@@ -42,8 +42,7 @@ _ACTIVE_SESSION = {
 }
 
 
-def _make_robot(robot_type: str, robot_port: str = None, robot_id: str = None,
-                cameras: Dict = None, **kwargs):
+def _make_robot(robot_type: str, robot_port: str = None, robot_id: str = None, cameras: Dict = None, **kwargs):
     """Create a LeRobot Robot from type string using native factory."""
     # Dynamically resolve config class
     import importlib
@@ -65,8 +64,12 @@ def _make_robot(robot_type: str, robot_port: str = None, robot_id: str = None,
             mod = importlib.import_module(f"lerobot.robots.{modname}")
             for attr_name in dir(mod):
                 obj = getattr(mod, attr_name)
-                if (isinstance(obj, type) and attr_name.endswith("Config")
-                    and issubclass(obj, RobotConfig) and obj is not RobotConfig):
+                if (
+                    isinstance(obj, type)
+                    and attr_name.endswith("Config")
+                    and issubclass(obj, RobotConfig)
+                    and obj is not RobotConfig
+                ):
                     if attr_name.lower().replace("_", "") == robot_type_lower.replace("_", "") + "config":
                         ConfigClass = obj
                         break
@@ -124,8 +127,12 @@ def _make_teleop(teleop_type: str, teleop_port: str = None, teleop_id: str = Non
             mod = importlib.import_module(f"lerobot.teleoperators.{modname}")
             for attr_name in dir(mod):
                 obj = getattr(mod, attr_name)
-                if (isinstance(obj, type) and attr_name.endswith("Config")
-                    and issubclass(obj, TeleoperatorConfig) and obj is not TeleoperatorConfig):
+                if (
+                    isinstance(obj, type)
+                    and attr_name.endswith("Config")
+                    and issubclass(obj, TeleoperatorConfig)
+                    and obj is not TeleoperatorConfig
+                ):
                     if attr_name.lower().replace("_", "") == teleop_type_lower.replace("_", "") + "config":
                         ConfigClass = obj
                         break
@@ -149,6 +156,7 @@ def _make_teleop(teleop_type: str, teleop_port: str = None, teleop_id: str = Non
                 config_data[f] = kwargs[f]
 
     from lerobot.teleoperators.utils import make_teleoperator_from_config
+
     config = ConfigClass(**config_data)
     return make_teleoperator_from_config(config)
 
@@ -196,9 +204,7 @@ def _run_record_loop(robot, teleop, record_session, num_episodes: int):
 
         record_session.record_episode(mode=RecordMode.TELEOP)
         _ACTIVE_SESSION["stats"]["episodes_completed"] = ep + 1
-        _ACTIVE_SESSION["stats"]["total_frames"] = sum(
-            e.frames for e in record_session._episodes if not e.discarded
-        )
+        _ACTIVE_SESSION["stats"]["total_frames"] = sum(e.frames for e in record_session._episodes if not e.discarded)
 
     # Finalize
     result = record_session.save_and_push()
@@ -270,9 +276,10 @@ def teleoperator(
     try:
         if action == "teleop":
             if _ACTIVE_SESSION["running"]:
-                return {"status": "error", "content": [
-                    {"text": "❌ Session already running. Use action='stop' first."}
-                ]}
+                return {
+                    "status": "error",
+                    "content": [{"text": "❌ Session already running. Use action='stop' first."}],
+                }
 
             # Create robot and teleop
             robot = _make_robot(robot_type, robot_port, robot_id, cameras or {})
@@ -283,13 +290,15 @@ def teleoperator(
             teleop_dev.connect()
 
             # Start background loop
-            _ACTIVE_SESSION.update({
-                "running": True,
-                "robot": robot,
-                "teleop": teleop_dev,
-                "mode": "teleop",
-                "stats": {"steps": 0, "duration": 0, "start_time": time.time()},
-            })
+            _ACTIVE_SESSION.update(
+                {
+                    "running": True,
+                    "robot": robot,
+                    "teleop": teleop_dev,
+                    "mode": "teleop",
+                    "stats": {"steps": 0, "duration": 0, "start_time": time.time()},
+                }
+            )
 
             thread = threading.Thread(
                 target=_run_teleop_loop,
@@ -299,19 +308,27 @@ def teleoperator(
             _ACTIVE_SESSION["thread"] = thread
             thread.start()
 
-            return {"status": "success", "content": [{"text": (
-                f"🕹️ Teleoperation started\n"
-                f"🤖 Robot: {robot_type} ({robot_port})\n"
-                f"🎮 Teleop: {teleop_type} ({teleop_port})\n"
-                f"⏱️ FPS: {fps}\n"
-                f"💡 Use action='stop' to end, action='status' to check"
-            )}]}
+            return {
+                "status": "success",
+                "content": [
+                    {
+                        "text": (
+                            f"🕹️ Teleoperation started\n"
+                            f"🤖 Robot: {robot_type} ({robot_port})\n"
+                            f"🎮 Teleop: {teleop_type} ({teleop_port})\n"
+                            f"⏱️ FPS: {fps}\n"
+                            f"💡 Use action='stop' to end, action='status' to check"
+                        )
+                    }
+                ],
+            }
 
         elif action == "record":
             if _ACTIVE_SESSION["running"]:
-                return {"status": "error", "content": [
-                    {"text": "❌ Session already running. Use action='stop' first."}
-                ]}
+                return {
+                    "status": "error",
+                    "content": [{"text": "❌ Session already running. Use action='stop' first."}],
+                }
 
             if not repo_id:
                 repo_id = f"local/teleop_{int(time.time())}"
@@ -322,6 +339,7 @@ def teleoperator(
 
             # Create record session
             from strands_robots.record import RecordSession
+
             record_session = RecordSession(
                 robot=robot,
                 teleop=teleop_dev,
@@ -335,19 +353,21 @@ def teleoperator(
             )
             record_session.connect()
 
-            _ACTIVE_SESSION.update({
-                "running": True,
-                "robot": robot,
-                "teleop": teleop_dev,
-                "record_session": record_session,
-                "mode": "record",
-                "stats": {
-                    "current_episode": 0,
-                    "episodes_completed": 0,
-                    "total_frames": 0,
-                    "start_time": time.time(),
-                },
-            })
+            _ACTIVE_SESSION.update(
+                {
+                    "running": True,
+                    "robot": robot,
+                    "teleop": teleop_dev,
+                    "record_session": record_session,
+                    "mode": "record",
+                    "stats": {
+                        "current_episode": 0,
+                        "episodes_completed": 0,
+                        "total_frames": 0,
+                        "start_time": time.time(),
+                    },
+                }
+            )
 
             thread = threading.Thread(
                 target=_run_record_loop,
@@ -357,21 +377,26 @@ def teleoperator(
             _ACTIVE_SESSION["thread"] = thread
             thread.start()
 
-            return {"status": "success", "content": [{"text": (
-                f"🔴 Recording started\n"
-                f"🤖 Robot: {robot_type} ({robot_port})\n"
-                f"🎮 Teleop: {teleop_type} ({teleop_port})\n"
-                f"📁 Dataset: {repo_id}\n"
-                f"🎯 Task: '{task}'\n"
-                f"📊 Episodes: 0/{num_episodes} @ {fps}fps\n"
-                f"💡 Use action='stop' to end, action='discard' to drop episode"
-            )}]}
+            return {
+                "status": "success",
+                "content": [
+                    {
+                        "text": (
+                            f"🔴 Recording started\n"
+                            f"🤖 Robot: {robot_type} ({robot_port})\n"
+                            f"🎮 Teleop: {teleop_type} ({teleop_port})\n"
+                            f"📁 Dataset: {repo_id}\n"
+                            f"🎯 Task: '{task}'\n"
+                            f"📊 Episodes: 0/{num_episodes} @ {fps}fps\n"
+                            f"💡 Use action='stop' to end, action='discard' to drop episode"
+                        )
+                    }
+                ],
+            }
 
         elif action == "stop":
             if not _ACTIVE_SESSION["running"]:
-                return {"status": "success", "content": [
-                    {"text": "💤 No active session to stop"}
-                ]}
+                return {"status": "success", "content": [{"text": "💤 No active session to stop"}]}
 
             _ACTIVE_SESSION["running"] = False
 
@@ -399,10 +424,16 @@ def teleoperator(
 
             stats = _ACTIVE_SESSION["stats"]
             mode = _ACTIVE_SESSION["mode"]
-            _ACTIVE_SESSION.update({
-                "running": False, "thread": None, "robot": None,
-                "teleop": None, "record_session": None, "mode": None,
-            })
+            _ACTIVE_SESSION.update(
+                {
+                    "running": False,
+                    "thread": None,
+                    "robot": None,
+                    "teleop": None,
+                    "record_session": None,
+                    "mode": None,
+                }
+            )
 
             text = f"🛑 Session stopped ({mode})\n"
             if mode == "record" and final_result:
@@ -412,28 +443,19 @@ def teleoperator(
                     f"📁 Saved to: {final_result.get('root', 'unknown')}\n"
                 )
             elif mode == "teleop":
-                text += (
-                    f"📊 Steps: {stats.get('steps', 0)}\n"
-                    f"⏱️ Duration: {stats.get('duration', 0):.1f}s\n"
-                )
+                text += f"📊 Steps: {stats.get('steps', 0)}\n" f"⏱️ Duration: {stats.get('duration', 0):.1f}s\n"
 
             return {"status": "success", "content": [{"text": text}]}
 
         elif action == "discard":
             if not _ACTIVE_SESSION["running"] or not _ACTIVE_SESSION["record_session"]:
-                return {"status": "error", "content": [
-                    {"text": "❌ No active recording session"}
-                ]}
+                return {"status": "error", "content": [{"text": "❌ No active recording session"}]}
             _ACTIVE_SESSION["record_session"].discard_episode()
-            return {"status": "success", "content": [
-                {"text": "🗑️ Current episode discarded"}
-            ]}
+            return {"status": "success", "content": [{"text": "🗑️ Current episode discarded"}]}
 
         elif action == "status":
             if not _ACTIVE_SESSION["running"]:
-                return {"status": "success", "content": [
-                    {"text": "💤 No active session"}
-                ]}
+                return {"status": "success", "content": [{"text": "💤 No active session"}]}
 
             mode = _ACTIVE_SESSION["mode"]
             stats = _ACTIVE_SESSION["stats"]
@@ -452,9 +474,10 @@ def teleoperator(
             return {"status": "success", "content": [{"text": text}]}
 
         else:
-            return {"status": "error", "content": [
-                {"text": f"❌ Unknown action: {action}. Valid: teleop, record, stop, status, discard"}
-            ]}
+            return {
+                "status": "error",
+                "content": [{"text": f"❌ Unknown action: {action}. Valid: teleop, record, stop, status, discard"}],
+            }
 
     except Exception as e:
         logger.error(f"Teleoperator tool error: {e}")

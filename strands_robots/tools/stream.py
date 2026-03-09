@@ -355,11 +355,7 @@ def _action_start_trace(robot_id: str, trace_name: str) -> Dict[str, Any]:
 
     return {
         "status": "success",
-        "content": [
-            {
-                "text": f"Trace started: name={trace_name}, trace_id={trace_id}, robot_id={robot_id}."
-            }
-        ],
+        "content": [{"text": f"Trace started: name={trace_name}, trace_id={trace_id}, robot_id={robot_id}."}],
     }
 
 
@@ -389,9 +385,5 @@ def _action_end_trace(robot_id: str) -> Dict[str, Any]:
 
     return {
         "status": "success",
-        "content": [
-            {
-                "text": f"Trace ended: name={span_name}, trace_id={trace_id}, robot_id={robot_id}."
-            }
-        ],
+        "content": [{"text": f"Trace ended: name={span_name}, trace_id={trace_id}, robot_id={robot_id}."}],
     }

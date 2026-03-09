@@ -275,7 +275,11 @@ def newton_sim(
                 obs_text = []
                 for rname, obs in result["observations"].items():
                     jp = obs.get("joint_positions")
-                    jp_str = f"[{', '.join(f'{x:.3f}' for x in jp[:6])}{'...' if len(jp) > 6 else ''}]" if jp is not None else "N/A"
+                    jp_str = (
+                        f"[{', '.join(f'{x:.3f}' for x in jp[:6])}{'...' if len(jp) > 6 else ''}]"
+                        if jp is not None
+                        else "N/A"
+                    )
                     obs_text.append(f"  🤖 {rname}: joints={jp_str}")
                 text = f"👁️ Observations (t={result['sim_time']:.4f}s):\n" + "\n".join(obs_text)
             else:
@@ -366,7 +370,7 @@ def newton_sim(
 
         elif action == "enable_dual_solver":
             backend = _get_backend()
-            cloth_solver = data_config if data_config and not data_config.startswith('{') else "vbd"
+            cloth_solver = data_config if data_config and not data_config.startswith("{") else "vbd"
             result = backend.enable_dual_solver(
                 rigid_solver=solver,
                 cloth_solver=cloth_solver,
@@ -388,11 +392,12 @@ def newton_sim(
                 import os
 
                 import newton.examples as ne
+
                 asset_dir = ne.get_asset_directory()
                 assets = sorted(os.listdir(asset_dir))
-                urdf = [a for a in assets if a.endswith('.urdf')]
-                usd = [a for a in assets if a.endswith(('.usd', '.usda'))]
-                xml = [a for a in assets if a.endswith('.xml')]
+                urdf = [a for a in assets if a.endswith(".urdf")]
+                usd = [a for a in assets if a.endswith((".usd", ".usda"))]
+                xml = [a for a in assets if a.endswith(".xml")]
                 text = (
                     f"📦 Newton Bundled Assets ({len(assets)} files):\n"
                     f"  URDF: {', '.join(urdf)}\n"
@@ -413,10 +418,12 @@ def newton_sim(
             # Try to add a quadruped
             try:
                 import newton.examples as ne
+
                 backend.add_robot("bench_robot", urdf_path=ne.get_asset("quadruped.urdf"))
             except Exception:
                 backend._lazy_init()
                 import warp as wp
+
                 backend._builder.add_body(xform=wp.transform((0, 0, 0.5), wp.quat_identity()))
                 backend._builder.add_shape_sphere(body=0, radius=0.1)
                 backend._builder.add_joint_free(child=0)
@@ -453,12 +460,16 @@ def newton_sim(
         else:
             return {
                 "status": "error",
-                "content": [{"text": (
-                    f"Unknown action: '{action}'\n"
-                    "Valid: create_world, add_robot, add_cloth, add_cable, add_particles, "
-                    "replicate, step, observe, reset, get_state, run_policy, run_diffsim, "
-                    "add_sensor, read_sensor, solve_ik, destroy, list_assets, benchmark"
-                )}],
+                "content": [
+                    {
+                        "text": (
+                            f"Unknown action: '{action}'\n"
+                            "Valid: create_world, add_robot, add_cloth, add_cable, add_particles, "
+                            "replicate, step, observe, reset, get_state, run_policy, run_diffsim, "
+                            "add_sensor, read_sensor, solve_ik, destroy, list_assets, benchmark"
+                        )
+                    }
+                ],
             }
 
     except Exception as e:

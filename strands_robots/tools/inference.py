@@ -37,18 +37,88 @@ _RUNNING_SERVICES = _RUNNING  # alias for tests
 # ---------------------------------------------------------------------------
 
 PROVIDERS = {
-    "dreamzero":  {"name": "DreamZero 14B",           "proto": "websocket", "port": 8000,  "multi_gpu": True,  "gpus": 2, "hf": "GEAR-Dreams/DreamZero-DROID"},
-    "groot":      {"name": "NVIDIA GR00T N1.5/N1.6",  "proto": "zmq",      "port": 5555,  "multi_gpu": False, "gpus": 1, "hf": ""},
-    "openvla":    {"name": "OpenVLA 7B",               "proto": "http",     "port": 8001,  "multi_gpu": False, "gpus": 1, "hf": "openvla/openvla-7b"},
-    "internvla":  {"name": "InternVLA 2B/40B",         "proto": "http",     "port": 8002,  "multi_gpu": False, "gpus": 1, "hf": "OpenGVLab/InternVLA-2B"},
-    "lerobot":    {"name": "LeRobot (ACT/Pi0/SmolVLA)","proto": "grpc",     "port": 50051, "multi_gpu": False, "gpus": 1, "hf": "lerobot/act_aloha_sim_transfer_cube_human"},
-    "cosmos":     {"name": "NVIDIA Cosmos Predict",    "proto": "http",     "port": 8003,  "multi_gpu": True,  "gpus": 1, "hf": "nvidia/Cosmos-Predict2.5-2B"},
-    "alpamayo":   {"name": "NVIDIA Alpamayo R1",       "proto": "http",     "port": 8004,  "multi_gpu": False, "gpus": 1, "hf": "nvidia/Alpamayo-R1"},
-    "rdt":        {"name": "RDT 1B",                   "proto": "http",     "port": 8005,  "multi_gpu": False, "gpus": 1, "hf": "robotics-diffusion-transformer/rdt-1b"},
-    "magma":      {"name": "Microsoft Magma 8B",       "proto": "http",     "port": 8006,  "multi_gpu": False, "gpus": 1, "hf": "microsoft/Magma-8B"},
-    "cogact":     {"name": "CogACT",                   "proto": "http",     "port": 8007,  "multi_gpu": False, "gpus": 1, "hf": ""},
-    "gear_sonic": {"name": "GEAR Sonic (Humanoid)",    "proto": "websocket","port": 8008,  "multi_gpu": True,  "gpus": 2, "hf": ""},
-    "unifolm":    {"name": "UnifolM (Unitree VLA)",    "proto": "http",     "port": 8009,  "multi_gpu": False, "gpus": 1, "hf": ""},
+    "dreamzero": {
+        "name": "DreamZero 14B",
+        "proto": "websocket",
+        "port": 8000,
+        "multi_gpu": True,
+        "gpus": 2,
+        "hf": "GEAR-Dreams/DreamZero-DROID",
+    },
+    "groot": {"name": "NVIDIA GR00T N1.5/N1.6", "proto": "zmq", "port": 5555, "multi_gpu": False, "gpus": 1, "hf": ""},
+    "openvla": {
+        "name": "OpenVLA 7B",
+        "proto": "http",
+        "port": 8001,
+        "multi_gpu": False,
+        "gpus": 1,
+        "hf": "openvla/openvla-7b",
+    },
+    "internvla": {
+        "name": "InternVLA 2B/40B",
+        "proto": "http",
+        "port": 8002,
+        "multi_gpu": False,
+        "gpus": 1,
+        "hf": "OpenGVLab/InternVLA-2B",
+    },
+    "lerobot": {
+        "name": "LeRobot (ACT/Pi0/SmolVLA)",
+        "proto": "grpc",
+        "port": 50051,
+        "multi_gpu": False,
+        "gpus": 1,
+        "hf": "lerobot/act_aloha_sim_transfer_cube_human",
+    },
+    "cosmos": {
+        "name": "NVIDIA Cosmos Predict",
+        "proto": "http",
+        "port": 8003,
+        "multi_gpu": True,
+        "gpus": 1,
+        "hf": "nvidia/Cosmos-Predict2.5-2B",
+    },
+    "alpamayo": {
+        "name": "NVIDIA Alpamayo R1",
+        "proto": "http",
+        "port": 8004,
+        "multi_gpu": False,
+        "gpus": 1,
+        "hf": "nvidia/Alpamayo-R1",
+    },
+    "rdt": {
+        "name": "RDT 1B",
+        "proto": "http",
+        "port": 8005,
+        "multi_gpu": False,
+        "gpus": 1,
+        "hf": "robotics-diffusion-transformer/rdt-1b",
+    },
+    "magma": {
+        "name": "Microsoft Magma 8B",
+        "proto": "http",
+        "port": 8006,
+        "multi_gpu": False,
+        "gpus": 1,
+        "hf": "microsoft/Magma-8B",
+    },
+    "cogact": {"name": "CogACT", "proto": "http", "port": 8007, "multi_gpu": False, "gpus": 1, "hf": ""},
+    "gear_sonic": {
+        "name": "GEAR Sonic (Humanoid)",
+        "proto": "websocket",
+        "port": 8008,
+        "multi_gpu": True,
+        "gpus": 2,
+        "hf": "",
+    },
+    "unifolm": {
+        "name": "UnifolM (Unitree VLA)",
+        "proto": "http",
+        "port": 8009,
+        "multi_gpu": False,
+        "gpus": 1,
+        "hf": "",
+    },
 }
 
 
@@ -56,10 +126,12 @@ PROVIDERS = {
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _port_in_use(port: int, host: str = "localhost") -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.settimeout(1)
         return s.connect_ex((host, port)) == 0
+
 
 # Alias for tests
 _is_port_in_use = _port_in_use
@@ -76,13 +148,13 @@ def _wait_for_port(port: int, timeout: int = 120, host: str = "localhost") -> bo
 
 def _find_pid_on_port(port: int) -> Optional[int]:
     try:
-        out = subprocess.run(["lsof", "-t", f"-i:{port}"],
-                             capture_output=True, text=True, timeout=5)
+        out = subprocess.run(["lsof", "-t", f"-i:{port}"], capture_output=True, text=True, timeout=5)
         if out.returncode == 0 and out.stdout.strip():
             return int(out.stdout.strip().split("\n")[0])
     except Exception:
         pass
     return None
+
 
 # Alias for tests
 _find_process_on_port = _find_pid_on_port
@@ -93,6 +165,7 @@ def _kill(pid: int, force: bool = False):
         os.kill(pid, signal.SIGKILL if force else signal.SIGTERM)
     except ProcessLookupError:
         pass
+
 
 # Alias for tests
 _kill_process = _kill
@@ -106,9 +179,9 @@ def _download_hf(model_id: str) -> str:
     if os.path.isdir(cache) and os.listdir(cache):
         return cache
     logger.info(f"Downloading {model_id} → {cache}")
-    subprocess.run(["huggingface-cli", "download", model_id,
-                     "--repo-type", "model", "--local-dir", cache],
-                    check=True, timeout=600)
+    subprocess.run(
+        ["huggingface-cli", "download", model_id, "--repo-type", "model", "--local-dir", cache], check=True, timeout=600
+    )
     return cache
 
 
@@ -116,36 +189,66 @@ def _download_hf(model_id: str) -> str:
 # Launchers — one per launch method
 # ---------------------------------------------------------------------------
 
-def _launch_torchrun(script: str, port: int, model_path: str,
-                     num_gpus: int, gpu_ids: str, extra_flags: list) -> Dict:
+
+def _launch_torchrun(script: str, port: int, model_path: str, num_gpus: int, gpu_ids: str, extra_flags: list) -> Dict:
     """Launch via torchrun (DreamZero, GEAR Sonic)."""
-    cmd = ["torchrun", "--standalone", f"--nproc_per_node={num_gpus}",
-           script, "--port", str(port), "--model-path", model_path] + extra_flags
+    cmd = [
+        "torchrun",
+        "--standalone",
+        f"--nproc_per_node={num_gpus}",
+        script,
+        "--port",
+        str(port),
+        "--model-path",
+        model_path,
+    ] + extra_flags
     env = {**os.environ, "CUDA_VISIBLE_DEVICES": gpu_ids}
-    proc = subprocess.Popen(cmd, env=env, cwd=os.path.dirname(script),
-                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                            start_new_session=True)
+    proc = subprocess.Popen(
+        cmd,
+        env=env,
+        cwd=os.path.dirname(script),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+    )
     return {"pid": proc.pid, "cmd": " ".join(cmd)}
 
 
-def _launch_docker(container: str, port: int, model_path: str,
-                   host: str, extra_flags: list) -> Dict:
+def _launch_docker(container: str, port: int, model_path: str, host: str, extra_flags: list) -> Dict:
     """Launch inside an existing Docker container (GR00T)."""
-    cmd = ["docker", "exec", "-d", container, "python",
-           "/opt/Isaac-GR00T/scripts/inference_service.py",
-           "--server", "--model-path", model_path,
-           "--port", str(port), "--host", host] + extra_flags
+    cmd = [
+        "docker",
+        "exec",
+        "-d",
+        container,
+        "python",
+        "/opt/Isaac-GR00T/scripts/inference_service.py",
+        "--server",
+        "--model-path",
+        model_path,
+        "--port",
+        str(port),
+        "--host",
+        host,
+    ] + extra_flags
     subprocess.run(cmd, capture_output=True, text=True, check=True)
     return {"pid": None, "container": container, "cmd": " ".join(cmd)}
 
 
 def _launch_lerobot(model_id: str, port: int, device: str) -> Dict:
     """Launch LeRobot gRPC inference server."""
-    cmd = ["python", "-m", "lerobot.scripts.server",
-           "--pretrained-name-or-path", model_id,
-           "--port", str(port), "--device", device]
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                            start_new_session=True)
+    cmd = [
+        "python",
+        "-m",
+        "lerobot.scripts.server",
+        "--pretrained-name-or-path",
+        model_id,
+        "--port",
+        str(port),
+        "--device",
+        device,
+    ]
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
     return {"pid": proc.pid, "cmd": " ".join(cmd)}
 
 
@@ -156,7 +259,8 @@ def _launch_http_serve(model_id: str, port: int, host: str, provider: str) -> Di
     script = os.path.join(script_dir, f"serve_{provider}_{port}.py")
 
     with open(script, "w") as f:
-        f.write(f'''#!/usr/bin/env python3
+        f.write(
+            f'''#!/usr/bin/env python3
 """Auto-generated HTTP inference server for {provider}"""
 import json, logging, numpy as np
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -192,10 +296,12 @@ class H(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     logger.info(f"Starting {{MODEL}} on {host}:{port}")
     HTTPServer(("{host}", {port}), H).serve_forever()
-''')
+'''
+        )
 
-    proc = subprocess.Popen(["python", script], stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT, start_new_session=True)
+    proc = subprocess.Popen(
+        ["python", script], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True
+    )
     return {"pid": proc.pid, "cmd": f"python {script}"}
 
 
@@ -203,41 +309,59 @@ if __name__ == "__main__":
 # Provider dispatch
 # ---------------------------------------------------------------------------
 
-def _start_provider(provider: str, model_id: str, port: int, host: str,
-                    num_gpus: int, gpu_ids: str, kwargs: Dict) -> Dict:
+
+def _start_provider(
+    provider: str, model_id: str, port: int, host: str, num_gpus: int, gpu_ids: str, kwargs: Dict
+) -> Dict:
     """Route to the correct launcher based on provider."""
 
     if provider == "dreamzero":
         result = _start_dreamzero(model_id, port, num_gpus, host, {**kwargs, "gpu_ids": gpu_ids})
-        return {"pid": result.get("pid"), "container": result.get("container"),
-                "cmd": result.get("command", ""),
-                **({"error": result["message"]} if result.get("status") == "error" else {})}
+        return {
+            "pid": result.get("pid"),
+            "container": result.get("container"),
+            "cmd": result.get("command", ""),
+            **({"error": result["message"]} if result.get("status") == "error" else {}),
+        }
 
     if provider == "groot":
         result = _start_groot(model_id, port, num_gpus, host, kwargs)
-        return {"pid": result.get("pid"), "container": result.get("container"),
-                "cmd": result.get("command", ""),
-                **({"error": result["message"]} if result.get("status") == "error" else {})}
+        return {
+            "pid": result.get("pid"),
+            "container": result.get("container"),
+            "cmd": result.get("command", ""),
+            **({"error": result["message"]} if result.get("status") == "error" else {}),
+        }
 
     if provider == "lerobot":
         result = _start_lerobot(model_id, port, num_gpus, host, kwargs)
-        return {"pid": result.get("pid"), "cmd": result.get("command", ""),
-                **({"error": result["message"]} if result.get("status") == "error" else {})}
+        return {
+            "pid": result.get("pid"),
+            "cmd": result.get("command", ""),
+            **({"error": result["message"]} if result.get("status") == "error" else {}),
+        }
 
     if provider == "openvla":
         result = _start_openvla(model_id, port, num_gpus, host, kwargs)
-        return {"pid": result.get("pid"), "cmd": result.get("command", ""),
-                **({"error": result["message"]} if result.get("status") == "error" else {})}
+        return {
+            "pid": result.get("pid"),
+            "cmd": result.get("command", ""),
+            **({"error": result["message"]} if result.get("status") == "error" else {}),
+        }
 
     # All others → generic HTTP serve
     result = _start_generic_hf(provider, model_id, port, num_gpus, host, kwargs)
-    return {"pid": result.get("pid"), "cmd": result.get("command", ""),
-            **({"error": result["message"]} if result.get("status") == "error" else {})}
+    return {
+        "pid": result.get("pid"),
+        "cmd": result.get("command", ""),
+        **({"error": result["message"]} if result.get("status") == "error" else {}),
+    }
 
 
 # ---------------------------------------------------------------------------
 # Main tool
 # ---------------------------------------------------------------------------
+
 
 @tool
 def inference(
@@ -294,10 +418,16 @@ def inference(
     if action == "info":
         cfg = PROVIDER_CONFIGS.get(provider)
         if not cfg:
-            return {"status": "error",
-                    "content": [{"text": f"Unknown provider: {provider}. Available: {', '.join(PROVIDER_CONFIGS)}"}]}
-        return {"status": "success", "provider": provider, "config": cfg,
-                "content": [{"text": f"{cfg['display_name']} — {cfg['protocol']} on port {cfg['default_port']}"}]}
+            return {
+                "status": "error",
+                "content": [{"text": f"Unknown provider: {provider}. Available: {', '.join(PROVIDER_CONFIGS)}"}],
+            }
+        return {
+            "status": "success",
+            "provider": provider,
+            "config": cfg,
+            "content": [{"text": f"{cfg['display_name']} — {cfg['protocol']} on port {cfg['default_port']}"}],
+        }
 
     # ── providers ──────────────────────────────────────────────────────
     if action == "providers":
@@ -315,8 +445,10 @@ def inference(
         for svc_port, info in _RUNNING.items():
             alive = _is_port_in_use(svc_port)
             icon = "✅" if alive else "❌"
-            lines.append(f"  {icon} :{svc_port} | {info.get('provider','?'):15s} | "
-                         f"{info.get('proto','?'):9s} | pid={info.get('pid','?')}")
+            lines.append(
+                f"  {icon} :{svc_port} | {info.get('provider','?'):15s} | "
+                f"{info.get('proto','?'):9s} | pid={info.get('pid','?')}"
+            )
         # Scan common ports for unregistered services
         scan = {5555, 8000, 8001, 8002, 8003, 8004, 8005, 8006, 8007, 8008, 8009, 50051}
         for p in scan - set(_RUNNING):
@@ -351,15 +483,19 @@ def inference(
                 time.sleep(1)
         if info.get("container"):
             try:
-                subprocess.run(["docker", "exec", info["container"],
-                                "pkill", "-f", f"--port {port}"],
-                               capture_output=True, timeout=10)
+                subprocess.run(
+                    ["docker", "exec", info["container"], "pkill", "-f", f"--port {port}"],
+                    capture_output=True,
+                    timeout=10,
+                )
             except Exception:
                 pass
         _RUNNING.pop(port, None)
         stopped = not _is_port_in_use(port)
-        return {"status": "success" if stopped else "warning",
-                "content": [{"text": f"Port {port} {'stopped' if stopped else 'may still be running'}"}]}
+        return {
+            "status": "success" if stopped else "warning",
+            "content": [{"text": f"Port {port} {'stopped' if stopped else 'may still be running'}"}],
+        }
 
     # ── download ───────────────────────────────────────────────────────
     if action == "download":
@@ -376,8 +512,10 @@ def inference(
     if action == "start":
         cfg = PROVIDERS.get(provider)
         if not cfg:
-            return {"status": "error",
-                    "content": [{"text": f"Unknown provider: {provider}. Available: {', '.join(PROVIDERS)}"}]}
+            return {
+                "status": "error",
+                "content": [{"text": f"Unknown provider: {provider}. Available: {', '.join(PROVIDERS)}"}],
+            }
 
         port = port or cfg["port"]
         num_gpus = num_gpus or cfg.get("gpus", 1)
@@ -386,16 +524,26 @@ def inference(
             return {"status": "error", "content": [{"text": f"No checkpoint/model_id for {provider}"}]}
 
         if _is_port_in_use(port):
-            return {"status": "error",
-                    "content": [{"text": f"Port {port} in use. Stop first: inference(action='stop', port={port})"}]}
+            return {
+                "status": "error",
+                "content": [{"text": f"Port {port} in use. Stop first: inference(action='stop', port={port})"}],
+            }
 
         gpu_str = gpu_ids or ",".join(str(i) for i in range(num_gpus))
-        kwargs = dict(data_config=data_config, embodiment_tag=embodiment_tag,
-                      denoising_steps=denoising_steps, use_tensorrt=use_tensorrt,
-                      http_server=http_server, enable_dit_cache=enable_dit_cache,
-                      container_name=container_name, device=device,
-                      trt_engine_path="gr00t_engine", vit_dtype="fp8",
-                      llm_dtype="nvfp4", dit_dtype="fp8")
+        kwargs = dict(
+            data_config=data_config,
+            embodiment_tag=embodiment_tag,
+            denoising_steps=denoising_steps,
+            use_tensorrt=use_tensorrt,
+            http_server=http_server,
+            enable_dit_cache=enable_dit_cache,
+            container_name=container_name,
+            device=device,
+            trt_engine_path="gr00t_engine",
+            vit_dtype="fp8",
+            llm_dtype="nvfp4",
+            dit_dtype="fp8",
+        )
 
         logger.info(f"Starting {provider} on :{port} ({num_gpus} GPU)")
         try:
@@ -410,9 +558,13 @@ def inference(
         proto = cfg["proto"]
 
         _RUNNING[port] = {
-            "provider": provider, "proto": proto, "port": port,
-            "checkpoint": checkpoint, "num_gpus": num_gpus,
-            "pid": result.get("pid"), "container": result.get("container"),
+            "provider": provider,
+            "proto": proto,
+            "port": port,
+            "checkpoint": checkpoint,
+            "num_gpus": num_gpus,
+            "pid": result.get("pid"),
+            "container": result.get("container"),
             "started_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         }
 
@@ -422,22 +574,31 @@ def inference(
 
         return {
             "status": "success" if started else "starting",
-            "port": port, "provider": provider, "protocol": proto, "endpoint": endpoint,
-            "content": [{"text": (
-                f"🚀 {cfg['name']}\n"
-                f"Status: {'✅ RUNNING' if started else '⏳ STARTING'}\n"
-                f"Endpoint: {endpoint}\n"
-                f"Checkpoint: {checkpoint}\n"
-                f"GPUs: {num_gpus} | PID: {result.get('pid', 'docker')}\n\n"
-                f"Connect:\n"
-                f"  from strands_robots.policies import create_policy\n"
-                f"  policy = create_policy(\"{provider}\", host=\"{host}\", port={port})\n\n"
-                f"Stop: inference(action=\"stop\", port={port})"
-            )}],
+            "port": port,
+            "provider": provider,
+            "protocol": proto,
+            "endpoint": endpoint,
+            "content": [
+                {
+                    "text": (
+                        f"🚀 {cfg['name']}\n"
+                        f"Status: {'✅ RUNNING' if started else '⏳ STARTING'}\n"
+                        f"Endpoint: {endpoint}\n"
+                        f"Checkpoint: {checkpoint}\n"
+                        f"GPUs: {num_gpus} | PID: {result.get('pid', 'docker')}\n\n"
+                        f"Connect:\n"
+                        f"  from strands_robots.policies import create_policy\n"
+                        f'  policy = create_policy("{provider}", host="{host}", port={port})\n\n'
+                        f'Stop: inference(action="stop", port={port})'
+                    )
+                }
+            ],
         }
 
-    return {"status": "error",
-            "content": [{"text": f"Unknown action: {action}. Valid: start, stop, status, info, list, providers, download"}]}
+    return {
+        "status": "error",
+        "content": [{"text": f"Unknown action: {action}. Valid: start, stop, status, info, list, providers, download"}],
+    }
 
 
 if __name__ == "__main__":
@@ -451,18 +612,125 @@ if __name__ == "__main__":
 # ---------------------------------------------------------------------------
 
 PROVIDER_CONFIGS = {
-    "dreamzero":  {"display_name": "DreamZero 14B (World Action Model)", "protocol": "websocket", "default_port": 8000,  "multi_gpu": True,  "default_num_gpus": 2, "launch_method": "torchrun", "requires": "torch", "hf_model_id": "GEAR-Dreams/DreamZero-DROID"},
-    "groot":      {"display_name": "NVIDIA GR00T N1.5/N1.6",  "protocol": "zmq",      "default_port": 5555,  "multi_gpu": False, "default_num_gpus": 1, "launch_method": "docker",   "requires": "docker"},
-    "openvla":    {"display_name": "OpenVLA 7B",               "protocol": "http",     "default_port": 8001,  "multi_gpu": False, "default_num_gpus": 1, "launch_method": "vllm",     "requires": "torch", "hf_model_id": "openvla/openvla-7b"},
-    "internvla":  {"display_name": "InternVLA 2B/40B",         "protocol": "http",     "default_port": 8002,  "multi_gpu": False, "default_num_gpus": 1, "launch_method": "python",   "requires": "torch", "hf_model_id": "OpenGVLab/InternVLA-2B"},
-    "lerobot":    {"display_name": "LeRobot (ACT/Pi0/SmolVLA)","protocol": "grpc",     "default_port": 50051, "multi_gpu": False, "default_num_gpus": 1, "launch_method": "python",   "requires": "lerobot", "hf_model_id": "lerobot/act_aloha_sim_transfer_cube_human"},
-    "cosmos":     {"display_name": "NVIDIA Cosmos Predict",    "protocol": "http",     "default_port": 8003,  "multi_gpu": True,  "default_num_gpus": 1, "launch_method": "python",   "requires": "torch", "hf_model_id": "nvidia/Cosmos-Predict1-7B"},
-    "alpamayo":   {"display_name": "NVIDIA Alpamayo R1",       "protocol": "http",     "default_port": 8004,  "multi_gpu": False, "default_num_gpus": 1, "launch_method": "python",   "requires": "torch", "hf_model_id": "nvidia/Alpamayo-R1"},
-    "rdt":        {"display_name": "RDT 1B",                   "protocol": "http",     "default_port": 8005,  "multi_gpu": False, "default_num_gpus": 1, "launch_method": "python",   "requires": "torch", "hf_model_id": "robotics-diffusion-transformer/rdt-1b"},
-    "magma":      {"display_name": "Microsoft Magma 8B",       "protocol": "http",     "default_port": 8006,  "multi_gpu": False, "default_num_gpus": 1, "launch_method": "python",   "requires": "torch", "hf_model_id": "microsoft/Magma-8B"},
-    "cogact":     {"display_name": "CogACT",                   "protocol": "http",     "default_port": 8007,  "multi_gpu": False, "default_num_gpus": 1, "launch_method": "python",   "requires": "torch", "hf_model_id": "CogACT/CogACT-Base"},
-    "gear_sonic": {"display_name": "GEAR Sonic (Humanoid)",    "protocol": "websocket","default_port": 8008,  "multi_gpu": True,  "default_num_gpus": 2, "launch_method": "torchrun", "requires": "torch", "hf_model_id": "GEAR-Group/GEAR-Sonic"},
-    "unifolm":    {"display_name": "UnifolM (Unitree VLA)",    "protocol": "http",     "default_port": 8009,  "multi_gpu": False, "default_num_gpus": 1, "launch_method": "python",   "requires": "torch", "hf_model_id": "unitreerobotics/UnifolM-50M"},
+    "dreamzero": {
+        "display_name": "DreamZero 14B (World Action Model)",
+        "protocol": "websocket",
+        "default_port": 8000,
+        "multi_gpu": True,
+        "default_num_gpus": 2,
+        "launch_method": "torchrun",
+        "requires": "torch",
+        "hf_model_id": "GEAR-Dreams/DreamZero-DROID",
+    },
+    "groot": {
+        "display_name": "NVIDIA GR00T N1.5/N1.6",
+        "protocol": "zmq",
+        "default_port": 5555,
+        "multi_gpu": False,
+        "default_num_gpus": 1,
+        "launch_method": "docker",
+        "requires": "docker",
+    },
+    "openvla": {
+        "display_name": "OpenVLA 7B",
+        "protocol": "http",
+        "default_port": 8001,
+        "multi_gpu": False,
+        "default_num_gpus": 1,
+        "launch_method": "vllm",
+        "requires": "torch",
+        "hf_model_id": "openvla/openvla-7b",
+    },
+    "internvla": {
+        "display_name": "InternVLA 2B/40B",
+        "protocol": "http",
+        "default_port": 8002,
+        "multi_gpu": False,
+        "default_num_gpus": 1,
+        "launch_method": "python",
+        "requires": "torch",
+        "hf_model_id": "OpenGVLab/InternVLA-2B",
+    },
+    "lerobot": {
+        "display_name": "LeRobot (ACT/Pi0/SmolVLA)",
+        "protocol": "grpc",
+        "default_port": 50051,
+        "multi_gpu": False,
+        "default_num_gpus": 1,
+        "launch_method": "python",
+        "requires": "lerobot",
+        "hf_model_id": "lerobot/act_aloha_sim_transfer_cube_human",
+    },
+    "cosmos": {
+        "display_name": "NVIDIA Cosmos Predict",
+        "protocol": "http",
+        "default_port": 8003,
+        "multi_gpu": True,
+        "default_num_gpus": 1,
+        "launch_method": "python",
+        "requires": "torch",
+        "hf_model_id": "nvidia/Cosmos-Predict1-7B",
+    },
+    "alpamayo": {
+        "display_name": "NVIDIA Alpamayo R1",
+        "protocol": "http",
+        "default_port": 8004,
+        "multi_gpu": False,
+        "default_num_gpus": 1,
+        "launch_method": "python",
+        "requires": "torch",
+        "hf_model_id": "nvidia/Alpamayo-R1",
+    },
+    "rdt": {
+        "display_name": "RDT 1B",
+        "protocol": "http",
+        "default_port": 8005,
+        "multi_gpu": False,
+        "default_num_gpus": 1,
+        "launch_method": "python",
+        "requires": "torch",
+        "hf_model_id": "robotics-diffusion-transformer/rdt-1b",
+    },
+    "magma": {
+        "display_name": "Microsoft Magma 8B",
+        "protocol": "http",
+        "default_port": 8006,
+        "multi_gpu": False,
+        "default_num_gpus": 1,
+        "launch_method": "python",
+        "requires": "torch",
+        "hf_model_id": "microsoft/Magma-8B",
+    },
+    "cogact": {
+        "display_name": "CogACT",
+        "protocol": "http",
+        "default_port": 8007,
+        "multi_gpu": False,
+        "default_num_gpus": 1,
+        "launch_method": "python",
+        "requires": "torch",
+        "hf_model_id": "CogACT/CogACT-Base",
+    },
+    "gear_sonic": {
+        "display_name": "GEAR Sonic (Humanoid)",
+        "protocol": "websocket",
+        "default_port": 8008,
+        "multi_gpu": True,
+        "default_num_gpus": 2,
+        "launch_method": "torchrun",
+        "requires": "torch",
+        "hf_model_id": "GEAR-Group/GEAR-Sonic",
+    },
+    "unifolm": {
+        "display_name": "UnifolM (Unitree VLA)",
+        "protocol": "http",
+        "default_port": 8009,
+        "multi_gpu": False,
+        "default_num_gpus": 1,
+        "launch_method": "python",
+        "requires": "torch",
+        "hf_model_id": "unitreerobotics/UnifolM-50M",
+    },
 }
 
 
@@ -505,9 +773,11 @@ def _start_dreamzero(model_id: str, port: int, num_gpus: int, host: str, kwargs:
         ckpt = model_id
 
     script = None
-    for p in [os.path.join(str(ckpt), "..", "socket_test_optimized_AR.py"),
-              "/tmp/dreamzero/socket_test_optimized_AR.py",
-              os.path.expanduser("~/dreamzero/socket_test_optimized_AR.py")]:
+    for p in [
+        os.path.join(str(ckpt), "..", "socket_test_optimized_AR.py"),
+        "/tmp/dreamzero/socket_test_optimized_AR.py",
+        os.path.expanduser("~/dreamzero/socket_test_optimized_AR.py"),
+    ]:
         if os.path.exists(os.path.abspath(p)):
             script = os.path.abspath(p)
             break
@@ -527,33 +797,54 @@ def _start_groot(model_id: str, port: int, num_gpus: int, host: str, kwargs: Dic
         try:
             out = subprocess.run(
                 ["docker", "ps", "--format", "{{.Names}}\t{{.Image}}\t{{.Status}}"],
-                capture_output=True, text=True, timeout=10)
-            for line in (out.stdout.strip().split("\n") if out.returncode == 0 else []):
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            for line in out.stdout.strip().split("\n") if out.returncode == 0 else []:
                 if line and ("isaac" in line.lower() or "gr00t" in line.lower()) and "Up" in line:
                     container = line.split("\t")[0]
                     break
         except Exception:
             pass
     if not container:
-        return {"status": "error", "message": "No running GR00T container found. Pull: docker pull nvcr.io/nvidia/isaac-gr00t"}
+        return {
+            "status": "error",
+            "message": "No running GR00T container found. Pull: docker pull nvcr.io/nvidia/isaac-gr00t",
+        }
 
     flags = []
     if kwargs.get("use_tensorrt"):
-        flags += ["--use-tensorrt",
-                   "--trt-engine-path", kwargs.get("trt_engine_path", "gr00t_engine"),
-                   "--vit-dtype", kwargs.get("vit_dtype", "fp8"),
-                   "--llm-dtype", kwargs.get("llm_dtype", "nvfp4"),
-                   "--dit-dtype", kwargs.get("dit_dtype", "fp8")]
+        flags += [
+            "--use-tensorrt",
+            "--trt-engine-path",
+            kwargs.get("trt_engine_path", "gr00t_engine"),
+            "--vit-dtype",
+            kwargs.get("vit_dtype", "fp8"),
+            "--llm-dtype",
+            kwargs.get("llm_dtype", "nvfp4"),
+            "--dit-dtype",
+            kwargs.get("dit_dtype", "fp8"),
+        ]
     if kwargs.get("http_server"):
         flags.append("--http-server")
-    flags += ["--data-config", kwargs.get("data_config", "fourier_gr1_arms_only"),
-              "--embodiment-tag", kwargs.get("embodiment_tag", "gr1"),
-              "--denoising-steps", str(kwargs.get("denoising_steps", 4))]
+    flags += [
+        "--data-config",
+        kwargs.get("data_config", "fourier_gr1_arms_only"),
+        "--embodiment-tag",
+        kwargs.get("embodiment_tag", "gr1"),
+        "--denoising-steps",
+        str(kwargs.get("denoising_steps", 4)),
+    ]
 
     try:
         result = _launch_docker(container, port, model_id, host, flags)
-        return {"status": "starting", "pid": result.get("pid"), "container": container,
-                "command": result.get("cmd", "")}
+        return {
+            "status": "starting",
+            "pid": result.get("pid"),
+            "container": container,
+            "command": result.get("cmd", ""),
+        }
     except Exception as e:
         return {"status": "error", "message": str(e), "command": ""}
 
@@ -561,12 +852,21 @@ def _start_groot(model_id: str, port: int, num_gpus: int, host: str, kwargs: Dic
 def _start_openvla(model_id: str, port: int, num_gpus: int, host: str, kwargs: Dict) -> Dict:
     """Test-compatible wrapper for OpenVLA launch."""
     if shutil.which("vllm"):
-        cmd = ["vllm", "serve", model_id, "--port", str(port),
-               "--host", host, "--dtype", "bfloat16", "--trust-remote-code"]
+        cmd = [
+            "vllm",
+            "serve",
+            model_id,
+            "--port",
+            str(port),
+            "--host",
+            host,
+            "--dtype",
+            "bfloat16",
+            "--trust-remote-code",
+        ]
         if num_gpus > 1:
             cmd += ["--tensor-parallel-size", str(num_gpus)]
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                start_new_session=True)
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
         return {"status": "starting", "pid": proc.pid, "command": " ".join(cmd)}
     else:
         result = _launch_http_serve(model_id, port, host, "openvla")
@@ -577,11 +877,18 @@ def _start_lerobot(model_id: str, port: int, num_gpus: int, host: str, kwargs: D
     """Test-compatible wrapper for LeRobot launch."""
     pretrained = kwargs.get("pretrained_name_or_path") or model_id
     device = kwargs.get("device", "cuda")
-    cmd = ["python", "-m", "lerobot.scripts.server",
-           "--pretrained-name-or-path", str(pretrained),
-           "--port", str(port), "--device", device]
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                            start_new_session=True)
+    cmd = [
+        "python",
+        "-m",
+        "lerobot.scripts.server",
+        "--pretrained-name-or-path",
+        str(pretrained),
+        "--port",
+        str(port),
+        "--device",
+        device,
+    ]
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
     return {"status": "starting", "pid": proc.pid, "command": " ".join(cmd)}
 
 
@@ -596,8 +903,12 @@ def _start_generic_hf(provider: str, model_id: str, port: int, num_gpus: int, ho
     # Re-launch with env if needed
     if env:
         script = os.path.join("/tmp/strands_robots_inference", f"serve_{provider}_{port}.py")
-        proc = subprocess.Popen(["python", script], stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT, start_new_session=True,
-                                env={**os.environ, **env})
+        proc = subprocess.Popen(
+            ["python", script],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+            env={**os.environ, **env},
+        )
         return {"status": "starting", "pid": proc.pid, "command": result.get("cmd", "")}
     return {"status": "starting", "pid": result.get("pid"), "command": result.get("cmd", "")}

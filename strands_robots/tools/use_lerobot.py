@@ -125,6 +125,7 @@ def _discover_modules() -> Dict[str, Any]:
     try:
         import lerobot.robots as lr_robots
         from lerobot.robots.config import RobotConfig
+
         robot_configs = []
         for _, modname, _ in pkgutil.iter_modules(lr_robots.__path__):
             if modname in ("config", "robot", "utils"):
@@ -133,7 +134,12 @@ def _discover_modules() -> Dict[str, Any]:
                 mod = importlib.import_module(f"lerobot.robots.{modname}")
                 for attr in dir(mod):
                     obj = getattr(mod, attr)
-                    if isinstance(obj, type) and attr.endswith("Config") and issubclass(obj, RobotConfig) and obj is not RobotConfig:
+                    if (
+                        isinstance(obj, type)
+                        and attr.endswith("Config")
+                        and issubclass(obj, RobotConfig)
+                        and obj is not RobotConfig
+                    ):
                         robot_configs.append(f"robots.{modname}.{attr}")
             except Exception:
                 continue
@@ -145,6 +151,7 @@ def _discover_modules() -> Dict[str, Any]:
     try:
         import lerobot.teleoperators as lr_teleops
         from lerobot.teleoperators.config import TeleoperatorConfig
+
         teleop_configs = []
         for _, modname, _ in pkgutil.iter_modules(lr_teleops.__path__):
             if modname in ("config", "teleoperator", "utils"):
@@ -153,7 +160,12 @@ def _discover_modules() -> Dict[str, Any]:
                 mod = importlib.import_module(f"lerobot.teleoperators.{modname}")
                 for attr in dir(mod):
                     obj = getattr(mod, attr)
-                    if isinstance(obj, type) and attr.endswith("Config") and issubclass(obj, TeleoperatorConfig) and obj is not TeleoperatorConfig:
+                    if (
+                        isinstance(obj, type)
+                        and attr.endswith("Config")
+                        and issubclass(obj, TeleoperatorConfig)
+                        and obj is not TeleoperatorConfig
+                    ):
                         teleop_configs.append(f"teleoperators.{modname}.{attr}")
             except Exception:
                 continue
@@ -173,8 +185,11 @@ def _describe_object(obj) -> Dict[str, Any]:
 
     if inspect.isclass(obj):
         info["methods"] = [m for m in dir(obj) if not m.startswith("_") and callable(getattr(obj, m, None))]
-        info["class_methods"] = [m for m in dir(obj) if not m.startswith("_")
-                                  and isinstance(inspect.getattr_static(obj, m, None), (classmethod, staticmethod))]
+        info["class_methods"] = [
+            m
+            for m in dir(obj)
+            if not m.startswith("_") and isinstance(inspect.getattr_static(obj, m, None), (classmethod, staticmethod))
+        ]
         if obj.__init__.__doc__:
             info["init_doc"] = obj.__init__.__doc__[:500]
         try:
@@ -326,9 +341,10 @@ def use_lerobot(
         # ── Describe mode (inspect without calling) ──
         if method == "__describe__":
             info = _describe_object(target)
-            return {"status": "success", "content": [
-                {"text": f"🔍 {module}\n{json.dumps(info, indent=2, default=str)}"}
-            ]}
+            return {
+                "status": "success",
+                "content": [{"text": f"🔍 {module}\n{json.dumps(info, indent=2, default=str)}"}],
+            }
 
         # ── Get the method/attribute ──
         if method:
@@ -338,16 +354,16 @@ def use_lerobot(
                 # Maybe the method IS the target (e.g. module="utils.constants", method="HF_LEROBOT_CALIBRATION")
                 # Already resolved, check if it's callable
                 available = [a for a in dir(target) if not a.startswith("_")][:20]
-                return {"status": "error", "content": [{"text": (
-                    f"❌ '{method}' not found on {module}\n"
-                    f"Available: {', '.join(available)}"
-                )}]}
+                return {
+                    "status": "error",
+                    "content": [
+                        {"text": (f"❌ '{method}' not found on {module}\n" f"Available: {', '.join(available)}")}
+                    ],
+                }
 
         # ── If target is not callable, just return its value ──
         if not callable(target):
-            return {"status": "success", "content": [
-                {"text": f"📋 {module}.{method} = {_serialize_result(target)}"}
-            ]}
+            return {"status": "success", "content": [{"text": f"📋 {module}.{method} = {_serialize_result(target)}"}]}
 
         # ── Call it ──
         if label:
@@ -356,9 +372,7 @@ def use_lerobot(
         result = target(**params)
         serialized = _serialize_result(result)
 
-        return {"status": "success", "content": [
-            {"text": f"✅ {module}.{method}() → {serialized[:3000]}"}
-        ]}
+        return {"status": "success", "content": [{"text": f"✅ {module}.{method}() → {serialized[:3000]}"}]}
 
     except ImportError as e:
         return {"status": "error", "content": [{"text": f"❌ Import error: {e}\n\nInstall: pip install lerobot"}]}
@@ -368,11 +382,18 @@ def use_lerobot(
         try:
             sig = inspect.signature(target)
             param_info = {name: str(p) for name, p in sig.parameters.items()}
-            return {"status": "error", "content": [{"text": (
-                f"❌ TypeError: {e}\n\n"
-                f"Expected signature for {module}.{method}:\n"
-                f"{json.dumps(param_info, indent=2)}"
-            )}]}
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            f"❌ TypeError: {e}\n\n"
+                            f"Expected signature for {module}.{method}:\n"
+                            f"{json.dumps(param_info, indent=2)}"
+                        )
+                    }
+                ],
+            }
         except Exception:
             return {"status": "error", "content": [{"text": f"❌ TypeError: {e}"}]}
 

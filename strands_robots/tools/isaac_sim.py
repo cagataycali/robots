@@ -250,7 +250,7 @@ def isaac_sim(
         # ── add_object ────────────────────────────────────────────
         elif action == "add_object":
             backend = _get_backend()
-            if not hasattr(backend, 'add_object'):
+            if not hasattr(backend, "add_object"):
                 # Inline implementation if backend doesn't have it yet
                 pos = json.loads(position) if position else [0, 0, 0.5]
                 size = json.loads(object_size) if object_size else [0.1, 0.1, 0.1]
@@ -286,6 +286,7 @@ def isaac_sim(
                 text += f"\n📊 Obs keys: {list(all_obs.keys())}"
                 for k, v in list(all_obs.items())[:3]:
                     import numpy as np
+
                     if isinstance(v, np.ndarray):
                         text += f"\n  {k}: shape={v.shape}, range=[{v.min():.3f}, {v.max():.3f}]"
 
@@ -300,7 +301,7 @@ def isaac_sim(
 
             text = f"📊 Observations ({len(obs)} keys):\n"
             for k, v in list(obs.items())[:20]:
-                if hasattr(v, 'shape'):
+                if hasattr(v, "shape"):
                     text += f"  {k}: shape={v.shape}\n"
                 else:
                     text += f"  {k}: {v}\n"
@@ -316,7 +317,7 @@ def isaac_sim(
         # ── reset ─────────────────────────────────────────────────
         elif action == "reset":
             backend = _get_backend()
-            if hasattr(backend, 'reset'):
+            if hasattr(backend, "reset"):
                 return backend.reset()
             # Fallback: destroy and recreate
             config = _backend_config.copy() if _backend_config else {}
@@ -344,12 +345,13 @@ def isaac_sim(
                 return {"status": "error", "content": [{"text": "❌ joint_positions required (JSON array)"}]}
 
             positions = json.loads(joint_positions)
-            if hasattr(backend, 'set_joint_positions'):
+            if hasattr(backend, "set_joint_positions"):
                 return backend.set_joint_positions(positions)
 
             # Inline via robot API
             if backend._robot is not None:
                 import torch
+
                 pos_tensor = torch.tensor([positions], device=backend.config.device, dtype=torch.float32)
                 if backend.config.num_envs > 1:
                     pos_tensor = pos_tensor.expand(backend.config.num_envs, -1)
@@ -360,7 +362,7 @@ def isaac_sim(
         # ── get_contacts ──────────────────────────────────────────
         elif action == "get_contacts":
             backend = _get_backend()
-            if hasattr(backend, 'get_contact_forces'):
+            if hasattr(backend, "get_contact_forces"):
                 return backend.get_contact_forces()
             return {"status": "success", "content": [{"text": "📍 Contact query requires Isaac Sim runtime"}]}
 
@@ -370,11 +372,13 @@ def isaac_sim(
             if _backend and _backend._robot:
                 obs = _backend.get_observation()
                 import json as json_mod
-                with open(path, 'w') as f:
+
+                with open(path, "w") as f:
                     # Convert numpy to lists
                     serializable = {}
                     for k, v in obs.items():
                         import numpy as np
+
                         if isinstance(v, np.ndarray):
                             serializable[k] = v.tolist()
                         else:
@@ -388,6 +392,7 @@ def isaac_sim(
             if not os.path.exists(path):
                 return {"status": "error", "content": [{"text": f"❌ File not found: {path}"}]}
             import json as json_mod
+
             with open(path) as f:
                 data = json_mod.load(f)
             # Recreate backend with saved config
@@ -429,10 +434,11 @@ def isaac_sim(
             # Also list strands-robots bundled robots that can be converted
             try:
                 from strands_robots.assets import list_available_robots
+
                 bundled = list_available_robots()
                 lines.append(f"\n📦 strands-robots bundled (MJCF, convertible to USD): {len(bundled)}")
                 if bundled:
-                    names = [r['name'] if isinstance(r, dict) else r for r in bundled[:15]]
+                    names = [r["name"] if isinstance(r, dict) else r for r in bundled[:15]]
                     lines.append(f"  {', '.join(names)}{'...' if len(bundled) > 15 else ''}")
             except ImportError:
                 pass
@@ -451,6 +457,7 @@ def isaac_sim(
             # Try to discover more from Isaac Lab
             try:
                 from strands_robots.isaac.isaac_lab_env import list_isaac_tasks
+
                 all_tasks = list_isaac_tasks()
                 extra = len(all_tasks) - len(_ISAAC_TASKS)
                 if extra > 0:
@@ -468,6 +475,7 @@ def isaac_sim(
                 _isaac_env.close()
 
             from strands_robots.isaac.isaac_lab_env import create_isaac_env
+
             _isaac_env = create_isaac_env(
                 task_name=task,
                 num_envs=num_envs,
@@ -561,9 +569,9 @@ def isaac_sim(
 
             from strands_robots.isaac.asset_converter import convert_mjcf_to_usd, convert_usd_to_mjcf
 
-            if input_path.endswith(('.xml', '.mjcf')):
+            if input_path.endswith((".xml", ".mjcf")):
                 return convert_mjcf_to_usd(input_path, output_path or None)
-            elif input_path.endswith(('.usd', '.usda', '.usdc')):
+            elif input_path.endswith((".usd", ".usda", ".usdc")):
                 return convert_usd_to_mjcf(input_path, output_path or None)
             else:
                 return {"status": "error", "content": [{"text": f"❌ Unknown format: {input_path}"}]}
@@ -571,13 +579,40 @@ def isaac_sim(
         # ── list_extensions ───────────────────────────────────────
         elif action == "list_extensions":
             extensions = {
-                "Core": ["isaacsim.core.api", "isaacsim.core.cloner", "isaacsim.core.prims", "isaacsim.core.simulation_manager"],
-                "Robot": ["isaacsim.robot.manipulators", "isaacsim.robot.wheeled_robots", "isaacsim.robot.surface_gripper", "isaacsim.robot.policy.examples"],
-                "Robot Setup": ["isaacsim.robot_setup.assembler", "isaacsim.robot_setup.gain_tuner", "isaacsim.robot_setup.wizard"],
+                "Core": [
+                    "isaacsim.core.api",
+                    "isaacsim.core.cloner",
+                    "isaacsim.core.prims",
+                    "isaacsim.core.simulation_manager",
+                ],
+                "Robot": [
+                    "isaacsim.robot.manipulators",
+                    "isaacsim.robot.wheeled_robots",
+                    "isaacsim.robot.surface_gripper",
+                    "isaacsim.robot.policy.examples",
+                ],
+                "Robot Setup": [
+                    "isaacsim.robot_setup.assembler",
+                    "isaacsim.robot_setup.gain_tuner",
+                    "isaacsim.robot_setup.wizard",
+                ],
                 "Robot Motion": ["isaacsim.robot_motion.lula", "isaacsim.robot_motion.motion_generation"],
-                "Sensors": ["isaacsim.sensors.camera", "isaacsim.sensors.physics", "isaacsim.sensors.physx", "isaacsim.sensors.rtx"],
-                "Replicator": ["isaacsim.replicator.domain_randomization", "isaacsim.replicator.grasping", "isaacsim.replicator.synthetic_recorder"],
-                "Assets": ["isaacsim.asset.importer.urdf", "isaacsim.asset.importer.mjcf", "isaacsim.asset.exporter.urdf"],
+                "Sensors": [
+                    "isaacsim.sensors.camera",
+                    "isaacsim.sensors.physics",
+                    "isaacsim.sensors.physx",
+                    "isaacsim.sensors.rtx",
+                ],
+                "Replicator": [
+                    "isaacsim.replicator.domain_randomization",
+                    "isaacsim.replicator.grasping",
+                    "isaacsim.replicator.synthetic_recorder",
+                ],
+                "Assets": [
+                    "isaacsim.asset.importer.urdf",
+                    "isaacsim.asset.importer.mjcf",
+                    "isaacsim.asset.exporter.urdf",
+                ],
                 "ROS2": ["isaacsim.ros2.bridge", "isaacsim.ros2.sim_control"],
                 "Cortex": ["isaacsim.cortex.behaviors", "isaacsim.cortex.framework"],
             }
@@ -595,13 +630,17 @@ def isaac_sim(
         else:
             return {
                 "status": "error",
-                "content": [{"text": (
-                    f"Unknown action: '{action}'\n"
-                    "Valid: create_world, add_robot, add_object, step, observe, render, "
-                    "reset, run_policy, set_joint_pos, get_contacts, save_state, load_state, "
-                    "destroy, list_robots, list_tasks, create_env, train, export_policy, "
-                    "benchmark, convert_asset, list_extensions"
-                )}],
+                "content": [
+                    {
+                        "text": (
+                            f"Unknown action: '{action}'\n"
+                            "Valid: create_world, add_robot, add_object, step, observe, render, "
+                            "reset, run_policy, set_joint_pos, get_contacts, save_state, load_state, "
+                            "destroy, list_robots, list_tasks, create_env, train, export_policy, "
+                            "benchmark, convert_asset, list_extensions"
+                        )
+                    }
+                ],
             }
 
     except Exception as e:

@@ -108,9 +108,7 @@ def stereo_depth(
         px = cx if cx is not None else w / 2.0
         py = cy if cy is not None else h / 2.0
         intrinsic_matrix = np.array(
-            [[focal_length, 0, px],
-             [0, focal_length, py],
-             [0, 0, 1]],
+            [[focal_length, 0, px], [0, focal_length, py], [0, 0, 1]],
             dtype=np.float64,
         )
 

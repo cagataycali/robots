@@ -92,12 +92,19 @@ def robot_mesh(
             mesh = _any_mesh()
             if not mesh:
                 return {"status": "error", "content": [{"text": "No local robots on mesh"}]}
-            cmd = {"action": "execute", "instruction": instruction,
-                   "policy_provider": policy_provider, "duration": duration}
+            cmd = {
+                "action": "execute",
+                "instruction": instruction,
+                "policy_provider": policy_provider,
+                "duration": duration,
+            }
             if policy_port:
                 cmd["policy_port"] = policy_port
             r = mesh.send(target, cmd, timeout=timeout)
-            return {"status": "success", "content": [{"text": f"📨 → {target}: {instruction}\n\n{json.dumps(r, indent=2, default=str)[:2000]}"}]}
+            return {
+                "status": "success",
+                "content": [{"text": f"📨 → {target}: {instruction}\n\n{json.dumps(r, indent=2, default=str)[:2000]}"}],
+            }
 
         elif action == "send":
             if not target:
@@ -107,7 +114,10 @@ def robot_mesh(
                 return {"status": "error", "content": [{"text": "No local robots on mesh"}]}
             cmd = json.loads(command) if command else {"action": "status"}
             r = mesh.send(target, cmd, timeout=timeout)
-            return {"status": "success", "content": [{"text": f"📨 {target}:\n{json.dumps(r, indent=2, default=str)[:2000]}"}]}
+            return {
+                "status": "success",
+                "content": [{"text": f"📨 {target}:\n{json.dumps(r, indent=2, default=str)[:2000]}"}],
+            }
 
         elif action == "broadcast":
             mesh = _any_mesh()
@@ -115,7 +125,10 @@ def robot_mesh(
                 return {"status": "error", "content": [{"text": "No local robots on mesh"}]}
             cmd = json.loads(command) if command else {"action": "status"}
             rs = mesh.broadcast(cmd, timeout=timeout)
-            return {"status": "success", "content": [{"text": f"📢 {len(rs)} responses:\n{json.dumps(rs, indent=2, default=str)[:3000]}"}]}
+            return {
+                "status": "success",
+                "content": [{"text": f"📢 {len(rs)} responses:\n{json.dumps(rs, indent=2, default=str)[:3000]}"}],
+            }
 
         elif action == "stop":
             if not target:
@@ -144,12 +157,24 @@ def robot_mesh(
 
         elif action == "subscribe":
             if not target:
-                return {"status": "error", "content": [{"text": "target (topic pattern) required. E.g. 'reachy_mini/*' or '*/joint_positions'"}]}
+                return {
+                    "status": "error",
+                    "content": [
+                        {"text": "target (topic pattern) required. E.g. 'reachy_mini/*' or '*/joint_positions'"}
+                    ],
+                }
             mesh = _any_mesh()
             if not mesh:
                 return {"status": "error", "content": [{"text": "No local robots on mesh"}]}
             name = mesh.subscribe(target)
-            return {"status": "success", "content": [{"text": f"📡 Subscribed to: {target}\nMessages buffered in inbox['{name}']\nUse action='inbox' to read."}]}
+            return {
+                "status": "success",
+                "content": [
+                    {
+                        "text": f"📡 Subscribed to: {target}\nMessages buffered in inbox['{name}']\nUse action='inbox' to read."
+                    }
+                ],
+            }
 
         elif action == "watch":
             if not target:
@@ -158,11 +183,14 @@ def robot_mesh(
             if not mesh:
                 return {"status": "error", "content": [{"text": "No local robots on mesh"}]}
             name = mesh.on_stream(target)
-            return {"status": "success", "content": [{"text": f"👁️ Watching VLA stream from: {target}\nMessages in inbox['{name}']"}]}
+            return {
+                "status": "success",
+                "content": [{"text": f"👁️ Watching VLA stream from: {target}\nMessages in inbox['{name}']"}],
+            }
 
         elif action == "inbox":
             mesh = _any_mesh()
-            if not mesh or not hasattr(mesh, 'inbox'):
+            if not mesh or not hasattr(mesh, "inbox"):
                 return {"status": "success", "content": [{"text": "No subscriptions active"}]}
             text = f"📬 Inbox ({len(mesh.inbox)} subscriptions):\n"
             for name, msgs in mesh.inbox.items():
@@ -173,7 +201,14 @@ def robot_mesh(
             return {"status": "success", "content": [{"text": text}]}
 
         else:
-            return {"status": "error", "content": [{"text": f"Unknown action: {action}. Try: peers, tell, send, broadcast, stop, emergency_stop, status, subscribe, watch, inbox"}]}
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": f"Unknown action: {action}. Try: peers, tell, send, broadcast, stop, emergency_stop, status, subscribe, watch, inbox"
+                    }
+                ],
+            }
 
     except ImportError as e:
         return {"status": "error", "content": [{"text": f"Mesh unavailable: {e}"}]}
@@ -184,4 +219,5 @@ def robot_mesh(
 def _any_mesh():
     """Get any local mesh instance."""
     from strands_robots.zenoh_mesh import _LOCAL_ROBOTS
+
     return next(iter(_LOCAL_ROBOTS.values()), None) if _LOCAL_ROBOTS else None

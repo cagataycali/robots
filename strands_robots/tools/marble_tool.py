@@ -51,10 +51,7 @@ def _get_pipeline(**kwargs):
 
     from strands_robots.marble import MarbleConfig, MarblePipeline
 
-    config = MarbleConfig(**{
-        k: v for k, v in kwargs.items()
-        if hasattr(MarbleConfig, k)
-    })
+    config = MarbleConfig(**{k: v for k, v in kwargs.items() if hasattr(MarbleConfig, k)})
     _pipeline = MarblePipeline(config)
     return _pipeline
 
@@ -164,9 +161,7 @@ def marble_tool(
             lines.append(f"{'Preset':<18s} {'Category':<12s} {'Description'}")
             lines.append("─" * 75)
             for p in presets:
-                lines.append(
-                    f"{p['name']:<18s} {p['category']:<12s} {p['description']}"
-                )
+                lines.append(f"{p['name']:<18s} {p['category']:<12s} {p['description']}")
                 lines.append(f"  Objects: {p['objects']}")
             lines.append(f"\nTotal: {len(presets)} presets")
             lines.append("\n💡 Use: marble_tool(action='generate', preset='kitchen', robot='so101')")
@@ -179,9 +174,7 @@ def marble_tool(
             lines.append(f"{'Robot':<15s} {'Type':<22s} {'Description'}")
             lines.append("─" * 65)
             for key, info in sorted(SUPPORTED_ROBOTS.items()):
-                lines.append(
-                    f"{key:<15s} {info['type']:<22s} {info['description']}"
-                )
+                lines.append(f"{key:<15s} {info['type']:<22s} {info['description']}")
             lines.append(f"\nTotal: {len(SUPPORTED_ROBOTS)} robots")
             lines.append("\n💡 Use: marble_tool(action='generate', robot='so101')")
 
@@ -200,10 +193,7 @@ def marble_tool(
                     f"\n  Usage: marble_tool(action='generate', preset='{preset}', robot='so101')"
                 )
             elif preset:
-                text = (
-                    f"❌ Unknown preset: '{preset}'.\n"
-                    f"Available: {', '.join(sorted(MARBLE_PRESETS.keys()))}"
-                )
+                text = f"❌ Unknown preset: '{preset}'.\n" f"Available: {', '.join(sorted(MARBLE_PRESETS.keys()))}"
             else:
                 text = (
                     "🌍 Marble 3D World Generation\n\n"
@@ -233,10 +223,14 @@ def marble_tool(
             if not effective_prompt:
                 return {
                     "status": "error",
-                    "content": [{"text": (
-                        "❌ Either 'prompt' or a valid 'preset' is required.\n"
-                        f"Available presets: {', '.join(sorted(MARBLE_PRESETS.keys()))}"
-                    )}],
+                    "content": [
+                        {
+                            "text": (
+                                "❌ Either 'prompt' or a valid 'preset' is required.\n"
+                                f"Available presets: {', '.join(sorted(MARBLE_PRESETS.keys()))}"
+                            )
+                        }
+                    ],
                 }
 
             # Use the global singleton pipeline
@@ -248,7 +242,6 @@ def marble_tool(
                 convert_to_usdz=True,
                 model=model,
             )
-
 
             scenes = pipeline.generate_world(
                 prompt=effective_prompt,
@@ -310,7 +303,9 @@ def marble_tool(
                 if scene.pano_url:
                     lines.append(f"    Pano URL: {scene.pano_url}")
                 if scene.spz_urls:
-                    lines.append(f"    SPZ splats: {len(scene.spz_urls)} variant(s) ({', '.join(scene.spz_urls.keys())})")
+                    lines.append(
+                        f"    SPZ splats: {len(scene.spz_urls)} variant(s) ({', '.join(scene.spz_urls.keys())})"
+                    )
                 if scene.metadata.get("placeholder"):
                     lines.append("    ⚠️ Placeholder (set WLT_API_KEY for real generation)")
 
@@ -491,11 +486,15 @@ def marble_tool(
         else:
             return {
                 "status": "error",
-                "content": [{"text": (
-                    f"Unknown action: '{action}'\n"
-                    "Valid: presets, robots, info, generate, compose, batch, convert, "
-                    "list_worlds, get_world"
-                )}],
+                "content": [
+                    {
+                        "text": (
+                            f"Unknown action: '{action}'\n"
+                            "Valid: presets, robots, info, generate, compose, batch, convert, "
+                            "list_worlds, get_world"
+                        )
+                    }
+                ],
             }
 
     except Exception as e:

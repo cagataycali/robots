@@ -48,14 +48,19 @@ def _get_zenoh_session(host: str, zenoh_port: int = 7447):
 
     try:
         import importlib
+
         zenoh = importlib.import_module("zenoh")
 
         try:
-            config = zenoh.Config.from_json5(json.dumps({
-                "mode": "peer",
-                "connect": {"endpoints": [f"tcp/{ip}:{zenoh_port}"]},
-                "scouting": {"multicast": {"enabled": True}, "gossip": {"enabled": True}},
-            }))
+            config = zenoh.Config.from_json5(
+                json.dumps(
+                    {
+                        "mode": "peer",
+                        "connect": {"endpoints": [f"tcp/{ip}:{zenoh_port}"]},
+                        "scouting": {"multicast": {"enabled": True}, "gossip": {"enabled": True}},
+                    }
+                )
+            )
         except AttributeError:
             config = zenoh.Config()
             config.insert_json5("connect/endpoints", json.dumps([f"tcp/{ip}:{zenoh_port}"]))
@@ -94,10 +99,12 @@ atexit.register(_close_all_sessions)
 # Transport helpers
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+
 def _api(host: str, port: int, path: str, method: str = "GET", data: dict = None) -> dict:
     """Call Reachy Mini daemon REST API."""
     import urllib.error
     import urllib.request
+
     url = f"http://{host}:{port}{path}"
     req = urllib.request.Request(url, method=method)
     req.add_header("Content-Type", "application/json")
@@ -135,11 +142,13 @@ def _zenoh_sub(host: str, prefix: str, topic: str, duration: float = 0.5, zenoh_
         return [("error", {"error": "zenoh unavailable"})]
     msgs = []
     try:
+
         def handler(sample):
             try:
                 msgs.append((str(sample.key_expr), json.loads(sample.payload.to_bytes().decode())))
             except Exception:
                 pass
+
         sub = session.declare_subscriber(f"{prefix}/{topic}", handler)
         time.sleep(duration)
         sub.undeclare()
@@ -152,28 +161,31 @@ def _zenoh_sub(host: str, prefix: str, topic: str, duration: float = 0.5, zenoh_
 # Pose math
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-def _rpy_to_pose(pitch_deg: float, roll_deg: float, yaw_deg: float,
-                 x_mm: float = 0, y_mm: float = 0, z_mm: float = 0) -> list:
+
+def _rpy_to_pose(
+    pitch_deg: float, roll_deg: float, yaw_deg: float, x_mm: float = 0, y_mm: float = 0, z_mm: float = 0
+) -> list:
     """Convert RPY (degrees) + XYZ (mm) to 4x4 pose matrix."""
     p, r, y = math.radians(pitch_deg), math.radians(roll_deg), math.radians(yaw_deg)
     cr, sr = math.cos(r), math.sin(r)
     cp, sp = math.cos(p), math.sin(p)
     cy, sy = math.cos(y), math.sin(y)
     return [
-        [cy*cp, cy*sp*sr - sy*cr, cy*sp*cr + sy*sr, x_mm/1000],
-        [sy*cp, sy*sp*sr + cy*cr, sy*sp*cr - cy*sr, y_mm/1000],
-        [-sp,   cp*sr,            cp*cr,             z_mm/1000],
-        [0,     0,                0,                 1],
+        [cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr, x_mm / 1000],
+        [sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr, y_mm / 1000],
+        [-sp, cp * sr, cp * cr, z_mm / 1000],
+        [0, 0, 0, 1],
     ]
 
 
 def _identity_pose() -> list:
-    return [[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]]
+    return [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # The tool
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 
 @tool
 def reachy_mini(
@@ -183,10 +195,15 @@ def reachy_mini(
     api_port: int = 8000,
     zenoh_port: int = 7447,
     # Head (degrees / mm)
-    pitch: float = 0.0, roll: float = 0.0, yaw: float = 0.0,
-    x: float = 0.0, y: float = 0.0, z: float = 0.0,
+    pitch: float = 0.0,
+    roll: float = 0.0,
+    yaw: float = 0.0,
+    x: float = 0.0,
+    y: float = 0.0,
+    z: float = 0.0,
     # Antennas (degrees)
-    left_antenna: float = 0.0, right_antenna: float = 0.0,
+    left_antenna: float = 0.0,
+    right_antenna: float = 0.0,
     # Body
     body_yaw: float = 0.0,
     # Motion
@@ -275,11 +292,17 @@ def reachy_mini(
             r = _api(host, api_port, "/api/daemon/status")
             bs = r.get("backend_status") or {}
             cs = bs.get("control_loop_stats") or {}
-            return {"status": "success", "content": [{"text":
-                f"🤖 Reachy Mini @ {host}\n  State: {r.get('state')}\n  Version: {r.get('version')}\n"
-                f"  IP: {r.get('wlan_ip')}\n  Motors: {bs.get('motor_control_mode')}\n"
-                f"  Freq: {cs.get('mean_control_loop_frequency',0):.1f}Hz\n"
-                f"  Prefix: {prefix}  Zenoh: {zenoh_port}  API: {api_port}"}]}
+            return {
+                "status": "success",
+                "content": [
+                    {
+                        "text": f"🤖 Reachy Mini @ {host}\n  State: {r.get('state')}\n  Version: {r.get('version')}\n"
+                        f"  IP: {r.get('wlan_ip')}\n  Motors: {bs.get('motor_control_mode')}\n"
+                        f"  Freq: {cs.get('mean_control_loop_frequency',0):.1f}Hz\n"
+                        f"  Prefix: {prefix}  Zenoh: {zenoh_port}  API: {api_port}"
+                    }
+                ],
+            }
 
         elif action == "state":
             joints = _zenoh_sub(host, prefix, "joint_positions", 0.3, zenoh_port)
@@ -299,26 +322,48 @@ def reachy_mini(
             return {"status": "success", "content": [{"text": text}]}
 
         elif action == "daemon_start":
-            return {"status": "success", "content": [{"text": f"▶️ {_api(host, api_port, '/api/daemon/start?wake_up=true', 'POST')}"}]}
+            return {
+                "status": "success",
+                "content": [{"text": f"▶️ {_api(host, api_port, '/api/daemon/start?wake_up=true', 'POST')}"}],
+            }
         elif action == "daemon_stop":
             return {"status": "success", "content": [{"text": f"⏹️ {_api(host, api_port, '/api/daemon/stop', 'POST')}"}]}
         elif action == "daemon_restart":
-            return {"status": "success", "content": [{"text": f"🔄 {_api(host, api_port, '/api/daemon/restart', 'POST')}"}]}
+            return {
+                "status": "success",
+                "content": [{"text": f"🔄 {_api(host, api_port, '/api/daemon/restart', 'POST')}"}],
+            }
 
         # ── Movement (Zenoh) ─────────────────────────────────
         elif action == "look":
             _zenoh_cmd(host, prefix, {"head_pose": _rpy_to_pose(pitch, roll, yaw, x, y, z)}, zenoh_port)
-            return {"status": "success", "content": [{"text": f"👀 pitch={pitch}° roll={roll}° yaw={yaw}° xyz=({x},{y},{z})mm"}]}
+            return {
+                "status": "success",
+                "content": [{"text": f"👀 pitch={pitch}° roll={roll}° yaw={yaw}° xyz=({x},{y},{z})mm"}],
+            }
 
         elif action == "goto_pose":
-            payload = {"target": {"x": x/1000, "y": y/1000, "z": z/1000,
-                                  "roll": math.radians(roll), "pitch": math.radians(pitch), "yaw": math.radians(yaw)},
-                       "duration": duration}
+            payload = {
+                "target": {
+                    "x": x / 1000,
+                    "y": y / 1000,
+                    "z": z / 1000,
+                    "roll": math.radians(roll),
+                    "pitch": math.radians(pitch),
+                    "yaw": math.radians(yaw),
+                },
+                "duration": duration,
+            }
             r = _api(host, api_port, "/api/move/goto", "POST", payload)
             return {"status": "success", "content": [{"text": f"🎯 Goto (dur={duration}s): {r}"}]}
 
         elif action == "antennas":
-            _zenoh_cmd(host, prefix, {"antennas_joint_positions": [math.radians(left_antenna), math.radians(right_antenna)]}, zenoh_port)
+            _zenoh_cmd(
+                host,
+                prefix,
+                {"antennas_joint_positions": [math.radians(left_antenna), math.radians(right_antenna)]},
+                zenoh_port,
+            )
             return {"status": "success", "content": [{"text": f"📡 L={left_antenna}° R={right_antenna}°"}]}
 
         elif action == "body":
@@ -331,13 +376,23 @@ def reachy_mini(
 
         # ── Gaze (REST) ──────────────────────────────────────
         elif action == "look_at_world":
-            r = _api(host, api_port, "/api/move/look_at_world", "POST",
-                     {"target": {"x": x, "y": y, "z": z}, "duration": duration, "perform_movement": True})
+            r = _api(
+                host,
+                api_port,
+                "/api/move/look_at_world",
+                "POST",
+                {"target": {"x": x, "y": y, "z": z}, "duration": duration, "perform_movement": True},
+            )
             return {"status": "success", "content": [{"text": f"👁️ World ({x},{y},{z})m: {r}"}]}
 
         elif action == "look_at_image":
-            r = _api(host, api_port, "/api/move/look_at_image", "POST",
-                     {"u": int(x), "v": int(y), "duration": duration, "perform_movement": True})
+            r = _api(
+                host,
+                api_port,
+                "/api/move/look_at_image",
+                "POST",
+                {"u": int(x), "v": int(y), "duration": duration, "perform_movement": True},
+            )
             return {"status": "success", "content": [{"text": f"👁️ Pixel ({int(x)},{int(y)}): {r}"}]}
 
         # ── Sensors (Zenoh) ──────────────────────────────────
@@ -347,38 +402,58 @@ def reachy_mini(
                 d = msgs[-1][1]
                 head = d.get("head_joint_positions", [])
                 ant = d.get("antennas_joint_positions", [])
-                return {"status": "success", "content": [
-                    {"text": f"🦾 Head: {[f'{math.degrees(j):.1f}°' for j in head]}  Ant: {[f'{math.degrees(j):.1f}°' for j in ant]}"},
-                    {"json": {"head": head, "antennas": ant}}]}
+                return {
+                    "status": "success",
+                    "content": [
+                        {
+                            "text": f"🦾 Head: {[f'{math.degrees(j):.1f}°' for j in head]}  Ant: {[f'{math.degrees(j):.1f}°' for j in ant]}"
+                        },
+                        {"json": {"head": head, "antennas": ant}},
+                    ],
+                }
             return {"status": "error", "content": [{"text": "No joint data"}]}
 
         elif action == "head_pose":
             msgs = _zenoh_sub(host, prefix, "head_pose", 0.5, zenoh_port)
             if msgs and msgs[0][0] != "error":
-                return {"status": "success", "content": [{"text": f"🎯 {json.dumps(msgs[-1][1].get('head_pose',[]), indent=2)[:300]}"}]}
+                return {
+                    "status": "success",
+                    "content": [{"text": f"🎯 {json.dumps(msgs[-1][1].get('head_pose',[]), indent=2)[:300]}"}],
+                }
             return {"status": "error", "content": [{"text": "No pose data"}]}
 
         elif action == "imu":
             msgs = _zenoh_sub(host, prefix, "imu_data", 0.5, zenoh_port)
             if msgs and msgs[0][0] != "error":
                 d = msgs[-1][1]
-                return {"status": "success", "content": [{"text":
-                    f"📐 Accel: {d.get('accelerometer')}\n  Gyro: {d.get('gyroscope')}\n"
-                    f"  Quat: {d.get('quaternion')}\n  Temp: {d.get('temperature')}°C"}]}
+                return {
+                    "status": "success",
+                    "content": [
+                        {
+                            "text": f"📐 Accel: {d.get('accelerometer')}\n  Gyro: {d.get('gyroscope')}\n"
+                            f"  Quat: {d.get('quaternion')}\n  Temp: {d.get('temperature')}°C"
+                        }
+                    ],
+                }
             return {"status": "error", "content": [{"text": "No IMU data"}]}
 
         # ── Camera (REST) ─────────────────────────────────────
         elif action == "camera":
             import urllib.request
+
             try:
                 with urllib.request.urlopen(f"http://{host}:{api_port}/api/camera/snapshot", timeout=5) as resp:
                     fb = resp.read()
                     if save_path:
                         with open(save_path, "wb") as f:
                             f.write(fb)
-                    return {"status": "success", "content": [
-                        {"text": f"📷 {len(fb)} bytes" + (f" → {save_path}" if save_path else "")},
-                        {"image": {"format": "jpeg", "source": {"bytes": fb}}}]}
+                    return {
+                        "status": "success",
+                        "content": [
+                            {"text": f"📷 {len(fb)} bytes" + (f" → {save_path}" if save_path else "")},
+                            {"image": {"format": "jpeg", "source": {"bytes": fb}}},
+                        ],
+                    }
             except Exception as e:
                 return {"status": "error", "content": [{"text": f"Camera: {e}"}]}
 
@@ -386,10 +461,20 @@ def reachy_mini(
         elif action == "play_sound":
             if not sound_file:
                 return {"status": "error", "content": [{"text": "sound_file required"}]}
-            return {"status": "success", "content": [{"text": f"🔊 {_api(host, api_port, '/api/media/play_sound', 'POST', {'file': sound_file})}"}]}
+            return {
+                "status": "success",
+                "content": [
+                    {"text": f"🔊 {_api(host, api_port, '/api/media/play_sound', 'POST', {'file': sound_file})}"}
+                ],
+            }
 
         elif action == "record_audio":
-            return {"status": "success", "content": [{"text": f"🎤 {_api(host, api_port, '/api/media/record', 'POST', {'duration': duration})}"}]}
+            return {
+                "status": "success",
+                "content": [
+                    {"text": f"🎤 {_api(host, api_port, '/api/media/record', 'POST', {'duration': duration})}"}
+                ],
+            }
 
         # ── Motors (Zenoh) ────────────────────────────────────
         elif action == "enable_motors":
@@ -418,7 +503,10 @@ def reachy_mini(
             ds = f"pollen-robotics/reachy-mini-{'emotions' if library == 'emotions' else 'dances'}-library"
             r = _api(host, api_port, f"/api/move/recorded-move-datasets/list/{ds}")
             if isinstance(r, list):
-                return {"status": "success", "content": [{"text": f"📚 {library} ({len(r)}):\n" + "\n".join(f"  • {m}" for m in r)}]}
+                return {
+                    "status": "success",
+                    "content": [{"text": f"📚 {library} ({len(r)}):\n" + "\n".join(f"  • {m}" for m in r)}],
+                }
             return {"status": "success", "content": [{"text": f"📚 {r}"}]}
 
         elif action == "play_move":
@@ -443,14 +531,23 @@ def reachy_mini(
                 if save_path and data:
                     with open(save_path, "w") as f:
                         json.dump(data, f, indent=2)
-            return {"status": "success", "content": [{"text": f"📹 Stopped: {frames} frames" + (f" → {save_path}" if save_path else "")}]}
+            return {
+                "status": "success",
+                "content": [{"text": f"📹 Stopped: {frames} frames" + (f" → {save_path}" if save_path else "")}],
+            }
 
         # ── Expressions ───────────────────────────────────────
         elif action == "wake_up":
-            return {"status": "success", "content": [{"text": f"☀️ {_api(host, api_port, '/api/move/play/wake_up', 'POST')}"}]}
+            return {
+                "status": "success",
+                "content": [{"text": f"☀️ {_api(host, api_port, '/api/move/play/wake_up', 'POST')}"}],
+            }
 
         elif action == "sleep":
-            return {"status": "success", "content": [{"text": f"😴 {_api(host, api_port, '/api/move/play/goto_sleep', 'POST')}"}]}
+            return {
+                "status": "success",
+                "content": [{"text": f"😴 {_api(host, api_port, '/api/move/play/goto_sleep', 'POST')}"}],
+            }
 
         elif action == "nod":
             for _ in range(3):
@@ -472,21 +569,31 @@ def reachy_mini(
 
         elif action == "happy":
             for _ in range(4):
-                _zenoh_cmd(host, prefix, {"antennas_joint_positions": [math.radians(60), math.radians(-60)]}, zenoh_port)
+                _zenoh_cmd(
+                    host, prefix, {"antennas_joint_positions": [math.radians(60), math.radians(-60)]}, zenoh_port
+                )
                 time.sleep(0.2)
-                _zenoh_cmd(host, prefix, {"antennas_joint_positions": [math.radians(-60), math.radians(60)]}, zenoh_port)
+                _zenoh_cmd(
+                    host, prefix, {"antennas_joint_positions": [math.radians(-60), math.radians(60)]}, zenoh_port
+                )
                 time.sleep(0.2)
             _zenoh_cmd(host, prefix, {"antennas_joint_positions": [0, 0]}, zenoh_port)
             return {"status": "success", "content": [{"text": "🤖 *happy wiggle*"}]}
 
         else:
-            return {"status": "error", "content": [{"text":
-                f"Unknown: {action}. Valid: status, state, daemon_start/stop/restart, "
-                f"look, goto_pose, antennas, body, auto_body_yaw, look_at_world, look_at_image, "
-                f"joints, head_pose, imu, camera, play_sound, record_audio, "
-                f"enable_motors, disable_motors, gravity_compensation, stiff, stop, "
-                f"list_moves, play_move, start_recording, stop_recording, "
-                f"wake_up, sleep, nod, shake, happy"}]}
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": f"Unknown: {action}. Valid: status, state, daemon_start/stop/restart, "
+                        f"look, goto_pose, antennas, body, auto_body_yaw, look_at_world, look_at_image, "
+                        f"joints, head_pose, imu, camera, play_sound, record_audio, "
+                        f"enable_motors, disable_motors, gravity_compensation, stiff, stop, "
+                        f"list_moves, play_move, start_recording, stop_recording, "
+                        f"wake_up, sleep, nod, shake, happy"
+                    }
+                ],
+            }
 
     except Exception as e:
         logger.error(f"reachy_mini @ {host}: {e}")

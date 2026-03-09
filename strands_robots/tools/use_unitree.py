@@ -79,7 +79,10 @@ _SERVICE_REGISTRY: Dict[Tuple[str, str], Tuple[str, str]] = {
     # H1 — humanoid
     ("h1", "loco"): ("unitree_sdk2py.h1.loco.h1_loco_client", "LocoClient"),
     # Common services
-    ("common", "motion_switcher"): ("unitree_sdk2py.comm.motion_switcher.motion_switcher_client", "MotionSwitcherClient"),
+    ("common", "motion_switcher"): (
+        "unitree_sdk2py.comm.motion_switcher.motion_switcher_client",
+        "MotionSwitcherClient",
+    ),
 }
 
 # Robot metadata
@@ -138,8 +141,14 @@ _G1_ARM_GESTURES: Dict[str, int] = {
 
 # Dangerous actions that require explicit confirmation
 _DANGEROUS_ACTIONS: set = {
-    "BackFlip", "FrontFlip", "LeftFlip", "HandStand",
-    "FrontJump", "FrontPounce", "ZeroTorque", "Damp",
+    "BackFlip",
+    "FrontFlip",
+    "LeftFlip",
+    "HandStand",
+    "FrontJump",
+    "FrontPounce",
+    "ZeroTorque",
+    "Damp",
 }
 
 # Velocity-clamped actions (auto-clamp vx/vy/vyaw to safe limits)
@@ -154,6 +163,7 @@ _VELOCITY_LIMITS: Dict[str, Dict[str, float]] = {
 # ─────────────────────────────────────────────────────────────────────
 # Connection Manager — singleton, thread-safe DDS client cache
 # ─────────────────────────────────────────────────────────────────────
+
 
 class _ConnectionManager:
     """Thread-safe DDS connection manager with client caching."""
@@ -173,6 +183,7 @@ class _ConnectionManager:
                 return
 
             from unitree_sdk2py.core.channel import ChannelFactoryInitialize
+
             ChannelFactoryInitialize(domain_id, interface)
             self._channel_initialized = True
             logger.info("DDS channel initialized (domain=%d, interface=%s)", domain_id, interface)
@@ -203,8 +214,7 @@ class _ConnectionManager:
             key = (robot, service)
             if key not in _SERVICE_REGISTRY:
                 raise ValueError(
-                    f"Unknown service: {robot}.{service}. "
-                    f"Available: {[f'{r}.{s}' for r, s in _SERVICE_REGISTRY]}"
+                    f"Unknown service: {robot}.{service}. " f"Available: {[f'{r}.{s}' for r, s in _SERVICE_REGISTRY]}"
                 )
 
             module_path, class_name = _SERVICE_REGISTRY[key]
@@ -231,6 +241,7 @@ _conn = _ConnectionManager()
 # ─────────────────────────────────────────────────────────────────────
 # Helper functions
 # ─────────────────────────────────────────────────────────────────────
+
 
 def _clamp_velocity(robot: str, params: Dict[str, Any]) -> Dict[str, Any]:
     """Auto-clamp velocity parameters to safe limits for the given robot."""
@@ -296,17 +307,22 @@ def _get_client_methods(robot: str, service: str) -> List[Dict[str, Any]]:
         for pname, param in sig.parameters.items():
             if pname == "self":
                 continue
-            info = {"name": pname, "type": str(param.annotation.__name__) if param.annotation != inspect.Parameter.empty else "Any"}
+            info = {
+                "name": pname,
+                "type": str(param.annotation.__name__) if param.annotation != inspect.Parameter.empty else "Any",
+            }
             if param.default != inspect.Parameter.empty:
                 info["default"] = param.default
             params.append(info)
 
         is_dangerous = name in _DANGEROUS_ACTIONS
-        methods.append({
-            "name": name,
-            "parameters": params,
-            "dangerous": is_dangerous,
-        })
+        methods.append(
+            {
+                "name": name,
+                "parameters": params,
+                "dangerous": is_dangerous,
+            }
+        )
 
     return methods
 
@@ -321,6 +337,7 @@ def _resolve_gesture(method: str) -> Optional[int]:
 # ─────────────────────────────────────────────────────────────────────
 # Mock mode for testing without hardware/SDK
 # ─────────────────────────────────────────────────────────────────────
+
 
 class _MockClient:
     """Mock client that records calls for testing."""
@@ -353,6 +370,7 @@ def _is_mock_mode() -> bool:
 try:
     from strands import tool as _tool_decorator
 except ImportError:
+
     def _tool_decorator(f):
         return f
 
@@ -426,10 +444,12 @@ def use_unitree(
     if method in _DANGEROUS_ACTIONS and not confirm:
         return {
             "status": "error",
-            "content": [{
-                "text": f"⚠️ '{method}' is a dangerous action. Pass confirm=True to execute. "
-                f"This action may cause the robot to perform a physically risky movement."
-            }],
+            "content": [
+                {
+                    "text": f"⚠️ '{method}' is a dangerous action. Pass confirm=True to execute. "
+                    f"This action may cause the robot to perform a physically risky movement."
+                }
+            ],
         }
 
     # ── Velocity clamping for Move-like actions ──
@@ -449,10 +469,9 @@ def use_unitree(
             available = [m for m in dir(client) if not m.startswith("_") and m != "Init"]
             return {
                 "status": "error",
-                "content": [{
-                    "text": f"Method '{method}' not found on {robot}.{service}. "
-                    f"Available methods: {available}"
-                }],
+                "content": [
+                    {"text": f"Method '{method}' not found on {robot}.{service}. " f"Available methods: {available}"}
+                ],
             }
 
         # Call the method
@@ -463,31 +482,37 @@ def use_unitree(
             code, data = result
             return {
                 "status": "success" if code == 0 else "error",
-                "content": [{
-                    "text": f"{robot}.{service}.{method} → code={code}",
-                    "json": {"return_code": code, "data": data},
-                }],
+                "content": [
+                    {
+                        "text": f"{robot}.{service}.{method} → code={code}",
+                        "json": {"return_code": code, "data": data},
+                    }
+                ],
             }
         else:
             code = result if isinstance(result, int) else 0
             return {
                 "status": "success" if code == 0 else "error",
-                "content": [{
-                    "text": f"{robot}.{service}.{method} → code={code}",
-                    "json": {"return_code": code},
-                }],
+                "content": [
+                    {
+                        "text": f"{robot}.{service}.{method} → code={code}",
+                        "json": {"return_code": code},
+                    }
+                ],
             }
 
     except ImportError as e:
         return {
             "status": "error",
-            "content": [{
-                "text": f"unitree_sdk2py not installed. Install with: "
-                f"pip install unitree_sdk2py\n\n"
-                f"Requires cyclonedds==0.10.2. See: "
-                f"https://github.com/unitreerobotics/unitree_sdk2_python\n\n"
-                f"Error: {e}"
-            }],
+            "content": [
+                {
+                    "text": f"unitree_sdk2py not installed. Install with: "
+                    f"pip install unitree_sdk2py\n\n"
+                    f"Requires cyclonedds==0.10.2. See: "
+                    f"https://github.com/unitreerobotics/unitree_sdk2_python\n\n"
+                    f"Error: {e}"
+                }
+            ],
         }
     except Exception as e:
         return {
@@ -502,59 +527,85 @@ def _handle_discovery(action: str, parameters: Dict[str, Any]) -> Dict[str, Any]
     if action == "list_robots":
         robots = []
         for name, info in _ROBOT_INFO.items():
-            robots.append({
-                "name": name,
-                "type": info["type"],
-                "description": info["description"],
-                "services": info["services"],
-                "joints": info["joints"],
-            })
+            robots.append(
+                {
+                    "name": name,
+                    "type": info["type"],
+                    "description": info["description"],
+                    "services": info["services"],
+                    "joints": info["joints"],
+                }
+            )
         return {
             "status": "success",
-            "content": [{
-                "text": f"Supported Unitree robots ({len(robots)}):\n"
-                + "\n".join(f"  • {r['name']} ({r['type']}) — {r['description']}" for r in robots),
-                "json": {"robots": robots},
-            }],
+            "content": [
+                {
+                    "text": f"Supported Unitree robots ({len(robots)}):\n"
+                    + "\n".join(f"  • {r['name']} ({r['type']}) — {r['description']}" for r in robots),
+                    "json": {"robots": robots},
+                }
+            ],
         }
 
     elif action == "list_services":
         robot = parameters.get("robot", "")
         if not robot:
-            return {"status": "error", "content": [{"text": "Missing 'robot' parameter. Example: list_services with parameters={\"robot\": \"go2\"}"}]}
+            return {
+                "status": "error",
+                "content": [
+                    {"text": 'Missing \'robot\' parameter. Example: list_services with parameters={"robot": "go2"}'}
+                ],
+            }
 
         info = _ROBOT_INFO.get(robot)
         if not info:
-            return {"status": "error", "content": [{"text": f"Unknown robot: {robot!r}. Available: {list(_ROBOT_INFO.keys())}"}]}
+            return {
+                "status": "error",
+                "content": [{"text": f"Unknown robot: {robot!r}. Available: {list(_ROBOT_INFO.keys())}"}],
+            }
 
         services = []
         for svc in info["services"]:
             key = (robot, svc)
             reg = _SERVICE_REGISTRY.get(key)
-            services.append({
-                "name": svc,
-                "module": reg[0] if reg else "unknown",
-                "client_class": reg[1] if reg else "unknown",
-            })
+            services.append(
+                {
+                    "name": svc,
+                    "module": reg[0] if reg else "unknown",
+                    "client_class": reg[1] if reg else "unknown",
+                }
+            )
 
         return {
             "status": "success",
-            "content": [{
-                "text": f"{robot} services ({len(services)}):\n"
-                + "\n".join(f"  • {s['name']} → {s['client_class']}" for s in services),
-                "json": {"robot": robot, "services": services},
-            }],
+            "content": [
+                {
+                    "text": f"{robot} services ({len(services)}):\n"
+                    + "\n".join(f"  • {s['name']} → {s['client_class']}" for s in services),
+                    "json": {"robot": robot, "services": services},
+                }
+            ],
         }
 
     elif action == "list_methods":
         robot = parameters.get("robot", "")
         service = parameters.get("service", "")
         if not robot or not service:
-            return {"status": "error", "content": [{"text": "Missing 'robot' and/or 'service' parameters. Example: list_methods with parameters={\"robot\": \"go2\", \"service\": \"sport\"}"}]}
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": 'Missing \'robot\' and/or \'service\' parameters. Example: list_methods with parameters={"robot": "go2", "service": "sport"}'
+                    }
+                ],
+            }
 
         methods = _get_client_methods(robot, service)
         if not methods:
-            return {"status": "error", "content": [{"text": f"No methods found for {robot}.{service}. Check service name."}]}
+            return {
+                "status": "error",
+                "content": [{"text": f"No methods found for {robot}.{service}. Check service name."}],
+            }
 
         # Add gesture shortcuts for G1 arm
         extra = ""
@@ -564,16 +615,18 @@ def _handle_discovery(action: str, parameters: Dict[str, Any]) -> Dict[str, Any]
 
         return {
             "status": "success",
-            "content": [{
-                "text": f"{robot}.{service} methods ({len(methods)}):\n"
-                + "\n".join(
-                    f"  • {m['name']}({', '.join(p['name'] + ': ' + p['type'] for p in m['parameters'])})"
-                    + (" ⚠️ DANGEROUS" if m['dangerous'] else "")
-                    for m in methods
-                )
-                + extra,
-                "json": {"robot": robot, "service": service, "methods": methods},
-            }],
+            "content": [
+                {
+                    "text": f"{robot}.{service} methods ({len(methods)}):\n"
+                    + "\n".join(
+                        f"  • {m['name']}({', '.join(p['name'] + ': ' + p['type'] for p in m['parameters'])})"
+                        + (" ⚠️ DANGEROUS" if m["dangerous"] else "")
+                        for m in methods
+                    )
+                    + extra,
+                    "json": {"robot": robot, "service": service, "methods": methods},
+                }
+            ],
         }
 
     elif action == "diagnose":
@@ -589,6 +642,7 @@ def _handle_discovery(action: str, parameters: Dict[str, Any]) -> Dict[str, Any]
 
         try:
             import unitree_sdk2py
+
             diag["sdk_installed"] = True
             diag["sdk_version"] = getattr(unitree_sdk2py, "__version__", "unknown")
         except ImportError:
@@ -596,6 +650,7 @@ def _handle_discovery(action: str, parameters: Dict[str, Any]) -> Dict[str, Any]
 
         try:
             import cyclonedds
+
             diag["cyclonedds_installed"] = True
             diag["cyclonedds_version"] = getattr(cyclonedds, "__version__", "unknown")
         except ImportError:
@@ -604,17 +659,24 @@ def _handle_discovery(action: str, parameters: Dict[str, Any]) -> Dict[str, Any]
         status_emoji = "✅" if diag["sdk_installed"] and diag["cyclonedds_installed"] else "⚠️"
         return {
             "status": "success",
-            "content": [{
-                "text": f"{status_emoji} Unitree SDK Diagnostics:\n"
-                f"  SDK installed: {diag['sdk_installed']}\n"
-                f"  CycloneDDS installed: {diag['cyclonedds_installed']}\n"
-                f"  Mock mode: {diag['mock_mode']}\n"
-                f"  Network interface: {diag['network_interface']}\n"
-                f"  Domain ID: {diag['domain_id']}\n"
-                f"  Registered services: {diag['registered_services']}\n"
-                f"  Supported robots: {', '.join(diag['supported_robots'])}",
-                "json": diag,
-            }],
+            "content": [
+                {
+                    "text": f"{status_emoji} Unitree SDK Diagnostics:\n"
+                    f"  SDK installed: {diag['sdk_installed']}\n"
+                    f"  CycloneDDS installed: {diag['cyclonedds_installed']}\n"
+                    f"  Mock mode: {diag['mock_mode']}\n"
+                    f"  Network interface: {diag['network_interface']}\n"
+                    f"  Domain ID: {diag['domain_id']}\n"
+                    f"  Registered services: {diag['registered_services']}\n"
+                    f"  Supported robots: {', '.join(diag['supported_robots'])}",
+                    "json": diag,
+                }
+            ],
         }
 
-    return {"status": "error", "content": [{"text": f"Unknown discovery action: {action!r}. Try: list_robots, list_services, list_methods, diagnose"}]}
+    return {
+        "status": "error",
+        "content": [
+            {"text": f"Unknown discovery action: {action!r}. Try: list_robots, list_services, list_methods, diagnose"}
+        ],
+    }

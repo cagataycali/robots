@@ -1,6 +1,6 @@
 """Tests for agent-facing tools."""
-import pytest
 
+import pytest
 
 # All tools should be importable without hardware dependencies
 TOOL_MODULES = [
@@ -32,6 +32,7 @@ class TestToolImports:
     def test_tool_importable(self, module_path, tool_name):
         """Each tool module should import without errors."""
         import importlib
+
         mod = importlib.import_module(module_path)
         assert mod is not None
         # Tool function should exist with same name as module
@@ -41,6 +42,7 @@ class TestToolImports:
     def test_tool_is_callable(self, module_path, tool_name):
         """Each tool's main function should be callable."""
         import importlib
+
         mod = importlib.import_module(module_path)
         fn = getattr(mod, tool_name)
         assert callable(fn)
@@ -51,12 +53,14 @@ class TestToolsPackage:
 
     def test_tools_init_importable(self):
         import strands_robots.tools
+
         assert strands_robots.tools is not None
 
     def test_tools_count(self):
         """Should have 18 tools."""
         import os
         from pathlib import Path
+
         tools_dir = Path(__file__).parent.parent / "strands_robots" / "tools"
         py_files = [f for f in tools_dir.glob("*.py") if f.name != "__init__.py"]
         assert len(py_files) >= 16  # At least 16 tool files

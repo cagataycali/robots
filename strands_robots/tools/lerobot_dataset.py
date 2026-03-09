@@ -33,9 +33,7 @@ def _get_lerobot_dataset(repo_id: str, root: Optional[str] = None, create: bool 
     try:
         from lerobot.datasets.lerobot_dataset import LeRobotDataset
     except ImportError:
-        raise ImportError(
-            "lerobot not installed. Install with: pip install lerobot"
-        )
+        raise ImportError("lerobot not installed. Install with: pip install lerobot")
 
     if create:
         return LeRobotDataset.create(repo_id=repo_id, root=root, **kwargs)
@@ -54,16 +52,24 @@ def _build_default_features(robot_type: str = "unknown") -> Dict[str, Any]:
             "dtype": "float32",
             "shape": (6,),
             "names": [
-                "joint_1", "joint_2", "joint_3",
-                "joint_4", "joint_5", "joint_6",
+                "joint_1",
+                "joint_2",
+                "joint_3",
+                "joint_4",
+                "joint_5",
+                "joint_6",
             ],
         },
         "action": {
             "dtype": "float32",
             "shape": (6,),
             "names": [
-                "joint_1", "joint_2", "joint_3",
-                "joint_4", "joint_5", "joint_6",
+                "joint_1",
+                "joint_2",
+                "joint_3",
+                "joint_4",
+                "joint_5",
+                "joint_6",
             ],
         },
     }
@@ -195,13 +201,17 @@ def lerobot_dataset(
 
                 return {
                     "status": "success",
-                    "content": [{"text": (
-                        f"✅ Dataset created: {repo_id}\n"
-                        f"   Root: {ds.root}\n"
-                        f"   FPS: {fps}\n"
-                        f"   Features: {list(ds_features.keys())}\n"
-                        f"   Format: LeRobot v3.0 (parquet + video)"
-                    )}],
+                    "content": [
+                        {
+                            "text": (
+                                f"✅ Dataset created: {repo_id}\n"
+                                f"   Root: {ds.root}\n"
+                                f"   FPS: {fps}\n"
+                                f"   Features: {list(ds_features.keys())}\n"
+                                f"   Format: LeRobot v3.0 (parquet + video)"
+                            )
+                        }
+                    ],
                 }
             except ImportError:
                 # Fallback: create directory structure manually
@@ -221,11 +231,15 @@ def lerobot_dataset(
 
                 return {
                     "status": "success",
-                    "content": [{"text": (
-                        f"✅ Dataset structure created: {repo_id}\n"
-                        f"   Root: {ds_root}\n"
-                        f"   Note: lerobot not installed, created minimal structure"
-                    )}],
+                    "content": [
+                        {
+                            "text": (
+                                f"✅ Dataset structure created: {repo_id}\n"
+                                f"   Root: {ds_root}\n"
+                                f"   Note: lerobot not installed, created minimal structure"
+                            )
+                        }
+                    ],
                 }
 
         elif action == "info":
@@ -239,7 +253,7 @@ def lerobot_dataset(
                 meta = ds.meta
 
                 ds_features = {}
-                if hasattr(meta, 'features'):
+                if hasattr(meta, "features"):
                     ds_features = {k: str(v) for k, v in meta.features.items()}
 
                 info_text = (
@@ -253,20 +267,22 @@ def lerobot_dataset(
                 for feat_name, feat_info in list(ds_features.items())[:10]:
                     info_text += f"     - {feat_name}: {feat_info}\n"
 
-                if hasattr(meta, 'tasks') and meta.tasks:
+                if hasattr(meta, "tasks") and meta.tasks:
                     info_text += f"   Tasks: {meta.tasks}\n"
 
                 return {
                     "status": "success",
                     "content": [
                         {"text": info_text},
-                        {"json": {
-                            "repo_id": repo_id,
-                            "total_episodes": meta.total_episodes,
-                            "total_frames": meta.total_frames,
-                            "fps": meta.fps,
-                            "features": ds_features,
-                        }},
+                        {
+                            "json": {
+                                "repo_id": repo_id,
+                                "total_episodes": meta.total_episodes,
+                                "total_frames": meta.total_frames,
+                                "fps": meta.fps,
+                                "features": ds_features,
+                            }
+                        },
                     ],
                 }
             except ImportError:
@@ -330,6 +346,7 @@ def lerobot_dataset(
                 teleop = None
                 if teleop_device:
                     from strands_robots.tools.teleoperator import _resolve_teleoperator
+
                     teleop = _resolve_teleoperator(teleop_device)
                     teleop.connect()
 
@@ -433,14 +450,18 @@ def lerobot_dataset(
 
                 return {
                     "status": "success",
-                    "content": [{"text": (
-                        f"✅ Recording complete: {repo_id}\n"
-                        f"   Episodes: {rec_info.get('episodes_recorded', num_episodes)}\n"
-                        f"   Total frames: {rec_info.get('total_frames', 0)}\n"
-                        f"   FPS: {fps}\n"
-                        f"   Task: {task}\n"
-                        f"   Pushed to Hub: {push_to_hub}"
-                    )}],
+                    "content": [
+                        {
+                            "text": (
+                                f"✅ Recording complete: {repo_id}\n"
+                                f"   Episodes: {rec_info.get('episodes_recorded', num_episodes)}\n"
+                                f"   Total frames: {rec_info.get('total_frames', 0)}\n"
+                                f"   FPS: {fps}\n"
+                                f"   Task: {task}\n"
+                                f"   Pushed to Hub: {push_to_hub}"
+                            )
+                        }
+                    ],
                 }
 
             except ImportError as e:
@@ -478,6 +499,7 @@ def lerobot_dataset(
                 return {"status": "error", "content": [{"text": "repo_id required"}]}
 
             from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
             ds = LeRobotDataset(repo_id=repo_id, root=root)
             ds.push_to_hub(tags=tags)
 
@@ -491,16 +513,21 @@ def lerobot_dataset(
                 return {"status": "error", "content": [{"text": "repo_id required"}]}
 
             from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
             ds = LeRobotDataset(repo_id=repo_id, root=root)
 
             return {
                 "status": "success",
-                "content": [{"text": (
-                    f"✅ Downloaded {repo_id}\n"
-                    f"   Episodes: {ds.meta.total_episodes}\n"
-                    f"   Frames: {ds.meta.total_frames}\n"
-                    f"   Root: {ds.root}"
-                )}],
+                "content": [
+                    {
+                        "text": (
+                            f"✅ Downloaded {repo_id}\n"
+                            f"   Episodes: {ds.meta.total_episodes}\n"
+                            f"   Frames: {ds.meta.total_frames}\n"
+                            f"   Root: {ds.root}"
+                        )
+                    }
+                ],
             }
 
         elif action == "browse":
@@ -508,6 +535,7 @@ def lerobot_dataset(
                 return {"status": "error", "content": [{"text": "repo_id required"}]}
 
             from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
             ds = LeRobotDataset(repo_id=repo_id, root=root)
 
             episodes_info = []
@@ -515,12 +543,14 @@ def lerobot_dataset(
 
             for ep_idx in range(total_eps):
                 try:
-                    ep_data = ds.meta.episodes[ep_idx] if hasattr(ds.meta, 'episodes') else {}
-                    episodes_info.append({
-                        "index": ep_idx,
-                        "length": ep_data.get("length", "?"),
-                        "task": ep_data.get("task", "?"),
-                    })
+                    ep_data = ds.meta.episodes[ep_idx] if hasattr(ds.meta, "episodes") else {}
+                    episodes_info.append(
+                        {
+                            "index": ep_idx,
+                            "length": ep_data.get("length", "?"),
+                            "task": ep_data.get("task", "?"),
+                        }
+                    )
                 except Exception:
                     episodes_info.append({"index": ep_idx})
 
@@ -541,6 +571,7 @@ def lerobot_dataset(
                 return {"status": "error", "content": [{"text": "repo_id required"}]}
 
             from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
             ds = LeRobotDataset(repo_id=repo_id, root=root)
 
             # Extract actions for the episode
@@ -549,10 +580,10 @@ def lerobot_dataset(
                 # Get frames for this episode
                 ep_start = 0
                 for i in range(episode):
-                    if hasattr(ds.meta, 'episodes'):
+                    if hasattr(ds.meta, "episodes"):
                         ep_start += ds.meta.episodes[i].get("length", 0)
 
-                ep_length = ds.meta.episodes[episode].get("length", 0) if hasattr(ds.meta, 'episodes') else 0
+                ep_length = ds.meta.episodes[episode].get("length", 0) if hasattr(ds.meta, "episodes") else 0
 
                 for frame_idx in range(min(ep_length, 1000)):
                     try:
@@ -560,7 +591,7 @@ def lerobot_dataset(
                         action_data = {}
                         for k, v in frame.items():
                             if "action" in k:
-                                action_data[k] = v.tolist() if hasattr(v, 'tolist') else v
+                                action_data[k] = v.tolist() if hasattr(v, "tolist") else v
                         if action_data:
                             actions.append(action_data)
                     except Exception:
@@ -573,7 +604,13 @@ def lerobot_dataset(
                 "status": "success",
                 "content": [
                     {"text": f"🔄 Episode {episode} from {repo_id}: {len(actions)} action frames"},
-                    {"json": {"episode": episode, "num_frames": len(actions), "sample_action": actions[0] if actions else {}}},
+                    {
+                        "json": {
+                            "episode": episode,
+                            "num_frames": len(actions),
+                            "sample_action": actions[0] if actions else {},
+                        }
+                    },
                 ],
             }
 
@@ -582,12 +619,13 @@ def lerobot_dataset(
                 return {"status": "error", "content": [{"text": "repo_id required"}]}
 
             from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
             ds = LeRobotDataset(repo_id=repo_id, root=root)
 
             try:
                 ds.consolidate()
                 stats_text = f"✅ Stats computed for {repo_id}"
-                if hasattr(ds.meta, 'stats') and ds.meta.stats:
+                if hasattr(ds.meta, "stats") and ds.meta.stats:
                     for k, v in list(ds.meta.stats.items())[:10]:
                         stats_text += f"\n   {k}: {v}"
                 return {"status": "success", "content": [{"text": stats_text}]}
@@ -597,6 +635,7 @@ def lerobot_dataset(
         elif action == "list_hub":
             try:
                 from huggingface_hub import HfApi
+
                 api = HfApi()
                 datasets = api.list_datasets(author="lerobot", limit=20)
                 lines = ["📦 LeRobot Datasets on HuggingFace Hub:\n"]
@@ -609,10 +648,14 @@ def lerobot_dataset(
         else:
             return {
                 "status": "error",
-                "content": [{"text": (
-                    f"Unknown action: {action}. Valid: "
-                    "create, info, record, stop_recording, push, pull, browse, replay, compute_stats, list_hub"
-                )}],
+                "content": [
+                    {
+                        "text": (
+                            f"Unknown action: {action}. Valid: "
+                            "create, info, record, stop_recording, push, pull, browse, replay, compute_stats, list_hub"
+                        )
+                    }
+                ],
             }
 
     except ImportError as e:
