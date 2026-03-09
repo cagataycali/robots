@@ -256,6 +256,9 @@ class CosmosPredictPolicy(Policy):
     def _load_policy_model(self):
         """Load Cosmos Policy model for direct action prediction."""
         try:
+            # Build a config-like object for cosmos_get_model
+            from types import SimpleNamespace
+
             from cosmos_predict2._src.predict2.cosmos_policy.experiments.robot.cosmos_utils import (
                 get_model as cosmos_get_model,
             )
@@ -265,9 +268,6 @@ class CosmosPredictPolicy(Policy):
             from cosmos_predict2._src.predict2.cosmos_policy.experiments.robot.cosmos_utils import (
                 load_dataset_stats as cosmos_load_dataset_stats,
             )
-
-            # Build a config-like object for cosmos_get_model
-            from types import SimpleNamespace
 
             cfg = SimpleNamespace(
                 ckpt_path=self._model_id,
