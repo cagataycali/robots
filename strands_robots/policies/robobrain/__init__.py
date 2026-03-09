@@ -33,6 +33,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 from strands_robots.policies import Policy
+from strands_robots.policies._utils import detect_device, extract_pil_image, parse_numbers_from_text
 
 logger = logging.getLogger(__name__)
 
@@ -104,15 +105,7 @@ class RobobrainPolicy(Policy):
         logger.info(f"🧠 Loading RoboBrain from {self._model_id}...")
         start = time.time()
 
-        device = self._requested_device
-        if not device:
-            if torch.cuda.is_available():
-                device = "cuda:0"
-            elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-                device = "mps"
-            else:
-                device = "cpu"
-        self._device = device
+        self._device = detect_device(self._requested_device)
 
         try:
             from transformers import AutoModelForCausalLM, AutoProcessor
@@ -123,12 +116,12 @@ class RobobrainPolicy(Policy):
                 torch_dtype=torch.bfloat16,
                 low_cpu_mem_usage=True,
                 trust_remote_code=True,
-            ).to(device)
+            ).to(self._device)
             self._model.eval()
 
             elapsed = time.time() - start
             n_params = sum(p.numel() for p in self._model.parameters())
-            logger.info(f"🧠 RoboBrain loaded: {n_params/1e9:.1f}B in {elapsed:.1f}s on {device}")
+            logger.info(f"🧠 RoboBrain loaded: {n_params/1e9:.1f}B in {elapsed:.1f}s on {self._device}")
 
         except Exception as e:
             raise ImportError(
@@ -151,9 +144,8 @@ class RobobrainPolicy(Policy):
         """
         self._ensure_loaded()
         import torch
-        from PIL import Image  # noqa: F401
 
-        image = self._extract_image(observation_dict)
+        image = extract_pil_image(observation_dict)
 
         # Build RoboBrain-style prompt
         # RoboBrain uses Qwen2.5-VL chat format
@@ -173,7 +165,7 @@ class RobobrainPolicy(Policy):
                     do_sample=False,
                 )
                 text = self._processor.decode(outputs[0], skip_special_tokens=True)
-                action_np = self._parse_action(text)
+                action_np = parse_numbers_from_text(text, action_dim=self._action_dim, take_last=True)
 
                 # Update scene memory if enabled
                 if self._enable_scene_memory:
@@ -205,29 +197,10 @@ class RobobrainPolicy(Policy):
 
         return "\n".join(parts)
 
-    def _parse_action(self, text: str) -> np.ndarray:
-        """Parse action values from generated text."""
-        import re
-
-        numbers = re.findall(r"[-+]?\d*\.?\d+", text)
-        values = [float(n) for n in numbers[-self._action_dim :]]
-        while len(values) < self._action_dim:
-            values.append(0.0)
-        return np.array(values[: self._action_dim], dtype=np.float32)
-
     def _array_to_dict(self, arr: np.ndarray) -> Dict[str, Any]:
         eef_keys = ["x", "y", "z", "roll", "pitch", "yaw", "gripper"]
         keys = self._robot_state_keys if self._robot_state_keys else eef_keys
         return {keys[i]: float(arr[i]) for i in range(min(len(keys), len(arr)))}
-
-    def _extract_image(self, observation_dict):
-        from PIL import Image
-
-        for key in sorted(observation_dict.keys()):
-            val = observation_dict[key]
-            if isinstance(val, np.ndarray) and val.ndim == 3 and val.shape[-1] in (3, 4):
-                return Image.fromarray(val[:, :, :3].astype(np.uint8))
-        return Image.new("RGB", (224, 224))
 
     def _update_scene_memory(self, text: str):
         """Update internal scene memory from model output."""
@@ -245,9 +218,8 @@ class RobobrainPolicy(Policy):
         """
         self._ensure_loaded()
         import torch
-        from PIL import Image  # noqa: F401
 
-        image = self._extract_image(observation_dict)
+        image = extract_pil_image(observation_dict)
         prompt = f"<image>\nPoint to: {query}\nOutput the (x, y) coordinates."
 
         inputs = self._processor(prompt, image, return_tensors="pt").to(self._device, dtype=torch.bfloat16)
@@ -255,11 +227,8 @@ class RobobrainPolicy(Policy):
             outputs = self._model.generate(**inputs, max_new_tokens=128, do_sample=False)
         text = self._processor.decode(outputs[0], skip_special_tokens=True)
 
-        import re
-
-        numbers = re.findall(r"[-+]?\d*\.?\d+", text)
-        coords = [float(n) for n in numbers[:4]]  # Up to 4 coords (bbox)
-        return {"text": text, "coordinates": coords}
+        coords = parse_numbers_from_text(text, action_dim=4, take_last=False)
+        return {"text": text, "coordinates": coords.tolist()}
 
     def predict_trajectory(self, observation_dict: Dict[str, Any], instruction: str) -> List[Dict[str, float]]:
         """Predict future trajectory waypoints.
@@ -268,9 +237,8 @@ class RobobrainPolicy(Policy):
         """
         self._ensure_loaded()
         import torch
-        from PIL import Image  # noqa: F401
 
-        image = self._extract_image(observation_dict)
+        image = extract_pil_image(observation_dict)
         prompt = f"<image>\nPredict the trajectory for: {instruction}\nOutput (x, y) waypoints."
 
         inputs = self._processor(prompt, image, return_tensors="pt").to(self._device, dtype=torch.bfloat16)
@@ -291,7 +259,7 @@ class RobobrainPolicy(Policy):
         self._ensure_loaded()
         import torch
 
-        image = self._extract_image(observation_dict)
+        image = extract_pil_image(observation_dict)
         prompt = f"<image>\n{question}"
 
         inputs = self._processor(prompt, image, return_tensors="pt").to(self._device, dtype=torch.bfloat16)

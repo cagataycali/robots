@@ -40,6 +40,7 @@ from typing import Any, Dict, List, Optional, Tuple  # noqa: F401
 import numpy as np
 
 from strands_robots.policies import Policy
+from strands_robots.policies._utils import detect_device, extract_pil_image
 
 logger = logging.getLogger(__name__)
 
@@ -141,10 +142,7 @@ class AlpamayoPolicy(Policy):
         logger.info(f"🏔️ Loading Alpamayo from {self._model_id}...")
         start = time.time()
 
-        device = self._requested_device
-        if not device:
-            device = "cuda:0" if torch.cuda.is_available() else "cpu"
-        self._device = device
+        self._device = detect_device(self._requested_device)
 
         try:
             from transformers import AutoModelForCausalLM, AutoProcessor
@@ -155,12 +153,12 @@ class AlpamayoPolicy(Policy):
                 torch_dtype=torch.bfloat16,
                 low_cpu_mem_usage=True,
                 trust_remote_code=True,
-            ).to(device)
+            ).to(self._device)
             self._model.eval()
 
             elapsed = time.time() - start
             n_params = sum(p.numel() for p in self._model.parameters())
-            logger.info(f"🏔️ Alpamayo loaded: {n_params/1e9:.1f}B in {elapsed:.1f}s on {device}")
+            logger.info(f"🏔️ Alpamayo loaded: {n_params/1e9:.1f}B in {elapsed:.1f}s on {self._device}")
 
         except Exception as e:
             raise ImportError(
@@ -203,27 +201,26 @@ class AlpamayoPolicy(Policy):
 
     async def _infer_server(self, observation_dict: Dict[str, Any], instruction: str) -> List[Dict[str, Any]]:
         """Inference via HTTP server."""
+        import base64
         import io
 
         import requests
-        from PIL import Image  # noqa: F401
 
         # Extract camera images
-        images_hex = {}
+        images_b64 = {}
         for cam_name in self.CAMERA_NAMES:
             image = self._find_camera_image(observation_dict, cam_name)
             if image is not None:
                 buf = io.BytesIO()
                 image.save(buf, format="PNG")
-                # TODO: Consider base64 encoding for ~50% smaller payloads (hex doubles size)
-                images_hex[cam_name] = buf.getvalue().hex()
+                images_b64[cam_name] = base64.b64encode(buf.getvalue()).decode("ascii")
 
         # Extract egomotion history
         ego = self._extract_egomotion(observation_dict)
 
         payload = {
             "instruction": instruction,
-            "images": images_hex,
+            "images": images_b64,
             "egomotion_history": ego.tolist() if ego is not None else [],
         }
 
@@ -300,13 +297,8 @@ class AlpamayoPolicy(Policy):
                 if isinstance(val, np.ndarray) and val.ndim == 3:
                     return Image.fromarray(val[:, :, :3].astype(np.uint8))
 
-        # Fallback: any image
-        for key in sorted(observation_dict.keys()):
-            val = observation_dict[key]
-            if isinstance(val, np.ndarray) and val.ndim == 3 and val.shape[-1] in (3, 4):
-                return Image.fromarray(val[:, :, :3].astype(np.uint8))
-
-        return None
+        # Fallback: any image via shared utility
+        return extract_pil_image(observation_dict) if cam_name == self.CAMERA_NAMES[0] else None
 
     def _extract_egomotion(self, observation_dict: Dict[str, Any]) -> Optional[np.ndarray]:
         """Extract egomotion history from observation."""

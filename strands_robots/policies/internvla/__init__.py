@@ -31,6 +31,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 from strands_robots.policies import Policy
+from strands_robots.policies._utils import detect_device, extract_pil_image, parse_numbers_from_text
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +54,7 @@ class InternvlaPolicy(Policy):
     ):
         self._model_id = model_id
         self._server_url = server_url
-        self._device = device
+        self._requested_device = device
         self._action_dim = action_dim
         self._robot_state_keys: List[str] = []
 
@@ -94,10 +95,7 @@ class InternvlaPolicy(Policy):
         logger.info(f"🧠 Loading InternVLA from {self._model_id}...")
         start = time.time()
 
-        device = self._device
-        if not device:
-            device = "cuda:0" if torch.cuda.is_available() else "cpu"
-        self._device = device
+        self._device = detect_device(self._requested_device)
 
         try:
             from transformers import AutoModelForVision2Seq, AutoProcessor
@@ -108,12 +106,12 @@ class InternvlaPolicy(Policy):
                 torch_dtype=torch.bfloat16,
                 low_cpu_mem_usage=True,
                 trust_remote_code=True,
-            ).to(device)
+            ).to(self._device)
             self._model.eval()
 
             elapsed = time.time() - start
             n_params = sum(p.numel() for p in self._model.parameters())
-            logger.info(f"🧠 InternVLA loaded: {n_params/1e9:.1f}B in {elapsed:.1f}s on {device}")
+            logger.info(f"🧠 InternVLA loaded: {n_params/1e9:.1f}B in {elapsed:.1f}s on {self._device}")
         except Exception as e:
             raise ImportError(
                 f"Failed to load InternVLA. Ensure the model repo is accessible.\n"
@@ -132,20 +130,19 @@ class InternvlaPolicy(Policy):
 
     async def _infer_server(self, observation_dict: Dict[str, Any], instruction: str) -> List[Dict[str, Any]]:
         """Inference via openpi-style HTTP server."""
+        import base64
         import io
 
         import requests
-        from PIL import Image  # noqa: F401
 
-        image = self._extract_image(observation_dict)
+        image = extract_pil_image(observation_dict)
         buf = io.BytesIO()
         image.save(buf, format="PNG")
 
-        # openpi protocol
+        # openpi protocol — base64 is ~33% overhead vs hex's 100%
         payload = {
             "instruction": instruction,
-            # TODO: Consider base64 encoding for smaller payloads
-            "image": buf.getvalue().hex(),
+            "image": base64.b64encode(buf.getvalue()).decode("ascii"),
         }
         # Add state if available
         state = [float(observation_dict.get(k, 0.0)) for k in self._robot_state_keys]
@@ -162,9 +159,8 @@ class InternvlaPolicy(Policy):
     def _infer_local(self, observation_dict: Dict[str, Any], instruction: str) -> List[Dict[str, Any]]:
         """Direct local inference."""
         import torch
-        from PIL import Image  # noqa: F401
 
-        image = self._extract_image(observation_dict)
+        image = extract_pil_image(observation_dict)
 
         # InternVLA uses Qwen3-VL style chat format
         prompt = f"What action should the robot take to {instruction}?"
@@ -177,30 +173,13 @@ class InternvlaPolicy(Policy):
             else:
                 outputs = self._model.generate(**inputs, max_new_tokens=256, do_sample=False)
                 action_text = self._processor.decode(outputs[0], skip_special_tokens=True)
-                action = self._parse_action_text(action_text)
+                # InternVLA may prefix output with "Out:" — strip the preamble
+                text = action_text.split("Out:")[-1] if "Out:" in action_text else action_text
+                action = parse_numbers_from_text(text, action_dim=self._action_dim, take_last=False)
 
         action_np = np.asarray(action).flatten()
         self._step += 1
         return [self._array_to_dict(action_np)]
-
-    def _extract_image(self, observation_dict):
-        from PIL import Image
-
-        for key in sorted(observation_dict.keys()):
-            val = observation_dict[key]
-            if isinstance(val, np.ndarray) and val.ndim == 3 and val.shape[-1] in (3, 4):
-                return Image.fromarray(val[:, :, :3].astype(np.uint8))
-        return Image.new("RGB", (224, 224))
-
-    def _parse_action_text(self, text: str) -> np.ndarray:
-        """Parse action values from generated text."""
-        import re
-
-        numbers = re.findall(r"[-+]?\d*\.?\d+", text.split("Out:")[-1] if "Out:" in text else text)
-        values = [float(n) for n in numbers[: self._action_dim]]
-        while len(values) < self._action_dim:
-            values.append(0.0)
-        return np.array(values, dtype=np.float32)
 
     def _array_to_dict(self, arr: np.ndarray) -> Dict[str, Any]:
         action_dict = {}

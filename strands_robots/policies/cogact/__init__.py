@@ -29,6 +29,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 from strands_robots.policies import Policy
+from strands_robots.policies._utils import detect_device, extract_pil_image, parse_numbers_from_text
 
 logger = logging.getLogger(__name__)
 
@@ -93,15 +94,7 @@ class CogactPolicy(Policy):
         logger.info(f"⚡ Loading CogACT from {self._model_id}...")
         start = time.time()
 
-        device = self._requested_device
-        if not device:
-            if torch.cuda.is_available():
-                device = "cuda:0"
-            elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-                device = "mps"
-            else:
-                device = "cpu"
-        self._device = device
+        self._device = detect_device(self._requested_device)
 
         try:
             from transformers import AutoModelForVision2Seq, AutoProcessor
@@ -112,12 +105,12 @@ class CogactPolicy(Policy):
                 torch_dtype=torch.bfloat16,
                 low_cpu_mem_usage=True,
                 trust_remote_code=True,
-            ).to(device)
+            ).to(self._device)
             self._model.eval()
 
             elapsed = time.time() - start
             n_params = sum(p.numel() for p in self._model.parameters())
-            logger.info(f"⚡ CogACT loaded: {n_params/1e9:.1f}B in {elapsed:.1f}s on {device}")
+            logger.info(f"⚡ CogACT loaded: {n_params/1e9:.1f}B in {elapsed:.1f}s on {self._device}")
 
         except Exception as e:
             raise ImportError(
@@ -136,9 +129,8 @@ class CogactPolicy(Policy):
         """
         self._ensure_loaded()
         import torch
-        from PIL import Image  # noqa: F401
 
-        image = self._extract_image(observation_dict)
+        image = extract_pil_image(observation_dict)
 
         # CogACT prompt format
         prompt = f"In: What action should the robot take to {instruction}?\nOut:"
@@ -164,16 +156,18 @@ class CogactPolicy(Policy):
                 # Fallback: text generation
                 outputs = self._model.generate(**inputs, max_new_tokens=256, do_sample=False)
                 text = self._processor.decode(outputs[0], skip_special_tokens=True)
-                action_np = self._parse_action_text(text)
+                action_np = parse_numbers_from_text(
+                    text, action_dim=self._action_dim, take_last=True
+                ).reshape(1, -1)
 
         # Handle multi-step action output
         if action_np.ndim == 1:
             action_np = action_np.reshape(1, -1)
 
+        eef_keys = ["x", "y", "z", "roll", "pitch", "yaw", "gripper"]
         results = []
         for i in range(min(self._action_horizon, len(action_np))):
             action_dict = {}
-            eef_keys = ["x", "y", "z", "roll", "pitch", "yaw", "gripper"]
             keys = self._robot_state_keys if len(self._robot_state_keys) >= len(action_np[i]) else eef_keys
             for j in range(min(len(keys), len(action_np[i]))):
                 action_dict[keys[j]] = float(action_np[i][j])
@@ -181,24 +175,6 @@ class CogactPolicy(Policy):
 
         self._step += 1
         return results if results else [{k: 0.0 for k in (self._robot_state_keys or eef_keys)}]
-
-    def _extract_image(self, observation_dict):
-        from PIL import Image
-
-        for key in sorted(observation_dict.keys()):
-            val = observation_dict[key]
-            if isinstance(val, np.ndarray) and val.ndim == 3 and val.shape[-1] in (3, 4):
-                return Image.fromarray(val[:, :, :3].astype(np.uint8))
-        return Image.new("RGB", (224, 224))
-
-    def _parse_action_text(self, text: str) -> np.ndarray:
-        import re
-
-        numbers = re.findall(r"[-+]?\d*\.?\d+", text)
-        values = [float(n) for n in numbers[-self._action_dim :]]
-        while len(values) < self._action_dim:
-            values.append(0.0)
-        return np.array([values[: self._action_dim]], dtype=np.float32)
 
 
 __all__ = ["CogactPolicy"]

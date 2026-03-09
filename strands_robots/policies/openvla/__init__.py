@@ -32,6 +32,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 from strands_robots.policies import Policy
+from strands_robots.policies._utils import detect_device, extract_pil_image
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +56,7 @@ class OpenvlaPolicy(Policy):
     ):
         self._model_id = model_id
         self._unnorm_key = unnorm_key
-        self._device = device
+        self._requested_device = device
         self._use_flash_attn = use_flash_attention
         self._do_sample = do_sample
         self._robot_state_keys: List[str] = []
@@ -84,43 +85,27 @@ class OpenvlaPolicy(Policy):
         logger.info(f"🔮 Loading OpenVLA from {self._model_id}...")
         start = time.time()
 
-        device = self._device
-        if not device:
-            if torch.cuda.is_available():
-                device = "cuda:0"
-            elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-                device = "mps"
-            else:
-                device = "cpu"
-        self._device = device
+        self._device = detect_device(self._requested_device)
 
-        attn_impl = "flash_attention_2" if self._use_flash_attn and device.startswith("cuda") else None
+        attn_impl = "flash_attention_2" if self._use_flash_attn and self._device.startswith("cuda") else None
         kwargs = {"torch_dtype": torch.bfloat16, "low_cpu_mem_usage": True, "trust_remote_code": True}
         if attn_impl:
             kwargs["attn_implementation"] = attn_impl
 
         self._processor = AutoProcessor.from_pretrained(self._model_id, trust_remote_code=True)
-        self._vla = AutoModelForVision2Seq.from_pretrained(self._model_id, **kwargs).to(device)
+        self._vla = AutoModelForVision2Seq.from_pretrained(self._model_id, **kwargs).to(self._device)
 
         elapsed = time.time() - start
         n_params = sum(p.numel() for p in self._vla.parameters())
-        logger.info(f"🔮 OpenVLA loaded: {n_params/1e9:.1f}B params in {elapsed:.1f}s on {device}")
+        logger.info(f"🔮 OpenVLA loaded: {n_params/1e9:.1f}B params in {elapsed:.1f}s on {self._device}")
         self._loaded = True
 
     async def get_actions(self, observation_dict: Dict[str, Any], instruction: str, **kwargs) -> List[Dict[str, Any]]:
         self._ensure_loaded()
         import torch
-        from PIL import Image
 
         # Extract camera image
-        image = None
-        for key in sorted(observation_dict.keys()):
-            val = observation_dict[key]
-            if isinstance(val, np.ndarray) and val.ndim == 3 and val.shape[-1] in (3, 4):
-                image = Image.fromarray(val[:, :, :3].astype(np.uint8))
-                break
-        if image is None:
-            image = Image.new("RGB", (224, 224))
+        image = extract_pil_image(observation_dict)
 
         # Format prompt per OpenVLA convention
         prompt = f"In: What action should the robot take to {instruction}?\nOut:"

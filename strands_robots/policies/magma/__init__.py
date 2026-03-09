@@ -24,6 +24,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 from strands_robots.policies import Policy
+from strands_robots.policies._utils import detect_device, extract_pil_image, parse_numbers_from_text
 
 logger = logging.getLogger(__name__)
 
@@ -78,10 +79,7 @@ class MagmaPolicy(Policy):
         logger.info(f"🔷 Loading Magma from {self._model_id}...")
         start = time.time()
 
-        device = self._requested_device
-        if not device:
-            device = "cuda:0" if torch.cuda.is_available() else "cpu"
-        self._device = device
+        self._device = detect_device(self._requested_device)
 
         self._processor = AutoProcessor.from_pretrained(self._model_id, trust_remote_code=True)
         self._model = AutoModelForCausalLM.from_pretrained(
@@ -89,20 +87,19 @@ class MagmaPolicy(Policy):
             torch_dtype=torch.bfloat16,
             low_cpu_mem_usage=True,
             trust_remote_code=True,
-        ).to(device)
+        ).to(self._device)
         self._model.eval()
 
         elapsed = time.time() - start
         n_params = sum(p.numel() for p in self._model.parameters())
-        logger.info(f"🔷 Magma loaded: {n_params/1e9:.1f}B in {elapsed:.1f}s on {device}")
+        logger.info(f"🔷 Magma loaded: {n_params/1e9:.1f}B in {elapsed:.1f}s on {self._device}")
         self._loaded = True
 
     async def get_actions(self, observation_dict: Dict[str, Any], instruction: str, **kwargs) -> List[Dict[str, Any]]:
         self._ensure_loaded()
         import torch
-        from PIL import Image  # noqa: F401
 
-        image = self._extract_image(observation_dict)
+        image = extract_pil_image(observation_dict)
 
         # Magma prompt for action prediction
         prompt = f"<image>\nWhat action should the robot take to {instruction}? Predict the 7-DoF action as numbers."
@@ -122,7 +119,7 @@ class MagmaPolicy(Policy):
                     do_sample=self._do_sample,
                 )
                 text = self._processor.decode(outputs[0], skip_special_tokens=True)
-                action_np = self._parse_action_text(text)
+                action_np = parse_numbers_from_text(text, action_dim=self._action_dim, take_last=True)
 
         action_dict = {}
         eef_keys = ["x", "y", "z", "roll", "pitch", "yaw", "gripper"]
@@ -133,32 +130,12 @@ class MagmaPolicy(Policy):
         self._step += 1
         return [action_dict]
 
-    def _extract_image(self, observation_dict):
-        from PIL import Image
-
-        for key in sorted(observation_dict.keys()):
-            val = observation_dict[key]
-            if isinstance(val, np.ndarray) and val.ndim == 3 and val.shape[-1] in (3, 4):
-                return Image.fromarray(val[:, :, :3].astype(np.uint8))
-        return Image.new("RGB", (224, 224))
-
-    def _parse_action_text(self, text: str) -> np.ndarray:
-        import re
-
-        # Extract numbers from generated text
-        numbers = re.findall(r"[-+]?\d*\.?\d+", text)
-        values = [float(n) for n in numbers[-self._action_dim :]]  # Take last N numbers
-        while len(values) < self._action_dim:
-            values.append(0.0)
-        return np.array(values[: self._action_dim], dtype=np.float32)
-
     def reason_about_scene(self, observation_dict: Dict[str, Any], question: str) -> str:
         """Use Magma as a VLM to reason about the scene (bonus capability)."""
         self._ensure_loaded()
         import torch
-        from PIL import Image  # noqa: F401
 
-        image = self._extract_image(observation_dict)
+        image = extract_pil_image(observation_dict)
         prompt = f"<image>\n{question}"
 
         inputs = self._processor(prompt, image, return_tensors="pt").to(self._device, dtype=torch.bfloat16)

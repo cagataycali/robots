@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 from strands_robots.policies import Policy
+from strands_robots.policies._utils import detect_device, extract_pil_image
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,10 @@ class RdtPolicy(Policy):
     Supports the unified 128-dim action space covering all manipulator types.
     """
 
+    # T5 encoder model ID — this is ~22GB and will be downloaded on first use.
+    # Override with a smaller encoder via the `t5_model_id` constructor param.
+    DEFAULT_T5_MODEL = "google/t5-v1_1-xxl"
+
     def __init__(
         self,
         model_id: str = "robotics-diffusion-transformer/rdt-1b",
@@ -44,8 +49,25 @@ class RdtPolicy(Policy):
         control_frequency: int = 25,
         device: Optional[str] = None,
         actions_per_step: int = 1,
+        t5_model_id: Optional[str] = None,
         **kwargs,
     ):
+        """Initialize RDT policy.
+
+        Args:
+            model_id: HuggingFace model ID for the RDT checkpoint.
+            repo_path: Path to cloned RDT repo (required for full inference).
+            state_dim: Robot proprioceptive state dimension.
+            chunk_size: Number of future actions to predict per inference.
+            camera_names: Camera key names in the observation dict.
+            control_frequency: Robot control frequency in Hz.
+            device: Inference device (auto-detected if None).
+            actions_per_step: How many actions from the chunk to return per call.
+            t5_model_id: Override for the T5 encoder model. Defaults to
+                google/t5-v1_1-xxl (~22GB). Set to a smaller T5 variant
+                (e.g. "google/t5-v1_1-base") for faster setup at the cost
+                of language understanding quality.
+        """
         self._model_id = model_id
         self._repo_path = repo_path
         self._state_dim = state_dim
@@ -54,6 +76,7 @@ class RdtPolicy(Policy):
         self._control_frequency = control_frequency
         self._requested_device = device
         self._actions_per_step = actions_per_step
+        self._t5_model_id = t5_model_id or self.DEFAULT_T5_MODEL
         self._robot_state_keys: List[str] = []
 
         self._model = None
@@ -80,10 +103,7 @@ class RdtPolicy(Policy):
         logger.info(f"🌊 Loading RDT from {self._model_id}...")
         start = time.time()
 
-        device = self._requested_device
-        if not device:
-            device = "cuda:0" if torch.cuda.is_available() else "cpu"
-        self._device = device
+        self._device = detect_device(self._requested_device)
 
         try:
             # RDT uses its own model creation from the repo
@@ -110,7 +130,7 @@ class RdtPolicy(Policy):
             )
 
             elapsed = time.time() - start
-            logger.info(f"🌊 RDT loaded in {elapsed:.1f}s on {device}")
+            logger.info(f"🌊 RDT loaded in {elapsed:.1f}s on {self._device}")
 
         except ImportError:
             logger.warning(
@@ -147,7 +167,6 @@ class RdtPolicy(Policy):
             return [{k: 0.0 for k in self._robot_state_keys}]
 
         import torch
-        from PIL import Image
 
         # Encode language instruction
         if self._lang_embeddings is None or self._step == 0:
@@ -161,18 +180,14 @@ class RdtPolicy(Policy):
                 if cam_name in key.lower():
                     val = observation_dict[key]
                     if isinstance(val, np.ndarray):
+                        from PIL import Image
+
                         images.append(Image.fromarray(val[:, :, :3].astype(np.uint8)))
                         found = True
                         break
             if not found:
-                # Try any available image
-                for key in sorted(observation_dict.keys()):
-                    val = observation_dict[key]
-                    if isinstance(val, np.ndarray) and val.ndim == 3:
-                        images.append(Image.fromarray(val[:, :, :3].astype(np.uint8)))
-                        break
-                else:
-                    images.append(Image.new("RGB", (384, 384)))
+                # Fallback to shared utility for first available image, or blank
+                images.append(extract_pil_image(observation_dict, fallback_size=(384, 384)))
 
         # Proprioception
         proprio = np.array(
@@ -204,22 +219,28 @@ class RdtPolicy(Policy):
         self._step += 1
         return result if result else [{k: 0.0 for k in self._robot_state_keys}]
 
-    # T5 encoder model ID — this is ~22GB and will be downloaded on first use.
-    # Override with a smaller encoder via the `t5_model_id` constructor param.
-    DEFAULT_T5_MODEL = "google/t5-v1_1-xxl"
-
     def _encode_instruction(self, instruction: str):
         """Encode language instruction using T5.
 
-        Note: Downloads google/t5-v1_1-xxl (~22GB) on first use.
+        Warning: Downloads the T5 encoder model on first use. The default
+        (google/t5-v1_1-xxl) is ~22GB. Override via t5_model_id constructor
+        param to use a smaller variant.
         """
         import torch
 
         try:
             from transformers import T5EncoderModel, T5Tokenizer
 
-            t5_model_id = getattr(self, "_t5_model_id", self.DEFAULT_T5_MODEL)
-            logger.info(f"Loading T5 encoder: {t5_model_id} (may download ~22GB on first use)")
+            t5_model_id = self._t5_model_id
+            logger.warning(
+                f"🌊 Loading T5 encoder: {t5_model_id}. "
+                + (
+                    "This will download ~22GB on first use. "
+                    "Set t5_model_id='google/t5-v1_1-base' for a smaller (~1GB) alternative."
+                    if "xxl" in t5_model_id
+                    else ""
+                )
+            )
 
             tokenizer = T5Tokenizer.from_pretrained(t5_model_id)
             encoder = T5EncoderModel.from_pretrained(t5_model_id, torch_dtype=torch.bfloat16)

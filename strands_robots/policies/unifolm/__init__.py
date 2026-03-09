@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 from strands_robots.policies import Policy
+from strands_robots.policies._utils import detect_device, extract_pil_image, parse_numbers_from_text
 
 logger = logging.getLogger(__name__)
 
@@ -79,10 +80,7 @@ class UnifolmPolicy(Policy):
         logger.info(f"🦾 Loading UnifoLM from {self._model_id}...")
         start = time.time()
 
-        device = self._requested_device
-        if not device:
-            device = "cuda:0" if torch.cuda.is_available() else "cpu"
-        self._device = device
+        self._device = detect_device(self._requested_device)
 
         try:
             from transformers import AutoModel, AutoProcessor
@@ -92,7 +90,7 @@ class UnifolmPolicy(Policy):
                 self._model_id,
                 torch_dtype=torch.bfloat16,
                 trust_remote_code=True,
-            ).to(device)
+            ).to(self._device)
             self._model.eval()
 
             elapsed = time.time() - start
@@ -121,12 +119,12 @@ class UnifolmPolicy(Policy):
 
     async def _infer_server(self, observation_dict: Dict[str, Any], instruction: str) -> List[Dict[str, Any]]:
         """Inference via Unitree's server API."""
+        import base64
         import io
 
         import requests
-        from PIL import Image  # noqa: F401
 
-        image = self._extract_image(observation_dict)
+        image = extract_pil_image(observation_dict)
         buf = io.BytesIO()
         image.save(buf, format="PNG")
 
@@ -134,8 +132,7 @@ class UnifolmPolicy(Policy):
 
         payload = {
             "instruction": instruction,
-            # TODO: Consider base64 encoding for smaller payloads
-            "image": buf.getvalue().hex(),
+            "image": base64.b64encode(buf.getvalue()).decode("ascii"),
             "state": state,
         }
 
@@ -149,9 +146,8 @@ class UnifolmPolicy(Policy):
     def _infer_local(self, observation_dict: Dict[str, Any], instruction: str) -> List[Dict[str, Any]]:
         """Local inference via HuggingFace model."""
         import torch
-        from PIL import Image  # noqa: F401
 
-        image = self._extract_image(observation_dict)
+        image = extract_pil_image(observation_dict)
         state = np.array(
             [float(observation_dict.get(k, 0.0)) for k in self._robot_state_keys],
             dtype=np.float32,
@@ -169,28 +165,10 @@ class UnifolmPolicy(Policy):
             with torch.no_grad():
                 outputs = self._model.generate(**inputs, max_new_tokens=256)
             text = self._processor.decode(outputs[0], skip_special_tokens=True)
-            action = self._parse_numbers(text)
+            action = parse_numbers_from_text(text, action_dim=self._action_dim, take_last=False)
             return [self._array_to_dict(action)]
 
         return [{k: 0.0 for k in self._robot_state_keys}]
-
-    def _extract_image(self, observation_dict):
-        from PIL import Image
-
-        for key in sorted(observation_dict.keys()):
-            val = observation_dict[key]
-            if isinstance(val, np.ndarray) and val.ndim == 3 and val.shape[-1] in (3, 4):
-                return Image.fromarray(val[:, :, :3].astype(np.uint8))
-        return Image.new("RGB", (224, 224))
-
-    def _parse_numbers(self, text: str) -> np.ndarray:
-        import re
-
-        numbers = re.findall(r"[-+]?\d*\.?\d+", text)
-        values = [float(n) for n in numbers[: self._action_dim]]
-        while len(values) < self._action_dim:
-            values.append(0.0)
-        return np.array(values, dtype=np.float32)
 
     def _array_to_dict(self, arr: np.ndarray) -> Dict[str, Any]:
         keys = self._robot_state_keys or [f"joint_{i}" for i in range(len(arr))]
