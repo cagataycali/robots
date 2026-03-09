@@ -271,7 +271,7 @@ def teleoperator(
     Returns:
         Dict with status and session info
     """
-    global _ACTIVE_SESSION
+    global _ACTIVE_SESSION  # noqa: F824
 
     try:
         if action == "teleop":

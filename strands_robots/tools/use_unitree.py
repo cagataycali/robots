@@ -595,7 +595,10 @@ def _handle_discovery(action: str, parameters: Dict[str, Any]) -> Dict[str, Any]
                 "status": "error",
                 "content": [
                     {
-                        "text": 'Missing \'robot\' and/or \'service\' parameters. Example: list_methods with parameters={"robot": "go2", "service": "sport"}'
+                        "text": (
+                            "Missing 'robot' and/or 'service' parameters. "
+                            'Example: list_methods with parameters={"robot": "go2", "service": "sport"}'
+                        )
                     }
                 ],
             }

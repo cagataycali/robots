@@ -259,8 +259,7 @@ def _launch_http_serve(model_id: str, port: int, host: str, provider: str) -> Di
     script = os.path.join(script_dir, f"serve_{provider}_{port}.py")
 
     with open(script, "w") as f:
-        f.write(
-            f'''#!/usr/bin/env python3
+        f.write(f'''#!/usr/bin/env python3
 """Auto-generated HTTP inference server for {provider}"""
 import json, logging, numpy as np
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -296,8 +295,7 @@ class H(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     logger.info(f"Starting {{MODEL}} on {host}:{port}")
     HTTPServer(("{host}", {port}), H).serve_forever()
-'''
-        )
+''')
 
     proc = subprocess.Popen(
         ["python", script], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True
@@ -410,7 +408,7 @@ def inference(
         inference(action="list")
         inference(action="stop", port=50051)
     """
-    global _RUNNING
+    global _RUNNING  # noqa: F824
 
     checkpoint = checkpoint_path or model_id
 
@@ -446,8 +444,8 @@ def inference(
             alive = _is_port_in_use(svc_port)
             icon = "✅" if alive else "❌"
             lines.append(
-                f"  {icon} :{svc_port} | {info.get('provider','?'):15s} | "
-                f"{info.get('proto','?'):9s} | pid={info.get('pid','?')}"
+                f"  {icon} :{svc_port} | {info.get('provider', '?'):15s} | "
+                f"{info.get('proto', '?'):9s} | pid={info.get('pid', '?')}"
             )
         # Scan common ports for unregistered services
         scan = {5555, 8000, 8001, 8002, 8003, 8004, 8005, 8006, 8007, 8008, 8009, 50051}
@@ -734,15 +732,15 @@ PROVIDER_CONFIGS = {
 }
 
 
-def _is_port_in_use(port: int, host: str = "localhost") -> bool:
+def _is_port_in_use(port: int, host: str = "localhost") -> bool:  # noqa: F811
     return _port_in_use(port, host)
 
 
-def _kill_process(pid: int, force: bool = False):
+def _kill_process(pid: int, force: bool = False):  # noqa: F811
     return _kill(pid, force)
 
 
-def _find_process_on_port(port: int) -> Optional[int]:
+def _find_process_on_port(port: int) -> Optional[int]:  # noqa: F811
     return _find_pid_on_port(port)
 
 

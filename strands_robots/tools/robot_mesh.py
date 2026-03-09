@@ -78,7 +78,10 @@ def robot_mesh(
                 text += "**Discovered peers:**\n"
                 for p in peers:
                     icon = {"robot": "🤖", "sim": "🎮", "agent": "🧠"}.get(p.get("type", ""), "🔧")
-                    text += f"  {icon} {p['peer_id']} ({p.get('type','?')}) — {p.get('hostname','?')}, {p.get('age',0)}s ago\n"
+                    text += (
+                        f"  {icon} {p['peer_id']} ({p.get('type', '?')}) "
+                        f"— {p.get('hostname', '?')}, {p.get('age', 0)}s ago\n"
+                    )
                     if p.get("task_status"):
                         text += f"      Task: {p['task_status']} — {p.get('instruction', '')}\n"
             elif not local:
@@ -171,7 +174,11 @@ def robot_mesh(
                 "status": "success",
                 "content": [
                     {
-                        "text": f"📡 Subscribed to: {target}\nMessages buffered in inbox['{name}']\nUse action='inbox' to read."
+                        "text": (
+                            f"📡 Subscribed to: {target}\n"
+                            f"Messages buffered in inbox['{name}']\n"
+                            f"Use action='inbox' to read."
+                        )
                     }
                 ],
             }
@@ -205,7 +212,10 @@ def robot_mesh(
                 "status": "error",
                 "content": [
                     {
-                        "text": f"Unknown action: {action}. Try: peers, tell, send, broadcast, stop, emergency_stop, status, subscribe, watch, inbox"
+                        "text": (
+                            f"Unknown action: {action}. Try: peers, tell, send, broadcast, "
+                            f"stop, emergency_stop, status, subscribe, watch, inbox"
+                        )
                     }
                 ],
             }

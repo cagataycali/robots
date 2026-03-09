@@ -298,7 +298,7 @@ def reachy_mini(
                     {
                         "text": f"🤖 Reachy Mini @ {host}\n  State: {r.get('state')}\n  Version: {r.get('version')}\n"
                         f"  IP: {r.get('wlan_ip')}\n  Motors: {bs.get('motor_control_mode')}\n"
-                        f"  Freq: {cs.get('mean_control_loop_frequency',0):.1f}Hz\n"
+                        f"  Freq: {cs.get('mean_control_loop_frequency', 0):.1f}Hz\n"
                         f"  Prefix: {prefix}  Zenoh: {zenoh_port}  API: {api_port}"
                     }
                 ],
@@ -311,14 +311,14 @@ def reachy_mini(
             text = f"🤖 State @ {host} (prefix={prefix}):\n"
             if joints and joints[0][0] != "error":
                 d = joints[-1][1]
-                text += f"  Head: {[round(math.degrees(j),1) for j in d.get('head_joint_positions',[])]}\n"
-                text += f"  Antennas: {[round(math.degrees(j),1) for j in d.get('antennas_joint_positions',[])]}\n"
+                text += f"  Head: {[round(math.degrees(j), 1) for j in d.get('head_joint_positions', [])]}\n"
+                text += f"  Antennas: {[round(math.degrees(j), 1) for j in d.get('antennas_joint_positions', [])]}\n"
             if pose and pose[0][0] != "error":
-                text += f"  Pose: {str(pose[-1][1].get('head_pose','?'))[:120]}\n"
+                text += f"  Pose: {str(pose[-1][1].get('head_pose', '?'))[:120]}\n"
             if imu and imu[0][0] != "error":
                 d = imu[-1][1]
-                text += f"  Accel: {[round(v,2) for v in d.get('accelerometer',[])]}\n"
-                text += f"  Temp: {d.get('temperature','?')}°C\n"
+                text += f"  Accel: {[round(v, 2) for v in d.get('accelerometer', [])]}\n"
+                text += f"  Temp: {d.get('temperature', '?')}°C\n"
             return {"status": "success", "content": [{"text": text}]}
 
         elif action == "daemon_start":
@@ -327,7 +327,10 @@ def reachy_mini(
                 "content": [{"text": f"▶️ {_api(host, api_port, '/api/daemon/start?wake_up=true', 'POST')}"}],
             }
         elif action == "daemon_stop":
-            return {"status": "success", "content": [{"text": f"⏹️ {_api(host, api_port, '/api/daemon/stop', 'POST')}"}]}
+            return {
+                "status": "success",
+                "content": [{"text": f"⏹️ {_api(host, api_port, '/api/daemon/stop', 'POST')}"}],
+            }
         elif action == "daemon_restart":
             return {
                 "status": "success",
@@ -406,7 +409,10 @@ def reachy_mini(
                     "status": "success",
                     "content": [
                         {
-                            "text": f"🦾 Head: {[f'{math.degrees(j):.1f}°' for j in head]}  Ant: {[f'{math.degrees(j):.1f}°' for j in ant]}"
+                            "text": (
+                                f"🦾 Head: {[f'{math.degrees(j):.1f}°' for j in head]}  "
+                                f"Ant: {[f'{math.degrees(j):.1f}°' for j in ant]}"
+                            )
                         },
                         {"json": {"head": head, "antennas": ant}},
                     ],
@@ -418,7 +424,7 @@ def reachy_mini(
             if msgs and msgs[0][0] != "error":
                 return {
                     "status": "success",
-                    "content": [{"text": f"🎯 {json.dumps(msgs[-1][1].get('head_pose',[]), indent=2)[:300]}"}],
+                    "content": [{"text": f"🎯 {json.dumps(msgs[-1][1].get('head_pose', []), indent=2)[:300]}"}],
                 }
             return {"status": "error", "content": [{"text": "No pose data"}]}
 

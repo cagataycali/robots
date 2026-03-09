@@ -58,7 +58,7 @@ class TestToolsPackage:
 
     def test_tools_count(self):
         """Should have 18 tools."""
-        import os
+        import os  # noqa: F401
         from pathlib import Path
 
         tools_dir = Path(__file__).parent.parent / "strands_robots" / "tools"
