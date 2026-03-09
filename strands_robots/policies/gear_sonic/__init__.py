@@ -46,27 +46,45 @@ logger = logging.getLogger(__name__)
 # Unitree G1 joint names (29 DOF)
 G1_JOINT_NAMES = [
     # Lower body (12)
-    "left_hip_pitch", "left_hip_roll", "left_hip_yaw",
-    "left_knee", "left_ankle_pitch", "left_ankle_roll",
-    "right_hip_pitch", "right_hip_roll", "right_hip_yaw",
-    "right_knee", "right_ankle_pitch", "right_ankle_roll",
+    "left_hip_pitch",
+    "left_hip_roll",
+    "left_hip_yaw",
+    "left_knee",
+    "left_ankle_pitch",
+    "left_ankle_roll",
+    "right_hip_pitch",
+    "right_hip_roll",
+    "right_hip_yaw",
+    "right_knee",
+    "right_ankle_pitch",
+    "right_ankle_roll",
     # Waist (1)
     "waist_yaw",
     # Left arm (7) + hand (1)
-    "left_shoulder_pitch", "left_shoulder_roll", "left_shoulder_yaw",
-    "left_elbow", "left_wrist_roll", "left_wrist_pitch", "left_wrist_yaw",
+    "left_shoulder_pitch",
+    "left_shoulder_roll",
+    "left_shoulder_yaw",
+    "left_elbow",
+    "left_wrist_roll",
+    "left_wrist_pitch",
+    "left_wrist_yaw",
     "left_hand",
     # Right arm (7) + hand (1)
-    "right_shoulder_pitch", "right_shoulder_roll", "right_shoulder_yaw",
-    "right_elbow", "right_wrist_roll", "right_wrist_pitch", "right_wrist_yaw",
+    "right_shoulder_pitch",
+    "right_shoulder_roll",
+    "right_shoulder_yaw",
+    "right_elbow",
+    "right_wrist_roll",
+    "right_wrist_pitch",
+    "right_wrist_yaw",
     "right_hand",
 ]
 
 # Observation dimensions from observation_config.yaml
 OBS_DIMS = {
     "token_state": 64,
-    "his_base_angular_velocity_10frame_step1": 12,       # 10 * 3 (flattened)? → check
-    "his_body_joint_positions_10frame_step1": 116,        # 10 * (29-17.4) → varies
+    "his_base_angular_velocity_10frame_step1": 12,  # 10 * 3 (flattened)? → check
+    "his_body_joint_positions_10frame_step1": 116,  # 10 * (29-17.4) → varies
     "his_body_joint_velocities_10frame_step1": 116,
     "his_last_actions_10frame_step1": 116,
     "his_gravity_dir_10frame_step1": 12,
@@ -75,8 +93,8 @@ OBS_DIMS = {
 # Encoder modes
 ENCODER_MODES = {
     "motion_tracking": 0,  # Default: track reference motions
-    "teleop": 1,           # VR teleoperation (PICO 3-point)
-    "smpl": 2,             # Video-based SMPL pose input
+    "teleop": 1,  # VR teleoperation (PICO 3-point)
+    "smpl": 2,  # Video-based SMPL pose input
 }
 
 
@@ -148,6 +166,7 @@ class GearSonicPolicy(Policy):
         # Try downloading from HuggingFace
         try:
             from huggingface_hub import snapshot_download
+
             cache_dir = os.path.expanduser("~/.cache/gear_sonic")
             local = snapshot_download(
                 self._hf_model_id,
@@ -174,9 +193,7 @@ class GearSonicPolicy(Policy):
             raise ImportError("GEAR-SONIC requires: pip install onnxruntime")
 
         providers = (
-            ["CUDAExecutionProvider", "CPUExecutionProvider"]
-            if self._device == "cuda"
-            else ["CPUExecutionProvider"]
+            ["CUDAExecutionProvider", "CPUExecutionProvider"] if self._device == "cuda" else ["CPUExecutionProvider"]
         )
 
         d = self._model_dir
@@ -197,7 +214,9 @@ class GearSonicPolicy(Policy):
         self._enc_out_names = [o.name for o in self._encoder.get_outputs()]
         self._dec_out_names = [o.name for o in self._decoder.get_outputs()]
 
-        logger.info(f"✅ GEAR-SONIC loaded: encoder={len(self._enc_inputs)} inputs, decoder={len(self._dec_inputs)} inputs")
+        logger.info(
+            f"✅ GEAR-SONIC loaded: encoder={len(self._enc_inputs)} inputs, decoder={len(self._dec_inputs)} inputs"
+        )
 
     @property
     def provider_name(self) -> str:
@@ -245,7 +264,7 @@ class GearSonicPolicy(Policy):
                 inputs[name] = token_state.reshape(arr.shape)
             elif "joint_position" in n and "his" not in n:
                 if arr.shape[-1] <= len(joint_pos):
-                    inputs[name].flat[:len(joint_pos)] = joint_pos[:arr.size]
+                    inputs[name].flat[: len(joint_pos)] = joint_pos[: arr.size]
             elif "joint_position" in n and "his" in n:
                 # Fill history
                 flat_hist = self._flatten_history(self._joint_pos_history, arr.size)
@@ -284,7 +303,7 @@ class GearSonicPolicy(Policy):
         """Flatten history buffer to target size, zero-padded."""
         if not history:
             return np.zeros(target_size, dtype=np.float32)
-        flat = np.concatenate([h.flatten() for h in history[-self._history_len:]])
+        flat = np.concatenate([h.flatten() for h in history[-self._history_len :]])
         result = np.zeros(target_size, dtype=np.float32)
         n = min(len(flat), target_size)
         result[:n] = flat[:n]
@@ -309,9 +328,13 @@ class GearSonicPolicy(Policy):
 
         # Trim to history length
         max_h = self._history_len + 5
-        for buf in [self._joint_pos_history, self._joint_vel_history,
-                     self._action_history, self._angular_vel_history,
-                     self._gravity_history]:
+        for buf in [
+            self._joint_pos_history,
+            self._joint_vel_history,
+            self._action_history,
+            self._angular_vel_history,
+            self._gravity_history,
+        ]:
             while len(buf) > max_h:
                 buf.pop(0)
 

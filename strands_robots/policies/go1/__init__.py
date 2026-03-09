@@ -75,24 +75,92 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_STATS = {
     "state": {
-        "mean": np.array([
-            -1.0137895, 0.6469389, 0.61943513, -0.9803505, 0.5940099, 0.9803505, 0.00141076, 0.0,
-            1.0361551, -0.6618055, -0.79369825, 0.8947412, -0.5716255, -0.9803505, -0.03847568, 0.0,
-        ], dtype=np.float32),
-        "std": np.array([
-            0.54978794, 0.3524604, 0.53088915, 0.36732885, 0.47180042, 0.4573713, 0.6099905, 1.0,
-            0.55983984, 0.3511852, 0.54829943, 0.39228913, 0.5156797, 0.44490147, 0.629012, 1.0,
-        ], dtype=np.float32),
+        "mean": np.array(
+            [
+                -1.0137895,
+                0.6469389,
+                0.61943513,
+                -0.9803505,
+                0.5940099,
+                0.9803505,
+                0.00141076,
+                0.0,
+                1.0361551,
+                -0.6618055,
+                -0.79369825,
+                0.8947412,
+                -0.5716255,
+                -0.9803505,
+                -0.03847568,
+                0.0,
+            ],
+            dtype=np.float32,
+        ),
+        "std": np.array(
+            [
+                0.54978794,
+                0.3524604,
+                0.53088915,
+                0.36732885,
+                0.47180042,
+                0.4573713,
+                0.6099905,
+                1.0,
+                0.55983984,
+                0.3511852,
+                0.54829943,
+                0.39228913,
+                0.5156797,
+                0.44490147,
+                0.629012,
+                1.0,
+            ],
+            dtype=np.float32,
+        ),
     },
     "action": {
-        "mean": np.array([
-            -1.0137895, 0.6469389, 0.61943513, -0.9803505, 0.5940099, 0.9803505, 0.00141076, 0.0,
-            1.0361551, -0.6618055, -0.79369825, 0.8947412, -0.5716255, -0.9803505, -0.03847568, 0.0,
-        ], dtype=np.float32),
-        "std": np.array([
-            0.54978794, 0.3524604, 0.53088915, 0.36732885, 0.47180042, 0.4573713, 0.6099905, 1.0,
-            0.55983984, 0.3511852, 0.54829943, 0.39228913, 0.5156797, 0.44490147, 0.629012, 1.0,
-        ], dtype=np.float32),
+        "mean": np.array(
+            [
+                -1.0137895,
+                0.6469389,
+                0.61943513,
+                -0.9803505,
+                0.5940099,
+                0.9803505,
+                0.00141076,
+                0.0,
+                1.0361551,
+                -0.6618055,
+                -0.79369825,
+                0.8947412,
+                -0.5716255,
+                -0.9803505,
+                -0.03847568,
+                0.0,
+            ],
+            dtype=np.float32,
+        ),
+        "std": np.array(
+            [
+                0.54978794,
+                0.3524604,
+                0.53088915,
+                0.36732885,
+                0.47180042,
+                0.4573713,
+                0.6099905,
+                1.0,
+                0.55983984,
+                0.3511852,
+                0.54829943,
+                0.39228913,
+                0.5156797,
+                0.44490147,
+                0.629012,
+                1.0,
+            ],
+            dtype=np.float32,
+        ),
     },
 }
 
@@ -105,12 +173,22 @@ _CAMERA_ALIASES = {
 
 # AgiBot Genie1 joint layout: 7 left arm + 1 left gripper + 7 right arm + 1 right gripper
 _DEFAULT_JOINT_KEYS = [
-    "left_arm_joint_0", "left_arm_joint_1", "left_arm_joint_2",
-    "left_arm_joint_3", "left_arm_joint_4", "left_arm_joint_5",
-    "left_arm_joint_6", "left_gripper",
-    "right_arm_joint_0", "right_arm_joint_1", "right_arm_joint_2",
-    "right_arm_joint_3", "right_arm_joint_4", "right_arm_joint_5",
-    "right_arm_joint_6", "right_gripper",
+    "left_arm_joint_0",
+    "left_arm_joint_1",
+    "left_arm_joint_2",
+    "left_arm_joint_3",
+    "left_arm_joint_4",
+    "left_arm_joint_5",
+    "left_arm_joint_6",
+    "left_gripper",
+    "right_arm_joint_0",
+    "right_arm_joint_1",
+    "right_arm_joint_2",
+    "right_arm_joint_3",
+    "right_arm_joint_4",
+    "right_arm_joint_5",
+    "right_arm_joint_6",
+    "right_gripper",
 ]
 
 
@@ -164,9 +242,7 @@ class Go1Policy(Policy):
         self._ctrl_freq = ctrl_freq
         self._normalize = normalize
         self._data_stats_path = data_stats_path
-        self._camera_keys = camera_keys or [
-            "cam_head_color", "cam_hand_right_color", "cam_hand_left_color"
-        ]
+        self._camera_keys = camera_keys or ["cam_head_color", "cam_hand_right_color", "cam_hand_left_color"]
         self._num_inference_timesteps = num_inference_timesteps
         self._robot_state_keys: List[str] = []
 
@@ -180,8 +256,10 @@ class Go1Policy(Policy):
         self._step = 0
 
         mode = "server" if server_url else "local"
-        logger.info(f"🤖 GO-1 policy: {model_id} (mode={mode}, action_dim={action_dim}, "
-                     f"chunk_size={action_chunk_size}, ctrl_freq={ctrl_freq}Hz)")
+        logger.info(
+            f"🤖 GO-1 policy: {model_id} (mode={mode}, action_dim={action_dim}, "
+            f"chunk_size={action_chunk_size}, ctrl_freq={ctrl_freq}Hz)"
+        )
 
     @property
     def provider_name(self) -> str:
@@ -210,6 +288,7 @@ class Go1Policy(Policy):
         """Verify server connectivity (non-blocking on failure)."""
         try:
             import requests
+
             resp = requests.get(f"{self._server_url}/docs", timeout=5)
             logger.info(f"🤖 GO-1 server connected: {self._server_url} (status={resp.status_code})")
         except Exception as e:
@@ -231,14 +310,11 @@ class Go1Policy(Policy):
             from transformers import AutoConfig, AutoModel, AutoTokenizer
 
             # Load config to get model parameters
-            self._config = AutoConfig.from_pretrained(
-                self._model_id, trust_remote_code=True
-            )
+            self._config = AutoConfig.from_pretrained(self._model_id, trust_remote_code=True)
 
             # Load tokenizer
             self._tokenizer = AutoTokenizer.from_pretrained(
-                self._model_id, add_eos_token=False,
-                trust_remote_code=True, use_fast=False
+                self._model_id, add_eos_token=False, trust_remote_code=True, use_fast=False
             )
 
             # Load model
@@ -272,6 +348,7 @@ class Go1Policy(Policy):
             import json
 
             import torch
+
             with open(self._data_stats_path, "r") as f:
                 stats_json = json.load(f)
             self._data_stats = {}
@@ -283,6 +360,7 @@ class Go1Policy(Policy):
             logger.info(f"🤖 Loaded normalization stats from {self._data_stats_path}")
         elif self._normalize:
             import torch
+
             self._data_stats = {
                 name: {
                     "mean": torch.from_numpy(_DEFAULT_STATS[name]["mean"]),
@@ -296,9 +374,7 @@ class Go1Policy(Policy):
     # Main inference entry point
     # ─────────────────────────────────────────────────────────────────
 
-    async def get_actions(
-        self, observation_dict: Dict[str, Any], instruction: str, **kwargs
-    ) -> List[Dict[str, Any]]:
+    async def get_actions(self, observation_dict: Dict[str, Any], instruction: str, **kwargs) -> List[Dict[str, Any]]:
         """Get actions from GO-1 model.
 
         Args:
@@ -322,9 +398,7 @@ class Go1Policy(Policy):
     # Server mode inference
     # ─────────────────────────────────────────────────────────────────
 
-    async def _infer_server(
-        self, observation_dict: Dict[str, Any], instruction: str, **kwargs
-    ) -> List[Dict[str, Any]]:
+    async def _infer_server(self, observation_dict: Dict[str, Any], instruction: str, **kwargs) -> List[Dict[str, Any]]:
         """Inference via FastAPI GO-1 server (POST /act)."""
         import requests
 
@@ -342,9 +416,7 @@ class Go1Policy(Policy):
         self._step += 1
         return self._actions_to_dicts(actions)
 
-    def _build_server_payload(
-        self, observation_dict: Dict[str, Any], instruction: str, **kwargs
-    ) -> Dict[str, Any]:
+    def _build_server_payload(self, observation_dict: Dict[str, Any], instruction: str, **kwargs) -> Dict[str, Any]:
         """Build the JSON payload for the GO-1 FastAPI server."""
         payload: Dict[str, Any] = {"instruction": instruction}
 
@@ -380,9 +452,7 @@ class Go1Policy(Policy):
     # Local mode inference
     # ─────────────────────────────────────────────────────────────────
 
-    def _infer_local(
-        self, observation_dict: Dict[str, Any], instruction: str, **kwargs
-    ) -> List[Dict[str, Any]]:
+    def _infer_local(self, observation_dict: Dict[str, Any], instruction: str, **kwargs) -> List[Dict[str, Any]]:
         """Direct local GPU inference (requires GO-1 model loaded)."""
         import torch
         from PIL import Image
@@ -511,6 +581,7 @@ class Go1Policy(Policy):
     def _basic_image_preprocess(images: list) -> "torch.Tensor":  # noqa: F821
         """Fallback image preprocessing (resize + normalize to tensor)."""
         import torch
+
         tensors = []
         for img in images:
             img = img.convert("RGB").resize((448, 448))
@@ -579,6 +650,7 @@ class Go1Policy(Policy):
                 return val[:3].transpose(1, 2, 0).astype(np.uint8)
         try:
             from PIL import Image
+
             if isinstance(val, Image.Image):
                 return np.array(val.convert("RGB"), dtype=np.uint8)
         except ImportError:
@@ -604,7 +676,7 @@ class Go1Policy(Policy):
             if len(state) < self._action_dim:
                 state = np.pad(state, (0, self._action_dim - len(state)))
             elif len(state) > self._action_dim:
-                state = state[:self._action_dim]
+                state = state[: self._action_dim]
             return state
 
         # Try array keys
@@ -615,7 +687,7 @@ class Go1Policy(Policy):
                 if len(state) < self._action_dim:
                     state = np.pad(state, (0, self._action_dim - len(state)))
                 elif len(state) > self._action_dim:
-                    state = state[:self._action_dim]
+                    state = state[: self._action_dim]
                 return state
 
         return np.zeros(self._action_dim, dtype=np.float32)

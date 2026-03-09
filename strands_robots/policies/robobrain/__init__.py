@@ -117,9 +117,7 @@ class RobobrainPolicy(Policy):
         try:
             from transformers import AutoModelForCausalLM, AutoProcessor
 
-            self._processor = AutoProcessor.from_pretrained(
-                self._model_id, trust_remote_code=True
-            )
+            self._processor = AutoProcessor.from_pretrained(self._model_id, trust_remote_code=True)
             self._model = AutoModelForCausalLM.from_pretrained(
                 self._model_id,
                 torch_dtype=torch.bfloat16,
@@ -141,9 +139,7 @@ class RobobrainPolicy(Policy):
 
         self._loaded = True
 
-    async def get_actions(
-        self, observation_dict: Dict[str, Any], instruction: str, **kwargs
-    ) -> List[Dict[str, Any]]:
+    async def get_actions(self, observation_dict: Dict[str, Any], instruction: str, **kwargs) -> List[Dict[str, Any]]:
         """Get actions from RoboBrain.
 
         RoboBrain can output:
@@ -163,9 +159,7 @@ class RobobrainPolicy(Policy):
         # RoboBrain uses Qwen2.5-VL chat format
         prompt = self._build_prompt(instruction, observation_dict)
 
-        inputs = self._processor(prompt, image, return_tensors="pt").to(
-            self._device, dtype=torch.bfloat16
-        )
+        inputs = self._processor(prompt, image, return_tensors="pt").to(self._device, dtype=torch.bfloat16)
 
         with torch.no_grad():
             # Try direct action prediction API
@@ -200,9 +194,9 @@ class RobobrainPolicy(Policy):
 
         # Add proprioceptive state if available
         if self._robot_state_keys:
-            state = [f"{k}={observation_dict.get(k, 0.0):.3f}"
-                     for k in self._robot_state_keys[:6]
-                     if k in observation_dict]
+            state = [
+                f"{k}={observation_dict.get(k, 0.0):.3f}" for k in self._robot_state_keys[:6] if k in observation_dict
+            ]
             if state:
                 parts.append(f"Robot state: {', '.join(state)}")
 
@@ -214,11 +208,12 @@ class RobobrainPolicy(Policy):
     def _parse_action(self, text: str) -> np.ndarray:
         """Parse action values from generated text."""
         import re
+
         numbers = re.findall(r"[-+]?\d*\.?\d+", text)
-        values = [float(n) for n in numbers[-self._action_dim:]]
+        values = [float(n) for n in numbers[-self._action_dim :]]
         while len(values) < self._action_dim:
             values.append(0.0)
-        return np.array(values[:self._action_dim], dtype=np.float32)
+        return np.array(values[: self._action_dim], dtype=np.float32)
 
     def _array_to_dict(self, arr: np.ndarray) -> Dict[str, Any]:
         eef_keys = ["x", "y", "z", "roll", "pitch", "yaw", "gripper"]
@@ -227,6 +222,7 @@ class RobobrainPolicy(Policy):
 
     def _extract_image(self, observation_dict):
         from PIL import Image
+
         for key in sorted(observation_dict.keys()):
             val = observation_dict[key]
             if isinstance(val, np.ndarray) and val.ndim == 3 and val.shape[-1] in (3, 4):
@@ -242,9 +238,7 @@ class RobobrainPolicy(Policy):
 
     # ==== Bonus capabilities ====
 
-    def spatial_refer(
-        self, observation_dict: Dict[str, Any], query: str
-    ) -> Dict[str, Any]:
+    def spatial_refer(self, observation_dict: Dict[str, Any], query: str) -> Dict[str, Any]:
         """Predict spatial location from referring expression.
 
         Returns point coordinates or bounding box.
@@ -256,21 +250,18 @@ class RobobrainPolicy(Policy):
         image = self._extract_image(observation_dict)
         prompt = f"<image>\nPoint to: {query}\nOutput the (x, y) coordinates."
 
-        inputs = self._processor(prompt, image, return_tensors="pt").to(
-            self._device, dtype=torch.bfloat16
-        )
+        inputs = self._processor(prompt, image, return_tensors="pt").to(self._device, dtype=torch.bfloat16)
         with torch.no_grad():
             outputs = self._model.generate(**inputs, max_new_tokens=128, do_sample=False)
         text = self._processor.decode(outputs[0], skip_special_tokens=True)
 
         import re
+
         numbers = re.findall(r"[-+]?\d*\.?\d+", text)
         coords = [float(n) for n in numbers[:4]]  # Up to 4 coords (bbox)
         return {"text": text, "coordinates": coords}
 
-    def predict_trajectory(
-        self, observation_dict: Dict[str, Any], instruction: str
-    ) -> List[Dict[str, float]]:
+    def predict_trajectory(self, observation_dict: Dict[str, Any], instruction: str) -> List[Dict[str, float]]:
         """Predict future trajectory waypoints.
 
         Uses RoboBrain's temporal reasoning to forecast object/robot motion.
@@ -282,23 +273,20 @@ class RobobrainPolicy(Policy):
         image = self._extract_image(observation_dict)
         prompt = f"<image>\nPredict the trajectory for: {instruction}\nOutput (x, y) waypoints."
 
-        inputs = self._processor(prompt, image, return_tensors="pt").to(
-            self._device, dtype=torch.bfloat16
-        )
+        inputs = self._processor(prompt, image, return_tensors="pt").to(self._device, dtype=torch.bfloat16)
         with torch.no_grad():
             outputs = self._model.generate(**inputs, max_new_tokens=256, do_sample=False)
         text = self._processor.decode(outputs[0], skip_special_tokens=True)
 
         import re
+
         numbers = re.findall(r"[-+]?\d*\.?\d+", text)
         waypoints = []
         for i in range(0, len(numbers) - 1, 2):
             waypoints.append({"x": float(numbers[i]), "y": float(numbers[i + 1])})
         return waypoints
 
-    def reason_about_scene(
-        self, observation_dict: Dict[str, Any], question: str
-    ) -> str:
+    def reason_about_scene(self, observation_dict: Dict[str, Any], question: str) -> str:
         """Use RoboBrain as a VLM for embodied scene reasoning."""
         self._ensure_loaded()
         import torch
@@ -306,9 +294,7 @@ class RobobrainPolicy(Policy):
         image = self._extract_image(observation_dict)
         prompt = f"<image>\n{question}"
 
-        inputs = self._processor(prompt, image, return_tensors="pt").to(
-            self._device, dtype=torch.bfloat16
-        )
+        inputs = self._processor(prompt, image, return_tensors="pt").to(self._device, dtype=torch.bfloat16)
         with torch.no_grad():
             outputs = self._model.generate(**inputs, max_new_tokens=512, do_sample=False)
         return self._processor.decode(outputs[0], skip_special_tokens=True)

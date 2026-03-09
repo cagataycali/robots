@@ -50,16 +50,25 @@ try:
     )
     from strands_robots.policy_resolver import resolve_policy  # noqa: F401
 
-    __all__.extend([
-        "Robot", "Policy", "MockPolicy", "create_policy", "register_policy",
-        "list_providers", "list_robots", "resolve_policy",
-    ])
+    __all__.extend(
+        [
+            "Robot",
+            "Policy",
+            "MockPolicy",
+            "create_policy",
+            "register_policy",
+            "list_providers",
+            "list_robots",
+            "resolve_policy",
+        ]
+    )
 except ImportError as e:
     logger.debug("Could not import core components: %s", e)
 
 # --- Tier 2: Hardware Robot (needs strands AgentTool) ---
 try:
     from strands_robots.robot import Robot as HardwareRobot  # noqa: F401
+
     __all__.append("HardwareRobot")
 except ImportError:
     pass
@@ -77,6 +86,7 @@ _TOOL_IMPORTS = {
 for _export_name, (_module_path, _attr_name) in _TOOL_IMPORTS.items():
     try:
         import importlib as _importlib
+
         _mod = _importlib.import_module(_module_path)
         _obj = getattr(_mod, _attr_name)
         globals()[_export_name] = _obj
@@ -92,18 +102,21 @@ del _name
 # --- Tier 4: Optional policy providers ---
 try:
     from strands_robots.policies.groot import Gr00tPolicy  # noqa: F401
+
     __all__.append("Gr00tPolicy")
 except ImportError as e:
     logger.debug("GR00T policy not available: %s", e)
 
 try:
     from strands_robots.policies.lerobot_async import LerobotAsyncPolicy  # noqa: F401
+
     __all__.append("LerobotAsyncPolicy")
 except ImportError:
     pass
 
 try:
     from strands_robots.policies.dreamgen import DreamgenPolicy  # noqa: F401
+
     __all__.append("DreamgenPolicy")
 except ImportError:
     pass

@@ -57,6 +57,7 @@ class Policy(ABC):
                 sim.step(5)
         """
         import asyncio
+
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
@@ -65,6 +66,7 @@ class Policy(ABC):
         if loop and loop.is_running():
             # Already in an async context — create a new thread to avoid deadlock
             import concurrent.futures
+
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
                 return pool.submit(asyncio.run, self.get_actions(observation_dict, instruction, **kwargs)).result()
         else:
@@ -106,7 +108,7 @@ class MockPolicy(Policy):
         if not self.robot_state_keys:
             if "observation.state" in observation_dict:
                 state = observation_dict["observation.state"]
-                dim = len(state) if hasattr(state, '__len__') else 6
+                dim = len(state) if hasattr(state, "__len__") else 6
             else:
                 dim = 6  # Default to 6-DOF
             self.robot_state_keys = [f"joint_{i}" for i in range(dim)]
@@ -129,6 +131,7 @@ class MockPolicy(Policy):
 # =============================================================================
 # Policy Registry — the plugin system
 # =============================================================================
+
 
 class PolicyRegistry:
     """Plugin registry for policy providers.
@@ -223,11 +226,7 @@ class PolicyRegistry:
             # Try checking __all__ for any Policy subclass
             for attr_name in dir(module):
                 attr = getattr(module, attr_name)
-                if (
-                    isinstance(attr, type)
-                    and issubclass(attr, Policy)
-                    and attr is not Policy
-                ):
+                if isinstance(attr, type) and issubclass(attr, Policy) and attr is not Policy:
                     logger.info(f"Auto-discovered policy provider: {name} -> {attr_name}")
                     self._registry[name] = lambda c=attr: c
                     return attr
@@ -246,10 +245,7 @@ class PolicyRegistry:
         return sorted(set(names))
 
     def __contains__(self, name: str) -> bool:
-        return (
-            name in self._registry
-            or name in self._aliases
-        )
+        return name in self._registry or name in self._aliases
 
 
 # Global registry instance
@@ -349,8 +345,15 @@ _registry.register(
 _registry.register(
     "cosmos_predict",
     loader=lambda: importlib.import_module("strands_robots.policies.cosmos_predict").Cosmos_predictPolicy,
-    aliases=["cosmos", "cosmos_predict2", "cosmos_predict_2b", "cosmos_predict_14b",
-             "cosmos_policy", "cosmos_world_model", "nvidia_cosmos"],
+    aliases=[
+        "cosmos",
+        "cosmos_predict2",
+        "cosmos_predict_2b",
+        "cosmos_predict_14b",
+        "cosmos_policy",
+        "cosmos_world_model",
+        "nvidia_cosmos",
+    ],
 )
 
 _registry.register(
@@ -369,6 +372,7 @@ _registry.register(
 # =============================================================================
 # Public API
 # =============================================================================
+
 
 def register_policy(
     name: str,
@@ -437,7 +441,8 @@ def create_policy(provider: str, **kwargs) -> Policy:
     # vs a registered provider name
     _needs_resolution = (
         "/" in provider
-        or ":" in provider and not provider.replace("_", "").isalpha()
+        or ":" in provider
+        and not provider.replace("_", "").isalpha()
         or provider.startswith("ws://")
         or provider.startswith("grpc://")
         or provider.startswith("zmq://")
@@ -446,6 +451,7 @@ def create_policy(provider: str, **kwargs) -> Policy:
     if _needs_resolution:
         try:
             from strands_robots.policy_resolver import resolve_policy
+
             resolved_provider, resolved_kwargs = resolve_policy(provider, **kwargs)
         except Exception:
             # Resolution failed — fall through to direct lookup

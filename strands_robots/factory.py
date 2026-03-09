@@ -40,7 +40,11 @@ _UNIFIED_ROBOTS: Dict[str, Dict[str, Any]] = {
     "openarm": {"sim": "openarm", "real": None, "description": "Enactic OpenArm (7-DOF, DAMIAO motors, CAN bus)"},
     "lekiwi": {"sim": None, "real": "lekiwi", "description": "LeKiwi mobile robot"},
     "reachy2": {"sim": None, "real": "reachy2", "description": "Pollen Reachy 2"},
-    "reachy_mini": {"sim": "reachy_mini", "real": None, "description": "Pollen Reachy Mini (6-DOF Stewart head + antennas)"},
+    "reachy_mini": {
+        "sim": "reachy_mini",
+        "real": None,
+        "description": "Pollen Reachy Mini (6-DOF Stewart head + antennas)",
+    },
     "hope_jr": {"sim": None, "real": "hope_jr", "description": "Hope Junior arm"},
     "kuka_iiwa": {"sim": "kuka_iiwa", "real": None, "description": "KUKA LBR iiwa 14"},
     "kinova_gen3": {"sim": "kinova_gen3", "real": None, "description": "Kinova Gen3 (7-DOF)"},
@@ -55,27 +59,60 @@ _UNIFIED_ROBOTS: Dict[str, Dict[str, Any]] = {
     "cassie": {"sim": "cassie", "real": None, "description": "Agility Cassie Bipedal"},
     "unitree_a1": {"sim": "unitree_a1", "real": None, "description": "Unitree A1 Quadruped"},
     "google_robot": {"sim": "google_robot", "real": None, "description": "Google Robot (RT-X)"},
-    "open_duck_mini": {"sim": "open_duck_mini", "real": None, "description": "Open Duck Mini V2 (16-DOF expressive biped)"},
+    "open_duck_mini": {
+        "sim": "open_duck_mini",
+        "real": None,
+        "description": "Open Duck Mini V2 (16-DOF expressive biped)",
+    },
     "asimov_v0": {"sim": "asimov_v0", "real": None, "description": "Asimov V0 Bipedal Legs (12-DOF)"},
 }
 
 _ALIASES: Dict[str, str] = {
-    "so100_follower": "so100", "so100_dualcam": "so100", "so100_4cam": "so100",
-    "so101_follower": "so101", "so101_dualcam": "so101", "so101_tricam": "so101",
-    "koch_follower": "koch", "koch_v1.1": "koch",
-    "g1": "unitree_g1", "h1": "unitree_h1", "go2": "unitree_go2",
-    "a1": "unitree_a1", "franka": "panda", "franka_panda": "panda", "franka_fr3": "fr3",
-    "bi_so_follower": "aloha", "reachy-mini": "reachy_mini", "reachymini": "reachy_mini", "gr1": "fourier_n1", "fourier_gr1": "fourier_n1",
-    "open_duck": "open_duck_mini", "mini_bdx": "open_duck_mini", "bdx": "open_duck_mini", "open_duck_v2": "open_duck_mini",
+    "so100_follower": "so100",
+    "so100_dualcam": "so100",
+    "so100_4cam": "so100",
+    "so101_follower": "so101",
+    "so101_dualcam": "so101",
+    "so101_tricam": "so101",
+    "koch_follower": "koch",
+    "koch_v1.1": "koch",
+    "g1": "unitree_g1",
+    "h1": "unitree_h1",
+    "go2": "unitree_go2",
+    "a1": "unitree_a1",
+    "franka": "panda",
+    "franka_panda": "panda",
+    "franka_fr3": "fr3",
+    "bi_so_follower": "aloha",
+    "reachy-mini": "reachy_mini",
+    "reachymini": "reachy_mini",
+    "gr1": "fourier_n1",
+    "fourier_gr1": "fourier_n1",
+    "open_duck": "open_duck_mini",
+    "mini_bdx": "open_duck_mini",
+    "bdx": "open_duck_mini",
+    "open_duck_v2": "open_duck_mini",
     "asimov": "asimov_v0",
-    "enactic_openarm": "openarm", "open_arm": "openarm", "openarm_v10": "openarm",
+    "enactic_openarm": "openarm",
+    "open_arm": "openarm",
+    "openarm_v10": "openarm",
     # GR00T DATA_CONFIG_MAP variant aliases → base robots
-    "unitree_g1_locomanip": "unitree_g1", "unitree_g1_full_body": "unitree_g1",
-    "fourier_gr1_arms_only": "fourier_n1", "fourier_gr1_arms_waist": "fourier_n1", "fourier_gr1_full_upper_body": "fourier_n1",
-    "single_panda_gripper": "panda", "bimanual_panda_gripper": "panda", "bimanual_panda_hand": "panda",
+    "unitree_g1_locomanip": "unitree_g1",
+    "unitree_g1_full_body": "unitree_g1",
+    "fourier_gr1_arms_only": "fourier_n1",
+    "fourier_gr1_arms_waist": "fourier_n1",
+    "fourier_gr1_full_upper_body": "fourier_n1",
+    "single_panda_gripper": "panda",
+    "bimanual_panda_gripper": "panda",
+    "bimanual_panda_hand": "panda",
     "libero_panda": "panda",
-    "oxe_droid": "panda", "oxe_google": "google_robot", "oxe_widowx": "vx300s",
-    "agibot_dual_arm": "aloha", "agibot_dual_arm_gripper": "aloha", "agibot_dual_arm_dexhand": "aloha", "agibot_dual_arm_full": "aloha",
+    "oxe_droid": "panda",
+    "oxe_google": "google_robot",
+    "oxe_widowx": "vx300s",
+    "agibot_dual_arm": "aloha",
+    "agibot_dual_arm_gripper": "aloha",
+    "agibot_dual_arm_dexhand": "aloha",
+    "agibot_dual_arm_full": "aloha",
     "agibot_genie1": "aloha",
     "galaxea_r1_pro": "aloha",
     "agilex_piper": "piper",
@@ -103,16 +140,19 @@ def _auto_detect_mode(canonical: str, robot_info: Optional[Dict]) -> str:
     if robot_info and robot_info.get("real"):
         try:
             import serial.tools.list_ports
+
             ports = list(serial.tools.list_ports.comports())
             # Only match ROBOT-SPECIFIC servo controllers, not generic USB serial
             robot_servo_keywords = ["feetech", "dynamixel", "sts3215", "xl430", "xl330"]
             robot_ports = [
-                p for p in ports
-                if any(kw in (p.description + p.manufacturer_string).lower()
-                       for kw in robot_servo_keywords
-                       if hasattr(p, 'manufacturer_string') or True)
-                and not any(s in p.description.lower()
-                           for s in ["bluetooth", "internal", "debug", "apple", "modem"])
+                p
+                for p in ports
+                if any(
+                    kw in (p.description + p.manufacturer_string).lower()
+                    for kw in robot_servo_keywords
+                    if hasattr(p, "manufacturer_string") or True
+                )
+                and not any(s in p.description.lower() for s in ["bluetooth", "internal", "debug", "apple", "modem"])
             ]
             if robot_ports:
                 logger.info(f"Auto-detected robot hardware: {[p.device for p in robot_ports]}")
@@ -205,7 +245,7 @@ def Robot(
                 enable_differentiable=kwargs.pop("enable_differentiable", False),
                 enable_cuda_graph=kwargs.pop("enable_cuda_graph", False),
                 substeps=kwargs.pop("substeps", 1),
-                physics_dt=kwargs.pop("physics_dt", 1.0/200.0),
+                physics_dt=kwargs.pop("physics_dt", 1.0 / 200.0),
             )
             newton_backend = NewtonBackend(config=config)
             newton_backend.create_world()
@@ -279,12 +319,14 @@ def list_robots(mode: str = "all") -> List[Dict[str, Any]]:
         if mode == "both" and not (has_sim and has_real):
             continue
 
-        results.append({
-            "name": name,
-            "description": info.get("description", ""),
-            "has_sim": has_sim,
-            "has_real": has_real,
-        })
+        results.append(
+            {
+                "name": name,
+                "description": info.get("description", ""),
+                "has_sim": has_sim,
+                "has_real": has_real,
+            }
+        )
 
     return results
 

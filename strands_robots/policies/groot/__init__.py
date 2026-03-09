@@ -21,9 +21,12 @@ from .data_config import DATA_CONFIG_MAP, BaseDataConfig, load_data_config  # no
 # Convenience aliases for common import patterns
 Gr00tDataConfig = BaseDataConfig
 
+
 def _get_client_class():
     from .client import ExternalRobotInferenceClient
+
     return ExternalRobotInferenceClient
+
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +46,7 @@ def _detect_groot_version() -> Optional[str]:
     try:
         from gr00t.data.embodiment_tags import EmbodimentTag as _EmbodimentTag  # noqa: F401
         from gr00t.policy.gr00t_policy import Gr00tPolicy as _Gr00tPolicy  # noqa: F401
+
         _GROOT_VERSION = "n1.6"
         logger.info("Detected GR00T N1.6 (gr00t.policy.gr00t_policy)")
         return _GROOT_VERSION
@@ -52,6 +56,7 @@ def _detect_groot_version() -> Optional[str]:
     # Try N1.5
     try:
         from gr00t.model.policy import Gr00tPolicy as _  # noqa: F401
+
         _GROOT_VERSION = "n1.5"
         logger.info("Detected GR00T N1.5 (gr00t.model.policy)")
         return _GROOT_VERSION
@@ -132,8 +137,7 @@ class Gr00tPolicy(Policy):
                 self._client = _get_client_class()(host=host, port=port)
             except Exception as e:
                 raise ImportError(
-                    f"GR00T service client init failed: {e}. "
-                    f"Install: pip install msgpack pyzmq"
+                    f"GR00T service client init failed: {e}. " f"Install: pip install msgpack pyzmq"
                 ) from e
 
         logger.info(f"🧠 GR00T Policy [{self._mode}] v={self._groot_version or 'service-only'}")
@@ -300,9 +304,9 @@ class Gr00tPolicy(Policy):
                     arr = obs_dict[src_key]
                     if isinstance(arr, np.ndarray):
                         # Ensure (B=1, T=1, H, W, C) — add batch AND temporal dims
-                        if arr.ndim == 3:          # (H, W, C) → (1, 1, H, W, C)
+                        if arr.ndim == 3:  # (H, W, C) → (1, 1, H, W, C)
                             arr = arr[np.newaxis, np.newaxis, ...]
-                        elif arr.ndim == 4:        # (B, H, W, C) → (B, 1, H, W, C)
+                        elif arr.ndim == 4:  # (B, H, W, C) → (B, 1, H, W, C)
                             arr = arr[:, np.newaxis, ...]
                         nested["video"][key] = arr
                     else:
@@ -321,9 +325,9 @@ class Gr00tPolicy(Policy):
                     if isinstance(arr, np.ndarray):
                         arr = arr.astype(np.float32)
                         # Ensure (B=1, T=1, D) — add batch AND temporal dims
-                        if arr.ndim == 1:          # (D,) → (1, 1, D)
+                        if arr.ndim == 1:  # (D,) → (1, 1, D)
                             arr = arr[np.newaxis, np.newaxis, ...]
-                        elif arr.ndim == 2:        # (B, D) → (B, 1, D)
+                        elif arr.ndim == 2:  # (B, D) → (B, 1, D)
                             arr = arr[:, np.newaxis, ...]
                         nested["state"][key] = arr
                     else:
@@ -394,14 +398,18 @@ class Gr00tPolicy(Policy):
             #               + left_hand(7) + right_hand(7) = 43 DOF total
             # N1.6 verified DOF layout from UNITREE_G1 EmbodimentTag
             g1_layout = [
-                ("state.left_leg", 6), ("state.right_leg", 6), ("state.waist", 3),
-                ("state.left_arm", 7), ("state.right_arm", 7),
-                ("state.left_hand", 7), ("state.right_hand", 7),
+                ("state.left_leg", 6),
+                ("state.right_leg", 6),
+                ("state.waist", 3),
+                ("state.left_arm", 7),
+                ("state.right_arm", 7),
+                ("state.left_hand", 7),
+                ("state.right_hand", 7),
             ]
             idx = 0
             for key, dim in g1_layout:
                 if idx + dim <= len(robot_state):
-                    obs_dict[key] = robot_state[idx:idx + dim].astype(_dtype)
+                    obs_dict[key] = robot_state[idx : idx + dim].astype(_dtype)
                 else:
                     # Pad with zeros if robot_state is shorter (e.g. arms-only mode)
                     obs_dict[key] = np.zeros(dim, dtype=_dtype)
@@ -421,7 +429,7 @@ class Gr00tPolicy(Policy):
         normalized = {}
         for k, v in action_chunk.items():
             clean_key = k.replace("action.", "") if k.startswith("action.") else k
-            if hasattr(v, 'shape'):
+            if hasattr(v, "shape"):
                 # Remove batch dim if present: (1, H, D) → (H, D)
                 arr = v
                 while arr.ndim > 2:
@@ -457,7 +465,7 @@ class Gr00tPolicy(Policy):
                 for ak in normalized:
                     v = normalized[ak]
                     row = v[i] if v.ndim >= 1 else v
-                    action_dict[ak] = row.tolist() if hasattr(row, 'tolist') else list(row)
+                    action_dict[ak] = row.tolist() if hasattr(row, "tolist") else list(row)
 
             robot_actions.append(action_dict)
         return robot_actions

@@ -143,7 +143,7 @@ class OpenvlaPolicy(Policy):
         action_dict = {}
         eef_keys = ["x", "y", "z", "roll", "pitch", "yaw", "gripper"]
         keys = self._robot_state_keys if len(self._robot_state_keys) >= 7 else eef_keys
-        for i, key in enumerate(keys[:len(action_np)]):
+        for i, key in enumerate(keys[: len(action_np)]):
             action_dict[key] = float(action_np[i])
 
         self._step += 1

@@ -106,9 +106,7 @@ class CogactPolicy(Policy):
         try:
             from transformers import AutoModelForVision2Seq, AutoProcessor
 
-            self._processor = AutoProcessor.from_pretrained(
-                self._model_id, trust_remote_code=True
-            )
+            self._processor = AutoProcessor.from_pretrained(self._model_id, trust_remote_code=True)
             self._model = AutoModelForVision2Seq.from_pretrained(
                 self._model_id,
                 torch_dtype=torch.bfloat16,
@@ -130,9 +128,7 @@ class CogactPolicy(Policy):
 
         self._loaded = True
 
-    async def get_actions(
-        self, observation_dict: Dict[str, Any], instruction: str, **kwargs
-    ) -> List[Dict[str, Any]]:
+    async def get_actions(self, observation_dict: Dict[str, Any], instruction: str, **kwargs) -> List[Dict[str, Any]]:
         """Get actions from CogACT.
 
         CogACT outputs action trajectories via diffusion denoising.
@@ -147,9 +143,7 @@ class CogactPolicy(Policy):
         # CogACT prompt format
         prompt = f"In: What action should the robot take to {instruction}?\nOut:"
 
-        inputs = self._processor(prompt, image, return_tensors="pt").to(
-            self._device, dtype=torch.bfloat16
-        )
+        inputs = self._processor(prompt, image, return_tensors="pt").to(self._device, dtype=torch.bfloat16)
 
         with torch.no_grad():
             # Try CogACT's direct action prediction
@@ -168,9 +162,7 @@ class CogactPolicy(Policy):
                 action_np = np.asarray(action)
             else:
                 # Fallback: text generation
-                outputs = self._model.generate(
-                    **inputs, max_new_tokens=256, do_sample=False
-                )
+                outputs = self._model.generate(**inputs, max_new_tokens=256, do_sample=False)
                 text = self._processor.decode(outputs[0], skip_special_tokens=True)
                 action_np = self._parse_action_text(text)
 
@@ -192,6 +184,7 @@ class CogactPolicy(Policy):
 
     def _extract_image(self, observation_dict):
         from PIL import Image
+
         for key in sorted(observation_dict.keys()):
             val = observation_dict[key]
             if isinstance(val, np.ndarray) and val.ndim == 3 and val.shape[-1] in (3, 4):
@@ -200,11 +193,12 @@ class CogactPolicy(Policy):
 
     def _parse_action_text(self, text: str) -> np.ndarray:
         import re
+
         numbers = re.findall(r"[-+]?\d*\.?\d+", text)
-        values = [float(n) for n in numbers[-self._action_dim:]]
+        values = [float(n) for n in numbers[-self._action_dim :]]
         while len(values) < self._action_dim:
             values.append(0.0)
-        return np.array([values[:self._action_dim]], dtype=np.float32)
+        return np.array([values[: self._action_dim]], dtype=np.float32)
 
 
 __all__ = ["CogactPolicy"]

@@ -87,9 +87,7 @@ class UnifolmPolicy(Policy):
         try:
             from transformers import AutoModel, AutoProcessor
 
-            self._processor = AutoProcessor.from_pretrained(
-                self._model_id, trust_remote_code=True
-            )
+            self._processor = AutoProcessor.from_pretrained(self._model_id, trust_remote_code=True)
             self._model = AutoModel.from_pretrained(
                 self._model_id,
                 torch_dtype=torch.bfloat16,
@@ -161,16 +159,12 @@ class UnifolmPolicy(Policy):
         # Try model-specific API first
         if hasattr(self._model, "predict_action"):
             with torch.no_grad():
-                action = self._model.predict_action(
-                    image=image, instruction=instruction, state=state
-                )
+                action = self._model.predict_action(image=image, instruction=instruction, state=state)
             return [self._array_to_dict(np.asarray(action).flatten())]
 
         # Fallback: generic generate
         if self._processor:
-            inputs = self._processor(instruction, image, return_tensors="pt").to(
-                self._device, dtype=torch.bfloat16
-            )
+            inputs = self._processor(instruction, image, return_tensors="pt").to(self._device, dtype=torch.bfloat16)
             with torch.no_grad():
                 outputs = self._model.generate(**inputs, max_new_tokens=256)
             text = self._processor.decode(outputs[0], skip_special_tokens=True)
@@ -181,6 +175,7 @@ class UnifolmPolicy(Policy):
 
     def _extract_image(self, observation_dict):
         from PIL import Image
+
         for key in sorted(observation_dict.keys()):
             val = observation_dict[key]
             if isinstance(val, np.ndarray) and val.ndim == 3 and val.shape[-1] in (3, 4):
@@ -189,8 +184,9 @@ class UnifolmPolicy(Policy):
 
     def _parse_numbers(self, text: str) -> np.ndarray:
         import re
+
         numbers = re.findall(r"[-+]?\d*\.?\d+", text)
-        values = [float(n) for n in numbers[:self._action_dim]]
+        values = [float(n) for n in numbers[: self._action_dim]]
         while len(values) < self._action_dim:
             values.append(0.0)
         return np.array(values, dtype=np.float32)

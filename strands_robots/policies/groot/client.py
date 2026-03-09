@@ -25,12 +25,11 @@ def _ensure_deps():
         try:
             import msgpack
             import zmq
+
             _zmq = zmq
             _msgpack = msgpack
         except ImportError as e:
-            raise ImportError(
-                "GR00T service client requires: pip install pyzmq msgpack"
-            ) from e
+            raise ImportError("GR00T service client requires: pip install pyzmq msgpack") from e
 
 
 class MsgSerializer:

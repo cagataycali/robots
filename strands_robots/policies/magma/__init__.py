@@ -107,9 +107,7 @@ class MagmaPolicy(Policy):
         # Magma prompt for action prediction
         prompt = f"<image>\nWhat action should the robot take to {instruction}? Predict the 7-DoF action as numbers."
 
-        inputs = self._processor(prompt, image, return_tensors="pt").to(
-            self._device, dtype=torch.bfloat16
-        )
+        inputs = self._processor(prompt, image, return_tensors="pt").to(self._device, dtype=torch.bfloat16)
 
         with torch.no_grad():
             # Check for direct action prediction API
@@ -137,6 +135,7 @@ class MagmaPolicy(Policy):
 
     def _extract_image(self, observation_dict):
         from PIL import Image
+
         for key in sorted(observation_dict.keys()):
             val = observation_dict[key]
             if isinstance(val, np.ndarray) and val.ndim == 3 and val.shape[-1] in (3, 4):
@@ -145,12 +144,13 @@ class MagmaPolicy(Policy):
 
     def _parse_action_text(self, text: str) -> np.ndarray:
         import re
+
         # Extract numbers from generated text
         numbers = re.findall(r"[-+]?\d*\.?\d+", text)
-        values = [float(n) for n in numbers[-self._action_dim:]]  # Take last N numbers
+        values = [float(n) for n in numbers[-self._action_dim :]]  # Take last N numbers
         while len(values) < self._action_dim:
             values.append(0.0)
-        return np.array(values[:self._action_dim], dtype=np.float32)
+        return np.array(values[: self._action_dim], dtype=np.float32)
 
     def reason_about_scene(self, observation_dict: Dict[str, Any], question: str) -> str:
         """Use Magma as a VLM to reason about the scene (bonus capability)."""
@@ -161,9 +161,7 @@ class MagmaPolicy(Policy):
         image = self._extract_image(observation_dict)
         prompt = f"<image>\n{question}"
 
-        inputs = self._processor(prompt, image, return_tensors="pt").to(
-            self._device, dtype=torch.bfloat16
-        )
+        inputs = self._processor(prompt, image, return_tensors="pt").to(self._device, dtype=torch.bfloat16)
         with torch.no_grad():
             outputs = self._model.generate(**inputs, max_new_tokens=512, do_sample=False)
         return self._processor.decode(outputs[0], skip_special_tokens=True)

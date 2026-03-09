@@ -51,6 +51,7 @@ def _resolve_policy_class_from_hub(pretrained_name_or_path: str):
         # HuggingFace Hub
         try:
             from huggingface_hub import hf_hub_download
+
             config_path = hf_hub_download(pretrained_name_or_path, "config.json")
             with open(config_path) as f:
                 config = json.load(f)
@@ -67,6 +68,7 @@ def _resolve_policy_class_from_hub(pretrained_name_or_path: str):
 
     # 2. Use LeRobot's own factory — handles all dynamic imports
     from lerobot.policies.factory import get_policy_class
+
     PolicyClass = get_policy_class(policy_type)
 
     logger.info(f"Auto-resolved: '{pretrained_name_or_path}' -> type='{policy_type}' -> {PolicyClass.__name__}")
@@ -77,6 +79,7 @@ def _resolve_policy_class_by_name(policy_type: str):
     """Resolve policy class from an explicit type string using LeRobot's factory."""
     try:
         from lerobot.policies.factory import get_policy_class
+
         return get_policy_class(policy_type)
     except (RuntimeError, ImportError) as e:
         raise ImportError(f"LeRobot policy factory import failed (likely CUDA/flash_attn issue): {e}") from e
@@ -146,13 +149,15 @@ class LerobotLocalPolicy(Policy):
         """
         if robot_state_keys:
             self.robot_state_keys = robot_state_keys
-            logger.info(f"LeRobot local state keys set: {len(self.robot_state_keys)} keys = {self.robot_state_keys[:5]}{'...' if len(self.robot_state_keys) > 5 else ''}")
+            logger.info(
+                f"LeRobot local state keys set: {len(self.robot_state_keys)} keys = {self.robot_state_keys[:5]}{'...' if len(self.robot_state_keys) > 5 else ''}"
+            )
             return
 
         # Auto-detect from model config
         if self._loaded and self._output_features:
-            action_feat = self._output_features.get('action')
-            if action_feat and hasattr(action_feat, 'shape') and action_feat.shape:
+            action_feat = self._output_features.get("action")
+            if action_feat and hasattr(action_feat, "shape") and action_feat.shape:
                 action_dim = action_feat.shape[0]
                 self.robot_state_keys = [f"joint_{i}" for i in range(action_dim)]
                 logger.warning(
@@ -163,8 +168,8 @@ class LerobotLocalPolicy(Policy):
                 return
 
         if self._loaded and self._input_features:
-            state_feat = self._input_features.get('observation.state')
-            if state_feat and hasattr(state_feat, 'shape') and state_feat.shape:
+            state_feat = self._input_features.get("observation.state")
+            if state_feat and hasattr(state_feat, "shape") and state_feat.shape:
                 state_dim = state_feat.shape[0]
                 self.robot_state_keys = [f"joint_{i}" for i in range(state_dim)]
                 logger.warning(
@@ -182,12 +187,14 @@ class LerobotLocalPolicy(Policy):
         import warnings
 
         import torch  # noqa: F401
+
         warnings.filterwarnings("ignore", message=".*Device.*")
 
         # XVLA compat: Florence2LanguageConfig.forced_bos_token_id missing in transformers 5.x
         try:
             from transformers.models.florence2.configuration_florence2 import Florence2LanguageConfig
-            if not hasattr(Florence2LanguageConfig, 'forced_bos_token_id'):
+
+            if not hasattr(Florence2LanguageConfig, "forced_bos_token_id"):
                 Florence2LanguageConfig.forced_bos_token_id = None
                 logger.debug("Patched Florence2LanguageConfig.forced_bos_token_id")
         except (ImportError, Exception):
@@ -202,32 +209,29 @@ class LerobotLocalPolicy(Policy):
             PolicyClass = _resolve_policy_class_by_name(self.policy_type)
         else:
             # Auto-detect from HF config.json
-            PolicyClass, self.policy_type = _resolve_policy_class_from_hub(
-                self.pretrained_name_or_path
-            )
+            PolicyClass, self.policy_type = _resolve_policy_class_from_hub(self.pretrained_name_or_path)
 
         self._policy = PolicyClass.from_pretrained(self.pretrained_name_or_path)
         self._policy.eval()
         self._device = next(self._policy.parameters()).device
 
-        if hasattr(self._policy, 'config'):
+        if hasattr(self._policy, "config"):
             cfg = self._policy.config
-            if hasattr(cfg, 'input_features'):
+            if hasattr(cfg, "input_features"):
                 self._input_features = cfg.input_features
-            if hasattr(cfg, 'output_features'):
+            if hasattr(cfg, "output_features"):
                 self._output_features = cfg.output_features
 
         elapsed = time.time() - start
         logger.info(
-            f"Loaded {PolicyClass.__name__} (type='{self.policy_type}') "
-            f"in {elapsed:.1f}s on {self._device}"
+            f"Loaded {PolicyClass.__name__} (type='{self.policy_type}') " f"in {elapsed:.1f}s on {self._device}"
         )
         self._loaded = True
 
         # Auto-detect robot_state_keys from model config if not set
         if not self.robot_state_keys and self._output_features:
-            action_feat = self._output_features.get('action')
-            if action_feat and hasattr(action_feat, 'shape') and action_feat.shape:
+            action_feat = self._output_features.get("action")
+            if action_feat and hasattr(action_feat, "shape") and action_feat.shape:
                 action_dim = action_feat.shape[0]
                 self.robot_state_keys = [f"joint_{i}" for i in range(action_dim)]
                 logger.warning(
@@ -240,15 +244,14 @@ class LerobotLocalPolicy(Policy):
         if self.use_processor and self.pretrained_name_or_path:
             try:
                 from strands_robots.processor import ProcessorBridge
+
                 self._processor_bridge = ProcessorBridge.from_pretrained(
                     self.pretrained_name_or_path,
                     device=str(self._device) if self._device else None,
                     overrides=self.processor_overrides or {},
                 )
                 if self._processor_bridge.is_active:
-                    logger.info(
-                        f"Processor bridge loaded: {self._processor_bridge}"
-                    )
+                    logger.info(f"Processor bridge loaded: {self._processor_bridge}")
                 else:
                     self._processor_bridge = None
                     logger.debug("No processor configs found, using raw obs/action flow")
@@ -256,9 +259,7 @@ class LerobotLocalPolicy(Policy):
                 logger.debug(f"Processor bridge not loaded: {e}")
                 self._processor_bridge = None
 
-    async def get_actions(
-        self, observation_dict: Dict[str, Any], instruction: str, **kwargs
-    ) -> List[Dict[str, Any]]:
+    async def get_actions(self, observation_dict: Dict[str, Any], instruction: str, **kwargs) -> List[Dict[str, Any]]:
         if not self._loaded:
             if self.pretrained_name_or_path:
                 self._load_model()
@@ -270,8 +271,8 @@ class LerobotLocalPolicy(Policy):
         try:
             # Inject task/instruction into obs for VLA tokenizer preprocessing
             obs = dict(observation_dict)
-            if instruction and 'task' not in obs:
-                obs['task'] = instruction
+            if instruction and "task" not in obs:
+                obs["task"] = instruction
 
             # Apply preprocessor if available
             if self._processor_bridge and self._processor_bridge.has_preprocessor:
@@ -318,13 +319,11 @@ class LerobotLocalPolicy(Policy):
         if self._processor_bridge and self._processor_bridge.has_postprocessor:
             action_tensor = self._processor_bridge.postprocess(action_tensor)
 
-        if hasattr(action_tensor, 'cpu'):
+        if hasattr(action_tensor, "cpu"):
             return action_tensor.cpu().numpy()
         return np.asarray(action_tensor)
 
-    def _build_observation_batch(
-        self, observation_dict: Dict[str, Any], instruction: str
-    ) -> Dict[str, Any]:
+    def _build_observation_batch(self, observation_dict: Dict[str, Any], instruction: str) -> Dict[str, Any]:
         import torch
 
         batch = {}
@@ -386,24 +385,30 @@ class LerobotLocalPolicy(Policy):
             # If not present but needed, try to tokenize the instruction
             if "observation.language.tokens" not in batch and instruction:
                 try:
-                    if hasattr(self._policy, 'config') and hasattr(self._policy.config, 'tokenizer_name'):
+                    if hasattr(self._policy, "config") and hasattr(self._policy.config, "tokenizer_name"):
                         from transformers import AutoTokenizer
+
                         tokenizer = AutoTokenizer.from_pretrained(self._policy.config.tokenizer_name)
                         # Use max_len_seq (model's total sequence budget) as upper bound
                         # not tokenizer_max_length (which may be much larger)
-                        max_seq = getattr(self._policy.config, 'max_len_seq', 512)
+                        max_seq = getattr(self._policy.config, "max_len_seq", 512)
                         max_len = min(
-                            getattr(self._policy.config, 'tokenizer_max_length', 50),
+                            getattr(self._policy.config, "tokenizer_max_length", 50),
                             max_seq // 4,  # Leave room for image tokens + state
                             50,  # Reasonable default for short instructions
                         )
                         encoded = tokenizer(
-                            instruction, return_tensors="pt", padding="max_length",
-                            max_length=max_len, truncation=True,
+                            instruction,
+                            return_tensors="pt",
+                            padding="max_length",
+                            max_length=max_len,
+                            truncation=True,
                         )
                         batch["observation.language.tokens"] = encoded["input_ids"].to(self._device)
                         if "attention_mask" in encoded:
-                            batch["observation.language.attention_mask"] = encoded["attention_mask"].bool().to(self._device)
+                            batch["observation.language.attention_mask"] = (
+                                encoded["attention_mask"].bool().to(self._device)
+                            )
                 except Exception as e:
                     logger.debug(f"VLA tokenization fallback failed: {e}")
 
@@ -430,13 +435,11 @@ class LerobotLocalPolicy(Policy):
         if state_values:
             state_feature = self._input_features.get("observation.state")
             if state_feature:
-                expected_dim = state_feature.shape[0] if hasattr(state_feature, 'shape') else len(state_values)
+                expected_dim = state_feature.shape[0] if hasattr(state_feature, "shape") else len(state_values)
                 while len(state_values) < expected_dim:
                     state_values.append(0.0)
                 state_values = state_values[:expected_dim]
-            batch["observation.state"] = torch.tensor(
-                state_values, dtype=torch.float32
-            ).unsqueeze(0).to(self._device)
+            batch["observation.state"] = torch.tensor(state_values, dtype=torch.float32).unsqueeze(0).to(self._device)
 
         # Camera images
         for key, value in observation_dict.items():
@@ -458,40 +461,47 @@ class LerobotLocalPolicy(Policy):
         # Detection: if model config has tokenizer_name, it's a VLA that needs language tokens
         if instruction:
             has_tokenizer_config = (
-                hasattr(self._policy, 'config')
-                and hasattr(self._policy.config, 'tokenizer_name')
+                hasattr(self._policy, "config")
+                and hasattr(self._policy.config, "tokenizer_name")
                 and self._policy.config.tokenizer_name
             )
-            needs_language = (
-                "observation.language.tokens" not in batch
-                and (any("language" in k for k in self._input_features) or has_tokenizer_config)
+            needs_language = "observation.language.tokens" not in batch and (
+                any("language" in k for k in self._input_features) or has_tokenizer_config
             )
             needs_task = any("task" in k for k in self._input_features) and "task" not in batch
 
             if needs_language:
                 try:
-                    if hasattr(self._policy, 'config') and hasattr(self._policy.config, 'tokenizer_name'):
+                    if hasattr(self._policy, "config") and hasattr(self._policy.config, "tokenizer_name"):
                         from transformers import AutoTokenizer
+
                         tokenizer = AutoTokenizer.from_pretrained(self._policy.config.tokenizer_name)
                         # Use max_len_seq (model's total sequence budget) as upper bound
                         # not tokenizer_max_length (which may be much larger)
-                        max_seq = getattr(self._policy.config, 'max_len_seq', 512)
+                        max_seq = getattr(self._policy.config, "max_len_seq", 512)
                         max_len = min(
-                            getattr(self._policy.config, 'tokenizer_max_length', 50),
+                            getattr(self._policy.config, "tokenizer_max_length", 50),
                             max_seq // 4,  # Leave room for image tokens + state
                             50,  # Reasonable default for short instructions
                         )
-                        pad_side = getattr(self._policy.config, 'tokenizer_padding_side', 'right')
+                        pad_side = getattr(self._policy.config, "tokenizer_padding_side", "right")
                         tokenizer.padding_side = pad_side
                         encoded = tokenizer(
-                            instruction, return_tensors="pt", padding="max_length",
-                            max_length=max_len, truncation=True,
+                            instruction,
+                            return_tensors="pt",
+                            padding="max_length",
+                            max_length=max_len,
+                            truncation=True,
                         )
                         batch["observation.language.tokens"] = encoded["input_ids"].to(self._device)
                         if "attention_mask" in encoded:
-                            batch["observation.language.attention_mask"] = encoded["attention_mask"].bool().to(self._device)
-                        logger.debug(f"VLA tokenized instruction: '{instruction[:50]}...' -> {encoded['input_ids'].shape}")
-                    elif hasattr(self._policy, 'processor') and self._policy.processor:
+                            batch["observation.language.attention_mask"] = (
+                                encoded["attention_mask"].bool().to(self._device)
+                            )
+                        logger.debug(
+                            f"VLA tokenized instruction: '{instruction[:50]}...' -> {encoded['input_ids'].shape}"
+                        )
+                    elif hasattr(self._policy, "processor") and self._policy.processor:
                         tokenized = self._policy.processor.tokenizer(
                             instruction, return_tensors="pt", padding=True, truncation=True
                         )
@@ -507,7 +517,7 @@ class LerobotLocalPolicy(Policy):
         # Fill missing image features with zeros
         for feat_name, feat_info in self._input_features.items():
             if feat_name not in batch and "image" in feat_name:
-                shape = feat_info.shape if hasattr(feat_info, 'shape') else (3, 480, 640)
+                shape = feat_info.shape if hasattr(feat_info, "shape") else (3, 480, 640)
                 batch[feat_name] = torch.zeros(1, *shape, device=self._device)
 
         return batch
@@ -549,12 +559,10 @@ class LerobotLocalPolicy(Policy):
         }
         if self._loaded:
             info["input_features"] = {
-                k: str(v.shape) if hasattr(v, 'shape') else str(v)
-                for k, v in self._input_features.items()
+                k: str(v.shape) if hasattr(v, "shape") else str(v) for k, v in self._input_features.items()
             }
             info["output_features"] = {
-                k: str(v.shape) if hasattr(v, 'shape') else str(v)
-                for k, v in self._output_features.items()
+                k: str(v.shape) if hasattr(v, "shape") else str(v) for k, v in self._output_features.items()
             }
             info["policy_class"] = type(self._policy).__name__
             info["n_parameters"] = sum(p.numel() for p in self._policy.parameters())

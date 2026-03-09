@@ -127,6 +127,7 @@ class AlpamayoPolicy(Policy):
             # Server mode — verify connectivity
             try:
                 import requests
+
                 requests.get(f"{self._server_url}/health", timeout=5)
                 logger.info(f"🏔️ Alpamayo server connected: {self._server_url}")
             except Exception as e:
@@ -148,9 +149,7 @@ class AlpamayoPolicy(Policy):
         try:
             from transformers import AutoModelForCausalLM, AutoProcessor
 
-            self._processor = AutoProcessor.from_pretrained(
-                self._model_id, trust_remote_code=True
-            )
+            self._processor = AutoProcessor.from_pretrained(self._model_id, trust_remote_code=True)
             self._model = AutoModelForCausalLM.from_pretrained(
                 self._model_id,
                 torch_dtype=torch.bfloat16,
@@ -202,9 +201,7 @@ class AlpamayoPolicy(Policy):
             return await self._infer_server(observation_dict, instruction)
         return self._infer_local(observation_dict, instruction)
 
-    async def _infer_server(
-        self, observation_dict: Dict[str, Any], instruction: str
-    ) -> List[Dict[str, Any]]:
+    async def _infer_server(self, observation_dict: Dict[str, Any], instruction: str) -> List[Dict[str, Any]]:
         """Inference via HTTP server."""
         import io
 
@@ -238,9 +235,7 @@ class AlpamayoPolicy(Policy):
 
         return [self._build_action_dict(trajectory, reasoning)]
 
-    def _infer_local(
-        self, observation_dict: Dict[str, Any], instruction: str
-    ) -> List[Dict[str, Any]]:
+    def _infer_local(self, observation_dict: Dict[str, Any], instruction: str) -> List[Dict[str, Any]]:
         """Local inference via HuggingFace model."""
         import torch
         from PIL import Image
@@ -264,8 +259,7 @@ class AlpamayoPolicy(Policy):
         else:
             inputs = self._processor(prompt, images, return_tensors="pt")
 
-        inputs = {k: v.to(self._device) for k, v in inputs.items()
-                  if isinstance(v, torch.Tensor)}
+        inputs = {k: v.to(self._device) for k, v in inputs.items() if isinstance(v, torch.Tensor)}
 
         reasoning = ""
         trajectory = np.zeros((self.NUM_TRAJECTORY_WAYPOINTS, 4))
@@ -276,8 +270,7 @@ class AlpamayoPolicy(Policy):
                 ego = self._extract_egomotion(observation_dict)
                 result = self._model.predict_trajectory(
                     **inputs,
-                    egomotion_history=torch.from_numpy(ego).unsqueeze(0).to(self._device)
-                    if ego is not None else None,
+                    egomotion_history=torch.from_numpy(ego).unsqueeze(0).to(self._device) if ego is not None else None,
                 )
                 trajectory = np.asarray(result.get("trajectory", trajectory))
                 reasoning = result.get("reasoning", "")
@@ -337,13 +330,14 @@ class AlpamayoPolicy(Policy):
     def _parse_trajectory_from_text(self, text: str) -> np.ndarray:
         """Parse trajectory waypoints from generated text."""
         import re
+
         numbers = re.findall(r"[-+]?\d*\.?\d+", text)
         values = [float(n) for n in numbers]
 
         # Group into (x, y, z, yaw) tuples
         trajectory = []
         for i in range(0, len(values) - 3, 4):
-            trajectory.append(values[i:i + 4])
+            trajectory.append(values[i : i + 4])
 
         # Pad to expected length
         while len(trajectory) < self.NUM_TRAJECTORY_WAYPOINTS:
@@ -352,11 +346,9 @@ class AlpamayoPolicy(Policy):
             else:
                 trajectory.append([0.0, 0.0, 0.0, 0.0])
 
-        return np.array(trajectory[:self.NUM_TRAJECTORY_WAYPOINTS], dtype=np.float32)
+        return np.array(trajectory[: self.NUM_TRAJECTORY_WAYPOINTS], dtype=np.float32)
 
-    def _build_action_dict(
-        self, trajectory: np.ndarray, reasoning: str = ""
-    ) -> Dict[str, Any]:
+    def _build_action_dict(self, trajectory: np.ndarray, reasoning: str = "") -> Dict[str, Any]:
         """Build action dict from trajectory + reasoning."""
         if trajectory.ndim == 1:
             trajectory = trajectory.reshape(-1, 4)
@@ -433,9 +425,7 @@ class AlpamayoPolicy(Policy):
 
         prompt = f"<image>\nAnalyze this driving scene: {situation}\nProvide Chain-of-Causation reasoning."
 
-        inputs = self._processor(prompt, image, return_tensors="pt").to(
-            self._device, dtype=torch.bfloat16
-        )
+        inputs = self._processor(prompt, image, return_tensors="pt").to(self._device, dtype=torch.bfloat16)
         with torch.no_grad():
             outputs = self._model.generate(**inputs, max_new_tokens=1024, do_sample=False)
         return self._processor.decode(outputs[0], skip_special_tokens=True)

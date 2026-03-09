@@ -204,9 +204,7 @@ class Cosmos_predictPolicy(Policy):
         self._step = 0
 
         mode_str = f"server={server_url}" if server_url else f"local ({model_id})"
-        logger.info(
-            f"🌌 Cosmos Predict 2.5 policy: mode={mode}, suite={suite}, {mode_str}"
-        )
+        logger.info(f"🌌 Cosmos Predict 2.5 policy: mode={mode}, suite={suite}, {mode_str}")
 
     @property
     def provider_name(self) -> str:
@@ -225,6 +223,7 @@ class Cosmos_predictPolicy(Policy):
             # Server mode — verify connectivity
             try:
                 import requests
+
                 requests.get(f"{self._server_url}/health", timeout=5)
                 logger.info(f"🌌 Cosmos server connected: {self._server_url}")
             except Exception as e:
@@ -287,10 +286,16 @@ class Cosmos_predictPolicy(Policy):
                 # Try to find dataset_statistics.json in the HF cache
                 try:
                     from huggingface_hub import snapshot_download
+
                     ckpt_dir = snapshot_download(self._model_id, allow_patterns=["*.json", "*.pkl"])
                     import os
-                    for fname in ["libero_dataset_statistics.json", "robocasa_dataset_statistics.json",
-                                  "aloha_dataset_statistics.json", "dataset_statistics.json"]:
+
+                    for fname in [
+                        "libero_dataset_statistics.json",
+                        "robocasa_dataset_statistics.json",
+                        "aloha_dataset_statistics.json",
+                        "dataset_statistics.json",
+                    ]:
                         stats_path = os.path.join(ckpt_dir, fname)
                         if os.path.exists(stats_path):
                             self._dataset_stats = cosmos_load_dataset_stats(stats_path)
@@ -305,9 +310,14 @@ class Cosmos_predictPolicy(Policy):
             # Initialize text embeddings cache (auto-resolve from HF if needed)
             if not self._t5_embeddings_path and self._dataset_stats_path:
                 import os
+
                 ckpt_dir = os.path.dirname(self._dataset_stats_path)
-                for fname in ["libero_t5_embeddings.pkl", "robocasa_t5_embeddings.pkl",
-                              "aloha_t5_embeddings.pkl", "t5_embeddings.pkl"]:
+                for fname in [
+                    "libero_t5_embeddings.pkl",
+                    "robocasa_t5_embeddings.pkl",
+                    "aloha_t5_embeddings.pkl",
+                    "t5_embeddings.pkl",
+                ]:
                     t5_path = os.path.join(ckpt_dir, fname)
                     if os.path.exists(t5_path):
                         self._t5_embeddings_path = t5_path
@@ -352,6 +362,7 @@ class Cosmos_predictPolicy(Policy):
 
             try:
                 from cosmos_predict2.config import MODEL_KEYS
+
                 if model_key_str in MODEL_KEYS:
                     key_obj = MODEL_KEYS[model_key_str]
                     checkpoint = MODEL_CHECKPOINTS.get(key_obj)
@@ -400,6 +411,7 @@ class Cosmos_predictPolicy(Policy):
             # MODEL_CHECKPOINTS is keyed by ModelKey objects, not strings.
             try:
                 from cosmos_predict2.config import MODEL_KEYS
+
                 if model_key_str in MODEL_KEYS:
                     key_obj = MODEL_KEYS[model_key_str]
                     checkpoint = MODEL_CHECKPOINTS.get(key_obj)
@@ -422,9 +434,7 @@ class Cosmos_predictPolicy(Policy):
             logger.info("🌌 World model loaded")
 
         except ImportError as e:
-            raise ImportError(
-                f"World model mode requires cosmos-predict2.\nError: {e}"
-            )
+            raise ImportError(f"World model mode requires cosmos-predict2.\nError: {e}")
 
     def _infer_config_name(self) -> str:
         """Infer the Cosmos config name from the model ID."""
@@ -626,6 +636,7 @@ class Cosmos_predictPolicy(Policy):
 
         # Run action-conditioned video generation
         import torchvision
+
         img_tensor = torchvision.transforms.functional.to_tensor(initial_frame).unsqueeze(0)
         num_video_frames = min(actions.shape[0] + 1, self._chunk_size + 1)
         vid_input = torch.cat(
@@ -637,7 +648,7 @@ class Cosmos_predictPolicy(Policy):
         video = self._video2world.generate_vid2world(
             prompt=instruction or "",
             input_path=vid_input,
-            action=torch.from_numpy(actions[:self._chunk_size]).float(),
+            action=torch.from_numpy(actions[: self._chunk_size]).float(),
             guidance=self._guidance,
             num_video_frames=num_video_frames,
             num_latent_conditional_frames=1,
@@ -647,10 +658,7 @@ class Cosmos_predictPolicy(Policy):
 
         # Return frames as action dicts with video metadata
         video_normalized = (video - (-1)) / (1 - (-1))
-        video_clamped = (
-            (torch.clamp(video_normalized[0], 0, 1) * 255)
-            .to(torch.uint8).permute(1, 2, 3, 0).cpu().numpy()
-        )
+        video_clamped = (torch.clamp(video_normalized[0], 0, 1) * 255).to(torch.uint8).permute(1, 2, 3, 0).cpu().numpy()
 
         result_actions = []
         for i in range(video_clamped.shape[0]):
@@ -677,6 +685,7 @@ class Cosmos_predictPolicy(Policy):
             raise ValueError("World model mode requires at least one camera image")
 
         import torchvision
+
         img_tensor = torchvision.transforms.functional.to_tensor(initial_frame).unsqueeze(0)
         num_frames = kwargs.get("num_video_frames", 17)
         vid_input = torch.cat(
@@ -696,10 +705,7 @@ class Cosmos_predictPolicy(Policy):
         )
 
         video_normalized = (video - (-1)) / (1 - (-1))
-        video_clamped = (
-            (torch.clamp(video_normalized[0], 0, 1) * 255)
-            .to(torch.uint8).permute(1, 2, 3, 0).cpu().numpy()
-        )
+        video_clamped = (torch.clamp(video_normalized[0], 0, 1) * 255).to(torch.uint8).permute(1, 2, 3, 0).cpu().numpy()
 
         return [{"predicted_frame": video_clamped[i]} for i in range(video_clamped.shape[0])]
 
@@ -754,7 +760,6 @@ class Cosmos_predictPolicy(Policy):
         - aloha: left_wrist_image, right_wrist_image, primary_image, proprio
         """
         obs = {}
-
 
         # Try to find images by various key patterns
         camera_mappings = {

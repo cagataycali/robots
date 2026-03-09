@@ -94,10 +94,7 @@ class DreamzeroPolicy(Policy):
         self._connected = False
         self._step = 0
 
-        logger.info(
-            f"🌊 DreamZero policy initialized: ws://{host}:{port} "
-            f"session={self._session_id[:8]}..."
-        )
+        logger.info(f"🌊 DreamZero policy initialized: ws://{host}:{port} " f"session={self._session_id[:8]}...")
 
     @property
     def provider_name(self) -> str:
@@ -115,9 +112,7 @@ class DreamzeroPolicy(Policy):
         try:
             import websockets.sync.client
         except ImportError:
-            raise ImportError(
-                "DreamZero requires websockets: pip install websockets"
-            )
+            raise ImportError("DreamZero requires websockets: pip install websockets")
 
         try:
             from openpi_client import msgpack_numpy
@@ -125,9 +120,7 @@ class DreamzeroPolicy(Policy):
             try:
                 import msgpack_numpy
             except ImportError:
-                raise ImportError(
-                    "DreamZero requires msgpack-numpy: pip install msgpack-numpy"
-                )
+                raise ImportError("DreamZero requires msgpack-numpy: pip install msgpack-numpy")
 
         uri = f"ws://{self._host}:{self._port}"
         logger.info(f"🌊 Connecting to DreamZero server at {uri}...")
@@ -173,9 +166,7 @@ class DreamzeroPolicy(Policy):
                 self._connected = True
                 logger.info(f"🌊 Connected via wss! Config: {self._server_config}")
             except Exception:
-                raise ConnectionError(
-                    f"Cannot connect to DreamZero server at {self._host}:{self._port}: {e}"
-                )
+                raise ConnectionError(f"Cannot connect to DreamZero server at {self._host}:{self._port}: {e}")
 
     def _build_observation(
         self,
@@ -207,9 +198,7 @@ class DreamzeroPolicy(Policy):
         needs_wrist = cfg.get("needs_wrist_camera", True)
 
         # Map camera images
-        camera_keys = sorted(
-            [k for k in observation_dict if "camera" in k.lower() or "image" in k.lower()]
-        )
+        camera_keys = sorted([k for k in observation_dict if "camera" in k.lower() or "image" in k.lower()])
 
         ext_cam_idx = 0
         for key in camera_keys:
@@ -221,6 +210,7 @@ class DreamzeroPolicy(Policy):
             if img_res and img.shape[:2] != tuple(img_res):
                 try:
                     from PIL import Image
+
                     pil_img = Image.fromarray(img)
                     pil_img = pil_img.resize((img_res[1], img_res[0]))
                     img = np.array(pil_img)
@@ -289,7 +279,7 @@ class DreamzeroPolicy(Policy):
                     return arr[:expected_dim]
                 else:
                     padded = np.zeros(expected_dim, dtype=np.float32)
-                    padded[:len(arr)] = arr
+                    padded[: len(arr)] = arr
                     return padded
 
         return np.zeros(expected_dim, dtype=np.float32)

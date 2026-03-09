@@ -80,6 +80,7 @@ class InternvlaPolicy(Policy):
             # Server mode — just verify connectivity
             try:
                 import requests
+
                 requests.get(f"{self._server_url}/health", timeout=5)
                 logger.info(f"🧠 InternVLA server connected: {self._server_url}")
             except Exception as e:
@@ -167,9 +168,7 @@ class InternvlaPolicy(Policy):
         # InternVLA uses Qwen3-VL style chat format
         prompt = f"What action should the robot take to {instruction}?"
 
-        inputs = self._processor(prompt, image, return_tensors="pt").to(
-            self._device, dtype=torch.bfloat16
-        )
+        inputs = self._processor(prompt, image, return_tensors="pt").to(self._device, dtype=torch.bfloat16)
 
         with torch.no_grad():
             if hasattr(self._model, "predict_action"):
@@ -185,6 +184,7 @@ class InternvlaPolicy(Policy):
 
     def _extract_image(self, observation_dict):
         from PIL import Image
+
         for key in sorted(observation_dict.keys()):
             val = observation_dict[key]
             if isinstance(val, np.ndarray) and val.ndim == 3 and val.shape[-1] in (3, 4):
@@ -194,8 +194,9 @@ class InternvlaPolicy(Policy):
     def _parse_action_text(self, text: str) -> np.ndarray:
         """Parse action values from generated text."""
         import re
+
         numbers = re.findall(r"[-+]?\d*\.?\d+", text.split("Out:")[-1] if "Out:" in text else text)
-        values = [float(n) for n in numbers[:self._action_dim]]
+        values = [float(n) for n in numbers[: self._action_dim]]
         while len(values) < self._action_dim:
             values.append(0.0)
         return np.array(values, dtype=np.float32)

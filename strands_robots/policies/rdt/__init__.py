@@ -88,6 +88,7 @@ class RdtPolicy(Policy):
         try:
             # RDT uses its own model creation from the repo
             import sys
+
             if self._repo_path and self._repo_path not in sys.path:
                 sys.path.insert(0, self._repo_path)
 
@@ -139,8 +140,10 @@ class RdtPolicy(Policy):
         self._ensure_loaded()
 
         if self._model is None:
-            logger.error("RDT model not loaded — need the RDT repo. "
-                        "git clone https://github.com/thu-ml/RoboticsDiffusionTransformer")
+            logger.error(
+                "RDT model not loaded — need the RDT repo. "
+                "git clone https://github.com/thu-ml/RoboticsDiffusionTransformer"
+            )
             return [{k: 0.0 for k in self._robot_state_keys}]
 
         import torch

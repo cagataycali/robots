@@ -219,6 +219,7 @@ class OmnivlaPolicy(Policy):
         # Load goal image if path provided
         if self._goal_image_path and os.path.exists(self._goal_image_path):
             from PIL import Image
+
             self._goal_image_pil = Image.open(self._goal_image_path).convert("RGB")
             logger.info(f"🧭 Goal image loaded: {self._goal_image_path}")
 
@@ -226,6 +227,7 @@ class OmnivlaPolicy(Policy):
         if self._goal_gps:
             try:
                 import utm
+
                 lat, lon, compass_deg = self._goal_gps
                 self._goal_utm = utm.from_latlon(lat, lon)
                 self._goal_compass_rad = -float(compass_deg) / 180.0 * math.pi
@@ -269,9 +271,7 @@ class OmnivlaPolicy(Policy):
             AutoModelForVision2Seq.register(OpenVLAConfig, OpenVLAForActionPrediction_MMNv1)
 
             # Load processor and VLA
-            self._processor = AutoProcessor.from_pretrained(
-                self._checkpoint_path, trust_remote_code=True
-            )
+            self._processor = AutoProcessor.from_pretrained(self._checkpoint_path, trust_remote_code=True)
             self._vla = AutoModelForVision2Seq.from_pretrained(
                 self._checkpoint_path,
                 torch_dtype=torch.bfloat16,
@@ -282,9 +282,7 @@ class OmnivlaPolicy(Policy):
             self._vla.to(dtype=torch.bfloat16, device=self._device)
 
             # Load pose projector
-            self._pose_projector = ProprioProjector(
-                llm_dim=self._vla.llm_dim, proprio_dim=POSE_DIM
-            )
+            self._pose_projector = ProprioProjector(llm_dim=self._vla.llm_dim, proprio_dim=POSE_DIM)
             self._load_checkpoint_module(self._pose_projector, "pose_projector")
             self._pose_projector = self._pose_projector.to(self._device)
 
@@ -299,8 +297,7 @@ class OmnivlaPolicy(Policy):
 
             # Compute vision patches
             self._num_patches = (
-                self._vla.vision_backbone.get_num_patches()
-                * self._vla.vision_backbone.get_num_images_in_input()
+                self._vla.vision_backbone.get_num_patches() * self._vla.vision_backbone.get_num_images_in_input()
                 + 1  # +1 for goal pose
             )
 
@@ -308,9 +305,7 @@ class OmnivlaPolicy(Policy):
             self._action_tokenizer = ActionTokenizer(self._processor.tokenizer)
 
             n_params = sum(p.numel() for p in self._vla.parameters())
-            logger.info(
-                f"🧭 OmniVLA full model loaded: {n_params/1e6:.0f}M params on {self._device}"
-            )
+            logger.info(f"🧭 OmniVLA full model loaded: {n_params/1e6:.0f}M params on {self._device}")
 
         except ImportError as e:
             raise ImportError(
@@ -338,6 +333,7 @@ class OmnivlaPolicy(Policy):
         try:
             # Edge model uses a custom loader
             import sys
+
             # Ensure OmniVLA inference dir is in path for utils_policy
             omnivla_dir = os.path.dirname(self._checkpoint_path)
             if omnivla_dir not in sys.path:
@@ -371,9 +367,7 @@ class OmnivlaPolicy(Policy):
                     f"Download with: git clone https://huggingface.co/NHirose/omnivla-edge"
                 )
 
-            self._edge_model, self._text_encoder, _ = load_model(
-                ckpt_path, model_params, self._device
-            )
+            self._edge_model, self._text_encoder, _ = load_model(ckpt_path, model_params, self._device)
             self._text_encoder = self._text_encoder.to(self._device).eval()
             self._edge_model = self._edge_model.to(self._device).eval()
 
@@ -392,17 +386,12 @@ class OmnivlaPolicy(Policy):
 
         # Try both naming conventions
         for mod_name in [name, name.replace("pose_", "proprio_")]:
-            ckpt_path = os.path.join(
-                self._checkpoint_path, f"{mod_name}--{self._resume_step}_checkpoint.pt"
-            )
+            ckpt_path = os.path.join(self._checkpoint_path, f"{mod_name}--{self._resume_step}_checkpoint.pt")
             if os.path.exists(ckpt_path):
                 logger.info(f"🧭 Loading checkpoint: {ckpt_path}")
                 state_dict = torch.load(ckpt_path, map_location="cpu")
                 # Remove DDP prefix
-                state_dict = {
-                    k[7:] if k.startswith("module.") else k: v
-                    for k, v in state_dict.items()
-                }
+                state_dict = {k[7:] if k.startswith("module.") else k: v for k, v in state_dict.items()}
                 module.load_state_dict(state_dict)
                 if to_bf16:
                     module = module.to(torch.bfloat16)
@@ -443,15 +432,15 @@ class OmnivlaPolicy(Policy):
 
         # Explicit modality selection
         modality_map = {
-            "language": (False, False, False, True),           # 7
-            "image": (False, False, True, False),              # 6
-            "pose": (True, False, False, False),               # 4
-            "satellite": (False, True, False, False),          # 0
-            "pose_image": (True, False, True, False),          # 5
-            "pose_satellite": (True, True, False, False),      # 1
-            "satellite_image": (False, True, True, False),     # 2
-            "all": (True, True, True, False),                  # 3
-            "language_pose": (True, False, False, True),       # 8
+            "language": (False, False, False, True),  # 7
+            "image": (False, False, True, False),  # 6
+            "pose": (True, False, False, False),  # 4
+            "satellite": (False, True, False, False),  # 0
+            "pose_image": (True, False, True, False),  # 5
+            "pose_satellite": (True, True, False, False),  # 1
+            "satellite_image": (False, True, True, False),  # 2
+            "all": (True, True, True, False),  # 3
+            "language_pose": (True, False, False, True),  # 8
         }
 
         return modality_map.get(modality, (False, False, False, True))
@@ -490,9 +479,7 @@ class OmnivlaPolicy(Policy):
     # Velocity Controller
     # =========================================================================
 
-    def _waypoints_to_velocity(
-        self, waypoints: np.ndarray
-    ) -> Tuple[float, float]:
+    def _waypoints_to_velocity(self, waypoints: np.ndarray) -> Tuple[float, float]:
         """Convert waypoint trajectory to (linear_vel, angular_vel) via PD controller.
 
         Args:
@@ -575,6 +562,7 @@ class OmnivlaPolicy(Policy):
 
         try:
             import utm
+
             cur_utm = utm.from_latlon(cur_lat, cur_lon)
             cur_compass_rad = -float(cur_compass_deg) / 180.0 * math.pi
 
@@ -590,18 +578,21 @@ class OmnivlaPolicy(Policy):
             rel_y = -delta_x * math.sin(cur_compass_rad) + delta_y * math.cos(cur_compass_rad)
 
             # Clip distance
-            radius = math.sqrt(rel_x ** 2 + rel_y ** 2)
+            radius = math.sqrt(rel_x**2 + rel_y**2)
             if radius > thres_dist:
                 rel_x *= thres_dist / radius
                 rel_y *= thres_dist / radius
 
             goal_compass = self._goal_compass_rad or 0.0
-            return np.array([
-                rel_y / self._metric_waypoint_spacing,
-                -rel_x / self._metric_waypoint_spacing,
-                math.cos(goal_compass - cur_compass_rad),
-                math.sin(goal_compass - cur_compass_rad),
-            ], dtype=np.float32)
+            return np.array(
+                [
+                    rel_y / self._metric_waypoint_spacing,
+                    -rel_x / self._metric_waypoint_spacing,
+                    math.cos(goal_compass - cur_compass_rad),
+                    math.sin(goal_compass - cur_compass_rad),
+                ],
+                dtype=np.float32,
+            )
 
         except ImportError:
             logger.warning("utm not installed — returning zero goal pose")
@@ -645,6 +636,7 @@ class OmnivlaPolicy(Policy):
         goal_image = self._goal_image_pil
         if "goal_image" in observation_dict:
             from PIL import Image
+
             gi = observation_dict["goal_image"]
             if isinstance(gi, np.ndarray):
                 goal_image = Image.fromarray(gi.astype(np.uint8)).convert("RGB")
@@ -664,13 +656,19 @@ class OmnivlaPolicy(Policy):
         # Run inference based on variant
         if self._variant == "edge":
             waypoints = self._infer_edge(
-                current_image, goal_image, goal_pose_norm,
-                effective_instruction, modality_id, observation_dict
+                current_image, goal_image, goal_pose_norm, effective_instruction, modality_id, observation_dict
             )
         else:
             waypoints = self._infer_full(
-                current_image, goal_image, goal_pose_norm,
-                effective_instruction, modality_id, pose_goal, satellite, image_goal, lan_prompt
+                current_image,
+                goal_image,
+                goal_pose_norm,
+                effective_instruction,
+                modality_id,
+                pose_goal,
+                satellite,
+                image_goal,
+                lan_prompt,
             )
 
         # Convert waypoints to velocity
@@ -678,16 +676,17 @@ class OmnivlaPolicy(Policy):
 
         self._step += 1
         logger.debug(
-            f"🧭 OmniVLA step {self._step}: modality={modality_id}, "
-            f"vel=({linear_vel:.3f}, {angular_vel:.3f})"
+            f"🧭 OmniVLA step {self._step}: modality={modality_id}, " f"vel=({linear_vel:.3f}, {angular_vel:.3f})"
         )
 
-        return [{
-            "linear_vel": linear_vel,
-            "angular_vel": angular_vel,
-            "waypoints": waypoints.tolist(),
-            "modality_id": modality_id,
-        }]
+        return [
+            {
+                "linear_vel": linear_vel,
+                "angular_vel": angular_vel,
+                "waypoints": waypoints.tolist(),
+                "modality_id": modality_id,
+            }
+        ]
 
     def _extract_camera_image(self, observation_dict: Dict[str, Any]):
         """Extract the primary camera image from observation dict."""
@@ -733,8 +732,11 @@ class OmnivlaPolicy(Policy):
 
         # Transform to dataset format
         batch_data = self._transform_full_data(
-            current_image, goal_image, lan_inst,
-            dummy_actions, goal_pose_norm,
+            current_image,
+            goal_image,
+            lan_inst,
+            dummy_actions,
+            goal_pose_norm,
         )
 
         # Collate
@@ -762,7 +764,7 @@ class OmnivlaPolicy(Policy):
         next_actions_mask = get_next_actions_mask(ground_truth_token_ids)
 
         last_hidden_states = output.hidden_states[-1]
-        text_hidden_states = last_hidden_states[:, self._num_patches:-1]
+        text_hidden_states = last_hidden_states[:, self._num_patches : -1]
 
         batch_size = batch["input_ids"].shape[0]
         actions_hidden = (
@@ -811,11 +813,9 @@ class OmnivlaPolicy(Policy):
         for turn in conversation:
             prompt_builder.add_turn(turn["from"], turn["value"])
 
-        input_ids = torch.tensor(
-            processor.tokenizer(prompt_builder.get_prompt(), add_special_tokens=True).input_ids
-        )
+        input_ids = torch.tensor(processor.tokenizer(prompt_builder.get_prompt(), add_special_tokens=True).input_ids)
         labels = input_ids.clone()
-        labels[:-(action_chunk_len + 1)] = IGNORE_INDEX
+        labels[: -(action_chunk_len + 1)] = IGNORE_INDEX
 
         pixel_values_current = processor.image_processor.apply_transform(current_image)
         pixel_values_goal = processor.image_processor.apply_transform(goal_image)
@@ -840,25 +840,28 @@ class OmnivlaPolicy(Policy):
 
         input_ids = pad_sequence(
             [inst["input_ids"] for inst in instances],
-            batch_first=True, padding_value=pad_token_id,
+            batch_first=True,
+            padding_value=pad_token_id,
         )
         labels = pad_sequence(
             [inst["labels"] for inst in instances],
-            batch_first=True, padding_value=IGNORE_INDEX,
+            batch_first=True,
+            padding_value=IGNORE_INDEX,
         )
         input_ids = input_ids[:, :model_max_length]
         labels = labels[:, :model_max_length]
         attention_mask = input_ids.ne(pad_token_id)
 
-        pixel_values = torch.cat((
-            torch.stack([inst["pixel_values_current"] for inst in instances]),
-            torch.stack([inst["pixel_values_goal"] for inst in instances]),
-        ), dim=1)
+        pixel_values = torch.cat(
+            (
+                torch.stack([inst["pixel_values_current"] for inst in instances]),
+                torch.stack([inst["pixel_values_goal"] for inst in instances]),
+            ),
+            dim=1,
+        )
 
         actions = torch.stack([inst["actions"] for inst in instances])
-        goal_pose = torch.stack([
-            torch.from_numpy(np.copy(inst["goal_pose"])) for inst in instances
-        ])
+        goal_pose = torch.stack([torch.from_numpy(np.copy(inst["goal_pose"])) for inst in instances])
 
         return {
             "pixel_values": pixel_values,
@@ -893,6 +896,7 @@ class OmnivlaPolicy(Policy):
             goal_96 = goal_image.resize(imgsize)
         else:
             from PIL import Image
+
             goal_96 = Image.new("RGB", imgsize, color=(0, 0, 0))
 
         # Build context queue (replicate current for static context)
@@ -911,15 +915,19 @@ class OmnivlaPolicy(Policy):
 
         # Dummy satellite images
         from PIL import Image
+
         sat_cur = Image.new("RGB", (352, 352), color=(0, 0, 0))
         sat_goal = Image.new("RGB", (352, 352), color=(0, 0, 0))
         current_map = transform_images_map(sat_cur)
         goal_map = transform_images_map(sat_goal)
-        map_images = torch.cat((
-            current_map.to(self._device),
-            goal_map.to(self._device),
-            obs_image_cur,
-        ), axis=1)
+        map_images = torch.cat(
+            (
+                current_map.to(self._device),
+                goal_map.to(self._device),
+                obs_image_cur,
+            ),
+            axis=1,
+        )
 
         # Language encoding
         lan_inst = instruction if modality_id in (7, 8, 9) else "xxxx"
@@ -1006,6 +1014,7 @@ class OmnivlaPolicy(Policy):
             self._instruction = instruction
         if goal_image is not None:
             from PIL import Image as PILImage
+
             if isinstance(goal_image, np.ndarray):
                 self._goal_image_pil = PILImage.fromarray(goal_image.astype(np.uint8)).convert("RGB")
             else:
@@ -1014,6 +1023,7 @@ class OmnivlaPolicy(Policy):
             self._goal_gps = goal_gps
             try:
                 import utm
+
                 lat, lon, compass_deg = goal_gps
                 self._goal_utm = utm.from_latlon(lat, lon)
                 self._goal_compass_rad = -float(compass_deg) / 180.0 * math.pi
@@ -1022,10 +1032,7 @@ class OmnivlaPolicy(Policy):
         if goal_modality is not None:
             self._goal_modality = goal_modality.lower()
 
-        logger.info(
-            f"🧭 Goal updated: modality={self._goal_modality}, "
-            f"instruction='{self._instruction[:50]}...'"
-        )
+        logger.info(f"🧭 Goal updated: modality={self._goal_modality}, " f"instruction='{self._instruction[:50]}...'")
 
 
 __all__ = ["OmnivlaPolicy"]
