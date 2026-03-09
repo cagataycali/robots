@@ -54,6 +54,7 @@ def _validate_policy_type(policy_type: str) -> None:
     """
     try:
         from lerobot.policies.factory import get_policy_class
+
         get_policy_class(policy_type)  # Raises ValueError if invalid
     except (ImportError, RuntimeError):
         logger.debug("LeRobot not installed locally or has import issues, skipping policy type validation")
@@ -63,14 +64,12 @@ def _validate_policy_type(policy_type: str) -> None:
             # Try to list what IS available for the error message
             from lerobot.configs.policies import PreTrainedConfig
             from lerobot.policies.factory import get_policy_class
+
             known = PreTrainedConfig.get_known_choices()
             available = sorted(known) if known else "check LeRobot docs"
         except Exception:
             available = "check LeRobot docs"
-        raise ValueError(
-            f"Unsupported policy type: '{policy_type}'. "
-            f"LeRobot supports: {available}"
-        )
+        raise ValueError(f"Unsupported policy type: '{policy_type}'. " f"LeRobot supports: {available}")
 
 
 def _validate_deserialized_actions(obj: Any) -> None:
@@ -90,13 +89,12 @@ def _validate_deserialized_actions(obj: Any) -> None:
 
     if not isinstance(obj, (list, tuple)):
         raise TypeError(
-            f"Expected list of TimedAction objects from server, "
-            f"got {type(obj).__name__}. Is the server trusted?"
+            f"Expected list of TimedAction objects from server, " f"got {type(obj).__name__}. Is the server trusted?"
         )
 
     for i, item in enumerate(obj):
         # TimedAction should have get_action() method and timestamp
-        if not hasattr(item, 'get_action'):
+        if not hasattr(item, "get_action"):
             raise TypeError(
                 f"Item {i} in deserialized actions has no 'get_action' method "
                 f"(type: {type(item).__name__}). Expected LeRobot TimedAction. "
@@ -226,6 +224,7 @@ class LerobotAsyncPolicy(Policy):
 
             # Send policy instructions
             from lerobot.async_inference.helpers import RemotePolicyConfig
+
             remote_config = RemotePolicyConfig(
                 policy_type=self.policy_type,
                 pretrained_name_or_path=self.pretrained_name_or_path,
@@ -236,25 +235,20 @@ class LerobotAsyncPolicy(Policy):
             )
 
             config_bytes = pickle.dumps(remote_config)
-            self._stub.SendPolicyInstructions(
-                services_pb2.PolicyInstructions(data=config_bytes)
-            )
+            self._stub.SendPolicyInstructions(services_pb2.PolicyInstructions(data=config_bytes))
 
             self._connected = True
             logger.info(f"✅ Connected to LeRobot server at {self.server_address}")
 
         except ImportError as e:
             raise ImportError(
-                f"LeRobot async inference dependencies not available: {e}. "
-                f"Install: pip install lerobot[async]"
+                f"LeRobot async inference dependencies not available: {e}. " f"Install: pip install lerobot[async]"
             ) from e
         except Exception as e:
             logger.error(f"❌ Failed to connect to LeRobot server: {e}")
             raise
 
-    async def get_actions(
-        self, observation_dict: Dict[str, Any], instruction: str, **kwargs
-    ) -> List[Dict[str, Any]]:
+    async def get_actions(self, observation_dict: Dict[str, Any], instruction: str, **kwargs) -> List[Dict[str, Any]]:
         """Get actions from LeRobot async inference server.
 
         Args:
@@ -289,6 +283,7 @@ class LerobotAsyncPolicy(Policy):
 
             # Use chunk sending for large observations
             from lerobot.transport.utils import send_bytes_in_chunks
+
             chunk_iterator = send_bytes_in_chunks(obs_bytes)
             self._stub.SendObservations(chunk_iterator)
 
@@ -314,9 +309,7 @@ class LerobotAsyncPolicy(Policy):
             logger.error(f"❌ LeRobot async inference error: {e}")
             return self._generate_zero_actions()
 
-    def _build_raw_observation(
-        self, observation_dict: Dict[str, Any], instruction: str
-    ) -> Dict[str, Any]:
+    def _build_raw_observation(self, observation_dict: Dict[str, Any], instruction: str) -> Dict[str, Any]:
         """Convert strands-robots observation to LeRobot raw observation format."""
         raw_obs = {}
 
@@ -343,7 +336,7 @@ class LerobotAsyncPolicy(Policy):
 
         for timed_action in timed_actions:
             action_tensor = timed_action.get_action()
-            action_array = action_tensor.numpy() if hasattr(action_tensor, 'numpy') else np.array(action_tensor)
+            action_array = action_tensor.numpy() if hasattr(action_tensor, "numpy") else np.array(action_tensor)
 
             action_dict = {}
             for j, key in enumerate(self.robot_state_keys):
@@ -358,10 +351,7 @@ class LerobotAsyncPolicy(Policy):
 
     def _generate_zero_actions(self) -> List[Dict[str, Any]]:
         """Generate zero actions as fallback."""
-        return [
-            {key: 0.0 for key in self.robot_state_keys}
-            for _ in range(self.actions_per_chunk)
-        ]
+        return [{key: 0.0 for key in self.robot_state_keys} for _ in range(self.actions_per_chunk)]
 
     def disconnect(self):
         """Disconnect from gRPC server."""

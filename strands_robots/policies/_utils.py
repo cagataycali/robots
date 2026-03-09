@@ -88,6 +88,7 @@ def detect_device(requested_device: Optional[str] = None) -> str:
 
     try:
         import torch
+
         if torch.cuda.is_available():
             return "cuda:0"
         if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
