@@ -344,7 +344,7 @@ _registry.register(
 
 _registry.register(
     "cosmos_predict",
-    loader=lambda: importlib.import_module("strands_robots.policies.cosmos_predict").Cosmos_predictPolicy,
+    loader=lambda: importlib.import_module("strands_robots.policies.cosmos_predict").CosmosPredictPolicy,
     aliases=[
         "cosmos",
         "cosmos_predict2",

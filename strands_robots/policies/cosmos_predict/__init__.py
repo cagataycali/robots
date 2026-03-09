@@ -77,7 +77,7 @@ COSMOS_IMAGE_SIZE = 224
 COSMOS_TEMPORAL_COMPRESSION_FACTOR = 4
 
 
-class Cosmos_predictPolicy(Policy):
+class CosmosPredictPolicy(Policy):
     """Cosmos Predict 2.5 — NVIDIA's World Foundation Model as Robot Policy.
 
     Supports three modes:
@@ -267,13 +267,13 @@ class Cosmos_predictPolicy(Policy):
             )
 
             # Build a config-like object for cosmos_get_model
-            class _Cfg:
-                pass
+            from types import SimpleNamespace
 
-            cfg = _Cfg()
-            cfg.ckpt_path = self._model_id
-            cfg.config = self._config_name or self._infer_config_name()
-            cfg.config_file = self._config_file
+            cfg = SimpleNamespace(
+                ckpt_path=self._model_id,
+                config=self._config_name or self._infer_config_name(),
+                config_file=self._config_file,
+            )
 
             self._model, self._config = cosmos_get_model(cfg)
 
@@ -514,6 +514,13 @@ class Cosmos_predictPolicy(Policy):
         suite_cfg = self.SUITE_CONFIGS.get(self._suite, self.SUITE_CONFIGS["libero"])
 
         class _Cfg:
+            """Config object for cosmos_get_action with all required fields.
+
+            Uses a class (not SimpleNamespace) because cosmos_get_action may
+            use hasattr checks for optional fields and expects attribute-style access.
+            Defaults verified on NVIDIA L40S (EC2 g6e.4xlarge).
+            """
+
             pass
 
         cfg = _Cfg()
@@ -858,7 +865,7 @@ class Cosmos_predictPolicy(Policy):
         logger.info("🌌 Cosmos Predict 2.5 policy reset")
 
 
-# Alias for PEP8-style name (CosmosPredictPolicy is the preferred public name)
-CosmosPredictPolicy = Cosmos_predictPolicy
+# Backwards-compatible alias
+Cosmos_predictPolicy = CosmosPredictPolicy
 
-__all__ = ["Cosmos_predictPolicy", "CosmosPredictPolicy"]
+__all__ = ["CosmosPredictPolicy", "Cosmos_predictPolicy"]

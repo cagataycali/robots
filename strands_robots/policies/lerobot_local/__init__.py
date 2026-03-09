@@ -149,8 +149,10 @@ class LerobotLocalPolicy(Policy):
         """
         if robot_state_keys:
             self.robot_state_keys = robot_state_keys
+            preview = self.robot_state_keys[:5]
+            suffix = "..." if len(self.robot_state_keys) > 5 else ""
             logger.info(
-                f"LeRobot local state keys set: {len(self.robot_state_keys)} keys = {self.robot_state_keys[:5]}{'...' if len(self.robot_state_keys) > 5 else ''}"
+                f"LeRobot local state keys set: {len(self.robot_state_keys)} keys = {preview}{suffix}"
             )
             return
 
@@ -190,13 +192,19 @@ class LerobotLocalPolicy(Policy):
 
         warnings.filterwarnings("ignore", message=".*Device.*")
 
-        # XVLA compat: Florence2LanguageConfig.forced_bos_token_id missing in transformers 5.x
+        # XVLA compat: Florence2LanguageConfig.forced_bos_token_id missing in
+        # transformers >= 4.46. Only apply the patch when the attribute is absent.
         try:
+            import transformers
+
             from transformers.models.florence2.configuration_florence2 import Florence2LanguageConfig
 
             if not hasattr(Florence2LanguageConfig, "forced_bos_token_id"):
                 Florence2LanguageConfig.forced_bos_token_id = None
-                logger.debug("Patched Florence2LanguageConfig.forced_bos_token_id")
+                logger.debug(
+                    f"Patched Florence2LanguageConfig.forced_bos_token_id "
+                    f"(transformers {transformers.__version__})"
+                )
         except (ImportError, Exception):
             pass
 

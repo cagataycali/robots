@@ -204,15 +204,25 @@ class RdtPolicy(Policy):
         self._step += 1
         return result if result else [{k: 0.0 for k in self._robot_state_keys}]
 
+    # T5 encoder model ID — this is ~22GB and will be downloaded on first use.
+    # Override with a smaller encoder via the `t5_model_id` constructor param.
+    DEFAULT_T5_MODEL = "google/t5-v1_1-xxl"
+
     def _encode_instruction(self, instruction: str):
-        """Encode language instruction using T5."""
+        """Encode language instruction using T5.
+
+        Note: Downloads google/t5-v1_1-xxl (~22GB) on first use.
+        """
         import torch
 
         try:
             from transformers import T5EncoderModel, T5Tokenizer
 
-            tokenizer = T5Tokenizer.from_pretrained("google/t5-v1_1-xxl")
-            encoder = T5EncoderModel.from_pretrained("google/t5-v1_1-xxl", torch_dtype=torch.bfloat16)
+            t5_model_id = getattr(self, "_t5_model_id", self.DEFAULT_T5_MODEL)
+            logger.info(f"Loading T5 encoder: {t5_model_id} (may download ~22GB on first use)")
+
+            tokenizer = T5Tokenizer.from_pretrained(t5_model_id)
+            encoder = T5EncoderModel.from_pretrained(t5_model_id, torch_dtype=torch.bfloat16)
             encoder = encoder.to(self._device).eval()
 
             tokens = tokenizer(instruction, return_tensors="pt", padding=True, truncation=True)

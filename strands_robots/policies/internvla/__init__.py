@@ -144,6 +144,7 @@ class InternvlaPolicy(Policy):
         # openpi protocol
         payload = {
             "instruction": instruction,
+            # TODO: Consider base64 encoding for smaller payloads
             "image": buf.getvalue().hex(),
         }
         # Add state if available

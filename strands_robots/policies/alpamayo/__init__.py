@@ -215,6 +215,7 @@ class AlpamayoPolicy(Policy):
             if image is not None:
                 buf = io.BytesIO()
                 image.save(buf, format="PNG")
+                # TODO: Consider base64 encoding for ~50% smaller payloads (hex doubles size)
                 images_hex[cam_name] = buf.getvalue().hex()
 
         # Extract egomotion history

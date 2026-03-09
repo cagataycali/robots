@@ -134,6 +134,7 @@ class UnifolmPolicy(Policy):
 
         payload = {
             "instruction": instruction,
+            # TODO: Consider base64 encoding for smaller payloads
             "image": buf.getvalue().hex(),
             "state": state,
         }

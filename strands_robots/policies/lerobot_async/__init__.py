@@ -86,6 +86,8 @@ class LerobotAsyncPolicy(Policy):
         task: str = "",
         lerobot_features: Optional[Dict] = None,
         rename_map: Optional[Dict[str, str]] = None,
+        secure: bool = False,
+        tls_credentials: Optional[Any] = None,
         **kwargs,
     ):
         """Initialize LeRobot async policy client.
@@ -100,6 +102,9 @@ class LerobotAsyncPolicy(Policy):
             task: Task instruction string
             lerobot_features: LeRobot feature configuration
             rename_map: Observation key renaming map
+            secure: Use TLS for gRPC connection (default: False)
+            tls_credentials: Custom gRPC TLS credentials. If secure=True and
+                this is None, default SSL channel credentials are used.
         """
         # Validate policy_type against LeRobot's own factory
         _validate_policy_type(policy_type)
@@ -113,6 +118,8 @@ class LerobotAsyncPolicy(Policy):
         self.task = task
         self.lerobot_features = lerobot_features or {}
         self.rename_map = rename_map or {}
+        self.secure = secure
+        self.tls_credentials = tls_credentials
         self.robot_state_keys: List[str] = []
 
         # gRPC state
@@ -144,7 +151,14 @@ class LerobotAsyncPolicy(Policy):
             import grpc
             from lerobot.transport import services_pb2, services_pb2_grpc
 
-            self._channel = grpc.insecure_channel(self.server_address)
+            self._channel = (
+                grpc.secure_channel(
+                    self.server_address,
+                    self.tls_credentials or grpc.ssl_channel_credentials(),
+                )
+                if self.secure
+                else grpc.insecure_channel(self.server_address)
+            )
             self._stub = services_pb2_grpc.AsyncInferenceStub(self._channel)
 
             # Signal ready
@@ -223,7 +237,16 @@ class LerobotAsyncPolicy(Policy):
                 return self._generate_zero_actions()
 
             # Deserialize action chunk
-            timed_actions = pickle.loads(actions_response.data)
+            # NOTE: pickle.loads is used here because the server serializes with pickle.
+            # This assumes the inference server is trusted (e.g. running locally or on
+            # a private network). Do NOT connect to untrusted servers — pickle
+            # deserialization of untrusted data can lead to arbitrary code execution.
+            # TODO: Consider migrating to a safer serialization format (protobuf/msgpack).
+            timed_actions = pickle.loads(actions_response.data)  # noqa: S301
+
+            if not isinstance(timed_actions, list):
+                logger.warning("Unexpected action type from server, expected list")
+                return self._generate_zero_actions()
 
             # Convert TimedAction list to robot action dicts
             return self._convert_actions(timed_actions)
