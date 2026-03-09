@@ -54,8 +54,9 @@ PEER_TIMEOUT = 10.0
 @dataclass
 class PeerInfo:
     """A discovered peer on the Zenoh mesh."""
+
     peer_id: str
-    peer_type: str          # "robot", "sim", "agent"
+    peer_type: str  # "robot", "sim", "agent"
     hostname: str = ""
     last_seen: float = 0.0
     caps: Dict[str, Any] = field(default_factory=dict)
@@ -85,6 +86,7 @@ def _get_session():
 
         try:
             import importlib
+
             zenoh = importlib.import_module("zenoh")
         except ImportError:
             logger.debug("eclipse-zenoh not installed — mesh disabled")
@@ -100,14 +102,12 @@ def _get_session():
         listen = os.getenv("ZENOH_LISTEN")
         if connect:
             try:
-                config.insert_json5("connect/endpoints",
-                                    json.dumps([e.strip() for e in connect.split(",")]))
+                config.insert_json5("connect/endpoints", json.dumps([e.strip() for e in connect.split(",")]))
             except Exception:
                 pass
         if listen:
             try:
-                config.insert_json5("listen/endpoints",
-                                    json.dumps([e.strip() for e in listen.split(",")]))
+                config.insert_json5("listen/endpoints", json.dumps([e.strip() for e in listen.split(",")]))
             except Exception:
                 pass
 
@@ -213,6 +213,7 @@ def get_peer(peer_id: str) -> Optional[dict]:
 # Mesh — the mixin that gets embedded into Robot/Simulation
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+
 class Mesh:
     """Peer-to-peer mesh for a single Robot or Simulation instance.
 
@@ -224,7 +225,7 @@ class Mesh:
     """
 
     def __init__(self, robot, peer_id: str, peer_type: str = "robot"):
-        self.robot = robot          # back-reference (Robot or Simulation)
+        self.robot = robot  # back-reference (Robot or Simulation)
         self.peer_id = peer_id
         self.peer_type = peer_type
         self._running = False
@@ -290,21 +291,21 @@ class Mesh:
             "timestamp": time.time(),
         }
         try:
-            if hasattr(r, 'tool_name_str'):
+            if hasattr(r, "tool_name_str"):
                 p["tool_name"] = r.tool_name_str
-            if hasattr(r, '_task_state'):
+            if hasattr(r, "_task_state"):
                 p["task_status"] = r._task_state.status.value
                 p["instruction"] = r._task_state.instruction
-            if hasattr(r, 'robot') and hasattr(r.robot, 'is_connected'):
+            if hasattr(r, "robot") and hasattr(r.robot, "is_connected"):
                 p["connected"] = r.robot.is_connected
-            if hasattr(r, 'robot') and hasattr(r.robot, 'name'):
+            if hasattr(r, "robot") and hasattr(r.robot, "name"):
                 p["hw"] = r.robot.name
-            if hasattr(r, '_action_features'):
+            if hasattr(r, "_action_features"):
                 p["action_keys"] = list(r._action_features.keys())
             # Simulation
-            if hasattr(r, '_robots'):
+            if hasattr(r, "_robots"):
                 p["sim_robots"] = list(r._robots.keys())
-            if hasattr(r, '_world') and r._world is not None:
+            if hasattr(r, "_world") and r._world is not None:
                 p["world"] = True
         except Exception:
             pass
@@ -322,8 +323,7 @@ class Mesh:
             pid = d.get("robot_id")
             if not pid or pid == self.peer_id:
                 return
-            is_new = _update_peer(pid, d.get("robot_type", "robot"),
-                                  d.get("hostname", ""), d)
+            is_new = _update_peer(pid, d.get("robot_type", "robot"), d.get("hostname", ""), d)
             if is_new:
                 logger.info(f"🤖 New peer: {pid} ({d.get('robot_type','?')})")
         except Exception:
@@ -344,29 +344,32 @@ class Mesh:
         s: dict = {"peer_id": self.peer_id, "t": time.time()}
         try:
             # Hardware robot
-            if hasattr(r, 'robot') and hasattr(r.robot, 'get_observation'):
-                if getattr(r.robot, 'is_connected', False):
+            if hasattr(r, "robot") and hasattr(r.robot, "get_observation"):
+                if getattr(r.robot, "is_connected", False):
                     obs = r.robot.get_observation()
-                    cam_keys = list(getattr(getattr(r.robot, 'config', None), 'cameras', {}).keys())
+                    cam_keys = list(getattr(getattr(r.robot, "config", None), "cameras", {}).keys())
                     s["joints"] = {
-                        k: (v.tolist() if hasattr(v, 'tolist') else v)
-                        for k, v in obs.items() if k not in cam_keys
+                        k: (v.tolist() if hasattr(v, "tolist") else v) for k, v in obs.items() if k not in cam_keys
                     }
 
             # Task state
-            if hasattr(r, '_task_state'):
+            if hasattr(r, "_task_state"):
                 ts = r._task_state
-                s["task"] = {"status": ts.status.value, "instruction": ts.instruction,
-                             "steps": ts.step_count, "duration": ts.duration}
+                s["task"] = {
+                    "status": ts.status.value,
+                    "instruction": ts.instruction,
+                    "steps": ts.step_count,
+                    "duration": ts.duration,
+                }
 
             # Simulation
-            if hasattr(r, '_world') and r._world is not None:
+            if hasattr(r, "_world") and r._world is not None:
                 w = r._world
-                if hasattr(w, '_data') and w._data is not None:
+                if hasattr(w, "_data") and w._data is not None:
                     s["sim_time"] = float(w._data.time)
-                elif hasattr(r, '_data') and r._data is not None:
+                elif hasattr(r, "_data") and r._data is not None:
                     s["sim_time"] = float(r._data.time)
-                if hasattr(r, '_robots'):
+                if hasattr(r, "_robots"):
                     for name in r._robots:
                         s.setdefault("robots", {})[name] = {"active": True}
 
@@ -398,12 +401,28 @@ class Mesh:
         try:
             result = self._dispatch(cmd)
             if rkey:
-                _put(rkey, {"type": "response", "responder_id": self.peer_id,
-                            "turn_id": turn, "result": result, "timestamp": time.time()})
+                _put(
+                    rkey,
+                    {
+                        "type": "response",
+                        "responder_id": self.peer_id,
+                        "turn_id": turn,
+                        "result": result,
+                        "timestamp": time.time(),
+                    },
+                )
         except Exception as e:
             if rkey:
-                _put(rkey, {"type": "error", "responder_id": self.peer_id,
-                            "turn_id": turn, "error": str(e), "timestamp": time.time()})
+                _put(
+                    rkey,
+                    {
+                        "type": "error",
+                        "responder_id": self.peer_id,
+                        "turn_id": turn,
+                        "error": str(e),
+                        "timestamp": time.time(),
+                    },
+                )
 
     def _dispatch(self, cmd: dict) -> dict:
         """Route command to robot methods."""
@@ -411,15 +430,15 @@ class Mesh:
         r = self.robot
 
         if action == "status":
-            if hasattr(r, 'get_task_status'):
+            if hasattr(r, "get_task_status"):
                 return r.get_task_status()
-            return {"status": getattr(getattr(r, '_task_state', None), 'status', 'unknown')}
+            return {"status": getattr(getattr(r, "_task_state", None), "status", "unknown")}
 
         if action == "stop":
-            return r.stop_task() if hasattr(r, 'stop_task') else {"ok": True}
+            return r.stop_task() if hasattr(r, "stop_task") else {"ok": True}
 
         if action == "features":
-            return r.get_features() if hasattr(r, 'get_features') else {}
+            return r.get_features() if hasattr(r, "get_features") else {}
 
         if action == "state":
             return self._read_state() or {}
@@ -432,18 +451,20 @@ class Mesh:
             port = cmd.get("policy_port")
             host = cmd.get("policy_host", "localhost")
             dur = cmd.get("duration", 30.0)
-            kw = {k: cmd[k] for k in
-                  ("model_path", "server_address", "policy_type",
-                   "pretrained_name_or_path") if k in cmd}
-            if action == "execute" and hasattr(r, '_execute_task_sync'):
+            kw = {
+                k: cmd[k]
+                for k in ("model_path", "server_address", "policy_type", "pretrained_name_or_path")
+                if k in cmd
+            }
+            if action == "execute" and hasattr(r, "_execute_task_sync"):
                 return r._execute_task_sync(instr, pp, port, host, dur, **kw)
-            if action == "start" and hasattr(r, 'start_task'):
+            if action == "start" and hasattr(r, "start_task"):
                 return r.start_task(instr, pp, port, host, dur, **kw)
 
         # Sim actions
-        if action == "step" and hasattr(r, 'step'):
+        if action == "step" and hasattr(r, "step"):
             return r.step(cmd.get("steps", 1))
-        if action == "reset" and hasattr(r, 'reset'):
+        if action == "reset" and hasattr(r, "reset"):
             return r.reset()
 
         return {"error": f"unknown action: {action}"}
@@ -457,7 +478,6 @@ class Mesh:
                 self._pending[turn].set()
         except Exception:
             pass
-
 
     # ── subscribe to ANY topic ─────────────────────────────────
 
@@ -498,9 +518,9 @@ class Mesh:
             return None
 
         sub_name = name or topic
-        if not hasattr(self, 'inbox'):
+        if not hasattr(self, "inbox"):
             self.inbox = {}
-        if not hasattr(self, '_user_subs'):
+        if not hasattr(self, "_user_subs"):
             self._user_subs = {}
 
         self.inbox.setdefault(sub_name, [])
@@ -532,7 +552,7 @@ class Mesh:
 
     def unsubscribe(self, name: str):
         """Unsubscribe from a topic by name."""
-        if not hasattr(self, '_user_subs'):
+        if not hasattr(self, "_user_subs"):
             return
         sub = self._user_subs.pop(name, None)
         if sub:
@@ -545,8 +565,7 @@ class Mesh:
 
     # ── VLA execution stream ───────────────────────────────────
 
-    def publish_step(self, step: int, observation: dict, action: dict,
-                     instruction: str = "", policy: str = ""):
+    def publish_step(self, step: int, observation: dict, action: dict, instruction: str = "", policy: str = ""):
         """Publish a single policy execution step to the mesh.
 
         Called from the Robot control loop during VLA inference.
@@ -564,9 +583,9 @@ class Mesh:
         # Filter out camera frames (numpy arrays / tensors)
         obs_numeric = {}
         for k, v in observation.items():
-            if hasattr(v, 'shape') and len(getattr(v, 'shape', ())) > 1:
+            if hasattr(v, "shape") and len(getattr(v, "shape", ())) > 1:
                 continue  # Skip images/tensors with >1 dim
-            if hasattr(v, 'tolist'):
+            if hasattr(v, "tolist"):
                 obs_numeric[k] = v.tolist()
             elif isinstance(v, (int, float, bool, str)):
                 obs_numeric[k] = v
@@ -575,20 +594,23 @@ class Mesh:
 
         act_numeric = {}
         for k, v in action.items():
-            if hasattr(v, 'tolist'):
+            if hasattr(v, "tolist"):
                 act_numeric[k] = v.tolist()
             elif isinstance(v, (int, float, bool, str, list, tuple)):
                 act_numeric[k] = v
 
-        _put(f"strands/{self.peer_id}/stream", {
-            "peer_id": self.peer_id,
-            "step": step,
-            "t": time.time(),
-            "instruction": instruction,
-            "policy": policy,
-            "observation": obs_numeric,
-            "action": act_numeric,
-        })
+        _put(
+            f"strands/{self.peer_id}/stream",
+            {
+                "peer_id": self.peer_id,
+                "step": step,
+                "t": time.time(),
+                "instruction": instruction,
+                "policy": policy,
+                "observation": obs_numeric,
+                "action": act_numeric,
+            },
+        )
 
     def on_stream(self, peer_id: str, callback=None):
         """Subscribe to another robot's VLA execution stream.
@@ -604,8 +626,7 @@ class Mesh:
 
             mesh.on_stream("so100-a1b2", on_step)
         """
-        return self.subscribe(f"strands/{peer_id}/stream", callback,
-                              name=f"stream:{peer_id}")
+        return self.subscribe(f"strands/{peer_id}/stream", callback, name=f"stream:{peer_id}")
 
     # ── outgoing messages ──────────────────────────────────────
 
@@ -616,8 +637,7 @@ class Mesh:
         self._pending[turn] = ev
         self._responses[turn] = []
 
-        msg = {"sender_id": self.peer_id, "turn_id": turn,
-               "command": cmd, "timestamp": time.time()}
+        msg = {"sender_id": self.peer_id, "turn_id": turn, "command": cmd, "timestamp": time.time()}
 
         _put(f"strands/{target}/cmd", msg)
 
@@ -633,8 +653,7 @@ class Mesh:
         self._pending[turn] = ev
         self._responses[turn] = []
 
-        msg = {"sender_id": self.peer_id, "turn_id": turn,
-               "command": cmd, "timestamp": time.time()}
+        msg = {"sender_id": self.peer_id, "turn_id": turn, "command": cmd, "timestamp": time.time()}
         _put("strands/broadcast", msg)
 
         ev.wait(timeout=timeout)
@@ -662,8 +681,8 @@ class Mesh:
 # init_mesh() — called from Robot.__init__ and Simulation.__init__
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-def init_mesh(robot, peer_id: str = None, peer_type: str = "robot",
-              mesh: bool = True) -> Optional[Mesh]:
+
+def init_mesh(robot, peer_id: str = None, peer_type: str = "robot", mesh: bool = True) -> Optional[Mesh]:
     """Initialize mesh for a Robot/Simulation.
 
     Called inside __init__(). Returns the Mesh instance (or None if disabled).
@@ -683,7 +702,7 @@ def init_mesh(robot, peer_id: str = None, peer_type: str = "robot",
         return None
 
     if peer_id is None:
-        base = getattr(robot, 'tool_name_str', 'robot')
+        base = getattr(robot, "tool_name_str", "robot")
         peer_id = f"{base}-{uuid.uuid4().hex[:4]}"
 
     m = Mesh(robot, peer_id=peer_id, peer_type=peer_type)

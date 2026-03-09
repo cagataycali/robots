@@ -169,7 +169,6 @@ _ROBOT_MODELS: Dict[str, Dict] = {
         "joints": 8,
         "category": "arm",
     },
-
     "openarm": {
         "dir": "enactic_openarm",
         "model_xml": "openarm.xml",
@@ -178,7 +177,6 @@ _ROBOT_MODELS: Dict[str, Dict] = {
         "joints": 9,
         "category": "arm",
     },
-
     # ── Bimanual ──
     "aloha": {
         "dir": "aloha",
@@ -196,7 +194,6 @@ _ROBOT_MODELS: Dict[str, Dict] = {
         "joints": 17,
         "category": "bimanual",
     },
-
     # ── Hands ──
     "shadow_hand": {
         "dir": "shadow_hand",
@@ -222,7 +219,6 @@ _ROBOT_MODELS: Dict[str, Dict] = {
         "joints": 16,
         "category": "hand",
     },
-
     # ── Humanoids ──
     "fourier_n1": {
         "dir": "fourier_n1",
@@ -280,7 +276,6 @@ _ROBOT_MODELS: Dict[str, Dict] = {
         "joints": 15,
         "category": "humanoid",
     },
-
     # ── Expressive ──
     "reachy_mini": {
         "dir": "reachy_mini",
@@ -290,7 +285,6 @@ _ROBOT_MODELS: Dict[str, Dict] = {
         "joints": 21,
         "category": "expressive",
     },
-
     # ── Mobile ──
     "unitree_go2": {
         "dir": "unitree_go2",
@@ -324,7 +318,6 @@ _ROBOT_MODELS: Dict[str, Dict] = {
         "joints": 41,
         "category": "mobile",
     },
-
     # ── Mobile Manipulation ──
     "google_robot": {
         "dir": "google_robot",
@@ -343,28 +336,23 @@ _ALIASES: Dict[str, str] = {
     "so100_4cam": "so100",
     "so_arm100": "so100",
     "trs_so_arm100": "so100",
-
     # SO-101
     "so101_follower": "so101",
     "so101_leader": "so101",
     "robotstudio_so101": "so101",
-
     # Panda variants
     "franka": "panda",
     "franka_panda": "panda",
     "franka_emika_panda": "panda",
     "bimanual_panda_gripper": "panda",  # data config → uses same panda model
     "libero_panda": "panda",
-
     # Franka FR3
     "franka_fr3": "fr3",
     "franka_fr3_v2": "fr3",
-
     # Fourier
     "fourier_gr1_arms_only": "fourier_n1",
     "fourier_gr1": "fourier_n1",
     "gr1": "fourier_n1",
-
     # Unitree
     "unitree_g1_locomanip": "unitree_g1",
     "g1": "unitree_g1",
@@ -372,10 +360,9 @@ _ALIASES: Dict[str, str] = {
     "go2": "unitree_go2",
     "a1": "unitree_a1",
     "unitree_z1": "z1",
-
     # Others
-    "oxe_droid": "google_robot",         # OXE DROID → closest is Google Robot
-    "galaxea_r1_pro": "panda",           # Galaxea not in Menagerie, fallback to Panda
+    "oxe_droid": "google_robot",  # OXE DROID → closest is Google Robot
+    "galaxea_r1_pro": "panda",  # Galaxea not in Menagerie, fallback to Panda
     "koch_v1.1": "koch",
     "low_cost_robot_arm": "koch",
     "viper_x300s": "vx300s",
@@ -398,22 +385,18 @@ _ALIASES: Dict[str, str] = {
     "open_duck_v2": "open_duck_mini",
     "mini_bdx": "open_duck_mini",
     "bdx": "open_duck_mini",
-
     # Asimov
     "asimov": "asimov_v0",
-
     # Reachy Mini
     "reachy": "reachy_mini",
     "pollen_reachy_mini": "reachy_mini",
     "reachy-mini": "reachy_mini",
     "reachymini": "reachy_mini",
-
     # OpenArm
     "enactic_openarm": "openarm",
     "open_arm": "openarm",
     "openarm_v10": "openarm",
 }
-
 
 
 def resolve_robot_name(name: str) -> str:
@@ -508,15 +491,17 @@ def list_available_robots() -> List[Dict]:
     robots = []
     for name, info in sorted(_ROBOT_MODELS.items()):
         path = resolve_model_path(name)
-        robots.append({
-            "name": name,
-            "description": info["description"],
-            "joints": info["joints"],
-            "category": info["category"],
-            "dir": info["dir"],
-            "available": path is not None,
-            "path": str(path) if path else None,
-        })
+        robots.append(
+            {
+                "name": name,
+                "description": info["description"],
+                "joints": info["joints"],
+                "category": info["category"],
+                "dir": info["dir"],
+                "available": path is not None,
+                "path": str(path) if path else None,
+            }
+        )
     return robots
 
 
@@ -549,12 +534,12 @@ def format_robot_table() -> str:
             continue
         for r in by_cat[category]:
             avail = "✅" if r["available"] else "❌"
-            lines.append(
-                f"{r['name']:<20} {r['category']:<15} {r['joints']:<8} {avail:<10} {r['description']}"
-            )
+            lines.append(f"{r['name']:<20} {r['category']:<15} {r['joints']:<8} {avail:<10} {r['description']}")
 
     lines.append("")
-    lines.append(f"Total: {len(_ROBOT_MODELS)} robots ({sum(1 for r in list_available_robots() if r['available'])} available)")
+    lines.append(
+        f"Total: {len(_ROBOT_MODELS)} robots ({sum(1 for r in list_available_robots() if r['available'])} available)"
+    )
 
     # Count aliases
     lines.append(f"Aliases: {len(_ALIASES)} (e.g. 'so100_dualcam' → 'so100', 'libero_panda' → 'panda')")

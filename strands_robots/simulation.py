@@ -180,6 +180,7 @@ def _ensure_mujoco():
         _configure_gl_backend()
         try:
             import mujoco
+
             _mujoco = mujoco
         except ImportError:
             raise ImportError(
@@ -190,6 +191,7 @@ def _ensure_mujoco():
     if _mujoco_viewer is None:
         try:
             import mujoco.viewer as viewer
+
             _mujoco_viewer = viewer
         except ImportError:
             pass  # Viewer is optional — headless mode works fine
@@ -216,15 +218,10 @@ _URDF_SEARCH_PATHS = [
 # Fallback: Legacy URDF registry for custom/user-registered models
 
 try:
-    from strands_robots.assets import (
-        format_robot_table as _format_robot_table,
-    )
-    from strands_robots.assets import (
-        list_available_robots as _list_menagerie_robots,
-    )
-    from strands_robots.assets import (
-        resolve_model_path as _resolve_menagerie_model,
-    )
+    from strands_robots.assets import format_robot_table as _format_robot_table
+    from strands_robots.assets import list_available_robots as _list_menagerie_robots
+    from strands_robots.assets import resolve_model_path as _resolve_menagerie_model
+
     _HAS_ASSET_MANAGER = True
 except ImportError:
     _HAS_ASSET_MANAGER = False
@@ -357,6 +354,7 @@ def list_available_models() -> str:
 
 class SimStatus(Enum):
     """Simulation execution status."""
+
     IDLE = "idle"
     RUNNING = "running"
     PAUSED = "paused"
@@ -367,6 +365,7 @@ class SimStatus(Enum):
 @dataclass
 class SimRobot:
     """A robot instance within the simulation."""
+
     name: str
     urdf_path: str
     position: List[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
@@ -387,6 +386,7 @@ class SimRobot:
 @dataclass
 class SimObject:
     """An object in the simulation scene."""
+
     name: str
     shape: str  # "box", "sphere", "cylinder", "capsule", "mesh"
     position: List[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
@@ -409,6 +409,7 @@ class SimObject:
 @dataclass
 class SimCamera:
     """A camera in the simulation."""
+
     name: str
     position: List[float] = field(default_factory=lambda: [1.0, 1.0, 1.0])
     target: List[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
@@ -421,6 +422,7 @@ class SimCamera:
 @dataclass
 class TrajectoryStep:
     """A single step in a recorded trajectory."""
+
     timestamp: float
     sim_time: float
     robot_name: str
@@ -432,6 +434,7 @@ class TrajectoryStep:
 @dataclass
 class SimWorld:
     """Complete simulation world state."""
+
     robots: Dict[str, SimRobot] = field(default_factory=dict)
     objects: Dict[str, SimObject] = field(default_factory=dict)
     cameras: Dict[str, SimCamera] = field(default_factory=dict)
@@ -485,91 +488,103 @@ class MJCFBuilder:
         gx, gy, gz = world.gravity
         parts.append(f'  <option timestep="{world.timestep}" gravity="{gx} {gy} {gz}"/>')
 
-        parts.append('  <visual>')
+        parts.append("  <visual>")
         parts.append('    <global offwidth="1280" offheight="960"/>')
         parts.append('    <quality shadowsize="4096"/>')
-        parts.append('  </visual>')
+        parts.append("  </visual>")
 
         # Assets
-        parts.append('  <asset>')
-        parts.append('    <texture type="2d" name="grid_tex" builtin="checker" '
-                     'width="512" height="512" rgb1=".9 .9 .9" rgb2=".7 .7 .7"/>')
+        parts.append("  <asset>")
+        parts.append(
+            '    <texture type="2d" name="grid_tex" builtin="checker" '
+            'width="512" height="512" rgb1=".9 .9 .9" rgb2=".7 .7 .7"/>'
+        )
         parts.append('    <material name="grid_mat" texture="grid_tex" texrepeat="8 8" reflectance="0.1"/>')
         for obj in world.objects.values():
             if obj.shape == "mesh" and obj.mesh_path:
                 parts.append(f'    <mesh name="mesh_{obj.name}" file="{obj.mesh_path}"/>')
-        parts.append('  </asset>')
+        parts.append("  </asset>")
 
         # Worldbody
-        parts.append('  <worldbody>')
+        parts.append("  <worldbody>")
         parts.append('    <light name="main_light" pos="0 0 3" dir="0 0 -1" diffuse="1 1 1" specular="0.3 0.3 0.3"/>')
         parts.append('    <light name="fill_light" pos="1 1 2" dir="-0.5 -0.5 -1" diffuse="0.5 0.5 0.5"/>')
 
         if world.ground_plane:
-            parts.append('    <geom name="ground" type="plane" size="5 5 0.01" '
-                        'material="grid_mat" conaffinity="1" condim="3"/>')
+            parts.append(
+                '    <geom name="ground" type="plane" size="5 5 0.01" '
+                'material="grid_mat" conaffinity="1" condim="3"/>'
+            )
 
         # Cameras
         for cam in world.cameras.values():
             px, py, pz = cam.position
-            parts.append(f'    <camera name="{cam.name}" pos="{px} {py} {pz}" '
-                        f'fovy="{cam.fov}" mode="fixed"/>')
+            parts.append(f'    <camera name="{cam.name}" pos="{px} {py} {pz}" ' f'fovy="{cam.fov}" mode="fixed"/>')
 
         # Objects
         for obj in world.objects.values():
             parts.append(MJCFBuilder._object_xml(obj, indent=4))
 
-        parts.append('  </worldbody>')
-        parts.append('</mujoco>')
+        parts.append("  </worldbody>")
+        parts.append("</mujoco>")
 
-        return '\n'.join(parts)
+        return "\n".join(parts)
 
     @staticmethod
     def _object_xml(obj: SimObject, indent: int = 4) -> str:
         """Generate MJCF XML for a single object."""
-        pad = ' ' * indent
+        pad = " " * indent
         px, py, pz = obj.position
         qw, qx, qy, qz = obj.orientation
         r, g, b, a = obj.color
         lines = []
 
-        lines.append(f'{pad}<body name="{obj.name}" pos="{px} {py} {pz}" '
-                    f'quat="{qw} {qx} {qy} {qz}">')
+        lines.append(f'{pad}<body name="{obj.name}" pos="{px} {py} {pz}" ' f'quat="{qw} {qx} {qy} {qz}">')
 
         if not obj.is_static:
             lines.append(f'{pad}  <freejoint name="{obj.name}_joint"/>')
-            lines.append(f'{pad}  <inertial pos="0 0 0" mass="{obj.mass}" '
-                        f'diaginertia="0.001 0.001 0.001"/>')
+            lines.append(f'{pad}  <inertial pos="0 0 0" mass="{obj.mass}" ' f'diaginertia="0.001 0.001 0.001"/>')
 
         if obj.shape == "box":
             sx, sy, sz = [s / 2 for s in obj.size]
-            lines.append(f'{pad}  <geom name="{obj.name}_geom" type="box" size="{sx} {sy} {sz}" '
-                        f'rgba="{r} {g} {b} {a}" condim="3" friction="1 0.5 0.001"/>')
+            lines.append(
+                f'{pad}  <geom name="{obj.name}_geom" type="box" size="{sx} {sy} {sz}" '
+                f'rgba="{r} {g} {b} {a}" condim="3" friction="1 0.5 0.001"/>'
+            )
         elif obj.shape == "sphere":
             radius = obj.size[0] / 2 if obj.size else 0.025
-            lines.append(f'{pad}  <geom name="{obj.name}_geom" type="sphere" size="{radius}" '
-                        f'rgba="{r} {g} {b} {a}" condim="3"/>')
+            lines.append(
+                f'{pad}  <geom name="{obj.name}_geom" type="sphere" size="{radius}" '
+                f'rgba="{r} {g} {b} {a}" condim="3"/>'
+            )
         elif obj.shape == "cylinder":
             radius = obj.size[0] / 2 if obj.size else 0.025
             half_h = obj.size[2] / 2 if len(obj.size) > 2 else 0.05
-            lines.append(f'{pad}  <geom name="{obj.name}_geom" type="cylinder" size="{radius} {half_h}" '
-                        f'rgba="{r} {g} {b} {a}" condim="3"/>')
+            lines.append(
+                f'{pad}  <geom name="{obj.name}_geom" type="cylinder" size="{radius} {half_h}" '
+                f'rgba="{r} {g} {b} {a}" condim="3"/>'
+            )
         elif obj.shape == "capsule":
             radius = obj.size[0] / 2 if obj.size else 0.025
             half_h = obj.size[2] / 2 if len(obj.size) > 2 else 0.05
-            lines.append(f'{pad}  <geom name="{obj.name}_geom" type="capsule" size="{radius} {half_h}" '
-                        f'rgba="{r} {g} {b} {a}" condim="3"/>')
+            lines.append(
+                f'{pad}  <geom name="{obj.name}_geom" type="capsule" size="{radius} {half_h}" '
+                f'rgba="{r} {g} {b} {a}" condim="3"/>'
+            )
         elif obj.shape == "mesh" and obj.mesh_path:
-            lines.append(f'{pad}  <geom name="{obj.name}_geom" type="mesh" mesh="mesh_{obj.name}" '
-                        f'rgba="{r} {g} {b} {a}" condim="3"/>')
+            lines.append(
+                f'{pad}  <geom name="{obj.name}_geom" type="mesh" mesh="mesh_{obj.name}" '
+                f'rgba="{r} {g} {b} {a}" condim="3"/>'
+            )
         elif obj.shape == "plane":
             sx = obj.size[0] if obj.size else 1.0
             sy = obj.size[1] if len(obj.size) > 1 else sx
-            lines.append(f'{pad}  <geom name="{obj.name}_geom" type="plane" size="{sx} {sy} 0.01" '
-                        f'rgba="{r} {g} {b} {a}"/>')
+            lines.append(
+                f'{pad}  <geom name="{obj.name}_geom" type="plane" size="{sx} {sy} 0.01" ' f'rgba="{r} {g} {b} {a}"/>'
+            )
 
-        lines.append(f'{pad}</body>')
-        return '\n'.join(lines)
+        lines.append(f"{pad}</body>")
+        return "\n".join(lines)
 
     @staticmethod
     def compose_multi_robot_scene(
@@ -615,28 +630,32 @@ class MJCFBuilder:
         gx, gy, gz = world.gravity
         parts.append(f'  <option timestep="{world.timestep}" gravity="{gx} {gy} {gz}"/>')
 
-        parts.append('  <visual>')
+        parts.append("  <visual>")
         parts.append('    <global offwidth="1280" offheight="960"/>')
         parts.append('    <quality shadowsize="4096"/>')
-        parts.append('  </visual>')
+        parts.append("  </visual>")
 
         # Assets
-        parts.append('  <asset>')
-        parts.append('    <texture type="2d" name="grid_tex" builtin="checker" '
-                     'width="512" height="512" rgb1=".9 .9 .9" rgb2=".7 .7 .7"/>')
+        parts.append("  <asset>")
+        parts.append(
+            '    <texture type="2d" name="grid_tex" builtin="checker" '
+            'width="512" height="512" rgb1=".9 .9 .9" rgb2=".7 .7 .7"/>'
+        )
         parts.append('    <material name="grid_mat" texture="grid_tex" texrepeat="8 8" reflectance="0.1"/>')
         for obj in objects.values():
             if obj.shape == "mesh" and obj.mesh_path:
                 parts.append(f'    <mesh name="mesh_{obj.name}" file="{obj.mesh_path}"/>')
-        parts.append('  </asset>')
+        parts.append("  </asset>")
 
-        parts.append('  <worldbody>')
+        parts.append("  <worldbody>")
         parts.append('    <light name="main_light" pos="0 0 3" dir="0 0 -1" diffuse="1 1 1" specular="0.3 0.3 0.3"/>')
         parts.append('    <light name="fill_light" pos="1 1 2" dir="-0.5 -0.5 -1" diffuse="0.5 0.5 0.5"/>')
 
         if world.ground_plane:
-            parts.append('    <geom name="ground" type="plane" size="5 5 0.01" '
-                        'material="grid_mat" conaffinity="1" condim="3"/>')
+            parts.append(
+                '    <geom name="ground" type="plane" size="5 5 0.01" '
+                'material="grid_mat" conaffinity="1" condim="3"/>'
+            )
 
         # Cameras
         for cam in cameras.values():
@@ -648,21 +667,21 @@ class MJCFBuilder:
             px, py, pz = robot.position
             qw, qx, qy, qz = robot.orientation
             xml_path = robot_xmls[robot_name]
-            parts.append(f'    <!-- Robot: {robot_name} -->')
+            parts.append(f"    <!-- Robot: {robot_name} -->")
             parts.append(f'    <include file="{xml_path}"/>')
 
         # Objects
         for obj in objects.values():
             parts.append(MJCFBuilder._object_xml(obj, indent=4))
 
-        parts.append('  </worldbody>')
-        parts.append('</mujoco>')
+        parts.append("  </worldbody>")
+        parts.append("</mujoco>")
 
-        master_xml = '\n'.join(parts)
+        master_xml = "\n".join(parts)
 
         # Save master and load
         master_path = os.path.join(tmpdir, "master_scene.xml")
-        with open(master_path, 'w') as f:
+        with open(master_path, "w") as f:
             f.write(master_xml)
 
         return master_path
@@ -767,11 +786,11 @@ class Simulation(AgentTool):
         # Zenoh mesh — every Simulation is a peer by default
         try:
             from strands_robots.zenoh_mesh import init_mesh
+
             self.mesh = init_mesh(self, peer_id=peer_id, peer_type="sim", mesh=mesh)
         except Exception as e:
             logger.debug(f"Mesh init skipped: {e}")
             self.mesh = None
-
 
     # -------------------------------------------------------------------
     # Public Properties — Direct MuJoCo model/data access
@@ -928,16 +947,20 @@ class Simulation(AgentTool):
         logger.info("🌍 Simulation world created")
         return {
             "status": "success",
-            "content": [{"text": (
-                "🌍 Simulation world created\n"
-                f"⚙️ Timestep: {self._world.timestep}s ({1/self._world.timestep:.0f}Hz physics)\n"
-                f"🌐 Gravity: {self._world.gravity}\n"
-                f"📷 Default camera ready\n"
-                f"🤖 Robot models: {len(_list_menagerie_robots()) if _HAS_ASSET_MANAGER else len(_URDF_REGISTRY)} available\n"
-                "💡 Add robots: action='add_robot' (urdf_path or data_config)\n"
-                "💡 Add objects: action='add_object'\n"
-                "💡 List URDFs: action='list_urdfs'"
-            )}],
+            "content": [
+                {
+                    "text": (
+                        "🌍 Simulation world created\n"
+                        f"⚙️ Timestep: {self._world.timestep}s ({1/self._world.timestep:.0f}Hz physics)\n"
+                        f"🌐 Gravity: {self._world.gravity}\n"
+                        f"📷 Default camera ready\n"
+                        f"🤖 Robot models: {len(_list_menagerie_robots()) if _HAS_ASSET_MANAGER else len(_URDF_REGISTRY)} available\n"
+                        "💡 Add robots: action='add_robot' (urdf_path or data_config)\n"
+                        "💡 Add objects: action='add_object'\n"
+                        "💡 List URDFs: action='list_urdfs'"
+                    )
+                }
+            ],
         }
 
     def load_scene(self, scene_path: str) -> Dict[str, Any]:
@@ -960,11 +983,15 @@ class Simulation(AgentTool):
             logger.info(f"🌍 Scene loaded: {scene_path}")
             return {
                 "status": "success",
-                "content": [{"text": (
-                    f"🌍 Scene loaded from {os.path.basename(scene_path)}\n"
-                    f"🦴 Bodies: {n_bodies}, 🔩 Joints: {n_joints}, ⚡ Actuators: {n_actuators}\n"
-                    "💡 Use action='get_state' to inspect, action='step' to simulate"
-                )}],
+                "content": [
+                    {
+                        "text": (
+                            f"🌍 Scene loaded from {os.path.basename(scene_path)}\n"
+                            f"🦴 Bodies: {n_bodies}, 🔩 Joints: {n_joints}, ⚡ Actuators: {n_actuators}\n"
+                            "💡 Use action='get_state' to inspect, action='step' to simulate"
+                        )
+                    }
+                ],
             }
         except Exception as e:
             logger.error(f"Failed to load scene: {e}")
@@ -1054,13 +1081,16 @@ class Simulation(AgentTool):
         try:
             from strands_robots.assets import resolve_robot_name
             from strands_robots.assets.download import download_robots
+
             canonical = resolve_robot_name(robot_name)
             download_robots(names=[canonical], force=True)
         except Exception as e:
             print(f"⚠️  Auto-download failed for '{robot_name}': {e}")
             print(f"   Try manually: python -m strands_robots.assets.download {robot_name}")
-            logger.warning(f"Auto-download failed for '{robot_name}': {e}. "
-                           "MuJoCo will attempt to load anyway (may fail on missing meshes).")
+            logger.warning(
+                f"Auto-download failed for '{robot_name}': {e}. "
+                "MuJoCo will attempt to load anyway (may fail on missing meshes)."
+            )
 
     def add_robot(
         self,
@@ -1096,11 +1126,15 @@ class Simulation(AgentTool):
             if not resolved_path:
                 return {
                     "status": "error",
-                    "content": [{"text": (
-                        f"❌ No model found for '{data_config}'.\n"
-                        f"💡 Use action='list_urdfs' to see available robots\n"
-                        f"💡 Register with: action='register_urdf', data_config='...', urdf_path='...'"
-                    )}],
+                    "content": [
+                        {
+                            "text": (
+                                f"❌ No model found for '{data_config}'.\n"
+                                f"💡 Use action='list_urdfs' to see available robots\n"
+                                f"💡 Register with: action='register_urdf', data_config='...', urdf_path='...'"
+                            )
+                        }
+                    ],
                 }
         elif not resolved_path and name:
             # Try resolving the name itself as a robot identifier
@@ -1148,8 +1182,10 @@ class Simulation(AgentTool):
                 cam_name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_CAMERA, i)
                 if cam_name and cam_name not in self._world.cameras:
                     self._world.cameras[cam_name] = SimCamera(
-                        name=cam_name, camera_id=i,
-                        width=self.default_width, height=self.default_height,
+                        name=cam_name,
+                        camera_id=i,
+                        width=self.default_width,
+                        height=self.default_height,
                     )
 
             # Replace the world model with this robot's scene
@@ -1166,15 +1202,19 @@ class Simulation(AgentTool):
             source = f"data_config='{data_config}'" if data_config else os.path.basename(resolved_path)
             return {
                 "status": "success",
-                "content": [{"text": (
-                    f"🤖 Robot '{name}' added to simulation\n"
-                    f"📁 Source: {source} → {os.path.basename(resolved_path)}\n"
-                    f"📍 Position: {robot.position}\n"
-                    f"🔩 Joints: {len(robot.joint_names)} ({', '.join(robot.joint_names[:8])}{'...' if len(robot.joint_names) > 8 else ''})\n"
-                    f"⚡ Actuators: {len(robot.actuator_ids)}\n"
-                    f"📷 Cameras: {list(self._world.cameras.keys())}\n"
-                    f"💡 Run policy: action='run_policy', robot_name='{name}'"
-                )}],
+                "content": [
+                    {
+                        "text": (
+                            f"🤖 Robot '{name}' added to simulation\n"
+                            f"📁 Source: {source} → {os.path.basename(resolved_path)}\n"
+                            f"📍 Position: {robot.position}\n"
+                            f"🔩 Joints: {len(robot.joint_names)} ({', '.join(robot.joint_names[:8])}{'...' if len(robot.joint_names) > 8 else ''})\n"
+                            f"⚡ Actuators: {len(robot.actuator_ids)}\n"
+                            f"📷 Cameras: {list(self._world.cameras.keys())}\n"
+                            f"💡 Run policy: action='run_policy', robot_name='{name}'"
+                        )
+                    }
+                ],
             }
 
         except Exception as e:
@@ -1236,10 +1276,18 @@ class Simulation(AgentTool):
     # Object Management
     # -------------------------------------------------------------------
 
-    def add_object(self, name: str, shape: str = "box", position: List[float] = None,
-                   orientation: List[float] = None, size: List[float] = None,
-                   color: List[float] = None, mass: float = 0.1,
-                   is_static: bool = False, mesh_path: str = None) -> Dict[str, Any]:
+    def add_object(
+        self,
+        name: str,
+        shape: str = "box",
+        position: List[float] = None,
+        orientation: List[float] = None,
+        size: List[float] = None,
+        color: List[float] = None,
+        mass: float = 0.1,
+        is_static: bool = False,
+        mesh_path: str = None,
+    ) -> Dict[str, Any]:
         """Add an object to the simulation.
 
         If a robot has been loaded, objects cannot be added via XML recompilation
@@ -1255,12 +1303,15 @@ class Simulation(AgentTool):
             return {"status": "error", "content": [{"text": f"❌ Object '{name}' exists."}]}
 
         obj = SimObject(
-            name=name, shape=shape,
+            name=name,
+            shape=shape,
             position=position or [0.0, 0.0, 0.0],
             orientation=orientation or [1.0, 0.0, 0.0, 0.0],
             size=size or [0.05, 0.05, 0.05],
             color=color or [0.5, 0.5, 0.5, 1.0],
-            mass=mass, mesh_path=mesh_path, is_static=is_static,
+            mass=mass,
+            mesh_path=mesh_path,
+            is_static=is_static,
         )
         self._world.objects[name] = obj
 
@@ -1279,21 +1330,29 @@ class Simulation(AgentTool):
                     logger.info(f"Object '{name}' registered (injection returned False — metadata only)")
                     return {
                         "status": "success",
-                        "content": [{"text": (
-                            f"📦 '{name}' registered: {shape} at {obj.position}\n"
-                            f"⚠️ Robot scene loaded — object is tracked but not physically spawned.\n"
-                            f"💡 For objects + robots: use load_scene with a pre-built scene,\n"
-                            f"   or use MuJoCo's interactive viewer to position objects."
-                        )}],
+                        "content": [
+                            {
+                                "text": (
+                                    f"📦 '{name}' registered: {shape} at {obj.position}\n"
+                                    f"⚠️ Robot scene loaded — object is tracked but not physically spawned.\n"
+                                    f"💡 For objects + robots: use load_scene with a pre-built scene,\n"
+                                    f"   or use MuJoCo's interactive viewer to position objects."
+                                )
+                            }
+                        ],
                     }
             except Exception as e:
                 logger.warning(f"Object injection failed, tracking metadata only: {e}")
                 return {
                     "status": "success",
-                    "content": [{"text": (
-                        f"📦 '{name}' registered: {shape} at {obj.position}\n"
-                        f"⚠️ Injection failed ({e}) — object tracked as metadata only."
-                    )}],
+                    "content": [
+                        {
+                            "text": (
+                                f"📦 '{name}' registered: {shape} at {obj.position}\n"
+                                f"⚠️ Injection failed ({e}) — object tracked as metadata only."
+                            )
+                        }
+                    ],
                 }
 
         # No robots — safe to recompile XML
@@ -1304,10 +1363,14 @@ class Simulation(AgentTool):
 
         return {
             "status": "success",
-            "content": [{"text": (
-                f"📦 '{name}' added: {shape} at {obj.position}, "
-                f"size={obj.size}, {'static' if is_static else f'{mass}kg'}"
-            )}],
+            "content": [
+                {
+                    "text": (
+                        f"📦 '{name}' added: {shape} at {obj.position}, "
+                        f"size={obj.size}, {'static' if is_static else f'{mass}kg'}"
+                    )
+                }
+            ],
         }
 
     def _inject_object_into_scene(self, obj: SimObject) -> bool:
@@ -1347,9 +1410,9 @@ class Simulation(AgentTool):
             xml_content = f.read()
 
         obj_xml = MJCFBuilder._object_xml(obj, indent=4)
-        xml_content = xml_content.replace('</worldbody>', f'{obj_xml}\n</worldbody>')
+        xml_content = xml_content.replace("</worldbody>", f"{obj_xml}\n</worldbody>")
 
-        with open(scene_path, 'w') as f:
+        with open(scene_path, "w") as f:
             f.write(xml_content)
 
         # Reload model (preserves actuators since they're in the XML)
@@ -1409,8 +1472,7 @@ class Simulation(AgentTool):
         self._recompile_world()
         return {"status": "success", "content": [{"text": f"🗑️ '{name}' removed."}]}
 
-    def move_object(self, name: str, position: List[float] = None,
-                    orientation: List[float] = None) -> Dict[str, Any]:
+    def move_object(self, name: str, position: List[float] = None, orientation: List[float] = None) -> Dict[str, Any]:
         if self._world is None or self._world._data is None:
             return {"status": "error", "content": [{"text": "❌ No simulation."}]}
         if name not in self._world.objects:
@@ -1424,10 +1486,10 @@ class Simulation(AgentTool):
         if jnt_id >= 0:
             qpos_addr = model.jnt_qposadr[jnt_id]
             if position:
-                data.qpos[qpos_addr:qpos_addr + 3] = position
+                data.qpos[qpos_addr : qpos_addr + 3] = position
                 self._world.objects[name].position = position
             if orientation:
-                data.qpos[qpos_addr + 3:qpos_addr + 7] = orientation
+                data.qpos[qpos_addr + 3 : qpos_addr + 7] = orientation
                 self._world.objects[name].orientation = orientation
             mj.mj_forward(model, data)
 
@@ -1441,17 +1503,24 @@ class Simulation(AgentTool):
 
         lines = ["📦 Objects:\n"]
         for name, obj in self._world.objects.items():
-            lines.append(f"  • {name}: {obj.shape} at {obj.position}, "
-                        f"{'static' if obj.is_static else f'{obj.mass}kg'}")
+            lines.append(
+                f"  • {name}: {obj.shape} at {obj.position}, " f"{'static' if obj.is_static else f'{obj.mass}kg'}"
+            )
         return {"status": "success", "content": [{"text": "\n".join(lines)}]}
 
     # -------------------------------------------------------------------
     # Camera Management
     # -------------------------------------------------------------------
 
-    def add_camera(self, name: str, position: List[float] = None,
-                   target: List[float] = None, fov: float = 60.0,
-                   width: int = 640, height: int = 480) -> Dict[str, Any]:
+    def add_camera(
+        self,
+        name: str,
+        position: List[float] = None,
+        target: List[float] = None,
+        fov: float = 60.0,
+        width: int = 640,
+        height: int = 480,
+    ) -> Dict[str, Any]:
         if self._world is None:
             return {"status": "error", "content": [{"text": "❌ No world."}]}
 
@@ -1459,7 +1528,9 @@ class Simulation(AgentTool):
             name=name,
             position=position or [1.0, 1.0, 1.0],
             target=target or [0.0, 0.0, 0.0],
-            fov=fov, width=width, height=height,
+            fov=fov,
+            width=width,
+            height=height,
         )
         self._world.cameras[name] = cam
 
@@ -1509,9 +1580,9 @@ class Simulation(AgentTool):
 
         px, py, pz = cam.position
         cam_xml = f'    <camera name="{cam.name}" pos="{px} {py} {pz}" fovy="{cam.fov}" mode="fixed"/>'
-        xml_content = xml_content.replace('</worldbody>', f'{cam_xml}\n</worldbody>')
+        xml_content = xml_content.replace("</worldbody>", f"{cam_xml}\n</worldbody>")
 
-        with open(scene_path, 'w') as f:
+        with open(scene_path, "w") as f:
             f.write(xml_content)
 
         try:
@@ -1590,10 +1661,7 @@ class Simulation(AgentTool):
             cameras_to_render = [cam_name]
         else:
             # Render all scene cameras
-            cameras_to_render = [
-                mj.mj_id2name(model, mj.mjtObj.mjOBJ_CAMERA, i)
-                for i in range(model.ncam)
-            ]
+            cameras_to_render = [mj.mj_id2name(model, mj.mjtObj.mjOBJ_CAMERA, i) for i in range(model.ncam)]
 
         for cname in cameras_to_render:
             if not cname:
@@ -1641,10 +1709,16 @@ class Simulation(AgentTool):
         self._world.sim_time = data.time
         self._world.step_count += n_substeps
 
-    def run_policy(self, robot_name: str, policy_provider: str = "mock",
-                   instruction: str = "", duration: float = 10.0,
-                   action_horizon: int = 8, control_frequency: float = 50.0,
-                   **policy_kwargs) -> Dict[str, Any]:
+    def run_policy(
+        self,
+        robot_name: str,
+        policy_provider: str = "mock",
+        instruction: str = "",
+        duration: float = 10.0,
+        action_horizon: int = 8,
+        control_frequency: float = 50.0,
+        **policy_kwargs,
+    ) -> Dict[str, Any]:
         """Run a policy on a simulated robot (blocking). Same Policy ABC as robot.py."""
         if self._world is None or self._world._data is None:
             return {"status": "error", "content": [{"text": "❌ No simulation."}]}
@@ -1656,6 +1730,7 @@ class Simulation(AgentTool):
         try:
             # Runtime import to avoid stale module-level references from test mocks
             from strands_robots.policies import create_policy as _create_policy
+
             policy = _create_policy(policy_provider, **policy_kwargs)
             policy.set_robot_state_keys(robot.joint_names)
 
@@ -1675,10 +1750,9 @@ class Simulation(AgentTool):
                     try:
                         asyncio.get_running_loop()
                         import concurrent.futures
+
                         with concurrent.futures.ThreadPoolExecutor() as ex:
-                            actions = ex.submit(
-                                lambda c=coro_or_result: asyncio.run(c)
-                            ).result()
+                            actions = ex.submit(lambda c=coro_or_result: asyncio.run(c)).result()
                     except RuntimeError:
                         actions = asyncio.run(coro_or_result)
                 else:
@@ -1691,15 +1765,16 @@ class Simulation(AgentTool):
 
                     # Record trajectory if recording
                     if self._world._recording:
-                        self._world._trajectory.append(TrajectoryStep(
-                            timestamp=time.time(),
-                            sim_time=self._world.sim_time,
-                            robot_name=robot_name,
-                            observation={k: v for k, v in observation.items()
-                                        if not isinstance(v, np.ndarray)},
-                            action=action_dict,
-                            instruction=instruction,
-                        ))
+                        self._world._trajectory.append(
+                            TrajectoryStep(
+                                timestamp=time.time(),
+                                sim_time=self._world.sim_time,
+                                robot_name=robot_name,
+                                observation={k: v for k, v in observation.items() if not isinstance(v, np.ndarray)},
+                                action=action_dict,
+                                instruction=instruction,
+                            )
+                        )
                         # Also write to LeRobotDataset if active
                         if self._world._dataset_recorder is not None:
                             self._world._dataset_recorder.add_frame(
@@ -1717,21 +1792,30 @@ class Simulation(AgentTool):
 
             return {
                 "status": "success",
-                "content": [{"text": (
-                    f"✅ Policy complete on '{robot_name}'\n"
-                    f"🧠 {policy_provider} | 🎯 {instruction}\n"
-                    f"⏱️ {elapsed:.1f}s | 📊 {robot.policy_steps} steps | "
-                    f"🕐 sim_t={self._world.sim_time:.3f}s"
-                )}],
+                "content": [
+                    {
+                        "text": (
+                            f"✅ Policy complete on '{robot_name}'\n"
+                            f"🧠 {policy_provider} | 🎯 {instruction}\n"
+                            f"⏱️ {elapsed:.1f}s | 📊 {robot.policy_steps} steps | "
+                            f"🕐 sim_t={self._world.sim_time:.3f}s"
+                        )
+                    }
+                ],
             }
 
         except Exception as e:
             robot.policy_running = False
             return {"status": "error", "content": [{"text": f"❌ Policy failed: {e}"}]}
 
-    def start_policy(self, robot_name: str, policy_provider: str = "mock",
-                     instruction: str = "", duration: float = 10.0,
-                     **policy_kwargs) -> Dict[str, Any]:
+    def start_policy(
+        self,
+        robot_name: str,
+        policy_provider: str = "mock",
+        instruction: str = "",
+        duration: float = 10.0,
+        **policy_kwargs,
+    ) -> Dict[str, Any]:
         """Start policy execution in background (non-blocking).
 
         Submits run_policy to a thread pool so the agent can continue
@@ -1763,8 +1847,7 @@ class Simulation(AgentTool):
     # Rendering & Observation
     # -------------------------------------------------------------------
 
-    def render(self, camera_name: str = "default", width: int = None,
-              height: int = None) -> Dict[str, Any]:
+    def render(self, camera_name: str = "default", width: int = None, height: int = None) -> Dict[str, Any]:
         """Render a camera view as base64 PNG image.
 
         Args:
@@ -1795,6 +1878,7 @@ class Simulation(AgentTool):
             del renderer
 
             from PIL import Image
+
             pil_img = Image.fromarray(img)
             buffer = io.BytesIO()
             pil_img.save(buffer, format="PNG")
@@ -1810,8 +1894,7 @@ class Simulation(AgentTool):
         except Exception as e:
             return {"status": "error", "content": [{"text": f"❌ Render failed: {e}"}]}
 
-    def render_depth(self, camera_name: str = "default", width: int = None,
-                     height: int = None) -> Dict[str, Any]:
+    def render_depth(self, camera_name: str = "default", width: int = None, height: int = None) -> Dict[str, Any]:
         """Render depth map from a camera."""
         if self._world is None or self._world._model is None:
             return {"status": "error", "content": [{"text": "❌ No simulation."}]}
@@ -1830,10 +1913,12 @@ class Simulation(AgentTool):
             return {
                 "status": "success",
                 "content": [
-                    {"text": (
-                        f"📸 Depth {w}x{h} from '{camera_name}'\n"
-                        f"Min: {float(depth.min()):.3f}m, Max: {float(depth.max()):.3f}m"
-                    )},
+                    {
+                        "text": (
+                            f"📸 Depth {w}x{h} from '{camera_name}'\n"
+                            f"Min: {float(depth.min()):.3f}m, Max: {float(depth.max()):.3f}m"
+                        )
+                    },
                     {"json": {"depth_min": float(depth.min()), "depth_max": float(depth.max())}},
                 ],
             }
@@ -1878,7 +1963,9 @@ class Simulation(AgentTool):
 
         return {
             "status": "success",
-            "content": [{"text": f"⏩ +{n_steps} steps | t={self._world.sim_time:.4f}s | total={self._world.step_count}"}],
+            "content": [
+                {"text": f"⏩ +{n_steps} steps | t={self._world.sim_time:.4f}s | total={self._world.step_count}"}
+            ],
         }
 
     def reset(self) -> Dict[str, Any]:
@@ -1906,7 +1993,9 @@ class Simulation(AgentTool):
             f"🤖 Robots: {len(self._world.robots)} | 📦 Objects: {len(self._world.objects)} | 📷 Cameras: {len(self._world.cameras)}",
         ]
         if self._world._model:
-            lines.append(f"🦴 Bodies: {self._world._model.nbody} | 🔩 Joints: {self._world._model.njnt} | ⚡ Actuators: {self._world._model.nu}")
+            lines.append(
+                f"🦴 Bodies: {self._world._model.nbody} | 🔩 Joints: {self._world._model.njnt} | ⚡ Actuators: {self._world._model.nu}"
+            )
         if self._world._recording:
             lines.append(f"🔴 Recording: {len(self._world._trajectory)} steps")
 
@@ -1994,9 +2083,7 @@ class Simulation(AgentTool):
             for i in range(model.ngeom):
                 geom_name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_GEOM, i)
                 if geom_name and geom_name != "ground":
-                    model.geom_rgba[i, :3] = np.random.uniform(
-                        color_range[0], color_range[1], size=3
-                    )
+                    model.geom_rgba[i, :3] = np.random.uniform(color_range[0], color_range[1], size=3)
             changes.append(f"🎨 Colors: {model.ngeom} geoms randomized")
 
         # Randomize lighting
@@ -2027,7 +2114,7 @@ class Simulation(AgentTool):
                     if jnt_id >= 0:
                         qpos_addr = model.jnt_qposadr[jnt_id]
                         noise = np.random.uniform(-position_noise, position_noise, size=3)
-                        data.qpos[qpos_addr:qpos_addr + 3] += noise
+                        data.qpos[qpos_addr : qpos_addr + 3] += noise
             mj.mj_forward(model, data)
             changes.append(f"📍 Positions: ±{position_noise}m noise on dynamic objects")
 
@@ -2074,10 +2161,17 @@ class Simulation(AgentTool):
             _has_lerobot = False
             _DatasetRecorder = None
         if not _has_lerobot or _DatasetRecorder is None:
-            return {"status": "error", "content": [{"text": (
-                "lerobot not installed. Install with: pip install lerobot\n"
-                "Required for dataset recording."
-            )}]}
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            "lerobot not installed. Install with: pip install lerobot\n"
+                            "Required for dataset recording."
+                        )
+                    }
+                ],
+            }
 
         self._world._recording = True
         self._world._trajectory = []
@@ -2088,6 +2182,7 @@ class Simulation(AgentTool):
             if overwrite:
                 import shutil
                 from pathlib import Path as _Path
+
                 # repo_id could be a path or a HF-style "user/dataset"
                 if root:
                     dataset_dir = _Path(root)
@@ -2112,18 +2207,27 @@ class Simulation(AgentTool):
                     camera_keys.append(cam_name)
 
             self._world._dataset_recorder = _DatasetRecorder.create(
-                repo_id=repo_id, fps=fps, robot_type=robot_type,
-                joint_names=joint_names, camera_keys=camera_keys,
-                task=task, root=root, vcodec=vcodec,
+                repo_id=repo_id,
+                fps=fps,
+                robot_type=robot_type,
+                joint_names=joint_names,
+                camera_keys=camera_keys,
+                task=task,
+                root=root,
+                vcodec=vcodec,
             )
             return {
                 "status": "success",
-                "content": [{"text": (
-                    f"Recording to LeRobotDataset: {repo_id}\n"
-                    f"{len(joint_names)} joints, {len(camera_keys)} cameras @ {fps}fps\n"
-                    f"Codec: {vcodec} | Task: {task or '(set per policy)'}\n"
-                    f"Run policies to capture frames, then stop_recording to save episode"
-                )}],
+                "content": [
+                    {
+                        "text": (
+                            f"Recording to LeRobotDataset: {repo_id}\n"
+                            f"{len(joint_names)} joints, {len(camera_keys)} cameras @ {fps}fps\n"
+                            f"Codec: {vcodec} | Task: {task or '(set per policy)'}\n"
+                            f"Run policies to capture frames, then stop_recording to save episode"
+                        )
+                    }
+                ],
             }
         except Exception as e:
             self._world._recording = False
@@ -2147,7 +2251,7 @@ class Simulation(AgentTool):
 
         recorder.save_episode()
         push_result = None
-        if getattr(self._world, '_push_to_hub', False):
+        if getattr(self._world, "_push_to_hub", False):
             push_result = recorder.push_to_hub(tags=["strands-robots", "sim"])
 
         repo_id = recorder.repo_id
@@ -2184,7 +2288,6 @@ class Simulation(AgentTool):
     # -------------------------------------------------------------------
     # Viewer
     # -------------------------------------------------------------------
-
 
     # -------------------------------------------------------------------
     # Video Recording
@@ -2262,6 +2365,7 @@ class Simulation(AgentTool):
 
             # Create policy — runtime import to avoid stale module-level refs
             from strands_robots.policies import create_policy as _create_policy
+
             policy = _create_policy(policy_provider, **policy_kwargs)
             policy.set_robot_state_keys(robot.joint_names)
 
@@ -2288,15 +2392,15 @@ class Simulation(AgentTool):
                 # Policy inference — handle both sync and async get_actions
                 try:
                     import asyncio
+
                     coro_or_result = policy.get_actions(observation, instruction)
                     if asyncio.iscoroutine(coro_or_result):
                         try:
                             asyncio.get_running_loop()
                             import concurrent.futures
+
                             with concurrent.futures.ThreadPoolExecutor() as ex:
-                                actions = ex.submit(
-                                    lambda c=coro_or_result: asyncio.run(c)
-                                ).result()
+                                actions = ex.submit(lambda c=coro_or_result: asyncio.run(c)).result()
                         except RuntimeError:
                             actions = asyncio.run(coro_or_result)
                     else:
@@ -2420,6 +2524,7 @@ class Simulation(AgentTool):
         # Load dataset
         try:
             from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
             ds = LeRobotDataset(repo_id=repo_id, root=root)
         except ImportError:
             return {"status": "error", "content": [{"text": "❌ lerobot not installed"}]}
@@ -2427,17 +2532,20 @@ class Simulation(AgentTool):
             return {"status": "error", "content": [{"text": f"❌ Failed to load '{repo_id}': {e}"}]}
 
         # Get episode frame range
-        num_episodes = ds.meta.total_episodes if hasattr(ds.meta, 'total_episodes') else len(ds.meta.episodes)
+        num_episodes = ds.meta.total_episodes if hasattr(ds.meta, "total_episodes") else len(ds.meta.episodes)
         if episode >= num_episodes:
-            return {"status": "error", "content": [{"text": f"❌ Episode {episode} out of range (0-{num_episodes - 1})"}]}
+            return {
+                "status": "error",
+                "content": [{"text": f"❌ Episode {episode} out of range (0-{num_episodes - 1})"}],
+            }
 
         ep_start = 0
         ep_length = 0
         try:
             for i in range(episode):
-                ep_info = ds.meta.episodes[i] if hasattr(ds.meta, 'episodes') else {}
+                ep_info = ds.meta.episodes[i] if hasattr(ds.meta, "episodes") else {}
                 ep_start += ep_info.get("length", 0)
-            ep_info = ds.meta.episodes[episode] if hasattr(ds.meta, 'episodes') else {}
+            ep_info = ds.meta.episodes[episode] if hasattr(ds.meta, "episodes") else {}
             ep_length = ep_info.get("length", 0)
         except Exception:
             ep_length = min(len(ds), 1000)
@@ -2446,7 +2554,7 @@ class Simulation(AgentTool):
             return {"status": "error", "content": [{"text": f"❌ Episode {episode} has no frames"}]}
 
         # Replay loop
-        dataset_fps = getattr(ds, 'fps', 30)
+        dataset_fps = getattr(ds, "fps", 30)
         frame_interval = 1.0 / (dataset_fps * speed)
         model = self._world._model
         data = self._world._data
@@ -2462,9 +2570,9 @@ class Simulation(AgentTool):
             # Extract action and apply to sim
             if "action" in frame:
                 action_vals = frame["action"]
-                if hasattr(action_vals, 'numpy'):
+                if hasattr(action_vals, "numpy"):
                     action_vals = action_vals.numpy()
-                if hasattr(action_vals, 'tolist'):
+                if hasattr(action_vals, "tolist"):
                     action_vals = action_vals.tolist()
 
                 # Map to actuators (truncate or pad)
@@ -2490,14 +2598,16 @@ class Simulation(AgentTool):
                         f"Frames: {frames_applied}/{ep_length} | Duration: {duration:.1f}s | Speed: {speed}x"
                     )
                 },
-                {"json": {
-                    "episode": episode,
-                    "robot_name": robot_name,
-                    "frames_applied": frames_applied,
-                    "total_frames": ep_length,
-                    "duration_s": round(duration, 2),
-                    "speed": speed,
-                }},
+                {
+                    "json": {
+                        "episode": episode,
+                        "robot_name": robot_name,
+                        "frames_applied": frames_applied,
+                        "total_frames": ep_length,
+                        "duration_s": round(duration, 2),
+                        "speed": speed,
+                    }
+                },
             ],
         }
 
@@ -2539,6 +2649,7 @@ class Simulation(AgentTool):
 
         # Create policy
         from strands_robots.policies import create_policy
+
         policy_instance = create_policy(policy_provider, **policy_kwargs)
         policy_instance.set_robot_state_keys(robot.joint_names)
 
@@ -2561,6 +2672,7 @@ class Simulation(AgentTool):
 
                 # Get action
                 import asyncio
+
                 try:
                     loop = asyncio.get_running_loop()
                 except RuntimeError:
@@ -2571,10 +2683,9 @@ class Simulation(AgentTool):
                 if asyncio.iscoroutine(coro_or_result):
                     if loop and loop.is_running():
                         import concurrent.futures
+
                         with concurrent.futures.ThreadPoolExecutor() as ex:
-                            actions = ex.submit(
-                                lambda c=coro_or_result: asyncio.run(c)
-                            ).result()
+                            actions = ex.submit(lambda c=coro_or_result: asyncio.run(c)).result()
                     else:
                         actions = asyncio.run(coro_or_result)
                 else:
@@ -2597,12 +2708,14 @@ class Simulation(AgentTool):
                         success = True
                         break
 
-            results.append({
-                "episode": ep,
-                "steps": steps,
-                "success": success,
-                "reward": total_reward,
-            })
+            results.append(
+                {
+                    "episode": ep,
+                    "steps": steps,
+                    "success": success,
+                    "reward": total_reward,
+                }
+            )
 
         # Compute summary metrics
         n_success = sum(1 for r in results if r["success"])
@@ -2619,14 +2732,16 @@ class Simulation(AgentTool):
                         f"Avg steps: {avg_steps:.0f}/{max_steps}"
                     )
                 },
-                {"json": {
-                    "success_rate": round(success_rate, 4),
-                    "n_episodes": n_episodes,
-                    "n_success": n_success,
-                    "avg_steps": round(avg_steps, 1),
-                    "max_steps": max_steps,
-                    "episodes": results,
-                }},
+                {
+                    "json": {
+                        "success_rate": round(success_rate, 4),
+                        "n_episodes": n_episodes,
+                        "n_success": n_success,
+                        "avg_steps": round(avg_steps, 1),
+                        "max_steps": max_steps,
+                        "episodes": results,
+                    }
+                },
             ],
         }
 
@@ -2636,16 +2751,20 @@ class Simulation(AgentTool):
             return {"status": "error", "content": [{"text": "❌ No simulation to view."}]}
 
         if _mujoco_viewer is None:
-            return {"status": "error", "content": [{"text": "❌ mujoco.viewer not available. Install: pip install mujoco"}]}
+            return {
+                "status": "error",
+                "content": [{"text": "❌ mujoco.viewer not available. Install: pip install mujoco"}],
+            }
 
         if self._viewer_handle is not None:
             return {"status": "success", "content": [{"text": "👁️ Viewer already open."}]}
 
         try:
-            self._viewer_handle = _mujoco_viewer.launch_passive(
-                self._world._model, self._world._data
-            )
-            return {"status": "success", "content": [{"text": "👁️ Interactive viewer opened. Close window or use action='close_viewer'."}]}
+            self._viewer_handle = _mujoco_viewer.launch_passive(self._world._model, self._world._data)
+            return {
+                "status": "success",
+                "content": [{"text": "👁️ Interactive viewer opened. Close window or use action='close_viewer'."}],
+            }
         except Exception as e:
             return {"status": "error", "content": [{"text": f"❌ Viewer failed: {e}"}]}
 
@@ -2749,7 +2868,9 @@ class Simulation(AgentTool):
             f"⏱️ Timestep: {model.opt.timestep}s ({1/model.opt.timestep:.0f}Hz)",
         ]
         for rname, rinfo in robots_info.items():
-            lines.append(f"🤖 {rname}: {rinfo['n_joints']} joints, {rinfo['n_actuators']} actuators ({rinfo['source']})")
+            lines.append(
+                f"🤖 {rname}: {rinfo['n_joints']} joints, {rinfo['n_actuators']} actuators ({rinfo['source']})"
+            )
 
         return {
             "status": "success",
@@ -2801,20 +2922,42 @@ class Simulation(AgentTool):
                             "type": "string",
                             "description": "Action to perform",
                             "enum": [
-                                "create_world", "load_scene", "reset", "get_state", "destroy",
-                                "add_robot", "remove_robot", "list_robots", "get_robot_state",
-                                "add_object", "remove_object", "move_object", "list_objects",
-                                "add_camera", "remove_camera",
-                                "run_policy", "start_policy", "stop_policy",
-                                "render", "render_depth", "get_contacts",
-                                "step", "set_gravity", "set_timestep",
+                                "create_world",
+                                "load_scene",
+                                "reset",
+                                "get_state",
+                                "destroy",
+                                "add_robot",
+                                "remove_robot",
+                                "list_robots",
+                                "get_robot_state",
+                                "add_object",
+                                "remove_object",
+                                "move_object",
+                                "list_objects",
+                                "add_camera",
+                                "remove_camera",
+                                "run_policy",
+                                "start_policy",
+                                "stop_policy",
+                                "render",
+                                "render_depth",
+                                "get_contacts",
+                                "step",
+                                "set_gravity",
+                                "set_timestep",
                                 "randomize",
-                                "start_recording", "stop_recording", "get_recording_status",
+                                "start_recording",
+                                "stop_recording",
+                                "get_recording_status",
                                 "record_video",
-                                "open_viewer", "close_viewer",
-                                "list_urdfs", "register_urdf",
+                                "open_viewer",
+                                "close_viewer",
+                                "list_urdfs",
+                                "register_urdf",
                                 "get_features",
-                                "replay_episode", "eval_policy",
+                                "replay_episode",
+                                "eval_policy",
                             ],
                         },
                         "scene_path": {"type": "string", "description": "Path to MJCF/URDF scene file"},
@@ -2837,7 +2980,10 @@ class Simulation(AgentTool):
                         "fov": {"type": "number", "description": "Camera field of view"},
                         "width": {"type": "integer"},
                         "height": {"type": "integer"},
-                        "policy_provider": {"type": "string", "description": "Policy provider name (e.g. groot, lerobot_async, lerobot_local, dreamgen, mock)"},
+                        "policy_provider": {
+                            "type": "string",
+                            "description": "Policy provider name (e.g. groot, lerobot_async, lerobot_local, dreamgen, mock)",
+                        },
                         "instruction": {"type": "string"},
                         "duration": {"type": "number"},
                         "policy_port": {"type": "integer"},
@@ -2849,7 +2995,10 @@ class Simulation(AgentTool):
                         "n_steps": {"type": "integer"},
                         "output_path": {"type": "string", "description": "Trajectory/video export path"},
                         "fps": {"type": "integer", "description": "Video frames per second (for record_video)"},
-                        "pretrained_name_or_path": {"type": "string", "description": "HuggingFace model ID for lerobot_local"},
+                        "pretrained_name_or_path": {
+                            "type": "string",
+                            "description": "HuggingFace model ID for lerobot_local",
+                        },
                         # Domain randomization
                         "randomize_colors": {"type": "boolean"},
                         "randomize_lighting": {"type": "boolean"},
@@ -2858,9 +3007,18 @@ class Simulation(AgentTool):
                         "position_noise": {"type": "number"},
                         "seed": {"type": "integer", "description": "Random seed"},
                         # Replay and eval
-                        "repo_id": {"type": "string", "description": "HuggingFace dataset repo ID (for start_recording: creates LeRobotDataset; for replay_episode: loads dataset)"},
-                        "push_to_hub": {"type": "boolean", "description": "Auto-push dataset to HuggingFace Hub on stop_recording"},
-                        "vcodec": {"type": "string", "description": "Video codec for dataset recording (h264, hevc, libsvtav1)"},
+                        "repo_id": {
+                            "type": "string",
+                            "description": "HuggingFace dataset repo ID (for start_recording: creates LeRobotDataset; for replay_episode: loads dataset)",
+                        },
+                        "push_to_hub": {
+                            "type": "boolean",
+                            "description": "Auto-push dataset to HuggingFace Hub on stop_recording",
+                        },
+                        "vcodec": {
+                            "type": "string",
+                            "description": "Video codec for dataset recording (h264, hevc, libsvtav1)",
+                        },
                         "task": {"type": "string", "description": "Task description for dataset recording"},
                         "episode": {"type": "integer", "description": "Episode index for replay_episode"},
                         "root": {"type": "string", "description": "Local dataset root directory"},
@@ -2874,19 +3032,22 @@ class Simulation(AgentTool):
             },
         }
 
-    async def stream(self, tool_use: ToolUse, invocation_state: dict[str, Any],
-                     **kwargs: Any) -> AsyncGenerator[ToolResultEvent, None]:
+    async def stream(
+        self, tool_use: ToolUse, invocation_state: dict[str, Any], **kwargs: Any
+    ) -> AsyncGenerator[ToolResultEvent, None]:
         try:
             tool_use_id = tool_use.get("toolUseId", "")
             input_data = tool_use.get("input", {})
             result = self._dispatch_action(input_data.get("action", ""), input_data)
             yield ToolResultEvent({"toolUseId": tool_use_id, **result})
         except Exception as e:
-            yield ToolResultEvent({
-                "toolUseId": tool_use.get("toolUseId", ""),
-                "status": "error",
-                "content": [{"text": f"❌ Sim error: {e}"}],
-            })
+            yield ToolResultEvent(
+                {
+                    "toolUseId": tool_use.get("toolUseId", ""),
+                    "status": "error",
+                    "content": [{"text": f"❌ Sim error: {e}"}],
+                }
+            )
 
     def _dispatch_action(self, action: str, d: Dict[str, Any]) -> Dict[str, Any]:
         """Route action to method."""
@@ -2921,10 +3082,14 @@ class Simulation(AgentTool):
         # Objects
         elif action == "add_object":
             return self.add_object(
-                name=d.get("name", ""), shape=d.get("shape", "box"),
-                position=d.get("position"), orientation=d.get("orientation"),
-                size=d.get("size"), color=d.get("color"),
-                mass=d.get("mass", 0.1), is_static=d.get("is_static", False),
+                name=d.get("name", ""),
+                shape=d.get("shape", "box"),
+                position=d.get("position"),
+                orientation=d.get("orientation"),
+                size=d.get("size"),
+                color=d.get("color"),
+                mass=d.get("mass", 0.1),
+                is_static=d.get("is_static", False),
                 mesh_path=d.get("mesh_path"),
             )
         elif action == "remove_object":
@@ -2937,27 +3102,39 @@ class Simulation(AgentTool):
         # Cameras
         elif action == "add_camera":
             return self.add_camera(
-                name=d.get("name", "cam"), position=d.get("position"),
-                target=d.get("target"), fov=d.get("fov", 60.0),
-                width=d.get("width", 640), height=d.get("height", 480),
+                name=d.get("name", "cam"),
+                position=d.get("position"),
+                target=d.get("target"),
+                fov=d.get("fov", 60.0),
+                width=d.get("width", 640),
+                height=d.get("height", 480),
             )
         elif action == "remove_camera":
             return self.remove_camera(d.get("name", ""))
 
         # Policy
         elif action == "run_policy":
-            kw = {k: d[k] for k in ["policy_port", "policy_host", "model_path", "server_address", "policy_type"] if k in d}
+            kw = {
+                k: d[k] for k in ["policy_port", "policy_host", "model_path", "server_address", "policy_type"] if k in d
+            }
             return self.run_policy(
-                robot_name=d.get("robot_name", ""), policy_provider=d.get("policy_provider", "mock"),
-                instruction=d.get("instruction", ""), duration=d.get("duration", 10.0),
-                action_horizon=d.get("action_horizon", 8), control_frequency=d.get("control_frequency", 50.0),
+                robot_name=d.get("robot_name", ""),
+                policy_provider=d.get("policy_provider", "mock"),
+                instruction=d.get("instruction", ""),
+                duration=d.get("duration", 10.0),
+                action_horizon=d.get("action_horizon", 8),
+                control_frequency=d.get("control_frequency", 50.0),
                 **kw,
             )
         elif action == "start_policy":
-            kw = {k: d[k] for k in ["policy_port", "policy_host", "model_path", "server_address", "policy_type"] if k in d}
+            kw = {
+                k: d[k] for k in ["policy_port", "policy_host", "model_path", "server_address", "policy_type"] if k in d
+            }
             return self.start_policy(
-                robot_name=d.get("robot_name", ""), policy_provider=d.get("policy_provider", "mock"),
-                instruction=d.get("instruction", ""), duration=d.get("duration", 10.0),
+                robot_name=d.get("robot_name", ""),
+                policy_provider=d.get("policy_provider", "mock"),
+                instruction=d.get("instruction", ""),
+                duration=d.get("duration", 10.0),
                 **kw,
             )
         elif action == "stop_policy":
@@ -3009,10 +3186,18 @@ class Simulation(AgentTool):
         elif action == "get_recording_status":
             return self.get_recording_status()
         elif action == "record_video":
-            kw = {k: d[k] for k in [
-                "policy_port", "policy_host", "model_path", "server_address",
-                "policy_type", "pretrained_name_or_path",
-            ] if k in d}
+            kw = {
+                k: d[k]
+                for k in [
+                    "policy_port",
+                    "policy_host",
+                    "model_path",
+                    "server_address",
+                    "policy_type",
+                    "pretrained_name_or_path",
+                ]
+                if k in d
+            }
             return self.record_video(
                 robot_name=d.get("robot_name", ""),
                 policy_provider=d.get("policy_provider", "lerobot_local"),
@@ -3069,7 +3254,7 @@ class Simulation(AgentTool):
             return {"status": "error", "content": [{"text": f"❌ Unknown action: {action}"}]}
 
     def cleanup(self):
-        if hasattr(self, 'mesh') and self.mesh:
+        if hasattr(self, "mesh") and self.mesh:
             self.mesh.stop()
         if self._world:
             for r in self._world.robots.values():

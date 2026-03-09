@@ -18,12 +18,14 @@ logger = logging.getLogger(__name__)
 try:
     import gymnasium as gym
     from gymnasium import spaces
+
     HAS_GYM = True
 except ImportError:
     HAS_GYM = False
 
 try:
     import mujoco
+
     HAS_MUJOCO = True
 except ImportError:
     HAS_MUJOCO = False
@@ -108,6 +110,7 @@ if HAS_GYM:
             if backend == "isaac":
                 super().__init__()
                 from strands_robots.isaac.isaac_gym_env import IsaacGymEnv
+
                 self._delegate = IsaacGymEnv(
                     robot_name=robot_name,
                     task=task,
@@ -128,6 +131,7 @@ if HAS_GYM:
                 super().__init__()
                 from strands_robots.newton.newton_backend import NewtonConfig
                 from strands_robots.newton.newton_gym_env import NewtonGymEnv
+
                 self._delegate = NewtonGymEnv(
                     robot_name=robot_name,
                     task=task,
@@ -184,10 +188,13 @@ if HAS_GYM:
             self._sim._dispatch_action("create_world", {})
 
             # Add robot
-            self._sim._dispatch_action("add_robot", {
-                "data_config": self.robot_name,
-                "name": "robot",
-            })
+            self._sim._dispatch_action(
+                "add_robot",
+                {
+                    "data_config": self.robot_name,
+                    "name": "robot",
+                },
+            )
 
             # Add objects
             for obj in self.objects_config:
@@ -222,14 +229,17 @@ if HAS_GYM:
 
             if self.render_mode == "rgb_array" or self.cameras_config:
                 # Include image in observation
-                self.observation_space = spaces.Dict({
-                    "state": spaces.Box(low=obs_low, high=obs_high, dtype=np.float32),
-                    "pixels": spaces.Box(
-                        low=0, high=255,
-                        shape=(self.render_height, self.render_width, 3),
-                        dtype=np.uint8,
-                    ),
-                })
+                self.observation_space = spaces.Dict(
+                    {
+                        "state": spaces.Box(low=obs_low, high=obs_high, dtype=np.float32),
+                        "pixels": spaces.Box(
+                            low=0,
+                            high=255,
+                            shape=(self.render_height, self.render_width, 3),
+                            dtype=np.uint8,
+                        ),
+                    }
+                )
                 self._include_pixels = True
             else:
                 self.observation_space = spaces.Box(low=obs_low, high=obs_high, dtype=np.float32)
@@ -241,10 +251,12 @@ if HAS_GYM:
             """Get current observation from sim."""
             data = self._sim._world._data
 
-            state = np.concatenate([
-                data.qpos.astype(np.float32),
-                data.qvel.astype(np.float32),
-            ])
+            state = np.concatenate(
+                [
+                    data.qpos.astype(np.float32),
+                    data.qvel.astype(np.float32),
+                ]
+            )
 
             if self._include_pixels:
                 # Render image
@@ -263,7 +275,7 @@ if HAS_GYM:
 
         def reset(self, seed=None, options=None) -> Tuple[Any, Dict]:
             """Reset environment to initial state."""
-            if hasattr(self, '_delegate') and self._delegate is not None:
+            if hasattr(self, "_delegate") and self._delegate is not None:
                 return self._delegate.reset(seed=seed, options=options)
 
             super().reset(seed=seed)
@@ -281,13 +293,13 @@ if HAS_GYM:
 
         def step(self, action: np.ndarray) -> Tuple[Any, float, bool, bool, Dict]:
             """Take a step in the environment."""
-            if hasattr(self, '_delegate') and self._delegate is not None:
+            if hasattr(self, "_delegate") and self._delegate is not None:
                 return self._delegate.step(action)
 
             data = self._sim._world._data
 
             # Apply action to actuators
-            np.copyto(data.ctrl[:len(action)], action)
+            np.copyto(data.ctrl[: len(action)], action)
 
             # Step physics
             for _ in range(self.n_substeps):
@@ -322,7 +334,7 @@ if HAS_GYM:
 
         def render(self) -> Optional[np.ndarray]:
             """Render the environment."""
-            if hasattr(self, '_delegate') and self._delegate is not None:
+            if hasattr(self, "_delegate") and self._delegate is not None:
                 return self._delegate.render()
 
             if self.render_mode == "rgb_array":
@@ -334,17 +346,17 @@ if HAS_GYM:
                 return frame
             elif self.render_mode == "human":
                 # Use MuJoCo viewer
-                if not hasattr(self, '_viewer') or self._viewer is None:
+                if not hasattr(self, "_viewer") or self._viewer is None:
                     self._viewer = mujoco.viewer.launch_passive(self._sim._world._model, self._sim._world._data)
                 self._viewer.sync()
                 return None
 
         def close(self):
             """Clean up resources."""
-            if hasattr(self, '_delegate') and self._delegate is not None:
+            if hasattr(self, "_delegate") and self._delegate is not None:
                 return self._delegate.close()
 
-            if hasattr(self, '_viewer') and self._viewer is not None:
+            if hasattr(self, "_viewer") and self._viewer is not None:
                 self._viewer.close()
                 self._viewer = None
             if self._sim is not None:
@@ -355,7 +367,6 @@ if HAS_GYM:
         def unwrapped_sim(self):
             """Access the underlying Simulation object for advanced usage."""
             return self._sim
-
 
     # Register the environment with Gymnasium
     try:

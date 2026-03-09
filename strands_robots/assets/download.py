@@ -35,6 +35,7 @@ except ImportError:
     def tool(f):  # type: ignore[misc]
         return f
 
+
 from . import _ROBOT_MODELS, format_robot_table, get_assets_dir, resolve_robot_name
 
 logger = logging.getLogger(__name__)
@@ -86,6 +87,7 @@ def download_robots(names=None, category=None, force=False) -> Dict[str, Any]:
             needs_meshes = False
             try:
                 import re
+
                 content = model_file.read_text()
                 mesh_files = re.findall(r'file="([^"]+\.(?:stl|STL|obj))"', content)
                 if mesh_files:
@@ -234,6 +236,7 @@ def download_assets(
 
         elif action == "status":
             from . import list_available_robots
+
             robots_info = list_available_robots()
             available = sum(1 for r in robots_info if r["available"])
             missing = sum(1 for r in robots_info if not r["available"])
