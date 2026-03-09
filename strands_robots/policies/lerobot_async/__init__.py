@@ -23,7 +23,7 @@ Usage:
 """
 
 import logging
-import pickle
+import pickle  # noqa: S403
 import time
 from typing import Any, Dict, List, Optional
 
@@ -128,10 +128,10 @@ class LerobotAsyncPolicy(Policy):
         self._connected = False
         self._timestep = 0
 
-        logger.info(f"🤖 LeRobot Async Policy: {policy_type}")
-        logger.info(f"📡 Server: {server_address}")
-        logger.info(f"🧠 Model: {pretrained_name_or_path}")
-        logger.info(f"⚡ Actions/chunk: {actions_per_chunk}")
+        logger.info(f"LeRobot Async Policy: {policy_type}")
+        logger.info(f"Server: {server_address}")
+        logger.info(f"Model: {pretrained_name_or_path}")
+        logger.info(f"Actions/chunk: {actions_per_chunk}")
 
     @property
     def provider_name(self) -> str:
@@ -180,14 +180,14 @@ class LerobotAsyncPolicy(Policy):
             self._stub.SendPolicyInstructions(services_pb2.PolicyInstructions(data=config_bytes))
 
             self._connected = True
-            logger.info(f"✅ Connected to LeRobot server at {self.server_address}")
+            logger.info(f"Connected to LeRobot server at {self.server_address}")
 
         except ImportError as e:
             raise ImportError(
                 f"LeRobot async inference dependencies not available: {e}. " f"Install: pip install lerobot[async]"
             ) from e
         except Exception as e:
-            logger.error(f"❌ Failed to connect to LeRobot server: {e}")
+            logger.error(f"Failed to connect to LeRobot server: {e}")
             raise
 
     async def get_actions(self, observation_dict: Dict[str, Any], instruction: str, **kwargs) -> List[Dict[str, Any]]:
@@ -233,7 +233,7 @@ class LerobotAsyncPolicy(Policy):
             actions_response = self._stub.GetActions(services_pb2.Empty())
 
             if not actions_response.data:
-                logger.warning("⚠️ Empty action response from server")
+                logger.warning("Empty action response from server")
                 return self._generate_zero_actions()
 
             # Deserialize action chunk
@@ -241,18 +241,18 @@ class LerobotAsyncPolicy(Policy):
             # This assumes the inference server is trusted (e.g. running locally or on
             # a private network). Do NOT connect to untrusted servers — pickle
             # deserialization of untrusted data can lead to arbitrary code execution.
-            # TODO: Consider migrating to a safer serialization format (protobuf/msgpack).
+            # TODO(P0): Migrate to a safer serialization format (protobuf/msgpack).
             timed_actions = pickle.loads(actions_response.data)  # noqa: S301
 
-            if not isinstance(timed_actions, list):
-                logger.warning("Unexpected action type from server, expected list")
+            if not isinstance(timed_actions, (list, tuple)):
+                logger.warning(f"Unexpected action type from server: {type(timed_actions).__name__}, expected list")
                 return self._generate_zero_actions()
 
             # Convert TimedAction list to robot action dicts
             return self._convert_actions(timed_actions)
 
         except Exception as e:
-            logger.error(f"❌ LeRobot async inference error: {e}")
+            logger.error(f"LeRobot async inference error: {e}")
             return self._generate_zero_actions()
 
     def _build_raw_observation(self, observation_dict: Dict[str, Any], instruction: str) -> Dict[str, Any]:
@@ -292,7 +292,7 @@ class LerobotAsyncPolicy(Policy):
                     action_dict[key] = 0.0
             robot_actions.append(action_dict)
 
-        logger.debug(f"⚡ Converted {len(robot_actions)} actions from LeRobot server")
+        logger.debug(f"Converted {len(robot_actions)} actions from LeRobot server")
         return robot_actions
 
     def _generate_zero_actions(self) -> List[Dict[str, Any]]:
