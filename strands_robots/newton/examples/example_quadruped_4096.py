@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """4096 parallel quadrupeds on GPU — Newton's massive parallelism showcase."""
+
 import os
 import sys
 import time

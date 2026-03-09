@@ -112,7 +112,7 @@ def _ensure_isaacsim():
             break
 
     try:
-        import isaacsim  # noqa: F401
+        import isaacsim  # noqa: F401,F811
 
         return True
     except ImportError:

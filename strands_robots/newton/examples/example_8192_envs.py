@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Push Thor to the limit: 8192 parallel environments."""
+
 import os
 import sys
 import time

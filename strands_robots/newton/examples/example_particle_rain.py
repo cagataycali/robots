@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """100 particles falling with collision — SemiImplicit + CollisionPipeline."""
+
 import os
 import sys
 

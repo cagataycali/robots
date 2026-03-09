@@ -411,7 +411,6 @@ class DreamGenPipeline:
                 continue
 
             # IDM sliding window: predict H actions from frame pairs
-            import torch
 
             all_actions = []
             for t in range(len(frames) - 1):

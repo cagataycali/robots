@@ -1,7 +1,5 @@
 """Tests for training pipeline, dataset recording, GPU backends, and utilities."""
 
-import pytest
-
 
 class TestDatasetRecorder:
     """Test dataset recording in LeRobot format."""
@@ -46,6 +44,8 @@ class TestTrainingPipeline:
 
         assert Gr00tTrainer is not None
         assert LerobotTrainer is not None
+        assert DreamgenIdmTrainer is not None
+        assert DreamgenVlaTrainer is not None
 
     def test_evaluate_function(self):
         from strands_robots.training import evaluate

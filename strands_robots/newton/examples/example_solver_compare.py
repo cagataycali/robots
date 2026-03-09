@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Compare MuJoCo vs SemiImplicit solvers on same scene."""
+
 import os
 import sys
 import time

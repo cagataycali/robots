@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Multiple robots in one scene — MuJoCo solver."""
+
 import os
 import sys
 import time

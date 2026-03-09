@@ -10,6 +10,7 @@ Bridges Zenoh mesh + all strands-robots capabilities to the browser:
 Usage:
     python -m strands_robots.dashboard.serve [port]
 """
+
 import asyncio
 import base64
 import json

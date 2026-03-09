@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Differentiable simulation: optimize ball trajectory to hit target."""
+
 import os
 import sys
 
