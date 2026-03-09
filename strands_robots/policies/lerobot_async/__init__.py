@@ -235,7 +235,7 @@ class LerobotAsyncPolicy(Policy):
             )
 
             config_bytes = pickle.dumps(remote_config)
-            self._stub.SendPolicyInstructions(services_pb2.PolicyInstructions(data=config_bytes))
+            self._stub.SendPolicyInstructions(services_pb2.PolicySetup(data=config_bytes))
 
             self._connected = True
             logger.info(f"✅ Connected to LeRobot server at {self.server_address}")
@@ -284,7 +284,12 @@ class LerobotAsyncPolicy(Policy):
             # Use chunk sending for large observations
             from lerobot.transport.utils import send_bytes_in_chunks
 
-            chunk_iterator = send_bytes_in_chunks(obs_bytes)
+            chunk_iterator = send_bytes_in_chunks(
+                obs_bytes,
+                services_pb2.Observation,
+                log_prefix="[STRANDS] Observation",
+                silent=True,
+            )
             self._stub.SendObservations(chunk_iterator)
 
             # Request actions
