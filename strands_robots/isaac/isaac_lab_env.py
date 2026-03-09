@@ -72,7 +72,6 @@ _ISAAC_TASK_REGISTRY: Dict[str, Dict[str, Any]] = {
         "robot": "anymal_c",
         "description": "ANYmal-C direct RL locomotion",
     },
-
     # Manipulation
     "franka_cabinet": {
         "task_id": "Isaac-Open-Drawer-Franka-v0",
@@ -92,7 +91,6 @@ _ISAAC_TASK_REGISTRY: Dict[str, Dict[str, Any]] = {
         "robot": "allegro_hand",
         "description": "Allegro Hand in-hand manipulation",
     },
-
     # Classic control
     "cartpole": {
         "task_id": "Isaac-CartPole-v0",
@@ -106,7 +104,6 @@ _ISAAC_TASK_REGISTRY: Dict[str, Dict[str, Any]] = {
         "robot": "ant",
         "description": "Ant locomotion (Isaac Lab)",
     },
-
     # Navigation
     "anymal_c_nav": {
         "task_id": "Isaac-Navigation-Flat-Anymal-C-v0",
@@ -130,13 +127,15 @@ def list_isaac_tasks(category: Optional[str] = None) -> List[Dict[str, Any]]:
     for name, info in sorted(_ISAAC_TASK_REGISTRY.items()):
         if category and info["type"] != category:
             continue
-        tasks.append({
-            "name": name,
-            "task_id": info["task_id"],
-            "type": info["type"],
-            "robot": info["robot"],
-            "description": info["description"],
-        })
+        tasks.append(
+            {
+                "name": name,
+                "task_id": info["task_id"],
+                "type": info["type"],
+                "robot": info["robot"],
+                "description": info["description"],
+            }
+        )
 
     # Also try to discover registered tasks from Isaac Lab
     try:
@@ -146,22 +145,21 @@ def list_isaac_tasks(category: Optional[str] = None) -> List[Dict[str, Any]]:
         import isaaclab_tasks  # noqa: F401
 
         # Get all Isaac Lab registered envs
-        isaac_envs = [
-            spec.id for spec in gym.registry.values()
-            if spec.id.startswith("Isaac-")
-        ]
+        isaac_envs = [spec.id for spec in gym.registry.values() if spec.id.startswith("Isaac-")]
 
         # Add any we don't have in our registry
         known_ids = {info["task_id"] for info in _ISAAC_TASK_REGISTRY.values()}
         for env_id in isaac_envs:
             if env_id not in known_ids:
-                tasks.append({
-                    "name": env_id.lower().replace("-", "_"),
-                    "task_id": env_id,
-                    "type": "unknown",
-                    "robot": "unknown",
-                    "description": f"Isaac Lab env: {env_id}",
-                })
+                tasks.append(
+                    {
+                        "name": env_id.lower().replace("-", "_"),
+                        "task_id": env_id,
+                        "type": "unknown",
+                        "robot": "unknown",
+                        "description": f"Isaac Lab env: {env_id}",
+                    }
+                )
     except ImportError:
         pass
 
@@ -176,6 +174,7 @@ def list_isaac_tasks(category: Optional[str] = None) -> List[Dict[str, Any]]:
 @dataclass
 class IsaacLabEnvConfig:
     """Configuration for Isaac Lab environment wrapper."""
+
     task_name: str = "cartpole"
     num_envs: int = 1
     device: str = "cuda:0"
@@ -252,7 +251,7 @@ class IsaacLabEnv:
             )
 
             # Extract spaces info
-            self._action_dim = self._env.action_space.shape[-1] if hasattr(self._env.action_space, 'shape') else 0
+            self._action_dim = self._env.action_space.shape[-1] if hasattr(self._env.action_space, "shape") else 0
 
             logger.info(
                 f"✅ Isaac Lab env created: {task_id} "
@@ -300,9 +299,9 @@ class IsaacLabEnv:
         obs, rew, terminated, truncated, info = self._env.step(action_tensor)
 
         obs_dict = self._to_policy_obs(obs)
-        reward = float(rew.mean().cpu()) if hasattr(rew, 'cpu') else float(rew)
-        done = bool(terminated.any().cpu()) if hasattr(terminated, 'cpu') else bool(terminated)
-        trunc = bool(truncated.any().cpu()) if hasattr(truncated, 'cpu') else bool(truncated)
+        reward = float(rew.mean().cpu()) if hasattr(rew, "cpu") else float(rew)
+        done = bool(terminated.any().cpu()) if hasattr(terminated, "cpu") else bool(terminated)
+        trunc = bool(truncated.any().cpu()) if hasattr(truncated, "cpu") else bool(truncated)
 
         return obs_dict, reward, done, trunc, info
 
@@ -316,7 +315,7 @@ class IsaacLabEnv:
         if len(action_vals) < self._action_dim:
             action_vals.extend([0.0] * (self._action_dim - len(action_vals)))
         elif len(action_vals) > self._action_dim:
-            action_vals = action_vals[:self._action_dim]
+            action_vals = action_vals[: self._action_dim]
 
         return self.step(np.array(action_vals, dtype=np.float32))
 
@@ -326,7 +325,7 @@ class IsaacLabEnv:
             return {}
         # For Isaac Lab, we need to return the current observation
         # which is stored after the last step/reset
-        return self._last_obs if hasattr(self, '_last_obs') else {}
+        return self._last_obs if hasattr(self, "_last_obs") else {}
 
     def run_policy(
         self,
@@ -381,12 +380,14 @@ class IsaacLabEnv:
                     if terminated or truncated:
                         break
 
-            results.append({
-                "episode": ep,
-                "reward": ep_reward,
-                "steps": ep_steps,
-                "terminated": terminated,
-            })
+            results.append(
+                {
+                    "episode": ep,
+                    "reward": ep_reward,
+                    "steps": ep_steps,
+                    "terminated": terminated,
+                }
+            )
 
         total_time = time.time() - total_start
         avg_reward = sum(r["reward"] for r in results) / max(len(results), 1)
@@ -394,13 +395,17 @@ class IsaacLabEnv:
 
         return {
             "status": "success",
-            "content": [{"text": (
-                f"📊 Isaac Lab Evaluation: {self.config.task_name}\n"
-                f"🧠 Policy: {policy_provider} | 🎯 {instruction}\n"
-                f"📈 Episodes: {n_episodes} | Avg reward: {avg_reward:.2f}\n"
-                f"📊 Avg steps: {avg_steps:.0f}/{max_steps}\n"
-                f"⏱️ Total: {total_time:.1f}s"
-            )}],
+            "content": [
+                {
+                    "text": (
+                        f"📊 Isaac Lab Evaluation: {self.config.task_name}\n"
+                        f"🧠 Policy: {policy_provider} | 🎯 {instruction}\n"
+                        f"📈 Episodes: {n_episodes} | Avg reward: {avg_reward:.2f}\n"
+                        f"📊 Avg steps: {avg_steps:.0f}/{max_steps}\n"
+                        f"⏱️ Total: {total_time:.1f}s"
+                    )
+                }
+            ],
             "results": results,
         }
 

@@ -54,9 +54,11 @@ def _ensure_isaac():
 
     try:
         import isaaclab.sim as sim_utils_mod
+
         _sim_utils = sim_utils_mod
 
         from isaaclab.envs import DirectRLEnv
+
         _isaac_env = DirectRLEnv
 
         logger.info("✅ Isaac Lab loaded successfully")
@@ -78,6 +80,7 @@ def _ensure_isaacsim():
     """
     try:
         import isaacsim  # noqa: F401
+
         return True
     except ImportError:
         pass
@@ -85,6 +88,7 @@ def _ensure_isaacsim():
     # Attempt to discover Isaac Sim on the filesystem and
     # inject its Python packages into sys.path.
     from . import get_isaac_sim_path
+
     isaac_path = get_isaac_sim_path()
     if isaac_path is None:
         return False
@@ -109,9 +113,11 @@ def _ensure_isaacsim():
 
     try:
         import isaacsim  # noqa: F401
+
         return True
     except ImportError:
         return False
+
 
 def _setup_nucleus():
     """Configure Nucleus asset paths for Isaac Lab.
@@ -121,6 +127,7 @@ def _setup_nucleus():
     """
     try:
         import carb
+
         settings = carb.settings.get_settings()
         root = settings.get("/persistent/isaac/asset_root/cloud")
         if root is None or root == "":
@@ -131,6 +138,7 @@ def _setup_nucleus():
         # Patch isaaclab assets module with correct root
         try:
             import isaaclab.utils.assets as am
+
             am.NUCLEUS_ASSET_ROOT_DIR = root
             am.NVIDIA_NUCLEUS_DIR = f"{root}/NVIDIA"
             am.ISAAC_NUCLEUS_DIR = f"{root}/Isaac"
@@ -145,9 +153,6 @@ def _setup_nucleus():
         return None
 
 
-
-
-
 # ─────────────────────────────────────────────────────────────────────
 # Isaac Sim Backend — GPU-accelerated simulation
 # ─────────────────────────────────────────────────────────────────────
@@ -156,6 +161,7 @@ def _setup_nucleus():
 @dataclass
 class IsaacSimConfig:
     """Configuration for Isaac Sim backend."""
+
     num_envs: int = 1
     device: str = "cuda:0"
     physics_dt: float = 1.0 / 200.0  # 200Hz physics
@@ -203,6 +209,7 @@ class IsaacSimBackend:
             # importable in the current Python (common with Omniverse installs
             # which ship their own Python environment).
             from . import get_isaac_sim_path
+
             isaac_path = get_isaac_sim_path()
             if isaac_path:
                 raise ImportError(
@@ -224,8 +231,10 @@ class IsaacSimBackend:
         # Isaac Sim extensions are not fully loaded in this Python env).
         try:
             from isaacsim import SimulationApp
+
             if SimulationApp is None:
                 from . import get_isaac_sim_path
+
                 isaac_path = get_isaac_sim_path()
                 raise ImportError(
                     f"Isaac Sim imported but SimulationApp is None — "
@@ -237,8 +246,7 @@ class IsaacSimBackend:
             pass  # Will be handled when create_world() is called
 
         logger.info(
-            f"🎮 Isaac Sim backend initialized "
-            f"(num_envs={self.config.num_envs}, device={self.config.device})"
+            f"🎮 Isaac Sim backend initialized " f"(num_envs={self.config.num_envs}, device={self.config.device})"
         )
 
     def create_world(
@@ -280,13 +288,17 @@ class IsaacSimBackend:
 
             return {
                 "status": "success",
-                "content": [{"text": (
-                    f"🌍 Isaac Sim world created (GPU: {self.config.device})\n"
-                    f"⚙️ Physics: {1/self.config.physics_dt:.0f}Hz, "
-                    f"Render: {1/self.config.rendering_dt:.0f}Hz\n"
-                    f"🔢 Parallel envs: {self.config.num_envs}\n"
-                    f"💡 Use add_robot() to spawn robots"
-                )}],
+                "content": [
+                    {
+                        "text": (
+                            f"🌍 Isaac Sim world created (GPU: {self.config.device})\n"
+                            f"⚙️ Physics: {1/self.config.physics_dt:.0f}Hz, "
+                            f"Render: {1/self.config.rendering_dt:.0f}Hz\n"
+                            f"🔢 Parallel envs: {self.config.num_envs}\n"
+                            f"💡 Use add_robot() to spawn robots"
+                        )
+                    }
+                ],
             }
 
         except Exception as e:
@@ -320,10 +332,17 @@ class IsaacSimBackend:
                 resolved_usd = self._resolve_usd(data_config)
 
             if not resolved_usd:
-                return {"status": "error", "content": [{"text": (
-                    f"❌ No USD file found for '{data_config or name}'.\n"
-                    "💡 Convert MJCF: from strands_robots.isaac import convert_mjcf_to_usd"
-                )}]}
+                return {
+                    "status": "error",
+                    "content": [
+                        {
+                            "text": (
+                                f"❌ No USD file found for '{data_config or name}'.\n"
+                                "💡 Convert MJCF: from strands_robots.isaac import convert_mjcf_to_usd"
+                            )
+                        }
+                    ],
+                }
 
             pos = position or [0.0, 0.0, 0.0]
 
@@ -338,17 +357,21 @@ class IsaacSimBackend:
 
             self._robot = Articulation(robot_cfg)
 
-            n_joints = self._robot.num_joints if hasattr(self._robot, 'num_joints') else 0
+            n_joints = self._robot.num_joints if hasattr(self._robot, "num_joints") else 0
 
             return {
                 "status": "success",
-                "content": [{"text": (
-                    f"🤖 Robot '{name}' added to Isaac Sim\n"
-                    f"📁 USD: {os.path.basename(resolved_usd or 'unknown')}\n"
-                    f"📍 Position: {pos}\n"
-                    f"🔩 Joints: {n_joints}\n"
-                    f"🔢 Instances: {self.config.num_envs} parallel"
-                )}],
+                "content": [
+                    {
+                        "text": (
+                            f"🤖 Robot '{name}' added to Isaac Sim\n"
+                            f"📁 USD: {os.path.basename(resolved_usd or 'unknown')}\n"
+                            f"📍 Position: {pos}\n"
+                            f"🔩 Joints: {n_joints}\n"
+                            f"🔢 Instances: {self.config.num_envs} parallel"
+                        )
+                    }
+                ],
             }
 
         except Exception as e:
@@ -427,7 +450,7 @@ class IsaacSimBackend:
             camera.update(dt=self.config.rendering_dt)
 
             rgb_data = camera.data.output["rgb"]
-            if hasattr(rgb_data, 'cpu'):
+            if hasattr(rgb_data, "cpu"):
                 rgb_np = rgb_data[0].cpu().numpy()
             else:
                 rgb_np = np.array(rgb_data[0])
@@ -467,7 +490,7 @@ class IsaacSimBackend:
         joint_pos = self._robot.data.joint_pos
         joint_vel = self._robot.data.joint_vel
 
-        if hasattr(joint_pos, 'cpu'):
+        if hasattr(joint_pos, "cpu"):
             joint_pos = joint_pos.cpu().numpy()
             joint_vel = joint_vel.cpu().numpy()
 
@@ -476,7 +499,7 @@ class IsaacSimBackend:
             joint_pos = joint_pos.squeeze(0)
             joint_vel = joint_vel.squeeze(0)
 
-        joint_names = self._robot.joint_names if hasattr(self._robot, 'joint_names') else []
+        joint_names = self._robot.joint_names if hasattr(self._robot, "joint_names") else []
         for i, name in enumerate(joint_names):
             if i < len(joint_pos):
                 obs[name] = float(joint_pos[i]) if joint_pos.ndim == 1 else joint_pos[:, i]
@@ -502,7 +525,7 @@ class IsaacSimBackend:
 
         policy = create_policy(policy_provider, **policy_kwargs)
 
-        joint_names = self._robot.joint_names if self._robot and hasattr(self._robot, 'joint_names') else []
+        joint_names = self._robot.joint_names if self._robot and hasattr(self._robot, "joint_names") else []
         policy.set_robot_state_keys(joint_names)
 
         start_time = time.time()
@@ -519,6 +542,7 @@ class IsaacSimBackend:
 
             if actions:
                 import torch
+
                 action_vals = []
                 for jname in joint_names:
                     action_vals.append(actions[0].get(jname, 0.0))
@@ -539,12 +563,16 @@ class IsaacSimBackend:
         elapsed = time.time() - start_time
         return {
             "status": "success",
-            "content": [{"text": (
-                f"✅ Policy complete on Isaac Sim '{robot_name}'\n"
-                f"🧠 {policy_provider} | 🎯 {instruction}\n"
-                f"⏱️ {elapsed:.1f}s | 📊 {steps} steps | "
-                f"🔢 {self.config.num_envs} parallel envs"
-            )}],
+            "content": [
+                {
+                    "text": (
+                        f"✅ Policy complete on Isaac Sim '{robot_name}'\n"
+                        f"🧠 {policy_provider} | 🎯 {instruction}\n"
+                        f"⏱️ {elapsed:.1f}s | 📊 {steps} steps | "
+                        f"🔢 {self.config.num_envs} parallel envs"
+                    )
+                }
+            ],
         }
 
     def destroy(self) -> Dict[str, Any]:
@@ -585,8 +613,7 @@ class IsaacSimBackend:
         if data_config in _ISAAC_ASSETS:
             # Replace nucleus dir placeholder
             try:
-                nucleus_dir = os.environ.get("ISAACLAB_NUCLEUS_DIR",
-                    "omniverse://localhost/NVIDIA/Assets/Isaac/4.2")
+                nucleus_dir = os.environ.get("ISAACLAB_NUCLEUS_DIR", "omniverse://localhost/NVIDIA/Assets/Isaac/4.2")
                 return _ISAAC_ASSETS[data_config].replace("ISAACLAB_NUCLEUS_DIR", nucleus_dir)
             except Exception:
                 pass
@@ -600,9 +627,11 @@ class IsaacSimBackend:
         # Try converting from MJCF
         try:
             from strands_robots.assets import resolve_model_path
+
             mjcf_path = resolve_model_path(data_config)
             if mjcf_path and mjcf_path.exists():
                 from .asset_converter import convert_mjcf_to_usd
+
                 cache_dir.mkdir(parents=True, exist_ok=True)
                 output = str(cached)
                 result = convert_mjcf_to_usd(str(mjcf_path), output)
@@ -617,7 +646,6 @@ class IsaacSimBackend:
     def is_available(self) -> bool:
         """Check if Isaac Sim runtime is available."""
         return _ensure_isaacsim()
-
 
     # ── Extended API (Phase 1.1 completion) ─────────────────────
 
@@ -698,11 +726,15 @@ class IsaacSimBackend:
 
             return {
                 "status": "success",
-                "content": [{"text": (
-                    f"📦 Object '{name}' added\n"
-                    f"  Type: {object_type} | Mass: {mass}kg\n"
-                    f"  Position: {pos} | Size: {sz}"
-                )}],
+                "content": [
+                    {
+                        "text": (
+                            f"📦 Object '{name}' added\n"
+                            f"  Type: {object_type} | Mass: {mass}kg\n"
+                            f"  Position: {pos} | Size: {sz}"
+                        )
+                    }
+                ],
             }
 
         except Exception as e:
@@ -752,11 +784,15 @@ class IsaacSimBackend:
 
                 return {
                     "status": "success",
-                    "content": [{"text": (
-                        f"🏔️ Terrain '{terrain_type}' added\n"
-                        f"  Size: {sz[0]}×{sz[1]}m\n"
-                        f"  Using Isaac Lab ROUGH_TERRAINS_CFG"
-                    )}],
+                    "content": [
+                        {
+                            "text": (
+                                f"🏔️ Terrain '{terrain_type}' added\n"
+                                f"  Size: {sz[0]}×{sz[1]}m\n"
+                                f"  Using Isaac Lab ROUGH_TERRAINS_CFG"
+                            )
+                        }
+                    ],
                 }
 
             else:
@@ -787,9 +823,7 @@ class IsaacSimBackend:
         try:
             import torch
 
-            pos_tensor = torch.tensor(
-                [positions], device=self.config.device, dtype=torch.float32
-            )
+            pos_tensor = torch.tensor([positions], device=self.config.device, dtype=torch.float32)
 
             if env_ids is not None:
                 idx = torch.tensor(env_ids, device=self.config.device)
@@ -807,10 +841,14 @@ class IsaacSimBackend:
 
             return {
                 "status": "success",
-                "content": [{"text": (
-                    f"🎯 Joint positions set ({len(positions)} joints)\n"
-                    f"  Envs: {env_ids if env_ids else 'all'}"
-                )}],
+                "content": [
+                    {
+                        "text": (
+                            f"🎯 Joint positions set ({len(positions)} joints)\n"
+                            f"  Envs: {env_ids if env_ids else 'all'}"
+                        )
+                    }
+                ],
             }
 
         except Exception as e:
@@ -834,7 +872,7 @@ class IsaacSimBackend:
         try:
             # Isaac Lab provides net contact forces via the robot data
             net_forces = self._robot.data.net_contact_forces
-            if hasattr(net_forces, 'cpu'):
+            if hasattr(net_forces, "cpu"):
                 forces_np = net_forces.cpu().numpy()
             else:
                 forces_np = np.array(net_forces)
@@ -844,12 +882,16 @@ class IsaacSimBackend:
 
             return {
                 "status": "success",
-                "content": [{"text": (
-                    f"📍 Contact Forces:\n"
-                    f"  Shape: {forces_np.shape}\n"
-                    f"  Total force norm: {total_force:.3f}N\n"
-                    f"  Max component: {max_force:.3f}N"
-                )}],
+                "content": [
+                    {
+                        "text": (
+                            f"📍 Contact Forces:\n"
+                            f"  Shape: {forces_np.shape}\n"
+                            f"  Total force norm: {total_force:.3f}N\n"
+                            f"  Max component: {max_force:.3f}N"
+                        )
+                    }
+                ],
                 "forces": forces_np,
             }
 
@@ -965,6 +1007,7 @@ class IsaacSimBackend:
                             import io
 
                             from PIL import Image
+
                             img = Image.open(io.BytesIO(img_bytes))
                             frame = np.array(img)
                             encoder.add_frame(frame)
@@ -972,18 +1015,23 @@ class IsaacSimBackend:
             encoder.close()
 
             import os
+
             size_kb = os.path.getsize(output_path) / 1024
 
             return {
                 "status": "success",
-                "content": [{"text": (
-                    f"🎬 Video recorded!\n"
-                    f"  Output: {output_path}\n"
-                    f"  Frames: {n_frames} @ {fps}fps\n"
-                    f"  Duration: {duration:.1f}s\n"
-                    f"  Resolution: {width}×{height}\n"
-                    f"  Size: {size_kb:.1f} KB"
-                )}],
+                "content": [
+                    {
+                        "text": (
+                            f"🎬 Video recorded!\n"
+                            f"  Output: {output_path}\n"
+                            f"  Frames: {n_frames} @ {fps}fps\n"
+                            f"  Duration: {duration:.1f}s\n"
+                            f"  Resolution: {width}×{height}\n"
+                            f"  Size: {size_kb:.1f} KB"
+                        )
+                    }
+                ],
                 "video_path": output_path,
             }
 

@@ -34,6 +34,7 @@ def _check_pyav() -> bool:
     """Check if PyAV is available."""
     try:
         import av  # noqa: F401
+
         return True
     except ImportError:
         return False
@@ -43,6 +44,7 @@ def _check_imageio() -> bool:
     """Check if imageio is available."""
     try:
         import imageio  # noqa: F401
+
         return True
     except ImportError:
         return False
@@ -116,10 +118,7 @@ class VideoEncoder:
             logger.warning(f"Error closing video: {e}")
 
         self._writer = None
-        logger.info(
-            f"Video saved: {self.output_path} "
-            f"({self._frame_count} frames, {self.codec}, {self._backend})"
-        )
+        logger.info(f"Video saved: {self.output_path} " f"({self._frame_count} frames, {self.codec}, {self._backend})")
 
     def _init_writer(self, width: int, height: int):
         """Initialize the video writer with the best available backend."""
@@ -142,9 +141,7 @@ class VideoEncoder:
             logger.info(f"Video encoder: imageio ({width}x{height})")
             return
 
-        raise RuntimeError(
-            "No video encoder available. Install: pip install av  OR  pip install imageio[ffmpeg]"
-        )
+        raise RuntimeError("No video encoder available. Install: pip install av  OR  pip install imageio[ffmpeg]")
 
     def _init_pyav(self, width: int, height: int):
         """Initialize PyAV encoder."""
@@ -257,6 +254,7 @@ def get_video_info(video_path: str) -> dict:
     """
     try:
         import av
+
         container = av.open(str(video_path))
         stream = container.streams.video[0]
         info = {

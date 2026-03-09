@@ -149,14 +149,16 @@ def list_tasks() -> List[Dict[str, str]]:
     """
     tasks = []
     for name, info in LEISAAC_TASKS.items():
-        tasks.append({
-            "name": name,
-            "env_id": info["env_id"],
-            "description": info["description"],
-            "robot": info["robot"],
-            "category": info["category"],
-            "instruction": info["default_instruction"],
-        })
+        tasks.append(
+            {
+                "name": name,
+                "env_id": info["env_id"],
+                "description": info["description"],
+                "robot": info["robot"],
+                "category": info["category"],
+                "instruction": info["default_instruction"],
+            }
+        )
     return tasks
 
 
@@ -168,9 +170,7 @@ def format_task_table() -> str:
         "─" * 85,
     ]
     for name, info in LEISAAC_TASKS.items():
-        lines.append(
-            f"{name:<25s} {info['robot']:<30s} {info['description']}"
-        )
+        lines.append(f"{name:<25s} {info['robot']:<30s} {info['description']}")
     lines.append(f"\nSource: {ENVHUB_REPO}")
     return "\n".join(lines)
 
@@ -183,6 +183,7 @@ def format_task_table() -> str:
 @dataclass
 class RolloutResult:
     """Result from a policy rollout in a LeIsaac environment."""
+
     n_episodes: int = 0
     n_successes: int = 0
     success_rate: float = 0.0
@@ -257,10 +258,7 @@ class LeIsaacEnv:
         self._raw_env = None
         self._loaded = False
 
-        logger.info(
-            f"🏭 LeIsaacEnv initialized: {task_name} "
-            f"({self.task_info.get('description', '')})"
-        )
+        logger.info(f"🏭 LeIsaacEnv initialized: {task_name} " f"({self.task_info.get('description', '')})")
 
     def load(self) -> bool:
         """Load the environment from HuggingFace EnvHub.
@@ -293,10 +291,7 @@ class LeIsaacEnv:
             return True
 
         except ImportError as e:
-            logger.error(
-                f"❌ Failed to load LeIsaac env: {e}\n"
-                f"Install: pip install leisaac[isaaclab] lerobot"
-            )
+            logger.error(f"❌ Failed to load LeIsaac env: {e}\n" f"Install: pip install leisaac[isaaclab] lerobot")
             return False
         except Exception as e:
             logger.error(f"❌ Failed to load LeIsaac env: {e}")
@@ -379,9 +374,7 @@ class LeIsaacEnv:
                 obs_dict = self._obs_to_dict(obs)
 
                 # Get action from policy
-                actions = asyncio.run(
-                    policy.get_actions(obs_dict, instruction)
-                )
+                actions = asyncio.run(policy.get_actions(obs_dict, instruction))
 
                 if actions:
                     action = self._dict_to_action(actions[0])
@@ -398,12 +391,14 @@ class LeIsaacEnv:
                 if truncated:
                     break
 
-            result.episodes.append({
-                "episode": ep,
-                "steps": ep_steps,
-                "reward": float(ep_reward),
-                "success": success,
-            })
+            result.episodes.append(
+                {
+                    "episode": ep,
+                    "steps": ep_steps,
+                    "reward": float(ep_reward),
+                    "success": success,
+                }
+            )
             if success:
                 result.n_successes += 1
 
@@ -444,6 +439,7 @@ class LeIsaacEnv:
         except ImportError:
             # Fallback to imageio
             import imageio
+
             VideoEncoder = None
 
         if not instruction:
@@ -629,14 +625,18 @@ try:
                 else:
                     return {
                         "status": "error",
-                        "content": [{"text": (
-                            f"❌ Failed to load LeIsaac environment: {task}\n"
-                            f"Requirements:\n"
-                            f"  - NVIDIA GPU with CUDA 12+\n"
-                            f"  - pip install leisaac[isaaclab]\n"
-                            f"  - pip install lerobot\n"
-                            f"See: https://huggingface.co/docs/lerobot/envhub_leisaac"
-                        )}],
+                        "content": [
+                            {
+                                "text": (
+                                    f"❌ Failed to load LeIsaac environment: {task}\n"
+                                    f"Requirements:\n"
+                                    f"  - NVIDIA GPU with CUDA 12+\n"
+                                    f"  - pip install leisaac[isaaclab]\n"
+                                    f"  - pip install lerobot\n"
+                                    f"See: https://huggingface.co/docs/lerobot/envhub_leisaac"
+                                )
+                            }
+                        ],
                     }
 
             elif action == "rollout":
@@ -658,15 +658,17 @@ try:
                 return {
                     "status": "success",
                     "content": [
-                        {"text": (
-                            f"📊 LeIsaac Rollout: {task}\n"
-                            f"  Policy: {policy_provider}\n"
-                            f"  Episodes: {result.n_episodes}\n"
-                            f"  Success: {result.n_successes}/{result.n_episodes} ({result.success_rate:.1%})\n"
-                            f"  Avg steps: {result.avg_steps:.0f}\n"
-                            f"  Avg reward: {result.avg_reward:.4f}\n"
-                            f"  Time: {result.total_time:.1f}s"
-                        )},
+                        {
+                            "text": (
+                                f"📊 LeIsaac Rollout: {task}\n"
+                                f"  Policy: {policy_provider}\n"
+                                f"  Episodes: {result.n_episodes}\n"
+                                f"  Success: {result.n_successes}/{result.n_episodes} ({result.success_rate:.1%})\n"
+                                f"  Avg steps: {result.avg_steps:.0f}\n"
+                                f"  Avg reward: {result.avg_reward:.4f}\n"
+                                f"  Time: {result.total_time:.1f}s"
+                            )
+                        },
                         {"json": result.to_dict()},
                     ],
                 }
@@ -692,11 +694,15 @@ try:
 
                 return {
                     "status": "success",
-                    "content": [{"text": (
-                        f"🎬 Video recorded: {output_path}\n"
-                        f"  Frames: {info['frames']}, Steps: {info['steps']}\n"
-                        f"  Reward: {info['reward']:.4f}, Success: {info['success']}"
-                    )}],
+                    "content": [
+                        {
+                            "text": (
+                                f"🎬 Video recorded: {output_path}\n"
+                                f"  Frames: {info['frames']}, Steps: {info['steps']}\n"
+                                f"  Reward: {info['reward']:.4f}, Success: {info['success']}"
+                            )
+                        }
+                    ],
                 }
 
             else:
@@ -717,6 +723,7 @@ except ImportError:
 # ─────────────────────────────────────────────────────────────────────
 # Convenience functions
 # ─────────────────────────────────────────────────────────────────────
+
 
 def create_leisaac_env(
     task: str = "so101_pick_orange",

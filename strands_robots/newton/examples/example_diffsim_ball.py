@@ -14,9 +14,14 @@ print("=" * 50)
 builder = newton.ModelBuilder(up_axis=newton.Axis.Z)
 builder.add_particle(pos=wp.vec3(0, -0.5, 1), vel=wp.vec3(0, 5, -5), mass=1.0)
 ke, kd, mu = 1e4, 1e1, 0.2
-builder.add_shape_box(body=-1, xform=wp.transform(wp.vec3(0,2,1), wp.quat_identity()),
-                      hx=1.0, hy=0.25, hz=1.0,
-                      cfg=newton.ModelBuilder.ShapeConfig(ke=ke, kf=0, kd=kd, mu=mu))
+builder.add_shape_box(
+    body=-1,
+    xform=wp.transform(wp.vec3(0, 2, 1), wp.quat_identity()),
+    hx=1.0,
+    hy=0.25,
+    hz=1.0,
+    cfg=newton.ModelBuilder.ShapeConfig(ke=ke, kf=0, kd=kd, mu=mu),
+)
 builder.add_ground_plane(cfg=newton.ModelBuilder.ShapeConfig(ke=ke, kf=0, kd=kd, mu=mu))
 model = builder.finalize(requires_grad=True)
 model.soft_contact_ke = ke
@@ -28,15 +33,18 @@ solver = newton.solvers.SolverSemiImplicit(model)
 target = wp.vec3(0, -2, 1.5)
 loss = wp.zeros(1, dtype=wp.float32, requires_grad=True)
 
+
 @wp.kernel
 def loss_kernel(pos: wp.array(dtype=wp.vec3), target: wp.vec3, loss: wp.array(dtype=float)):
     delta = pos[0] - target
     loss[0] = wp.dot(delta, delta)
 
+
 @wp.kernel
 def step_kernel(x: wp.array(dtype=wp.vec3), grad: wp.array(dtype=wp.vec3), alpha: float):
     tid = wp.tid()
     x[tid] = x[tid] - grad[tid] * alpha
+
 
 N_steps, substeps = 36, 8
 dt = (1.0 / 60.0) / substeps
@@ -58,7 +66,7 @@ for it in range(50):
             for i in range(substeps):
                 t = s * substeps + i
                 states[t].clear_forces()
-                solver.step(states[t], states[t+1], control, contacts, dt)
+                solver.step(states[t], states[t + 1], control, contacts, dt)
         wp.launch(loss_kernel, dim=1, inputs=[states[-1].particle_q, target, loss])
     tape.backward(loss)
     loss_val = float(loss.numpy()[0])

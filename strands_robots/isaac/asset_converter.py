@@ -167,6 +167,7 @@ def _convert_single_obj_to_stl(obj_path: str, stl_path: str) -> None:
     """
     try:
         import trimesh
+
         mesh = trimesh.load(obj_path, force="mesh")
         mesh.export(stl_path, file_type="stl")
         return
@@ -222,7 +223,6 @@ def _convert_single_obj_to_stl(obj_path: str, stl_path: str) -> None:
             f.write(struct.pack("<3f", *v1))
             f.write(struct.pack("<3f", *v2))
             f.write(struct.pack("<H", 0))  # attribute byte count
-
 
 
 def _strip_meshes_from_mjcf(mjcf_path: str) -> Optional[str]:
@@ -443,13 +443,17 @@ def convert_mjcf_to_usd(
             logger.info(f"✅ Converted MJCF → USD via {method}: {usd_path}")
             return {
                 "status": "success",
-                "content": [{"text": (
-                    f"✅ MJCF → USD conversion complete\n"
-                    f"📥 Input: {os.path.basename(mjcf_path)}\n"
-                    f"📤 Output: {usd_path}\n"
-                    f"🔧 Method: {method}\n"
-                    f"⚙️ fix_base={fix_base}, instanceable={make_instanceable}"
-                )}],
+                "content": [
+                    {
+                        "text": (
+                            f"✅ MJCF → USD conversion complete\n"
+                            f"📥 Input: {os.path.basename(mjcf_path)}\n"
+                            f"📤 Output: {usd_path}\n"
+                            f"🔧 Method: {method}\n"
+                            f"⚙️ fix_base={fix_base}, instanceable={make_instanceable}"
+                        )
+                    }
+                ],
                 "usd_path": usd_path,
                 "method": "isaac_sim",
             }
@@ -540,6 +544,7 @@ def convert_usd_to_mjcf(
             # We need to use Omniverse's USD → URDF exporter
             import omni.isaac.core.utils.extensions as ext_utils
             from isaaclab.sim.converters import UrdfConverterCfg  # noqa: F401
+
             ext_utils.enable_extension("omni.importer.urdf")
 
             from omni.importer.urdf import _urdf  # noqa: F401
@@ -550,16 +555,21 @@ def convert_usd_to_mjcf(
         except ImportError:
             return {
                 "status": "error",
-                "content": [{"text": (
-                    "❌ USD → MJCF requires Isaac Sim runtime.\n"
-                    "Isaac Sim is needed for the USD → URDF step.\n"
-                    "💡 Alternative: Use the MJCF version of the robot directly"
-                )}],
+                "content": [
+                    {
+                        "text": (
+                            "❌ USD → MJCF requires Isaac Sim runtime.\n"
+                            "Isaac Sim is needed for the USD → URDF step.\n"
+                            "💡 Alternative: Use the MJCF version of the robot directly"
+                        )
+                    }
+                ],
             }
 
         # Step 2: URDF → MJCF (via MuJoCo)
         if os.path.exists(urdf_tmp):
             import mujoco
+
             model = mujoco.MjModel.from_xml_path(urdf_tmp)
             mujoco.mj_saveLastXML(output_path, model)
 
@@ -735,36 +745,61 @@ def _manual_mjcf_to_usd(mjcf_path: str, output_path: str) -> Dict[str, Any]:
                 mesh_id = int(model.geom_dataid[i])
                 if mesh_id >= 0:
                     _create_usd_mesh_from_mujoco(
-                        stage, geom_path, model, mesh_id,
-                        geom_pos, geom_quat, geom_rgba,
+                        stage,
+                        geom_path,
+                        model,
+                        mesh_id,
+                        geom_pos,
+                        geom_quat,
+                        geom_rgba,
                     )
                     stats["meshes_extracted"] += 1
                     stats["geoms"] += 1
 
             elif geom_type == _GEOM_BOX:
                 _create_usd_cube(
-                    stage, geom_path, geom_size, geom_pos, geom_quat, geom_rgba,
+                    stage,
+                    geom_path,
+                    geom_size,
+                    geom_pos,
+                    geom_quat,
+                    geom_rgba,
                 )
                 stats["primitives_created"] += 1
                 stats["geoms"] += 1
 
             elif geom_type == _GEOM_SPHERE:
                 _create_usd_sphere(
-                    stage, geom_path, geom_size, geom_pos, geom_quat, geom_rgba,
+                    stage,
+                    geom_path,
+                    geom_size,
+                    geom_pos,
+                    geom_quat,
+                    geom_rgba,
                 )
                 stats["primitives_created"] += 1
                 stats["geoms"] += 1
 
             elif geom_type == _GEOM_CYLINDER:
                 _create_usd_cylinder(
-                    stage, geom_path, geom_size, geom_pos, geom_quat, geom_rgba,
+                    stage,
+                    geom_path,
+                    geom_size,
+                    geom_pos,
+                    geom_quat,
+                    geom_rgba,
                 )
                 stats["primitives_created"] += 1
                 stats["geoms"] += 1
 
             elif geom_type == _GEOM_CAPSULE:
                 _create_usd_capsule(
-                    stage, geom_path, geom_size, geom_pos, geom_quat, geom_rgba,
+                    stage,
+                    geom_path,
+                    geom_size,
+                    geom_pos,
+                    geom_quat,
+                    geom_rgba,
                 )
                 stats["primitives_created"] += 1
                 stats["geoms"] += 1
@@ -772,7 +807,12 @@ def _manual_mjcf_to_usd(mjcf_path: str, output_path: str) -> Dict[str, Any]:
             elif geom_type == _GEOM_ELLIPSOID:
                 # USD doesn't have ellipsoid — approximate as scaled sphere
                 _create_usd_sphere(
-                    stage, geom_path, geom_size, geom_pos, geom_quat, geom_rgba,
+                    stage,
+                    geom_path,
+                    geom_size,
+                    geom_pos,
+                    geom_quat,
+                    geom_rgba,
                     ellipsoid_radii=geom_size[:3],
                 )
                 stats["primitives_created"] += 1
@@ -780,7 +820,12 @@ def _manual_mjcf_to_usd(mjcf_path: str, output_path: str) -> Dict[str, Any]:
 
             elif geom_type == _GEOM_PLANE:
                 _create_usd_plane(
-                    stage, geom_path, geom_size, geom_pos, geom_quat, geom_rgba,
+                    stage,
+                    geom_path,
+                    geom_size,
+                    geom_pos,
+                    geom_quat,
+                    geom_rgba,
                 )
                 stats["primitives_created"] += 1
                 stats["geoms"] += 1
@@ -873,19 +918,27 @@ def _manual_mjcf_to_usd(mjcf_path: str, output_path: str) -> Dict[str, Any]:
 
         file_size_kb = os.path.getsize(output_path) / 1024
 
-        method_desc = "MuJoCo+pxr (kinematic-only, mesh files unavailable)" if meshes_stripped else "MuJoCo+pxr (full mesh geometry)"
+        method_desc = (
+            "MuJoCo+pxr (kinematic-only, mesh files unavailable)"
+            if meshes_stripped
+            else "MuJoCo+pxr (full mesh geometry)"
+        )
 
         return {
             "status": "success",
-            "content": [{"text": (
-                f"✅ MJCF → USD via {method_desc}\n"
-                f"📥 Input: {os.path.basename(mjcf_path)}\n"
-                f"📤 Output: {output_path} ({file_size_kb:.0f} KB)\n"
-                f"🦴 Bodies: {stats['bodies']} | 🔩 Joints: {stats['joints']} | "
-                f"📐 Geoms: {stats['geoms']}\n"
-                f"🔷 Meshes extracted: {stats['meshes_extracted']} | "
-                f"⬡ Primitives: {stats['primitives_created']}"
-            )}],
+            "content": [
+                {
+                    "text": (
+                        f"✅ MJCF → USD via {method_desc}\n"
+                        f"📥 Input: {os.path.basename(mjcf_path)}\n"
+                        f"📤 Output: {output_path} ({file_size_kb:.0f} KB)\n"
+                        f"🦴 Bodies: {stats['bodies']} | 🔩 Joints: {stats['joints']} | "
+                        f"📐 Geoms: {stats['geoms']}\n"
+                        f"🔷 Meshes extracted: {stats['meshes_extracted']} | "
+                        f"⬡ Primitives: {stats['primitives_created']}"
+                    )
+                }
+            ],
             "usd_path": output_path,
             "method": "mujoco_pxr" + ("_kinematic" if meshes_stripped else ""),
             "stats": stats,
@@ -902,11 +955,15 @@ def _manual_mjcf_to_usd(mjcf_path: str, output_path: str) -> Dict[str, Any]:
 
         return {
             "status": "error",
-            "content": [{"text": (
-                f"❌ Missing dependency: {missing}\n"
-                f"Install with:\n  " + "\n  ".join(packages) if packages else
-                f"❌ Import error: {missing}"
-            )}],
+            "content": [
+                {
+                    "text": (
+                        f"❌ Missing dependency: {missing}\n" f"Install with:\n  " + "\n  ".join(packages)
+                        if packages
+                        else f"❌ Import error: {missing}"
+                    )
+                }
+            ],
         }
     except Exception as e:
         logger.error(f"MuJoCo+pxr conversion failed: {e}", exc_info=True)
@@ -916,6 +973,7 @@ def _manual_mjcf_to_usd(mjcf_path: str, output_path: str) -> Dict[str, Any]:
 # ────────────────────────────────────────────────────────────────
 # USD Geometry Helpers
 # ────────────────────────────────────────────────────────────────
+
 
 def _sanitize_usd_name(name: str) -> str:
     """Sanitize a name for use as a USD prim path component."""
@@ -975,8 +1033,13 @@ def _set_joint_bodies(jnt_prim, parent_path: str, child_path: str) -> None:
 
 
 def _create_usd_mesh_from_mujoco(
-    stage, prim_path: str, model, mesh_id: int,
-    geom_pos, geom_quat, geom_rgba,
+    stage,
+    prim_path: str,
+    model,
+    mesh_id: int,
+    geom_pos,
+    geom_quat,
+    geom_rgba,
 ) -> None:
     """Extract mesh geometry from MuJoCo's internal data and create UsdGeom.Mesh.
 
@@ -1002,8 +1065,8 @@ def _create_usd_mesh_from_mujoco(
         return
 
     # Slice out this mesh's vertices and faces
-    vertices = model.mesh_vert[vert_adr: vert_adr + vert_num].copy()
-    faces = model.mesh_face[face_adr: face_adr + face_num].copy()
+    vertices = model.mesh_vert[vert_adr : vert_adr + vert_num].copy()
+    faces = model.mesh_face[face_adr : face_adr + face_num].copy()
 
     # MuJoCo face indices are relative to the mesh's vertex start (already 0-based)
     # Each face is a triangle (3 indices)
@@ -1011,7 +1074,7 @@ def _create_usd_mesh_from_mujoco(
     # Extract normals if available
     normals = None
     if hasattr(model, "mesh_normal") and model.mesh_normal.shape[0] > 0:
-        normals = model.mesh_normal[vert_adr: vert_adr + vert_num].copy()
+        normals = model.mesh_normal[vert_adr : vert_adr + vert_num].copy()
 
     # Create UsdGeom.Mesh
     mesh_prim = UsdGeom.Mesh.Define(stage, prim_path)
@@ -1030,9 +1093,7 @@ def _create_usd_mesh_from_mujoco(
 
     # Set normals if available
     if normals is not None and len(normals) == vert_num:
-        normal_array = Vt.Vec3fArray([
-            Gf.Vec3f(float(n[0]), float(n[1]), float(n[2])) for n in normals
-        ])
+        normal_array = Vt.Vec3fArray([Gf.Vec3f(float(n[0]), float(n[1]), float(n[2])) for n in normals])
         mesh_prim.CreateNormalsAttr(normal_array)
         mesh_prim.SetNormalsInterpolation(UsdGeom.Tokens.vertex)
 
@@ -1053,7 +1114,12 @@ def _create_usd_mesh_from_mujoco(
 
 
 def _create_usd_cube(
-    stage, prim_path: str, size, pos, quat, rgba,
+    stage,
+    prim_path: str,
+    size,
+    pos,
+    quat,
+    rgba,
 ) -> None:
     """Create a UsdGeom.Cube from MuJoCo box geom.
 
@@ -1078,7 +1144,12 @@ def _create_usd_cube(
 
 
 def _create_usd_sphere(
-    stage, prim_path: str, size, pos, quat, rgba,
+    stage,
+    prim_path: str,
+    size,
+    pos,
+    quat,
+    rgba,
     ellipsoid_radii=None,
 ) -> None:
     """Create a UsdGeom.Sphere from MuJoCo sphere/ellipsoid geom.
@@ -1113,7 +1184,12 @@ def _create_usd_sphere(
 
 
 def _create_usd_cylinder(
-    stage, prim_path: str, size, pos, quat, rgba,
+    stage,
+    prim_path: str,
+    size,
+    pos,
+    quat,
+    rgba,
 ) -> None:
     """Create a UsdGeom.Cylinder from MuJoCo cylinder geom.
 
@@ -1137,7 +1213,12 @@ def _create_usd_cylinder(
 
 
 def _create_usd_capsule(
-    stage, prim_path: str, size, pos, quat, rgba,
+    stage,
+    prim_path: str,
+    size,
+    pos,
+    quat,
+    rgba,
 ) -> None:
     """Create a UsdGeom.Capsule from MuJoCo capsule geom.
 
@@ -1161,7 +1242,12 @@ def _create_usd_capsule(
 
 
 def _create_usd_plane(
-    stage, prim_path: str, size, pos, quat, rgba,
+    stage,
+    prim_path: str,
+    size,
+    pos,
+    quat,
+    rgba,
 ) -> None:
     """Create a large quad mesh for MuJoCo plane geom.
 
@@ -1177,19 +1263,27 @@ def _create_usd_plane(
     hx = float(size[0]) if size[0] > 0 else 50.0
     hy = float(size[1]) if size[1] > 0 else 50.0
 
-    points = Vt.Vec3fArray([
-        Gf.Vec3f(-hx, -hy, 0), Gf.Vec3f(hx, -hy, 0),
-        Gf.Vec3f(hx, hy, 0), Gf.Vec3f(-hx, hy, 0),
-    ])
+    points = Vt.Vec3fArray(
+        [
+            Gf.Vec3f(-hx, -hy, 0),
+            Gf.Vec3f(hx, -hy, 0),
+            Gf.Vec3f(hx, hy, 0),
+            Gf.Vec3f(-hx, hy, 0),
+        ]
+    )
     mesh.CreatePointsAttr(points)
     mesh.CreateFaceVertexCountsAttr(Vt.IntArray([4]))
     mesh.CreateFaceVertexIndicesAttr(Vt.IntArray([0, 1, 2, 3]))
 
     # Set normals (single upward-facing normal for the quad)
-    normals = Vt.Vec3fArray([
-        Gf.Vec3f(0, 0, 1), Gf.Vec3f(0, 0, 1),
-        Gf.Vec3f(0, 0, 1), Gf.Vec3f(0, 0, 1),
-    ])
+    normals = Vt.Vec3fArray(
+        [
+            Gf.Vec3f(0, 0, 1),
+            Gf.Vec3f(0, 0, 1),
+            Gf.Vec3f(0, 0, 1),
+            Gf.Vec3f(0, 0, 1),
+        ]
+    )
     mesh.CreateNormalsAttr(normals)
     mesh.SetNormalsInterpolation(UsdGeom.Tokens.vertex)
 
@@ -1206,6 +1300,7 @@ def _create_usd_plane(
 # ────────────────────────────────────────────────────────────────
 # Batch Conversion
 # ────────────────────────────────────────────────────────────────
+
 
 def convert_all_robots_to_usd(
     output_dir: Optional[str] = None,
@@ -1285,13 +1380,17 @@ def convert_all_robots_to_usd(
 
     return {
         "status": "success",
-        "content": [{"text": (
-            f"🔄 Batch MJCF → USD conversion complete\n"
-            f"✅ Success: {summary['success']}/{summary['total']}\n"
-            f"⏭️ Skipped: {summary['skipped']}\n"
-            f"❌ Failed: {summary['failed']}\n"
-            f"📂 Output: {output_dir}"
-        )}],
+        "content": [
+            {
+                "text": (
+                    f"🔄 Batch MJCF → USD conversion complete\n"
+                    f"✅ Success: {summary['success']}/{summary['total']}\n"
+                    f"⏭️ Skipped: {summary['skipped']}\n"
+                    f"❌ Failed: {summary['failed']}\n"
+                    f"📂 Output: {output_dir}"
+                )
+            }
+        ],
         "results": results,
         "summary": summary,
         "output_dir": output_dir,
@@ -1301,6 +1400,7 @@ def convert_all_robots_to_usd(
 # ────────────────────────────────────────────────────────────────
 # AssetConverter Class (OOP Wrapper)
 # ────────────────────────────────────────────────────────────────
+
 
 class AssetConverter:
     """Convenience wrapper around MJCF ↔ USD conversion functions.
@@ -1401,13 +1501,15 @@ def list_convertible_assets() -> Dict[str, Any]:
                 # Detect mesh format(s)
                 mesh_formats = _detect_mesh_formats(str(path))
 
-                convertible.append({
-                    "name": name,
-                    "mjcf_path": str(path),
-                    "has_usd": cached.exists(),
-                    "usd_path": str(cached) if cached.exists() else None,
-                    "mesh_formats": mesh_formats,
-                })
+                convertible.append(
+                    {
+                        "name": name,
+                        "mjcf_path": str(path),
+                        "has_usd": cached.exists(),
+                        "usd_path": str(cached) if cached.exists() else None,
+                        "mesh_formats": mesh_formats,
+                    }
+                )
 
         return {
             "status": "success",

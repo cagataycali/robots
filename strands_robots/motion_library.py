@@ -50,10 +50,7 @@ class Motion:
         self.n_steps = len(self.timestamps)
 
         # Joint trajectories
-        self.joint_positions = data.get(
-            "joint_positions",
-            data.get("trajectory", data.get("actions", []))
-        )
+        self.joint_positions = data.get("joint_positions", data.get("trajectory", data.get("actions", [])))
 
     def get_action_at(self, t: float) -> Optional[Dict[str, float]]:
         """Get interpolated action at time t."""
@@ -216,8 +213,7 @@ class MotionLibrary:
         """Search motions by name or description."""
         query_lower = query.lower()
         return [
-            m for m in self._motions.values()
-            if query_lower in m.name.lower() or query_lower in m.description.lower()
+            m for m in self._motions.values() if query_lower in m.name.lower() or query_lower in m.description.lower()
         ]
 
     def play_in_sim(
@@ -272,10 +268,12 @@ class MotionLibrary:
 
             return {
                 "status": "success",
-                "content": [{
-                    "text": f"Played '{motion_name}' on '{robot_name}': "
-                            f"{steps_applied} steps, {motion.duration / speed:.1f}s"
-                }],
+                "content": [
+                    {
+                        "text": f"Played '{motion_name}' on '{robot_name}': "
+                        f"{steps_applied} steps, {motion.duration / speed:.1f}s"
+                    }
+                ],
             }
 
         except Exception as e:

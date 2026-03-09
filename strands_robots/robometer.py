@@ -118,10 +118,7 @@ logger = logging.getLogger(__name__)
 def _require(flag: bool, name: str) -> None:
     """Raise ``ImportError`` if *flag* is ``False``."""
     if not flag:
-        raise ImportError(
-            f"{name} is required but not installed.  "
-            f"Install it with:  pip install {name}"
-        )
+        raise ImportError(f"{name} is required but not installed.  " f"Install it with:  pip install {name}")
 
 
 # ---------------------------------------------------------------------------
@@ -314,8 +311,7 @@ class StrandsRobometerRewardWrapper:
                 )
         else:
             logger.warning(
-                "Cannot verify presence of %r in observation space "
-                "(space is not a Dict). Proceeding anyway.",
+                "Cannot verify presence of %r in observation space " "(space is not a Dict). Proceeding anyway.",
                 pixels_key,
             )
 
@@ -367,9 +363,7 @@ class StrandsRobometerRewardWrapper:
         self._config, self._tokenizer, self._processor, self._model = _load_robometer_model(
             self._model_path, device=self._device
         )
-        self._batch_collator = _setup_batch_collator(
-            self._processor, self._tokenizer, self._config, is_eval=True
-        )
+        self._batch_collator = _setup_batch_collator(self._processor, self._tokenizer, self._config, is_eval=True)
         self._model_loaded = True
 
     def _infer_reward(self) -> Tuple[float, Optional[float]]:
@@ -681,9 +675,7 @@ class RobometerTrainer:
         from robometer.utils.save import load_model_from_hf  # lazy
         from robometer.utils.setup_utils import setup_batch_collator  # lazy
 
-        config, tokenizer, processor, model = load_model_from_hf(
-            self._model_path, device=self._device
-        )
+        config, tokenizer, processor, model = load_model_from_hf(self._model_path, device=self._device)
         self._model_artefacts = (config, tokenizer, processor, model)
 
         # Optional LoRA
@@ -692,8 +684,7 @@ class RobometerTrainer:
                 from peft import LoraConfig, get_peft_model  # lazy
             except ImportError as exc:
                 raise ImportError(
-                    "LoRA fine-tuning requires the `peft` package.  "
-                    "Install with: pip install peft"
+                    "LoRA fine-tuning requires the `peft` package.  " "Install with: pip install peft"
                 ) from exc
 
             lora_config = LoraConfig(
@@ -835,11 +826,13 @@ def strands_robots_loader(
     elif hasattr(data_source, "episodes"):
         episodes = []
         for ep in data_source.episodes:
-            episodes.append({
-                "observations": getattr(ep, "observations", []),
-                "actions": getattr(ep, "actions", []),
-                "task": getattr(ep, "task", None) or getattr(data_source, "task", None),
-            })
+            episodes.append(
+                {
+                    "observations": getattr(ep, "observations", []),
+                    "actions": getattr(ep, "actions", []),
+                    "task": getattr(ep, "task", None) or getattr(data_source, "task", None),
+                }
+            )
     elif isinstance(data_source, (str, pathlib.Path)):
         episodes = _load_lerobot_v3_episodes(pathlib.Path(data_source), pixels_key=pixels_key)
     else:
@@ -880,12 +873,14 @@ def strands_robots_loader(
             if actions_list is not None:
                 actions_list = [actions_list[min(i, len(actions_list) - 1)] for i in indices]
 
-        trajectories.append({
-            "frames": frames,
-            "task_instruction": ep_task,
-            "actions": actions_list,
-            "states": states if states else None,
-        })
+        trajectories.append(
+            {
+                "frames": frames,
+                "task_instruction": ep_task,
+                "actions": actions_list,
+                "states": states if states else None,
+            }
+        )
 
     logger.info("Loaded %d trajectories from %s", len(trajectories), type(data_source).__name__)
     return trajectories
@@ -934,11 +929,13 @@ def _load_lerobot_v3_episodes(
                 if "action" in row and row["action"] is not None:
                     actions.append(np.asarray(row["action"], dtype=np.float32))
 
-            episodes.append({
-                "observations": observations,
-                "actions": actions if actions else None,
-                "task": task_instruction,
-            })
+            episodes.append(
+                {
+                    "observations": observations,
+                    "actions": actions if actions else None,
+                    "task": task_instruction,
+                }
+            )
 
     return episodes
 
@@ -1080,7 +1077,12 @@ class RobometerBenchmark:
                 "success_std": float(np.std(success)),
                 "num_episodes": self._num_episodes,
             }
-            logger.info("  %s – progress=%.4f  success=%.4f", name, policy_scores[name]["mean_progress"], policy_scores[name]["mean_success"])
+            logger.info(
+                "  %s – progress=%.4f  success=%.4f",
+                name,
+                policy_scores[name]["mean_progress"],
+                policy_scores[name]["mean_success"],
+            )
 
         ranking = sorted(policy_scores, key=lambda n: policy_scores[n]["mean_progress"], reverse=True)
 

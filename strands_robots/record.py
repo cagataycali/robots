@@ -48,6 +48,7 @@ logger = logging.getLogger(__name__)
 # Optional live visualizer
 try:
     from strands_robots.visualizer import RecordingVisualizer
+
     HAS_VISUALIZER = True
 except ImportError:
     HAS_VISUALIZER = False
@@ -62,6 +63,7 @@ class RecordMode(Enum):
 @dataclass
 class EpisodeStats:
     """Stats for a single recorded episode."""
+
     index: int = 0
     frames: int = 0
     duration_s: float = 0.0
@@ -78,9 +80,9 @@ class RecordSession:
 
     def __init__(
         self,
-        robot,                    # LeRobot Robot instance
-        teleop=None,              # LeRobot Teleoperator instance (optional)
-        policy=None,              # strands_robots Policy instance (optional)
+        robot,  # LeRobot Robot instance
+        teleop=None,  # LeRobot Teleoperator instance (optional)
+        policy=None,  # strands_robots Policy instance (optional)
         repo_id: str = "local/recording",
         task: str = "",
         fps: int = 30,
@@ -173,6 +175,7 @@ class RecordSession:
                 make_default_robot_action_processor,
                 make_default_robot_observation_processor,
             )
+
             self._action_processor = make_default_robot_action_processor()
             self._observation_processor = make_default_robot_observation_processor()
             logger.info("LeRobot processors initialized")
@@ -188,7 +191,7 @@ class RecordSession:
 
             # Get robot features
             features = {}
-            if hasattr(self.robot, 'observation_features'):
+            if hasattr(self.robot, "observation_features"):
                 obs_feats = self.robot.observation_features
                 for key, val in obs_feats.items():
                     if isinstance(val, tuple):
@@ -203,8 +206,7 @@ class RecordSession:
                         pass  # Handled below
 
                 # Build observation.state from scalar features
-                state_keys = [k for k, v in obs_feats.items()
-                              if v is float]
+                state_keys = [k for k, v in obs_feats.items() if v is float]
                 if state_keys:
                     features["observation.state"] = {
                         "dtype": "float32",
@@ -212,10 +214,9 @@ class RecordSession:
                         "names": state_keys,
                     }
 
-            if hasattr(self.robot, 'action_features'):
+            if hasattr(self.robot, "action_features"):
                 act_feats = self.robot.action_features
-                action_keys = [k for k, v in act_feats.items()
-                               if v is float]
+                action_keys = [k for k, v in act_feats.items() if v is float]
                 if action_keys:
                     features["action"] = {
                         "dtype": "float32",
@@ -223,8 +224,7 @@ class RecordSession:
                         "names": action_keys,
                     }
 
-            robot_type = getattr(self.robot, 'robot_type',
-                                 getattr(self.robot, 'name', 'unknown'))
+            robot_type = getattr(self.robot, "robot_type", getattr(self.robot, "name", "unknown"))
 
             self._dataset = LeRobotDataset.create(
                 repo_id=self.repo_id,
@@ -318,16 +318,11 @@ class RecordSession:
 
                     if loop and loop.is_running():
                         import concurrent.futures
+
                         with concurrent.futures.ThreadPoolExecutor() as ex:
-                            actions = ex.submit(
-                                lambda: asyncio.run(
-                                    self.policy.get_actions(obs, task)
-                                )
-                            ).result()
+                            actions = ex.submit(lambda: asyncio.run(self.policy.get_actions(obs, task))).result()
                     else:
-                        actions = asyncio.run(
-                            self.policy.get_actions(obs, task)
-                        )
+                        actions = asyncio.run(self.policy.get_actions(obs, task))
 
                     if actions:
                         action = actions[0]
@@ -377,10 +372,7 @@ class RecordSession:
         if self._dataset is not None and frame_idx > 0:
             try:
                 self._dataset.save_episode()
-                logger.info(
-                    f"Episode {ep_idx} saved: {frame_idx} frames, "
-                    f"{stats.duration_s:.1f}s"
-                )
+                logger.info(f"Episode {ep_idx} saved: {frame_idx} frames, " f"{stats.duration_s:.1f}s")
             except Exception as e:
                 logger.error(f"Episode save failed: {e}")
                 stats.discarded = True
@@ -397,7 +389,7 @@ class RecordSession:
         elif self._episodes and not self._episodes[-1].discarded:
             self._episodes[-1].discarded = True
             # Try to clear last episode from dataset
-            if self._dataset and hasattr(self._dataset, 'clear_episode_buffer'):
+            if self._dataset and hasattr(self._dataset, "clear_episode_buffer"):
                 try:
                     self._dataset.clear_episode_buffer()
                 except Exception:
@@ -430,7 +422,7 @@ class RecordSession:
 
         # Observation: separate images from state
         state_values = []
-        if hasattr(self.robot, 'observation_features'):
+        if hasattr(self.robot, "observation_features"):
             obs_feats = self.robot.observation_features
             for key, val in obs_feats.items():
                 if isinstance(val, tuple) and key in obs:
@@ -445,7 +437,7 @@ class RecordSession:
         else:
             # Fallback: treat non-array values as state
             camera_keys = []
-            if hasattr(self.robot, 'config') and hasattr(self.robot.config, 'cameras'):
+            if hasattr(self.robot, "config") and hasattr(self.robot.config, "cameras"):
                 camera_keys = list(self.robot.config.cameras.keys())
 
             for key, val in obs.items():
@@ -462,9 +454,7 @@ class RecordSession:
         if has_action:
             if isinstance(action, dict):
                 action_values = list(action.values())
-                frame["action"] = torch.tensor(
-                    [float(v) for v in action_values], dtype=torch.float32
-                )
+                frame["action"] = torch.tensor([float(v) for v in action_values], dtype=torch.float32)
             elif isinstance(action, (np.ndarray, list)):
                 frame["action"] = torch.tensor(action, dtype=torch.float32)
             elif isinstance(action, torch.Tensor):
@@ -487,9 +477,9 @@ class RecordSession:
 
         if self._dataset:
             try:
-                if hasattr(self._dataset, 'consolidate'):
+                if hasattr(self._dataset, "consolidate"):
                     self._dataset.consolidate()
-                result["root"] = str(self._dataset.root) if hasattr(self._dataset, 'root') else None
+                result["root"] = str(self._dataset.root) if hasattr(self._dataset, "root") else None
             except Exception as e:
                 logger.error(f"Dataset consolidation failed: {e}")
 
@@ -507,12 +497,12 @@ class RecordSession:
 
     def disconnect(self):
         """Disconnect robot and teleop."""
-        if self.teleop and hasattr(self.teleop, 'disconnect'):
+        if self.teleop and hasattr(self.teleop, "disconnect"):
             try:
                 self.teleop.disconnect()
             except Exception:
                 pass
-        if self.robot and hasattr(self.robot, 'disconnect'):
+        if self.robot and hasattr(self.robot, "disconnect"):
             try:
                 self.robot.disconnect()
             except Exception:

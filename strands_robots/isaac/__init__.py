@@ -116,30 +116,39 @@ def __getattr__(name):
     """Lazy imports to avoid hard dependency on Isaac Sim."""
     if name == "IsaacSimBackend":
         from .isaac_sim_backend import IsaacSimBackend
+
         return IsaacSimBackend
     elif name in ("IsaacSimBridgeClient", "IsaacSimBridgeServer"):
         from .isaac_sim_bridge import IsaacSimBridgeClient, IsaacSimBridgeServer
+
         return IsaacSimBridgeClient if name == "IsaacSimBridgeClient" else IsaacSimBridgeServer
     elif name == "IsaacGymEnv":
         from .isaac_gym_env import IsaacGymEnv
+
         return IsaacGymEnv
     elif name == "IsaacLabEnv":
         from .isaac_lab_env import IsaacLabEnv
+
         return IsaacLabEnv
     elif name in ("IsaacLabTrainer", "IsaacLabTrainerConfig"):
         from .isaac_lab_trainer import IsaacLabTrainer, IsaacLabTrainerConfig
+
         return IsaacLabTrainer if name == "IsaacLabTrainer" else IsaacLabTrainerConfig
     elif name == "AssetConverter":
         from .asset_converter import AssetConverter
+
         return AssetConverter
     elif name == "create_isaac_env":
         from .isaac_lab_env import create_isaac_env
+
         return create_isaac_env
     elif name == "list_isaac_tasks":
         from .isaac_lab_env import list_isaac_tasks
+
         return list_isaac_tasks
     elif name in ("convert_mjcf_to_usd", "convert_usd_to_mjcf", "convert_all_robots_to_usd"):
         from .asset_converter import convert_all_robots_to_usd, convert_mjcf_to_usd, convert_usd_to_mjcf
+
         if name == "convert_mjcf_to_usd":
             return convert_mjcf_to_usd
         elif name == "convert_all_robots_to_usd":

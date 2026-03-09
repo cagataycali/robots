@@ -82,12 +82,12 @@ _PROCEDURAL_ROBOTS: Dict[str, Dict[str, Any]] = {
         "num_joints": 6,
         # (link_length, radius, axis) per revolute joint — SO-100 is a 6-DOF desktop arm
         "links": [
-            (0.05, 0.025, (0.0, 1.0, 0.0)),   # base rotation (yaw)
-            (0.10, 0.020, (1.0, 0.0, 0.0)),    # shoulder pitch
-            (0.10, 0.018, (1.0, 0.0, 0.0)),    # elbow pitch
-            (0.05, 0.015, (0.0, 1.0, 0.0)),    # wrist yaw
-            (0.04, 0.012, (1.0, 0.0, 0.0)),    # wrist pitch
-            (0.03, 0.010, (0.0, 1.0, 0.0)),    # wrist roll / gripper
+            (0.05, 0.025, (0.0, 1.0, 0.0)),  # base rotation (yaw)
+            (0.10, 0.020, (1.0, 0.0, 0.0)),  # shoulder pitch
+            (0.10, 0.018, (1.0, 0.0, 0.0)),  # elbow pitch
+            (0.05, 0.015, (0.0, 1.0, 0.0)),  # wrist yaw
+            (0.04, 0.012, (1.0, 0.0, 0.0)),  # wrist pitch
+            (0.03, 0.010, (0.0, 1.0, 0.0)),  # wrist roll / gripper
         ],
     },
     "so101": {
@@ -186,9 +186,7 @@ def _build_procedural_robot(
             parent=parent_body,
             child=body_idx,
             parent_xform=wp.transform(joint_pos, wp.quat_identity()),
-            child_xform=wp.transform(
-                (0.0, -link_len_scaled * 0.5, 0.0), wp.quat_identity()
-            ),
+            child_xform=wp.transform((0.0, -link_len_scaled * 0.5, 0.0), wp.quat_identity()),
             axis=axis,
             limit_lower=-3.14159,
             limit_upper=3.14159,
@@ -214,7 +212,10 @@ def _build_procedural_robot(
 
     logger.info(
         "Procedurally built robot '%s' (canonical: %s) — %d joints, %d bodies",
-        name, canonical, num_new_joints, num_new_bodies,
+        name,
+        canonical,
+        num_new_joints,
+        num_new_bodies,
     )
 
     return {
@@ -230,7 +231,6 @@ def _build_procedural_robot(
     }
 
 
-
 def _ensure_newton():
     """Lazily import Newton and Warp."""
     global _newton_module, _warp_module
@@ -239,21 +239,21 @@ def _ensure_newton():
 
     try:
         import warp as wp
+
         _warp_module = wp
         logger.debug("Warp %s loaded.", getattr(wp, "__version__", "unknown"))
     except ImportError as exc:
         raise ImportError(
-            "warp-lang is required for the Newton backend. "
-            "Install with: pip install warp-lang"
+            "warp-lang is required for the Newton backend. " "Install with: pip install warp-lang"
         ) from exc
 
     try:
         import newton
+
         _newton_module = newton
     except ImportError as exc:
         raise ImportError(
-            "newton-sim is required for the Newton backend. "
-            "Install with: pip install newton-sim"
+            "newton-sim is required for the Newton backend. " "Install with: pip install newton-sim"
         ) from exc
 
 
@@ -261,6 +261,7 @@ def _try_resolve_model_path(name: str) -> Optional[str]:
     """Attempt to resolve a model path via strands_robots.assets."""
     try:
         from strands_robots.assets import resolve_model_path
+
         path = resolve_model_path(name)
         logger.debug("Resolved '%s' → %s", name, path)
         return str(path)
@@ -273,6 +274,7 @@ def _try_get_newton_asset(name: str) -> Optional[str]:
     try:
         _ensure_newton()
         from newton import examples as ne
+
         path = ne.get_asset(name)
         if os.path.exists(path):
             return path
@@ -319,17 +321,11 @@ class NewtonConfig:
 
     def __post_init__(self):
         if self.solver not in SOLVER_MAP:
-            raise ValueError(
-                f"Unknown solver '{self.solver}'. Options: {list(SOLVER_MAP.keys())}"
-            )
+            raise ValueError(f"Unknown solver '{self.solver}'. Options: {list(SOLVER_MAP.keys())}")
         if self.render_backend not in RENDER_BACKENDS:
-            raise ValueError(
-                f"Unknown render_backend '{self.render_backend}'. Options: {RENDER_BACKENDS}"
-            )
+            raise ValueError(f"Unknown render_backend '{self.render_backend}'. Options: {RENDER_BACKENDS}")
         if self.broad_phase not in BROAD_PHASE_OPTIONS:
-            raise ValueError(
-                f"Unknown broad_phase '{self.broad_phase}'. Options: {BROAD_PHASE_OPTIONS}"
-            )
+            raise ValueError(f"Unknown broad_phase '{self.broad_phase}'. Options: {BROAD_PHASE_OPTIONS}")
         if self.physics_dt <= 0:
             raise ValueError("physics_dt must be positive")
         if self.num_envs < 1:
@@ -718,9 +714,11 @@ class NewtonBackend:
                     **parse_kwargs,
                 )
             elif suffix == ".urdf":
-                parse_kwargs.update({
-                    "collapse_fixed_joints": True,
-                })
+                parse_kwargs.update(
+                    {
+                        "collapse_fixed_joints": True,
+                    }
+                )
                 # NOTE: armature, stiffness, damping, enable_self_collisions, floating
                 # are NOT accepted by Newton's add_urdf() — they must be set on the
                 # model/builder after loading. Only collapse_fixed_joints is supported.
@@ -736,8 +734,11 @@ class NewtonBackend:
                     # Recreate builder to avoid partial state from failed URDF parse
                     self._recreate_builder()
                     proc_info = _build_procedural_robot(
-                        self._builder, self._wp, name,
-                        position=position, scale=scale,
+                        self._builder,
+                        self._wp,
+                        name,
+                        position=position,
+                        scale=scale,
                     )
                     if proc_info is not None:
                         used_procedural = True
@@ -756,8 +757,11 @@ class NewtonBackend:
                     # Recreate builder to avoid partial state from failed MJCF parse
                     self._recreate_builder()
                     proc_info = _build_procedural_robot(
-                        self._builder, self._wp, name,
-                        position=position, scale=scale,
+                        self._builder,
+                        self._wp,
+                        name,
+                        position=position,
+                        scale=scale,
                     )
                     if proc_info is not None:
                         used_procedural = True
@@ -780,8 +784,11 @@ class NewtonBackend:
                     self._recreate_builder()
                     # Fallback: build robot procedurally from known definitions
                     proc_info = _build_procedural_robot(
-                        self._builder, self._wp, name,
-                        position=position, scale=scale,
+                        self._builder,
+                        self._wp,
+                        name,
+                        position=position,
+                        scale=scale,
                     )
                     if proc_info is not None:
                         used_procedural = True
@@ -825,7 +832,12 @@ class NewtonBackend:
 
             num_j = robot_info.get("num_joints", 0)
             num_b = robot_info.get("num_bodies", 0)
-            return {"success": True, "num_joints": num_j, "robot_info": robot_info, "message": f"Robot '{name}' added ({num_j} joints, {num_b} bodies)"}
+            return {
+                "success": True,
+                "num_joints": num_j,
+                "robot_info": robot_info,
+                "message": f"Robot '{name}' added ({num_j} joints, {num_b} bodies)",
+            }
         except Exception as exc:
             return {"success": False, "message": str(exc)}
 
@@ -865,6 +877,7 @@ class NewtonBackend:
             try:
                 from newton import usd as newton_usd
                 from pxr import Usd
+
                 stage = Usd.Stage.Open(usd_path)
                 if usd_prim_path:
                     prim = stage.GetPrimAtPath(usd_prim_path)
@@ -1149,12 +1162,8 @@ class NewtonBackend:
 
             if env_ids is None:
                 # Full reset
-                self._state_0.joint_q.assign(
-                    wp.array(q_default, dtype=wp.float32, device=self._config.device)
-                )
-                self._state_0.joint_qd.assign(
-                    wp.array(qd_default, dtype=wp.float32, device=self._config.device)
-                )
+                self._state_0.joint_q.assign(wp.array(q_default, dtype=wp.float32, device=self._config.device))
+                self._state_0.joint_qd.assign(wp.array(qd_default, dtype=wp.float32, device=self._config.device))
             else:
                 # Per-environment reset
                 current_q = self._state_0.joint_q.numpy()
@@ -1164,17 +1173,13 @@ class NewtonBackend:
                     for env_id in env_ids:
                         q_start = env_id * self._joints_per_world
                         q_end = q_start + self._joints_per_world
-                        current_q[q_start:q_end] = q_default[:self._joints_per_world]
-                        current_qd[q_start:q_end] = qd_default[:self._joints_per_world]
+                        current_q[q_start:q_end] = q_default[: self._joints_per_world]
+                        current_qd[q_start:q_end] = qd_default[: self._joints_per_world]
                 else:
                     logger.warning("Cannot per-env reset: joints_per_world=%d", self._joints_per_world)
 
-                self._state_0.joint_q.assign(
-                    wp.array(current_q, dtype=wp.float32, device=self._config.device)
-                )
-                self._state_0.joint_qd.assign(
-                    wp.array(current_qd, dtype=wp.float32, device=self._config.device)
-                )
+                self._state_0.joint_q.assign(wp.array(current_q, dtype=wp.float32, device=self._config.device))
+                self._state_0.joint_qd.assign(wp.array(current_qd, dtype=wp.float32, device=self._config.device))
 
             # Re-evaluate FK
             if hasattr(self._newton, "eval_fk"):
@@ -1440,7 +1445,6 @@ class NewtonBackend:
         if self._model is None:
             self._finalize_model()
 
-
         try:
             from newton.sensors import SensorContact, SensorIMU, SensorTiledCamera
 
@@ -1544,9 +1548,7 @@ class NewtonBackend:
                     delta_q[j] = np.dot(jac_col, error) * step_size
 
                 current_q = joint_q + delta_q
-                self._state_0.joint_q.assign(
-                    wp.array(current_q, dtype=wp.float32, device=self._config.device)
-                )
+                self._state_0.joint_q.assign(wp.array(current_q, dtype=wp.float32, device=self._config.device))
 
             return {
                 "success": True,
@@ -1581,13 +1583,13 @@ class NewtonBackend:
 
                 try:
                     jq = self._state_0.joint_q.numpy().copy()
-                    obs["joint_q"] = jq[offset:offset + n_joints] if n_joints > 0 else jq
+                    obs["joint_q"] = jq[offset : offset + n_joints] if n_joints > 0 else jq
                 except Exception:
                     pass
 
                 try:
                     jqd = self._state_0.joint_qd.numpy().copy()
-                    obs["joint_qd"] = jqd[offset:offset + n_joints] if n_joints > 0 else jqd
+                    obs["joint_qd"] = jqd[offset : offset + n_joints] if n_joints > 0 else jqd
                 except Exception:
                     pass
 
@@ -1738,6 +1740,7 @@ class NewtonBackend:
 
         try:
             from strands_robots.policies import create_policy
+
             return create_policy(
                 provider=policy_provider,
                 robot_name=robot_name,
@@ -1810,10 +1813,20 @@ class NewtonBackend:
 
         # Clear all state
         for attr in (
-            "_solver", "_secondary_solver", "_state_0", "_state_1",
-            "_control", "_contacts", "_collision_pipeline", "_model",
-            "_builder", "_cuda_graph", "_diffsim_states", "_diffsim_tape",
-            "_default_joint_q", "_default_joint_qd",
+            "_solver",
+            "_secondary_solver",
+            "_state_0",
+            "_state_1",
+            "_control",
+            "_contacts",
+            "_collision_pipeline",
+            "_model",
+            "_builder",
+            "_cuda_graph",
+            "_diffsim_states",
+            "_diffsim_tape",
+            "_default_joint_q",
+            "_default_joint_qd",
         ):
             try:
                 setattr(self, attr, None)
@@ -1892,6 +1905,7 @@ class NewtonBackend:
         # Save video
         try:
             import imageio
+
             writer = imageio.get_writer(output_path, fps=fps, quality=8)
             for f in frames:
                 writer.append_data(f)
@@ -1911,6 +1925,7 @@ class NewtonBackend:
         if cosmos_transfer and output_path.endswith(".mp4"):
             try:
                 from strands_robots.cosmos_transfer import CosmosTransferConfig, CosmosTransferPipeline
+
                 cfg = CosmosTransferConfig()
                 pipe = CosmosTransferPipeline(cfg)
                 cosmos_out = pipe.transfer_video(

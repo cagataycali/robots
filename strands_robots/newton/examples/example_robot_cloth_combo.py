@@ -37,15 +37,11 @@ verts = []
 indices = []
 for y in range(grid_size):
     for x in range(grid_size):
-        verts.append(wp.vec3(
-            float(x) * 0.1 - 0.35,
-            float(y) * 0.1 - 0.35,
-            0.8  # above the robot
-        ))
+        verts.append(wp.vec3(float(x) * 0.1 - 0.35, float(y) * 0.1 - 0.35, 0.8))  # above the robot
 for y in range(grid_size - 1):
     for x in range(grid_size - 1):
         i = y * grid_size + x
-        indices.extend([i, i+1, i+grid_size, i+1, i+grid_size+1, i+grid_size])
+        indices.extend([i, i + 1, i + grid_size, i + 1, i + grid_size + 1, i + grid_size])
 
 builder.add_cloth_mesh(
     pos=wp.vec3(0, 0, 0),
@@ -98,7 +94,7 @@ for step in range(200):
         pipeline.collide(s0, contacts)
     except Exception:
         pass
-    solver.step(s0, s1, ctrl, contacts, 1.0/120.0)
+    solver.step(s0, s1, ctrl, contacts, 1.0 / 120.0)
     s0, s1 = s1, s0
 
     if step % 50 == 0:

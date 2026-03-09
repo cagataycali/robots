@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 # Check if LeRobot is available
 try:
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
     HAS_LEROBOT_DATASET = True
 except ImportError:
     HAS_LEROBOT_DATASET = False
@@ -38,9 +39,9 @@ except ImportError:
 
 def _numpy_ify(v):
     """Convert any value to numpy-friendly format for add_frame."""
-    if hasattr(v, 'numpy'):
+    if hasattr(v, "numpy"):
         return v.numpy()
-    if hasattr(v, 'tolist') and isinstance(v, np.ndarray):
+    if hasattr(v, "tolist") and isinstance(v, np.ndarray):
         return v
     if isinstance(v, (int, float)):
         return np.array([v], dtype=np.float32)
@@ -105,8 +106,7 @@ class DatasetRecorder:
         """
         if not HAS_LEROBOT_DATASET:
             raise ImportError(
-                "lerobot not installed. Install with: pip install lerobot\n"
-                "Required for LeRobotDataset recording."
+                "lerobot not installed. Install with: pip install lerobot\n" "Required for LeRobotDataset recording."
             )
 
         # Build features dict in LeRobot format
@@ -119,8 +119,7 @@ class DatasetRecorder:
         )
 
         logger.info(
-            f"Creating LeRobotDataset: {repo_id} @ {fps}fps, "
-            f"{len(features)} features, robot_type={robot_type}"
+            f"Creating LeRobotDataset: {repo_id} @ {fps}fps, " f"{len(features)} features, robot_type={robot_type}"
         )
 
         # Build kwargs, skip unsupported params for this LeRobot version
@@ -136,6 +135,7 @@ class DatasetRecorder:
         )
         # streaming_encoding only in newer LeRobot versions
         import inspect
+
         create_sig = inspect.signature(LeRobotDataset.create)
         if "streaming_encoding" in create_sig.parameters:
             create_kwargs["streaming_encoding"] = streaming_encoding
@@ -183,8 +183,11 @@ class DatasetRecorder:
         state_names = []
         if robot_features:
             # Count scalar features (exclude cameras)
-            state_keys = [k for k, v in robot_features.items()
-                          if not isinstance(v, dict) or v.get("dtype") not in ("image", "video")]
+            state_keys = [
+                k
+                for k, v in robot_features.items()
+                if not isinstance(v, dict) or v.get("dtype") not in ("image", "video")
+            ]
             state_dim = len(state_keys)
             state_names = state_keys
         elif joint_names:
@@ -202,8 +205,11 @@ class DatasetRecorder:
         action_dim = 0
         action_names = []
         if action_features:
-            action_keys = [k for k, v in action_features.items()
-                           if not isinstance(v, dict) or v.get("dtype") not in ("image", "video")]
+            action_keys = [
+                k
+                for k, v in action_features.items()
+                if not isinstance(v, dict) or v.get("dtype") not in ("image", "video")
+            ]
             action_dim = len(action_keys)
             action_names = action_keys
         elif joint_names:
@@ -247,8 +253,7 @@ class DatasetRecorder:
 
         # --- Detect camera vs state keys ---
         if camera_keys is None:
-            camera_keys = [k for k, v in observation.items()
-                           if isinstance(v, np.ndarray) and v.ndim >= 2]
+            camera_keys = [k for k, v in observation.items() if isinstance(v, np.ndarray) and v.ndim >= 2]
 
         state_keys = [k for k in observation.keys() if k not in camera_keys]
 
@@ -317,10 +322,7 @@ class DatasetRecorder:
             self.dataset.save_episode()
             self.episode_count += 1
             ep_frames = self.frame_count  # Total frames so far
-            logger.info(
-                f"Episode {self.episode_count} saved: "
-                f"{ep_frames} total frames"
-            )
+            logger.info(f"Episode {self.episode_count} saved: " f"{ep_frames} total frames")
             return {
                 "status": "success",
                 "episode": self.episode_count,
@@ -376,7 +378,4 @@ class DatasetRecorder:
         return str(self.dataset.root)
 
     def __repr__(self) -> str:
-        return (
-            f"DatasetRecorder(repo_id={self.repo_id}, "
-            f"episodes={self.episode_count}, frames={self.frame_count})"
-        )
+        return f"DatasetRecorder(repo_id={self.repo_id}, " f"episodes={self.episode_count}, frames={self.frame_count})"

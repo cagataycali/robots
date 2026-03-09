@@ -259,31 +259,23 @@ class StereoConfig:
         """Validate configuration after initialisation."""
         if self.model_variant not in VALID_MODEL_VARIANTS:
             raise ValueError(
-                f"Invalid model_variant '{self.model_variant}'. "
-                f"Must be one of: {VALID_MODEL_VARIANTS}"
+                f"Invalid model_variant '{self.model_variant}'. " f"Must be one of: {VALID_MODEL_VARIANTS}"
             )
 
         if self.valid_iters < 1:
-            raise ValueError(
-                f"valid_iters must be >= 1, got {self.valid_iters}"
-            )
+            raise ValueError(f"valid_iters must be >= 1, got {self.valid_iters}")
 
         if self.max_disp < 1:
             raise ValueError(f"max_disp must be >= 1, got {self.max_disp}")
 
         if not 0.0 < self.scale <= 2.0:
-            raise ValueError(
-                f"scale must be in (0.0, 2.0], got {self.scale}"
-            )
+            raise ValueError(f"scale must be in (0.0, 2.0], got {self.scale}")
 
         if self.zfar <= 0:
             raise ValueError(f"zfar must be > 0, got {self.zfar}")
 
         if self.camera and self.camera not in SUPPORTED_CAMERAS:
-            raise ValueError(
-                f"Unknown camera '{self.camera}'. "
-                f"Supported: {sorted(SUPPORTED_CAMERAS.keys())}"
-            )
+            raise ValueError(f"Unknown camera '{self.camera}'. " f"Supported: {sorted(SUPPORTED_CAMERAS.keys())}")
 
     def resolve_model_path(self) -> str:
         """Resolve the model checkpoint path.
@@ -307,17 +299,13 @@ class StereoConfig:
         for env_var in ("STEREO_MODEL_DIR", "FAST_FOUNDATION_STEREO_DIR"):
             env_dir = os.environ.get(env_var)
             if env_dir:
-                candidate = os.path.join(
-                    env_dir, self.model_variant, "model_best_bp2_serialize.pth"
-                )
+                candidate = os.path.join(env_dir, self.model_variant, "model_best_bp2_serialize.pth")
                 if os.path.isfile(candidate):
                     logger.info("Using stereo model from %s: %s", env_var, candidate)
                     return candidate
 
         # 3. Default weights directory
-        default_path = os.path.join(
-            "weights", self.model_variant, "model_best_bp2_serialize.pth"
-        )
+        default_path = os.path.join("weights", self.model_variant, "model_best_bp2_serialize.pth")
         if os.path.isfile(default_path):
             return default_path
 
@@ -388,8 +376,7 @@ class StereoDepthPipeline:
         self._model_loaded = False
 
         logger.info(
-            "Initialised StereoDepthPipeline (variant=%s, iters=%d, "
-            "scale=%.2f, max_disp=%d)",
+            "Initialised StereoDepthPipeline (variant=%s, iters=%d, " "scale=%.2f, max_disp=%d)",
             self.config.model_variant,
             self.config.valid_iters,
             self.config.scale,
@@ -414,15 +401,11 @@ class StereoDepthPipeline:
             import torch  # type: ignore[import-untyped]
         except ImportError as exc:
             raise ImportError(
-                "PyTorch is required for stereo depth estimation. "
-                "Install with: pip install torch"
+                "PyTorch is required for stereo depth estimation. " "Install with: pip install torch"
             ) from exc
 
         if not torch.cuda.is_available():
-            raise RuntimeError(
-                "CUDA is required for Fast-FoundationStereo inference. "
-                "No CUDA device found."
-            )
+            raise RuntimeError("CUDA is required for Fast-FoundationStereo inference. " "No CUDA device found.")
 
         model_path = self.config.resolve_model_path()
         logger.info("Loading stereo model from %s", model_path)
@@ -498,10 +481,7 @@ class StereoDepthPipeline:
         metadata["image_load_time"] = time.monotonic() - t0
 
         if img_left.shape != img_right.shape:
-            raise ValueError(
-                f"Image shapes must match. Left: {img_left.shape}, "
-                f"Right: {img_right.shape}"
-            )
+            raise ValueError(f"Image shapes must match. Left: {img_left.shape}, " f"Right: {img_right.shape}")
 
         H_orig, W_orig = img_left.shape[:2]
         metadata["original_size"] = (H_orig, W_orig)
@@ -513,21 +493,23 @@ class StereoDepthPipeline:
                 import cv2  # type: ignore[import-untyped]
 
                 img_l_scaled = cv2.resize(
-                    img_left, None, fx=scale, fy=scale,
+                    img_left,
+                    None,
+                    fx=scale,
+                    fy=scale,
                     interpolation=cv2.INTER_LINEAR,
                 )
                 # Verify resize returned a real numpy array
                 if not isinstance(img_l_scaled, np.ndarray):
                     raise TypeError("cv2.resize returned non-array")
                 img_right = cv2.resize(
-                    img_right, (img_l_scaled.shape[1], img_l_scaled.shape[0]),
+                    img_right,
+                    (img_l_scaled.shape[1], img_l_scaled.shape[0]),
                     interpolation=cv2.INTER_LINEAR,
                 )
                 img_left = img_l_scaled
             except Exception:
-                logger.warning(
-                    "OpenCV not available for image scaling; using original size."
-                )
+                logger.warning("OpenCV not available for image scaling; using original size.")
                 scale = 1.0
 
         H, W = img_left.shape[:2]
@@ -539,12 +521,8 @@ class StereoDepthPipeline:
         if device.startswith("cuda") and not torch.cuda.is_available():
             device = "cpu"
             logger.debug("CUDA not available; falling back to CPU for tensors.")
-        img0 = torch.as_tensor(img_left, dtype=torch.float32).to(
-            device
-        )[None].permute(0, 3, 1, 2)  # (1, 3, H, W)
-        img1 = torch.as_tensor(img_right, dtype=torch.float32).to(
-            device
-        )[None].permute(0, 3, 1, 2)
+        img0 = torch.as_tensor(img_left, dtype=torch.float32).to(device)[None].permute(0, 3, 1, 2)  # (1, 3, H, W)
+        img1 = torch.as_tensor(img_right, dtype=torch.float32).to(device)[None].permute(0, 3, 1, 2)
 
         # Pad to divisible-by-32
         padder = _InputPadder(img0.shape, divis_by=DEFAULT_DIVIS_BY)
@@ -560,7 +538,8 @@ class StereoDepthPipeline:
         ):
             if effective_config.hierarchical:
                 disp = self.model.run_hierachical(
-                    img0_padded, img1_padded,
+                    img0_padded,
+                    img1_padded,
                     iters=effective_config.valid_iters,
                     test_mode=True,
                     low_memory=effective_config.low_memory,
@@ -568,7 +547,8 @@ class StereoDepthPipeline:
                 )
             else:
                 disp = self.model.forward(
-                    img0_padded, img1_padded,
+                    img0_padded,
+                    img1_padded,
                     iters=effective_config.valid_iters,
                     test_mode=True,
                     low_memory=effective_config.low_memory,
@@ -582,9 +562,7 @@ class StereoDepthPipeline:
 
         # Remove invisible regions (non-overlapping at left boundary)
         if effective_config.remove_invisible:
-            yy, xx = np.meshgrid(
-                np.arange(H), np.arange(W), indexing="ij"
-            )
+            yy, xx = np.meshgrid(np.arange(H), np.arange(W), indexing="ij")
             invalid = (xx - disp_np) < 0
             disp_np[invalid] = np.inf
 
@@ -649,9 +627,7 @@ class StereoDepthPipeline:
             if image.ndim == 2:
                 image = np.stack([image] * 3, axis=-1)
             if image.ndim != 3 or image.shape[2] not in (1, 3, 4):
-                raise ValueError(
-                    f"Expected (H, W, 3) array, got shape {image.shape}"
-                )
+                raise ValueError(f"Expected (H, W, 3) array, got shape {image.shape}")
             return image[..., :3].copy()
 
         path = str(image)
@@ -721,9 +697,7 @@ def _depth_to_xyz(
     H, W = depth.shape[:2]
     invalid_mask = (depth < zmin) | ~np.isfinite(depth)
 
-    vs, us = np.meshgrid(
-        np.arange(H), np.arange(W), sparse=False, indexing="ij"
-    )
+    vs, us = np.meshgrid(np.arange(H), np.arange(W), sparse=False, indexing="ij")
 
     zs = depth.copy()
     xs = (us - K[0, 2]) * zs / K[0, 0]
@@ -794,8 +768,7 @@ class _InputPadder:
         pad_ht = (((ht // divis_by) + 1) * divis_by - ht) % divis_by
         pad_wd = (((wd // divis_by) + 1) * divis_by - wd) % divis_by
         if mode == "sintel":
-            self._pad = [pad_wd // 2, pad_wd - pad_wd // 2,
-                         pad_ht // 2, pad_ht - pad_ht // 2]
+            self._pad = [pad_wd // 2, pad_wd - pad_wd // 2, pad_ht // 2, pad_ht - pad_ht // 2]
         else:
             self._pad = [pad_wd // 2, pad_wd - pad_wd // 2, 0, pad_ht]
 
@@ -812,7 +785,7 @@ class _InputPadder:
             self._pad[0],
             wd - self._pad[1],
         ]
-        return x[..., c[0]:c[1], c[2]:c[3]]
+        return x[..., c[0] : c[1], c[2] : c[3]]
 
 
 # ---------------------------------------------------------------------------

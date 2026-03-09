@@ -41,6 +41,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class RecordingStats:
     """Live recording statistics."""
+
     episode: int = 0
     total_episodes: int = 0
     frame_count: int = 0
@@ -247,6 +248,7 @@ class RecordingVisualizer:
         """Render camera frames in matplotlib (non-blocking)."""
         try:
             import matplotlib
+
             matplotlib.use("TkAgg")
             import matplotlib.pyplot as plt
 
@@ -278,8 +280,7 @@ class RecordingVisualizer:
                     self._img_plots[cam_name].set_data(frame)
 
             self._fig.suptitle(
-                f"Ep {s.episode} | Frame {s.frame_count} | "
-                f"FPS {s.fps_actual:.1f}/{s.fps_target:.0f} | {s.task}",
+                f"Ep {s.episode} | Frame {s.frame_count} | " f"FPS {s.fps_actual:.1f}/{s.fps_target:.0f} | {s.task}",
                 fontsize=10,
             )
             self._fig.canvas.draw_idle()

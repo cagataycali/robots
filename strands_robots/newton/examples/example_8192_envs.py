@@ -34,14 +34,14 @@ for num_envs in [256, 1024, 2048, 4096, 8192]:
     # Warmup
     for _ in range(3):
         s0.clear_forces()
-        solver.step(s0, s1, ctrl, None, 1.0/200.0)
+        solver.step(s0, s1, ctrl, None, 1.0 / 200.0)
         s0, s1 = s1, s0
 
     # Benchmark
     t0 = time.time()
     for _ in range(100):
         s0.clear_forces()
-        solver.step(s0, s1, ctrl, None, 1.0/200.0)
+        solver.step(s0, s1, ctrl, None, 1.0 / 200.0)
         s0, s1 = s1, s0
     elapsed = time.time() - t0
 

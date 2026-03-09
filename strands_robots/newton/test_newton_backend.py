@@ -41,6 +41,7 @@ def run_test(name, fn):
 
 def test_config_validation():
     from strands_robots.newton import NewtonConfig
+
     # Valid config
     c = NewtonConfig(solver="mujoco", device=DEVICE, num_envs=1)
     assert c.solver == "mujoco"
@@ -62,6 +63,7 @@ def test_config_validation():
 
 def test_create_world():
     from strands_robots.newton import NewtonBackend, NewtonConfig
+
     b = NewtonBackend(NewtonConfig(solver="mujoco", device=DEVICE))
     r = b.create_world()
     assert r["success"]
@@ -72,6 +74,7 @@ def test_create_world():
 
 def test_add_robot_urdf():
     from strands_robots.newton import NewtonBackend, NewtonConfig
+
     try:
         import newton.examples as ne
     except ImportError:
@@ -87,6 +90,7 @@ def test_add_robot_urdf():
 
 def test_step():
     from strands_robots.newton import NewtonBackend, NewtonConfig
+
     try:
         import newton.examples as ne
     except ImportError:
@@ -104,6 +108,7 @@ def test_step():
 
 def test_observation():
     from strands_robots.newton import NewtonBackend, NewtonConfig
+
     try:
         import newton.examples as ne
     except ImportError:
@@ -125,6 +130,7 @@ def test_observation():
 
 def test_replicate():
     from strands_robots.newton import NewtonBackend, NewtonConfig
+
     try:
         import newton.examples as ne
     except ImportError:
@@ -146,6 +152,7 @@ def test_replicate():
 
 def test_replicate_4096():
     from strands_robots.newton import NewtonBackend, NewtonConfig
+
     try:
         import newton.examples as ne
     except ImportError:
@@ -172,6 +179,7 @@ def test_replicate_4096():
 
 def test_reset_full():
     from strands_robots.newton import NewtonBackend, NewtonConfig
+
     try:
         import newton.examples as ne
     except ImportError:
@@ -193,6 +201,7 @@ def test_reset_full():
 
 def test_reset_per_env():
     from strands_robots.newton import NewtonBackend, NewtonConfig
+
     try:
         import newton.examples as ne
     except ImportError:
@@ -214,6 +223,7 @@ def test_reset_per_env():
 
 def test_get_state():
     from strands_robots.newton import NewtonBackend, NewtonConfig
+
     try:
         import newton.examples as ne
     except ImportError:
@@ -255,6 +265,7 @@ def test_diffsim_particle():
 
 def test_collision_pipeline():
     from strands_robots.newton import NewtonBackend, NewtonConfig
+
     try:
         import newton.examples as ne
     except ImportError:
@@ -271,6 +282,7 @@ def test_collision_pipeline():
 
 def test_destroy():
     from strands_robots.newton import NewtonBackend, NewtonConfig
+
     b = NewtonBackend(NewtonConfig(solver="mujoco", device=DEVICE))
     b.create_world()
     r = b.destroy()
@@ -281,6 +293,7 @@ def test_destroy():
 
 def test_multiple_robots():
     from strands_robots.newton import NewtonBackend, NewtonConfig
+
     try:
         import newton.examples as ne
     except ImportError:
@@ -288,10 +301,8 @@ def test_multiple_robots():
 
     b = NewtonBackend(NewtonConfig(solver="mujoco", device=DEVICE))
     b.create_world()
-    r1 = b.add_robot("quad1", urdf_path=ne.get_asset("quadruped.urdf"),
-                      position=(0, 0, 0))
-    r2 = b.add_robot("quad2", urdf_path=ne.get_asset("quadruped.urdf"),
-                      position=(2, 0, 0))
+    r1 = b.add_robot("quad1", urdf_path=ne.get_asset("quadruped.urdf"), position=(0, 0, 0))
+    r2 = b.add_robot("quad2", urdf_path=ne.get_asset("quadruped.urdf"), position=(2, 0, 0))
     assert r1["success"] and r2["success"]
     assert len(b._robots) == 2
     assert r2["robot_info"]["joint_offset"] > 0
@@ -316,6 +327,7 @@ def test_dual_solver():
     # Add robot
     try:
         import newton.examples as ne
+
         b.add_robot("quad", urdf_path=ne.get_asset("quadruped.urdf"))
     except ImportError:
         return "SKIP"
@@ -326,16 +338,23 @@ def test_dual_solver():
     verts, indices = [], []
     for y in range(grid):
         for x in range(grid):
-            verts.append(wp.vec3(float(x)*0.1, float(y)*0.1, 1.0))
-    for y in range(grid-1):
-        for x in range(grid-1):
-            i = y*grid+x
-            indices.extend([i, i+1, i+grid, i+1, i+grid+1, i+grid])
+            verts.append(wp.vec3(float(x) * 0.1, float(y) * 0.1, 1.0))
+    for y in range(grid - 1):
+        for x in range(grid - 1):
+            i = y * grid + x
+            indices.extend([i, i + 1, i + grid, i + 1, i + grid + 1, i + grid])
 
     b._builder.add_cloth_mesh(
-        pos=wp.vec3(0,0,0), rot=wp.quat_identity(), scale=1.0, vel=wp.vec3(0,0,0),
-        vertices=verts, indices=indices, density=0.1,
-        tri_ke=1e3, tri_ka=1e3, tri_kd=1e-4,
+        pos=wp.vec3(0, 0, 0),
+        rot=wp.quat_identity(),
+        scale=1.0,
+        vel=wp.vec3(0, 0, 0),
+        vertices=verts,
+        indices=indices,
+        density=0.1,
+        tri_ke=1e3,
+        tri_ka=1e3,
+        tri_kd=1e-4,
     )
     b._cloths["test_cloth"] = {"name": "test_cloth"}
     b._builder.color()

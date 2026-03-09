@@ -105,6 +105,7 @@ class MuJoCoKinematics(Kinematics):
     ):
         try:
             import mujoco
+
             self._mj = mujoco
         except ImportError:
             raise ImportError("mujoco required for MuJoCoKinematics")
@@ -238,7 +239,7 @@ class MuJoCoKinematics(Kinematics):
         data.qpos[:] = qpos_save
         mj.mj_forward(model, data)
 
-        return result[:len(current_joints)]
+        return result[: len(current_joints)]
 
 
 class PlacoKinematics(Kinematics):
@@ -261,6 +262,7 @@ class PlacoKinematics(Kinematics):
     ):
         try:
             from lerobot.model.kinematics import RobotKinematics
+
             self._kin = RobotKinematics(
                 urdf_path=urdf_path,
                 target_frame_name=target_frame,
@@ -268,8 +270,7 @@ class PlacoKinematics(Kinematics):
             )
         except ImportError:
             raise ImportError(
-                "lerobot with placo required for PlacoKinematics. "
-                "Install with: pip install lerobot[kinematics]"
+                "lerobot with placo required for PlacoKinematics. " "Install with: pip install lerobot[kinematics]"
             )
 
         self._urdf_path = urdf_path
@@ -326,6 +327,7 @@ class ONNXKinematics(Kinematics):
     ):
         try:
             import onnxruntime as ort
+
             self._ort = ort
         except ImportError:
             raise ImportError("onnxruntime required: pip install onnxruntime")
@@ -393,7 +395,7 @@ class ONNXKinematics(Kinematics):
         input_name = self._ik_session.get_inputs()[0].name
         joints = self._ik_session.run(None, {input_name: inp})[0][0]
 
-        return joints[:len(current_joints)]
+        return joints[: len(current_joints)]
 
     @staticmethod
     def generate_training_data(
@@ -416,9 +418,7 @@ class ONNXKinematics(Kinematics):
         poses_data = []
 
         for _ in range(n_samples):
-            joints = np.array([
-                np.random.uniform(lo, hi) for lo, hi in joint_ranges
-            ])
+            joints = np.array([np.random.uniform(lo, hi) for lo, hi in joint_ranges])
             try:
                 pose = kinematics.forward_kinematics(joints)
                 pos = pose[:3, 3]
@@ -460,9 +460,7 @@ def create_kinematics(
     """
     # MuJoCo backend (simulation)
     if model is not None and data is not None:
-        return MuJoCoKinematics(
-            model=model, data=data, body_name=body_name, **kwargs
-        )
+        return MuJoCoKinematics(model=model, data=data, body_name=body_name, **kwargs)
 
     # Placo backend (real hardware with URDF)
     if urdf_path:
@@ -478,14 +476,11 @@ def create_kinematics(
             # Fallback: load URDF into MuJoCo and use MuJoCo IK
             try:
                 import mujoco
+
                 model = mujoco.MjModel.from_xml_path(urdf_path)
                 data = mujoco.MjData(model)
-                return MuJoCoKinematics(
-                    model=model, data=data, body_name=body_name, **kwargs
-                )
+                return MuJoCoKinematics(model=model, data=data, body_name=body_name, **kwargs)
             except Exception as e:
                 raise RuntimeError(f"No kinematics backend available: {e}")
 
-    raise ValueError(
-        "Provide either model+data (MuJoCo) or urdf_path (Placo/MuJoCo)"
-    )
+    raise ValueError("Provide either model+data (MuJoCo) or urdf_path (Placo/MuJoCo)")

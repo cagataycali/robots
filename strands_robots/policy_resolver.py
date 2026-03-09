@@ -24,34 +24,24 @@ __all__ = ["resolve_policy"]
 _HF_ORG_TO_PROVIDER: Dict[str, str] = {
     # LeRobot models → lerobot_local (direct HF inference)
     "lerobot": "lerobot_local",
-
     # OpenVLA
     "openvla": "openvla",
-
     # Microsoft
-    "microsoft": "magma",      # Magma-8B
-
+    "microsoft": "magma",  # Magma-8B
     # InternRobotics
     "internrobotics": "internvla",
-
     # Robotics Diffusion Transformer
     "robotics-diffusion-transformer": "rdt",
-
     # Unitree
     "unitreerobotics": "unifolm",
-
     # BAAI
     "baai": "robobrain",
-
     # NVIDIA
-    "nvidia": "groot",         # GR00T models default
-
+    "nvidia": "groot",  # GR00T models default
     # CogACT
     "cogact": "cogact",
-
     # Dream-org
     "dream-org": "dreamgen",
-
     # AgiBot World
     "agibot-world": "go1",
 }
@@ -179,8 +169,7 @@ def resolve_policy(
             # Different providers need the model ID in different kwargs
             if provider in ("lerobot_local", "lerobot_async"):
                 kwargs["pretrained_name_or_path"] = policy
-            elif provider in ("openvla", "internvla", "magma", "rdt", "unifolm",
-                              "robobrain", "cogact", "go1"):
+            elif provider in ("openvla", "internvla", "magma", "rdt", "unifolm", "robobrain", "cogact", "go1"):
                 kwargs["model_id"] = policy
             elif provider in ("groot", "dreamgen"):
                 kwargs["pretrained_name_or_path"] = policy
@@ -200,6 +189,7 @@ def resolve_policy(
     # Check if it's a registered provider name
     try:
         from strands_robots.policies import list_providers
+
         all_providers = list_providers()
         if policy.lower() in all_providers:
             kwargs.update(extra_kwargs)

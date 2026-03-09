@@ -55,16 +55,18 @@ logger = logging.getLogger(__name__)
 @dataclass
 class NeuralTrajectory:
     """A single neural trajectory: video frames + pseudo-actions + instruction."""
-    frames: np.ndarray           # (T, H, W, C) uint8
-    actions: np.ndarray          # (T-1, action_dim) float32 — IDM or latent
-    instruction: str             # Language instruction
-    action_type: str = "idm"     # "idm" or "latent"
+
+    frames: np.ndarray  # (T, H, W, C) uint8
+    actions: np.ndarray  # (T-1, action_dim) float32 — IDM or latent
+    instruction: str  # Language instruction
+    action_type: str = "idm"  # "idm" or "latent"
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class DreamGenConfig:
     """Configuration for the DreamGen pipeline."""
+
     # Video world model
     video_model: str = "wan2.1"
     video_model_path: Optional[str] = None
@@ -107,8 +109,7 @@ class DreamGenPipeline:
             config: DreamGenConfig or keyword arguments
         """
         if config is None:
-            config = DreamGenConfig(**{k: v for k, v in kwargs.items()
-                                       if k in DreamGenConfig.__dataclass_fields__})
+            config = DreamGenConfig(**{k: v for k, v in kwargs.items() if k in DreamGenConfig.__dataclass_fields__})
         self.config = config
         self._video_model = None
         self._idm_model = None
@@ -218,13 +219,15 @@ class DreamGenPipeline:
                     video_id = f"video_{frame_idx}_{instr_idx}_{gen_idx}"
                     video_path = os.path.join(output_dir, f"{video_id}.mp4")
 
-                    generated.append({
-                        "video_id": video_id,
-                        "video_path": video_path,
-                        "instruction": instruction,
-                        "frame_idx": frame_idx,
-                        "initial_frame_shape": frame.shape,
-                    })
+                    generated.append(
+                        {
+                            "video_id": video_id,
+                            "video_path": video_path,
+                            "instruction": instruction,
+                            "frame_idx": frame_idx,
+                            "initial_frame_shape": frame.shape,
+                        }
+                    )
 
         logger.info(f"📹 {len(generated)} video generation tasks prepared")
         logger.info("💡 Execute with: pipeline._run_video_generation(output_dir)")
@@ -314,19 +317,20 @@ class DreamGenPipeline:
                     seed=var_idx * 1000 + vid_idx,
                 )
 
-                generated.append({
-                    "video_id": video_id,
-                    "video_path": output_path,
-                    "instruction": instruction,
-                    "sim_video": sim_video,
-                    "control_type": control_type,
-                    "model_variant": model_variant,
-                    "transfer_result": result,
-                })
+                generated.append(
+                    {
+                        "video_id": video_id,
+                        "video_path": output_path,
+                        "instruction": instruction,
+                        "sim_video": sim_video,
+                        "control_type": control_type,
+                        "model_variant": model_variant,
+                        "transfer_result": result,
+                    }
+                )
 
         logger.info(f"📹 {len(generated)} photorealistic videos generated via Cosmos Transfer")
         return generated
-
 
     def extract_actions(
         self,
@@ -370,6 +374,7 @@ class DreamGenPipeline:
             try:
                 import torch
                 from transformers import AutoModel
+
                 try:
                     from gr00t.model.idm import IDM, IDMConfig  # Register model type  # noqa: F401
                 except ImportError:
@@ -383,13 +388,15 @@ class DreamGenPipeline:
                 logger.error(f"❌ Failed to load IDM: {e}")
                 logger.info("💡 Returning placeholder trajectories for pipeline testing")
                 for v in videos:
-                    trajectories.append(NeuralTrajectory(
-                        frames=np.zeros((10, 480, 640, 3), dtype=np.uint8),
-                        actions=np.zeros((9, 6), dtype=np.float32),
-                        instruction=v["instruction"],
-                        action_type="idm",
-                        metadata=v,
-                    ))
+                    trajectories.append(
+                        NeuralTrajectory(
+                            frames=np.zeros((10, 480, 640, 3), dtype=np.uint8),
+                            actions=np.zeros((9, 6), dtype=np.float32),
+                            instruction=v["instruction"],
+                            action_type="idm",
+                            metadata=v,
+                        )
+                    )
                 return trajectories
 
         logger.info(f"⚡ Extracting IDM actions with sliding window (horizon={self.config.idm_action_horizon})")
@@ -405,6 +412,7 @@ class DreamGenPipeline:
 
             # IDM sliding window: predict H actions from frame pairs
             import torch
+
             all_actions = []
             for t in range(len(frames) - 1):
                 frame_pair = np.stack([frames[t], frames[t + 1]], axis=0)
@@ -417,13 +425,15 @@ class DreamGenPipeline:
                 all_actions.append(action_pred[0])  # Take first action from chunk
 
             if all_actions:
-                trajectories.append(NeuralTrajectory(
-                    frames=frames,
-                    actions=np.array(all_actions, dtype=np.float32),
-                    instruction=video_info["instruction"],
-                    action_type="idm",
-                    metadata=video_info,
-                ))
+                trajectories.append(
+                    NeuralTrajectory(
+                        frames=frames,
+                        actions=np.array(all_actions, dtype=np.float32),
+                        instruction=video_info["instruction"],
+                        action_type="idm",
+                        metadata=video_info,
+                    )
+                )
 
         logger.info(f"✅ Extracted {len(trajectories)} neural trajectories")
         return trajectories
@@ -434,13 +444,15 @@ class DreamGenPipeline:
         # Placeholder for LAPA integration
         trajectories = []
         for v in videos:
-            trajectories.append(NeuralTrajectory(
-                frames=np.zeros((10, 480, 640, 3), dtype=np.uint8),
-                actions=np.zeros((9, 8), dtype=np.float32),  # LAPA codebook size 8
-                instruction=v["instruction"],
-                action_type="latent",
-                metadata=v,
-            ))
+            trajectories.append(
+                NeuralTrajectory(
+                    frames=np.zeros((10, 480, 640, 3), dtype=np.uint8),
+                    actions=np.zeros((9, 8), dtype=np.float32),  # LAPA codebook size 8
+                    instruction=v["instruction"],
+                    action_type="latent",
+                    metadata=v,
+                )
+            )
         return trajectories
 
     def create_dataset(
@@ -549,6 +561,7 @@ class DreamGenPipeline:
         """Load video frames from file."""
         try:
             import cv2
+
             cap = cv2.VideoCapture(video_path)
             frames = []
             while cap.isOpened():
@@ -561,6 +574,7 @@ class DreamGenPipeline:
         except ImportError:
             logger.warning("cv2 not available, trying decord")
             from decord import VideoReader
+
             vr = VideoReader(video_path)
             return vr[:].asnumpy()
 

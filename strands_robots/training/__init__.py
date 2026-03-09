@@ -79,8 +79,7 @@ def _discover_nvidia_cuda_lib_paths() -> list:
 
     # Also check ~/.local/lib/pythonX.Y/site-packages/nvidia/*/lib/
     user_sp = os.path.expanduser(
-        f"~/.local/lib/python{sys.version_info.major}.{sys.version_info.minor}"
-        f"/site-packages/nvidia"
+        f"~/.local/lib/python{sys.version_info.major}.{sys.version_info.minor}" f"/site-packages/nvidia"
     )
     if os.path.isdir(user_sp):
         for lib_dir in glob.glob(os.path.join(user_sp, "*", "lib")):
@@ -93,6 +92,7 @@ def _discover_nvidia_cuda_lib_paths() -> list:
 @dataclass
 class TrainConfig:
     """Universal training configuration."""
+
     dataset_path: str = ""
     output_dir: str = "./outputs"
     max_steps: int = 10000
@@ -196,20 +196,35 @@ class Gr00tTrainer(Trainer):
         import sys
 
         cmd = [
-            sys.executable, "-m", "gr00t.experiment.launch_finetune",
-            "--base-model-path", self.base_model_path,
-            "--dataset-path", self.dataset_path,
-            "--embodiment-tag", self.embodiment_tag,
-            "--output-dir", self.config.output_dir,
-            "--max-steps", str(self.config.max_steps),
-            "--global-batch-size", str(self.config.batch_size),
-            "--learning-rate", str(self.config.learning_rate),
-            "--weight-decay", str(self.config.weight_decay),
-            "--warmup-ratio", str(self.config.warmup_ratio),
-            "--num-gpus", str(self.config.num_gpus),
-            "--save-steps", str(self.config.save_steps),
-            "--save-total-limit", str(self.config.save_total_limit),
-            "--dataloader-num-workers", str(self.config.dataloader_num_workers),
+            sys.executable,
+            "-m",
+            "gr00t.experiment.launch_finetune",
+            "--base-model-path",
+            self.base_model_path,
+            "--dataset-path",
+            self.dataset_path,
+            "--embodiment-tag",
+            self.embodiment_tag,
+            "--output-dir",
+            self.config.output_dir,
+            "--max-steps",
+            str(self.config.max_steps),
+            "--global-batch-size",
+            str(self.config.batch_size),
+            "--learning-rate",
+            str(self.config.learning_rate),
+            "--weight-decay",
+            str(self.config.weight_decay),
+            "--warmup-ratio",
+            str(self.config.warmup_ratio),
+            "--num-gpus",
+            str(self.config.num_gpus),
+            "--save-steps",
+            str(self.config.save_steps),
+            "--save-total-limit",
+            str(self.config.save_total_limit),
+            "--dataloader-num-workers",
+            str(self.config.dataloader_num_workers),
         ]
 
         if self.tune_llm:
@@ -373,10 +388,7 @@ class LerobotTrainer(Trainer):
         try:
             from lerobot.scripts.lerobot_train import train as lerobot_train_fn
         except ImportError:
-            raise ImportError(
-                "LeRobot training script not available. "
-                "Install with: pip install lerobot"
-            )
+            raise ImportError("LeRobot training script not available. " "Install with: pip install lerobot")
 
         # Build the training config
         train_cfg = self._build_train_config()
@@ -414,7 +426,9 @@ class LerobotTrainer(Trainer):
         import sys
 
         cmd = [
-            sys.executable, "-m", "lerobot.scripts.lerobot_train",
+            sys.executable,
+            "-m",
+            "lerobot.scripts.lerobot_train",
             f"--dataset.repo_id={self.dataset_repo_id}",
             f"--output_dir={self.config.output_dir}",
             f"--steps={self.config.max_steps}",
@@ -470,7 +484,9 @@ class LerobotTrainer(Trainer):
         import sys
 
         cmd = [
-            sys.executable, "-m", "lerobot.scripts.lerobot_eval",
+            sys.executable,
+            "-m",
+            "lerobot.scripts.lerobot_eval",
             f"--policy={checkpoint_path}",
             f"--env={self.eval_env}",
             f"--seed={self.config.seed}",
@@ -547,17 +563,29 @@ class DreamgenIdmTrainer(Trainer):
         import sys
 
         cmd = [
-            sys.executable, "-m", "scripts.idm_training",
-            "--dataset-path", self.dataset_path,
-            "--data-config", self.data_config,
-            "--embodiment-tag", self.embodiment_tag,
-            "--output-dir", self.config.output_dir,
-            "--max-steps", str(self.config.max_steps),
-            "--batch-size", str(self.config.batch_size),
-            "--learning-rate", str(self.config.learning_rate),
-            "--num-gpus", str(self.config.num_gpus),
-            "--save-steps", str(self.config.save_steps),
-            "--video-backend", self.video_backend,
+            sys.executable,
+            "-m",
+            "scripts.idm_training",
+            "--dataset-path",
+            self.dataset_path,
+            "--data-config",
+            self.data_config,
+            "--embodiment-tag",
+            self.embodiment_tag,
+            "--output-dir",
+            self.config.output_dir,
+            "--max-steps",
+            str(self.config.max_steps),
+            "--batch-size",
+            str(self.config.batch_size),
+            "--learning-rate",
+            str(self.config.learning_rate),
+            "--num-gpus",
+            str(self.config.num_gpus),
+            "--save-steps",
+            str(self.config.save_steps),
+            "--video-backend",
+            self.video_backend,
         ]
 
         if self.tune_action_head:
@@ -633,17 +661,29 @@ class DreamgenVlaTrainer(Trainer):
         import sys
 
         cmd = [
-            sys.executable, "-m", "scripts.gr00t_finetune",
-            "--base-model-path", self.base_model_path,
-            "--dataset-path", self.dataset_path,
-            "--data-config", self.data_config,
-            "--embodiment-tag", self.embodiment_tag,
-            "--output-dir", self.config.output_dir,
-            "--max-steps", str(self.config.max_steps),
-            "--batch-size", str(self.config.batch_size),
-            "--learning-rate", str(self.config.learning_rate),
-            "--num-gpus", str(self.config.num_gpus),
-            "--save-steps", str(self.config.save_steps),
+            sys.executable,
+            "-m",
+            "scripts.gr00t_finetune",
+            "--base-model-path",
+            self.base_model_path,
+            "--dataset-path",
+            self.dataset_path,
+            "--data-config",
+            self.data_config,
+            "--embodiment-tag",
+            self.embodiment_tag,
+            "--output-dir",
+            self.config.output_dir,
+            "--max-steps",
+            str(self.config.max_steps),
+            "--batch-size",
+            str(self.config.batch_size),
+            "--learning-rate",
+            str(self.config.learning_rate),
+            "--num-gpus",
+            str(self.config.num_gpus),
+            "--save-steps",
+            str(self.config.save_steps),
         ]
 
         if self.tune_llm:
@@ -721,15 +761,18 @@ class CosmosTrainer(Trainer):
             candidate_paths.append(os.path.join(cosmos_root, "scripts", "train.py"))
 
         # 3. Well-known filesystem locations
-        candidate_paths.extend([
-            os.path.expanduser("~/cosmos-predict2.5/scripts/train.py"),
-            os.path.expanduser("~/cosmos-predict2/scripts/train.py"),
-            "/opt/cosmos-predict2/scripts/train.py",
-        ])
+        candidate_paths.extend(
+            [
+                os.path.expanduser("~/cosmos-predict2.5/scripts/train.py"),
+                os.path.expanduser("~/cosmos-predict2/scripts/train.py"),
+                "/opt/cosmos-predict2/scripts/train.py",
+            ]
+        )
 
         # 4. Derive from cosmos_oss editable-install location
         try:
             import cosmos_oss as _oss
+
             # cosmos_oss.__file__ is <repo>/packages/cosmos-oss/cosmos_oss/__init__.py
             # repo root is 3 parents up
             oss_init = os.path.abspath(_oss.__file__)
@@ -987,7 +1030,8 @@ class CosmosTrainer(Trainer):
                 cmd = [
                     "torchrun",
                     f"--nproc_per_node={num_gpus}",
-                    "-m", "scripts.train",
+                    "-m",
+                    "scripts.train",
                 ]
             else:
                 cmd = [sys.executable, "-m", "scripts.train"]
@@ -1047,8 +1091,6 @@ class CosmosTrainer(Trainer):
         """Evaluate a post-trained Cosmos checkpoint."""
         logger.info("📊 Cosmos evaluation — use cosmos_predict2 eval scripts")
         return {"provider": "cosmos_predict", "status": "not_implemented"}
-
-
 
 
 class CosmosTransferTrainer(Trainer):
@@ -1113,17 +1155,20 @@ class CosmosTransferTrainer(Trainer):
                 candidate_paths.append(os.path.join(cosmos_root, "train.py"))
 
         # 3. Well-known filesystem locations
-        candidate_paths.extend([
-            os.path.expanduser("~/cosmos-transfer2.5/scripts/train.py"),
-            os.path.expanduser("~/cosmos-transfer2.5/scripts/finetune.py"),
-            os.path.expanduser("~/cosmos-transfer2/scripts/train.py"),
-            "/opt/cosmos-transfer2/scripts/train.py",
-            "/opt/cosmos-transfer2.5/scripts/train.py",
-        ])
+        candidate_paths.extend(
+            [
+                os.path.expanduser("~/cosmos-transfer2.5/scripts/train.py"),
+                os.path.expanduser("~/cosmos-transfer2.5/scripts/finetune.py"),
+                os.path.expanduser("~/cosmos-transfer2/scripts/train.py"),
+                "/opt/cosmos-transfer2/scripts/train.py",
+                "/opt/cosmos-transfer2.5/scripts/train.py",
+            ]
+        )
 
         # 4. Derive from cosmos_transfer2 package install location
         try:
             import cosmos_transfer2 as _ct2
+
             ct2_init = os.path.abspath(_ct2.__file__)
             # cosmos_transfer2.__file__ may be <repo>/cosmos_transfer2/__init__.py
             repo_root = os.path.dirname(os.path.dirname(ct2_init))
@@ -1178,22 +1223,17 @@ class CosmosTransferTrainer(Trainer):
         # Validate control_type
         if self.control_type not in self.VALID_CONTROL_TYPES:
             raise ValueError(
-                f"Invalid control_type '{self.control_type}'. "
-                f"Must be one of: {self.VALID_CONTROL_TYPES}"
+                f"Invalid control_type '{self.control_type}'. " f"Must be one of: {self.VALID_CONTROL_TYPES}"
             )
 
         # Validate mode
         if self.mode not in self.VALID_MODES:
-            raise ValueError(
-                f"Invalid mode '{self.mode}'. "
-                f"Must be one of: {self.VALID_MODES}"
-            )
+            raise ValueError(f"Invalid mode '{self.mode}'. " f"Must be one of: {self.VALID_MODES}")
 
         # Validate output_resolution
         if self.output_resolution not in ("480", "720", "1080"):
             raise ValueError(
-                f"Invalid output_resolution '{self.output_resolution}'. "
-                f"Must be one of: '480', '720', '1080'"
+                f"Invalid output_resolution '{self.output_resolution}'. " f"Must be one of: '480', '720', '1080'"
             )
 
         # Warn about LoRA (not yet verified against cosmos-transfer2 CLI)
@@ -1385,7 +1425,8 @@ class CosmosTransferTrainer(Trainer):
                 cmd = [
                     "torchrun",
                     f"--nproc_per_node={num_gpus}",
-                    "-m", "scripts.train",
+                    "-m",
+                    "scripts.train",
                 ]
             else:
                 cmd = [sys.executable, "-m", "scripts.train"]
@@ -1424,8 +1465,7 @@ class CosmosTransferTrainer(Trainer):
         if self.mode == "control_finetuning":
             if not self.freeze_backbone:
                 logger.warning(
-                    "control_finetuning mode requires freeze_backbone=True. "
-                    "Overriding freeze_backbone=False."
+                    "control_finetuning mode requires freeze_backbone=True. " "Overriding freeze_backbone=False."
                 )
             cmd.append("model.freeze_backbone=True")
             cmd.append("model.freeze_controlnet=False")
@@ -1479,7 +1519,6 @@ class CosmosTransferTrainer(Trainer):
         """
         logger.info("📊 Cosmos Transfer evaluation — use cosmos-transfer2.5 eval scripts")
         return {"provider": "cosmos_transfer", "status": "not_implemented"}
-
 
 
 def evaluate(
@@ -1636,7 +1675,7 @@ def evaluate(
 
     # Create a single event loop for async policies (reused across all steps)
     _async_loop = None
-    if inspect.iscoroutinefunction(getattr(policy, 'get_actions', None)):
+    if inspect.iscoroutinefunction(getattr(policy, "get_actions", None)):
         _async_loop = asyncio.new_event_loop()
 
     try:
@@ -1656,9 +1695,7 @@ def evaluate(
                 # Get actions from policy
                 try:
                     if _async_loop is not None:
-                        actions = _async_loop.run_until_complete(
-                            policy.get_actions(obs_dict, task)
-                        )
+                        actions = _async_loop.run_until_complete(policy.get_actions(obs_dict, task))
                     else:
                         actions = policy.get_actions(obs_dict, task)
                 except Exception as e:
@@ -1680,11 +1717,15 @@ def evaluate(
                     action = env.action_space.sample() * 0  # Zero action
 
                 # Clip to action space
-                action = np.clip(
-                    action[:env.action_space.shape[0]],
-                    env.action_space.low,
-                    env.action_space.high,
-                ) if len(action) >= env.action_space.shape[0] else env.action_space.sample() * 0
+                action = (
+                    np.clip(
+                        action[: env.action_space.shape[0]],
+                        env.action_space.low,
+                        env.action_space.high,
+                    )
+                    if len(action) >= env.action_space.shape[0]
+                    else env.action_space.sample() * 0
+                )
 
                 obs, reward, terminated, truncated, info = env.step(action)
                 episode_reward += reward
@@ -1696,12 +1737,14 @@ def evaluate(
                 successes += 1
             total_reward += episode_reward
 
-            episodes.append({
-                "episode": ep,
-                "steps": episode_steps,
-                "reward": episode_reward,
-                "success": is_success,
-            })
+            episodes.append(
+                {
+                    "episode": ep,
+                    "steps": episode_steps,
+                    "reward": episode_reward,
+                    "success": is_success,
+                }
+            )
     finally:
         if _async_loop is not None:
             _async_loop.close()
@@ -1710,10 +1753,7 @@ def evaluate(
     success_rate = (successes / num_episodes * 100) if num_episodes > 0 else 0.0
     mean_reward = total_reward / num_episodes if num_episodes > 0 else 0.0
 
-    logger.info(
-        f"📊 Evaluation: {num_episodes} episodes, "
-        f"success={success_rate:.1f}%, reward={mean_reward:.2f}"
-    )
+    logger.info(f"📊 Evaluation: {num_episodes} episodes, " f"success={success_rate:.1f}%, reward={mean_reward:.2f}")
 
     return {
         "success_rate": success_rate,
@@ -1783,6 +1823,7 @@ def create_trainer(provider: str, **kwargs) -> Trainer:
     if provider == "robometer" and provider not in providers:
         try:
             from strands_robots.robometer import RobometerTrainer
+
             providers["robometer"] = RobometerTrainer
         except ImportError:
             pass
@@ -1794,7 +1835,14 @@ def create_trainer(provider: str, **kwargs) -> Trainer:
 
 
 __all__ = [
-    "Trainer", "TrainConfig", "create_trainer", "evaluate",
-    "Gr00tTrainer", "LerobotTrainer", "DreamgenIdmTrainer", "DreamgenVlaTrainer",
-    "CosmosTrainer", "CosmosTransferTrainer",
+    "Trainer",
+    "TrainConfig",
+    "create_trainer",
+    "evaluate",
+    "Gr00tTrainer",
+    "LerobotTrainer",
+    "DreamgenIdmTrainer",
+    "DreamgenVlaTrainer",
+    "CosmosTrainer",
+    "CosmosTransferTrainer",
 ]

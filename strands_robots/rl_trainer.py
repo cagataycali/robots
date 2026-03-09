@@ -132,7 +132,7 @@ class RewardFunction:
 
         # Energy penalty
         action_arr = np.asarray(action).flatten() if action is not None else np.zeros(1)
-        energy = energy_penalty * np.sum(action_arr ** 2)
+        energy = energy_penalty * np.sum(action_arr**2)
 
         # Alive bonus (assume robot is alive if we got here)
         reward = alive_bonus + vel_reward - energy
@@ -165,7 +165,7 @@ class RewardFunction:
         if target_pos is not None:
             # Use end-effector position from state (last 3 of qpos usually)
             n_qpos = len(state) // 2
-            ee_pos = state[max(0, n_qpos - 3):n_qpos]
+            ee_pos = state[max(0, n_qpos - 3) : n_qpos]
             if len(ee_pos) >= 3 and len(target_pos) >= 3:
                 dist = np.linalg.norm(ee_pos - target_pos[:3])
                 reach_reward = -reach_scale * dist
@@ -176,7 +176,7 @@ class RewardFunction:
 
         # Action smoothness penalty
         action_arr = np.asarray(action).flatten() if action is not None else np.zeros(1)
-        smoothness = -0.001 * np.sum(action_arr ** 2)
+        smoothness = -0.001 * np.sum(action_arr**2)
 
         return float(reach_reward + smoothness)
 
@@ -363,15 +363,13 @@ class PickAndPlaceReward:
         action_arr = np.asarray(action, dtype=np.float64).flatten() if action is not None else np.zeros(1)
 
         # Extract positions
-        ee_pos = state[self.ee_idx[0]:self.ee_idx[1]]
-        obj_pos = state[self.obj_idx[0]:self.obj_idx[1]]
+        ee_pos = state[self.ee_idx[0] : self.ee_idx[1]]
+        obj_pos = state[self.obj_idx[0] : self.obj_idx[1]]
         gripper = state[self.gripper_idx] if self.gripper_idx < len(state) else 0.0
 
         # Contact force (if available)
         contact_force = (
-            state[self.contact_idx]
-            if self.contact_idx is not None and self.contact_idx < len(state)
-            else None
+            state[self.contact_idx] if self.contact_idx is not None and self.contact_idx < len(state) else None
         )
 
         # Cache initial object Z for lift detection
@@ -457,12 +455,12 @@ class PickAndPlaceReward:
 
         # ── Global penalties ───────────────────────────────────
         # Energy penalty
-        reward -= self.energy_penalty * float(np.sum(action_arr ** 2))
+        reward -= self.energy_penalty * float(np.sum(action_arr**2))
 
         # Action smoothness penalty
         if self._prev_action is not None and len(action_arr) == len(self._prev_action):
             delta = action_arr - self._prev_action
-            reward -= self.smooth_penalty * float(np.sum(delta ** 2))
+            reward -= self.smooth_penalty * float(np.sum(delta**2))
 
         self._prev_action = action_arr.copy()
 
@@ -473,8 +471,9 @@ class PickAndPlaceReward:
     def _extract_state(self, obs: Any) -> np.ndarray:
         """Extract flat state vector from observation."""
         if isinstance(obs, dict):
-            state = obs.get("state", obs.get("observation.state",
-                    obs.get("observation", obs.get("policy", np.zeros(1)))))
+            state = obs.get(
+                "state", obs.get("observation.state", obs.get("observation", obs.get("policy", np.zeros(1))))
+            )
             if isinstance(state, dict):
                 # ManagerBasedRLEnv: concatenate all values
                 vals = []
@@ -548,7 +547,6 @@ class PickAndPlaceReward:
             f"target={self.target_place.tolist()}, "
             f"success={self.is_success})"
         )
-
 
 
 class RLTrainer(ABC):
@@ -638,8 +636,7 @@ class SB3Trainer(RLTrainer):
             )
 
             logger.info(
-                f"🚀 Newton GPU env created: {self.config.num_envs} envs, "
-                f"solver={self.config.newton_solver}"
+                f"🚀 Newton GPU env created: {self.config.num_envs} envs, " f"solver={self.config.newton_solver}"
             )
             return env
 
@@ -678,9 +675,9 @@ class SB3Trainer(RLTrainer):
         """Run SB3 training."""
         try:
             from stable_baselines3 import PPO, SAC
+            from stable_baselines3.common.callbacks import EvalCallback  # noqa: F401
             from stable_baselines3.common.callbacks import (
                 CheckpointCallback,
-                EvalCallback,  # noqa: F401
             )
         except ImportError:
             logger.error("stable-baselines3 required: pip install stable-baselines3")
@@ -710,18 +707,22 @@ class SB3Trainer(RLTrainer):
         }
 
         if self.config.algorithm == "ppo":
-            model_kwargs.update({
-                "n_steps": self.config.n_steps,
-                "gae_lambda": self.config.gae_lambda,
-                "clip_range": self.config.clip_range,
-                "ent_coef": self.config.ent_coef,
-                "vf_coef": self.config.vf_coef,
-            })
+            model_kwargs.update(
+                {
+                    "n_steps": self.config.n_steps,
+                    "gae_lambda": self.config.gae_lambda,
+                    "clip_range": self.config.clip_range,
+                    "ent_coef": self.config.ent_coef,
+                    "vf_coef": self.config.vf_coef,
+                }
+            )
         elif self.config.algorithm == "sac":
-            model_kwargs.update({
-                "buffer_size": self.config.buffer_size,
-                "tau": self.config.tau,
-            })
+            model_kwargs.update(
+                {
+                    "buffer_size": self.config.buffer_size,
+                    "tau": self.config.tau,
+                }
+            )
 
         self._model = algo_cls(**model_kwargs)
 
@@ -769,10 +770,7 @@ class SB3Trainer(RLTrainer):
             "fps": self.config.total_timesteps / elapsed if elapsed > 0 else 0,
         }
 
-        logger.info(
-            f"✅ Training complete: {elapsed:.1f}s, "
-            f"{result['fps']:.0f} steps/s, saved to {final_path}"
-        )
+        logger.info(f"✅ Training complete: {elapsed:.1f}s, " f"{result['fps']:.0f} steps/s, saved to {final_path}")
         return result
 
     def evaluate(self, num_episodes: int = 10) -> Dict[str, Any]:
@@ -804,12 +802,14 @@ class SB3Trainer(RLTrainer):
                 successes += 1
 
             total_reward += episode_reward
-            episodes.append({
-                "episode": ep,
-                "reward": episode_reward,
-                "steps": steps,
-                "success": info.get("is_success", False),
-            })
+            episodes.append(
+                {
+                    "episode": ep,
+                    "reward": episode_reward,
+                    "steps": steps,
+                    "success": info.get("is_success", False),
+                }
+            )
 
         return {
             "success_rate": successes / num_episodes * 100,
@@ -827,6 +827,7 @@ class SB3Trainer(RLTrainer):
         """Load a trained model."""
         try:
             from stable_baselines3 import PPO, SAC
+
             algo_cls = PPO if self.config.algorithm == "ppo" else SAC
             self._model = algo_cls.load(path)
         except ImportError:

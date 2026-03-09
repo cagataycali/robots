@@ -42,20 +42,26 @@ def __getattr__(name):
     """Lazy imports to avoid hard dependency on Newton / Warp."""
     if name == "NewtonBackend":
         from .newton_backend import NewtonBackend
+
         return NewtonBackend
     if name == "NewtonConfig":
         from .newton_backend import NewtonConfig
+
         return NewtonConfig
     if name == "NewtonGymEnv":
         from .newton_gym_env import NewtonGymEnv
+
         return NewtonGymEnv
     if name == "SOLVER_MAP":
         from .newton_backend import SOLVER_MAP
+
         return SOLVER_MAP
     if name == "RENDER_BACKENDS":
         from .newton_backend import RENDER_BACKENDS
+
         return RENDER_BACKENDS
     if name == "BROAD_PHASE_OPTIONS":
         from .newton_backend import BROAD_PHASE_OPTIONS
+
         return BROAD_PHASE_OPTIONS
     raise AttributeError(f"module 'strands_robots.newton' has no attribute {name!r}")

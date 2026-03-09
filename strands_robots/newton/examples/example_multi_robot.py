@@ -16,13 +16,12 @@ b = NewtonBackend(NewtonConfig(solver="mujoco", device="cuda:0"))
 b.create_world()
 
 # Add 3 quadrupeds at different positions
-for i, pos in enumerate([(0,0,0), (2,0,0), (-2,0,0)]):
+for i, pos in enumerate([(0, 0, 0), (2, 0, 0), (-2, 0, 0)]):
     r = b.add_robot(f"quad_{i}", urdf_path=ne.get_asset("quadruped.urdf"), position=pos)
     print(f"  Added quad_{i}: {r['robot_info']['num_joints']} joints at {pos}")
 
 # Add ant
-r = b.add_robot("ant", urdf_path=ne.get_asset("nv_ant.xml"), position=(0, 2, 0),
-                data_config={"format": "mjcf"})
+r = b.add_robot("ant", urdf_path=ne.get_asset("nv_ant.xml"), position=(0, 2, 0), data_config={"format": "mjcf"})
 print(f"  Added ant: {r['robot_info']['num_joints']} joints")
 
 state = b.get_state()

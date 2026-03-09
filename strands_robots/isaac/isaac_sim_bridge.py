@@ -345,10 +345,7 @@ class IsaacSimBridgeClient:
         try:
             import zmq
         except ImportError:
-            raise ImportError(
-                "pyzmq is required for the Isaac Sim bridge.\n"
-                "Install with: pip install pyzmq"
-            )
+            raise ImportError("pyzmq is required for the Isaac Sim bridge.\n" "Install with: pip install pyzmq")
 
         self._context = zmq.Context()
         self._socket = self._context.socket(zmq.REQ)
@@ -402,10 +399,7 @@ class IsaacSimBridgeClient:
 
             # Re-raise server exceptions
             if result.get("status") == "error" and "exception" in result:
-                logger.error(
-                    f"Server error in {method}: {result['exception']}\n"
-                    f"{result.get('traceback', '')}"
-                )
+                logger.error(f"Server error in {method}: {result['exception']}\n" f"{result.get('traceback', '')}")
 
             return result
 
@@ -517,6 +511,7 @@ class IsaacSimBridgeClient:
 # ─────────────────────────────────────────────────────────────────────
 # CLI entry point — ``python.sh -m strands_robots.isaac.isaac_sim_bridge``
 # ─────────────────────────────────────────────────────────────────────
+
 
 def main():
     """CLI entry point for the Isaac Sim bridge server."""

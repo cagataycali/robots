@@ -147,14 +147,12 @@ class CosmosTransferConfig:
         """Validate configuration values after initialisation."""
         if self.model_variant not in VALID_MODEL_VARIANTS:
             raise ValueError(
-                f"Invalid model_variant '{self.model_variant}'. "
-                f"Must be one of: {VALID_MODEL_VARIANTS}"
+                f"Invalid model_variant '{self.model_variant}'. " f"Must be one of: {VALID_MODEL_VARIANTS}"
             )
 
         if self.output_resolution not in VALID_OUTPUT_RESOLUTIONS:
             raise ValueError(
-                f"Invalid output_resolution '{self.output_resolution}'. "
-                f"Must be one of: {VALID_OUTPUT_RESOLUTIONS}"
+                f"Invalid output_resolution '{self.output_resolution}'. " f"Must be one of: {VALID_OUTPUT_RESOLUTIONS}"
             )
 
         if self.num_gpus < 1:
@@ -167,17 +165,13 @@ class CosmosTransferConfig:
             raise ValueError(f"num_steps must be >= 1, got {self.num_steps}")
 
         if not 0.0 <= self.control_weight <= 2.0:
-            raise ValueError(
-                f"control_weight should be in [0.0, 2.0], got {self.control_weight}"
-            )
+            raise ValueError(f"control_weight should be in [0.0, 2.0], got {self.control_weight}")
 
         if self.num_chunks < 1:
             raise ValueError(f"num_chunks must be >= 1, got {self.num_chunks}")
 
         if self.chunk_overlap < 0:
-            raise ValueError(
-                f"chunk_overlap must be >= 0, got {self.chunk_overlap}"
-            )
+            raise ValueError(f"chunk_overlap must be >= 0, got {self.chunk_overlap}")
 
     def resolve_checkpoint_path(self) -> str:
         """Resolve the checkpoint path from config, env var, or default.
@@ -197,9 +191,7 @@ class CosmosTransferConfig:
             return env_path
 
         # Fallback: HuggingFace hub cache default location
-        default_hf = os.path.expanduser(
-            "~/.cache/huggingface/hub/models--nvidia--Cosmos-Transfer2-7B"
-        )
+        default_hf = os.path.expanduser("~/.cache/huggingface/hub/models--nvidia--Cosmos-Transfer2-7B")
         if os.path.isdir(default_hf):
             logger.info("Using default HuggingFace cache checkpoint: %s", default_hf)
             return default_hf
@@ -334,9 +326,7 @@ class CosmosTransferPipeline:
         output_path = str(output_path)
 
         if not os.path.isfile(sim_video_path):
-            raise FileNotFoundError(
-                f"Simulation video not found: {sim_video_path}"
-            )
+            raise FileNotFoundError(f"Simulation video not found: {sim_video_path}")
 
         if control_types is None:
             control_types = ["depth"]
@@ -344,10 +334,7 @@ class CosmosTransferPipeline:
         valid_control_types = {"depth", "edge", "seg"}
         for ct in control_types:
             if ct not in valid_control_types:
-                raise ValueError(
-                    f"Invalid control type '{ct}'. "
-                    f"Must be one of: {sorted(valid_control_types)}"
-                )
+                raise ValueError(f"Invalid control type '{ct}'. " f"Must be one of: {sorted(valid_control_types)}")
 
         if control_weights is not None and len(control_weights) != len(control_types):
             raise ValueError(
@@ -383,15 +370,12 @@ class CosmosTransferPipeline:
             else:
                 if precomputed:
                     logger.warning(
-                        "Pre-computed %s control not found at '%s'; "
-                        "generating automatically.",
+                        "Pre-computed %s control not found at '%s'; " "generating automatically.",
                         ct,
                         precomputed,
                     )
                 logger.info("Auto-generating %s control video…", ct)
-                generated = self._generate_control(
-                    ct, sim_video_path, work_dir
-                )
+                generated = self._generate_control(ct, sim_video_path, work_dir)
                 control_video_paths[ct] = generated
 
         # -- Build weights list --------------------------------------------
@@ -438,9 +422,7 @@ class CosmosTransferPipeline:
             "seed": effective_config.seed,
         }
 
-        logger.info(
-            "Transfer complete → %s (%d frames)", output_path, frame_count
-        )
+        logger.info("Transfer complete → %s (%d frames)", output_path, frame_count)
         return result
 
     def set_sim_context(self, model, data):
@@ -483,9 +465,7 @@ class CosmosTransferPipeline:
 
         if output_path is None:
             stem = Path(sim_video_path).stem
-            output_path = str(
-                Path(sim_video_path).parent / f"{stem}_depth_control.mp4"
-            )
+            output_path = str(Path(sim_video_path).parent / f"{stem}_depth_control.mp4")
 
         # Strategy 1: MuJoCo depth buffer
         if self._try_mujoco_depth(sim_video_path, output_path):
@@ -551,17 +531,14 @@ class CosmosTransferPipeline:
 
         if threshold not in VALID_EDGE_THRESHOLDS:
             raise ValueError(
-                f"Invalid threshold '{threshold}'. "
-                f"Must be one of: {sorted(VALID_EDGE_THRESHOLDS.keys())}"
+                f"Invalid threshold '{threshold}'. " f"Must be one of: {sorted(VALID_EDGE_THRESHOLDS.keys())}"
             )
 
         low_thresh, high_thresh = VALID_EDGE_THRESHOLDS[threshold]
 
         if output_path is None:
             stem = Path(sim_video_path).stem
-            output_path = str(
-                Path(sim_video_path).parent / f"{stem}_edge_control.mp4"
-            )
+            output_path = str(Path(sim_video_path).parent / f"{stem}_edge_control.mp4")
 
         cap = cv2.VideoCapture(sim_video_path)
         if not cap.isOpened():
@@ -576,9 +553,7 @@ class CosmosTransferPipeline:
             writer = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
 
             if not writer.isOpened():
-                raise RuntimeError(
-                    f"Cannot create video writer for: {output_path}"
-                )
+                raise RuntimeError(f"Cannot create video writer for: {output_path}")
 
             frame_idx = 0
             while True:
@@ -647,22 +622,15 @@ class CosmosTransferPipeline:
 
         if output_path is None:
             stem = Path(sim_video_path).stem
-            output_path = str(
-                Path(sim_video_path).parent / f"{stem}_seg_control.mp4"
-            )
+            output_path = str(Path(sim_video_path).parent / f"{stem}_seg_control.mp4")
 
         # Try SAM2 first
         if self._try_sam2_segmentation(sim_video_path, output_path, prompt):
-            logger.info(
-                "Segmentation control generated via SAM2: %s", output_path
-            )
+            logger.info("Segmentation control generated via SAM2: %s", output_path)
             return output_path
 
         # Fallback: simple colour-quantised segmentation
-        logger.warning(
-            "SAM2 not available. Falling back to colour-quantised "
-            "segmentation placeholder."
-        )
+        logger.warning("SAM2 not available. Falling back to colour-quantised " "segmentation placeholder.")
         self._fallback_colour_segmentation(sim_video_path, output_path)
         return output_path
 
@@ -763,6 +731,7 @@ class CosmosTransferPipeline:
         if not cosmos_root:
             try:
                 import cosmos_transfer2
+
                 cosmos_root = str(Path(cosmos_transfer2.__file__).parent.parent)
             except (ImportError, AttributeError):
                 pass
@@ -793,11 +762,17 @@ class CosmosTransferPipeline:
                 torchrun = shutil.which("torchrun")
                 if torchrun is None:
                     raise FileNotFoundError("torchrun not found.")
-                cmd = [torchrun, f"--nproc_per_node={config.num_gpus}",
-                       inference_script, "-i", spec_path, "-o", os.path.dirname(spec_path) or output_dir]
+                cmd = [
+                    torchrun,
+                    f"--nproc_per_node={config.num_gpus}",
+                    inference_script,
+                    "-i",
+                    spec_path,
+                    "-o",
+                    os.path.dirname(spec_path) or output_dir,
+                ]
             else:
-                cmd = [python_bin, inference_script,
-                       "-i", spec_path, "-o", os.path.dirname(spec_path) or output_dir]
+                cmd = [python_bin, inference_script, "-i", spec_path, "-o", os.path.dirname(spec_path) or output_dir]
 
             if getattr(config, "disable_guardrails", True):
                 cmd.append("--disable-guardrails")
@@ -818,9 +793,7 @@ class CosmosTransferPipeline:
                 cwd=output_dir,
             )
         except OSError as exc:
-            raise RuntimeError(
-                f"Failed to launch inference subprocess: {exc}"
-            ) from exc
+            raise RuntimeError(f"Failed to launch inference subprocess: {exc}") from exc
 
         if result.returncode != 0:
             logger.error("Cosmos inference STDOUT:\n%s", result.stdout)
@@ -855,9 +828,7 @@ class CosmosTransferPipeline:
     # Control generation helpers (private)
     # ------------------------------------------------------------------
 
-    def _generate_control(
-        self, control_type: str, sim_video_path: str, work_dir: str
-    ) -> str:
+    def _generate_control(self, control_type: str, sim_video_path: str, work_dir: str) -> str:
         """Dispatch control generation by type.
 
         Args:
@@ -880,9 +851,7 @@ class CosmosTransferPipeline:
         else:
             raise ValueError(f"Unknown control type: {control_type}")
 
-    def _try_mujoco_depth(
-        self, sim_video_path: str, output_path: str
-    ) -> bool:
+    def _try_mujoco_depth(self, sim_video_path: str, output_path: str) -> bool:
         """Attempt depth generation via MuJoCo depth buffer.
 
         Tries to import ``mujoco`` and ``strands_robots.video.VideoEncoder``
@@ -936,9 +905,7 @@ class CosmosTransferPipeline:
 
             encoder = VideoEncoder(output_path, fps=fps, width=width, height=height)
 
-            frame_count = int(
-                cv2.VideoCapture(sim_video_path).get(cv2.CAP_PROP_FRAME_COUNT)
-            )
+            frame_count = int(cv2.VideoCapture(sim_video_path).get(cv2.CAP_PROP_FRAME_COUNT))
             for _ in range(frame_count):
                 renderer.update_scene(data)
                 depth = renderer.render()
@@ -947,9 +914,7 @@ class CosmosTransferPipeline:
                 depth_min = depth.min()
                 depth_max = depth.max()
                 if depth_max - depth_min > 1e-6:
-                    depth_norm = (
-                        (depth - depth_min) / (depth_max - depth_min) * 255.0
-                    )
+                    depth_norm = (depth - depth_min) / (depth_max - depth_min) * 255.0
                 else:
                     depth_norm = np.zeros_like(depth)
 
@@ -966,14 +931,10 @@ class CosmosTransferPipeline:
             return True
 
         except Exception:
-            logger.debug(
-                "MuJoCo depth generation failed.", exc_info=True
-            )
+            logger.debug("MuJoCo depth generation failed.", exc_info=True)
             return False
 
-    def _try_video_depth_anything(
-        self, sim_video_path: str, output_path: str
-    ) -> bool:
+    def _try_video_depth_anything(self, sim_video_path: str, output_path: str) -> bool:
         """Attempt depth generation via Video Depth Anything.
 
         Args:
@@ -1032,20 +993,14 @@ class CosmosTransferPipeline:
                 writer.write(depth_bgr)
 
             writer.release()
-            logger.info(
-                "Video Depth Anything generated %d depth frames.", len(frames)
-            )
+            logger.info("Video Depth Anything generated %d depth frames.", len(frames))
             return True
 
         except Exception:
-            logger.debug(
-                "Video Depth Anything inference failed.", exc_info=True
-            )
+            logger.debug("Video Depth Anything inference failed.", exc_info=True)
             return False
 
-    def _fallback_greyscale_depth(
-        self, sim_video_path: str, output_path: str
-    ) -> None:
+    def _fallback_greyscale_depth(self, sim_video_path: str, output_path: str) -> None:
         """Last-resort depth proxy using luminance-based greyscale conversion.
 
         This is **not** a true depth map but provides a usable control
@@ -1062,9 +1017,7 @@ class CosmosTransferPipeline:
         try:
             import cv2  # type: ignore[import-untyped]
         except ImportError as exc:
-            raise ImportError(
-                "OpenCV is required for fallback depth generation."
-            ) from exc
+            raise ImportError("OpenCV is required for fallback depth generation.") from exc
 
         cap = cv2.VideoCapture(sim_video_path)
         if not cap.isOpened():
@@ -1129,22 +1082,14 @@ class CosmosTransferPipeline:
 
         try:
             # Build the SAM2 video predictor with default checkpoint
-            sam2_checkpoint = os.environ.get(
-                "SAM2_CHECKPOINT", "sam2_hiera_large.pt"
-            )
-            model_cfg = os.environ.get(
-                "SAM2_MODEL_CFG", "sam2_hiera_l.yaml"
-            )
+            sam2_checkpoint = os.environ.get("SAM2_CHECKPOINT", "sam2_hiera_large.pt")
+            model_cfg = os.environ.get("SAM2_MODEL_CFG", "sam2_hiera_l.yaml")
 
             if not os.path.isfile(sam2_checkpoint):
-                logger.debug(
-                    "SAM2 checkpoint not found at %s", sam2_checkpoint
-                )
+                logger.debug("SAM2 checkpoint not found at %s", sam2_checkpoint)
                 return False
 
-            predictor = build_sam2_video_predictor(
-                model_cfg, sam2_checkpoint
-            )
+            predictor = build_sam2_video_predictor(model_cfg, sam2_checkpoint)
 
             cap = cv2.VideoCapture(sim_video_path)
             if not cap.isOpened():
@@ -1175,9 +1120,7 @@ class CosmosTransferPipeline:
                     inference_state=state,
                     frame_idx=0,
                     obj_id=1,
-                    points=np.array(
-                        [[width // 2, height // 2]], dtype=np.float32
-                    ),
+                    points=np.array([[width // 2, height // 2]], dtype=np.float32),
                     labels=np.array([1], dtype=np.int32),
                 )
 
@@ -1207,18 +1150,14 @@ class CosmosTransferPipeline:
                 writer.write(seg_bgr)
 
             writer.release()
-            logger.info(
-                "SAM2 segmentation generated %d frames.", len(frames)
-            )
+            logger.info("SAM2 segmentation generated %d frames.", len(frames))
             return True
 
         except Exception:
             logger.debug("SAM2 segmentation failed.", exc_info=True)
             return False
 
-    def _fallback_colour_segmentation(
-        self, sim_video_path: str, output_path: str
-    ) -> None:
+    def _fallback_colour_segmentation(self, sim_video_path: str, output_path: str) -> None:
         """Fallback colour-quantised segmentation.
 
         Uses k-means colour clustering to produce a rough semantic-style
@@ -1236,9 +1175,7 @@ class CosmosTransferPipeline:
             import cv2  # type: ignore[import-untyped]
             import numpy as np  # type: ignore[import-untyped]
         except ImportError as exc:
-            raise ImportError(
-                "OpenCV and NumPy are required for fallback segmentation."
-            ) from exc
+            raise ImportError("OpenCV and NumPy are required for fallback segmentation.") from exc
 
         cap = cv2.VideoCapture(sim_video_path)
         if not cap.isOpened():
@@ -1259,13 +1196,13 @@ class CosmosTransferPipeline:
             # Predefined palette for segmentation visualisation
             palette = np.array(
                 [
-                    [0, 0, 0],        # background – black
-                    [128, 0, 0],      # maroon
-                    [0, 128, 0],      # green
-                    [128, 128, 0],    # olive
-                    [0, 0, 128],      # navy
-                    [128, 0, 128],    # purple
-                    [0, 128, 128],    # teal
+                    [0, 0, 0],  # background – black
+                    [128, 0, 0],  # maroon
+                    [0, 128, 0],  # green
+                    [128, 128, 0],  # olive
+                    [0, 0, 128],  # navy
+                    [128, 0, 128],  # purple
+                    [0, 128, 128],  # teal
                     [192, 192, 192],  # silver
                 ],
                 dtype=np.uint8,
@@ -1347,9 +1284,7 @@ class CosmosTransferPipeline:
             cap.release()
             return max(count, 0)
         except Exception:
-            logger.debug(
-                "Could not count frames in %s", video_path, exc_info=True
-            )
+            logger.debug("Could not count frames in %s", video_path, exc_info=True)
             return 0
 
     def cleanup(self) -> None:
@@ -1449,8 +1384,7 @@ def transfer_video(
         config = CosmosTransferConfig(**config_kwargs)
     elif config_kwargs:
         logger.warning(
-            "Config keyword arguments (%s) are ignored when an explicit "
-            "'config' is provided.",
+            "Config keyword arguments (%s) are ignored when an explicit " "'config' is provided.",
             list(config_kwargs.keys()),
         )
 

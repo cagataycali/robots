@@ -58,6 +58,7 @@ def _try_import_processor():
         )
         from lerobot.processor.core import EnvTransition, TransitionKey
         from lerobot.processor.pipeline import DataProcessorPipeline
+
         return {
             "DataProcessorPipeline": DataProcessorPipeline,
             "batch_to_transition": batch_to_transition,
@@ -150,10 +151,7 @@ class ProcessorBridge:
                 config_filename=preprocessor_config,
                 overrides=overrides or {},
             )
-            logger.info(
-                f"Loaded preprocessor from {pretrained_name_or_path}: "
-                f"{len(preprocessor)} steps"
-            )
+            logger.info(f"Loaded preprocessor from {pretrained_name_or_path}: " f"{len(preprocessor)} steps")
         except (FileNotFoundError, ValueError) as e:
             logger.debug(f"No preprocessor found: {e}")
         except Exception as e:
@@ -166,10 +164,7 @@ class ProcessorBridge:
                 config_filename=postprocessor_config,
                 overrides=overrides or {},
             )
-            logger.info(
-                f"Loaded postprocessor from {pretrained_name_or_path}: "
-                f"{len(postprocessor)} steps"
-            )
+            logger.info(f"Loaded postprocessor from {pretrained_name_or_path}: " f"{len(postprocessor)} steps")
         except (FileNotFoundError, ValueError) as e:
             logger.debug(f"No postprocessor found: {e}")
         except Exception as e:
@@ -294,14 +289,10 @@ class ProcessorBridge:
         }
         if self._preprocessor is not None:
             info["preprocessor_steps"] = len(self._preprocessor)
-            info["preprocessor_step_names"] = [
-                type(s).__name__ for s in self._preprocessor.steps
-            ]
+            info["preprocessor_step_names"] = [type(s).__name__ for s in self._preprocessor.steps]
         if self._postprocessor is not None:
             info["postprocessor_steps"] = len(self._postprocessor)
-            info["postprocessor_step_names"] = [
-                type(s).__name__ for s in self._postprocessor.steps
-            ]
+            info["postprocessor_step_names"] = [type(s).__name__ for s in self._postprocessor.steps]
         return info
 
     def __repr__(self) -> str:
@@ -329,9 +320,7 @@ class ProcessedPolicy:
     def set_robot_state_keys(self, robot_state_keys: List[str]) -> None:
         self._policy.set_robot_state_keys(robot_state_keys)
 
-    async def get_actions(
-        self, observation_dict: Dict[str, Any], instruction: str, **kwargs
-    ) -> List[Dict[str, Any]]:
+    async def get_actions(self, observation_dict: Dict[str, Any], instruction: str, **kwargs) -> List[Dict[str, Any]]:
         """Get actions with automatic pre/post processing."""
         # Preprocess observation
         processed_obs = self._bridge.preprocess(observation_dict)
@@ -361,6 +350,7 @@ class ProcessedPolicy:
 
         if self._bridge.has_postprocessor:
             import torch
+
             if isinstance(result, np.ndarray):
                 tensor = torch.from_numpy(result)
             else:

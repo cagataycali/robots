@@ -42,6 +42,7 @@ logger = logging.getLogger(__name__)
 try:
     import gymnasium as gym
     from gymnasium import spaces
+
     HAS_GYM = True
 except ImportError:
     HAS_GYM = False
@@ -148,31 +149,39 @@ if HAS_GYM:
             if self._num_envs > 1:
                 # Batched spaces [num_envs, dim]
                 self.observation_space = spaces.Box(
-                    low=-np.inf, high=np.inf,
+                    low=-np.inf,
+                    high=np.inf,
                     shape=(self._num_envs, obs_dim),
                     dtype=np.float32,
                 )
                 self.action_space = spaces.Box(
-                    low=-1.0, high=1.0,
+                    low=-1.0,
+                    high=1.0,
                     shape=(self._num_envs, act_dim),
                     dtype=np.float32,
                 )
             else:
                 # Single env spaces
                 self.observation_space = spaces.Box(
-                    low=-np.inf, high=np.inf,
+                    low=-np.inf,
+                    high=np.inf,
                     shape=(obs_dim,),
                     dtype=np.float32,
                 )
                 self.action_space = spaces.Box(
-                    low=-1.0, high=1.0,
+                    low=-1.0,
+                    high=1.0,
                     shape=(act_dim,),
                     dtype=np.float32,
                 )
 
             logger.info(
                 "NewtonGymEnv initialized: robot=%s, num_envs=%d, obs_dim=%d, act_dim=%d, solver=%s",
-                self._robot_name, self._num_envs, obs_dim, act_dim, self._config.solver,
+                self._robot_name,
+                self._num_envs,
+                obs_dim,
+                act_dim,
+                self._config.solver,
             )
 
         def _get_obs(self) -> np.ndarray:
@@ -206,7 +215,7 @@ if HAS_GYM:
                     # Fallback: pad or truncate
                     obs = np.zeros((self._num_envs, n * 2), dtype=np.float32)
             else:
-                obs = np.concatenate([jpos[:self._n_joints], jvel[:self._n_joints]])
+                obs = np.concatenate([jpos[: self._n_joints], jvel[: self._n_joints]])
 
             return obs.astype(np.float32)
 
@@ -233,9 +242,7 @@ if HAS_GYM:
 
             return obs, info
 
-        def step(
-            self, action: np.ndarray
-        ) -> Tuple[np.ndarray, Any, Any, Any, Dict]:
+        def step(self, action: np.ndarray) -> Tuple[np.ndarray, Any, Any, Any, Dict]:
             """Take a step in all environments simultaneously.
 
             Args:
@@ -326,8 +333,10 @@ if HAS_GYM:
             )
 
 else:
+
     class NewtonGymEnv:
         """Stub when gymnasium is not installed."""
+
         def __init__(self, *args, **kwargs):
             raise ImportError("gymnasium required: pip install gymnasium")
 

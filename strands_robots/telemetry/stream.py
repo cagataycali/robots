@@ -106,9 +106,7 @@ class TelemetryStream:
         }
 
         # Per-tier oldest event timestamp for age-based flush
-        self._buffer_first_ts: Dict[StreamTier, Optional[float]] = {
-            tier: None for tier in StreamTier
-        }
+        self._buffer_first_ts: Dict[StreamTier, Optional[float]] = {tier: None for tier in StreamTier}
 
         # Transports
         self._transports: List[TransportConfig] = []
@@ -460,8 +458,5 @@ class TelemetryStream:
         with self._stats_lock:
             self._stats["errors"] += 1
 
-        logger.error(
-            f"Transport {transport.name} failed after {transport.retry_max} attempts "
-            f"(tier={tier.name})"
-        )
+        logger.error(f"Transport {transport.name} failed after {transport.retry_max} attempts " f"(tier={tier.name})")
         return False

@@ -41,7 +41,7 @@ t0 = time.time()
 for step in range(300):
     s0.clear_forces()
     pipeline.collide(s0, contacts)
-    solver.step(s0, s1, ctrl, contacts, 1.0/60.0)
+    solver.step(s0, s1, ctrl, contacts, 1.0 / 60.0)
     s0, s1 = s1, s0
     if step % 100 == 0:
         positions = s0.particle_q.numpy()

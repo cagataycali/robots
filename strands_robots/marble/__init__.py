@@ -110,8 +110,8 @@ VALID_INPUT_MODES: Tuple[str, ...] = ("text", "image", "video", "multi-image")
 MARBLE_MODELS: Tuple[str, ...] = ("Marble 0.1-mini", "Marble 0.1-plus")
 
 # Default polling configuration for async generation
-DEFAULT_POLL_INTERVAL: float = 5.0     # seconds between polls
-DEFAULT_POLL_TIMEOUT: float = 600.0    # max seconds to wait for generation
+DEFAULT_POLL_INTERVAL: float = 5.0  # seconds between polls
+DEFAULT_POLL_TIMEOUT: float = 600.0  # max seconds to wait for generation
 
 # Robots supported for scene composition (from LeIsaac + strands-robots)
 SUPPORTED_ROBOTS: Dict[str, Dict[str, Any]] = {
@@ -157,56 +157,53 @@ SUPPORTED_ROBOTS: Dict[str, Dict[str, Any]] = {
 MARBLE_PRESETS: Dict[str, Dict[str, Any]] = {
     "kitchen": {
         "prompt": "A modern kitchen with wooden countertops, stainless steel sink, "
-                  "and a cutting board with fruits on the counter",
+        "and a cutting board with fruits on the counter",
         "description": "Kitchen manipulation — pick-place, pouring, cutting prep",
         "task_objects": ["orange", "apple", "mug", "plate", "knife"],
         "category": "indoor",
     },
     "office_desk": {
-        "prompt": "A cluttered office desk with papers, a coffee mug, pens, "
-                  "and a laptop next to a wooden bookshelf",
+        "prompt": "A cluttered office desk with papers, a coffee mug, pens, " "and a laptop next to a wooden bookshelf",
         "description": "Office desk manipulation — sorting, stacking, tidying",
         "task_objects": ["mug", "pen", "paper", "book"],
         "category": "indoor",
     },
     "workshop": {
         "prompt": "A workshop table with tools, screws in a box, a circuit board, "
-                  "and a soldering iron in a well-lit garage",
+        "and a soldering iron in a well-lit garage",
         "description": "Workshop assembly — precision pick-place, tool use",
         "task_objects": ["screw", "screwdriver", "circuit_board", "box"],
         "category": "indoor",
     },
     "living_room": {
         "prompt": "A cozy living room with a coffee table, scattered toys, "
-                  "folded towels, and a houseplant near a window",
+        "folded towels, and a houseplant near a window",
         "description": "Home cleanup — tidying, folding, organizing",
         "task_objects": ["toy", "towel", "remote", "cup"],
         "category": "indoor",
     },
     "warehouse": {
-        "prompt": "A warehouse aisle with metal shelving, cardboard boxes of "
-                  "varying sizes, and a packing station",
+        "prompt": "A warehouse aisle with metal shelving, cardboard boxes of " "varying sizes, and a packing station",
         "description": "Warehouse logistics — box manipulation, stacking",
         "task_objects": ["box_small", "box_medium", "box_large", "pallet"],
         "category": "industrial",
     },
     "lab_bench": {
-        "prompt": "A clean laboratory bench with beakers, test tubes in a rack, "
-                  "a microscope, and a precision scale",
+        "prompt": "A clean laboratory bench with beakers, test tubes in a rack, " "a microscope, and a precision scale",
         "description": "Lab manipulation — precise handling, liquid transfer",
         "task_objects": ["beaker", "test_tube", "petri_dish"],
         "category": "scientific",
     },
     "outdoor_garden": {
         "prompt": "A garden table on a patio with potted plants, a watering can, "
-                  "garden tools, and a wooden fence background",
+        "garden tools, and a wooden fence background",
         "description": "Outdoor manipulation — robust to varied lighting",
         "task_objects": ["pot", "watering_can", "trowel", "seeds"],
         "category": "outdoor",
     },
     "restaurant": {
         "prompt": "A restaurant table with plates, napkins, wine glasses, "
-                  "cutlery, and a bread basket, warm ambient lighting",
+        "cutlery, and a bread basket, warm ambient lighting",
         "description": "Table setting and service tasks",
         "task_objects": ["plate", "wine_glass", "fork", "napkin"],
         "category": "indoor",
@@ -228,26 +225,26 @@ class MarbleScene:
     input_mode: str = "text"
 
     # Raw Marble outputs
-    ply_path: Optional[str] = None    # Gaussian splat (.ply format)
-    spz_path: Optional[str] = None    # Gaussian splat (.spz compressed format)
-    glb_path: Optional[str] = None    # Mesh
+    ply_path: Optional[str] = None  # Gaussian splat (.ply format)
+    spz_path: Optional[str] = None  # Gaussian splat (.spz compressed format)
+    glb_path: Optional[str] = None  # Mesh
     video_path: Optional[str] = None  # Rendered video
-    pano_path: Optional[str] = None   # Downloaded panorama image
+    pano_path: Optional[str] = None  # Downloaded panorama image
 
     # Marble API outputs
-    world_id: Optional[str] = None          # Marble world identifier
+    world_id: Optional[str] = None  # Marble world identifier
     world_marble_url: Optional[str] = None  # World Marble viewer URL
-    pano_url: Optional[str] = None          # Panorama image URL
-    thumbnail_url: Optional[str] = None     # Thumbnail URL
-    collider_mesh_url: Optional[str] = None # Collider mesh URL
+    pano_url: Optional[str] = None  # Panorama image URL
+    thumbnail_url: Optional[str] = None  # Thumbnail URL
+    collider_mesh_url: Optional[str] = None  # Collider mesh URL
     spz_urls: Optional[Dict[str, str]] = None  # SPZ Gaussian splat URLs
-    caption: Optional[str] = None           # AI-generated caption
-    operation_id: Optional[str] = None      # Async operation ID
-    model: Optional[str] = None             # Model used (Marble 0.1-mini/plus)
+    caption: Optional[str] = None  # AI-generated caption
+    operation_id: Optional[str] = None  # Async operation ID
+    model: Optional[str] = None  # Model used (Marble 0.1-mini/plus)
 
     # Converted outputs
-    usdz_path: Optional[str] = None   # USDZ via 3DGrut conversion
-    scene_usd: Optional[str] = None   # Final composed scene with robot
+    usdz_path: Optional[str] = None  # USDZ via 3DGrut conversion
+    scene_usd: Optional[str] = None  # Final composed scene with robot
 
     # Metadata
     output_dir: str = ""
@@ -264,13 +261,7 @@ class MarbleScene:
     @property
     def best_background(self) -> Optional[str]:
         """Best available background asset for scene composition."""
-        return (
-            self.usdz_path
-            or self.glb_path
-            or self.spz_path
-            or self.ply_path
-            or self.pano_path
-        )
+        return self.usdz_path or self.glb_path or self.spz_path or self.ply_path or self.pano_path
 
     def to_dict(self) -> Dict[str, Any]:
         d = asdict(self)
@@ -334,39 +325,24 @@ class MarbleConfig:
         """Validate configuration after initialisation."""
         if self.output_format not in VALID_OUTPUT_FORMATS:
             raise ValueError(
-                f"Invalid output_format '{self.output_format}'. "
-                f"Must be one of: {VALID_OUTPUT_FORMATS}"
+                f"Invalid output_format '{self.output_format}'. " f"Must be one of: {VALID_OUTPUT_FORMATS}"
             )
 
         if self.input_mode not in VALID_INPUT_MODES:
-            raise ValueError(
-                f"Invalid input_mode '{self.input_mode}'. "
-                f"Must be one of: {VALID_INPUT_MODES}"
-            )
+            raise ValueError(f"Invalid input_mode '{self.input_mode}'. " f"Must be one of: {VALID_INPUT_MODES}")
 
         if self.model not in MARBLE_MODELS:
-            raise ValueError(
-                f"Invalid model '{self.model}'. "
-                f"Must be one of: {MARBLE_MODELS}"
-            )
+            raise ValueError(f"Invalid model '{self.model}'. " f"Must be one of: {MARBLE_MODELS}")
 
         if self.robot and self.robot not in SUPPORTED_ROBOTS:
-            raise ValueError(
-                f"Unknown robot '{self.robot}'. "
-                f"Supported: {sorted(SUPPORTED_ROBOTS.keys())}"
-            )
+            raise ValueError(f"Unknown robot '{self.robot}'. " f"Supported: {sorted(SUPPORTED_ROBOTS.keys())}")
 
         if self.num_variations < 1:
-            raise ValueError(
-                f"num_variations must be >= 1, got {self.num_variations}"
-            )
+            raise ValueError(f"num_variations must be >= 1, got {self.num_variations}")
 
         # Resolve API key (WLT-Api-Key header per OpenAPI spec)
         if self.api_key is None:
-            self.api_key = (
-                os.environ.get("WLT_API_KEY")
-                or os.environ.get("MARBLE_API_KEY")
-            )
+            self.api_key = os.environ.get("WLT_API_KEY") or os.environ.get("MARBLE_API_KEY")
 
         # Resolve 3DGrut path
         if self.threedgrut_path is None:
@@ -574,9 +550,7 @@ class MarblePipeline:
                 scene.model = meta.get("model") or self.config.model
 
             except Exception as exc:
-                logger.error(
-                    "Failed to generate world variation %d: %s", var_idx, exc
-                )
+                logger.error("Failed to generate world variation %d: %s", var_idx, exc)
                 scene.metadata["error"] = str(exc)
 
             # Stage 2: Convert PLY → USDZ if requested
@@ -689,9 +663,7 @@ class MarblePipeline:
             "Set THREEDGRUT_PATH env var for option 1."
         )
 
-    def _convert_via_3dgrut(
-        self, ply_path: str, output_path: str, grut_path: str
-    ) -> str:
+    def _convert_via_3dgrut(self, ply_path: str, output_path: str, grut_path: str) -> str:
         """Convert PLY to USDZ using 3DGrut CLI."""
         export_script = os.path.join(grut_path, "scripts", "export_usdz.py")
         if not os.path.isfile(export_script):
@@ -705,10 +677,15 @@ class MarblePipeline:
                 # Use module-based invocation
                 python = shutil.which("python3") or shutil.which("python")
                 cmd = [
-                    python, "-m", "threedgrut.export",
-                    "--input", ply_path,
-                    "--output", output_path,
-                    "--format", "usdz",
+                    python,
+                    "-m",
+                    "threedgrut.export",
+                    "--input",
+                    ply_path,
+                    "--output",
+                    output_path,
+                    "--format",
+                    "usdz",
                 ]
                 return self._run_subprocess(cmd, "3DGrut export")
 
@@ -740,21 +717,15 @@ class MarblePipeline:
             points_prim = UsdGeom.Points.Define(stage, "/World/MarbleScene")
 
             # Set points
-            points_prim.GetPointsAttr().Set(
-                [Gf.Vec3f(*v) for v in vertices]
-            )
+            points_prim.GetPointsAttr().Set([Gf.Vec3f(*v) for v in vertices])
 
             # Set widths (point sizes)
-            points_prim.GetWidthsAttr().Set(
-                [0.005] * len(vertices)
-            )
+            points_prim.GetWidthsAttr().Set([0.005] * len(vertices))
 
             # Set colors if available
             if colors is not None and len(colors) > 0:
                 color_attr = points_prim.GetDisplayColorAttr()
-                color_attr.Set(
-                    [Gf.Vec3f(*c) for c in colors]
-                )
+                color_attr.Set([Gf.Vec3f(*c) for c in colors])
 
             stage.GetRootLayer().Save()
             logger.info("PLY→USD converted via OpenUSD: %s", output_path)
@@ -813,9 +784,7 @@ class MarblePipeline:
 
                 plydata = PlyData.read(ply_path)
                 vertex = plydata["vertex"]
-                vertices = list(
-                    zip(vertex["x"], vertex["y"], vertex["z"])
-                )
+                vertices = list(zip(vertex["x"], vertex["y"], vertex["z"]))
 
                 colors = None
                 if "red" in vertex.data.dtype.names:
@@ -825,9 +794,7 @@ class MarblePipeline:
                             float(g) / 255.0,
                             float(b) / 255.0,
                         )
-                        for r, g, b in zip(
-                            vertex["red"], vertex["green"], vertex["blue"]
-                        )
+                        for r, g, b in zip(vertex["red"], vertex["green"], vertex["blue"])
                     ]
 
                 return vertices, colors
@@ -859,9 +826,7 @@ class MarblePipeline:
 
                     parts = line.split()
                     if len(parts) >= 3:
-                        vertices.append(
-                            (float(parts[0]), float(parts[1]), float(parts[2]))
-                        )
+                        vertices.append((float(parts[0]), float(parts[1]), float(parts[2])))
                         if has_color and len(parts) >= 6:
                             colors.append(
                                 (
@@ -929,10 +894,7 @@ class MarblePipeline:
 
         robot = robot or self.config.robot
         if robot and robot not in SUPPORTED_ROBOTS:
-            raise ValueError(
-                f"Unknown robot '{robot}'. "
-                f"Supported: {sorted(SUPPORTED_ROBOTS.keys())}"
-            )
+            raise ValueError(f"Unknown robot '{robot}'. " f"Supported: {sorted(SUPPORTED_ROBOTS.keys())}")
 
         if table_replacement is None:
             table_replacement = self.config.table_replacement
@@ -987,8 +949,7 @@ class MarblePipeline:
                 json.dump(manifest, fh, indent=2)
 
             logger.info(
-                "📋 Composition manifest saved (USD composition requires "
-                "Isaac Sim runtime): %s",
+                "📋 Composition manifest saved (USD composition requires " "Isaac Sim runtime): %s",
                 manifest_path,
             )
             composed_usd = manifest_path
@@ -1046,9 +1007,7 @@ class MarblePipeline:
                 robot_xform.AddTranslateOp().Set(Gf.Vec3d(*pos))
 
                 # Reference robot USD (path relative to Isaac Sim assets)
-                robot_xform.GetPrim().GetReferences().AddReference(
-                    robot_info["usd_path"]
-                )
+                robot_xform.GetPrim().GetReferences().AddReference(robot_info["usd_path"])
 
             # Add table if replacement requested
             if table_replacement:
@@ -1080,6 +1039,7 @@ class MarblePipeline:
             UsdGeom.Xform.Define(stage, "/World/Light")
             # Dome light for ambient
             from pxr import UsdLux  # type: ignore
+
             dome = UsdLux.DomeLight.Define(stage, "/World/Light/Dome")
             dome.CreateIntensityAttr().Set(1000.0)
 
@@ -1135,9 +1095,7 @@ class MarblePipeline:
             if prompts is None:
                 prompts = [preset_info["prompt"]]
             task_objects = preset_info.get("task_objects", [])
-            logger.info(
-                "🎯 Using preset '%s': %s", preset, preset_info["description"]
-            )
+            logger.info("🎯 Using preset '%s': %s", preset, preset_info["description"])
         else:
             task_objects = kwargs.pop("task_objects", [])
 
@@ -1193,9 +1151,7 @@ class MarblePipeline:
             "output_dir": output_dir,
             "scenes": all_scenes,
             "scene_paths": [
-                s.scene_usd or s.usdz_path or s.ply_path
-                for s in all_scenes
-                if s.scene_usd or s.usdz_path or s.ply_path
+                s.scene_usd or s.usdz_path or s.ply_path for s in all_scenes if s.scene_usd or s.usdz_path or s.ply_path
             ],
         }
 
@@ -1267,9 +1223,7 @@ class MarblePipeline:
                     **kwargs,
                 )
             except Exception as exc:
-                logger.warning(
-                    "Marble API call failed, creating placeholder: %s", exc
-                )
+                logger.warning("Marble API call failed, creating placeholder: %s", exc)
 
         # Create placeholder outputs for offline/local mode
         logger.info(
@@ -1357,10 +1311,7 @@ class MarblePipeline:
                     "uri": input_image,
                 }
             else:
-                raise ValueError(
-                    "image mode requires input_image (file path or URL) "
-                    "or media_asset_id"
-                )
+                raise ValueError("image mode requires input_image (file path or URL) " "or media_asset_id")
 
             return {
                 "type": "image",
@@ -1391,10 +1342,7 @@ class MarblePipeline:
                     "uri": input_video,
                 }
             else:
-                raise ValueError(
-                    "video mode requires input_video (file path or URL) "
-                    "or media_asset_id"
-                )
+                raise ValueError("video mode requires input_video (file path or URL) " "or media_asset_id")
 
             return {
                 "type": "video",
@@ -1439,10 +1387,7 @@ class MarblePipeline:
         try:
             import requests  # type: ignore[import-untyped]
         except ImportError:
-            raise ImportError(
-                "requests is required for Marble API calls. "
-                "Install with: pip install requests"
-            )
+            raise ImportError("requests is required for Marble API calls. " "Install with: pip install requests")
 
         headers = self._get_api_headers()
 
@@ -1455,25 +1400,17 @@ class MarblePipeline:
 
         if not media_asset_id and input_mode == "image" and input_image and os.path.isfile(input_image):
             try:
-                media_asset_id = self._upload_media_asset(
-                    file_path=input_image, kind="image", headers=headers
-                )
+                media_asset_id = self._upload_media_asset(file_path=input_image, kind="image", headers=headers)
                 logger.info("Uploaded image as media asset: %s", media_asset_id)
             except Exception as exc:
-                logger.debug(
-                    "Media asset upload failed, using data_base64 fallback: %s", exc
-                )
+                logger.debug("Media asset upload failed, using data_base64 fallback: %s", exc)
 
         if not media_asset_id and input_mode == "video" and input_video and os.path.isfile(input_video):
             try:
-                media_asset_id = self._upload_media_asset(
-                    file_path=input_video, kind="video", headers=headers
-                )
+                media_asset_id = self._upload_media_asset(file_path=input_video, kind="video", headers=headers)
                 logger.info("Uploaded video as media asset: %s", media_asset_id)
             except Exception as exc:
-                logger.debug(
-                    "Media asset upload failed, using data_base64 fallback: %s", exc
-                )
+                logger.debug("Media asset upload failed, using data_base64 fallback: %s", exc)
 
         # Step 2: Build WorldsGenerateRequest
         world_prompt = self._build_world_prompt(
@@ -1593,9 +1530,7 @@ class MarblePipeline:
             spz_local = os.path.join(output_dir, f"scene_{chosen_key}.spz")
             self._download_file(spz_url, spz_local, headers)
             result["spz_path"] = spz_local
-            logger.info(
-                "Downloaded SPZ Gaussian splat (%s): %s", chosen_key, spz_local
-            )
+            logger.info("Downloaded SPZ Gaussian splat (%s): %s", chosen_key, spz_local)
 
         # Save full world metadata
         meta_path = os.path.join(output_dir, "world_metadata.json")
@@ -1631,15 +1566,12 @@ class MarblePipeline:
                 error = data.get("error")
                 if error and (error.get("message") or error.get("code")):
                     raise RuntimeError(
-                        f"Marble generation failed: "
-                        f"code={error.get('code')}, message={error.get('message')}"
+                        f"Marble generation failed: " f"code={error.get('code')}, message={error.get('message')}"
                     )
                 # Return the World object
                 world = data.get("response")
                 if world is None:
-                    raise RuntimeError(
-                        "Operation completed but no world in response"
-                    )
+                    raise RuntimeError("Operation completed but no world in response")
                 return world
 
             # Log progress
@@ -1654,8 +1586,7 @@ class MarblePipeline:
             time.sleep(self.config.poll_interval)
 
         raise RuntimeError(
-            f"Marble generation timed out after {self.config.poll_timeout}s "
-            f"(operation_id={operation_id})"
+            f"Marble generation timed out after {self.config.poll_timeout}s " f"(operation_id={operation_id})"
         )
 
     def _upload_media_asset(
@@ -1847,9 +1778,7 @@ class MarblePipeline:
     # Utility methods
     # ------------------------------------------------------------------
 
-    def _run_subprocess(
-        self, cmd: List[str], label: str
-    ) -> str:
+    def _run_subprocess(self, cmd: List[str], label: str) -> str:
         """Run a subprocess with logging and error handling."""
         logger.info("Running %s: %s", label, " ".join(cmd))
 
@@ -1869,10 +1798,7 @@ class MarblePipeline:
         if result.returncode != 0:
             logger.error("%s STDOUT:\n%s", label, result.stdout)
             logger.error("%s STDERR:\n%s", label, result.stderr)
-            raise RuntimeError(
-                f"{label} failed (rc={result.returncode}): "
-                f"{result.stderr[-500:]}"
-            )
+            raise RuntimeError(f"{label} failed (rc={result.returncode}): " f"{result.stderr[-500:]}")
 
         logger.debug("%s output:\n%s", label, result.stdout)
 
@@ -2015,11 +1941,13 @@ def list_presets() -> List[Dict[str, str]]:
     """
     presets = []
     for name, info in MARBLE_PRESETS.items():
-        presets.append({
-            "name": name,
-            "description": info["description"],
-            "category": info["category"],
-            "prompt": info["prompt"][:80] + "...",
-            "objects": ", ".join(info.get("task_objects", [])),
-        })
+        presets.append(
+            {
+                "name": name,
+                "description": info["description"],
+                "category": info["category"],
+                "prompt": info["prompt"][:80] + "...",
+                "objects": ", ".join(info.get("task_objects", [])),
+            }
+        )
     return presets

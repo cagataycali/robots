@@ -28,6 +28,7 @@ wp.init()
 DEVICE = "cuda:0"
 RESULTS = {}
 
+
 def test_solver_rigid(solver_name, num_envs=16):
     """Test a solver with rigid-body articulation (quadruped URDF)."""
     print(f"\n{'='*60}")
@@ -35,12 +36,15 @@ def test_solver_rigid(solver_name, num_envs=16):
     print(f"{'='*60}")
 
     try:
-        SolverCls = getattr(newton.solvers, {
-            "mujoco": "SolverMuJoCo",
-            "featherstone": "SolverFeatherstone",
-            "semi_implicit": "SolverSemiImplicit",
-            "xpbd": "SolverXPBD",
-        }[solver_name])
+        SolverCls = getattr(
+            newton.solvers,
+            {
+                "mujoco": "SolverMuJoCo",
+                "featherstone": "SolverFeatherstone",
+                "semi_implicit": "SolverSemiImplicit",
+                "xpbd": "SolverXPBD",
+            }[solver_name],
+        )
     except (KeyError, AttributeError) as e:
         print(f"  ❌ Solver class not found: {e}")
         return {"status": "SKIP", "reason": str(e)}
@@ -66,7 +70,7 @@ def test_solver_rigid(solver_name, num_envs=16):
         try:
             solver = SolverCls(model)
         except TypeError:
-            solver = SolverCls(model, 1.0/200.0)
+            solver = SolverCls(model, 1.0 / 200.0)
 
         s0 = model.state()
         s1 = model.state()
@@ -92,7 +96,7 @@ def test_solver_rigid(solver_name, num_envs=16):
         # Warmup
         for _ in range(3):
             s0.clear_forces()
-            solver.step(s0, s1, ctrl, contacts, 1.0/200.0)
+            solver.step(s0, s1, ctrl, contacts, 1.0 / 200.0)
             s0, s1 = s1, s0
 
         # Benchmark
@@ -100,12 +104,12 @@ def test_solver_rigid(solver_name, num_envs=16):
         n_steps = 100
         for _ in range(n_steps):
             s0.clear_forces()
-            if contacts is not None and hasattr(pipeline, 'collide'):
+            if contacts is not None and hasattr(pipeline, "collide"):
                 try:
                     pipeline.collide(s0, contacts)
                 except Exception:
                     pass
-            solver.step(s0, s1, ctrl, contacts, 1.0/200.0)
+            solver.step(s0, s1, ctrl, contacts, 1.0 / 200.0)
             s0, s1 = s1, s0
         elapsed = time.time() - t0
         throughput = int(n_steps * num_envs / elapsed)
@@ -139,12 +143,15 @@ def test_solver_particles(solver_name, n_particles=100):
     print(f"{'='*60}")
 
     try:
-        SolverCls = getattr(newton.solvers, {
-            "semi_implicit": "SolverSemiImplicit",
-            "xpbd": "SolverXPBD",
-            "vbd": "SolverVBD",
-            "implicit_mpm": "SolverImplicitMPM",
-        }[solver_name])
+        SolverCls = getattr(
+            newton.solvers,
+            {
+                "semi_implicit": "SolverSemiImplicit",
+                "xpbd": "SolverXPBD",
+                "vbd": "SolverVBD",
+                "implicit_mpm": "SolverImplicitMPM",
+            }[solver_name],
+        )
     except (KeyError, AttributeError) as e:
         print(f"  ❌ Solver class not found: {e}")
         return {"status": "SKIP", "reason": str(e)}
@@ -166,9 +173,7 @@ def test_solver_particles(solver_name, n_particles=100):
             )
             builder.add_particle(pos=pos, vel=wp.vec3(0, 0, 0), mass=1.0)
 
-        builder.add_ground_plane(
-            cfg=newton.ModelBuilder.ShapeConfig(ke=1e4, kd=10, mu=0.5)
-        )
+        builder.add_ground_plane(cfg=newton.ModelBuilder.ShapeConfig(ke=1e4, kd=10, mu=0.5))
 
         model = builder.finalize()
         model.soft_contact_ke = 1e4
@@ -190,7 +195,7 @@ def test_solver_particles(solver_name, n_particles=100):
                 solver = SolverCls(model)
         except TypeError:
             try:
-                solver = SolverCls(model, 1.0/60.0)
+                solver = SolverCls(model, 1.0 / 60.0)
             except TypeError:
                 solver = SolverCls(model, iterations=5)
 
@@ -201,9 +206,7 @@ def test_solver_particles(solver_name, n_particles=100):
         # Collision pipeline
         contacts = None
         try:
-            pipeline = newton.CollisionPipeline(
-                model, broad_phase="explicit", soft_contact_margin=5.0
-            )
+            pipeline = newton.CollisionPipeline(model, broad_phase="explicit", soft_contact_margin=5.0)
             contacts = pipeline.contacts()
             pipeline.collide(s0, contacts)
         except Exception as e:
@@ -219,7 +222,7 @@ def test_solver_particles(solver_name, n_particles=100):
                     pipeline.collide(s0, contacts)
                 except Exception:
                     pass
-            solver.step(s0, s1, ctrl, contacts, 1.0/60.0)
+            solver.step(s0, s1, ctrl, contacts, 1.0 / 60.0)
             s0, s1 = s1, s0
         elapsed = time.time() - t0
 
@@ -254,11 +257,14 @@ def test_solver_cloth(solver_name):
     print(f"{'='*60}")
 
     try:
-        SolverCls = getattr(newton.solvers, {
-            "xpbd": "SolverXPBD",
-            "vbd": "SolverVBD",
-            "style3d": "SolverStyle3D",
-        }[solver_name])
+        SolverCls = getattr(
+            newton.solvers,
+            {
+                "xpbd": "SolverXPBD",
+                "vbd": "SolverVBD",
+                "style3d": "SolverStyle3D",
+            }[solver_name],
+        )
     except (KeyError, AttributeError) as e:
         print(f"  ❌ Solver class not found: {e}")
         return {"status": "SKIP", "reason": str(e)}
@@ -274,11 +280,7 @@ def test_solver_cloth(solver_name):
         indices = []
         for y in range(grid_size):
             for x in range(grid_size):
-                vertices.append(wp.vec3(
-                    float(x) * 0.1 - 0.45,
-                    float(y) * 0.1 - 0.45,
-                    1.5
-                ))
+                vertices.append(wp.vec3(float(x) * 0.1 - 0.45, float(y) * 0.1 - 0.45, 1.5))
 
         # Triangulate grid
         for y in range(grid_size - 1):
@@ -305,7 +307,7 @@ def test_solver_cloth(solver_name):
         builder.add_ground_plane()
 
         # VBD requires graph coloring before finalize
-        if solver_name == 'vbd':
+        if solver_name == "vbd":
             builder.color()
 
         model = builder.finalize()
@@ -344,7 +346,7 @@ def test_solver_cloth(solver_name):
                     pipeline.collide(s0, contacts)
                 except Exception:
                     pass
-            solver.step(s0, s1, ctrl, contacts, 1.0/60.0)
+            solver.step(s0, s1, ctrl, contacts, 1.0 / 60.0)
             s0, s1 = s1, s0
         elapsed = time.time() - t0
 

@@ -82,6 +82,7 @@ class IsaacLabTrainerConfig:
         value_hidden_dims: Value network hidden dims
         activation: Activation function ("elu", "relu", "tanh")
     """
+
     task: str = "cartpole"
     rl_framework: str = "rsl_rl"
     algorithm: str = "PPO"
@@ -151,15 +152,11 @@ class IsaacLabTrainer:
         self._training_results = {}
 
         # Resolve task ID
-        self._task_id = _TASK_ID_MAP.get(
-            self.config.task, self.config.task
-        )
+        self._task_id = _TASK_ID_MAP.get(self.config.task, self.config.task)
 
         # Set experiment name
         if not self.config.experiment_name:
-            self.config.experiment_name = (
-                f"{self.config.task}_{self.config.rl_framework}_{self.config.algorithm}"
-            )
+            self.config.experiment_name = f"{self.config.task}_{self.config.rl_framework}_{self.config.algorithm}"
 
         logger.info(
             f"🎓 Isaac Lab Trainer: {self._task_id} "
@@ -188,10 +185,7 @@ class IsaacLabTrainer:
         else:
             return {
                 "status": "error",
-                "content": [{"text": (
-                    f"❌ Unknown RL framework: {fw}\n"
-                    "Supported: rsl_rl, sb3, skrl, rl_games"
-                )}],
+                "content": [{"text": (f"❌ Unknown RL framework: {fw}\n" "Supported: rsl_rl, sb3, skrl, rl_games")}],
             }
 
     def evaluate(self, checkpoint_path: Optional[str] = None, n_episodes: int = 10, **kwargs) -> Dict[str, Any]:
@@ -226,6 +220,7 @@ class IsaacLabTrainer:
         try:
             import gymnasium as gym
             from isaaclab_tasks import register_isaaclab_tasks
+
             register_isaaclab_tasks()
 
             from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper
@@ -255,7 +250,6 @@ class IsaacLabTrainer:
                 "resume": self.config.resume_path is not None,
                 "load_run": self.config.resume_path or "",
                 "checkpoint": -1,
-
                 "policy": {
                     "class_name": "ActorCritic",
                     "init_noise_std": 1.0,
@@ -307,24 +301,28 @@ class IsaacLabTrainer:
 
             return {
                 "status": "success",
-                "content": [{"text": (
-                    f"✅ RSL-RL Training Complete\n"
-                    f"🎯 Task: {self._task_id}\n"
-                    f"🔢 Envs: {self.config.num_envs} | Iterations: {self.config.max_iterations}\n"
-                    f"⏱️ Time: {elapsed:.1f}s ({elapsed/60:.1f}min)\n"
-                    f"💾 Checkpoint: {best_ckpt or 'none'}\n"
-                    f"📁 Logs: {log_dir}"
-                )}],
+                "content": [
+                    {
+                        "text": (
+                            f"✅ RSL-RL Training Complete\n"
+                            f"🎯 Task: {self._task_id}\n"
+                            f"🔢 Envs: {self.config.num_envs} | Iterations: {self.config.max_iterations}\n"
+                            f"⏱️ Time: {elapsed:.1f}s ({elapsed/60:.1f}min)\n"
+                            f"💾 Checkpoint: {best_ckpt or 'none'}\n"
+                            f"📁 Logs: {log_dir}"
+                        )
+                    }
+                ],
                 "checkpoint_path": best_ckpt,
                 "log_dir": log_dir,
                 "elapsed_seconds": elapsed,
             }
 
         except ImportError as e:
-            return {"status": "error", "content": [{"text": (
-                f"❌ RSL-RL not available: {e}\n"
-                "Install with: pip install rsl-rl"
-            )}]}
+            return {
+                "status": "error",
+                "content": [{"text": (f"❌ RSL-RL not available: {e}\n" "Install with: pip install rsl-rl")}],
+            }
         except Exception as e:
             logger.error(f"RSL-RL training failed: {e}")
             return {"status": "error", "content": [{"text": f"❌ Training failed: {e}"}]}
@@ -340,6 +338,7 @@ class IsaacLabTrainer:
         try:
             import gymnasium as gym
             from isaaclab_tasks import register_isaaclab_tasks
+
             register_isaaclab_tasks()
 
             from isaaclab_rl.sb3 import Sb3VecEnvWrapper, process_sb3_cfg
@@ -356,12 +355,15 @@ class IsaacLabTrainer:
             algo_name = self.config.algorithm.upper()
             if algo_name == "PPO":
                 from stable_baselines3 import PPO
+
                 algo_cls = PPO
             elif algo_name == "SAC":
                 from stable_baselines3 import SAC
+
                 algo_cls = SAC
             elif algo_name == "A2C":
                 from stable_baselines3 import A2C
+
                 algo_cls = A2C
             else:
                 return {"status": "error", "content": [{"text": f"❌ Unsupported SB3 algo: {algo_name}"}]}
@@ -423,24 +425,28 @@ class IsaacLabTrainer:
 
             return {
                 "status": "success",
-                "content": [{"text": (
-                    f"✅ SB3 {algo_name} Training Complete\n"
-                    f"🎯 Task: {self._task_id}\n"
-                    f"🔢 Envs: {self.config.num_envs} | Steps: {self.config.total_timesteps:,}\n"
-                    f"⏱️ Time: {elapsed:.1f}s ({elapsed/60:.1f}min)\n"
-                    f"💾 Model: {model_path}\n"
-                    f"📁 Logs: {log_dir}"
-                )}],
+                "content": [
+                    {
+                        "text": (
+                            f"✅ SB3 {algo_name} Training Complete\n"
+                            f"🎯 Task: {self._task_id}\n"
+                            f"🔢 Envs: {self.config.num_envs} | Steps: {self.config.total_timesteps:,}\n"
+                            f"⏱️ Time: {elapsed:.1f}s ({elapsed/60:.1f}min)\n"
+                            f"💾 Model: {model_path}\n"
+                            f"📁 Logs: {log_dir}"
+                        )
+                    }
+                ],
                 "model_path": model_path,
                 "log_dir": log_dir,
                 "elapsed_seconds": elapsed,
             }
 
         except ImportError as e:
-            return {"status": "error", "content": [{"text": (
-                f"❌ SB3 not available: {e}\n"
-                "Install with: pip install stable-baselines3"
-            )}]}
+            return {
+                "status": "error",
+                "content": [{"text": (f"❌ SB3 not available: {e}\n" "Install with: pip install stable-baselines3")}],
+            }
         except Exception as e:
             logger.error(f"SB3 training failed: {e}")
             return {"status": "error", "content": [{"text": f"❌ Training failed: {e}"}]}
@@ -452,6 +458,7 @@ class IsaacLabTrainer:
         try:
             import gymnasium as gym
             from isaaclab_tasks import register_isaaclab_tasks
+
             register_isaaclab_tasks()
 
             from isaaclab_rl.skrl import SkrlVecEnvWrapper
@@ -480,12 +487,14 @@ class IsaacLabTrainer:
             class GaussianPolicy(GaussianMixin, Model):
                 def __init__(self, observation_space, action_space, device, **kwargs):
                     Model.__init__(self, observation_space, action_space, device)
-                    GaussianMixin.__init__(self, clip_actions=False, clip_log_std=True,
-                                          min_log_std=-20, max_log_std=2)
+                    GaussianMixin.__init__(self, clip_actions=False, clip_log_std=True, min_log_std=-20, max_log_std=2)
                     self.net = nn.Sequential(
-                        nn.Linear(obs_dim, 256), nn.ELU(),
-                        nn.Linear(256, 256), nn.ELU(),
-                        nn.Linear(256, 128), nn.ELU(),
+                        nn.Linear(obs_dim, 256),
+                        nn.ELU(),
+                        nn.Linear(256, 256),
+                        nn.ELU(),
+                        nn.Linear(256, 128),
+                        nn.ELU(),
                         nn.Linear(128, act_dim),
                     )
                     self.log_std = nn.Parameter(torch.zeros(act_dim))
@@ -498,9 +507,12 @@ class IsaacLabTrainer:
                     Model.__init__(self, observation_space, action_space, device)
                     DeterministicMixin.__init__(self, clip_actions=False)
                     self.net = nn.Sequential(
-                        nn.Linear(obs_dim, 256), nn.ELU(),
-                        nn.Linear(256, 256), nn.ELU(),
-                        nn.Linear(256, 128), nn.ELU(),
+                        nn.Linear(obs_dim, 256),
+                        nn.ELU(),
+                        nn.Linear(256, 256),
+                        nn.ELU(),
+                        nn.Linear(256, 128),
+                        nn.ELU(),
                         nn.Linear(128, 1),
                     )
 
@@ -553,13 +565,17 @@ class IsaacLabTrainer:
 
             return {
                 "status": "success",
-                "content": [{"text": (
-                    f"✅ SKRL PPO Training Complete\n"
-                    f"🎯 Task: {self._task_id}\n"
-                    f"🔢 Envs: {self.config.num_envs} | Steps: {self.config.total_timesteps:,}\n"
-                    f"⏱️ Time: {elapsed:.1f}s\n"
-                    f"📁 Logs: {log_dir}"
-                )}],
+                "content": [
+                    {
+                        "text": (
+                            f"✅ SKRL PPO Training Complete\n"
+                            f"🎯 Task: {self._task_id}\n"
+                            f"🔢 Envs: {self.config.num_envs} | Steps: {self.config.total_timesteps:,}\n"
+                            f"⏱️ Time: {elapsed:.1f}s\n"
+                            f"📁 Logs: {log_dir}"
+                        )
+                    }
+                ],
                 "log_dir": log_dir,
                 "elapsed_seconds": elapsed,
             }
@@ -576,6 +592,7 @@ class IsaacLabTrainer:
         try:
             import gymnasium as gym
             from isaaclab_tasks import register_isaaclab_tasks
+
             register_isaaclab_tasks()
 
             from isaaclab_rl.rl_games import RlGamesVecEnvWrapper
@@ -638,13 +655,17 @@ class IsaacLabTrainer:
 
             return {
                 "status": "success",
-                "content": [{"text": (
-                    f"✅ RL-Games setup complete (use Isaac Lab CLI for full training)\n"
-                    f"🎯 Task: {self._task_id}\n"
-                    f"💡 Run: isaaclab -p source/isaaclab_rl/scripts/train.py "
-                    f"--task={self._task_id} --num_envs={self.config.num_envs}\n"
-                    f"📁 Output: {log_dir}"
-                )}],
+                "content": [
+                    {
+                        "text": (
+                            f"✅ RL-Games setup complete (use Isaac Lab CLI for full training)\n"
+                            f"🎯 Task: {self._task_id}\n"
+                            f"💡 Run: isaaclab -p source/isaaclab_rl/scripts/train.py "
+                            f"--task={self._task_id} --num_envs={self.config.num_envs}\n"
+                            f"📁 Output: {log_dir}"
+                        )
+                    }
+                ],
                 "log_dir": log_dir,
             }
 
