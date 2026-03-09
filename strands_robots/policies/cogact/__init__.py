@@ -156,9 +156,7 @@ class CogactPolicy(Policy):
                 # Fallback: text generation
                 outputs = self._model.generate(**inputs, max_new_tokens=256, do_sample=False)
                 text = self._processor.decode(outputs[0], skip_special_tokens=True)
-                action_np = parse_numbers_from_text(
-                    text, action_dim=self._action_dim, take_last=True
-                ).reshape(1, -1)
+                action_np = parse_numbers_from_text(text, action_dim=self._action_dim, take_last=True).reshape(1, -1)
 
         # Handle multi-step action output
         if action_np.ndim == 1:
