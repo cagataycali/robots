@@ -61,11 +61,13 @@ Reference:
 
 import logging
 import time
+import types
 from typing import Any, Dict, List, Optional
 
 import numpy as np
 
 from strands_robots.policies import Policy
+from strands_robots.policies._utils import detect_device, extract_pil_image
 
 logger = logging.getLogger(__name__)
 
@@ -204,7 +206,9 @@ class CosmosPredictPolicy(Policy):
         self._step = 0
 
         mode_str = f"server={server_url}" if server_url else f"local ({model_id})"
-        logger.info(f"🌌 Cosmos Predict 2.5 policy: mode={mode}, suite={suite}, {mode_str}")
+        logger.info(
+            f"🌌 Cosmos Predict 2.5 policy: mode={mode}, suite={suite}, {mode_str}"
+        )
 
     @property
     def provider_name(self) -> str:
@@ -223,7 +227,6 @@ class CosmosPredictPolicy(Policy):
             # Server mode — verify connectivity
             try:
                 import requests
-
                 requests.get(f"{self._server_url}/health", timeout=5)
                 logger.info(f"🌌 Cosmos server connected: {self._server_url}")
             except Exception as e:
@@ -232,15 +235,10 @@ class CosmosPredictPolicy(Policy):
             return
 
         # Local mode — load model
-        import torch
-
         logger.info(f"🌌 Loading Cosmos Predict 2.5 from {self._model_id}...")
         start = time.time()
 
-        device = self._requested_device
-        if not device:
-            device = "cuda:0" if torch.cuda.is_available() else "cpu"
-        self._device = device
+        self._device = detect_device(self._requested_device)
 
         if self._mode == "policy":
             self._load_policy_model()
@@ -250,15 +248,12 @@ class CosmosPredictPolicy(Policy):
             self._load_world_model()
 
         elapsed = time.time() - start
-        logger.info(f"🌌 Cosmos loaded in {elapsed:.1f}s on {device}")
+        logger.info(f"🌌 Cosmos loaded in {elapsed:.1f}s on {self._device}")
         self._loaded = True
 
     def _load_policy_model(self):
         """Load Cosmos Policy model for direct action prediction."""
         try:
-            # Build a config-like object for cosmos_get_model
-            from types import SimpleNamespace
-
             from cosmos_predict2._src.predict2.cosmos_policy.experiments.robot.cosmos_utils import (
                 get_model as cosmos_get_model,
             )
@@ -269,7 +264,8 @@ class CosmosPredictPolicy(Policy):
                 load_dataset_stats as cosmos_load_dataset_stats,
             )
 
-            cfg = SimpleNamespace(
+            # Build a config namespace for cosmos_get_model
+            cfg = types.SimpleNamespace(
                 ckpt_path=self._model_id,
                 config=self._config_name or self._infer_config_name(),
                 config_file=self._config_file,
@@ -286,16 +282,10 @@ class CosmosPredictPolicy(Policy):
                 # Try to find dataset_statistics.json in the HF cache
                 try:
                     from huggingface_hub import snapshot_download
-
                     ckpt_dir = snapshot_download(self._model_id, allow_patterns=["*.json", "*.pkl"])
                     import os
-
-                    for fname in [
-                        "libero_dataset_statistics.json",
-                        "robocasa_dataset_statistics.json",
-                        "aloha_dataset_statistics.json",
-                        "dataset_statistics.json",
-                    ]:
+                    for fname in ["libero_dataset_statistics.json", "robocasa_dataset_statistics.json",
+                                  "aloha_dataset_statistics.json", "dataset_statistics.json"]:
                         stats_path = os.path.join(ckpt_dir, fname)
                         if os.path.exists(stats_path):
                             self._dataset_stats = cosmos_load_dataset_stats(stats_path)
@@ -310,14 +300,9 @@ class CosmosPredictPolicy(Policy):
             # Initialize text embeddings cache (auto-resolve from HF if needed)
             if not self._t5_embeddings_path and self._dataset_stats_path:
                 import os
-
                 ckpt_dir = os.path.dirname(self._dataset_stats_path)
-                for fname in [
-                    "libero_t5_embeddings.pkl",
-                    "robocasa_t5_embeddings.pkl",
-                    "aloha_t5_embeddings.pkl",
-                    "t5_embeddings.pkl",
-                ]:
+                for fname in ["libero_t5_embeddings.pkl", "robocasa_t5_embeddings.pkl",
+                              "aloha_t5_embeddings.pkl", "t5_embeddings.pkl"]:
                     t5_path = os.path.join(ckpt_dir, fname)
                     if os.path.exists(t5_path):
                         self._t5_embeddings_path = t5_path
@@ -362,7 +347,6 @@ class CosmosPredictPolicy(Policy):
 
             try:
                 from cosmos_predict2.config import MODEL_KEYS
-
                 if model_key_str in MODEL_KEYS:
                     key_obj = MODEL_KEYS[model_key_str]
                     checkpoint = MODEL_CHECKPOINTS.get(key_obj)
@@ -411,7 +395,6 @@ class CosmosPredictPolicy(Policy):
             # MODEL_CHECKPOINTS is keyed by ModelKey objects, not strings.
             try:
                 from cosmos_predict2.config import MODEL_KEYS
-
                 if model_key_str in MODEL_KEYS:
                     key_obj = MODEL_KEYS[model_key_str]
                     checkpoint = MODEL_CHECKPOINTS.get(key_obj)
@@ -434,7 +417,9 @@ class CosmosPredictPolicy(Policy):
             logger.info("🌌 World model loaded")
 
         except ImportError as e:
-            raise ImportError(f"World model mode requires cosmos-predict2.\nError: {e}")
+            raise ImportError(
+                f"World model mode requires cosmos-predict2.\nError: {e}"
+            )
 
     def _infer_config_name(self) -> str:
         """Infer the Cosmos config name from the model ID."""
@@ -509,61 +494,52 @@ class CosmosPredictPolicy(Policy):
         # Build observation in Cosmos format
         obs = self._build_cosmos_observation(observation_dict)
 
-        # Build config object with ALL required fields for get_action()
+        # Build config namespace with ALL required fields for get_action()
         # These defaults were verified working on NVIDIA L40S (EC2 g6e.4xlarge)
         suite_cfg = self.SUITE_CONFIGS.get(self._suite, self.SUITE_CONFIGS["libero"])
 
-        class _Cfg:
-            """Config object for cosmos_get_action with all required fields.
-
-            Uses a class (not SimpleNamespace) because cosmos_get_action may
-            use hasattr checks for optional fields and expects attribute-style access.
-            Defaults verified on NVIDIA L40S (EC2 g6e.4xlarge).
-            """
-
-            pass
-
-        cfg = _Cfg()
-        # Suite & camera config
-        cfg.suite = self._suite
-        cfg.use_wrist_image = self._use_wrist_image
-        cfg.use_third_person_image = True
-        cfg.num_wrist_images = suite_cfg.get("num_wrist_images", 1)
-        cfg.num_third_person_images = suite_cfg.get("num_third_person_images", 1)
-        cfg.use_proprio = self._use_proprio
-        cfg.normalize_proprio = self._normalize_proprio
-        cfg.unnormalize_actions = self._unnormalize_actions
-        cfg.use_jpeg_compression = self._use_jpeg_compression
-        cfg.trained_with_image_aug = self._trained_with_image_aug
-        cfg.chunk_size = self._chunk_size
-        cfg.model_family = "predict2"
-        cfg.scale_multiplier = kwargs.get("scale_multiplier", 1.0)
-        # Denoising & sampling
-        cfg.num_denoising_steps_action = kwargs.get("num_denoising_steps", self._num_denoising_steps)
-        cfg.seed = kwargs.get("seed", 1)
-        cfg.randomize_seed = kwargs.get("randomize_seed", False)
-        cfg.shift = kwargs.get("shift", 1.0)
-        cfg.t = suite_cfg.get("state_t", 9)
-        cfg.use_variance_scale = kwargs.get("use_variance_scale", False)
-        # Future state & value prediction (disabled by default for speed)
-        cfg.ar_future_prediction = kwargs.get("ar_future_prediction", False)
-        cfg.ar_value_prediction = kwargs.get("ar_value_prediction", False)
-        cfg.ar_qvalue_prediction = kwargs.get("ar_qvalue_prediction", False)
-        cfg.use_ensemble_future_state_predictions = False
-        cfg.use_ensemble_value_predictions = False
-        cfg.num_future_state_predictions_in_ensemble = 1
-        cfg.num_value_predictions_in_ensemble = 1
-        cfg.future_state_ensemble_aggregation_scheme = "mean"
-        cfg.value_ensemble_aggregation_scheme = "mean"
-        cfg.mask_current_state_action_for_value_prediction = False
-        cfg.mask_future_state_for_qvalue_prediction = False
-        cfg.num_denoising_steps_future_state = 5
-        cfg.num_denoising_steps_value = 5
-        cfg.num_queries_best_of_n = kwargs.get("best_of_n", 1)
-        cfg.parallel_timeout = 30
-        cfg.search_depth = 1
-        cfg.planning_model_ckpt_path = None
-        cfg.planning_model_config_name = None
+        cfg = types.SimpleNamespace(
+            # Suite & camera config
+            suite=self._suite,
+            use_wrist_image=self._use_wrist_image,
+            use_third_person_image=True,
+            num_wrist_images=suite_cfg.get("num_wrist_images", 1),
+            num_third_person_images=suite_cfg.get("num_third_person_images", 1),
+            use_proprio=self._use_proprio,
+            normalize_proprio=self._normalize_proprio,
+            unnormalize_actions=self._unnormalize_actions,
+            use_jpeg_compression=self._use_jpeg_compression,
+            trained_with_image_aug=self._trained_with_image_aug,
+            chunk_size=self._chunk_size,
+            model_family="predict2",
+            scale_multiplier=kwargs.get("scale_multiplier", 1.0),
+            # Denoising & sampling
+            num_denoising_steps_action=kwargs.get("num_denoising_steps", self._num_denoising_steps),
+            seed=kwargs.get("seed", 1),
+            randomize_seed=kwargs.get("randomize_seed", False),
+            shift=kwargs.get("shift", 1.0),
+            t=suite_cfg.get("state_t", 9),
+            use_variance_scale=kwargs.get("use_variance_scale", False),
+            # Future state & value prediction (disabled by default for speed)
+            ar_future_prediction=kwargs.get("ar_future_prediction", False),
+            ar_value_prediction=kwargs.get("ar_value_prediction", False),
+            ar_qvalue_prediction=kwargs.get("ar_qvalue_prediction", False),
+            use_ensemble_future_state_predictions=False,
+            use_ensemble_value_predictions=False,
+            num_future_state_predictions_in_ensemble=1,
+            num_value_predictions_in_ensemble=1,
+            future_state_ensemble_aggregation_scheme="mean",
+            value_ensemble_aggregation_scheme="mean",
+            mask_current_state_action_for_value_prediction=False,
+            mask_future_state_for_qvalue_prediction=False,
+            num_denoising_steps_future_state=5,
+            num_denoising_steps_value=5,
+            num_queries_best_of_n=kwargs.get("best_of_n", 1),
+            parallel_timeout=30,
+            search_depth=1,
+            planning_model_ckpt_path=None,
+            planning_model_config_name=None,
+        )
 
         seed = kwargs.get("seed", 1)
         num_steps = kwargs.get("num_denoising_steps", self._num_denoising_steps)
@@ -643,7 +619,6 @@ class CosmosPredictPolicy(Policy):
 
         # Run action-conditioned video generation
         import torchvision
-
         img_tensor = torchvision.transforms.functional.to_tensor(initial_frame).unsqueeze(0)
         num_video_frames = min(actions.shape[0] + 1, self._chunk_size + 1)
         vid_input = torch.cat(
@@ -655,7 +630,7 @@ class CosmosPredictPolicy(Policy):
         video = self._video2world.generate_vid2world(
             prompt=instruction or "",
             input_path=vid_input,
-            action=torch.from_numpy(actions[: self._chunk_size]).float(),
+            action=torch.from_numpy(actions[:self._chunk_size]).float(),
             guidance=self._guidance,
             num_video_frames=num_video_frames,
             num_latent_conditional_frames=1,
@@ -665,7 +640,10 @@ class CosmosPredictPolicy(Policy):
 
         # Return frames as action dicts with video metadata
         video_normalized = (video - (-1)) / (1 - (-1))
-        video_clamped = (torch.clamp(video_normalized[0], 0, 1) * 255).to(torch.uint8).permute(1, 2, 3, 0).cpu().numpy()
+        video_clamped = (
+            (torch.clamp(video_normalized[0], 0, 1) * 255)
+            .to(torch.uint8).permute(1, 2, 3, 0).cpu().numpy()
+        )
 
         result_actions = []
         for i in range(video_clamped.shape[0]):
@@ -692,7 +670,6 @@ class CosmosPredictPolicy(Policy):
             raise ValueError("World model mode requires at least one camera image")
 
         import torchvision
-
         img_tensor = torchvision.transforms.functional.to_tensor(initial_frame).unsqueeze(0)
         num_frames = kwargs.get("num_video_frames", 17)
         vid_input = torch.cat(
@@ -712,7 +689,10 @@ class CosmosPredictPolicy(Policy):
         )
 
         video_normalized = (video - (-1)) / (1 - (-1))
-        video_clamped = (torch.clamp(video_normalized[0], 0, 1) * 255).to(torch.uint8).permute(1, 2, 3, 0).cpu().numpy()
+        video_clamped = (
+            (torch.clamp(video_normalized[0], 0, 1) * 255)
+            .to(torch.uint8).permute(1, 2, 3, 0).cpu().numpy()
+        )
 
         return [{"predicted_frame": video_clamped[i]} for i in range(video_clamped.shape[0])]
 
@@ -821,13 +801,7 @@ class CosmosPredictPolicy(Policy):
 
     def _find_camera_image(self, observation_dict: Dict[str, Any]):
         """Find any camera image in the observation dict and return as PIL Image."""
-        from PIL import Image
-
-        for key in sorted(observation_dict.keys()):
-            val = observation_dict[key]
-            if isinstance(val, np.ndarray) and val.ndim == 3 and val.shape[-1] in (3, 4):
-                return Image.fromarray(val[:, :, :3].astype(np.uint8))
-        return None
+        return extract_pil_image(observation_dict, fallback_size=(COSMOS_IMAGE_SIZE, COSMOS_IMAGE_SIZE))
 
     def get_value_estimate(
         self,
@@ -865,7 +839,7 @@ class CosmosPredictPolicy(Policy):
         logger.info("🌌 Cosmos Predict 2.5 policy reset")
 
 
-# Backwards-compatible alias
+# Backward compatibility alias — old name still works
 Cosmos_predictPolicy = CosmosPredictPolicy
 
 __all__ = ["CosmosPredictPolicy", "Cosmos_predictPolicy"]
