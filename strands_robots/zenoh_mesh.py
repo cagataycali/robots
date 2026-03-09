@@ -325,7 +325,7 @@ class Mesh:
                 return
             is_new = _update_peer(pid, d.get("robot_type", "robot"), d.get("hostname", ""), d)
             if is_new:
-                logger.info(f"🤖 New peer: {pid} ({d.get('robot_type','?')})")
+                logger.info(f"🤖 New peer: {pid} ({d.get('robot_type', '?')})")
         except Exception:
             pass
 

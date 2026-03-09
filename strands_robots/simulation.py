@@ -954,7 +954,8 @@ class Simulation(AgentTool):
                         f"⚙️ Timestep: {self._world.timestep}s ({1/self._world.timestep:.0f}Hz physics)\n"
                         f"🌐 Gravity: {self._world.gravity}\n"
                         f"📷 Default camera ready\n"
-                        f"🤖 Robot models: {len(_list_menagerie_robots()) if _HAS_ASSET_MANAGER else len(_URDF_REGISTRY)} available\n"
+                        f"🤖 Robot models: "
+                        f"{len(_list_menagerie_robots()) if _HAS_ASSET_MANAGER else len(_URDF_REGISTRY)} available\n"
                         "💡 Add robots: action='add_robot' (urdf_path or data_config)\n"
                         "💡 Add objects: action='add_object'\n"
                         "💡 List URDFs: action='list_urdfs'"
@@ -1208,7 +1209,8 @@ class Simulation(AgentTool):
                             f"🤖 Robot '{name}' added to simulation\n"
                             f"📁 Source: {source} → {os.path.basename(resolved_path)}\n"
                             f"📍 Position: {robot.position}\n"
-                            f"🔩 Joints: {len(robot.joint_names)} ({', '.join(robot.joint_names[:8])}{'...' if len(robot.joint_names) > 8 else ''})\n"
+                            f"🔩 Joints: {len(robot.joint_names)} "
+                            f"({', '.join(robot.joint_names[:8])}{'...' if len(robot.joint_names) > 8 else ''})\n"
                             f"⚡ Actuators: {len(robot.actuator_ids)}\n"
                             f"📷 Cameras: {list(self._world.cameras.keys())}\n"
                             f"💡 Run policy: action='run_policy', robot_name='{name}'"
@@ -1990,11 +1992,13 @@ class Simulation(AgentTool):
             "🌍 Simulation State",
             f"🕐 t={self._world.sim_time:.4f}s (step {self._world.step_count})",
             f"⚙️ dt={self._world.timestep}s | 🌐 g={self._world.gravity}",
-            f"🤖 Robots: {len(self._world.robots)} | 📦 Objects: {len(self._world.objects)} | 📷 Cameras: {len(self._world.cameras)}",
+            f"🤖 Robots: {len(self._world.robots)} | 📦 Objects: {len(self._world.objects)} "
+            f"| 📷 Cameras: {len(self._world.cameras)}",
         ]
         if self._world._model:
             lines.append(
-                f"🦴 Bodies: {self._world._model.nbody} | 🔩 Joints: {self._world._model.njnt} | ⚡ Actuators: {self._world._model.nu}"
+                f"🦴 Bodies: {self._world._model.nbody} | 🔩 Joints: {self._world._model.njnt} "
+                f"| ⚡ Actuators: {self._world._model.nu}"
             )
         if self._world._recording:
             lines.append(f"🔴 Recording: {len(self._world._trajectory)} steps")
@@ -2671,7 +2675,6 @@ class Simulation(AgentTool):
                 obs = self._get_sim_observation(robot_name=robot_name)
 
                 # Get action
-                import asyncio
 
                 try:
                     loop = asyncio.get_running_loop()
@@ -2982,7 +2985,8 @@ class Simulation(AgentTool):
                         "height": {"type": "integer"},
                         "policy_provider": {
                             "type": "string",
-                            "description": "Policy provider name (e.g. groot, lerobot_async, lerobot_local, dreamgen, mock)",
+                            "description": "Policy provider name "
+                            "(e.g. groot, lerobot_async, lerobot_local, dreamgen, mock)",
                         },
                         "instruction": {"type": "string"},
                         "duration": {"type": "number"},
@@ -3009,7 +3013,11 @@ class Simulation(AgentTool):
                         # Replay and eval
                         "repo_id": {
                             "type": "string",
-                            "description": "HuggingFace dataset repo ID (for start_recording: creates LeRobotDataset; for replay_episode: loads dataset)",
+                            "description": (
+                                "HuggingFace dataset repo ID "
+                                "(for start_recording: creates LeRobotDataset; "
+                                "for replay_episode: loads dataset)"
+                            ),
                         },
                         "push_to_hub": {
                             "type": "boolean",

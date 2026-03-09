@@ -1,7 +1,5 @@
 """Tests for the MuJoCo simulation engine, asset manager, and zenoh mesh."""
 
-import pytest
-
 
 class TestAssetManager:
     """Test the robot asset manager."""
@@ -99,6 +97,7 @@ class TestSimulationImport:
         assert SimRobot is not None
         assert SimObject is not None
         assert SimCamera is not None
+        assert SimStatus is not None
 
     def test_simulation_convenience_alias(self):
         """The module exports a `simulation` callable as convenience."""
