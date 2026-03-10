@@ -73,9 +73,10 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 
 import numpy as np
 from strands.tools.tools import AgentTool
-from strands_robots.simulation_backend import SimulationBackend
 from strands.types._events import ToolResultEvent
 from strands.types.tools import ToolSpec, ToolUse
+
+from strands_robots.simulation_backend import SimulationBackend
 
 # LeRobotDataset recording (optional — falls back to JSON if not installed)
 try:
