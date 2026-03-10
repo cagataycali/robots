@@ -1,6 +1,5 @@
 """Tests for strands_robots top-level package imports."""
 
-import pytest
 
 
 class TestPackageImport:
@@ -9,7 +8,7 @@ class TestPackageImport:
         assert hasattr(strands_robots, "__all__")
 
     def test_core_exports(self):
-        from strands_robots import Robot, Policy, MockPolicy, create_policy, list_providers, list_robots, resolve_policy
+        from strands_robots import MockPolicy, Policy, Robot, create_policy, list_providers, list_robots, resolve_policy
         assert Robot is not None
         assert Policy is not None
         assert MockPolicy is not None
@@ -24,11 +23,11 @@ class TestPackageImport:
         assert len(strands_robots.__all__) > 0
 
     def test_motion_library_import(self):
-        from strands_robots.motion_library import MotionLibrary, Motion
+        from strands_robots.motion_library import Motion, MotionLibrary
         assert MotionLibrary is not None
         assert Motion is not None
 
     def test_telemetry_import(self):
-        from strands_robots.telemetry import TelemetryStream, EventCategory
+        from strands_robots.telemetry import EventCategory, TelemetryStream
         assert TelemetryStream is not None
         assert EventCategory is not None

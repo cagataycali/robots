@@ -5,7 +5,6 @@ import tempfile
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 from strands_robots.motion_library import Motion, MotionLibrary
 

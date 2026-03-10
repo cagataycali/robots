@@ -1,9 +1,7 @@
 """Tests for strands_robots.factory — Robot(), list_robots()."""
 
-import pytest
 
 from strands_robots.factory import (
-    Robot,
     _ALIASES,
     _UNIFIED_ROBOTS,
     _resolve_name,

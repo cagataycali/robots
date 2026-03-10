@@ -1,12 +1,10 @@
 """Tests for strands_robots.telemetry — TelemetryStream, events, batching."""
 
-import pytest
 
 from strands_robots.telemetry import (
     BatchConfig,
     EventCategory,
     StreamTier,
-    TelemetryEvent,
     TelemetryStream,
 )
 

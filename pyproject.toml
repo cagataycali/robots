@@ -167,6 +167,7 @@ packages = ["strands_robots"]
 dependencies = [
     "pytest>=6.0",
     "pytest-cov",
+    "ruff",
     "Pillow>=8.0.0",
     "requests>=2.28.0",
     "msgpack>=1.0.0",
@@ -184,6 +185,9 @@ target-version = "py310"
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]
 ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

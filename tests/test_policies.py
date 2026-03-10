@@ -1,7 +1,6 @@
 """Tests for strands_robots.policies — registry, MockPolicy, create_policy."""
 
 import asyncio
-import math
 
 import pytest
 

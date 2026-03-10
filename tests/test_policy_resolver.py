@@ -1,6 +1,5 @@
 """Tests for strands_robots.policy_resolver — resolve_policy()."""
 
-import pytest
 
 from strands_robots.policy_resolver import resolve_policy
 
