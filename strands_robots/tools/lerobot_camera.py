@@ -870,7 +870,9 @@ def _test_camera_performance(
                 f"   - Async capture: {'✅ Better' if avg_async_time < avg_sync_time else '❌ Worse'}"
                 f" ({avg_async_time:.3f}s)"
             )
-        test_results.append(f"   - Frame rate: {'✅ Stable' if max_sync_time - min_sync_time < 0.05 else '⚠️ Variable'}")
+        test_results.append(
+            f"   - Frame rate: {'✅ Stable' if max_sync_time - min_sync_time < 0.05 else '⚠️ Variable'}"
+        )
 
         return {"status": "success", "content": [{"text": "\n".join(test_results)}]}
 

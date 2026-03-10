@@ -1705,10 +1705,9 @@ def evaluate(
                         else:
                             # Running inside an existing event loop (e.g. Jupyter, async agent)
                             import concurrent.futures
+
                             with concurrent.futures.ThreadPoolExecutor() as pool:
-                                actions = pool.submit(
-                                    asyncio.run, policy.get_actions(obs_dict, task)
-                                ).result()
+                                actions = pool.submit(asyncio.run, policy.get_actions(obs_dict, task)).result()
                     else:
                         actions = policy.get_actions(obs_dict, task)
                 except Exception as e:
