@@ -441,7 +441,7 @@ def create_policy(provider: str, **kwargs) -> Policy:
     # vs a registered provider name
     _needs_resolution = (
         "/" in provider
-        or (":" in provider and not provider.replace("_", "").isalpha())
+        or (":" in provider and (not provider.replace("_", "").isalpha()))
         or provider.startswith("ws://")
         or provider.startswith("grpc://")
         or provider.startswith("zmq://")
