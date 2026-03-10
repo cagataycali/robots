@@ -132,6 +132,11 @@ class OmnivlaPolicy(Policy):
     ):
         """Initialize OmniVLA policy.
 
+        .. warning:: Security — trusted paths only
+            The checkpoint_path directory may be added to sys.path during edge model
+            loading (for utils_policy imports). Only use checkpoint paths from trusted
+            sources. See :meth:`_load_edge_model` for details.
+
         Args:
             checkpoint_path: Path to model checkpoint directory (local or will be downloaded)
             variant: Model variant — "full" (7B) or "edge" (lightweight)
@@ -315,7 +320,15 @@ class OmnivlaPolicy(Policy):
             )
 
     def _load_edge_model(self):
-        """Load the lightweight OmniVLA-edge model."""
+        """Load the lightweight OmniVLA-edge model.
+
+        .. warning:: Security — sys.path modification
+            This method inserts ``checkpoint_path`` and its ``inference/`` subdirectory
+            into ``sys.path`` so that OmniVLA's ``utils_policy`` module can be imported.
+            This affects all subsequent imports in the process. Only use checkpoint paths
+            from trusted sources — a malicious checkpoint directory could shadow standard
+            library or third-party modules.
+        """
         import torch
 
         logger.info(f"🧭 Loading OmniVLA-edge from {self._checkpoint_path}...")
@@ -334,7 +347,10 @@ class OmnivlaPolicy(Policy):
             # Edge model uses a custom loader
             import sys
 
-            # Ensure OmniVLA inference dir is in path for utils_policy
+            # NOTE(security): This inserts user-provided checkpoint_path into sys.path.
+            # The checkpoint directory must be trusted — it can contain arbitrary Python
+            # modules that will be importable by the entire process. This is inherent to
+            # the OmniVLA "load from local path" pattern (requires utils_policy.py).
             omnivla_dir = os.path.dirname(self._checkpoint_path)
             if omnivla_dir not in sys.path:
                 sys.path.insert(0, omnivla_dir)

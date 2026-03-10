@@ -15,10 +15,16 @@ Built-in providers:
 
 import importlib
 import logging
+import re
 from abc import ABC, abstractmethod
 from typing import Any, Callable, Dict, List, Optional, Type
 
 logger = logging.getLogger(__name__)
+
+# Regex for valid provider names: lowercase letter followed by lowercase
+# alphanumeric or underscores. Prevents path traversal and unexpected
+# module names from reaching importlib.import_module().
+_VALID_PROVIDER_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
 class Policy(ABC):
@@ -211,7 +217,16 @@ class PolicyRegistry:
 
         Convention: strands_robots.policies.<name>.<Name>Policy
         Example: strands_robots.policies.foo -> FooPolicy
+
+        Security: Provider names are validated against ^[a-z][a-z0-9_]*$
+        before being passed to importlib.import_module() to prevent
+        path traversal or unexpected module resolution.
         """
+        # Validate provider name before passing to importlib.import_module()
+        if not _VALID_PROVIDER_NAME_RE.match(name):
+            logger.debug(f"Auto-discovery skipped for '{name}': invalid provider name format")
+            return None
+
         try:
             module = importlib.import_module(f"strands_robots.policies.{name}")
             # Try <Name>Policy (e.g. FooPolicy)
@@ -459,8 +474,13 @@ def create_policy(provider: str, **kwargs) -> Policy:
             from strands_robots.policy_resolver import resolve_policy
 
             resolved_provider, resolved_kwargs = resolve_policy(provider, **kwargs)
-        except Exception:
-            # Resolution failed — fall through to direct lookup
+        except ImportError:
+            # Resolver module not available — fall through to direct lookup
+            resolved_provider = None
+            resolved_kwargs = {}
+        except Exception as e:
+            # Log unexpected resolver errors instead of silently swallowing them
+            logger.debug(f"Policy resolver failed for '{provider}': {e}")
             resolved_provider = None
             resolved_kwargs = {}
 

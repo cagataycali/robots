@@ -104,6 +104,38 @@ class DreamzeroPolicy(Policy):
         self._robot_state_keys = robot_state_keys
         logger.info(f"🔧 DreamZero robot state keys: {self._robot_state_keys}")
 
+    # Maximum allowed image resolution from server config (prevents OOM from malicious configs)
+    _MAX_IMAGE_RESOLUTION = (4096, 4096)
+
+    def _validate_server_config(self, config: dict) -> dict:
+        """Validate server config values to prevent resource exhaustion.
+
+        Bounds-checks image_resolution to prevent a malicious or misconfigured
+        server from causing excessive memory allocation.
+        """
+        if not isinstance(config, dict):
+            logger.warning(f"Server config is not a dict ({type(config)}), using defaults")
+            return {}
+
+        img_res = config.get("image_resolution")
+        if img_res is not None:
+            try:
+                h, w = int(img_res[0]), int(img_res[1])
+                max_h, max_w = self._MAX_IMAGE_RESOLUTION
+                if h <= 0 or w <= 0:
+                    raise ValueError(f"image_resolution must be positive, got ({h}, {w})")
+                if h > max_h or w > max_w:
+                    logger.warning(
+                        f"Server image_resolution ({h}, {w}) exceeds max "
+                        f"({max_h}, {max_w}), clamping"
+                    )
+                    config["image_resolution"] = (min(h, max_h), min(w, max_w))
+            except (TypeError, IndexError, ValueError) as e:
+                logger.warning(f"Invalid image_resolution in server config: {img_res} ({e}), removing")
+                config.pop("image_resolution", None)
+
+        return config
+
     def _ensure_connected(self):
         """Lazily connect to the DreamZero server."""
         if self._connected:
@@ -136,7 +168,7 @@ class DreamzeroPolicy(Policy):
 
             # Server sends config on connect
             raw_config = self._ws.recv()
-            self._server_config = msgpack_numpy.unpackb(raw_config)
+            self._server_config = self._validate_server_config(msgpack_numpy.unpackb(raw_config))
             self._packer = msgpack_numpy.Packer()
             self._connected = True
 
@@ -161,7 +193,7 @@ class DreamzeroPolicy(Policy):
                     ping_timeout=600,
                 )
                 raw_config = self._ws.recv()
-                self._server_config = msgpack_numpy.unpackb(raw_config)
+                self._server_config = self._validate_server_config(msgpack_numpy.unpackb(raw_config))
                 self._packer = msgpack_numpy.Packer()
                 self._connected = True
                 logger.info(f"🌊 Connected via wss! Config: {self._server_config}")
@@ -194,7 +226,11 @@ class DreamzeroPolicy(Policy):
         # Get server config for expected format
         cfg = self._server_config or {}
         img_res = self._image_resize or cfg.get("image_resolution", (180, 320))
-        n_ext_cams = cfg.get("n_external_cameras", 2)
+        # Bounds check: cap resolution to prevent excessive memory allocation from
+        # untrusted server config (max 4096x4096 is generous for any VLA use case)
+        if isinstance(img_res, (list, tuple)) and len(img_res) == 2:
+            img_res = (min(max(1, img_res[0]), 4096), min(max(1, img_res[1]), 4096))
+        n_ext_cams = min(cfg.get("n_external_cameras", 2), 16)  # cap camera count
         needs_wrist = cfg.get("needs_wrist_camera", True)
 
         # Map camera images

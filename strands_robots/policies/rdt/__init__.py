@@ -57,6 +57,7 @@ class RdtPolicy(Policy):
         Args:
             model_id: HuggingFace model ID for the RDT checkpoint.
             repo_path: Path to cloned RDT repo (required for full inference).
+                This path is added to sys.path at load time — only use trusted sources.
             state_dim: Robot proprioceptive state dimension.
             chunk_size: Number of future actions to predict per inference.
             camera_names: Camera key names in the observation dict.
@@ -106,9 +107,17 @@ class RdtPolicy(Policy):
         self._device = detect_device(self._requested_device)
 
         try:
-            # RDT uses its own model creation from the repo
+            # RDT uses its own model creation from the repo.
+            # Security note: repo_path is inserted into sys.path so that
+            # RDT's scripts.agilex_model can be imported. This affects all
+            # subsequent imports in the process. Only use repo_path values
+            # from trusted sources — a malicious directory could shadow
+            # standard library or third-party modules.
             import sys
 
+            # NOTE(security): This inserts user-provided repo_path into sys.path.
+            # The repo directory must be trusted — it can contain arbitrary Python
+            # modules that will be importable by the entire process.
             if self._repo_path and self._repo_path not in sys.path:
                 sys.path.insert(0, self._repo_path)
 
