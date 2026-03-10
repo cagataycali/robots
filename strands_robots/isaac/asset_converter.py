@@ -368,8 +368,7 @@ def _strip_meshes_from_mjcf(mjcf_path: str) -> Optional[str]:
                     removed_classonly_geoms += 1
                 # Also remove geoms with no class, type, size, mesh, or fromto
                 # (these cannot define valid geometry)
-                elif (not geom_class and not has_type and not has_size
-                      and not has_mesh and not has_fromto):
+                elif not geom_class and not has_type and not has_size and not has_mesh and not has_fromto:
                     to_remove.append(child)
                     removed_classonly_geoms += 1
             else:
