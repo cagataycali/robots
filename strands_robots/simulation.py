@@ -129,6 +129,8 @@ def _sanitize_xml_attr(value: str) -> str:
     Returns:
         Escaped string safe for XML attribute interpolation.
     """
+    # Strip ASCII control characters (null bytes, newlines, tabs) first
+    value = re.sub(r"[\x00-\x1f]", "", str(value))
     # Order matters: & must be replaced first to avoid double-escaping
     value = value.replace("&", "&amp;")
     value = value.replace('"', "&quot;")
@@ -191,6 +193,9 @@ def _validate_mesh_path(path: str) -> str:
     dangerous = (";", "|", "&", "`", "$", "(", ")", "{", "}", "<", ">")
     if any(c in path for c in dangerous):
         raise ValueError(f"mesh_path contains invalid characters: {path!r}")
+    # Reject control characters (null bytes, newlines, etc.)
+    if re.search(r"[\x00-\x1f]", path):
+        raise ValueError(f"mesh_path contains control characters: {path!r}")
     return _sanitize_xml_attr(path)
 
 
