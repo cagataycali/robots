@@ -73,6 +73,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 
 import numpy as np
 from strands.tools.tools import AgentTool
+from strands_robots.simulation_backend import SimulationBackend
 from strands.types._events import ToolResultEvent
 from strands.types.tools import ToolSpec, ToolUse
 
@@ -805,7 +806,7 @@ class MJCFBuilder:
 # ===================================================================
 
 
-class Simulation(AgentTool):
+class Simulation(SimulationBackend, AgentTool):
     """Programmatic simulation environment as a Strands AgentTool.
 
     Gives AI agents the ability to create, modify, and control MuJoCo
