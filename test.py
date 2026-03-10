@@ -7,8 +7,18 @@ robot = Robot(
     tool_name="orange_arm",
     robot="so101_follower",
     cameras={
-        "wrist": {"type": "opencv", "index_or_path": "/dev/video0", "fps": 15, "fourcc": "MJPG"},
-        "front": {"type": "opencv", "index_or_path": "/dev/video2", "fps": 15, "fourcc": "MJPG"},
+        "wrist": {
+            "type": "opencv",
+            "index_or_path": "/dev/video0",
+            "fps": 15,
+            "fourcc": "MJPG",
+        },
+        "front": {
+            "type": "opencv",
+            "index_or_path": "/dev/video2",
+            "fps": 15,
+            "fourcc": "MJPG",
+        },
     },
     port="/dev/ttyACM0",
     data_config="so100_dualcam",
@@ -21,7 +31,7 @@ agent = Agent(
 
 agent.tool.gr00t_inference(
     action="start",
-    checkpoint_path="/data/checkpoints/gr00t-wave/checkpoint-300000", # Model -> https://huggingface.co/cagataydev/gr00t-wave
+    checkpoint_path="/data/checkpoints/gr00t-wave/checkpoint-300000",  # Model -> https://huggingface.co/cagataydev/gr00t-wave
     port=5555,
     data_config="so100_dualcam",
     embodiment_tag="new_embodiment",
