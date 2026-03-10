@@ -370,12 +370,20 @@ if HAS_GYM:
 
     # Register the environment with Gymnasium
     try:
-        gym.register(
-            id="StrandsSim-v0",
-            entry_point="strands_robots.envs:StrandsSimEnv",
-        )
+        if gym.spec("StrandsSim-v0") is None:
+            gym.register(
+                id="StrandsSim-v0",
+                entry_point="strands_robots.envs:StrandsSimEnv",
+            )
     except Exception:
-        pass  # Already registered or gym not available
+        # Already registered — spec() raises if not found in some gym versions
+        try:
+            gym.register(
+                id="StrandsSim-v0",
+                entry_point="strands_robots.envs:StrandsSimEnv",
+            )
+        except gymnasium.error.Error:
+            pass  # Already registered
 
 else:
     # Stub when gymnasium not installed

@@ -362,7 +362,7 @@ _ALIASES: Dict[str, str] = {
     "unitree_z1": "z1",
     # Others
     "oxe_droid": "google_robot",  # OXE DROID → closest is Google Robot
-    "galaxea_r1_pro": "panda",  # Galaxea not in Menagerie, fallback to Panda
+    # "galaxea_r1_pro": "panda",  # Removed: silent fallback to Panda is misleading (see PR #9 review)
     "koch_v1.1": "koch",
     "low_cost_robot_arm": "koch",
     "viper_x300s": "vx300s",

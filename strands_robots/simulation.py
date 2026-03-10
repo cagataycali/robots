@@ -454,6 +454,8 @@ class SimWorld:
     _trajectory: List[TrajectoryStep] = field(default_factory=list)
     # LeRobotDataset recorder (training-ready format)
     _dataset_recorder: Any = None
+    # Temp directories created during scene composition (cleaned up on close)
+    _tmpdirs: List[str] = field(default_factory=list)
 
 
 # ===================================================================
@@ -606,6 +608,7 @@ class MJCFBuilder:
         """
         mj = _ensure_mujoco()
         tmpdir = tempfile.mkdtemp(prefix="strands_sim_")
+        world._tmpdirs.append(tmpdir)
 
         # Convert each robot URDF to MJCF and save
         robot_xmls = {}
@@ -1403,6 +1406,7 @@ class Simulation(AgentTool):
             scene_path = os.path.join(robot_base_dir, "_strands_scene_with_objects.xml")
         else:
             tmpdir = tempfile.mkdtemp(prefix="strands_obj_")
+            self._world._tmpdirs.append(tmpdir)
             scene_path = os.path.join(tmpdir, "scene_with_objects.xml")
 
         mj.mj_saveLastXML(scene_path, self._world._model)
@@ -1573,6 +1577,7 @@ class Simulation(AgentTool):
             scene_path = os.path.join(robot_base_dir, "_strands_scene_with_cameras.xml")
         else:
             tmpdir = tempfile.mkdtemp(prefix="strands_cam_")
+            self._world._tmpdirs.append(tmpdir)
             scene_path = os.path.join(tmpdir, "scene_with_cameras.xml")
 
         mj.mj_saveLastXML(scene_path, self._world._model)
@@ -2195,8 +2200,17 @@ class Simulation(AgentTool):
                 else:
                     dataset_dir = _Path.home() / ".cache" / "huggingface" / "lerobot" / repo_id
                 if dataset_dir.exists() and dataset_dir.is_dir():
-                    shutil.rmtree(dataset_dir)
-                    logger.info(f"Removed existing dataset dir: {dataset_dir}")
+                    # Safety: only remove if it looks like a dataset directory
+                    _marker_files = {"meta", "data", "videos", "episode_data_index.safetensors"}
+                    _dir_contents = {p.name for p in dataset_dir.iterdir()} if dataset_dir.exists() else set()
+                    if _dir_contents & _marker_files or len(_dir_contents) == 0:
+                        shutil.rmtree(dataset_dir)
+                        logger.info(f"Removed existing dataset dir: {dataset_dir}")
+                    else:
+                        logger.warning(
+                            f"Refusing to remove {dataset_dir}: does not look like a "
+                            f"dataset directory (contents: {_dir_contents})"
+                        )
 
             joint_names = []
             camera_keys = []
@@ -2395,7 +2409,6 @@ class Simulation(AgentTool):
 
                 # Policy inference — handle both sync and async get_actions
                 try:
-                    import asyncio
 
                     coro_or_result = policy.get_actions(observation, instruction)
                     if asyncio.iscoroutine(coro_or_result):
@@ -3267,6 +3280,14 @@ class Simulation(AgentTool):
         if self._world:
             for r in self._world.robots.values():
                 r.policy_running = False
+            # Clean up temp directories created during scene composition
+            for tmpdir in getattr(self._world, "_tmpdirs", []):
+                try:
+                    import shutil
+                    if os.path.isdir(tmpdir):
+                        shutil.rmtree(tmpdir)
+                except OSError:
+                    pass
             self._world = None
         self._close_viewer()
         self._executor.shutdown(wait=False)
