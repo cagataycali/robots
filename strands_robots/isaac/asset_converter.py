@@ -350,6 +350,7 @@ def _strip_meshes_from_mjcf(mjcf_path: str) -> Optional[str]:
     # Remove geoms that inherit mesh type from class defaults.
     # After mesh stripping, such geoms would cause errors in MuJoCo.
     removed_classonly_geoms = 0
+
     def _remove_mesh_class_geoms(elem):
         nonlocal removed_classonly_geoms
         to_remove = []

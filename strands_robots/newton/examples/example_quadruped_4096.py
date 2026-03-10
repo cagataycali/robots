@@ -6,9 +6,9 @@ import sys
 import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-import newton.examples as ne
+import newton.examples as ne  # noqa: E402
 
-from strands_robots.newton import NewtonBackend, NewtonConfig
+from strands_robots.newton import NewtonBackend, NewtonConfig  # noqa: E402
 
 print("🦿 Newton Example: 4096 Parallel Quadrupeds")
 print("=" * 50)

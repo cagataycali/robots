@@ -18,10 +18,10 @@ import traceback
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
-import newton
-import newton.examples as ne
-import numpy as np
-import warp as wp
+import newton  # noqa: E402
+import newton.examples as ne  # noqa: E402
+import numpy as np  # noqa: E402
+import warp as wp  # noqa: E402
 
 wp.config.quiet = True
 wp.init()

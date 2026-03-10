@@ -5,8 +5,8 @@ import os
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-import newton
-import warp as wp
+import newton  # noqa: E402
+import warp as wp  # noqa: E402
 
 wp.config.quiet = True
 print("🧮 Newton Example: Differentiable Ball Optimization")

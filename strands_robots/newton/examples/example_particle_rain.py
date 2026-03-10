@@ -5,11 +5,11 @@ import os
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-import time
+import time  # noqa: E402
 
-import newton
-import numpy as np
-import warp as wp
+import newton  # noqa: E402
+import numpy as np  # noqa: E402
+import warp as wp  # noqa: E402
 
 wp.config.quiet = True
 print("🌧️ Newton Example: Particle Rain (100 particles)")
