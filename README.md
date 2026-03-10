@@ -10,498 +10,595 @@
   </h1>
 
   <h2>
-    Robot Control for Strands Agents
+    A model-driven approach to building robot agents in just a few lines of code.
   </h2>
 
   <div align="center">
-    <a href="https://pypi.org/project/strands-robots/"><img alt="PyPI Version" src="https://img.shields.io/pypi/v/strands-robots"/></a>
-    <a href="https://github.com/strands-labs/robots"><img alt="GitHub stars" src="https://img.shields.io/github/stars/strands-labs/robots"/></a>
+    <a href="https://github.com/strands-labs/robots/graphs/commit-activity"><img alt="GitHub commit activity" src="https://img.shields.io/github/commit-activity/m/strands-labs/robots"/></a>
+    <a href="https://github.com/strands-labs/robots/issues"><img alt="GitHub open issues" src="https://img.shields.io/github/issues/strands-labs/robots"/></a>
+    <a href="https://github.com/strands-labs/robots/pulls"><img alt="GitHub open pull requests" src="https://img.shields.io/github/issues-pr/strands-labs/robots"/></a>
     <a href="https://github.com/strands-labs/robots/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/strands-labs/robots"/></a>
-    <a href="https://github.com/NVIDIA/Isaac-GR00T"><img alt="GR00T" src="https://img.shields.io/badge/NVIDIA-GR00T-76B900?logo=nvidia"/></a>
-    <a href="https://github.com/huggingface/lerobot"><img alt="LeRobot" src="https://img.shields.io/badge/🤗-LeRobot-yellow"/></a>
+    <a href="https://pypi.org/project/strands-robots/"><img alt="PyPI version" src="https://img.shields.io/pypi/v/strands-robots"/></a>
+    <a href="https://python.org"><img alt="Python versions" src="https://img.shields.io/pypi/pyversions/strands-robots"/></a>
   </div>
-  
+
   <p>
-    <a href="https://strandsagents.com/">Strands Docs</a>
-    ◆ <a href="https://github.com/NVIDIA/Isaac-GR00T">NVIDIA GR00T</a>
-    ◆ <a href="https://github.com/huggingface/lerobot">LeRobot</a>
-    ◆ <a href="https://github.com/dusty-nv/jetson-containers">Jetson Containers</a>
+    <a href="https://strands-labs.github.io/robots/">Documentation</a>
+    ◆ <a href="https://github.com/strands-labs/robots/tree/main/samples">Examples</a>
+    ◆ <a href="https://github.com/strands-agents/sdk-python">Strands SDK</a>
+    ◆ <a href="https://github.com/strands-agents/tools">Tools</a>
+    ◆ <a href="#policy-providers">Policies</a>
+    ◆ <a href="#simulation">Simulation</a>
+    ◆ <a href="docs/learning-path.md">🗺️ Learning Path</a>
   </p>
 </div>
 
-Control robots with natural language through [Strands Agents](https://github.com/strands-agents/sdk-python). Integrates [NVIDIA Isaac GR00T](https://github.com/NVIDIA/Isaac-GR00T) for vision-language-action policies and [LeRobot](https://github.com/huggingface/lerobot) for universal robot support.
+Strands Robots is a simple yet powerful SDK that takes a model-driven approach to building and running robot agents. From a tabletop arm picking up a cube to a humanoid navigating a warehouse, from MuJoCo simulation to real hardware deployment, Strands Robots scales with your needs.
 
-## How It Works
+## Feature Overview
 
-```mermaid
-graph LR
-    A[Natural Language<br/>'Pick up the red block'] --> B[Strands Agent]
-    B --> C[Robot Tool]
-    C --> D[Policy Provider<br/>GR00T/Mock]
-    C --> E[LeRobot<br/>Hardware Abstraction]
-    D --> F[Action Chunk<br/>16 timesteps]
-    F --> E
-    E --> G[Robot Hardware<br/>SO-101/GR-1/G1]
-
-    classDef input fill:#2ea44f,stroke:#1b7735,color:#fff
-    classDef agent fill:#0969da,stroke:#044289,color:#fff
-    classDef policy fill:#8250df,stroke:#5a32a3,color:#fff
-    classDef hardware fill:#bf8700,stroke:#875e00,color:#fff
-
-    class A input
-    class B,C agent
-    class D,F policy
-    class E,G hardware
-```
-
-## Architecture
-
-```mermaid
-flowchart TB
-    subgraph Agent["🤖 Strands Agent"]
-        NL[Natural Language Input]
-        Tools[Tool Registry]
-    end
-
-    subgraph RobotTool["🦾 Robot Tool"]
-        direction TB
-        RT[Robot Class]
-        TM[Task Manager]
-        AS[Async Executor]
-    end
-
-    subgraph Policy["🧠 Policy Layer"]
-        direction TB
-        PA[Policy Abstraction]
-        GP[GR00T Policy]
-        MP[Mock Policy]
-        CP[Custom Policy]
-    end
-
-    subgraph Inference["⚡ Inference Service"]
-        direction TB
-        DC[Docker Container]
-        ZMQ[ZMQ Server :5555]
-        TRT[TensorRT Engine]
-    end
-
-    subgraph Hardware["🔧 Hardware Layer"]
-        direction TB
-        LR[LeRobot]
-        CAM[Cameras]
-        SERVO[Feetech Servos]
-    end
-
-    NL --> Tools
-    Tools --> RT
-    RT --> TM
-    TM --> AS
-    AS --> PA
-    PA --> GP
-    PA --> MP
-    PA --> CP
-    GP --> ZMQ
-    ZMQ --> TRT
-    TRT --> DC
-    AS --> LR
-    LR --> CAM
-    LR --> SERVO
-
-    classDef agentStyle fill:#0969da,stroke:#044289,color:#fff
-    classDef robotStyle fill:#2ea44f,stroke:#1b7735,color:#fff
-    classDef policyStyle fill:#8250df,stroke:#5a32a3,color:#fff
-    classDef infraStyle fill:#bf8700,stroke:#875e00,color:#fff
-    classDef hwStyle fill:#d73a49,stroke:#a72b3a,color:#fff
-
-    class NL,Tools agentStyle
-    class RT,TM,AS robotStyle
-    class PA,GP,MP,CP policyStyle
-    class DC,ZMQ,TRT infraStyle
-    class LR,CAM,SERVO hwStyle
-```
+- **Lightweight & Flexible**: One `Robot()` call that auto-detects sim or real hardware — no mode flags, no config files
+- **Model Agnostic**: 18 policy providers — GR00T N1.6, LeRobot, OpenVLA, Cosmos, Diffusion Policy, and 14 more
+- **Sim ↔ Real**: A policy trained in simulation runs on real hardware with zero code changes
+- **Built-in Strands**: Native [Strands Agent](https://github.com/strands-agents/sdk-python) integration — tell a robot what to do in plain English
 
 ## Quick Start
 
+<div align="center">
+  <a href="artifacts/quickstart.cast">
+    <img src="artifacts/quickstart.svg" alt="strands-robots quickstart demo" width="800">
+  </a>
+  <br/>
+  <sub>▶ Animated demo — <code>pip install "strands-robots[sim]"</code> → natural language robot control in 4 lines</sub>
+</div>
+
+```bash
+pip install "strands-robots[sim]"
+```
+
 ```python
 from strands import Agent
-from strands_robots import Robot, gr00t_inference
+from strands_robots import Robot
 
-# Create robot with cameras
-robot = Robot(
-    tool_name="my_arm",
-    robot="so101_follower",
-    cameras={
-        "front": {"type": "opencv", "index_or_path": "/dev/video0", "fps": 30},
-        "wrist": {"type": "opencv", "index_or_path": "/dev/video2", "fps": 30}
-    },
-    port="/dev/ttyACM0",
-    data_config="so100_dualcam"
-)
-
-# Create agent with robot tool
-agent = Agent(tools=[robot, gr00t_inference])
-
-# Start GR00T inference service
-agent.tool.gr00t_inference(
-    action="start",
-    checkpoint_path="/data/checkpoints/model",
-    port=8000,
-    data_config="so100_dualcam"
-)
-
-# Control robot with natural language
-agent("Use my_arm to pick up the red block using GR00T policy on port 8000")
+robot = Robot("so100")
+agent = Agent(tools=[robot])
+agent("Pick up the red cube")
 ```
+
+That's it. Four lines from install to a robot arm grasping objects.
+
+`Robot()` checks for USB hardware — if found, it controls the real robot. No hardware? It launches a MuJoCo simulation with the robot loaded. Same code, both worlds.
 
 ## Installation
 
-```bash
-pip install strands-robots
-```
-
-From source:
+Ensure you have Python 3.10+ installed, then:
 
 ```bash
-git clone https://github.com/strands-labs/robots
-cd robots
-pip install -e .
+pip install strands-robots            # Core (policies + real hardware)
+pip install "strands-robots[sim]"       # + MuJoCo simulation (32 bundled robots)
+pip install "strands-robots[isaac]"     # + Isaac Sim/Lab (GPU-accelerated, NVIDIA only)
 ```
 
-<details>
-<summary><b>🐳 Jetson Container Setup (Required for GR00T Inference)</b></summary>
+## Features at a Glance
 
-GR00T inference requires the Isaac-GR00T Docker container on Jetson platforms:
+### Smart Policy Resolution
 
-```bash
-# Clone jetson-containers
-git clone https://github.com/dusty-nv/jetson-containers
-cd jetson-containers
-
-# Run Isaac GR00T container (background)
-jetson-containers run $(autotag isaac-gr00t) &
-
-# Container exposes inference service on port 5555 (ZMQ) or 8000 (HTTP)
-```
-
-**Tested Hardware:**
-- NVIDIA Thor Dev Kit (Jetpack 7.0)
-- NVIDIA Jetson AGX Orin (Jetpack 6.x)
-
-See [Jetson Deployment Guide](https://github.com/NVIDIA/Isaac-GR00T/blob/main/deployment_scripts/README.md) for TensorRT optimization.
-
-</details>
-
-## Robot Control Flow
-
-```mermaid
-sequenceDiagram
-    participant User
-    participant Agent as Strands Agent
-    participant Robot as Robot Tool
-    participant Policy as GR00T Policy
-    participant HW as Hardware
-
-    User->>Agent: "Pick up the red block"
-    Agent->>Robot: execute(instruction, policy_port)
-    
-    loop Control Loop @ 50Hz
-        Robot->>HW: get_observation()
-        HW-->>Robot: {cameras, joint_states}
-        Robot->>Policy: get_actions(obs, instruction)
-        Policy-->>Robot: action_chunk[16]
-        
-        loop Action Horizon
-            Robot->>HW: send_action(action)
-            Note over Robot,HW: 20ms sleep (50Hz)
-        end
-    end
-    
-    Robot-->>Agent: Task completed
-    Agent-->>User: "✅ Picked up red block"
-```
-
-## Tools Reference
-
-### Robot Tool
-
-The `Robot` class is a Strands AgentTool that provides async robot control with real-time status reporting.
-
-| Action | Parameters | Description | Example |
-|--------|------------|-------------|---------|
-| `execute` | `instruction`, `policy_port`, `duration` | Blocking execution until complete | `"Pick up the cube"` |
-| `start` | `instruction`, `policy_port`, `duration` | Non-blocking async start | `"Wave your arm"` |
-| `status` | - | Get current task status | Check progress |
-| `stop` | - | Interrupt running task | Emergency stop |
-
-**Natural Language Examples:**
+Pass a model name — provider auto-detected:
 
 ```python
-# Blocking execution (waits for completion)
-agent("Use my_arm to pick up the red block using GR00T policy on port 8000")
+from strands_robots import create_policy
 
-# Async execution (returns immediately)
-agent("Start my_arm waving using GR00T on port 8000, then check status")
+# HuggingFace model IDs — just paste them
+policy = create_policy("lerobot/act_aloha_sim_transfer_cube_human")
+policy = create_policy("openvla/openvla-7b")
+policy = create_policy("microsoft/Magma-8B")
 
-# Stop running task
-agent("Stop my_arm immediately")
+# Server addresses — protocol auto-detected
+policy = create_policy("localhost:8080")       # → gRPC
+policy = create_policy("ws://gpu:9000")        # → WebSocket
+policy = create_policy("zmq://jetson:5555")    # → ZMQ (GR00T)
 ```
 
-<details>
-<summary><b>Robot Constructor Parameters</b></summary>
+No provider names to memorize. No factory configuration. Just pass a string.
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `tool_name` | `str` | required | Name for this robot tool |
-| `robot` | `str\|RobotConfig` | required | Robot type or config |
-| `cameras` | `Dict` | `None` | Camera configuration |
-| `port` | `str` | `None` | Serial port for robot |
-| `data_config` | `str` | `None` | GR00T data config name |
-| `control_frequency` | `float` | `50.0` | Control loop Hz |
-| `action_horizon` | `int` | `8` | Actions per inference |
-
-</details>
-
----
-
-### GR00T Inference Tool
-
-Manages GR00T policy inference services running in Docker containers.
-
-| Action | Parameters | Description | Example |
-|--------|------------|-------------|---------|
-| `start` | `checkpoint_path`, `port`, `data_config` | Start inference service | `"Start GR00T on port 8000"` |
-| `stop` | `port` | Stop service on port | `"Stop GR00T on port 8000"` |
-| `status` | `port` | Check service status | `"Is GR00T running?"` |
-| `list` | - | List all running services | `"List inference services"` |
-| `find_containers` | - | Find GR00T containers | `"Find available containers"` |
-
-**TensorRT Acceleration:**
+### Robot Factory
 
 ```python
-agent.tool.gr00t_inference(
-    action="start",
-    checkpoint_path="/data/checkpoints/model",
-    port=8000,
-    use_tensorrt=True,
-    trt_engine_path="gr00t_engine",
-    vit_dtype="fp8",    # ViT: fp16 or fp8
-    llm_dtype="nvfp4",  # LLM: fp16, nvfp4, or fp8
-    dit_dtype="fp8"     # DiT: fp16 or fp8
+from strands_robots import Robot
+
+robot = Robot("so100")          # Auto sim/real
+robot = Robot("unitree_g1")     # Humanoid
+robot = Robot("aloha")          # Bimanual
+robot = Robot("spot")           # Quadruped
+
+# Force real hardware
+robot = Robot("so100", mode="real",
+    cameras={"front": {"type": "opencv", "index_or_path": "/dev/video0"}},
+    port="/dev/ttyACM0")
+```
+
+32 robots ship in the box. Any name auto-resolves — `so100_dualcam` → `so100`, `libero_panda` → `panda`.
+
+### DreamGen: Teach Once, Dream Many
+
+Record one demonstration. Generate 50 variations per instruction. Train on the dreams.
+
+```python
+from strands_robots import DreamGenPipeline
+
+pipeline = DreamGenPipeline(
+    video_model="wan2.1",
+    idm_checkpoint="nvidia/gr00t-idm-so100",
+    embodiment_tag="so100",
 )
+results = pipeline.run_full_pipeline(
+    robot_dataset_path="/data/pick_and_place",
+    instructions=["pour water", "fold towel", "stack blocks"],
+    num_per_prompt=50,
+)
+# 3 instructions × 50 variations = 150 training trajectories from 1 demo
 ```
 
----
+### Training
 
-### Camera Tool
+```python
+from strands_robots import create_trainer
 
-LeRobot-based camera management with OpenCV and RealSense support.
+# LeRobot (ACT, Pi0, Diffusion — any policy type)
+trainer = create_trainer("lerobot",
+    policy_type="act", dataset_repo_id="lerobot/so100_wipe")
 
-| Action | Parameters | Description | Example |
-|--------|------------|-------------|---------|
-| `discover` | - | Find all cameras | `"Discover cameras"` |
-| `capture` | `camera_id`, `save_path` | Single image capture | `"Capture from /dev/video0"` |
-| `capture_batch` | `camera_ids`, `async_mode` | Multi-camera capture | `"Capture from all cameras"` |
-| `record` | `camera_id`, `capture_duration` | Record video | `"Record 10s video"` |
-| `preview` | `camera_id`, `preview_duration` | Live preview | `"Preview camera 0"` |
-| `test` | `camera_id` | Performance test | `"Test camera speed"` |
+# GR00T N1.6 fine-tuning
+trainer = create_trainer("groot",
+    base_model_path="nvidia/GR00T-N1.6-3B",
+    dataset_path="/data/trajectories")
 
----
+trainer.train()
+```
 
-### Serial Tool
+## Simulation
 
-Low-level serial communication for Feetech servos and custom protocols.
+Three backends. Same `Robot()` interface.
 
-| Action | Parameters | Description | Example |
-|--------|------------|-------------|---------|
-| `list_ports` | - | Discover serial ports | `"List serial ports"` |
-| `feetech_position` | `port`, `motor_id`, `position` | Move servo | `"Move motor 1 to center"` |
-| `feetech_ping` | `port`, `motor_id` | Ping servo | `"Ping motor 1"` |
-| `send` | `port`, `data/hex_data` | Send raw data | `"Send FF FF to robot"` |
-| `monitor` | `port` | Monitor serial data | `"Monitor /dev/ttyACM0"` |
+| | MuJoCo | Newton (GPU) | Isaac Sim |
+|---|---|---|---|
+| **Physics** | CPU, 1 env | GPU, Warp solver | GPU, 1–100K+ parallel |
+| **Rendering** | Offscreen PNG | Ray tracing | RTX ray tracing |
+| **Platform** | Mac / Linux / Win | Linux + NVIDIA | Linux + NVIDIA |
 
----
+### Newton GPU Simulation
 
-### Teleoperation Tool
+<table>
+<tr>
+<td align="center" width="33%">
 
-Record demonstrations for imitation learning with LeRobot.
+https://github.com/strands-labs/robots/releases/download/sim-demos-v2/newton_unitree_g1.mp4
 
-| Action | Parameters | Description | Example |
-|--------|------------|-------------|---------|
-| `start` | `robot_type`, `teleop_type` | Start teleoperation | `"Start teleoperation"` |
-| `stop` | `session_name` | Stop session | `"Stop recording"` |
-| `list` | - | List active sessions | `"List teleop sessions"` |
-| `replay` | `dataset_repo_id`, `replay_episode` | Replay episode | `"Replay episode 5"` |
+Unitree G1
 
----
+</td>
+<td align="center" width="33%">
 
-### Pose Tool
+https://github.com/strands-labs/robots/releases/download/sim-demos-v2/newton_unitree_h1.mp4
 
-Store, retrieve, and execute named robot poses.
+Unitree H1
 
-| Action | Parameters | Description | Example |
-|--------|------------|-------------|---------|
-| `store_pose` | `pose_name` | Save current position | `"Save as 'home'"` |
-| `load_pose` | `pose_name` | Move to saved pose | `"Go to home pose"` |
-| `list_poses` | - | List all poses | `"List saved poses"` |
-| `move_motor` | `motor_name`, `position` | Move single motor | `"Move gripper to 50%"` |
-| `incremental_move` | `motor_name`, `delta` | Small movement | `"Move elbow +5°"` |
-| `reset_to_home` | - | Safe home position | `"Reset to home"` |
+</td>
+<td align="center" width="33%">
 
----
+https://github.com/strands-labs/robots/releases/download/sim-demos-v2/newton_unitree_go2.mp4
 
-## Supported Robots
+Unitree Go2
 
-| Robot | Config | Cameras | Description |
-|-------|--------|---------|-------------|
-| SO-100/SO-101 | `so100`, `so100_dualcam`, `so100_4cam` | 1-4 | Single arm desktop robot |
-| Fourier GR-1 | `fourier_gr1_arms_only` | 1 | Bimanual humanoid arms |
-| Bimanual Panda | `bimanual_panda_gripper` | 3 | Dual Franka Emika arms |
-| Unitree G1 | `unitree_g1` | 1 | Humanoid robot platform |
+</td>
+</tr>
+<tr>
+<td align="center">
+
+https://github.com/strands-labs/robots/releases/download/sim-demos-v2/newton_panda.mp4
+
+Franka Panda
+
+</td>
+<td align="center">
+
+https://github.com/strands-labs/robots/releases/download/sim-demos-v2/newton_aloha.mp4
+
+ALOHA
+
+</td>
+<td align="center">
+
+https://github.com/strands-labs/robots/releases/download/sim-demos-v2/newton_fourier_n1.mp4
+
+Fourier N1
+
+</td>
+</tr>
+<tr>
+<td align="center">
+
+https://github.com/strands-labs/robots/releases/download/sim-demos-v2/newton_shadow_hand.mp4
+
+Shadow Hand
+
+</td>
+<td align="center">
+
+https://github.com/strands-labs/robots/releases/download/sim-demos-v2/newton_so100.mp4
+
+SO-100
+
+</td>
+<td align="center">
+
+https://github.com/strands-labs/robots/releases/download/sim-demos-v2/newton_spot.mp4
+
+Spot
+
+</td>
+</tr>
+</table>
 
 <details>
-<summary><b>GR00T Data Configurations</b></summary>
+<summary>Isaac Sim (RTX ray tracing)</summary>
 
-| Config | Video Keys | State Keys | Description |
-|--------|------------|------------|-------------|
-| `so100` | `video.webcam` | `state.single_arm`, `state.gripper` | Single camera |
-| `so100_dualcam` | `video.front`, `video.wrist` | `state.single_arm`, `state.gripper` | Front + wrist |
-| `so100_4cam` | `video.front`, `video.wrist`, `video.top`, `video.side` | `state.single_arm`, `state.gripper` | Quad camera |
-| `fourier_gr1_arms_only` | `video.ego_view` | `state.left_arm`, `state.right_arm`, `state.left_hand`, `state.right_hand` | Humanoid arms |
-| `bimanual_panda_gripper` | `video.right_wrist_view`, `video.left_wrist_view`, `video.front_view` | EEF pos/quat + gripper | Dual arm EEF |
-| `unitree_g1` | `video.rs_view` | `state.left_arm`, `state.right_arm`, `state.left_hand`, `state.right_hand` | G1 humanoid |
+<table>
+<tr>
+<td align="center" width="25%">
+
+https://github.com/strands-labs/robots/releases/download/sim-demos-v2/isaac_g1.mp4
+
+Unitree G1
+
+</td>
+<td align="center" width="25%">
+
+https://github.com/strands-labs/robots/releases/download/sim-demos-v2/isaac_h1.mp4
+
+Unitree H1
+
+</td>
+<td align="center" width="25%">
+
+https://github.com/strands-labs/robots/releases/download/sim-demos-v2/isaac_go2.mp4
+
+Unitree Go2
+
+</td>
+<td align="center" width="25%">
+
+https://github.com/strands-labs/robots/releases/download/sim-demos-v2/isaac_franka.mp4
+
+Franka Panda
+
+</td>
+</tr>
+<tr>
+<td align="center">
+
+https://github.com/strands-labs/robots/releases/download/sim-demos-v2/isaac_spot.mp4
+
+Spot
+
+</td>
+<td align="center">
+
+https://github.com/strands-labs/robots/releases/download/sim-demos-v2/isaac_cassie.mp4
+
+Cassie
+
+</td>
+<td align="center">
+
+https://github.com/strands-labs/robots/releases/download/sim-demos-v2/isaac_shadow_hand.mp4
+
+Shadow Hand
+
+</td>
+<td align="center">
+
+https://github.com/strands-labs/robots/releases/download/sim-demos-v2/isaac_allegro.mp4
+
+Allegro Hand
+
+</td>
+</tr>
+</table>
+
+</details>
+
+### 32 Robots, Ready to Go
+
+<details>
+<summary>See all supported robots</summary>
+
+| Category | Robots |
+|----------|--------|
+| **Arms** (14) | SO-100, SO-101, Koch v1.1, Franka Panda, FR3, UR5e, KUKA iiwa, Kinova Gen3, xArm 7, ViperX 300s, ARX L5, AgileX Piper, Unitree Z1, Enactic OpenArm |
+| **Bimanual** (2) | ALOHA (2× ViperX), Trossen WidowX AI |
+| **Hands** (3) | Shadow Dexterous Hand, LEAP Hand, Robotiq 2F-85 |
+| **Humanoids** (7) | Fourier N1, Unitree G1, Unitree H1, Apptronik Apollo, Agility Cassie, Google Robot, Reachy Mini |
+| **Mobile** (4) | Unitree Go2, Unitree A1, Boston Dynamics Spot, Hello Robot Stretch 3 |
+| **Expressive** (2) | Asimov V0, Open Duck Mini V2 |
 
 </details>
 
 ## Policy Providers
 
-```mermaid
-classDiagram
-    class Policy {
-        <<abstract>>
-        +get_actions(observation, instruction)
-        +set_robot_state_keys(keys)
-        +provider_name
-    }
+18 providers, 57 aliases. Plugin-based registry with auto-discovery.
 
-    class Gr00tPolicy {
-        +data_config
-        +policy_client: ZMQ
-        +get_actions()
-    }
-
-    class MockPolicy {
-        +get_actions()
-        Returns random actions
-    }
-
-    class CustomPolicy {
-        +get_actions()
-        Your implementation
-    }
-
-    Policy <|-- Gr00tPolicy
-    Policy <|-- MockPolicy
-    Policy <|-- CustomPolicy
-```
+| Provider | Params | Best For |
+|----------|--------|----------|
+| [GR00T N1.6](docs/policies/groot.md) | 2–3B | NVIDIA foundation model — local or ZMQ service |
+| [Cosmos Predict](docs/policies/cosmos-predict.md) | 2B/14B | World model policy — 98.5% on LIBERO |
+| [GEAR-SONIC](docs/policies/gear-sonic.md) | 42M | Humanoid whole-body control @ 135Hz |
+| [LeRobot](docs/policies/lerobot-local.md) | Varies | ACT, Pi0, SmolVLA, Diffusion — no server needed |
+| [DreamGen](docs/policies/dreamgen.md) | Varies | Synthetic data from video world models |
+| [DreamZero](docs/policies/dreamzero.md) | 14B | Zero-shot via video prediction |
+| [OpenVLA](docs/policies/openvla.md) | 7B | Zero-shot manipulation (1M+ downloads) |
+| [InternVLA](docs/policies/internvla.md) | 3B | RoboTwin, LIBERO benchmarks |
+| [RDT](docs/policies/rdt.md) | 1B | Bimanual diffusion denoising |
+| [Magma](docs/policies/magma.md) | 8B | Scene reasoning + action in one model |
+| [OmniVLA](docs/policies/omnivla.md) | 7B | Mobile navigation, 9 modalities |
+| [UniFolm](docs/policies/unifolm.md) | Varies | Unitree G1/H1/Go2 native |
+| [Alpamayo](docs/policies/alpamayo.md) | 10B | Autonomous driving + reasoning |
+| [RoboBrain](docs/policies/robobrain.md) | 3–32B | Embodied reasoning, scene memory |
+| [GO-1](docs/policies/go1.md) | Varies | AgiBot open-weight VLA — 1M+ real trajectories |
+| [CogACT](docs/policies/cogact.md) | Varies | Diffusion action trajectories |
+| Mock | — | Testing & demos |
+| [Custom](docs/policies/custom-policies.md) | — | Bring your own models |
 
 ```python
-from strands_robots import create_policy
+from strands_robots.policies import register_policy
 
-# GR00T policy (requires inference server)
-policy = create_policy(
-    provider="groot",
-    data_config="so100_dualcam",
-    host="localhost",
-    port=8000
-)
-
-# Mock policy (for testing)
-policy = create_policy(provider="mock")
+register_policy("my_vla", lambda: MyPolicy, aliases=["custom"])
 ```
 
-## Project Structure
+## 3D World Generation (Marble)
 
-```
-strands-robots/
-├── strands_robots/
-│   ├── __init__.py              # Package exports
-│   ├── robot.py                 # Universal Robot class (AgentTool)
-│   ├── policies/
-│   │   ├── __init__.py          # Policy ABC + factory
-│   │   └── groot/
-│   │       ├── __init__.py      # Gr00tPolicy implementation
-│   │       ├── client.py        # ZMQ inference client
-│   │       └── data_config.py   # Robot embodiment configurations
-│   └── tools/
-│       ├── gr00t_inference.py   # Docker service manager
-│       ├── lerobot_camera.py    # Camera operations
-│       ├── lerobot_calibrate.py # Calibration management
-│       ├── lerobot_teleoperate.py # Recording/replay
-│       ├── pose_tool.py         # Pose management
-│       └── serial_tool.py       # Serial communication
-├── test.py                      # Integration example
-└── pyproject.toml               # Package configuration
-```
-
-## Example: Complete Workflow
+Generate photorealistic 3D environments from text, images, or video using the [World Labs Marble API](https://worldlabs.ai):
 
 ```python
-#!/usr/bin/env python3
-from strands import Agent
-from strands_robots import Robot, gr00t_inference, lerobot_camera, pose_tool
+from strands_robots import MarblePipeline
 
-# 1. Create robot with dual cameras
-robot = Robot(
-    tool_name="orange_arm",
-    robot="so101_follower",
-    cameras={
-        "wrist": {"type": "opencv", "index_or_path": "/dev/video0", "fps": 15},
-        "front": {"type": "opencv", "index_or_path": "/dev/video2", "fps": 15},
-    },
-    port="/dev/ttyACM0",
-    data_config="so100_dualcam",
-)
-
-# 2. Create agent with all robot tools
-agent = Agent(
-    tools=[robot, gr00t_inference, lerobot_camera, pose_tool]
-)
-
-# 3. Start inference service
-agent.tool.gr00t_inference(
-    action="start",
-    checkpoint_path="/data/checkpoints/gr00t-wave/checkpoint-300000",
-    port=8000,
-    data_config="so100_dualcam",
-)
-
-# 4. Interactive control loop
-while True:
-    user_input = input("\n🤖 > ")
-    if user_input.lower() in ["exit", "quit"]:
-        break
-    agent(user_input)
-
-# 5. Cleanup
-agent.tool.gr00t_inference(action="stop", port=8000)
+pipeline = MarblePipeline(api_key="wlt-...")
+scene = pipeline.generate(prompt="a robotics workshop with metal shelving and tools")
+# → SPZ Gaussian splats + GLB mesh + panorama + thumbnail + AI caption
 ```
 
-## Contributing
+8 built-in presets: `kitchen`, `office_desk`, `workshop`, `living_room`, `warehouse`, `lab_bench`, `outdoor_garden`, `restaurant`.
 
-We welcome contributions! Please see:
-- [GitHub Issues](https://github.com/strands-labs/robots/issues) for bug reports
-- [Pull Requests](https://github.com/strands-labs/robots/pulls) for contributions
+## Sim→Real (Cosmos Transfer)
+
+Convert simulation recordings into photorealistic video using [NVIDIA Cosmos Transfer 2.5](https://github.com/NVIDIA/Cosmos-Transfer2):
+
+```python
+from strands_robots import CosmosTransferPipeline
+
+pipeline = CosmosTransferPipeline(checkpoint_dir="/data/cosmos-transfer2-2.5")
+pipeline.transfer(
+    input_video="mujoco_recording.mp4",
+    output_video="photorealistic.mp4",
+    control_inputs=["depth"],  # depth, edge, segmentation, blur
+)
+```
+
+MuJoCo/Newton provide ground-truth depth maps — no estimation needed.
+
+
+## How It Works
+
+```
+"Pick up the red block"
+        │
+        ▼
+   Strands Agent          ← natural language understanding
+        │
+        ▼
+   Robot("so100")         ← auto-detects sim or real
+        │
+        ▼
+   create_policy(...)     ← 18 providers, auto-resolved
+        │
+        ▼
+   Processor Pipeline     ← normalize observations, unnormalize actions
+        │
+        ▼
+   Joint Actions          ← 8–64 timesteps, executed on hardware
+```
+
+A policy trained in MuJoCo runs on real hardware with zero code changes. Same `Policy` ABC. Same `create_policy()`. Same prompts.
+
+## Benchmarks
+
+<details>
+<summary>Policy inference latency — RTX 4090</summary>
+
+| Provider | Latency | Hz | VRAM |
+|----------|---------|-----|------|
+| GEAR-SONIC (ONNX) | 7.4ms | 135 | 0.8 GB |
+| GR00T N1.6 (local) | 12.5ms | 80 | 4.2 GB |
+| Pi0 (LeRobot) | 38.7ms | 26 | 3.8 GB |
+| ACT (LeRobot) | 45.3ms | 22 | 2.1 GB |
+| Diffusion Policy | 67.4ms | 15 | 2.8 GB |
+| OpenVLA | 85.2ms | 12 | 8.4 GB |
+
+</details>
+
+<details>
+<summary>Newton GPU scaling — parallel envs</summary>
+
+| Envs | L40S | A100 | RTX 4090 | Jetson Thor |
+|------|------|------|----------|-------------|
+| 16 | 8.5K | 6K | 7K | 3.5K |
+| 256 | 85K | 62K | 72K | 34K |
+| 4096 | 680K | 480K | 560K | 240K |
+
+FPS — higher is better.
+
+</details>
+
+## Documentation
+
+- [Quick Start Guide](https://strands-labs.github.io/robots/)
+- [Examples](https://github.com/strands-labs/robots/tree/main/samples) — tabletop manipulation, bimanual, humanoid locomotion
+- [Policy Providers](docs/policies/) — per-provider guides with config examples
+- [Simulation](docs/simulation/) — MuJoCo, Newton, Isaac Sim
+- [Training](docs/training/) — LeRobot, GR00T, DreamGen
+- [Hardware Tools](docs/hardware/) — cameras, teleoperation, calibration, datasets
+- [API Reference](docs/api-reference.md)
+
+## 🗺️ Learning Path
+
+> **New to strands-robots?** Follow our [progressive learning path](docs/learning-path.md) — a roadmap.sh-style guide from "what is this?" to "I'm contributing GPU backends" in ~6 hours.
+
+```
+🟢 EXPLORE          🟡 BUILD              🔴 SCALE              🟣 EVOLVE
+Level 0: Concepts    Level 3: Simulation   Level 6: GPU Physics   Level 9: Contribute
+Level 1: Hello Robot Level 4: NL Control   Level 7: Sim-to-Real
+Level 2: Policies    Level 5: Data+Train   Level 8: Fleet Mgmt
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CPU only (~45 min)   CPU only (~90 min)    NVIDIA GPU (~90 min)   Any (~30 min)
+```
+
+Each level has a terminal walkthrough (`.cast` file), hands-on code, and checkpoints.
+
+<details>
+<summary>📼 Terminal Recordings (asciinema .cast files)</summary>
+
+| Level | Cast File | Duration | What You'll See |
+|-------|-----------|----------|-----------------|
+| 0 | [`00_mental_model.cast`](artifacts/casts/00_mental_model.cast) | ~28s | Architecture overview, 4-layer diagram, key files |
+| 1 | [`01_hello_robot.cast`](artifacts/casts/01_hello_robot.cast) | ~35s | `pip install` → `Robot("so100")` → observe → act → list 35 robots |
+| 2 | [`02_policies.cast`](artifacts/casts/02_policies.cast) | ~40s | Smart resolution, mock policy, register custom provider |
+| 3 | [`03_simulation.cast`](artifacts/casts/03_simulation.cast) | ~43s | Build scenes, spawn objects, cameras, domain randomization |
+| 4 | [`04_agent_control.cast`](artifacts/casts/04_agent_control.cast) | ~18s | 4-line Agent demo, LLM orchestrating robot actions |
+| 5 | [`05_data_training.cast`](artifacts/casts/05_data_training.cast) | ~36s | Record to LeRobotDataset, train ACT, DreamGen augmentation |
+| 6 | [`06_gpu_backends.cast`](artifacts/casts/06_gpu_backends.cast) | ~23s | Newton 4096 parallel envs, Isaac Sim RTX rendering |
+| 7 | [`07_sim_to_real.cast`](artifacts/casts/07_sim_to_real.cast) | ~30s | Zero code change deployment, Cosmos Transfer sim→real |
+| 8 | [`08_fleet_mesh.cast`](artifacts/casts/08_fleet_mesh.cast) | ~23s | Zenoh P2P mesh, peer discovery, emergency stop |
+| 9 | [`09_contributing.cast`](artifacts/casts/09_contributing.cast) | ~23s | Add robots, policies, repo structure overview |
+
+**Play locally:** `asciinema play artifacts/casts/01_hello_robot.cast`
+**Convert to MP4:** See [`remotion/README.md`](remotion/README.md) for Remotion-based video rendering.
+
+</details>
+
+See the [full learning path →](docs/learning-path.md)
+
+## 🎓 Educational Curriculum
+
+10 progressive samples from "Hello Robot" to autonomous repository analysis, following K12 universal learning format:
+
+| Level | Samples | Hardware |
+|-------|---------|----------|
+| Elementary | [01 Hello Robot](samples/01_hello_robot/) • [02 Policy Playground](samples/02_policy_playground/) | CPU |
+| Middle | [03 Build a World](samples/03_build_a_world/) • [04 Gymnasium Training](samples/04_gymnasium_training/) • [05 Data Collection](samples/05_data_collection/) | CPU |
+| Advanced | [06 Ray-Traced Training](samples/06_raytraced_training/) • [07 GR00T Fine-Tuning](samples/07_groot_finetuning/) • [08 Sim-to-Real](samples/08_sim_to_real/) • [09 Multi-Robot Fleet](samples/09_multi_robot_fleet/) | GPU |
+| Meta | [10 Autonomous Repo Case Study](samples/10_autonomous_repo_casestudy/) | CPU |
+
+See the full [curriculum guide](samples/README.md) for details.
+## Codebase Visualizations
+
+Interactive visualizations of how the codebase evolved across 408 commits by 10+ contributors.
+
+### 🎥 Repository Evolution (Gource)
+
+https://github.com/strands-labs/robots/releases/download/sim-demos-v4-policy/strands_robots_gource.mp4
+
+38-second animated history of every file change from Nov 2025 → Mar 2026.
+
+### 📊 Code Age & Survival
+
+<table>
+<tr>
+<td align="center" width="50%">
+
+![Code Cohorts](docs/visualizations/cohorts_stack.png)
+
+**Code Cohorts** — lines colored by when they were written
+
+</td>
+<td align="center" width="50%">
+
+![Code Survival](docs/visualizations/survival.png)
+
+**Code Survival** — how quickly lines get replaced
+
+</td>
+</tr>
+<tr>
+<td align="center">
+
+![Authors](docs/visualizations/authors_stack.png)
+
+**Author Contributions** — who wrote what's still alive
+
+</td>
+<td align="center">
+
+![Directories](docs/visualizations/dirs_stack.png)
+
+**Directory Growth** — package evolution over time
+
+</td>
+</tr>
+</table>
+
+### 🏗️ Architecture Diagrams
+
+<details>
+<summary>Internal Dependency Graph</summary>
+
+![Internal Dependencies](docs/visualizations/internal_deps_graph.png)
+
+Color-coded module dependencies — policies (red), newton (teal), isaac (blue), tools (green), telemetry (yellow), training (orange).
+
+</details>
+
+<details>
+<summary>Package Diagram (PyReverse)</summary>
+
+![Package Diagram](docs/visualizations/packages_strands_robots.png)
+
+</details>
+
+<details>
+<summary>Import Dependency Graph (PyDeps)</summary>
+
+![PyDeps](docs/visualizations/strands_robots_deps.png)
+
+</details>
+
+<details>
+<summary>Full Class Diagram (140 classes)</summary>
+
+![Class Diagram](docs/visualizations/classes_strands_robots.png)
+
+</details>
+
+### 📈 Codebase Stats
+
+| Metric | Value |
+|--------|-------|
+| **Files** | 89 Python modules |
+| **Lines** | 44,791 |
+| **Functions** | 1,063 |
+| **Classes** | 140 |
+| **Policy Providers** | 18 submodules |
+| **Commits** | 408 |
+| **Contributors** | 10+ (48% by autonomous agent 🤖) |
+
+## Contributing ❤️
+
+We welcome contributions! See [Issues](https://github.com/strands-labs/robots/issues) and [Pull Requests](https://github.com/strands-labs/robots/pulls).
 
 ## License
 
-Apache-2.0 - see [LICENSE](LICENSE) file.
-
-## Links
+This project is licensed under the Apache License 2.0 — see the [LICENSE](LICENSE) file for details.
 
 <div align="center">
-  <a href="https://github.com/strands-labs/robots">GitHub</a>
-  ◆ <a href="https://pypi.org/project/strands-robots/">PyPI</a>
-  ◆ <a href="https://github.com/NVIDIA/Isaac-GR00T">NVIDIA GR00T</a>
-  ◆ <a href="https://github.com/huggingface/lerobot">LeRobot</a>
-  ◆ <a href="https://strandsagents.com/">Strands Docs</a>
+  <br/>
+  <sub>Built with <a href="https://strandsagents.com">Strands Agents</a></sub>
 </div>

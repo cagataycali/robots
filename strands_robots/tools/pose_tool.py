@@ -1,6 +1,4 @@
-#!/usr/bin/env python3
-"""
-Robot Pose Management Tool
+"""Robot Pose Management Tool
 
 This tool provides comprehensive pose management for robotic arms, including:
 - Storing and retrieving named poses
@@ -17,8 +15,14 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-import serial
-import serial.tools.list_ports
+try:
+    import serial
+    import serial.tools.list_ports
+
+    HAS_SERIAL = True
+except ImportError:
+    HAS_SERIAL = False
+
 from strands import tool
 
 logger = logging.getLogger(__name__)
@@ -49,7 +53,11 @@ class PoseManager:
 
     def __init__(self, robot_id: str, storage_dir: Optional[Path] = None):
         self.robot_id = robot_id
-        self.storage_dir = Path(storage_dir) if storage_dir else Path.cwd() / ".strands_robots" / "poses"
+        self.storage_dir = (
+            Path(storage_dir)
+            if storage_dir
+            else Path.cwd() / ".strands_robots" / "poses"
+        )
         self.storage_dir.mkdir(parents=True, exist_ok=True)
         self.pose_file = self.storage_dir / f"{robot_id}_poses.json"
         self.poses: Dict[str, RobotPose] = {}
@@ -61,7 +69,10 @@ class PoseManager:
             try:
                 with open(self.pose_file, "r") as f:
                     data = json.load(f)
-                    self.poses = {name: RobotPose.from_dict(pose_data) for name, pose_data in data.items()}
+                    self.poses = {
+                        name: RobotPose.from_dict(pose_data)
+                        for name, pose_data in data.items()
+                    }
                 logger.info(f"Loaded {len(self.poses)} poses for robot {self.robot_id}")
             except Exception as e:
                 logger.error(f"Failed to load poses: {e}")
@@ -121,7 +132,10 @@ class PoseManager:
             if motor in pose.safety_bounds:
                 min_pos, max_pos = pose.safety_bounds[motor]
                 if not (min_pos <= position <= max_pos):
-                    return False, f"Motor {motor} position {position} outside bounds [{min_pos}, {max_pos}]"
+                    return (
+                        False,
+                        f"Motor {motor} position {position} outside bounds [{min_pos}, {max_pos}]",
+                    )
 
         return True, "Pose is valid"
 
@@ -130,6 +144,11 @@ class MotorController:
     """Low-level motor control for fine movements."""
 
     def __init__(self, port: str, baudrate: int = 1000000):
+        if not HAS_SERIAL:
+            raise ImportError(
+                "pyserial is required for motor control. "
+                'Install with: pip install "strands-robots[hardware]"'
+            )
         self.port = port
         self.baudrate = baudrate
         self.serial_conn: Optional[serial.Serial] = None
@@ -163,7 +182,9 @@ class MotorController:
         if self.serial_conn and self.serial_conn.is_open:
             self.serial_conn.close()
 
-    def build_feetech_packet(self, motor_id: int, instruction: int, params: List[int]) -> bytes:
+    def build_feetech_packet(
+        self, motor_id: int, instruction: int, params: List[int]
+    ) -> bytes:
         """Build Feetech servo protocol packet."""
         packet = [0xFF, 0xFF, motor_id, len(params) + 2, instruction] + params
         checksum = ~sum(packet[2:]) & 0xFF
@@ -255,7 +276,9 @@ class MotorController:
                 positions[motor_name] = pos
         return positions
 
-    def move_multiple_motors(self, positions: Dict[str, float], smooth: bool = True) -> bool:
+    def move_multiple_motors(
+        self, positions: Dict[str, float], smooth: bool = True
+    ) -> bool:
         """Move multiple motors simultaneously."""
         if smooth:
             return self._smooth_move(positions)
@@ -266,7 +289,12 @@ class MotorController:
                     success = False
             return success
 
-    def _smooth_move(self, target_positions: Dict[str, float], steps: int = 20, step_delay: float = 0.05) -> bool:
+    def _smooth_move(
+        self,
+        target_positions: Dict[str, float],
+        steps: int = 20,
+        step_delay: float = 0.05,
+    ) -> bool:
         """Smoothly move to target positions."""
         current_positions = self.read_all_positions()
 
@@ -383,7 +411,10 @@ def pose_tool(
                 )
 
             pose_list = "\n".join(
-                [f"• {p['name']} - {p['description']} ({p['motors']} motors) - {p['timestamp']}" for p in pose_details]
+                [
+                    f"• {p['name']} - {p['description']} ({p['motors']} motors) - {p['timestamp']}"
+                    for p in pose_details
+                ]
             )
 
             return {
@@ -394,13 +425,21 @@ def pose_tool(
 
         if action == "show_pose":
             if not pose_name:
-                return {"status": "error", "content": [{"text": "❌ pose_name required"}]}
+                return {
+                    "status": "error",
+                    "content": [{"text": "❌ pose_name required"}],
+                }
 
             pose = pose_manager.get_pose(pose_name)
             if not pose:
-                return {"status": "error", "content": [{"text": f"❌ Pose '{pose_name}' not found"}]}
+                return {
+                    "status": "error",
+                    "content": [{"text": f"❌ Pose '{pose_name}' not found"}],
+                }
 
-            motor_info = "\n".join([f"  • {motor}: {pos:.2f}°" for motor, pos in pose.positions.items()])
+            motor_info = "\n".join(
+                [f"  • {motor}: {pos:.2f}°" for motor, pos in pose.positions.items()]
+            )
 
             return {
                 "status": "success",
@@ -417,16 +456,39 @@ def pose_tool(
 
         if action == "delete_pose":
             if not pose_name:
-                return {"status": "error", "content": [{"text": "❌ pose_name required"}]}
+                return {
+                    "status": "error",
+                    "content": [{"text": "❌ pose_name required"}],
+                }
 
             if pose_manager.delete_pose(pose_name):
-                return {"status": "success", "content": [{"text": f"✅ Deleted pose '{pose_name}'"}]}
+                return {
+                    "status": "success",
+                    "content": [{"text": f"✅ Deleted pose '{pose_name}'"}],
+                }
             else:
-                return {"status": "error", "content": [{"text": f"❌ Pose '{pose_name}' not found"}]}
+                return {
+                    "status": "error",
+                    "content": [{"text": f"❌ Pose '{pose_name}' not found"}],
+                }
 
-        # Actions that need motor controller
+        # Actions that need motor controller — require pyserial
+        if not HAS_SERIAL:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": "❌ pyserial is required for motor control actions. "
+                        'Install with: pip install "strands-robots[hardware]"'
+                    }
+                ],
+            }
+
         if not port:
-            return {"status": "error", "content": [{"text": "❌ port required for motor operations"}]}
+            return {
+                "status": "error",
+                "content": [{"text": "❌ port required for motor operations"}],
+            }
 
         controller = MotorController(port)
 
@@ -434,13 +496,21 @@ def pose_tool(
             connected, error = controller.connect()
             if connected:
                 controller.disconnect()
-                return {"status": "success", "content": [{"text": f"✅ Successfully connected to robot on {port}"}]}
+                return {
+                    "status": "success",
+                    "content": [
+                        {"text": f"✅ Successfully connected to robot on {port}"}
+                    ],
+                }
             else:
                 return {"status": "error", "content": [{"text": f"❌ {error}"}]}
 
         if action == "read_position":
             if not motor_name:
-                return {"status": "error", "content": [{"text": "❌ motor_name required"}]}
+                return {
+                    "status": "error",
+                    "content": [{"text": "❌ motor_name required"}],
+                }
 
             connected, error = controller.connect()
             if not connected:
@@ -456,7 +526,10 @@ def pose_tool(
                         "position": position,
                     }
                 else:
-                    return {"status": "error", "content": [{"text": f"❌ Failed to read {motor_name}"}]}
+                    return {
+                        "status": "error",
+                        "content": [{"text": f"❌ Failed to read {motor_name}"}],
+                    }
             finally:
                 controller.disconnect()
 
@@ -476,17 +549,25 @@ def pose_tool(
                     )
                     return {
                         "status": "success",
-                        "content": [{"text": f"📍 Current robot positions:\n{pos_text}"}],
+                        "content": [
+                            {"text": f"📍 Current robot positions:\n{pos_text}"}
+                        ],
                         "positions": positions,
                     }
                 else:
-                    return {"status": "error", "content": [{"text": "❌ Failed to read positions"}]}
+                    return {
+                        "status": "error",
+                        "content": [{"text": "❌ Failed to read positions"}],
+                    }
             finally:
                 controller.disconnect()
 
         if action == "store_pose":
             if not pose_name:
-                return {"status": "error", "content": [{"text": "❌ pose_name required"}]}
+                return {
+                    "status": "error",
+                    "content": [{"text": "❌ pose_name required"}],
+                }
 
             connected, error = controller.connect()
             if not connected:
@@ -495,9 +576,14 @@ def pose_tool(
             try:
                 current_positions = controller.read_all_positions()
                 if not current_positions:
-                    return {"status": "error", "content": [{"text": "❌ Failed to read current positions"}]}
+                    return {
+                        "status": "error",
+                        "content": [{"text": "❌ Failed to read current positions"}],
+                    }
 
-                pose = pose_manager.store_pose(pose_name, current_positions, description)
+                pose = pose_manager.store_pose(
+                    pose_name, current_positions, description
+                )
 
                 pos_text = "\n".join(
                     [
@@ -516,16 +602,25 @@ def pose_tool(
 
         if action == "load_pose":
             if not pose_name:
-                return {"status": "error", "content": [{"text": "❌ pose_name required"}]}
+                return {
+                    "status": "error",
+                    "content": [{"text": "❌ pose_name required"}],
+                }
 
             pose = pose_manager.get_pose(pose_name)
             if not pose:
-                return {"status": "error", "content": [{"text": f"❌ Pose '{pose_name}' not found"}]}
+                return {
+                    "status": "error",
+                    "content": [{"text": f"❌ Pose '{pose_name}' not found"}],
+                }
 
             # Validate pose
             is_valid, msg = pose_manager.validate_pose(pose)
             if not is_valid:
-                return {"status": "error", "content": [{"text": f"❌ Pose validation failed: {msg}"}]}
+                return {
+                    "status": "error",
+                    "content": [{"text": f"❌ Pose validation failed: {msg}"}],
+                }
 
             connected, error = controller.connect()
             if not connected:
@@ -540,13 +635,21 @@ def pose_tool(
                         "target_positions": pose.positions,
                     }
                 else:
-                    return {"status": "error", "content": [{"text": f"❌ Failed to move to pose '{pose_name}'"}]}
+                    return {
+                        "status": "error",
+                        "content": [
+                            {"text": f"❌ Failed to move to pose '{pose_name}'"}
+                        ],
+                    }
             finally:
                 controller.disconnect()
 
         if action == "move_motor":
             if not motor_name or position is None:
-                return {"status": "error", "content": [{"text": "❌ motor_name and position required"}]}
+                return {
+                    "status": "error",
+                    "content": [{"text": "❌ motor_name and position required"}],
+                }
 
             connected, error = controller.connect()
             if not connected:
@@ -556,15 +659,26 @@ def pose_tool(
                 success = controller.move_motor(motor_name, position)
                 if success:
                     unit = "%" if motor_name == "gripper" else "°"
-                    return {"status": "success", "content": [{"text": f"🎯 Moved {motor_name} to {position}{unit}"}]}
+                    return {
+                        "status": "success",
+                        "content": [
+                            {"text": f"🎯 Moved {motor_name} to {position}{unit}"}
+                        ],
+                    }
                 else:
-                    return {"status": "error", "content": [{"text": f"❌ Failed to move {motor_name}"}]}
+                    return {
+                        "status": "error",
+                        "content": [{"text": f"❌ Failed to move {motor_name}"}],
+                    }
             finally:
                 controller.disconnect()
 
         if action == "move_multiple":
             if not positions:
-                return {"status": "error", "content": [{"text": "❌ positions dict required"}]}
+                return {
+                    "status": "error",
+                    "content": [{"text": "❌ positions dict required"}],
+                }
 
             connected, error = controller.connect()
             if not connected:
@@ -579,15 +693,24 @@ def pose_tool(
                             for motor, pos in positions.items()
                         ]
                     )
-                    return {"status": "success", "content": [{"text": f"🎯 Moved multiple motors:\n{pos_text}"}]}
+                    return {
+                        "status": "success",
+                        "content": [{"text": f"🎯 Moved multiple motors:\n{pos_text}"}],
+                    }
                 else:
-                    return {"status": "error", "content": [{"text": "❌ Failed to move motors"}]}
+                    return {
+                        "status": "error",
+                        "content": [{"text": "❌ Failed to move motors"}],
+                    }
             finally:
                 controller.disconnect()
 
         if action == "incremental_move":
             if not motor_name or delta is None:
-                return {"status": "error", "content": [{"text": "❌ motor_name and delta required"}]}
+                return {
+                    "status": "error",
+                    "content": [{"text": "❌ motor_name and delta required"}],
+                }
 
             connected, error = controller.connect()
             if not connected:
@@ -598,9 +721,17 @@ def pose_tool(
                 if success:
                     unit = "%" if motor_name == "gripper" else "°"
                     sign = "+" if delta >= 0 else ""
-                    return {"status": "success", "content": [{"text": f"🔧 Moved {motor_name} by {sign}{delta}{unit}"}]}
+                    return {
+                        "status": "success",
+                        "content": [
+                            {"text": f"🔧 Moved {motor_name} by {sign}{delta}{unit}"}
+                        ],
+                    }
                 else:
-                    return {"status": "error", "content": [{"text": f"❌ Failed to move {motor_name}"}]}
+                    return {
+                        "status": "error",
+                        "content": [{"text": f"❌ Failed to move {motor_name}"}],
+                    }
             finally:
                 controller.disconnect()
 
@@ -628,13 +759,19 @@ def pose_tool(
                         "home_positions": home_positions,
                     }
                 else:
-                    return {"status": "error", "content": [{"text": "❌ Failed to move to home position"}]}
+                    return {
+                        "status": "error",
+                        "content": [{"text": "❌ Failed to move to home position"}],
+                    }
             finally:
                 controller.disconnect()
 
         if action == "emergency_stop":
             # This would require torque disable in real implementation
-            return {"status": "success", "content": [{"text": "🛑 Emergency stop executed (torque disabled)"}]}
+            return {
+                "status": "success",
+                "content": [{"text": "🛑 Emergency stop executed (torque disabled)"}],
+            }
 
         else:
             return {

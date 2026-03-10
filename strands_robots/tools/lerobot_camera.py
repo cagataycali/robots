@@ -24,7 +24,12 @@ try:
         OpenCVCameraConfig,
     )
 
-    # Try to import RealSense camera if available
+    # Try to import RealSense camera if available.
+    # Suppress lerobot's root-logger noise ("Could not import realsense")
+    # that fires when pyrealsense2 is not installed.
+    _root = logging.getLogger()
+    _prev_level = _root.level
+    _root.setLevel(logging.CRITICAL)
     try:
         from lerobot.cameras.realsense.camera_realsense import RealSenseCamera
         from lerobot.cameras.realsense.configuration_realsense import (
@@ -36,14 +41,14 @@ try:
         REALSENSE_AVAILABLE = False
         RealSenseCamera = None
         RealSenseCameraConfig = None
+    finally:
+        _root.setLevel(_prev_level)
 
 except ImportError as e:
     raise ImportError(f"LeRobot camera modules not available: {e}")
 
 from strands import tool
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -327,7 +332,9 @@ def _discover_cameras() -> Dict[str, Any]:
         }
 
 
-def _list_camera_details(camera_type: str, camera_id: Union[int, str] = None) -> Dict[str, Any]:
+def _list_camera_details(
+    camera_type: str, camera_id: Union[int, str] = None
+) -> Dict[str, Any]:
     """List detailed camera information and configurations."""
     try:
         details = []
@@ -344,7 +351,9 @@ def _list_camera_details(camera_type: str, camera_id: Union[int, str] = None) ->
 
             if camera_id is not None:
                 try:
-                    config = OpenCVCameraConfig(index_or_path=camera_id, fps=30, width=640, height=480)
+                    config = OpenCVCameraConfig(
+                        index_or_path=camera_id, fps=30, width=640, height=480
+                    )
                     camera = OpenCVCamera(config)
                     camera.connect(warmup=False)
 
@@ -413,7 +422,9 @@ def _capture_single_image(
         file_path = os.path.join(save_path, f"{filename}.{format}")
 
         # Create camera configuration
-        camera = _create_camera(camera_type, camera_id, width, height, fps, color_mode, rotation)
+        camera = _create_camera(
+            camera_type, camera_id, width, height, fps, color_mode, rotation
+        )
 
         # Connect and capture
         start_time = time.time()
@@ -505,7 +516,9 @@ def _capture_batch_images(
                 file_path = os.path.join(save_path, f"{cam_filename}.{format}")
 
                 # Create and use camera
-                camera = _create_camera(camera_type, cam_id, width, height, fps, color_mode, rotation)
+                camera = _create_camera(
+                    camera_type, cam_id, width, height, fps, color_mode, rotation
+                )
 
                 start_time = time.time()
                 camera.connect(warmup=warmup)
@@ -544,7 +557,10 @@ def _capture_batch_images(
 
         # Use ThreadPoolExecutor for parallel capture
         with ThreadPoolExecutor(max_workers=len(camera_ids)) as executor:
-            future_to_camera = {executor.submit(capture_single_camera, cam_id): cam_id for cam_id in camera_ids}
+            future_to_camera = {
+                executor.submit(capture_single_camera, cam_id): cam_id
+                for cam_id in camera_ids
+            }
 
             for future in as_completed(future_to_camera):
                 result = future.result()
@@ -624,7 +640,9 @@ def _record_video_sequence(
         video_path = os.path.join(save_path, f"{filename}.mp4")
 
         # Create camera
-        camera = _create_camera(camera_type, camera_id, width, height, fps, color_mode, rotation)
+        camera = _create_camera(
+            camera_type, camera_id, width, height, fps, color_mode, rotation
+        )
         camera.connect(warmup=warmup)
 
         # Setup video writer
@@ -651,7 +669,9 @@ def _record_video_sequence(
                 if frames_captured % fps == 0:
                     elapsed = time.time() - start_time
                     remaining = capture_duration - elapsed
-                    print(f"Recording... {elapsed:.1f}s / {capture_duration:.1f}s ({remaining:.1f}s remaining)")
+                    print(
+                        f"Recording... {elapsed:.1f}s / {capture_duration:.1f}s ({remaining:.1f}s remaining)"
+                    )
 
         finally:
             video_writer.release()
@@ -696,7 +716,9 @@ def _preview_camera_live(
 ) -> Dict[str, Any]:
     """Show live preview from camera."""
     try:
-        camera = _create_camera(camera_type, camera_id, width, height, fps, color_mode, rotation)
+        camera = _create_camera(
+            camera_type, camera_id, width, height, fps, color_mode, rotation
+        )
         camera.connect(warmup=warmup)
 
         frames_displayed = 0
@@ -720,7 +742,9 @@ def _preview_camera_live(
                 bgr_frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
 
                 # Add info overlay
-                info_text = f"Camera: {camera_id} | Frame: {frames_displayed} | FPS: {fps}"
+                info_text = (
+                    f"Camera: {camera_id} | Frame: {frames_displayed} | FPS: {fps}"
+                )
                 cv2.putText(
                     bgr_frame,
                     info_text,
@@ -800,7 +824,9 @@ def _test_camera_performance(
 
         # Connection test
         start_time = time.time()
-        camera = _create_camera(camera_type, camera_id, width, height, fps, color_mode, rotation)
+        camera = _create_camera(
+            camera_type, camera_id, width, height, fps, color_mode, rotation
+        )
         camera.connect(warmup=warmup)
         connect_time = time.time() - start_time
 
@@ -861,7 +887,9 @@ def _test_camera_performance(
         camera.disconnect()
 
         test_results.append("\n🎯 **Performance Summary**:")
-        test_results.append(f"   - Connection: {'✅ Fast' if connect_time < 1.0 else '⚠️ Slow'} ({connect_time:.3f}s)")
+        test_results.append(
+            f"   - Connection: {'✅ Fast' if connect_time < 1.0 else '⚠️ Slow'} ({connect_time:.3f}s)"
+        )
         test_results.append(
             f"   - Sync capture: {'✅ Good' if avg_sync_time < 0.1 else '⚠️ Slow'} ({avg_sync_time:.3f}s)"
         )
@@ -897,7 +925,9 @@ def _configure_camera_settings(
 ) -> Dict[str, Any]:
     """Configure camera settings and optionally save configuration."""
     try:
-        camera = _create_camera(camera_type, camera_id, width, height, fps, color_mode, rotation)
+        camera = _create_camera(
+            camera_type, camera_id, width, height, fps, color_mode, rotation
+        )
         camera.connect(warmup=warmup)
 
         # Get actual camera properties
@@ -930,7 +960,9 @@ def _configure_camera_settings(
             os.makedirs(save_path, exist_ok=True)
             cam_id_safe = str(camera_id).replace("/", "_")
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            config_filename = f"camera_config_{camera_type}_{cam_id_safe}_{timestamp}.json"
+            config_filename = (
+                f"camera_config_{camera_type}_{cam_id_safe}_{timestamp}.json"
+            )
             config_path = os.path.join(save_path, config_filename)
 
             with open(config_path, "w") as f:
@@ -969,7 +1001,9 @@ def _create_camera(
 
     if camera_type.lower() == "opencv":
         # Convert string enums to proper types
-        color_mode_enum = ColorMode.RGB if color_mode.upper() == "RGB" else ColorMode.BGR
+        color_mode_enum = (
+            ColorMode.RGB if color_mode.upper() == "RGB" else ColorMode.BGR
+        )
 
         rotation_map = {
             "NO_ROTATION": Cv2Rotation.NO_ROTATION,
@@ -990,7 +1024,9 @@ def _create_camera(
         return OpenCVCamera(config)
 
     elif camera_type.lower() == "realsense" and REALSENSE_AVAILABLE:
-        config = RealSenseCameraConfig(serial_number=str(camera_id), fps=fps, width=width, height=height)
+        config = RealSenseCameraConfig(
+            serial_number=str(camera_id), fps=fps, width=width, height=height
+        )
         return RealSenseCamera(config)
 
     else:
