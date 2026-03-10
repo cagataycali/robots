@@ -81,12 +81,30 @@ _MESH_SECRET: Optional[str] = os.getenv("STRANDS_MESH_SECRET")
 _SAFE_ACTIONS = frozenset({"status", "features", "state", "stop"})
 
 # Allowlist of valid policy providers (prevents arbitrary module loading)
-_ALLOWED_POLICY_PROVIDERS = frozenset({
-    "mock", "groot", "lerobot_async", "lerobot_local", "dreamgen",
-    "act", "diffusion", "smolvla", "pi0", "cosmos_predict",
-    "openvla", "internvla", "cogact", "robobrain", "magma",
-    "alpamayo", "unifolm", "omnivla", "rdt", "dreamzero",
-})
+_ALLOWED_POLICY_PROVIDERS = frozenset(
+    {
+        "mock",
+        "groot",
+        "lerobot_async",
+        "lerobot_local",
+        "dreamgen",
+        "act",
+        "diffusion",
+        "smolvla",
+        "pi0",
+        "cosmos_predict",
+        "openvla",
+        "internvla",
+        "cogact",
+        "robobrain",
+        "magma",
+        "alpamayo",
+        "unifolm",
+        "omnivla",
+        "rdt",
+        "dreamzero",
+    }
+)
 
 
 def _compute_mesh_token(secret: str, turn_id: str) -> str:
@@ -631,8 +649,7 @@ class Mesh:
             pp = cmd.get("policy_provider", "mock")
             if pp not in _ALLOWED_POLICY_PROVIDERS:
                 logger.warning(
-                    "Mesh: rejected unknown policy_provider %r from peer command. "
-                    "Allowed providers: %s",
+                    "Mesh: rejected unknown policy_provider %r from peer command. " "Allowed providers: %s",
                     pp,
                     ", ".join(sorted(_ALLOWED_POLICY_PROVIDERS)),
                 )

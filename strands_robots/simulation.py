@@ -58,8 +58,8 @@ import asyncio
 import io
 import logging
 import os
-import re
 import random
+import re
 import shutil
 import sys
 import tempfile
@@ -110,7 +110,7 @@ _mujoco_viewer = None
 # ===================================================================
 
 # Regex for valid MJCF identifiers: alphanumeric, underscores, hyphens, dots
-_MJCF_NAME_RE = re.compile(r'^[a-zA-Z0-9_.\-]+$')
+_MJCF_NAME_RE = re.compile(r"^[a-zA-Z0-9_.\-]+$")
 
 # Maximum allowed length for MJCF names (prevents buffer abuse)
 _MJCF_NAME_MAX_LEN = 128
@@ -197,7 +197,6 @@ def _validate_mesh_path(path: str) -> str:
     if re.search(r"[\x00-\x1f]", path):
         raise ValueError(f"mesh_path contains control characters: {path!r}")
     return _sanitize_xml_attr(path)
-
 
 
 def _is_headless() -> bool:
