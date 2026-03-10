@@ -59,15 +59,28 @@ def _build_collect_ignore():
     _import_cache = {}
 
     def _is_available(mod_name):
-        """Check if a module can be found (not imported — just spec check)."""
+        """Check if a module can be found and imported.
+
+        For strands_robots.* modules, we do a full import check because
+        they may have transitive dependencies (psutil, serial, lerobot)
+        that fail at import time even though the module spec exists.
+        """
         if mod_name in _spec_cache:
             return _spec_cache[mod_name]
         try:
-            result = importlib.util.find_spec(mod_name) is not None
+            spec_ok = importlib.util.find_spec(mod_name) is not None
+            if not spec_ok:
+                _spec_cache[mod_name] = False
+                return False
+            # For strands_robots.* modules, verify actual import works
+            # (catches transitive dep failures like psutil, serial, lerobot)
+            if mod_name.startswith("strands_robots."):
+                importlib.import_module(mod_name)
+            _spec_cache[mod_name] = True
+            return True
         except (ModuleNotFoundError, ValueError, ImportError):
-            result = False
-        _spec_cache[mod_name] = result
-        return result
+            _spec_cache[mod_name] = False
+            return False
 
     def _can_import_name(mod_name, name):
         """Check if 'from mod_name import name' would succeed.
