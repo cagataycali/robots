@@ -40,8 +40,8 @@ Usage:
 import logging
 import warnings
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field  # noqa: F401
-from typing import Any, Dict, List, Optional  # noqa: F401
+from dataclasses import dataclass
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -493,7 +493,7 @@ class LerobotTrainer(Trainer):
         ]
 
         logger.info(f"📊 Evaluating: {checkpoint_path} on {self.eval_env}")
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)  # 1h timeout for eval
 
         return {
             "provider": "lerobot",
