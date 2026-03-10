@@ -58,6 +58,7 @@ import asyncio
 import io
 import logging
 import os
+import re
 import random
 import shutil
 import sys
@@ -464,6 +465,17 @@ class SimWorld:
 # ===================================================================
 
 
+
+def _sanitize_xml_attr(value: str) -> str:
+    """Sanitize a string for safe use in XML attributes.
+
+    Prevents XML injection by removing characters that could break
+    out of attribute values or inject new XML elements.
+    """
+    # Remove characters that could escape XML attribute context
+    return re.sub(r'[<>&"\']', '', str(value))
+
+
 class MJCFBuilder:
     """Builds MuJoCo MJCF XML from SimWorld state.
 
@@ -505,7 +517,7 @@ class MJCFBuilder:
         parts.append('    <material name="grid_mat" texture="grid_tex" texrepeat="8 8" reflectance="0.1"/>')
         for obj in world.objects.values():
             if obj.shape == "mesh" and obj.mesh_path:
-                parts.append(f'    <mesh name="mesh_{obj.name}" file="{obj.mesh_path}"/>')
+                parts.append(f'    <mesh name="mesh_{_sanitize_xml_attr(obj.name)}" file="{_sanitize_xml_attr(obj.mesh_path)}"/>')
         parts.append("  </asset>")
 
         # Worldbody
@@ -537,53 +549,56 @@ class MJCFBuilder:
     def _object_xml(obj: SimObject, indent: int = 4) -> str:
         """Generate MJCF XML for a single object."""
         pad = " " * indent
+        # Sanitize user-provided strings to prevent XML injection
+        safe_name = _sanitize_xml_attr(obj.name)
+        safe_mesh_path = _sanitize_xml_attr(obj.mesh_path) if obj.mesh_path else ""
         px, py, pz = obj.position
         qw, qx, qy, qz = obj.orientation
         r, g, b, a = obj.color
         lines = []
 
-        lines.append(f'{pad}<body name="{obj.name}" pos="{px} {py} {pz}" ' f'quat="{qw} {qx} {qy} {qz}">')
+        lines.append(f'{pad}<body name="{safe_name}" pos="{px} {py} {pz}" ' f'quat="{qw} {qx} {qy} {qz}">')
 
         if not obj.is_static:
-            lines.append(f'{pad}  <freejoint name="{obj.name}_joint"/>')
+            lines.append(f'{pad}  <freejoint name="{safe_name}_joint"/>')
             lines.append(f'{pad}  <inertial pos="0 0 0" mass="{obj.mass}" ' f'diaginertia="0.001 0.001 0.001"/>')
 
         if obj.shape == "box":
             sx, sy, sz = [s / 2 for s in obj.size]
             lines.append(
-                f'{pad}  <geom name="{obj.name}_geom" type="box" size="{sx} {sy} {sz}" '
+                f'{pad}  <geom name="{safe_name}_geom" type="box" size="{sx} {sy} {sz}" '
                 f'rgba="{r} {g} {b} {a}" condim="3" friction="1 0.5 0.001"/>'
             )
         elif obj.shape == "sphere":
             radius = obj.size[0] / 2 if obj.size else 0.025
             lines.append(
-                f'{pad}  <geom name="{obj.name}_geom" type="sphere" size="{radius}" '
+                f'{pad}  <geom name="{safe_name}_geom" type="sphere" size="{radius}" '
                 f'rgba="{r} {g} {b} {a}" condim="3"/>'
             )
         elif obj.shape == "cylinder":
             radius = obj.size[0] / 2 if obj.size else 0.025
             half_h = obj.size[2] / 2 if len(obj.size) > 2 else 0.05
             lines.append(
-                f'{pad}  <geom name="{obj.name}_geom" type="cylinder" size="{radius} {half_h}" '
+                f'{pad}  <geom name="{safe_name}_geom" type="cylinder" size="{radius} {half_h}" '
                 f'rgba="{r} {g} {b} {a}" condim="3"/>'
             )
         elif obj.shape == "capsule":
             radius = obj.size[0] / 2 if obj.size else 0.025
             half_h = obj.size[2] / 2 if len(obj.size) > 2 else 0.05
             lines.append(
-                f'{pad}  <geom name="{obj.name}_geom" type="capsule" size="{radius} {half_h}" '
+                f'{pad}  <geom name="{safe_name}_geom" type="capsule" size="{radius} {half_h}" '
                 f'rgba="{r} {g} {b} {a}" condim="3"/>'
             )
         elif obj.shape == "mesh" and obj.mesh_path:
             lines.append(
-                f'{pad}  <geom name="{obj.name}_geom" type="mesh" mesh="mesh_{obj.name}" '
+                f'{pad}  <geom name="{safe_name}_geom" type="mesh" mesh="mesh_{safe_name}" '
                 f'rgba="{r} {g} {b} {a}" condim="3"/>'
             )
         elif obj.shape == "plane":
             sx = obj.size[0] if obj.size else 1.0
             sy = obj.size[1] if len(obj.size) > 1 else sx
             lines.append(
-                f'{pad}  <geom name="{obj.name}_geom" type="plane" size="{sx} {sy} 0.01" ' f'rgba="{r} {g} {b} {a}"/>'
+                f'{pad}  <geom name="{safe_name}_geom" type="plane" size="{sx} {sy} 0.01" ' f'rgba="{r} {g} {b} {a}"/>'
             )
 
         lines.append(f"{pad}</body>")
@@ -648,7 +663,7 @@ class MJCFBuilder:
         parts.append('    <material name="grid_mat" texture="grid_tex" texrepeat="8 8" reflectance="0.1"/>')
         for obj in objects.values():
             if obj.shape == "mesh" and obj.mesh_path:
-                parts.append(f'    <mesh name="mesh_{obj.name}" file="{obj.mesh_path}"/>')
+                parts.append(f'    <mesh name="mesh_{_sanitize_xml_attr(obj.name)}" file="{_sanitize_xml_attr(obj.mesh_path)}"/>')
         parts.append("  </asset>")
 
         parts.append("  <worldbody>")

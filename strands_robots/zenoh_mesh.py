@@ -30,6 +30,10 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
+# Security: optional shared secret for mesh command authentication.
+# Set STRANDS_MESH_SECRET to require a matching token in all commands.
+_MESH_SECRET = os.getenv("STRANDS_MESH_SECRET")
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Shared session — ONE Zenoh session per process, refcounted
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -102,7 +106,15 @@ def _get_session():
         listen = os.getenv("ZENOH_LISTEN")
         if connect:
             try:
-                config.insert_json5("connect/endpoints", json.dumps([e.strip() for e in connect.split(",")]))
+                endpoints = [e.strip() for e in connect.split(",")]
+                config.insert_json5("connect/endpoints", json.dumps(endpoints))
+                # Security: warn when connecting to non-localhost endpoints
+                for ep in endpoints:
+                    if not any(local in ep for local in ("localhost", "127.0.0.1", "::1")):
+                        logger.warning(
+                            f"Zenoh connecting to remote endpoint: {ep}. "
+                            "Set STRANDS_MESH_SECRET for command authentication."
+                        )
             except Exception:
                 pass
         if listen:
@@ -392,6 +404,12 @@ class Mesh:
     def _exec_cmd(self, data: dict):
         sender = data.get("sender_id", "")
         turn = data.get("turn_id", uuid.uuid4().hex[:8])
+
+        # Security: validate shared secret if configured
+        if _MESH_SECRET and data.get("secret") != _MESH_SECRET:
+            logger.warning(f"Rejected unauthenticated command from {sender}")
+            return
+
         cmd = data.get("command", data)
         if isinstance(cmd, str):
             cmd = {"action": "execute", "instruction": cmd}
