@@ -1769,9 +1769,19 @@ def evaluate(
 def create_trainer(provider: str, **kwargs) -> Trainer:
     """Create a trainer instance based on provider name.
 
+    Convenience kwargs such as ``max_steps``, ``output_dir``, ``batch_size``,
+    ``learning_rate``, etc. are automatically extracted and forwarded to a
+    :class:`TrainConfig` instance so callers do not need to construct one
+    manually.
+
     Args:
         provider: Trainer provider name
-        **kwargs: Provider-specific parameters
+        **kwargs: Provider-specific parameters **and** TrainConfig fields.
+            TrainConfig fields (max_steps, output_dir, batch_size, …) are
+            extracted and used to build a ``config`` object that is passed
+            to the trainer constructor.  If an explicit ``config`` kwarg is
+            provided, TrainConfig fields from kwargs are merged into it
+            (kwargs take precedence).
 
     Supported providers:
         - "groot": GR00T N1.6 fine-tuning (Isaac-GR00T)
@@ -1802,7 +1812,9 @@ def create_trainer(provider: str, **kwargs) -> Trainer:
         trainer = create_trainer("cosmos_predict",
             base_model_path="nvidia/Cosmos-Predict2.5-2B",
             dataset_path="/data/trajectories",
-            mode="policy")
+            mode="policy",
+            max_steps=5000,
+            output_dir="./my_output")
 
         trainer = create_trainer("cosmos_transfer",
             base_model_path="nvidia/Cosmos-Transfer2-7B",
@@ -1810,6 +1822,8 @@ def create_trainer(provider: str, **kwargs) -> Trainer:
             control_type="depth",
             mode="sim2real")
     """
+    import dataclasses as _dc
+
     providers = {
         "groot": Gr00tTrainer,
         "lerobot": LerobotTrainer,
@@ -1831,7 +1845,35 @@ def create_trainer(provider: str, **kwargs) -> Trainer:
     if provider not in providers:
         raise ValueError(f"Unknown trainer provider: {provider}. Available: {list(providers.keys())}")
 
-    return providers[provider](**kwargs)
+    # ── Extract TrainConfig fields from kwargs ──
+    # This allows callers to write:
+    #   create_trainer("cosmos_predict", max_steps=10, output_dir="./out")
+    # instead of needing:
+    #   create_trainer("cosmos_predict", config=TrainConfig(max_steps=10, output_dir="./out"))
+    config_field_names = {f.name for f in _dc.fields(TrainConfig)}
+    config_overrides = {}
+    remaining_kwargs = {}
+    for k, v in kwargs.items():
+        if k in config_field_names and k != "config":
+            config_overrides[k] = v
+        else:
+            remaining_kwargs[k] = v
+
+    if config_overrides:
+        # Merge into existing config if one was provided, otherwise create new
+        explicit_config = remaining_kwargs.get("config")
+        if explicit_config is not None and isinstance(explicit_config, TrainConfig):
+            # Override fields on the existing config
+            for k, v in config_overrides.items():
+                setattr(explicit_config, k, v)
+        else:
+            # Build a new TrainConfig from the overrides
+            # Start with defaults, then apply dataset_path from kwargs if present
+            if "dataset_path" in remaining_kwargs and "dataset_path" not in config_overrides:
+                config_overrides["dataset_path"] = remaining_kwargs["dataset_path"]
+            remaining_kwargs["config"] = TrainConfig(**config_overrides)
+
+    return providers[provider](**remaining_kwargs)
 
 
 __all__ = [

@@ -316,6 +316,18 @@ def _strip_meshes_from_mjcf(mjcf_path: str) -> Optional[str]:
                     del mat_elem.attrib["texture"]
                     removed_materials += 1
 
+    # ── Build mesh_classes set BEFORE removing geoms ──
+    # Must happen first because _remove_mesh_geoms also strips <geom>
+    # children inside <default> elements, which would prevent us from
+    # detecting which classes define type="mesh".
+    mesh_classes = set()
+    for default_elem in root.iter("default"):
+        cls_name = default_elem.get("class", "")
+        for geom_def in default_elem.findall("geom"):
+            if geom_def.get("type") == "mesh":
+                if cls_name:
+                    mesh_classes.add(cls_name)
+
     # Remove <geom> elements that reference meshes
     # We need to walk the entire tree and remove mesh-typed geoms
     def _remove_mesh_geoms(elem):
@@ -335,13 +347,63 @@ def _strip_meshes_from_mjcf(mjcf_path: str) -> Optional[str]:
 
     _remove_mesh_geoms(root)
 
+    # Remove geoms that inherit mesh type from class defaults.
+    # After mesh stripping, such geoms would cause errors in MuJoCo.
+    removed_classonly_geoms = 0
+    def _remove_mesh_class_geoms(elem):
+        nonlocal removed_classonly_geoms
+        to_remove = []
+        for child in list(elem):
+            if child.tag == "geom":
+                geom_class = child.get("class", "")
+                has_type = child.get("type")
+                has_size = child.get("size")
+                has_mesh = child.get("mesh")
+                has_fromto = child.get("fromto")
+                # Remove geoms that inherit mesh type from their class
+                # and have no explicit type/size override
+                if geom_class in mesh_classes and not has_type and not has_mesh:
+                    to_remove.append(child)
+                    removed_classonly_geoms += 1
+                # Also remove geoms with no class, type, size, mesh, or fromto
+                # (these cannot define valid geometry)
+                elif (not geom_class and not has_type and not has_size
+                      and not has_mesh and not has_fromto):
+                    to_remove.append(child)
+                    removed_classonly_geoms += 1
+            else:
+                _remove_mesh_class_geoms(child)
+        for child in to_remove:
+            elem.remove(child)
+
+    _remove_mesh_class_geoms(root)
+
+    # ── Add default inertial to bodies that lost all geoms ──
+    # When all geoms on a body are mesh-type and get stripped, the body
+    # has zero mass.  MuJoCo rejects this with:
+    #   "mass and inertia of moving bodies must be larger than mjMINVAL"
+    # Fix: add a minimal <inertial> element to bodies that have no
+    # remaining child geoms AND no existing <inertial> element.
+    added_inertials = 0
+    for body_elem in root.iter("body"):
+        has_geom = any(child.tag == "geom" for child in body_elem)
+        has_inertial = any(child.tag == "inertial" for child in body_elem)
+        if not has_geom and not has_inertial:
+            inertial = ET.SubElement(body_elem, "inertial")
+            inertial.set("pos", "0 0 0")
+            inertial.set("mass", "0.001")
+            inertial.set("diaginertia", "1e-8 1e-8 1e-8")
+            added_inertials += 1
+
     if removed_meshes == 0 and removed_geoms == 0 and removed_textures == 0:
         return None  # No mesh/texture references found
 
     logger.info(
         f"Stripped {removed_meshes} mesh assets, {removed_geoms} mesh geoms, "
+        f"{removed_classonly_geoms} class-only geoms, "
         f"{removed_textures} textures, {removed_materials} material refs "
-        f"from {os.path.basename(mjcf_path)} (asset files not available)"
+        f"from {os.path.basename(mjcf_path)}; added {added_inertials} default "
+        f"inertials (asset files not available)"
     )
 
     # Write to a temp file
