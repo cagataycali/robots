@@ -28,6 +28,7 @@ _LAZY_IMPORTS: dict[str, str] = {
     "newton_sim": ".newton_sim",
     "pose_tool": ".pose_tool",
     "reachy_mini_tool": ".reachy_mini_tool",
+    "reachy_mini": ".reachy_mini_tool",  # alias for the @tool function name
     "robot_mesh": ".robot_mesh",
     "serial_tool": ".serial_tool",
     "stereo_depth": ".stereo_depth",

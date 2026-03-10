@@ -51,6 +51,8 @@ _BLOCKED_PATTERNS = frozenset(
 )
 
 # Methods that require explicit confirmation (destructive operations)
+# TODO: Wire this into the dispatch logic to gate destructive operations,
+# similar to _DANGEROUS_ACTIONS in use_unitree.py
 _SENSITIVE_METHODS = frozenset(
     {
         "delete",
