@@ -17,7 +17,6 @@ import pytest
 
 from strands_robots.simulation_backend import SimulationBackend
 
-
 # ── Helpers ─────────────────────────────────────────────────────────
 
 
