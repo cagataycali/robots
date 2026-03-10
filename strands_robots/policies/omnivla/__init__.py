@@ -389,7 +389,7 @@ class OmnivlaPolicy(Policy):
             ckpt_path = os.path.join(self._checkpoint_path, f"{mod_name}--{self._resume_step}_checkpoint.pt")
             if os.path.exists(ckpt_path):
                 logger.info(f"🧭 Loading checkpoint: {ckpt_path}")
-                state_dict = torch.load(ckpt_path, map_location="cpu")
+                state_dict = torch.load(ckpt_path, map_location="cpu", weights_only=True)
                 # Remove DDP prefix
                 state_dict = {k[7:] if k.startswith("module.") else k: v for k, v in state_dict.items()}
                 module.load_state_dict(state_dict)

@@ -73,6 +73,8 @@ class BaseInferenceClient:
         self.host = host
         self.port = port
         self.timeout_ms = timeout_ms
+        # TODO(security): api_token is sent in plaintext over unencrypted TCP.
+        # Consider CurveZMQ or TLS tunnel for non-localhost deployments.
         self.api_token = api_token
         self._init_socket()
 

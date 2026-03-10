@@ -326,6 +326,12 @@ class DreamzeroPolicy(Policy):
         if not isinstance(actions_array, np.ndarray):
             raise ValueError(f"Expected numpy array, got {type(actions_array)}")
 
+        # Validate shape to prevent OOM from malicious server payloads
+        if actions_array.ndim != 2:
+            raise ValueError(f"Expected 2D actions array, got shape {actions_array.shape}")
+        if actions_array.shape[0] > 1000 or actions_array.shape[1] > 100:
+            raise ValueError(f"Actions array shape {actions_array.shape} exceeds safety bounds (1000, 100)")
+
         # Convert (N, 8) numpy array to list of action dicts
         actions = []
         for i in range(actions_array.shape[0]):

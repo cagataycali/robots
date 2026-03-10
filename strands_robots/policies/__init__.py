@@ -419,6 +419,13 @@ def create_policy(provider: str, **kwargs) -> Policy:
         "zmq://host:5555"              → groot (ZMQ)
         "mock"                          → mock
 
+    .. warning::
+        Many VLA providers require ``trust_remote_code=True`` for HuggingFace model loading,
+        which allows the model repository to execute arbitrary Python during ``from_pretrained()``.
+        When using smart string resolution (e.g. ``create_policy("some-org/some-model")``),
+        unknown organizations silently fall back to ``lerobot_local``, which will load and
+        potentially execute code from the HuggingFace repo. Only load models from trusted sources.
+
     Args:
         provider: Provider name, HuggingFace model ID, or server URL
         **kwargs: Provider-specific parameters
