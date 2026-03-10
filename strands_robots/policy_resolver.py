@@ -198,8 +198,10 @@ def resolve_policy(
         pass
 
     # ── 5. Fallback: assume it's a local path or model name ──
-    logger.warning(f"Unrecognized policy '{policy}', falling back to lerobot_local. "
-                   f"Note: this may load and execute code from HuggingFace if trust_remote_code=True.")
+    logger.warning(
+        f"Unrecognized policy '{policy}', falling back to lerobot_local. "
+        f"Note: this may load and execute code from HuggingFace if trust_remote_code=True."
+    )
     kwargs["pretrained_name_or_path"] = policy
     kwargs.update(extra_kwargs)
     return "lerobot_local", kwargs

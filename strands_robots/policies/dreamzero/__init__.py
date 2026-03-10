@@ -125,10 +125,7 @@ class DreamzeroPolicy(Policy):
                 if h <= 0 or w <= 0:
                     raise ValueError(f"image_resolution must be positive, got ({h}, {w})")
                 if h > max_h or w > max_w:
-                    logger.warning(
-                        f"Server image_resolution ({h}, {w}) exceeds max "
-                        f"({max_h}, {max_w}), clamping"
-                    )
+                    logger.warning(f"Server image_resolution ({h}, {w}) exceeds max " f"({max_h}, {max_w}), clamping")
                     config["image_resolution"] = (min(h, max_h), min(w, max_w))
             except (TypeError, IndexError, ValueError) as e:
                 logger.warning(f"Invalid image_resolution in server config: {img_res} ({e}), removing")
