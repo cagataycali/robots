@@ -105,6 +105,95 @@ __all__ = [
 _mujoco = None
 _mujoco_viewer = None
 
+# ===================================================================
+# XML Sanitization — Prevent injection via user-supplied names/paths
+# ===================================================================
+
+# Regex for valid MJCF identifiers: alphanumeric, underscores, hyphens, dots
+_MJCF_NAME_RE = re.compile(r'^[a-zA-Z0-9_.\-]+$')
+
+# Maximum allowed length for MJCF names (prevents buffer abuse)
+_MJCF_NAME_MAX_LEN = 128
+
+
+def _sanitize_xml_attr(value: str) -> str:
+    """Escape a string for safe use as an XML attribute value.
+
+    Replaces the 5 XML special characters with their entity references.
+    This prevents XML injection when user-supplied strings are interpolated
+    into XML attribute values (e.g., object names, file paths).
+
+    Args:
+        value: Raw string to be used in an XML attribute.
+
+    Returns:
+        Escaped string safe for XML attribute interpolation.
+    """
+    # Order matters: & must be replaced first to avoid double-escaping
+    value = value.replace("&", "&amp;")
+    value = value.replace('"', "&quot;")
+    value = value.replace("'", "&apos;")
+    value = value.replace("<", "&lt;")
+    value = value.replace(">", "&gt;")
+    return value
+
+
+def _validate_mjcf_name(name: str, field_name: str = "name") -> str:
+    """Validate and sanitize a name for use as an MJCF identifier.
+
+    MJCF names are used as XML attribute values for body, joint, geom,
+    camera, and mesh names. They must be safe identifiers -- no XML special
+    characters, no path traversal, no shell metacharacters.
+
+    Args:
+        name: The proposed MJCF name.
+        field_name: Human-readable field name for error messages.
+
+    Returns:
+        The validated name (unchanged if valid).
+
+    Raises:
+        ValueError: If the name contains invalid characters or is too long.
+    """
+    if not name:
+        raise ValueError(f"{field_name} cannot be empty")
+    if len(name) > _MJCF_NAME_MAX_LEN:
+        raise ValueError(f"{field_name} too long ({len(name)} chars, max {_MJCF_NAME_MAX_LEN})")
+    if not _MJCF_NAME_RE.match(name):
+        raise ValueError(
+            f"{field_name} contains invalid characters: {name!r}. "
+            f"Only alphanumeric, underscores, hyphens, and dots are allowed."
+        )
+    return name
+
+
+def _validate_mesh_path(path: str) -> str:
+    """Validate a mesh file path for safe use in MJCF XML.
+
+    Prevents path traversal and ensures the path points to a valid mesh file.
+    The path is XML-escaped before return.
+
+    Args:
+        path: File path to a mesh file (.stl, .obj, etc.)
+
+    Returns:
+        Sanitized and XML-escaped path.
+
+    Raises:
+        ValueError: If the path contains traversal patterns or invalid characters.
+    """
+    if not path:
+        raise ValueError("mesh_path cannot be empty")
+    # Reject path traversal
+    if ".." in path:
+        raise ValueError(f"mesh_path contains path traversal: {path!r}")
+    # Reject shell metacharacters
+    dangerous = (";", "|", "&", "`", "$", "(", ")", "{", "}", "<", ">")
+    if any(c in path for c in dangerous):
+        raise ValueError(f"mesh_path contains invalid characters: {path!r}")
+    return _sanitize_xml_attr(path)
+
+
 
 def _is_headless() -> bool:
     """Detect if running in a headless environment (no display server).
@@ -465,17 +554,6 @@ class SimWorld:
 # ===================================================================
 
 
-
-def _sanitize_xml_attr(value: str) -> str:
-    """Sanitize a string for safe use in XML attributes.
-
-    Prevents XML injection by removing characters that could break
-    out of attribute values or inject new XML elements.
-    """
-    # Remove characters that could escape XML attribute context
-    return re.sub(r'[<>&"\']', '', str(value))
-
-
 class MJCFBuilder:
     """Builds MuJoCo MJCF XML from SimWorld state.
 
@@ -517,7 +595,9 @@ class MJCFBuilder:
         parts.append('    <material name="grid_mat" texture="grid_tex" texrepeat="8 8" reflectance="0.1"/>')
         for obj in world.objects.values():
             if obj.shape == "mesh" and obj.mesh_path:
-                parts.append(f'    <mesh name="mesh_{_sanitize_xml_attr(obj.name)}" file="{_sanitize_xml_attr(obj.mesh_path)}"/>')
+                safe_name = _validate_mjcf_name(obj.name, "object name")
+                safe_path = _validate_mesh_path(obj.mesh_path)
+                parts.append(f'    <mesh name="mesh_{safe_name}" file="{safe_path}"/>')
         parts.append("  </asset>")
 
         # Worldbody
@@ -533,8 +613,9 @@ class MJCFBuilder:
 
         # Cameras
         for cam in world.cameras.values():
+            safe_cam_name = _validate_mjcf_name(cam.name, "camera name")
             px, py, pz = cam.position
-            parts.append(f'    <camera name="{cam.name}" pos="{px} {py} {pz}" ' f'fovy="{cam.fov}" mode="fixed"/>')
+            parts.append(f'    <camera name="{safe_cam_name}" pos="{px} {py} {pz}" ' f'fovy="{cam.fov}" mode="fixed"/>')
 
         # Objects
         for obj in world.objects.values():
@@ -547,11 +628,15 @@ class MJCFBuilder:
 
     @staticmethod
     def _object_xml(obj: SimObject, indent: int = 4) -> str:
-        """Generate MJCF XML for a single object."""
+        """Generate MJCF XML for a single object.
+
+        Security: All user-supplied strings (obj.name, obj.mesh_path) are
+        validated and sanitized before XML interpolation to prevent injection.
+        """
+        # Validate object name — must be a safe MJCF identifier
+        safe_name = _validate_mjcf_name(obj.name, "object name")
+
         pad = " " * indent
-        # Sanitize user-provided strings to prevent XML injection
-        safe_name = _sanitize_xml_attr(obj.name)
-        safe_mesh_path = _sanitize_xml_attr(obj.mesh_path) if obj.mesh_path else ""
         px, py, pz = obj.position
         qw, qx, qy, qz = obj.orientation
         r, g, b, a = obj.color
@@ -590,6 +675,8 @@ class MJCFBuilder:
                 f'rgba="{r} {g} {b} {a}" condim="3"/>'
             )
         elif obj.shape == "mesh" and obj.mesh_path:
+            # Validate mesh path — prevents path traversal and XML injection
+            _validate_mesh_path(obj.mesh_path)
             lines.append(
                 f'{pad}  <geom name="{safe_name}_geom" type="mesh" mesh="mesh_{safe_name}" '
                 f'rgba="{r} {g} {b} {a}" condim="3"/>'
@@ -663,7 +750,9 @@ class MJCFBuilder:
         parts.append('    <material name="grid_mat" texture="grid_tex" texrepeat="8 8" reflectance="0.1"/>')
         for obj in objects.values():
             if obj.shape == "mesh" and obj.mesh_path:
-                parts.append(f'    <mesh name="mesh_{_sanitize_xml_attr(obj.name)}" file="{_sanitize_xml_attr(obj.mesh_path)}"/>')
+                safe_name = _validate_mjcf_name(obj.name, "object name")
+                safe_path = _validate_mesh_path(obj.mesh_path)
+                parts.append(f'    <mesh name="mesh_{safe_name}" file="{safe_path}"/>')
         parts.append("  </asset>")
 
         parts.append("  <worldbody>")
@@ -678,8 +767,9 @@ class MJCFBuilder:
 
         # Cameras
         for cam in cameras.values():
+            safe_cam_name = _validate_mjcf_name(cam.name, "camera name")
             px, py, pz = cam.position
-            parts.append(f'    <camera name="{cam.name}" pos="{px} {py} {pz}" fovy="{cam.fov}" mode="fixed"/>')
+            parts.append(f'    <camera name="{safe_cam_name}" pos="{px} {py} {pz}" fovy="{cam.fov}" mode="fixed"/>')
 
         # Robot includes — each wrapped in a body at configured position
         for robot_name, robot in robots.items():
@@ -1323,6 +1413,19 @@ class Simulation(AgentTool):
         if name in self._world.objects:
             return {"status": "error", "content": [{"text": f"❌ Object '{name}' exists."}]}
 
+        # Validate object name for safe XML interpolation
+        try:
+            _validate_mjcf_name(name, "object name")
+        except ValueError as e:
+            return {"status": "error", "content": [{"text": f"❌ Invalid object name: {e}"}]}
+
+        # Validate mesh_path if provided
+        if mesh_path:
+            try:
+                _validate_mesh_path(mesh_path)
+            except ValueError as e:
+                return {"status": "error", "content": [{"text": f"❌ Invalid mesh path: {e}"}]}
+
         obj = SimObject(
             name=name,
             shape=shape,
@@ -1546,6 +1649,12 @@ class Simulation(AgentTool):
         if self._world is None:
             return {"status": "error", "content": [{"text": "❌ No world."}]}
 
+        # Validate camera name for safe XML interpolation
+        try:
+            _validate_mjcf_name(name, "camera name")
+        except ValueError as e:
+            return {"status": "error", "content": [{"text": f"❌ Invalid camera name: {e}"}]}
+
         cam = SimCamera(
             name=name,
             position=position or [1.0, 1.0, 1.0],
@@ -1601,8 +1710,9 @@ class Simulation(AgentTool):
         with open(scene_path) as f:
             xml_content = f.read()
 
+        safe_cam_name = _validate_mjcf_name(cam.name, "camera name")
         px, py, pz = cam.position
-        cam_xml = f'    <camera name="{cam.name}" pos="{px} {py} {pz}" fovy="{cam.fov}" mode="fixed"/>'
+        cam_xml = f'    <camera name="{safe_cam_name}" pos="{px} {py} {pz}" fovy="{cam.fov}" mode="fixed"/>'
         xml_content = xml_content.replace("</worldbody>", f"{cam_xml}\n</worldbody>")
 
         with open(scene_path, "w") as f:

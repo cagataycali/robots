@@ -16,11 +16,32 @@ Cross-compatible with:
     {prefix}/**     — Reachy Mini (Pollen Robotics, same eclipse-zenoh)
 
 Disable with: Robot("so100", mesh=False) or STRANDS_MESH=false
+
+Security model:
+    The mesh is designed for **trusted local networks** (localhost by default).
+    Commands from peers are dispatched to robot methods, including policy execution.
+
+    When ZENOH_CONNECT is set to a non-localhost address, all peers on that
+    network can send commands. Set STRANDS_MESH_SECRET to require a shared
+    token for command authentication. Commands without a valid token are rejected.
+
+    Environment variables:
+        STRANDS_MESH_SECRET  — shared secret token for command authentication.
+                               If set, all command messages must include a matching
+                               HMAC token. Presence/state messages are not
+                               authenticated (they are read-only telemetry).
+        STRANDS_MESH         — set to "false" to disable mesh entirely.
+        ZENOH_CONNECT        — remote Zenoh endpoints (comma-separated).
+                               A warning is logged when connecting to non-localhost
+                               addresses without STRANDS_MESH_SECRET set.
 """
 
+import hashlib
+import hmac
 import json
 import logging
 import os
+import re
 import socket
 import threading
 import time
@@ -29,10 +50,6 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
-
-# Security: optional shared secret for mesh command authentication.
-# Set STRANDS_MESH_SECRET to require a matching token in all commands.
-_MESH_SECRET = os.getenv("STRANDS_MESH_SECRET")
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Shared session — ONE Zenoh session per process, refcounted
@@ -53,6 +70,104 @@ _LOCAL_ROBOTS: Dict[str, "Mesh"] = {}
 HEARTBEAT_HZ = 2.0
 STATE_HZ = 10.0
 PEER_TIMEOUT = 10.0
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Mesh authentication — shared secret for command validation
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+_MESH_SECRET: Optional[str] = os.getenv("STRANDS_MESH_SECRET")
+
+# Allowlisted actions that are safe without authentication (read-only / emergency)
+_SAFE_ACTIONS = frozenset({"status", "features", "state", "stop"})
+
+# Allowlist of valid policy providers (prevents arbitrary module loading)
+_ALLOWED_POLICY_PROVIDERS = frozenset({
+    "mock", "groot", "lerobot_async", "lerobot_local", "dreamgen",
+    "act", "diffusion", "smolvla", "pi0", "cosmos_predict",
+    "openvla", "internvla", "cogact", "robobrain", "magma",
+    "alpamayo", "unifolm", "omnivla", "rdt", "dreamzero",
+})
+
+
+def _compute_mesh_token(secret: str, turn_id: str) -> str:
+    """Compute HMAC-SHA256 token for command authentication.
+
+    The token is computed over the turn_id using the shared secret,
+    binding authentication to each specific command message.
+    """
+    return hmac.new(
+        secret.encode("utf-8"),
+        turn_id.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def _verify_mesh_token(data: dict) -> bool:
+    """Verify that a command message has a valid mesh_secret token.
+
+    Returns True if:
+    - No STRANDS_MESH_SECRET is configured (open mode), OR
+    - The message contains a valid HMAC token matching the shared secret
+
+    Returns False if:
+    - STRANDS_MESH_SECRET is configured but the message has no/invalid token
+    """
+    if _MESH_SECRET is None:
+        return True
+
+    token = data.get("mesh_token", "")
+    turn_id = data.get("turn_id", "")
+    if not token or not turn_id:
+        return False
+
+    expected = _compute_mesh_token(_MESH_SECRET, turn_id)
+    return hmac.compare_digest(token, expected)
+
+
+def _is_localhost_endpoint(endpoint: str) -> bool:
+    """Check if a Zenoh endpoint string points to localhost."""
+    localhost_patterns = ("127.0.0.1", "localhost", "::1", "[::1]")
+    return any(pat in endpoint for pat in localhost_patterns)
+
+
+def _validate_policy_host(host: str) -> str:
+    """Validate and sanitize the policy_host parameter.
+
+    Only allows hostnames/IPs that match safe patterns.
+    Prevents command injection via crafted hostnames.
+    """
+    if not host:
+        return "localhost"
+    # Allow only alphanumeric, dots, hyphens, colons (for IPv6), and brackets
+    if not re.match(r"^[a-zA-Z0-9.\-:\[\]]+$", host):
+        logger.warning(f"Mesh: rejected invalid policy_host: {host!r}")
+        return "localhost"
+    return host
+
+
+def _validate_model_path(path: str) -> Optional[str]:
+    """Validate model_path to prevent path traversal or command injection.
+
+    Allows:
+    - HuggingFace model IDs (org/model)
+    - Absolute paths without traversal
+    - Relative paths without traversal
+
+    Rejects:
+    - Paths with .. components
+    - Paths with shell metacharacters
+    """
+    if not path:
+        return None
+    # Reject path traversal
+    if ".." in path:
+        logger.warning(f"Mesh: rejected model_path with traversal: {path!r}")
+        return None
+    # Reject shell metacharacters
+    if any(c in path for c in (";", "|", "&", "`", "$", "(", ")", "{", "}", "<", ">", "\n", "\r")):
+        logger.warning(f"Mesh: rejected model_path with shell metacharacters: {path!r}")
+        return None
+    return path
 
 
 @dataclass
@@ -105,23 +220,26 @@ def _get_session():
         connect = os.getenv("ZENOH_CONNECT")
         listen = os.getenv("ZENOH_LISTEN")
         if connect:
+            endpoints = [e.strip() for e in connect.split(",")]
+            # Security warning for non-localhost endpoints without authentication
+            non_local = [e for e in endpoints if not _is_localhost_endpoint(e)]
+            if non_local and _MESH_SECRET is None:
+                logger.warning(
+                    "⚠️  SECURITY: ZENOH_CONNECT includes non-localhost endpoints %s "
+                    "but STRANDS_MESH_SECRET is not set. Any peer on the network can "
+                    "send commands to this robot. Set STRANDS_MESH_SECRET to enable "
+                    "command authentication.",
+                    non_local,
+                )
             try:
-                endpoints = [e.strip() for e in connect.split(",")]
                 config.insert_json5("connect/endpoints", json.dumps(endpoints))
-                # Security: warn when connecting to non-localhost endpoints
-                for ep in endpoints:
-                    if not any(local in ep for local in ("localhost", "127.0.0.1", "::1")):
-                        logger.warning(
-                            f"Zenoh connecting to remote endpoint: {ep}. "
-                            "Set STRANDS_MESH_SECRET for command authentication."
-                        )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Zenoh connect config error: {e}")
         if listen:
             try:
                 config.insert_json5("listen/endpoints", json.dumps([e.strip() for e in listen.split(",")]))
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Zenoh listen config error: {e}")
 
         # Auto-mesh on localhost: first process listens, others connect
         # Port 7447 is the default Zenoh router port
@@ -145,8 +263,8 @@ def _get_session():
             try:
                 config.insert_json5("mode", '"client"')
                 config.insert_json5("connect/endpoints", json.dumps([MESH_EP]))
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Zenoh client config error: {e}")
 
         _SESSION = zenoh.open(config)
         _SESSION_REFS = 1
@@ -234,6 +352,12 @@ class Mesh:
 
     This is NOT a wrapper — it's a component, like _task_state or _executor.
     The robot owns a Mesh, the Mesh holds a back-reference to the robot.
+
+    Security:
+        The mesh operates on a trusted-network model. By default it binds to
+        localhost only. When STRANDS_MESH_SECRET is set, commands require a
+        valid HMAC token. Unauthenticated commands to privileged actions
+        (execute, start) are rejected with a warning.
     """
 
     def __init__(self, robot, peer_id: str, peer_type: str = "robot"):
@@ -397,19 +521,51 @@ class Mesh:
             d = json.loads(sample.payload.to_bytes().decode())
             if d.get("sender_id") == self.peer_id:
                 return
+
+            # Authentication: verify mesh token if STRANDS_MESH_SECRET is set
+            if not _verify_mesh_token(d):
+                sender = d.get("sender_id", "unknown")
+                action = "unknown"
+                cmd = d.get("command", d)
+                if isinstance(cmd, dict):
+                    action = cmd.get("action", "unknown")
+                elif isinstance(cmd, str):
+                    action = "execute"
+
+                # Allow safe read-only actions without auth
+                if action not in _SAFE_ACTIONS:
+                    logger.warning(
+                        "🔒 Mesh: rejected unauthenticated command from peer %s "
+                        "(action=%s). Set STRANDS_MESH_SECRET on all peers to "
+                        "enable authenticated mesh commands.",
+                        sender,
+                        action,
+                    )
+                    # Send rejection response
+                    turn = d.get("turn_id", "")
+                    if sender and turn:
+                        _put(
+                            f"strands/{sender}/response/{turn}",
+                            {
+                                "type": "error",
+                                "responder_id": self.peer_id,
+                                "turn_id": turn,
+                                "error": "authentication_required",
+                                "message": "Command rejected: STRANDS_MESH_SECRET authentication required",
+                                "timestamp": time.time(),
+                            },
+                        )
+                    return
+
             threading.Thread(target=self._exec_cmd, args=(d,), daemon=True).start()
-        except Exception:
-            pass
+        except json.JSONDecodeError as e:
+            logger.debug(f"Mesh: invalid JSON in command: {e}")
+        except Exception as e:
+            logger.debug(f"Mesh: command handler error: {e}")
 
     def _exec_cmd(self, data: dict):
         sender = data.get("sender_id", "")
         turn = data.get("turn_id", uuid.uuid4().hex[:8])
-
-        # Security: validate shared secret if configured
-        if _MESH_SECRET and data.get("secret") != _MESH_SECRET:
-            logger.warning(f"Rejected unauthenticated command from {sender}")
-            return
-
         cmd = data.get("command", data)
         if isinstance(cmd, str):
             cmd = {"action": "execute", "instruction": cmd}
@@ -430,6 +586,7 @@ class Mesh:
                     },
                 )
         except Exception as e:
+            logger.debug(f"Mesh: command execution error: {e}")
             if rkey:
                 _put(
                     rkey,
@@ -443,7 +600,11 @@ class Mesh:
                 )
 
     def _dispatch(self, cmd: dict) -> dict:
-        """Route command to robot methods."""
+        """Route command to robot methods.
+
+        Security: Validates and sanitizes policy_host, model_path, and
+        policy_provider fields before passing them to robot methods.
+        """
         action = cmd.get("action", "status")
         r = self.robot
 
@@ -465,15 +626,41 @@ class Mesh:
             instr = cmd.get("instruction", "")
             if not instr:
                 return {"error": "instruction required"}
+
+            # Validate policy_provider against allowlist
             pp = cmd.get("policy_provider", "mock")
+            if pp not in _ALLOWED_POLICY_PROVIDERS:
+                logger.warning(
+                    "Mesh: rejected unknown policy_provider %r from peer command. "
+                    "Allowed providers: %s",
+                    pp,
+                    ", ".join(sorted(_ALLOWED_POLICY_PROVIDERS)),
+                )
+                return {"error": f"policy_provider '{pp}' not in allowlist"}
+
             port = cmd.get("policy_port")
-            host = cmd.get("policy_host", "localhost")
+            # Validate and sanitize policy_host
+            host = _validate_policy_host(cmd.get("policy_host", "localhost"))
             dur = cmd.get("duration", 30.0)
-            kw = {
-                k: cmd[k]
-                for k in ("model_path", "server_address", "policy_type", "pretrained_name_or_path")
-                if k in cmd
-            }
+            # Cap duration to prevent abuse (max 5 minutes from mesh commands)
+            dur = min(float(dur), 300.0)
+
+            kw = {}
+            for k in ("model_path", "server_address", "policy_type", "pretrained_name_or_path"):
+                if k in cmd:
+                    val = cmd[k]
+                    # Validate path-like parameters
+                    if k in ("model_path", "pretrained_name_or_path"):
+                        val = _validate_model_path(val)
+                        if val is None:
+                            return {"error": f"invalid {k}: rejected by security validation"}
+                    # Validate server_address (same rules as policy_host)
+                    if k == "server_address" and isinstance(val, str):
+                        if not re.match(r"^[a-zA-Z0-9.\-:\[\]/]+$", val):
+                            logger.warning(f"Mesh: rejected invalid server_address: {val!r}")
+                            return {"error": "invalid server_address"}
+                    kw[k] = val
+
             if action == "execute" and hasattr(r, "_execute_task_sync"):
                 return r._execute_task_sync(instr, pp, port, host, dur, **kw)
             if action == "start" and hasattr(r, "start_task"):
@@ -649,13 +836,21 @@ class Mesh:
     # ── outgoing messages ──────────────────────────────────────
 
     def send(self, target: str, cmd: dict, timeout: float = 30.0) -> dict:
-        """Send command to a specific peer. Returns response."""
+        """Send command to a specific peer. Returns response.
+
+        If STRANDS_MESH_SECRET is set, the command is signed with an HMAC
+        token so the receiving peer can verify authenticity.
+        """
         turn = uuid.uuid4().hex[:8]
         ev = threading.Event()
         self._pending[turn] = ev
         self._responses[turn] = []
 
         msg = {"sender_id": self.peer_id, "turn_id": turn, "command": cmd, "timestamp": time.time()}
+
+        # Sign with mesh secret if configured
+        if _MESH_SECRET is not None:
+            msg["mesh_token"] = _compute_mesh_token(_MESH_SECRET, turn)
 
         _put(f"strands/{target}/cmd", msg)
 
@@ -665,13 +860,22 @@ class Mesh:
         return resps[0] if resps else {"status": "timeout"}
 
     def broadcast(self, cmd: dict, timeout: float = 5.0) -> List[dict]:
-        """Broadcast command to all peers."""
+        """Broadcast command to all peers.
+
+        If STRANDS_MESH_SECRET is set, the command is signed with an HMAC
+        token so receiving peers can verify authenticity.
+        """
         turn = uuid.uuid4().hex[:8]
         ev = threading.Event()
         self._pending[turn] = ev
         self._responses[turn] = []
 
         msg = {"sender_id": self.peer_id, "turn_id": turn, "command": cmd, "timestamp": time.time()}
+
+        # Sign with mesh secret if configured
+        if _MESH_SECRET is not None:
+            msg["mesh_token"] = _compute_mesh_token(_MESH_SECRET, turn)
+
         _put("strands/broadcast", msg)
 
         ev.wait(timeout=timeout)
