@@ -172,5 +172,3 @@ line_length = 120
 multi_line_output = 3
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
-addopts = "-v --cov=strands_robots --cov-report=term-missing"
