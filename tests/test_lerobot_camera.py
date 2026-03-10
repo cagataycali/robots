@@ -90,6 +90,9 @@ def _mock_imports(monkeypatch):
     monkeypatch.setitem(sys.modules, "lerobot.cameras.realsense.configuration_realsense", None)
     monkeypatch.setitem(sys.modules, "strands", _mock_strands)
 
+    # Mock psutil (not always available in CI)
+    monkeypatch.setitem(sys.modules, "psutil", MagicMock())
+
     # Clear the module to force re-import
     mod_name = "strands_robots.tools.lerobot_camera"
     if mod_name in sys.modules:
