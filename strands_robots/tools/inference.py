@@ -21,6 +21,7 @@ import shutil
 import signal
 import socket
 import subprocess
+import tempfile
 import time
 from typing import Any, Dict, Optional
 
@@ -28,12 +29,19 @@ from strands import tool
 
 logger = logging.getLogger(__name__)
 
+# Configurable directory for generated inference scripts
+_INFERENCE_SCRIPT_DIR = os.environ.get(
+    "STRANDS_INFERENCE_SCRIPT_DIR",
+    os.path.join(tempfile.gettempdir(), "strands_robots_inference"),
+)
+
 # In-memory registry of running services (survives across tool calls)
 _RUNNING: Dict[int, Dict[str, Any]] = {}
 _RUNNING_SERVICES = _RUNNING  # alias for tests
 
 # ---------------------------------------------------------------------------
-# Provider metadata (display only — actual model logic lives in policies/)
+# Provider metadata — single source of truth for all provider info.
+# PROVIDER_CONFIGS is derived from this dict (see below).
 # ---------------------------------------------------------------------------
 
 PROVIDERS = {
@@ -44,8 +52,19 @@ PROVIDERS = {
         "multi_gpu": True,
         "gpus": 2,
         "hf": "GEAR-Dreams/DreamZero-DROID",
+        "launch_method": "torchrun",
+        "requires": "torch",
     },
-    "groot": {"name": "NVIDIA GR00T N1.5/N1.6", "proto": "zmq", "port": 5555, "multi_gpu": False, "gpus": 1, "hf": ""},
+    "groot": {
+        "name": "NVIDIA GR00T N1.5/N1.6",
+        "proto": "zmq",
+        "port": 5555,
+        "multi_gpu": False,
+        "gpus": 1,
+        "hf": "",
+        "launch_method": "docker",
+        "requires": "docker",
+    },
     "openvla": {
         "name": "OpenVLA 7B",
         "proto": "http",
@@ -53,6 +72,8 @@ PROVIDERS = {
         "multi_gpu": False,
         "gpus": 1,
         "hf": "openvla/openvla-7b",
+        "launch_method": "vllm",
+        "requires": "torch",
     },
     "internvla": {
         "name": "InternVLA 2B/40B",
@@ -61,6 +82,8 @@ PROVIDERS = {
         "multi_gpu": False,
         "gpus": 1,
         "hf": "OpenGVLab/InternVLA-2B",
+        "launch_method": "python",
+        "requires": "torch",
     },
     "lerobot": {
         "name": "LeRobot (ACT/Pi0/SmolVLA)",
@@ -69,6 +92,8 @@ PROVIDERS = {
         "multi_gpu": False,
         "gpus": 1,
         "hf": "lerobot/act_aloha_sim_transfer_cube_human",
+        "launch_method": "python",
+        "requires": "lerobot",
     },
     "cosmos": {
         "name": "NVIDIA Cosmos Predict",
@@ -77,6 +102,8 @@ PROVIDERS = {
         "multi_gpu": True,
         "gpus": 1,
         "hf": "nvidia/Cosmos-Predict2.5-2B",
+        "launch_method": "python",
+        "requires": "torch",
     },
     "alpamayo": {
         "name": "NVIDIA Alpamayo R1",
@@ -85,6 +112,8 @@ PROVIDERS = {
         "multi_gpu": False,
         "gpus": 1,
         "hf": "nvidia/Alpamayo-R1",
+        "launch_method": "python",
+        "requires": "torch",
     },
     "rdt": {
         "name": "RDT 1B",
@@ -93,6 +122,8 @@ PROVIDERS = {
         "multi_gpu": False,
         "gpus": 1,
         "hf": "robotics-diffusion-transformer/rdt-1b",
+        "launch_method": "python",
+        "requires": "torch",
     },
     "magma": {
         "name": "Microsoft Magma 8B",
@@ -101,15 +132,28 @@ PROVIDERS = {
         "multi_gpu": False,
         "gpus": 1,
         "hf": "microsoft/Magma-8B",
+        "launch_method": "python",
+        "requires": "torch",
     },
-    "cogact": {"name": "CogACT", "proto": "http", "port": 8007, "multi_gpu": False, "gpus": 1, "hf": ""},
+    "cogact": {
+        "name": "CogACT",
+        "proto": "http",
+        "port": 8007,
+        "multi_gpu": False,
+        "gpus": 1,
+        "hf": "CogACT/CogACT-Base",
+        "launch_method": "python",
+        "requires": "torch",
+    },
     "gear_sonic": {
         "name": "GEAR Sonic (Humanoid)",
         "proto": "websocket",
         "port": 8008,
         "multi_gpu": True,
         "gpus": 2,
-        "hf": "",
+        "hf": "GEAR-Group/GEAR-Sonic",
+        "launch_method": "torchrun",
+        "requires": "torch",
     },
     "unifolm": {
         "name": "UnifolM (Unitree VLA)",
@@ -117,7 +161,9 @@ PROVIDERS = {
         "port": 8009,
         "multi_gpu": False,
         "gpus": 1,
-        "hf": "",
+        "hf": "unitreerobotics/UnifolM-50M",
+        "launch_method": "python",
+        "requires": "torch",
     },
 }
 
@@ -253,8 +299,17 @@ def _launch_lerobot(model_id: str, port: int, device: str) -> Dict:
 
 
 def _launch_http_serve(model_id: str, port: int, host: str, provider: str) -> Dict:
-    """Launch a minimal HTTP inference server for generic HF models."""
-    script_dir = "/tmp/strands_robots_inference"
+    """Launch a minimal HTTP inference server for generic HF models.
+
+    Warning:
+        The generated server uses ``trust_remote_code=True`` for HuggingFace
+        model loading, which executes arbitrary code from the model repository.
+        Only use with trusted model IDs from verified sources.
+
+    The script directory defaults to ``$TMPDIR/strands_robots_inference`` and
+    can be overridden via the ``STRANDS_INFERENCE_SCRIPT_DIR`` env var.
+    """
+    script_dir = _INFERENCE_SCRIPT_DIR
     os.makedirs(script_dir, exist_ok=True)
     script = os.path.join(script_dir, f"serve_{provider}_{port}.py")
 
@@ -609,139 +664,26 @@ if __name__ == "__main__":
 # Compatibility aliases — tests import these names
 # ---------------------------------------------------------------------------
 
+# Derived from PROVIDERS — single source of truth, no drift.
 PROVIDER_CONFIGS = {
-    "dreamzero": {
-        "display_name": "DreamZero 14B (World Action Model)",
-        "protocol": "websocket",
-        "default_port": 8000,
-        "multi_gpu": True,
-        "default_num_gpus": 2,
-        "launch_method": "torchrun",
-        "requires": "torch",
-        "hf_model_id": "GEAR-Dreams/DreamZero-DROID",
-    },
-    "groot": {
-        "display_name": "NVIDIA GR00T N1.5/N1.6",
-        "protocol": "zmq",
-        "default_port": 5555,
-        "multi_gpu": False,
-        "default_num_gpus": 1,
-        "launch_method": "docker",
-        "requires": "docker",
-    },
-    "openvla": {
-        "display_name": "OpenVLA 7B",
-        "protocol": "http",
-        "default_port": 8001,
-        "multi_gpu": False,
-        "default_num_gpus": 1,
-        "launch_method": "vllm",
-        "requires": "torch",
-        "hf_model_id": "openvla/openvla-7b",
-    },
-    "internvla": {
-        "display_name": "InternVLA 2B/40B",
-        "protocol": "http",
-        "default_port": 8002,
-        "multi_gpu": False,
-        "default_num_gpus": 1,
-        "launch_method": "python",
-        "requires": "torch",
-        "hf_model_id": "OpenGVLab/InternVLA-2B",
-    },
-    "lerobot": {
-        "display_name": "LeRobot (ACT/Pi0/SmolVLA)",
-        "protocol": "grpc",
-        "default_port": 50051,
-        "multi_gpu": False,
-        "default_num_gpus": 1,
-        "launch_method": "python",
-        "requires": "lerobot",
-        "hf_model_id": "lerobot/act_aloha_sim_transfer_cube_human",
-    },
-    "cosmos": {
-        "display_name": "NVIDIA Cosmos Predict",
-        "protocol": "http",
-        "default_port": 8003,
-        "multi_gpu": True,
-        "default_num_gpus": 1,
-        "launch_method": "python",
-        "requires": "torch",
-        "hf_model_id": "nvidia/Cosmos-Predict1-7B",
-    },
-    "alpamayo": {
-        "display_name": "NVIDIA Alpamayo R1",
-        "protocol": "http",
-        "default_port": 8004,
-        "multi_gpu": False,
-        "default_num_gpus": 1,
-        "launch_method": "python",
-        "requires": "torch",
-        "hf_model_id": "nvidia/Alpamayo-R1",
-    },
-    "rdt": {
-        "display_name": "RDT 1B",
-        "protocol": "http",
-        "default_port": 8005,
-        "multi_gpu": False,
-        "default_num_gpus": 1,
-        "launch_method": "python",
-        "requires": "torch",
-        "hf_model_id": "robotics-diffusion-transformer/rdt-1b",
-    },
-    "magma": {
-        "display_name": "Microsoft Magma 8B",
-        "protocol": "http",
-        "default_port": 8006,
-        "multi_gpu": False,
-        "default_num_gpus": 1,
-        "launch_method": "python",
-        "requires": "torch",
-        "hf_model_id": "microsoft/Magma-8B",
-    },
-    "cogact": {
-        "display_name": "CogACT",
-        "protocol": "http",
-        "default_port": 8007,
-        "multi_gpu": False,
-        "default_num_gpus": 1,
-        "launch_method": "python",
-        "requires": "torch",
-        "hf_model_id": "CogACT/CogACT-Base",
-    },
-    "gear_sonic": {
-        "display_name": "GEAR Sonic (Humanoid)",
-        "protocol": "websocket",
-        "default_port": 8008,
-        "multi_gpu": True,
-        "default_num_gpus": 2,
-        "launch_method": "torchrun",
-        "requires": "torch",
-        "hf_model_id": "GEAR-Group/GEAR-Sonic",
-    },
-    "unifolm": {
-        "display_name": "UnifolM (Unitree VLA)",
-        "protocol": "http",
-        "default_port": 8009,
-        "multi_gpu": False,
-        "default_num_gpus": 1,
-        "launch_method": "python",
-        "requires": "torch",
-        "hf_model_id": "unitreerobotics/UnifolM-50M",
-    },
+    k: {
+        "display_name": v["name"],
+        "protocol": v["proto"],
+        "default_port": v["port"],
+        "multi_gpu": v["multi_gpu"],
+        "default_num_gpus": v["gpus"],
+        "launch_method": v.get("launch_method", "python"),
+        "requires": v.get("requires", "torch"),
+        **({"hf_model_id": v["hf"]} if v.get("hf") else {}),
+    }
+    for k, v in PROVIDERS.items()
 }
 
 
-def _is_port_in_use(port: int, host: str = "localhost") -> bool:  # noqa: F811
-    return _port_in_use(port, host)
 
 
-def _kill_process(pid: int, force: bool = False):  # noqa: F811
-    return _kill(pid, force)
 
 
-def _find_process_on_port(port: int) -> Optional[int]:  # noqa: F811
-    return _find_pid_on_port(port)
 
 
 def _download_checkpoint(model_id: str, local_dir: str = None) -> str:
@@ -752,7 +694,7 @@ def _download_checkpoint(model_id: str, local_dir: str = None) -> str:
 
 def _generate_hf_serve_script(model_id: str, port: int, host: str, provider: str) -> str:
     """Generate an HTTP serve script, return path."""
-    script_dir = "/tmp/strands_robots_inference"
+    script_dir = _INFERENCE_SCRIPT_DIR
     os.makedirs(script_dir, exist_ok=True)
     script = os.path.join(script_dir, f"serve_{provider}_{port}.py")
     # Reuse launch logic to create script, but we just return path
@@ -900,7 +842,7 @@ def _start_generic_hf(provider: str, model_id: str, port: int, num_gpus: int, ho
         env["CUDA_VISIBLE_DEVICES"] = ",".join(str(i) for i in range(num_gpus))
     # Re-launch with env if needed
     if env:
-        script = os.path.join("/tmp/strands_robots_inference", f"serve_{provider}_{port}.py")
+        script = os.path.join(_INFERENCE_SCRIPT_DIR, f"serve_{provider}_{port}.py")
         proc = subprocess.Popen(
             ["python", script],
             stdout=subprocess.PIPE,

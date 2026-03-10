@@ -24,12 +24,7 @@ import json
 import logging
 from typing import Any, Dict, Optional
 
-try:
-    from strands import tool
-except ImportError:
-    # Fallback for environments without strands SDK
-    def tool(fn):  # type: ignore[misc]
-        return fn
+from strands import tool
 
 
 logger = logging.getLogger(__name__)

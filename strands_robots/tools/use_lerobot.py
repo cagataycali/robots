@@ -36,6 +36,17 @@ from strands import tool
 
 logger = logging.getLogger(__name__)
 
+# Safety: block module paths that could escape the lerobot namespace
+_BLOCKED_PATTERNS = frozenset({
+    "__builtins__", "__import__", "__subclasses__",
+    "os.", "sys.", "subprocess.", "shutil.", "pathlib.",
+})
+
+# Methods that require explicit confirmation (destructive operations)
+_SENSITIVE_METHODS = frozenset({
+    "delete", "remove", "drop", "push_to_hub", "rmtree",
+})
+
 
 def _import_from_lerobot(module_path: str):
     """Import a module/class/function from lerobot.
@@ -50,6 +61,10 @@ def _import_from_lerobot(module_path: str):
         _import_from_lerobot("policies.factory.get_policy_class")
         → <function get_policy_class>
     """
+    # Safety: reject paths that could escape the lerobot namespace
+    if any(pat in module_path.lower() for pat in _BLOCKED_PATTERNS):
+        raise ImportError(f"Access to '{module_path}' is blocked for safety")
+
     full_path = f"lerobot.{module_path}" if not module_path.startswith("lerobot.") else module_path
 
     # Try importing as a module first

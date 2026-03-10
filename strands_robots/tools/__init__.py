@@ -4,18 +4,67 @@ Strands Robotics Tools
 
 Collection of specialized tools for robot control, camera management,
 teleoperation, inference services, and serial communication.
+
+Tools use lazy imports to avoid pulling in heavy dependencies (torch, lerobot,
+etc.) until actually needed. Import any tool directly::
+
+    from strands_robots.tools import inference
+    from strands_robots.tools import use_lerobot
 """
 
-from .gr00t_inference import gr00t_inference
-from .lerobot_camera import lerobot_camera
-from .lerobot_teleoperate import lerobot_teleoperate
-from .pose_tool import pose_tool
-from .serial_tool import serial_tool
+import importlib
+from typing import TYPE_CHECKING
 
-__all__ = [
-    "gr00t_inference",
-    "lerobot_camera",
-    "lerobot_teleoperate",
-    "serial_tool",
-    "pose_tool",
-]
+# Lazy-import mapping: name → relative module
+_LAZY_IMPORTS: dict[str, str] = {
+    "gr00t_inference": ".gr00t_inference",
+    "inference": ".inference",
+    "isaac_sim": ".isaac_sim",
+    "lerobot_calibrate": ".lerobot_calibrate",
+    "lerobot_camera": ".lerobot_camera",
+    "lerobot_dataset": ".lerobot_dataset",
+    "lerobot_teleoperate": ".lerobot_teleoperate",
+    "marble_tool": ".marble_tool",
+    "newton_sim": ".newton_sim",
+    "pose_tool": ".pose_tool",
+    "reachy_mini_tool": ".reachy_mini_tool",
+    "robot_mesh": ".robot_mesh",
+    "serial_tool": ".serial_tool",
+    "stereo_depth": ".stereo_depth",
+    "stream": ".stream",
+    "teleoperator": ".teleoperator",
+    "use_lerobot": ".use_lerobot",
+    "use_unitree": ".use_unitree",
+}
+
+__all__ = list(_LAZY_IMPORTS.keys())
+
+
+def __getattr__(name: str):
+    if name in _LAZY_IMPORTS:
+        module = importlib.import_module(_LAZY_IMPORTS[name], __name__)
+        attr = getattr(module, name)
+        globals()[name] = attr  # cache for subsequent access
+        return attr
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+if TYPE_CHECKING:
+    from .gr00t_inference import gr00t_inference
+    from .inference import inference
+    from .isaac_sim import isaac_sim
+    from .lerobot_calibrate import lerobot_calibrate
+    from .lerobot_camera import lerobot_camera
+    from .lerobot_dataset import lerobot_dataset
+    from .lerobot_teleoperate import lerobot_teleoperate
+    from .marble_tool import marble_tool
+    from .newton_sim import newton_sim
+    from .pose_tool import pose_tool
+    from .reachy_mini_tool import reachy_mini_tool
+    from .robot_mesh import robot_mesh
+    from .serial_tool import serial_tool
+    from .stereo_depth import stereo_depth
+    from .stream import stream
+    from .teleoperator import teleoperator
+    from .use_lerobot import use_lerobot
+    from .use_unitree import use_unitree

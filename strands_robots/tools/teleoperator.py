@@ -161,6 +161,24 @@ def _make_teleop(teleop_type: str, teleop_port: str = None, teleop_id: str = Non
     return make_teleoperator_from_config(config)
 
 
+
+def _resolve_teleoperator(device_spec: str):
+    """Resolve a teleoperator from a device specification string.
+
+    Used by lerobot_dataset for recording with a teleop device.
+
+    Args:
+        device_spec: Either a type name (e.g. "so100_leader") or
+                    "type:port" (e.g. "so100_leader:/dev/ttyUSB1").
+
+    Returns:
+        A Teleoperator instance (not yet connected).
+    """
+    parts = device_spec.split(":", 1)
+    teleop_type = parts[0]
+    teleop_port = parts[1] if len(parts) > 1 else None
+    return _make_teleop(teleop_type, teleop_port)
+
 def _run_teleop_loop(robot, teleop, fps: int = 60, duration: float = None):
     """Run teleop control loop in background thread."""
     frame_interval = 1.0 / fps
