@@ -2,10 +2,10 @@ name: Pull Request and Push Action
 
 on:
   pull_request:
-    branches: [ main ]
+    branches: [ main, dev ]
     types: [opened, synchronize, reopened, ready_for_review, review_requested, review_request_removed]
   push:
-    branches: [ main ]
+    branches: [ main, dev ]
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
