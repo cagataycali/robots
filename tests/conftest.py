@@ -105,6 +105,11 @@ def _build_collect_ignore():
         "strands_robots",
         "strands_robots.policies",
         "strands_robots.policies.groot",
+        "strands_robots.training",
+        "strands_robots.assets",
+        "strands_robots.stereo",
+        "strands_robots.tools",
+        "strands_robots.simulation",
     }
 
     for fname in sorted(os.listdir(tests_dir)):
