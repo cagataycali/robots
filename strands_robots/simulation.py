@@ -59,6 +59,7 @@ import io
 import logging
 import os
 import random
+import shutil
 import sys
 import tempfile
 import threading
@@ -2189,7 +2190,6 @@ class Simulation(AgentTool):
         try:
             # Clean up existing dataset directory if overwrite is True
             if overwrite:
-                import shutil
                 from pathlib import Path as _Path
 
                 # repo_id could be a path or a HF-style "user/dataset"
@@ -3283,7 +3283,6 @@ class Simulation(AgentTool):
             # Clean up temp directories created during scene composition
             for tmpdir in getattr(self._world, "_tmpdirs", []):
                 try:
-                    import shutil
                     if os.path.isdir(tmpdir):
                         shutil.rmtree(tmpdir)
                 except OSError:
