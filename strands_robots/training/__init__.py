@@ -1675,8 +1675,13 @@ def evaluate(
 
     # Create a single event loop for async policies (reused across all steps)
     _async_loop = None
+    _owns_loop = False
     if inspect.iscoroutinefunction(getattr(policy, "get_actions", None)):
-        _async_loop = asyncio.new_event_loop()
+        try:
+            _async_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            _async_loop = asyncio.new_event_loop()
+            _owns_loop = True
 
     try:
         for ep in range(num_episodes):
@@ -1695,7 +1700,15 @@ def evaluate(
                 # Get actions from policy
                 try:
                     if _async_loop is not None:
-                        actions = _async_loop.run_until_complete(policy.get_actions(obs_dict, task))
+                        if _owns_loop:
+                            actions = _async_loop.run_until_complete(policy.get_actions(obs_dict, task))
+                        else:
+                            # Running inside an existing event loop (e.g. Jupyter, async agent)
+                            import concurrent.futures
+                            with concurrent.futures.ThreadPoolExecutor() as pool:
+                                actions = pool.submit(
+                                    asyncio.run, policy.get_actions(obs_dict, task)
+                                ).result()
                     else:
                         actions = policy.get_actions(obs_dict, task)
                 except Exception as e:
@@ -1746,7 +1759,7 @@ def evaluate(
                 }
             )
     finally:
-        if _async_loop is not None:
+        if _async_loop is not None and _owns_loop:
             _async_loop.close()
         env.close()
 
