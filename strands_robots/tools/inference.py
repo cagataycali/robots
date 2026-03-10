@@ -680,12 +680,6 @@ PROVIDER_CONFIGS = {
 }
 
 
-
-
-
-
-
-
 def _download_checkpoint(model_id: str, local_dir: str = None) -> str:
     if local_dir and os.path.isdir(local_dir) and os.listdir(local_dir):
         return local_dir

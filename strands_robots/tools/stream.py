@@ -26,7 +26,6 @@ from typing import Any, Dict, Optional
 
 from strands import tool
 
-
 logger = logging.getLogger(__name__)
 
 # Global stream registry (persists across tool calls)

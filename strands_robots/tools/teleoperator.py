@@ -161,7 +161,6 @@ def _make_teleop(teleop_type: str, teleop_port: str = None, teleop_id: str = Non
     return make_teleoperator_from_config(config)
 
 
-
 def _resolve_teleoperator(device_spec: str):
     """Resolve a teleoperator from a device specification string.
 
@@ -178,6 +177,7 @@ def _resolve_teleoperator(device_spec: str):
     teleop_type = parts[0]
     teleop_port = parts[1] if len(parts) > 1 else None
     return _make_teleop(teleop_type, teleop_port)
+
 
 def _run_teleop_loop(robot, teleop, fps: int = 60, duration: float = None):
     """Run teleop control loop in background thread."""

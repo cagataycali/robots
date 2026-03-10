@@ -37,15 +37,29 @@ from strands import tool
 logger = logging.getLogger(__name__)
 
 # Safety: block module paths that could escape the lerobot namespace
-_BLOCKED_PATTERNS = frozenset({
-    "__builtins__", "__import__", "__subclasses__",
-    "os.", "sys.", "subprocess.", "shutil.", "pathlib.",
-})
+_BLOCKED_PATTERNS = frozenset(
+    {
+        "__builtins__",
+        "__import__",
+        "__subclasses__",
+        "os.",
+        "sys.",
+        "subprocess.",
+        "shutil.",
+        "pathlib.",
+    }
+)
 
 # Methods that require explicit confirmation (destructive operations)
-_SENSITIVE_METHODS = frozenset({
-    "delete", "remove", "drop", "push_to_hub", "rmtree",
-})
+_SENSITIVE_METHODS = frozenset(
+    {
+        "delete",
+        "remove",
+        "drop",
+        "push_to_hub",
+        "rmtree",
+    }
+)
 
 
 def _import_from_lerobot(module_path: str):
