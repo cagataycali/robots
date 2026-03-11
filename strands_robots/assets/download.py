@@ -5,13 +5,12 @@ The download tool is strands_robots/tools/download_assets.py and downloads to
 """
 
 from strands_robots.tools.download_assets import (
+    _needs_download,  # noqa: F401
     download_assets,
     download_robots,
     get_user_assets_dir,
     main,
 )
-
-from strands_robots.tools.download_assets import _needs_download  # noqa: F401
 
 __all__ = ["download_assets", "download_robots", "get_user_assets_dir", "main"]
 

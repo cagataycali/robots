@@ -133,7 +133,7 @@ def Robot(
             newton_backend.create_world()
             result = newton_backend.add_robot(
                 name=canonical,
-                data_config={"name": canonical},
+                data_config=canonical,
                 position=tuple(position) if position else (0.0, 0.0, 0.0),
             )
             if result.get("status") == "error":

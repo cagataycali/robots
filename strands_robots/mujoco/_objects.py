@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import logging
 import os
+import re as _re
 import shutil
 import tempfile
-import re as _re
 import xml.etree.ElementTree as ET
 from typing import TYPE_CHECKING, Any, Dict, List
 

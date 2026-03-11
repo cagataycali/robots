@@ -96,8 +96,8 @@ def _auto_download_robot(name: str, info: dict) -> bool:
     """
     try:
         from strands_robots.tools.download_assets import (
-            _download_via_robot_descriptions,
             _download_from_github,
+            _download_via_robot_descriptions,
             _robot_descriptions_available,
             get_user_assets_dir,
         )
