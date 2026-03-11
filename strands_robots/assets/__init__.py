@@ -5,8 +5,7 @@ Resolves robot model files (MJCF XML) from:
     2. Custom paths (``STRANDS_URDF_DIR`` / ``STRANDS_ASSETS_DIR`` env vars)
     3. User home (``~/.strands_robots/assets/``)
 
-All robot definitions now live in ``registry/robots.json``.
-This module provides path resolution and backward-compatible helpers.
+Robot definitions live in ``registry/robots.json``.
 
 Source: https://github.com/google-deepmind/mujoco_menagerie (Apache-2.0)
 """

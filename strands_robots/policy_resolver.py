@@ -1,8 +1,6 @@
 """Auto-resolve a HuggingFace model ID or shorthand to (provider, kwargs).
 
-All resolution rules now live in ``registry/policies.json``.
-This module is a thin backward-compatible wrapper around
-``registry.resolve_policy_string()``.
+Resolution rules are defined in ``registry/policies.json``.
 
 Examples::
 
@@ -28,9 +26,6 @@ def resolve_policy(
     **extra_kwargs,
 ) -> Tuple[str, Dict[str, Any]]:
     """Resolve a policy string to ``(provider_name, provider_kwargs)``.
-
-    Delegates entirely to ``registry.resolve_policy_string()``.
-    Kept for backward compatibility — new code should use the registry directly.
 
     Args:
         policy: Smart string — HF model ID, URL, or provider name.

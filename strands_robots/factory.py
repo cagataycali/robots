@@ -3,10 +3,8 @@
 Provides:
     - ``Robot("so100")`` → auto-detects sim/real, returns the right backend
     - ``list_robots()``  → what's available
-    - ``create_robot()`` → alias for Robot()
 
-All robot definitions and aliases now live in ``registry/robots.json``.
-This file is pure routing logic — no hardcoded robot dicts.
+Robot definitions and aliases live in ``registry/robots.json``.
 """
 
 import logging
@@ -183,9 +181,6 @@ def Robot(
         )
 
 
-# Backward compat alias
-create_robot = Robot
-
 
 def list_robots(mode: str = "all") -> List[Dict[str, Any]]:
     """List available robots.
@@ -199,4 +194,4 @@ def list_robots(mode: str = "all") -> List[Dict[str, Any]]:
     return _registry_list_robots(mode)
 
 
-__all__ = ["Robot", "create_robot", "list_robots"]
+__all__ = ["Robot", "list_robots"]

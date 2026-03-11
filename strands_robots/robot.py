@@ -54,7 +54,8 @@ def _import_lerobot():
 logger = logging.getLogger(__name__)
 
 
-from ._async_utils import _resolve_coroutine, _run_async  # noqa: E402
+from strands_robots._async_utils import _resolve_coroutine, _run_async  # noqa: E402
+from strands_robots.registry import build_policy_kwargs  # noqa: E402
 
 
 class TaskStatus(Enum):
@@ -376,8 +377,6 @@ class Robot(AgentTool):
             policy_type: Sub-type (pi0, act, smolvla, ...).
             **policy_kwargs: Additional provider-specific parameters.
         """
-        from strands_robots.registry import build_policy_kwargs
-
         policy_config = build_policy_kwargs(
             provider=policy_provider,
             policy_port=policy_port,
@@ -989,16 +988,25 @@ class Robot(AgentTool):
                     ],
                 }
 
-            # Find episode frame range — use LeRobot's episode_data_index
+            # Resolve the frame range for the target episode.
+            # LeRobot datasets store frames contiguously; we need the
+            # global start index and length for this episode.
+            #
+            # Strategy:
+            #   1. episode_data_index (LeRobot v2) — O(1) lookup
+            #   2. meta.episodes (LeRobot v1) — sum lengths
+            #   3. Fallback: linear scan of episode_index per frame
             episode_start = 0
             episode_length = 0
             try:
                 if hasattr(ds, "episode_data_index"):
+                    # LeRobot v2: direct from/to index table
                     from_idx = ds.episode_data_index["from"][episode].item()
                     to_idx = ds.episode_data_index["to"][episode].item()
                     episode_start = from_idx
                     episode_length = to_idx - from_idx
                 else:
+                    # LeRobot v1: accumulate lengths from episode metadata
                     for i in range(episode):
                         episode_info = (
                             ds.meta.episodes[i] if hasattr(ds.meta, "episodes") else {}
@@ -1011,7 +1019,7 @@ class Robot(AgentTool):
                     )
                     episode_length = episode_info.get("length", 0)
             except Exception:
-                # Scan frames to find episode boundaries
+                # Last resort: scan frames to find episode boundaries
                 episode_length = 0
                 for idx in range(len(ds)):
                     frame = ds[idx]

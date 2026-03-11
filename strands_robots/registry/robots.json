@@ -12,7 +12,14 @@
       "hardware": {
         "lerobot_type": "so100_follower"
       },
-      "legacy_urdf": "so100/so100.urdf"
+      "legacy_urdf": "so100/so100.urdf",
+      "aliases": [
+        "so100_4cam",
+        "so100_dualcam",
+        "so100_follower",
+        "so_arm100",
+        "trs_so_arm100"
+      ]
     },
     "so101": {
       "description": "RobotStudio SO-101 (6-DOF, upgraded SO-100)",
@@ -25,7 +32,14 @@
       },
       "hardware": {
         "lerobot_type": "so101_follower"
-      }
+      },
+      "aliases": [
+        "robotstudio_so101",
+        "so101_dualcam",
+        "so101_follower",
+        "so101_leader",
+        "so101_tricam"
+      ]
     },
     "koch": {
       "description": "Koch v1.1 Low Cost Robot Arm (6-DOF, Dynamixel)",
@@ -38,7 +52,12 @@
       },
       "hardware": {
         "lerobot_type": "koch_follower"
-      }
+      },
+      "aliases": [
+        "koch_follower",
+        "koch_v1.1",
+        "low_cost_robot_arm"
+      ]
     },
     "panda": {
       "description": "Franka Emika Panda (7-DOF + gripper)",
@@ -49,7 +68,17 @@
         "model_xml": "panda.xml",
         "scene_xml": "scene.xml"
       },
-      "legacy_urdf": "panda/panda.urdf"
+      "legacy_urdf": "panda/panda.urdf",
+      "aliases": [
+        "bimanual_panda_gripper",
+        "bimanual_panda_hand",
+        "franka",
+        "franka_emika_panda",
+        "franka_panda",
+        "libero_panda",
+        "oxe_droid",
+        "single_panda_gripper"
+      ]
     },
     "fr3": {
       "description": "Franka Research 3 (7-DOF + gripper)",
@@ -59,7 +88,11 @@
         "dir": "franka_fr3",
         "model_xml": "fr3.xml",
         "scene_xml": "scene.xml"
-      }
+      },
+      "aliases": [
+        "franka_fr3",
+        "franka_fr3_v2"
+      ]
     },
     "ur5e": {
       "description": "Universal Robots UR5e (6-DOF industrial)",
@@ -79,7 +112,10 @@
         "dir": "kuka_iiwa_14",
         "model_xml": "iiwa14.xml",
         "scene_xml": "scene.xml"
-      }
+      },
+      "aliases": [
+        "kuka_iiwa_14"
+      ]
     },
     "kinova_gen3": {
       "description": "Kinova Gen3 (7-DOF lightweight)",
@@ -99,7 +135,10 @@
         "dir": "ufactory_xarm7",
         "model_xml": "xarm7.xml",
         "scene_xml": "scene.xml"
-      }
+      },
+      "aliases": [
+        "ufactory_xarm7"
+      ]
     },
     "vx300s": {
       "description": "Trossen ViperX 300s (6-DOF + gripper)",
@@ -109,7 +148,12 @@
         "dir": "trossen_vx300s",
         "model_xml": "vx300s.xml",
         "scene_xml": "scene.xml"
-      }
+      },
+      "aliases": [
+        "oxe_widowx",
+        "trossen_vx300s",
+        "viper_x300s"
+      ]
     },
     "arx_l5": {
       "description": "ARX L5 (6-DOF lightweight arm)",
@@ -129,7 +173,10 @@
         "dir": "agilex_piper",
         "model_xml": "piper.xml",
         "scene_xml": "scene.xml"
-      }
+      },
+      "aliases": [
+        "agilex_piper"
+      ]
     },
     "z1": {
       "description": "Unitree Z1 (6-DOF + gripper)",
@@ -139,7 +186,10 @@
         "dir": "unitree_z1",
         "model_xml": "z1_gripper.xml",
         "scene_xml": "scene.xml"
-      }
+      },
+      "aliases": [
+        "unitree_z1"
+      ]
     },
     "openarm": {
       "description": "Enactic OpenArm (7-DOF, DAMIAO motors, CAN bus)",
@@ -149,7 +199,12 @@
         "dir": "enactic_openarm",
         "model_xml": "openarm.xml",
         "scene_xml": "scene.xml"
-      }
+      },
+      "aliases": [
+        "enactic_openarm",
+        "open_arm",
+        "openarm_v10"
+      ]
     },
     "aloha": {
       "description": "ALOHA Bimanual (2x ViperX 300s, 14-DOF + 2 grippers)",
@@ -162,7 +217,16 @@
       },
       "hardware": {
         "lerobot_type": "bi_so_follower"
-      }
+      },
+      "aliases": [
+        "agibot_dual_arm",
+        "agibot_dual_arm_dexhand",
+        "agibot_dual_arm_full",
+        "agibot_dual_arm_gripper",
+        "agibot_genie1",
+        "bi_so_follower",
+        "galaxea_r1_pro"
+      ]
     },
     "trossen_wxai": {
       "description": "Trossen WidowX AI Bimanual",
@@ -172,7 +236,10 @@
         "dir": "trossen_wxai",
         "model_xml": "trossen_ai_bimanual.xml",
         "scene_xml": "scene.xml"
-      }
+      },
+      "aliases": [
+        "trossen_ai_bimanual"
+      ]
     },
     "shadow_hand": {
       "description": "Shadow Dexterous Hand (24-DOF)",
@@ -182,7 +249,10 @@
         "dir": "shadow_hand",
         "model_xml": "left_hand.xml",
         "scene_xml": "scene_left.xml"
-      }
+      },
+      "aliases": [
+        "shadow_dexee"
+      ]
     },
     "leap_hand": {
       "description": "LEAP Hand (16-DOF dexterous)",
@@ -202,7 +272,11 @@
         "dir": "robotiq_2f85",
         "model_xml": "2f85.xml",
         "scene_xml": "scene.xml"
-      }
+      },
+      "aliases": [
+        "robotiq",
+        "robotiq_2f85_v4"
+      ]
     },
     "fourier_n1": {
       "description": "Fourier N1 / GR-1 Humanoid (26-DOF)",
@@ -212,7 +286,14 @@
         "dir": "fourier_n1",
         "model_xml": "n1.xml",
         "scene_xml": "scene.xml"
-      }
+      },
+      "aliases": [
+        "fourier_gr1",
+        "fourier_gr1_arms_only",
+        "fourier_gr1_arms_waist",
+        "fourier_gr1_full_upper_body",
+        "gr1"
+      ]
     },
     "unitree_g1": {
       "description": "Unitree G1 Humanoid (29-DOF + dexterous hands)",
@@ -226,7 +307,14 @@
       "hardware": {
         "lerobot_type": "unitree_g1"
       },
-      "legacy_urdf": "unitree_g1/g1.urdf"
+      "legacy_urdf": "unitree_g1/g1.urdf",
+      "aliases": [
+        "g1",
+        "g1_wbc",
+        "unitree_g1_full_body",
+        "unitree_g1_locomanip",
+        "unitree_g1_wbc"
+      ]
     },
     "unitree_h1": {
       "description": "Unitree H1 Humanoid (19-DOF)",
@@ -236,7 +324,10 @@
         "dir": "unitree_h1",
         "model_xml": "h1.xml",
         "scene_xml": "scene.xml"
-      }
+      },
+      "aliases": [
+        "h1"
+      ]
     },
     "apollo": {
       "description": "Apptronik Apollo Humanoid (34-DOF)",
@@ -246,7 +337,10 @@
         "dir": "apptronik_apollo",
         "model_xml": "apptronik_apollo.xml",
         "scene_xml": "scene.xml"
-      }
+      },
+      "aliases": [
+        "apptronik_apollo"
+      ]
     },
     "cassie": {
       "description": "Agility Cassie Bipedal Robot",
@@ -256,7 +350,10 @@
         "dir": "agility_cassie",
         "model_xml": "cassie.xml",
         "scene_xml": "scene.xml"
-      }
+      },
+      "aliases": [
+        "agility_cassie"
+      ]
     },
     "open_duck_mini": {
       "description": "Open Duck Mini V2 (16-DOF expressive biped, Feetech servos)",
@@ -266,7 +363,14 @@
         "dir": "open_duck_mini_v2",
         "model_xml": "open_duck_mini_v2.xml",
         "scene_xml": "scene.xml"
-      }
+      },
+      "aliases": [
+        "bdx",
+        "mini_bdx",
+        "open_duck",
+        "open_duck_mini_v2",
+        "open_duck_v2"
+      ]
     },
     "asimov_v0": {
       "description": "Asimov V0 Bipedal Legs (12-DOF + 2 passive toes)",
@@ -276,7 +380,10 @@
         "dir": "asimov_v0",
         "model_xml": "asimov_v0.xml",
         "scene_xml": "scene.xml"
-      }
+      },
+      "aliases": [
+        "asimov"
+      ]
     },
     "reachy_mini": {
       "description": "Pollen Reachy Mini (6-DOF Stewart head + antennas, 9 actuators)",
@@ -286,7 +393,13 @@
         "dir": "reachy_mini",
         "model_xml": "mjcf/reachy_mini.xml",
         "scene_xml": "mjcf/scene.xml"
-      }
+      },
+      "aliases": [
+        "pollen_reachy_mini",
+        "reachy",
+        "reachy-mini",
+        "reachymini"
+      ]
     },
     "unitree_go2": {
       "description": "Unitree Go2 Quadruped",
@@ -296,7 +409,10 @@
         "dir": "unitree_go2",
         "model_xml": "go2.xml",
         "scene_xml": "scene.xml"
-      }
+      },
+      "aliases": [
+        "go2"
+      ]
     },
     "unitree_a1": {
       "description": "Unitree A1 Quadruped",
@@ -306,7 +422,10 @@
         "dir": "unitree_a1",
         "model_xml": "a1.xml",
         "scene_xml": "scene.xml"
-      }
+      },
+      "aliases": [
+        "a1"
+      ]
     },
     "spot": {
       "description": "Boston Dynamics Spot (with arm)",
@@ -316,7 +435,10 @@
         "dir": "boston_dynamics_spot",
         "model_xml": "spot_arm.xml",
         "scene_xml": "scene_arm.xml"
-      }
+      },
+      "aliases": [
+        "boston_dynamics_spot"
+      ]
     },
     "stretch3": {
       "description": "Hello Robot Stretch 3 (mobile manipulator)",
@@ -326,7 +448,11 @@
         "dir": "hello_robot_stretch_3",
         "model_xml": "stretch.xml",
         "scene_xml": "scene.xml"
-      }
+      },
+      "aliases": [
+        "hello_robot_stretch",
+        "hello_robot_stretch_3"
+      ]
     },
     "google_robot": {
       "description": "Google Robot (mobile base + arm, RT-X)",
@@ -336,7 +462,10 @@
         "dir": "google_robot",
         "model_xml": "robot.xml",
         "scene_xml": "scene.xml"
-      }
+      },
+      "aliases": [
+        "oxe_google"
+      ]
     },
     "lekiwi": {
       "description": "LeKiwi mobile robot",
@@ -364,105 +493,36 @@
       "category": "mobile",
       "hardware": {
         "lerobot_type": "earthrover"
-      }
+      },
+      "aliases": [
+        "earth_rover",
+        "earthrover_mini_plus",
+        "frodobots"
+      ]
     },
     "omx": {
       "description": "OMX Robot Arm (ROBOTIS, CAN bus motors)",
       "category": "arm",
       "hardware": {
         "lerobot_type": "omx"
-      }
+      },
+      "aliases": [
+        "omx_follower",
+        "omx_robot",
+        "robotis_omx"
+      ]
     },
     "bi_openarm": {
       "description": "Bi-manual OpenArm (dual-arm coordination)",
       "category": "bimanual",
       "hardware": {
         "lerobot_type": "bi_openarm"
-      }
+      },
+      "aliases": [
+        "bi_openarm_follower",
+        "dual_openarm",
+        "openarm_bimanual"
+      ]
     }
-  },
-  "aliases": {
-    "so100_follower": "so100",
-    "so100_dualcam": "so100",
-    "so100_4cam": "so100",
-    "so_arm100": "so100",
-    "trs_so_arm100": "so100",
-    "so101_follower": "so101",
-    "so101_dualcam": "so101",
-    "so101_tricam": "so101",
-    "so101_leader": "so101",
-    "robotstudio_so101": "so101",
-    "koch_follower": "koch",
-    "koch_v1.1": "koch",
-    "low_cost_robot_arm": "koch",
-    "g1": "unitree_g1",
-    "h1": "unitree_h1",
-    "go2": "unitree_go2",
-    "a1": "unitree_a1",
-    "unitree_z1": "z1",
-    "unitree_g1_locomanip": "unitree_g1",
-    "unitree_g1_full_body": "unitree_g1",
-    "unitree_g1_wbc": "unitree_g1",
-    "g1_wbc": "unitree_g1",
-    "franka": "panda",
-    "franka_panda": "panda",
-    "franka_emika_panda": "panda",
-    "single_panda_gripper": "panda",
-    "bimanual_panda_gripper": "panda",
-    "bimanual_panda_hand": "panda",
-    "libero_panda": "panda",
-    "franka_fr3": "fr3",
-    "franka_fr3_v2": "fr3",
-    "bi_so_follower": "aloha",
-    "agibot_dual_arm": "aloha",
-    "agibot_dual_arm_gripper": "aloha",
-    "agibot_dual_arm_dexhand": "aloha",
-    "agibot_dual_arm_full": "aloha",
-    "agibot_genie1": "aloha",
-    "galaxea_r1_pro": "aloha",
-    "trossen_ai_bimanual": "trossen_wxai",
-    "gr1": "fourier_n1",
-    "fourier_gr1": "fourier_n1",
-    "fourier_gr1_arms_only": "fourier_n1",
-    "fourier_gr1_arms_waist": "fourier_n1",
-    "fourier_gr1_full_upper_body": "fourier_n1",
-    "reachy-mini": "reachy_mini",
-    "reachymini": "reachy_mini",
-    "reachy": "reachy_mini",
-    "pollen_reachy_mini": "reachy_mini",
-    "open_duck": "open_duck_mini",
-    "mini_bdx": "open_duck_mini",
-    "bdx": "open_duck_mini",
-    "open_duck_v2": "open_duck_mini",
-    "open_duck_mini_v2": "open_duck_mini",
-    "asimov": "asimov_v0",
-    "enactic_openarm": "openarm",
-    "open_arm": "openarm",
-    "openarm_v10": "openarm",
-    "viper_x300s": "vx300s",
-    "trossen_vx300s": "vx300s",
-    "ufactory_xarm7": "xarm7",
-    "kuka_iiwa_14": "kuka_iiwa",
-    "boston_dynamics_spot": "spot",
-    "hello_robot_stretch": "stretch3",
-    "hello_robot_stretch_3": "stretch3",
-    "apptronik_apollo": "apollo",
-    "agility_cassie": "cassie",
-    "shadow_dexee": "shadow_hand",
-    "robotiq": "robotiq_2f85",
-    "robotiq_2f85_v4": "robotiq_2f85",
-    "agilex_piper": "piper",
-    "oxe_droid": "panda",
-    "oxe_google": "google_robot",
-    "oxe_widowx": "vx300s",
-    "earthrover_mini_plus": "earthrover",
-    "earth_rover": "earthrover",
-    "frodobots": "earthrover",
-    "omx_follower": "omx",
-    "omx_robot": "omx",
-    "robotis_omx": "omx",
-    "bi_openarm_follower": "bi_openarm",
-    "dual_openarm": "bi_openarm",
-    "openarm_bimanual": "bi_openarm"
   }
 }

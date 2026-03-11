@@ -1,40 +1,35 @@
 """Unified Registry — single source of truth for robots and policies.
 
-Loads robot definitions and policy provider configs from JSON files,
-eliminating the triplicated Python dicts that previously lived in
-factory.py, assets/__init__.py, and simulation.py.
+Loads robot definitions and policy provider configs from JSON files.
 
 Features:
     - **One file to edit**: Add a robot → edit robots.json, done.
     - **Hot-reload**: JSON is re-read when the file changes (mtime check).
-    - **Zero breaking changes**: Same public API as before — downstream code
-      calls ``get_robot("so100")`` instead of looking up three dicts.
-    - **Backward compat**: ``resolve_name()``, ``list_robots()``, etc. all
-      delegate here.
+    - **Self-contained entries**: Each robot/policy owns its aliases,
+      shorthands, and URL patterns — no separate lookup tables.
 
 Usage::
 
     from strands_robots.registry import get_robot, resolve_name, list_robots
     from strands_robots.registry import get_policy_provider, resolve_policy_string
 
-    info = get_robot("so100")        # full robot dict
-    name = resolve_name("franka")    # → "panda"
+    info = get_robot("so100")
+    name = resolve_name("franka")       # → "panda"
     providers = list_policy_providers()
 
 Architecture:
     registry/
         __init__.py      ← this file (loader + public API)
-        robots.json      ← 38 robots + 82 aliases
-        policies.json    ← 8 providers + aliases + resolver rules
+        robots.json      ← robot definitions (aliases inside each entry)
+        policies.json    ← policy providers (shorthands/urls inside each entry)
 """
 
 import importlib
 import json
 import logging
-import os
 import re
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple, Type
+from typing import Any, Dict, List, Optional, Tuple, Type
 
 logger = logging.getLogger(__name__)
 
@@ -48,16 +43,13 @@ _mtimes: Dict[str, float] = {}
 
 
 def _load(name: str) -> dict:
-    """Load a JSON registry file with automatic hot-reload on change.
-
-    Files are only re-read from disk when their mtime changes,
-    so repeated calls within the same second are free.
+    """Load a JSON registry file, re-reading only when mtime changes.
 
     Args:
-        name: Base name without extension (e.g. "robots", "policies")
+        name: Base name without extension (e.g. "robots", "policies").
 
     Returns:
-        Parsed JSON as a dict
+        Parsed JSON as a dict.
     """
     path = _REGISTRY_DIR / f"{name}.json"
     try:
@@ -85,11 +77,22 @@ def reload():
 # Robot Registry
 # ─────────────────────────────────────────────────────────────────────
 
+def _build_robot_alias_map() -> Dict[str, str]:
+    """Build alias → canonical name mapping from robot entries.
+
+    Each robot entry may have an ``aliases`` list. This function
+    inverts those into a flat lookup dict.
+    """
+    reg = _load("robots")
+    alias_map: Dict[str, str] = {}
+    for name, info in reg.get("robots", {}).items():
+        for alias in info.get("aliases", []):
+            alias_map[alias] = name
+    return alias_map
+
 
 def resolve_name(name: str) -> str:
     """Resolve a robot name or alias to the canonical name.
-
-    Handles case-insensitive lookup, hyphens, and chained aliases.
 
     Args:
         name: Any robot name, alias, or data_config string.
@@ -99,16 +102,13 @@ def resolve_name(name: str) -> str:
 
     Examples::
 
-        resolve_name("franka")       # → "panda"
-        resolve_name("SO100_follower")# → "so100"
-        resolve_name("g1")           # → "unitree_g1"
+        resolve_name("franka")        # → "panda"
+        resolve_name("SO100_follower") # → "so100"
+        resolve_name("g1")            # → "unitree_g1"
     """
-    reg = _load("robots")
     normalized = name.lower().strip().replace("-", "_")
-    aliases = reg.get("aliases", {})
-    # One level of alias resolution (no chains needed — aliases are flat)
-    canonical = aliases.get(normalized, normalized)
-    return canonical
+    alias_map = _build_robot_alias_map()
+    return alias_map.get(normalized, normalized)
 
 
 def get_robot(name: str) -> Optional[Dict[str, Any]]:
@@ -119,13 +119,7 @@ def get_robot(name: str) -> Optional[Dict[str, Any]]:
 
     Returns:
         Robot dict with keys like description, category, joints, asset,
-        hardware, legacy_urdf — or None if not found.
-
-    Examples::
-
-        info = get_robot("so100")
-        print(info["description"])   # "TrossenRobotics SO-ARM100 (6-DOF, ...)"
-        print(info["asset"]["dir"])  # "trs_so_arm100"
+        hardware — or None if not found.
     """
     reg = _load("robots")
     canonical = resolve_name(name)
@@ -200,8 +194,7 @@ def list_robots_by_category() -> Dict[str, List[Dict[str, Any]]]:
 
 def list_aliases() -> Dict[str, str]:
     """Return the full alias → canonical mapping."""
-    reg = _load("robots")
-    return dict(reg.get("aliases", {}))
+    return _build_robot_alias_map()
 
 
 def format_robot_table() -> str:
@@ -230,6 +223,17 @@ def format_robot_table() -> str:
 # Policy Registry
 # ─────────────────────────────────────────────────────────────────────
 
+def _build_policy_alias_map() -> Dict[str, str]:
+    """Build alias/shorthand → canonical provider mapping from provider entries."""
+    reg = _load("policies")
+    alias_map: Dict[str, str] = {}
+    for name, info in reg.get("providers", {}).items():
+        for alias in info.get("aliases", []):
+            alias_map[alias] = name
+        for shorthand in info.get("shorthands", []):
+            alias_map[shorthand] = name
+    return alias_map
+
 
 def get_policy_provider(name: str) -> Optional[Dict[str, Any]]:
     """Get policy provider config by name or alias.
@@ -242,18 +246,15 @@ def get_policy_provider(name: str) -> Optional[Dict[str, Any]]:
         None if not found.
     """
     reg = _load("policies")
-    # Resolve alias
-    aliases = reg.get("aliases", {})
-    canonical = aliases.get(name, name)
+    alias_map = _build_policy_alias_map()
+    canonical = alias_map.get(name, name)
     return reg.get("providers", {}).get(canonical)
 
 
 def list_policy_providers() -> List[str]:
-    """List all registered policy provider names (canonical + aliases)."""
+    """List all registered policy provider names (canonical only)."""
     reg = _load("policies")
-    names = list(reg.get("providers", {}).keys())
-    names.extend(reg.get("aliases", {}).keys())
-    return sorted(set(names))
+    return sorted(reg.get("providers", {}).keys())
 
 
 def resolve_policy_string(
@@ -263,6 +264,13 @@ def resolve_policy_string(
 
     Accepts HuggingFace model IDs, server URLs, or shorthand names
     and returns the canonical provider + ready-to-use kwargs.
+
+    Resolution order:
+        1. URL patterns (ws://, zmq://, grpc://, host:port)
+        2. Shorthand names (mock, groot, dreamgen, ...)
+        3. HuggingFace model IDs (org/model)
+        4. Registered provider name
+        5. Fallback to lerobot_local
 
     Args:
         policy: Smart string — HF model ID, URL, or provider name.
@@ -283,52 +291,63 @@ def resolve_policy_string(
         # → ("mock", {})
     """
     reg = _load("policies")
-    resolver = reg.get("resolver", {})
+    providers = reg.get("providers", {})
     policy = policy.strip()
     kwargs: Dict[str, Any] = {}
 
-    # 1. URL pattern matching (ws://, zmq://, grpc://, host:port)
-    for pattern, provider in resolver.get("url_patterns", {}).items():
-        if re.match(pattern, policy):
-            if pattern.startswith("^wss?://"):
-                match = re.match(r"wss?://([^:]+):?(\d+)?", policy)
-                if match:
-                    kwargs["host"] = match.group(1)
-                    kwargs["port"] = int(match.group(2) or 8000)
-            elif pattern.startswith("^zmq://"):
-                match = re.match(r"zmq://([^:]+):(\d+)", policy)
-                if match:
-                    kwargs["host"] = match.group(1)
-                    kwargs["port"] = int(match.group(2))
-            elif pattern.startswith("^grpc://"):
-                kwargs["server_address"] = policy.replace("grpc://", "")
-            elif ":" in policy and "/" not in policy:
-                kwargs["server_address"] = policy
-            kwargs.update(extra_kwargs)
-            return provider, kwargs
+    # 1. URL pattern matching — check each provider's url_patterns
+    for prov_name, prov_info in providers.items():
+        for pattern in prov_info.get("url_patterns", []):
+            if re.match(pattern, policy):
+                if pattern.startswith("^wss?://"):
+                    match = re.match(r"wss?://([^:]+):?(\d+)?", policy)
+                    if match:
+                        kwargs["host"] = match.group(1)
+                        kwargs["port"] = int(match.group(2) or 8000)
+                elif pattern.startswith("^zmq://"):
+                    match = re.match(r"zmq://([^:]+):(\d+)", policy)
+                    if match:
+                        kwargs["host"] = match.group(1)
+                        kwargs["port"] = int(match.group(2))
+                elif pattern.startswith("^grpc://"):
+                    kwargs["server_address"] = policy.replace("grpc://", "")
+                elif ":" in policy and "/" not in policy:
+                    kwargs["server_address"] = policy
+                kwargs.update(extra_kwargs)
+                return prov_name, kwargs
 
-    # 2. Shorthand names (mock, groot, dreamgen, ...)
-    shorthands = resolver.get("shorthands", {})
-    if policy.lower() in shorthands:
+    # 2. Shorthand names — built from each provider's shorthands list
+    alias_map = _build_policy_alias_map()
+    if policy.lower() in alias_map:
         kwargs.update(extra_kwargs)
-        return shorthands[policy.lower()], kwargs
+        return alias_map[policy.lower()], kwargs
 
     # 3. HuggingFace model IDs (org/model)
     if "/" in policy:
+        # Check model_id_overrides across all providers
+        for prov_name, prov_info in providers.items():
+            for prefix in prov_info.get("model_id_overrides", []):
+                if policy.lower().startswith(prefix):
+                    kwargs["pretrained_name_or_path"] = policy
+                    kwargs.update(extra_kwargs)
+                    return prov_name, kwargs
+
+        # Check hf_orgs
         org = policy.split("/")[0].lower()
-        # Exact model ID overrides
-        for prefix, provider in resolver.get("model_id_overrides", {}).items():
-            if policy.lower().startswith(prefix):
+        for prov_name, prov_info in providers.items():
+            if org in prov_info.get("hf_orgs", []):
                 kwargs["pretrained_name_or_path"] = policy
                 kwargs.update(extra_kwargs)
-                return provider, kwargs
-        # Org mapping
-        hf_map = resolver.get("hf_org_map", {})
-        if org in hf_map:
-            kwargs["pretrained_name_or_path"] = policy
-            kwargs.update(extra_kwargs)
-            return hf_map[org], kwargs
-        # Unknown org → default to lerobot_local
+                return prov_name, kwargs
+
+        # Unknown org → find default HF provider
+        for prov_name, prov_info in providers.items():
+            if prov_info.get("is_hf_default"):
+                kwargs["pretrained_name_or_path"] = policy
+                kwargs.update(extra_kwargs)
+                return prov_name, kwargs
+
+        # Absolute fallback
         kwargs["pretrained_name_or_path"] = policy
         kwargs.update(extra_kwargs)
         return "lerobot_local", kwargs
@@ -365,7 +384,8 @@ def import_policy_class(provider: str) -> Type:
     if config:
         # Resolve alias to canonical for module lookup
         reg = _load("policies")
-        canonical = reg.get("aliases", {}).get(provider, provider)
+        alias_map = _build_policy_alias_map()
+        canonical = alias_map.get(provider, provider)
         config = reg.get("providers", {}).get(canonical, config)
 
         mod = importlib.import_module(config["module"])
@@ -377,7 +397,6 @@ def import_policy_class(provider: str) -> Type:
         class_name = f"{provider.capitalize()}Policy"
         if hasattr(mod, class_name):
             return getattr(mod, class_name)
-        # Scan for any Policy subclass
         from strands_robots.policies import Policy
         for attr_name in dir(mod):
             attr = getattr(mod, attr_name)
@@ -402,9 +421,8 @@ def build_policy_kwargs(
     data_config: Any = None,
     **extra,
 ) -> Dict[str, Any]:
-    """Build provider-specific kwargs from generic tool parameters.
+    """Build provider-specific kwargs from generic parameters.
 
-    Replaces the if/elif chain that was in robot.py::_get_policy().
     Maps generic parameter names (policy_port, model_path, ...) to
     the provider-specific keys declared in policies.json.
 
@@ -412,7 +430,7 @@ def build_policy_kwargs(
         provider: Policy provider name.
         policy_port: Port number (groot, lerobot_async).
         policy_host: Hostname (default: "localhost").
-        model_path: Local model path or HF ID (dreamgen, lerobot_local).
+        model_path: Local model path or HF ID.
         server_address: Full gRPC address (lerobot_async).
         policy_type: Sub-type (pi0, act, smolvla, ...).
         data_config: Data configuration for groot.
@@ -426,7 +444,6 @@ def build_policy_kwargs(
     defaults = dict(config.get("defaults", {}))
     kwargs: Dict[str, Any] = {}
 
-    # Map generic params → provider-specific keys
     param_map = {
         "port": policy_port,
         "host": policy_host,
@@ -439,17 +456,14 @@ def build_policy_kwargs(
         "policy_type": policy_type,
     }
 
-    # Only include keys the provider actually accepts
     for key, value in param_map.items():
         if value is not None and key in allowed_keys:
             kwargs[key] = value
 
-    # Apply defaults for missing keys
     for key, default_val in defaults.items():
         if key not in kwargs:
             kwargs[key] = default_val
 
-    # Forward extra kwargs that match config_keys
     for key, value in extra.items():
         if key in allowed_keys and key not in kwargs:
             kwargs[key] = value

@@ -1,9 +1,4 @@
-"""Tests for strands_robots.policies — MockPolicy, create_policy, registry.
-
-Tests the unified registry approach where policy provider definitions
-live in ``registry/policies.json`` and runtime registration is still
-supported via ``register_policy()``.
-"""
+"""Tests for strands_robots.policies — MockPolicy, create_policy, registry."""
 
 import asyncio
 
@@ -102,8 +97,8 @@ class TestPolicyRegistry:
         providers = list_policy_providers()
         assert "mock" in providers
         assert "groot" in providers
-        assert "lerobot" in providers  # alias
-        assert "cosmos" in providers  # alias
+        assert "lerobot_local" in providers
+        assert "cosmos_predict" in providers
 
     def test_resolve_mock(self):
         p, kw = resolve_policy_string("mock")
@@ -130,7 +125,7 @@ class TestCreatePolicy:
         assert "mock" in providers
         assert "groot" in providers
         assert "lerobot_local" in providers
-        assert "lerobot" in providers  # alias
+        assert "lerobot_async" in providers
 
     def test_register_custom_provider(self):
         register_policy("my_test_provider", loader=lambda: MockPolicy, aliases=["mtp"])

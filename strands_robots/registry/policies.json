@@ -6,7 +6,8 @@
       "description": "Sinusoidal test actions (no deps)",
       "requires": [],
       "config_keys": [],
-      "defaults": {}
+      "defaults": {},
+      "shorthands": ["mock", "random", "test"]
     },
     "groot": {
       "module": "strands_robots.policies.groot",
@@ -14,7 +15,11 @@
       "description": "NVIDIA GR00T N1.5/N1.6 via ZMQ",
       "requires": ["port"],
       "config_keys": ["port", "host", "data_config"],
-      "defaults": {"host": "localhost"}
+      "defaults": {"host": "localhost"},
+      "shorthands": ["groot"],
+      "url_patterns": ["^zmq://"],
+      "hf_orgs": ["nvidia"],
+      "model_id_overrides": ["nvidia/gr00t", "nvidia/groot"]
     },
     "lerobot_async": {
       "module": "strands_robots.policies.lerobot_async",
@@ -22,7 +27,8 @@
       "description": "LeRobot gRPC async inference (ACT, Pi0, SmolVLA, ...)",
       "requires": ["server_address"],
       "config_keys": ["server_address", "policy_type", "pretrained_name_or_path", "actions_per_chunk", "device", "fps", "task", "lerobot_features", "rename_map"],
-      "defaults": {}
+      "defaults": {},
+      "url_patterns": ["^grpc://", "^[\\w.\\-]+:\\d+$"]
     },
     "lerobot_local": {
       "module": "strands_robots.policies.lerobot_local",
@@ -30,7 +36,10 @@
       "description": "Direct HuggingFace inference (no server)",
       "requires": [],
       "config_keys": ["pretrained_name_or_path", "policy_type", "device", "actions_per_step"],
-      "defaults": {}
+      "defaults": {},
+      "aliases": ["lerobot"],
+      "hf_orgs": ["lerobot"],
+      "is_hf_default": true
     },
     "dreamgen": {
       "module": "strands_robots.policies.dreamgen",
@@ -38,7 +47,9 @@
       "description": "GR00T-Dreams IDM + VLA pipeline",
       "requires": ["model_path"],
       "config_keys": ["model_path", "mode", "embodiment_tag", "modality_config", "modality_transform", "device", "action_horizon", "action_dim", "denoising_steps"],
-      "defaults": {}
+      "defaults": {},
+      "shorthands": ["dreamgen"],
+      "hf_orgs": ["dream-org"]
     },
     "dreamzero": {
       "module": "strands_robots.policies.dreamzero",
@@ -46,7 +57,12 @@
       "description": "DreamZero world action model (WebSocket)",
       "requires": [],
       "config_keys": ["host", "port"],
-      "defaults": {"host": "localhost", "port": 8000}
+      "defaults": {"host": "localhost", "port": 8000},
+      "aliases": ["dream_zero", "world_action_model"],
+      "shorthands": ["dreamzero"],
+      "url_patterns": ["^wss?://"],
+      "hf_orgs": ["gear-dreams"],
+      "model_id_overrides": ["nvidia/dreamzero"]
     },
     "cosmos_predict": {
       "module": "strands_robots.policies.cosmos_predict",
@@ -54,7 +70,10 @@
       "description": "NVIDIA Cosmos world model policy",
       "requires": [],
       "config_keys": ["pretrained_name_or_path"],
-      "defaults": {}
+      "defaults": {},
+      "aliases": ["cosmos", "cosmos_predict2", "cosmos_predict_2b", "cosmos_predict_14b", "cosmos_policy", "cosmos_world_model", "nvidia_cosmos"],
+      "shorthands": ["cosmos", "cosmos_predict"],
+      "model_id_overrides": ["nvidia/cosmos-predict", "nvidia/cosmos-predict2", "nvidia/cosmos-predict2.5-2b", "nvidia/cosmos-predict2.5-14b", "nvidia/cosmos-policy"]
     },
     "gear_sonic": {
       "module": "strands_robots.policies.gear_sonic",
@@ -62,58 +81,10 @@
       "description": "GEAR-SONIC humanoid controller (135Hz ONNX)",
       "requires": [],
       "config_keys": [],
-      "defaults": {}
-    }
-  },
-  "aliases": {
-    "lerobot": "lerobot_local",
-    "dream_zero": "dreamzero",
-    "world_action_model": "dreamzero",
-    "cosmos": "cosmos_predict",
-    "cosmos_predict2": "cosmos_predict",
-    "cosmos_predict_2b": "cosmos_predict",
-    "cosmos_predict_14b": "cosmos_predict",
-    "cosmos_policy": "cosmos_predict",
-    "cosmos_world_model": "cosmos_predict",
-    "nvidia_cosmos": "cosmos_predict",
-    "sonic": "gear_sonic",
-    "gear": "gear_sonic",
-    "humanoid_sonic": "gear_sonic"
-  },
-  "resolver": {
-    "hf_org_map": {
-      "lerobot": "lerobot_local",
-      "nvidia": "groot",
-      "dream-org": "dreamgen",
-      "gear-dreams": "dreamzero",
-      "gear-group": "gear_sonic"
-    },
-    "model_id_overrides": {
-      "nvidia/gr00t": "groot",
-      "nvidia/groot": "groot",
-      "nvidia/dreamzero": "dreamzero",
-      "nvidia/cosmos-predict": "cosmos_predict",
-      "nvidia/cosmos-predict2": "cosmos_predict",
-      "nvidia/cosmos-predict2.5-2b": "cosmos_predict",
-      "nvidia/cosmos-predict2.5-14b": "cosmos_predict",
-      "nvidia/cosmos-policy": "cosmos_predict"
-    },
-    "shorthands": {
-      "mock": "mock",
-      "random": "mock",
-      "test": "mock",
-      "groot": "groot",
-      "dreamgen": "dreamgen",
-      "dreamzero": "dreamzero",
-      "cosmos": "cosmos_predict",
-      "cosmos_predict": "cosmos_predict",
-      "gear_sonic": "gear_sonic"
-    },
-    "url_patterns": {
-      "^wss?://": "dreamzero",
-      "^zmq://": "groot",
-      "^grpc://": "lerobot_async",
-      "^[\\w.\\-]+:\\d+$": "lerobot_async"
+      "defaults": {},
+      "aliases": ["sonic", "gear", "humanoid_sonic"],
+      "shorthands": ["gear_sonic"],
+      "hf_orgs": ["gear-group"]
     }
   }
 }
