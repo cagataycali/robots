@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
-import re as _re
+import re
 import shutil
 import tempfile
 import xml.etree.ElementTree as ET
@@ -69,9 +69,7 @@ def add_object(
             if result:
                 return {
                     "status": "success",
-                    "content": [
-                        {"text": f"📦 '{name}' spawned: {shape} at {obj.position}"}
-                    ],
+                    "content": [{"text": f"📦 '{name}' spawned: {shape} at {obj.position}"}],
                 }
             else:
                 # Fallback: metadata only
@@ -108,6 +106,7 @@ def add_object(
 
     # No robots — safe to recompile XML
     from ._scene import recompile_world
+
     result = recompile_world(sim)
     if result["status"] == "error":
         del sim._world.objects[name]
@@ -140,9 +139,7 @@ def _inject_object_into_scene(sim: MujocoBackend, obj: SimObject) -> bool:
     # Determine the original model directory for mesh resolution
     robot_base_dir = None
     if sim._world._robot_base_xml:
-        robot_base_dir = os.path.dirname(
-            os.path.abspath(sim._world._robot_base_xml)
-        )
+        robot_base_dir = os.path.dirname(os.path.abspath(sim._world._robot_base_xml))
 
     # Always use tempdir to avoid polluting shared asset directories.
     tmpdir = tempfile.mkdtemp(prefix="strands_sim_")
@@ -159,16 +156,16 @@ def _inject_object_into_scene(sim: MujocoBackend, obj: SimObject) -> bool:
             xml_content = f.read()
 
         # Extract existing meshdir value (may be relative like "assets/")
-        meshdir_match = _re.search(r'meshdir="([^"]*)"', xml_content)
+        meshdir_match = re.search(r'meshdir="([^"]*)"', xml_content)
         existing_meshdir = meshdir_match.group(1) if meshdir_match else ""
         abs_meshdir = os.path.normpath(os.path.join(robot_base_dir, existing_meshdir))
 
-        texdir_match = _re.search(r'texturedir="([^"]*)"', xml_content)
+        texdir_match = re.search(r'texturedir="([^"]*)"', xml_content)
         existing_texdir = texdir_match.group(1) if texdir_match else ""
         abs_texdir = os.path.normpath(os.path.join(robot_base_dir, existing_texdir))
 
         if meshdir_match:
-            xml_content = _re.sub(
+            xml_content = re.sub(
                 r'meshdir="[^"]*"',
                 f'meshdir="{abs_meshdir}"',
                 xml_content,
@@ -181,7 +178,7 @@ def _inject_object_into_scene(sim: MujocoBackend, obj: SimObject) -> bool:
             )
 
         if texdir_match:
-            xml_content = _re.sub(
+            xml_content = re.sub(
                 r'texturedir="[^"]*"',
                 f'texturedir="{abs_texdir}"',
                 xml_content,
@@ -204,7 +201,7 @@ def _inject_object_into_scene(sim: MujocoBackend, obj: SimObject) -> bool:
     xml_content = xml_content.replace("</worldbody>", f"{obj_xml}\n</worldbody>")
 
     # Remove keyframes — adding a freejoint changes qpos size, breaking them
-    xml_content = _re.sub(r'<keyframe>.*?</keyframe>', '', xml_content, flags=_re.DOTALL)
+    xml_content = re.sub(r"<keyframe>.*?</keyframe>", "", xml_content, flags=re.DOTALL)
 
     with open(scene_path, "w") as f:
         f.write(xml_content)
@@ -269,6 +266,7 @@ def remove_object(sim: MujocoBackend, name: str) -> Dict[str, Any]:
         _eject_body_from_scene(sim, name)
     else:
         from ._scene import recompile_world
+
         recompile_world(sim)
 
     return {
@@ -295,9 +293,7 @@ def _eject_body_from_scene(sim: MujocoBackend, body_name: str) -> bool:
         # we must always set absolute paths to the original model directory.
         robot_base_dir = None
         if sim._world._robot_base_xml:
-            robot_base_dir = os.path.dirname(
-                os.path.abspath(sim._world._robot_base_xml)
-            )
+            robot_base_dir = os.path.dirname(os.path.abspath(sim._world._robot_base_xml))
         if robot_base_dir:
             compiler = root.find("compiler")
             if compiler is not None:
@@ -319,9 +315,7 @@ def _eject_body_from_scene(sim: MujocoBackend, body_name: str) -> bool:
                     removed = True
 
         if not removed:
-            logger.warning(
-                "Body '%s' not found in MJCF XML — skipping ejection.", body_name
-            )
+            logger.warning("Body '%s' not found in MJCF XML — skipping ejection.", body_name)
 
         # Remove keyframes — their qpos sizes become invalid after body removal
         # (MuJoCo keyframes embed fixed-size qpos arrays that must match njnt)
@@ -348,6 +342,7 @@ def _eject_body_from_scene(sim: MujocoBackend, body_name: str) -> bool:
     except Exception as e:
         logger.error("Body ejection failed for '%s': %s", body_name, e)
         from ._scene import recompile_world
+
         recompile_world(sim)
         return False
     finally:
@@ -394,8 +389,5 @@ def list_objects(sim: MujocoBackend) -> Dict[str, Any]:
 
     lines = ["📦 Objects:\n"]
     for name, obj in sim._world.objects.items():
-        lines.append(
-            f"  • {name}: {obj.shape} at {obj.position}, "
-            f"{'static' if obj.is_static else f'{obj.mass}kg'}"
-        )
+        lines.append(f"  • {name}: {obj.shape} at {obj.position}, {'static' if obj.is_static else f'{obj.mass}kg'}")
     return {"status": "success", "content": [{"text": "\n".join(lines)}]}

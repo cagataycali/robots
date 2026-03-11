@@ -29,7 +29,7 @@
         "dir": "robotstudio_so101",
         "model_xml": "so101.xml",
         "scene_xml": "scene_box.xml",
-        "rd_module": "so_arm101_mj_description"
+        "robot_descriptions_module": "so_arm101_mj_description"
       },
       "hardware": {
         "lerobot_type": "so101_follower"
@@ -200,7 +200,7 @@
         "dir": "enactic_openarm",
         "model_xml": "openarm.xml",
         "scene_xml": "scene.xml",
-        "rd_module": "openarm_v1_mj_description"
+        "robot_descriptions_module": "openarm_v1_mj_description"
       },
       "aliases": [
         "enactic_openarm",
@@ -238,7 +238,7 @@
         "dir": "trossen_wxai",
         "model_xml": "trossen_ai_bimanual.xml",
         "scene_xml": "scene.xml",
-        "rd_module": "widow_mj_description"
+        "robot_descriptions_module": "widow_mj_description"
       },
       "aliases": [
         "trossen_ai_bimanual"
@@ -440,7 +440,7 @@
         "dir": "unitree_a1",
         "model_xml": "a1.xml",
         "scene_xml": "scene.xml",
-        "rd_module": "a1_mj_description"
+        "robot_descriptions_module": "a1_mj_description"
       },
       "aliases": [
         "a1"
