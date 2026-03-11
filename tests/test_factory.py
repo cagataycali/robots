@@ -1,8 +1,4 @@
-"""Tests for strands_robots.factory — Robot(), list_robots().
-
-Tests the unified registry approach where all robot definitions
-live in ``registry/robots.json`` and factory.py is pure routing.
-"""
+"""Tests for strands_robots.factory — Robot(), list_robots()."""
 
 from strands_robots.factory import list_robots
 from strands_robots.registry import (

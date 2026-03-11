@@ -35,19 +35,17 @@ import math
 from abc import ABC, abstractmethod
 from typing import Any, Callable, Dict, List, Optional, Type
 
-from strands_robots.registry import (  # noqa: I001
-    import_policy_class,
-    resolve_policy_string,
-)
 from strands_robots.registry import (
+    import_policy_class,
     list_policy_providers as _registry_list_providers,
+    resolve_policy_string,
 )
 
 logger = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────────────────────────────
-# Policy ABC (unchanged — this is the contract)
+# Policy ABC
 # ─────────────────────────────────────────────────────────────────────
 
 

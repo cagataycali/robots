@@ -7,73 +7,169 @@
       "requires": [],
       "config_keys": [],
       "defaults": {},
-      "shorthands": ["mock", "random", "test"]
+      "shorthands": [
+        "mock",
+        "random",
+        "test"
+      ]
     },
     "groot": {
       "module": "strands_robots.policies.groot",
       "class": "Gr00tPolicy",
       "description": "NVIDIA GR00T N1.5/N1.6 via ZMQ",
-      "requires": ["port"],
-      "config_keys": ["port", "host", "data_config"],
-      "defaults": {"host": "localhost"},
-      "shorthands": ["groot"],
-      "url_patterns": ["^zmq://"],
-      "hf_orgs": ["nvidia"],
-      "model_id_overrides": ["nvidia/gr00t", "nvidia/groot"]
+      "requires": [
+        "port"
+      ],
+      "config_keys": [
+        "port",
+        "host",
+        "data_config"
+      ],
+      "defaults": {
+        "host": "localhost"
+      },
+      "shorthands": [
+        "groot"
+      ],
+      "url_patterns": [
+        "^zmq://"
+      ],
+      "hf_orgs": [
+        "nvidia"
+      ],
+      "model_id_overrides": [
+        "nvidia/gr00t",
+        "nvidia/groot"
+      ]
     },
     "lerobot_async": {
       "module": "strands_robots.policies.lerobot_async",
       "class": "LerobotAsyncPolicy",
       "description": "LeRobot gRPC async inference (ACT, Pi0, SmolVLA, ...)",
-      "requires": ["server_address"],
-      "config_keys": ["server_address", "policy_type", "pretrained_name_or_path", "actions_per_chunk", "device", "fps", "task", "lerobot_features", "rename_map"],
+      "requires": [
+        "server_address"
+      ],
+      "config_keys": [
+        "server_address",
+        "policy_type",
+        "pretrained_name_or_path",
+        "actions_per_chunk",
+        "device",
+        "fps",
+        "task",
+        "lerobot_features",
+        "rename_map"
+      ],
       "defaults": {},
-      "url_patterns": ["^grpc://", "^[\\w.\\-]+:\\d+$"]
+      "url_patterns": [
+        "^grpc://",
+        "^[\\w.\\-]+:\\d+$"
+      ]
     },
     "lerobot_local": {
       "module": "strands_robots.policies.lerobot_local",
       "class": "LerobotLocalPolicy",
       "description": "Direct HuggingFace inference (no server)",
       "requires": [],
-      "config_keys": ["pretrained_name_or_path", "policy_type", "device", "actions_per_step"],
+      "config_keys": [
+        "pretrained_name_or_path",
+        "policy_type",
+        "device",
+        "actions_per_step"
+      ],
       "defaults": {},
-      "aliases": ["lerobot"],
-      "hf_orgs": ["lerobot"],
+      "aliases": [
+        "lerobot"
+      ],
+      "hf_orgs": [
+        "lerobot"
+      ],
       "is_hf_default": true
     },
     "dreamgen": {
       "module": "strands_robots.policies.dreamgen",
       "class": "DreamgenPolicy",
       "description": "GR00T-Dreams IDM + VLA pipeline",
-      "requires": ["model_path"],
-      "config_keys": ["model_path", "mode", "embodiment_tag", "modality_config", "modality_transform", "device", "action_horizon", "action_dim", "denoising_steps"],
+      "requires": [
+        "model_path"
+      ],
+      "config_keys": [
+        "model_path",
+        "mode",
+        "embodiment_tag",
+        "modality_config",
+        "modality_transform",
+        "device",
+        "action_horizon",
+        "action_dim",
+        "denoising_steps"
+      ],
       "defaults": {},
-      "shorthands": ["dreamgen"],
-      "hf_orgs": ["dream-org"]
+      "shorthands": [
+        "dreamgen"
+      ],
+      "hf_orgs": [
+        "dream-org"
+      ]
     },
     "dreamzero": {
       "module": "strands_robots.policies.dreamzero",
       "class": "DreamzeroPolicy",
       "description": "DreamZero world action model (WebSocket)",
       "requires": [],
-      "config_keys": ["host", "port"],
-      "defaults": {"host": "localhost", "port": 8000},
-      "aliases": ["dream_zero", "world_action_model"],
-      "shorthands": ["dreamzero"],
-      "url_patterns": ["^wss?://"],
-      "hf_orgs": ["gear-dreams"],
-      "model_id_overrides": ["nvidia/dreamzero"]
+      "config_keys": [
+        "host",
+        "port"
+      ],
+      "defaults": {
+        "host": "localhost",
+        "port": 8000
+      },
+      "aliases": [
+        "dream_zero",
+        "world_action_model"
+      ],
+      "shorthands": [
+        "dreamzero"
+      ],
+      "url_patterns": [
+        "^wss?://"
+      ],
+      "hf_orgs": [
+        "gear-dreams"
+      ],
+      "model_id_overrides": [
+        "nvidia/dreamzero"
+      ]
     },
     "cosmos_predict": {
       "module": "strands_robots.policies.cosmos_predict",
       "class": "CosmosPredictPolicy",
       "description": "NVIDIA Cosmos world model policy",
       "requires": [],
-      "config_keys": ["pretrained_name_or_path"],
+      "config_keys": [
+        "pretrained_name_or_path"
+      ],
       "defaults": {},
-      "aliases": ["cosmos", "cosmos_predict2", "cosmos_predict_2b", "cosmos_predict_14b", "cosmos_policy", "cosmos_world_model", "nvidia_cosmos"],
-      "shorthands": ["cosmos", "cosmos_predict"],
-      "model_id_overrides": ["nvidia/cosmos-predict", "nvidia/cosmos-predict2", "nvidia/cosmos-predict2.5-2b", "nvidia/cosmos-predict2.5-14b", "nvidia/cosmos-policy"]
+      "aliases": [
+        "cosmos",
+        "cosmos_predict2",
+        "cosmos_predict_2b",
+        "cosmos_predict_14b",
+        "cosmos_policy",
+        "cosmos_world_model",
+        "nvidia_cosmos"
+      ],
+      "shorthands": [
+        "cosmos_predict"
+      ],
+      "model_id_overrides": [
+        "nvidia/cosmos-predict",
+        "nvidia/cosmos-predict2",
+        "nvidia/cosmos-predict2.5-2b",
+        "nvidia/cosmos-predict2.5-14b",
+        "nvidia/cosmos-policy"
+      ]
     },
     "gear_sonic": {
       "module": "strands_robots.policies.gear_sonic",
@@ -82,9 +178,17 @@
       "requires": [],
       "config_keys": [],
       "defaults": {},
-      "aliases": ["sonic", "gear", "humanoid_sonic"],
-      "shorthands": ["gear_sonic"],
-      "hf_orgs": ["gear-group"]
+      "aliases": [
+        "sonic",
+        "gear",
+        "humanoid_sonic"
+      ],
+      "shorthands": [
+        "gear_sonic"
+      ],
+      "hf_orgs": [
+        "gear-group"
+      ]
     }
   }
 }

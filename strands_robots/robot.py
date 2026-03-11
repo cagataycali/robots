@@ -26,11 +26,16 @@ from strands.tools.tools import AgentTool
 from strands.types._events import ToolResultEvent
 from strands.types.tools import ToolSpec, ToolUse
 
+from strands_robots._async_utils import _resolve_coroutine, _run_async
+from strands_robots.registry import build_policy_kwargs
+
 from .policies import Policy, create_policy
 
 if TYPE_CHECKING:
     from lerobot.robots.config import RobotConfig
     from lerobot.robots.robot import Robot as LeRobotRobot
+
+logger = logging.getLogger(__name__)
 
 
 def _import_lerobot():
@@ -49,13 +54,6 @@ def _import_lerobot():
             f"LeRobot is required for Robot but could not be imported: {e}. "
             "Install it with: pip install lerobot"
         ) from e
-
-
-logger = logging.getLogger(__name__)
-
-
-from strands_robots._async_utils import _resolve_coroutine, _run_async  # noqa: E402
-from strands_robots.registry import build_policy_kwargs  # noqa: E402
 
 
 class TaskStatus(Enum):

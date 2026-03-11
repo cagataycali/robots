@@ -5,8 +5,6 @@ Resolves robot model files (MJCF XML) from:
     2. Custom paths (``STRANDS_URDF_DIR`` / ``STRANDS_ASSETS_DIR`` env vars)
     3. User home (``~/.strands_robots/assets/``)
 
-Robot definitions live in ``registry/robots.json``.
-
 Source: https://github.com/google-deepmind/mujoco_menagerie (Apache-2.0)
 """
 
@@ -15,14 +13,12 @@ import os
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from strands_robots.registry import (  # noqa: I001
+from strands_robots.registry import (
     format_robot_table,
     get_robot,
     list_aliases,
     list_robots,
     list_robots_by_category,
-)
-from strands_robots.registry import (
     resolve_name as resolve_robot_name,
 )
 

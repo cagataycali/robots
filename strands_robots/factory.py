@@ -3,19 +3,13 @@
 Provides:
     - ``Robot("so100")`` → auto-detects sim/real, returns the right backend
     - ``list_robots()``  → what's available
-
-Robot definitions and aliases live in ``registry/robots.json``.
 """
 
 import logging
 import os
 from typing import Any, Dict, List, Optional
 
-from strands_robots.registry import (  # noqa: I001
-    get_hardware_type,
-    has_hardware,
-    resolve_name,
-)
+from strands_robots.registry import get_hardware_type, has_hardware, resolve_name
 from strands_robots.registry import list_robots as _registry_list_robots
 
 logger = logging.getLogger(__name__)
@@ -103,8 +97,9 @@ def Robot(
     # ── Simulation backends ──
     if mode == "sim":
         if backend == "isaac":
-            from strands_robots.isaac.isaac_sim_backend import (  # noqa: I001
-                IsaacSimBackend, IsaacSimConfig,
+            from strands_robots.isaac.isaac_sim_backend import (
+                IsaacSimBackend,
+                IsaacSimConfig,
             )
             config = IsaacSimConfig(
                 num_envs=num_envs,
