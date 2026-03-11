@@ -154,6 +154,7 @@ def _get_source(info: dict) -> dict:
 
 def _shallow_clone(repo_url: str, dest: str, *, timeout: int = 120) -> None:
     """Shallow-clone *repo_url* into *dest*.  Raises on failure."""
+    logger.info("Cloning %s (this may take a moment)...", repo_url)
     subprocess.run(
         ["git", "clone", "--depth", "1", repo_url, dest],
         check=True,
