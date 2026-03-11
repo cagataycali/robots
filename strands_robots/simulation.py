@@ -72,22 +72,7 @@ from strands.types._events import ToolResultEvent
 from strands.types.tools import ToolSpec, ToolUse
 
 
-def _resolve_coroutine(coro_or_result):
-    """Safely resolve a potentially-async result to a sync value.
-
-    Avoids creating ThreadPoolExecutor per call and handles nested event loops.
-    """
-    if not asyncio.iscoroutine(coro_or_result):
-        return coro_or_result
-    try:
-        asyncio.get_running_loop()
-        # Already in an event loop — run in a new thread to avoid nesting
-        import concurrent.futures
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-            return ex.submit(asyncio.run, coro_or_result).result()
-    except RuntimeError:
-        return asyncio.run(coro_or_result)
+from ._async_utils import _resolve_coroutine  # noqa: F401
 
 
 # LeRobotDataset recording (optional — falls back to JSON if not installed)
@@ -1634,8 +1619,6 @@ class Simulation(AgentTool):
                 shutil.rmtree(tmpdir, ignore_errors=True)
             except Exception:
                 pass
-            except OSError:
-                pass
             return False
 
     def remove_object(self, name: str) -> Dict[str, Any]:
@@ -1656,7 +1639,7 @@ class Simulation(AgentTool):
     def _eject_body_from_scene(self, body_name: str) -> bool:
         """Remove a named body from the scene via XML round-trip, preserving robot state."""
         mj = _ensure_mujoco()
-        import re
+        import xml.etree.ElementTree as ET
 
         tmpdir = tempfile.mkdtemp(prefix="strands_eject_")
         scene_path = os.path.join(tmpdir, "scene_ejected.xml")
@@ -1671,27 +1654,30 @@ class Simulation(AgentTool):
                     os.path.abspath(self._world._robot_base_xml)
                 )
 
-            with open(scene_path) as f:
-                xml_content = f.read()
+            tree = ET.parse(scene_path)
+            root = tree.getroot()
 
             if (
                 robot_base_dir
-                and "<compiler" in xml_content
-                and "meshdir=" not in xml_content
+                and root.find("compiler") is not None
+                and root.find("compiler").get("meshdir") is None
             ):
-                xml_content = xml_content.replace(
-                    "<compiler",
-                    f'<compiler meshdir="{robot_base_dir}" texturedir="{robot_base_dir}"',
-                    1,
-                )
+                compiler = root.find("compiler")
+                compiler.set("meshdir", robot_base_dir)
+                compiler.set("texturedir", robot_base_dir)
 
-            # Remove the body element by name
-            # Match <body name="body_name" ...> ... </body> (handles nested bodies)
-            pattern = rf'<body\s+name="{re.escape(body_name)}"[^>]*>.*?</body>'
-            xml_content = re.sub(pattern, "", xml_content, flags=re.DOTALL)
+            # Remove the target body using ElementTree (handles nested bodies correctly)
+            removed = False
+            for parent in root.iter():
+                for child in list(parent):
+                    if child.tag == "body" and child.get("name") == body_name:
+                        parent.remove(child)
+                        removed = True
+                        break
+                if removed:
+                    break
 
-            with open(scene_path, "w") as f:
-                f.write(xml_content)
+            tree.write(scene_path, xml_declaration=True)
 
             new_model = mj.MjModel.from_xml_path(scene_path)
             new_data = mj.MjData(new_model)
