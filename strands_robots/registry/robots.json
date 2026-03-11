@@ -28,7 +28,8 @@
       "asset": {
         "dir": "robotstudio_so101",
         "model_xml": "so101.xml",
-        "scene_xml": "scene_box.xml"
+        "scene_xml": "scene_box.xml",
+        "rd_module": "so_arm101_mj_description"
       },
       "hardware": {
         "lerobot_type": "so101_follower"
@@ -198,7 +199,8 @@
       "asset": {
         "dir": "enactic_openarm",
         "model_xml": "openarm.xml",
-        "scene_xml": "scene.xml"
+        "scene_xml": "scene.xml",
+        "rd_module": "openarm_v1_mj_description"
       },
       "aliases": [
         "enactic_openarm",
@@ -235,7 +237,8 @@
       "asset": {
         "dir": "trossen_wxai",
         "model_xml": "trossen_ai_bimanual.xml",
-        "scene_xml": "scene.xml"
+        "scene_xml": "scene.xml",
+        "rd_module": "widow_mj_description"
       },
       "aliases": [
         "trossen_ai_bimanual"
@@ -362,7 +365,12 @@
       "asset": {
         "dir": "open_duck_mini_v2",
         "model_xml": "open_duck_mini_v2.xml",
-        "scene_xml": "scene.xml"
+        "scene_xml": "scene.xml",
+        "source": {
+          "type": "github",
+          "repo": "apirrone/Open_Duck_Mini",
+          "subdir": "mini_bdx/robots/open_duck_mini_v2"
+        }
       },
       "aliases": [
         "bdx",
@@ -379,7 +387,12 @@
       "asset": {
         "dir": "asimov_v0",
         "model_xml": "asimov_v0.xml",
-        "scene_xml": "scene.xml"
+        "scene_xml": "scene.xml",
+        "source": {
+          "type": "github",
+          "repo": "asimovinc/asimov-v0",
+          "subdir": "sim-model"
+        }
       },
       "aliases": [
         "asimov"
@@ -392,7 +405,12 @@
       "asset": {
         "dir": "reachy_mini",
         "model_xml": "mjcf/reachy_mini.xml",
-        "scene_xml": "mjcf/scene.xml"
+        "scene_xml": "mjcf/scene.xml",
+        "source": {
+          "type": "github",
+          "repo": "pollen-robotics/reachy_mini",
+          "subdir": "src/reachy_mini/descriptions/reachy_mini"
+        }
       },
       "aliases": [
         "pollen_reachy_mini",
@@ -421,7 +439,8 @@
       "asset": {
         "dir": "unitree_a1",
         "model_xml": "a1.xml",
-        "scene_xml": "scene.xml"
+        "scene_xml": "scene.xml",
+        "rd_module": "a1_mj_description"
       },
       "aliases": [
         "a1"

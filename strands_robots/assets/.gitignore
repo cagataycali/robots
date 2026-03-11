@@ -1,23 +1,33 @@
-# Robot model assets (from MuJoCo Menagerie)
-# Downloaded automatically or manually via: python -m strands_robots.assets.download
-# Source: https://github.com/google-deepmind/mujoco_menagerie (Apache-2.0)
+# Robot model assets — downloaded on-the-fly to ~/.strands_robots/assets/
 #
-# To keep assets in git (for packaging), remove this .gitignore
-# To use auto-download instead, keep this .gitignore
+# The pip package ships ONLY XML model files (lightweight).
+# Mesh files (STL, OBJ) are downloaded automatically when needed via:
+#   python -m strands_robots.tools.download_assets
+#
+# Sources:
+#   - MuJoCo Menagerie: https://github.com/google-deepmind/mujoco_menagerie
+#   - Custom repos: defined per-robot in registry/robots.json (asset.source)
 
-# Exclude all mesh files (STL, OBJ) — they're large
+# Exclude ALL mesh/binary files (large — downloaded to user cache)
 **/*.stl
 **/*.STL
 **/*.obj
 **/*.OBJ
+**/*.msh
+**/*.MSH
 
 # Exclude textures
 **/*.png
 **/*.jpg
 **/*.jpeg
 
-# Keep XML model files and this gitignore
-!**/*.xml
-!.gitignore
+# Exclude menagerie extras
+**/README.md
+**/LICENSE
+**/CHANGELOG.md
+
+# Keep only Python + XML files
 !__init__.py
 !download.py
+!.gitignore
+!**/*.xml

@@ -6,6 +6,7 @@ import logging
 import os
 import shutil
 import tempfile
+import re as _re
 import xml.etree.ElementTree as ET
 from typing import TYPE_CHECKING, Any, Dict, List
 
@@ -149,16 +150,49 @@ def _inject_object_into_scene(sim: MujocoBackend, obj: SimObject) -> bool:
 
     mj.mj_saveLastXML(scene_path, sim._world._model)
 
-    # Patch meshdir/texturedir to point to original asset dir for mesh resolution
+    # Patch meshdir/texturedir to point to original asset dir for mesh resolution.
+    # mj_saveLastXML writes relative paths (e.g. meshdir="assets/") with files like
+    # "Base.stl". Since we're in a tmpdir, we must resolve the meshdir to an absolute
+    # path: join robot_base_dir + the existing relative meshdir.
     if robot_base_dir and os.path.isdir(robot_base_dir):
         with open(scene_path) as f:
             xml_content = f.read()
-        if "<compiler" in xml_content and "meshdir=" not in xml_content:
+
+        # Extract existing meshdir value (may be relative like "assets/")
+        meshdir_match = _re.search(r'meshdir="([^"]*)"', xml_content)
+        existing_meshdir = meshdir_match.group(1) if meshdir_match else ""
+        abs_meshdir = os.path.normpath(os.path.join(robot_base_dir, existing_meshdir))
+
+        texdir_match = _re.search(r'texturedir="([^"]*)"', xml_content)
+        existing_texdir = texdir_match.group(1) if texdir_match else ""
+        abs_texdir = os.path.normpath(os.path.join(robot_base_dir, existing_texdir))
+
+        if meshdir_match:
+            xml_content = _re.sub(
+                r'meshdir="[^"]*"',
+                f'meshdir="{abs_meshdir}"',
+                xml_content,
+            )
+        elif "<compiler" in xml_content:
             xml_content = xml_content.replace(
                 "<compiler",
-                f'<compiler meshdir="{robot_base_dir}" texturedir="{robot_base_dir}"',
+                f'<compiler meshdir="{robot_base_dir}"',
                 1,
             )
+
+        if texdir_match:
+            xml_content = _re.sub(
+                r'texturedir="[^"]*"',
+                f'texturedir="{abs_texdir}"',
+                xml_content,
+            )
+        elif "<compiler" in xml_content and "texturedir" not in xml_content:
+            xml_content = xml_content.replace(
+                "<compiler",
+                f'<compiler texturedir="{robot_base_dir}"',
+                1,
+            )
+
         with open(scene_path, "w") as f:
             f.write(xml_content)
 
@@ -168,6 +202,9 @@ def _inject_object_into_scene(sim: MujocoBackend, obj: SimObject) -> bool:
 
     obj_xml = MJCFBuilder._object_xml(obj, indent=4)
     xml_content = xml_content.replace("</worldbody>", f"{obj_xml}\n</worldbody>")
+
+    # Remove keyframes — adding a freejoint changes qpos size, breaking them
+    xml_content = _re.sub(r'<keyframe>.*?</keyframe>', '', xml_content, flags=_re.DOTALL)
 
     with open(scene_path, "w") as f:
         f.write(xml_content)
@@ -253,7 +290,9 @@ def _eject_body_from_scene(sim: MujocoBackend, body_name: str) -> bool:
         tree = ET.parse(scene_path)
         root = tree.getroot()
 
-        # Patch meshdir / texturedir if needed
+        # Patch meshdir / texturedir to absolute paths.
+        # mj_saveLastXML writes relative paths; since we're in a tmpdir
+        # we must always set absolute paths to the original model directory.
         robot_base_dir = None
         if sim._world._robot_base_xml:
             robot_base_dir = os.path.dirname(
@@ -262,10 +301,14 @@ def _eject_body_from_scene(sim: MujocoBackend, body_name: str) -> bool:
         if robot_base_dir:
             compiler = root.find("compiler")
             if compiler is not None:
-                if compiler.get("meshdir") is None:
-                    compiler.set("meshdir", robot_base_dir)
-                if compiler.get("texturedir") is None:
-                    compiler.set("texturedir", robot_base_dir)
+                # Resolve relative meshdir to absolute path
+                existing_meshdir = compiler.get("meshdir", "")
+                abs_meshdir = os.path.normpath(os.path.join(robot_base_dir, existing_meshdir))
+                compiler.set("meshdir", abs_meshdir)
+
+                existing_texdir = compiler.get("texturedir", "")
+                abs_texdir = os.path.normpath(os.path.join(robot_base_dir, existing_texdir))
+                compiler.set("texturedir", abs_texdir)
 
         # Walk the tree and remove the target body element.
         removed = False
@@ -279,6 +322,11 @@ def _eject_body_from_scene(sim: MujocoBackend, body_name: str) -> bool:
             logger.warning(
                 "Body '%s' not found in MJCF XML — skipping ejection.", body_name
             )
+
+        # Remove keyframes — their qpos sizes become invalid after body removal
+        # (MuJoCo keyframes embed fixed-size qpos arrays that must match njnt)
+        for keyframe_elem in root.findall("keyframe"):
+            root.remove(keyframe_elem)
 
         tree.write(scene_path, xml_declaration=True)
 
