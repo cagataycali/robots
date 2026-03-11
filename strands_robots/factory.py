@@ -256,8 +256,7 @@ def _auto_detect_mode(canonical: str, robot_info: Optional[Dict]) -> str:
                 p
                 for p in ports
                 if any(
-                    kw
-                    in (p.description + getattr(p, "manufacturer_string", "")).lower()
+                    kw in (p.description + getattr(p, "manufacturer", "")).lower()
                     for kw in robot_servo_keywords
                 )
                 and not any(

@@ -361,7 +361,8 @@ class LerobotLocalPolicy(Policy):
                         t = torch.from_numpy(v.copy()).float()
                         if t.dim() == 3 and t.shape[-1] in (1, 3, 4):
                             t = t.permute(2, 0, 1)
-                        if "image" in k and t.max() > 1.0:
+                        # Normalize based on source dtype, not value range
+                        if "image" in k and v.dtype == np.uint8:
                             t = t / 255.0
                         if "image" in k and t.dim() == 3:
                             t = t.unsqueeze(0)
@@ -382,8 +383,8 @@ class LerobotLocalPolicy(Policy):
                         .to(self._device)
                     )
                 elif isinstance(v, (list, tuple)):
-                    # BUG-4 FIX: Simulation returns lists for observation.state
-                    # Convert list/tuple to tensor (handles 1D state vectors and nested lists)
+                    # Handle list/tuple values (e.g. observation.state from simulation)
+
                     try:
                         arr = np.array(v, dtype=np.float32)
                     except (ValueError, TypeError):
@@ -393,7 +394,7 @@ class LerobotLocalPolicy(Policy):
                         t = torch.from_numpy(arr).float()
                         if t.dim() == 3 and t.shape[-1] in (1, 3, 4):
                             t = t.permute(2, 0, 1)
-                        if "image" in k and t.max() > 1.0:
+                        if "image" in k and arr.dtype == np.uint8:
                             t = t / 255.0
                         if "image" in k and t.dim() == 3:
                             t = t.unsqueeze(0)
@@ -484,10 +485,11 @@ class LerobotLocalPolicy(Policy):
             if key in self.robot_state_keys:
                 continue
             if isinstance(value, np.ndarray) and value.ndim >= 2:
-                img_tensor = torch.from_numpy(value).float()
+                # use .copy() for memory safety, dtype for normalization
+                img_tensor = torch.from_numpy(value.copy()).float()
                 if img_tensor.dim() == 3 and img_tensor.shape[-1] in (1, 3, 4):
                     img_tensor = img_tensor.permute(2, 0, 1)
-                if img_tensor.max() > 1.0:
+                if value.dtype == np.uint8:
                     img_tensor = img_tensor / 255.0
                 for feat_name in self._input_features:
                     if "image" in feat_name and feat_name not in batch:

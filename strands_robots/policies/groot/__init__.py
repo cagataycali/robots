@@ -319,11 +319,10 @@ class Gr00tPolicy(Policy):
             mc = self._local_policy.get_modality_config()
             nested = {"video": {}, "state": {}, "language": {}}
 
-            for key in (
-                mc.get("video", {}).modality_keys
-                if hasattr(mc.get("video", {}), "modality_keys")
-                else []
-            ):
+            video_mc = getattr(mc, "video", None)
+            video_keys = getattr(video_mc, "modality_keys", []) if video_mc else []
+
+            for key in video_keys:
                 short = key.split(".")[-1] if "." in key else key
                 # Try multiple source key patterns
                 src_key = None
@@ -343,11 +342,10 @@ class Gr00tPolicy(Policy):
                     else:
                         nested["video"][key] = arr
 
-            for key in (
-                mc.get("state", {}).modality_keys
-                if hasattr(mc.get("state", {}), "modality_keys")
-                else []
-            ):
+            state_mc = getattr(mc, "state", None)
+            state_keys = getattr(state_mc, "modality_keys", []) if state_mc else []
+
+            for key in state_keys:
                 short = key.split(".")[-1] if "." in key else key
                 # Try multiple source key patterns
                 src_key = None
@@ -368,11 +366,10 @@ class Gr00tPolicy(Policy):
                     else:
                         nested["state"][key] = arr
 
-            for key in (
-                mc.get("language", {}).modality_keys
-                if hasattr(mc.get("language", {}), "modality_keys")
-                else []
-            ):
+            lang_mc = getattr(mc, "language", None)
+            lang_keys = getattr(lang_mc, "modality_keys", []) if lang_mc else []
+
+            for key in lang_keys:
                 short = key.split(".")[-1] if "." in key else key
                 lang_key = self.language_keys[0] if self.language_keys else key
                 # Look for lang value in obs_dict by full key, short key, or our config key

@@ -17,9 +17,10 @@ Policy Providers:
     - lerobot_async: gRPC to LeRobot PolicyServer
     - groot: NVIDIA GR00T N1.5/N1.6 (ZMQ or local GPU)
     - dreamgen: GR00T-Dreams IDM + VLA pipeline
+    - dreamzero: DreamZero world action model (WebSocket)
     - gear_sonic: NVIDIA GEAR-SONIC humanoid control (135Hz ONNX)
-    - openvla, internvla, rdt, magma, omnivla, unifolm, alpamayo,
-      robobrain, cogact, dreamzero, mock
+    - cosmos_predict: NVIDIA Cosmos world model policy
+    - mock: Sinusoidal actions for testing
 
 See Also:
     - https://github.com/strands-labs/robots

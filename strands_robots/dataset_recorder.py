@@ -347,11 +347,22 @@ class DatasetRecorder:
                 frame[f"observation.images.{cam_key}"] = img
 
         # --- State → observation.state (flattened vector) ---
+        # Use feature schema ordering to match the dataset schema declared in _build_features().
         if state_keys:
             state_vals = []
-            for k in sorted(state_keys):
-                v = observation[k]
-                if isinstance(v, (int, float)):
+            feat = self.dataset.features.get("observation.state", {})
+            state_names = (
+                feat.get("names", [])
+                if isinstance(feat, dict)
+                else getattr(feat, "names", [])
+            )
+
+            ordered_keys = state_names if state_names else sorted(state_keys)
+            for k in ordered_keys:
+                v = observation.get(k)
+                if v is None:
+                    state_vals.append(0.0)
+                elif isinstance(v, (int, float)):
                     state_vals.append(float(v))
                 elif isinstance(v, np.ndarray) and v.ndim == 0:
                     state_vals.append(float(v))
@@ -362,11 +373,22 @@ class DatasetRecorder:
                 frame["observation.state"] = np.array(state_vals, dtype=np.float32)
 
         # --- Action → flattened vector ---
+        # Use feature schema ordering for actions too.
         if action:
             action_vals = []
-            for k in sorted(action.keys()):
-                v = action[k]
-                if isinstance(v, (int, float)):
+            feat = self.dataset.features.get("action", {})
+            action_names = (
+                feat.get("names", [])
+                if isinstance(feat, dict)
+                else getattr(feat, "names", [])
+            )
+
+            ordered_keys = action_names if action_names else sorted(action.keys())
+            for k in ordered_keys:
+                v = action.get(k)
+                if v is None:
+                    action_vals.append(0.0)
+                elif isinstance(v, (int, float)):
                     action_vals.append(float(v))
                 elif isinstance(v, np.ndarray) and v.ndim == 0:
                     action_vals.append(float(v))

@@ -87,6 +87,8 @@ class BaseInferenceClient:
 
     def _init_socket(self):
         self.socket = self.context.socket(_zmq.REQ)
+        self.socket.setsockopt(_zmq.RCVTIMEO, self.timeout_ms)
+        self.socket.setsockopt(_zmq.SNDTIMEO, self.timeout_ms)
         self.socket.connect(f"tcp://{self.host}:{self.port}")
 
     def ping(self) -> bool:

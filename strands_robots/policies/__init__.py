@@ -8,6 +8,9 @@ Built-in providers:
 - lerobot_async: LeRobot gRPC async inference (ACT, Pi0, SmolVLA, Diffusion, etc.)
 - lerobot_local: LeRobot direct HuggingFace inference (no server needed)
 - dreamgen: GR00T-Dreams IDM and VLA (DreamGen neural trajectories)
+- dreamzero: DreamZero world action model (WebSocket)
+- cosmos_predict: NVIDIA Cosmos world model policy
+- gear_sonic: GEAR Sonic humanoid controller
 - mock: Sinusoidal actions for testing
 """
 
@@ -312,74 +315,6 @@ _registry.register(
 )
 
 _registry.register(
-    "omnivla",
-    loader=lambda: importlib.import_module(
-        "strands_robots.policies.omnivla"
-    ).OmnivlaPolicy,
-    aliases=["omni_vla", "omnivla_nav", "navigation_vla"],
-)
-
-_registry.register(
-    "openvla",
-    loader=lambda: importlib.import_module(
-        "strands_robots.policies.openvla"
-    ).OpenvlaPolicy,
-    aliases=["open_vla"],
-)
-
-_registry.register(
-    "internvla",
-    loader=lambda: importlib.import_module(
-        "strands_robots.policies.internvla"
-    ).InternvlaPolicy,
-    aliases=["intern_vla", "internvla_a1", "internvla_m1"],
-)
-
-_registry.register(
-    "rdt",
-    loader=lambda: importlib.import_module("strands_robots.policies.rdt").RdtPolicy,
-    aliases=["rdt_1b", "robotics_diffusion_transformer"],
-)
-
-_registry.register(
-    "magma",
-    loader=lambda: importlib.import_module("strands_robots.policies.magma").MagmaPolicy,
-    aliases=["magma_8b", "microsoft_magma"],
-)
-
-_registry.register(
-    "unifolm",
-    loader=lambda: importlib.import_module(
-        "strands_robots.policies.unifolm"
-    ).UnifolmPolicy,
-    aliases=["unitree", "unitree_vla", "unifolm_vla"],
-)
-
-_registry.register(
-    "alpamayo",
-    loader=lambda: importlib.import_module(
-        "strands_robots.policies.alpamayo"
-    ).AlpamayoPolicy,
-    aliases=["alpamayo_r1", "alpamayo_1", "nvidia_alpamayo"],
-)
-
-_registry.register(
-    "robobrain",
-    loader=lambda: importlib.import_module(
-        "strands_robots.policies.robobrain"
-    ).RobobrainPolicy,
-    aliases=["robobrain2", "robobrain_2", "baai_robobrain"],
-)
-
-_registry.register(
-    "cogact",
-    loader=lambda: importlib.import_module(
-        "strands_robots.policies.cogact"
-    ).CogactPolicy,
-    aliases=["cog_act", "cogact_base"],
-)
-
-_registry.register(
     "cosmos_predict",
     loader=lambda: importlib.import_module(
         "strands_robots.policies.cosmos_predict"
@@ -401,12 +336,6 @@ _registry.register(
         "strands_robots.policies.gear_sonic"
     ).GearSonicPolicy,
     aliases=["sonic", "gear", "humanoid_sonic"],
-)
-
-_registry.register(
-    "go1",
-    loader=lambda: importlib.import_module("strands_robots.policies.go1").Go1Policy,
-    aliases=["go_1", "agibot_go1", "agibot_world", "go1_air"],
 )
 
 
@@ -453,8 +382,6 @@ def create_policy(provider: str, **kwargs) -> Policy:
 
     Smart resolution (when provider contains "/" or looks like a URL):
         "lerobot/act_aloha_sim"         → lerobot_local
-        "openvla/openvla-7b"            → openvla
-        "microsoft/Magma-8B"            → magma
         "localhost:8080"                → lerobot_async (gRPC)
         "ws://gpu:9000"                 → dreamzero (WebSocket)
         "zmq://host:5555"              → groot (ZMQ)
@@ -480,7 +407,6 @@ def create_policy(provider: str, **kwargs) -> Policy:
 
         # Smart string (new — auto-resolves)
         policy = create_policy("lerobot/act_aloha_sim_transfer_cube_human")
-        policy = create_policy("openvla/openvla-7b")
         policy = create_policy("mock")
         policy = create_policy("localhost:8080")
     """

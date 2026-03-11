@@ -236,6 +236,7 @@ class Mesh:
         self._subs: list = []
         self._pending: Dict[str, threading.Event] = {}
         self._responses: Dict[str, list] = {}
+        self._has_session_ref = False
 
     # ── lifecycle ──────────────────────────────────────────────
 
@@ -249,6 +250,7 @@ class Mesh:
             logger.debug(f"{self.peer_id}: zenoh unavailable, mesh off")
             return
 
+        self._has_session_ref = True
         self._running = True
         _LOCAL_ROBOTS[self.peer_id] = self
 
@@ -284,7 +286,10 @@ class Mesh:
             except Exception:
                 pass
         self._subs.clear()
-        _release_session()
+        # Only release session if we actually acquired a reference
+        if self._has_session_ref:
+            _release_session()
+            self._has_session_ref = False
         logger.info(f"🔌 {self.peer_id} off mesh")
 
     @property
@@ -387,8 +392,12 @@ class Mesh:
                     s["sim_time"] = float(w._data.time)
                 elif hasattr(r, "_data") and r._data is not None:
                     s["sim_time"] = float(r._data.time)
-                if hasattr(r, "_robots"):
-                    for name in r._robots:
+                if (
+                    hasattr(r, "_world")
+                    and r._world is not None
+                    and hasattr(r._world, "robots")
+                ):
+                    for name in r._world.robots:
                         s.setdefault("robots", {})[name] = {"active": True}
 
         except Exception:
