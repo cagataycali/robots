@@ -54,7 +54,30 @@ def _import_lerobot():
 logger = logging.getLogger(__name__)
 
 
-from ._async_utils import _resolve_coroutine, _run_async  # noqa: F401
+def _resolve_coroutine(coro_or_result):
+    """Safely resolve a potentially-async result to a sync value."""
+    if not asyncio.iscoroutine(coro_or_result):
+        return coro_or_result
+    try:
+        asyncio.get_running_loop()
+        import concurrent.futures
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+            return ex.submit(asyncio.run, coro_or_result).result()
+    except RuntimeError:
+        return asyncio.run(coro_or_result)
+
+
+def _run_async(coro_fn):
+    """Run an async function from sync context, handling nested loops."""
+    try:
+        asyncio.get_running_loop()
+        import concurrent.futures
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+            return ex.submit(asyncio.run, coro_fn()).result()
+    except RuntimeError:
+        return asyncio.run(coro_fn())
 
 
 class TaskStatus(Enum):
@@ -70,7 +93,7 @@ class TaskStatus(Enum):
 
 @dataclass
 class RobotTaskState:
-    """Robot task execution state — guarded by _task_lock for thread safety (BUG-08)."""
+    """Robot task execution state — guarded by _task_lock for thread safety."""
 
     status: TaskStatus = TaskStatus.IDLE
     instruction: str = ""
@@ -362,104 +385,32 @@ class Robot(AgentTool):
     ) -> Policy:
         """Create policy on-the-fly from invocation parameters.
 
-        Builds provider-specific kwargs based on the policy_provider type:
-        - groot: Uses policy_host + policy_port for ZMQ connection
-        - lerobot_async: Uses server_address for gRPC connection
-        - dreamgen: Uses model_path for local model inference
-        - mock: No additional params needed
+        Uses ``registry/policies.json`` to map generic parameters
+        (policy_port, model_path, ...) to provider-specific kwargs.
+        No hardcoded if/elif chains — adding a new provider is a
+        JSON edit + a Python module.
 
         Args:
-            policy_provider: Policy provider name (groot, lerobot_async, dreamgen, mock)
-            policy_port: Port for remote policy services (groot, lerobot_async)
-            policy_host: Host for remote policy services (default: localhost)
-            model_path: Local model path or HF model ID (dreamgen)
-            server_address: Full server address for gRPC (lerobot_async, e.g. "localhost:8080")
-            policy_type: Sub-policy type for lerobot_async (pi0, act, smolvla, etc.)
-            **policy_kwargs: Additional provider-specific parameters
+            policy_provider: Provider name (groot, lerobot_async, dreamgen, mock, ...)
+            policy_port: Port for remote services (groot, lerobot_async).
+            policy_host: Hostname (default: "localhost").
+            model_path: Model path or HF ID (dreamgen, lerobot_local).
+            server_address: Full gRPC address (lerobot_async).
+            policy_type: Sub-type (pi0, act, smolvla, ...).
+            **policy_kwargs: Additional provider-specific parameters.
         """
-        policy_config = {}
+        from strands_robots.registry import build_policy_kwargs
 
-        if policy_provider == "groot":
-            if not policy_port:
-                raise ValueError("policy_port is required for groot provider")
-            policy_config["port"] = policy_port
-            policy_config["host"] = policy_host
-            if self.data_config:
-                policy_config["data_config"] = self.data_config
-
-        elif policy_provider == "lerobot_async":
-            # Build server_address from host:port if not provided directly
-            if server_address:
-                policy_config["server_address"] = server_address
-            elif policy_port:
-                policy_config["server_address"] = f"{policy_host}:{policy_port}"
-            else:
-                raise ValueError(
-                    "policy_port or server_address is required for lerobot_async provider"
-                )
-            if policy_type:
-                policy_config["policy_type"] = policy_type
-            # Forward any extra kwargs (pretrained_name_or_path, actions_per_chunk, etc.)
-            for key in [
-                "pretrained_name_or_path",
-                "actions_per_chunk",
-                "device",
-                "fps",
-                "task",
-                "lerobot_features",
-                "rename_map",
-            ]:
-                if key in policy_kwargs:
-                    policy_config[key] = policy_kwargs.pop(key)
-
-        elif policy_provider == "dreamgen":
-            if not model_path:
-                raise ValueError("model_path is required for dreamgen provider")
-            policy_config["model_path"] = model_path
-            # Forward dreamgen-specific kwargs
-            for key in [
-                "mode",
-                "embodiment_tag",
-                "modality_config",
-                "modality_transform",
-                "device",
-                "action_horizon",
-                "action_dim",
-                "denoising_steps",
-            ]:
-                if key in policy_kwargs:
-                    policy_config[key] = policy_kwargs.pop(key)
-
-        elif policy_provider == "mock":
-            pass  # No config needed
-
-        elif policy_provider in ("lerobot_local", "lerobot"):
-            # Direct HuggingFace model inference — no server needed
-            for key in [
-                "pretrained_name_or_path",
-                "policy_type",
-                "device",
-                "actions_per_step",
-            ]:
-                if key in policy_kwargs:
-                    policy_config[key] = policy_kwargs.pop(key)
-            # Forward named policy_type param (not in **policy_kwargs due to Python arg binding)
-            if policy_type:
-                policy_config["policy_type"] = policy_type
-            # Also accept model_path as alias for pretrained_name_or_path
-            if model_path and "pretrained_name_or_path" not in policy_config:
-                policy_config["pretrained_name_or_path"] = model_path
-
-        else:
-            # Unknown provider - pass through port/host as best-effort
-            if policy_port:
-                policy_config["port"] = policy_port
-                policy_config["host"] = policy_host
-            if self.data_config:
-                policy_config["data_config"] = self.data_config
-
-        # Merge any remaining kwargs
-        policy_config.update(policy_kwargs)
+        policy_config = build_policy_kwargs(
+            provider=policy_provider,
+            policy_port=policy_port,
+            policy_host=policy_host,
+            model_path=model_path,
+            server_address=server_address,
+            policy_type=policy_type,
+            data_config=self.data_config,
+            **policy_kwargs,
+        )
 
         return create_policy(policy_provider, **policy_config)
 
@@ -1062,44 +1013,44 @@ class Robot(AgentTool):
                 }
 
             # Find episode frame range — use LeRobot's episode_data_index
-            ep_start = 0
-            ep_length = 0
+            episode_start = 0
+            episode_length = 0
             try:
                 if hasattr(ds, "episode_data_index"):
                     from_idx = ds.episode_data_index["from"][episode].item()
                     to_idx = ds.episode_data_index["to"][episode].item()
-                    ep_start = from_idx
-                    ep_length = to_idx - from_idx
+                    episode_start = from_idx
+                    episode_length = to_idx - from_idx
                 else:
                     for i in range(episode):
-                        ep_info = (
+                        episode_info = (
                             ds.meta.episodes[i] if hasattr(ds.meta, "episodes") else {}
                         )
-                        ep_start += ep_info.get("length", 0)
-                    ep_info = (
+                        episode_start += episode_info.get("length", 0)
+                    episode_info = (
                         ds.meta.episodes[episode]
                         if hasattr(ds.meta, "episodes")
                         else {}
                     )
-                    ep_length = ep_info.get("length", 0)
+                    episode_length = episode_info.get("length", 0)
             except Exception:
-                # Fallback: try indexing directly and count frames
-                ep_length = 0
+                # Scan frames to find episode boundaries
+                episode_length = 0
                 for idx in range(len(ds)):
                     frame = ds[idx]
-                    ep_idx = (
+                    frame_episode = (
                         frame.get("episode_index", -1) if hasattr(frame, "get") else -1
                     )
-                    if hasattr(ep_idx, "item"):
-                        ep_idx = ep_idx.item()
-                    if ep_idx == episode:
-                        if ep_length == 0:
-                            ep_start = idx
-                        ep_length += 1
-                    elif ep_length > 0:
+                    if hasattr(frame_episode, "item"):
+                        frame_episode = frame_episode.item()
+                    if frame_episode == episode:
+                        if episode_length == 0:
+                            episode_start = idx
+                        episode_length += 1
+                    elif episode_length > 0:
                         break
 
-            if ep_length == 0:
+            if episode_length == 0:
                 return {
                     "status": "error",
                     "content": [{"text": f"❌ Episode {episode} has no frames"}],
@@ -1118,11 +1069,11 @@ class Robot(AgentTool):
             frame_interval = 1.0 / (dataset_fps * speed)
 
             # Extract action keys from first frame
-            first_frame = ds[ep_start]
+            first_frame = ds[episode_start]
             action_keys = [k for k in first_frame.keys() if "action" in k]
 
             logger.info(
-                f"▶️ Replaying episode {episode}: {ep_length} frames at "
+                f"▶️ Replaying episode {episode}: {episode_length} frames at "
                 f"{dataset_fps * speed:.1f} fps (speed={speed}x)"
             )
 
@@ -1135,7 +1086,7 @@ class Robot(AgentTool):
             frames_sent = 0
 
             try:
-                for frame_idx in range(ep_length):
+                for frame_idx in range(episode_length):
                     if (
                         self._task_state.status != TaskStatus.RUNNING
                         or self._shutdown_event.is_set()
@@ -1144,7 +1095,7 @@ class Robot(AgentTool):
 
                     step_start = time.time()
 
-                    frame = ds[ep_start + frame_idx]
+                    frame = ds[episode_start + frame_idx]
 
                     # Extract action and send to robot
                     action_dict = {}
@@ -1196,7 +1147,7 @@ class Robot(AgentTool):
                     {
                         "text": (
                             f"▶️ Replayed episode {episode} from {repo_id}\n"
-                            f"Frames: {frames_sent}/{ep_length} | "
+                            f"Frames: {frames_sent}/{episode_length} | "
                             f"Duration: {duration:.1f}s | "
                             f"Speed: {speed}x | "
                             f"Effective FPS: {frames_sent / max(duration, 0.001):.1f}"
@@ -1206,7 +1157,7 @@ class Robot(AgentTool):
                         "json": {
                             "episode": episode,
                             "frames_sent": frames_sent,
-                            "total_frames": ep_length,
+                            "total_frames": episode_length,
                             "duration_s": round(duration, 2),
                             "speed": speed,
                             "action_keys": action_keys,

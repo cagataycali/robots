@@ -236,7 +236,7 @@ class Mesh:
         self._subs: list = []
         self._pending: Dict[str, threading.Event] = {}
         self._responses: Dict[str, list] = {}
-        self._has_session_ref = False  # BUG-17 FIX: track if we acquired a session ref
+        self._has_session_ref = False
 
     # ── lifecycle ──────────────────────────────────────────────
 
@@ -250,7 +250,7 @@ class Mesh:
             logger.debug(f"{self.peer_id}: zenoh unavailable, mesh off")
             return
 
-        self._has_session_ref = True  # BUG-17 FIX: mark that we acquired a ref
+        self._has_session_ref = True
         self._running = True
         _LOCAL_ROBOTS[self.peer_id] = self
 

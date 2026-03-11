@@ -347,20 +347,15 @@ class DatasetRecorder:
                 frame[f"observation.images.{cam_key}"] = img
 
         # --- State → observation.state (flattened vector) ---
-        # BUG-06 FIX: Use feature schema ordering (joint_names) instead of sorted()
-        # to match the dataset schema declared in _build_features().
+        # Use feature schema ordering to match the dataset schema declared in _build_features().
         if state_keys:
             state_vals = []
-            state_names = []
-            try:
-                feat = self.dataset.features.get("observation.state", {})
-                state_names = (
-                    feat.get("names", [])
-                    if isinstance(feat, dict)
-                    else getattr(feat, "names", [])
-                )
-            except Exception:
-                state_names = []
+            feat = self.dataset.features.get("observation.state", {})
+            state_names = (
+                feat.get("names", [])
+                if isinstance(feat, dict)
+                else getattr(feat, "names", [])
+            )
 
             ordered_keys = state_names if state_names else sorted(state_keys)
             for k in ordered_keys:
@@ -378,19 +373,15 @@ class DatasetRecorder:
                 frame["observation.state"] = np.array(state_vals, dtype=np.float32)
 
         # --- Action → flattened vector ---
-        # BUG-06 FIX: Use feature schema ordering for actions too.
+        # Use feature schema ordering for actions too.
         if action:
             action_vals = []
-            action_names = []
-            try:
-                feat = self.dataset.features.get("action", {})
-                action_names = (
-                    feat.get("names", [])
-                    if isinstance(feat, dict)
-                    else getattr(feat, "names", [])
-                )
-            except Exception:
-                action_names = []
+            feat = self.dataset.features.get("action", {})
+            action_names = (
+                feat.get("names", [])
+                if isinstance(feat, dict)
+                else getattr(feat, "names", [])
+            )
 
             ordered_keys = action_names if action_names else sorted(action.keys())
             for k in ordered_keys:

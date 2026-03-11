@@ -383,8 +383,8 @@ class LerobotLocalPolicy(Policy):
                         .to(self._device)
                     )
                 elif isinstance(v, (list, tuple)):
-                    # BUG-4 FIX: Simulation returns lists for observation.state
-                    # Convert list/tuple to tensor (handles 1D state vectors and nested lists)
+                    # Handle list/tuple values (e.g. observation.state from simulation)
+
                     try:
                         arr = np.array(v, dtype=np.float32)
                     except (ValueError, TypeError):

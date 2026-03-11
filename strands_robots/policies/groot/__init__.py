@@ -319,8 +319,6 @@ class Gr00tPolicy(Policy):
             mc = self._local_policy.get_modality_config()
             nested = {"video": {}, "state": {}, "language": {}}
 
-            # Use getattr() instead of dict.get() since ModalityConfig
-            # is a dataclass/object, not a dict.
             video_mc = getattr(mc, "video", None)
             video_keys = getattr(video_mc, "modality_keys", []) if video_mc else []
 

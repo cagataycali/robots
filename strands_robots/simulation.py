@@ -72,7 +72,22 @@ from strands.types._events import ToolResultEvent
 from strands.types.tools import ToolSpec, ToolUse
 
 
-from ._async_utils import _resolve_coroutine  # noqa: F401
+def _resolve_coroutine(coro_or_result):
+    """Safely resolve a potentially-async result to a sync value.
+
+    Avoids creating ThreadPoolExecutor per call and handles nested event loops.
+    """
+    if not asyncio.iscoroutine(coro_or_result):
+        return coro_or_result
+    try:
+        asyncio.get_running_loop()
+        # Already in an event loop — run in a new thread to avoid nesting
+        import concurrent.futures
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+            return ex.submit(asyncio.run, coro_or_result).result()
+    except RuntimeError:
+        return asyncio.run(coro_or_result)
 
 
 # LeRobotDataset recording (optional — falls back to JSON if not installed)
@@ -219,41 +234,22 @@ _URDF_SEARCH_PATHS = [
 ]
 
 # ─────────────────────────────────────────────────────────────────────
-# Robot Model Resolution (MJCF + URDF)
+# Robot Model Resolution (MJCF + URDF) — delegates to unified registry
 # ─────────────────────────────────────────────────────────────────────
-# Primary: MuJoCo Menagerie MJCF models via strands_robots.assets (32 robots)
-# Fallback: Legacy URDF registry for custom/user-registered models
 
 try:
-    from strands_robots.assets import (
+    from strands_robots.assets import (  # noqa: I001
         format_robot_table as _format_robot_table,
-    )
-    from strands_robots.assets import (
         list_available_robots as _list_menagerie_robots,
-    )
-    from strands_robots.assets import (
         resolve_model_path as _resolve_menagerie_model,
     )
-
     _HAS_ASSET_MANAGER = True
 except ImportError:
     _HAS_ASSET_MANAGER = False
 
-# Legacy URDF registry (backward compat + custom registrations)
-_URDF_REGISTRY: Dict[str, str] = {
-    # N1.5 embodiments
-    "so100": "so100/so100.urdf",
-    "so100_dualcam": "so100/so100.urdf",
-    "so100_4cam": "so100/so100.urdf",
-    "fourier_gr1_arms_only": "fourier_gr1/gr1_arms.urdf",
-    "bimanual_panda_gripper": "panda/panda_bimanual.urdf",
-    "unitree_g1": "unitree_g1/g1.urdf",
-    # N1.6 embodiments
-    "unitree_g1_locomanip": "unitree_g1/g1_locomanip.urdf",
-    "libero_panda": "panda/panda.urdf",
-    "oxe_droid": "droid/droid.urdf",
-    "galaxea_r1_pro": "galaxea/r1_pro.urdf",
-}
+# Legacy URDF registry — now just a runtime cache for user-registered
+# URDFs via register_urdf().  Builtin legacy_urdf paths are in robots.json.
+_URDF_REGISTRY: Dict[str, str] = {}
 
 # Allow overrides from environment
 _URDF_DIR_OVERRIDE = os.getenv("STRANDS_URDF_DIR")
@@ -307,28 +303,40 @@ def resolve_model(name: str, prefer_scene: bool = True) -> Optional[str]:
 def resolve_urdf(data_config: str) -> Optional[str]:
     """Resolve a data_config name to a URDF file path (legacy).
 
+    Checks runtime-registered URDFs first, then falls back to the
+    ``legacy_urdf`` field in ``registry/robots.json``.
+
     Args:
         data_config: Data config name
 
     Returns:
         Absolute path to URDF file, or None if not found
     """
-    if data_config not in _URDF_REGISTRY:
-        logger.debug(f"No URDF registered for '{data_config}'")
-        return None
+    # 1. Runtime-registered URDFs (via register_urdf())
+    if data_config in _URDF_REGISTRY:
+        urdf_rel = _URDF_REGISTRY[data_config]
+        if os.path.isabs(urdf_rel) and os.path.exists(urdf_rel):
+            return urdf_rel
+        for search_dir in _URDF_SEARCH_PATHS:
+            candidate = search_dir / urdf_rel
+            if candidate.exists():
+                return str(candidate)
 
-    urdf_rel = _URDF_REGISTRY[data_config]
-
-    # If it's already an absolute path and exists, use it
-    if os.path.isabs(urdf_rel) and os.path.exists(urdf_rel):
-        return urdf_rel
-
-    # Search through paths
-    for search_dir in _URDF_SEARCH_PATHS:
-        candidate = search_dir / urdf_rel
-        if candidate.exists():
-            logger.info(f"📁 Resolved URDF for '{data_config}': {candidate}")
-            return str(candidate)
+    # 2. Check registry robots.json for legacy_urdf
+    try:
+        from strands_robots.registry import get_robot, resolve_name
+        canonical = resolve_name(data_config)
+        info = get_robot(canonical)
+        if info and "legacy_urdf" in info:
+            urdf_rel = info["legacy_urdf"]
+            if os.path.isabs(urdf_rel) and os.path.exists(urdf_rel):
+                return urdf_rel
+            for search_dir in _URDF_SEARCH_PATHS:
+                candidate = search_dir / urdf_rel
+                if candidate.exists():
+                    return str(candidate)
+    except ImportError:
+        pass
 
     logger.debug(f"URDF not found for '{data_config}' in search paths")
     return None
@@ -1619,6 +1627,8 @@ class Simulation(AgentTool):
                 shutil.rmtree(tmpdir, ignore_errors=True)
             except Exception:
                 pass
+            except OSError:
+                pass
             return False
 
     def remove_object(self, name: str) -> Dict[str, Any]:
@@ -1639,7 +1649,7 @@ class Simulation(AgentTool):
     def _eject_body_from_scene(self, body_name: str) -> bool:
         """Remove a named body from the scene via XML round-trip, preserving robot state."""
         mj = _ensure_mujoco()
-        import xml.etree.ElementTree as ET
+        import re
 
         tmpdir = tempfile.mkdtemp(prefix="strands_eject_")
         scene_path = os.path.join(tmpdir, "scene_ejected.xml")
@@ -1654,30 +1664,27 @@ class Simulation(AgentTool):
                     os.path.abspath(self._world._robot_base_xml)
                 )
 
-            tree = ET.parse(scene_path)
-            root = tree.getroot()
+            with open(scene_path) as f:
+                xml_content = f.read()
 
             if (
                 robot_base_dir
-                and root.find("compiler") is not None
-                and root.find("compiler").get("meshdir") is None
+                and "<compiler" in xml_content
+                and "meshdir=" not in xml_content
             ):
-                compiler = root.find("compiler")
-                compiler.set("meshdir", robot_base_dir)
-                compiler.set("texturedir", robot_base_dir)
+                xml_content = xml_content.replace(
+                    "<compiler",
+                    f'<compiler meshdir="{robot_base_dir}" texturedir="{robot_base_dir}"',
+                    1,
+                )
 
-            # Remove the target body using ElementTree (handles nested bodies correctly)
-            removed = False
-            for parent in root.iter():
-                for child in list(parent):
-                    if child.tag == "body" and child.get("name") == body_name:
-                        parent.remove(child)
-                        removed = True
-                        break
-                if removed:
-                    break
+            # Remove the body element by name
+            # Match <body name="body_name" ...> ... </body> (handles nested bodies)
+            pattern = rf'<body\s+name="{re.escape(body_name)}"[^>]*>.*?</body>'
+            xml_content = re.sub(pattern, "", xml_content, flags=re.DOTALL)
 
-            tree.write(scene_path, xml_declaration=True)
+            with open(scene_path, "w") as f:
+                f.write(xml_content)
 
             new_model = mj.MjModel.from_xml_path(scene_path)
             new_data = mj.MjData(new_model)
@@ -2919,7 +2926,10 @@ class Simulation(AgentTool):
                 ],
             }
 
-        # use LeRobot's episode_data_index for reliable frame ranges
+        # Resolve the frame range for this episode.
+        # LeRobot stores a global frame index — episode_data_index["from"]/["to"]
+        # gives the exact slice. Fallback: sum episode lengths from metadata.
+        # Last resort: scan frames by episode_index field.
         ep_start = 0
         ep_length = 0
         try:
@@ -3070,7 +3080,7 @@ class Simulation(AgentTool):
                 # Get observation
                 obs = self._get_sim_observation(robot_name=robot_name)
 
-                # Get action — BUG-11 FIX: use _resolve_coroutine helper
+                # Get action from policy (may be sync or async)
                 coro_or_result = policy_instance.get_actions(obs, instruction)
                 actions = _resolve_coroutine(coro_or_result)
 

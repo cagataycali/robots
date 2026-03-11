@@ -32,49 +32,39 @@ _RUNNING_SERVICES = _RUNNING  # alias for tests
 # ---------------------------------------------------------------------------
 # Provider metadata (display only — actual model logic lives in policies/)
 # ---------------------------------------------------------------------------
-# TODO: After merge on strands-labs/robots, get the policies using policy API.
-PROVIDERS = {
-    "dreamzero": {
-        "name": "DreamZero 14B",
-        "proto": "websocket",
-        "port": 8000,
-        "multi_gpu": True,
-        "gpus": 2,
-        "hf": "GEAR-Dreams/DreamZero-DROID",
-    },
-    "groot": {
-        "name": "NVIDIA GR00T N1.5/N1.6",
-        "proto": "zmq",
-        "port": 5555,
-        "multi_gpu": False,
-        "gpus": 1,
-        "hf": "",
-    },
-    "lerobot": {
-        "name": "LeRobot (ACT/Pi0/SmolVLA)",
-        "proto": "grpc",
-        "port": 50051,
-        "multi_gpu": False,
-        "gpus": 1,
-        "hf": "lerobot/act_aloha_sim_transfer_cube_human",
-    },
-    "cosmos": {
-        "name": "NVIDIA Cosmos Predict",
-        "proto": "http",
-        "port": 8003,
-        "multi_gpu": True,
-        "gpus": 1,
-        "hf": "nvidia/Cosmos-Predict2.5-2B",
-    },
-    "gear_sonic": {
-        "name": "GEAR Sonic (Humanoid)",
-        "proto": "websocket",
-        "port": 8008,
-        "multi_gpu": True,
-        "gpus": 2,
-        "hf": "",
-    },
-}
+# Loaded from registry/policies.json — single source of truth.
+# Only display-specific fields (proto, gpus, hf) are here as overrides.
+def _build_providers():
+    """Build provider display metadata from registry + local overrides."""
+    try:
+        from strands_robots.registry import get_policy_provider, list_policy_providers
+        _display_overrides = {
+            "dreamzero": {"proto": "websocket", "multi_gpu": True, "gpus": 2, "hf": "GEAR-Dreams/DreamZero-DROID"},
+            "groot": {"proto": "zmq", "multi_gpu": False, "gpus": 1, "hf": ""},
+            "lerobot": {"proto": "grpc", "multi_gpu": False, "gpus": 1, "hf": "lerobot/act_aloha_sim_transfer_cube_human"},
+            "cosmos": {"proto": "http", "multi_gpu": True, "gpus": 1, "hf": "nvidia/Cosmos-Predict2.5-2B"},
+            "gear_sonic": {"proto": "websocket", "multi_gpu": True, "gpus": 2, "hf": ""},
+        }
+        providers = {}
+        for name in list_policy_providers():
+            config = get_policy_provider(name)
+            if config is None:
+                continue
+            overrides = _display_overrides.get(name, {})
+            port = config.get("config_keys", {}).get("port", config.get("default_port", 0))
+            providers[name] = {
+                "name": config.get("description", name),
+                "proto": overrides.get("proto", "http"),
+                "port": port,
+                "multi_gpu": overrides.get("multi_gpu", False),
+                "gpus": overrides.get("gpus", 1),
+                "hf": overrides.get("hf", ""),
+            }
+        return providers
+    except Exception:
+        return {}
+
+PROVIDERS = _build_providers()
 
 
 # ---------------------------------------------------------------------------
