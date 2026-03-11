@@ -70,7 +70,7 @@ from strands.tools.tools import AgentTool
 from strands.types._events import ToolResultEvent
 from strands.types.tools import ToolSpec, ToolUse
 
-from ._async_utils import _resolve_coroutine
+from strands_robots._async_utils import _resolve_coroutine
 
 # LeRobotDataset recording (optional — falls back to JSON if not installed)
 try:
@@ -2921,7 +2921,6 @@ class Simulation(AgentTool):
         # gives the exact slice. Fallback: sum episode lengths from metadata.
         # Last resort: scan frames by episode_index field.
         episode_start = 0
-        episode_length = 0
         try:
             if hasattr(ds, "episode_data_index"):
                 from_idx = ds.episode_data_index["from"][episode].item()

@@ -1,28 +1,31 @@
 """Tests for strands_robots.factory — Robot(), list_robots()."""
 
-from strands_robots.factory import (
-    _ALIASES,
-    _UNIFIED_ROBOTS,
-    _resolve_name,
-    list_robots,
+from strands_robots.factory import list_robots
+from strands_robots.registry import (
+    get_robot,
+    list_aliases,
+    resolve_name,
+)
+from strands_robots.registry import (
+    list_robots as registry_list_robots,
 )
 
 
 class TestResolveNames:
     def test_canonical(self):
-        assert _resolve_name("so100") == "so100"
+        assert resolve_name("so100") == "so100"
 
     def test_alias(self):
-        assert _resolve_name("franka") == "panda"
-        assert _resolve_name("g1") == "unitree_g1"
-        assert _resolve_name("h1") == "unitree_h1"
+        assert resolve_name("franka") == "panda"
+        assert resolve_name("g1") == "unitree_g1"
+        assert resolve_name("h1") == "unitree_h1"
 
     def test_case_insensitive(self):
-        assert _resolve_name("SO100") == "so100"
-        assert _resolve_name("Panda") == "panda"
+        assert resolve_name("SO100") == "so100"
+        assert resolve_name("Panda") == "panda"
 
     def test_hyphen_to_underscore(self):
-        assert _resolve_name("reachy-mini") == "reachy_mini"
+        assert resolve_name("reachy-mini") == "reachy_mini"
 
 
 class TestListRobots:
@@ -58,22 +61,28 @@ class TestListRobots:
             assert "has_real" in r
 
 
-class TestUnifiedRobots:
+class TestRobotRegistry:
     def test_so100_exists(self):
-        assert "so100" in _UNIFIED_ROBOTS
-        assert _UNIFIED_ROBOTS["so100"]["sim"] == "so100"
+        info = get_robot("so100")
+        assert info is not None
+        assert "asset" in info
+        assert info["asset"]["dir"] == "trs_so_arm100"
 
     def test_all_aliases_point_to_valid_robots(self):
-        for alias, canonical in _ALIASES.items():
-            assert (
-                canonical in _UNIFIED_ROBOTS
-            ), f"Alias '{alias}' points to unknown robot '{canonical}'"
+        aliases = list_aliases()
+        for alias, canonical in aliases.items():
+            info = get_robot(canonical)
+            assert info is not None, (
+                f"Alias '{alias}' points to unknown robot '{canonical}'"
+            )
 
     def test_robot_count(self):
         """Ensure we have a reasonable number of robots."""
-        assert len(_UNIFIED_ROBOTS) >= 30
+        robots = registry_list_robots()
+        assert len(robots) >= 30
 
     def test_all_robots_have_description(self):
-        for name, info in _UNIFIED_ROBOTS.items():
-            assert "description" in info, f"Robot '{name}' missing description"
-            assert len(info["description"]) > 0
+        robots = registry_list_robots()
+        for r in robots:
+            assert "description" in r, f"Robot '{r['name']}' missing description"
+            assert len(r["description"]) > 0

@@ -908,7 +908,4 @@ class CosmosPredictPolicy(Policy):
         logger.info("🌌 Cosmos Predict 2.5 policy reset")
 
 
-# Backward compatibility alias — old name still works
-Cosmos_predictPolicy = CosmosPredictPolicy
-
-__all__ = ["CosmosPredictPolicy", "Cosmos_predictPolicy"]
+__all__ = ["CosmosPredictPolicy"]
