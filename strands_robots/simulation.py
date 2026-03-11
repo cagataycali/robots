@@ -52,7 +52,6 @@ Domain randomization:
            randomize_physics=true, randomize_positions=true, position_noise=0.02)
 """
 
-import asyncio
 import io
 import logging
 import os
@@ -71,9 +70,7 @@ from strands.tools.tools import AgentTool
 from strands.types._events import ToolResultEvent
 from strands.types.tools import ToolSpec, ToolUse
 
-
-from ._async_utils import _resolve_coroutine  # noqa: E402
-
+from ._async_utils import _resolve_coroutine
 
 # LeRobotDataset recording (optional — falls back to JSON if not installed)
 try:
