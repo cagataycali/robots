@@ -88,6 +88,130 @@ def _discover_nvidia_cuda_lib_paths() -> list:
     return nvidia_lib_dirs
 
 
+def _discover_torch_lib_paths() -> list:
+    """Discover PyTorch shared library directories.
+
+    Packages like ``transformer_engine`` and ``megatron-core`` dynamically
+    link against PyTorch's C++ libraries (``libc10.so``, ``libc10_cuda.so``,
+    ``libtorch_cuda.so``, etc.) which live under ``<torch-install>/lib/``.
+
+    When the subprocess Python environment has a **different** PyTorch
+    version from the one ``transformer_engine`` was compiled against (e.g.
+    venv has cu130 torch but TE was compiled against cu124 torch), there
+    can be ABI symbol mismatches.  Adding all known torch lib directories
+    to ``LD_LIBRARY_PATH`` — with the compatible version first — allows
+    the dynamic linker to resolve the correct symbols.
+
+    Resolution order (first match wins at link time):
+        1. ``~/.local/lib/pythonX.Y/site-packages/torch/lib/``
+        2. Active venv's ``torch/lib/``
+        3. System ``dist-packages/torch/lib/``
+
+    Returns:
+        List of directory paths containing PyTorch shared libraries.
+    """
+    import glob
+    import os
+    import sys
+
+    torch_lib_dirs = []
+
+    # Check user site-packages first (often has the version TE was compiled against)
+    user_torch_lib = os.path.expanduser(
+        f"~/.local/lib/python{sys.version_info.major}.{sys.version_info.minor}"
+        f"/site-packages/torch/lib"
+    )
+    if os.path.isdir(user_torch_lib):
+        torch_lib_dirs.append(user_torch_lib)
+
+    # Check all site-packages directories on sys.path
+    for site_dir in sys.path:
+        if not os.path.isdir(site_dir):
+            continue
+        torch_lib = os.path.join(site_dir, "torch", "lib")
+        if os.path.isdir(torch_lib) and torch_lib not in torch_lib_dirs:
+            torch_lib_dirs.append(torch_lib)
+
+    # Also try to get it from the imported torch module
+    try:
+        import torch as _torch
+
+        torch_lib_from_import = os.path.join(os.path.dirname(_torch.__file__), "lib")
+        if (
+            os.path.isdir(torch_lib_from_import)
+            and torch_lib_from_import not in torch_lib_dirs
+        ):
+            torch_lib_dirs.append(torch_lib_from_import)
+    except ImportError:
+        pass
+
+    return torch_lib_dirs
+
+
+def _discover_compatible_torch_site_packages() -> list:
+    """Discover site-packages directories with torch compatible with transformer_engine.
+
+    When ``transformer_engine`` is installed in user site-packages
+    (``~/.local/lib/pythonX.Y/site-packages``) alongside a specific
+    torch version (e.g. cu124), but the active venv has a different
+    torch (e.g. cu130), the subprocess needs the user site-packages
+    on ``PYTHONPATH`` so that Python imports the compatible torch.
+
+    This function detects the ABI mismatch by comparing ``libc10_cuda.so``
+    file sizes between the venv and user site-packages — different CUDA
+    builds produce different binary sizes.
+
+    Returns:
+        List of site-packages directory paths to prepend to PYTHONPATH.
+    """
+    import os
+    import sys
+
+    result = []
+
+    # Check if transformer_engine exists in user site-packages
+    user_sp = os.path.expanduser(
+        f"~/.local/lib/python{sys.version_info.major}.{sys.version_info.minor}"
+        f"/site-packages"
+    )
+    te_in_user = os.path.isdir(os.path.join(user_sp, "transformer_engine"))
+    torch_in_user = os.path.isdir(os.path.join(user_sp, "torch"))
+
+    if te_in_user and torch_in_user:
+        # Both transformer_engine and torch are in user site-packages.
+        # Check if the venv has a *different* torch.
+        venv_prefix = getattr(sys, "prefix", "")
+        base_prefix = getattr(sys, "base_prefix", venv_prefix)
+        in_venv = venv_prefix != base_prefix
+
+        if in_venv:
+            # Find venv torch lib
+            for site_dir in sys.path:
+                if venv_prefix in site_dir:
+                    venv_torch_lib = os.path.join(
+                        site_dir, "torch", "lib", "libc10_cuda.so"
+                    )
+                    user_torch_lib = os.path.join(
+                        user_sp, "torch", "lib", "libc10_cuda.so"
+                    )
+                    if os.path.isfile(venv_torch_lib) and os.path.isfile(
+                        user_torch_lib
+                    ):
+                        # Both exist — check if they differ (ABI mismatch)
+                        venv_size = os.path.getsize(venv_torch_lib)
+                        user_size = os.path.getsize(user_torch_lib)
+                        if venv_size != user_size:
+                            # Different versions — prepend user sp
+                            result.append(user_sp)
+                            break
+
+        if not result and te_in_user:
+            # Fallback: always include user sp if TE is there
+            result.append(user_sp)
+
+    return result
+
+
 @dataclass
 class TrainConfig:
     """Universal training configuration."""
@@ -930,6 +1054,31 @@ class CosmosTrainer(Trainer):
             env["PYTHONPATH"] = new_pythonpath
             logger.info(f"✅ Cosmos subprocess PYTHONPATH prepended: {repo_root}")
 
+        # When transformer_engine is compiled against a different torch
+        # version (e.g. cu124) than the active venv (e.g. cu130), we must
+        # add the user site-packages to PYTHONPATH so the subprocess
+        # imports the compatible torch.  Insert AFTER the cosmos repo
+        # paths (which must be first for cosmos_predict2._src) but BEFORE
+        # the rest of the path.
+        compat_sp = _discover_compatible_torch_site_packages()
+        if compat_sp:
+            existing = env.get("PYTHONPATH", "")
+            parts = existing.split(os.pathsep) if existing else []
+            # Insert compat paths after any cosmos repo paths (first N entries)
+            # but before the rest.  Cosmos repo paths were just prepended above.
+            cosmos_count = 0
+            if repo_root and os.path.isdir(str(repo_root)):
+                for p in parts:
+                    if p.startswith(str(repo_root)) or (
+                        repo_root and str(repo_root) in p
+                    ):
+                        cosmos_count += 1
+                    else:
+                        break
+            new_parts = parts[:cosmos_count] + compat_sp + parts[cosmos_count:]
+            env["PYTHONPATH"] = os.pathsep.join(new_parts)
+            logger.info(f"✅ Compatible torch site-packages inserted: {compat_sp}")
+
         # Ensure CUDA shared libraries are findable in the subprocess.
         # On systems with CUDA 13+ installed, packages compiled against
         # CUDA 12 (e.g. transformer_engine) look for libcublas.so.12 which
@@ -952,9 +1101,18 @@ class CosmosTrainer(Trainer):
         ]
         system_cuda_paths = [p for p in cuda_lib_candidates if os.path.isdir(p)]
 
-        # Pip NVIDIA paths first (correct versioned CUDA 12 libs),
+        # PyTorch lib directories — needed for libc10_cuda.so and
+        # libtorch_cuda.so which transformer_engine links against.
+        # When the venv torch (e.g. cu130) differs from the torch that
+        # transformer_engine was compiled against (e.g. cu124), the user
+        # site-packages torch/lib/ must come first to provide compatible
+        # ABI symbols.
+        torch_lib_paths = _discover_torch_lib_paths()
+
+        # Torch lib paths first (ABI-compatible libc10_cuda.so),
+        # then pip NVIDIA paths (correct versioned CUDA 12 libs),
         # then system CUDA paths (fallback for other libs)
-        cuda_paths = nvidia_pip_paths + system_cuda_paths
+        cuda_paths = torch_lib_paths + nvidia_pip_paths + system_cuda_paths
 
         if cuda_paths:
             existing_ld = env.get("LD_LIBRARY_PATH", "")
@@ -1400,6 +1558,26 @@ class CosmosTransferTrainer(Trainer):
                 f"✅ Cosmos Transfer subprocess PYTHONPATH prepended: {repo_root}"
             )
 
+        # When transformer_engine is compiled against a different torch
+        # version, add user site-packages for ABI compatibility.
+        # Insert AFTER the cosmos repo paths but BEFORE the rest.
+        compat_sp = _discover_compatible_torch_site_packages()
+        if compat_sp:
+            existing = env.get("PYTHONPATH", "")
+            parts = existing.split(os.pathsep) if existing else []
+            cosmos_count = 0
+            if repo_root and os.path.isdir(str(repo_root)):
+                for p in parts:
+                    if p.startswith(str(repo_root)) or (
+                        repo_root and str(repo_root) in p
+                    ):
+                        cosmos_count += 1
+                    else:
+                        break
+            new_parts = parts[:cosmos_count] + compat_sp + parts[cosmos_count:]
+            env["PYTHONPATH"] = os.pathsep.join(new_parts)
+            logger.info(f"✅ Compatible torch site-packages inserted: {compat_sp}")
+
         # Ensure CUDA shared libraries are findable
         # Pip-installed NVIDIA CUDA library directories come FIRST
         nvidia_pip_paths = _discover_nvidia_cuda_lib_paths()
@@ -1411,7 +1589,13 @@ class CosmosTransferTrainer(Trainer):
             "/usr/lib/x86_64-linux-gnu",
         ]
         system_cuda_paths = [p for p in cuda_lib_candidates if os.path.isdir(p)]
-        cuda_paths = nvidia_pip_paths + system_cuda_paths
+
+        # PyTorch lib directories (libc10_cuda.so, libtorch_cuda.so)
+        torch_lib_paths = _discover_torch_lib_paths()
+
+        # Torch lib paths first (ABI-compatible libc10_cuda.so),
+        # then pip NVIDIA paths, then system CUDA paths
+        cuda_paths = torch_lib_paths + nvidia_pip_paths + system_cuda_paths
 
         if cuda_paths:
             existing_ld = env.get("LD_LIBRARY_PATH", "")
