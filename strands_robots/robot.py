@@ -54,30 +54,8 @@ def _import_lerobot():
 logger = logging.getLogger(__name__)
 
 
-def _resolve_coroutine(coro_or_result):
-    """Safely resolve a potentially-async result to a sync value."""
-    if not asyncio.iscoroutine(coro_or_result):
-        return coro_or_result
-    try:
-        asyncio.get_running_loop()
-        import concurrent.futures
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-            return ex.submit(asyncio.run, coro_or_result).result()
-    except RuntimeError:
-        return asyncio.run(coro_or_result)
-
-
-def _run_async(coro_fn):
-    """Run an async function from sync context, handling nested loops."""
-    try:
-        asyncio.get_running_loop()
-        import concurrent.futures
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-            return ex.submit(asyncio.run, coro_fn()).result()
-    except RuntimeError:
-        return asyncio.run(coro_fn())
+# Shared async helpers — single definition in _async_utils to avoid duplication
+from ._async_utils import _resolve_coroutine, _run_async
 
 
 class TaskStatus(Enum):

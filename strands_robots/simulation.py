@@ -72,22 +72,8 @@ from strands.types._events import ToolResultEvent
 from strands.types.tools import ToolSpec, ToolUse
 
 
-def _resolve_coroutine(coro_or_result):
-    """Safely resolve a potentially-async result to a sync value.
-
-    Avoids creating ThreadPoolExecutor per call and handles nested event loops.
-    """
-    if not asyncio.iscoroutine(coro_or_result):
-        return coro_or_result
-    try:
-        asyncio.get_running_loop()
-        # Already in an event loop — run in a new thread to avoid nesting
-        import concurrent.futures
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-            return ex.submit(asyncio.run, coro_or_result).result()
-    except RuntimeError:
-        return asyncio.run(coro_or_result)
+# Shared async helpers — single definition in _async_utils to avoid duplication
+from strands_robots._async_utils import _resolve_coroutine
 
 
 # LeRobotDataset recording (optional — falls back to JSON if not installed)
@@ -1634,8 +1620,6 @@ class Simulation(AgentTool):
                 shutil.rmtree(tmpdir, ignore_errors=True)
             except Exception:
                 pass
-            except OSError:
-                pass
             return False
 
     def remove_object(self, name: str) -> Dict[str, Any]:
@@ -1685,10 +1669,32 @@ class Simulation(AgentTool):
                     1,
                 )
 
-            # Remove the body element by name
-            # Match <body name="body_name" ...> ... </body> (handles nested bodies)
-            pattern = rf'<body\s+name="{re.escape(body_name)}"[^>]*>.*?</body>'
-            xml_content = re.sub(pattern, "", xml_content, flags=re.DOTALL)
+            # Remove the body element by name (handles nested <body> tags correctly).
+            # A simple .*? regex fails with nested bodies because it matches the
+            # *first* </body> — which may close a child, not the target.  Instead
+            # we locate the opening tag and count nesting depth to find the
+            # matching </body>.
+            open_pat = re.compile(
+                rf'<body\s+name="{re.escape(body_name)}"[^>]*>', re.DOTALL
+            )
+            m = open_pat.search(xml_content)
+            if m:
+                depth = 1
+                pos = m.end()
+                body_open = re.compile(r"<body[\s>]")
+                body_close = re.compile(r"</body>")
+                while depth > 0 and pos < len(xml_content):
+                    next_open = body_open.search(xml_content, pos)
+                    next_close = body_close.search(xml_content, pos)
+                    if next_close is None:
+                        break  # malformed XML — bail out
+                    if next_open and next_open.start() < next_close.start():
+                        depth += 1
+                        pos = next_open.end()
+                    else:
+                        depth -= 1
+                        pos = next_close.end()
+                xml_content = xml_content[: m.start()] + xml_content[pos:]
 
             with open(scene_path, "w") as f:
                 f.write(xml_content)
