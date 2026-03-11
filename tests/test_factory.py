@@ -4,13 +4,15 @@ Tests the unified registry approach where all robot definitions
 live in ``registry/robots.json`` and factory.py is pure routing.
 """
 
+from strands_robots.factory import list_robots
 from strands_robots.registry import (
     get_robot,
     list_aliases,
-    list_robots as registry_list_robots,
     resolve_name,
 )
-from strands_robots.factory import list_robots
+from strands_robots.registry import (
+    list_robots as registry_list_robots,
+)
 
 
 class TestResolveNames:

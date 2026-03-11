@@ -13,11 +13,9 @@ import logging
 import os
 from typing import Any, Dict, List, Optional
 
-from strands_robots.registry import (
+from strands_robots.registry import (  # noqa: I001
     get_hardware_type,
-    get_robot,
     has_hardware,
-    has_sim,
     resolve_name,
 )
 from strands_robots.registry import list_robots as _registry_list_robots
@@ -100,7 +98,6 @@ def Robot(
         hw  = Robot("so100", mode="real", cameras={...})  # Real hardware
     """
     canonical = resolve_name(name)
-    robot_info = get_robot(canonical)
 
     if mode == "auto":
         mode = _auto_detect_mode(canonical)
@@ -108,7 +105,7 @@ def Robot(
     # ── Simulation backends ──
     if mode == "sim":
         if backend == "isaac":
-            from strands_robots.isaac.isaac_sim_backend import (
+            from strands_robots.isaac.isaac_sim_backend import (  # noqa: I001
                 IsaacSimBackend, IsaacSimConfig,
             )
             config = IsaacSimConfig(

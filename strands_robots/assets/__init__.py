@@ -16,12 +16,14 @@ import os
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from strands_robots.registry import (
+from strands_robots.registry import (  # noqa: I001
     format_robot_table,
     get_robot,
     list_aliases,
     list_robots,
     list_robots_by_category,
+)
+from strands_robots.registry import (
     resolve_name as resolve_robot_name,
 )
 
