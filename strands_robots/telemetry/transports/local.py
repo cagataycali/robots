@@ -110,6 +110,9 @@ class LocalWALTransport:
         """Close current file, compress if configured, open new file."""
         if self._current_file:
             self._current_file.close()
+            # Clear handle immediately so a failed open() below
+            # doesn't leave us pointing at a closed file.
+            self._current_file = None
 
             # Compress the rotated file
             if self.compress_rotated and self._current_path:

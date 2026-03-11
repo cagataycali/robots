@@ -89,8 +89,14 @@ class TestMotionLibrary:
 
     def test_search(self):
         lib = MotionLibrary()
-        lib.register("happy_wave", {"description": "A happy waving motion", "time": [], "joint_positions": []})
-        lib.register("sad_drop", {"description": "A sad dropping motion", "time": [], "joint_positions": []})
+        lib.register(
+            "happy_wave",
+            {"description": "A happy waving motion", "time": [], "joint_positions": []},
+        )
+        lib.register(
+            "sad_drop",
+            {"description": "A sad dropping motion", "time": [], "joint_positions": []},
+        )
         results = lib.search("happy")
         assert len(results) == 1
         assert results[0].name == "happy_wave"
@@ -102,7 +108,11 @@ class TestMotionLibrary:
         assert lib.count == 1
 
     def test_load_file(self):
-        data = {"name": "from_file", "time": [0.0, 0.5], "joint_positions": [[0.0], [1.0]]}
+        data = {
+            "name": "from_file",
+            "time": [0.0, 0.5],
+            "joint_positions": [[0.0], [1.0]],
+        }
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             json.dump(data, f)
             f.flush()

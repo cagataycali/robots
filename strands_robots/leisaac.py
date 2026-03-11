@@ -620,7 +620,7 @@ try:
                         f"  Instruction: {info['default_instruction']}\n"
                         f"  EnvHub: {info['env_script']}\n"
                         f"\n  Supported policies: {', '.join(LEISAAC_POLICY_TYPES.keys())}\n"
-                        f"  + any strands-robots policy (mock, lerobot_local, openvla, ...)"
+                        f"  + any strands-robots policy (mock, lerobot_local, groot, ...)"
                     )
                 else:
                     text = f"❌ Unknown task: {task}. Use action='list' to see available tasks."

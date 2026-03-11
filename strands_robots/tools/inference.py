@@ -15,7 +15,6 @@ Usage:
 
 import logging
 import os
-import shutil
 import signal
 import socket
 import subprocess
@@ -51,22 +50,6 @@ PROVIDERS = {
         "gpus": 1,
         "hf": "",
     },
-    "openvla": {
-        "name": "OpenVLA 7B",
-        "proto": "http",
-        "port": 8001,
-        "multi_gpu": False,
-        "gpus": 1,
-        "hf": "openvla/openvla-7b",
-    },
-    "internvla": {
-        "name": "InternVLA 2B/40B",
-        "proto": "http",
-        "port": 8002,
-        "multi_gpu": False,
-        "gpus": 1,
-        "hf": "OpenGVLab/InternVLA-2B",
-    },
     "lerobot": {
         "name": "LeRobot (ACT/Pi0/SmolVLA)",
         "proto": "grpc",
@@ -83,52 +66,12 @@ PROVIDERS = {
         "gpus": 1,
         "hf": "nvidia/Cosmos-Predict2.5-2B",
     },
-    "alpamayo": {
-        "name": "NVIDIA Alpamayo R1",
-        "proto": "http",
-        "port": 8004,
-        "multi_gpu": False,
-        "gpus": 1,
-        "hf": "nvidia/Alpamayo-R1",
-    },
-    "rdt": {
-        "name": "RDT 1B",
-        "proto": "http",
-        "port": 8005,
-        "multi_gpu": False,
-        "gpus": 1,
-        "hf": "robotics-diffusion-transformer/rdt-1b",
-    },
-    "magma": {
-        "name": "Microsoft Magma 8B",
-        "proto": "http",
-        "port": 8006,
-        "multi_gpu": False,
-        "gpus": 1,
-        "hf": "microsoft/Magma-8B",
-    },
-    "cogact": {
-        "name": "CogACT",
-        "proto": "http",
-        "port": 8007,
-        "multi_gpu": False,
-        "gpus": 1,
-        "hf": "",
-    },
     "gear_sonic": {
         "name": "GEAR Sonic (Humanoid)",
         "proto": "websocket",
         "port": 8008,
         "multi_gpu": True,
         "gpus": 2,
-        "hf": "",
-    },
-    "unifolm": {
-        "name": "UnifolM (Unitree VLA)",
-        "proto": "http",
-        "port": 8009,
-        "multi_gpu": False,
-        "gpus": 1,
         "hf": "",
     },
 }
@@ -387,14 +330,6 @@ def _start_provider(
             **({"error": result["message"]} if result.get("status") == "error" else {}),
         }
 
-    if provider == "openvla":
-        result = _start_openvla(model_id, port, num_gpus, host, kwargs)
-        return {
-            "pid": result.get("pid"),
-            "cmd": result.get("command", ""),
-            **({"error": result["message"]} if result.get("status") == "error" else {}),
-        }
-
     # All others → generic HTTP serve
     result = _start_generic_hf(provider, model_id, port, num_gpus, host, kwargs)
     return {
@@ -436,7 +371,7 @@ def inference(
 
     Args:
         action: "start" | "stop" | "status" | "list" | "providers" | "download"
-        provider: Provider name (dreamzero, groot, openvla, lerobot, cosmos, etc.)
+        provider: Provider name (dreamzero, groot, lerobot, cosmos, gear_sonic)
         checkpoint_path: Local path or HuggingFace model ID
         model_id: Alias for checkpoint_path
         port: Service port (default: provider-specific)
@@ -722,26 +657,6 @@ PROVIDER_CONFIGS = {
         "launch_method": "docker",
         "requires": "docker",
     },
-    "openvla": {
-        "display_name": "OpenVLA 7B",
-        "protocol": "http",
-        "default_port": 8001,
-        "multi_gpu": False,
-        "default_num_gpus": 1,
-        "launch_method": "vllm",
-        "requires": "torch",
-        "hf_model_id": "openvla/openvla-7b",
-    },
-    "internvla": {
-        "display_name": "InternVLA 2B/40B",
-        "protocol": "http",
-        "default_port": 8002,
-        "multi_gpu": False,
-        "default_num_gpus": 1,
-        "launch_method": "python",
-        "requires": "torch",
-        "hf_model_id": "OpenGVLab/InternVLA-2B",
-    },
     "lerobot": {
         "display_name": "LeRobot (ACT/Pi0/SmolVLA)",
         "protocol": "grpc",
@@ -762,46 +677,6 @@ PROVIDER_CONFIGS = {
         "requires": "torch",
         "hf_model_id": "nvidia/Cosmos-Predict1-7B",
     },
-    "alpamayo": {
-        "display_name": "NVIDIA Alpamayo R1",
-        "protocol": "http",
-        "default_port": 8004,
-        "multi_gpu": False,
-        "default_num_gpus": 1,
-        "launch_method": "python",
-        "requires": "torch",
-        "hf_model_id": "nvidia/Alpamayo-R1",
-    },
-    "rdt": {
-        "display_name": "RDT 1B",
-        "protocol": "http",
-        "default_port": 8005,
-        "multi_gpu": False,
-        "default_num_gpus": 1,
-        "launch_method": "python",
-        "requires": "torch",
-        "hf_model_id": "robotics-diffusion-transformer/rdt-1b",
-    },
-    "magma": {
-        "display_name": "Microsoft Magma 8B",
-        "protocol": "http",
-        "default_port": 8006,
-        "multi_gpu": False,
-        "default_num_gpus": 1,
-        "launch_method": "python",
-        "requires": "torch",
-        "hf_model_id": "microsoft/Magma-8B",
-    },
-    "cogact": {
-        "display_name": "CogACT",
-        "protocol": "http",
-        "default_port": 8007,
-        "multi_gpu": False,
-        "default_num_gpus": 1,
-        "launch_method": "python",
-        "requires": "torch",
-        "hf_model_id": "CogACT/CogACT-Base",
-    },
     "gear_sonic": {
         "display_name": "GEAR Sonic (Humanoid)",
         "protocol": "websocket",
@@ -811,16 +686,6 @@ PROVIDER_CONFIGS = {
         "launch_method": "torchrun",
         "requires": "torch",
         "hf_model_id": "GEAR-Group/GEAR-Sonic",
-    },
-    "unifolm": {
-        "display_name": "UnifolM (Unitree VLA)",
-        "protocol": "http",
-        "default_port": 8009,
-        "multi_gpu": False,
-        "default_num_gpus": 1,
-        "launch_method": "python",
-        "requires": "torch",
-        "hf_model_id": "unitreerobotics/UnifolM-50M",
     },
 }
 
@@ -952,41 +817,6 @@ def _start_groot(
         }
     except Exception as e:
         return {"status": "error", "message": str(e), "command": ""}
-
-
-def _start_openvla(
-    model_id: str, port: int, num_gpus: int, host: str, kwargs: Dict
-) -> Dict:
-    """Test-compatible wrapper for OpenVLA launch."""
-    if shutil.which("vllm"):
-        cmd = [
-            "vllm",
-            "serve",
-            model_id,
-            "--port",
-            str(port),
-            "--host",
-            host,
-            "--dtype",
-            "bfloat16",
-            "--trust-remote-code",
-        ]
-        if num_gpus > 1:
-            cmd += ["--tensor-parallel-size", str(num_gpus)]
-        proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-        )
-        return {"status": "starting", "pid": proc.pid, "command": " ".join(cmd)}
-    else:
-        result = _launch_http_serve(model_id, port, host, "openvla")
-        return {
-            "status": "starting",
-            "pid": result.get("pid"),
-            "command": result.get("cmd", ""),
-        }
 
 
 def _start_lerobot(

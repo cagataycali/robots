@@ -22,42 +22,25 @@ __all__ = ["resolve_policy"]
 _HF_ORG_TO_PROVIDER: Dict[str, str] = {
     # LeRobot models → lerobot_local (direct HF inference)
     "lerobot": "lerobot_local",
-    # OpenVLA
-    "openvla": "openvla",
-    # Microsoft
-    "microsoft": "magma",  # Magma-8B
-    # InternRobotics
-    "internrobotics": "internvla",
-    # Robotics Diffusion Transformer
-    "robotics-diffusion-transformer": "rdt",
-    # Unitree
-    "unitreerobotics": "unifolm",
-    # BAAI
-    "baai": "robobrain",
     # NVIDIA
     "nvidia": "groot",  # GR00T models default
-    # CogACT
-    "cogact": "cogact",
     # Dream-org
     "dream-org": "dreamgen",
-    # AgiBot World
-    "agibot-world": "go1",
+    # GEAR
+    "gear-dreams": "dreamzero",
+    "gear-group": "gear_sonic",
 }
 
 # Explicit model ID → provider overrides (for ambiguous orgs like nvidia)
 _MODEL_ID_OVERRIDES: Dict[str, str] = {
     "nvidia/gr00t": "groot",
     "nvidia/groot": "groot",
-    "nvidia/alpamayo": "alpamayo",
     "nvidia/dreamzero": "dreamzero",
     "nvidia/cosmos-predict": "cosmos_predict",
     "nvidia/cosmos-predict2": "cosmos_predict",
     "nvidia/cosmos-predict2.5-2b": "cosmos_predict",
     "nvidia/cosmos-predict2.5-14b": "cosmos_predict",
     "nvidia/cosmos-policy": "cosmos_predict",
-    # AgiBot World GO-1
-    "agibot-world/go-1": "go1",
-    "agibot-world/go-1-air": "go1",
 }
 
 # Shorthand names → provider
@@ -70,7 +53,7 @@ _SHORTHAND_TO_PROVIDER: Dict[str, str] = {
     "dreamzero": "dreamzero",
     "cosmos": "cosmos_predict",
     "cosmos_predict": "cosmos_predict",
-    "go1": "go1",
+    "gear_sonic": "gear_sonic",
 }
 
 
@@ -84,7 +67,7 @@ def resolve_policy(
         - HuggingFace model IDs: "lerobot/act_aloha_sim_transfer_cube_human"
         - Server addresses: "localhost:8080", "ws://gpu:9000"
         - Shorthand names: "mock", "groot"
-        - Explicit provider: "lerobot_local", "openvla", etc.
+        - Explicit provider: "lerobot_local", "dreamzero", etc.
 
     Returns:
         (provider_name, kwargs_dict) ready for create_policy()
@@ -101,9 +84,6 @@ def resolve_policy(
 
         >>> resolve_policy("ws://gpu-server:9000")
         ("dreamzero", {"host": "gpu-server", "port": 9000})
-
-        >>> resolve_policy("openvla/openvla-7b")
-        ("openvla", {"model_id": "openvla/openvla-7b"})
     """
     policy = policy.strip()
     kwargs: Dict[str, Any] = {}
@@ -165,26 +145,7 @@ def resolve_policy(
         # Check org → provider mapping
         if org in _HF_ORG_TO_PROVIDER:
             provider = _HF_ORG_TO_PROVIDER[org]
-
-            # Different providers need the model ID in different kwargs
-            if provider in ("lerobot_local", "lerobot_async"):
-                kwargs["pretrained_name_or_path"] = policy
-            elif provider in (
-                "openvla",
-                "internvla",
-                "magma",
-                "rdt",
-                "unifolm",
-                "robobrain",
-                "cogact",
-                "go1",
-            ):
-                kwargs["model_id"] = policy
-            elif provider in ("groot", "dreamgen"):
-                kwargs["pretrained_name_or_path"] = policy
-            else:
-                kwargs["pretrained_name_or_path"] = policy
-
+            kwargs["pretrained_name_or_path"] = policy
             kwargs.update(extra_kwargs)
             return provider, kwargs
 

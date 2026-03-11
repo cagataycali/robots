@@ -18,7 +18,7 @@ import logging
 import threading
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, Optional, Union
 
@@ -54,6 +54,32 @@ def _import_lerobot():
 logger = logging.getLogger(__name__)
 
 
+def _resolve_coroutine(coro_or_result):
+    """Safely resolve a potentially-async result to a sync value."""
+    if not asyncio.iscoroutine(coro_or_result):
+        return coro_or_result
+    try:
+        asyncio.get_running_loop()
+        import concurrent.futures
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+            return ex.submit(asyncio.run, coro_or_result).result()
+    except RuntimeError:
+        return asyncio.run(coro_or_result)
+
+
+def _run_async(coro_fn):
+    """Run an async function from sync context, handling nested loops."""
+    try:
+        asyncio.get_running_loop()
+        import concurrent.futures
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+            return ex.submit(asyncio.run, coro_fn()).result()
+    except RuntimeError:
+        return asyncio.run(coro_fn())
+
+
 class TaskStatus(Enum):
     """Robot task execution status"""
 
@@ -67,7 +93,7 @@ class TaskStatus(Enum):
 
 @dataclass
 class RobotTaskState:
-    """Robot task execution state"""
+    """Robot task execution state — guarded by _task_lock for thread safety (BUG-08)."""
 
     status: TaskStatus = TaskStatus.IDLE
     instruction: str = ""
@@ -76,6 +102,25 @@ class RobotTaskState:
     step_count: int = 0
     error_message: str = ""
     task_future: Optional[Future] = None
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+
+    def update(self, **kwargs):
+        """Thread-safe batch update of multiple fields."""
+        with self._lock:
+            for k, v in kwargs.items():
+                setattr(self, k, v)
+
+    def snapshot(self) -> dict:
+        """Thread-safe snapshot of all fields for consistent reads."""
+        with self._lock:
+            return {
+                "status": self.status,
+                "instruction": self.instruction,
+                "start_time": self.start_time,
+                "duration": self.duration,
+                "step_count": self.step_count,
+                "error_message": self.error_message,
+            }
 
 
 class Robot(AgentTool):
@@ -541,18 +586,21 @@ class Robot(AgentTool):
         """Execute robot task in background thread (internal method)."""
         try:
             # Update task state
-            self._task_state.status = TaskStatus.CONNECTING
-            self._task_state.instruction = instruction
-            self._task_state.start_time = time.time()
-            self._task_state.step_count = 0
-            self._task_state.error_message = ""
+            self._task_state.update(
+                status=TaskStatus.CONNECTING,
+                instruction=instruction,
+                start_time=time.time(),
+                step_count=0,
+                error_message="",
+            )
 
             # Connect to robot
             connected, connect_error = await self._connect_robot()
             if not connected:
-                self._task_state.status = TaskStatus.ERROR
-                self._task_state.error_message = (
-                    connect_error or f"Failed to connect to {self.tool_name_str}"
+                self._task_state.update(
+                    status=TaskStatus.ERROR,
+                    error_message=connect_error
+                    or f"Failed to connect to {self.tool_name_str}",
                 )
                 return
 
@@ -566,14 +614,16 @@ class Robot(AgentTool):
 
             # Initialize policy with robot state keys
             if not await self._initialize_policy(policy_instance):
-                self._task_state.status = TaskStatus.ERROR
-                self._task_state.error_message = "Failed to initialize policy"
+                self._task_state.update(
+                    status=TaskStatus.ERROR,
+                    error_message="Failed to initialize policy",
+                )
                 return
 
             logger.info(f"🎯 Starting task: '{instruction}' on {self.tool_name_str}")
             logger.info(f"🧠 Using policy: {policy_provider}")
 
-            self._task_state.status = TaskStatus.RUNNING
+            self._task_state.update(status=TaskStatus.RUNNING)
             start_time = time.time()
 
             while (
@@ -596,7 +646,8 @@ class Robot(AgentTool):
                     if self._task_state.status != TaskStatus.RUNNING:
                         break
                     await asyncio.to_thread(self.robot.send_action, action_dict)
-                    self._task_state.step_count += 1
+                    with self._task_state._lock:
+                        self._task_state.step_count += 1
 
                     # Stream step to mesh (observation + action)
                     if self.mesh and self.mesh.alive:
@@ -617,18 +668,17 @@ class Robot(AgentTool):
 
             # Update final state
             elapsed = time.time() - start_time
-            self._task_state.duration = elapsed
+            self._task_state.update(duration=elapsed)
 
             if self._task_state.status == TaskStatus.RUNNING:
-                self._task_state.status = TaskStatus.COMPLETED
+                self._task_state.update(status=TaskStatus.COMPLETED)
                 logger.info(
                     f"✅ Task completed: '{instruction}' in {elapsed:.1f}s ({self._task_state.step_count} steps)"
                 )
 
         except Exception as e:
             logger.error(f"❌ Task execution failed: {e}")
-            self._task_state.status = TaskStatus.ERROR
-            self._task_state.error_message = str(e)
+            self._task_state.update(status=TaskStatus.ERROR, error_message=str(e))
 
     def _execute_task_sync(
         self,
@@ -642,7 +692,6 @@ class Robot(AgentTool):
         """Execute task synchronously in thread - no new event loop."""
 
         # Import here to avoid conflicts
-        import asyncio
 
         # Run task without creating new event loop - let it run in thread
         async def task_runner():
@@ -655,19 +704,8 @@ class Robot(AgentTool):
                 **policy_kwargs,
             )
 
-        # Use asyncio.run only if no loop is running, otherwise run in existing loop
-        try:
-            # Try to get the current event loop
-            asyncio.get_running_loop()
-            # If we're already in an event loop, we need to run in a thread
-            import concurrent.futures
-
-            with concurrent.futures.ThreadPoolExecutor() as exec:
-                future = exec.submit(lambda: asyncio.run(task_runner()))
-                future.result()  # Wait for completion
-        except RuntimeError:
-            # No event loop running - safe to create one
-            asyncio.run(task_runner())
+        # use _run_async helper for clean event loop handling
+        _run_async(lambda: task_runner())
 
         # Build policy display string
         policy_display = policy_provider
@@ -788,7 +826,7 @@ class Robot(AgentTool):
             }
 
         # Signal task to stop
-        self._task_state.status = TaskStatus.STOPPED
+        self._task_state.update(status=TaskStatus.STOPPED)
 
         # Cancel future if it exists
         if self._task_state.task_future:
@@ -913,7 +951,7 @@ class Robot(AgentTool):
 
             step_count = 0
             start_time = time.time()
-            self._task_state.status = TaskStatus.RUNNING
+            self._task_state.update(status=TaskStatus.RUNNING)
             self._task_state.instruction = instruction
             self._task_state.start_time = start_time
 
@@ -982,14 +1020,8 @@ class Robot(AgentTool):
             }
 
         # Run the async recording
-        try:
-            asyncio.get_running_loop()
-            import concurrent.futures
-
-            with concurrent.futures.ThreadPoolExecutor() as ex:
-                result = ex.submit(lambda: asyncio.run(_record_async())).result()
-        except RuntimeError:
-            result = asyncio.run(_record_async())
+        # use _run_async helper
+        result = _resolve_coroutine(_record_async())
 
         return result
 
@@ -1052,28 +1084,38 @@ class Robot(AgentTool):
                     ],
                 }
 
-            # Find episode frame range
+            # Find episode frame range — use LeRobot's episode_data_index
             ep_start = 0
             ep_length = 0
             try:
-                for i in range(episode):
+                if hasattr(ds, "episode_data_index"):
+                    from_idx = ds.episode_data_index["from"][episode].item()
+                    to_idx = ds.episode_data_index["to"][episode].item()
+                    ep_start = from_idx
+                    ep_length = to_idx - from_idx
+                else:
+                    for i in range(episode):
+                        ep_info = (
+                            ds.meta.episodes[i] if hasattr(ds.meta, "episodes") else {}
+                        )
+                        ep_start += ep_info.get("length", 0)
                     ep_info = (
-                        ds.meta.episodes[i] if hasattr(ds.meta, "episodes") else {}
+                        ds.meta.episodes[episode]
+                        if hasattr(ds.meta, "episodes")
+                        else {}
                     )
-                    ep_start += ep_info.get("length", 0)
-                ep_info = (
-                    ds.meta.episodes[episode] if hasattr(ds.meta, "episodes") else {}
-                )
-                ep_length = ep_info.get("length", 0)
+                    ep_length = ep_info.get("length", 0)
             except Exception:
                 # Fallback: try indexing directly and count frames
                 ep_length = 0
                 for idx in range(len(ds)):
                     frame = ds[idx]
-                    if (
-                        hasattr(frame, "get")
-                        and frame.get("episode_index", -1) == episode
-                    ):
+                    ep_idx = (
+                        frame.get("episode_index", -1) if hasattr(frame, "get") else -1
+                    )
+                    if hasattr(ep_idx, "item"):
+                        ep_idx = ep_idx.item()
+                    if ep_idx == episode:
                         if ep_length == 0:
                             ep_start = idx
                         ep_length += 1
@@ -1110,7 +1152,7 @@ class Robot(AgentTool):
             # Replay loop
             import numpy as np
 
-            self._task_state.status = TaskStatus.RUNNING
+            self._task_state.update(status=TaskStatus.RUNNING)
             self._task_state.instruction = f"replay:{repo_id}/ep{episode}"
             self._task_state.start_time = time.time()
             frames_sent = 0
@@ -1196,15 +1238,8 @@ class Robot(AgentTool):
                 ],
             }
 
-        # Run the async replay
-        try:
-            asyncio.get_running_loop()
-            import concurrent.futures
-
-            with concurrent.futures.ThreadPoolExecutor() as ex:
-                result = ex.submit(lambda: asyncio.run(_replay_async())).result()
-        except RuntimeError:
-            result = asyncio.run(_replay_async())
+        # use _resolve_coroutine helper
+        result = _resolve_coroutine(_replay_async())
 
         return result
 

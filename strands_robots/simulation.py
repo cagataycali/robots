@@ -56,7 +56,6 @@ import asyncio
 import io
 import logging
 import os
-import random
 import sys
 import tempfile
 import threading
@@ -71,6 +70,25 @@ import numpy as np
 from strands.tools.tools import AgentTool
 from strands.types._events import ToolResultEvent
 from strands.types.tools import ToolSpec, ToolUse
+
+
+def _resolve_coroutine(coro_or_result):
+    """Safely resolve a potentially-async result to a sync value.
+
+    Avoids creating ThreadPoolExecutor per call and handles nested event loops.
+    """
+    if not asyncio.iscoroutine(coro_or_result):
+        return coro_or_result
+    try:
+        asyncio.get_running_loop()
+        # Already in an event loop — run in a new thread to avoid nesting
+        import concurrent.futures
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+            return ex.submit(asyncio.run, coro_or_result).result()
+    except RuntimeError:
+        return asyncio.run(coro_or_result)
+
 
 # LeRobotDataset recording (optional — falls back to JSON if not installed)
 try:
@@ -827,6 +845,10 @@ class Simulation(AgentTool):
         self._viewer_handle = None
         self._viewer_thread = None
 
+        # Cache renderers per (width, height) to avoid GPU context churn
+        self._renderers: Dict[tuple, Any] = {}
+        self._renderer_model = None  # Track which model the renderers are for
+
         logger.info(f"🎮 Simulation tool '{tool_name}' initialized")
 
         # Zenoh mesh — every Simulation is a peer by default
@@ -1258,7 +1280,22 @@ class Simulation(AgentTool):
             robot.joint_names = joint_names
 
             for i in range(model.nu):
-                robot.actuator_ids.append(i)
+                act_name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_ACTUATOR, i)
+                # Only assign actuators that relate to this robot's joints
+                if act_name:
+                    # Check if actuator's joint is one of this robot's joints
+                    jnt_id = model.actuator_trnid[i, 0]
+                    if jnt_id in robot.joint_ids:
+                        robot.actuator_ids.append(i)
+                    elif not robot.actuator_ids:
+                        # Fallback: if no match found yet, assign all (single-robot scene)
+                        pass
+                else:
+                    robot.actuator_ids.append(i)
+            # If no actuators were matched by joint, assign all (backward compat for single-robot)
+            if not robot.actuator_ids:
+                for i in range(model.nu):
+                    robot.actuator_ids.append(i)
 
             # Discover cameras already in the scene
             for i in range(model.ncam):
@@ -1316,6 +1353,13 @@ class Simulation(AgentTool):
             }
         if name in self._policy_threads:
             self._world.robots[name].policy_running = False
+            # Wait for the policy thread to finish before removing the robot
+            future = self._policy_threads[name]
+            try:
+                future.result(timeout=5.0)
+            except Exception:
+                logger.debug(f"Policy thread for '{name}' did not finish cleanly")
+            del self._policy_threads[name]
         del self._world.robots[name]
         return {
             "status": "success",
@@ -1509,15 +1553,26 @@ class Simulation(AgentTool):
                 os.path.abspath(self._world._robot_base_xml)
             )
 
-        # Save current model to temp directory alongside the original assets
-        # We save INTO the robot's directory so relative mesh paths still resolve
-        if robot_base_dir and os.path.isdir(robot_base_dir):
-            scene_path = os.path.join(robot_base_dir, "_strands_scene_with_objects.xml")
-        else:
-            tmpdir = tempfile.mkdtemp(prefix="strands_obj_")
-            scene_path = os.path.join(tmpdir, "scene_with_objects.xml")
+        # Always use tempdir to avoid polluting shared asset directories.
+        # Set meshdir in XML to point back to original asset dir for mesh resolution.
+        tmpdir = tempfile.mkdtemp(prefix="strands_sim_")
+        scene_path = os.path.join(tmpdir, "scene_with_objects.xml")
 
         mj.mj_saveLastXML(scene_path, self._world._model)
+
+        # Patch meshdir/texturedir to point to original asset dir for mesh resolution
+        if robot_base_dir and os.path.isdir(robot_base_dir):
+            with open(scene_path) as f:
+                xml_content = f.read()
+            # Add or update meshdir/texturedir in <compiler> to point to asset dir
+            if "<compiler" in xml_content and "meshdir=" not in xml_content:
+                xml_content = xml_content.replace(
+                    "<compiler",
+                    f'<compiler meshdir="{robot_base_dir}" texturedir="{robot_base_dir}"',
+                    1,
+                )
+            with open(scene_path, "w") as f:
+                f.write(xml_content)
 
         # Read XML, inject object before </worldbody>
         with open(scene_path) as f:
@@ -1561,20 +1616,24 @@ class Simulation(AgentTool):
                 for i in range(new_model.nu):
                     robot.actuator_ids.append(i)
 
-            # Clean up temp file
+            # Clean up temp directory
             try:
-                if scene_path.endswith("_strands_scene_with_objects.xml"):
-                    os.remove(scene_path)
-            except OSError:
+                import shutil
+
+                shutil.rmtree(tmpdir, ignore_errors=True)
+            except Exception:
                 pass
 
             return True
         except Exception as e:
             logger.error(f"Object injection reload failed: {e}")
-            # Clean up temp file on failure too
+            # Clean up temp directory on failure too
             try:
-                if scene_path.endswith("_strands_scene_with_objects.xml"):
-                    os.remove(scene_path)
+                import shutil
+
+                shutil.rmtree(tmpdir, ignore_errors=True)
+            except Exception:
+                pass
             except OSError:
                 pass
             return False
@@ -1586,8 +1645,78 @@ class Simulation(AgentTool):
                 "content": [{"text": f"❌ Object '{name}' not found."}],
             }
         del self._world.objects[name]
-        self._recompile_world()
+
+        # Use XML round-trip when robots are present to preserve their state.
+        if self._world.robots:
+            self._eject_body_from_scene(name)
+        else:
+            self._recompile_world()
         return {"status": "success", "content": [{"text": f"🗑️ '{name}' removed."}]}
+
+    def _eject_body_from_scene(self, body_name: str) -> bool:
+        """Remove a named body from the scene via XML round-trip, preserving robot state."""
+        mj = _ensure_mujoco()
+        import re
+
+        tmpdir = tempfile.mkdtemp(prefix="strands_eject_")
+        scene_path = os.path.join(tmpdir, "scene_ejected.xml")
+
+        try:
+            mj.mj_saveLastXML(scene_path, self._world._model)
+
+            # Patch meshdir if needed
+            robot_base_dir = None
+            if self._world._robot_base_xml:
+                robot_base_dir = os.path.dirname(
+                    os.path.abspath(self._world._robot_base_xml)
+                )
+
+            with open(scene_path) as f:
+                xml_content = f.read()
+
+            if (
+                robot_base_dir
+                and "<compiler" in xml_content
+                and "meshdir=" not in xml_content
+            ):
+                xml_content = xml_content.replace(
+                    "<compiler",
+                    f'<compiler meshdir="{robot_base_dir}" texturedir="{robot_base_dir}"',
+                    1,
+                )
+
+            # Remove the body element by name
+            # Match <body name="body_name" ...> ... </body> (handles nested bodies)
+            pattern = rf'<body\s+name="{re.escape(body_name)}"[^>]*>.*?</body>'
+            xml_content = re.sub(pattern, "", xml_content, flags=re.DOTALL)
+
+            with open(scene_path, "w") as f:
+                f.write(xml_content)
+
+            new_model = mj.MjModel.from_xml_path(scene_path)
+            new_data = mj.MjData(new_model)
+
+            # Copy state
+            old_nq = min(self._world._data.qpos.shape[0], new_data.qpos.shape[0])
+            new_data.qpos[:old_nq] = self._world._data.qpos[:old_nq]
+            old_nv = min(self._world._data.qvel.shape[0], new_data.qvel.shape[0])
+            new_data.qvel[:old_nv] = self._world._data.qvel[:old_nv]
+            old_nu = min(self._world._data.ctrl.shape[0], new_data.ctrl.shape[0])
+            new_data.ctrl[:old_nu] = self._world._data.ctrl[:old_nu]
+
+            mj.mj_forward(new_model, new_data)
+            self._world._model = new_model
+            self._world._data = new_data
+            return True
+        except Exception as e:
+            logger.error(f"Body ejection failed for '{body_name}': {e}")
+            # Fallback to recompile (lossy but at least works)
+            self._recompile_world()
+            return False
+        finally:
+            import shutil
+
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
     def move_object(
         self, name: str, position: List[float] = None, orientation: List[float] = None
@@ -1773,6 +1902,19 @@ class Simulation(AgentTool):
     # -------------------------------------------------------------------
     # Policy Execution
     # -------------------------------------------------------------------
+    def _get_renderer(self, width: int, height: int):
+        """Get a cached MuJoCo renderer, creating one only if needed."""
+        mj = _ensure_mujoco()
+        key = (width, height)
+        # Invalidate cache if model changed (e.g. after add/remove object)
+        if self._renderer_model is not self._world._model:
+            self._renderers.clear()
+            self._renderer_model = self._world._model
+        if key not in self._renderers:
+            self._renderers[key] = mj.Renderer(
+                self._world._model, height=height, width=width
+            )
+        return self._renderers[key]
 
     def _get_sim_observation(
         self, robot_name: str, cam_name: str = None
@@ -1813,10 +1955,9 @@ class Simulation(AgentTool):
                 h = cam_info.height if cam_info else self.default_height
                 w = cam_info.width if cam_info else self.default_width
                 try:
-                    renderer = mj.Renderer(model, height=h, width=w)
+                    renderer = self._get_renderer(w, h)
                     renderer.update_scene(data, camera=cam_id)
                     obs[cname] = renderer.render().copy()
-                    del renderer
                 except Exception as e:
                     logger.debug(f"Camera render failed for {cname}: {e}")
 
@@ -1892,20 +2033,7 @@ class Simulation(AgentTool):
 
                 # Call policy.get_actions — handle both sync and async
                 coro_or_result = policy.get_actions(observation, instruction)
-                if asyncio.iscoroutine(coro_or_result):
-                    try:
-                        asyncio.get_running_loop()
-                        import concurrent.futures
-
-                        with concurrent.futures.ThreadPoolExecutor() as ex:
-                            actions = ex.submit(
-                                lambda c=coro_or_result: asyncio.run(c)
-                            ).result()
-                    except RuntimeError:
-                        actions = asyncio.run(coro_or_result)
-                else:
-                    # Sync get_actions (e.g. mock or simple policies)
-                    actions = coro_or_result
+                actions = _resolve_coroutine(coro_or_result)
 
                 for action_dict in actions[:action_horizon]:
                     if not robot.policy_running:
@@ -2026,7 +2154,7 @@ class Simulation(AgentTool):
         h = height or self.default_height
 
         try:
-            renderer = mj.Renderer(self._world._model, height=h, width=w)
+            renderer = self._get_renderer(w, h)
 
             # Try to use named camera
             cam_id = mj.mj_name2id(
@@ -2039,7 +2167,6 @@ class Simulation(AgentTool):
                 renderer.update_scene(self._world._data)
 
             img = renderer.render().copy()
-            del renderer
 
             from PIL import Image
 
@@ -2072,8 +2199,17 @@ class Simulation(AgentTool):
         h = height or self.default_height
 
         try:
-            renderer = mj.Renderer(self._world._model, height=h, width=w)
-            renderer.update_scene(self._world._data)
+            cam_id = -1
+            if camera_name and camera_name != "default":
+                cam_id = mj.mj_name2id(
+                    self._world._model, mj.mjtObj.mjOBJ_CAMERA, camera_name
+                )
+
+            renderer = self._get_renderer(w, h)
+            if cam_id >= 0:
+                renderer.update_scene(self._world._data, camera=cam_id)
+            else:
+                renderer.update_scene(self._world._data)
             renderer.enable_depth_rendering()
             depth = renderer.render()
             renderer.disable_depth_rendering()
@@ -2260,8 +2396,9 @@ class Simulation(AgentTool):
             return {"status": "error", "content": [{"text": "❌ No simulation."}]}
 
         if seed is not None:
-            random.seed(seed)
-            np.random.seed(seed)
+            rng = np.random.default_rng(seed)
+        else:
+            rng = np.random.default_rng()
 
         mj = _ensure_mujoco()
         model = self._world._model
@@ -2273,7 +2410,7 @@ class Simulation(AgentTool):
             for i in range(model.ngeom):
                 geom_name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_GEOM, i)
                 if geom_name and geom_name != "ground":
-                    model.geom_rgba[i, :3] = np.random.uniform(
+                    model.geom_rgba[i, :3] = rng.uniform(
                         color_range[0], color_range[1], size=3
                     )
             changes.append(f"🎨 Colors: {model.ngeom} geoms randomized")
@@ -2282,19 +2419,19 @@ class Simulation(AgentTool):
         if randomize_lighting:
             for i in range(model.nlight):
                 # Randomize position within bounds
-                model.light_pos[i] += np.random.uniform(-0.5, 0.5, size=3)
+                model.light_pos[i] += rng.uniform(-0.5, 0.5, size=3)
                 # Randomize diffuse intensity
-                model.light_diffuse[i] = np.random.uniform(0.3, 1.0, size=3)
+                model.light_diffuse[i] = rng.uniform(0.3, 1.0, size=3)
             changes.append(f"💡 Lighting: {model.nlight} lights randomized")
 
         # Randomize physics (friction, mass)
         if randomize_physics:
             for i in range(model.ngeom):
                 # Randomize friction
-                model.geom_friction[i, 0] *= np.random.uniform(*friction_range)
+                model.geom_friction[i, 0] *= rng.uniform(*friction_range)
             for i in range(model.nbody):
                 if model.body_mass[i] > 0:
-                    model.body_mass[i] *= np.random.uniform(*mass_range)
+                    model.body_mass[i] *= rng.uniform(*mass_range)
             changes.append(
                 f"⚙️ Physics: friction×[{friction_range}], mass×[{mass_range}]"
             )
@@ -2307,9 +2444,7 @@ class Simulation(AgentTool):
                     jnt_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, jnt_name)
                     if jnt_id >= 0:
                         qpos_addr = model.jnt_qposadr[jnt_id]
-                        noise = np.random.uniform(
-                            -position_noise, position_noise, size=3
-                        )
+                        noise = rng.uniform(-position_noise, position_noise, size=3)
                         data.qpos[qpos_addr : qpos_addr + 3] += noise
             mj.mj_forward(model, data)
             changes.append(f"📍 Positions: ±{position_noise}m noise on dynamic objects")
@@ -2614,24 +2749,10 @@ class Simulation(AgentTool):
                     robot_name, cam_name=camera_name
                 )
 
-                # Policy inference — handle both sync and async get_actions
+                # Policy inference — use _resolve_coroutine helper
                 try:
-                    import asyncio
-
                     coro_or_result = policy.get_actions(observation, instruction)
-                    if asyncio.iscoroutine(coro_or_result):
-                        try:
-                            asyncio.get_running_loop()
-                            import concurrent.futures
-
-                            with concurrent.futures.ThreadPoolExecutor() as ex:
-                                actions = ex.submit(
-                                    lambda c=coro_or_result: asyncio.run(c)
-                                ).result()
-                        except RuntimeError:
-                            actions = asyncio.run(coro_or_result)
-                    else:
-                        actions = coro_or_result
+                    actions = _resolve_coroutine(coro_or_result)
                 except Exception as e:
                     logger.warning(f"Policy inference failed at frame {frame_idx}: {e}")
                     actions = [{key: 0.0 for key in robot.joint_names}]
@@ -2649,13 +2770,12 @@ class Simulation(AgentTool):
                     self._world.sim_time = data.time
 
                 # Render frame
-                renderer = mj.Renderer(model, height=height, width=width)
+                renderer = self._get_renderer(width, height)
                 if cam_id >= 0:
                     renderer.update_scene(data, camera=cam_id)
                 else:
                     renderer.update_scene(data)
                 frame = renderer.render().copy()
-                del renderer
 
                 writer.append_data(frame)
 
@@ -2813,14 +2933,25 @@ class Simulation(AgentTool):
                 ],
             }
 
+        # use LeRobot's episode_data_index for reliable frame ranges
         ep_start = 0
         ep_length = 0
         try:
-            for i in range(episode):
-                ep_info = ds.meta.episodes[i] if hasattr(ds.meta, "episodes") else {}
-                ep_start += ep_info.get("length", 0)
-            ep_info = ds.meta.episodes[episode] if hasattr(ds.meta, "episodes") else {}
-            ep_length = ep_info.get("length", 0)
+            if hasattr(ds, "episode_data_index"):
+                from_idx = ds.episode_data_index["from"][episode].item()
+                to_idx = ds.episode_data_index["to"][episode].item()
+                ep_start = from_idx
+                ep_length = to_idx - from_idx
+            else:
+                for i in range(episode):
+                    ep_info = (
+                        ds.meta.episodes[i] if hasattr(ds.meta, "episodes") else {}
+                    )
+                    ep_start += ep_info.get("length", 0)
+                ep_info = (
+                    ds.meta.episodes[episode] if hasattr(ds.meta, "episodes") else {}
+                )
+                ep_length = ep_info.get("length", 0)
         except Exception:
             ep_length = min(len(ds), 1000)
 
@@ -2953,28 +3084,9 @@ class Simulation(AgentTool):
                 # Get observation
                 obs = self._get_sim_observation(robot_name=robot_name)
 
-                # Get action
-                import asyncio
-
-                try:
-                    loop = asyncio.get_running_loop()
-                except RuntimeError:
-                    loop = None
-
-                # Handle both sync and async get_actions
+                # Get action — BUG-11 FIX: use _resolve_coroutine helper
                 coro_or_result = policy_instance.get_actions(obs, instruction)
-                if asyncio.iscoroutine(coro_or_result):
-                    if loop and loop.is_running():
-                        import concurrent.futures
-
-                        with concurrent.futures.ThreadPoolExecutor() as ex:
-                            actions = ex.submit(
-                                lambda c=coro_or_result: asyncio.run(c)
-                            ).result()
-                    else:
-                        actions = asyncio.run(coro_or_result)
-                else:
-                    actions = coro_or_result
+                actions = _resolve_coroutine(coro_or_result)
 
                 if actions:
                     self._apply_sim_action(robot_name, actions[0])
@@ -3411,9 +3523,12 @@ class Simulation(AgentTool):
         """Route action to method."""
         # World
         if action == "create_world":
-            return self.create_world(
-                d.get("timestep"), d.get("gravity"), d.get("ground_plane", True)
-            )
+            cw_kwargs = {"ground_plane": d.get("ground_plane", True)}
+            if d.get("timestep") is not None:
+                cw_kwargs["timestep"] = d["timestep"]
+            if d.get("gravity") is not None:
+                cw_kwargs["gravity"] = d["gravity"]
+            return self.create_world(**cw_kwargs)
         elif action == "load_scene":
             return self.load_scene(d.get("scene_path", ""))
         elif action == "reset":
@@ -3558,14 +3673,17 @@ class Simulation(AgentTool):
 
         # Recording
         elif action == "start_recording":
-            return self.start_recording(
-                repo_id=d.get("repo_id"),
-                task=d.get("instruction", d.get("task", "")),
-                fps=d.get("fps", 30),
-                root=d.get("root"),
-                push_to_hub=d.get("push_to_hub", False),
-                vcodec=d.get("vcodec", "libsvtav1"),
-            )
+            rec_kwargs = {
+                "task": d.get("instruction", d.get("task", "")),
+                "fps": d.get("fps", 30),
+                "push_to_hub": d.get("push_to_hub", False),
+                "vcodec": d.get("vcodec", "libsvtav1"),
+            }
+            if d.get("repo_id") is not None:
+                rec_kwargs["repo_id"] = d["repo_id"]
+            if d.get("root") is not None:
+                rec_kwargs["root"] = d["root"]
+            return self.start_recording(**rec_kwargs)
         elif action == "stop_recording":
             return self.stop_recording(d.get("output_path"))
         elif action == "get_recording_status":

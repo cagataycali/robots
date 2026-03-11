@@ -1,6 +1,5 @@
 """Tests for strands_robots.policy_resolver — resolve_policy()."""
 
-
 from strands_robots.policy_resolver import resolve_policy
 
 
@@ -30,16 +29,16 @@ class TestResolveHuggingFace:
     def test_lerobot_model(self):
         provider, kwargs = resolve_policy("lerobot/act_aloha_sim_transfer_cube_human")
         assert provider == "lerobot_local"
-        assert kwargs["pretrained_name_or_path"] == "lerobot/act_aloha_sim_transfer_cube_human"
+        assert (
+            kwargs["pretrained_name_or_path"]
+            == "lerobot/act_aloha_sim_transfer_cube_human"
+        )
 
-    def test_openvla_model(self):
+    def test_openvla_model_falls_back_to_lerobot(self):
+        """openvla org was removed — unknown orgs now default to lerobot_local."""
         provider, kwargs = resolve_policy("openvla/openvla-7b")
-        assert provider == "openvla"
-        assert kwargs["model_id"] == "openvla/openvla-7b"
-
-    def test_microsoft_magma(self):
-        provider, kwargs = resolve_policy("microsoft/Magma-8B")
-        assert provider == "magma"
+        assert provider == "lerobot_local"
+        assert kwargs["pretrained_name_or_path"] == "openvla/openvla-7b"
 
     def test_nvidia_groot(self):
         provider, kwargs = resolve_policy("nvidia/gr00t-something")

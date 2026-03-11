@@ -1,6 +1,5 @@
 """Tests for strands_robots.factory — Robot(), list_robots()."""
 
-
 from strands_robots.factory import (
     _ALIASES,
     _UNIFIED_ROBOTS,
@@ -66,9 +65,9 @@ class TestUnifiedRobots:
 
     def test_all_aliases_point_to_valid_robots(self):
         for alias, canonical in _ALIASES.items():
-            assert canonical in _UNIFIED_ROBOTS, (
-                f"Alias '{alias}' points to unknown robot '{canonical}'"
-            )
+            assert (
+                canonical in _UNIFIED_ROBOTS
+            ), f"Alias '{alias}' points to unknown robot '{canonical}'"
 
     def test_robot_count(self):
         """Ensure we have a reasonable number of robots."""

@@ -280,6 +280,7 @@ class RecordSession:
         logger.info(
             f"Recording episode {ep_idx} ({mode.value}): '{task}' for {duration}s"
         )
+        self._recording = True
 
         start = time.time()
         frame_idx = 0
@@ -367,6 +368,7 @@ class RecordSession:
             logger.error(f"Episode recording error: {e}")
 
         # Finalize episode stats
+        self._recording = False
         stats.frames = frame_idx
         stats.duration_s = time.time() - start
         self._current_episode = None

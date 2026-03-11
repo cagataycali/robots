@@ -1,6 +1,5 @@
 """Tests for strands_robots.telemetry — TelemetryStream, events, batching."""
 
-
 from strands_robots.telemetry import (
     BatchConfig,
     EventCategory,
