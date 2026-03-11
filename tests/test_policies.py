@@ -1,4 +1,9 @@
-"""Tests for strands_robots.policies — registry, MockPolicy, create_policy."""
+"""Tests for strands_robots.policies — MockPolicy, create_policy, registry.
+
+Tests the unified registry approach where policy provider definitions
+live in ``registry/policies.json`` and runtime registration is still
+supported via ``register_policy()``.
+"""
 
 import asyncio
 
@@ -7,10 +12,14 @@ import pytest
 from strands_robots.policies import (
     MockPolicy,
     Policy,
-    PolicyRegistry,
     create_policy,
     list_providers,
     register_policy,
+)
+from strands_robots.registry import (
+    get_policy_provider,
+    list_policy_providers,
+    resolve_policy_string,
 )
 
 
@@ -58,7 +67,6 @@ class TestMockPolicy:
         obs = {"observation.state": [0.0]}
         actions = p.get_actions_sync(obs, "test")
         vals = [a["j0"] for a in actions]
-        # Sinusoidal values should be bounded in [-0.5, 0.5]
         assert all(-0.6 <= v <= 0.6 for v in vals)
 
     def test_auto_generates_keys(self):
@@ -76,38 +84,40 @@ class TestMockPolicy:
 
 
 class TestPolicyRegistry:
-    def test_register_and_get(self):
-        reg = PolicyRegistry()
-        reg.register("test_mock", loader=lambda: MockPolicy)
-        cls = reg.get("test_mock")
-        assert cls is MockPolicy
+    def test_get_provider_config(self):
+        config = get_policy_provider("groot")
+        assert config is not None
+        assert "port" in config["config_keys"]
 
     def test_aliases(self):
-        reg = PolicyRegistry()
-        reg.register("test_full", loader=lambda: MockPolicy, aliases=["tf", "test_f"])
-        assert reg.get("tf") is MockPolicy
-        assert reg.get("test_f") is MockPolicy
+        config = get_policy_provider("lerobot")
+        assert config is not None
+        assert config["class"] == "LerobotLocalPolicy"
 
-    def test_unknown_raises(self):
-        reg = PolicyRegistry()
-        with pytest.raises(ValueError, match="Unknown policy provider"):
-            reg.get("nonexistent_provider_xyz")
+    def test_unknown_returns_none(self):
+        config = get_policy_provider("nonexistent_provider_xyz")
+        assert config is None
 
     def test_list_providers(self):
-        reg = PolicyRegistry()
-        reg.register("a", loader=lambda: MockPolicy)
-        reg.register("b", loader=lambda: MockPolicy, aliases=["b_alias"])
-        providers = reg.list_providers()
-        assert "a" in providers
-        assert "b" in providers
-        assert "b_alias" in providers
+        providers = list_policy_providers()
+        assert "mock" in providers
+        assert "groot" in providers
+        assert "lerobot" in providers  # alias
+        assert "cosmos" in providers  # alias
 
-    def test_contains(self):
-        reg = PolicyRegistry()
-        reg.register("x", loader=lambda: MockPolicy, aliases=["y"])
-        assert "x" in reg
-        assert "y" in reg
-        assert "z" not in reg
+    def test_resolve_mock(self):
+        p, kw = resolve_policy_string("mock")
+        assert p == "mock"
+
+    def test_resolve_hf_model(self):
+        p, kw = resolve_policy_string("lerobot/act_aloha_sim")
+        assert p == "lerobot_local"
+        assert kw["pretrained_name_or_path"] == "lerobot/act_aloha_sim"
+
+    def test_resolve_server_address(self):
+        p, kw = resolve_policy_string("localhost:8080")
+        assert p == "lerobot_async"
+        assert kw["server_address"] == "localhost:8080"
 
 
 class TestCreatePolicy:
