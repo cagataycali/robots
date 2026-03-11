@@ -2923,28 +2923,28 @@ class Simulation(AgentTool):
         # LeRobot stores a global frame index — episode_data_index["from"]/["to"]
         # gives the exact slice. Fallback: sum episode lengths from metadata.
         # Last resort: scan frames by episode_index field.
-        ep_start = 0
-        ep_length = 0
+        episode_start = 0
+        episode_length = 0
         try:
             if hasattr(ds, "episode_data_index"):
                 from_idx = ds.episode_data_index["from"][episode].item()
                 to_idx = ds.episode_data_index["to"][episode].item()
-                ep_start = from_idx
-                ep_length = to_idx - from_idx
+                episode_start = from_idx
+                episode_length = to_idx - from_idx
             else:
                 for i in range(episode):
-                    ep_info = (
+                    episode_info = (
                         ds.meta.episodes[i] if hasattr(ds.meta, "episodes") else {}
                     )
-                    ep_start += ep_info.get("length", 0)
-                ep_info = (
+                    episode_start += episode_info.get("length", 0)
+                episode_info = (
                     ds.meta.episodes[episode] if hasattr(ds.meta, "episodes") else {}
                 )
-                ep_length = ep_info.get("length", 0)
+                episode_length = episode_info.get("length", 0)
         except Exception:
-            ep_length = min(len(ds), 1000)
+            episode_length = min(len(ds), 1000)
 
-        if ep_length == 0:
+        if episode_length == 0:
             return {
                 "status": "error",
                 "content": [{"text": f"❌ Episode {episode} has no frames"}],
@@ -2959,10 +2959,10 @@ class Simulation(AgentTool):
         frames_applied = 0
         start_time = time.time()
 
-        for frame_idx in range(ep_length):
+        for frame_idx in range(episode_length):
             step_start = time.time()
 
-            frame = ds[ep_start + frame_idx]
+            frame = ds[episode_start + frame_idx]
 
             # Extract action and apply to sim
             if "action" in frame:
@@ -2992,7 +2992,7 @@ class Simulation(AgentTool):
                 {
                     "text": (
                         f"▶️ Replayed episode {episode} from {repo_id} on '{robot_name}'\n"
-                        f"Frames: {frames_applied}/{ep_length} | Duration: {duration:.1f}s | Speed: {speed}x"
+                        f"Frames: {frames_applied}/{episode_length} | Duration: {duration:.1f}s | Speed: {speed}x"
                     )
                 },
                 {
@@ -3000,7 +3000,7 @@ class Simulation(AgentTool):
                         "episode": episode,
                         "robot_name": robot_name,
                         "frames_applied": frames_applied,
-                        "total_frames": ep_length,
+                        "total_frames": episode_length,
                         "duration_s": round(duration, 2),
                         "speed": speed,
                     }
