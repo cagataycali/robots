@@ -19,6 +19,8 @@ from strands_robots.registry import (
     list_aliases,
     list_robots,
     list_robots_by_category,
+)
+from strands_robots.registry import (
     resolve_name as resolve_robot_name,
 )
 
