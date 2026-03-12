@@ -1506,6 +1506,17 @@ class NewtonBackend:
             tape = wp.Tape()
             states = [self._model.state()]
 
+            # Create collision pipeline once per iteration (not per timestep)
+            diffsim_pipeline = None
+            if self._collision_pipeline is not None:
+                try:
+                    diffsim_pipeline = newton.CollisionPipeline(
+                        self._model,
+                        soft_contact_margin=self._config.soft_contact_margin,
+                    )
+                except Exception:
+                    pass
+
             with tape:
                 for t in range(num_steps):
                     current = states[-1]
@@ -1514,15 +1525,11 @@ class NewtonBackend:
                     if hasattr(current, "clear_forces"):
                         current.clear_forces()
 
-                    # Collision
-                    if self._collision_pipeline is not None:
+                    # Collision — reuse pipeline allocated above
+                    if diffsim_pipeline is not None:
                         try:
-                            pipeline = newton.CollisionPipeline(
-                                self._model,
-                                soft_contact_margin=self._config.soft_contact_margin,
-                            )
-                            contacts = pipeline.contacts()
-                            pipeline.collide(self._model, current, contacts)
+                            contacts = diffsim_pipeline.contacts()
+                            diffsim_pipeline.collide(self._model, current, contacts)
                         except Exception:
                             pass
 

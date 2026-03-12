@@ -133,7 +133,7 @@ def Robot(
             newton_backend.create_world()
             result = newton_backend.add_robot(
                 name=canonical,
-                data_config={"name": canonical},
+                data_config=canonical,
                 position=tuple(position) if position else (0.0, 0.0, 0.0),
             )
             if result.get("status") == "error":
@@ -152,12 +152,12 @@ def Robot(
             sim = MujocoBackend(
                 tool_name=f"{canonical}_sim", mesh=mesh, peer_id=peer_id, **kwargs
             )
-            sim.create_world()
-            result = sim.add_robot(
-                name=canonical,
-                data_config=sim_name,
-                position=position or [0.0, 0.0, 0.0],
-            )
+            sim._dispatch_action("create_world", {})
+            result = sim._dispatch_action("add_robot", {
+                "robot_name": canonical,
+                "data_config": sim_name,
+                "position": position or [0.0, 0.0, 0.0],
+            })
             if result.get("status") == "error":
                 raise RuntimeError(f"Failed to create sim robot '{canonical}': {result}")
             return sim

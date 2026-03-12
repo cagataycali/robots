@@ -33,12 +33,18 @@
   </p>
 </div>
 
+<div align="center">
+  <img src="artifacts/hero.svg" alt="Strands Robots — 4 lines from install to robot control" width="100%">
+</div>
+
+<br/>
+
 Strands Robots is a simple yet powerful SDK that takes a model-driven approach to building and running robot agents. From a tabletop arm picking up a cube to a humanoid navigating a warehouse, from MuJoCo simulation to real hardware deployment, Strands Robots scales with your needs.
 
 ## Feature Overview
 
 - **Lightweight & Flexible**: One `Robot()` call that auto-detects sim or real hardware — no mode flags, no config files
-- **Model Agnostic**: 18 policy providers — GR00T N1.6, LeRobot, OpenVLA, Cosmos, Diffusion Policy, and 14 more
+- **Model Agnostic**: 8 policy providers — GR00T N1.6, LeRobot, Cosmos, GEAR-SONIC, DreamGen, DreamZero, and more
 - **Sim ↔ Real**: A policy trained in simulation runs on real hardware with zero code changes
 - **Built-in Strands**: Native [Strands Agent](https://github.com/strands-agents/sdk-python) integration — tell a robot what to do in plain English
 
@@ -75,7 +81,7 @@ Ensure you have Python 3.10+ installed, then:
 
 ```bash
 pip install strands-robots            # Core (policies + real hardware)
-pip install "strands-robots[sim]"       # + MuJoCo simulation (32 bundled robots)
+pip install "strands-robots[sim]"       # + MuJoCo simulation (38 bundled robots, 175+ via robot-descriptions)
 pip install "strands-robots[isaac]"     # + Isaac Sim/Lab (GPU-accelerated, NVIDIA only)
 ```
 
@@ -117,7 +123,7 @@ robot = Robot("so100", mode="real",
     port="/dev/ttyACM0")
 ```
 
-32 robots ship in the box. Any name auto-resolves — `so100_dualcam` → `so100`, `libero_panda` → `panda`.
+38 robots ship in the box. Any name auto-resolves — `so100_dualcam` → `so100`, `libero_panda` → `panda`.
 
 ### DreamGen: Teach Once, Dream Many
 
@@ -308,25 +314,26 @@ Allegro Hand
 
 </details>
 
-### 32 Robots, Ready to Go
+### 38 Robots, Ready to Go
 
 <details>
 <summary>See all supported robots</summary>
 
 | Category | Robots |
 |----------|--------|
-| **Arms** (14) | SO-100, SO-101, Koch v1.1, Franka Panda, FR3, UR5e, KUKA iiwa, Kinova Gen3, xArm 7, ViperX 300s, ARX L5, AgileX Piper, Unitree Z1, Enactic OpenArm |
-| **Bimanual** (2) | ALOHA (2× ViperX), Trossen WidowX AI |
+| **Arms** (16) | SO-100, SO-101, Koch v1.1, Franka Panda, FR3, UR5e, KUKA iiwa, Kinova Gen3, xArm 7, ViperX 300s, ARX L5, AgileX Piper, Unitree Z1, Enactic OpenArm, HOPE Jr, OMX |
+| **Bimanual** (3) | ALOHA (2× ViperX), Trossen WidowX AI, Bi-OpenArm |
 | **Hands** (3) | Shadow Dexterous Hand, LEAP Hand, Robotiq 2F-85 |
-| **Humanoids** (7) | Fourier N1, Unitree G1, Unitree H1, Apptronik Apollo, Agility Cassie, Google Robot, Reachy Mini |
-| **Mobile** (4) | Unitree Go2, Unitree A1, Boston Dynamics Spot, Hello Robot Stretch 3 |
-| **Expressive** (2) | Asimov V0, Open Duck Mini V2 |
+| **Humanoids** (8) | Fourier N1, Unitree G1, Unitree H1, Apptronik Apollo, Agility Cassie, Open Duck Mini V2, Reachy2, Asimov V0 |
+| **Mobile** (6) | Unitree Go2, Unitree A1, Boston Dynamics Spot, Hello Robot Stretch 3, LeKiwi, EarthRover |
+| **Mobile Manip** (1) | Google Robot |
+| **Expressive** (1) | Reachy Mini |
 
 </details>
 
 ## Policy Providers
 
-18 providers, 57 aliases. Plugin-based registry with auto-discovery.
+8 providers, 21 aliases. Plugin-based registry with auto-discovery.
 
 | Provider | Params | Best For |
 |----------|--------|----------|
@@ -399,7 +406,7 @@ MuJoCo/Newton provide ground-truth depth maps — no estimation needed.
    Robot("so100")         ← auto-detects sim or real
         │
         ▼
-   create_policy(...)     ← 18 providers, auto-resolved
+   create_policy(...)     ← 8 providers, auto-resolved
         │
         ▼
    Processor Pipeline     ← normalize observations, unnormalize actions

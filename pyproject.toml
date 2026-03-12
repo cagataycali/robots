@@ -55,6 +55,7 @@ hardware = [
 ]
 sim = [
     "mujoco>=3.0.0",
+    "robot_descriptions>=1.11.0",
     "Pillow>=8.0.0",
 ]
 isaac = [

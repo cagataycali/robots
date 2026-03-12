@@ -7,7 +7,8 @@
       "asset": {
         "dir": "trs_so_arm100",
         "model_xml": "so_arm100.xml",
-        "scene_xml": "scene.xml"
+        "scene_xml": "scene.xml",
+        "robot_descriptions_module": "so_arm100_mj_description"
       },
       "hardware": {
         "lerobot_type": "so100_follower"
@@ -28,7 +29,8 @@
       "asset": {
         "dir": "robotstudio_so101",
         "model_xml": "so101.xml",
-        "scene_xml": "scene_box.xml"
+        "scene_xml": "scene_box.xml",
+        "robot_descriptions_module": "so_arm101_mj_description"
       },
       "hardware": {
         "lerobot_type": "so101_follower"
@@ -48,7 +50,8 @@
       "asset": {
         "dir": "low_cost_robot_arm",
         "model_xml": "low_cost_robot_arm.xml",
-        "scene_xml": "scene.xml"
+        "scene_xml": "scene.xml",
+        "robot_descriptions_module": "low_cost_robot_arm_mj_description"
       },
       "hardware": {
         "lerobot_type": "koch_follower"
@@ -66,7 +69,8 @@
       "asset": {
         "dir": "franka_emika_panda",
         "model_xml": "panda.xml",
-        "scene_xml": "scene.xml"
+        "scene_xml": "scene.xml",
+        "robot_descriptions_module": "panda_mj_description"
       },
       "legacy_urdf": "panda/panda.urdf",
       "aliases": [
@@ -87,7 +91,8 @@
       "asset": {
         "dir": "franka_fr3",
         "model_xml": "fr3.xml",
-        "scene_xml": "scene.xml"
+        "scene_xml": "scene.xml",
+        "robot_descriptions_module": "fr3_mj_description"
       },
       "aliases": [
         "franka_fr3",
@@ -101,7 +106,8 @@
       "asset": {
         "dir": "universal_robots_ur5e",
         "model_xml": "ur5e.xml",
-        "scene_xml": "scene.xml"
+        "scene_xml": "scene.xml",
+        "robot_descriptions_module": "ur5e_mj_description"
       }
     },
     "kuka_iiwa": {
@@ -111,7 +117,8 @@
       "asset": {
         "dir": "kuka_iiwa_14",
         "model_xml": "iiwa14.xml",
-        "scene_xml": "scene.xml"
+        "scene_xml": "scene.xml",
+        "robot_descriptions_module": "iiwa14_mj_description"
       },
       "aliases": [
         "kuka_iiwa_14"
@@ -124,7 +131,8 @@
       "asset": {
         "dir": "kinova_gen3",
         "model_xml": "gen3.xml",
-        "scene_xml": "scene.xml"
+        "scene_xml": "scene.xml",
+        "robot_descriptions_module": "gen3_mj_description"
       }
     },
     "xarm7": {
@@ -134,7 +142,8 @@
       "asset": {
         "dir": "ufactory_xarm7",
         "model_xml": "xarm7.xml",
-        "scene_xml": "scene.xml"
+        "scene_xml": "scene.xml",
+        "robot_descriptions_module": "xarm7_mj_description"
       },
       "aliases": [
         "ufactory_xarm7"
@@ -147,7 +156,8 @@
       "asset": {
         "dir": "trossen_vx300s",
         "model_xml": "vx300s.xml",
-        "scene_xml": "scene.xml"
+        "scene_xml": "scene.xml",
+        "robot_descriptions_module": "viper_mj_description"
       },
       "aliases": [
         "oxe_widowx",
@@ -162,7 +172,8 @@
       "asset": {
         "dir": "arx_l5",
         "model_xml": "arx_l5.xml",
-        "scene_xml": "scene.xml"
+        "scene_xml": "scene.xml",
+        "robot_descriptions_module": "arx_l5_mj_description"
       }
     },
     "piper": {
@@ -172,7 +183,8 @@
       "asset": {
         "dir": "agilex_piper",
         "model_xml": "piper.xml",
-        "scene_xml": "scene.xml"
+        "scene_xml": "scene.xml",
+        "robot_descriptions_module": "piper_mj_description"
       },
       "aliases": [
         "agilex_piper"
@@ -185,7 +197,8 @@
       "asset": {
         "dir": "unitree_z1",
         "model_xml": "z1_gripper.xml",
-        "scene_xml": "scene.xml"
+        "scene_xml": "scene.xml",
+        "robot_descriptions_module": "z1_mj_description"
       },
       "aliases": [
         "unitree_z1"
@@ -198,7 +211,8 @@
       "asset": {
         "dir": "enactic_openarm",
         "model_xml": "openarm.xml",
-        "scene_xml": "scene.xml"
+        "scene_xml": "scene.xml",
+        "robot_descriptions_module": "openarm_v1_mj_description"
       },
       "aliases": [
         "enactic_openarm",
@@ -213,7 +227,8 @@
       "asset": {
         "dir": "aloha",
         "model_xml": "aloha.xml",
-        "scene_xml": "scene.xml"
+        "scene_xml": "scene.xml",
+        "robot_descriptions_module": "aloha_mj_description"
       },
       "hardware": {
         "lerobot_type": "bi_so_follower"
@@ -235,7 +250,8 @@
       "asset": {
         "dir": "trossen_wxai",
         "model_xml": "trossen_ai_bimanual.xml",
-        "scene_xml": "scene.xml"
+        "scene_xml": "scene.xml",
+        "robot_descriptions_module": "widow_mj_description"
       },
       "aliases": [
         "trossen_ai_bimanual"
@@ -248,7 +264,8 @@
       "asset": {
         "dir": "shadow_hand",
         "model_xml": "left_hand.xml",
-        "scene_xml": "scene_left.xml"
+        "scene_xml": "scene_left.xml",
+        "robot_descriptions_module": "shadow_hand_mj_description"
       },
       "aliases": [
         "shadow_dexee"
@@ -261,7 +278,8 @@
       "asset": {
         "dir": "leap_hand",
         "model_xml": "left_hand.xml",
-        "scene_xml": "scene_left.xml"
+        "scene_xml": "scene_left.xml",
+        "robot_descriptions_module": "leap_hand_mj_description"
       }
     },
     "robotiq_2f85": {
@@ -271,7 +289,8 @@
       "asset": {
         "dir": "robotiq_2f85",
         "model_xml": "2f85.xml",
-        "scene_xml": "scene.xml"
+        "scene_xml": "scene.xml",
+        "robot_descriptions_module": "robotiq_2f85_mj_description"
       },
       "aliases": [
         "robotiq",
@@ -285,7 +304,8 @@
       "asset": {
         "dir": "fourier_n1",
         "model_xml": "n1.xml",
-        "scene_xml": "scene.xml"
+        "scene_xml": "scene.xml",
+        "robot_descriptions_module": "n1_mj_description"
       },
       "aliases": [
         "fourier_gr1",
@@ -302,7 +322,8 @@
       "asset": {
         "dir": "unitree_g1",
         "model_xml": "g1.xml",
-        "scene_xml": "scene.xml"
+        "scene_xml": "scene.xml",
+        "robot_descriptions_module": "g1_mj_description"
       },
       "hardware": {
         "lerobot_type": "unitree_g1"
@@ -323,7 +344,8 @@
       "asset": {
         "dir": "unitree_h1",
         "model_xml": "h1.xml",
-        "scene_xml": "scene.xml"
+        "scene_xml": "scene.xml",
+        "robot_descriptions_module": "h1_mj_description"
       },
       "aliases": [
         "h1"
@@ -336,7 +358,8 @@
       "asset": {
         "dir": "apptronik_apollo",
         "model_xml": "apptronik_apollo.xml",
-        "scene_xml": "scene.xml"
+        "scene_xml": "scene.xml",
+        "robot_descriptions_module": "apollo_mj_description"
       },
       "aliases": [
         "apptronik_apollo"
@@ -349,7 +372,8 @@
       "asset": {
         "dir": "agility_cassie",
         "model_xml": "cassie.xml",
-        "scene_xml": "scene.xml"
+        "scene_xml": "scene.xml",
+        "robot_descriptions_module": "cassie_mj_description"
       },
       "aliases": [
         "agility_cassie"
@@ -362,7 +386,12 @@
       "asset": {
         "dir": "open_duck_mini_v2",
         "model_xml": "open_duck_mini_v2.xml",
-        "scene_xml": "scene.xml"
+        "scene_xml": "scene.xml",
+        "source": {
+          "type": "github",
+          "repo": "apirrone/Open_Duck_Mini",
+          "subdir": "mini_bdx/robots/open_duck_mini_v2"
+        }
       },
       "aliases": [
         "bdx",
@@ -379,7 +408,12 @@
       "asset": {
         "dir": "asimov_v0",
         "model_xml": "asimov_v0.xml",
-        "scene_xml": "scene.xml"
+        "scene_xml": "scene.xml",
+        "source": {
+          "type": "github",
+          "repo": "asimovinc/asimov-v0",
+          "subdir": "sim-model"
+        }
       },
       "aliases": [
         "asimov"
@@ -392,7 +426,12 @@
       "asset": {
         "dir": "reachy_mini",
         "model_xml": "mjcf/reachy_mini.xml",
-        "scene_xml": "mjcf/scene.xml"
+        "scene_xml": "mjcf/scene.xml",
+        "source": {
+          "type": "github",
+          "repo": "pollen-robotics/reachy_mini",
+          "subdir": "src/reachy_mini/descriptions/reachy_mini"
+        }
       },
       "aliases": [
         "pollen_reachy_mini",
@@ -408,7 +447,8 @@
       "asset": {
         "dir": "unitree_go2",
         "model_xml": "go2.xml",
-        "scene_xml": "scene.xml"
+        "scene_xml": "scene.xml",
+        "robot_descriptions_module": "go2_mj_description"
       },
       "aliases": [
         "go2"
@@ -421,7 +461,8 @@
       "asset": {
         "dir": "unitree_a1",
         "model_xml": "a1.xml",
-        "scene_xml": "scene.xml"
+        "scene_xml": "scene.xml",
+        "robot_descriptions_module": "a1_mj_description"
       },
       "aliases": [
         "a1"
@@ -434,7 +475,8 @@
       "asset": {
         "dir": "boston_dynamics_spot",
         "model_xml": "spot_arm.xml",
-        "scene_xml": "scene_arm.xml"
+        "scene_xml": "scene_arm.xml",
+        "robot_descriptions_module": "spot_mj_description"
       },
       "aliases": [
         "boston_dynamics_spot"
@@ -447,7 +489,8 @@
       "asset": {
         "dir": "hello_robot_stretch_3",
         "model_xml": "stretch.xml",
-        "scene_xml": "scene.xml"
+        "scene_xml": "scene.xml",
+        "robot_descriptions_module": "stretch_3_mj_description"
       },
       "aliases": [
         "hello_robot_stretch",

@@ -129,6 +129,9 @@ class LerobotLocalPolicy(Policy):
         self._output_features = {}
         self._loaded = False
         self._processor_bridge = None
+        self._tokenizer = None
+        self._tokenizer_max_length: int = 48
+        self._tokenizer_padding_side: str = "right"
         self._consecutive_failures = 0
         self._max_consecutive_failures = 5
 
@@ -186,6 +189,109 @@ class LerobotLocalPolicy(Policy):
             "robot_state_keys empty and no model features available for auto-detection. "
             "Actions will be empty dicts. Call set_robot_state_keys() with actual joint names."
         )
+
+    def _resolve_tokenizer(self):
+        """Resolve and cache the tokenizer for VLA language token injection.
+
+        Resolution order:
+            1. Explicit ``tokenizer_name`` on policy config (e.g. xvla)
+            2. ``vlm_model_name`` on policy config (e.g. SmolVLA → SmolVLM2)
+            3. Policy's own ``.processor.tokenizer`` (e.g. Paligemma-based)
+
+        Also reads ``tokenizer_max_length`` and ``tokenizer_padding_side``
+        from the policy config when available.
+
+        Returns the tokenizer or ``None``.
+        """
+        if self._tokenizer is not None:
+            return self._tokenizer
+
+        if not self._loaded or not self._policy:
+            return None
+
+        cfg = getattr(self._policy, "config", None)
+        if cfg is None:
+            return None
+
+        # Read sizing / padding from config (used by all paths)
+        self._tokenizer_max_length = getattr(cfg, "tokenizer_max_length", 48)
+        self._tokenizer_padding_side = getattr(cfg, "tokenizer_padding_side", "right")
+
+        # 1. tokenizer_name (explicit)
+        tokenizer_id = getattr(cfg, "tokenizer_name", None)
+
+        # 2. vlm_model_name (SmolVLA, etc.)
+        if not tokenizer_id:
+            tokenizer_id = getattr(cfg, "vlm_model_name", None)
+
+        if tokenizer_id:
+            try:
+                from transformers import AutoTokenizer
+
+                self._tokenizer = AutoTokenizer.from_pretrained(tokenizer_id)
+                self._tokenizer.padding_side = self._tokenizer_padding_side
+                logger.info(
+                    "Auto-resolved tokenizer from '%s' (%s)",
+                    tokenizer_id,
+                    type(self._tokenizer).__name__,
+                )
+                return self._tokenizer
+            except Exception as e:
+                logger.warning("Failed to load tokenizer from '%s': %s", tokenizer_id, e)
+
+        # 3. policy.processor.tokenizer
+        proc = getattr(self._policy, "processor", None)
+        if proc and hasattr(proc, "tokenizer"):
+            self._tokenizer = proc.tokenizer
+            self._tokenizer.padding_side = self._tokenizer_padding_side
+            logger.info(
+                "Using policy's built-in processor tokenizer (%s)",
+                type(self._tokenizer).__name__,
+            )
+            return self._tokenizer
+
+        return None
+
+    def _tokenize_instruction(self, instruction: str):
+        """Tokenize an instruction into ``(input_ids, attention_mask)`` tensors.
+
+        Returns ``None`` if no tokenizer is available.
+        """
+        tokenizer = self._resolve_tokenizer()
+        if tokenizer is None or not instruction:
+            return None
+
+        max_len = self._tokenizer_max_length
+        encoded = tokenizer(
+            instruction,
+            return_tensors="pt",
+            padding="max_length",
+            max_length=max_len,
+            truncation=True,
+        )
+        tokens = encoded["input_ids"].to(self._device)
+        mask = encoded.get("attention_mask")
+        if mask is not None:
+            mask = mask.bool().to(self._device)
+        return tokens, mask
+
+    def _needs_language_tokens(self) -> bool:
+        """Check whether this policy requires observation.language.tokens."""
+        cfg = getattr(self._policy, "config", None)
+        if cfg is None:
+            return False
+
+        # Explicit tokenizer_name or vlm_model_name → VLA that needs tokens
+        if getattr(cfg, "tokenizer_name", None):
+            return True
+        if getattr(cfg, "vlm_model_name", None):
+            return True
+
+        # Input features mention 'language'
+        if any("language" in k for k in self._input_features):
+            return True
+
+        return False
 
     def _load_model(self):
         import warnings
@@ -425,41 +531,18 @@ class LerobotLocalPolicy(Policy):
                 # This handles observation.language.tokens from the preprocessor
 
             # VLA language token injection: if preprocessor generated language tokens, keep them
-            # If not present but needed, try to tokenize the instruction
+            # If not present but needed, auto-tokenize using _resolve_tokenizer()
             if "observation.language.tokens" not in batch and instruction:
-                try:
-                    if hasattr(self._policy, "config") and hasattr(
-                        self._policy.config, "tokenizer_name"
-                    ):
-                        from transformers import AutoTokenizer
-
-                        tokenizer = AutoTokenizer.from_pretrained(
-                            self._policy.config.tokenizer_name
-                        )
-                        # Use max_len_seq (model's total sequence budget) as upper bound
-                        # not tokenizer_max_length (which may be much larger)
-                        max_seq = getattr(self._policy.config, "max_len_seq", 512)
-                        max_len = min(
-                            getattr(self._policy.config, "tokenizer_max_length", 50),
-                            max_seq // 4,  # Leave room for image tokens + state
-                            50,  # Reasonable default for short instructions
-                        )
-                        encoded = tokenizer(
-                            instruction,
-                            return_tensors="pt",
-                            padding="max_length",
-                            max_length=max_len,
-                            truncation=True,
-                        )
-                        batch["observation.language.tokens"] = encoded["input_ids"].to(
-                            self._device
-                        )
-                        if "attention_mask" in encoded:
-                            batch["observation.language.attention_mask"] = (
-                                encoded["attention_mask"].bool().to(self._device)
-                            )
-                except Exception as e:
-                    logger.debug("VLA tokenization fallback failed: %s", e)
+                if self._needs_language_tokens():
+                    try:
+                        result = self._tokenize_instruction(instruction)
+                        if result is not None:
+                            tokens, mask = result
+                            batch["observation.language.tokens"] = tokens
+                            if mask is not None:
+                                batch["observation.language.attention_mask"] = mask
+                    except Exception as e:
+                        logger.debug("VLA tokenization fallback failed: %s", e)
 
             return batch
 
@@ -515,17 +598,11 @@ class LerobotLocalPolicy(Policy):
                         break
 
         # VLA language token injection for models that need observation.language.tokens
-        # (xvla, smolvla, etc.) — tokenize instruction using model's configured tokenizer
-        # Detection: if model config has tokenizer_name, it's a VLA that needs language tokens
+        # (xvla, smolvla, etc.) — auto-resolved from tokenizer_name or vlm_model_name
         if instruction:
-            has_tokenizer_config = (
-                hasattr(self._policy, "config")
-                and hasattr(self._policy.config, "tokenizer_name")
-                and self._policy.config.tokenizer_name
-            )
-            needs_language = "observation.language.tokens" not in batch and (
-                any("language" in k for k in self._input_features)
-                or has_tokenizer_config
+            needs_language = (
+                "observation.language.tokens" not in batch
+                and self._needs_language_tokens()
             )
             needs_task = (
                 any("task" in k for k in self._input_features) and "task" not in batch
@@ -533,53 +610,17 @@ class LerobotLocalPolicy(Policy):
 
             if needs_language:
                 try:
-                    if hasattr(self._policy, "config") and hasattr(
-                        self._policy.config, "tokenizer_name"
-                    ):
-                        from transformers import AutoTokenizer
-
-                        tokenizer = AutoTokenizer.from_pretrained(
-                            self._policy.config.tokenizer_name
-                        )
-                        # Use max_len_seq (model's total sequence budget) as upper bound
-                        # not tokenizer_max_length (which may be much larger)
-                        max_seq = getattr(self._policy.config, "max_len_seq", 512)
-                        max_len = min(
-                            getattr(self._policy.config, "tokenizer_max_length", 50),
-                            max_seq // 4,  # Leave room for image tokens + state
-                            50,  # Reasonable default for short instructions
-                        )
-                        pad_side = getattr(
-                            self._policy.config, "tokenizer_padding_side", "right"
-                        )
-                        tokenizer.padding_side = pad_side
-                        encoded = tokenizer(
-                            instruction,
-                            return_tensors="pt",
-                            padding="max_length",
-                            max_length=max_len,
-                            truncation=True,
-                        )
-                        batch["observation.language.tokens"] = encoded["input_ids"].to(
-                            self._device
-                        )
-                        if "attention_mask" in encoded:
-                            batch["observation.language.attention_mask"] = (
-                                encoded["attention_mask"].bool().to(self._device)
-                            )
+                    result = self._tokenize_instruction(instruction)
+                    if result is not None:
+                        tokens, mask = result
+                        batch["observation.language.tokens"] = tokens
+                        if mask is not None:
+                            batch["observation.language.attention_mask"] = mask
                         logger.debug(
-                            f"VLA tokenized instruction: '{instruction[:50]}...' -> {encoded['input_ids'].shape}"
+                            "VLA tokenized instruction: '%s...' -> %s",
+                            instruction[:50],
+                            tokens.shape,
                         )
-                    elif hasattr(self._policy, "processor") and self._policy.processor:
-                        tokenized = self._policy.processor.tokenizer(
-                            instruction,
-                            return_tensors="pt",
-                            padding=True,
-                            truncation=True,
-                        )
-                        batch["observation.language.tokens"] = tokenized[
-                            "input_ids"
-                        ].to(self._device)
                 except Exception as e:
                     logger.warning("VLA language token injection failed: %s", e)
 
