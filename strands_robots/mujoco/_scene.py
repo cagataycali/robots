@@ -61,11 +61,14 @@ def create_world(
     # Build initial empty scene
     compile_world(sim)
 
+    # Use cheap registry count — NOT list_available_robots() which resolves
+    # every robot path and triggers downloads for missing assets.
     from ._registry import _URDF_REGISTRY
 
     try:
-        from strands_robots.assets import list_available_robots as _list_menagerie_robots
-        n_models = len(_list_menagerie_robots())
+        from strands_robots.registry import list_robots as _registry_list_robots
+
+        n_models = len(_registry_list_robots(mode="sim"))
     except ImportError:
         n_models = len(_URDF_REGISTRY)
 
