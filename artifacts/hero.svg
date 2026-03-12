@@ -1,0 +1,241 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 400" fill="none">
+  <defs>
+    <!-- Background gradient -->
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0a0e27"/>
+      <stop offset="50%" stop-color="#111936"/>
+      <stop offset="100%" stop-color="#0d1530"/>
+    </linearGradient>
+
+    <!-- Accent gradients -->
+    <linearGradient id="accent1" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#6366f1"/>
+      <stop offset="100%" stop-color="#8b5cf6"/>
+    </linearGradient>
+    <linearGradient id="accent2" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#06b6d4"/>
+      <stop offset="100%" stop-color="#22d3ee"/>
+    </linearGradient>
+    <linearGradient id="accent3" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#f59e0b"/>
+      <stop offset="100%" stop-color="#fbbf24"/>
+    </linearGradient>
+    <linearGradient id="green" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#10b981"/>
+      <stop offset="100%" stop-color="#34d399"/>
+    </linearGradient>
+
+    <!-- Glow filter -->
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="softglow">
+      <feGaussianBlur stdDeviation="8" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- Grid pattern -->
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5" opacity="0.4"/>
+    </pattern>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="400" fill="url(#bg)"/>
+  <rect width="1200" height="400" fill="url(#grid)"/>
+
+  <!-- Decorative orbs -->
+  <circle cx="150" cy="80" r="120" fill="#6366f1" opacity="0.04"/>
+  <circle cx="1050" cy="320" r="150" fill="#06b6d4" opacity="0.04"/>
+  <circle cx="600" cy="200" r="200" fill="#8b5cf6" opacity="0.02"/>
+
+  <!-- ═══ LEFT: Code block ═══ -->
+  <g transform="translate(40, 55)">
+    <!-- Terminal window -->
+    <rect x="0" y="0" width="340" height="290" rx="12" fill="#1a1f3a" stroke="#2d3561" stroke-width="1.5"/>
+    <!-- Title bar -->
+    <rect x="0" y="0" width="340" height="32" rx="12" fill="#1e2440"/>
+    <rect x="0" y="20" width="340" height="12" fill="#1e2440"/>
+    <!-- Traffic lights -->
+    <circle cx="18" cy="16" r="5" fill="#ef4444" opacity="0.9"/>
+    <circle cx="36" cy="16" r="5" fill="#f59e0b" opacity="0.9"/>
+    <circle cx="54" cy="16" r="5" fill="#22c55e" opacity="0.9"/>
+    <text x="170" y="20" text-anchor="middle" fill="#64748b" font-family="SF Mono, Menlo, monospace" font-size="11">robot_agent.py</text>
+
+    <!-- Code lines -->
+    <text x="16" y="58" fill="#c084fc" font-family="SF Mono, Menlo, monospace" font-size="12.5" font-weight="600">from</text>
+    <text x="52" y="58" fill="#e2e8f0" font-family="SF Mono, Menlo, monospace" font-size="12.5"> strands </text>
+    <text x="118" y="58" fill="#c084fc" font-family="SF Mono, Menlo, monospace" font-size="12.5" font-weight="600">import</text>
+    <text x="168" y="58" fill="#67e8f9" font-family="SF Mono, Menlo, monospace" font-size="12.5"> Agent</text>
+
+    <text x="16" y="78" fill="#c084fc" font-family="SF Mono, Menlo, monospace" font-size="12.5" font-weight="600">from</text>
+    <text x="52" y="78" fill="#e2e8f0" font-family="SF Mono, Menlo, monospace" font-size="12.5"> strands_robots </text>
+    <text x="180" y="78" fill="#c084fc" font-family="SF Mono, Menlo, monospace" font-size="12.5" font-weight="600">import</text>
+    <text x="230" y="78" fill="#67e8f9" font-family="SF Mono, Menlo, monospace" font-size="12.5"> Robot</text>
+
+    <text x="16" y="112" fill="#64748b" font-family="SF Mono, Menlo, monospace" font-size="12.5"># Auto sim/real — zero config</text>
+
+    <text x="16" y="140" fill="#e2e8f0" font-family="SF Mono, Menlo, monospace" font-size="12.5">robot = </text>
+    <text x="80" y="140" fill="#67e8f9" font-family="SF Mono, Menlo, monospace" font-size="12.5">Robot</text>
+    <text x="112" y="140" fill="#e2e8f0" font-family="SF Mono, Menlo, monospace" font-size="12.5">(</text>
+    <text x="120" y="140" fill="#fbbf24" font-family="SF Mono, Menlo, monospace" font-size="12.5">"so100"</text>
+    <text x="178" y="140" fill="#e2e8f0" font-family="SF Mono, Menlo, monospace" font-size="12.5">)</text>
+
+    <text x="16" y="162" fill="#e2e8f0" font-family="SF Mono, Menlo, monospace" font-size="12.5">agent = </text>
+    <text x="80" y="162" fill="#67e8f9" font-family="SF Mono, Menlo, monospace" font-size="12.5">Agent</text>
+    <text x="116" y="162" fill="#e2e8f0" font-family="SF Mono, Menlo, monospace" font-size="12.5">(tools=[robot])</text>
+
+    <text x="16" y="196" fill="#64748b" font-family="SF Mono, Menlo, monospace" font-size="12.5"># Natural language control</text>
+
+    <text x="16" y="224" fill="#e2e8f0" font-family="SF Mono, Menlo, monospace" font-size="12.5">agent(</text>
+    <text x="64" y="224" fill="#fbbf24" font-family="SF Mono, Menlo, monospace" font-size="12.5">"Pick up the red cube"</text>
+    <text x="266" y="224" fill="#e2e8f0" font-family="SF Mono, Menlo, monospace" font-size="12.5">)</text>
+
+    <!-- Cursor blink -->
+    <rect x="16" y="244" width="8" height="16" fill="#6366f1" opacity="0.8">
+      <animate attributeName="opacity" values="0.8;0.2;0.8" dur="1.2s" repeatCount="indefinite"/>
+    </rect>
+  </g>
+
+  <!-- ═══ CENTER: Flow arrows ═══ -->
+  <g transform="translate(400, 140)">
+    <!-- Arrow 1: Code → Sim -->
+    <path d="M 0 40 C 40 40, 50 -10, 90 -10" stroke="url(#accent1)" stroke-width="2.5" fill="none" stroke-dasharray="6,4" filter="url(#glow)">
+      <animate attributeName="stroke-dashoffset" values="0;-20" dur="1.5s" repeatCount="indefinite"/>
+    </path>
+    <polygon points="88,-16 98,-10 88,-4" fill="#8b5cf6"/>
+
+    <!-- Arrow 2: Code → Real -->
+    <path d="M 0 60 C 40 60, 50 130, 90 130" stroke="url(#accent2)" stroke-width="2.5" fill="none" stroke-dasharray="6,4" filter="url(#glow)">
+      <animate attributeName="stroke-dashoffset" values="0;-20" dur="1.5s" repeatCount="indefinite"/>
+    </path>
+    <polygon points="88,124 98,130 88,136" fill="#22d3ee"/>
+
+    <!-- Labels -->
+    <text x="45" y="15" text-anchor="middle" fill="#a78bfa" font-family="Inter, system-ui, sans-serif" font-size="10" font-weight="600" letter-spacing="1">SIM</text>
+    <text x="45" y="155" text-anchor="middle" fill="#67e8f9" font-family="Inter, system-ui, sans-serif" font-size="10" font-weight="600" letter-spacing="1">REAL</text>
+  </g>
+
+  <!-- ═══ RIGHT TOP: Simulation panel ═══ -->
+  <g transform="translate(510, 40)">
+    <rect x="0" y="0" width="310" height="145" rx="12" fill="#1a1f3a" stroke="#4338ca" stroke-width="1.2" opacity="0.95"/>
+
+    <!-- MuJoCo sim label -->
+    <rect x="12" y="12" width="90" height="22" rx="6" fill="#6366f1" opacity="0.2"/>
+    <text x="57" y="27" text-anchor="middle" fill="#a78bfa" font-family="Inter, system-ui, sans-serif" font-size="10" font-weight="700" letter-spacing="0.5">SIMULATION</text>
+
+    <!-- Robot arm ASCII art representation -->
+    <g transform="translate(40, 50)" filter="url(#glow)">
+      <!-- Base -->
+      <rect x="40" y="70" width="40" height="12" rx="3" fill="#6366f1" opacity="0.7"/>
+      <!-- Joint 1 -->
+      <rect x="52" y="40" width="16" height="35" rx="4" fill="#818cf8" opacity="0.8"/>
+      <!-- Joint 2 -->
+      <rect x="62" y="22" width="40" height="12" rx="4" fill="#a78bfa" opacity="0.8" transform="rotate(-25, 62, 28)"/>
+      <!-- Gripper -->
+      <rect x="92" y="8" width="6" height="18" rx="2" fill="#c4b5fd" opacity="0.9"/>
+      <rect x="100" y="8" width="6" height="18" rx="2" fill="#c4b5fd" opacity="0.9"/>
+      <!-- Cube -->
+      <rect x="96" y="28" width="12" height="12" rx="2" fill="#ef4444" opacity="0.85">
+        <animate attributeName="y" values="28;22;28" dur="2s" repeatCount="indefinite"/>
+      </rect>
+    </g>
+
+    <!-- Stats -->
+    <text x="180" y="55" fill="#94a3b8" font-family="SF Mono, Menlo, monospace" font-size="10">38 robots (175+ via</text>
+    <text x="180" y="68" fill="#94a3b8" font-family="SF Mono, Menlo, monospace" font-size="10">robot-descriptions)</text>
+    <text x="180" y="85" fill="#94a3b8" font-family="SF Mono, Menlo, monospace" font-size="10">MuJoCo · Newton</text>
+    <text x="180" y="100" fill="#94a3b8" font-family="SF Mono, Menlo, monospace" font-size="10">Isaac Sim</text>
+    <text x="180" y="122" fill="#22c55e" font-family="SF Mono, Menlo, monospace" font-size="10">● Zero config</text>
+  </g>
+
+  <!-- ═══ RIGHT BOTTOM: Real hardware panel ═══ -->
+  <g transform="translate(510, 210)">
+    <rect x="0" y="0" width="310" height="145" rx="12" fill="#1a1f3a" stroke="#0891b2" stroke-width="1.2" opacity="0.95"/>
+
+    <!-- Hardware label -->
+    <rect x="12" y="12" width="82" height="22" rx="6" fill="#06b6d4" opacity="0.2"/>
+    <text x="53" y="27" text-anchor="middle" fill="#67e8f9" font-family="Inter, system-ui, sans-serif" font-size="10" font-weight="700" letter-spacing="0.5">HARDWARE</text>
+
+    <!-- Physical robot representation -->
+    <g transform="translate(40, 50)" filter="url(#glow)">
+      <!-- Base -->
+      <rect x="40" y="70" width="40" height="12" rx="3" fill="#0891b2" opacity="0.7"/>
+      <!-- Arm segments -->
+      <rect x="52" y="40" width="16" height="35" rx="4" fill="#22d3ee" opacity="0.7"/>
+      <rect x="62" y="22" width="40" height="12" rx="4" fill="#67e8f9" opacity="0.7" transform="rotate(-25, 62, 28)"/>
+      <!-- Gripper -->
+      <rect x="92" y="10" width="6" height="16" rx="2" fill="#a5f3fc" opacity="0.8"/>
+      <rect x="100" y="10" width="6" height="16" rx="2" fill="#a5f3fc" opacity="0.8"/>
+      <!-- USB indicator -->
+      <rect x="20" y="76" width="14" height="6" rx="2" fill="#22c55e" opacity="0.7"/>
+    </g>
+
+    <!-- Stats -->
+    <text x="180" y="55" fill="#94a3b8" font-family="SF Mono, Menlo, monospace" font-size="10">USB auto-detect</text>
+    <text x="180" y="72" fill="#94a3b8" font-family="SF Mono, Menlo, monospace" font-size="10">Same code, same API</text>
+    <text x="180" y="89" fill="#94a3b8" font-family="SF Mono, Menlo, monospace" font-size="10">8 policy providers</text>
+    <text x="180" y="115" fill="#22c55e" font-family="SF Mono, Menlo, monospace" font-size="10">● Zero code changes</text>
+  </g>
+
+  <!-- ═══ FAR RIGHT: Stats column ═══ -->
+  <g transform="translate(850, 55)">
+    <!-- Stat cards -->
+    <g>
+      <rect x="0" y="0" width="130" height="45" rx="8" fill="#1a1f3a" stroke="#2d3561" stroke-width="1"/>
+      <text x="65" y="18" text-anchor="middle" fill="#fbbf24" font-family="Inter, system-ui, sans-serif" font-size="20" font-weight="800">38</text>
+      <text x="65" y="35" text-anchor="middle" fill="#64748b" font-family="Inter, system-ui, sans-serif" font-size="10" font-weight="500">Robots</text>
+    </g>
+    <g transform="translate(145, 0)">
+      <rect x="0" y="0" width="130" height="45" rx="8" fill="#1a1f3a" stroke="#2d3561" stroke-width="1"/>
+      <text x="65" y="18" text-anchor="middle" fill="#a78bfa" font-family="Inter, system-ui, sans-serif" font-size="20" font-weight="800">8</text>
+      <text x="65" y="35" text-anchor="middle" fill="#64748b" font-family="Inter, system-ui, sans-serif" font-size="10" font-weight="500">Policy Providers</text>
+    </g>
+    <g transform="translate(0, 60)">
+      <rect x="0" y="0" width="130" height="45" rx="8" fill="#1a1f3a" stroke="#2d3561" stroke-width="1"/>
+      <text x="65" y="18" text-anchor="middle" fill="#22d3ee" font-family="Inter, system-ui, sans-serif" font-size="20" font-weight="800">3</text>
+      <text x="65" y="35" text-anchor="middle" fill="#64748b" font-family="Inter, system-ui, sans-serif" font-size="10" font-weight="500">Sim Backends</text>
+    </g>
+    <g transform="translate(145, 60)">
+      <rect x="0" y="0" width="130" height="45" rx="8" fill="#1a1f3a" stroke="#2d3561" stroke-width="1"/>
+      <text x="65" y="18" text-anchor="middle" fill="#34d399" font-family="Inter, system-ui, sans-serif" font-size="20" font-weight="800">4</text>
+      <text x="65" y="35" text-anchor="middle" fill="#64748b" font-family="Inter, system-ui, sans-serif" font-size="10" font-weight="500">Lines to Start</text>
+    </g>
+
+    <!-- Category pills -->
+    <g transform="translate(0, 130)">
+      <rect x="0" y="0" width="275" height="28" rx="6" fill="#1a1f3a" stroke="#2d3561" stroke-width="0.8"/>
+      <text x="12" y="18" fill="#f59e0b" font-family="SF Mono, Menlo, monospace" font-size="9">Arms</text>
+      <text x="48" y="18" fill="#64748b" font-family="SF Mono, Menlo, monospace" font-size="9">·</text>
+      <text x="58" y="18" fill="#a78bfa" font-family="SF Mono, Menlo, monospace" font-size="9">Hands</text>
+      <text x="102" y="18" fill="#64748b" font-family="SF Mono, Menlo, monospace" font-size="9">·</text>
+      <text x="112" y="18" fill="#22d3ee" font-family="SF Mono, Menlo, monospace" font-size="9">Humanoids</text>
+      <text x="183" y="18" fill="#64748b" font-family="SF Mono, Menlo, monospace" font-size="9">·</text>
+      <text x="193" y="18" fill="#34d399" font-family="SF Mono, Menlo, monospace" font-size="9">Mobile</text>
+      <text x="237" y="18" fill="#64748b" font-family="SF Mono, Menlo, monospace" font-size="9">·</text>
+      <text x="247" y="18" fill="#fb7185" font-family="SF Mono, Menlo, monospace" font-size="9">Bi</text>
+    </g>
+
+    <!-- Tagline -->
+    <text x="137" y="195" text-anchor="middle" fill="#e2e8f0" font-family="Inter, system-ui, sans-serif" font-size="14" font-weight="600">Model-driven robotics.</text>
+    <text x="137" y="215" text-anchor="middle" fill="#94a3b8" font-family="Inter, system-ui, sans-serif" font-size="12">Sim ↔ Real in one line.</text>
+
+    <!-- Policy provider logos row -->
+    <g transform="translate(0, 235)">
+      <rect x="0" y="0" width="275" height="60" rx="8" fill="#1a1f3a" stroke="#2d3561" stroke-width="0.8"/>
+      <text x="137" y="16" text-anchor="middle" fill="#64748b" font-family="Inter, system-ui, sans-serif" font-size="8" font-weight="600" letter-spacing="1.5">POLICY PROVIDERS</text>
+      <text x="137" y="33" text-anchor="middle" fill="#94a3b8" font-family="SF Mono, Menlo, monospace" font-size="8.5">GR00T · LeRobot · Cosmos · GEAR-SONIC</text>
+      <text x="137" y="48" text-anchor="middle" fill="#94a3b8" font-family="SF Mono, Menlo, monospace" font-size="8.5">DreamGen · DreamZero · Mock · Custom</text>
+    </g>
+  </g>
+
+  <!-- Bottom accent line -->
+  <rect x="0" y="396" width="1200" height="4" fill="url(#accent1)" opacity="0.6"/>
+</svg>

@@ -9,4 +9,4 @@ build
 dist
 .strands_robots
 .coverage
-.kiro/
+site/

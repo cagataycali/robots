@@ -1,0 +1,68 @@
+name: Feature Request
+description: Suggest a feature for Strands Robots
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for suggesting a feature! Please describe what you'd like.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: A clear description of the feature you'd like.
+    validations:
+      required: true
+
+  - type: textarea
+    id: use_case
+    attributes:
+      label: Use Case
+      description: What problem does this solve? How would you use it?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed
+    attributes:
+      label: Proposed Solution
+      description: How you'd like it to work. Code examples welcome.
+      placeholder: |
+        ```python
+        from strands_robots import Robot
+
+        robot = Robot("my_new_robot")
+        # ...
+        ```
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part of the project does this relate to?
+      options:
+        - Robot Support (new robot)
+        - Policy Provider (new/existing)
+        - Simulation
+        - Training
+        - DreamGen
+        - Tools
+        - Registry
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Any alternative solutions or workarounds you've considered.
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Any other info — links, papers, related projects.

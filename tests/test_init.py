@@ -32,14 +32,32 @@ class TestPackageImport:
         assert isinstance(strands_robots.__all__, list)
         assert len(strands_robots.__all__) > 0
 
-    def test_motion_library_import(self):
+    def test_submodule_imports(self):
+        """Advanced users import from submodules, not top-level."""
         from strands_robots.motion_library import Motion, MotionLibrary
 
         assert MotionLibrary is not None
         assert Motion is not None
 
-    def test_telemetry_import(self):
         from strands_robots.telemetry import EventCategory, TelemetryStream
 
         assert TelemetryStream is not None
         assert EventCategory is not None
+
+    def test_clean_namespace(self):
+        """Top-level should be small — configs/internals live in submodules."""
+        import strands_robots
+
+        # No config classes at top level
+        for name in strands_robots.__all__:
+            if name.endswith("Config") and name not in ("TrainConfig",):
+                raise AssertionError(
+                    f"Config class at top level: {name} — "
+                    f"should be imported from its submodule"
+                )
+
+    def test_create_trainer(self):
+        """create_trainer should be a top-level export."""
+        from strands_robots import create_trainer
+
+        assert callable(create_trainer)

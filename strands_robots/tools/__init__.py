@@ -4,7 +4,7 @@ Strands Robotics Tools
 
 Collection of specialized tools for robot control, camera management,
 teleoperation, inference services, dataset management, serial communication,
-robot mesh coordination, 3D world generation, and telemetry streaming.
+robot mesh coordination, and telemetry streaming.
 
 Tools are lazily imported to avoid pulling in heavy dependencies (strands SDK,
 torch, etc.) until actually needed. This preserves the ability to import

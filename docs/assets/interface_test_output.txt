@@ -1,0 +1,34 @@
+============================================================
+Strands Robots — Interface E2E Test
+============================================================
+
+📦 Top-level exports: 22
+   ['MockPolicy', 'Policy', 'Robot', 'create_policy', 'create_trainer', 'download_assets', 'evaluate', 'gr00t_inference', 'lerobot_camera', 'lerobot_dataset', 'list_providers', 'list_robots', 'newton_sim', 'pose_tool', 'reachy_mini_tool', 'register_policy', 'resolve_policy', 'robot_mesh', 'serial_tool', 'stereo_depth', 'stream', 'teleoperator']
+
+🤖 Robots: 38 available
+   arm          (16): arx_l5, fr3, hope_jr, kinova_gen3...
+   bimanual     ( 3): aloha, bi_openarm, trossen_wxai
+   expressive   ( 1): reachy_mini
+   hand         ( 3): leap_hand, robotiq_2f85, shadow_hand
+   humanoid     ( 8): apollo, asimov_v0, cassie, fourier_n1...
+   mobile       ( 6): earthrover, lekiwi, spot, stretch3...
+   mobile_manip ( 1): google_robot
+
+🧠 Policy providers: 8
+   • cosmos_predict
+   • dreamgen
+   • dreamzero
+   • gear_sonic
+   • groot
+   • lerobot_async
+   • lerobot_local
+   • mock
+
+🎮 Robot('so100') → MujocoBackend
+🎯 create_policy('mock') → MockPolicy
+🏋️ create_trainer('lerobot') → LerobotTrainer
+🔍 resolve_policy('mock') → provider=mock
+
+============================================================
+✅ All interface tests passed
+============================================================
