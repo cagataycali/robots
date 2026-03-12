@@ -39,17 +39,17 @@ def _resolve_policy_class_from_hub(pretrained_name_or_path: str):
     import json
     from pathlib import Path
 
-    # Strategy 1: Use PreTrainedConfig draccus resolution
+    # Strategy 1: Use PreTrainedConfig draccus resolution → then resolve concrete class
     try:
         from lerobot.configs.policies import PreTrainedConfig
 
         config = PreTrainedConfig.from_pretrained(pretrained_name_or_path)
         policy_type = getattr(config, "type", type(config).__name__.replace("Config", "").lower())
         logger.info(f"Auto-resolved via PreTrainedConfig: '{pretrained_name_or_path}' -> type='{policy_type}'")
-        # Return the config's associated policy class
-        from lerobot.policies.pretrained import PreTrainedPolicy
 
-        return PreTrainedPolicy, policy_type
+        # Resolve the CONCRETE policy class (not abstract PreTrainedPolicy)
+        PolicyClass = _resolve_policy_class_by_name(policy_type)
+        return PolicyClass, policy_type
     except Exception as e:
         logger.debug("PreTrainedConfig resolution failed, trying manual: %s", e)
 
@@ -86,16 +86,41 @@ def _resolve_policy_class_from_hub(pretrained_name_or_path: str):
 def _resolve_policy_class_by_name(policy_type: str):
     """Resolve policy class from an explicit type string.
 
-    Uses PreTrainedConfig.get_known_choices() + make_policy()
-    or direct module import from lerobot.policies.{policy_type}.
-    Falls back to legacy get_policy_class() for older lerobot versions.
-    """
-    # Strategy 1: Direct module import
-    try:
-        import importlib
+    Resolution strategies (in order):
+        1. Direct submodule import: lerobot.policies.{type}.modeling_{type}
+        2. Package-level import: lerobot.policies.{type}
+        3. Legacy factory: lerobot.policies.factory.get_policy_class
+        4. PreTrainedPolicy fallback (only if concrete, not abstract)
 
+    LeRobot 0.5+ puts concrete classes in ``modeling_*`` submodules
+    (e.g. ``lerobot.policies.act.modeling_act.ACTPolicy``) while the
+    package ``__init__`` may re-export only the config.
+    """
+    import importlib
+
+    # Build candidate class name: "act" → "ACTPolicy", "diffusion" → "DiffusionPolicy"
+    _type_cap = policy_type.upper() if len(policy_type) <= 4 else policy_type.capitalize()
+    expected_class = f"{_type_cap}Policy"
+
+    # Strategy 1: modeling_* submodule (LeRobot 0.5+ convention)
+    for submodule in [f"modeling_{policy_type}", "modeling"]:
+        try:
+            mod = importlib.import_module(f"lerobot.policies.{policy_type}.{submodule}")
+            for attr_name in dir(mod):
+                obj = getattr(mod, attr_name)
+                if (
+                    isinstance(obj, type)
+                    and attr_name.endswith("Policy")
+                    and attr_name != "PreTrainedPolicy"
+                    and hasattr(obj, "from_pretrained")
+                ):
+                    return obj
+        except ImportError:
+            pass
+
+    # Strategy 2: Direct package-level import
+    try:
         mod = importlib.import_module(f"lerobot.policies.{policy_type}")
-        # Find the Policy class (convention: {Type}Policy)
         for attr_name in dir(mod):
             obj = getattr(mod, attr_name)
             if (
@@ -108,23 +133,31 @@ def _resolve_policy_class_by_name(policy_type: str):
     except ImportError:
         pass
 
-    # Strategy 2: PreTrainedPolicy (generic loader)
-    try:
-        from lerobot.policies.pretrained import PreTrainedPolicy
-
-        return PreTrainedPolicy
-    except ImportError:
-        pass
-
-    # Strategy 3: Legacy get_policy_class
+    # Strategy 3: Legacy get_policy_class (LeRobot <0.4)
     try:
         from lerobot.policies.factory import get_policy_class
 
         return get_policy_class(policy_type)
-    except (ImportError, AttributeError, RuntimeError) as e:
-        raise ImportError(
-            f"Could not resolve LeRobot policy class for type '{policy_type}': {e}. Ensure lerobot is installed."
-        ) from e
+    except (ImportError, AttributeError, RuntimeError):
+        pass
+
+    # Strategy 4: PreTrainedPolicy — only if it's NOT abstract
+    #   (LeRobot 0.5 makes it abstract with forward/reset/etc.)
+    try:
+        from lerobot.policies.pretrained import PreTrainedPolicy
+        import inspect
+
+        if not inspect.isabstract(PreTrainedPolicy):
+            return PreTrainedPolicy
+    except ImportError:
+        pass
+
+    raise ImportError(
+        f"Could not resolve LeRobot policy class for type '{policy_type}'. "
+        f"Tried: lerobot.policies.{policy_type}.modeling_{policy_type}, "
+        f"lerobot.policies.{policy_type}, factory, PreTrainedPolicy. "
+        f"Ensure lerobot is installed (pip install lerobot)."
+    )
 
 
 class LerobotLocalPolicy(Policy):
@@ -363,7 +396,14 @@ class LerobotLocalPolicy(Policy):
             # Auto-detect from HF config.json
             PolicyClass, self.policy_type = _resolve_policy_class_from_hub(self.pretrained_name_or_path)
 
-        self._policy = PolicyClass.from_pretrained(self.pretrained_name_or_path)
+        import warnings as _w
+        with _w.catch_warnings():
+            # Suppress "Unexpected key(s) when loading model" from old checkpoints
+            # that contain normalize_inputs/unnormalize_outputs buffers removed in
+            # LeRobot 0.5+.  The weights load correctly — these are stale state-dict
+            # keys, not missing model parameters.
+            _w.filterwarnings("ignore", message=".*Unexpected key.*when loading model.*")
+            self._policy = PolicyClass.from_pretrained(self.pretrained_name_or_path)
         self._policy.eval()
         self._device = next(self._policy.parameters()).device
 
