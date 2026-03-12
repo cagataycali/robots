@@ -3787,6 +3787,14 @@ class Simulation(AgentTool):
                 r.policy_running = False
             self._world = None
         self._close_viewer()
+        # Close cached MuJoCo renderers before interpreter shutdown
+        # to avoid EGL context errors in Renderer.__del__
+        for renderer in getattr(self, "_renderers", {}).values():
+            try:
+                renderer.close()
+            except Exception:
+                pass
+        self._renderers.clear()
         self._executor.shutdown(wait=False)
         self._shutdown_event.set()
 

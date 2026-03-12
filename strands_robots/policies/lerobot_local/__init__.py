@@ -393,14 +393,19 @@ class LerobotLocalPolicy(Policy):
             # Auto-detect from HF config.json
             PolicyClass, self.policy_type = _resolve_policy_class_from_hub(self.pretrained_name_or_path)
 
-        import warnings as _w
-        with _w.catch_warnings():
-            # Suppress "Unexpected key(s) when loading model" from old checkpoints
-            # that contain normalize_inputs/unnormalize_outputs buffers removed in
-            # LeRobot 0.5+.  The weights load correctly — these are stale state-dict
-            # keys, not missing model parameters.
-            _w.filterwarnings("ignore", message=".*Unexpected key.*when loading model.*")
+        # Suppress "Unexpected key(s) when loading model" from old checkpoints
+        # that contain normalize_inputs/unnormalize_outputs buffers removed in
+        # LeRobot 0.5+.  The weights load correctly — these are stale state-dict
+        # keys, not missing model parameters.
+        # NOTE: LeRobot emits this via logging.warning(), not warnings.warn(),
+        # so we must temporarily raise the root logger level.
+        _root_logger = logging.getLogger()
+        _prev_level = _root_logger.level
+        _root_logger.setLevel(logging.ERROR)
+        try:
             self._policy = PolicyClass.from_pretrained(self.pretrained_name_or_path)
+        finally:
+            _root_logger.setLevel(_prev_level)
         self._policy.eval()
         self._device = next(self._policy.parameters()).device
 
