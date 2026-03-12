@@ -86,7 +86,7 @@ if HAS_GYM:
                 max_episode_steps: Maximum steps before truncation.
                 reward_fn: Custom reward function(obs_dict, action) -> float or np.ndarray.
                 success_fn: Custom success function(obs_dict) -> bool or np.ndarray.
-                obs_keys: Which observation keys to include. Default: ["joint_positions", "joint_velocities"].
+                obs_keys: Which observation keys to include. Default: ["joint_q", "joint_qd"].
             """
             super().__init__()
 
@@ -101,7 +101,7 @@ if HAS_GYM:
             self.max_episode_steps = max_episode_steps
             self.reward_fn = reward_fn
             self.success_fn = success_fn
-            self._obs_keys = obs_keys or ["joint_positions", "joint_velocities"]
+            self._obs_keys = obs_keys or ["joint_q", "joint_qd"]
 
             self._backend: Optional[NewtonBackend] = None
             self._step_count = 0
@@ -193,12 +193,22 @@ if HAS_GYM:
             result = self._backend.get_observation(self._robot_name)
             obs_data = result.get("observations", {}).get(self._robot_name, {})
 
-            jpos = obs_data.get("joint_positions")
-            jvel = obs_data.get("joint_velocities")
+            jpos = obs_data.get("joint_q")
+            jvel = obs_data.get("joint_qd")
 
             if jpos is None:
+                logger.warning(
+                    'joint_q not found in observation (available keys: %s). '
+                    'Falling back to zeros — RL training will be ineffective.',
+                    list(obs_data.keys()),
+                )
                 jpos = np.zeros(self._n_joints * self._num_envs, dtype=np.float32)
             if jvel is None:
+                logger.warning(
+                    'joint_qd not found in observation (available keys: %s). '
+                    'Falling back to zeros — RL training will be ineffective.',
+                    list(obs_data.keys()),
+                )
                 jvel = np.zeros(self._n_joints * self._num_envs, dtype=np.float32)
 
             jpos = np.asarray(jpos, dtype=np.float32).flatten()

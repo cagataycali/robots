@@ -122,7 +122,7 @@ def test_observation():
     obs = b.get_observation("quad")
     assert obs["success"]
     assert "quad" in obs["observations"]
-    jp = obs["observations"]["quad"]["joint_positions"]
+    jp = obs["observations"]["quad"]["joint_q"]
     assert jp is not None
     assert len(jp) > 0
     b.destroy()
