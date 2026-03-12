@@ -31,7 +31,6 @@ import re
 import shutil
 import subprocess
 import tempfile
-from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -66,35 +65,47 @@ def _robot_descriptions_available() -> bool:
         return False
 
 
-@lru_cache(maxsize=1)
-def _discover_robot_descriptions_mapping() -> Dict[str, str]:
-    """Map menagerie directory names to ``robot_descriptions`` module names.
+def _resolve_robot_descriptions_module(name: str, info: dict) -> Optional[str]:
+    """Resolve the ``robot_descriptions`` module name for a robot.
 
-    Uses the ``DESCRIPTIONS`` registry exposed by the package to enumerate
-    available MuJoCo modules, then imports each to read ``PACKAGE_PATH``.
-    Only runs once (cached).
+    Uses the ``robot_descriptions_module`` field from the registry (O(1)),
+    with a lightweight naming-convention fallback for unregistered robots.
+
+    Args:
+        name: Canonical robot name.
+        info: Robot registry entry.
 
     Returns:
-        ``{menagerie_dir: module_name}`` — empty if package is absent.
+        Module name (e.g. ``panda_mj_description``) or ``None``.
     """
-    try:
-        from robot_descriptions import DESCRIPTIONS
-    except ImportError:
-        return {}
+    # Primary: explicit registry entry (preferred, O(1))
+    module_name = info.get("asset", {}).get("robot_descriptions_module")
+    if module_name:
+        return module_name
 
-    mapping: Dict[str, str] = {}
-    for module_name in DESCRIPTIONS:
-        if not module_name.endswith("_mj_description"):
+    # Fallback: try common naming conventions (max 3 imports)
+    asset_dir = info.get("asset", {}).get("dir", "")
+    candidates = [
+        f"{asset_dir}_mj_description",
+        f"{name}_mj_description",
+        f"{name}_description",
+    ]
+    for candidate in candidates:
+        if not re.match(r"^[a-z0-9_]+$", candidate):
             continue
         try:
-            mod = importlib.import_module(f"robot_descriptions.{module_name}")
-            package_path = Path(mod.PACKAGE_PATH)
-            mapping[package_path.name] = module_name
-        except Exception:
+            importlib.import_module(f"robot_descriptions.{candidate}")
+            logger.warning(
+                "Resolved '%s' via naming heuristic → '%s'. "
+                "Consider adding 'robot_descriptions_module' to the registry.",
+                name,
+                candidate,
+            )
+            return candidate
+        except ImportError:
             continue
 
-    logger.debug("Discovered %d robot_descriptions MJ modules", len(mapping))
-    return mapping
+    return None
 
 
 # ── Helpers ───────────────────────────────────────────────────────────
@@ -180,22 +191,22 @@ def _copy_and_clean(src: Path, dst: Path) -> None:
 def _download_via_robot_descriptions(robots: Dict[str, dict], dest_dir: Path) -> Dict[str, str]:
     """Download robots using the ``robot_descriptions`` package.
 
-    Imports the per-robot module (which triggers the upstream clone on first
-    use) and symlinks ``PACKAGE_PATH`` into our asset cache.
+    Imports only the specific module for each robot (O(1) per robot),
+    using the ``robot_descriptions_module`` field from the registry.
+    The import triggers the upstream clone on first use, then we symlink
+    ``PACKAGE_PATH`` into our asset cache.
     """
     results: Dict[str, str] = {}
     if not robots:
         return results
 
-    robot_descriptions_mapping = _discover_robot_descriptions_mapping()
-
     for name, info in robots.items():
         asset_dir = info["asset"]["dir"]
-        module_name = info["asset"].get("robot_descriptions_module") or robot_descriptions_mapping.get(asset_dir)
+        module_name = _resolve_robot_descriptions_module(name, info)
         if module_name is None:
             results[name] = "skipped: no robot_descriptions module found"
             continue
-        if not re.match(r"^[a-z0-9_]+_mj_description$", module_name):
+        if not re.match(r"^[a-z0-9_]+$", module_name):
             results[name] = f"skipped: invalid module name: {module_name}"
             continue
 
