@@ -54,8 +54,8 @@ __all__: list[str] = []
 try:
     from strands_robots.factory import Robot, list_robots
     from strands_robots.policies import (
-        Policy,
         MockPolicy,
+        Policy,
         create_policy,
         list_providers,
         register_policy,
