@@ -52,6 +52,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 
+from strands_robots._async_utils import _resolve_coroutine
+
 logger = logging.getLogger(__name__)
 
 # Lazily imported
@@ -1888,9 +1890,10 @@ class NewtonBackend:
         for i in range(num_steps):
             obs = self.get_observation(robot_name)
             try:
-                actions = policy.get_actions(
+                coro_or_result = policy.get_actions(
                     obs.get("observations", {}).get(robot_name, {}), instruction
                 )
+                actions = _resolve_coroutine(coro_or_result)
                 self.step(actions)
                 trajectory.append(
                     {"step": i, "sim_time": self._sim_time, "observation": obs}
