@@ -1,0 +1,489 @@
+[
+  {
+    "call": "lerobot.datasets.lerobot_dataset.LeRobotDataset",
+    "file": "strands_robots/dataset_recorder.py",
+    "line": 480,
+    "status": "OBJECT_NOT_FOUND",
+    "kwargs_used": [
+      "repo_id",
+      "root"
+    ]
+  },
+  {
+    "call": "lerobot.model.kinematics.RobotKinematics",
+    "file": "strands_robots/kinematics.py",
+    "line": 269,
+    "status": "OBJECT_NOT_FOUND",
+    "kwargs_used": [
+      "urdf_path",
+      "target_frame_name",
+      "joint_names"
+    ]
+  },
+  {
+    "call": "lerobot.processor.pipeline.DataProcessorPipeline.from_pretrained",
+    "file": "strands_robots/processor.py",
+    "line": 149,
+    "status": "ok",
+    "kwargs_used": [
+      "config_filename",
+      "overrides"
+    ]
+  },
+  {
+    "call": "lerobot.processor.pipeline.DataProcessorPipeline.from_pretrained",
+    "file": "strands_robots/processor.py",
+    "line": 165,
+    "status": "ok",
+    "kwargs_used": [
+      "config_filename",
+      "overrides"
+    ]
+  },
+  {
+    "call": "lerobot.processor.make_default_robot_action_processor",
+    "file": "strands_robots/record.py",
+    "line": 178,
+    "status": "ok",
+    "kwargs_used": []
+  },
+  {
+    "call": "lerobot.processor.make_default_robot_observation_processor",
+    "file": "strands_robots/record.py",
+    "line": 179,
+    "status": "ok",
+    "kwargs_used": []
+  },
+  {
+    "call": "lerobot.datasets.lerobot_dataset.LeRobotDataset.create",
+    "file": "strands_robots/record.py",
+    "line": 230,
+    "status": "ok",
+    "kwargs_used": [
+      "repo_id",
+      "fps",
+      "root",
+      "robot_type",
+      "features",
+      "use_videos",
+      "image_writer_threads",
+      "vcodec"
+    ]
+  },
+  {
+    "call": "lerobot.envs.factory.make_env",
+    "file": "strands_robots/leisaac.py",
+    "line": 281,
+    "status": "OBJECT_NOT_FOUND",
+    "kwargs_used": [
+      "n_envs",
+      "trust_remote_code"
+    ]
+  },
+  {
+    "call": "lerobot.robots.config.RobotConfig.get_known_choices",
+    "file": "strands_robots/robot.py",
+    "line": 295,
+    "status": "ok",
+    "kwargs_used": []
+  },
+  {
+    "call": "lerobot.robots.utils.make_robot_from_config",
+    "file": "strands_robots/robot.py",
+    "line": 193,
+    "status": "ok",
+    "kwargs_used": []
+  },
+  {
+    "call": "lerobot.robots.utils.make_robot_from_config",
+    "file": "strands_robots/robot.py",
+    "line": 198,
+    "status": "ok",
+    "kwargs_used": []
+  },
+  {
+    "call": "lerobot.cameras.opencv.configuration_opencv.OpenCVCameraConfig",
+    "file": "strands_robots/robot.py",
+    "line": 224,
+    "status": "ok",
+    "kwargs_used": [
+      "index_or_path",
+      "fps",
+      "width",
+      "height",
+      "rotation",
+      "color_mode"
+    ]
+  },
+  {
+    "call": "lerobot.robots.utils.make_robot_from_config",
+    "file": "strands_robots/tools/teleoperator.py",
+    "line": 117,
+    "status": "ok",
+    "kwargs_used": []
+  },
+  {
+    "call": "lerobot.teleoperators.utils.make_teleoperator_from_config",
+    "file": "strands_robots/tools/teleoperator.py",
+    "line": 174,
+    "status": "ok",
+    "kwargs_used": []
+  },
+  {
+    "call": "lerobot.cameras.opencv.configuration_opencv.OpenCVCameraConfig",
+    "file": "strands_robots/tools/teleoperator.py",
+    "line": 96,
+    "status": "ok",
+    "kwargs_used": [
+      "index_or_path",
+      "fps",
+      "width",
+      "height"
+    ]
+  },
+  {
+    "call": "lerobot.cameras.opencv.OpenCVCamera.find_cameras",
+    "file": "strands_robots/tools/lerobot_camera.py",
+    "line": 279,
+    "status": "ok",
+    "kwargs_used": []
+  },
+  {
+    "call": "lerobot.cameras.opencv.configuration_opencv.OpenCVCameraConfig",
+    "file": "strands_robots/tools/lerobot_camera.py",
+    "line": 1017,
+    "status": "ok",
+    "kwargs_used": [
+      "index_or_path",
+      "fps",
+      "width",
+      "height",
+      "color_mode",
+      "rotation"
+    ]
+  },
+  {
+    "call": "lerobot.cameras.opencv.OpenCVCamera",
+    "file": "strands_robots/tools/lerobot_camera.py",
+    "line": 1025,
+    "status": "ok",
+    "kwargs_used": []
+  },
+  {
+    "call": "lerobot.cameras.realsense.configuration_realsense.RealSenseCameraConfig",
+    "file": "strands_robots/tools/lerobot_camera.py",
+    "line": 1028,
+    "status": "INVALID_KWARGS",
+    "kwargs_used": [
+      "serial_number",
+      "fps",
+      "width",
+      "height"
+    ],
+    "valid_params": [
+      "color_mode",
+      "fps",
+      "height",
+      "rotation",
+      "serial_number_or_name",
+      "use_depth",
+      "warmup_s",
+      "width"
+    ],
+    "invalid_kwargs": [
+      "serial_number"
+    ]
+  },
+  {
+    "call": "lerobot.cameras.realsense.camera_realsense.RealSenseCamera",
+    "file": "strands_robots/tools/lerobot_camera.py",
+    "line": 1031,
+    "status": "ok",
+    "kwargs_used": []
+  },
+  {
+    "call": "lerobot.cameras.realsense.camera_realsense.RealSenseCamera.find_cameras",
+    "file": "strands_robots/tools/lerobot_camera.py",
+    "line": 285,
+    "status": "ok",
+    "kwargs_used": []
+  },
+  {
+    "call": "lerobot.cameras.opencv.configuration_opencv.OpenCVCameraConfig",
+    "file": "strands_robots/tools/lerobot_camera.py",
+    "line": 354,
+    "status": "ok",
+    "kwargs_used": [
+      "index_or_path",
+      "fps",
+      "width",
+      "height"
+    ]
+  },
+  {
+    "call": "lerobot.cameras.opencv.OpenCVCamera",
+    "file": "strands_robots/tools/lerobot_camera.py",
+    "line": 357,
+    "status": "ok",
+    "kwargs_used": []
+  },
+  {
+    "call": "lerobot.datasets.lerobot_dataset.LeRobotDataset.create",
+    "file": "strands_robots/tools/lerobot_dataset.py",
+    "line": 39,
+    "status": "ok",
+    "kwargs_used": [
+      "repo_id",
+      "root"
+    ]
+  },
+  {
+    "call": "lerobot.datasets.lerobot_dataset.LeRobotDataset",
+    "file": "strands_robots/tools/lerobot_dataset.py",
+    "line": 41,
+    "status": "ok",
+    "kwargs_used": [
+      "repo_id",
+      "root"
+    ]
+  },
+  {
+    "call": "lerobot.datasets.lerobot_dataset.LeRobotDataset.create",
+    "file": "strands_robots/tools/lerobot_dataset.py",
+    "line": 199,
+    "status": "ok",
+    "kwargs_used": [
+      "repo_id",
+      "root",
+      "fps",
+      "features",
+      "robot_type"
+    ]
+  },
+  {
+    "call": "lerobot.datasets.lerobot_dataset.LeRobotDataset",
+    "file": "strands_robots/tools/lerobot_dataset.py",
+    "line": 261,
+    "status": "ok",
+    "kwargs_used": [
+      "repo_id",
+      "root"
+    ]
+  },
+  {
+    "call": "lerobot.datasets.lerobot_dataset.LeRobotDataset",
+    "file": "strands_robots/tools/lerobot_dataset.py",
+    "line": 350,
+    "status": "ok",
+    "kwargs_used": [
+      "repo_id",
+      "root"
+    ]
+  },
+  {
+    "call": "lerobot.datasets.lerobot_dataset.LeRobotDataset",
+    "file": "strands_robots/tools/lerobot_dataset.py",
+    "line": 557,
+    "status": "ok",
+    "kwargs_used": [
+      "repo_id",
+      "root"
+    ]
+  },
+  {
+    "call": "lerobot.datasets.lerobot_dataset.LeRobotDataset.create",
+    "file": "strands_robots/tools/lerobot_dataset.py",
+    "line": 357,
+    "status": "ok",
+    "kwargs_used": [
+      "repo_id",
+      "root",
+      "fps",
+      "features",
+      "robot_type"
+    ]
+  },
+  {
+    "call": "lerobot.datasets.lerobot_dataset.LeRobotDataset",
+    "file": "strands_robots/tools/lerobot_dataset.py",
+    "line": 571,
+    "status": "ok",
+    "kwargs_used": [
+      "repo_id",
+      "root"
+    ]
+  },
+  {
+    "call": "lerobot.datasets.lerobot_dataset.LeRobotDataset",
+    "file": "strands_robots/tools/lerobot_dataset.py",
+    "line": 593,
+    "status": "ok",
+    "kwargs_used": [
+      "repo_id",
+      "root"
+    ]
+  },
+  {
+    "call": "lerobot.datasets.lerobot_dataset.LeRobotDataset",
+    "file": "strands_robots/tools/lerobot_dataset.py",
+    "line": 631,
+    "status": "ok",
+    "kwargs_used": [
+      "repo_id",
+      "root"
+    ]
+  },
+  {
+    "call": "lerobot.datasets.lerobot_dataset.LeRobotDataset",
+    "file": "strands_robots/tools/lerobot_dataset.py",
+    "line": 687,
+    "status": "ok",
+    "kwargs_used": [
+      "repo_id",
+      "root"
+    ]
+  },
+  {
+    "call": "lerobot.configs.default.DatasetConfig",
+    "file": "strands_robots/training/lerobot.py",
+    "line": 89,
+    "status": "OBJECT_NOT_FOUND",
+    "kwargs_used": [
+      "repo_id"
+    ]
+  },
+  {
+    "call": "lerobot.configs.default.WandBConfig",
+    "file": "strands_robots/training/lerobot.py",
+    "line": 100,
+    "status": "OBJECT_NOT_FOUND",
+    "kwargs_used": [
+      "enable"
+    ]
+  },
+  {
+    "call": "lerobot.configs.train.TrainPipelineConfig",
+    "file": "strands_robots/training/lerobot.py",
+    "line": 103,
+    "status": "OBJECT_NOT_FOUND",
+    "kwargs_used": [
+      "dataset",
+      "policy",
+      "output_dir",
+      "seed",
+      "batch_size",
+      "steps",
+      "num_workers",
+      "eval_freq",
+      "save_freq",
+      "log_freq",
+      "wandb",
+      "rename_map"
+    ]
+  },
+  {
+    "call": "lerobot.scripts.lerobot_train.train",
+    "file": "strands_robots/training/lerobot.py",
+    "line": 169,
+    "status": "OBJECT_NOT_FOUND",
+    "kwargs_used": []
+  },
+  {
+    "call": "lerobot.configs.policies.PreTrainedConfig.from_pretrained",
+    "file": "strands_robots/training/lerobot.py",
+    "line": 94,
+    "status": "ok",
+    "kwargs_used": []
+  },
+  {
+    "call": "lerobot.policies.factory.get_policy_class",
+    "file": "strands_robots/policies/lerobot_local/__init__.py",
+    "line": 70,
+    "status": "OBJECT_NOT_FOUND",
+    "kwargs_used": []
+  },
+  {
+    "call": "lerobot.policies.factory.get_policy_class",
+    "file": "strands_robots/policies/lerobot_local/__init__.py",
+    "line": 83,
+    "status": "OBJECT_NOT_FOUND",
+    "kwargs_used": []
+  },
+  {
+    "call": "lerobot.policies.factory.get_policy_class",
+    "file": "strands_robots/policies/lerobot_async/__init__.py",
+    "line": 56,
+    "status": "OBJECT_NOT_FOUND",
+    "kwargs_used": []
+  },
+  {
+    "call": "lerobot.transport.services_pb2_grpc.AsyncInferenceStub",
+    "file": "strands_robots/policies/lerobot_async/__init__.py",
+    "line": 228,
+    "status": "OBJECT_NOT_FOUND",
+    "kwargs_used": []
+  },
+  {
+    "call": "lerobot.async_inference.helpers.RemotePolicyConfig",
+    "file": "strands_robots/policies/lerobot_async/__init__.py",
+    "line": 236,
+    "status": "OBJECT_NOT_FOUND",
+    "kwargs_used": [
+      "policy_type",
+      "pretrained_name_or_path",
+      "lerobot_features",
+      "actions_per_chunk",
+      "device",
+      "rename_map"
+    ]
+  },
+  {
+    "call": "lerobot.async_inference.helpers.TimedObservation",
+    "file": "strands_robots/policies/lerobot_async/__init__.py",
+    "line": 286,
+    "status": "OBJECT_NOT_FOUND",
+    "kwargs_used": [
+      "timestamp",
+      "timestep",
+      "observation",
+      "must_go"
+    ]
+  },
+  {
+    "call": "lerobot.transport.utils.send_bytes_in_chunks",
+    "file": "strands_robots/policies/lerobot_async/__init__.py",
+    "line": 300,
+    "status": "OBJECT_NOT_FOUND",
+    "kwargs_used": []
+  },
+  {
+    "call": "lerobot.configs.policies.PreTrainedConfig.get_known_choices",
+    "file": "strands_robots/policies/lerobot_async/__init__.py",
+    "line": 68,
+    "status": "ok",
+    "kwargs_used": []
+  },
+  {
+    "call": "lerobot.transport.services_pb2.Empty",
+    "file": "strands_robots/policies/lerobot_async/__init__.py",
+    "line": 231,
+    "status": "OBJECT_NOT_FOUND",
+    "kwargs_used": []
+  },
+  {
+    "call": "lerobot.transport.services_pb2.PolicyInstructions",
+    "file": "strands_robots/policies/lerobot_async/__init__.py",
+    "line": 247,
+    "status": "OBJECT_NOT_FOUND",
+    "kwargs_used": [
+      "data"
+    ]
+  },
+  {
+    "call": "lerobot.transport.services_pb2.Empty",
+    "file": "strands_robots/policies/lerobot_async/__init__.py",
+    "line": 304,
+    "status": "OBJECT_NOT_FOUND",
+    "kwargs_used": []
+  }
+]

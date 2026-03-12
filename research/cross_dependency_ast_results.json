@@ -1,0 +1,883 @@
+{
+  "PIL": {
+    "total_imports": 1,
+    "ok": 1,
+    "failures": 0,
+    "skipped": 0,
+    "details": [
+      {
+        "import": "PIL.Image",
+        "status": "ok",
+        "error": null,
+        "used_in": [
+          "strands_robots/isaac/isaac_gym_env.py",
+          "strands_robots/isaac/isaac_sim_backend.py",
+          "strands_robots/mujoco/_rendering.py",
+          "strands_robots/policies/_utils.py",
+          "strands_robots/policies/dreamzero/__init__.py"
+        ],
+        "count": 5
+      }
+    ]
+  },
+  "cv2": {
+    "total_imports": 1,
+    "ok": 1,
+    "failures": 0,
+    "skipped": 0,
+    "details": [
+      {
+        "import": "cv2",
+        "status": "ok",
+        "error": null,
+        "used_in": [
+          "strands_robots/cosmos_transfer/__init__.py",
+          "strands_robots/dreamgen/__init__.py",
+          "strands_robots/stereo/__init__.py",
+          "strands_robots/tools/lerobot_camera.py",
+          "strands_robots/tools/stereo_depth.py"
+        ],
+        "count": 5
+      }
+    ]
+  },
+  "gr00t": {
+    "total_imports": 6,
+    "ok": 0,
+    "failures": 6,
+    "skipped": 0,
+    "details": [
+      {
+        "import": "gr00t.data.embodiment_tags.EmbodimentTag",
+        "status": "IMPORT_ERROR",
+        "error": "No module named 'gr00t'",
+        "used_in": [
+          "strands_robots/policies/groot/__init__.py"
+        ],
+        "count": 1
+      },
+      {
+        "import": "gr00t.experiment.data_config.DATA_CONFIG_MAP",
+        "status": "IMPORT_ERROR",
+        "error": "No module named 'gr00t'",
+        "used_in": [
+          "strands_robots/policies/groot/__init__.py"
+        ],
+        "count": 1
+      },
+      {
+        "import": "gr00t.model.idm.IDM",
+        "status": "IMPORT_ERROR",
+        "error": "No module named 'gr00t'",
+        "used_in": [
+          "strands_robots/dreamgen/__init__.py",
+          "strands_robots/policies/dreamgen/__init__.py"
+        ],
+        "count": 2
+      },
+      {
+        "import": "gr00t.model.idm.IDMConfig",
+        "status": "IMPORT_ERROR",
+        "error": "No module named 'gr00t'",
+        "used_in": [
+          "strands_robots/dreamgen/__init__.py",
+          "strands_robots/policies/dreamgen/__init__.py"
+        ],
+        "count": 2
+      },
+      {
+        "import": "gr00t.model.policy.Gr00tPolicy",
+        "status": "IMPORT_ERROR",
+        "error": "No module named 'gr00t'",
+        "used_in": [
+          "strands_robots/policies/dreamgen/__init__.py",
+          "strands_robots/policies/groot/__init__.py"
+        ],
+        "count": 2
+      },
+      {
+        "import": "gr00t.policy.gr00t_policy.Gr00tPolicy",
+        "status": "IMPORT_ERROR",
+        "error": "No module named 'gr00t'",
+        "used_in": [
+          "strands_robots/policies/groot/__init__.py"
+        ],
+        "count": 1
+      }
+    ]
+  },
+  "gymnasium": {
+    "total_imports": 2,
+    "ok": 2,
+    "failures": 0,
+    "skipped": 0,
+    "details": [
+      {
+        "import": "gymnasium",
+        "status": "ok",
+        "error": null,
+        "used_in": [
+          "strands_robots/envs.py",
+          "strands_robots/isaac/isaac_gym_env.py",
+          "strands_robots/isaac/isaac_lab_env.py",
+          "strands_robots/isaac/isaac_lab_trainer.py",
+          "strands_robots/newton/newton_gym_env.py"
+        ],
+        "count": 5
+      },
+      {
+        "import": "gymnasium.spaces",
+        "status": "ok",
+        "error": null,
+        "used_in": [
+          "strands_robots/envs.py",
+          "strands_robots/isaac/isaac_gym_env.py",
+          "strands_robots/newton/newton_gym_env.py"
+        ],
+        "count": 3
+      }
+    ]
+  },
+  "huggingface_hub": {
+    "total_imports": 3,
+    "ok": 3,
+    "failures": 0,
+    "skipped": 0,
+    "details": [
+      {
+        "import": "huggingface_hub.HfApi",
+        "status": "ok",
+        "error": null,
+        "used_in": [
+          "strands_robots/tools/lerobot_dataset.py"
+        ],
+        "count": 1
+      },
+      {
+        "import": "huggingface_hub.hf_hub_download",
+        "status": "ok",
+        "error": null,
+        "used_in": [
+          "strands_robots/policies/lerobot_local/__init__.py"
+        ],
+        "count": 1
+      },
+      {
+        "import": "huggingface_hub.snapshot_download",
+        "status": "ok",
+        "error": null,
+        "used_in": [
+          "strands_robots/motion_library.py",
+          "strands_robots/policies/cosmos_predict/__init__.py",
+          "strands_robots/policies/gear_sonic/__init__.py"
+        ],
+        "count": 3
+      }
+    ]
+  },
+  "lerobot": {
+    "total_imports": 41,
+    "ok": 39,
+    "failures": 2,
+    "skipped": 0,
+    "details": [
+      {
+        "import": "lerobot",
+        "status": "ok",
+        "error": null,
+        "used_in": [
+          "strands_robots/tools/use_lerobot.py"
+        ],
+        "count": 1
+      },
+      {
+        "import": "lerobot.LerobotTrainer",
+        "status": "MISSING_ATTR",
+        "error": "lerobot has no attribute 'LerobotTrainer'",
+        "used_in": [
+          "strands_robots/training/__init__.py"
+        ],
+        "count": 1
+      },
+      {
+        "import": "lerobot.async_inference.helpers.RemotePolicyConfig",
+        "status": "ok",
+        "error": null,
+        "used_in": [
+          "strands_robots/policies/lerobot_async/__init__.py"
+        ],
+        "count": 1
+      },
+      {
+        "import": "lerobot.async_inference.helpers.TimedObservation",
+        "status": "ok",
+        "error": null,
+        "used_in": [
+          "strands_robots/policies/lerobot_async/__init__.py"
+        ],
+        "count": 1
+      },
+      {
+        "import": "lerobot.cameras.camera.Camera",
+        "status": "ok",
+        "error": null,
+        "used_in": [
+          "strands_robots/tools/lerobot_camera.py"
+        ],
+        "count": 1
+      },
+      {
+        "import": "lerobot.cameras.opencv.OpenCVCamera",
+        "status": "ok",
+        "error": null,
+        "used_in": [
+          "strands_robots/tools/lerobot_camera.py"
+        ],
+        "count": 1
+      },
+      {
+        "import": "lerobot.cameras.opencv.configuration_opencv.ColorMode",
+        "status": "ok",
+        "error": null,
+        "used_in": [
+          "strands_robots/tools/lerobot_camera.py"
+        ],
+        "count": 1
+      },
+      {
+        "import": "lerobot.cameras.opencv.configuration_opencv.Cv2Rotation",
+        "status": "ok",
+        "error": null,
+        "used_in": [
+          "strands_robots/tools/lerobot_camera.py"
+        ],
+        "count": 1
+      },
+      {
+        "import": "lerobot.cameras.opencv.configuration_opencv.OpenCVCameraConfig",
+        "status": "ok",
+        "error": null,
+        "used_in": [
+          "strands_robots/robot.py",
+          "strands_robots/tools/lerobot_camera.py",
+          "strands_robots/tools/teleoperator.py"
+        ],
+        "count": 3
+      },
+      {
+        "import": "lerobot.cameras.realsense.camera_realsense.RealSenseCamera",
+        "status": "ok",
+        "error": null,
+        "used_in": [
+          "strands_robots/tools/lerobot_camera.py"
+        ],
+        "count": 1
+      },
+      {
+        "import": "lerobot.cameras.realsense.configuration_realsense.RealSenseCameraConfig",
+        "status": "ok",
+        "error": null,
+        "used_in": [
+          "strands_robots/tools/lerobot_camera.py"
+        ],
+        "count": 1
+      },
+      {
+        "import": "lerobot.configs.default.DatasetConfig",
+        "status": "ok",
+        "error": null,
+        "used_in": [
+          "strands_robots/training/lerobot.py"
+        ],
+        "count": 1
+      },
+      {
+        "import": "lerobot.configs.default.WandBConfig",
+        "status": "ok",
+        "error": null,
+        "used_in": [
+          "strands_robots/training/lerobot.py"
+        ],
+        "count": 1
+      },
+      {
+        "import": "lerobot.configs.policies.PreTrainedConfig",
+        "status": "ok",
+        "error": null,
+        "used_in": [
+          "strands_robots/policies/lerobot_async/__init__.py",
+          "strands_robots/training/lerobot.py"
+        ],
+        "count": 2
+      },
+      {
+        "import": "lerobot.configs.train.TrainPipelineConfig",
+        "status": "ok",
+        "error": null,
+        "used_in": [
+          "strands_robots/training/lerobot.py"
+        ],
+        "count": 1
+      },
+      {
+        "import": "lerobot.datasets.lerobot_dataset.LeRobotDataset",
+        "status": "ok",
+        "error": null,
+        "used_in": [
+          "strands_robots/dataset_recorder.py",
+          "strands_robots/record.py",
+          "strands_robots/tools/lerobot_dataset.py"
+        ],
+        "count": 3
+      },
+      {
+        "import": "lerobot.envs.factory.make_env",
+        "status": "ok",
+        "error": null,
+        "used_in": [
+          "strands_robots/leisaac.py"
+        ],
+        "count": 1
+      },
+      {
+        "import": "lerobot.model.kinematics.RobotKinematics",
+        "status": "ok",
+        "error": null,
+        "used_in": [
+          "strands_robots/kinematics.py"
+        ],
+        "count": 1
+      },
+      {
+        "import": "lerobot.policies.factory.get_policy_class",
+        "status": "ok",
+        "error": null,
+        "used_in": [
+          "strands_robots/policies/lerobot_async/__init__.py",
+          "strands_robots/policies/lerobot_local/__init__.py"
+        ],
+        "count": 2
+      },
+      {
+        "import": "lerobot.processor.converters.batch_to_transition",
+        "status": "ok",
+        "error": null,
+        "used_in": [
+          "strands_robots/processor.py"
+        ],
+        "count": 1
+      },
+      {
+        "import": "lerobot.processor.converters.observation_to_transition",
+        "status": "ok",
+        "error": null,
+        "used_in": [
+          "strands_robots/processor.py"
+        ],
+        "count": 1
+      },
+      {
+        "import": "lerobot.processor.converters.transition_to_batch",
+        "status": "ok",
+        "error": null,
+        "used_in": [
+          "strands_robots/processor.py"
+        ],
+        "count": 1
+      },
+      {
+        "import": "lerobot.processor.converters.transition_to_observation",
+        "status": "ok",
+        "error": null,
+        "used_in": [
+          "strands_robots/processor.py"
+        ],
+        "count": 1
+      },
+      {
+        "import": "lerobot.processor.core.EnvTransition",
+        "status": "ok",
+        "error": null,
+        "used_in": [
+          "strands_robots/processor.py"
+        ],
+        "count": 1
+      },
+      {
+        "import": "lerobot.processor.core.TransitionKey",
+        "status": "ok",
+        "error": null,
+        "used_in": [
+          "strands_robots/processor.py"
+        ],
+        "count": 1
+      },
+      {
+        "import": "lerobot.processor.make_default_robot_action_processor",
+        "status": "ok",
+        "error": null,
+        "used_in": [
+          "strands_robots/record.py"
+        ],
+        "count": 1
+      },
+      {
+        "import": "lerobot.processor.make_default_robot_observation_processor",
+        "status": "ok",
+        "error": null,
+        "used_in": [
+          "strands_robots/record.py"
+        ],
+        "count": 1
+      },
+      {
+        "import": "lerobot.processor.pipeline.DataProcessorPipeline",
+        "status": "ok",
+        "error": null,
+        "used_in": [
+          "strands_robots/processor.py"
+        ],
+        "count": 1
+      },
+      {
+        "import": "lerobot.robots",
+        "status": "ok",
+        "error": null,
+        "used_in": [
+          "strands_robots/robot.py",
+          "strands_robots/tools/teleoperator.py",
+          "strands_robots/tools/use_lerobot.py"
+        ],
+        "count": 3
+      },
+      {
+        "import": "lerobot.robots.config.RobotConfig",
+        "status": "ok",
+        "error": null,
+        "used_in": [
+          "strands_robots/robot.py",
+          "strands_robots/tools/teleoperator.py",
+          "strands_robots/tools/use_lerobot.py"
+        ],
+        "count": 3
+      },
+      {
+        "import": "lerobot.robots.robot.Robot",
+        "status": "ok",
+        "error": null,
+        "used_in": [
+          "strands_robots/robot.py"
+        ],
+        "count": 1
+      },
+      {
+        "import": "lerobot.robots.utils.make_robot_from_config",
+        "status": "ok",
+        "error": null,
+        "used_in": [
+          "strands_robots/robot.py",
+          "strands_robots/tools/teleoperator.py"
+        ],
+        "count": 2
+      },
+      {
+        "import": "lerobot.scripts.lerobot_train.train",
+        "status": "ok",
+        "error": null,
+        "used_in": [
+          "strands_robots/training/lerobot.py"
+        ],
+        "count": 1
+      },
+      {
+        "import": "lerobot.teleoperators",
+        "status": "ok",
+        "error": null,
+        "used_in": [
+          "strands_robots/tools/teleoperator.py",
+          "strands_robots/tools/use_lerobot.py"
+        ],
+        "count": 2
+      },
+      {
+        "import": "lerobot.teleoperators.config.TeleoperatorConfig",
+        "status": "ok",
+        "error": null,
+        "used_in": [
+          "strands_robots/tools/teleoperator.py",
+          "strands_robots/tools/use_lerobot.py"
+        ],
+        "count": 2
+      },
+      {
+        "import": "lerobot.teleoperators.utils.make_teleoperator_from_config",
+        "status": "ok",
+        "error": null,
+        "used_in": [
+          "strands_robots/tools/teleoperator.py"
+        ],
+        "count": 1
+      },
+      {
+        "import": "lerobot.transport.services_pb2",
+        "status": "ok",
+        "error": null,
+        "used_in": [
+          "strands_robots/policies/lerobot_async/__init__.py"
+        ],
+        "count": 1
+      },
+      {
+        "import": "lerobot.transport.services_pb2_grpc",
+        "status": "MISSING_ATTR",
+        "error": "lerobot.transport has no attribute 'services_pb2_grpc'",
+        "used_in": [
+          "strands_robots/policies/lerobot_async/__init__.py"
+        ],
+        "count": 1
+      },
+      {
+        "import": "lerobot.transport.utils.send_bytes_in_chunks",
+        "status": "ok",
+        "error": null,
+        "used_in": [
+          "strands_robots/policies/lerobot_async/__init__.py"
+        ],
+        "count": 1
+      },
+      {
+        "import": "lerobot.utils.constants.HF_LEROBOT_CALIBRATION",
+        "status": "ok",
+        "error": null,
+        "used_in": [
+          "strands_robots/tools/lerobot_calibrate.py"
+        ],
+        "count": 1
+      },
+      {
+        "import": "lerobot.utils.errors.DeviceAlreadyConnectedError",
+        "status": "ok",
+        "error": null,
+        "used_in": [
+          "strands_robots/robot.py"
+        ],
+        "count": 1
+      }
+    ]
+  },
+  "mujoco": {
+    "total_imports": 2,
+    "ok": 2,
+    "failures": 0,
+    "skipped": 0,
+    "details": [
+      {
+        "import": "mujoco",
+        "status": "ok",
+        "error": null,
+        "used_in": [
+          "strands_robots/cosmos_transfer/__init__.py",
+          "strands_robots/envs.py",
+          "strands_robots/isaac/asset_converter.py",
+          "strands_robots/kinematics.py",
+          "strands_robots/motion_library.py",
+          "strands_robots/mujoco/_registry.py"
+        ],
+        "count": 6
+      },
+      {
+        "import": "mujoco.viewer",
+        "status": "ok",
+        "error": null,
+        "used_in": [
+          "strands_robots/mujoco/_registry.py"
+        ],
+        "count": 1
+      }
+    ]
+  },
+  "numpy": {
+    "total_imports": 1,
+    "ok": 1,
+    "failures": 0,
+    "skipped": 0,
+    "details": [
+      {
+        "import": "numpy",
+        "status": "ok",
+        "error": null,
+        "used_in": [
+          "strands_robots/cosmos_transfer/__init__.py",
+          "strands_robots/dataset_recorder.py",
+          "strands_robots/dreamgen/__init__.py",
+          "strands_robots/envs.py",
+          "strands_robots/isaac/asset_converter.py",
+          "strands_robots/isaac/isaac_gym_env.py",
+          "strands_robots/isaac/isaac_lab_env.py",
+          "strands_robots/isaac/isaac_sim_backend.py",
+          "strands_robots/isaac/isaac_sim_bridge.py",
+          "strands_robots/kinematics.py",
+          "strands_robots/leisaac.py",
+          "strands_robots/marble/__init__.py",
+          "strands_robots/motion_library.py",
+          "strands_robots/mujoco/_policy.py",
+          "strands_robots/mujoco/_randomization.py",
+          "strands_robots/newton/newton_backend.py",
+          "strands_robots/newton/newton_gym_env.py",
+          "strands_robots/policies/_utils.py",
+          "strands_robots/policies/cosmos_predict/__init__.py",
+          "strands_robots/policies/dreamgen/__init__.py",
+          "strands_robots/policies/dreamzero/__init__.py",
+          "strands_robots/policies/gear_sonic/__init__.py",
+          "strands_robots/policies/groot/__init__.py",
+          "strands_robots/policies/groot/client.py",
+          "strands_robots/policies/lerobot_async/__init__.py",
+          "strands_robots/policies/lerobot_local/__init__.py",
+          "strands_robots/processor.py",
+          "strands_robots/record.py",
+          "strands_robots/rl_trainer.py",
+          "strands_robots/robot.py",
+          "strands_robots/stereo/__init__.py",
+          "strands_robots/telemetry/stream.py",
+          "strands_robots/telemetry/types.py",
+          "strands_robots/tools/isaac_sim.py",
+          "strands_robots/tools/lerobot_camera.py",
+          "strands_robots/tools/lerobot_dataset.py",
+          "strands_robots/tools/stereo_depth.py",
+          "strands_robots/training/evaluate.py",
+          "strands_robots/video.py",
+          "strands_robots/visualizer.py"
+        ],
+        "count": 40
+      }
+    ]
+  },
+  "openpi_client": {
+    "total_imports": 1,
+    "ok": 0,
+    "failures": 1,
+    "skipped": 0,
+    "details": [
+      {
+        "import": "openpi_client.msgpack_numpy",
+        "status": "IMPORT_ERROR",
+        "error": "No module named 'openpi_client'",
+        "used_in": [
+          "strands_robots/policies/dreamzero/__init__.py"
+        ],
+        "count": 1
+      }
+    ]
+  },
+  "robot_descriptions": {
+    "total_imports": 1,
+    "ok": 1,
+    "failures": 0,
+    "skipped": 0,
+    "details": [
+      {
+        "import": "robot_descriptions",
+        "status": "ok",
+        "error": null,
+        "used_in": [
+          "strands_robots/tools/download_assets.py"
+        ],
+        "count": 1
+      }
+    ]
+  },
+  "stable_baselines3": {
+    "total_imports": 5,
+    "ok": 0,
+    "failures": 5,
+    "skipped": 0,
+    "details": [
+      {
+        "import": "stable_baselines3.A2C",
+        "status": "IMPORT_ERROR",
+        "error": "No module named 'stable_baselines3'",
+        "used_in": [
+          "strands_robots/isaac/isaac_lab_trainer.py"
+        ],
+        "count": 1
+      },
+      {
+        "import": "stable_baselines3.PPO",
+        "status": "IMPORT_ERROR",
+        "error": "No module named 'stable_baselines3'",
+        "used_in": [
+          "strands_robots/isaac/isaac_lab_trainer.py",
+          "strands_robots/rl_trainer.py"
+        ],
+        "count": 2
+      },
+      {
+        "import": "stable_baselines3.SAC",
+        "status": "IMPORT_ERROR",
+        "error": "No module named 'stable_baselines3'",
+        "used_in": [
+          "strands_robots/isaac/isaac_lab_trainer.py",
+          "strands_robots/rl_trainer.py"
+        ],
+        "count": 2
+      },
+      {
+        "import": "stable_baselines3.common.callbacks.CheckpointCallback",
+        "status": "IMPORT_ERROR",
+        "error": "No module named 'stable_baselines3'",
+        "used_in": [
+          "strands_robots/rl_trainer.py"
+        ],
+        "count": 1
+      },
+      {
+        "import": "stable_baselines3.common.callbacks.EvalCallback",
+        "status": "IMPORT_ERROR",
+        "error": "No module named 'stable_baselines3'",
+        "used_in": [
+          "strands_robots/rl_trainer.py"
+        ],
+        "count": 1
+      }
+    ]
+  },
+  "torch": {
+    "total_imports": 3,
+    "ok": 3,
+    "failures": 0,
+    "skipped": 0,
+    "details": [
+      {
+        "import": "torch",
+        "status": "ok",
+        "error": null,
+        "used_in": [
+          "strands_robots/cosmos_transfer/__init__.py",
+          "strands_robots/dreamgen/__init__.py",
+          "strands_robots/isaac/isaac_gym_env.py",
+          "strands_robots/isaac/isaac_lab_env.py",
+          "strands_robots/isaac/isaac_lab_trainer.py",
+          "strands_robots/isaac/isaac_sim_backend.py",
+          "strands_robots/policies/_utils.py",
+          "strands_robots/policies/cosmos_predict/__init__.py",
+          "strands_robots/policies/dreamgen/__init__.py",
+          "strands_robots/policies/lerobot_local/__init__.py",
+          "strands_robots/processor.py",
+          "strands_robots/record.py",
+          "strands_robots/robot.py",
+          "strands_robots/stereo/__init__.py",
+          "strands_robots/tools/isaac_sim.py"
+        ],
+        "count": 15
+      },
+      {
+        "import": "torch.nn",
+        "status": "ok",
+        "error": null,
+        "used_in": [
+          "strands_robots/isaac/isaac_lab_trainer.py"
+        ],
+        "count": 1
+      },
+      {
+        "import": "torch.nn.functional",
+        "status": "ok",
+        "error": null,
+        "used_in": [
+          "strands_robots/stereo/__init__.py"
+        ],
+        "count": 1
+      }
+    ]
+  },
+  "transformers": {
+    "total_imports": 4,
+    "ok": 3,
+    "failures": 1,
+    "skipped": 0,
+    "details": [
+      {
+        "import": "transformers.AutoConfig",
+        "status": "ok",
+        "error": null,
+        "used_in": [
+          "strands_robots/policies/dreamgen/__init__.py"
+        ],
+        "count": 1
+      },
+      {
+        "import": "transformers.AutoModel",
+        "status": "ok",
+        "error": null,
+        "used_in": [
+          "strands_robots/dreamgen/__init__.py",
+          "strands_robots/policies/dreamgen/__init__.py"
+        ],
+        "count": 2
+      },
+      {
+        "import": "transformers.AutoTokenizer",
+        "status": "ok",
+        "error": null,
+        "used_in": [
+          "strands_robots/policies/lerobot_local/__init__.py"
+        ],
+        "count": 1
+      },
+      {
+        "import": "transformers.models.florence2.configuration_florence2.Florence2LanguageConfig",
+        "status": "MISSING_ATTR",
+        "error": "transformers.models.florence2.configuration_florence2 has no attribute 'Florence2LanguageConfig'",
+        "used_in": [
+          "strands_robots/policies/lerobot_local/__init__.py"
+        ],
+        "count": 1
+      }
+    ]
+  },
+  "unitree_sdk2py": {
+    "total_imports": 2,
+    "ok": 0,
+    "failures": 2,
+    "skipped": 0,
+    "details": [
+      {
+        "import": "unitree_sdk2py",
+        "status": "IMPORT_ERROR",
+        "error": "No module named 'unitree_sdk2py'",
+        "used_in": [
+          "strands_robots/tools/use_unitree.py"
+        ],
+        "count": 1
+      },
+      {
+        "import": "unitree_sdk2py.core.channel.ChannelFactoryInitialize",
+        "status": "IMPORT_ERROR",
+        "error": "No module named 'unitree_sdk2py'",
+        "used_in": [
+          "strands_robots/tools/use_unitree.py"
+        ],
+        "count": 1
+      }
+    ]
+  },
+  "warp": {
+    "total_imports": 1,
+    "ok": 0,
+    "failures": 1,
+    "skipped": 0,
+    "details": [
+      {
+        "import": "warp",
+        "status": "IMPORT_ERROR",
+        "error": "No module named 'warp'",
+        "used_in": [
+          "strands_robots/newton/newton_backend.py",
+          "strands_robots/newton/test_newton_backend.py",
+          "strands_robots/tools/newton_sim.py"
+        ],
+        "count": 3
+      }
+    ]
+  }
+}

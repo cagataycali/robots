@@ -1,0 +1,366 @@
+diff --git a/strands_robots/policies/lerobot_async/__init__.py b/strands_robots/policies/lerobot_async/__init__.py
+index 997a296..f179daa 100644
+--- a/strands_robots/policies/lerobot_async/__init__.py
++++ b/strands_robots/policies/lerobot_async/__init__.py
+@@ -44,35 +44,46 @@ logger = logging.getLogger(__name__)
+ 
+ 
+ def _validate_policy_type(policy_type: str) -> None:
+-    """Validate policy type against LeRobot's own factory.
++    """Validate policy type against LeRobot's policy registry.
+ 
+-    No hardcoding — uses LeRobot's get_policy_class() which knows
+-    all registered policies (including third-party plugins).
++    lerobot ≥0.5: Uses direct module import check or PreTrainedConfig registry.
+     Skips validation if LeRobot isn't installed (let the server handle it).
+     """
+     try:
+-        from lerobot.policies.factory import get_policy_class
++        import importlib
++        # Try direct module import (lerobot ≥0.5 convention)
++        importlib.import_module(f"lerobot.policies.{policy_type}")
++        return  # Valid
++    except ImportError:
++        pass
+ 
+-        get_policy_class(policy_type)  # Raises ValueError if invalid
++    try:
++        # Try PreTrainedConfig registry
++        from lerobot.configs.policies import PreTrainedConfig
++        known = PreTrainedConfig.get_known_choices()
++        if known and policy_type in known:
++            return  # Valid
+     except (ImportError, RuntimeError):
+         logger.debug(
+             "LeRobot not installed locally or has import issues, skipping policy type validation"
+         )
+-    except ValueError:
+-        # Re-raise with a cleaner message
+-        try:
+-            # Try to list what IS available for the error message
+-            from lerobot.configs.policies import PreTrainedConfig
+-            from lerobot.policies.factory import get_policy_class
++        return  # Can't validate — let the server handle it
+ 
+-            known = PreTrainedConfig.get_known_choices()
+-            available = sorted(known) if known else "check LeRobot docs"
+-        except Exception:
+-            available = "check LeRobot docs"
+-        raise ValueError(
+-            f"Unsupported policy type: '{policy_type}'. "
+-            f"LeRobot supports: {available}"
+-        )
++    # Collect available types for error message
++    available = []
++    try:
++        import pkgutil
++        import lerobot.policies as lp
++        for _, modname, _ in pkgutil.iter_modules(lp.__path__):
++            if modname not in ("factory", "pretrained", "utils"):
++                available.append(modname)
++    except Exception:
++        available = ["check LeRobot docs"]
++
++    raise ValueError(
++        f"Unsupported policy type: '{policy_type}'. "
++        f"LeRobot supports: {sorted(available)}"
++    )
+ 
+ 
+ def _validate_deserialized_actions(obj: Any) -> None:
+@@ -192,14 +203,34 @@ class LerobotAsyncPolicy(Policy):
+         logger.info("🔧 LeRobot async state keys: %s", self.robot_state_keys)
+ 
+     def _ensure_connected(self):
+-        """Ensure gRPC connection is established."""
++        """Ensure gRPC connection is established.
++
++        lerobot ≥0.5: services_pb2_grpc requires the `grpc` package.
++        Install with: pip install lerobot[async] or pip install grpcio
++        """
+         if self._connected:
+             return
+ 
+         try:
+             import grpc
+-            from lerobot.transport import services_pb2, services_pb2_grpc
++        except ImportError as e:
++            raise ImportError(
++                "gRPC is required for LeRobot async inference. "
++                "Install with: pip install grpcio grpcio-tools"
++            ) from e
+ 
++        try:
++            from lerobot.transport import services_pb2
++
++            # services_pb2_grpc requires grpc at import time
++            from lerobot.transport import services_pb2_grpc
++        except ImportError as e:
++            raise ImportError(
++                f"LeRobot async inference transport not available: {e}. "
++                f"Install with: pip install lerobot grpcio grpcio-tools"
++            ) from e
++
++        try:
+             if self._use_tls:
+                 # Secure TLS channel
+                 if self._tls_root_cert:
+@@ -244,17 +275,12 @@ class LerobotAsyncPolicy(Policy):
+ 
+             config_bytes = pickle.dumps(remote_config)
+             self._stub.SendPolicyInstructions(
+-                services_pb2.PolicyInstructions(data=config_bytes)
++                services_pb2.PolicySetup(data=config_bytes)
+             )
+ 
+             self._connected = True
+             logger.info("✅ Connected to LeRobot server at %s", self.server_address)
+ 
+-        except ImportError as e:
+-            raise ImportError(
+-                f"LeRobot async inference dependencies not available: {e}. "
+-                f"Install: pip install lerobot[async]"
+-            ) from e
+         except Exception as e:
+             logger.error("❌ Failed to connect to LeRobot server: %s", e)
+             raise
+diff --git a/strands_robots/policies/lerobot_local/__init__.py b/strands_robots/policies/lerobot_local/__init__.py
+index 2635a88..b361ae2 100644
+--- a/strands_robots/policies/lerobot_local/__init__.py
++++ b/strands_robots/policies/lerobot_local/__init__.py
+@@ -22,31 +22,46 @@ logger = logging.getLogger(__name__)
+ 
+ 
+ def _resolve_policy_class_from_hub(pretrained_name_or_path: str):
+-    """Resolve the LeRobot policy class by reading config.json from HuggingFace.
++    """Resolve the LeRobot policy class from a pretrained path or HF repo.
+ 
+-    Zero hardcoding — uses LeRobot's own factory + HF config metadata.
++    Zero hardcoding — uses LeRobot 0.5's PreTrainedPolicy.from_pretrained()
++    which handles config resolution, class lookup, and weight loading
++    internally via the draccus config registry.
+ 
+-    Flow:
+-        1. Download config.json from HF hub (or local path)
+-        2. Read the "type" field (e.g. "act", "pi0", "smolvla", ...)
+-        3. Pass to LeRobot's get_policy_class() which handles dynamic import
++    Flow (lerobot ≥0.5):
++        1. PreTrainedConfig.from_pretrained() loads config.json from HF/local
++        2. Config's draccus type field resolves to the correct PolicyClass
++        3. PreTrainedPolicy.from_pretrained() loads weights into that class
+ 
+-    This means any new policy added to LeRobot automatically works here.
++    Falls back to reading config.json manually + class name matching if
++    the draccus path fails (e.g. third-party policies not in registry).
+     """
+     import json
+     from pathlib import Path
+ 
+-    policy_type = None
++    # Strategy 1 (lerobot ≥0.5): Use PreTrainedConfig draccus resolution
++    try:
++        from lerobot.configs.policies import PreTrainedConfig
+ 
+-    # 1. Try reading config.json
++        config = PreTrainedConfig.from_pretrained(pretrained_name_or_path)
++        policy_type = getattr(config, "type", type(config).__name__.replace("Config", "").lower())
++        logger.info(
++            f"Auto-resolved via PreTrainedConfig: '{pretrained_name_or_path}' -> type='{policy_type}'"
++        )
++        # Return the config's associated policy class
++        from lerobot.policies.pretrained import PreTrainedPolicy
++        return PreTrainedPolicy, policy_type
++    except Exception as e:
++        logger.debug("PreTrainedConfig resolution failed, trying manual: %s", e)
++
++    # Strategy 2: Manual config.json reading (fallback for custom/third-party)
++    policy_type = None
+     local_path = Path(pretrained_name_or_path)
+     if local_path.is_dir() and (local_path / "config.json").exists():
+-        # Local checkpoint
+         with open(local_path / "config.json") as f:
+             config = json.load(f)
+         policy_type = config.get("type")
+     else:
+-        # HuggingFace Hub
+         try:
+             from huggingface_hub import hf_hub_download
+ 
+@@ -64,11 +79,7 @@ def _resolve_policy_class_from_hub(pretrained_name_or_path: str):
+             f"Pass policy_type= explicitly."
+         )
+ 
+-    # 2. Use LeRobot's own factory — handles all dynamic imports
+-    from lerobot.policies.factory import get_policy_class
+-
+-    PolicyClass = get_policy_class(policy_type)
+-
++    PolicyClass = _resolve_policy_class_by_name(policy_type)
+     logger.info(
+         f"Auto-resolved: '{pretrained_name_or_path}' -> type='{policy_type}' -> {PolicyClass.__name__}"
+     )
+@@ -76,14 +87,42 @@ def _resolve_policy_class_from_hub(pretrained_name_or_path: str):
+ 
+ 
+ def _resolve_policy_class_by_name(policy_type: str):
+-    """Resolve policy class from an explicit type string using LeRobot's factory."""
++    """Resolve policy class from an explicit type string.
++
++    lerobot ≥0.5: Uses PreTrainedConfig.get_known_choices() + make_policy()
++    or direct module import from lerobot.policies.{policy_type}.
++    Falls back to legacy get_policy_class() for older lerobot versions.
++    """
++    # Strategy 1 (lerobot ≥0.5): Direct module import
+     try:
+-        from lerobot.policies.factory import get_policy_class
++        import importlib
++        mod = importlib.import_module(f"lerobot.policies.{policy_type}")
++        # Find the Policy class (convention: {Type}Policy)
++        for attr_name in dir(mod):
++            obj = getattr(mod, attr_name)
++            if (isinstance(obj, type)
++                and attr_name.endswith("Policy")
++                and attr_name != "PreTrainedPolicy"
++                and hasattr(obj, "from_pretrained")):
++                return obj
++    except ImportError:
++        pass
++
++    # Strategy 2: PreTrainedPolicy (generic loader)
++    try:
++        from lerobot.policies.pretrained import PreTrainedPolicy
++        return PreTrainedPolicy
++    except ImportError:
++        pass
+ 
++    # Strategy 3: Legacy get_policy_class (lerobot <0.5)
++    try:
++        from lerobot.policies.factory import get_policy_class
+         return get_policy_class(policy_type)
+-    except (RuntimeError, ImportError) as e:
++    except (ImportError, AttributeError, RuntimeError) as e:
+         raise ImportError(
+-            f"LeRobot policy factory import failed (likely CUDA/flash_attn issue): {e}"
++            f"Could not resolve LeRobot policy class for type '{policy_type}': {e}. "
++            f"Ensure lerobot>=0.5.0 is installed."
+         ) from e
+ 
+ 
+diff --git a/strands_robots/tools/lerobot_camera.py b/strands_robots/tools/lerobot_camera.py
+index a73c3dc..2ce0a26 100644
+--- a/strands_robots/tools/lerobot_camera.py
++++ b/strands_robots/tools/lerobot_camera.py
+@@ -1026,7 +1026,7 @@ def _create_camera(
+ 
+     elif camera_type.lower() == "realsense" and REALSENSE_AVAILABLE:
+         config = RealSenseCameraConfig(
+-            serial_number=str(camera_id), fps=fps, width=width, height=height
++            serial_number_or_name=str(camera_id), fps=fps, width=width, height=height
+         )
+         return RealSenseCamera(config)
+ 
+diff --git a/strands_robots/training/lerobot.py b/strands_robots/training/lerobot.py
+index 7a89801..097076e 100644
+--- a/strands_robots/training/lerobot.py
++++ b/strands_robots/training/lerobot.py
+@@ -76,13 +76,13 @@ class LerobotTrainer(Trainer):
+     def _build_train_config(self) -> Any:
+         """Build a LeRobot TrainPipelineConfig from our TrainConfig.
+ 
+-        Bridges strands-robots TrainConfig → LeRobot TrainPipelineConfig.
++        lerobot ≥0.5: Uses lerobot.configs.train.TrainPipelineConfig directly
++        with DatasetConfig and WandBConfig from lerobot.configs.default.
+         """
+         try:
+             from pathlib import Path
+ 
+             from lerobot.configs.default import DatasetConfig, WandBConfig
+-            from lerobot.configs.policies import PreTrainedConfig
+             from lerobot.configs.train import TrainPipelineConfig
+ 
+             # Build dataset config
+@@ -91,29 +91,46 @@ class LerobotTrainer(Trainer):
+             # Build policy config (from pretrained or type)
+             policy_cfg = None
+             if self.pretrained_name_or_path:
+-                policy_cfg = PreTrainedConfig.from_pretrained(
+-                    self.pretrained_name_or_path
+-                )
+-                policy_cfg.pretrained_path = Path(self.pretrained_name_or_path)
++                try:
++                    from lerobot.configs.policies import PreTrainedConfig
++                    policy_cfg = PreTrainedConfig.from_pretrained(
++                        self.pretrained_name_or_path
++                    )
++                except Exception as e:
++                    logger.warning("Could not load pretrained config: %s", e)
+ 
+             # Build wandb config
+             wandb_cfg = WandBConfig(enable=self.config.use_wandb)
+ 
+-            # Construct full training config
+-            train_cfg = TrainPipelineConfig(
+-                dataset=dataset_cfg,
+-                policy=policy_cfg,
+-                output_dir=Path(self.config.output_dir),
+-                seed=self.config.seed,
+-                batch_size=self.config.batch_size,
+-                steps=self.config.max_steps,
+-                num_workers=self.config.dataloader_num_workers,
+-                eval_freq=self.eval_freq,
+-                save_freq=self.save_freq,
+-                log_freq=self.log_freq,
+-                wandb=wandb_cfg,
+-                rename_map=self.rename_map,
+-            )
++            # Build training config kwargs — only pass params that exist
++            import inspect
++            train_sig = inspect.signature(TrainPipelineConfig)
++            train_kwargs = {
++                "dataset": dataset_cfg,
++                "policy": policy_cfg,
++                "seed": self.config.seed,
++                "batch_size": self.config.batch_size,
++                "steps": self.config.max_steps,
++                "num_workers": self.config.dataloader_num_workers,
++                "eval_freq": self.eval_freq,
++                "save_freq": self.save_freq,
++                "log_freq": self.log_freq,
++                "wandb": wandb_cfg,
++            }
++
++            # output_dir needs Path
++            if "output_dir" in train_sig.parameters:
++                train_kwargs["output_dir"] = Path(self.config.output_dir)
++
++            # rename_map (lerobot ≥0.5)
++            if "rename_map" in train_sig.parameters and self.rename_map:
++                train_kwargs["rename_map"] = self.rename_map
++
++            # Filter to only valid params
++            valid_params = set(train_sig.parameters.keys())
++            train_kwargs = {k: v for k, v in train_kwargs.items() if k in valid_params}
++
++            train_cfg = TrainPipelineConfig(**train_kwargs)
+ 
+             self._train_config = train_cfg
+             return train_cfg
+@@ -142,8 +159,7 @@ class LerobotTrainer(Trainer):
+     def _train_in_process(self, **kwargs) -> Dict[str, Any]:
+         """Run training using LeRobot's internal training loop.
+ 
+-        Uses lerobot.scripts.lerobot_train.train() directly.
+-        Provides full access to the training loop, model, optimizer, etc.
++        lerobot ≥0.5: train(cfg, accelerator) — accelerator is optional.
+         """
+         try:
+             from lerobot.scripts.lerobot_train import train as lerobot_train_fn
+@@ -164,7 +180,7 @@ class LerobotTrainer(Trainer):
+         )
+         logger.info("   Output: %s", self.config.output_dir)
+ 
+-        # Run the actual LeRobot training function
++        # lerobot ≥0.5: train() accepts optional Accelerator
+         try:
+             lerobot_train_fn(train_cfg)
+             return {
