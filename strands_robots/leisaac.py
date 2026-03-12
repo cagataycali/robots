@@ -260,10 +260,7 @@ class LeIsaacEnv:
         self._raw_env = None
         self._loaded = False
 
-        logger.info(
-            f"🏭 LeIsaacEnv initialized: {task_name} "
-            f"({self.task_info.get('description', '')})"
-        )
+        logger.info(f"🏭 LeIsaacEnv initialized: {task_name} ({self.task_info.get('description', '')})")
 
     def load(self) -> bool:
         """Load the environment from HuggingFace EnvHub.
@@ -291,9 +288,7 @@ class LeIsaacEnv:
             self._raw_env = sync_vector_env.envs[0].unwrapped
 
             # Initialize if needed (e.g., fold cloth task)
-            if self.task_info.get("needs_initialize") and hasattr(
-                self._raw_env, "initialize"
-            ):
+            if self.task_info.get("needs_initialize") and hasattr(self._raw_env, "initialize"):
                 self._raw_env.initialize()
 
             self._loaded = True
@@ -301,10 +296,7 @@ class LeIsaacEnv:
             return True
 
         except ImportError as e:
-            logger.error(
-                f"❌ Failed to load LeIsaac env: {e}\n"
-                f"Install: pip install leisaac[isaaclab] lerobot"
-            )
+            logger.error(f"❌ Failed to load LeIsaac env: {e}\nInstall: pip install leisaac[isaaclab] lerobot")
             return False
         except Exception as e:
             logger.error("❌ Failed to load LeIsaac env: %s", e)
@@ -418,9 +410,7 @@ class LeIsaacEnv:
         result.n_episodes = n_episodes
         result.success_rate = result.n_successes / max(n_episodes, 1)
         result.avg_steps = sum(e["steps"] for e in result.episodes) / max(n_episodes, 1)
-        result.avg_reward = sum(e["reward"] for e in result.episodes) / max(
-            n_episodes, 1
-        )
+        result.avg_reward = sum(e["reward"] for e in result.episodes) / max(n_episodes, 1)
         result.total_time = time.time() - start_time
 
         logger.info(
@@ -547,11 +537,7 @@ class LeIsaacEnv:
         return action
 
     def __repr__(self) -> str:
-        return (
-            f"LeIsaacEnv(task={self.task_name!r}, "
-            f"loaded={self._loaded}, "
-            f"robot={self.task_info.get('robot', '?')})"
-        )
+        return f"LeIsaacEnv(task={self.task_name!r}, loaded={self._loaded}, robot={self.task_info.get('robot', '?')})"
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -667,8 +653,7 @@ try:
                 policy = create_policy(policy_provider, **kwargs)
                 result = env.rollout(
                     policy,
-                    instruction=instruction
-                    or env.task_info.get("default_instruction", ""),
+                    instruction=instruction or env.task_info.get("default_instruction", ""),
                     n_episodes=n_episodes,
                     max_steps=max_steps,
                 )
@@ -709,8 +694,7 @@ try:
                 info = env.record_video(
                     policy,
                     output_path=output_path,
-                    instruction=instruction
-                    or env.task_info.get("default_instruction", ""),
+                    instruction=instruction or env.task_info.get("default_instruction", ""),
                     max_steps=max_steps,
                 )
                 env.close()
@@ -731,11 +715,7 @@ try:
             else:
                 return {
                     "status": "error",
-                    "content": [
-                        {
-                            "text": f"Unknown action: {action}. Valid: list, info, load, rollout, record"
-                        }
-                    ],
+                    "content": [{"text": f"Unknown action: {action}. Valid: list, info, load, rollout, record"}],
                 }
 
         except Exception as e:

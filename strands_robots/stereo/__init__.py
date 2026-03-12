@@ -258,10 +258,7 @@ class StereoConfig:
     def __post_init__(self) -> None:
         """Validate configuration after initialisation."""
         if self.model_variant not in VALID_MODEL_VARIANTS:
-            raise ValueError(
-                f"Invalid model_variant '{self.model_variant}'. "
-                f"Must be one of: {VALID_MODEL_VARIANTS}"
-            )
+            raise ValueError(f"Invalid model_variant '{self.model_variant}'. Must be one of: {VALID_MODEL_VARIANTS}")
 
         if self.valid_iters < 1:
             raise ValueError(f"valid_iters must be >= 1, got {self.valid_iters}")
@@ -276,10 +273,7 @@ class StereoConfig:
             raise ValueError(f"zfar must be > 0, got {self.zfar}")
 
         if self.camera and self.camera not in SUPPORTED_CAMERAS:
-            raise ValueError(
-                f"Unknown camera '{self.camera}'. "
-                f"Supported: {sorted(SUPPORTED_CAMERAS.keys())}"
-            )
+            raise ValueError(f"Unknown camera '{self.camera}'. Supported: {sorted(SUPPORTED_CAMERAS.keys())}")
 
     def resolve_model_path(self) -> str:
         """Resolve the model checkpoint path.
@@ -303,17 +297,13 @@ class StereoConfig:
         for env_var in ("STEREO_MODEL_DIR", "FAST_FOUNDATION_STEREO_DIR"):
             env_dir = os.environ.get(env_var)
             if env_dir:
-                candidate = os.path.join(
-                    env_dir, self.model_variant, "model_best_bp2_serialize.pth"
-                )
+                candidate = os.path.join(env_dir, self.model_variant, "model_best_bp2_serialize.pth")
                 if os.path.isfile(candidate):
                     logger.info("Using stereo model from %s: %s", env_var, candidate)
                     return candidate
 
         # 3. Default weights directory
-        default_path = os.path.join(
-            "weights", self.model_variant, "model_best_bp2_serialize.pth"
-        )
+        default_path = os.path.join("weights", self.model_variant, "model_best_bp2_serialize.pth")
         if os.path.isfile(default_path):
             return default_path
 
@@ -384,8 +374,7 @@ class StereoDepthPipeline:
         self._model_loaded = False
 
         logger.info(
-            "Initialised StereoDepthPipeline (variant=%s, iters=%d, "
-            "scale=%.2f, max_disp=%d)",
+            "Initialised StereoDepthPipeline (variant=%s, iters=%d, scale=%.2f, max_disp=%d)",
             self.config.model_variant,
             self.config.valid_iters,
             self.config.scale,
@@ -410,15 +399,11 @@ class StereoDepthPipeline:
             import torch  # type: ignore[import-untyped]
         except ImportError as exc:
             raise ImportError(
-                "PyTorch is required for stereo depth estimation. "
-                "Install with: pip install torch"
+                "PyTorch is required for stereo depth estimation. Install with: pip install torch"
             ) from exc
 
         if not torch.cuda.is_available():
-            raise RuntimeError(
-                "CUDA is required for Fast-FoundationStereo inference. "
-                "No CUDA device found."
-            )
+            raise RuntimeError("CUDA is required for Fast-FoundationStereo inference. No CUDA device found.")
 
         model_path = self.config.resolve_model_path()
         logger.info("Loading stereo model from %s", model_path)
@@ -494,10 +479,7 @@ class StereoDepthPipeline:
         metadata["image_load_time"] = time.monotonic() - t0
 
         if img_left.shape != img_right.shape:
-            raise ValueError(
-                f"Image shapes must match. Left: {img_left.shape}, "
-                f"Right: {img_right.shape}"
-            )
+            raise ValueError(f"Image shapes must match. Left: {img_left.shape}, Right: {img_right.shape}")
 
         H_orig, W_orig = img_left.shape[:2]
         metadata["original_size"] = (H_orig, W_orig)
@@ -525,9 +507,7 @@ class StereoDepthPipeline:
                 )
                 img_left = img_l_scaled
             except Exception:
-                logger.warning(
-                    "OpenCV not available for image scaling; using original size."
-                )
+                logger.warning("OpenCV not available for image scaling; using original size.")
                 scale = 1.0
 
         H, W = img_left.shape[:2]
@@ -539,16 +519,8 @@ class StereoDepthPipeline:
         if device.startswith("cuda") and not torch.cuda.is_available():
             device = "cpu"
             logger.debug("CUDA not available; falling back to CPU for tensors.")
-        img0 = (
-            torch.as_tensor(img_left, dtype=torch.float32)
-            .to(device)[None]
-            .permute(0, 3, 1, 2)
-        )  # (1, 3, H, W)
-        img1 = (
-            torch.as_tensor(img_right, dtype=torch.float32)
-            .to(device)[None]
-            .permute(0, 3, 1, 2)
-        )
+        img0 = torch.as_tensor(img_left, dtype=torch.float32).to(device)[None].permute(0, 3, 1, 2)  # (1, 3, H, W)
+        img1 = torch.as_tensor(img_right, dtype=torch.float32).to(device)[None].permute(0, 3, 1, 2)
 
         # Pad to divisible-by-32
         padder = _InputPadder(img0.shape, divis_by=DEFAULT_DIVIS_BY)
@@ -608,9 +580,7 @@ class StereoDepthPipeline:
 
             with np.errstate(divide="ignore", invalid="ignore"):
                 depth_np = (focal * baseline) / disp_np
-            depth_np = np.where(
-                np.isfinite(depth_np) & (depth_np > 0), depth_np, np.inf
-            )
+            depth_np = np.where(np.isfinite(depth_np) & (depth_np > 0), depth_np, np.inf)
 
             # Point cloud
             point_cloud = _depth_to_xyz(depth_np, K)

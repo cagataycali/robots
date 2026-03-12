@@ -489,27 +489,41 @@ class LerobotLocalPolicy(Policy):
                 ) from e
             return self._zero_actions()
 
-    def select_action_sync(self, observation_dict: Dict[str, Any]) -> np.ndarray:
+    def select_action_sync(self, observation_dict: Dict[str, Any], instruction: str = "") -> np.ndarray:
         """Synchronous inference — returns raw action numpy array.
 
         Convenience for simulation loops that don't need async.
         Applies processor pipeline if available.
 
         For VLA models (xvla, smolvla, etc.) that require language tokens:
-        Uses the processor pipeline's TokenizerProcessorStep to generate
-        observation.language.tokens from a 'task' key in the observation dict.
+        Pass ``instruction`` or include a ``'task'`` key in observation_dict.
+        The processor pipeline / tokenizer will generate
+        ``observation.language.tokens`` automatically.
+
+        Args:
+            observation_dict: Observation dict (state + images).
+            instruction: Natural language instruction for VLA models.
+                         If empty, falls back to observation_dict['task'] if present.
         """
         import torch
 
         if not self._loaded:
             self._load_model()
 
+        # Resolve instruction from obs['task'] if not provided explicitly
+        if not instruction:
+            instruction = observation_dict.get("task", "")
+
+        # Inject task/instruction into obs for VLA tokenizer preprocessing
+        obs = dict(observation_dict)
+        if instruction and "task" not in obs:
+            obs["task"] = instruction
+
         # Apply preprocessor if available
-        obs = observation_dict
         if self._processor_bridge and self._processor_bridge.has_preprocessor:
             obs = self._processor_bridge.preprocess(obs)
 
-        batch = self._build_observation_batch(obs, "")
+        batch = self._build_observation_batch(obs, instruction)
         with torch.no_grad():
             action_tensor = self._policy.select_action(batch)
 

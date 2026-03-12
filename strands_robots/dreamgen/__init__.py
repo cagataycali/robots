@@ -107,13 +107,7 @@ class DreamGenPipeline:
             config: DreamGenConfig or keyword arguments
         """
         if config is None:
-            config = DreamGenConfig(
-                **{
-                    k: v
-                    for k, v in kwargs.items()
-                    if k in DreamGenConfig.__dataclass_fields__
-                }
-            )
+            config = DreamGenConfig(**{k: v for k, v in kwargs.items() if k in DreamGenConfig.__dataclass_fields__})
         self.config = config
         self._video_model = None
         self._idm_model = None
@@ -138,9 +132,7 @@ class DreamGenPipeline:
             dataset_path: Path to robot trajectory dataset
             output_dir: Where to save fine-tuned model
         """
-        logger.info(
-            f"🎬 Stage 1: Fine-tuning {self.config.video_model} on {dataset_path}"
-        )
+        logger.info(f"🎬 Stage 1: Fine-tuning {self.config.video_model} on {dataset_path}")
 
         # This would invoke the actual video model fine-tuning
         # For WAN2.1: uses diffusers LoRA fine-tuning
@@ -158,12 +150,8 @@ class DreamGenPipeline:
         }
 
         if self.config.video_model == "cosmos_transfer":
-            logger.info(
-                "🎬 Cosmos Transfer 2.5: SKIPPING Stage 1 (fine-tuning not needed)"
-            )
-            logger.info(
-                "   ControlNet depth/edge/seg signals preserve exact robot motion"
-            )
+            logger.info("🎬 Cosmos Transfer 2.5: SKIPPING Stage 1 (fine-tuning not needed)")
+            logger.info("   ControlNet depth/edge/seg signals preserve exact robot motion")
             return {
                 "stage": "finetune_video_model",
                 "model": "cosmos_transfer",
@@ -212,9 +200,7 @@ class DreamGenPipeline:
         Returns:
             List of generated video metadata dicts
         """
-        logger.info(
-            f"🎬 Stage 2: Generating {len(initial_frames) * len(instructions) * num_per_prompt} videos"
-        )
+        logger.info(f"🎬 Stage 2: Generating {len(initial_frames) * len(instructions) * num_per_prompt} videos")
 
         os.makedirs(output_dir, exist_ok=True)
         generated = []
@@ -285,9 +271,7 @@ class DreamGenPipeline:
 
         sim_videos = kwargs.get("sim_videos", [])
         if not sim_videos:
-            logger.warning(
-                "cosmos_transfer requires sim_videos in kwargs — falling back to frame-based generation"
-            )
+            logger.warning("cosmos_transfer requires sim_videos in kwargs — falling back to frame-based generation")
             # If no sim videos provided, save initial frames as single-frame videos
             sim_videos = []
             for i, frame in enumerate(initial_frames):
@@ -322,11 +306,7 @@ class DreamGenPipeline:
 
         generated = []
         for vid_idx, sim_video in enumerate(sim_videos):
-            instruction = (
-                instructions[vid_idx % len(instructions)]
-                if instructions
-                else "Robot in a modern workspace"
-            )
+            instruction = instructions[vid_idx % len(instructions)] if instructions else "Robot in a modern workspace"
             for var_idx in range(num_per_prompt):
                 video_id = f"cosmos_{vid_idx}_{var_idx}"
                 output_path = os.path.join(output_dir, f"{video_id}.mp4")
@@ -350,9 +330,7 @@ class DreamGenPipeline:
                     }
                 )
 
-        logger.info(
-            f"📹 {len(generated)} photorealistic videos generated via Cosmos Transfer"
-        )
+        logger.info(f"📹 {len(generated)} photorealistic videos generated via Cosmos Transfer")
         return generated
 
     def extract_actions(
@@ -378,18 +356,14 @@ class DreamGenPipeline:
         Returns:
             List of NeuralTrajectory objects
         """
-        logger.info(
-            f"🎬 Stage 3: Extracting {method} actions from {len(videos)} videos"
-        )
+        logger.info(f"🎬 Stage 3: Extracting {method} actions from {len(videos)} videos")
 
         if method == "idm":
             return self._extract_idm_actions(videos, output_dir)
         elif method == "latent":
             return self._extract_latent_actions(videos, output_dir)
         else:
-            raise ValueError(
-                f"Unknown action extraction method: {method}. Use 'idm' or 'latent'"
-            )
+            raise ValueError(f"Unknown action extraction method: {method}. Use 'idm' or 'latent'")
 
     def _extract_idm_actions(self, videos, output_dir):
         """Extract actions using IDM sliding window approach."""
@@ -416,9 +390,7 @@ class DreamGenPipeline:
                 logger.info("✅ IDM loaded")
             except Exception as e:
                 logger.error("❌ Failed to load IDM: %s", e)
-                logger.info(
-                    "💡 Returning placeholder trajectories for pipeline testing"
-                )
+                logger.info("💡 Returning placeholder trajectories for pipeline testing")
                 for v in videos:
                     trajectories.append(
                         NeuralTrajectory(
@@ -431,9 +403,7 @@ class DreamGenPipeline:
                     )
                 return trajectories
 
-        logger.info(
-            f"⚡ Extracting IDM actions with sliding window (horizon={self.config.idm_action_horizon})"
-        )
+        logger.info(f"⚡ Extracting IDM actions with sliding window (horizon={self.config.idm_action_horizon})")
 
         for video_info in videos:
             # Load video frames
@@ -509,9 +479,7 @@ class DreamGenPipeline:
         Returns:
             Dict with dataset info (path, num_trajectories, etc.)
         """
-        logger.info(
-            f"🎬 Stage 4: Creating {format} dataset with {len(trajectories)} trajectories"
-        )
+        logger.info(f"🎬 Stage 4: Creating {format} dataset with {len(trajectories)} trajectories")
 
         os.makedirs(output_path, exist_ok=True)
 
@@ -590,9 +558,7 @@ class DreamGenPipeline:
             output_path=os.path.join(output_dir, "neural_trajectories"),
         )
 
-        logger.info(
-            f"✅ Full DreamGen pipeline complete: {len(trajectories)} neural trajectories"
-        )
+        logger.info(f"✅ Full DreamGen pipeline complete: {len(trajectories)} neural trajectories")
         return results
 
     def _load_video_frames(self, video_path: str) -> np.ndarray:

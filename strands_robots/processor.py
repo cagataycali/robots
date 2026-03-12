@@ -151,10 +151,7 @@ class ProcessorBridge:
                 config_filename=preprocessor_config,
                 overrides=overrides or {},
             )
-            logger.info(
-                f"Loaded preprocessor from {pretrained_name_or_path}: "
-                f"{len(preprocessor)} steps"
-            )
+            logger.info(f"Loaded preprocessor from {pretrained_name_or_path}: {len(preprocessor)} steps")
         except (FileNotFoundError, ValueError) as e:
             logger.debug("No preprocessor found: %s", e)
         except Exception as e:
@@ -167,10 +164,7 @@ class ProcessorBridge:
                 config_filename=postprocessor_config,
                 overrides=overrides or {},
             )
-            logger.info(
-                f"Loaded postprocessor from {pretrained_name_or_path}: "
-                f"{len(postprocessor)} steps"
-            )
+            logger.info(f"Loaded postprocessor from {pretrained_name_or_path}: {len(postprocessor)} steps")
         except (FileNotFoundError, ValueError) as e:
             logger.debug("No postprocessor found: %s", e)
         except Exception as e:
@@ -295,25 +289,15 @@ class ProcessorBridge:
         }
         if self._preprocessor is not None:
             info["preprocessor_steps"] = len(self._preprocessor)
-            info["preprocessor_step_names"] = [
-                type(s).__name__ for s in self._preprocessor.steps
-            ]
+            info["preprocessor_step_names"] = [type(s).__name__ for s in self._preprocessor.steps]
         if self._postprocessor is not None:
             info["postprocessor_steps"] = len(self._postprocessor)
-            info["postprocessor_step_names"] = [
-                type(s).__name__ for s in self._postprocessor.steps
-            ]
+            info["postprocessor_step_names"] = [type(s).__name__ for s in self._postprocessor.steps]
         return info
 
     def __repr__(self) -> str:
-        pre = (
-            f"pre={len(self._preprocessor)}steps" if self._preprocessor else "pre=None"
-        )
-        post = (
-            f"post={len(self._postprocessor)}steps"
-            if self._postprocessor
-            else "post=None"
-        )
+        pre = f"pre={len(self._preprocessor)}steps" if self._preprocessor else "pre=None"
+        post = f"post={len(self._postprocessor)}steps" if self._postprocessor else "post=None"
         return f"ProcessorBridge({pre}, {post})"
 
 
@@ -338,9 +322,7 @@ class ProcessedPolicy(Policy):
     def set_robot_state_keys(self, robot_state_keys: List[str]) -> None:
         self._policy.set_robot_state_keys(robot_state_keys)
 
-    async def get_actions(
-        self, observation_dict: Dict[str, Any], instruction: str, **kwargs
-    ) -> List[Dict[str, Any]]:
+    async def get_actions(self, observation_dict: Dict[str, Any], instruction: str, **kwargs) -> List[Dict[str, Any]]:
         """Get actions with automatic pre/post processing."""
         # Preprocess observation
         processed_obs = self._bridge.preprocess(observation_dict)

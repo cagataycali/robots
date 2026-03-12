@@ -137,8 +137,7 @@ class DreamgenPolicy(Policy):
 
         except Exception as e:
             raise ImportError(
-                f"Failed to load DreamGen IDM model: {e}. "
-                f"Install GR00T-Dreams: pip install gr00t-dreams"
+                f"Failed to load DreamGen IDM model: {e}. Install GR00T-Dreams: pip install gr00t-dreams"
             ) from e
 
     def _load_vla(self):
@@ -169,13 +168,10 @@ class DreamgenPolicy(Policy):
 
         except ImportError as e:
             raise ImportError(
-                f"GR00T-Dreams not available: {e}. "
-                f"Install: pip install gr00t-dreams or clone GR00T-Dreams repo"
+                f"GR00T-Dreams not available: {e}. Install: pip install gr00t-dreams or clone GR00T-Dreams repo"
             ) from e
 
-    async def get_actions(
-        self, observation_dict: Dict[str, Any], instruction: str, **kwargs
-    ) -> List[Dict[str, Any]]:
+    async def get_actions(self, observation_dict: Dict[str, Any], instruction: str, **kwargs) -> List[Dict[str, Any]]:
         """Get actions from DreamGen model.
 
         For IDM mode: Uses current + previous frame to predict action chunk.
@@ -196,9 +192,7 @@ class DreamgenPolicy(Policy):
         else:
             raise ValueError(f"Unknown mode: {self.mode}. Use 'idm' or 'vla'")
 
-    async def _get_idm_actions(
-        self, observation_dict: Dict[str, Any], instruction: str
-    ) -> List[Dict[str, Any]]:
+    async def _get_idm_actions(self, observation_dict: Dict[str, Any], instruction: str) -> List[Dict[str, Any]]:
         """Get actions using IDM (Inverse Dynamics Model).
 
         The IDM takes two consecutive frames and predicts the action chunk
@@ -252,9 +246,7 @@ class DreamgenPolicy(Policy):
             self._previous_frame = current_frame
             return self._generate_zero_actions()
 
-    async def _get_vla_actions(
-        self, observation_dict: Dict[str, Any], instruction: str
-    ) -> List[Dict[str, Any]]:
+    async def _get_vla_actions(self, observation_dict: Dict[str, Any], instruction: str) -> List[Dict[str, Any]]:
         """Get actions using full GR00T-Dreams VLA policy."""
         self._load_vla()
 
@@ -282,9 +274,7 @@ class DreamgenPolicy(Policy):
                     return np.transpose(value, (1, 2, 0)).astype(np.uint8)
         return None
 
-    def _build_dreams_observation(
-        self, observation_dict: Dict[str, Any], instruction: str
-    ) -> Dict[str, Any]:
+    def _build_dreams_observation(self, observation_dict: Dict[str, Any], instruction: str) -> Dict[str, Any]:
         """Build observation dict for GR00T-Dreams VLA."""
         obs = {}
 
@@ -307,9 +297,7 @@ class DreamgenPolicy(Policy):
 
         return obs
 
-    def _convert_dreams_actions(
-        self, action_dict: Dict[str, Any]
-    ) -> List[Dict[str, Any]]:
+    def _convert_dreams_actions(self, action_dict: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Convert GR00T-Dreams action output to robot action list."""
         # Concatenate all action modalities
         action_parts = []
@@ -342,10 +330,7 @@ class DreamgenPolicy(Policy):
 
     def _generate_zero_actions(self) -> List[Dict[str, Any]]:
         """Generate zero actions as fallback."""
-        return [
-            {key: 0.0 for key in self.robot_state_keys}
-            for _ in range(self.action_horizon)
-        ]
+        return [{key: 0.0 for key in self.robot_state_keys} for _ in range(self.action_horizon)]
 
     def reset(self):
         """Reset policy state (clear previous frame for IDM)."""

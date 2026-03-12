@@ -129,11 +129,7 @@ def _auto_download_robot(name: str, info: dict) -> bool:
 def _has_meshes(directory: Path) -> bool:
     """Check if a directory tree contains mesh files."""
     _MESH_EXTS = {".stl", ".obj", ".msh", ".ply"}
-    return any(
-        f.suffix.lower() in _MESH_EXTS
-        for f in directory.rglob("*")
-        if f.is_file()
-    )
+    return any(f.suffix.lower() in _MESH_EXTS for f in directory.rglob("*") if f.is_file())
 
 
 def resolve_model_path(
@@ -261,15 +257,17 @@ def list_available_robots() -> List[Dict]:
     for r in list_robots(mode="sim"):
         path = resolve_model_path(r["name"])
         info = get_robot(r["name"]) or {}
-        robots.append({
-            "name": r["name"],
-            "description": r.get("description", ""),
-            "joints": r.get("joints"),
-            "category": r.get("category", ""),
-            "dir": info.get("asset", {}).get("dir", ""),
-            "available": path is not None,
-            "path": str(path) if path else None,
-        })
+        robots.append(
+            {
+                "name": r["name"],
+                "description": r.get("description", ""),
+                "joints": r.get("joints"),
+                "category": r.get("category", ""),
+                "dir": info.get("asset", {}).get("dir", ""),
+                "available": path is not None,
+                "path": str(path) if path else None,
+            }
+        )
     return robots
 
 

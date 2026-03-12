@@ -97,9 +97,7 @@ def _preconvert_obj_to_stl(mjcf_path: str) -> Optional[str]:
     if compiler is not None:
         meshdir = compiler.get("meshdir", "")
 
-    mesh_dir_abs = (
-        os.path.normpath(os.path.join(mjcf_dir, meshdir)) if meshdir else mjcf_dir
-    )
+    mesh_dir_abs = os.path.normpath(os.path.join(mjcf_dir, meshdir)) if meshdir else mjcf_dir
 
     # Collect all mesh elements referencing OBJ files
     obj_meshes = []
@@ -156,9 +154,7 @@ def _preconvert_obj_to_stl(mjcf_path: str) -> Optional[str]:
     tmp_mjcf = os.path.join(tmp_dir, os.path.basename(mjcf_path))
     tree.write(tmp_mjcf, xml_declaration=True, encoding="unicode")
 
-    logger.info(
-        f"Pre-converted {converted}/{len(obj_meshes)} OBJ→STL, modified MJCF: {tmp_mjcf}"
-    )
+    logger.info(f"Pre-converted {converted}/{len(obj_meshes)} OBJ→STL, modified MJCF: {tmp_mjcf}")
     return tmp_mjcf
 
 
@@ -273,19 +269,11 @@ def _strip_meshes_from_mjcf(mjcf_path: str) -> Optional[str]:
     meshdir = ""
     if compiler_elem is not None:
         meshdir = compiler_elem.get("meshdir", "")
-    mesh_dir_abs = (
-        os.path.normpath(os.path.join(mjcf_dir_abs, meshdir))
-        if meshdir
-        else mjcf_dir_abs
-    )
+    mesh_dir_abs = os.path.normpath(os.path.join(mjcf_dir_abs, meshdir)) if meshdir else mjcf_dir_abs
     texturedir = ""
     if compiler_elem is not None:
         texturedir = compiler_elem.get("texturedir", "")
-    texture_dir_abs = (
-        os.path.normpath(os.path.join(mjcf_dir_abs, texturedir))
-        if texturedir
-        else mjcf_dir_abs
-    )
+    texture_dir_abs = os.path.normpath(os.path.join(mjcf_dir_abs, texturedir)) if texturedir else mjcf_dir_abs
 
     removed_textures = 0
     removed_materials = 0
@@ -321,9 +309,7 @@ def _strip_meshes_from_mjcf(mjcf_path: str) -> Optional[str]:
             mat_tex = mat_elem.get("texture", "")
             if mat_tex:
                 # Check if the referenced texture still exists in the asset
-                remaining_textures = {
-                    t.get("name", "") for t in asset_elem.findall("texture")
-                }
+                remaining_textures = {t.get("name", "") for t in asset_elem.findall("texture")}
                 if mat_tex not in remaining_textures:
                     # Remove the texture attribute rather than the whole material
                     del mat_elem.attrib["texture"]
@@ -381,13 +367,7 @@ def _strip_meshes_from_mjcf(mjcf_path: str) -> Optional[str]:
                     removed_classonly_geoms += 1
                 # Also remove geoms with no class, type, size, mesh, or fromto
                 # (these cannot define valid geometry)
-                elif (
-                    not geom_class
-                    and not has_type
-                    and not has_size
-                    and not has_mesh
-                    and not has_fromto
-                ):
+                elif not geom_class and not has_type and not has_size and not has_mesh and not has_fromto:
                     to_remove.append(child)
                     removed_classonly_geoms += 1
             else:
@@ -543,13 +523,9 @@ def convert_mjcf_to_usd(
             }
 
         except ImportError:
-            logger.info(
-                "Isaac Lab MjcfConverter not available, trying alternative method"
-            )
+            logger.info("Isaac Lab MjcfConverter not available, trying alternative method")
         except Exception as e:
-            logger.warning(
-                f"Isaac Lab conversion failed: {e}, falling back to MuJoCo+pxr"
-            )
+            logger.warning(f"Isaac Lab conversion failed: {e}, falling back to MuJoCo+pxr")
 
         # ── Method 2: Isaac Sim's built-in converter (if available) ──
         try:
@@ -570,20 +546,14 @@ def convert_mjcf_to_usd(
             logger.info("✅ Converted via Isaac Sim converter: %s", output_path)
             return {
                 "status": "success",
-                "content": [
-                    {
-                        "text": f"✅ Converted: {os.path.basename(mjcf_path)} → {output_path}"
-                    }
-                ],
+                "content": [{"text": f"✅ Converted: {os.path.basename(mjcf_path)} → {output_path}"}],
                 "usd_path": output_path,
                 "method": "isaac_sim_converter",
             }
         except ImportError:
             pass
         except Exception as e:
-            logger.warning(
-                f"Isaac Sim converter failed: {e}, falling back to MuJoCo+pxr"
-            )
+            logger.warning(f"Isaac Sim converter failed: {e}, falling back to MuJoCo+pxr")
 
         # ── Method 3: MuJoCo + OpenUSD (pxr) — full mesh extraction ──
         return _manual_mjcf_to_usd(mjcf_path, output_path)
@@ -674,11 +644,7 @@ def convert_usd_to_mjcf(
 
             return {
                 "status": "success",
-                "content": [
-                    {
-                        "text": f"✅ Converted: {os.path.basename(usd_path)} → {output_path}"
-                    }
-                ],
+                "content": [{"text": f"✅ Converted: {os.path.basename(usd_path)} → {output_path}"}],
                 "mjcf_path": output_path,
             }
 
@@ -1059,8 +1025,7 @@ def _manual_mjcf_to_usd(mjcf_path: str, output_path: str) -> Dict[str, Any]:
             "content": [
                 {
                     "text": (
-                        f"❌ Missing dependency: {missing}\n"
-                        f"Install with:\n  " + "\n  ".join(packages)
+                        f"❌ Missing dependency: {missing}\nInstall with:\n  " + "\n  ".join(packages)
                         if packages
                         else f"❌ Import error: {missing}"
                     )
@@ -1185,9 +1150,7 @@ def _create_usd_mesh_from_mujoco(
     mesh_prim = UsdGeom.Mesh.Define(stage, prim_path)
 
     # Set mesh points (vertices)
-    points = Vt.Vec3fArray(
-        [Gf.Vec3f(float(v[0]), float(v[1]), float(v[2])) for v in vertices]
-    )
+    points = Vt.Vec3fArray([Gf.Vec3f(float(v[0]), float(v[1]), float(v[2])) for v in vertices])
     mesh_prim.CreatePointsAttr(points)
 
     # Set face vertex counts (all triangles = 3)
@@ -1200,9 +1163,7 @@ def _create_usd_mesh_from_mujoco(
 
     # Set normals if available
     if normals is not None and len(normals) == vert_num:
-        normal_array = Vt.Vec3fArray(
-            [Gf.Vec3f(float(n[0]), float(n[1]), float(n[2])) for n in normals]
-        )
+        normal_array = Vt.Vec3fArray([Gf.Vec3f(float(n[0]), float(n[1]), float(n[2])) for n in normals])
         mesh_prim.CreateNormalsAttr(normal_array)
         mesh_prim.SetNormalsInterpolation(UsdGeom.Tokens.vertex)
 
@@ -1489,7 +1450,7 @@ def convert_all_robots_to_usd(
 
             if result.get("status") == "success":
                 summary["success"] += 1
-                logger.info("✅ %s: %s", name, result.get('method', 'unknown'))
+                logger.info("✅ %s: %s", name, result.get("method", "unknown"))
             else:
                 summary["failed"] += 1
                 logger.warning("❌ %s: %s", name, result)
@@ -1634,9 +1595,7 @@ def list_convertible_assets() -> Dict[str, Any]:
 
         return {
             "status": "success",
-            "content": [
-                {"text": f"🔄 {len(convertible)} robots convertible MJCF → USD"}
-            ],
+            "content": [{"text": f"🔄 {len(convertible)} robots convertible MJCF → USD"}],
             "robots": convertible,
         }
 

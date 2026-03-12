@@ -151,9 +151,7 @@ if HAS_GYM:
             try:
                 self._init_backend()
             except Exception as e:
-                logger.warning(
-                    f"Deferred Isaac backend init (will retry on reset): {e}"
-                )
+                logger.warning(f"Deferred Isaac backend init (will retry on reset): {e}")
 
         # ── Space helpers ───────────────────────────────────────────
 
@@ -226,8 +224,7 @@ if HAS_GYM:
             self._set_default_spaces(self._n_joints)
 
             logger.info(
-                "IsaacGymEnv initialised: robot=%s, num_envs=%d, "
-                "obs_dim=%d, act_dim=%d, device=%s",
+                "IsaacGymEnv initialised: robot=%s, num_envs=%d, obs_dim=%d, act_dim=%d, device=%s",
                 self._robot_name,
                 self._num_envs,
                 self._n_joints * 2,
@@ -267,9 +264,9 @@ if HAS_GYM:
                 # jpos, jvel: (num_envs, n_joints)
                 obs = np.concatenate([jpos, jvel], axis=1).astype(np.float32)
             else:
-                obs = np.concatenate(
-                    [jpos.flatten()[: self._n_joints], jvel.flatten()[: self._n_joints]]
-                ).astype(np.float32)
+                obs = np.concatenate([jpos.flatten()[: self._n_joints], jvel.flatten()[: self._n_joints]]).astype(
+                    np.float32
+                )
 
             return obs
 
@@ -332,9 +329,7 @@ if HAS_GYM:
                 if self.reward_fn is not None:
                     reward = self.reward_fn(obs, action)
                     if not isinstance(reward, np.ndarray):
-                        reward = np.full(
-                            self._num_envs, float(reward), dtype=np.float32
-                        )
+                        reward = np.full(self._num_envs, float(reward), dtype=np.float32)
                 else:
                     reward = np.zeros(self._num_envs, dtype=np.float32)
 
@@ -350,22 +345,14 @@ if HAS_GYM:
                 else:
                     terminated = np.full(self._num_envs, False)
             else:
-                reward = (
-                    float(self.reward_fn(obs, action))
-                    if self.reward_fn is not None
-                    else 0.0
-                )
+                reward = float(self.reward_fn(obs, action)) if self.reward_fn is not None else 0.0
                 truncated = self._step_count >= self.max_episode_steps
-                terminated = (
-                    bool(self.success_fn(obs)) if self.success_fn is not None else False
-                )
+                terminated = bool(self.success_fn(obs)) if self.success_fn is not None else False
 
             info = {
                 "step": self._step_count,
                 "task": self._task,
-                "is_success": (
-                    terminated if isinstance(terminated, bool) else terminated.any()
-                ),
+                "is_success": (terminated if isinstance(terminated, bool) else terminated.any()),
             }
 
             return obs, reward, terminated, truncated, info
@@ -404,10 +391,7 @@ if HAS_GYM:
             return self._backend
 
         def __repr__(self) -> str:
-            return (
-                f"IsaacGymEnv(robot={self._robot_name!r}, "
-                f"num_envs={self._num_envs}, device={self._device!r})"
-            )
+            return f"IsaacGymEnv(robot={self._robot_name!r}, num_envs={self._num_envs}, device={self._device!r})"
 
 else:
 

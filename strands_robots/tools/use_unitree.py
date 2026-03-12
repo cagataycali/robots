@@ -229,8 +229,7 @@ class _ConnectionManager:
             key = (robot, service)
             if key not in _SERVICE_REGISTRY:
                 raise ValueError(
-                    f"Unknown service: {robot}.{service}. "
-                    f"Available: {[f'{r}.{s}' for r, s in _SERVICE_REGISTRY]}"
+                    f"Unknown service: {robot}.{service}. Available: {[f'{r}.{s}' for r, s in _SERVICE_REGISTRY]}"
                 )
 
             module_path, class_name = _SERVICE_REGISTRY[key]
@@ -300,9 +299,7 @@ def _parse_action(action: str) -> Tuple[str, str, str]:
         # Discovery action
         return "__discovery__", "", parts[0]
     else:
-        raise ValueError(
-            f"Invalid action format: {action!r}. Expected 'robot.service.method'"
-        )
+        raise ValueError(f"Invalid action format: {action!r}. Expected 'robot.service.method'")
 
 
 def _get_client_methods(robot: str, service: str) -> List[Dict[str, Any]]:
@@ -333,11 +330,7 @@ def _get_client_methods(robot: str, service: str) -> List[Dict[str, Any]]:
                 continue
             info = {
                 "name": pname,
-                "type": (
-                    str(param.annotation.__name__)
-                    if param.annotation != inspect.Parameter.empty
-                    else "Any"
-                ),
+                "type": (str(param.annotation.__name__) if param.annotation != inspect.Parameter.empty else "Any"),
             }
             if param.default != inspect.Parameter.empty:
                 info["default"] = param.default
@@ -499,16 +492,11 @@ def use_unitree(
         # Get the method
         func = getattr(client, method, None)
         if func is None:
-            available = [
-                m for m in dir(client) if not m.startswith("_") and m != "Init"
-            ]
+            available = [m for m in dir(client) if not m.startswith("_") and m != "Init"]
             return {
                 "status": "error",
                 "content": [
-                    {
-                        "text": f"Method '{method}' not found on {robot}.{service}. "
-                        f"Available methods: {available}"
-                    }
+                    {"text": f"Method '{method}' not found on {robot}.{service}. Available methods: {available}"}
                 ],
             }
 
@@ -579,10 +567,7 @@ def _handle_discovery(action: str, parameters: Dict[str, Any]) -> Dict[str, Any]
             "content": [
                 {
                     "text": f"Supported Unitree robots ({len(robots)}):\n"
-                    + "\n".join(
-                        f"  • {r['name']} ({r['type']}) — {r['description']}"
-                        for r in robots
-                    ),
+                    + "\n".join(f"  • {r['name']} ({r['type']}) — {r['description']}" for r in robots),
                     "json": {"robots": robots},
                 }
             ],
@@ -594,9 +579,7 @@ def _handle_discovery(action: str, parameters: Dict[str, Any]) -> Dict[str, Any]
             return {
                 "status": "error",
                 "content": [
-                    {
-                        "text": 'Missing \'robot\' parameter. Example: list_services with parameters={"robot": "go2"}'
-                    }
+                    {"text": 'Missing \'robot\' parameter. Example: list_services with parameters={"robot": "go2"}'}
                 ],
             }
 
@@ -604,11 +587,7 @@ def _handle_discovery(action: str, parameters: Dict[str, Any]) -> Dict[str, Any]
         if not info:
             return {
                 "status": "error",
-                "content": [
-                    {
-                        "text": f"Unknown robot: {robot!r}. Available: {list(_ROBOT_INFO.keys())}"
-                    }
-                ],
+                "content": [{"text": f"Unknown robot: {robot!r}. Available: {list(_ROBOT_INFO.keys())}"}],
             }
 
         services = []
@@ -628,9 +607,7 @@ def _handle_discovery(action: str, parameters: Dict[str, Any]) -> Dict[str, Any]
             "content": [
                 {
                     "text": f"{robot} services ({len(services)}):\n"
-                    + "\n".join(
-                        f"  • {s['name']} → {s['client_class']}" for s in services
-                    ),
+                    + "\n".join(f"  • {s['name']} → {s['client_class']}" for s in services),
                     "json": {"robot": robot, "services": services},
                 }
             ],
@@ -653,11 +630,7 @@ def _handle_discovery(action: str, parameters: Dict[str, Any]) -> Dict[str, Any]
         if not methods:
             return {
                 "status": "error",
-                "content": [
-                    {
-                        "text": f"No methods found for {robot}.{service}. Check service name."
-                    }
-                ],
+                "content": [{"text": f"No methods found for {robot}.{service}. Check service name."}],
             }
 
         # Add gesture shortcuts for G1 arm
@@ -709,9 +682,7 @@ def _handle_discovery(action: str, parameters: Dict[str, Any]) -> Dict[str, Any]
         except ImportError:
             pass
 
-        status_emoji = (
-            "✅" if diag["sdk_installed"] and diag["cyclonedds_installed"] else "⚠️"
-        )
+        status_emoji = "✅" if diag["sdk_installed"] and diag["cyclonedds_installed"] else "⚠️"
         return {
             "status": "success",
             "content": [
@@ -732,8 +703,6 @@ def _handle_discovery(action: str, parameters: Dict[str, Any]) -> Dict[str, Any]
     return {
         "status": "error",
         "content": [
-            {
-                "text": f"Unknown discovery action: {action!r}. Try: list_robots, list_services, list_methods, diagnose"
-            }
+            {"text": f"Unknown discovery action: {action!r}. Try: list_robots, list_services, list_methods, diagnose"}
         ],
     }

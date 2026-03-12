@@ -59,9 +59,7 @@ def _create_env(backend, robot_name, task, max_steps_per_episode, render, kwargs
             )
         except Exception as e:
             logger.warning("Newton env creation failed: %s", e)
-            return _error_result(
-                provider_name, f"Newton environment creation failed: {e}"
-            )
+            return _error_result(provider_name, f"Newton environment creation failed: {e}")
 
     elif backend == "isaac":
         try:
@@ -84,14 +82,10 @@ def _create_env(backend, robot_name, task, max_steps_per_episode, render, kwargs
             return env
         except ImportError as e:
             logger.warning("Isaac backend not available: %s", e)
-            return _error_result(
-                provider_name, f"Isaac backend requires Isaac Sim: {e}"
-            )
+            return _error_result(provider_name, f"Isaac backend requires Isaac Sim: {e}")
         except Exception as e:
             logger.warning("Isaac env creation failed: %s", e)
-            return _error_result(
-                provider_name, f"Isaac environment creation failed: {e}"
-            )
+            return _error_result(provider_name, f"Isaac environment creation failed: {e}")
 
     else:
         try:
@@ -106,9 +100,7 @@ def _create_env(backend, robot_name, task, max_steps_per_episode, render, kwargs
             env_kwargs.update(kwargs)
             return StrandsSimEnv(**env_kwargs)
         except ImportError:
-            return _error_result(
-                provider_name, "gymnasium and mujoco required for evaluation"
-            )
+            return _error_result(provider_name, "gymnasium and mujoco required for evaluation")
 
 
 def evaluate(
@@ -179,9 +171,7 @@ def evaluate(
 
                 try:
                     if _async_loop is not None:
-                        actions = _async_loop.run_until_complete(
-                            policy.get_actions(obs_dict, task)
-                        )
+                        actions = _async_loop.run_until_complete(policy.get_actions(obs_dict, task))
                     else:
                         actions = policy.get_actions(obs_dict, task)
                 except Exception as e:
@@ -192,9 +182,7 @@ def evaluate(
                     action_dict = actions[0]
                     if isinstance(action_dict, dict):
                         action_vec = list(action_dict.values())
-                        action_vec = [
-                            v for v in action_vec if isinstance(v, (int, float))
-                        ]
+                        action_vec = [v for v in action_vec if isinstance(v, (int, float))]
                         action = np.array(action_vec, dtype=np.float32)
                     else:
                         action = np.array(action_dict, dtype=np.float32)

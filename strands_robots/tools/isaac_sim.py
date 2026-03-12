@@ -59,6 +59,7 @@ def _get_state_dir() -> str:
         _state_dir = tempfile.mkdtemp(prefix="strands_isaac_sim_")
     return _state_dir
 
+
 _isaac_env = None
 
 
@@ -80,9 +81,7 @@ def _get_backend(config_overrides: Optional[Dict] = None):
     if config_overrides:
         kwargs.update(config_overrides)
 
-    config = IsaacSimConfig(
-        **{k: v for k, v in kwargs.items() if hasattr(IsaacSimConfig, k)}
-    )
+    config = IsaacSimConfig(**{k: v for k, v in kwargs.items() if hasattr(IsaacSimConfig, k)})
     _backend = IsaacSimBackend(config)
     _backend_config = kwargs
     return _backend
@@ -268,9 +267,7 @@ def isaac_sim(
                 # Inline implementation if backend doesn't have it yet
                 pos = json.loads(position) if position else [0, 0, 0.5]
                 size = json.loads(object_size) if object_size else [0.1, 0.1, 0.1]
-                color = (
-                    json.loads(object_color) if object_color else [1.0, 0.0, 0.0, 1.0]
-                )
+                color = json.loads(object_color) if object_color else [1.0, 0.0, 0.0, 1.0]
 
                 text = (
                     f"📦 Object '{name or object_type}' queued\n"
@@ -385,9 +382,7 @@ def isaac_sim(
             if backend._robot is not None:
                 import torch
 
-                pos_tensor = torch.tensor(
-                    [positions], device=backend.config.device, dtype=torch.float32
-                )
+                pos_tensor = torch.tensor([positions], device=backend.config.device, dtype=torch.float32)
                 if backend.config.num_envs > 1:
                     pos_tensor = pos_tensor.expand(backend.config.num_envs, -1)
                 backend._robot.set_joint_position_target(pos_tensor)
@@ -483,30 +478,20 @@ def isaac_sim(
             for rtype, robots in sorted(by_type.items()):
                 lines.append(f"\n**{rtype.title()}** ({len(robots)}):")
                 for rname, info in robots:
-                    lines.append(
-                        f"  • `{rname}` — {info['joints']} joints ({info['source']})"
-                    )
+                    lines.append(f"  • `{rname}` — {info['joints']} joints ({info['source']})")
 
             lines.append(f"\nTotal: {len(_ISAAC_ROBOTS)} robots")
-            lines.append(
-                "\n💡 Use: isaac_sim(action='add_robot', robot_type='unitree_go2')"
-            )
+            lines.append("\n💡 Use: isaac_sim(action='add_robot', robot_type='unitree_go2')")
 
             # Also list strands-robots bundled robots that can be converted
             try:
                 from strands_robots.assets import list_available_robots
 
                 bundled = list_available_robots()
-                lines.append(
-                    f"\n📦 strands-robots bundled (MJCF, convertible to USD): {len(bundled)}"
-                )
+                lines.append(f"\n📦 strands-robots bundled (MJCF, convertible to USD): {len(bundled)}")
                 if bundled:
-                    names = [
-                        r["name"] if isinstance(r, dict) else r for r in bundled[:15]
-                    ]
-                    lines.append(
-                        f"  {', '.join(names)}{'...' if len(bundled) > 15 else ''}"
-                    )
+                    names = [r["name"] if isinstance(r, dict) else r for r in bundled[:15]]
+                    lines.append(f"  {', '.join(names)}{'...' if len(bundled) > 15 else ''}")
             except ImportError:
                 pass
 
@@ -528,15 +513,11 @@ def isaac_sim(
                 all_tasks = list_isaac_tasks()
                 extra = len(all_tasks) - len(_ISAAC_TASKS)
                 if extra > 0:
-                    lines.append(
-                        f"  + {extra} additional tasks discovered from Isaac Lab"
-                    )
+                    lines.append(f"  + {extra} additional tasks discovered from Isaac Lab")
             except ImportError:
                 pass
 
-            lines.append(
-                "\n💡 Use: isaac_sim(action='create_env', task='anymal_c_flat', num_envs=4096)"
-            )
+            lines.append("\n💡 Use: isaac_sim(action='create_env', task='anymal_c_flat', num_envs=4096)")
             return {"status": "success", "content": [{"text": "\n".join(lines)}]}
 
         # ── create_env ────────────────────────────────────────────

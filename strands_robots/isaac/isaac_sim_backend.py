@@ -244,10 +244,7 @@ class IsaacSimBackend:
         except ImportError:
             pass  # Will be handled when create_world() is called
 
-        logger.info(
-            f"🎮 Isaac Sim backend initialized "
-            f"(num_envs={self.config.num_envs}, device={self.config.device})"
-        )
+        logger.info(f"🎮 Isaac Sim backend initialized (num_envs={self.config.num_envs}, device={self.config.device})")
 
     def create_world(
         self,
@@ -269,9 +266,7 @@ class IsaacSimBackend:
 
             sim_cfg = SimulationCfg(
                 dt=self.config.physics_dt,
-                render_interval=max(
-                    1, int(self.config.rendering_dt / self.config.physics_dt)
-                ),
+                render_interval=max(1, int(self.config.rendering_dt / self.config.physics_dt)),
                 gravity=gravity or (0.0, 0.0, -9.81),
                 device=self.config.device,
             )
@@ -286,9 +281,7 @@ class IsaacSimBackend:
                 ground_cfg.func("/World/defaultGroundPlane", ground_cfg)
 
             # Add dome light
-            light_cfg = _sim_utils.DomeLightCfg(
-                intensity=2000.0, color=(0.75, 0.75, 0.75)
-            )
+            light_cfg = _sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
             light_cfg.func("/World/Light", light_cfg)
 
             self._envs_created = True
@@ -299,8 +292,8 @@ class IsaacSimBackend:
                     {
                         "text": (
                             f"🌍 Isaac Sim world created (GPU: {self.config.device})\n"
-                            f"⚙️ Physics: {1/self.config.physics_dt:.0f}Hz, "
-                            f"Render: {1/self.config.rendering_dt:.0f}Hz\n"
+                            f"⚙️ Physics: {1 / self.config.physics_dt:.0f}Hz, "
+                            f"Render: {1 / self.config.rendering_dt:.0f}Hz\n"
                             f"🔢 Parallel envs: {self.config.num_envs}\n"
                             f"💡 Use add_robot() to spawn robots"
                         )
@@ -367,9 +360,7 @@ class IsaacSimBackend:
 
             self._robot = Articulation(robot_cfg)
 
-            n_joints = (
-                self._robot.num_joints if hasattr(self._robot, "num_joints") else 0
-            )
+            n_joints = self._robot.num_joints if hasattr(self._robot, "num_joints") else 0
 
             return {
                 "status": "success",
@@ -406,7 +397,6 @@ class IsaacSimBackend:
             }
 
         try:
-
             if actions is not None and self._robot is not None:
                 self._robot.set_joint_position_target(actions)
 
@@ -514,14 +504,10 @@ class IsaacSimBackend:
             joint_pos = joint_pos.squeeze(0)
             joint_vel = joint_vel.squeeze(0)
 
-        joint_names = (
-            self._robot.joint_names if hasattr(self._robot, "joint_names") else []
-        )
+        joint_names = self._robot.joint_names if hasattr(self._robot, "joint_names") else []
         for i, name in enumerate(joint_names):
             if i < len(joint_pos):
-                obs[name] = (
-                    float(joint_pos[i]) if joint_pos.ndim == 1 else joint_pos[:, i]
-                )
+                obs[name] = float(joint_pos[i]) if joint_pos.ndim == 1 else joint_pos[:, i]
 
         return obs
 
@@ -544,11 +530,7 @@ class IsaacSimBackend:
 
         policy = create_policy(policy_provider, **policy_kwargs)
 
-        joint_names = (
-            self._robot.joint_names
-            if self._robot and hasattr(self._robot, "joint_names")
-            else []
-        )
+        joint_names = self._robot.joint_names if self._robot and hasattr(self._robot, "joint_names") else []
         policy.set_robot_state_keys(joint_names)
 
         start_time = time.time()
@@ -643,9 +625,7 @@ class IsaacSimBackend:
                     "ISAACLAB_NUCLEUS_DIR",
                     "omniverse://localhost/NVIDIA/Assets/Isaac/4.2",
                 )
-                return _ISAAC_ASSETS[data_config].replace(
-                    "ISAACLAB_NUCLEUS_DIR", nucleus_dir
-                )
+                return _ISAAC_ASSETS[data_config].replace("ISAACLAB_NUCLEUS_DIR", nucleus_dir)
             except Exception:
                 pass
 
@@ -812,9 +792,7 @@ class IsaacSimBackend:
                 # Already have ground plane from create_world
                 return {
                     "status": "success",
-                    "content": [
-                        {"text": "🏔️ Flat terrain (ground plane already present)"}
-                    ],
+                    "content": [{"text": "🏔️ Flat terrain (ground plane already present)"}],
                 }
 
             elif terrain_type in ("rough", "stairs", "pyramid_stairs", "wave"):
@@ -874,18 +852,14 @@ class IsaacSimBackend:
         try:
             import torch
 
-            pos_tensor = torch.tensor(
-                [positions], device=self.config.device, dtype=torch.float32
-            )
+            pos_tensor = torch.tensor([positions], device=self.config.device, dtype=torch.float32)
 
             if env_ids is not None:
                 idx = torch.tensor(env_ids, device=self.config.device)
                 # Only set for specific envs
                 current = self._robot.data.joint_pos.clone()
                 current[idx] = pos_tensor
-                self._robot.write_joint_state_to_sim(
-                    current, self._robot.data.joint_vel
-                )
+                self._robot.write_joint_state_to_sim(current, self._robot.data.joint_vel)
             else:
                 if self.config.num_envs > 1:
                     pos_tensor = pos_tensor.expand(self.config.num_envs, -1)
@@ -899,8 +873,7 @@ class IsaacSimBackend:
                 "content": [
                     {
                         "text": (
-                            f"🎯 Joint positions set ({len(positions)} joints)\n"
-                            f"  Envs: {env_ids if env_ids else 'all'}"
+                            f"🎯 Joint positions set ({len(positions)} joints)\n  Envs: {env_ids if env_ids else 'all'}"
                         )
                     }
                 ],
@@ -1000,9 +973,7 @@ class IsaacSimBackend:
                     # Reset specific envs to default joint positions
                     default_pos = self._robot.data.default_joint_pos[idx]
                     default_vel = self._robot.data.default_joint_vel[idx]
-                    self._robot.write_joint_state_to_sim(
-                        default_pos, default_vel, env_ids=idx
-                    )
+                    self._robot.write_joint_state_to_sim(default_pos, default_vel, env_ids=idx)
                     return {
                         "status": "success",
                         "content": [{"text": f"🔄 Reset {len(env_ids)} environments"}],
@@ -1017,9 +988,7 @@ class IsaacSimBackend:
             self._sim.reset()
             return {
                 "status": "success",
-                "content": [
-                    {"text": f"🔄 All {self.config.num_envs} environments reset"}
-                ],
+                "content": [{"text": f"🔄 All {self.config.num_envs} environments reset"}],
             }
 
         except Exception as e:

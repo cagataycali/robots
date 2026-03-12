@@ -269,11 +269,7 @@ class IsaacSimBridgeServer:
             self._backend = IsaacSimBackend(config=config)
             return {
                 "status": "success",
-                "content": [
-                    {
-                        "text": f"Isaac Sim backend initialized (num_envs={config.num_envs})"
-                    }
-                ],
+                "content": [{"text": f"Isaac Sim backend initialized (num_envs={config.num_envs})"}],
             }
 
         except Exception as e:
@@ -298,9 +294,7 @@ class IsaacSimBridgeServer:
             try:
                 self._sim_app.close()
             except Exception:
-                logger.debug(
-                    "Failed to close SimulationApp during cleanup", exc_info=True
-                )
+                logger.debug("Failed to close SimulationApp during cleanup", exc_info=True)
             self._sim_app = None
 
 
@@ -367,10 +361,7 @@ class IsaacSimBridgeClient:
         try:
             import zmq
         except ImportError:
-            raise ImportError(
-                "pyzmq is required for the Isaac Sim bridge.\n"
-                "Install with: pip install pyzmq"
-            )
+            raise ImportError("pyzmq is required for the Isaac Sim bridge.\nInstall with: pip install pyzmq")
 
         self._context = zmq.Context()
         self._socket = self._context.socket(zmq.REQ)
@@ -398,9 +389,7 @@ class IsaacSimBridgeClient:
         logger.error("Failed to connect within %ss", self.connect_timeout)
         return False
 
-    def call(
-        self, method: str, args: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
+    def call(self, method: str, args: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Call a method on the remote Isaac Sim backend.
 
         Args:
@@ -426,10 +415,7 @@ class IsaacSimBridgeClient:
 
             # Re-raise server exceptions
             if result.get("status") == "error" and "exception" in result:
-                logger.error(
-                    f"Server error in {method}: {result['exception']}\n"
-                    f"{result.get('traceback', '')}"
-                )
+                logger.error(f"Server error in {method}: {result['exception']}\n{result.get('traceback', '')}")
 
             return result
 
@@ -437,9 +423,7 @@ class IsaacSimBridgeClient:
             import zmq
 
             if isinstance(e, zmq.Again):
-                raise TimeoutError(
-                    f"Server timeout on {method} (>{self.request_timeout}ms)"
-                ) from e
+                raise TimeoutError(f"Server timeout on {method} (>{self.request_timeout}ms)") from e
             raise
 
     def init_backend(self, **config_kwargs) -> Dict[str, Any]:
@@ -472,9 +456,7 @@ class IsaacSimBridgeClient:
             try:
                 self._context.term()
             except Exception:
-                logger.debug(
-                    "Failed to terminate ZMQ context during cleanup", exc_info=True
-                )
+                logger.debug("Failed to terminate ZMQ context during cleanup", exc_info=True)
             self._context = None
 
         if self._server_process is not None:
@@ -482,15 +464,11 @@ class IsaacSimBridgeClient:
                 self._server_process.terminate()
                 self._server_process.wait(timeout=10)
             except Exception:
-                logger.debug(
-                    "Failed to terminate server process, sending SIGKILL", exc_info=True
-                )
+                logger.debug("Failed to terminate server process, sending SIGKILL", exc_info=True)
                 try:
                     self._server_process.kill()
                 except Exception:
-                    logger.debug(
-                        "Failed to kill server process during cleanup", exc_info=True
-                    )
+                    logger.debug("Failed to kill server process during cleanup", exc_info=True)
             self._server_process = None
 
         self._connected = False
@@ -518,8 +496,7 @@ class IsaacSimBridgeClient:
         python_sh = os.path.join(self.isaac_sim_path, "python.sh")
         if not os.path.isfile(python_sh):
             raise FileNotFoundError(
-                f"Isaac Sim python.sh not found at {python_sh}.\n"
-                f"Verify Isaac Sim is installed at {self.isaac_sim_path}"
+                f"Isaac Sim python.sh not found at {python_sh}.\nVerify Isaac Sim is installed at {self.isaac_sim_path}"
             )
 
         # Launch the server module
@@ -533,7 +510,7 @@ class IsaacSimBridgeClient:
             str(self.port),
         ]
 
-        logger.info("Spawning Isaac Sim bridge server: %s", ' '.join(cmd))
+        logger.info("Spawning Isaac Sim bridge server: %s", " ".join(cmd))
 
         self._server_process = subprocess.Popen(
             cmd,
@@ -543,9 +520,7 @@ class IsaacSimBridgeClient:
         )
 
         # Give the server time to start SimulationApp (~10-30s on first run)
-        logger.info(
-            "Waiting for Isaac Sim to initialize (may take 30-60s on first run)..."
-        )
+        logger.info("Waiting for Isaac Sim to initialize (may take 30-60s on first run)...")
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -576,9 +551,7 @@ Examples:
 
     args = parser.parse_args()
 
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s"
-    )
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 
     if args.mode == "server":
         server = IsaacSimBridgeServer(port=args.port, bind_address=args.bind)

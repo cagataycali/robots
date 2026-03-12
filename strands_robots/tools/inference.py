@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 _RUNNING: Dict[int, Dict[str, Any]] = {}
 _RUNNING_SERVICES = _RUNNING  # alias for tests
 
+
 # ---------------------------------------------------------------------------
 # Provider metadata (display only — actual model logic lives in policies/)
 # ---------------------------------------------------------------------------
@@ -39,10 +40,16 @@ def _build_providers():
     """Build provider display metadata from registry + local overrides."""
     try:
         from strands_robots.registry import get_policy_provider, list_policy_providers
+
         _display_overrides = {
             "dreamzero": {"proto": "websocket", "multi_gpu": True, "gpus": 2, "hf": "GEAR-Dreams/DreamZero-DROID"},
             "groot": {"proto": "zmq", "multi_gpu": False, "gpus": 1, "hf": ""},
-            "lerobot": {"proto": "grpc", "multi_gpu": False, "gpus": 1, "hf": "lerobot/act_aloha_sim_transfer_cube_human"},
+            "lerobot": {
+                "proto": "grpc",
+                "multi_gpu": False,
+                "gpus": 1,
+                "hf": "lerobot/act_aloha_sim_transfer_cube_human",
+            },
             "cosmos": {"proto": "http", "multi_gpu": True, "gpus": 1, "hf": "nvidia/Cosmos-Predict2.5-2B"},
             "gear_sonic": {"proto": "websocket", "multi_gpu": True, "gpus": 2, "hf": ""},
         }
@@ -64,6 +71,7 @@ def _build_providers():
         return providers
     except Exception:
         return {}
+
 
 PROVIDERS = _build_providers()
 
@@ -94,9 +102,7 @@ def _wait_for_port(port: int, timeout: int = 120, host: str = "localhost") -> bo
 
 def _find_pid_on_port(port: int) -> Optional[int]:
     try:
-        out = subprocess.run(
-            ["lsof", "-t", f"-i:{port}"], capture_output=True, text=True, timeout=5
-        )
+        out = subprocess.run(["lsof", "-t", f"-i:{port}"], capture_output=True, text=True, timeout=5)
         if out.returncode == 0 and out.stdout.strip():
             return int(out.stdout.strip().split("\n")[0])
     except Exception:
@@ -123,9 +129,7 @@ def _download_hf(model_id: str) -> str:
     """Download HuggingFace checkpoint, return local path."""
     if os.path.exists(model_id):
         return model_id
-    cache = os.path.expanduser(
-        f"~/.cache/strands_robots/checkpoints/{model_id.replace('/', '_')}"
-    )
+    cache = os.path.expanduser(f"~/.cache/strands_robots/checkpoints/{model_id.replace('/', '_')}")
     if os.path.isdir(cache) and os.listdir(cache):
         return cache
     logger.info("Downloading %s → %s", model_id, cache)
@@ -181,9 +185,7 @@ def _launch_torchrun(
     return {"pid": proc.pid, "cmd": " ".join(cmd)}
 
 
-def _launch_docker(
-    container: str, port: int, model_path: str, host: str, extra_flags: list
-) -> Dict:
+def _launch_docker(container: str, port: int, model_path: str, host: str, extra_flags: list) -> Dict:
     """Launch inside an existing Docker container (GR00T)."""
     cmd = [
         "docker",
@@ -217,9 +219,7 @@ def _launch_lerobot(model_id: str, port: int, device: str) -> Dict:
         "--device",
         device,
     ]
-    proc = subprocess.Popen(
-        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True
-    )
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
     return {"pid": proc.pid, "cmd": " ".join(cmd)}
 
 
@@ -312,9 +312,7 @@ def _start_provider(
     """Route to the correct launcher based on provider."""
 
     if provider == "dreamzero":
-        result = _start_dreamzero(
-            model_id, port, num_gpus, host, {**kwargs, "gpu_ids": gpu_ids}
-        )
+        result = _start_dreamzero(model_id, port, num_gpus, host, {**kwargs, "gpu_ids": gpu_ids})
         return {
             "pid": result.get("pid"),
             "container": result.get("container"),
@@ -410,21 +408,13 @@ def inference(
         if not cfg:
             return {
                 "status": "error",
-                "content": [
-                    {
-                        "text": f"Unknown provider: {provider}. Available: {', '.join(PROVIDER_CONFIGS)}"
-                    }
-                ],
+                "content": [{"text": f"Unknown provider: {provider}. Available: {', '.join(PROVIDER_CONFIGS)}"}],
             }
         return {
             "status": "success",
             "provider": provider,
             "config": cfg,
-            "content": [
-                {
-                    "text": f"{cfg['display_name']} — {cfg['protocol']} on port {cfg['default_port']}"
-                }
-            ],
+            "content": [{"text": f"{cfg['display_name']} — {cfg['protocol']} on port {cfg['default_port']}"}],
         }
 
     # ── providers ──────────────────────────────────────────────────────
@@ -433,9 +423,7 @@ def inference(
         for key, cfg in PROVIDERS.items():
             gpu = f"multi-GPU ({cfg['gpus']})" if cfg["multi_gpu"] else "single GPU"
             hf = f" [{cfg['hf']}]" if cfg["hf"] else ""
-            lines.append(
-                f"  • {key:15s} | {cfg['name']:40s} | {cfg['proto'].upper():9s} | {gpu}{hf}"
-            )
+            lines.append(f"  • {key:15s} | {cfg['name']:40s} | {cfg['proto'].upper():9s} | {gpu}{hf}")
         lines.append(f"\n{len(PROVIDERS)} providers")
         return {"status": "success", "content": [{"text": "\n".join(lines)}]}
 
@@ -446,8 +434,8 @@ def inference(
             alive = _is_port_in_use(svc_port)
             icon = "✅" if alive else "❌"
             lines.append(
-                f"  {icon} :{svc_port} | {info.get('provider','?'):15s} | "
-                f"{info.get('proto','?'):9s} | pid={info.get('pid','?')}"
+                f"  {icon} :{svc_port} | {info.get('provider', '?'):15s} | "
+                f"{info.get('proto', '?'):9s} | pid={info.get('pid', '?')}"
             )
         # Scan common ports for unregistered services
         scan = {5555, 8000, 8001, 8002, 8003, 8004, 8005, 8006, 8007, 8008, 8009, 50051}
@@ -501,11 +489,7 @@ def inference(
         stopped = not _is_port_in_use(port)
         return {
             "status": "success" if stopped else "warning",
-            "content": [
-                {
-                    "text": f"Port {port} {'stopped' if stopped else 'may still be running'}"
-                }
-            ],
+            "content": [{"text": f"Port {port} {'stopped' if stopped else 'may still be running'}"}],
         }
 
     # ── download ───────────────────────────────────────────────────────
@@ -532,11 +516,7 @@ def inference(
         if not cfg:
             return {
                 "status": "error",
-                "content": [
-                    {
-                        "text": f"Unknown provider: {provider}. Available: {', '.join(PROVIDERS)}"
-                    }
-                ],
+                "content": [{"text": f"Unknown provider: {provider}. Available: {', '.join(PROVIDERS)}"}],
             }
 
         port = port or cfg["port"]
@@ -551,11 +531,7 @@ def inference(
         if _is_port_in_use(port):
             return {
                 "status": "error",
-                "content": [
-                    {
-                        "text": f"Port {port} in use. Stop first: inference(action='stop', port={port})"
-                    }
-                ],
+                "content": [{"text": f"Port {port} in use. Stop first: inference(action='stop', port={port})"}],
             }
 
         gpu_str = gpu_ids or ",".join(str(i) for i in range(num_gpus))
@@ -576,9 +552,7 @@ def inference(
 
         logger.info("Starting %s on :%s (%s GPU)", provider, port, num_gpus)
         try:
-            result = _start_provider(
-                provider, checkpoint, port, host, num_gpus, gpu_str, kwargs
-            )
+            result = _start_provider(provider, checkpoint, port, host, num_gpus, gpu_str, kwargs)
         except Exception as e:
             return {"status": "error", "content": [{"text": f"Launch failed: {e}"}]}
 
@@ -628,11 +602,7 @@ def inference(
 
     return {
         "status": "error",
-        "content": [
-            {
-                "text": f"Unknown action: {action}. Valid: start, stop, status, info, list, providers, download"
-            }
-        ],
+        "content": [{"text": f"Unknown action: {action}. Valid: start, stop, status, info, list, providers, download"}],
     }
 
 
@@ -717,18 +687,14 @@ def _download_checkpoint(model_id: str, local_dir: str = None) -> str:
     return _download_hf(model_id)
 
 
-def _generate_hf_serve_script(
-    model_id: str, port: int, host: str, provider: str
-) -> str:
+def _generate_hf_serve_script(model_id: str, port: int, host: str, provider: str) -> str:
     """Generate an HTTP serve script, return path."""
     result = _launch_http_serve(model_id, port, host, provider)
     # Extract script path from the command
     return result["cmd"].replace("python ", "")
 
 
-def _start_dreamzero(
-    model_id: str, port: int, num_gpus: int, host: str, kwargs: Dict
-) -> Dict:
+def _start_dreamzero(model_id: str, port: int, num_gpus: int, host: str, kwargs: Dict) -> Dict:
     """Test-compatible wrapper around _launch_torchrun for DreamZero."""
     try:
         if model_id and os.path.exists(model_id):
@@ -760,9 +726,7 @@ def _start_dreamzero(
     }
 
 
-def _start_groot(
-    model_id: str, port: int, num_gpus: int, host: str, kwargs: Dict
-) -> Dict:
+def _start_groot(model_id: str, port: int, num_gpus: int, host: str, kwargs: Dict) -> Dict:
     """Test-compatible wrapper around _launch_docker for GR00T."""
     container = kwargs.get("container_name")
     if not container:
@@ -773,12 +737,8 @@ def _start_groot(
                 text=True,
                 timeout=10,
             )
-            for line in (out.stdout.strip().split("\n") if out.returncode == 0 else []):
-                if (
-                    line
-                    and ("isaac" in line.lower() or "gr00t" in line.lower())
-                    and "Up" in line
-                ):
+            for line in out.stdout.strip().split("\n") if out.returncode == 0 else []:
+                if line and ("isaac" in line.lower() or "gr00t" in line.lower()) and "Up" in line:
                     container = line.split("\t")[0]
                     break
         except Exception:
@@ -825,9 +785,7 @@ def _start_groot(
         return {"status": "error", "message": str(e), "command": ""}
 
 
-def _start_lerobot(
-    model_id: str, port: int, num_gpus: int, host: str, kwargs: Dict
-) -> Dict:
+def _start_lerobot(model_id: str, port: int, num_gpus: int, host: str, kwargs: Dict) -> Dict:
     """Test-compatible wrapper for LeRobot launch."""
     pretrained = kwargs.get("pretrained_name_or_path") or model_id
     device = kwargs.get("device", "cuda")
@@ -842,15 +800,11 @@ def _start_lerobot(
         "--device",
         device,
     ]
-    proc = subprocess.Popen(
-        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True
-    )
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
     return {"status": "starting", "pid": proc.pid, "command": " ".join(cmd)}
 
 
-def _start_generic_hf(
-    provider: str, model_id: str, port: int, num_gpus: int, host: str, kwargs: Dict
-) -> Dict:
+def _start_generic_hf(provider: str, model_id: str, port: int, num_gpus: int, host: str, kwargs: Dict) -> Dict:
     """Test-compatible wrapper for generic HF model launch."""
     if not model_id:
         return {"status": "error", "message": "No model ID provided"}
@@ -860,9 +814,7 @@ def _start_generic_hf(
         env["CUDA_VISIBLE_DEVICES"] = ",".join(str(i) for i in range(num_gpus))
     # Re-launch with env if needed
     if env:
-        script = os.path.join(
-            "/tmp/strands_robots_inference", f"serve_{provider}_{port}.py"
-        )
+        script = os.path.join("/tmp/strands_robots_inference", f"serve_{provider}_{port}.py")
         proc = subprocess.Popen(
             ["python", script],
             stdout=subprocess.PIPE,

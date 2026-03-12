@@ -36,14 +36,13 @@ def _auto_detect_mode(canonical: str) -> str:
             servo_keywords = ["feetech", "dynamixel", "sts3215", "xl430", "xl330"]
             exclude = ["bluetooth", "internal", "debug", "apple", "modem"]
             robot_ports = [
-                p for p in ports
-                if any(kw in (p.description + getattr(p, "manufacturer", "")).lower()
-                       for kw in servo_keywords)
+                p
+                for p in ports
+                if any(kw in (p.description + getattr(p, "manufacturer", "")).lower() for kw in servo_keywords)
                 and not any(s in p.description.lower() for s in exclude)
             ]
             if robot_ports:
-                logger.info("Auto-detected robot hardware: %s",
-                            [p.device for p in robot_ports])
+                logger.info("Auto-detected robot hardware: %s", [p.device for p in robot_ports])
                 return "real"
         except (ImportError, Exception):
             pass
@@ -101,6 +100,7 @@ def Robot(
                 IsaacSimBackend,
                 IsaacSimConfig,
             )
+
             config = IsaacSimConfig(
                 num_envs=num_envs,
                 device=kwargs.pop("device", "cuda:0"),
@@ -118,6 +118,7 @@ def Robot(
 
         elif backend == "newton":
             from strands_robots.newton.newton_backend import NewtonBackend, NewtonConfig
+
             solver = kwargs.pop("solver", "mujoco")
             config = NewtonConfig(
                 num_envs=num_envs,
@@ -137,10 +138,7 @@ def Robot(
                 position=tuple(position) if position else (0.0, 0.0, 0.0),
             )
             if result.get("status") == "error":
-                raise RuntimeError(
-                    f"Failed to create Newton robot '{canonical}': "
-                    f"{result.get('message', result)}"
-                )
+                raise RuntimeError(f"Failed to create Newton robot '{canonical}': {result.get('message', result)}")
             if num_envs > 1:
                 newton_backend.replicate(num_envs=num_envs)
             return newton_backend
@@ -148,16 +146,18 @@ def Robot(
         else:
             # MuJoCo CPU backend (default)
             from strands_robots.simulation import Simulation
+
             sim_name = canonical
-            sim = Simulation(
-                tool_name=f"{canonical}_sim", mesh=mesh, peer_id=peer_id, **kwargs
-            )
+            sim = Simulation(tool_name=f"{canonical}_sim", mesh=mesh, peer_id=peer_id, **kwargs)
             sim._dispatch_action("create_world", {})
-            result = sim._dispatch_action("add_robot", {
-                "robot_name": canonical,
-                "data_config": sim_name,
-                "position": position or [0.0, 0.0, 0.0],
-            })
+            result = sim._dispatch_action(
+                "add_robot",
+                {
+                    "robot_name": canonical,
+                    "data_config": sim_name,
+                    "position": position or [0.0, 0.0, 0.0],
+                },
+            )
             if result.get("status") == "error":
                 raise RuntimeError(f"Failed to create sim robot '{canonical}': {result}")
             return sim
@@ -165,6 +165,7 @@ def Robot(
     # ── Real hardware ──
     else:
         from strands_robots.robot import Robot as HardwareRobot
+
         real_type = get_hardware_type(canonical) or canonical
         return HardwareRobot(
             tool_name=canonical,
@@ -174,7 +175,6 @@ def Robot(
             peer_id=peer_id,
             **kwargs,
         )
-
 
 
 def list_robots(mode: str = "all") -> List[Dict[str, Any]]:

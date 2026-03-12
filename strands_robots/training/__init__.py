@@ -113,9 +113,7 @@ def create_trainer(provider: str, **kwargs) -> Trainer:
     }
 
     if provider not in providers:
-        raise ValueError(
-            f"Unknown trainer provider: {provider}. Available: {list(providers.keys())}"
-        )
+        raise ValueError(f"Unknown trainer provider: {provider}. Available: {list(providers.keys())}")
 
     # ── Extract TrainConfig fields from kwargs ──
     config_field_names = {f.name for f in _dc.fields(TrainConfig)}
@@ -133,10 +131,7 @@ def create_trainer(provider: str, **kwargs) -> Trainer:
             for k, v in config_overrides.items():
                 setattr(explicit_config, k, v)
         else:
-            if (
-                "dataset_path" in remaining_kwargs
-                and "dataset_path" not in config_overrides
-            ):
+            if "dataset_path" in remaining_kwargs and "dataset_path" not in config_overrides:
                 config_overrides["dataset_path"] = remaining_kwargs["dataset_path"]
             remaining_kwargs["config"] = TrainConfig(**config_overrides)
 

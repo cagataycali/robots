@@ -51,8 +51,7 @@ def _import_lerobot():
         return _OpenCVCameraConfig, _RobotConfig, _LeRobotRobot, _make_robot
     except ImportError as e:
         raise ImportError(
-            f"LeRobot is required for Robot but could not be imported: {e}. "
-            "Install it with: pip install lerobot"
+            f"LeRobot is required for Robot but could not be imported: {e}. Install it with: pip install lerobot"
         ) from e
 
 
@@ -136,21 +135,15 @@ class Robot(AgentTool):
 
         # Task execution state
         self._task_state = RobotTaskState()
-        self._executor = ThreadPoolExecutor(
-            max_workers=1, thread_name_prefix=f"{tool_name}_executor"
-        )
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"{tool_name}_executor")
         self._shutdown_event = threading.Event()
 
         # Initialize robot using lerobot's abstraction
         self.robot = self._initialize_robot(robot, cameras, **kwargs)
 
         logger.info("🤖 %s initialized with async capabilities", tool_name)
-        logger.info(
-            f"📱 Robot: {self.robot.name} (type: {getattr(self.robot, 'robot_type', 'unknown')})"
-        )
-        logger.info(
-            f"⏱️ Control frequency: {control_frequency}Hz ({self.action_sleep_time*1000:.1f}ms per action)"
-        )
+        logger.info(f"📱 Robot: {self.robot.name} (type: {getattr(self.robot, 'robot_type', 'unknown')})")
+        logger.info(f"⏱️ Control frequency: {control_frequency}Hz ({self.action_sleep_time * 1000:.1f}ms per action)")
 
         # Get camera info if available
         if hasattr(self.robot, "config") and hasattr(self.robot.config, "cameras"):
@@ -180,9 +173,7 @@ class Robot(AgentTool):
         **kwargs,
     ) -> LeRobotRobot:
         """Initialize LeRobot robot instance using native lerobot patterns."""
-        _OpenCVCameraConfig, _RobotConfig, _LeRobotRobot, _make_robot = (
-            _import_lerobot()
-        )
+        _OpenCVCameraConfig, _RobotConfig, _LeRobotRobot, _make_robot = _import_lerobot()
 
         # Direct robot instance - use as-is
         if isinstance(robot, _LeRobotRobot):
@@ -212,9 +203,7 @@ class Robot(AgentTool):
         *Config classes that are RobotConfig subclasses. Any robot LeRobot
         supports, we support.
         """
-        _OpenCVCameraConfig, _RobotConfig, _LeRobotRobot, _make_robot = (
-            _import_lerobot()
-        )
+        _OpenCVCameraConfig, _RobotConfig, _LeRobotRobot, _make_robot = _import_lerobot()
 
         # Convert cameras to lerobot format
         camera_configs = {}
@@ -322,11 +311,7 @@ class Robot(AgentTool):
         # Strategy 3: Fuzzy match — module name contains robot_type parts
         for class_name, cls, modname in candidates:
             type_parts = robot_type_lower.split("_")
-            if all(
-                part in modname.lower() or part in class_name.lower()
-                for part in type_parts
-                if len(part) > 2
-            ):
+            if all(part in modname.lower() or part in class_name.lower() for part in type_parts if len(part) > 2):
                 return cls
 
         available = sorted(set(name for name, _, _ in candidates))
@@ -395,9 +380,7 @@ class Robot(AgentTool):
             # Handle robot connection using lerobot's error handling patterns
             try:
                 if not self.robot.is_connected:
-                    await asyncio.to_thread(
-                        self.robot.connect, False
-                    )  # calibrate=False
+                    await asyncio.to_thread(self.robot.connect, False)  # calibrate=False
 
             except DeviceAlreadyConnectedError:
                 # This is expected and fine - robot is already connected
@@ -433,16 +416,12 @@ class Robot(AgentTool):
         """Initialize policy with robot state keys."""
         try:
             if self._action_features:
-                robot_state_keys = [
-                    k for k, v in self._action_features.items() if v is float
-                ]
+                robot_state_keys = [k for k, v in self._action_features.items() if v is float]
             else:
                 # Fallback: get from observation
                 test_obs = await asyncio.to_thread(self.robot.get_observation)
                 camera_keys = []
-                if hasattr(self.robot, "config") and hasattr(
-                    self.robot.config, "cameras"
-                ):
+                if hasattr(self.robot, "config") and hasattr(self.robot.config, "cameras"):
                     camera_keys = list(self.robot.config.cameras.keys())
                 robot_state_keys = [k for k in test_obs.keys() if k not in camera_keys]
 
@@ -479,8 +458,7 @@ class Robot(AgentTool):
             if not connected:
                 self._task_state.update(
                     status=TaskStatus.ERROR,
-                    error_message=connect_error
-                    or f"Failed to connect to {self.tool_name_str}",
+                    error_message=connect_error or f"Failed to connect to {self.tool_name_str}",
                 )
                 return
 
@@ -511,14 +489,11 @@ class Robot(AgentTool):
                 and self._task_state.status == TaskStatus.RUNNING
                 and not self._shutdown_event.is_set()
             ):
-
                 # Get observation from robot
                 observation = await asyncio.to_thread(self.robot.get_observation)
 
                 # Get actions from policy
-                robot_actions = await policy_instance.get_actions(
-                    observation, instruction
-                )
+                robot_actions = await policy_instance.get_actions(observation, instruction)
 
                 # Execute actions from chunk with proper timing control
                 # Wait between actions for smooth execution
@@ -596,11 +571,7 @@ class Robot(AgentTool):
 
         # Return final status
         return {
-            "status": (
-                "success"
-                if self._task_state.status == TaskStatus.COMPLETED
-                else "error"
-            ),
+            "status": ("success" if self._task_state.status == TaskStatus.COMPLETED else "error"),
             "content": [
                 {
                     "text": f"✅ Task: '{instruction}' - {self._task_state.status.value}\n"
@@ -608,11 +579,7 @@ class Robot(AgentTool):
                     f"🧠 Policy: {policy_display}\n"
                     f"⏱️ Duration: {self._task_state.duration:.1f}s\n"
                     f"🎯 Steps: {self._task_state.step_count}"
-                    + (
-                        f"\n❌ Error: {self._task_state.error_message}"
-                        if self._task_state.error_message
-                        else ""
-                    )
+                    + (f"\n❌ Error: {self._task_state.error_message}" if self._task_state.error_message else "")
                 }
             ],
         }
@@ -632,9 +599,7 @@ class Robot(AgentTool):
         if self._task_state.status == TaskStatus.RUNNING:
             return {
                 "status": "error",
-                "content": [
-                    {"text": f"❌ Task already running: {self._task_state.instruction}"}
-                ],
+                "content": [{"text": f"❌ Task already running: {self._task_state.instruction}"}],
             }
 
         # Start task in background
@@ -698,11 +663,7 @@ class Robot(AgentTool):
         if self._task_state.status != TaskStatus.RUNNING:
             return {
                 "status": "success",
-                "content": [
-                    {
-                        "text": f"💤 No task running to stop (current: {self._task_state.status.value})"
-                    }
-                ],
+                "content": [{"text": f"💤 No task running to stop (current: {self._task_state.status.value})"}],
             }
 
         # Signal task to stop
@@ -767,15 +728,14 @@ class Robot(AgentTool):
         try:
             from .dataset_recorder import DatasetRecorder, has_lerobot_dataset
         except ImportError:
+
             def has_lerobot_dataset():
                 return False
 
         if not has_lerobot_dataset():
             return {
                 "status": "error",
-                "content": [
-                    {"text": "lerobot not installed. Install with: pip install lerobot"}
-                ],
+                "content": [{"text": "lerobot not installed. Install with: pip install lerobot"}],
             }
 
         import asyncio
@@ -806,14 +766,10 @@ class Robot(AgentTool):
                 camera_keys = list(self.robot.config.cameras.keys())
 
             # Get robot type
-            robot_type = getattr(
-                self.robot, "robot_type", getattr(self.robot, "name", "unknown")
-            )
+            robot_type = getattr(self.robot, "robot_type", getattr(self.robot, "name", "unknown"))
 
             # Get joint names from action features
-            joint_names = (
-                list(self._action_features.keys()) if self._action_features else None
-            )
+            joint_names = list(self._action_features.keys()) if self._action_features else None
             if not joint_names:
                 # Fallback: get from observation
                 test_obs = await asyncio.to_thread(self.robot.get_observation)
@@ -846,9 +802,7 @@ class Robot(AgentTool):
                     observation = await asyncio.to_thread(self.robot.get_observation)
 
                     # Get actions from policy
-                    robot_actions = await policy_instance.get_actions(
-                        observation, instruction
-                    )
+                    robot_actions = await policy_instance.get_actions(observation, instruction)
 
                     # Execute actions
                     for action_dict in robot_actions[: self.action_horizon]:
@@ -931,17 +885,11 @@ class Robot(AgentTool):
             try:
                 from .dataset_recorder import load_lerobot_episode
 
-                ds, episode_start, episode_length = load_lerobot_episode(
-                    repo_id, episode, root
-                )
+                ds, episode_start, episode_length = load_lerobot_episode(repo_id, episode, root)
             except ImportError:
                 return {
                     "status": "error",
-                    "content": [
-                        {
-                            "text": "❌ lerobot not installed. Install: pip install lerobot"
-                        }
-                    ],
+                    "content": [{"text": "❌ lerobot not installed. Install: pip install lerobot"}],
                 }
             except (ValueError, Exception) as e:
                 return {
@@ -980,10 +928,7 @@ class Robot(AgentTool):
 
             try:
                 for frame_idx in range(episode_length):
-                    if (
-                        self._task_state.status != TaskStatus.RUNNING
-                        or self._shutdown_event.is_set()
-                    ):
+                    if self._task_state.status != TaskStatus.RUNNING or self._shutdown_event.is_set():
                         break
 
                     step_start = time.time()
@@ -1009,16 +954,10 @@ class Robot(AgentTool):
                             action_tensor = action_dict["action"]
                             if not isinstance(action_tensor, torch.Tensor):
                                 action_tensor = torch.tensor(
-                                    (
-                                        action_tensor
-                                        if isinstance(action_tensor, list)
-                                        else np.asarray(action_tensor)
-                                    ),
+                                    (action_tensor if isinstance(action_tensor, list) else np.asarray(action_tensor)),
                                     dtype=torch.float32,
                                 )
-                            await asyncio.to_thread(
-                                self.robot.send_action, action_tensor
-                            )
+                            await asyncio.to_thread(self.robot.send_action, action_tensor)
 
                     frames_sent += 1
 
@@ -1258,11 +1197,7 @@ class Robot(AgentTool):
                         {
                             "toolUseId": tool_use_id,
                             "status": "error",
-                            "content": [
-                                {
-                                    "text": "❌ instruction is required for execute/start action"
-                                }
-                            ],
+                            "content": [{"text": "❌ instruction is required for execute/start action"}],
                         }
                     )
                     return
@@ -1277,27 +1212,17 @@ class Robot(AgentTool):
                         {
                             "toolUseId": tool_use_id,
                             "status": "error",
-                            "content": [
-                                {
-                                    "text": f"❌ policy_port or server_address required for {policy_provider}"
-                                }
-                            ],
+                            "content": [{"text": f"❌ policy_port or server_address required for {policy_provider}"}],
                         }
                     )
                     return
 
-                if policy_provider == "dreamgen" and not policy_kwargs.get(
-                    "model_path"
-                ):
+                if policy_provider == "dreamgen" and not policy_kwargs.get("model_path"):
                     yield ToolResultEvent(
                         {
                             "toolUseId": tool_use_id,
                             "status": "error",
-                            "content": [
-                                {
-                                    "text": "❌ model_path is required for dreamgen provider"
-                                }
-                            ],
+                            "content": [{"text": "❌ model_path is required for dreamgen provider"}],
                         }
                     )
                     return
@@ -1363,9 +1288,7 @@ class Robot(AgentTool):
                         {
                             "toolUseId": tool_use_id,
                             "status": "error",
-                            "content": [
-                                {"text": "❌ instruction is required for record action"}
-                            ],
+                            "content": [{"text": "❌ instruction is required for record action"}],
                         }
                     )
                     return
@@ -1396,9 +1319,7 @@ class Robot(AgentTool):
                         {
                             "toolUseId": tool_use_id,
                             "status": "error",
-                            "content": [
-                                {"text": "❌ repo_id required for replay action"}
-                            ],
+                            "content": [{"text": "❌ repo_id required for replay action"}],
                         }
                     )
                     return
@@ -1472,16 +1393,8 @@ class Robot(AgentTool):
     async def get_status(self) -> Dict[str, Any]:
         """Get robot status including connection and task state."""
         try:
-            is_connected = (
-                self.robot.is_connected
-                if hasattr(self.robot, "is_connected")
-                else False
-            )
-            is_calibrated = (
-                self.robot.is_calibrated
-                if hasattr(self.robot, "is_calibrated")
-                else True
-            )
+            is_connected = self.robot.is_connected if hasattr(self.robot, "is_connected") else False
+            is_calibrated = self.robot.is_calibrated if hasattr(self.robot, "is_calibrated") else True
 
             camera_status = []
             if hasattr(self.robot, "config") and hasattr(self.robot.config, "cameras"):

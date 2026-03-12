@@ -75,9 +75,7 @@ class CosmosTrainer(Trainer):
             # cosmos_oss.__file__ is <repo>/packages/cosmos-oss/cosmos_oss/__init__.py
             # repo root is 3 parents up
             oss_init = os.path.abspath(_oss.__file__)
-            repo_root = os.path.dirname(
-                os.path.dirname(os.path.dirname(os.path.dirname(oss_init)))
-            )
+            repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(oss_init))))
             candidate_paths.append(os.path.join(repo_root, "scripts", "train.py"))
         except (ImportError, AttributeError, TypeError):
             pass
@@ -226,11 +224,7 @@ class CosmosTrainer(Trainer):
         cmd.append(f"experiment={self.config_name}")
         cmd.append(f"trainer.max_iter={self.config.max_steps}")
         cmd.append(f"checkpoint.save_iter={self.config.save_steps}")
-        cmd.append(
-            "job.wandb_mode=disabled"
-            if not self.config.use_wandb
-            else "job.wandb_mode=online"
-        )
+        cmd.append("job.wandb_mode=disabled" if not self.config.use_wandb else "job.wandb_mode=online")
 
         if self.base_model_path:
             cmd.append(f"checkpoint.load_path={self.base_model_path}")
@@ -246,11 +240,9 @@ class CosmosTrainer(Trainer):
         logger.info("   Config: %s", config_file)
         logger.info("   Experiment: %s", self.config_name)
         logger.info("   GPUs: %s, Steps: %s", num_gpus, self.config.max_steps)
-        logger.info("   Command: %s...", ' '.join(cmd[:8]))
+        logger.info("   Command: %s...", " ".join(cmd[:8]))
 
-        sub_env = _build_cosmos_subprocess_env(
-            script_path, extra_env_vars=["COSMOS_PREDICT2_PATH"]
-        )
+        sub_env = _build_cosmos_subprocess_env(script_path, extra_env_vars=["COSMOS_PREDICT2_PATH"])
         cwd = None
         if script_path and os.path.isfile(script_path):
             cwd = os.path.dirname(os.path.dirname(os.path.abspath(script_path)))

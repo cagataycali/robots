@@ -66,9 +66,7 @@ class CosmosTransferTrainer(Trainer):
             cosmos_root = os.environ.get(env_var)
             if cosmos_root:
                 candidate_paths.append(os.path.join(cosmos_root, "scripts", "train.py"))
-                candidate_paths.append(
-                    os.path.join(cosmos_root, "scripts", "finetune.py")
-                )
+                candidate_paths.append(os.path.join(cosmos_root, "scripts", "finetune.py"))
                 candidate_paths.append(os.path.join(cosmos_root, "train.py"))
 
         candidate_paths.extend(
@@ -135,20 +133,14 @@ class CosmosTransferTrainer(Trainer):
         self.extra_kwargs = kwargs
 
         if self.control_type not in self.VALID_CONTROL_TYPES:
-            raise ValueError(
-                f"Invalid control_type '{self.control_type}'. "
-                f"Must be one of: {self.VALID_CONTROL_TYPES}"
-            )
+            raise ValueError(f"Invalid control_type '{self.control_type}'. Must be one of: {self.VALID_CONTROL_TYPES}")
 
         if self.mode not in self.VALID_MODES:
-            raise ValueError(
-                f"Invalid mode '{self.mode}'. " f"Must be one of: {self.VALID_MODES}"
-            )
+            raise ValueError(f"Invalid mode '{self.mode}'. Must be one of: {self.VALID_MODES}")
 
         if self.output_resolution not in ("480", "720", "1080"):
             raise ValueError(
-                f"Invalid output_resolution '{self.output_resolution}'. "
-                f"Must be one of: '480', '720', '1080'"
+                f"Invalid output_resolution '{self.output_resolution}'. Must be one of: '480', '720', '1080'"
             )
 
         if self.use_lora:
@@ -262,11 +254,7 @@ class CosmosTransferTrainer(Trainer):
         cmd.append(f"experiment={self.config_name}")
         cmd.append(f"trainer.max_iter={self.config.max_steps}")
         cmd.append(f"checkpoint.save_iter={self.config.save_steps}")
-        cmd.append(
-            "job.wandb_mode=disabled"
-            if not self.config.use_wandb
-            else "job.wandb_mode=online"
-        )
+        cmd.append("job.wandb_mode=disabled" if not self.config.use_wandb else "job.wandb_mode=online")
 
         if self.base_model_path:
             cmd.append(f"checkpoint.load_path={self.base_model_path}")
@@ -282,8 +270,7 @@ class CosmosTransferTrainer(Trainer):
         if self.mode == "control_finetuning":
             if not self.freeze_backbone:
                 logger.warning(
-                    "control_finetuning mode requires freeze_backbone=True. "
-                    "Overriding freeze_backbone=False."
+                    "control_finetuning mode requires freeze_backbone=True. Overriding freeze_backbone=False."
                 )
             cmd.append("model.freeze_backbone=True")
             cmd.append("model.freeze_controlnet=False")
@@ -308,7 +295,7 @@ class CosmosTransferTrainer(Trainer):
         logger.info("   Experiment: %s", self.config_name)
         logger.info("   Control: %s, Weight: %s", self.control_type, self.control_weight)
         logger.info("   GPUs: %s, Steps: %s", num_gpus, self.config.max_steps)
-        logger.info("   Command: %s...", ' '.join(cmd[:8]))
+        logger.info("   Command: %s...", " ".join(cmd[:8]))
 
         sub_env = _build_cosmos_subprocess_env(
             script_path,
@@ -330,7 +317,5 @@ class CosmosTransferTrainer(Trainer):
 
     def evaluate(self, checkpoint_path: str = None, **kwargs) -> Dict[str, Any]:
         """Evaluate a post-trained Cosmos Transfer checkpoint."""
-        logger.info(
-            "📊 Cosmos Transfer evaluation — use cosmos-transfer2.5 eval scripts"
-        )
+        logger.info("📊 Cosmos Transfer evaluation — use cosmos-transfer2.5 eval scripts")
         return {"provider": "cosmos_transfer", "status": "not_implemented"}

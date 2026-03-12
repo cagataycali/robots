@@ -76,6 +76,7 @@ from strands_robots._async_utils import _resolve_coroutine
 try:
     from .dataset_recorder import DatasetRecorder, has_lerobot_dataset
 except ImportError:
+
     def has_lerobot_dataset():
         return False
 
@@ -131,9 +132,7 @@ def _configure_gl_backend() -> None:
     Never overrides a user-set MUJOCO_GL value.
     """
     if os.environ.get("MUJOCO_GL"):
-        logger.debug(
-            f"MUJOCO_GL already set to '{os.environ['MUJOCO_GL']}', respecting user config"
-        )
+        logger.debug(f"MUJOCO_GL already set to '{os.environ['MUJOCO_GL']}', respecting user config")
         return
 
     if not _is_headless():
@@ -146,9 +145,7 @@ def _configure_gl_backend() -> None:
     try:
         ctypes.cdll.LoadLibrary("libEGL.so.1")
         os.environ["MUJOCO_GL"] = "egl"
-        logger.info(
-            "Headless environment detected — using MUJOCO_GL=egl (GPU-accelerated offscreen)"
-        )
+        logger.info("Headless environment detected — using MUJOCO_GL=egl (GPU-accelerated offscreen)")
         return
     except OSError:
         pass
@@ -157,9 +154,7 @@ def _configure_gl_backend() -> None:
     try:
         ctypes.cdll.LoadLibrary("libOSMesa.so")
         os.environ["MUJOCO_GL"] = "osmesa"
-        logger.info(
-            "Headless environment detected — using MUJOCO_GL=osmesa (CPU software rendering)"
-        )
+        logger.info("Headless environment detected — using MUJOCO_GL=osmesa (CPU software rendering)")
         return
     except OSError:
         pass
@@ -194,7 +189,7 @@ def _ensure_mujoco():
                 "  pip install strands-robots[sim]\n"
                 "Or: pip install mujoco"
             )
-    if _mujoco_viewer is None:
+    if _mujoco_viewer is None and not _is_headless():
         try:
             import mujoco.viewer as viewer
 
@@ -226,6 +221,7 @@ try:
         format_robot_table as _format_robot_table,
         resolve_model_path as _resolve_menagerie_model,
     )
+
     _HAS_ASSET_MANAGER = True
 except ImportError:
     _HAS_ASSET_MANAGER = False
@@ -308,6 +304,7 @@ def resolve_urdf(data_config: str) -> Optional[str]:
     # 2. Check registry robots.json for legacy_urdf
     try:
         from strands_robots.registry import get_robot, resolve_name
+
         canonical = resolve_name(data_config)
         info = get_robot(canonical)
         if info and "legacy_urdf" in info:
@@ -373,9 +370,7 @@ class SimRobot:
     name: str
     urdf_path: str
     position: List[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
-    orientation: List[float] = field(
-        default_factory=lambda: [1.0, 0.0, 0.0, 0.0]
-    )  # wxyz quat
+    orientation: List[float] = field(default_factory=lambda: [1.0, 0.0, 0.0, 0.0])  # wxyz quat
     data_config: Optional[str] = None
     body_id: int = -1
     joint_ids: List[int] = field(default_factory=list)
@@ -494,9 +489,7 @@ class MJCFBuilder:
         parts.append('  <compiler angle="radian" autolimits="true"/>')
 
         gx, gy, gz = world.gravity
-        parts.append(
-            f'  <option timestep="{world.timestep}" gravity="{gx} {gy} {gz}"/>'
-        )
+        parts.append(f'  <option timestep="{world.timestep}" gravity="{gx} {gy} {gz}"/>')
 
         parts.append("  <visual>")
         parts.append('    <global offwidth="1280" offheight="960"/>')
@@ -509,38 +502,26 @@ class MJCFBuilder:
             '    <texture type="2d" name="grid_tex" builtin="checker" '
             'width="512" height="512" rgb1=".9 .9 .9" rgb2=".7 .7 .7"/>'
         )
-        parts.append(
-            '    <material name="grid_mat" texture="grid_tex" texrepeat="8 8" reflectance="0.1"/>'
-        )
+        parts.append('    <material name="grid_mat" texture="grid_tex" texrepeat="8 8" reflectance="0.1"/>')
         for obj in world.objects.values():
             if obj.shape == "mesh" and obj.mesh_path:
-                parts.append(
-                    f'    <mesh name="mesh_{obj.name}" file="{obj.mesh_path}"/>'
-                )
+                parts.append(f'    <mesh name="mesh_{obj.name}" file="{obj.mesh_path}"/>')
         parts.append("  </asset>")
 
         # Worldbody
         parts.append("  <worldbody>")
-        parts.append(
-            '    <light name="main_light" pos="0 0 3" dir="0 0 -1" diffuse="1 1 1" specular="0.3 0.3 0.3"/>'
-        )
-        parts.append(
-            '    <light name="fill_light" pos="1 1 2" dir="-0.5 -0.5 -1" diffuse="0.5 0.5 0.5"/>'
-        )
+        parts.append('    <light name="main_light" pos="0 0 3" dir="0 0 -1" diffuse="1 1 1" specular="0.3 0.3 0.3"/>')
+        parts.append('    <light name="fill_light" pos="1 1 2" dir="-0.5 -0.5 -1" diffuse="0.5 0.5 0.5"/>')
 
         if world.ground_plane:
             parts.append(
-                '    <geom name="ground" type="plane" size="5 5 0.01" '
-                'material="grid_mat" conaffinity="1" condim="3"/>'
+                '    <geom name="ground" type="plane" size="5 5 0.01" material="grid_mat" conaffinity="1" condim="3"/>'
             )
 
         # Cameras
         for cam in world.cameras.values():
             px, py, pz = cam.position
-            parts.append(
-                f'    <camera name="{cam.name}" pos="{px} {py} {pz}" '
-                f'fovy="{cam.fov}" mode="fixed"/>'
-            )
+            parts.append(f'    <camera name="{cam.name}" pos="{px} {py} {pz}" fovy="{cam.fov}" mode="fixed"/>')
 
         # Objects
         for obj in world.objects.values():
@@ -560,17 +541,11 @@ class MJCFBuilder:
         r, g, b, a = obj.color
         lines = []
 
-        lines.append(
-            f'{pad}<body name="{obj.name}" pos="{px} {py} {pz}" '
-            f'quat="{qw} {qx} {qy} {qz}">'
-        )
+        lines.append(f'{pad}<body name="{obj.name}" pos="{px} {py} {pz}" quat="{qw} {qx} {qy} {qz}">')
 
         if not obj.is_static:
             lines.append(f'{pad}  <freejoint name="{obj.name}_joint"/>')
-            lines.append(
-                f'{pad}  <inertial pos="0 0 0" mass="{obj.mass}" '
-                f'diaginertia="0.001 0.001 0.001"/>'
-            )
+            lines.append(f'{pad}  <inertial pos="0 0 0" mass="{obj.mass}" diaginertia="0.001 0.001 0.001"/>')
 
         if obj.shape == "box":
             sx, sy, sz = [s / 2 for s in obj.size]
@@ -581,8 +556,7 @@ class MJCFBuilder:
         elif obj.shape == "sphere":
             radius = obj.size[0] / 2 if obj.size else 0.025
             lines.append(
-                f'{pad}  <geom name="{obj.name}_geom" type="sphere" size="{radius}" '
-                f'rgba="{r} {g} {b} {a}" condim="3"/>'
+                f'{pad}  <geom name="{obj.name}_geom" type="sphere" size="{radius}" rgba="{r} {g} {b} {a}" condim="3"/>'
             )
         elif obj.shape == "cylinder":
             radius = obj.size[0] / 2 if obj.size else 0.025
@@ -607,8 +581,7 @@ class MJCFBuilder:
             sx = obj.size[0] if obj.size else 1.0
             sy = obj.size[1] if len(obj.size) > 1 else sx
             lines.append(
-                f'{pad}  <geom name="{obj.name}_geom" type="plane" size="{sx} {sy} 0.01" '
-                f'rgba="{r} {g} {b} {a}"/>'
+                f'{pad}  <geom name="{obj.name}_geom" type="plane" size="{sx} {sy} 0.01" rgba="{r} {g} {b} {a}"/>'
             )
 
         lines.append(f"{pad}</body>")
@@ -657,9 +630,7 @@ class MJCFBuilder:
         parts.append('  <compiler angle="radian" autolimits="true" meshdir="."/>')
 
         gx, gy, gz = world.gravity
-        parts.append(
-            f'  <option timestep="{world.timestep}" gravity="{gx} {gy} {gz}"/>'
-        )
+        parts.append(f'  <option timestep="{world.timestep}" gravity="{gx} {gy} {gz}"/>')
 
         parts.append("  <visual>")
         parts.append('    <global offwidth="1280" offheight="960"/>')
@@ -672,36 +643,25 @@ class MJCFBuilder:
             '    <texture type="2d" name="grid_tex" builtin="checker" '
             'width="512" height="512" rgb1=".9 .9 .9" rgb2=".7 .7 .7"/>'
         )
-        parts.append(
-            '    <material name="grid_mat" texture="grid_tex" texrepeat="8 8" reflectance="0.1"/>'
-        )
+        parts.append('    <material name="grid_mat" texture="grid_tex" texrepeat="8 8" reflectance="0.1"/>')
         for obj in objects.values():
             if obj.shape == "mesh" and obj.mesh_path:
-                parts.append(
-                    f'    <mesh name="mesh_{obj.name}" file="{obj.mesh_path}"/>'
-                )
+                parts.append(f'    <mesh name="mesh_{obj.name}" file="{obj.mesh_path}"/>')
         parts.append("  </asset>")
 
         parts.append("  <worldbody>")
-        parts.append(
-            '    <light name="main_light" pos="0 0 3" dir="0 0 -1" diffuse="1 1 1" specular="0.3 0.3 0.3"/>'
-        )
-        parts.append(
-            '    <light name="fill_light" pos="1 1 2" dir="-0.5 -0.5 -1" diffuse="0.5 0.5 0.5"/>'
-        )
+        parts.append('    <light name="main_light" pos="0 0 3" dir="0 0 -1" diffuse="1 1 1" specular="0.3 0.3 0.3"/>')
+        parts.append('    <light name="fill_light" pos="1 1 2" dir="-0.5 -0.5 -1" diffuse="0.5 0.5 0.5"/>')
 
         if world.ground_plane:
             parts.append(
-                '    <geom name="ground" type="plane" size="5 5 0.01" '
-                'material="grid_mat" conaffinity="1" condim="3"/>'
+                '    <geom name="ground" type="plane" size="5 5 0.01" material="grid_mat" conaffinity="1" condim="3"/>'
             )
 
         # Cameras
         for cam in cameras.values():
             px, py, pz = cam.position
-            parts.append(
-                f'    <camera name="{cam.name}" pos="{px} {py} {pz}" fovy="{cam.fov}" mode="fixed"/>'
-            )
+            parts.append(f'    <camera name="{cam.name}" pos="{px} {py} {pz}" fovy="{cam.fov}" mode="fixed"/>')
 
         # Robot includes — each wrapped in a body at configured position
         for robot_name, robot in robots.items():
@@ -813,9 +773,7 @@ class Simulation(AgentTool):
 
         # World state
         self._world: Optional[SimWorld] = None
-        self._executor = ThreadPoolExecutor(
-            max_workers=4, thread_name_prefix=f"{tool_name}_sim"
-        )
+        self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix=f"{tool_name}_sim")
         self._policy_threads: Dict[str, Future] = {}
         self._shutdown_event = threading.Event()
         self._lock = threading.Lock()
@@ -874,9 +832,7 @@ class Simulation(AgentTool):
     # Robot-compatible interface — get_observation / send_action
     # -------------------------------------------------------------------
 
-    def get_observation(
-        self, robot_name: str = None, camera_name: str = None
-    ) -> Dict[str, Any]:
+    def get_observation(self, robot_name: str = None, camera_name: str = None) -> Dict[str, Any]:
         """Get observation from simulation (Robot ABC compatible).
 
         This mirrors the real robot's get_observation() interface, making
@@ -911,9 +867,7 @@ class Simulation(AgentTool):
 
         return self._get_sim_observation(robot_name, cam_name=camera_name)
 
-    def send_action(
-        self, action: Dict[str, Any], robot_name: str = None, n_substeps: int = 1
-    ) -> None:
+    def send_action(self, action: Dict[str, Any], robot_name: str = None, n_substeps: int = 1) -> None:
         """Apply action to simulation (Robot ABC compatible).
 
         This mirrors the real robot's send_action() interface, making
@@ -958,6 +912,7 @@ class Simulation(AgentTool):
         """Return robot count without triggering asset downloads."""
         try:
             from strands_robots.registry import list_robots as _registry_list_robots
+
             return len(_registry_list_robots(mode="sim"))
         except ImportError:
             return len(_URDF_REGISTRY)
@@ -974,11 +929,7 @@ class Simulation(AgentTool):
         if self._world is not None and self._world._model is not None:
             return {
                 "status": "error",
-                "content": [
-                    {
-                        "text": "❌ World already exists. Use action='destroy' first, or action='reset'."
-                    }
-                ],
+                "content": [{"text": "❌ World already exists. Use action='destroy' first, or action='reset'."}],
             }
 
         # Normalize gravity: accept scalar (e.g. -9.81) or 3-element list
@@ -1014,7 +965,7 @@ class Simulation(AgentTool):
                 {
                     "text": (
                         "🌍 Simulation world created\n"
-                        f"⚙️ Timestep: {self._world.timestep}s ({1/self._world.timestep:.0f}Hz physics)\n"
+                        f"⚙️ Timestep: {self._world.timestep}s ({1 / self._world.timestep:.0f}Hz physics)\n"
                         f"🌐 Gravity: {self._world.gravity}\n"
                         f"📷 Default camera ready\n"
                         f"🤖 Robot models: {self._cheap_robot_count()} available\n"
@@ -1159,9 +1110,10 @@ class Simulation(AgentTool):
             download_robots(names=[canonical], force=True)
         except Exception as e:
             logger.warning(
-                "Auto-download failed for '%s': %s. "
-                "Try manually: python -m strands_robots.assets.download %s",
-                robot_name, e, robot_name,
+                "Auto-download failed for '%s': %s. Try manually: python -m strands_robots.assets.download %s",
+                robot_name,
+                e,
+                robot_name,
             )
 
     def add_robot(
@@ -1221,9 +1173,7 @@ class Simulation(AgentTool):
         if not resolved_path:
             return {
                 "status": "error",
-                "content": [
-                    {"text": "❌ Either urdf_path or data_config is required."}
-                ],
+                "content": [{"text": "❌ Either urdf_path or data_config is required."}],
             }
 
         if not os.path.exists(resolved_path):
@@ -1300,11 +1250,7 @@ class Simulation(AgentTool):
                 mj.mj_step(model, data)
 
             logger.info("Robot '%s' added from %s", name, os.path.basename(resolved_path))
-            source = (
-                f"data_config='{data_config}'"
-                if data_config
-                else os.path.basename(resolved_path)
-            )
+            source = f"data_config='{data_config}'" if data_config else os.path.basename(resolved_path)
             return {
                 "status": "success",
                 "content": [
@@ -1456,15 +1402,11 @@ class Simulation(AgentTool):
                 if result:
                     return {
                         "status": "success",
-                        "content": [
-                            {"text": f"📦 '{name}' spawned: {shape} at {obj.position}"}
-                        ],
+                        "content": [{"text": f"📦 '{name}' spawned: {shape} at {obj.position}"}],
                     }
                 else:
                     # Fallback: metadata only
-                    logger.info(
-                        f"Object '{name}' registered (injection returned False — metadata only)"
-                    )
+                    logger.info(f"Object '{name}' registered (injection returned False — metadata only)")
                     return {
                         "status": "success",
                         "content": [
@@ -1530,9 +1472,7 @@ class Simulation(AgentTool):
         # Determine the original model directory for mesh resolution
         robot_base_dir = None
         if self._world._robot_base_xml:
-            robot_base_dir = os.path.dirname(
-                os.path.abspath(self._world._robot_base_xml)
-            )
+            robot_base_dir = os.path.dirname(os.path.abspath(self._world._robot_base_xml))
 
         # Always use tempdir to avoid polluting shared asset directories.
         # Set meshdir in XML to point back to original asset dir for mesh resolution.
@@ -1709,9 +1649,7 @@ class Simulation(AgentTool):
                         removed = True
 
             if not removed:
-                logger.warning(
-                    f"Body '{body_name}' not found in MJCF XML — skipping ejection."
-                )
+                logger.warning(f"Body '{body_name}' not found in MJCF XML — skipping ejection.")
 
             # Remove keyframes — their qpos sizes become invalid after body removal
             # (MuJoCo keyframes embed fixed-size qpos arrays that must match njnt)
@@ -1736,7 +1674,7 @@ class Simulation(AgentTool):
             self._world._data = new_data
             return True
         except Exception as e:
-            logger.error("Body ejection failed for \'%s\': %s", body_name, e)
+            logger.error("Body ejection failed for '%s': %s", body_name, e)
             # Fallback to recompile (lossy but at least works)
             self._recompile_world()
             return False
@@ -1745,9 +1683,7 @@ class Simulation(AgentTool):
 
             shutil.rmtree(tmpdir, ignore_errors=True)
 
-    def move_object(
-        self, name: str, position: List[float] = None, orientation: List[float] = None
-    ) -> Dict[str, Any]:
+    def move_object(self, name: str, position: List[float] = None, orientation: List[float] = None) -> Dict[str, Any]:
         if self._world is None or self._world._data is None:
             return {"status": "error", "content": [{"text": "❌ No simulation."}]}
         if name not in self._world.objects:
@@ -1781,10 +1717,7 @@ class Simulation(AgentTool):
 
         lines = ["📦 Objects:\n"]
         for name, obj in self._world.objects.items():
-            lines.append(
-                f"  • {name}: {obj.shape} at {obj.position}, "
-                f"{'static' if obj.is_static else f'{obj.mass}kg'}"
-            )
+            lines.append(f"  • {name}: {obj.shape} at {obj.position}, {'static' if obj.is_static else f'{obj.mass}kg'}")
         return {"status": "success", "content": [{"text": "\n".join(lines)}]}
 
     # -------------------------------------------------------------------
@@ -1819,9 +1752,7 @@ class Simulation(AgentTool):
             try:
                 self._inject_camera_into_scene(cam)
             except Exception as e:
-                logger.warning(
-                    f"Camera injection failed: {e}. Camera tracked as metadata only."
-                )
+                logger.warning(f"Camera injection failed: {e}. Camera tracked as metadata only.")
         else:
             self._recompile_world()
 
@@ -1849,9 +1780,7 @@ class Simulation(AgentTool):
 
         robot_base_dir = None
         if self._world._robot_base_xml:
-            robot_base_dir = os.path.dirname(
-                os.path.abspath(self._world._robot_base_xml)
-            )
+            robot_base_dir = os.path.dirname(os.path.abspath(self._world._robot_base_xml))
 
         if robot_base_dir and os.path.isdir(robot_base_dir):
             scene_path = os.path.join(robot_base_dir, "_strands_scene_with_cameras.xml")
@@ -1938,14 +1867,10 @@ class Simulation(AgentTool):
             self._renderers.clear()
             self._renderer_model = self._world._model
         if key not in self._renderers:
-            self._renderers[key] = mj.Renderer(
-                self._world._model, height=height, width=width
-            )
+            self._renderers[key] = mj.Renderer(self._world._model, height=height, width=width)
         return self._renderers[key]
 
-    def _get_sim_observation(
-        self, robot_name: str, cam_name: str = None
-    ) -> Dict[str, Any]:
+    def _get_sim_observation(self, robot_name: str, cam_name: str = None) -> Dict[str, Any]:
         """Get observation from sim (same format as real robot).
 
         Args:
@@ -1967,32 +1892,34 @@ class Simulation(AgentTool):
         if cam_name:
             cameras_to_render = [cam_name]
         else:
-            # Render all scene cameras
-            cameras_to_render = [
-                mj.mj_id2name(model, mj.mjtObj.mjOBJ_CAMERA, i)
-                for i in range(model.ncam)
-            ]
+            # Render all scene cameras (from MuJoCo model)
+            cameras_to_render = [mj.mj_id2name(model, mj.mjtObj.mjOBJ_CAMERA, i) for i in range(model.ncam)]
+            # Also include Python-level cameras not in the model (e.g. 'default' free camera)
+            for pycam_name in self._world.cameras:
+                if pycam_name not in cameras_to_render:
+                    cameras_to_render.append(pycam_name)
 
         for cname in cameras_to_render:
             if not cname:
                 continue
             cam_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_CAMERA, cname)
-            if cam_id >= 0:
-                cam_info = self._world.cameras.get(cname)
-                h = cam_info.height if cam_info else self.default_height
-                w = cam_info.width if cam_info else self.default_width
-                try:
-                    renderer = self._get_renderer(w, h)
+            cam_info = self._world.cameras.get(cname)
+            h = cam_info.height if cam_info else self.default_height
+            w = cam_info.width if cam_info else self.default_width
+            try:
+                renderer = self._get_renderer(w, h)
+                if cam_id >= 0:
                     renderer.update_scene(data, camera=cam_id)
-                    obs[cname] = renderer.render().copy()
-                except Exception as e:
-                    logger.debug("Camera render failed for %s: %s", cname, e)
+                else:
+                    # Free camera fallback (same as render() method)
+                    renderer.update_scene(data)
+                obs[cname] = renderer.render().copy()
+            except Exception as e:
+                logger.debug("Camera render failed for %s: %s", cname, e)
 
         return obs
 
-    def _apply_sim_action(
-        self, robot_name: str, action_dict: Dict[str, Any], n_substeps: int = 1
-    ):
+    def _apply_sim_action(self, robot_name: str, action_dict: Dict[str, Any], n_substeps: int = 1):
         """Apply action dict to sim (same interface as robot.send_action).
 
         Args:
@@ -2074,11 +2001,7 @@ class Simulation(AgentTool):
                                 timestamp=time.time(),
                                 sim_time=self._world.sim_time,
                                 robot_name=robot_name,
-                                observation={
-                                    k: v
-                                    for k, v in observation.items()
-                                    if not isinstance(v, np.ndarray)
-                                },
+                                observation={k: v for k, v in observation.items() if not isinstance(v, np.ndarray)},
                                 action=action_dict,
                                 instruction=instruction,
                             )
@@ -2167,9 +2090,7 @@ class Simulation(AgentTool):
     # Rendering & Observation
     # -------------------------------------------------------------------
 
-    def render(
-        self, camera_name: str = "default", width: int = None, height: int = None
-    ) -> Dict[str, Any]:
+    def render(self, camera_name: str = "default", width: int = None, height: int = None) -> Dict[str, Any]:
         """Render a camera view as base64 PNG image.
 
         Args:
@@ -2189,9 +2110,7 @@ class Simulation(AgentTool):
             renderer = self._get_renderer(w, h)
 
             # Try to use named camera
-            cam_id = mj.mj_name2id(
-                self._world._model, mj.mjtObj.mjOBJ_CAMERA, camera_name
-            )
+            cam_id = mj.mj_name2id(self._world._model, mj.mjtObj.mjOBJ_CAMERA, camera_name)
             if cam_id >= 0:
                 renderer.update_scene(self._world._data, camera=cam_id)
             else:
@@ -2210,18 +2129,14 @@ class Simulation(AgentTool):
             return {
                 "status": "success",
                 "content": [
-                    {
-                        "text": f"📸 {w}x{h} from '{camera_name}' at t={self._world.sim_time:.3f}s"
-                    },
+                    {"text": f"📸 {w}x{h} from '{camera_name}' at t={self._world.sim_time:.3f}s"},
                     {"image": {"format": "png", "source": {"bytes": png_bytes}}},
                 ],
             }
         except Exception as e:
             return {"status": "error", "content": [{"text": f"❌ Render failed: {e}"}]}
 
-    def render_depth(
-        self, camera_name: str = "default", width: int = None, height: int = None
-    ) -> Dict[str, Any]:
+    def render_depth(self, camera_name: str = "default", width: int = None, height: int = None) -> Dict[str, Any]:
         """Render depth map from a camera."""
         if self._world is None or self._world._model is None:
             return {"status": "error", "content": [{"text": "❌ No simulation."}]}
@@ -2233,9 +2148,7 @@ class Simulation(AgentTool):
         try:
             cam_id = -1
             if camera_name and camera_name != "default":
-                cam_id = mj.mj_name2id(
-                    self._world._model, mj.mjtObj.mjOBJ_CAMERA, camera_name
-                )
+                cam_id = mj.mj_name2id(self._world._model, mj.mjtObj.mjOBJ_CAMERA, camera_name)
 
             renderer = self._get_renderer(w, h)
             if cam_id >= 0:
@@ -2279,15 +2192,9 @@ class Simulation(AgentTool):
         contacts = []
         for i in range(data.ncon):
             c = data.contact[i]
-            g1 = (
-                mj.mj_id2name(model, mj.mjtObj.mjOBJ_GEOM, c.geom1) or f"geom_{c.geom1}"
-            )
-            g2 = (
-                mj.mj_id2name(model, mj.mjtObj.mjOBJ_GEOM, c.geom2) or f"geom_{c.geom2}"
-            )
-            contacts.append(
-                {"geom1": g1, "geom2": g2, "dist": float(c.dist), "pos": c.pos.tolist()}
-            )
+            g1 = mj.mj_id2name(model, mj.mjtObj.mjOBJ_GEOM, c.geom1) or f"geom_{c.geom1}"
+            g2 = mj.mj_id2name(model, mj.mjtObj.mjOBJ_GEOM, c.geom2) or f"geom_{c.geom2}"
+            contacts.append({"geom1": g1, "geom2": g2, "dist": float(c.dist), "pos": c.pos.tolist()})
 
         text = f"💥 {len(contacts)} contacts" if contacts else "No contacts."
         if contacts:
@@ -2317,9 +2224,7 @@ class Simulation(AgentTool):
         return {
             "status": "success",
             "content": [
-                {
-                    "text": f"⏩ +{n_steps} steps | t={self._world.sim_time:.4f}s | total={self._world.step_count}"
-                }
+                {"text": f"⏩ +{n_steps} steps | t={self._world.sim_time:.4f}s | total={self._world.step_count}"}
             ],
         }
 
@@ -2389,7 +2294,7 @@ class Simulation(AgentTool):
         self._world.timestep = timestep
         return {
             "status": "success",
-            "content": [{"text": f"⏱️ Timestep: {timestep}s ({1/timestep:.0f}Hz)"}],
+            "content": [{"text": f"⏱️ Timestep: {timestep}s ({1 / timestep:.0f}Hz)"}],
         }
 
     # -------------------------------------------------------------------
@@ -2442,9 +2347,7 @@ class Simulation(AgentTool):
             for i in range(model.ngeom):
                 geom_name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_GEOM, i)
                 if geom_name and geom_name != "ground":
-                    model.geom_rgba[i, :3] = rng.uniform(
-                        color_range[0], color_range[1], size=3
-                    )
+                    model.geom_rgba[i, :3] = rng.uniform(color_range[0], color_range[1], size=3)
             changes.append(f"🎨 Colors: {model.ngeom} geoms randomized")
 
         # Randomize lighting
@@ -2464,9 +2367,7 @@ class Simulation(AgentTool):
             for i in range(model.nbody):
                 if model.body_mass[i] > 0:
                     model.body_mass[i] *= rng.uniform(*mass_range)
-            changes.append(
-                f"⚙️ Physics: friction×[{friction_range}], mass×[{mass_range}]"
-            )
+            changes.append(f"⚙️ Physics: friction×[{friction_range}], mass×[{mass_range}]")
 
         # Randomize object positions
         if randomize_positions:
@@ -2483,9 +2384,7 @@ class Simulation(AgentTool):
 
         return {
             "status": "success",
-            "content": [
-                {"text": "🎲 Domain Randomization applied:\n" + "\n".join(changes)}
-            ],
+            "content": [{"text": "🎲 Domain Randomization applied:\n" + "\n".join(changes)}],
         }
 
     # -------------------------------------------------------------------
@@ -2523,6 +2422,7 @@ class Simulation(AgentTool):
             from .dataset_recorder import DatasetRecorder as _DatasetRecorder
             from .dataset_recorder import has_lerobot_dataset as _has_lerobot
         except ImportError:
+
             def _has_lerobot():
                 return False
 
@@ -2533,8 +2433,7 @@ class Simulation(AgentTool):
                 "content": [
                     {
                         "text": (
-                            "lerobot not installed. Install with: pip install lerobot\n"
-                            "Required for dataset recording."
+                            "lerobot not installed. Install with: pip install lerobot\nRequired for dataset recording."
                         )
                     }
                 ],
@@ -2553,16 +2452,10 @@ class Simulation(AgentTool):
                 # repo_id could be a path or a HF-style "user/dataset"
                 if root:
                     dataset_dir = _Path(root)
-                elif (
-                    "/" not in repo_id
-                    or repo_id.startswith("/")
-                    or repo_id.startswith("./")
-                ):
+                elif "/" not in repo_id or repo_id.startswith("/") or repo_id.startswith("./"):
                     dataset_dir = _Path(repo_id)
                 else:
-                    dataset_dir = (
-                        _Path.home() / ".cache" / "huggingface" / "lerobot" / repo_id
-                    )
+                    dataset_dir = _Path.home() / ".cache" / "huggingface" / "lerobot" / repo_id
                 if dataset_dir.exists() and dataset_dir.is_dir():
                     shutil.rmtree(dataset_dir)
                     logger.info("Removed existing dataset dir: %s", dataset_dir)
@@ -2661,11 +2554,7 @@ class Simulation(AgentTool):
 
         return {
             "status": "success",
-            "content": [
-                {
-                    "text": f"{'🔴 Recording' if recording else '⚪ Not recording'}: {steps} steps captured"
-                }
-            ],
+            "content": [{"text": f"{'🔴 Recording' if recording else '⚪ Not recording'}: {steps} steps captured"}],
         }
 
     # -------------------------------------------------------------------
@@ -2732,9 +2621,7 @@ class Simulation(AgentTool):
         if output_path is None:
             output_dir = os.path.join(tempfile.gettempdir(), "strands_sim")
             os.makedirs(output_dir, exist_ok=True)
-            output_path = os.path.join(
-                output_dir, f"video_{robot_name}_{int(time.time())}.mp4"
-            )
+            output_path = os.path.join(output_dir, f"video_{robot_name}_{int(time.time())}.mp4")
 
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
@@ -2761,13 +2648,9 @@ class Simulation(AgentTool):
             dt = 1.0 / fps
             phys_per_frame = max(1, int(dt / model.opt.timestep))
 
-            logger.info(
-                f"Recording {total_frames} frames at {fps}fps, {phys_per_frame} physics steps/frame"
-            )
+            logger.info(f"Recording {total_frames} frames at {fps}fps, {phys_per_frame} physics steps/frame")
 
-            writer = imageio.get_writer(
-                output_path, fps=fps, quality=8, macro_block_size=1
-            )
+            writer = imageio.get_writer(output_path, fps=fps, quality=8, macro_block_size=1)
             robot.policy_running = True
             robot.policy_instruction = instruction
             robot.policy_steps = 0
@@ -2779,9 +2662,7 @@ class Simulation(AgentTool):
                     break
 
                 # Get observation (with camera)
-                observation = self._get_sim_observation(
-                    robot_name, cam_name=camera_name
-                )
+                observation = self._get_sim_observation(robot_name, cam_name=camera_name)
 
                 # Policy inference — use _resolve_coroutine helper
                 try:
@@ -2793,9 +2674,7 @@ class Simulation(AgentTool):
 
                 # Apply first action
                 if actions:
-                    self._apply_sim_action(
-                        robot_name, actions[0], n_substeps=phys_per_frame
-                    )
+                    self._apply_sim_action(robot_name, actions[0], n_substeps=phys_per_frame)
                     robot.policy_steps += 1
                 else:
                     # Just step physics
@@ -2816,9 +2695,7 @@ class Simulation(AgentTool):
                 if (frame_idx + 1) % 60 == 0:
                     elapsed = time.time() - start_time
                     real_fps = (frame_idx + 1) / elapsed
-                    logger.info(
-                        f"  frame {frame_idx+1}/{total_frames} | {elapsed:.1f}s | {real_fps:.1f} fps"
-                    )
+                    logger.info(f"  frame {frame_idx + 1}/{total_frames} | {elapsed:.1f}s | {real_fps:.1f} fps")
 
             writer.close()
             robot.policy_running = False
@@ -2835,16 +2712,10 @@ class Simulation(AgentTool):
                         CosmosTransferPipeline,
                     )
 
-                    prompt = (
-                        cosmos_prompt
-                        or instruction
-                        or f"Robot {robot_name} performing task in modern workspace"
-                    )
+                    prompt = cosmos_prompt or instruction or f"Robot {robot_name} performing task in modern workspace"
                     cosmos_out_path = output_path.replace(".mp4", "_photorealistic.mp4")
 
-                    logger.info(
-                        f"🎬 Running Cosmos Transfer 2.5 ({cosmos_control}) → {cosmos_out_path}"
-                    )
+                    logger.info(f"🎬 Running Cosmos Transfer 2.5 ({cosmos_control}) → {cosmos_out_path}")
 
                     config = CosmosTransferConfig(control_type=cosmos_control)
                     pipeline = CosmosTransferPipeline(config=config)
@@ -2855,20 +2726,12 @@ class Simulation(AgentTool):
                     )
 
                     cosmos_output = cosmos_out_path
-                    cosmos_kb = (
-                        os.path.getsize(cosmos_out_path) / 1024
-                        if os.path.exists(cosmos_out_path)
-                        else 0
-                    )
+                    cosmos_kb = os.path.getsize(cosmos_out_path) / 1024 if os.path.exists(cosmos_out_path) else 0
                     logger.info("🎬 Cosmos Transfer complete: %.0f KB", cosmos_kb)
                 except ImportError:
-                    logger.warning(
-                        "Cosmos Transfer not available (missing deps). Skipping."
-                    )
+                    logger.warning("Cosmos Transfer not available (missing deps). Skipping.")
                 except Exception as e:
-                    logger.warning(
-                        f"Cosmos Transfer failed: {e}. Sim video still available."
-                    )
+                    logger.warning(f"Cosmos Transfer failed: {e}. Sim video still available.")
 
             result_text = (
                 f"🎬 Video recorded: {output_path}\n"
@@ -2939,9 +2802,7 @@ class Simulation(AgentTool):
         try:
             from .dataset_recorder import load_lerobot_episode
 
-            ds, episode_start, episode_length = load_lerobot_episode(
-                repo_id, episode, root
-            )
+            ds, episode_start, episode_length = load_lerobot_episode(repo_id, episode, root)
         except ImportError:
             return {
                 "status": "error",
@@ -3145,11 +3006,7 @@ class Simulation(AgentTool):
         if _mujoco_viewer is None:
             return {
                 "status": "error",
-                "content": [
-                    {
-                        "text": "❌ mujoco.viewer not available. Install: pip install mujoco"
-                    }
-                ],
+                "content": [{"text": "❌ mujoco.viewer not available. Install: pip install mujoco"}],
             }
 
         if self._viewer_handle is not None:
@@ -3159,16 +3016,10 @@ class Simulation(AgentTool):
             }
 
         try:
-            self._viewer_handle = _mujoco_viewer.launch_passive(
-                self._world._model, self._world._data
-            )
+            self._viewer_handle = _mujoco_viewer.launch_passive(self._world._model, self._world._data)
             return {
                 "status": "success",
-                "content": [
-                    {
-                        "text": "👁️ Interactive viewer opened. Close window or use action='close_viewer'."
-                    }
-                ],
+                "content": [{"text": "👁️ Interactive viewer opened. Close window or use action='close_viewer'."}],
             }
         except Exception as e:
             return {"status": "error", "content": [{"text": f"❌ Viewer failed: {e}"}]}
@@ -3201,11 +3052,7 @@ class Simulation(AgentTool):
         resolved = resolve_model(data_config)
         return {
             "status": "success",
-            "content": [
-                {
-                    "text": f"📋 Registered '{data_config}' → {urdf_path}\nResolved: {resolved or 'NOT FOUND'}"
-                }
-            ],
+            "content": [{"text": f"📋 Registered '{data_config}' → {urdf_path}\nResolved: {resolved or 'NOT FOUND'}"}],
         }
 
     # -------------------------------------------------------------------
@@ -3274,7 +3121,7 @@ class Simulation(AgentTool):
             f"🦴 Joints ({model.njnt}): {', '.join(joint_names[:12])}{'...' if len(joint_names) > 12 else ''}",
             f"⚡ Actuators ({model.nu}): {', '.join(actuator_names[:12])}{'...' if len(actuator_names) > 12 else ''}",
             f"📷 Cameras ({model.ncam}): {', '.join(camera_names) if camera_names else 'none (free camera only)'}",
-            f"⏱️ Timestep: {model.opt.timestep}s ({1/model.opt.timestep:.0f}Hz)",
+            f"⏱️ Timestep: {model.opt.timestep}s ({1 / model.opt.timestep:.0f}Hz)",
         ]
         for rname, rinfo in robots_info.items():
             lines.append(
@@ -3525,9 +3372,7 @@ class Simulation(AgentTool):
     def _extract_policy_kwargs(d: Dict[str, Any]) -> Dict[str, Any]:
         """Extract optional policy kwargs from dispatch dict."""
         return {
-            k: d[k]
-            for k in ("policy_port", "policy_host", "model_path", "server_address", "policy_type")
-            if k in d
+            k: d[k] for k in ("policy_port", "policy_host", "model_path", "server_address", "policy_type") if k in d
         }
 
     @staticmethod
@@ -3680,8 +3525,12 @@ class Simulation(AgentTool):
         kw = {
             k: d[k]
             for k in (
-                "policy_port", "policy_host", "model_path",
-                "server_address", "policy_type", "pretrained_name_or_path",
+                "policy_port",
+                "policy_host",
+                "model_path",
+                "server_address",
+                "policy_type",
+                "pretrained_name_or_path",
             )
             if k in d
         }
@@ -3733,11 +3582,7 @@ class Simulation(AgentTool):
             n_episodes=d.get("n_episodes", 10),
             max_steps=d.get("max_steps", 300),
             success_fn=d.get("success_fn"),
-            **{
-                k: v
-                for k, v in d.items()
-                if k.startswith("pretrained") or k in ("policy_type", "device")
-            },
+            **{k: v for k, v in d.items() if k.startswith("pretrained") or k in ("policy_type", "device")},
         )
 
     _ACTION_DISPATCH: Dict[str, Callable] = {

@@ -354,11 +354,7 @@ class PickAndPlaceReward:
             Scalar reward (float).
         """
         state = self._extract_state(obs)
-        action_arr = (
-            np.asarray(action, dtype=np.float64).flatten()
-            if action is not None
-            else np.zeros(1)
-        )
+        action_arr = np.asarray(action, dtype=np.float64).flatten() if action is not None else np.zeros(1)
 
         # Extract positions
         ee_pos = state[self.ee_idx[0] : self.ee_idx[1]]
@@ -367,9 +363,7 @@ class PickAndPlaceReward:
 
         # Contact force (if available)
         contact_force = (
-            state[self.contact_idx]
-            if self.contact_idx is not None and self.contact_idx < len(state)
-            else None
+            state[self.contact_idx] if self.contact_idx is not None and self.contact_idx < len(state) else None
         )
 
         # Cache initial object Z for lift detection
@@ -380,11 +374,7 @@ class PickAndPlaceReward:
 
         # ── Phase 1: Reach ─────────────────────────────────────
         if self._phase == self.PHASE_REACH:
-            dist_to_obj = (
-                np.linalg.norm(ee_pos - obj_pos)
-                if len(ee_pos) >= 3 and len(obj_pos) >= 3
-                else 1.0
-            )
+            dist_to_obj = np.linalg.norm(ee_pos - obj_pos) if len(ee_pos) >= 3 and len(obj_pos) >= 3 else 1.0
             # Dense shaping: negative distance
             reward += self.reach_scale * (1.0 - np.tanh(5.0 * dist_to_obj))
 
@@ -395,11 +385,7 @@ class PickAndPlaceReward:
         # ── Phase 2: Grasp ─────────────────────────────────────
         elif self._phase == self.PHASE_GRASP:
             # Keep rewarding proximity
-            dist_to_obj = (
-                np.linalg.norm(ee_pos - obj_pos)
-                if len(ee_pos) >= 3 and len(obj_pos) >= 3
-                else 1.0
-            )
+            dist_to_obj = np.linalg.norm(ee_pos - obj_pos) if len(ee_pos) >= 3 and len(obj_pos) >= 3 else 1.0
             reward += self.reach_scale * (1.0 - np.tanh(5.0 * dist_to_obj))
 
             # Detect grasp
@@ -412,9 +398,7 @@ class PickAndPlaceReward:
             if is_grasping and len(obj_pos) >= 3 and self._initial_obj_z is not None:
                 height_gained = obj_pos[2] - self._initial_obj_z
                 # Continuous lift reward
-                reward += self.lift_bonus * np.clip(
-                    height_gained / self.lift_height, 0.0, 1.0
-                )
+                reward += self.lift_bonus * np.clip(height_gained / self.lift_height, 0.0, 1.0)
 
                 if height_gained > self.lift_height and not self._lift_awarded:
                     reward += self.lift_bonus
@@ -426,11 +410,7 @@ class PickAndPlaceReward:
         # ── Phase 3: Transport ─────────────────────────────────
         elif self._phase == self.PHASE_TRANSPORT:
             # Distance from object to target placement
-            dist_to_target = (
-                np.linalg.norm(obj_pos - self.target_place)
-                if len(obj_pos) >= 3
-                else 1.0
-            )
+            dist_to_target = np.linalg.norm(obj_pos - self.target_place) if len(obj_pos) >= 3 else 1.0
             reward += self.transport_scale * (1.0 - np.tanh(3.0 * dist_to_target))
 
             # Penalise dropping (object Z falls back to table)
@@ -451,11 +431,7 @@ class PickAndPlaceReward:
 
         # ── Phase 4: Place ─────────────────────────────────────
         elif self._phase == self.PHASE_PLACE:
-            dist_to_target = (
-                np.linalg.norm(obj_pos - self.target_place)
-                if len(obj_pos) >= 3
-                else 1.0
-            )
+            dist_to_target = np.linalg.norm(obj_pos - self.target_place) if len(obj_pos) >= 3 else 1.0
             reward += self.transport_scale * (1.0 - np.tanh(3.0 * dist_to_target))
 
             # Reward opening gripper at target
@@ -657,16 +633,12 @@ class SB3Trainer(RLTrainer):
                 reward_fn=reward_fn,
             )
 
-            logger.info(
-                f"🚀 Newton GPU env created: {self.config.num_envs} envs, "
-                f"solver={self.config.newton_solver}"
-            )
+            logger.info(f"🚀 Newton GPU env created: {self.config.num_envs} envs, solver={self.config.newton_solver}")
             return env
 
         except ImportError as e:
             logger.warning(
-                f"Newton backend not available ({e}), falling back to MuJoCo. "
-                "Install: pip install newton-sim warp-lang"
+                f"Newton backend not available ({e}), falling back to MuJoCo. Install: pip install newton-sim warp-lang"
             )
             return self._create_mujoco_env()
         except Exception as e:
@@ -793,10 +765,7 @@ class SB3Trainer(RLTrainer):
             "fps": self.config.total_timesteps / elapsed if elapsed > 0 else 0,
         }
 
-        logger.info(
-            f"✅ Training complete: {elapsed:.1f}s, "
-            f"{result['fps']:.0f} steps/s, saved to {final_path}"
-        )
+        logger.info(f"✅ Training complete: {elapsed:.1f}s, {result['fps']:.0f} steps/s, saved to {final_path}")
         return result
 
     def evaluate(self, num_episodes: int = 10) -> Dict[str, Any]:

@@ -232,9 +232,7 @@ def newton_sim(
         elif action == "add_cable":
             backend = _get_backend()
             end_pos = dc.get("end", (1, 0, 1))
-            result = backend.add_cable(
-                name=name or "cable", start=pos, end=tuple(end_pos)
-            )
+            result = backend.add_cable(name=name or "cable", start=pos, end=tuple(end_pos))
             text = f"{'🔗' if result['success'] else '❌'} {result['message']}"
             return {
                 "status": "success" if result["success"] else "error",
@@ -244,9 +242,7 @@ def newton_sim(
         elif action == "add_particles":
             backend = _get_backend()
             positions = dc.get("positions", [list(pos)])
-            result = backend.add_particles(
-                name=name or "particles", positions=positions, mass=density
-            )
+            result = backend.add_particles(name=name or "particles", positions=positions, mass=density)
             text = f"{'⚛️' if result['success'] else '❌'} {result['message']}"
             return {
                 "status": "success" if result["success"] else "error",
@@ -301,18 +297,14 @@ def newton_sim(
                         else "N/A"
                     )
                     obs_text.append(f"  🤖 {rname}: joints={jp_str}")
-                text = f"👁️ Observations (t={result['sim_time']:.4f}s):\n" + "\n".join(
-                    obs_text
-                )
+                text = f"👁️ Observations (t={result['sim_time']:.4f}s):\n" + "\n".join(obs_text)
             else:
                 text = "❌ No observations available"
             return {"status": "success", "content": [{"text": text}]}
 
         elif action == "reset":
             backend = _get_backend()
-            eids = (
-                [int(x) for x in env_ids.split(",") if x.strip()] if env_ids else None
-            )
+            eids = [int(x) for x in env_ids.split(",") if x.strip()] if env_ids else None
             result = backend.reset(env_ids=eids)
             text = f"{'🔄' if result['success'] else '❌'} {result['message']}"
             return {
@@ -412,11 +404,7 @@ def newton_sim(
 
         elif action == "enable_dual_solver":
             backend = _get_backend()
-            cloth_solver = (
-                data_config
-                if data_config and not data_config.startswith("{")
-                else "vbd"
-            )
+            cloth_solver = data_config if data_config and not data_config.startswith("{") else "vbd"
             result = backend.enable_dual_solver(
                 rigid_solver=solver,
                 cloth_solver=cloth_solver,
@@ -473,16 +461,12 @@ def newton_sim(
             try:
                 import newton.examples as ne
 
-                backend.add_robot(
-                    "bench_robot", urdf_path=ne.get_asset("quadruped.urdf")
-                )
+                backend.add_robot("bench_robot", urdf_path=ne.get_asset("quadruped.urdf"))
             except Exception:
                 backend._lazy_init()
                 import warp as wp
 
-                backend._builder.add_body(
-                    xform=wp.transform((0, 0, 0.5), wp.quat_identity())
-                )
+                backend._builder.add_body(xform=wp.transform((0, 0, 0.5), wp.quat_identity()))
                 backend._builder.add_shape_sphere(body=0, radius=0.1)
                 backend._builder.add_joint_free(child=0)
                 backend._model = None

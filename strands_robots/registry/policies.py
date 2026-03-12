@@ -49,9 +49,7 @@ def list_policy_providers() -> List[str]:
     return sorted(reg.get("providers", {}).keys())
 
 
-def resolve_policy_string(
-    policy: str, **extra_kwargs
-) -> Tuple[str, Dict[str, Any]]:
+def resolve_policy_string(policy: str, **extra_kwargs) -> Tuple[str, Dict[str, Any]]:
     """Resolve a smart policy string to (provider_name, kwargs).
 
     Accepts HuggingFace model IDs, server URLs, or shorthand names
@@ -190,6 +188,7 @@ def import_policy_class(provider: str) -> Type:
         if hasattr(mod, class_name):
             return getattr(mod, class_name)
         from strands_robots.policies import Policy
+
         for attr_name in dir(mod):
             attr = getattr(mod, attr_name)
             if isinstance(attr, type) and issubclass(attr, Policy) and attr is not Policy:
@@ -197,10 +196,7 @@ def import_policy_class(provider: str) -> Type:
     except ImportError:
         pass
 
-    raise ValueError(
-        f"Unknown policy provider: '{provider}'. "
-        f"Available: {list_policy_providers()}"
-    )
+    raise ValueError(f"Unknown policy provider: '{provider}'. Available: {list_policy_providers()}")
 
 
 def build_policy_kwargs(
@@ -240,11 +236,12 @@ def build_policy_kwargs(
         "port": policy_port,
         "host": policy_host,
         "data_config": data_config,
-        "server_address": server_address or (
-            f"{policy_host}:{policy_port}" if policy_port and "server_address" in allowed_keys else None
-        ),
+        "server_address": server_address
+        or (f"{policy_host}:{policy_port}" if policy_port and "server_address" in allowed_keys else None),
         "model_path": model_path,
-        "pretrained_name_or_path": model_path if model_path and "pretrained_name_or_path" in allowed_keys else extra.get("pretrained_name_or_path"),
+        "pretrained_name_or_path": model_path
+        if model_path and "pretrained_name_or_path" in allowed_keys
+        else extra.get("pretrained_name_or_path"),
         "policy_type": policy_type,
     }
 

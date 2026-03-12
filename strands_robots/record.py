@@ -223,9 +223,7 @@ class RecordSession:
                         "names": action_keys,
                     }
 
-            robot_type = getattr(
-                self.robot, "robot_type", getattr(self.robot, "name", "unknown")
-            )
+            robot_type = getattr(self.robot, "robot_type", getattr(self.robot, "name", "unknown"))
 
             self._dataset = LeRobotDataset.create(
                 repo_id=self.repo_id,
@@ -277,9 +275,7 @@ class RecordSession:
         self._current_episode = stats
         self._stop_flag = False
 
-        logger.info(
-            f"Recording episode {ep_idx} ({mode.value}): '{task}' for {duration}s"
-        )
+        logger.info(f"Recording episode {ep_idx} ({mode.value}): '{task}' for {duration}s")
         self._recording = True
 
         start = time.time()
@@ -324,9 +320,7 @@ class RecordSession:
                         import concurrent.futures
 
                         with concurrent.futures.ThreadPoolExecutor() as ex:
-                            actions = ex.submit(
-                                lambda: asyncio.run(self.policy.get_actions(obs, task))
-                            ).result()
+                            actions = ex.submit(lambda: asyncio.run(self.policy.get_actions(obs, task))).result()
                     else:
                         actions = asyncio.run(self.policy.get_actions(obs, task))
 
@@ -379,10 +373,7 @@ class RecordSession:
         if self._dataset is not None and frame_idx > 0:
             try:
                 self._dataset.save_episode()
-                logger.info(
-                    f"Episode {ep_idx} saved: {frame_idx} frames, "
-                    f"{stats.duration_s:.1f}s"
-                )
+                logger.info(f"Episode {ep_idx} saved: {frame_idx} frames, {stats.duration_s:.1f}s")
             except Exception as e:
                 logger.error("Episode save failed: %s", e)
                 stats.discarded = True
@@ -460,15 +451,11 @@ class RecordSession:
             frame["observation.state"] = torch.tensor(state_values, dtype=torch.float32)
 
         # Action — avoid bare truthiness check for numpy/torch arrays
-        has_action = action is not None and not (
-            isinstance(action, dict) and len(action) == 0
-        )
+        has_action = action is not None and not (isinstance(action, dict) and len(action) == 0)
         if has_action:
             if isinstance(action, dict):
                 action_values = list(action.values())
-                frame["action"] = torch.tensor(
-                    [float(v) for v in action_values], dtype=torch.float32
-                )
+                frame["action"] = torch.tensor([float(v) for v in action_values], dtype=torch.float32)
             elif isinstance(action, (np.ndarray, list)):
                 frame["action"] = torch.tensor(action, dtype=torch.float32)
             elif isinstance(action, torch.Tensor):
@@ -493,9 +480,7 @@ class RecordSession:
             try:
                 if hasattr(self._dataset, "consolidate"):
                     self._dataset.consolidate()
-                result["root"] = (
-                    str(self._dataset.root) if hasattr(self._dataset, "root") else None
-                )
+                result["root"] = str(self._dataset.root) if hasattr(self._dataset, "root") else None
             except Exception as e:
                 logger.error("Dataset consolidation failed: %s", e)
 

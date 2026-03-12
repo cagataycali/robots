@@ -111,9 +111,7 @@ class Gr00tPolicy(Policy):
     ):
         # Load data config
         self.data_config = load_data_config(data_config)
-        self.data_config_name = (
-            data_config if isinstance(data_config, str) else type(data_config).__name__
-        )
+        self.data_config_name = data_config if isinstance(data_config, str) else type(data_config).__name__
 
         # Extract modality keys
         self.camera_keys = self.data_config.video_keys
@@ -138,23 +136,16 @@ class Gr00tPolicy(Policy):
             try:
                 self._client = _get_client_class()(host=host, port=port)
             except Exception as e:
-                raise ImportError(
-                    f"GR00T service client init failed: {e}. "
-                    f"Install: pip install msgpack pyzmq"
-                ) from e
+                raise ImportError(f"GR00T service client init failed: {e}. Install: pip install msgpack pyzmq") from e
 
-        logger.info(
-            f"🧠 GR00T Policy [{self._mode}] v={self._groot_version or 'service-only'}"
-        )
+        logger.info(f"🧠 GR00T Policy [{self._mode}] v={self._groot_version or 'service-only'}")
         logger.info("   config=%s cameras=%s", self.data_config_name, self.camera_keys)
 
     # ------------------------------------------------------------------
     # Local model loading
     # ------------------------------------------------------------------
 
-    def _load_local_policy(
-        self, model_path: str, embodiment_tag: str, denoising_steps: int, device: str
-    ):
+    def _load_local_policy(self, model_path: str, embodiment_tag: str, denoising_steps: int, device: str):
         """Load GR00T model locally (N1.5 or N1.6)."""
         ver = self._groot_version
 
@@ -168,19 +159,13 @@ class Gr00tPolicy(Policy):
                 "Either install Isaac-GR00T or use service mode (host/port)."
             )
 
-    def _load_n15(
-        self, model_path: str, embodiment_tag: str, denoising_steps: int, device: str
-    ):
+    def _load_n15(self, model_path: str, embodiment_tag: str, denoising_steps: int, device: str):
         """Load N1.5 model using gr00t.model.policy.Gr00tPolicy."""
         from gr00t.experiment.data_config import DATA_CONFIG_MAP as N15_CONFIGS
         from gr00t.model.policy import Gr00tPolicy as N15Policy
 
         # Try to get native N1.5 config for proper transforms
-        cfg_name = (
-            self.data_config_name
-            if isinstance(self.data_config_name, str)
-            else "so100_dualcam"
-        )
+        cfg_name = self.data_config_name if isinstance(self.data_config_name, str) else "so100_dualcam"
         native_cfg = N15_CONFIGS.get(cfg_name)
 
         if native_cfg:
@@ -190,9 +175,7 @@ class Gr00tPolicy(Policy):
             # Fallback: build from our data_config
             mc = self.data_config.modality_config()
             mt = None
-            logger.warning(
-                f"No native N1.5 config for '{cfg_name}', transforms may be missing"
-            )
+            logger.warning(f"No native N1.5 config for '{cfg_name}', transforms may be missing")
 
         kwargs = {
             "model_path": model_path,
@@ -208,9 +191,7 @@ class Gr00tPolicy(Policy):
         self._local_policy = N15Policy(**kwargs)
         logger.info("✅ GR00T N1.5 loaded from %s", model_path)
 
-    def _load_n16(
-        self, model_path: str, embodiment_tag: str, denoising_steps: int, device: str
-    ):
+    def _load_n16(self, model_path: str, embodiment_tag: str, denoising_steps: int, device: str):
         # NOTE: GR00T N1.6 requires Python 3.10 + the gr00t package from NVIDIA Isaac-GR00T.
         # The Eagle-Block2A-2B-v2 vision backbone needs a config.json that isn't shipped
         # in the pip package. Generate it with these verified dimensions (from L40S testing):
@@ -223,9 +204,7 @@ class Gr00tPolicy(Policy):
         from gr00t.policy.gr00t_policy import Gr00tPolicy as N16Policy
 
         # Map string to EmbodimentTag enum
-        tag = getattr(
-            EmbodimentTag, embodiment_tag.upper(), EmbodimentTag.NEW_EMBODIMENT
-        )
+        tag = getattr(EmbodimentTag, embodiment_tag.upper(), EmbodimentTag.NEW_EMBODIMENT)
 
         self._local_policy = N16Policy(
             embodiment_tag=tag,
@@ -245,9 +224,7 @@ class Gr00tPolicy(Policy):
     def set_robot_state_keys(self, robot_state_keys: List[str]) -> None:
         self.robot_state_keys = robot_state_keys
 
-    async def get_actions(
-        self, observation_dict: Dict[str, Any], instruction: str, **kwargs
-    ) -> List[Dict[str, Any]]:
+    async def get_actions(self, observation_dict: Dict[str, Any], instruction: str, **kwargs) -> List[Dict[str, Any]]:
         """Get actions from GR00T (service or local mode)."""
 
         # Build observation in GR00T format
@@ -264,9 +241,7 @@ class Gr00tPolicy(Policy):
     # Observation building
     # ------------------------------------------------------------------
 
-    def _build_observation(
-        self, observation_dict: Dict[str, Any], instruction: str
-    ) -> dict:
+    def _build_observation(self, observation_dict: Dict[str, Any], instruction: str) -> dict:
         """Build GR00T-formatted observation dict."""
         obs = {}
 
@@ -277,9 +252,7 @@ class Gr00tPolicy(Policy):
                 obs[video_key] = observation_dict[camera_key]
 
         # State observations
-        robot_state = np.array(
-            [observation_dict.get(k, 0.0) for k in self.robot_state_keys]
-        )
+        robot_state = np.array([observation_dict.get(k, 0.0) for k in self.robot_state_keys])
         self._map_robot_state_to_gr00t_state(obs, robot_state)
 
         # Language
@@ -305,9 +278,7 @@ class Gr00tPolicy(Policy):
             batched = {}
             for k, v in obs_dict.items():
                 if isinstance(v, np.ndarray):
-                    batched[k] = (
-                        v[np.newaxis, ...] if v.ndim < 4 else v[np.newaxis, ...]
-                    )
+                    batched[k] = v[np.newaxis, ...] if v.ndim < 4 else v[np.newaxis, ...]
                 else:
                     batched[k] = [v] if not isinstance(v, list) else v
             return self._local_policy.get_action(batched)
@@ -385,18 +356,13 @@ class Gr00tPolicy(Policy):
                 if isinstance(lang_value, str):
                     nested["language"][key] = [[lang_value]]
                 elif isinstance(lang_value, list):
-                    nested["language"][key] = (
-                        lang_value if isinstance(lang_value[0], list) else [lang_value]
-                    )
+                    nested["language"][key] = lang_value if isinstance(lang_value[0], list) else [lang_value]
                 else:
                     nested["language"][key] = [[str(lang_value)]]
 
             actions, _ = self._local_policy.get_action(nested)
             # N1.6 returns {key: arr} without "action." prefix — add it
-            return {
-                f"action.{k}" if not k.startswith("action.") else k: v
-                for k, v in actions.items()
-            }
+            return {f"action.{k}" if not k.startswith("action.") else k: v for k, v in actions.items()}
 
         raise RuntimeError(f"Unknown GR00T version: {ver}")
 
@@ -423,11 +389,7 @@ class Gr00tPolicy(Policy):
         return camera_keys[0] if camera_keys else None
 
     def _map_robot_state_to_gr00t_state(self, obs_dict: dict, robot_state: np.ndarray):
-        name = (
-            self.data_config_name.lower()
-            if isinstance(self.data_config_name, str)
-            else ""
-        )
+        name = self.data_config_name.lower() if isinstance(self.data_config_name, str) else ""
         # N1.6 requires float32 (vendor asserts dtype); N1.5 used float64.
         _dtype = np.float32
         if "so100" in name or "so101" in name:
@@ -510,9 +472,7 @@ class Gr00tPolicy(Policy):
                 for ak in normalized:
                     v = normalized[ak]
                     row = v[i] if v.ndim >= 1 else v
-                    action_dict[ak] = (
-                        row.tolist() if hasattr(row, "tolist") else list(row)
-                    )
+                    action_dict[ak] = row.tolist() if hasattr(row, "tolist") else list(row)
 
             robot_actions.append(action_dict)
         return robot_actions

@@ -48,11 +48,7 @@ def _import_from_lerobot(module_path: str):
         _import_from_lerobot("policies.factory.get_policy_class")
         → <function get_policy_class>
     """
-    full_path = (
-        f"lerobot.{module_path}"
-        if not module_path.startswith("lerobot.")
-        else module_path
-    )
+    full_path = f"lerobot.{module_path}" if not module_path.startswith("lerobot.") else module_path
 
     # Try importing as a module first
     try:
@@ -186,18 +182,11 @@ def _describe_object(obj) -> Dict[str, Any]:
     }
 
     if inspect.isclass(obj):
-        info["methods"] = [
-            m
-            for m in dir(obj)
-            if not m.startswith("_") and callable(getattr(obj, m, None))
-        ]
+        info["methods"] = [m for m in dir(obj) if not m.startswith("_") and callable(getattr(obj, m, None))]
         info["class_methods"] = [
             m
             for m in dir(obj)
-            if not m.startswith("_")
-            and isinstance(
-                inspect.getattr_static(obj, m, None), (classmethod, staticmethod)
-            )
+            if not m.startswith("_") and isinstance(inspect.getattr_static(obj, m, None), (classmethod, staticmethod))
         ]
         if obj.__init__.__doc__:
             info["init_doc"] = obj.__init__.__doc__[:500]
@@ -212,16 +201,8 @@ def _describe_object(obj) -> Dict[str, Any]:
             sig = inspect.signature(obj)
             info["params"] = {
                 name: {
-                    "default": (
-                        str(p.default)
-                        if p.default is not inspect.Parameter.empty
-                        else "REQUIRED"
-                    ),
-                    "annotation": (
-                        str(p.annotation)
-                        if p.annotation is not inspect.Parameter.empty
-                        else None
-                    ),
+                    "default": (str(p.default) if p.default is not inspect.Parameter.empty else "REQUIRED"),
+                    "annotation": (str(p.annotation) if p.annotation is not inspect.Parameter.empty else None),
                 }
                 for name, p in sig.parameters.items()
             }
@@ -345,19 +326,13 @@ def use_lerobot(
                     lines.append(f"  • {rc}")
 
             if discovery.get("teleop_configs"):
-                lines.append(
-                    f"\n🎮 Teleop Configs ({len(discovery['teleop_configs'])}):"
-                )
+                lines.append(f"\n🎮 Teleop Configs ({len(discovery['teleop_configs'])}):")
                 for tc in discovery["teleop_configs"]:
                     lines.append(f"  • {tc}")
 
             lines.append("\n💡 Usage:")
-            lines.append(
-                '  use_lerobot(module="cameras.opencv.OpenCVCamera", method="find_cameras")'
-            )
-            lines.append(
-                '  use_lerobot(module="datasets.lerobot_dataset.LeRobotDataset", method="__describe__")'
-            )
+            lines.append('  use_lerobot(module="cameras.opencv.OpenCVCamera", method="find_cameras")')
+            lines.append('  use_lerobot(module="datasets.lerobot_dataset.LeRobotDataset", method="__describe__")')
 
             return {"status": "success", "content": [{"text": "\n".join(lines)}]}
 
@@ -369,9 +344,7 @@ def use_lerobot(
             info = _describe_object(target)
             return {
                 "status": "success",
-                "content": [
-                    {"text": f"🔍 {module}\n{json.dumps(info, indent=2, default=str)}"}
-                ],
+                "content": [{"text": f"🔍 {module}\n{json.dumps(info, indent=2, default=str)}"}],
             }
 
         # ── Get the method/attribute ──
@@ -384,30 +357,19 @@ def use_lerobot(
                 available = [a for a in dir(target) if not a.startswith("_")][:20]
                 return {
                     "status": "error",
-                    "content": [
-                        {
-                            "text": (
-                                f"❌ '{method}' not found on {module}\n"
-                                f"Available: {', '.join(available)}"
-                            )
-                        }
-                    ],
+                    "content": [{"text": (f"❌ '{method}' not found on {module}\nAvailable: {', '.join(available)}")}],
                 }
 
         # ── If target is not callable, just return its value ──
         if not callable(target):
             return {
                 "status": "success",
-                "content": [
-                    {"text": f"📋 {module}.{method} = {_serialize_result(target)}"}
-                ],
+                "content": [{"text": f"📋 {module}.{method} = {_serialize_result(target)}"}],
             }
 
         # ── Call it ──
         if label:
-            logger.info(
-                f"🤖 LeRobot: {label} — {module}.{method}({list(params.keys())})"
-            )
+            logger.info(f"🤖 LeRobot: {label} — {module}.{method}({list(params.keys())})")
 
         result = target(**params)
         serialized = _serialize_result(result)
@@ -420,9 +382,7 @@ def use_lerobot(
     except ImportError as e:
         return {
             "status": "error",
-            "content": [
-                {"text": f"❌ Import error: {e}\n\nInstall: pip install lerobot"}
-            ],
+            "content": [{"text": f"❌ Import error: {e}\n\nInstall: pip install lerobot"}],
         }
 
     except TypeError as e:

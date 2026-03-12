@@ -54,11 +54,7 @@ class PoseManager:
 
     def __init__(self, robot_id: str, storage_dir: Optional[Path] = None):
         self.robot_id = robot_id
-        self.storage_dir = (
-            Path(storage_dir)
-            if storage_dir
-            else Path.cwd() / ".strands_robots" / "poses"
-        )
+        self.storage_dir = Path(storage_dir) if storage_dir else Path.cwd() / ".strands_robots" / "poses"
         self.storage_dir.mkdir(parents=True, exist_ok=True)
         safe_id = re.sub(r"[^\w\-.]", "_", robot_id)
         self.pose_file = self.storage_dir / f"{safe_id}_poses.json"
@@ -71,10 +67,7 @@ class PoseManager:
             try:
                 with open(self.pose_file, "r") as f:
                     data = json.load(f)
-                    self.poses = {
-                        name: RobotPose.from_dict(pose_data)
-                        for name, pose_data in data.items()
-                    }
+                    self.poses = {name: RobotPose.from_dict(pose_data) for name, pose_data in data.items()}
                 logger.info("Loaded %s poses for robot %s", len(self.poses), self.robot_id)
             except Exception as e:
                 logger.error("Failed to load poses: %s", e)
@@ -148,8 +141,7 @@ class MotorController:
     def __init__(self, port: str, baudrate: int = 1000000):
         if not HAS_SERIAL:
             raise ImportError(
-                "pyserial is required for motor control. "
-                'Install with: pip install "strands-robots[hardware]"'
+                'pyserial is required for motor control. Install with: pip install "strands-robots[hardware]"'
             )
         self.port = port
         self.baudrate = baudrate
@@ -184,9 +176,7 @@ class MotorController:
         if self.serial_conn and self.serial_conn.is_open:
             self.serial_conn.close()
 
-    def build_feetech_packet(
-        self, motor_id: int, instruction: int, params: List[int]
-    ) -> bytes:
+    def build_feetech_packet(self, motor_id: int, instruction: int, params: List[int]) -> bytes:
         """Build Feetech servo protocol packet."""
         packet = [0xFF, 0xFF, motor_id, len(params) + 2, instruction] + params
         checksum = ~sum(packet[2:]) & 0xFF
@@ -278,9 +268,7 @@ class MotorController:
                 positions[motor_name] = pos
         return positions
 
-    def move_multiple_motors(
-        self, positions: Dict[str, float], smooth: bool = True
-    ) -> bool:
+    def move_multiple_motors(self, positions: Dict[str, float], smooth: bool = True) -> bool:
         """Move multiple motors simultaneously."""
         if smooth:
             return self._smooth_move(positions)
@@ -413,10 +401,7 @@ def pose_tool(
                 )
 
             pose_list = "\n".join(
-                [
-                    f"• {p['name']} - {p['description']} ({p['motors']} motors) - {p['timestamp']}"
-                    for p in pose_details
-                ]
+                [f"• {p['name']} - {p['description']} ({p['motors']} motors) - {p['timestamp']}" for p in pose_details]
             )
 
             return {
@@ -439,9 +424,7 @@ def pose_tool(
                     "content": [{"text": f"❌ Pose '{pose_name}' not found"}],
                 }
 
-            motor_info = "\n".join(
-                [f"  • {motor}: {pos:.2f}°" for motor, pos in pose.positions.items()]
-            )
+            motor_info = "\n".join([f"  • {motor}: {pos:.2f}°" for motor, pos in pose.positions.items()])
 
             return {
                 "status": "success",
@@ -500,9 +483,7 @@ def pose_tool(
                 controller.disconnect()
                 return {
                     "status": "success",
-                    "content": [
-                        {"text": f"✅ Successfully connected to robot on {port}"}
-                    ],
+                    "content": [{"text": f"✅ Successfully connected to robot on {port}"}],
                 }
             else:
                 return {"status": "error", "content": [{"text": f"❌ {error}"}]}
@@ -551,9 +532,7 @@ def pose_tool(
                     )
                     return {
                         "status": "success",
-                        "content": [
-                            {"text": f"📍 Current robot positions:\n{pos_text}"}
-                        ],
+                        "content": [{"text": f"📍 Current robot positions:\n{pos_text}"}],
                         "positions": positions,
                     }
                 else:
@@ -583,9 +562,7 @@ def pose_tool(
                         "content": [{"text": "❌ Failed to read current positions"}],
                     }
 
-                pose = pose_manager.store_pose(
-                    pose_name, current_positions, description
-                )
+                pose = pose_manager.store_pose(pose_name, current_positions, description)
 
                 pos_text = "\n".join(
                     [
@@ -639,9 +616,7 @@ def pose_tool(
                 else:
                     return {
                         "status": "error",
-                        "content": [
-                            {"text": f"❌ Failed to move to pose '{pose_name}'"}
-                        ],
+                        "content": [{"text": f"❌ Failed to move to pose '{pose_name}'"}],
                     }
             finally:
                 controller.disconnect()
@@ -663,9 +638,7 @@ def pose_tool(
                     unit = "%" if motor_name == "gripper" else "°"
                     return {
                         "status": "success",
-                        "content": [
-                            {"text": f"🎯 Moved {motor_name} to {position}{unit}"}
-                        ],
+                        "content": [{"text": f"🎯 Moved {motor_name} to {position}{unit}"}],
                     }
                 else:
                     return {
@@ -725,9 +698,7 @@ def pose_tool(
                     sign = "+" if delta >= 0 else ""
                     return {
                         "status": "success",
-                        "content": [
-                            {"text": f"🔧 Moved {motor_name} by {sign}{delta}{unit}"}
-                        ],
+                        "content": [{"text": f"🔧 Moved {motor_name} by {sign}{delta}{unit}"}],
                     }
                 else:
                     return {

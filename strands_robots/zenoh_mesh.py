@@ -255,18 +255,10 @@ class Mesh:
         _LOCAL_ROBOTS[self.peer_id] = self
 
         # Subscribe
-        self._subs.append(
-            session.declare_subscriber("strands/*/presence", self._on_presence)
-        )
+        self._subs.append(session.declare_subscriber("strands/*/presence", self._on_presence))
         self._subs.append(session.declare_subscriber("strands/broadcast", self._on_cmd))
-        self._subs.append(
-            session.declare_subscriber(f"strands/{self.peer_id}/cmd", self._on_cmd)
-        )
-        self._subs.append(
-            session.declare_subscriber(
-                f"strands/{self.peer_id}/response/*", self._on_response
-            )
-        )
+        self._subs.append(session.declare_subscriber(f"strands/{self.peer_id}/cmd", self._on_cmd))
+        self._subs.append(session.declare_subscriber(f"strands/{self.peer_id}/response/*", self._on_response))
 
         # Threads
         threading.Thread(target=self._heartbeat_loop, daemon=True).start()
@@ -340,11 +332,9 @@ class Mesh:
             pid = d.get("robot_id")
             if not pid or pid == self.peer_id:
                 return
-            is_new = _update_peer(
-                pid, d.get("robot_type", "robot"), d.get("hostname", ""), d
-            )
+            is_new = _update_peer(pid, d.get("robot_type", "robot"), d.get("hostname", ""), d)
             if is_new:
-                logger.info("🤖 New peer: %s (%s)", pid, d.get('robot_type','?'))
+                logger.info("🤖 New peer: %s (%s)", pid, d.get("robot_type", "?"))
         except Exception:
             pass
 
@@ -366,13 +356,9 @@ class Mesh:
             if hasattr(r, "robot") and hasattr(r.robot, "get_observation"):
                 if getattr(r.robot, "is_connected", False):
                     obs = r.robot.get_observation()
-                    cam_keys = list(
-                        getattr(getattr(r.robot, "config", None), "cameras", {}).keys()
-                    )
+                    cam_keys = list(getattr(getattr(r.robot, "config", None), "cameras", {}).keys())
                     s["joints"] = {
-                        k: (v.tolist() if hasattr(v, "tolist") else v)
-                        for k, v in obs.items()
-                        if k not in cam_keys
+                        k: (v.tolist() if hasattr(v, "tolist") else v) for k, v in obs.items() if k not in cam_keys
                     }
 
             # Task state
@@ -392,11 +378,7 @@ class Mesh:
                     s["sim_time"] = float(w._data.time)
                 elif hasattr(r, "_data") and r._data is not None:
                     s["sim_time"] = float(r._data.time)
-                if (
-                    hasattr(r, "_world")
-                    and r._world is not None
-                    and hasattr(r._world, "robots")
-                ):
+                if hasattr(r, "_world") and r._world is not None and hasattr(r._world, "robots"):
                     for name in r._world.robots:
                         s.setdefault("robots", {})[name] = {"active": True}
 
@@ -459,9 +441,7 @@ class Mesh:
         if action == "status":
             if hasattr(r, "get_task_status"):
                 return r.get_task_status()
-            return {
-                "status": getattr(getattr(r, "_task_state", None), "status", "unknown")
-            }
+            return {"status": getattr(getattr(r, "_task_state", None), "status", "unknown")}
 
         if action == "stop":
             return r.stop_task() if hasattr(r, "stop_task") else {"ok": True}
@@ -667,9 +647,7 @@ class Mesh:
 
             mesh.on_stream("so100-a1b2", on_step)
         """
-        return self.subscribe(
-            f"strands/{peer_id}/stream", callback, name=f"stream:{peer_id}"
-        )
+        return self.subscribe(f"strands/{peer_id}/stream", callback, name=f"stream:{peer_id}")
 
     # ── outgoing messages ──────────────────────────────────────
 
@@ -735,9 +713,7 @@ class Mesh:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 
-def init_mesh(
-    robot, peer_id: str = None, peer_type: str = "robot", mesh: bool = True
-) -> Optional[Mesh]:
+def init_mesh(robot, peer_id: str = None, peer_type: str = "robot", mesh: bool = True) -> Optional[Mesh]:
     """Initialize mesh for a Robot/Simulation.
 
     Called inside __init__(). Returns the Mesh instance (or None if disabled).

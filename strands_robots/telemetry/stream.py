@@ -107,21 +107,13 @@ class TelemetryStream:
 
         # Per-tier batch configs with sensible defaults
         self._batch_configs: Dict[StreamTier, BatchConfig] = batch_config or {
-            StreamTier.STREAM: BatchConfig(
-                max_count=10, max_bytes=64 * 1024, max_age_ms=50.0
-            ),
-            StreamTier.BATCH: BatchConfig(
-                max_count=100, max_bytes=256 * 1024, max_age_ms=500.0
-            ),
-            StreamTier.STORAGE: BatchConfig(
-                max_count=10, max_bytes=1024 * 1024, max_age_ms=2000.0
-            ),
+            StreamTier.STREAM: BatchConfig(max_count=10, max_bytes=64 * 1024, max_age_ms=50.0),
+            StreamTier.BATCH: BatchConfig(max_count=100, max_bytes=256 * 1024, max_age_ms=500.0),
+            StreamTier.STORAGE: BatchConfig(max_count=10, max_bytes=1024 * 1024, max_age_ms=2000.0),
         }
 
         # Per-tier oldest event timestamp for age-based flush
-        self._buffer_first_ts: Dict[StreamTier, Optional[float]] = {
-            tier: None for tier in StreamTier
-        }
+        self._buffer_first_ts: Dict[StreamTier, Optional[float]] = {tier: None for tier in StreamTier}
 
         # Transports
         self._transports: List[TransportConfig] = []
@@ -180,9 +172,7 @@ class TelemetryStream:
 
         # Final flush
         self._flush_all()
-        logger.info(
-            f"TelemetryStream stopped for robot={self.robot_id} | stats={self.get_stats()}"
-        )
+        logger.info(f"TelemetryStream stopped for robot={self.robot_id} | stats={self.get_stats()}")
 
     def __enter__(self):
         return self
@@ -193,9 +183,7 @@ class TelemetryStream:
     def add_transport(self, transport: TransportConfig) -> None:
         """Register a transport backend."""
         self._transports.append(transport)
-        logger.info(
-            f"Transport added: {transport.name} for tiers={[t.name for t in transport.tiers]}"
-        )
+        logger.info(f"Transport added: {transport.name} for tiers={[t.name for t in transport.tiers]}")
 
     # --- Emit (hot path — must be <1ms) ---
 
@@ -315,9 +303,7 @@ class TelemetryStream:
         """Get current telemetry stats."""
         with self._stats_lock:
             stats = dict(self._stats)
-        stats["buffer_sizes"] = {
-            tier.name: len(buf) for tier, buf in self._buffers.items()
-        }
+        stats["buffer_sizes"] = {tier.name: len(buf) for tier, buf in self._buffers.items()}
         stats["running"] = self._running
         stats["robot_id"] = self.robot_id
         stats["transports"] = [t.name for t in self._transports]
@@ -354,8 +340,7 @@ class TelemetryStream:
                 age_ms = (time.time() - first_ts) * 1000.0
 
             should_flush = (
-                count >= config.max_count
-                or age_ms >= config.max_age_ms
+                count >= config.max_count or age_ms >= config.max_age_ms
                 # Size check is deferred — estimating without serializing
             )
 
@@ -479,8 +464,5 @@ class TelemetryStream:
         with self._stats_lock:
             self._stats["errors"] += 1
 
-        logger.error(
-            f"Transport {transport.name} failed after {transport.retry_max} attempts "
-            f"(tier={tier.name})"
-        )
+        logger.error(f"Transport {transport.name} failed after {transport.retry_max} attempts (tier={tier.name})")
         return False
