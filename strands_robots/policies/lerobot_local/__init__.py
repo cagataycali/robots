@@ -98,10 +98,6 @@ def _resolve_policy_class_by_name(policy_type: str):
     """
     import importlib
 
-    # Build candidate class name: "act" → "ACTPolicy", "diffusion" → "DiffusionPolicy"
-    _type_cap = policy_type.upper() if len(policy_type) <= 4 else policy_type.capitalize()
-    expected_class = f"{_type_cap}Policy"
-
     # Strategy 1: modeling_* submodule (LeRobot 0.5+ convention)
     for submodule in [f"modeling_{policy_type}", "modeling"]:
         try:
@@ -144,8 +140,9 @@ def _resolve_policy_class_by_name(policy_type: str):
     # Strategy 4: PreTrainedPolicy — only if it's NOT abstract
     #   (LeRobot 0.5 makes it abstract with forward/reset/etc.)
     try:
-        from lerobot.policies.pretrained import PreTrainedPolicy
         import inspect
+
+        from lerobot.policies.pretrained import PreTrainedPolicy
 
         if not inspect.isabstract(PreTrainedPolicy):
             return PreTrainedPolicy
