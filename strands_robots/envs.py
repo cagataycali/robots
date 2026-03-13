@@ -87,9 +87,12 @@ if HAS_GYM:
         ):
             """
             Args:
-                robot_name: Robot model name (str) or a Robot/Simulation instance.
-                    If a Simulation or Robot object is passed, it will be used
-                    directly instead of creating a new one.
+                robot_name: Robot model name (str) or a Simulation instance.
+                    If a Simulation object is passed, it will be used directly
+                    instead of creating a new one. Note: when passing an existing
+                    Simulation, any ``objects`` and ``cameras`` configs will still
+                    be added to it — ensure the passed sim does not already have
+                    them configured to avoid duplicates.
                 data_config: Optional data config name for joint mapping
                 task: Task description (for VLA policies)
                 render_mode: "rgb_array" or "human"
@@ -152,28 +155,19 @@ if HAS_GYM:
 
             assert HAS_MUJOCO, "mujoco required: pip install mujoco"
 
-            # Support passing a Robot or Simulation object directly
+            # Support passing a Simulation object directly
             from strands_robots.simulation import Simulation
 
             _passed_sim = None
             if not isinstance(robot_name, str):
-                # User passed a Robot/Simulation instance
                 if isinstance(robot_name, Simulation):
-                    _passed_sim = robot_name
-                elif hasattr(robot_name, "_world"):
-                    # Robot wrapper — extract the underlying Simulation
                     _passed_sim = robot_name
                 else:
                     raise TypeError(
-                        f"robot_name must be a string or Robot/Simulation instance, "
-                        f"got {type(robot_name).__name__}"
+                        f"robot_name must be a string or Simulation instance, got {type(robot_name).__name__}"
                     )
                 # Derive robot_name string from the sim's first robot
-                _robots = (
-                    _passed_sim._world.robots
-                    if hasattr(_passed_sim, "_world")
-                    else {}
-                )
+                _robots = _passed_sim._world.robots if hasattr(_passed_sim, "_world") else {}
                 robot_name = next(iter(_robots), "robot")
 
             self.robot_name = robot_name
@@ -200,7 +194,13 @@ if HAS_GYM:
             self._init_sim()
 
         def _init_sim(self):
-            """Initialize the simulation to determine observation/action spaces."""
+            """Initialize the simulation to determine observation/action spaces.
+
+            When a Simulation instance was passed to __init__, world creation and
+            robot addition are skipped, but ``objects`` and ``cameras`` configs are
+            still applied. Callers passing a pre-configured sim should leave those
+            lists empty to avoid duplicates.
+            """
             from strands_robots.simulation import Simulation
 
             if self._sim is None:
@@ -221,11 +221,12 @@ if HAS_GYM:
                     },
                 )
 
-            # Add objects
+            # Add objects (also applied when a Simulation is passed directly —
+            # skip if no objects configured to avoid duplicating existing ones)
             for obj in self.objects_config:
                 self._sim._dispatch_action("add_object", obj)
 
-            # Add cameras
+            # Add cameras (same caveat as objects above)
             for cam in self.cameras_config:
                 self._sim._dispatch_action("add_camera", cam)
 
