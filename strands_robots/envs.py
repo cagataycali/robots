@@ -87,7 +87,9 @@ if HAS_GYM:
         ):
             """
             Args:
-                robot_name: Robot model name (from asset registry or URDF path)
+                robot_name: Robot model name (str) or a Robot/Simulation instance.
+                    If a Simulation or Robot object is passed, it will be used
+                    directly instead of creating a new one.
                 data_config: Optional data config name for joint mapping
                 task: Task description (for VLA policies)
                 render_mode: "rgb_array" or "human"
@@ -150,6 +152,30 @@ if HAS_GYM:
 
             assert HAS_MUJOCO, "mujoco required: pip install mujoco"
 
+            # Support passing a Robot or Simulation object directly
+            from strands_robots.simulation import Simulation
+
+            _passed_sim = None
+            if not isinstance(robot_name, str):
+                # User passed a Robot/Simulation instance
+                if isinstance(robot_name, Simulation):
+                    _passed_sim = robot_name
+                elif hasattr(robot_name, "_world"):
+                    # Robot wrapper — extract the underlying Simulation
+                    _passed_sim = robot_name
+                else:
+                    raise TypeError(
+                        f"robot_name must be a string or Robot/Simulation instance, "
+                        f"got {type(robot_name).__name__}"
+                    )
+                # Derive robot_name string from the sim's first robot
+                _robots = (
+                    _passed_sim._world.robots
+                    if hasattr(_passed_sim, "_world")
+                    else {}
+                )
+                robot_name = next(iter(_robots), "robot")
+
             self.robot_name = robot_name
             self.data_config = data_config or robot_name
             self.task = task
@@ -166,9 +192,9 @@ if HAS_GYM:
             self.success_fn = success_fn
 
             # Will be initialized in reset()
-            self._sim = None
+            self._sim = _passed_sim  # None if user passed a string
             self._step_count = 0
-            self._initialized = False
+            self._initialized = _passed_sim is not None
 
             # Initialize sim to get spaces
             self._init_sim()
@@ -177,22 +203,23 @@ if HAS_GYM:
             """Initialize the simulation to determine observation/action spaces."""
             from strands_robots.simulation import Simulation
 
-            self._sim = Simulation(
-                tool_name="gym_sim",
-                default_timestep=self.physics_dt,
-            )
+            if self._sim is None:
+                self._sim = Simulation(
+                    tool_name="gym_sim",
+                    default_timestep=self.physics_dt,
+                )
 
-            # Create world
-            self._sim._dispatch_action("create_world", {})
+                # Create world
+                self._sim._dispatch_action("create_world", {})
 
-            # Add robot
-            self._sim._dispatch_action(
-                "add_robot",
-                {
-                    "data_config": self.robot_name,
-                    "name": "robot",
-                },
-            )
+                # Add robot
+                self._sim._dispatch_action(
+                    "add_robot",
+                    {
+                        "data_config": self.robot_name,
+                        "name": "robot",
+                    },
+                )
 
             # Add objects
             for obj in self.objects_config:
