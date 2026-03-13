@@ -73,10 +73,7 @@ def _make_robot(
                     and issubclass(obj, RobotConfig)
                     and obj is not RobotConfig
                 ):
-                    if (
-                        attr_name.lower().replace("_", "")
-                        == robot_type_lower.replace("_", "") + "config"
-                    ):
+                    if attr_name.lower().replace("_", "") == robot_type_lower.replace("_", "") + "config":
                         ConfigClass = obj
                         break
             if ConfigClass:
@@ -85,9 +82,7 @@ def _make_robot(
             continue
 
     if not ConfigClass:
-        raise ValueError(
-            f"Robot config not found for '{robot_type}'. Check lerobot.robots."
-        )
+        raise ValueError(f"Robot config not found for '{robot_type}'. Check lerobot.robots.")
 
     # Build camera configs
     camera_configs = {}
@@ -117,9 +112,7 @@ def _make_robot(
     return make_robot_from_config(config)
 
 
-def _make_teleop(
-    teleop_type: str, teleop_port: str = None, teleop_id: str = None, **kwargs
-):
+def _make_teleop(teleop_type: str, teleop_port: str = None, teleop_id: str = None, **kwargs):
     """Create a LeRobot Teleoperator from type string using native factory."""
     import importlib
     import pkgutil
@@ -143,10 +136,7 @@ def _make_teleop(
                     and issubclass(obj, TeleoperatorConfig)
                     and obj is not TeleoperatorConfig
                 ):
-                    if (
-                        attr_name.lower().replace("_", "")
-                        == teleop_type_lower.replace("_", "") + "config"
-                    ):
+                    if attr_name.lower().replace("_", "") == teleop_type_lower.replace("_", "") + "config":
                         ConfigClass = obj
                         break
             if ConfigClass:
@@ -217,9 +207,7 @@ def _run_record_loop(robot, teleop, record_session, num_episodes: int):
 
         record_session.record_episode(mode=RecordMode.TELEOP)
         _ACTIVE_SESSION["stats"]["episodes_completed"] = ep + 1
-        _ACTIVE_SESSION["stats"]["total_frames"] = sum(
-            e.frames for e in record_session._episodes if not e.discarded
-        )
+        _ACTIVE_SESSION["stats"]["total_frames"] = sum(e.frames for e in record_session._episodes if not e.discarded)
 
     # Finalize
     result = record_session.save_and_push()
@@ -293,9 +281,7 @@ def teleoperator(
             if _ACTIVE_SESSION["running"]:
                 return {
                     "status": "error",
-                    "content": [
-                        {"text": "❌ Session already running. Use action='stop' first."}
-                    ],
+                    "content": [{"text": "❌ Session already running. Use action='stop' first."}],
                 }
 
             # Create robot and teleop
@@ -344,9 +330,7 @@ def teleoperator(
             if _ACTIVE_SESSION["running"]:
                 return {
                     "status": "error",
-                    "content": [
-                        {"text": "❌ Session already running. Use action='stop' first."}
-                    ],
+                    "content": [{"text": "❌ Session already running. Use action='stop' first."}],
                 }
 
             if not repo_id:
@@ -465,10 +449,7 @@ def teleoperator(
                     f"📁 Saved to: {final_result.get('root', 'unknown')}\n"
                 )
             elif mode == "teleop":
-                text += (
-                    f"📊 Steps: {stats.get('steps', 0)}\n"
-                    f"⏱️ Duration: {stats.get('duration', 0):.1f}s\n"
-                )
+                text += f"📊 Steps: {stats.get('steps', 0)}\n⏱️ Duration: {stats.get('duration', 0):.1f}s\n"
 
             return {"status": "success", "content": [{"text": text}]}
 
@@ -510,11 +491,7 @@ def teleoperator(
         else:
             return {
                 "status": "error",
-                "content": [
-                    {
-                        "text": f"❌ Unknown action: {action}. Valid: teleop, record, stop, status, discard"
-                    }
-                ],
+                "content": [{"text": f"❌ Unknown action: {action}. Valid: teleop, record, stop, status, discard"}],
             }
 
     except Exception as e:

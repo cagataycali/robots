@@ -38,8 +38,7 @@ def _discover_nvidia_cuda_lib_paths() -> list:
 
     # Also check ~/.local/lib/pythonX.Y/site-packages/nvidia/*/lib/
     user_sp = os.path.expanduser(
-        f"~/.local/lib/python{sys.version_info.major}.{sys.version_info.minor}"
-        f"/site-packages/nvidia"
+        f"~/.local/lib/python{sys.version_info.major}.{sys.version_info.minor}/site-packages/nvidia"
     )
     if os.path.isdir(user_sp):
         for lib_dir in glob.glob(os.path.join(user_sp, "*", "lib")):

@@ -59,9 +59,7 @@ class Policy(ABC):
     """
 
     @abstractmethod
-    async def get_actions(
-        self, observation_dict: Dict[str, Any], instruction: str, **kwargs
-    ) -> List[Dict[str, Any]]:
+    async def get_actions(self, observation_dict: Dict[str, Any], instruction: str, **kwargs) -> List[Dict[str, Any]]:
         """Get actions from policy given observation and instruction.
 
         Args:
@@ -73,9 +71,7 @@ class Policy(ABC):
         """
         pass
 
-    def get_actions_sync(
-        self, observation_dict: Dict[str, Any], instruction: str, **kwargs
-    ) -> List[Dict[str, Any]]:
+    def get_actions_sync(self, observation_dict: Dict[str, Any], instruction: str, **kwargs) -> List[Dict[str, Any]]:
         """Synchronous convenience wrapper around ``get_actions()``.
 
         Safe to call from sync code, event loops, or notebooks.
@@ -89,15 +85,14 @@ class Policy(ABC):
 
         if loop and loop.is_running():
             import concurrent.futures
+
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
                 return pool.submit(
                     asyncio.run,
                     self.get_actions(observation_dict, instruction, **kwargs),
                 ).result()
         else:
-            return asyncio.run(
-                self.get_actions(observation_dict, instruction, **kwargs)
-            )
+            return asyncio.run(self.get_actions(observation_dict, instruction, **kwargs))
 
     @abstractmethod
     def set_robot_state_keys(self, robot_state_keys: List[str]) -> None:
@@ -126,9 +121,7 @@ class MockPolicy(Policy):
     def set_robot_state_keys(self, robot_state_keys: List[str]) -> None:
         self.robot_state_keys = robot_state_keys
 
-    async def get_actions(
-        self, observation_dict: Dict[str, Any], instruction: str, **kwargs
-    ) -> List[Dict[str, Any]]:
+    async def get_actions(self, observation_dict: Dict[str, Any], instruction: str, **kwargs) -> List[Dict[str, Any]]:
         """Return smooth sinusoidal actions."""
         if not self.robot_state_keys:
             if "observation.state" in observation_dict:

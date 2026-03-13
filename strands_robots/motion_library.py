@@ -49,9 +49,7 @@ class Motion:
         self.n_steps = len(self.timestamps)
 
         # Joint trajectories
-        self.joint_positions = data.get(
-            "joint_positions", data.get("trajectory", data.get("actions", []))
-        )
+        self.joint_positions = data.get("joint_positions", data.get("trajectory", data.get("actions", [])))
 
     def get_action_at(self, t: float) -> Optional[Dict[str, float]]:
         """Get interpolated action at time t."""
@@ -158,11 +156,7 @@ class MotionLibrary:
                         count += 1
                 elif isinstance(data, dict):
                     # Could be a single motion or a collection
-                    if (
-                        "name" in data
-                        or "trajectory" in data
-                        or "joint_positions" in data
-                    ):
+                    if "name" in data or "trajectory" in data or "joint_positions" in data:
                         name = data.get("name", json_file.stem)
                         self._motions[name] = Motion(name, data, source=source)
                         count += 1
@@ -170,9 +164,7 @@ class MotionLibrary:
                         # Dict of motions keyed by name
                         for name, motion_data in data.items():
                             if isinstance(motion_data, dict):
-                                self._motions[name] = Motion(
-                                    name, motion_data, source=source
-                                )
+                                self._motions[name] = Motion(name, motion_data, source=source)
                                 count += 1
             except Exception as e:
                 logger.debug("Could not load %s: %s", json_file, e)
@@ -220,9 +212,7 @@ class MotionLibrary:
         """Search motions by name or description."""
         query_lower = query.lower()
         return [
-            m
-            for m in self._motions.values()
-            if query_lower in m.name.lower() or query_lower in m.description.lower()
+            m for m in self._motions.values() if query_lower in m.name.lower() or query_lower in m.description.lower()
         ]
 
     def play_in_sim(

@@ -332,9 +332,7 @@ def _discover_cameras() -> Dict[str, Any]:
         }
 
 
-def _list_camera_details(
-    camera_type: str, camera_id: Union[int, str] = None
-) -> Dict[str, Any]:
+def _list_camera_details(camera_type: str, camera_id: Union[int, str] = None) -> Dict[str, Any]:
     """List detailed camera information and configurations."""
     try:
         details = []
@@ -351,9 +349,7 @@ def _list_camera_details(
 
             if camera_id is not None:
                 try:
-                    config = OpenCVCameraConfig(
-                        index_or_path=camera_id, fps=30, width=640, height=480
-                    )
+                    config = OpenCVCameraConfig(index_or_path=camera_id, fps=30, width=640, height=480)
                     camera = OpenCVCamera(config)
                     camera.connect(warmup=False)
 
@@ -422,9 +418,7 @@ def _capture_single_image(
         file_path = os.path.join(save_path, f"{filename}.{format}")
 
         # Create camera configuration
-        camera = _create_camera(
-            camera_type, camera_id, width, height, fps, color_mode, rotation
-        )
+        camera = _create_camera(camera_type, camera_id, width, height, fps, color_mode, rotation)
 
         # Connect and capture
         start_time = time.time()
@@ -516,9 +510,7 @@ def _capture_batch_images(
                 file_path = os.path.join(save_path, f"{cam_filename}.{format}")
 
                 # Create and use camera
-                camera = _create_camera(
-                    camera_type, cam_id, width, height, fps, color_mode, rotation
-                )
+                camera = _create_camera(camera_type, cam_id, width, height, fps, color_mode, rotation)
 
                 start_time = time.time()
                 camera.connect(warmup=warmup)
@@ -557,10 +549,7 @@ def _capture_batch_images(
 
         # Use ThreadPoolExecutor for parallel capture
         with ThreadPoolExecutor(max_workers=len(camera_ids)) as executor:
-            future_to_camera = {
-                executor.submit(capture_single_camera, cam_id): cam_id
-                for cam_id in camera_ids
-            }
+            future_to_camera = {executor.submit(capture_single_camera, cam_id): cam_id for cam_id in camera_ids}
 
             for future in as_completed(future_to_camera):
                 result = future.result()
@@ -640,9 +629,7 @@ def _record_video_sequence(
         video_path = os.path.join(save_path, f"{filename}.mp4")
 
         # Create camera
-        camera = _create_camera(
-            camera_type, camera_id, width, height, fps, color_mode, rotation
-        )
+        camera = _create_camera(camera_type, camera_id, width, height, fps, color_mode, rotation)
         camera.connect(warmup=warmup)
 
         # Setup video writer
@@ -671,7 +658,9 @@ def _record_video_sequence(
                     remaining = capture_duration - elapsed
                     logger.info(
                         "Recording... %.1fs / %.1fs (%.1fs remaining)",
-                        elapsed, capture_duration, remaining,
+                        elapsed,
+                        capture_duration,
+                        remaining,
                     )
 
         finally:
@@ -717,9 +706,7 @@ def _preview_camera_live(
 ) -> Dict[str, Any]:
     """Show live preview from camera."""
     try:
-        camera = _create_camera(
-            camera_type, camera_id, width, height, fps, color_mode, rotation
-        )
+        camera = _create_camera(camera_type, camera_id, width, height, fps, color_mode, rotation)
         camera.connect(warmup=warmup)
 
         frames_displayed = 0
@@ -743,9 +730,7 @@ def _preview_camera_live(
                 bgr_frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
 
                 # Add info overlay
-                info_text = (
-                    f"Camera: {camera_id} | Frame: {frames_displayed} | FPS: {fps}"
-                )
+                info_text = f"Camera: {camera_id} | Frame: {frames_displayed} | FPS: {fps}"
                 cv2.putText(
                     bgr_frame,
                     info_text,
@@ -825,9 +810,7 @@ def _test_camera_performance(
 
         # Connection test
         start_time = time.time()
-        camera = _create_camera(
-            camera_type, camera_id, width, height, fps, color_mode, rotation
-        )
+        camera = _create_camera(camera_type, camera_id, width, height, fps, color_mode, rotation)
         camera.connect(warmup=warmup)
         connect_time = time.time() - start_time
 
@@ -849,7 +832,7 @@ def _test_camera_performance(
         test_results.append(f"   - Average: {avg_sync_time:.3f}s")
         test_results.append(f"   - Min: {min_sync_time:.3f}s")
         test_results.append(f"   - Max: {max_sync_time:.3f}s")
-        test_results.append(f"   - Est. FPS: {1/avg_sync_time:.1f}")
+        test_results.append(f"   - Est. FPS: {1 / avg_sync_time:.1f}")
 
         # Frame capture test (async)
         if async_mode:
@@ -868,8 +851,8 @@ def _test_camera_performance(
             test_results.append(f"   - Average: {avg_async_time:.3f}s")
             test_results.append(f"   - Min: {min_async_time:.3f}s")
             test_results.append(f"   - Max: {max_async_time:.3f}s")
-            test_results.append(f"   - Est. FPS: {1/avg_async_time:.1f}")
-            test_results.append(f"   - Speedup: {avg_sync_time/avg_async_time:.2f}x")
+            test_results.append(f"   - Est. FPS: {1 / avg_async_time:.1f}")
+            test_results.append(f"   - Speedup: {avg_sync_time / avg_async_time:.2f}x")
 
         # Frame properties test
         test_results.append("📊 **Frame Properties**:")
@@ -888,9 +871,7 @@ def _test_camera_performance(
         camera.disconnect()
 
         test_results.append("\n🎯 **Performance Summary**:")
-        test_results.append(
-            f"   - Connection: {'✅ Fast' if connect_time < 1.0 else '⚠️ Slow'} ({connect_time:.3f}s)"
-        )
+        test_results.append(f"   - Connection: {'✅ Fast' if connect_time < 1.0 else '⚠️ Slow'} ({connect_time:.3f}s)")
         test_results.append(
             f"   - Sync capture: {'✅ Good' if avg_sync_time < 0.1 else '⚠️ Slow'} ({avg_sync_time:.3f}s)"
         )
@@ -899,9 +880,7 @@ def _test_camera_performance(
                 f"   - Async capture: {'✅ Better' if avg_async_time < avg_sync_time else '❌ Worse'}"
                 f" ({avg_async_time:.3f}s)"
             )
-        test_results.append(
-            f"   - Frame rate: {'✅ Stable' if max_sync_time - min_sync_time < 0.05 else '⚠️ Variable'}"
-        )
+        test_results.append(f"   - Frame rate: {'✅ Stable' if max_sync_time - min_sync_time < 0.05 else '⚠️ Variable'}")
 
         return {"status": "success", "content": [{"text": "\n".join(test_results)}]}
 
@@ -926,9 +905,7 @@ def _configure_camera_settings(
 ) -> Dict[str, Any]:
     """Configure camera settings and optionally save configuration."""
     try:
-        camera = _create_camera(
-            camera_type, camera_id, width, height, fps, color_mode, rotation
-        )
+        camera = _create_camera(camera_type, camera_id, width, height, fps, color_mode, rotation)
         camera.connect(warmup=warmup)
 
         # Get actual camera properties
@@ -961,9 +938,7 @@ def _configure_camera_settings(
             os.makedirs(save_path, exist_ok=True)
             cam_id_safe = str(camera_id).replace("/", "_")
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            config_filename = (
-                f"camera_config_{camera_type}_{cam_id_safe}_{timestamp}.json"
-            )
+            config_filename = f"camera_config_{camera_type}_{cam_id_safe}_{timestamp}.json"
             config_path = os.path.join(save_path, config_filename)
 
             with open(config_path, "w") as f:
@@ -1002,9 +977,7 @@ def _create_camera(
 
     if camera_type.lower() == "opencv":
         # Convert string enums to proper types
-        color_mode_enum = (
-            ColorMode.RGB if color_mode.upper() == "RGB" else ColorMode.BGR
-        )
+        color_mode_enum = ColorMode.RGB if color_mode.upper() == "RGB" else ColorMode.BGR
 
         rotation_map = {
             "NO_ROTATION": Cv2Rotation.NO_ROTATION,
@@ -1025,9 +998,7 @@ def _create_camera(
         return OpenCVCamera(config)
 
     elif camera_type.lower() == "realsense" and REALSENSE_AVAILABLE:
-        config = RealSenseCameraConfig(
-            serial_number_or_name=str(camera_id), fps=fps, width=width, height=height
-        )
+        config = RealSenseCameraConfig(serial_number_or_name=str(camera_id), fps=fps, width=width, height=height)
         return RealSenseCamera(config)
 
     else:

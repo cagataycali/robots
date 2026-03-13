@@ -116,9 +116,7 @@ class MuJoCoKinematics(Kinematics):
         self._tol = tolerance
 
         # Resolve body ID
-        self._body_id = self._mj.mj_name2id(
-            model, self._mj.mjtObj.mjOBJ_BODY, body_name
-        )
+        self._body_id = self._mj.mj_name2id(model, self._mj.mjtObj.mjOBJ_BODY, body_name)
         if self._body_id < 0:
             raise ValueError(f"Body '{body_name}' not found in model")
 
@@ -135,9 +133,7 @@ class MuJoCoKinematics(Kinematics):
             name = self._mj.mj_id2name(model, self._mj.mjtObj.mjOBJ_JOINT, jid)
             self._joint_names.append(name or f"joint_{jid}")
 
-        logger.info(
-            f"MuJoCoKinematics: body='{body_name}', {len(self._joint_ids)} joints"
-        )
+        logger.info(f"MuJoCoKinematics: body='{body_name}', {len(self._joint_ids)} joints")
 
     @property
     def joint_names(self) -> List[str]:
@@ -273,8 +269,7 @@ class PlacoKinematics(Kinematics):
             )
         except ImportError:
             raise ImportError(
-                "lerobot with placo required for PlacoKinematics. "
-                "Install with: pip install lerobot[kinematics]"
+                "lerobot with placo required for PlacoKinematics. Install with: pip install lerobot[kinematics]"
             )
 
         self._urdf_path = urdf_path
@@ -337,9 +332,7 @@ class ONNXKinematics(Kinematics):
             raise ImportError("onnxruntime required: pip install onnxruntime")
 
         self._fk_session = ort.InferenceSession(fk_model_path)
-        self._ik_session = (
-            ort.InferenceSession(ik_model_path) if ik_model_path else None
-        )
+        self._ik_session = ort.InferenceSession(ik_model_path) if ik_model_path else None
         self._joint_names = joint_names or [f"joint_{i}" for i in range(6)]
         self._fk_path = fk_model_path
         self._ik_path = ik_model_path
@@ -485,9 +478,7 @@ def create_kinematics(
 
                 model = mujoco.MjModel.from_xml_path(urdf_path)
                 data = mujoco.MjData(model)
-                return MuJoCoKinematics(
-                    model=model, data=data, body_name=body_name, **kwargs
-                )
+                return MuJoCoKinematics(model=model, data=data, body_name=body_name, **kwargs)
             except Exception as e:
                 raise RuntimeError(f"No kinematics backend available: {e}")
 

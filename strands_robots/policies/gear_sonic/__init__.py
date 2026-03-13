@@ -193,20 +193,14 @@ class GearSonicPolicy(Policy):
             raise ImportError("GEAR-SONIC requires: pip install onnxruntime")
 
         providers = (
-            ["CUDAExecutionProvider", "CPUExecutionProvider"]
-            if self._device == "cuda"
-            else ["CPUExecutionProvider"]
+            ["CUDAExecutionProvider", "CPUExecutionProvider"] if self._device == "cuda" else ["CPUExecutionProvider"]
         )
 
         d = self._model_dir
         logger.info("🔄 Loading GEAR-SONIC ONNX models from %s...", d)
 
-        self._encoder = ort.InferenceSession(
-            f"{d}/model_encoder.onnx", providers=providers
-        )
-        self._decoder = ort.InferenceSession(
-            f"{d}/model_decoder.onnx", providers=providers
-        )
+        self._encoder = ort.InferenceSession(f"{d}/model_encoder.onnx", providers=providers)
+        self._decoder = ort.InferenceSession(f"{d}/model_decoder.onnx", providers=providers)
 
         if self._use_planner:
             planner_path = f"{d}/planner_sonic.onnx"
@@ -231,9 +225,7 @@ class GearSonicPolicy(Policy):
     def set_robot_state_keys(self, robot_state_keys: List[str]) -> None:
         self._robot_state_keys = robot_state_keys
 
-    def _build_encoder_input(
-        self, observation_dict: Dict[str, Any]
-    ) -> Dict[str, np.ndarray]:
+    def _build_encoder_input(self, observation_dict: Dict[str, Any]) -> Dict[str, np.ndarray]:
         """Build encoder input from observation + history."""
         inputs = {}
         for inp_spec in self._encoder.get_inputs():
@@ -372,9 +364,7 @@ class GearSonicPolicy(Policy):
 
         # Map to named joints
         action_dict = {}
-        joint_names = (
-            self._robot_state_keys if self._robot_state_keys else G1_JOINT_NAMES
-        )
+        joint_names = self._robot_state_keys if self._robot_state_keys else G1_JOINT_NAMES
         for i, name in enumerate(joint_names):
             if i < len(action_array):
                 action_dict[name] = float(action_array[i])

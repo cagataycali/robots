@@ -22,9 +22,7 @@ class ModalityConfig:
     def model_dump_json(self) -> str:
         import json
 
-        return json.dumps(
-            {"delta_indices": self.delta_indices, "modality_keys": self.modality_keys}
-        )
+        return json.dumps({"delta_indices": self.delta_indices, "modality_keys": self.modality_keys})
 
 
 @dataclass
@@ -40,18 +38,10 @@ class BaseDataConfig(ABC):
 
     def modality_config(self) -> Dict[str, ModalityConfig]:
         return {
-            "video": ModalityConfig(
-                delta_indices=self.observation_indices, modality_keys=self.video_keys
-            ),
-            "state": ModalityConfig(
-                delta_indices=self.observation_indices, modality_keys=self.state_keys
-            ),
-            "action": ModalityConfig(
-                delta_indices=self.action_indices, modality_keys=self.action_keys
-            ),
-            "language": ModalityConfig(
-                delta_indices=self.observation_indices, modality_keys=self.language_keys
-            ),
+            "video": ModalityConfig(delta_indices=self.observation_indices, modality_keys=self.video_keys),
+            "state": ModalityConfig(delta_indices=self.observation_indices, modality_keys=self.state_keys),
+            "action": ModalityConfig(delta_indices=self.action_indices, modality_keys=self.action_keys),
+            "language": ModalityConfig(delta_indices=self.observation_indices, modality_keys=self.language_keys),
         }
 
 
@@ -181,9 +171,7 @@ class FourierGr1ArmsOnlyDataConfig(BaseDataConfig):
             "action.left_hand",
             "action.right_hand",
         ]
-        self.language_keys = self.language_keys or [
-            "annotation.human.action.task_description"
-        ]
+        self.language_keys = self.language_keys or ["annotation.human.action.task_description"]
         self.observation_indices = self.observation_indices or [0]
         self.action_indices = self.action_indices or list(range(16))
 
@@ -388,9 +376,7 @@ class BimanualPandaGripperDataConfig(BaseDataConfig):
             "action.left_arm_eef_rot",
             "action.left_gripper_close",
         ]
-        self.language_keys = self.language_keys or [
-            "annotation.human.action.task_description"
-        ]
+        self.language_keys = self.language_keys or ["annotation.human.action.task_description"]
         self.observation_indices = self.observation_indices or [0]
         self.action_indices = self.action_indices or list(range(16))
 
@@ -428,9 +414,7 @@ class BimanualPandaHandDataConfig(BaseDataConfig):
             "action.left_arm_eef_rot",
             "action.left_hand",
         ]
-        self.language_keys = self.language_keys or [
-            "annotation.human.action.task_description"
-        ]
+        self.language_keys = self.language_keys or ["annotation.human.action.task_description"]
         self.observation_indices = self.observation_indices or [0]
         self.action_indices = self.action_indices or list(range(16))
 
@@ -466,9 +450,7 @@ class SinglePandaGripperDataConfig(BaseDataConfig):
             "action.base_motion",
             "action.control_mode",
         ]
-        self.language_keys = self.language_keys or [
-            "annotation.human.action.task_description"
-        ]
+        self.language_keys = self.language_keys or ["annotation.human.action.task_description"]
         self.observation_indices = self.observation_indices or [0]
         self.action_indices = self.action_indices or list(range(16))
 
@@ -508,9 +490,7 @@ class OxeDroidDataConfig(BaseDataConfig):
             "action.joint_position",
             "action.gripper_position",
         ]
-        self.language_keys = self.language_keys or [
-            "annotation.language.language_instruction"
-        ]
+        self.language_keys = self.language_keys or ["annotation.language.language_instruction"]
         self.observation_indices = self.observation_indices or [0]
         self.action_indices = self.action_indices or list(range(32))
 
@@ -551,9 +531,7 @@ class OxeGoogleDataConfig(BaseDataConfig):
             "action.yaw",
             "action.gripper",
         ]
-        self.language_keys = self.language_keys or [
-            "annotation.human.action.task_description"
-        ]
+        self.language_keys = self.language_keys or ["annotation.human.action.task_description"]
         self.observation_indices = self.observation_indices or [0]
         self.action_indices = self.action_indices or list(range(8))
 
@@ -594,9 +572,7 @@ class OxeWidowXDataConfig(BaseDataConfig):
             "action.yaw",
             "action.gripper",
         ]
-        self.language_keys = self.language_keys or [
-            "annotation.human.action.task_description"
-        ]
+        self.language_keys = self.language_keys or ["annotation.human.action.task_description"]
         self.observation_indices = self.observation_indices or [0]
         self.action_indices = self.action_indices or list(range(8))
 
@@ -637,9 +613,7 @@ class LiberoPandaDataConfig(BaseDataConfig):
             "action.yaw",
             "action.gripper",
         ]
-        self.language_keys = self.language_keys or [
-            "annotation.human.action.task_description"
-        ]
+        self.language_keys = self.language_keys or ["annotation.human.action.task_description"]
         self.observation_indices = self.observation_indices or [0]
         self.action_indices = self.action_indices or list(range(16))
 
@@ -729,9 +703,7 @@ class AgibotDualArmGripperDataConfig(BaseDataConfig):
         ]
         self.language_keys = self.language_keys or ["annotation.language.action_text"]
         self.observation_indices = self.observation_indices or [0]
-        self.action_indices = self.action_indices or list(
-            range(30)
-        )  # GO-1 uses 30-step chunks
+        self.action_indices = self.action_indices or list(range(30))  # GO-1 uses 30-step chunks
 
 
 @dataclass
@@ -851,9 +823,7 @@ class GalaxeaR1ProDataConfig(BaseDataConfig):
             "action.left_hand",
             "action.right_hand",
         ]
-        self.language_keys = self.language_keys or [
-            "annotation.human.action.task_description"
-        ]
+        self.language_keys = self.language_keys or ["annotation.human.action.task_description"]
         self.observation_indices = self.observation_indices or [0]
         self.action_indices = self.action_indices or list(range(16))
 
@@ -906,12 +876,8 @@ def load_data_config(data_config: Union[str, BaseDataConfig]) -> BaseDataConfig:
     if isinstance(data_config, str):
         if data_config in DATA_CONFIG_MAP:
             return DATA_CONFIG_MAP[data_config]
-        raise ValueError(
-            f"Unknown data_config '{data_config}'. Available: {list(DATA_CONFIG_MAP.keys())}"
-        )
-    raise ValueError(
-        f"data_config must be str or BaseDataConfig, got {type(data_config)}"
-    )
+        raise ValueError(f"Unknown data_config '{data_config}'. Available: {list(DATA_CONFIG_MAP.keys())}")
+    raise ValueError(f"data_config must be str or BaseDataConfig, got {type(data_config)}")
 
 
 def create_custom_data_config(
@@ -936,9 +902,7 @@ def create_custom_data_config(
 
     config = CustomDataConfig()
     DATA_CONFIG_MAP[name] = config
-    logger.info(
-        f"Registered custom config '{name}': cameras={video_keys} state={state_keys}"
-    )
+    logger.info(f"Registered custom config '{name}': cameras={video_keys} state={state_keys}")
     return config
 
 

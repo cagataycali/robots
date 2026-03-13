@@ -95,10 +95,7 @@ class DreamzeroPolicy(Policy):
         self._connected = False
         self._step = 0
 
-        logger.info(
-            f"🌊 DreamZero policy initialized: ws://{host}:{port} "
-            f"session={self._session_id[:8]}..."
-        )
+        logger.info(f"🌊 DreamZero policy initialized: ws://{host}:{port} session={self._session_id[:8]}...")
 
     @property
     def provider_name(self) -> str:
@@ -124,9 +121,7 @@ class DreamzeroPolicy(Policy):
             try:
                 import msgpack_numpy
             except ImportError:
-                raise ImportError(
-                    "DreamZero requires msgpack-numpy: pip install msgpack-numpy"
-                )
+                raise ImportError("DreamZero requires msgpack-numpy: pip install msgpack-numpy")
 
         uri = f"ws://{self._host}:{self._port}"
         logger.info("🌊 Connecting to DreamZero server at %s...", uri)
@@ -172,9 +167,7 @@ class DreamzeroPolicy(Policy):
                 self._connected = True
                 logger.info("🌊 Connected via wss! Config: %s", self._server_config)
             except Exception:
-                raise ConnectionError(
-                    f"Cannot connect to DreamZero server at {self._host}:{self._port}: {e}"
-                )
+                raise ConnectionError(f"Cannot connect to DreamZero server at {self._host}:{self._port}: {e}")
 
     def _build_observation(
         self,
@@ -206,13 +199,7 @@ class DreamzeroPolicy(Policy):
         needs_wrist = cfg.get("needs_wrist_camera", True)
 
         # Map camera images
-        camera_keys = sorted(
-            [
-                k
-                for k in observation_dict
-                if "camera" in k.lower() or "image" in k.lower()
-            ]
-        )
+        camera_keys = sorted([k for k in observation_dict if "camera" in k.lower() or "image" in k.lower()])
 
         ext_cam_idx = 0
         for key in camera_keys:
@@ -235,17 +222,13 @@ class DreamzeroPolicy(Policy):
             if "wrist" in key.lower() and needs_wrist:
                 obs["observation/wrist_image_left"] = img.astype(np.uint8)
             elif ext_cam_idx < n_ext_cams:
-                obs[f"observation/exterior_image_{ext_cam_idx}_left"] = img.astype(
-                    np.uint8
-                )
+                obs[f"observation/exterior_image_{ext_cam_idx}_left"] = img.astype(np.uint8)
                 ext_cam_idx += 1
 
         # Fill missing cameras with zeros
         h, w = img_res if img_res else (180, 320)
         for i in range(ext_cam_idx, n_ext_cams):
-            obs[f"observation/exterior_image_{i}_left"] = np.zeros(
-                (h, w, 3), dtype=np.uint8
-            )
+            obs[f"observation/exterior_image_{i}_left"] = np.zeros((h, w, 3), dtype=np.uint8)
         if needs_wrist and "observation/wrist_image_left" not in obs:
             obs["observation/wrist_image_left"] = np.zeros((h, w, 3), dtype=np.uint8)
 
@@ -346,13 +329,9 @@ class DreamzeroPolicy(Policy):
 
         # Validate deserialized array bounds (security hardening)
         if actions_array.ndim != 2:
-            raise ValueError(
-                f"Expected 2-D action array, got ndim={actions_array.ndim}"
-            )
+            raise ValueError(f"Expected 2-D action array, got ndim={actions_array.ndim}")
         if actions_array.shape[0] > 1000 or actions_array.shape[1] > 100:
-            raise ValueError(
-                f"Action array shape {actions_array.shape} exceeds safety bounds (1000, 100)"
-            )
+            raise ValueError(f"Action array shape {actions_array.shape} exceeds safety bounds (1000, 100)")
 
         # Convert (N, 8) numpy array to list of action dicts
         actions = []

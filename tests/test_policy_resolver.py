@@ -29,10 +29,7 @@ class TestResolveHuggingFace:
     def test_lerobot_model(self):
         provider, kwargs = resolve_policy("lerobot/act_aloha_sim_transfer_cube_human")
         assert provider == "lerobot_local"
-        assert (
-            kwargs["pretrained_name_or_path"]
-            == "lerobot/act_aloha_sim_transfer_cube_human"
-        )
+        assert kwargs["pretrained_name_or_path"] == "lerobot/act_aloha_sim_transfer_cube_human"
 
     def test_openvla_model_falls_back_to_lerobot(self):
         """openvla org was removed — unknown orgs now default to lerobot_local."""

@@ -129,11 +129,7 @@ def _action_start(
     if robot_id in _STREAMS:
         return {
             "status": "error",
-            "content": [
-                {
-                    "text": f"Stream already running for robot_id={robot_id}. Stop it first."
-                }
-            ],
+            "content": [{"text": f"Stream already running for robot_id={robot_id}. Stop it first."}],
         }
 
     stream = TelemetryStream(
@@ -235,9 +231,7 @@ def _action_emit(
     if robot_id not in _STREAMS:
         return {
             "status": "error",
-            "content": [
-                {"text": f"No stream running for robot_id={robot_id}. Start one first."}
-            ],
+            "content": [{"text": f"No stream running for robot_id={robot_id}. Start one first."}],
         }
 
     from strands_robots.telemetry.types import EventCategory
@@ -263,10 +257,7 @@ def _action_emit(
     return {
         "status": "success",
         "content": [
-            {
-                "text": f"Event emitted: category={category}, robot_id={robot_id}, "
-                f"data_keys={list(event_data.keys())}."
-            }
+            {"text": f"Event emitted: category={category}, robot_id={robot_id}, data_keys={list(event_data.keys())}."}
         ],
     }
 
@@ -356,17 +347,11 @@ def _action_start_trace(robot_id: str, trace_name: str) -> Dict[str, Any]:
 
     from strands_robots.telemetry.types import EventCategory
 
-    stream.emit(
-        EventCategory.TASK_START, {"span_name": trace_name, "trace_id": trace_id}
-    )
+    stream.emit(EventCategory.TASK_START, {"span_name": trace_name, "trace_id": trace_id})
 
     return {
         "status": "success",
-        "content": [
-            {
-                "text": f"Trace started: name={trace_name}, trace_id={trace_id}, robot_id={robot_id}."
-            }
-        ],
+        "content": [{"text": f"Trace started: name={trace_name}, trace_id={trace_id}, robot_id={robot_id}."}],
     }
 
 
@@ -396,9 +381,5 @@ def _action_end_trace(robot_id: str) -> Dict[str, Any]:
 
     return {
         "status": "success",
-        "content": [
-            {
-                "text": f"Trace ended: name={span_name}, trace_id={trace_id}, robot_id={robot_id}."
-            }
-        ],
+        "content": [{"text": f"Trace ended: name={span_name}, trace_id={trace_id}, robot_id={robot_id}."}],
     }

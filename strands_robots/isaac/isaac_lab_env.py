@@ -144,9 +144,7 @@ def list_isaac_tasks(category: Optional[str] = None) -> List[Dict[str, Any]]:
         import isaaclab_tasks  # noqa: F401
 
         # Get all Isaac Lab registered envs
-        isaac_envs = [
-            spec.id for spec in gym.registry.values() if spec.id.startswith("Isaac-")
-        ]
+        isaac_envs = [spec.id for spec in gym.registry.values() if spec.id.startswith("Isaac-")]
 
         # Add any we don't have in our registry
         known_ids = {info["task_id"] for info in _ISAAC_TASK_REGISTRY.values()}
@@ -238,9 +236,7 @@ class IsaacLabEnv:
                 # isaaclab_tasks auto-registers on import (v0.54+)
                 import isaaclab_tasks  # noqa: F401
             except ImportError:
-                logger.warning(
-                    "isaaclab_tasks not available — using direct env creation"
-                )
+                logger.warning("isaaclab_tasks not available — using direct env creation")
 
             # Resolve task ID
             task_info = _ISAAC_TASK_REGISTRY.get(self.config.task_name)
@@ -254,11 +250,7 @@ class IsaacLabEnv:
             )
 
             # Extract spaces info
-            self._action_dim = (
-                self._env.action_space.shape[-1]
-                if hasattr(self._env.action_space, "shape")
-                else 0
-            )
+            self._action_dim = self._env.action_space.shape[-1] if hasattr(self._env.action_space, "shape") else 0
 
             logger.info(
                 f"✅ Isaac Lab env created: {task_id} "
@@ -291,15 +283,11 @@ class IsaacLabEnv:
         import torch
 
         if isinstance(action_array, np.ndarray):
-            action_tensor = (
-                torch.from_numpy(action_array).float().to(self.config.device)
-            )
+            action_tensor = torch.from_numpy(action_array).float().to(self.config.device)
         elif isinstance(action_array, torch.Tensor):
             action_tensor = action_array.to(self.config.device)
         else:
-            action_tensor = torch.tensor(
-                action_array, dtype=torch.float32, device=self.config.device
-            )
+            action_tensor = torch.tensor(action_array, dtype=torch.float32, device=self.config.device)
 
         # Ensure batch dimension
         if action_tensor.dim() == 1:
@@ -311,22 +299,12 @@ class IsaacLabEnv:
 
         obs_dict = self._to_policy_obs(obs)
         reward = float(rew.mean().cpu()) if hasattr(rew, "cpu") else float(rew)
-        done = (
-            bool(terminated.any().cpu())
-            if hasattr(terminated, "cpu")
-            else bool(terminated)
-        )
-        trunc = (
-            bool(truncated.any().cpu())
-            if hasattr(truncated, "cpu")
-            else bool(truncated)
-        )
+        done = bool(terminated.any().cpu()) if hasattr(terminated, "cpu") else bool(terminated)
+        trunc = bool(truncated.any().cpu()) if hasattr(truncated, "cpu") else bool(truncated)
 
         return obs_dict, reward, done, trunc, info
 
-    def step_with_dict(
-        self, action_dict: Dict[str, float]
-    ) -> Tuple[Dict[str, Any], float, bool, bool, Dict]:
+    def step_with_dict(self, action_dict: Dict[str, float]) -> Tuple[Dict[str, Any], float, bool, bool, Dict]:
         """Step with a strands-robots Policy-style action dict.
 
         Converts {joint_name: value, ...} → action array for Isaac Lab.
@@ -391,14 +369,10 @@ class IsaacLabEnv:
                     actions = asyncio.run(policy.get_actions(obs, instruction))
                 except RuntimeError:
                     loop = asyncio.get_event_loop()
-                    actions = loop.run_until_complete(
-                        policy.get_actions(obs, instruction)
-                    )
+                    actions = loop.run_until_complete(policy.get_actions(obs, instruction))
 
                 if actions:
-                    obs, reward, terminated, truncated, info = self.step_with_dict(
-                        actions[0]
-                    )
+                    obs, reward, terminated, truncated, info = self.step_with_dict(actions[0])
                     ep_reward += reward
                     ep_steps += 1
 

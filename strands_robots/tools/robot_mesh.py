@@ -75,10 +75,8 @@ def robot_mesh(
             if peers:
                 text += "**Discovered peers:**\n"
                 for p in peers:
-                    icon = {"robot": "🤖", "sim": "🎮", "agent": "🧠"}.get(
-                        p.get("type", ""), "🔧"
-                    )
-                    text += f"  {icon} {p['peer_id']} ({p.get('type','?')}) — {p.get('hostname','?')}, {p.get('age',0)}s ago\n"
+                    icon = {"robot": "🤖", "sim": "🎮", "agent": "🧠"}.get(p.get("type", ""), "🔧")
+                    text += f"  {icon} {p['peer_id']} ({p.get('type', '?')}) — {p.get('hostname', '?')}, {p.get('age', 0)}s ago\n"
                     if p.get("task_status"):
                         text += f"      Task: {p['task_status']} — {p.get('instruction', '')}\n"
             elif not local:
@@ -109,11 +107,7 @@ def robot_mesh(
             r = mesh.send(target, cmd, timeout=timeout)
             return {
                 "status": "success",
-                "content": [
-                    {
-                        "text": f"📨 → {target}: {instruction}\n\n{json.dumps(r, indent=2, default=str)[:2000]}"
-                    }
-                ],
+                "content": [{"text": f"📨 → {target}: {instruction}\n\n{json.dumps(r, indent=2, default=str)[:2000]}"}],
             }
 
         elif action == "send":
@@ -129,11 +123,7 @@ def robot_mesh(
             r = mesh.send(target, cmd, timeout=timeout)
             return {
                 "status": "success",
-                "content": [
-                    {
-                        "text": f"📨 {target}:\n{json.dumps(r, indent=2, default=str)[:2000]}"
-                    }
-                ],
+                "content": [{"text": f"📨 {target}:\n{json.dumps(r, indent=2, default=str)[:2000]}"}],
             }
 
         elif action == "broadcast":
@@ -147,11 +137,7 @@ def robot_mesh(
             rs = mesh.broadcast(cmd, timeout=timeout)
             return {
                 "status": "success",
-                "content": [
-                    {
-                        "text": f"📢 {len(rs)} responses:\n{json.dumps(rs, indent=2, default=str)[:3000]}"
-                    }
-                ],
+                "content": [{"text": f"📢 {len(rs)} responses:\n{json.dumps(rs, indent=2, default=str)[:3000]}"}],
             }
 
         elif action == "stop":
@@ -196,9 +182,7 @@ def robot_mesh(
                 return {
                     "status": "error",
                     "content": [
-                        {
-                            "text": "target (topic pattern) required. E.g. 'reachy_mini/*' or '*/joint_positions'"
-                        }
+                        {"text": "target (topic pattern) required. E.g. 'reachy_mini/*' or '*/joint_positions'"}
                     ],
                 }
             mesh = _any_mesh()
@@ -232,11 +216,7 @@ def robot_mesh(
             name = mesh.on_stream(target)
             return {
                 "status": "success",
-                "content": [
-                    {
-                        "text": f"👁️ Watching VLA stream from: {target}\nMessages in inbox['{name}']"
-                    }
-                ],
+                "content": [{"text": f"👁️ Watching VLA stream from: {target}\nMessages in inbox['{name}']"}],
             }
 
         elif action == "inbox":

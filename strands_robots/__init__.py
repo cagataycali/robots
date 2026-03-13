@@ -110,6 +110,16 @@ del _name
 
 # --- Tier 4: Optional heavy integrations ---
 
+# Auto-configure MuJoCo GL backend for headless environments BEFORE any
+# module imports mujoco at the top level.  MuJoCo locks the OpenGL backend
+# at import time, so MUJOCO_GL must be set first.
+try:
+    from strands_robots.simulation import _configure_gl_backend
+
+    _configure_gl_backend()
+except (ImportError, AttributeError, OSError):
+    pass
+
 # Simulation (MuJoCo — optional dependency)
 try:
     from strands_robots.simulation import Simulation
@@ -177,9 +187,7 @@ try:
         create_kinematics,
     )
 
-    __all__.extend(
-        ["create_kinematics", "MuJoCoKinematics", "ONNXKinematics", "Kinematics"]
-    )
+    __all__.extend(["create_kinematics", "MuJoCoKinematics", "ONNXKinematics", "Kinematics"])
 except (ImportError, AttributeError, OSError):
     pass
 
@@ -311,7 +319,6 @@ except (ImportError, AttributeError, OSError):
     pass
 
 
-
 # LeIsaac × LeRobot EnvHub (Lightwheel AI — IsaacSim environments)
 try:
     from strands_robots.leisaac import (
@@ -382,9 +389,7 @@ try:
         estimate_depth,
     )
 
-    __all__.extend(
-        ["StereoDepthPipeline", "StereoConfig", "StereoResult", "estimate_depth"]
-    )
+    __all__.extend(["StereoDepthPipeline", "StereoConfig", "StereoResult", "estimate_depth"])
 except (ImportError, AttributeError, OSError):
     pass
 

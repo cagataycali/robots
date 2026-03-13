@@ -185,9 +185,7 @@ class TelemetryEvent:
         if self.metadata:
             payload["metadata"] = self.metadata
 
-        return json.dumps(payload, default=_encoder, separators=(",", ":")).encode(
-            "utf-8"
-        )
+        return json.dumps(payload, default=_encoder, separators=(",", ":")).encode("utf-8")
 
     def compress(self) -> bytes:
         """Serialize + gzip compress."""

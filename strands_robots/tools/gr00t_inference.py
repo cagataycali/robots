@@ -160,8 +160,7 @@ def _find_gr00t_containers() -> Dict[str, Any]:
                     ports = parts[3] if len(parts) > 3 else ""
 
                     is_gr00t_container = "isaac-gr00t" in image.lower() or (
-                        "isaac" in image.lower()
-                        and ("gr00t" in image.lower() or "jetson" in name.lower())
+                        "isaac" in image.lower() and ("gr00t" in image.lower() or "jetson" in name.lower())
                     )
 
                     if is_gr00t_container:
@@ -193,9 +192,7 @@ def _list_running_services() -> Dict[str, Any]:
         for port in common_ports:
             if _is_service_running(port):
                 protocol = "HTTP" if port >= 8000 else "ZMQ"
-                services.append(
-                    {"port": port, "protocol": protocol, "status": "running"}
-                )
+                services.append({"port": port, "protocol": protocol, "status": "running"})
 
         return {
             "status": "success",
@@ -243,9 +240,7 @@ def _stop_service(port: int) -> Dict[str, Any]:
     try:
         containers_result = _find_gr00t_containers()
         if containers_result["status"] == "success":
-            running_containers = [
-                c for c in containers_result["containers"] if "Up" in c["status"]
-            ]
+            running_containers = [c for c in containers_result["containers"] if "Up" in c["status"]]
 
             for container in running_containers:
                 container_name = container["name"]
@@ -323,9 +318,7 @@ def _stop_service(port: int) -> Dict[str, Any]:
                     continue
 
         # Fallback: try host system
-        result = subprocess.run(
-            ["lsof", "-t", f"-i:{port}"], capture_output=True, text=True
-        )
+        result = subprocess.run(["lsof", "-t", f"-i:{port}"], capture_output=True, text=True)
 
         if result.returncode == 0:
             pids = result.stdout.strip().split("\n")
@@ -335,9 +328,7 @@ def _stop_service(port: int) -> Dict[str, Any]:
 
             time.sleep(2)
 
-            result = subprocess.run(
-                ["lsof", "-t", f"-i:{port}"], capture_output=True, text=True
-            )
+            result = subprocess.run(["lsof", "-t", f"-i:{port}"], capture_output=True, text=True)
 
             if result.returncode == 0:
                 pids = result.stdout.strip().split("\n")
@@ -387,9 +378,7 @@ def _start_service(
             if containers["status"] == "error":
                 return containers
 
-            running_containers = [
-                c for c in containers["containers"] if "Up" in c["status"]
-            ]
+            running_containers = [c for c in containers["containers"] if "Up" in c["status"]]
             if not running_containers:
                 return {
                     "status": "error",
@@ -498,19 +487,13 @@ if __name__ == "__main__":
     print()
     print("Examples:")
     print("  # Start ZMQ server (default)")
-    print(
-        "  gr00t_inference(action='start', checkpoint_path='/data/checkpoints/model', port=5555)"
-    )
+    print("  gr00t_inference(action='start', checkpoint_path='/data/checkpoints/model', port=5555)")
     print()
     print("  # Start HTTP server")
-    print(
-        "  gr00t_inference(action='start', checkpoint_path='/data/checkpoints/model', port=8000, http_server=True)"
-    )
+    print("  gr00t_inference(action='start', checkpoint_path='/data/checkpoints/model', port=8000, http_server=True)")
     print()
     print("  # Start with TensorRT acceleration")
-    print(
-        "  gr00t_inference(action='start', checkpoint_path='/data/checkpoints/model', port=5555, use_tensorrt=True)"
-    )
+    print("  gr00t_inference(action='start', checkpoint_path='/data/checkpoints/model', port=5555, use_tensorrt=True)")
     print()
     print("  # Start HTTP + TensorRT")
     print(

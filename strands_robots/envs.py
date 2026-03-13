@@ -229,9 +229,7 @@ if HAS_GYM:
                 # Include image in observation
                 self.observation_space = spaces.Dict(
                     {
-                        "state": spaces.Box(
-                            low=obs_low, high=obs_high, dtype=np.float32
-                        ),
+                        "state": spaces.Box(low=obs_low, high=obs_high, dtype=np.float32),
                         "pixels": spaces.Box(
                             low=0,
                             high=255,
@@ -242,9 +240,7 @@ if HAS_GYM:
                 )
                 self._include_pixels = True
             else:
-                self.observation_space = spaces.Box(
-                    low=obs_low, high=obs_high, dtype=np.float32
-                )
+                self.observation_space = spaces.Box(low=obs_low, high=obs_high, dtype=np.float32)
                 self._include_pixels = False
 
             self._initialized = True
@@ -262,9 +258,7 @@ if HAS_GYM:
 
             if self._include_pixels:
                 # Render image
-                renderer = mujoco.Renderer(
-                    self._sim._world._model, self.render_height, self.render_width
-                )
+                renderer = mujoco.Renderer(self._sim._world._model, self.render_height, self.render_width)
                 renderer.update_scene(data)
                 pixels = renderer.render().copy()
                 # mujoco 3.x Renderer has no close() — it's garbage-collected
@@ -342,9 +336,7 @@ if HAS_GYM:
                 return self._delegate.render()
 
             if self.render_mode == "rgb_array":
-                renderer = mujoco.Renderer(
-                    self._sim._world._model, self.render_height, self.render_width
-                )
+                renderer = mujoco.Renderer(self._sim._world._model, self.render_height, self.render_width)
                 renderer.update_scene(self._sim._world._data)
                 frame = renderer.render().copy()
                 # mujoco 3.x Renderer has no close() — it's garbage-collected
@@ -353,9 +345,7 @@ if HAS_GYM:
             elif self.render_mode == "human":
                 # Use MuJoCo viewer
                 if not hasattr(self, "_viewer") or self._viewer is None:
-                    self._viewer = mujoco.viewer.launch_passive(
-                        self._sim._world._model, self._sim._world._data
-                    )
+                    self._viewer = mujoco.viewer.launch_passive(self._sim._world._model, self._sim._world._data)
                 self._viewer.sync()
                 return None
 

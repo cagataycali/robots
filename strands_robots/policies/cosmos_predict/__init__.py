@@ -179,10 +179,7 @@ class CosmosPredictPolicy(Policy):
         self._dataset_stats_path = dataset_stats_path
         self._t5_embeddings_path = t5_embeddings_path
         self._text_embeddings_kind = text_embeddings_kind
-        self._config_file = (
-            config_file
-            or "cosmos_predict2/_src/predict2/cosmos_policy/config/config.py"
-        )
+        self._config_file = config_file or "cosmos_predict2/_src/predict2/cosmos_policy/config/config.py"
         self._config_name = config_name
         self._use_wrist_image = use_wrist_image
         self._use_proprio = use_proprio
@@ -207,9 +204,7 @@ class CosmosPredictPolicy(Policy):
         self._step = 0
 
         mode_str = f"server={server_url}" if server_url else f"local ({model_id})"
-        logger.info(
-            f"🌌 Cosmos Predict 2.5 policy: mode={mode}, suite={suite}, {mode_str}"
-        )
+        logger.info(f"🌌 Cosmos Predict 2.5 policy: mode={mode}, suite={suite}, {mode_str}")
 
     @property
     def provider_name(self) -> str:
@@ -232,9 +227,7 @@ class CosmosPredictPolicy(Policy):
                 requests.get(f"{self._server_url}/health", timeout=5)
                 logger.info("🌌 Cosmos server connected: %s", self._server_url)
             except Exception as e:
-                logger.warning(
-                    f"Cosmos server not reachable at {self._server_url}: {e}"
-                )
+                logger.warning(f"Cosmos server not reachable at {self._server_url}: {e}")
             self._loaded = True
             return
 
@@ -280,18 +273,14 @@ class CosmosPredictPolicy(Policy):
             # Load dataset statistics for action un-normalization
             # Auto-resolve dataset_stats from HF checkpoint if not explicitly provided
             if self._dataset_stats_path:
-                self._dataset_stats = cosmos_load_dataset_stats(
-                    self._dataset_stats_path
-                )
+                self._dataset_stats = cosmos_load_dataset_stats(self._dataset_stats_path)
                 logger.info("🌌 Dataset stats loaded from %s", self._dataset_stats_path)
             else:
                 # Try to find dataset_statistics.json in the HF cache
                 try:
                     from huggingface_hub import snapshot_download
 
-                    ckpt_dir = snapshot_download(
-                        self._model_id, allow_patterns=["*.json", "*.pkl"]
-                    )
+                    ckpt_dir = snapshot_download(self._model_id, allow_patterns=["*.json", "*.pkl"])
                     import os
 
                     for fname in [
@@ -307,9 +296,7 @@ class CosmosPredictPolicy(Policy):
                             logger.info("🌌 Dataset stats auto-resolved: %s", stats_path)
                             break
                     if not self._dataset_stats:
-                        logger.warning(
-                            "🌌 No dataset statistics found — actions will not be un-normalized"
-                        )
+                        logger.warning("🌌 No dataset statistics found — actions will not be un-normalized")
                 except Exception as e:
                     logger.warning("🌌 Could not auto-resolve dataset stats: %s", e)
 
@@ -400,8 +387,7 @@ class CosmosPredictPolicy(Policy):
 
         except ImportError as e:
             raise ImportError(
-                f"Action-conditioned mode requires cosmos-predict2.\n"
-                f"Install: pip install cosmos-predict2\nError: {e}"
+                f"Action-conditioned mode requires cosmos-predict2.\nInstall: pip install cosmos-predict2\nError: {e}"
             )
 
     def _load_world_model(self):
@@ -498,9 +484,7 @@ class CosmosPredictPolicy(Policy):
         if self._mode == "policy":
             return self._infer_policy(observation_dict, instruction, **kwargs)
         elif self._mode == "action_conditioned":
-            return self._infer_action_conditioned(
-                observation_dict, instruction, **kwargs
-            )
+            return self._infer_action_conditioned(observation_dict, instruction, **kwargs)
         else:
             return self._infer_world_model(observation_dict, instruction, **kwargs)
 
@@ -541,9 +525,7 @@ class CosmosPredictPolicy(Policy):
             model_family="predict2",
             scale_multiplier=kwargs.get("scale_multiplier", 1.0),
             # Denoising & sampling
-            num_denoising_steps_action=kwargs.get(
-                "num_denoising_steps", self._num_denoising_steps
-            ),
+            num_denoising_steps_action=kwargs.get("num_denoising_steps", self._num_denoising_steps),
             seed=kwargs.get("seed", 1),
             randomize_seed=kwargs.get("randomize_seed", False),
             shift=kwargs.get("shift", 1.0),
@@ -596,9 +578,7 @@ class CosmosPredictPolicy(Policy):
                 for j, key in enumerate(self._robot_state_keys):
                     if j < len(action_vec) - 1:
                         action_dict[key] = float(action_vec[j])
-                action_dict["gripper"] = (
-                    float(action_vec[-1]) if len(action_vec) > 0 else 0.0
-                )
+                action_dict["gripper"] = float(action_vec[-1]) if len(action_vec) > 0 else 0.0
             else:
                 # Default 7-DoF mapping
                 labels = ["x", "y", "z", "roll", "pitch", "yaw", "gripper"]
@@ -620,8 +600,7 @@ class CosmosPredictPolicy(Policy):
 
         self._step += 1
         logger.debug(
-            f"🌌 Cosmos policy step {self._step}: {len(actions)} actions, "
-            f"value={result.get('value_prediction', 'N/A')}"
+            f"🌌 Cosmos policy step {self._step}: {len(actions)} actions, value={result.get('value_prediction', 'N/A')}"
         )
         return actions
 
@@ -646,16 +625,12 @@ class CosmosPredictPolicy(Policy):
         # Extract initial frame
         initial_frame = self._find_camera_image(observation_dict)
         if initial_frame is None:
-            raise ValueError(
-                "Action-conditioned mode requires at least one camera image"
-            )
+            raise ValueError("Action-conditioned mode requires at least one camera image")
 
         # Run action-conditioned video generation
         import torchvision
 
-        img_tensor = torchvision.transforms.functional.to_tensor(
-            initial_frame
-        ).unsqueeze(0)
+        img_tensor = torchvision.transforms.functional.to_tensor(initial_frame).unsqueeze(0)
         num_video_frames = min(actions.shape[0] + 1, self._chunk_size + 1)
         vid_input = torch.cat(
             [
@@ -664,9 +639,7 @@ class CosmosPredictPolicy(Policy):
             ],
             dim=0,
         )
-        vid_input = (
-            (vid_input * 255.0).to(torch.uint8).unsqueeze(0).permute(0, 2, 1, 3, 4)
-        )
+        vid_input = (vid_input * 255.0).to(torch.uint8).unsqueeze(0).permute(0, 2, 1, 3, 4)
 
         video = self._video2world.generate_vid2world(
             prompt=instruction or "",
@@ -681,13 +654,7 @@ class CosmosPredictPolicy(Policy):
 
         # Return frames as action dicts with video metadata
         video_normalized = (video - (-1)) / (1 - (-1))
-        video_clamped = (
-            (torch.clamp(video_normalized[0], 0, 1) * 255)
-            .to(torch.uint8)
-            .permute(1, 2, 3, 0)
-            .cpu()
-            .numpy()
-        )
+        video_clamped = (torch.clamp(video_normalized[0], 0, 1) * 255).to(torch.uint8).permute(1, 2, 3, 0).cpu().numpy()
 
         result_actions = []
         for i in range(video_clamped.shape[0]):
@@ -715,17 +682,13 @@ class CosmosPredictPolicy(Policy):
 
         import torchvision
 
-        img_tensor = torchvision.transforms.functional.to_tensor(
-            initial_frame
-        ).unsqueeze(0)
+        img_tensor = torchvision.transforms.functional.to_tensor(initial_frame).unsqueeze(0)
         num_frames = kwargs.get("num_video_frames", 17)
         vid_input = torch.cat(
             [img_tensor, torch.zeros_like(img_tensor).repeat(num_frames - 1, 1, 1, 1)],
             dim=0,
         )
-        vid_input = (
-            (vid_input * 255.0).to(torch.uint8).unsqueeze(0).permute(0, 2, 1, 3, 4)
-        )
+        vid_input = (vid_input * 255.0).to(torch.uint8).unsqueeze(0).permute(0, 2, 1, 3, 4)
 
         video = self._video2world.generate_vid2world(
             prompt=instruction,
@@ -738,17 +701,9 @@ class CosmosPredictPolicy(Policy):
         )
 
         video_normalized = (video - (-1)) / (1 - (-1))
-        video_clamped = (
-            (torch.clamp(video_normalized[0], 0, 1) * 255)
-            .to(torch.uint8)
-            .permute(1, 2, 3, 0)
-            .cpu()
-            .numpy()
-        )
+        video_clamped = (torch.clamp(video_normalized[0], 0, 1) * 255).to(torch.uint8).permute(1, 2, 3, 0).cpu().numpy()
 
-        return [
-            {"predicted_frame": video_clamped[i]} for i in range(video_clamped.shape[0])
-        ]
+        return [{"predicted_frame": video_clamped[i]} for i in range(video_clamped.shape[0])]
 
     async def _infer_server(
         self,
@@ -792,9 +747,7 @@ class CosmosPredictPolicy(Policy):
 
         return actions
 
-    def _build_cosmos_observation(
-        self, observation_dict: Dict[str, Any]
-    ) -> Dict[str, Any]:
+    def _build_cosmos_observation(self, observation_dict: Dict[str, Any]) -> Dict[str, Any]:
         """Convert strands-robots observation to Cosmos policy format.
 
         Cosmos expects specific key names depending on the suite:
@@ -831,11 +784,7 @@ class CosmosPredictPolicy(Policy):
             # Pattern-based search
             for pattern in search_patterns:
                 for obs_key, val in observation_dict.items():
-                    if (
-                        pattern in obs_key.lower()
-                        and isinstance(val, np.ndarray)
-                        and val.ndim == 3
-                    ):
+                    if pattern in obs_key.lower() and isinstance(val, np.ndarray) and val.ndim == 3:
                         obs[cosmos_key] = val[:, :, :3].astype(np.uint8)
                         break
                 if cosmos_key in obs:
@@ -868,9 +817,7 @@ class CosmosPredictPolicy(Policy):
 
     def _find_camera_image(self, observation_dict: Dict[str, Any]):
         """Find any camera image in the observation dict and return as PIL Image."""
-        return extract_pil_image(
-            observation_dict, fallback_size=(COSMOS_IMAGE_SIZE, COSMOS_IMAGE_SIZE)
-        )
+        return extract_pil_image(observation_dict, fallback_size=(COSMOS_IMAGE_SIZE, COSMOS_IMAGE_SIZE))
 
     def get_value_estimate(
         self,

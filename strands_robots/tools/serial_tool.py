@@ -83,9 +83,7 @@ def serial_tool(
             )
         return ports
 
-    def build_feetech_packet(
-        motor_id: int, instruction: int, params: List[int]
-    ) -> bytes:
+    def build_feetech_packet(motor_id: int, instruction: int, params: List[int]) -> bytes:
         """Build Feetech servo protocol packet."""
         packet = [0xFF, 0xFF, motor_id, len(params) + 2, instruction] + params
         checksum = ~sum(packet[2:]) & 0xFF
@@ -107,9 +105,7 @@ def serial_tool(
                 "content": [
                     {
                         "text": f"📡 Found {len(ports)} serial ports:\n"
-                        + "\n".join(
-                            [f"• {p['device']} - {p['description']}" for p in ports]
-                        )
+                        + "\n".join([f"• {p['device']} - {p['description']}" for p in ports])
                     }
                 ],
                 "ports": ports,
@@ -149,17 +145,11 @@ def serial_tool(
 
             # Format response as both hex and ASCII
             hex_str = " ".join([f"{b:02X}" for b in read_data])
-            ascii_str = "".join(
-                [chr(b) if 32 <= b <= 126 else f"\\x{b:02x}" for b in read_data]
-            )
+            ascii_str = "".join([chr(b) if 32 <= b <= 126 else f"\\x{b:02x}" for b in read_data])
 
             return {
                 "status": "success",
-                "content": [
-                    {
-                        "text": f"📥 Read {len(read_data)} bytes:\nHex: {hex_str}\nASCII: {ascii_str}"
-                    }
-                ],
+                "content": [{"text": f"📥 Read {len(read_data)} bytes:\nHex: {hex_str}\nASCII: {ascii_str}"}],
                 "raw_data": read_data.hex(),
                 "length": len(read_data),
             }
@@ -183,16 +173,12 @@ def serial_tool(
             ser.close()
 
             hex_str = " ".join([f"{b:02X}" for b in read_data])
-            ascii_str = "".join(
-                [chr(b) if 32 <= b <= 126 else f"\\x{b:02x}" for b in read_data]
-            )
+            ascii_str = "".join([chr(b) if 32 <= b <= 126 else f"\\x{b:02x}" for b in read_data])
 
             return {
                 "status": "success",
                 "content": [
-                    {
-                        "text": f"📤 {sent_text}\n📥 Read {len(read_data)} bytes:\nHex: {hex_str}\nASCII: {ascii_str}"
-                    }
+                    {"text": f"📤 {sent_text}\n📥 Read {len(read_data)} bytes:\nHex: {hex_str}\nASCII: {ascii_str}"}
                 ],
             }
 
@@ -213,9 +199,7 @@ def serial_tool(
             return {
                 "status": "success",
                 "content": [
-                    {
-                        "text": f"🤖 Feetech Motor {motor_id} → Position {position} ({position/4095*360:.1f}°)"
-                    }
+                    {"text": f"🤖 Feetech Motor {motor_id} → Position {position} ({position / 4095 * 360:.1f}°)"}
                 ],
             }
 
@@ -235,9 +219,7 @@ def serial_tool(
 
             return {
                 "status": "success",
-                "content": [
-                    {"text": f"🤖 Feetech Motor {motor_id} → Velocity {velocity}"}
-                ],
+                "content": [{"text": f"🤖 Feetech Motor {motor_id} → Velocity {velocity}"}],
             }
 
         elif action == "feetech_ping":
@@ -259,11 +241,7 @@ def serial_tool(
             if len(response) >= 6:
                 return {
                     "status": "success",
-                    "content": [
-                        {
-                            "text": f"🟢 Feetech Motor {motor_id} responded: {response.hex().upper()}"
-                        }
-                    ],
+                    "content": [{"text": f"🟢 Feetech Motor {motor_id} responded: {response.hex().upper()}"}],
                 }
             else:
                 return {
@@ -283,12 +261,7 @@ def serial_tool(
                         {
                             "timestamp": time.time(),
                             "data": chunk.hex(),
-                            "ascii": "".join(
-                                [
-                                    chr(b) if 32 <= b <= 126 else f"\\x{b:02x}"
-                                    for b in chunk
-                                ]
-                            ),
+                            "ascii": "".join([chr(b) if 32 <= b <= 126 else f"\\x{b:02x}" for b in chunk]),
                         }
                     )
                 time.sleep(0.1)
@@ -297,11 +270,7 @@ def serial_tool(
 
             return {
                 "status": "success",
-                "content": [
-                    {
-                        "text": f"📊 Monitored {len(monitor_data)} data chunks in 5 seconds"
-                    }
-                ],
+                "content": [{"text": f"📊 Monitored {len(monitor_data)} data chunks in 5 seconds"}],
                 "monitor_data": monitor_data,
             }
 

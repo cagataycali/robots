@@ -142,9 +142,7 @@ def test_replicate():
     r = b.replicate(num_envs=16)
     assert r["success"], r.get("message")
     assert r["env_info"]["num_envs"] == 16
-    assert (
-        int(r["env_info"]["bodies_total"]) > 16
-    )  # 16 envs × bodies_per_world + ground
+    assert int(r["env_info"]["bodies_total"]) > 16  # 16 envs × bodies_per_world + ground
 
     for _ in range(10):
         b.step()
@@ -248,13 +246,9 @@ def test_diffsim_particle():
 
     from strands_robots.newton import NewtonBackend, NewtonConfig
 
-    b = NewtonBackend(
-        NewtonConfig(enable_differentiable=True, solver="semi_implicit", device=DEVICE)
-    )
+    b = NewtonBackend(NewtonConfig(enable_differentiable=True, solver="semi_implicit", device=DEVICE))
     b.create_world()
-    r = b.add_particles(
-        "ball", positions=[(0, 0, 1)], velocities=[(0, 5, -5)], mass=1.0
-    )
+    r = b.add_particles("ball", positions=[(0, 0, 1)], velocities=[(0, 5, -5)], mass=1.0)
     assert r["success"]
     b._finalize_model()
     assert b._model.particle_count == 1
@@ -277,9 +271,7 @@ def test_collision_pipeline():
     except ImportError:
         return "SKIP"
 
-    b = NewtonBackend(
-        NewtonConfig(solver="mujoco", device=DEVICE, broad_phase="explicit")
-    )
+    b = NewtonBackend(NewtonConfig(solver="mujoco", device=DEVICE, broad_phase="explicit"))
     b.create_world()
     b.add_robot("quad", urdf_path=ne.get_asset("quadruped.urdf"))
     b._finalize_model()
@@ -309,12 +301,8 @@ def test_multiple_robots():
 
     b = NewtonBackend(NewtonConfig(solver="mujoco", device=DEVICE))
     b.create_world()
-    r1 = b.add_robot(
-        "quad1", urdf_path=ne.get_asset("quadruped.urdf"), position=(0, 0, 0)
-    )
-    r2 = b.add_robot(
-        "quad2", urdf_path=ne.get_asset("quadruped.urdf"), position=(2, 0, 0)
-    )
+    r1 = b.add_robot("quad1", urdf_path=ne.get_asset("quadruped.urdf"), position=(0, 0, 0))
+    r2 = b.add_robot("quad2", urdf_path=ne.get_asset("quadruped.urdf"), position=(2, 0, 0))
     assert r1["success"] and r2["success"]
     assert len(b._robots) == 2
     assert r2["robot_info"]["joint_offset"] > 0

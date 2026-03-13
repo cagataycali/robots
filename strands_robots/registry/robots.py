@@ -108,14 +108,16 @@ def list_robots(mode: str = "all") -> List[Dict[str, Any]]:
         if mode == "both" and not (_has_sim and _has_real):
             continue
 
-        results.append({
-            "name": name,
-            "description": info.get("description", ""),
-            "category": info.get("category", ""),
-            "joints": info.get("joints"),
-            "has_sim": _has_sim,
-            "has_real": _has_real,
-        })
+        results.append(
+            {
+                "name": name,
+                "description": info.get("description", ""),
+                "category": info.get("category", ""),
+                "joints": info.get("joints"),
+                "has_sim": _has_sim,
+                "has_real": _has_real,
+            }
+        )
     return results
 
 
@@ -145,9 +147,7 @@ def format_robot_table() -> str:
             sim = "✅" if r["has_sim"] else "  "
             real = "✅" if r["has_real"] else "  "
             joints = str(r["joints"]) if r["joints"] else "?"
-            lines.append(
-                f"{r['name']:<20} {r['category']:<15} {joints:<8} {sim:<5} {real:<5} {r['description']}"
-            )
+            lines.append(f"{r['name']:<20} {r['category']:<15} {joints:<8} {sim:<5} {real:<5} {r['description']}")
 
     robots = list_robots()
     lines.append("")

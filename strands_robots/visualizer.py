@@ -193,14 +193,8 @@ class RecordingVisualizer:
         else:
             fps_ratio = 0
 
-        fps_bar = "█" * int(fps_ratio * bar_width) + "░" * (
-            bar_width - int(fps_ratio * bar_width)
-        )
-        fps_color = (
-            "\033[32m"
-            if fps_ratio > 0.9
-            else "\033[33m" if fps_ratio > 0.7 else "\033[31m"
-        )
+        fps_bar = "█" * int(fps_ratio * bar_width) + "░" * (bar_width - int(fps_ratio * bar_width))
+        fps_color = "\033[32m" if fps_ratio > 0.9 else "\033[33m" if fps_ratio > 0.7 else "\033[31m"
 
         mins = int(s.duration_s // 60)
         secs = int(s.duration_s % 60)
@@ -222,7 +216,7 @@ class RecordingVisualizer:
             vals = list(s.last_action.values())[:4]
             action_str = " ".join(f"{v:+.2f}" for v in vals)
             if len(s.last_action) > 4:
-                action_str += f" +{len(s.last_action)-4} more"
+                action_str += f" +{len(s.last_action) - 4} more"
             lines.append(f"║  Action: {action_str:<39} ║")
 
         if s.errors > 0:
@@ -284,8 +278,7 @@ class RecordingVisualizer:
                     self._img_plots[cam_name].set_data(frame)
 
             self._fig.suptitle(
-                f"Ep {s.episode} | Frame {s.frame_count} | "
-                f"FPS {s.fps_actual:.1f}/{s.fps_target:.0f} | {s.task}",
+                f"Ep {s.episode} | Frame {s.frame_count} | FPS {s.fps_actual:.1f}/{s.fps_target:.0f} | {s.task}",
                 fontsize=10,
             )
             self._fig.canvas.draw_idle()
@@ -337,12 +330,8 @@ class RecordingVisualizer:
                 pass  # Suppress HTTP logs
 
         try:
-            self._web_server = socketserver.TCPServer(
-                ("127.0.0.1", self.port), DashboardHandler
-            )
-            thread = threading.Thread(
-                target=self._web_server.serve_forever, daemon=True
-            )
+            self._web_server = socketserver.TCPServer(("127.0.0.1", self.port), DashboardHandler)
+            thread = threading.Thread(target=self._web_server.serve_forever, daemon=True)
             thread.start()
             logger.info("Visualizer web dashboard: http://localhost:%d", self.port)
         except Exception as e:

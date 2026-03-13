@@ -64,9 +64,7 @@ def _get_zenoh_session(host: str, zenoh_port: int = 7447):
             )
         except AttributeError:
             config = zenoh.Config()
-            config.insert_json5(
-                "connect/endpoints", json.dumps([f"tcp/{ip}:{zenoh_port}"])
-            )
+            config.insert_json5("connect/endpoints", json.dumps([f"tcp/{ip}:{zenoh_port}"]))
 
         session = zenoh.open(config)
 
@@ -103,9 +101,7 @@ atexit.register(_close_all_sessions)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 
-def _api(
-    host: str, port: int, path: str, method: str = "GET", data: dict = None
-) -> dict:
+def _api(host: str, port: int, path: str, method: str = "GET", data: dict = None) -> dict:
     """Call Reachy Mini daemon REST API."""
     import urllib.error
     import urllib.request
@@ -140,9 +136,7 @@ def _zenoh_cmd(host: str, prefix: str, cmd: dict, zenoh_port: int = 7447):
     return _zenoh_put(host, prefix, "command", cmd, zenoh_port)
 
 
-def _zenoh_sub(
-    host: str, prefix: str, topic: str, duration: float = 0.5, zenoh_port: int = 7447
-) -> list:
+def _zenoh_sub(host: str, prefix: str, topic: str, duration: float = 0.5, zenoh_port: int = 7447) -> list:
     """Subscribe briefly to collect messages (uses pooled session)."""
     session = _get_zenoh_session(host, zenoh_port)
     if session is None:
@@ -315,7 +309,7 @@ def reachy_mini(
                     {
                         "text": f"🤖 Reachy Mini @ {host}\n  State: {r.get('state')}\n  Version: {r.get('version')}\n"
                         f"  IP: {r.get('wlan_ip')}\n  Motors: {bs.get('motor_control_mode')}\n"
-                        f"  Freq: {cs.get('mean_control_loop_frequency',0):.1f}Hz\n"
+                        f"  Freq: {cs.get('mean_control_loop_frequency', 0):.1f}Hz\n"
                         f"  Prefix: {prefix}  Zenoh: {zenoh_port}  API: {api_port}"
                     }
                 ],
@@ -328,40 +322,30 @@ def reachy_mini(
             text = f"🤖 State @ {host} (prefix={prefix}):\n"
             if joints and joints[0][0] != "error":
                 d = joints[-1][1]
-                text += f"  Head: {[round(math.degrees(j),1) for j in d.get('head_joint_positions',[])]}\n"
-                text += f"  Antennas: {[round(math.degrees(j),1) for j in d.get('antennas_joint_positions',[])]}\n"
+                text += f"  Head: {[round(math.degrees(j), 1) for j in d.get('head_joint_positions', [])]}\n"
+                text += f"  Antennas: {[round(math.degrees(j), 1) for j in d.get('antennas_joint_positions', [])]}\n"
             if pose and pose[0][0] != "error":
-                text += f"  Pose: {str(pose[-1][1].get('head_pose','?'))[:120]}\n"
+                text += f"  Pose: {str(pose[-1][1].get('head_pose', '?'))[:120]}\n"
             if imu and imu[0][0] != "error":
                 d = imu[-1][1]
-                text += f"  Accel: {[round(v,2) for v in d.get('accelerometer',[])]}\n"
-                text += f"  Temp: {d.get('temperature','?')}°C\n"
+                text += f"  Accel: {[round(v, 2) for v in d.get('accelerometer', [])]}\n"
+                text += f"  Temp: {d.get('temperature', '?')}°C\n"
             return {"status": "success", "content": [{"text": text}]}
 
         elif action == "daemon_start":
             return {
                 "status": "success",
-                "content": [
-                    {
-                        "text": f"▶️ {_api(host, api_port, '/api/daemon/start?wake_up=true', 'POST')}"
-                    }
-                ],
+                "content": [{"text": f"▶️ {_api(host, api_port, '/api/daemon/start?wake_up=true', 'POST')}"}],
             }
         elif action == "daemon_stop":
             return {
                 "status": "success",
-                "content": [
-                    {"text": f"⏹️ {_api(host, api_port, '/api/daemon/stop', 'POST')}"}
-                ],
+                "content": [{"text": f"⏹️ {_api(host, api_port, '/api/daemon/stop', 'POST')}"}],
             }
         elif action == "daemon_restart":
             return {
                 "status": "success",
-                "content": [
-                    {
-                        "text": f"🔄 {_api(host, api_port, '/api/daemon/restart', 'POST')}"
-                    }
-                ],
+                "content": [{"text": f"🔄 {_api(host, api_port, '/api/daemon/restart', 'POST')}"}],
             }
 
         # ── Movement (Zenoh) ─────────────────────────────────
@@ -374,11 +358,7 @@ def reachy_mini(
             )
             return {
                 "status": "success",
-                "content": [
-                    {
-                        "text": f"👀 pitch={pitch}° roll={roll}° yaw={yaw}° xyz=({x},{y},{z})mm"
-                    }
-                ],
+                "content": [{"text": f"👀 pitch={pitch}° roll={roll}° yaw={yaw}° xyz=({x},{y},{z})mm"}],
             }
 
         elif action == "goto_pose":
@@ -424,9 +404,7 @@ def reachy_mini(
             _zenoh_cmd(host, prefix, {"automatic_body_yaw": enabled}, zenoh_port)
             return {
                 "status": "success",
-                "content": [
-                    {"text": f"🎪 Auto body yaw: {'ON' if enabled else 'OFF'}"}
-                ],
+                "content": [{"text": f"🎪 Auto body yaw: {'ON' if enabled else 'OFF'}"}],
             }
 
         # ── Gaze (REST) ──────────────────────────────────────
@@ -488,11 +466,7 @@ def reachy_mini(
             if msgs and msgs[0][0] != "error":
                 return {
                     "status": "success",
-                    "content": [
-                        {
-                            "text": f"🎯 {json.dumps(msgs[-1][1].get('head_pose',[]), indent=2)[:300]}"
-                        }
-                    ],
+                    "content": [{"text": f"🎯 {json.dumps(msgs[-1][1].get('head_pose', []), indent=2)[:300]}"}],
                 }
             return {"status": "error", "content": [{"text": "No pose data"}]}
 
@@ -516,9 +490,7 @@ def reachy_mini(
             import urllib.request
 
             try:
-                with urllib.request.urlopen(
-                    f"http://{host}:{api_port}/api/camera/snapshot", timeout=5
-                ) as resp:
+                with urllib.request.urlopen(f"http://{host}:{api_port}/api/camera/snapshot", timeout=5) as resp:
                     fb = resp.read()
                     if save_path:
                         with open(save_path, "wb") as f:
@@ -526,10 +498,7 @@ def reachy_mini(
                     return {
                         "status": "success",
                         "content": [
-                            {
-                                "text": f"📷 {len(fb)} bytes"
-                                + (f" → {save_path}" if save_path else "")
-                            },
+                            {"text": f"📷 {len(fb)} bytes" + (f" → {save_path}" if save_path else "")},
                             {"image": {"format": "jpeg", "source": {"bytes": fb}}},
                         ],
                     }
@@ -543,9 +512,7 @@ def reachy_mini(
             return {
                 "status": "success",
                 "content": [
-                    {
-                        "text": f"🔊 {_api(host, api_port, '/api/media/play_sound', 'POST', {'file': sound_file})}"
-                    }
+                    {"text": f"🔊 {_api(host, api_port, '/api/media/play_sound', 'POST', {'file': sound_file})}"}
                 ],
             }
 
@@ -553,9 +520,7 @@ def reachy_mini(
             return {
                 "status": "success",
                 "content": [
-                    {
-                        "text": f"🎤 {_api(host, api_port, '/api/media/record', 'POST', {'duration': duration})}"
-                    }
+                    {"text": f"🎤 {_api(host, api_port, '/api/media/record', 'POST', {'duration': duration})}"}
                 ],
             }
 
@@ -565,9 +530,7 @@ def reachy_mini(
             _zenoh_cmd(host, prefix, {"torque": True, "ids": ids}, zenoh_port)
             return {
                 "status": "success",
-                "content": [
-                    {"text": f"⚡ Enabled{f' ({motor_ids})' if motor_ids else ''}"}
-                ],
+                "content": [{"text": f"⚡ Enabled{f' ({motor_ids})' if motor_ids else ''}"}],
             }
 
         elif action == "disable_motors":
@@ -575,9 +538,7 @@ def reachy_mini(
             _zenoh_cmd(host, prefix, {"torque": False, "ids": ids}, zenoh_port)
             return {
                 "status": "success",
-                "content": [
-                    {"text": f"💤 Disabled{f' ({motor_ids})' if motor_ids else ''}"}
-                ],
+                "content": [{"text": f"💤 Disabled{f' ({motor_ids})' if motor_ids else ''}"}],
             }
 
         elif action == "gravity_compensation":
@@ -594,9 +555,7 @@ def reachy_mini(
         elif action == "stop":
             return {
                 "status": "success",
-                "content": [
-                    {"text": f"🛑 {_api(host, api_port, '/api/move/stop', 'POST')}"}
-                ],
+                "content": [{"text": f"🛑 {_api(host, api_port, '/api/move/stop', 'POST')}"}],
             }
 
         # ── Move Libraries (REST) ─────────────────────────────
@@ -606,12 +565,7 @@ def reachy_mini(
             if isinstance(r, list):
                 return {
                     "status": "success",
-                    "content": [
-                        {
-                            "text": f"📚 {library} ({len(r)}):\n"
-                            + "\n".join(f"  • {m}" for m in r)
-                        }
-                    ],
+                    "content": [{"text": f"📚 {library} ({len(r)}):\n" + "\n".join(f"  • {m}" for m in r)}],
                 }
             return {"status": "success", "content": [{"text": f"📚 {r}"}]}
 
@@ -647,57 +601,36 @@ def reachy_mini(
                         json.dump(data, f, indent=2)
             return {
                 "status": "success",
-                "content": [
-                    {
-                        "text": f"📹 Stopped: {frames} frames"
-                        + (f" → {save_path}" if save_path else "")
-                    }
-                ],
+                "content": [{"text": f"📹 Stopped: {frames} frames" + (f" → {save_path}" if save_path else "")}],
             }
 
         # ── Expressions ───────────────────────────────────────
         elif action == "wake_up":
             return {
                 "status": "success",
-                "content": [
-                    {
-                        "text": f"☀️ {_api(host, api_port, '/api/move/play/wake_up', 'POST')}"
-                    }
-                ],
+                "content": [{"text": f"☀️ {_api(host, api_port, '/api/move/play/wake_up', 'POST')}"}],
             }
 
         elif action == "sleep":
             return {
                 "status": "success",
-                "content": [
-                    {
-                        "text": f"😴 {_api(host, api_port, '/api/move/play/goto_sleep', 'POST')}"
-                    }
-                ],
+                "content": [{"text": f"😴 {_api(host, api_port, '/api/move/play/goto_sleep', 'POST')}"}],
             }
 
         elif action == "nod":
             for _ in range(3):
-                _zenoh_cmd(
-                    host, prefix, {"head_pose": _rpy_to_pose(15, 0, 0)}, zenoh_port
-                )
+                _zenoh_cmd(host, prefix, {"head_pose": _rpy_to_pose(15, 0, 0)}, zenoh_port)
                 time.sleep(0.25)
-                _zenoh_cmd(
-                    host, prefix, {"head_pose": _rpy_to_pose(-10, 0, 0)}, zenoh_port
-                )
+                _zenoh_cmd(host, prefix, {"head_pose": _rpy_to_pose(-10, 0, 0)}, zenoh_port)
                 time.sleep(0.25)
             _zenoh_cmd(host, prefix, {"head_pose": _identity_pose()}, zenoh_port)
             return {"status": "success", "content": [{"text": "🤖 *nods*"}]}
 
         elif action == "shake":
             for _ in range(3):
-                _zenoh_cmd(
-                    host, prefix, {"head_pose": _rpy_to_pose(0, 0, 25)}, zenoh_port
-                )
+                _zenoh_cmd(host, prefix, {"head_pose": _rpy_to_pose(0, 0, 25)}, zenoh_port)
                 time.sleep(0.2)
-                _zenoh_cmd(
-                    host, prefix, {"head_pose": _rpy_to_pose(0, 0, -25)}, zenoh_port
-                )
+                _zenoh_cmd(host, prefix, {"head_pose": _rpy_to_pose(0, 0, -25)}, zenoh_port)
                 time.sleep(0.2)
             _zenoh_cmd(host, prefix, {"head_pose": _identity_pose()}, zenoh_port)
             return {"status": "success", "content": [{"text": "🤖 *shakes head*"}]}

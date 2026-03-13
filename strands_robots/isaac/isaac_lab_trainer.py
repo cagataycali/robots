@@ -155,9 +155,7 @@ class IsaacLabTrainer:
 
         # Set experiment name
         if not self.config.experiment_name:
-            self.config.experiment_name = (
-                f"{self.config.task}_{self.config.rl_framework}_{self.config.algorithm}"
-            )
+            self.config.experiment_name = f"{self.config.task}_{self.config.rl_framework}_{self.config.algorithm}"
 
         logger.info(
             f"🎓 Isaac Lab Trainer: {self._task_id} "
@@ -186,19 +184,10 @@ class IsaacLabTrainer:
         else:
             return {
                 "status": "error",
-                "content": [
-                    {
-                        "text": (
-                            f"❌ Unknown RL framework: {fw}\n"
-                            "Supported: rsl_rl, sb3, skrl, rl_games"
-                        )
-                    }
-                ],
+                "content": [{"text": (f"❌ Unknown RL framework: {fw}\nSupported: rsl_rl, sb3, skrl, rl_games")}],
             }
 
-    def evaluate(
-        self, checkpoint_path: Optional[str] = None, n_episodes: int = 10, **kwargs
-    ) -> Dict[str, Any]:
+    def evaluate(self, checkpoint_path: Optional[str] = None, n_episodes: int = 10, **kwargs) -> Dict[str, Any]:
         """Evaluate a trained policy.
 
         Args:
@@ -212,9 +201,7 @@ class IsaacLabTrainer:
         # Implementation depends on RL framework
         return {
             "status": "success",
-            "content": [
-                {"text": "📊 Evaluation not yet implemented for Isaac Lab trainer"}
-            ],
+            "content": [{"text": "📊 Evaluation not yet implemented for Isaac Lab trainer"}],
         }
 
     @property
@@ -295,13 +282,9 @@ class IsaacLabTrainer:
 
             # Train
             start_time = time.time()
-            logger.info(
-                f"🏋️ RSL-RL training started: {self._task_id} ({self.config.num_envs} envs)"
-            )
+            logger.info(f"🏋️ RSL-RL training started: {self._task_id} ({self.config.num_envs} envs)")
 
-            runner = OnPolicyRunner(
-                env, rsl_cfg, log_dir=log_dir, device=self.config.device
-            )
+            runner = OnPolicyRunner(env, rsl_cfg, log_dir=log_dir, device=self.config.device)
             runner.learn(
                 num_learning_iterations=self.config.max_iterations,
                 init_at_random_ep_len=True,
@@ -312,9 +295,7 @@ class IsaacLabTrainer:
 
             # Find best checkpoint
             ckpt_dir = os.path.join(log_dir, "checkpoints")
-            checkpoints = (
-                sorted(Path(ckpt_dir).glob("*.pt")) if os.path.exists(ckpt_dir) else []
-            )
+            checkpoints = sorted(Path(ckpt_dir).glob("*.pt")) if os.path.exists(ckpt_dir) else []
             best_ckpt = str(checkpoints[-1]) if checkpoints else None
 
             return {
@@ -325,7 +306,7 @@ class IsaacLabTrainer:
                             f"✅ RSL-RL Training Complete\n"
                             f"🎯 Task: {self._task_id}\n"
                             f"🔢 Envs: {self.config.num_envs} | Iterations: {self.config.max_iterations}\n"
-                            f"⏱️ Time: {elapsed:.1f}s ({elapsed/60:.1f}min)\n"
+                            f"⏱️ Time: {elapsed:.1f}s ({elapsed / 60:.1f}min)\n"
                             f"💾 Checkpoint: {best_ckpt or 'none'}\n"
                             f"📁 Logs: {log_dir}"
                         )
@@ -339,14 +320,7 @@ class IsaacLabTrainer:
         except ImportError as e:
             return {
                 "status": "error",
-                "content": [
-                    {
-                        "text": (
-                            f"❌ RSL-RL not available: {e}\n"
-                            "Install with: pip install rsl-rl"
-                        )
-                    }
-                ],
+                "content": [{"text": (f"❌ RSL-RL not available: {e}\nInstall with: pip install rsl-rl")}],
             }
         except Exception as e:
             logger.error("RSL-RL training failed: %s", e)
@@ -462,7 +436,7 @@ class IsaacLabTrainer:
                             f"✅ SB3 {algo_name} Training Complete\n"
                             f"🎯 Task: {self._task_id}\n"
                             f"🔢 Envs: {self.config.num_envs} | Steps: {self.config.total_timesteps:,}\n"
-                            f"⏱️ Time: {elapsed:.1f}s ({elapsed/60:.1f}min)\n"
+                            f"⏱️ Time: {elapsed:.1f}s ({elapsed / 60:.1f}min)\n"
                             f"💾 Model: {model_path}\n"
                             f"📁 Logs: {log_dir}"
                         )
@@ -476,14 +450,7 @@ class IsaacLabTrainer:
         except ImportError as e:
             return {
                 "status": "error",
-                "content": [
-                    {
-                        "text": (
-                            f"❌ SB3 not available: {e}\n"
-                            "Install with: pip install stable-baselines3"
-                        )
-                    }
-                ],
+                "content": [{"text": (f"❌ SB3 not available: {e}\nInstall with: pip install stable-baselines3")}],
             }
         except Exception as e:
             logger.error("SB3 training failed: %s", e)
@@ -568,9 +535,7 @@ class IsaacLabTrainer:
 
             device = self.config.device
             models = {
-                "policy": GaussianPolicy(
-                    env.observation_space, env.action_space, device
-                ),
+                "policy": GaussianPolicy(env.observation_space, env.action_space, device),
                 "value": ValueNet(env.observation_space, env.action_space, device),
             }
 

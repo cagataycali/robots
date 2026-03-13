@@ -30,9 +30,7 @@ def _ensure_deps():
             _zmq = zmq
             _msgpack = msgpack
         except ImportError as e:
-            raise ImportError(
-                "GR00T service client requires: pip install pyzmq msgpack"
-            ) from e
+            raise ImportError("GR00T service client requires: pip install pyzmq msgpack") from e
 
 
 class MsgSerializer:
@@ -109,9 +107,7 @@ class BaseInferenceClient:
             self._init_socket()
             return False
 
-    def call_endpoint(
-        self, endpoint: str, data: dict | None = None, requires_input: bool = True
-    ) -> dict:
+    def call_endpoint(self, endpoint: str, data: dict | None = None, requires_input: bool = True) -> dict:
         request: dict = {"endpoint": endpoint}
         if requires_input:
             request["data"] = data

@@ -72,9 +72,7 @@ class TestRobotRegistry:
         aliases = list_aliases()
         for alias, canonical in aliases.items():
             info = get_robot(canonical)
-            assert info is not None, (
-                f"Alias '{alias}' points to unknown robot '{canonical}'"
-            )
+            assert info is not None, f"Alias '{alias}' points to unknown robot '{canonical}'"
 
     def test_robot_count(self):
         """Ensure we have a reasonable number of robots."""

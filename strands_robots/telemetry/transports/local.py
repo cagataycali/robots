@@ -95,10 +95,7 @@ class LocalWALTransport:
     def _write_line(self, line_bytes: bytes) -> None:
         """Write a single line, rotating file if needed."""
         # Check rotation
-        if (
-            self._current_file is None
-            or self._current_size + len(line_bytes) > self.max_file_bytes
-        ):
+        if self._current_file is None or self._current_size + len(line_bytes) > self.max_file_bytes:
             self._rotate()
 
         self._current_file.write(line_bytes)
@@ -145,9 +142,7 @@ class LocalWALTransport:
         to ensure the total on-disk count (existing + new) never exceeds
         ``max_files``.
         """
-        files = sorted(
-            self.wal_dir.glob("telemetry_*"), key=lambda p: p.stat().st_mtime
-        )
+        files = sorted(self.wal_dir.glob("telemetry_*"), key=lambda p: p.stat().st_mtime)
         while len(files) >= self.max_files:
             oldest = files.pop(0)
             try:

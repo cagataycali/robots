@@ -123,9 +123,7 @@ if HAS_GYM:
 
             result = self._backend.add_robot(**add_kwargs)
             if not result.get("success"):
-                raise RuntimeError(
-                    f"Failed to add robot '{self._robot_name}': {result.get('message')}"
-                )
+                raise RuntimeError(f"Failed to add robot '{self._robot_name}': {result.get('message')}")
 
             robot_info = result.get("robot_info", {})
             self._n_joints = robot_info.get("num_joints", 0)
@@ -198,15 +196,15 @@ if HAS_GYM:
 
             if jpos is None:
                 logger.warning(
-                    'joint_q not found in observation (available keys: %s). '
-                    'Falling back to zeros — RL training will be ineffective.',
+                    "joint_q not found in observation (available keys: %s). "
+                    "Falling back to zeros — RL training will be ineffective.",
                     list(obs_data.keys()),
                 )
                 jpos = np.zeros(self._n_joints * self._num_envs, dtype=np.float32)
             if jvel is None:
                 logger.warning(
-                    'joint_qd not found in observation (available keys: %s). '
-                    'Falling back to zeros — RL training will be ineffective.',
+                    "joint_qd not found in observation (available keys: %s). "
+                    "Falling back to zeros — RL training will be ineffective.",
                     list(obs_data.keys()),
                 )
                 jvel = np.zeros(self._n_joints * self._num_envs, dtype=np.float32)
@@ -276,16 +274,12 @@ if HAS_GYM:
                 if self.reward_fn is not None:
                     reward = self.reward_fn(obs, action)
                     if not isinstance(reward, np.ndarray):
-                        reward = np.full(
-                            self._num_envs, float(reward), dtype=np.float32
-                        )
+                        reward = np.full(self._num_envs, float(reward), dtype=np.float32)
                 else:
                     reward = np.zeros(self._num_envs, dtype=np.float32)
 
                 # Truncation check
-                truncated = np.full(
-                    self._num_envs, self._step_count >= self.max_episode_steps
-                )
+                truncated = np.full(self._num_envs, self._step_count >= self.max_episode_steps)
 
                 # Success/termination check
                 if self.success_fn is not None:
@@ -311,9 +305,7 @@ if HAS_GYM:
                 "step": self._step_count,
                 "task": self._task,
                 "sim_time": result.get("sim_time", 0.0),
-                "is_success": (
-                    terminated if isinstance(terminated, bool) else terminated.any()
-                ),
+                "is_success": (terminated if isinstance(terminated, bool) else terminated.any()),
             }
 
             return obs, reward, terminated, truncated, info
@@ -343,9 +335,7 @@ if HAS_GYM:
 
         def __repr__(self) -> str:
             return (
-                f"NewtonGymEnv(robot={self._robot_name!r}, "
-                f"num_envs={self._num_envs}, "
-                f"solver={self._config.solver!r})"
+                f"NewtonGymEnv(robot={self._robot_name!r}, num_envs={self._num_envs}, solver={self._config.solver!r})"
             )
 
 else:

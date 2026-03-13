@@ -146,15 +146,11 @@ class CosmosTransferConfig:
     def __post_init__(self) -> None:
         """Validate configuration values after initialisation."""
         if self.model_variant not in VALID_MODEL_VARIANTS:
-            raise ValueError(
-                f"Invalid model_variant '{self.model_variant}'. "
-                f"Must be one of: {VALID_MODEL_VARIANTS}"
-            )
+            raise ValueError(f"Invalid model_variant '{self.model_variant}'. Must be one of: {VALID_MODEL_VARIANTS}")
 
         if self.output_resolution not in VALID_OUTPUT_RESOLUTIONS:
             raise ValueError(
-                f"Invalid output_resolution '{self.output_resolution}'. "
-                f"Must be one of: {VALID_OUTPUT_RESOLUTIONS}"
+                f"Invalid output_resolution '{self.output_resolution}'. Must be one of: {VALID_OUTPUT_RESOLUTIONS}"
             )
 
         if self.num_gpus < 1:
@@ -167,9 +163,7 @@ class CosmosTransferConfig:
             raise ValueError(f"num_steps must be >= 1, got {self.num_steps}")
 
         if not 0.0 <= self.control_weight <= 2.0:
-            raise ValueError(
-                f"control_weight should be in [0.0, 2.0], got {self.control_weight}"
-            )
+            raise ValueError(f"control_weight should be in [0.0, 2.0], got {self.control_weight}")
 
         if self.num_chunks < 1:
             raise ValueError(f"num_chunks must be >= 1, got {self.num_chunks}")
@@ -191,15 +185,11 @@ class CosmosTransferConfig:
 
         env_path = os.environ.get("COSMOS_CHECKPOINT_DIR")
         if env_path and os.path.isdir(env_path):
-            logger.info(
-                "Using checkpoint path from COSMOS_CHECKPOINT_DIR: %s", env_path
-            )
+            logger.info("Using checkpoint path from COSMOS_CHECKPOINT_DIR: %s", env_path)
             return env_path
 
         # Fallback: HuggingFace hub cache default location
-        default_hf = os.path.expanduser(
-            "~/.cache/huggingface/hub/models--nvidia--Cosmos-Transfer2-7B"
-        )
+        default_hf = os.path.expanduser("~/.cache/huggingface/hub/models--nvidia--Cosmos-Transfer2-7B")
         if os.path.isdir(default_hf):
             logger.info("Using default HuggingFace cache checkpoint: %s", default_hf)
             return default_hf
@@ -342,10 +332,7 @@ class CosmosTransferPipeline:
         valid_control_types = {"depth", "edge", "seg"}
         for ct in control_types:
             if ct not in valid_control_types:
-                raise ValueError(
-                    f"Invalid control type '{ct}'. "
-                    f"Must be one of: {sorted(valid_control_types)}"
-                )
+                raise ValueError(f"Invalid control type '{ct}'. Must be one of: {sorted(valid_control_types)}")
 
         if control_weights is not None and len(control_weights) != len(control_types):
             raise ValueError(
@@ -381,8 +368,7 @@ class CosmosTransferPipeline:
             else:
                 if precomputed:
                     logger.warning(
-                        "Pre-computed %s control not found at '%s'; "
-                        "generating automatically.",
+                        "Pre-computed %s control not found at '%s'; generating automatically.",
                         ct,
                         precomputed,
                     )
@@ -494,8 +480,7 @@ class CosmosTransferPipeline:
 
         # Strategy 3: OpenCV-based simple disparity (last resort)
         logger.warning(
-            "MuJoCo and Video Depth Anything unavailable. "
-            "Falling back to greyscale luminance as a pseudo-depth proxy."
+            "MuJoCo and Video Depth Anything unavailable. Falling back to greyscale luminance as a pseudo-depth proxy."
         )
         self._fallback_greyscale_depth(sim_video_path, output_path)
         return output_path
@@ -542,10 +527,7 @@ class CosmosTransferPipeline:
             raise FileNotFoundError(f"Video not found: {sim_video_path}")
 
         if threshold not in VALID_EDGE_THRESHOLDS:
-            raise ValueError(
-                f"Invalid threshold '{threshold}'. "
-                f"Must be one of: {sorted(VALID_EDGE_THRESHOLDS.keys())}"
-            )
+            raise ValueError(f"Invalid threshold '{threshold}'. Must be one of: {sorted(VALID_EDGE_THRESHOLDS.keys())}")
 
         low_thresh, high_thresh = VALID_EDGE_THRESHOLDS[threshold]
 
@@ -643,10 +625,7 @@ class CosmosTransferPipeline:
             return output_path
 
         # Fallback: simple colour-quantised segmentation
-        logger.warning(
-            "SAM2 not available. Falling back to colour-quantised "
-            "segmentation placeholder."
-        )
+        logger.warning("SAM2 not available. Falling back to colour-quantised segmentation placeholder.")
         self._fallback_colour_segmentation(sim_video_path, output_path)
         return output_path
 
@@ -802,9 +781,7 @@ class CosmosTransferPipeline:
             cmd.append(control_subcommand)
         else:
             # Fallback: try module invocation (may not work with all versions)
-            logger.warning(
-                "Cosmos examples/inference.py not found. Trying module invocation."
-            )
+            logger.warning("Cosmos examples/inference.py not found. Trying module invocation.")
             cmd = [python_bin, "-m", COSMOS_INFERENCE_SCRIPT, "--spec", spec_path]
 
         logger.info("Running inference: %s", " ".join(cmd))
@@ -853,9 +830,7 @@ class CosmosTransferPipeline:
     # Control generation helpers (private)
     # ------------------------------------------------------------------
 
-    def _generate_control(
-        self, control_type: str, sim_video_path: str, work_dir: str
-    ) -> str:
+    def _generate_control(self, control_type: str, sim_video_path: str, work_dir: str) -> str:
         """Dispatch control generation by type.
 
         Args:
@@ -924,9 +899,7 @@ class CosmosTransferPipeline:
             model = getattr(self, "_sim_model", None)
             data = getattr(self, "_sim_data", None)
             if model is None or data is None:
-                logger.debug(
-                    "No MuJoCo sim context set. Use pipeline.set_sim_context(model, data)."
-                )
+                logger.debug("No MuJoCo sim context set. Use pipeline.set_sim_context(model, data).")
                 return False
 
             renderer = mujoco.Renderer(model, height=height, width=width)
@@ -934,9 +907,7 @@ class CosmosTransferPipeline:
 
             encoder = VideoEncoder(output_path, fps=fps, width=width, height=height)
 
-            frame_count = int(
-                cv2.VideoCapture(sim_video_path).get(cv2.CAP_PROP_FRAME_COUNT)
-            )
+            frame_count = int(cv2.VideoCapture(sim_video_path).get(cv2.CAP_PROP_FRAME_COUNT))
             for _ in range(frame_count):
                 renderer.update_scene(data)
                 depth = renderer.render()
@@ -1048,9 +1019,7 @@ class CosmosTransferPipeline:
         try:
             import cv2  # type: ignore[import-untyped]
         except ImportError as exc:
-            raise ImportError(
-                "OpenCV is required for fallback depth generation."
-            ) from exc
+            raise ImportError("OpenCV is required for fallback depth generation.") from exc
 
         cap = cv2.VideoCapture(sim_video_path)
         if not cap.isOpened():
@@ -1190,9 +1159,7 @@ class CosmosTransferPipeline:
             logger.debug("SAM2 segmentation failed.", exc_info=True)
             return False
 
-    def _fallback_colour_segmentation(
-        self, sim_video_path: str, output_path: str
-    ) -> None:
+    def _fallback_colour_segmentation(self, sim_video_path: str, output_path: str) -> None:
         """Fallback colour-quantised segmentation.
 
         Uses k-means colour clustering to produce a rough semantic-style
@@ -1210,9 +1177,7 @@ class CosmosTransferPipeline:
             import cv2  # type: ignore[import-untyped]
             import numpy as np  # type: ignore[import-untyped]
         except ImportError as exc:
-            raise ImportError(
-                "OpenCV and NumPy are required for fallback segmentation."
-            ) from exc
+            raise ImportError("OpenCV and NumPy are required for fallback segmentation.") from exc
 
         cap = cv2.VideoCapture(sim_video_path)
         if not cap.isOpened():
@@ -1421,8 +1386,7 @@ def transfer_video(
         config = CosmosTransferConfig(**config_kwargs)
     elif config_kwargs:
         logger.warning(
-            "Config keyword arguments (%s) are ignored when an explicit "
-            "'config' is provided.",
+            "Config keyword arguments (%s) are ignored when an explicit 'config' is provided.",
             list(config_kwargs.keys()),
         )
 

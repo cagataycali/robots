@@ -63,14 +63,10 @@ def _validate_robots(data: dict) -> None:
         for alias in info.get("aliases", []):
             if alias in seen_aliases:
                 raise ValueError(
-                    f"Duplicate robot alias '{alias}': claimed by both "
-                    f"'{seen_aliases[alias]}' and '{robot_name}'"
+                    f"Duplicate robot alias '{alias}': claimed by both '{seen_aliases[alias]}' and '{robot_name}'"
                 )
             if alias in data.get("robots", {}):
-                raise ValueError(
-                    f"Robot alias '{alias}' in '{robot_name}' collides with "
-                    f"a canonical robot name"
-                )
+                raise ValueError(f"Robot alias '{alias}' in '{robot_name}' collides with a canonical robot name")
             seen_aliases[alias] = robot_name
 
 
@@ -83,8 +79,7 @@ def _validate_policies(data: dict) -> None:
         for alias in info.get("aliases", []):
             if alias in seen_aliases:
                 raise ValueError(
-                    f"Duplicate policy alias '{alias}': claimed by both "
-                    f"'{seen_aliases[alias]}' and '{provider_name}'"
+                    f"Duplicate policy alias '{alias}': claimed by both '{seen_aliases[alias]}' and '{provider_name}'"
                 )
             seen_aliases[alias] = provider_name
 

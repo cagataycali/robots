@@ -117,10 +117,7 @@ class VideoEncoder:
             logger.warning("Error closing video: %s", e)
 
         self._writer = None
-        logger.info(
-            f"Video saved: {self.output_path} "
-            f"({self._frame_count} frames, {self.codec}, {self._backend})"
-        )
+        logger.info(f"Video saved: {self.output_path} ({self._frame_count} frames, {self.codec}, {self._backend})")
 
     def _init_writer(self, width: int, height: int):
         """Initialize the video writer with the best available backend."""
@@ -143,9 +140,7 @@ class VideoEncoder:
             logger.info("Video encoder: imageio (%sx%s)", width, height)
             return
 
-        raise RuntimeError(
-            "No video encoder available. Install: pip install av  OR  pip install imageio[ffmpeg]"
-        )
+        raise RuntimeError("No video encoder available. Install: pip install av  OR  pip install imageio[ffmpeg]")
 
     def _init_pyav(self, width: int, height: int):
         """Initialize PyAV encoder."""
@@ -263,9 +258,7 @@ def get_video_info(video_path: str) -> dict:
         stream = container.streams.video[0]
         info = {
             "path": str(video_path),
-            "duration_s": (
-                float(stream.duration * stream.time_base) if stream.duration else 0
-            ),
+            "duration_s": (float(stream.duration * stream.time_base) if stream.duration else 0),
             "fps": float(stream.average_rate) if stream.average_rate else 0,
             "width": stream.width,
             "height": stream.height,

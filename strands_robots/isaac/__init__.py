@@ -120,11 +120,7 @@ def __getattr__(name):
     elif name in ("IsaacSimBridgeClient", "IsaacSimBridgeServer"):
         from .isaac_sim_bridge import IsaacSimBridgeClient, IsaacSimBridgeServer
 
-        return (
-            IsaacSimBridgeClient
-            if name == "IsaacSimBridgeClient"
-            else IsaacSimBridgeServer
-        )
+        return IsaacSimBridgeClient if name == "IsaacSimBridgeClient" else IsaacSimBridgeServer
     elif name == "IsaacGymEnv":
         from .isaac_gym_env import IsaacGymEnv
 

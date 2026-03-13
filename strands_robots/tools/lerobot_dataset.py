@@ -26,9 +26,7 @@ _ACTIVE_RECORDINGS: Dict[str, Any] = {}
 _RECORDING_LOCK = threading.Lock()
 
 
-def _get_lerobot_dataset(
-    repo_id: str, root: Optional[str] = None, create: bool = False, **kwargs
-):
+def _get_lerobot_dataset(repo_id: str, root: Optional[str] = None, create: bool = False, **kwargs):
     """Load or create a LeRobotDataset."""
     try:
         from lerobot.datasets.lerobot_dataset import LeRobotDataset
@@ -192,9 +190,7 @@ def lerobot_dataset(
                 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
                 # LeRobot v3 requires features at create time
-                ds_features = features or _build_default_features(
-                    robot_type or "unknown"
-                )
+                ds_features = features or _build_default_features(robot_type or "unknown")
 
                 ds = LeRobotDataset.create(
                     repo_id=repo_id,
@@ -220,11 +216,7 @@ def lerobot_dataset(
                 }
             except ImportError:
                 # Fallback: create directory structure manually
-                ds_root = (
-                    Path(root)
-                    if root
-                    else Path.home() / ".cache" / "huggingface" / "lerobot" / repo_id
-                )
+                ds_root = Path(root) if root else Path.home() / ".cache" / "huggingface" / "lerobot" / repo_id
                 ds_root.mkdir(parents=True, exist_ok=True)
 
                 info = {
@@ -296,22 +288,14 @@ def lerobot_dataset(
                 }
             except ImportError:
                 # Fallback: read info.json
-                ds_root = (
-                    Path(root)
-                    if root
-                    else Path.home() / ".cache" / "huggingface" / "lerobot" / repo_id
-                )
+                ds_root = Path(root) if root else Path.home() / ".cache" / "huggingface" / "lerobot" / repo_id
                 info_path = ds_root / "info.json"
                 if info_path.exists():
                     with open(info_path) as f:
                         info = json.load(f)
                     return {
                         "status": "success",
-                        "content": [
-                            {
-                                "text": f"📊 Dataset: {repo_id}\n{json.dumps(info, indent=2)}"
-                            }
-                        ],
+                        "content": [{"text": f"📊 Dataset: {repo_id}\n{json.dumps(info, indent=2)}"}],
                     }
                 else:
                     return {
@@ -351,9 +335,7 @@ def lerobot_dataset(
                     logger.info("Loaded existing dataset: %s", repo_id)
                 except Exception:
                     # LeRobot v3 requires features at create time
-                    ds_features = features or _build_default_features(
-                        robot_type or "unknown"
-                    )
+                    ds_features = features or _build_default_features(robot_type or "unknown")
                     ds = LeRobotDataset.create(
                         repo_id=repo_id,
                         root=ds_root,
@@ -379,24 +361,14 @@ def lerobot_dataset(
                 ds_feature_keys = set(ds.features.keys()) if ds.features else set()
                 has_state = "observation.state" in ds_feature_keys
                 has_action = "action" in ds_feature_keys
-                action_dim = (
-                    ds.features.get("action", {}).get("shape", (0,))[0]
-                    if has_action
-                    else 0
-                )
-                state_dim = (
-                    ds.features.get("observation.state", {}).get("shape", (0,))[0]
-                    if has_state
-                    else 0
-                )
+                action_dim = ds.features.get("action", {}).get("shape", (0,))[0] if has_action else 0
+                state_dim = ds.features.get("observation.state", {}).get("shape", (0,))[0] if has_state else 0
 
                 # Record episodes
                 interval = 1.0 / fps
                 for ep_idx in range(num_episodes):
                     with _RECORDING_LOCK:
-                        _ACTIVE_RECORDINGS[recording_id][
-                            "status"
-                        ] = f"recording episode {ep_idx + 1}/{num_episodes}"
+                        _ACTIVE_RECORDINGS[recording_id]["status"] = f"recording episode {ep_idx + 1}/{num_episodes}"
 
                     ep_frames = 0
                     max_frames = int(episode_time_s * fps)
@@ -424,20 +396,14 @@ def lerobot_dataset(
                             action_values = list(action_data.values())
                             # Pad or truncate to match expected action dimension
                             if len(action_values) < action_dim:
-                                action_values.extend(
-                                    [0.0] * (action_dim - len(action_values))
-                                )
+                                action_values.extend([0.0] * (action_dim - len(action_values)))
                             elif len(action_values) > action_dim:
                                 action_values = action_values[:action_dim]
-                            frame_data["action"] = np.array(
-                                action_values, dtype=np.float32
-                            )
+                            frame_data["action"] = np.array(action_values, dtype=np.float32)
 
                         # Build state vector (zero-filled when no observation source)
                         if has_state:
-                            frame_data["observation.state"] = np.zeros(
-                                state_dim, dtype=np.float32
-                            )
+                            frame_data["observation.state"] = np.zeros(state_dim, dtype=np.float32)
 
                         try:
                             ds.add_frame(frame_data)
@@ -466,12 +432,8 @@ def lerobot_dataset(
 
                     with _RECORDING_LOCK:
                         if recording_id in _ACTIVE_RECORDINGS:
-                            _ACTIVE_RECORDINGS[recording_id]["episodes_recorded"] = (
-                                ep_idx + 1
-                            )
-                            _ACTIVE_RECORDINGS[recording_id][
-                                "total_frames"
-                            ] += ep_frames
+                            _ACTIVE_RECORDINGS[recording_id]["episodes_recorded"] = ep_idx + 1
+                            _ACTIVE_RECORDINGS[recording_id]["total_frames"] += ep_frames
 
                 # Cleanup teleop
                 if teleop:
@@ -514,11 +476,7 @@ def lerobot_dataset(
                     _ACTIVE_RECORDINGS.pop(recording_id, None)
                 return {
                     "status": "error",
-                    "content": [
-                        {
-                            "text": f"lerobot not installed: {e}\nInstall with: pip install lerobot"
-                        }
-                    ],
+                    "content": [{"text": f"lerobot not installed: {e}\nInstall with: pip install lerobot"}],
                 }
             except Exception:
                 with _RECORDING_LOCK:
@@ -539,9 +497,7 @@ def lerobot_dataset(
             for rid, info in active.items():
                 with _RECORDING_LOCK:
                     _ACTIVE_RECORDINGS.pop(rid, None)
-                stopped.append(
-                    f"{rid} ({info['repo_id']}, {info['episodes_recorded']} episodes)"
-                )
+                stopped.append(f"{rid} ({info['repo_id']}, {info['episodes_recorded']} episodes)")
 
             return {
                 "status": "success",
@@ -597,9 +553,7 @@ def lerobot_dataset(
 
             for ep_idx in range(total_eps):
                 try:
-                    ep_data = (
-                        ds.meta.episodes[ep_idx] if hasattr(ds.meta, "episodes") else {}
-                    )
+                    ep_data = ds.meta.episodes[ep_idx] if hasattr(ds.meta, "episodes") else {}
                     episodes_info.append(
                         {
                             "index": ep_idx,
@@ -639,11 +593,7 @@ def lerobot_dataset(
                     if hasattr(ds.meta, "episodes"):
                         ep_start += ds.meta.episodes[i].get("length", 0)
 
-                ep_length = (
-                    ds.meta.episodes[episode].get("length", 0)
-                    if hasattr(ds.meta, "episodes")
-                    else 0
-                )
+                ep_length = ds.meta.episodes[episode].get("length", 0) if hasattr(ds.meta, "episodes") else 0
 
                 for frame_idx in range(min(ep_length, 1000)):
                     try:
@@ -651,9 +601,7 @@ def lerobot_dataset(
                         action_data = {}
                         for k, v in frame.items():
                             if "action" in k:
-                                action_data[k] = (
-                                    v.tolist() if hasattr(v, "tolist") else v
-                                )
+                                action_data[k] = v.tolist() if hasattr(v, "tolist") else v
                         if action_data:
                             actions.append(action_data)
                     except Exception:
@@ -665,9 +613,7 @@ def lerobot_dataset(
             return {
                 "status": "success",
                 "content": [
-                    {
-                        "text": f"🔄 Episode {episode} from {repo_id}: {len(actions)} action frames"
-                    },
+                    {"text": f"🔄 Episode {episode} from {repo_id}: {len(actions)} action frames"},
                     {
                         "json": {
                             "episode": episode,
@@ -725,9 +671,7 @@ def lerobot_dataset(
     except ImportError as e:
         return {
             "status": "error",
-            "content": [
-                {"text": f"Missing dependency: {e}\nInstall with: pip install lerobot"}
-            ],
+            "content": [{"text": f"Missing dependency: {e}\nInstall with: pip install lerobot"}],
         }
     except Exception as e:
         logger.error("Dataset error: %s", e, exc_info=True)

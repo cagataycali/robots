@@ -40,9 +40,7 @@ try:
 except ImportError:
     LEROBOT_AVAILABLE = False
     # Fallback path
-    HF_LEROBOT_CALIBRATION = (
-        Path.home() / ".cache" / "huggingface" / "lerobot" / "calibration"
-    )
+    HF_LEROBOT_CALIBRATION = Path.home() / ".cache" / "huggingface" / "lerobot" / "calibration"
 
 # Session storage for backups
 BACKUP_DIR = Path.cwd() / ".strands_robots/.calibration_backups"
@@ -81,21 +79,15 @@ class LeRobotCalibrationManager:
 
         return structure
 
-    def get_calibration_path(
-        self, device_type: str, device_model: str, device_id: str
-    ) -> Path:
+    def get_calibration_path(self, device_type: str, device_model: str, device_id: str) -> Path:
         """Get the full path to a calibration file"""
         return self.base_path / device_type / device_model / f"{device_id}.json"
 
-    def calibration_exists(
-        self, device_type: str, device_model: str, device_id: str
-    ) -> bool:
+    def calibration_exists(self, device_type: str, device_model: str, device_id: str) -> bool:
         """Check if a calibration file exists"""
         return self.get_calibration_path(device_type, device_model, device_id).exists()
 
-    def load_calibration(
-        self, device_type: str, device_model: str, device_id: str
-    ) -> Optional[Dict[str, Any]]:
+    def load_calibration(self, device_type: str, device_model: str, device_id: str) -> Optional[Dict[str, Any]]:
         """Load calibration data from file"""
         calib_path = self.get_calibration_path(device_type, device_model, device_id)
 
@@ -109,9 +101,7 @@ class LeRobotCalibrationManager:
             logger.error("Error loading calibration %s: %s", calib_path, e)
             return None
 
-    def save_calibration(
-        self, device_type: str, device_model: str, device_id: str, data: Dict[str, Any]
-    ) -> bool:
+    def save_calibration(self, device_type: str, device_model: str, device_id: str, data: Dict[str, Any]) -> bool:
         """Save calibration data to file"""
         calib_path = self.get_calibration_path(device_type, device_model, device_id)
 
@@ -126,9 +116,7 @@ class LeRobotCalibrationManager:
             logger.error("Error saving calibration %s: %s", calib_path, e)
             return False
 
-    def delete_calibration(
-        self, device_type: str, device_model: str, device_id: str
-    ) -> bool:
+    def delete_calibration(self, device_type: str, device_model: str, device_id: str) -> bool:
         """Delete a calibration file"""
         calib_path = self.get_calibration_path(device_type, device_model, device_id)
 
@@ -142,9 +130,7 @@ class LeRobotCalibrationManager:
             logger.error("Error deleting calibration %s: %s", calib_path, e)
             return False
 
-    def get_calibration_info(
-        self, device_type: str, device_model: str, device_id: str
-    ) -> Optional[Dict[str, Any]]:
+    def get_calibration_info(self, device_type: str, device_model: str, device_id: str) -> Optional[Dict[str, Any]]:
         """Get detailed information about a calibration file"""
         calib_path = self.get_calibration_path(device_type, device_model, device_id)
 
@@ -237,9 +223,7 @@ class LeRobotCalibrationManager:
                         if device_id and device_id != calib_id:
                             continue
 
-                        source_file = self.get_calibration_path(
-                            dev_type, model, calib_id
-                        )
+                        source_file = self.get_calibration_path(dev_type, model, calib_id)
                         dest_dir = output_dir / dev_type / model
                         dest_dir.mkdir(parents=True, exist_ok=True)
                         dest_file = dest_dir / f"{calib_id}.json"
@@ -267,9 +251,7 @@ class LeRobotCalibrationManager:
             logger.error("Backup failed: %s", e)
             return False, str(e), copied_count
 
-    def restore_calibrations(
-        self, backup_dir: Path, overwrite: bool = False
-    ) -> Tuple[bool, str, int]:
+    def restore_calibrations(self, backup_dir: Path, overwrite: bool = False) -> Tuple[bool, str, int]:
         """Restore calibrations from backup"""
         backup_dir = Path(backup_dir)
 
@@ -289,9 +271,7 @@ class LeRobotCalibrationManager:
                         continue
 
                     for calib_file in model_dir.glob("*.json"):
-                        dest_file = self.get_calibration_path(
-                            device_type, model_dir.name, calib_file.stem
-                        )
+                        dest_file = self.get_calibration_path(device_type, model_dir.name, calib_file.stem)
 
                         if dest_file.exists() and not overwrite:
                             continue  # Skip existing files unless overwrite is True
@@ -449,30 +429,18 @@ def lerobot_calibrate(
                     if device_model and device_model != model:
                         continue
 
-                    content_lines.append(
-                        f"### 🤖 **{model}** ({len(calibrations)} calibrations)"
-                    )
+                    content_lines.append(f"### 🤖 **{model}** ({len(calibrations)} calibrations)")
 
                     for calib_id in calibrations:
                         info = manager.get_calibration_info(dev_type, model, calib_id)
                         if info:
-                            modified = info["modified_time"].strftime(
-                                "%Y-%m-%d %H:%M:%S"
-                            )
+                            modified = info["modified_time"].strftime("%Y-%m-%d %H:%M:%S")
                             size_kb = info["size_bytes"] / 1024
-                            motor_info = (
-                                f"{info.get('motor_count', 0)} motors"
-                                if info.get("motor_count")
-                                else ""
-                            )
-                            content_lines.append(
-                                f"  - `{calib_id}` *({modified}, {size_kb:.1f}KB, {motor_info})*"
-                            )
+                            motor_info = f"{info.get('motor_count', 0)} motors" if info.get("motor_count") else ""
+                            content_lines.append(f"  - `{calib_id}` *({modified}, {size_kb:.1f}KB, {motor_info})*")
                             total_count += 1
                         else:
-                            content_lines.append(
-                                f"  - `{calib_id}` *(error reading file)*"
-                            )
+                            content_lines.append(f"  - `{calib_id}` *(error reading file)*")
 
                     content_lines.append("")
 
@@ -487,29 +455,21 @@ def lerobot_calibrate(
             if not all([device_type, device_model, device_id]):
                 return {
                     "status": "error",
-                    "content": [
-                        {
-                            "text": "❌ **view** action requires: device_type, device_model, and device_id"
-                        }
-                    ],
+                    "content": [{"text": "❌ **view** action requires: device_type, device_model, and device_id"}],
                 }
 
             info = manager.get_calibration_info(device_type, device_model, device_id)
             if not info:
                 return {
                     "status": "error",
-                    "content": [
-                        {
-                            "text": f"❌ Calibration not found: `{device_type}/{device_model}/{device_id}`"
-                        }
-                    ],
+                    "content": [{"text": f"❌ Calibration not found: `{device_type}/{device_model}/{device_id}`"}],
                 }
 
             content_lines = [
                 f"🔧 **Calibration Details: `{device_type}/{device_model}/{device_id}`**",
                 f"📍 **Path:** `{info['path']}`",
                 f"📅 **Modified:** {info['modified_time'].strftime('%Y-%m-%d %H:%M:%S')}",
-                f"📏 **Size:** {info['size_bytes']} bytes ({info['size_bytes']/1024:.1f} KB)",
+                f"📏 **Size:** {info['size_bytes']} bytes ({info['size_bytes'] / 1024:.1f} KB)",
                 "",
             ]
 
@@ -542,17 +502,13 @@ def lerobot_calibrate(
             }
 
         elif action == "search":
-            results = manager.search_calibrations(
-                query or "", device_type, device_model
-            )
+            results = manager.search_calibrations(query or "", device_type, device_model)
 
             if not results:
                 search_desc = f"query '{query}'" if query else "specified criteria"
                 return {
                     "status": "success",
-                    "content": [
-                        {"text": f"🔍 **No calibrations found** matching {search_desc}"}
-                    ],
+                    "content": [{"text": f"🔍 **No calibrations found** matching {search_desc}"}],
                     "results": [],
                     "count": 0,
                 }
@@ -566,11 +522,7 @@ def lerobot_calibrate(
             for result in results:
                 modified = result["modified_time"].strftime("%Y-%m-%d %H:%M:%S")
                 size_kb = result["size_bytes"] / 1024
-                motor_info = (
-                    f"{result.get('motor_count', 0)} motors"
-                    if result.get("motor_count")
-                    else ""
-                )
+                motor_info = f"{result.get('motor_count', 0)} motors" if result.get("motor_count") else ""
 
                 content_lines.extend(
                     [
@@ -592,9 +544,7 @@ def lerobot_calibrate(
 
         elif action == "backup":
             output_path = Path(output_dir) if output_dir else None
-            success, message, count = manager.backup_calibrations(
-                output_path, device_type, device_model, device_id
-            )
+            success, message, count = manager.backup_calibrations(output_path, device_type, device_model, device_id)
 
             if success:
                 content_lines = [
@@ -632,17 +582,13 @@ def lerobot_calibrate(
                     "content": [{"text": "❌ **restore** action requires: backup_dir"}],
                 }
 
-            success, message, count = manager.restore_calibrations(
-                Path(backup_dir), overwrite
-            )
+            success, message, count = manager.restore_calibrations(Path(backup_dir), overwrite)
 
             if success:
                 return {
                     "status": "success",
                     "content": [
-                        {
-                            "text": f"✅ **{message}**\n📁 From: `{backup_dir}`\n🔄 Overwrite mode: `{overwrite}`"
-                        }
+                        {"text": f"✅ **{message}**\n📁 From: `{backup_dir}`\n🔄 Overwrite mode: `{overwrite}`"}
                     ],
                     "restored_count": count,
                 }
@@ -656,21 +602,13 @@ def lerobot_calibrate(
             if not all([device_type, device_model, device_id]):
                 return {
                     "status": "error",
-                    "content": [
-                        {
-                            "text": "❌ **delete** action requires: device_type, device_model, and device_id"
-                        }
-                    ],
+                    "content": [{"text": "❌ **delete** action requires: device_type, device_model, and device_id"}],
                 }
 
             if not manager.calibration_exists(device_type, device_model, device_id):
                 return {
                     "status": "error",
-                    "content": [
-                        {
-                            "text": f"❌ Calibration not found: `{device_type}/{device_model}/{device_id}`"
-                        }
-                    ],
+                    "content": [{"text": f"❌ Calibration not found: `{device_type}/{device_model}/{device_id}`"}],
                 }
 
             success = manager.delete_calibration(device_type, device_model, device_id)
@@ -678,20 +616,12 @@ def lerobot_calibrate(
             if success:
                 return {
                     "status": "success",
-                    "content": [
-                        {
-                            "text": f"🗑️ **Successfully deleted:** `{device_type}/{device_model}/{device_id}`"
-                        }
-                    ],
+                    "content": [{"text": f"🗑️ **Successfully deleted:** `{device_type}/{device_model}/{device_id}`"}],
                 }
             else:
                 return {
                     "status": "error",
-                    "content": [
-                        {
-                            "text": f"❌ **Failed to delete:** `{device_type}/{device_model}/{device_id}`"
-                        }
-                    ],
+                    "content": [{"text": f"❌ **Failed to delete:** `{device_type}/{device_model}/{device_id}`"}],
                 }
 
         elif action == "analyze":
@@ -750,9 +680,7 @@ def lerobot_calibrate(
                     if model_key in motor_stats:
                         stats = motor_stats[model_key]
                         motor_info = f"(avg {stats['avg']:.1f} motors)"
-                    content_lines.append(
-                        f"  - **{model_key}:** {count} calibrations {motor_info}"
-                    )
+                    content_lines.append(f"  - **{model_key}:** {count} calibrations {motor_info}")
 
             analysis = {
                 "total_calibrations": total_calibrations,
@@ -771,9 +699,7 @@ def lerobot_calibrate(
         elif action == "path":
             if device_type and device_model and device_id:
                 # Show specific calibration path
-                calib_path = manager.get_calibration_path(
-                    device_type, device_model, device_id
-                )
+                calib_path = manager.get_calibration_path(device_type, device_model, device_id)
                 exists = calib_path.exists()
 
                 return {

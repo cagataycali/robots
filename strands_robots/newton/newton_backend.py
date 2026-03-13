@@ -193,9 +193,7 @@ def _build_procedural_robot(
             parent=parent_body,
             child=body_idx,
             parent_xform=wp.transform(joint_pos, wp.quat_identity()),
-            child_xform=wp.transform(
-                (0.0, -link_len_scaled * 0.5, 0.0), wp.quat_identity()
-            ),
+            child_xform=wp.transform((0.0, -link_len_scaled * 0.5, 0.0), wp.quat_identity()),
             axis=axis,
             limit_lower=-3.14159,
             limit_upper=3.14159,
@@ -252,10 +250,7 @@ def _ensure_newton():
         _warp_module = wp
         logger.debug("Warp %s loaded.", getattr(wp, "__version__", "unknown"))
     except ImportError as exc:
-        raise ImportError(
-            "warp-lang is required for the Newton backend. "
-            "Install with: pip install warp-lang"
-        ) from exc
+        raise ImportError("warp-lang is required for the Newton backend. Install with: pip install warp-lang") from exc
 
     try:
         import newton
@@ -263,8 +258,7 @@ def _ensure_newton():
         _newton_module = newton
     except ImportError as exc:
         raise ImportError(
-            "newton-sim is required for the Newton backend. "
-            "Install with: pip install newton-sim"
+            "newton-sim is required for the Newton backend. Install with: pip install newton-sim"
         ) from exc
 
 
@@ -332,17 +326,11 @@ class NewtonConfig:
 
     def __post_init__(self):
         if self.solver not in SOLVER_MAP:
-            raise ValueError(
-                f"Unknown solver '{self.solver}'. Options: {list(SOLVER_MAP.keys())}"
-            )
+            raise ValueError(f"Unknown solver '{self.solver}'. Options: {list(SOLVER_MAP.keys())}")
         if self.render_backend not in RENDER_BACKENDS:
-            raise ValueError(
-                f"Unknown render_backend '{self.render_backend}'. Options: {RENDER_BACKENDS}"
-            )
+            raise ValueError(f"Unknown render_backend '{self.render_backend}'. Options: {RENDER_BACKENDS}")
         if self.broad_phase not in BROAD_PHASE_OPTIONS:
-            raise ValueError(
-                f"Unknown broad_phase '{self.broad_phase}'. Options: {BROAD_PHASE_OPTIONS}"
-            )
+            raise ValueError(f"Unknown broad_phase '{self.broad_phase}'. Options: {BROAD_PHASE_OPTIONS}")
         if self.physics_dt <= 0:
             raise ValueError("physics_dt must be positive")
         if self.num_envs < 1:
@@ -561,9 +549,7 @@ class NewtonBackend:
             kwargs = {}
             if cloth_solver == "vbd":
                 kwargs["iterations"] = cloth_iterations
-            self._secondary_solver = (
-                SecondaryCls(**kwargs) if kwargs else SecondaryCls()
-            )
+            self._secondary_solver = SecondaryCls(**kwargs) if kwargs else SecondaryCls()
             self._secondary_solver_name = cloth_solver
             logger.info(
                 "Dual solver enabled: %s (rigid) + %s (cloth)",
@@ -946,9 +932,7 @@ class NewtonBackend:
         v = [wp.vec3(*vert) for vert in vertices]
 
         rot = rotation if rotation is not None else wp.quat_identity()
-        if isinstance(rotation, (list, tuple)) and not isinstance(
-            rotation, type(wp.quat_identity())
-        ):
+        if isinstance(rotation, (list, tuple)) and not isinstance(rotation, type(wp.quat_identity())):
             if hasattr(wp, "quat"):
                 rot = wp.quat(*rotation)
 
@@ -1074,11 +1058,7 @@ class NewtonBackend:
 
         count = 0
         for i, pos in enumerate(positions):
-            vel = (
-                velocities[i]
-                if velocities is not None and hasattr(velocities, "__iter__")
-                else (0.0, 0.0, 0.0)
-            )
+            vel = velocities[i] if velocities is not None and hasattr(velocities, "__iter__") else (0.0, 0.0, 0.0)
             if isinstance(vel, np.ndarray):
                 vel = tuple(vel)
             try:
@@ -1138,9 +1118,7 @@ class NewtonBackend:
                     self._builder.add_ground_plane()
                 except Exception:
                     try:
-                        self._builder.add_shape_plane(
-                            plane=(0.0, 1.0, 0.0, 0.0), body=-1
-                        )
+                        self._builder.add_shape_plane(plane=(0.0, 1.0, 0.0, 0.0), body=-1)
                     except Exception:
                         pass
 
@@ -1222,9 +1200,7 @@ class NewtonBackend:
                 "message": f"Replicated × {num_envs} in {elapsed:.3f}s",
             }
         except Exception as exc:
-            logger.warning(
-                "replicate() failed: %s, falling back to _finalize_model()", exc
-            )
+            logger.warning("replicate() failed: %s, falling back to _finalize_model()", exc)
             self._finalize_model()
             return {
                 "success": True,
@@ -1251,12 +1227,8 @@ class NewtonBackend:
 
             if env_ids is None:
                 # Full reset
-                self._state_0.joint_q.assign(
-                    wp.array(q_default, dtype=wp.float32, device=self._config.device)
-                )
-                self._state_0.joint_qd.assign(
-                    wp.array(qd_default, dtype=wp.float32, device=self._config.device)
-                )
+                self._state_0.joint_q.assign(wp.array(q_default, dtype=wp.float32, device=self._config.device))
+                self._state_0.joint_qd.assign(wp.array(qd_default, dtype=wp.float32, device=self._config.device))
             else:
                 # Per-environment reset
                 current_q = self._state_0.joint_q.numpy()
@@ -1274,12 +1246,8 @@ class NewtonBackend:
                         self._joints_per_world,
                     )
 
-                self._state_0.joint_q.assign(
-                    wp.array(current_q, dtype=wp.float32, device=self._config.device)
-                )
-                self._state_0.joint_qd.assign(
-                    wp.array(current_qd, dtype=wp.float32, device=self._config.device)
-                )
+                self._state_0.joint_q.assign(wp.array(current_q, dtype=wp.float32, device=self._config.device))
+                self._state_0.joint_qd.assign(wp.array(current_qd, dtype=wp.float32, device=self._config.device))
 
             # Re-evaluate FK
             if hasattr(self._newton, "eval_fk"):
@@ -1327,11 +1295,7 @@ class NewtonBackend:
                 self._sim_time += dt * self._config.substeps
             else:
                 # Standard path
-                if (
-                    self._config.enable_cuda_graph
-                    and self._cuda_graph is None
-                    and "cuda" in str(self._config.device)
-                ):
+                if self._config.enable_cuda_graph and self._cuda_graph is None and "cuda" in str(self._config.device):
                     # Capture CUDA graph on first step
                     with wp.ScopedCapture(device=self._config.device) as capture:
                         for _ in range(self._config.substeps):
@@ -1384,9 +1348,7 @@ class NewtonBackend:
                 self._collision_pipeline.collide(self._state_0)
             except TypeError:
                 try:
-                    self._collision_pipeline.collide(
-                        self._model, self._state_0, self._contacts
-                    )
+                    self._collision_pipeline.collide(self._model, self._state_0, self._contacts)
                 except Exception as exc:
                     logger.debug("pipeline.collide: %s", exc)
             except Exception as exc:
@@ -1395,24 +1357,16 @@ class NewtonBackend:
         # Secondary solver (cloth)
         if self._secondary_solver is not None:
             try:
-                self._secondary_solver.step(
-                    self._state_0, self._state_1, self._control, self._contacts, dt
-                )
+                self._secondary_solver.step(self._state_0, self._state_1, self._control, self._contacts, dt)
             except TypeError:
-                self._secondary_solver.step(
-                    self._model, self._state_0, self._state_1, dt, self._control
-                )
+                self._secondary_solver.step(self._model, self._state_0, self._state_1, dt, self._control)
 
         # Primary solver — try new API first (state_in, state_out, control, contacts, dt)
         try:
-            self._solver.step(
-                self._state_0, self._state_1, self._control, self._contacts, dt
-            )
+            self._solver.step(self._state_0, self._state_1, self._control, self._contacts, dt)
         except TypeError:
             # Fallback to old API (model, state_in, state_out, dt, control)
-            self._solver.step(
-                self._model, self._state_0, self._state_1, dt, self._control
-            )
+            self._solver.step(self._model, self._state_0, self._state_1, dt, self._control)
 
     def _apply_actions(self, actions: Any) -> None:
         """Write actions into control / state joint_act arrays."""
@@ -1435,12 +1389,8 @@ class NewtonBackend:
 
         if target is not None:
             flat = actions_np.flatten()
-            n = min(
-                len(flat), target.shape[0] if hasattr(target, "shape") else len(flat)
-            )
-            target.assign(
-                wp.array(flat[:n], dtype=wp.float32, device=self._config.device)
-            )
+            n = min(len(flat), target.shape[0] if hasattr(target, "shape") else len(flat))
+            target.assign(wp.array(flat[:n], dtype=wp.float32, device=self._config.device))
 
     # ------------------------------------------------------------------
     # Differentiable simulation
@@ -1489,11 +1439,7 @@ class NewtonBackend:
         elif optimize_param == "particle_q":
             param = self._state_0.particle_q
         elif optimize_param == "joint_act":
-            param = (
-                self._control.joint_act
-                if hasattr(self._control, "joint_act")
-                else self._state_0.joint_act
-            )
+            param = self._control.joint_act if hasattr(self._control, "joint_act") else self._state_0.joint_act
         else:
             param = getattr(self._state_0, optimize_param, None)
             if param is None:
@@ -1535,9 +1481,7 @@ class NewtonBackend:
                         except Exception:
                             pass
 
-                    self._solver.step(
-                        self._model, current, next_state, dt, self._control
-                    )
+                    self._solver.step(self._model, current, next_state, dt, self._control)
                     states.append(next_state)
 
                 if loss_fn is not None:
@@ -1546,22 +1490,14 @@ class NewtonBackend:
                     loss = wp.zeros(1, dtype=wp.float32, requires_grad=True)
 
             tape.backward(loss)
-            current_loss = (
-                float(loss.numpy()[0]) if hasattr(loss, "numpy") else float(loss)
-            )
+            current_loss = float(loss.numpy()[0]) if hasattr(loss, "numpy") else float(loss)
             loss_history.append(current_loss)
 
             # Gradient descent
             param_np = param.numpy()
-            grad_np = (
-                tape.grad(param).numpy()
-                if tape.grad(param) is not None
-                else np.zeros_like(param_np)
-            )
+            grad_np = tape.grad(param).numpy() if tape.grad(param) is not None else np.zeros_like(param_np)
             param_np -= lr * grad_np
-            param.assign(
-                wp.array(param_np, dtype=wp.float32, device=self._config.device)
-            )
+            param.assign(wp.array(param_np, dtype=wp.float32, device=self._config.device))
 
             if verbose:
                 logger.info("Iteration %d: loss=%.6f", iteration, current_loss)
@@ -1601,9 +1537,7 @@ class NewtonBackend:
 
             if sensor_type == "contact":
                 shapes = kwargs.get("shapes", [0])
-                sensor = SensorContact(
-                    sensing_obj_shapes=shapes, verbose=kwargs.get("verbose", False)
-                )
+                sensor = SensorContact(sensing_obj_shapes=shapes, verbose=kwargs.get("verbose", False))
             elif sensor_type == "imu":
                 sensor = SensorIMU(**kwargs)
             elif sensor_type == "tiled_camera":
@@ -1703,22 +1637,16 @@ class NewtonBackend:
                     q_plus = joint_q.copy()
                     q_plus[j] += 0.001
                     temp_state = self._model.state()
-                    temp_state.joint_q.assign(
-                        wp.array(q_plus, dtype=wp.float32, device=self._config.device)
-                    )
+                    temp_state.joint_q.assign(wp.array(q_plus, dtype=wp.float32, device=self._config.device))
                     temp_state.joint_qd.assign(self._state_0.joint_qd)
-                    newton.eval_fk(
-                        self._model, temp_state.joint_q, temp_state.joint_qd, temp_state
-                    )
+                    newton.eval_fk(self._model, temp_state.joint_q, temp_state.joint_qd, temp_state)
                     body_out = temp_state.body_q.numpy()
                     new_pos = body_out[ee_idx][:3]
                     jac_col = (new_pos - ee_pos) / 0.001
                     delta_q[j] = np.dot(jac_col, error) * step_size
 
                 current_q = joint_q + delta_q
-                self._state_0.joint_q.assign(
-                    wp.array(current_q, dtype=wp.float32, device=self._config.device)
-                )
+                self._state_0.joint_q.assign(wp.array(current_q, dtype=wp.float32, device=self._config.device))
 
             return {
                 "success": True,
@@ -1753,17 +1681,13 @@ class NewtonBackend:
 
                 try:
                     jq = self._state_0.joint_q.numpy().copy()
-                    obs["joint_q"] = (
-                        jq[offset : offset + n_joints] if n_joints > 0 else jq
-                    )
+                    obs["joint_q"] = jq[offset : offset + n_joints] if n_joints > 0 else jq
                 except Exception:
                     pass
 
                 try:
                     jqd = self._state_0.joint_qd.numpy().copy()
-                    obs["joint_qd"] = (
-                        jqd[offset : offset + n_joints] if n_joints > 0 else jqd
-                    )
+                    obs["joint_qd"] = jqd[offset : offset + n_joints] if n_joints > 0 else jqd
                 except Exception:
                     pass
 
@@ -1778,10 +1702,7 @@ class NewtonBackend:
                     pass
 
                 # Particle state (for cloth/MPM)
-                if (
-                    hasattr(self._model, "particle_count")
-                    and self._model.particle_count > 0
-                ):
+                if hasattr(self._model, "particle_count") and self._model.particle_count > 0:
                     try:
                         obs["particle_q"] = self._state_0.particle_q.numpy().copy()
                         obs["particle_qd"] = self._state_0.particle_qd.numpy().copy()
@@ -1890,14 +1811,10 @@ class NewtonBackend:
         for i in range(num_steps):
             obs = self.get_observation(robot_name)
             try:
-                coro_or_result = policy.get_actions(
-                    obs.get("observations", {}).get(robot_name, {}), instruction
-                )
+                coro_or_result = policy.get_actions(obs.get("observations", {}).get(robot_name, {}), instruction)
                 actions = _resolve_coroutine(coro_or_result)
                 self.step(actions)
-                trajectory.append(
-                    {"step": i, "sim_time": self._sim_time, "observation": obs}
-                )
+                trajectory.append({"step": i, "sim_time": self._sim_time, "observation": obs})
             except Exception as exc:
                 errors.append(str(exc))
 
@@ -1907,9 +1824,7 @@ class NewtonBackend:
             "steps_executed": self._step_count,
             "sim_time": self._sim_time,
             "wall_time": wall_time,
-            "realtime_factor": (
-                float(self._sim_time / wall_time) if wall_time > 0 else 0.0
-            ),
+            "realtime_factor": (float(self._sim_time / wall_time) if wall_time > 0 else 0.0),
             "trajectory": trajectory,
             "errors": errors,
         }

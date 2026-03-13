@@ -115,7 +115,7 @@ class Gr00tTrainer(Trainer):
         if self.data_config:
             cmd.extend(["--data-config", self.data_config])
 
-        logger.info("🚀 Launching GR00T training: %s...", ' '.join(cmd[:6]))
+        logger.info("🚀 Launching GR00T training: %s...", " ".join(cmd[:6]))
 
         result = subprocess.run(cmd, capture_output=False)
         return {
@@ -127,7 +127,5 @@ class Gr00tTrainer(Trainer):
 
     def evaluate(self, checkpoint_path: str = None, **kwargs) -> Dict[str, Any]:
         """Evaluate a GR00T checkpoint (open-loop)."""
-        logger.info(
-            "📊 GR00T evaluation not yet integrated — use Isaac-GR00T eval scripts directly"
-        )
+        logger.info("📊 GR00T evaluation not yet integrated — use Isaac-GR00T eval scripts directly")
         return {"provider": "groot", "status": "not_implemented"}
