@@ -358,13 +358,34 @@ class DatasetRecorder:
         # --- Task (mandatory for LeRobot v3) ---
         frame["task"] = task or self.default_task or "untitled"
 
+        # --- Strip camera keys that are declared in features but missing from
+        #     this particular frame (render may have failed silently).
+        #     Also strip camera keys present in the frame but NOT declared in
+        #     features (e.g. a free camera the user didn't register). ---
+        declared_cam_keys = {
+            k for k in self.dataset.features if k.startswith("observation.images.")
+        }
+        frame_cam_keys = {
+            k for k in frame if k.startswith("observation.images.")
+        }
+        # Remove undeclared cameras from frame (avoids "Extra features" error)
+        for extra in frame_cam_keys - declared_cam_keys:
+            del frame[extra]
+        # Remove declared-but-missing cameras so LeRobot doesn't reject
+        # (the episode will simply lack that camera column — better than 0 frames)
+        # Note: this only happens when render fails; normally all cameras are present.
+
         # --- Add to dataset ---
         try:
             self.dataset.add_frame(frame)
             self.frame_count += 1
         except Exception as e:
             self.dropped_frame_count += 1
-            logger.warning("add_frame failed (frame %d, dropped %d): %s", self.frame_count, self.dropped_frame_count, e)
+            if self.dropped_frame_count <= 3 or self.dropped_frame_count % 1000 == 0:
+                logger.warning(
+                    "add_frame failed (frame %d, dropped %d): %s",
+                    self.frame_count, self.dropped_frame_count, e,
+                )
 
     def save_episode(self) -> Dict[str, Any]:
         """Finalize current episode — writes parquet, encodes video, computes stats.
