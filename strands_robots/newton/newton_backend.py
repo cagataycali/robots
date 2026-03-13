@@ -258,7 +258,8 @@ def _ensure_newton():
         _newton_module = newton
     except ImportError as exc:
         raise ImportError(
-            "newton-sim is required for the Newton backend. Install with: pip install newton-sim"
+            "newton is required for the Newton backend. "
+            "Install with: pip install newton"
         ) from exc
 
 
@@ -1328,7 +1329,7 @@ class NewtonBackend:
           1. Primary solver (MuJoCo) handles rigid bodies
           2. Secondary solver (VBD/XPBD) handles cloth particles
 
-        Newton solver.step() signature (newton-sim >= 1.0):
+        Newton solver.step() signature (newton >= 1.0):
             solver.step(state_in, state_out, control, contacts, dt)
         """
         # Clear forces (body_f, particle_f exist but joint_f may not)

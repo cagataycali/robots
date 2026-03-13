@@ -55,7 +55,7 @@ def _create_env(backend, robot_name, task, max_steps_per_episode, render, kwargs
             logger.warning("Newton backend not available: %s", e)
             return _error_result(
                 provider_name,
-                f"Newton backend requires newton-sim and warp-lang: {e}",
+                f"Newton backend requires newton and warp-lang: {e}",
             )
         except Exception as e:
             logger.warning("Newton env creation failed: %s", e)

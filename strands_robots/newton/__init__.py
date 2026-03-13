@@ -23,7 +23,7 @@ Key capabilities:
 - **Gymnasium wrapper**: ``NewtonGymEnv`` for SB3/RL integration.
 
 Requirements:
-    - newton-sim (or newton from source)
+    - newton (or newton from source)
     - warp-lang >= 1.11.0
 """
 

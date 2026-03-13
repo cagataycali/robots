@@ -67,10 +67,10 @@ isaac = [
 ]
 newton = [
     "warp-lang>=1.9.0",
-    "newton-sim>=0.3.0",
     "trimesh",
     "mujoco>=3.5.0",
     "numpy>=1.24.0",
+    "newton>=1.0.0",
 ]
 cosmos-transfer = [
     "torch>=2.1.0",
