@@ -71,7 +71,7 @@ SOLVER_MAP: Dict[str, str] = {
 }
 
 RENDER_BACKENDS = {"opengl", "rerun", "viser", "null", "none"}
-BROAD_PHASE_OPTIONS = {"sap", "bvh", "none"}
+BROAD_PHASE_OPTIONS = {"explicit", "nxn", "sap", "bvh", "none"}
 
 
 # Known robot definitions for procedural construction when no model file is found.
@@ -550,7 +550,14 @@ class NewtonBackend:
             kwargs = {}
             if cloth_solver == "vbd":
                 kwargs["iterations"] = cloth_iterations
-            self._secondary_solver = SecondaryCls(**kwargs) if kwargs else SecondaryCls()
+            # Newton 1.0.0: all solvers require model as first positional arg
+            try:
+                self._secondary_solver = SecondaryCls(self._model, **kwargs)
+            except TypeError:
+                # Fallback for older API without model arg
+                self._secondary_solver = (
+                    SecondaryCls(**kwargs) if kwargs else SecondaryCls()
+                )
             self._secondary_solver_name = cloth_solver
             logger.info(
                 "Dual solver enabled: %s (rigid) + %s (cloth)",
@@ -1199,6 +1206,14 @@ class NewtonBackend:
             return {
                 "success": True,
                 "message": f"Replicated × {num_envs} in {elapsed:.3f}s",
+                "env_info": {
+                    "num_envs": num_envs,
+                    "bodies_total": getattr(self._model, "body_count", 0),
+                    "joints_total": getattr(self._model, "joint_count", 0),
+                    "bodies_per_world": self._bodies_per_world,
+                    "joints_per_world": self._joints_per_world,
+                    "elapsed": elapsed,
+                },
             }
         except Exception as exc:
             logger.warning("replicate() failed: %s, falling back to _finalize_model()", exc)
@@ -1259,8 +1274,10 @@ class NewtonBackend:
                     self._state_0,
                 )
 
-            self._step_count = 0
-            self._sim_time = 0.0
+            # Only reset counters on full reset, not per-env reset
+            if env_ids is None:
+                self._step_count = 0
+                self._sim_time = 0.0
             return {"success": True, "message": "Reset complete"}
         except Exception as exc:
             return {"success": False, "message": str(exc)}
