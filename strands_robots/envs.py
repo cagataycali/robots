@@ -87,7 +87,12 @@ if HAS_GYM:
         ):
             """
             Args:
-                robot_name: Robot model name (from asset registry or URDF path)
+                robot_name: Robot model name (str) or a Simulation instance.
+                    If a Simulation object is passed, it will be used directly
+                    instead of creating a new one. Note: when passing an existing
+                    Simulation, any ``objects`` and ``cameras`` configs will still
+                    be added to it — ensure the passed sim does not already have
+                    them configured to avoid duplicates.
                 data_config: Optional data config name for joint mapping
                 task: Task description (for VLA policies)
                 render_mode: "rgb_array" or "human"
@@ -150,6 +155,21 @@ if HAS_GYM:
 
             assert HAS_MUJOCO, "mujoco required: pip install mujoco"
 
+            # Support passing a Simulation object directly
+            from strands_robots.simulation import Simulation
+
+            _passed_sim = None
+            if not isinstance(robot_name, str):
+                if isinstance(robot_name, Simulation):
+                    _passed_sim = robot_name
+                else:
+                    raise TypeError(
+                        f"robot_name must be a string or Simulation instance, got {type(robot_name).__name__}"
+                    )
+                # Derive robot_name string from the sim's first robot
+                _robots = _passed_sim._world.robots if hasattr(_passed_sim, "_world") else {}
+                robot_name = next(iter(_robots), "robot")
+
             self.robot_name = robot_name
             self.data_config = data_config or robot_name
             self.task = task
@@ -166,39 +186,47 @@ if HAS_GYM:
             self.success_fn = success_fn
 
             # Will be initialized in reset()
-            self._sim = None
+            self._sim = _passed_sim  # None if user passed a string
             self._step_count = 0
-            self._initialized = False
+            self._initialized = _passed_sim is not None
 
             # Initialize sim to get spaces
             self._init_sim()
 
         def _init_sim(self):
-            """Initialize the simulation to determine observation/action spaces."""
+            """Initialize the simulation to determine observation/action spaces.
+
+            When a Simulation instance was passed to __init__, world creation and
+            robot addition are skipped, but ``objects`` and ``cameras`` configs are
+            still applied. Callers passing a pre-configured sim should leave those
+            lists empty to avoid duplicates.
+            """
             from strands_robots.simulation import Simulation
 
-            self._sim = Simulation(
-                tool_name="gym_sim",
-                default_timestep=self.physics_dt,
-            )
+            if self._sim is None:
+                self._sim = Simulation(
+                    tool_name="gym_sim",
+                    default_timestep=self.physics_dt,
+                )
 
-            # Create world
-            self._sim._dispatch_action("create_world", {})
+                # Create world
+                self._sim._dispatch_action("create_world", {})
 
-            # Add robot
-            self._sim._dispatch_action(
-                "add_robot",
-                {
-                    "data_config": self.robot_name,
-                    "name": "robot",
-                },
-            )
+                # Add robot
+                self._sim._dispatch_action(
+                    "add_robot",
+                    {
+                        "data_config": self.robot_name,
+                        "name": "robot",
+                    },
+                )
 
-            # Add objects
+            # Add objects (also applied when a Simulation is passed directly —
+            # skip if no objects configured to avoid duplicating existing ones)
             for obj in self.objects_config:
                 self._sim._dispatch_action("add_object", obj)
 
-            # Add cameras
+            # Add cameras (same caveat as objects above)
             for cam in self.cameras_config:
                 self._sim._dispatch_action("add_camera", cam)
 

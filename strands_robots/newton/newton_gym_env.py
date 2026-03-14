@@ -137,6 +137,16 @@ if HAS_GYM:
                 # Force model finalization for single env
                 self._backend._finalize_model()
 
+            # Determine actual DOF from the finalized model state
+            # robot_info.num_joints counts joints, but actual DOF (joint_q length)
+            # may differ (e.g. free joints have 7 DOF, revolute have 1).
+            # Use the real state vector length for accurate space dimensions.
+            if self._backend._state_0 is not None:
+                total_q_len = len(self._backend._state_0.joint_q.numpy())
+                dof_per_env = total_q_len // max(self._num_envs, 1)
+                if dof_per_env > 0:
+                    self._n_joints = dof_per_env
+
             # Determine observation dimension
             # For each env: joint_positions (n_joints) + joint_velocities (n_joints)
             obs_dim = self._n_joints * 2  # qpos + qvel

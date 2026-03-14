@@ -358,13 +358,32 @@ class DatasetRecorder:
         # --- Task (mandatory for LeRobot v3) ---
         frame["task"] = task or self.default_task or "untitled"
 
+        # --- Reconcile camera keys between frame and feature schema ---
+        # Only strip *undeclared* cameras from the frame (keys present in obs
+        # but not registered in _build_features). This avoids LeRobot's
+        # "Extra features" error.  Declared-but-missing cameras (e.g. when a
+        # render fails) are left alone — LeRobot tolerates absent columns and
+        # the episode simply won't have that camera's data.
+        declared_cam_keys = {k for k in self.dataset.features if k.startswith("observation.images.")}
+        frame_cam_keys = {k for k in frame if k.startswith("observation.images.")}
+        for extra in frame_cam_keys - declared_cam_keys:
+            del frame[extra]
+
         # --- Add to dataset ---
         try:
             self.dataset.add_frame(frame)
             self.frame_count += 1
         except Exception as e:
             self.dropped_frame_count += 1
-            logger.warning("add_frame failed (frame %d, dropped %d): %s", self.frame_count, self.dropped_frame_count, e)
+            n = self.dropped_frame_count
+            # Log at 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, then every 1000
+            if (n & (n - 1)) == 0 or n % 1000 == 0:
+                logger.warning(
+                    "add_frame failed (frame %d, dropped %d): %s",
+                    self.frame_count,
+                    self.dropped_frame_count,
+                    e,
+                )
 
     def save_episode(self) -> Dict[str, Any]:
         """Finalize current episode — writes parquet, encodes video, computes stats.

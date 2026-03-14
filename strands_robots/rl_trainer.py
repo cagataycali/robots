@@ -638,7 +638,8 @@ class SB3Trainer(RLTrainer):
 
         except ImportError as e:
             logger.warning(
-                f"Newton backend not available ({e}), falling back to MuJoCo. Install: pip install newton-sim warp-lang"
+                f"Newton backend not available ({e}), falling back to MuJoCo. "
+                "Install: pip install newton warp-lang"
             )
             return self._create_mujoco_env()
         except Exception as e:
