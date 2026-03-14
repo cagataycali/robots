@@ -64,12 +64,25 @@ class MJCFBuilder:
         return "\n".join(parts)
 
     @staticmethod
+    def _pad4(val, default):
+        """Pad a list to exactly 4 elements (for quaternion/RGBA)."""
+        if val is None:
+            return list(default)
+        v = list(val)
+        while len(v) < 4:
+            v.append(default[len(v)] if len(v) < len(default) else 0.0)
+        return v[:4]
+
+    @staticmethod
     def _object_xml(obj: SimObject, indent: int = 4) -> str:
         """Generate MJCF XML for a single object."""
         pad = " " * indent
-        px, py, pz = obj.position
-        qw, qx, qy, qz = obj.orientation
-        r, g, b, a = obj.color
+        pos = list(obj.position) + [0.0, 0.0, 0.0]
+        px, py, pz = pos[0], pos[1], pos[2]
+        ori = MJCFBuilder._pad4(obj.orientation, [1.0, 0.0, 0.0, 0.0])
+        qw, qx, qy, qz = ori[0], ori[1], ori[2], ori[3]
+        col = MJCFBuilder._pad4(obj.color, [0.5, 0.5, 0.5, 1.0])
+        r, g, b, a = col[0], col[1], col[2], col[3]
         lines = []
 
         lines.append(f'{pad}<body name="{obj.name}" pos="{px} {py} {pz}" quat="{qw} {qx} {qy} {qz}">')

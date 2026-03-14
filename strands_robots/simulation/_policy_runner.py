@@ -77,6 +77,10 @@ class PolicyRunnerMixin:
             robot.policy_steps = 0
             next_frame_step = 0.0
 
+            # Notify dashboard
+            if hasattr(self, '_publish_event'):
+                self._publish_event("policy_started", {"robot": robot_name, "policy": policy_provider, "instruction": instruction})
+
             sim_duration = duration * control_frequency  # target number of control steps
             start_time = time.time()
             action_sleep = 1.0 / control_frequency
@@ -112,6 +116,19 @@ class PolicyRunnerMixin:
                     self._apply_sim_action(robot_name, action_dict)
                     robot.policy_steps += 1
 
+                    # Stream step to mesh for dashboard live monitoring
+                    if hasattr(self, "mesh") and self.mesh and self.mesh.alive:
+                        try:
+                            self.mesh.publish_step(
+                                step=robot.policy_steps,
+                                observation=observation,
+                                action=action_dict,
+                                instruction=instruction,
+                                policy=policy_provider,
+                            )
+                        except Exception:
+                            pass  # Never let mesh errors break the control loop
+
                     if writer and robot.policy_steps >= next_frame_step:
                         renderer = self._get_renderer(video_width, video_height)
                         if cam_id >= 0:
@@ -127,6 +144,10 @@ class PolicyRunnerMixin:
 
             elapsed = time.time() - start_time
             robot.policy_running = False
+
+            # Notify dashboard
+            if hasattr(self, '_publish_event'):
+                self._publish_event("policy_completed", {"robot": robot_name, "steps": robot.policy_steps, "elapsed": round(elapsed, 1)})
 
             result_text = (
                 f"✅ Policy complete on '{robot_name}'\n"

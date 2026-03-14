@@ -1037,6 +1037,62 @@ class Robot(AgentTool):
             ],
         }
 
+    # --- Camera streaming for dashboard ---
+
+    def _render_camera_jpeg_b64(self, camera_name: str = "default") -> str | None:
+        """Render a camera frame from the real robot as base64 JPEG for mesh streaming.
+
+        Grabs the latest observation and encodes the first camera image.
+        """
+        try:
+            if not getattr(self.robot, "is_connected", False):
+                return None
+
+            observation = self.robot.get_observation()
+
+            # Find camera keys
+            camera_keys = []
+            if hasattr(self.robot, "config") and hasattr(self.robot.config, "cameras"):
+                camera_keys = list(self.robot.config.cameras.keys())
+
+            # If specific camera requested, use it; otherwise use first available
+            cam_key = camera_name if camera_name in observation else (camera_keys[0] if camera_keys else None)
+            if not cam_key or cam_key not in observation:
+                return None
+
+            img = observation[cam_key]
+            if not hasattr(img, "shape") or len(img.shape) < 2:
+                return None
+
+            import base64
+            import io
+            from PIL import Image
+
+            # Convert numpy array to JPEG
+            if hasattr(img, "numpy"):
+                img = img.numpy()
+            pil_img = Image.fromarray(img)
+            buffer = io.BytesIO()
+            pil_img.save(buffer, format="JPEG", quality=60)
+            return base64.b64encode(buffer.getvalue()).decode("ascii")
+
+        except Exception as e:
+            logger.debug("Robot camera render failed: %s", e)
+            return None
+
+    def start_camera_stream(self, camera: str = "default", fps: int = 5) -> Dict[str, Any]:
+        """Start streaming camera frames from real robot over Zenoh mesh.
+
+        Args:
+            camera: Camera name (default: first available)
+            fps: Frames per second (default: 5, lower than sim for bandwidth)
+        """
+        if not self.mesh or not self.mesh.alive:
+            return {"status": "error", "content": [{"text": "❌ Mesh not enabled"}]}
+
+        self.mesh.start_camera_stream(self._render_camera_jpeg_b64, camera=camera, fps=fps)
+        return {"status": "success", "content": [{"text": f"📹 Camera stream started: {camera} @ {fps}fps"}]}
+
     def tool_name(self) -> str:
         return self.tool_name_str
 

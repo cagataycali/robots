@@ -219,9 +219,38 @@ class Simulation(
     def _recompile_world(self) -> Dict[str, Any]:
         try:
             self._compile_world()
+            self._invalidate_renderers()
             return {"status": "success"}
         except Exception as e:
             return {"status": "error", "content": [{"text": f"❌ Recompile failed: {e}"}]}
+
+    def _invalidate_renderers(self):
+        """Invalidate all cached renderers after model recompile.
+
+        Called after any operation that changes the MuJoCo model (add_object,
+        remove_object, add_robot, add_camera, etc.) so camera streams and
+        render() produce frames from the new model.
+
+        NOTE: We only set references to None — we do NOT call .close() here
+        because the camera stream thread may still be using the renderer.
+        The old renderer will be garbage collected when no longer referenced.
+        New renderers are lazily created on next use.
+        """
+        # Set to None so next render creates a fresh renderer for the new model.
+        # The old renderer object will be GC'd when the camera thread moves on.
+        self._cam_stream_renderer = None
+
+        # Clear all cached renderers — same pattern: just drop references
+        self._renderers.clear()
+        self._renderer_model = None
+
+    def _publish_event(self, event_type: str, data: dict = None):
+        """Publish a sim mutation event to the Zenoh mesh."""
+        if hasattr(self, "mesh") and self.mesh and self.mesh.alive:
+            try:
+                self.mesh.publish_event(event_type, data or {})
+            except Exception:
+                pass
 
     # --- Robot Management ---
 
@@ -358,6 +387,8 @@ class Simulation(
                 mj.mj_step(model, data)
 
             source = f"data_config='{data_config}'" if data_config else os.path.basename(resolved_path)
+            self._invalidate_renderers()
+            self._publish_event("robot_added", {"name": name, "joints": len(robot.joint_names), "source": source})
             return {
                 "status": "success",
                 "content": [{"text": (
@@ -385,6 +416,7 @@ class Simulation(
                 pass
             del self._policy_threads[name]
         del self._world.robots[name]
+        self._publish_event("robot_removed", {"name": name})
         return {"status": "success", "content": [{"text": f"🗑️ Robot '{name}' removed."}]}
 
     def list_robots(self) -> Dict[str, Any]:
@@ -440,12 +472,13 @@ class Simulation(
         if name in self._world.objects:
             return {"status": "error", "content": [{"text": f"❌ Object '{name}' exists."}]}
 
+        from strands_robots.simulation._mjcf_builder import MJCFBuilder
         obj = SimObject(
             name=name, shape=shape,
-            position=position or [0.0, 0.0, 0.0],
-            orientation=orientation or [1.0, 0.0, 0.0, 0.0],
-            size=size or [0.05, 0.05, 0.05],
-            color=color or [0.5, 0.5, 0.5, 1.0],
+            position=list(position or [0.0, 0.0, 0.0])[:3],
+            orientation=MJCFBuilder._pad4(orientation, [1.0, 0.0, 0.0, 0.0]),
+            size=list(size or [0.05, 0.05, 0.05]),
+            color=MJCFBuilder._pad4(color, [0.5, 0.5, 0.5, 1.0]),
             mass=mass, mesh_path=mesh_path, is_static=is_static,
         )
         self._world.objects[name] = obj
@@ -453,14 +486,18 @@ class Simulation(
         if self._world.robots:
             try:
                 result = inject_object_into_scene(self._world, obj)
+                self._invalidate_renderers()
                 if result:
+                    self._publish_event("object_added", {"name": name, "shape": shape, "position": obj.position})
                     return {"status": "success", "content": [{"text": f"📦 '{name}' spawned: {shape} at {obj.position}"}]}
+                self._publish_event("object_added", {"name": name, "shape": shape, "position": obj.position})
                 return {"status": "success", "content": [{"text": (
                     f"📦 '{name}' registered: {shape} at {obj.position}\n"
                     "⚠️ Robot scene loaded — object is tracked but not physically spawned."
                 )}]}
             except Exception as e:
                 logger.warning("Object injection failed, tracking metadata only: %s", e)
+                self._publish_event("object_added", {"name": name, "shape": shape, "position": obj.position, "warning": str(e)})
                 return {"status": "success", "content": [{"text": f"📦 '{name}' registered: {shape} at {obj.position}\n⚠️ Injection failed ({e})"}]}
 
         result = self._recompile_world()
@@ -468,6 +505,7 @@ class Simulation(
             del self._world.objects[name]
             return result
 
+        self._publish_event("object_added", {"name": name, "shape": shape, "position": obj.position})
         return {"status": "success", "content": [{"text": f"📦 '{name}' added: {shape} at {obj.position}, size={obj.size}, {'static' if is_static else f'{mass}kg'}"}]}
 
     def remove_object(self, name: str) -> Dict[str, Any]:
@@ -476,8 +514,10 @@ class Simulation(
         del self._world.objects[name]
         if self._world.robots:
             eject_body_from_scene(self._world, name)
+            self._invalidate_renderers()
         else:
             self._recompile_world()
+        self._publish_event("object_removed", {"name": name})
         return {"status": "success", "content": [{"text": f"🗑️ '{name}' removed."}]}
 
     def move_object(self, name: str, position: List[float] = None, orientation: List[float] = None) -> Dict[str, Any]:
@@ -500,6 +540,7 @@ class Simulation(
                 self._world.objects[name].orientation = orientation
             mj.mj_forward(model, data)
 
+        self._publish_event("object_moved", {"name": name, "position": position, "orientation": orientation})
         return {"status": "success", "content": [{"text": f"📍 '{name}' moved to {position or 'same'}"}]}
 
     def list_objects(self) -> Dict[str, Any]:
@@ -564,6 +605,7 @@ class Simulation(
         for r in self._world.robots.values():
             r.policy_running = False
             r.policy_steps = 0
+        self._publish_event("reset", {})
         return {"status": "success", "content": [{"text": "🔄 Reset to initial state."}]}
 
     def get_state(self) -> Dict[str, Any]:
@@ -749,12 +791,17 @@ class Simulation(
             "list_urdfs": "list_urdfs_action",
             "register_urdf": "register_urdf_action",
             "stop_policy": "_stop_policy",
+            "execute": "run_policy",
+            "stop": "_stop_policy",
+            "teleop_start": "run_policy",
+            "teleop_stop": "_stop_policy",
+            "teleop_delta": "teleop_delta",
         }
 
         method_name = _ALIASES.get(action, action)
         method = getattr(self, method_name, None)
 
-        if method is None or action.startswith("_"):
+        if method is None or (action.startswith("_") and action not in _ALIASES):
             return {"status": "error", "content": [{"text": f"❌ Unknown action: {action}"}]}
 
         # Build kwargs from input dict, excluding 'action' itself
@@ -771,6 +818,10 @@ class Simulation(
                 kwargs["name"] = d["robot_name"]
             elif param_name == "robot_name" and "robot_name" not in d and "name" in d:
                 kwargs["robot_name"] = d["name"]
+            elif param_name == "robot_name" and "robot_name" not in d and "name" not in d:
+                # Auto-detect first robot in world
+                if self._world and self._world.robots:
+                    kwargs["robot_name"] = next(iter(self._world.robots))
             elif param_name in d:
                 kwargs[param_name] = d[param_name]
             # Forward policy kwargs
@@ -782,15 +833,130 @@ class Simulation(
 
         return method(**kwargs)
 
+    def teleop_delta(self, joint: int = 0, delta: float = 0.0, robot_name: str = "", **kwargs) -> Dict[str, Any]:
+        """Apply a delta to a specific joint and step the simulation.
+
+        Used by the dashboard keyboard teleop (WASD keys) to nudge joints.
+        The joint is identified by index into the robot's joint_names list.
+
+        Args:
+            joint: Joint index (0-based into robot's joint list)
+            delta: Position delta to apply (radians)
+            robot_name: Robot name (auto-detected if empty)
+        """
+        if self._world is None or self._world._model is None:
+            return {"status": "error", "content": [{"text": "❌ No simulation."}]}
+
+        mj = _ensure_mujoco()
+        model, data = self._world._model, self._world._data
+
+        if not robot_name and self._world.robots:
+            robot_name = next(iter(self._world.robots))
+        robot = self._world.robots.get(robot_name)
+        if not robot:
+            return {"status": "error", "content": [{"text": f"❌ Robot '{robot_name}' not found."}]}
+
+        if joint < 0 or joint >= len(robot.joint_names):
+            return {"status": "error", "content": [{"text": f"❌ Joint index {joint} out of range (0-{len(robot.joint_names)-1})"}]}
+
+        jnt_name = robot.joint_names[joint]
+        jnt_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, jnt_name)
+        if jnt_id < 0:
+            return {"status": "error", "content": [{"text": f"❌ Joint '{jnt_name}' not found in model"}]}
+
+        # Apply delta to joint position
+        qpos_adr = model.jnt_qposadr[jnt_id]
+        data.qpos[qpos_adr] += delta
+
+        # Also set ctrl if there's a matching actuator
+        act_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_ACTUATOR, jnt_name)
+        if act_id >= 0:
+            data.ctrl[act_id] = float(data.qpos[qpos_adr])
+
+        # Step the simulation to apply
+        for _ in range(5):  # small burst of steps for smooth motion
+            mj.mj_step(model, data)
+        self._world.sim_time = data.time
+        self._world.step_count += 5
+
+        if hasattr(self, '_viewer_handle') and self._viewer_handle is not None:
+            self._viewer_handle.sync()
+
+        return {"status": "success"}
+
     def _stop_policy(self, robot_name: str = "", **kwargs) -> Dict[str, Any]:
+        # Auto-detect robot if not specified
+        if not robot_name and self._world and self._world.robots:
+            robot_name = next(iter(self._world.robots))
         if self._world and robot_name in self._world.robots:
             self._world.robots[robot_name].policy_running = False
             return {"status": "success", "content": [{"text": f"🛑 Stopped on '{robot_name}'"}]}
+        # Stop ALL robots if name not found
+        if self._world:
+            for rn, robj in self._world.robots.items():
+                robj.policy_running = False
+            return {"status": "success", "content": [{"text": "🛑 All policies stopped"}]}
         return {"status": "error", "content": [{"text": f"❌ '{robot_name}' not found."}]}
+
+    # --- Camera Streaming ---
+
+    def _render_camera_jpeg_b64(self, camera_name: str = "default") -> Optional[str]:
+        """Render a camera view and return as base64 JPEG string for mesh streaming.
+
+        Thread-safe: if model changes between calls, the old renderer ref is
+        dropped by _invalidate_renderers() and a new one is created here.
+        """
+        if self._world is None or self._world._model is None:
+            return None
+        try:
+            mj = _ensure_mujoco()
+            w, h = 320, 240
+            model = self._world._model
+            data = self._world._data
+            renderer = getattr(self, "_cam_stream_renderer", None)
+            if renderer is None:
+                renderer = mj.Renderer(model, height=h, width=w)
+                self._cam_stream_renderer = renderer
+            cam_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_CAMERA, camera_name)
+            if cam_id >= 0:
+                renderer.update_scene(data, camera=cam_id)
+            else:
+                renderer.update_scene(data)
+            img = renderer.render().copy()
+            from PIL import Image
+            import io
+            import base64
+            pil_img = Image.fromarray(img)
+            buffer = io.BytesIO()
+            pil_img.save(buffer, format="JPEG", quality=60)
+            return base64.b64encode(buffer.getvalue()).decode("ascii")
+        except Exception as e:
+            # If renderer is stale after model change, discard and retry next frame
+            self._cam_stream_renderer = None
+            logger.debug("Camera JPEG render failed: %s", e)
+            return None
+
+    def start_camera_stream(self, camera: str = "default", fps: int = 10, **kwargs) -> Dict[str, Any]:
+        """Start streaming camera frames over Zenoh mesh."""
+        if not hasattr(self, "mesh") or not self.mesh:
+            return {"status": "error", "content": [{"text": "❌ Mesh not enabled"}]}
+        self.mesh.start_camera_stream(self._render_camera_jpeg_b64, camera=camera, fps=fps)
+        return {"status": "success", "content": [{"text": f"📹 Camera stream started: {camera} @ {fps}fps"}]}
+
+    def stop_camera_stream(self, **kwargs) -> Dict[str, Any]:
+        """Stop camera stream."""
+        return {"status": "success", "content": [{"text": "📹 Camera stream will stop on cleanup"}]}
 
     # --- Cleanup ---
 
     def cleanup(self):
+        # Close dedicated camera stream renderer
+        if hasattr(self, "_cam_stream_renderer") and self._cam_stream_renderer:
+            try:
+                self._cam_stream_renderer.close()
+            except Exception:
+                pass
+            self._cam_stream_renderer = None
         if hasattr(self, "mesh") and self.mesh:
             self.mesh.stop()
         if self._world:

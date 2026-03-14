@@ -348,7 +348,11 @@ class Mesh:
             time.sleep(1.0 / STATE_HZ)
 
     def _read_state(self) -> Optional[dict]:
-        """Read current robot/sim state for publishing."""
+        """Read current robot/sim state for publishing.
+
+        Includes joints, task status, simulation world metadata (objects,
+        cameras, robots) so the dashboard can render the full scene.
+        """
         r = self.robot
         s: dict = {"peer_id": self.peer_id, "t": time.time()}
         try:
@@ -371,16 +375,67 @@ class Mesh:
                     "duration": ts.duration,
                 }
 
-            # Simulation
+            # Simulation world state
             if hasattr(r, "_world") and r._world is not None:
                 w = r._world
                 if hasattr(w, "_data") and w._data is not None:
                     s["sim_time"] = float(w._data.time)
                 elif hasattr(r, "_data") and r._data is not None:
                     s["sim_time"] = float(r._data.time)
-                if hasattr(r, "_world") and r._world is not None and hasattr(r._world, "robots"):
-                    for name in r._world.robots:
-                        s.setdefault("robots", {})[name] = {"active": True}
+
+                # Sim joint positions (for dashboard joint gauges)
+                if "joints" not in s and hasattr(w, "robots") and w.robots and hasattr(w, "_model") and w._model is not None:
+                    try:
+                        import importlib
+                        mj = importlib.import_module("mujoco")
+                        model, data = w._model, w._data
+                        if data is not None:
+                            joints = {}
+                            for rname, rob in w.robots.items():
+                                for jnt_name in getattr(rob, "joint_names", []):
+                                    jnt_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, jnt_name)
+                                    if jnt_id >= 0:
+                                        joints[jnt_name] = float(data.qpos[model.jnt_qposadr[jnt_id]])
+                            if joints:
+                                s["joints"] = joints
+                    except Exception:
+                        pass
+
+                # Robots in world
+                if hasattr(w, "robots"):
+                    robots_info = {}
+                    for name, rob in w.robots.items():
+                        robots_info[name] = {
+                            "active": True,
+                            "policy_running": getattr(rob, "policy_running", False),
+                            "joints": len(getattr(rob, "joint_names", [])),
+                        }
+                    s["robots"] = robots_info
+
+                # Objects in world (scene composition)
+                if hasattr(w, "objects") and w.objects:
+                    s["objects"] = {
+                        name: {
+                            "shape": getattr(obj, "shape", "?"),
+                            "position": getattr(obj, "position", []),
+                            "color": getattr(obj, "color", [])[:3] if getattr(obj, "color", None) else [],
+                            "is_static": getattr(obj, "is_static", False),
+                        }
+                        for name, obj in w.objects.items()
+                    }
+
+                # Cameras in world
+                if hasattr(w, "cameras") and w.cameras:
+                    s["cameras"] = list(w.cameras.keys())
+
+                # World metadata
+                if hasattr(w, "_model") and w._model is not None:
+                    s["world"] = {
+                        "bodies": w._model.nbody,
+                        "joints": w._model.njnt,
+                        "actuators": w._model.nu,
+                        "step_count": getattr(w, "step_count", 0),
+                    }
 
         except Exception:
             pass
@@ -444,6 +499,11 @@ class Mesh:
             return {"status": getattr(getattr(r, "_task_state", None), "status", "unknown")}
 
         if action == "stop":
+            # Simulation: stop policy on all robots
+            if hasattr(r, "_world") and r._world:
+                for rname, robj in r._world.robots.items():
+                    robj.policy_running = False
+                return {"status": "stopped", "content": [{"text": "🛑 Policy stopped"}]}
             return r.stop_task() if hasattr(r, "stop_task") else {"ok": True}
 
         if action == "features":
@@ -470,6 +530,32 @@ class Mesh:
                 )
                 if k in cmd
             }
+
+            # Simulation backend — route to run_policy / start_policy
+            if hasattr(r, "run_policy") and hasattr(r, "_world"):
+                robot_name = None
+                if r._world and r._world.robots:
+                    robot_name = cmd.get("robot_name") or next(iter(r._world.robots))
+                if not robot_name:
+                    return {"error": "no robots in simulation"}
+                if action == "execute":
+                    return r.run_policy(
+                        robot_name=robot_name,
+                        policy_provider=pp,
+                        instruction=instr,
+                        duration=dur,
+                        **kw,
+                    )
+                else:  # start
+                    return r.start_policy(
+                        robot_name=robot_name,
+                        policy_provider=pp,
+                        instruction=instr,
+                        duration=dur,
+                        **kw,
+                    )
+
+            # Hardware robot backend
             if action == "execute" and hasattr(r, "_execute_task_sync"):
                 return r._execute_task_sync(instr, pp, port, host, dur, **kw)
             if action == "start" and hasattr(r, "start_task"):
@@ -480,6 +566,23 @@ class Mesh:
             return r.step(cmd.get("steps", 1))
         if action == "reset" and hasattr(r, "reset"):
             return r.reset()
+
+        # Camera stream — dispatch to simulation's handler or robot's
+        if action == "start_camera_stream":
+            if hasattr(r, "_dispatch_action"):
+                return r._dispatch_action("start_camera_stream", cmd)
+            elif hasattr(r, "start_camera_stream"):
+                return r.start_camera_stream(
+                    camera=cmd.get("camera", "default"),
+                    fps=cmd.get("fps", 10),
+                )
+            return {"error": "start_camera_stream not supported by this peer"}
+
+        # Teleop delta — nudge a joint in simulation
+        if action == "teleop_delta":
+            if hasattr(r, "_dispatch_action"):
+                return r._dispatch_action("teleop_delta", cmd)
+            return {"error": "teleop_delta requires Simulation backend"}
 
         return {"error": f"unknown action: {action}"}
 
@@ -577,7 +680,93 @@ class Mesh:
                 pass
             self.inbox.pop(name, None)
 
+    # ── Event publishing (discrete mutations) ─────────────────
+
+    def publish_event(self, event_type: str, data: dict = None):
+        """Publish a discrete event to the mesh.
+
+        Used for mutations like object_added, object_removed, robot_added,
+        policy_started, etc. Dashboard subscribes to strands/*/event.
+
+        Args:
+            event_type: Event type string (e.g. "object_added", "policy_started")
+            data: Event payload dict
+        """
+        _put(
+            f"strands/{self.peer_id}/event",
+            {
+                "peer_id": self.peer_id,
+                "event_type": event_type,
+                "data": data or {},
+                "ts": time.time(),
+            },
+        )
+
     # ── VLA execution stream ───────────────────────────────────
+
+    # ── Camera frame publishing ──────────────────────────────
+
+    def publish_camera_frame(
+        self,
+        frame_b64: str,
+        camera: str = "default",
+    ):
+        """Publish a camera frame (base64 JPEG) to the mesh.
+
+        Dashboard and other peers subscribe to strands/{peer_id}/camera.
+        Frames are JPEG-encoded and base64'd for JSON transport.
+
+        Args:
+            frame_b64: Base64-encoded JPEG image data
+            camera: Camera name (default: "default")
+        """
+        _put(
+            f"strands/{self.peer_id}/camera",
+            {
+                "peer_id": self.peer_id,
+                "camera": camera,
+                "frame": frame_b64,
+                "ts": time.time(),
+            },
+        )
+
+    def start_camera_stream(
+        self,
+        render_fn,
+        camera: str = "default",
+        fps: float = 10.0,
+    ):
+        """Start a background thread that publishes camera frames.
+
+        Args:
+            render_fn: Callable that returns base64 JPEG string.
+                Signature: render_fn(camera_name: str) -> str
+            camera: Camera name
+            fps: Frames per second (default: 10)
+        """
+        if not hasattr(self, "_camera_threads"):
+            self._camera_threads = {}
+
+        key = camera
+        if key in self._camera_threads and self._camera_threads[key].is_alive():
+            return  # Already streaming
+
+        def _stream_loop():
+            interval = 1.0 / fps
+            while self._running:
+                try:
+                    frame_b64 = render_fn(camera)
+                    if frame_b64:
+                        self.publish_camera_frame(frame_b64, camera)
+                except Exception as e:
+                    logger.debug("Camera stream error: %s", e)
+                time.sleep(interval)
+
+        t = threading.Thread(target=_stream_loop, daemon=True, name=f"cam-{self.peer_id}-{camera}")
+        t.start()
+        self._camera_threads[key] = t
+        logger.info("📹 %s camera stream started: %s @ %.0f fps", self.peer_id, camera, fps)
+
 
     def publish_step(
         self,
