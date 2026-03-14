@@ -83,10 +83,52 @@ def _resolve_policy_class_from_hub(pretrained_name_or_path: str):
     return PolicyClass, policy_type
 
 
+def _is_policy_class(obj, attr_name: str) -> bool:
+    """Check whether *obj* looks like a concrete LeRobot policy class.
+
+    A class qualifies when it:
+    * ends with ``Policy``, ``RewardModel``, or ``Processor`` (LeRobot
+      naming conventions)  **and**
+    * is not the abstract ``PreTrainedPolicy``  **and**
+    * has ``from_pretrained`` (HuggingFace Hub mixin)
+
+    Additionally, any class whose MRO includes ``PreTrainedPolicy``
+    (concrete subclass) is accepted regardless of its name.
+    """
+    if not isinstance(obj, type) or not hasattr(obj, "from_pretrained"):
+        return False
+    if attr_name == "PreTrainedPolicy":
+        return False
+    # Name-based match
+    if attr_name.endswith(("Policy", "RewardModel")):
+        return True
+    # Inheritance-based match (catches oddly-named subclasses)
+    try:
+        from lerobot.policies.pretrained import PreTrainedPolicy
+
+        if issubclass(obj, PreTrainedPolicy) and obj is not PreTrainedPolicy:
+            return True
+    except ImportError:
+        pass
+    return False
+
+
+# Policy types that are NOT standalone policies in LeRobot 0.5+.
+# They are processors/wrappers around other policies (e.g. rtc wraps PI0).
+_NON_STANDALONE_POLICY_TYPES = {
+    "rtc": (
+        "RTCProcessor is a real-time consistency wrapper around PI0/PI0Fast, "
+        "not a standalone policy. Use policy_type='pi0' or 'pi0_fast' instead, "
+        "then apply RTCProcessor as a post-processing step."
+    ),
+}
+
+
 def _resolve_policy_class_by_name(policy_type: str):
     """Resolve policy class from an explicit type string.
 
     Resolution strategies (in order):
+        0. Reject known non-standalone types (e.g. ``rtc``) with helpful error
         1. Direct submodule import: lerobot.policies.{type}.modeling_{type}
         2. Package-level import: lerobot.policies.{type}
         3. Legacy factory: lerobot.policies.factory.get_policy_class
@@ -98,20 +140,24 @@ def _resolve_policy_class_by_name(policy_type: str):
     """
     import importlib
 
+    # Strategy 0: Reject known non-standalone types with actionable message
+    if policy_type in _NON_STANDALONE_POLICY_TYPES:
+        raise ValueError(
+            f"Policy type '{policy_type}' is not a standalone policy. "
+            f"{_NON_STANDALONE_POLICY_TYPES[policy_type]}"
+        )
+
     # Strategy 1: modeling_* submodule (LeRobot 0.5+ convention)
+    #   Catch broad Exception — missing optional deps raise ModuleNotFoundError
+    #   or ImportError deep in the dependency chain (peft, qwen_vl_utils, etc.)
     for submodule in [f"modeling_{policy_type}", "modeling"]:
         try:
             mod = importlib.import_module(f"lerobot.policies.{policy_type}.{submodule}")
             for attr_name in dir(mod):
                 obj = getattr(mod, attr_name)
-                if (
-                    isinstance(obj, type)
-                    and attr_name.endswith("Policy")
-                    and attr_name != "PreTrainedPolicy"
-                    and hasattr(obj, "from_pretrained")
-                ):
+                if _is_policy_class(obj, attr_name):
                     return obj
-        except ImportError:
+        except Exception:
             pass
 
     # Strategy 2: Direct package-level import
@@ -119,22 +165,17 @@ def _resolve_policy_class_by_name(policy_type: str):
         mod = importlib.import_module(f"lerobot.policies.{policy_type}")
         for attr_name in dir(mod):
             obj = getattr(mod, attr_name)
-            if (
-                isinstance(obj, type)
-                and attr_name.endswith("Policy")
-                and attr_name != "PreTrainedPolicy"
-                and hasattr(obj, "from_pretrained")
-            ):
+            if _is_policy_class(obj, attr_name):
                 return obj
-    except ImportError:
+    except Exception:
         pass
 
-    # Strategy 3: Legacy get_policy_class (LeRobot <0.4)
+    # Strategy 3: LeRobot factory (works for policies registered via draccus)
     try:
         from lerobot.policies.factory import get_policy_class
 
         return get_policy_class(policy_type)
-    except (ImportError, AttributeError, RuntimeError):
+    except (ImportError, AttributeError, RuntimeError, ValueError):
         pass
 
     # Strategy 4: PreTrainedPolicy — only if it's NOT abstract
@@ -153,7 +194,8 @@ def _resolve_policy_class_by_name(policy_type: str):
         f"Could not resolve LeRobot policy class for type '{policy_type}'. "
         f"Tried: lerobot.policies.{policy_type}.modeling_{policy_type}, "
         f"lerobot.policies.{policy_type}, factory, PreTrainedPolicy. "
-        f"Ensure lerobot is installed (pip install lerobot)."
+        f"Ensure lerobot is installed with required extras: "
+        f"pip install 'strands-robots[vla]'"
     )
 
 

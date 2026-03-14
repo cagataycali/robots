@@ -98,6 +98,7 @@ zenoh = [
 ]
 vla = [
     "transformers>=5.0.0",
+    "peft>=0.15.0",
     "sentencepiece>=0.1.99",
     "num2words>=0.5.13",
     "scipy>=1.10.0",
@@ -105,6 +106,8 @@ vla = [
     "imageio-ffmpeg>=0.4.0",
     "av>=10.0.0",
     "lerobot>=0.5.0",
+    "qwen_vl_utils>=0.0.8",
+    "torchdiffeq>=0.2.0",
 ]
 leisaac = [
     "leisaac[isaaclab]",
