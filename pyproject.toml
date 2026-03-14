@@ -159,6 +159,11 @@ dependencies = [
     "msgpack>=1.0.0",
 ]
 
+
+[project.scripts]
+robots = "strands_robots.dashboard:main"
+robots-dashboard = "strands_robots.dashboard:main"
+
 [tool.hatch.envs.default.scripts]
 test = "pytest {args:tests}"
 lint = "ruff check strands_robots tests"
