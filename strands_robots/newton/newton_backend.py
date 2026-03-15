@@ -611,19 +611,11 @@ class NewtonBackend:
             gravity_mag = -abs(gy) if gy != 0 else -9.81
 
         try:
-            self._builder = newton.ModelBuilder(gravity=gravity_mag)
+            self._builder = newton.ModelBuilder(
+                up_axis=up_axis.upper(), gravity=gravity_mag
+            )
         except (TypeError, AttributeError):
             self._builder = newton.ModelBuilder()
-        # Set scalar gravity and up_vector
-        try:
-            self._builder.gravity = gravity_mag
-        except Exception:
-            pass
-        try:
-            self._builder.up_vector = up_vec
-            self._builder.up_axis = up_axis
-        except Exception:
-            pass
 
         self._ground_plane_requested = ground_plane
         if ground_plane:
@@ -656,19 +648,13 @@ class NewtonBackend:
         """Recreate the model builder to clear any partial state from failed loads."""
         newton = self._newton
         gravity_mag = getattr(self._builder, "gravity", -9.81)
-        up_vec = getattr(self._builder, "up_vector", (0.0, 0.0, 1.0))
+        up_axis_str = getattr(self._config, "up_axis", "z")
         try:
-            self._builder = newton.ModelBuilder(gravity=gravity_mag)
+            self._builder = newton.ModelBuilder(
+                up_axis=up_axis_str.upper(), gravity=gravity_mag
+            )
         except (TypeError, AttributeError):
             self._builder = newton.ModelBuilder()
-        try:
-            self._builder.gravity = gravity_mag
-        except Exception:
-            pass
-        try:
-            self._builder.up_vector = up_vec
-        except Exception:
-            pass
         if getattr(self, "_ground_plane_requested", True):
             try:
                 self._builder.add_ground_plane()
