@@ -368,7 +368,7 @@ class Gr00tPolicy(Policy):
             logger.debug("Video remap: %s → %s", our_key, model_key)
             batched[model_key] = _batch_value(model_key, observation_dict[our_key])
         # Fill missing model video keys with black frames
-        for model_key in model_video_keys[len(our_video_keys):]:
+        for model_key in model_video_keys[len(our_video_keys) :]:
             if our_video_keys:
                 ref = observation_dict[our_video_keys[0]]
                 batched[model_key] = _batch_value(model_key, np.zeros_like(ref))
@@ -381,7 +381,7 @@ class Gr00tPolicy(Policy):
             logger.debug("State remap: %s → %s", our_key, model_key)
             batched[model_key] = _batch_value(model_key, observation_dict[our_key])
         # Zero-fill remaining model state keys the robot doesn't have
-        for model_key in model_state_keys[len(our_state_keys):]:
+        for model_key in model_state_keys[len(our_state_keys) :]:
             # Infer DOF from first available state, default to 6
             ref_dof = 6
             if our_state_keys:
