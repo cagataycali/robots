@@ -249,7 +249,7 @@ class TestGr00tLocalMode:
         from strands_robots.policies.groot import Gr00tPolicy
 
         return Gr00tPolicy(
-            data_config="so100",
+            data_config="fourier_gr1_arms_waist",
             model_path=MODEL_PATH,
             embodiment_tag="gr1",
             device="cuda",
@@ -260,15 +260,30 @@ class TestGr00tLocalMode:
         assert local_policy._local_policy is not None
 
     def test_local_inference(self, local_policy):
-        """Local inference should produce valid action arrays with finite values."""
-        observation = _make_gr1_observation()["observation"]
-        result = local_policy._local_policy.get_action(observation)
-        action = _extract_action(result)
-        assert isinstance(action, dict), f"Expected dict, got {type(action)}"
-        assert len(action) > 0, "Action dict is empty"
-        for key, value in action.items():
+        """Local inference via public API should produce valid action timesteps.
+
+        Bypasses _build_observation (which requires robot_state_keys mapping) and
+        calls _local_inference directly with pre-formatted flat keys matching the
+        data config's modality layout (fourier_gr1_arms_waist).
+        """
+        rng = np.random.RandomState(42)
+        # Pre-formatted observation with data-config flat keys — this is what
+        # _build_observation would produce if robot_state_keys were configured.
+        observation_dict = {
+            "video.ego_view": rng.randint(0, 256, (256, 256, 3), dtype=np.uint8),
+            "state.left_arm": rng.uniform(-1, 1, (7,)).astype(np.float32),
+            "state.right_arm": rng.uniform(-1, 1, (7,)).astype(np.float32),
+            "state.left_hand": rng.uniform(0, 1, (6,)).astype(np.float32),
+            "state.right_hand": rng.uniform(0, 1, (6,)).astype(np.float32),
+            "state.waist": rng.uniform(-1, 1, (3,)).astype(np.float32),
+            "annotation.human.coarse_action": "pick up the cube",
+        }
+        action_chunk = local_policy._local_inference(observation_dict)
+        assert isinstance(action_chunk, dict), f"Expected dict, got {type(action_chunk)}"
+        assert len(action_chunk) > 0, "Empty action chunk"
+        for key, value in action_chunk.items():
             assert isinstance(value, np.ndarray), f"'{key}' not ndarray: {type(value)}"
             assert value.size > 0, f"'{key}' is empty"
-            assert not np.any(np.isnan(value)), f"NaN values in '{key}'"
-            assert not np.any(np.isinf(value)), f"Inf values in '{key}'"
+            assert not np.any(np.isnan(value)), f"NaN in '{key}'"
+            assert not np.any(np.isinf(value)), f"Inf in '{key}'"
             logger.info("Local action '%s': shape=%s dtype=%s", key, value.shape, value.dtype)

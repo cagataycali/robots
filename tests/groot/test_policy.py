@@ -388,6 +388,22 @@ class TestLocalInference:
         policy._strict = False
         policy._client = None
         policy._local_policy = MagicMock()
+        # N1.6 _local_inference reads model's modality_configs for key remapping.
+        # Mock it to pass through keys unchanged (model keys == our keys).
+        mock_mc = {}
+        for modality_name in ("video", "state", "action", "language"):
+            mc_obj = MagicMock()
+            # Strip 'video.', 'state.' etc. prefix to get bare modality keys
+            if modality_name == "video":
+                mc_obj.modality_keys = [k.split(".", 1)[1] for k in policy.data_config.video_keys]
+            elif modality_name == "state":
+                mc_obj.modality_keys = [k.split(".", 1)[1] for k in policy.data_config.state_keys]
+            elif modality_name == "action":
+                mc_obj.modality_keys = [k.split(".", 1)[1] for k in policy.data_config.action_keys]
+            elif modality_name == "language":
+                mc_obj.modality_keys = policy.data_config.language_keys
+            mock_mc[modality_name] = mc_obj
+        policy._local_policy.policy.modality_configs = mock_mc
         return policy
 
     def test_local_inference_n15_adds_batch_dim(self):
@@ -411,7 +427,7 @@ class TestLocalInference:
 
         observation = {
             "video.webcam": np.zeros((64, 64, 3), dtype=np.uint8),
-            "state.arm": np.ones(5, dtype=np.float32),
+            "state.single_arm": np.ones(5, dtype=np.float32),
             "annotation.human.task_description": "test",
         }
         result = policy._local_inference_n16(observation)
@@ -419,8 +435,8 @@ class TestLocalInference:
 
         call_args = policy._local_policy.get_action.call_args[0][0]
         assert call_args["video.webcam"].shape == (1, 1, 64, 64, 3)
-        assert call_args["state.arm"].shape == (1, 1, 5)
-        assert call_args["state.arm"].dtype == np.float32
+        assert call_args["state.single_arm"].shape == (1, 1, 5)
+        assert call_args["state.single_arm"].dtype == np.float32
         assert isinstance(call_args["annotation.human.task_description"], list)
 
     def test_local_inference_n16_video_4d_input(self):
@@ -428,20 +444,20 @@ class TestLocalInference:
         policy = self._make_local_policy("n1.6")
         policy._local_policy.get_action.return_value = ({"arm": np.zeros((1, 4, 5))}, {})
 
-        observation = {"video.cam": np.zeros((3, 64, 64, 3), dtype=np.uint8)}
+        observation = {"video.webcam": np.zeros((3, 64, 64, 3), dtype=np.uint8)}
         policy._local_inference_n16(observation)
         call_args = policy._local_policy.get_action.call_args[0][0]
-        assert call_args["video.cam"].shape == (1, 3, 64, 64, 3)
+        assert call_args["video.webcam"].shape == (1, 3, 64, 64, 3)
 
     def test_local_inference_n16_state_2d_input(self):
         """2D state (T, D) should become (1, T, D)."""
         policy = self._make_local_policy("n1.6")
         policy._local_policy.get_action.return_value = ({"arm": np.zeros((1, 4, 5))}, {})
 
-        observation = {"state.arm": np.zeros((3, 5), dtype=np.float32)}
+        observation = {"state.single_arm": np.zeros((3, 5), dtype=np.float32)}
         policy._local_inference_n16(observation)
         call_args = policy._local_policy.get_action.call_args[0][0]
-        assert call_args["state.arm"].shape == (1, 3, 5)
+        assert call_args["state.single_arm"].shape == (1, 3, 5)
 
     def test_local_inference_dispatch_n15(self):
         policy = self._make_local_policy("n1.5")

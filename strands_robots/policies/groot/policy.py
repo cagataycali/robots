@@ -328,30 +328,78 @@ class Gr00tPolicy(Policy):
     def _local_inference_n16(self, observation_dict: dict) -> dict:
         """N1.6 inference via ``Gr00tSimPolicyWrapper``.
 
-        The wrapper handles flat→nested observation conversion natively.
+        The wrapper uses the **model's own modality config** (e.g. GR1 keys like
+        ``video.ego_view_bg_crop_pad_res256_freq20``), which differ from our
+        data config keys (e.g. ``video.webcam`` for SO-100).  We remap our
+        observation keys to the model's expected flat keys by positional
+        matching per modality.  Missing model state keys are zero-filled so
+        the model always receives the full observation it expects.
+
         Vendor expects flat keys with shapes: video ``(B, T, H, W, C)``,
         state ``(B, T, D)``, language/task ``[str]``.
         """
-        batched: dict = {}
-        for key, value in observation_dict.items():
-            if isinstance(value, np.ndarray):
-                if "video" in key and value.ndim == 3:  # (H, W, C) → (1, 1, H, W, C)
-                    batched[key] = value[np.newaxis, np.newaxis, ...]
-                elif "video" in key and value.ndim == 4:  # (T, H, W, C) → (1, T, H, W, C)
-                    batched[key] = value[np.newaxis, ...]
-                elif "state" in key and value.ndim == 1:  # (D,) → (1, 1, D)
-                    batched[key] = value.astype(np.float32)[np.newaxis, np.newaxis, ...]
-                elif "state" in key and value.ndim == 2:  # (T, D) → (1, T, D)
-                    batched[key] = value.astype(np.float32)[np.newaxis, ...]
-                else:
-                    batched[key] = value[np.newaxis, ...] if value.ndim < 3 else value
-            elif isinstance(value, str):
-                batched[key] = [value]
-            elif isinstance(value, list):
-                batched[key] = value
-            else:
-                batched[key] = [value]
+        model_modality_configs = self._local_policy.policy.modality_configs
 
+        def _batch_value(target_key, value):
+            """Add batch/temporal dims as needed for N1.6."""
+            if isinstance(value, np.ndarray):
+                if "video" in target_key and value.ndim == 3:
+                    return value[np.newaxis, np.newaxis, ...]
+                elif "video" in target_key and value.ndim == 4:
+                    return value[np.newaxis, ...]
+                elif "state" in target_key and value.ndim == 1:
+                    return value.astype(np.float32)[np.newaxis, np.newaxis, ...]
+                elif "state" in target_key and value.ndim == 2:
+                    return value.astype(np.float32)[np.newaxis, ...]
+                else:
+                    return value[np.newaxis, ...] if value.ndim < 3 else value
+            elif isinstance(value, str):
+                return [value]
+            elif isinstance(value, list):
+                return value
+            return [value]
+
+        batched: dict = {}
+
+        # --- Video: positional remap our video keys → model video keys ---
+        model_video_keys = [f"video.{k}" for k in model_modality_configs["video"].modality_keys]
+        our_video_keys = [k for k in observation_dict if k.startswith("video.")]
+        for our_key, model_key in zip(our_video_keys, model_video_keys):
+            logger.debug("Video remap: %s → %s", our_key, model_key)
+            batched[model_key] = _batch_value(model_key, observation_dict[our_key])
+        # Fill missing model video keys with black frames
+        for model_key in model_video_keys[len(our_video_keys):]:
+            if our_video_keys:
+                ref = observation_dict[our_video_keys[0]]
+                batched[model_key] = _batch_value(model_key, np.zeros_like(ref))
+                logger.warning("Zero-filled missing video key: %s", model_key)
+
+        # --- State: positional remap, zero-fill missing ---
+        model_state_keys = [f"state.{k}" for k in model_modality_configs["state"].modality_keys]
+        our_state_keys = [k for k in observation_dict if k.startswith("state.")]
+        for our_key, model_key in zip(our_state_keys, model_state_keys):
+            logger.debug("State remap: %s → %s", our_key, model_key)
+            batched[model_key] = _batch_value(model_key, observation_dict[our_key])
+        # Zero-fill remaining model state keys the robot doesn't have
+        for model_key in model_state_keys[len(our_state_keys):]:
+            # Infer DOF from first available state, default to 6
+            ref_dof = 6
+            if our_state_keys:
+                ref = observation_dict[our_state_keys[0]]
+                if isinstance(ref, np.ndarray):
+                    ref_dof = ref.shape[-1]
+            zeros = np.zeros(ref_dof, dtype=np.float32)
+            batched[model_key] = _batch_value(model_key, zeros)
+            logger.debug("Zero-filled missing state key: %s (dof=%d)", model_key, ref_dof)
+
+        # --- Language: remap to model's expected language key ---
+        model_lang_keys = model_modality_configs["language"].modality_keys
+        our_lang_keys = [k for k in observation_dict if not k.startswith(("video.", "state."))]
+        for our_key, model_key in zip(our_lang_keys, model_lang_keys):
+            logger.debug("Language remap: %s → %s", our_key, model_key)
+            batched[model_key] = _batch_value(model_key, observation_dict[our_key])
+
+        logger.debug("N1.6 local inference keys: %s", list(batched.keys()))
         actions, _ = self._local_policy.get_action(batched)
         # Wrapper returns flat keys like "single_arm" — prefix with "action."
         return {f"action.{key}" if not key.startswith("action.") else key: value for key, value in actions.items()}
