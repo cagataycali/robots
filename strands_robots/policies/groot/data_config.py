@@ -3,14 +3,15 @@
 Provides :class:`Gr00tDataConfig` dataclasses and an ``_extends`` inheritance
 mechanism so new robot configs can be defined by overriding only what differs
 from a parent.
+
+Robot configurations are stored in ``data_configs.json`` alongside this module.
 """
 
 import json
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Dict, List, Optional, Union
-
-from ._data_config_defs import _ALIASES, _DATA_CONFIG_DEFS
 
 logger = logging.getLogger(__name__)
 
@@ -88,12 +89,28 @@ def _resolve_config(name: str, definitions: dict) -> Gr00tDataConfig:
     return Gr00tDataConfig(**merged)
 
 
+# ---------------------------------------------------------------------------
+# Load configs from JSON
+# ---------------------------------------------------------------------------
+
+_CONFIG_FILE = Path(__file__).parent / "data_configs.json"
+
+
+def _load_config_defs() -> tuple:
+    """Load config definitions and aliases from the JSON file."""
+    with open(_CONFIG_FILE) as fh:
+        raw = json.load(fh)
+    return raw["configs"], raw.get("aliases", {})
+
+
 # Pre-resolve all configs at import time
 DATA_CONFIG_MAP: Dict[str, Gr00tDataConfig] = {}
-for _config_name in _DATA_CONFIG_DEFS:
-    DATA_CONFIG_MAP[_config_name] = _resolve_config(_config_name, _DATA_CONFIG_DEFS)
-for _alias_name, _target_name in _ALIASES.items():
+_defs, _aliases = _load_config_defs()
+for _config_name in _defs:
+    DATA_CONFIG_MAP[_config_name] = _resolve_config(_config_name, _defs)
+for _alias_name, _target_name in _aliases.items():
     DATA_CONFIG_MAP[_alias_name] = DATA_CONFIG_MAP[_target_name]
+del _defs, _aliases
 
 
 def load_data_config(data_config: Union[str, Gr00tDataConfig]) -> Gr00tDataConfig:

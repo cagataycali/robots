@@ -8,14 +8,19 @@ import json
 
 import pytest
 
-from strands_robots.policies.groot._data_config_defs import _ALIASES, _DATA_CONFIG_DEFS
 from strands_robots.policies.groot.data_config import (
+    _CONFIG_FILE,
     DATA_CONFIG_MAP,
     Gr00tDataConfig,
     ModalityConfig,
     create_custom_data_config,
     load_data_config,
 )
+
+# Load raw JSON for validation tests
+_RAW = json.loads(_CONFIG_FILE.read_text())
+_RAW_CONFIGS = _RAW["configs"]
+_RAW_ALIASES = _RAW.get("aliases", {})
 
 # ---------------------------------------------------------------------------
 # ModalityConfig
@@ -110,14 +115,22 @@ class TestGr00tDataConfig:
 
 
 class TestDataConfigMap:
+    def test_json_file_exists_and_is_valid(self):
+        """data_configs.json must exist and contain valid JSON with expected structure."""
+        assert _CONFIG_FILE.exists(), f"Missing {_CONFIG_FILE}"
+        raw = json.loads(_CONFIG_FILE.read_text())
+        assert "configs" in raw
+        assert isinstance(raw["configs"], dict)
+        assert len(raw["configs"]) > 0
+
     def test_all_defs_are_resolved(self):
-        """Every key in _DATA_CONFIG_DEFS must appear in DATA_CONFIG_MAP."""
-        for config_name in _DATA_CONFIG_DEFS:
+        """Every key in data_configs.json must appear in DATA_CONFIG_MAP."""
+        for config_name in _RAW_CONFIGS:
             assert config_name in DATA_CONFIG_MAP, f"'{config_name}' not resolved"
 
     def test_aliases_resolve_correctly(self):
         """Aliases should point to the same Gr00tDataConfig as their target."""
-        for alias_name, target_name in _ALIASES.items():
+        for alias_name, target_name in _RAW_ALIASES.items():
             assert alias_name in DATA_CONFIG_MAP, f"Alias '{alias_name}' missing from map"
             assert DATA_CONFIG_MAP[alias_name] is DATA_CONFIG_MAP[target_name]
 
@@ -170,8 +183,8 @@ class TestDataConfigMap:
 
     def test_config_names_are_set(self):
         for config_name, config in DATA_CONFIG_MAP.items():
-            if config_name in _ALIASES:
-                assert config.name == _ALIASES[config_name]
+            if config_name in _RAW_ALIASES:
+                assert config.name == _RAW_ALIASES[config_name]
             else:
                 assert config.name == config_name, f"Config '{config_name}' has wrong .name: '{config.name}'"
 
@@ -201,7 +214,7 @@ class TestLoadDataConfig:
             load_data_config(42)
 
     def test_load_alias(self):
-        for alias_name, target_name in _ALIASES.items():
+        for alias_name, target_name in _RAW_ALIASES.items():
             config = load_data_config(alias_name)
             assert config is DATA_CONFIG_MAP[target_name]
 
