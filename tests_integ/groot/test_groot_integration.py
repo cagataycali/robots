@@ -6,6 +6,7 @@ Or: pytest tests_integ/ -v --timeout=300
 Requirements: CUDA GPU, Isaac-GR00T N1.6, nvidia/GR00T-N1.6-3B, pyzmq, msgpack
 """
 
+import asyncio
 import logging
 import os
 import signal
@@ -123,11 +124,8 @@ def _wait_for_server(proc, port, timeout):
 # -- Helpers ------------------------------------------------------------------
 
 
-def _make_gr1_observation(instruction="pick up the cube"):
-    """GR1 nested observation with B=1, T=1 shape convention.
-
-    Uses a fixed seed for reproducibility across test runs.
-    """
+def _make_gr1_server_observation(instruction="pick up the cube"):
+    """GR1 nested observation for direct server calls (B=1, T=1 shape)."""
     rng = np.random.RandomState(42)
     return {
         "observation": {
@@ -146,6 +144,23 @@ def _make_gr1_observation(instruction="pick up the cube"):
             },
         },
         "options": None,
+    }
+
+
+def _make_gr1_robot_observation():
+    """GR1 robot-side observation (raw sensor values, no batching).
+
+    This is what a robot would produce — single frames and 1D state vectors.
+    The policy's mapping layer handles all reshaping.
+    """
+    rng = np.random.RandomState(42)
+    return {
+        "ego_view": rng.randint(0, 256, (256, 256, 3), dtype=np.uint8),
+        "left_arm": rng.uniform(-1, 1, (7,)).astype(np.float32),
+        "right_arm": rng.uniform(-1, 1, (7,)).astype(np.float32),
+        "left_hand": rng.uniform(0, 1, (6,)).astype(np.float32),
+        "right_hand": rng.uniform(0, 1, (6,)).astype(np.float32),
+        "waist": rng.uniform(-1, 1, (3,)).astype(np.float32),
     }
 
 
@@ -171,7 +186,7 @@ class TestGr00tServiceMode:
         from strands_robots.policies.groot.client import Gr00tInferenceClient
 
         client = Gr00tInferenceClient(host="localhost", port=groot_server["port"])
-        observation = _make_gr1_observation("pick up the red cube")
+        observation = _make_gr1_server_observation("pick up the red cube")
         result = client.call_endpoint("get_action", observation)
         action = _extract_action(result)
         assert isinstance(action, dict), f"Expected dict, got {type(action)}"
@@ -189,30 +204,32 @@ class TestGr00tServiceMode:
         client = Gr00tInferenceClient(host="localhost", port=groot_server["port"])
         shapes = []
         for i in range(3):
-            result = client.call_endpoint("get_action", _make_gr1_observation(f"task {i}"))
+            result = client.call_endpoint("get_action", _make_gr1_server_observation(f"task {i}"))
             action = _extract_action(result)
             shapes.append({key: value.shape for key, value in action.items()})
         for i in range(1, len(shapes)):
             assert shapes[i] == shapes[0], f"Inconsistent: {shapes}"
 
     def test_different_instructions(self, groot_server):
-        """Different instructions should produce valid but potentially different action distributions."""
+        """Different instructions produce valid but potentially different actions."""
         from strands_robots.policies.groot.client import Gr00tInferenceClient
 
         client = Gr00tInferenceClient(host="localhost", port=groot_server["port"])
         actions_by_instruction = {}
         for instruction in ["pick up cube", "place in bowl", "wave hello"]:
-            result = client.call_endpoint("get_action", _make_gr1_observation(instruction))
+            result = client.call_endpoint("get_action", _make_gr1_server_observation(instruction))
             action = _extract_action(result)
-            assert isinstance(action, dict), f"Non-dict result for '{instruction}'"
+            assert isinstance(action, dict), f"Non-dict for '{instruction}'"
             for key, value in action.items():
                 assert isinstance(value, np.ndarray), f"'{key}' not ndarray for '{instruction}'"
-                assert value.dtype in (np.float32, np.float64), f"'{key}' unexpected dtype: {value.dtype}"
+                assert value.dtype in (
+                    np.float32,
+                    np.float64,
+                ), f"'{key}' unexpected dtype: {value.dtype}"
                 assert not np.any(np.isnan(value)), f"NaN in '{key}' for '{instruction}'"
                 assert not np.any(np.isinf(value)), f"Inf in '{key}' for '{instruction}'"
             actions_by_instruction[instruction] = action
 
-        # Verify all instructions produce same set of action keys
         key_sets = [set(a.keys()) for a in actions_by_instruction.values()]
         assert all(keys == key_sets[0] for keys in key_sets), f"Inconsistent action keys: {key_sets}"
 
@@ -222,12 +239,9 @@ class TestGr00tServiceMode:
 
 class TestGr00tVersionDetection:
     def test_detects_n16(self):
-        import strands_robots.policies.groot.policy as policy_mod
-
-        policy_mod._GROOT_VERSION = None
         from strands_robots.policies.groot.policy import _detect_groot_version
 
-        assert _detect_groot_version() == "n1.6"
+        assert _detect_groot_version(force=True) == "n1.6"
 
     def test_detection_is_cached(self):
         import strands_robots.policies.groot.policy as policy_mod
@@ -259,31 +273,71 @@ class TestGr00tLocalMode:
         assert local_policy._mode == "local"
         assert local_policy._local_policy is not None
 
-    def test_local_inference(self, local_policy):
-        """Local inference via public API should produce valid action timesteps.
+    def test_mappings_initialized(self, local_policy):
+        """Mappings should be auto-inferred from data_config + model."""
+        assert local_policy._obs_mapping is not None
+        assert local_policy._action_mapping is not None
+        assert len(local_policy._obs_mapping.video) > 0
+        assert len(local_policy._obs_mapping.state) > 0
+        assert len(local_policy._action_mapping.actions) > 0
+        logger.info("Obs video mapping: %s", local_policy._obs_mapping.video)
+        logger.info("Obs state mapping: %s", local_policy._obs_mapping.state)
+        logger.info("Action mapping: %s", local_policy._action_mapping.actions)
 
-        Bypasses _build_observation (which requires robot_state_keys mapping) and
-        calls _local_inference directly with pre-formatted flat keys matching the
-        data config's modality layout (fourier_gr1_arms_waist).
+    def test_model_state_dof_discovered(self, local_policy):
+        """DOF should be discovered from model, not hardcoded."""
+        assert len(local_policy._model_state_dof) > 0
+        logger.info("Discovered DOF: %s", local_policy._model_state_dof)
+        # GR1 should have these keys
+        for key in ["left_arm", "right_arm", "left_hand", "right_hand", "waist"]:
+            assert key in local_policy._model_state_dof, f"Missing DOF for '{key}'"
+
+    def test_local_get_actions(self, local_policy):
+        """Full pipeline: robot obs → mappings → model → action timesteps.
+
+        Uses robot-side keys (no prefixes). The policy's mapping layer
+        handles all translation to/from model modality keys.
         """
-        rng = np.random.RandomState(42)
-        # Pre-formatted observation with data-config flat keys — this is what
-        # _build_observation would produce if robot_state_keys were configured.
-        observation_dict = {
-            "video.ego_view": rng.randint(0, 256, (256, 256, 3), dtype=np.uint8),
-            "state.left_arm": rng.uniform(-1, 1, (7,)).astype(np.float32),
-            "state.right_arm": rng.uniform(-1, 1, (7,)).astype(np.float32),
-            "state.left_hand": rng.uniform(0, 1, (6,)).astype(np.float32),
-            "state.right_hand": rng.uniform(0, 1, (6,)).astype(np.float32),
-            "state.waist": rng.uniform(-1, 1, (3,)).astype(np.float32),
-            "annotation.human.coarse_action": "pick up the cube",
-        }
-        action_chunk = local_policy._local_inference(observation_dict)
-        assert isinstance(action_chunk, dict), f"Expected dict, got {type(action_chunk)}"
-        assert len(action_chunk) > 0, "Empty action chunk"
-        for key, value in action_chunk.items():
-            assert isinstance(value, np.ndarray), f"'{key}' not ndarray: {type(value)}"
-            assert value.size > 0, f"'{key}' is empty"
-            assert not np.any(np.isnan(value)), f"NaN in '{key}'"
-            assert not np.any(np.isinf(value)), f"Inf in '{key}'"
-            logger.info("Local action '%s': shape=%s dtype=%s", key, value.shape, value.dtype)
+        robot_obs = _make_gr1_robot_observation()
+        actions = local_policy._local_get_actions(robot_obs, "pick up the cube")
+
+        assert isinstance(actions, list), f"Expected list, got {type(actions)}"
+        assert len(actions) > 0, "Empty action list"
+
+        for i, step in enumerate(actions):
+            assert isinstance(step, dict), f"Step {i} not dict: {type(step)}"
+            assert len(step) > 0, f"Step {i} is empty"
+            for key, value in step.items():
+                assert isinstance(value, np.ndarray), f"Step {i} '{key}' not ndarray: {type(value)}"
+                assert value.size > 0, f"Step {i} '{key}' is empty"
+                assert not np.any(np.isnan(value)), f"NaN in step {i} '{key}'"
+                assert not np.any(np.isinf(value)), f"Inf in step {i} '{key}'"
+
+        logger.info(
+            "Local inference: %d timesteps, keys=%s",
+            len(actions),
+            list(actions[0].keys()),
+        )
+
+    def test_get_actions_async(self, local_policy):
+        """Public async API should work end-to-end."""
+        robot_obs = _make_gr1_robot_observation()
+        actions = asyncio.run(local_policy.get_actions(robot_obs, "pick up the cube"))
+        assert isinstance(actions, list)
+        assert len(actions) > 0
+        # Should have robot-side keys (mapped), not model keys
+        first_keys = set(actions[0].keys())
+        logger.info("Async get_actions keys: %s", first_keys)
+        # Should not have model-prefixed keys
+        for key in first_keys:
+            assert not key.startswith("action."), f"Unmapped model key: {key}"
+
+    def test_action_keys_are_robot_names(self, local_policy):
+        """Action keys should be robot actuator names, not model keys."""
+        robot_obs = _make_gr1_robot_observation()
+        actions = local_policy._local_get_actions(robot_obs, "wave hello")
+
+        mapped_robot_names = set(local_policy._action_mapping.actions.values())
+        for key in actions[0]:
+            if not key.startswith("unmapped."):
+                assert key in mapped_robot_names, f"Action key '{key}' not in mapped robot names: {mapped_robot_names}"
