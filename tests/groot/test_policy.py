@@ -78,8 +78,9 @@ def _make_policy(data_config="so100", version="n1.6", obs_mapping=None, action_m
     p._language_key_override = None
 
     mc = mmc or SO100_MMC
-    p._local_policy.policy.modality_configs = mc
-    p._local_policy.modality_config = mc
+    p._local_policy.modality_configs = mc  # Direct N16Policy
+    p._local_policy.policy.modality_configs = mc  # Wrapped
+    p._local_policy.modality_config = mc  # N1.5
 
     # Simulate discovered DOF
     p._model_state_dof = {k: _KNOWN_DOF[k] for k in mc["state"].modality_keys if _KNOWN_DOF.get(k) is not None}

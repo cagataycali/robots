@@ -379,7 +379,15 @@ class Gr00tPolicy(Policy):
         """Get the model's per-embodiment modality configs."""
         try:
             if self._groot_version == "n1.6":
-                return self._local_policy.policy.modality_configs
+                # Direct N16Policy
+                mmc = getattr(self._local_policy, "modality_configs", None)
+                if mmc is not None:
+                    return mmc
+                # Wrapped via SimPolicyWrapper
+                inner = getattr(self._local_policy, "policy", None)
+                if inner is not None:
+                    return getattr(inner, "modality_configs", None)
+                return None
             elif self._groot_version == "n1.5":
                 return getattr(self._local_policy, "modality_config", None)
         except (AttributeError, TypeError) as e:
@@ -400,7 +408,8 @@ class Gr00tPolicy(Policy):
 
         # Source 1: normalizer stats (N1.6)
         try:
-            normalizer = getattr(self._local_policy.policy, "normalizer", None)
+            inner = getattr(self._local_policy, "policy", self._local_policy)
+            normalizer = getattr(inner, "normalizer", None)
             if normalizer is not None:
                 for key in mmc["state"].modality_keys:
                     stat = normalizer.get_stat(f"state.{key}")
