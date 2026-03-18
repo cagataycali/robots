@@ -49,9 +49,7 @@ groot-service = [
     "msgpack>=1.0.0",
 ]
 lerobot = [
-    "torch>=2.0.0",
-    "lerobot>=0.4.0",
-    "lerobot[feetech]",
+    "lerobot>=0.5.0",
 ]
 mujoco = [
     "mujoco>=3.0.0",
@@ -59,7 +57,6 @@ mujoco = [
 ]
 isaac = [
     # Isaac Sim/Lab are installed separately (requires NVIDIA GPU + Isaac Sim runtime)
-    # See docs/isaac.md for EC2 setup instructions
     "h5py>=3.0",
     "mujoco>=3.0.0",
     "usd-core>=24.0",
@@ -85,16 +82,6 @@ cosmos-predict = [
     "einops>=0.6.0",
     "filelock>=3.0",
 ]
-marble = [
-    "requests>=2.28.0",
-    "trimesh>=4.0.0",
-    "plyfile>=1.0.0",
-]
-robometer = [
-    "torch>=2.0.0",
-    "transformers>=4.40.0",
-    "scipy>=1.10.0",
-]
 zenoh = [
     "eclipse-zenoh>=1.0.0",
 ]
@@ -107,10 +94,6 @@ policies = [
     "imageio-ffmpeg>=0.4.0",
     "av>=10.0.0",
 ]
-leisaac = [
-    "leisaac[isaaclab]",
-    "lerobot>=0.4.0",
-]
 all = [
     "strands-robots[groot-service]",
     "strands-robots[lerobot]",
@@ -119,10 +102,7 @@ all = [
     "strands-robots[newton]",
     "strands-robots[cosmos-transfer]",
     "strands-robots[cosmos-predict]",
-    "strands-robots[marble]",
-    "strands-robots[robometer]",
     "strands-robots[zenoh]",
-    "strands-robots[leisaac]",
 ]
 dev = [
     "pytest>=6.0",

@@ -1,46 +1,66 @@
 {
-  "providers": {
-    "mock": {
-      "module": "strands_robots.policies.mock",
-      "class": "MockPolicy",
-      "description": "Sinusoidal test actions (no deps)",
-      "requires": [],
-      "config_keys": [],
-      "defaults": {},
-      "shorthands": [
-        "mock",
-        "random",
-        "test"
-      ]
-    },
-    "groot": {
-      "module": "strands_robots.policies.groot",
-      "class": "Gr00tPolicy",
-      "description": "NVIDIA GR00T N1.5/N1.6 via ZMQ",
-      "requires": [
-        "port"
-      ],
-      "config_keys": [
-        "port",
-        "host",
-        "data_config"
-      ],
-      "defaults": {
-        "host": "localhost"
-      },
-      "shorthands": [
-        "groot"
-      ],
-      "url_patterns": [
-        "^zmq://"
-      ],
-      "hf_orgs": [
-        "nvidia"
-      ],
-      "model_id_overrides": [
-        "nvidia/gr00t",
-        "nvidia/groot"
-      ]
+    "providers": {
+        "mock": {
+            "module": "strands_robots.policies.mock",
+            "class": "MockPolicy",
+            "description": "Sinusoidal test actions (no deps)",
+            "requires": [],
+            "config_keys": [],
+            "defaults": {},
+            "shorthands": [
+                "mock",
+                "random",
+                "test"
+            ]
+        },
+        "groot": {
+            "module": "strands_robots.policies.groot",
+            "class": "Gr00tPolicy",
+            "description": "NVIDIA GR00T N1.5/N1.6 via ZMQ",
+            "requires": [
+                "port"
+            ],
+            "config_keys": [
+                "port",
+                "host",
+                "data_config"
+            ],
+            "defaults": {
+                "host": "localhost"
+            },
+            "shorthands": [
+                "groot"
+            ],
+            "url_patterns": [
+                "^zmq://"
+            ],
+            "hf_orgs": [
+                "nvidia"
+            ],
+            "model_id_overrides": [
+                "nvidia/gr00t",
+                "nvidia/groot"
+            ]
+        },
+        "lerobot_local": {
+            "module": "strands_robots.policies.lerobot_local",
+            "class": "LerobotLocalPolicy",
+            "description": "Direct HuggingFace inference (no server)",
+            "requires": [],
+            "config_keys": [
+                "pretrained_name_or_path",
+                "policy_type",
+                "device",
+                "actions_per_step"
+            ],
+            "defaults": {},
+            "aliases": [
+                "lerobot"
+            ],
+            "hf_orgs": [
+                "lerobot"
+            ],
+            "is_hf_default": true
+        }
     }
-  }
 }

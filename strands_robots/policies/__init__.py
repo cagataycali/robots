@@ -6,6 +6,7 @@ No hardcoded if/elif chains. New providers are auto-discovered or registered at 
 Built-in providers (see policies.json for full list):
     - mock: Sinusoidal test actions
     - groot: NVIDIA GR00T via ZMQ
+    - lerobot_local: Direct HuggingFace inference (ACT, Pi0, SmolVLA, Diffusion, ...)
 
 Usage::
 
@@ -13,8 +14,11 @@ Usage::
 
     # By provider name
     policy = create_policy("groot", port=5555)
+    policy = create_policy("lerobot_local",
+        pretrained_name_or_path="lerobot/act_aloha_sim_transfer_cube_human")
 
     # By smart string (auto-resolves provider)
+    policy = create_policy("lerobot/act_aloha_sim")
     policy = create_policy("zmq://localhost:5555")
     policy = create_policy("mock")
 
