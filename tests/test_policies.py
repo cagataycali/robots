@@ -112,10 +112,12 @@ class TestCreatePolicy:
         p = create_policy("kwarg_test", some_key="some_val")
         assert p.captured == {"some_key": "some_val"}
 
-    def test_create_via_zmq_url_triggers_smart_resolution(self):
-        """A zmq:// URL should go through smart-string resolution in factory."""
-        with pytest.raises(Exception):
-            create_policy("zmq://localhost:5555")
+    def test_create_via_zmq_url_resolves_to_groot(self):
+        """A zmq:// URL should resolve to a Gr00tPolicy via smart-string resolution."""
+        from strands_robots.policies.groot import Gr00tPolicy
+
+        p = create_policy("zmq://localhost:5555")
+        assert isinstance(p, Gr00tPolicy)
 
     def test_create_via_hf_model_id_triggers_smart_resolution(self):
         """An org/model string should trigger smart-string resolution."""
@@ -131,6 +133,30 @@ class TestCreatePolicy:
         """A ws:// URL should trigger smart-string resolution."""
         with pytest.raises(Exception):
             create_policy("ws://localhost:8080")
+
+    def test_groot_strict_and_api_token_passthrough(self):
+        """strict and api_token kwargs should reach Gr00tPolicy constructor."""
+        from strands_robots.policies.groot import Gr00tPolicy
+
+        p = create_policy("zmq://localhost:5555", strict=True, api_token="test-token")
+        assert isinstance(p, Gr00tPolicy)
+        assert p._strict is True
+        assert p._client.api_token == "test-token"
+
+    def test_groot_defaults_strict_false(self):
+        """strict should default to False for production use."""
+
+        p = create_policy("zmq://localhost:5555")
+        assert p._strict is False
+
+    def test_groot_direct_construction_with_new_params(self):
+        """Direct Gr00tPolicy() should accept strict and api_token."""
+        from strands_robots.policies.groot import Gr00tPolicy
+
+        p = Gr00tPolicy(host="localhost", port=5555, strict=True, api_token="s3cret")
+        assert p._strict is True
+        assert p._mode == "service"
+        assert p._client.api_token == "s3cret"
 
 
 class _KwargCapture(Policy):
