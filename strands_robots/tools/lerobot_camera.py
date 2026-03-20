@@ -10,7 +10,7 @@ import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
 
@@ -84,10 +84,10 @@ def _frame_to_image_content(frame: np.ndarray, format: str = "jpg") -> Dict[str,
 def lerobot_camera(
     action: str = "list",
     camera_type: str = "opencv",
-    camera_id: Union[int, str] = None,
+    camera_id: Optional[Union[int, str]] = None,
     save_path: str = "./lerobot_captures",
-    filename: str = None,
-    camera_ids: List[Union[int, str]] = None,
+    filename: Optional[str] = None,
+    camera_ids: Optional[List[Union[int, str]]] = None,
     width: int = 640,
     height: int = 480,
     fps: int = 30,
@@ -150,7 +150,7 @@ def lerobot_camera(
                 camera_type,
                 camera_id,
                 save_path,
-                filename,
+                filename or "",
                 width,
                 height,
                 fps,
@@ -168,7 +168,7 @@ def lerobot_camera(
                 camera_type,
                 camera_ids,
                 save_path,
-                filename,
+                filename or "",
                 width,
                 height,
                 fps,
@@ -189,7 +189,7 @@ def lerobot_camera(
                 camera_type,
                 camera_id,
                 save_path,
-                filename,
+                filename or "",
                 width,
                 height,
                 fps,
@@ -327,7 +327,7 @@ def _discover_cameras() -> Dict[str, Any]:
         }
 
 
-def _list_camera_details(camera_type: str, camera_id: Union[int, str] = None) -> Dict[str, Any]:
+def _list_camera_details(camera_type: str, camera_id: Optional[Union[int, str]] = None) -> Dict[str, Any]:
     """List detailed camera information and configurations."""
     try:
         details = []
@@ -628,7 +628,7 @@ def _record_video_sequence(
         camera.connect(warmup=warmup)
 
         # Setup video writer
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # type: ignore[attr-defined]
         video_writer = cv2.VideoWriter(video_path, fourcc, fps, (width, height))
 
         frames_captured = 0

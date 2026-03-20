@@ -9,7 +9,7 @@ Uses Isaac-GR00T's native inference service for proper ZMQ/HTTP communication.
 import socket
 import subprocess
 import time
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from strands import tool
 
@@ -17,14 +17,14 @@ from strands import tool
 @tool
 def gr00t_inference(
     action: str,
-    checkpoint_path: str = None,
-    policy_name: str = None,
-    port: int = None,
+    checkpoint_path: Optional[str] = None,
+    policy_name: Optional[str] = None,
+    port: Optional[int] = None,
     data_config: str = "fourier_gr1_arms_only",
     embodiment_tag: str = "gr1",
     denoising_steps: int = 4,
     host: str = "0.0.0.0",
-    container_name: str = None,
+    container_name: Optional[str] = None,
     timeout: int = 60,
     use_tensorrt: bool = False,
     trt_engine_path: str = "gr00t_engine",
@@ -32,7 +32,7 @@ def gr00t_inference(
     llm_dtype: str = "nvfp4",
     dit_dtype: str = "fp8",
     http_server: bool = False,
-    api_token: str = None,
+    api_token: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Manage GR00T inference services in Docker containers using Isaac-GR00T native scripts.
@@ -285,8 +285,8 @@ def _start_service(
     embodiment_tag: str,
     denoising_steps: int,
     host: str,
-    container_name: str,
-    policy_name: str,
+    container_name: Optional[str],
+    policy_name: Optional[str],
     timeout: int,
     use_tensorrt: bool,
     trt_engine_path: str,
@@ -294,7 +294,7 @@ def _start_service(
     llm_dtype: str,
     dit_dtype: str,
     http_server: bool,
-    api_token: str,
+    api_token: Optional[str],
 ) -> Dict[str, Any]:
     """Start GR00T inference service using Isaac-GR00T's native inference service."""
     try:

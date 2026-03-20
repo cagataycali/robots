@@ -20,7 +20,7 @@ import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, AsyncGenerator, Dict, Optional, Union
+from typing import Any, AsyncGenerator, Dict, Optional, Union, cast
 
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.robots.config import RobotConfig
@@ -28,7 +28,7 @@ from lerobot.robots.robot import Robot as LeRobotRobot
 from lerobot.robots.utils import make_robot_from_config
 from strands.tools.tools import AgentTool
 from strands.types._events import ToolResultEvent
-from strands.types.tools import ToolSpec, ToolUse
+from strands.types.tools import ToolResult, ToolSpec, ToolUse
 
 from .policies import Policy, create_policy
 
@@ -600,7 +600,7 @@ class Robot(AgentTool):
                 # Execute task synchronously
                 task_result = self._execute_task_sync(instruction, policy_port, policy_host, policy_provider, duration)
                 result = {"toolUseId": tool_use_id, **task_result}
-                yield ToolResultEvent(result)
+                yield ToolResultEvent(cast(ToolResult, result))
 
             elif action == "start":
                 # Asynchronous execution start
@@ -623,19 +623,19 @@ class Robot(AgentTool):
                 # Start task asynchronously
                 start_result = self.start_task(instruction, policy_port, policy_host, policy_provider, duration)
                 result = {"toolUseId": tool_use_id, **start_result}
-                yield ToolResultEvent(result)
+                yield ToolResultEvent(cast(ToolResult, result))
 
             elif action == "status":
                 # Get current task status
                 status_result = self.get_task_status()
                 result = {"toolUseId": tool_use_id, **status_result}
-                yield ToolResultEvent(result)
+                yield ToolResultEvent(cast(ToolResult, result))
 
             elif action == "stop":
                 # Stop current task
                 stop_result = self.stop_task()
                 result = {"toolUseId": tool_use_id, **stop_result}
-                yield ToolResultEvent(result)
+                yield ToolResultEvent(cast(ToolResult, result))
 
             else:
                 yield ToolResultEvent(
