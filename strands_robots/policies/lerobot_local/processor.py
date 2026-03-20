@@ -17,6 +17,8 @@ Architecture:
 import logging
 from typing import Any, Dict, Optional
 
+from ...utils import require_optional
+
 logger = logging.getLogger(__name__)
 
 # Standard pipeline config filenames used by LeRobot
@@ -24,31 +26,28 @@ PREPROCESSOR_CONFIG = "policy_preprocessor.json"
 POSTPROCESSOR_CONFIG = "policy_postprocessor.json"
 
 
-def _try_import_processor() -> Optional[Dict[str, Any]]:
-    """Import LeRobot processor module.
+def _try_import_processor() -> Optional[Any]:
+    """Import LeRobot processor pipeline class.
+
+    Uses require_optional for consistent dependency management. Returns
+    the DataProcessorPipeline class directly, or None if lerobot < 0.5.
 
     Returns:
-        Dict of processor classes/functions, or None if not available.
+        DataProcessorPipeline class, or None if not available.
     """
     try:
-        from lerobot.processor.converters import (
-            batch_to_transition,
-            observation_to_transition,
-            transition_to_batch,
-            transition_to_observation,
+        lerobot_pipeline = require_optional(
+            "lerobot.processor.pipeline",
+            pip_install="lerobot",
+            extra="lerobot",
+            purpose="processor pipeline support",
         )
-        from lerobot.processor.core import EnvTransition, TransitionKey
-        from lerobot.processor.pipeline import DataProcessorPipeline
-
-        return {
-            "DataProcessorPipeline": DataProcessorPipeline,
-            "batch_to_transition": batch_to_transition,
-            "transition_to_batch": transition_to_batch,
-            "observation_to_transition": observation_to_transition,
-            "transition_to_observation": transition_to_observation,
-            "EnvTransition": EnvTransition,
-            "TransitionKey": TransitionKey,
-        }
+        DataProcessorPipeline = getattr(lerobot_pipeline, "DataProcessorPipeline", None)
+        if DataProcessorPipeline is None:
+            logger.debug("lerobot.processor.pipeline has no DataProcessorPipeline")
+            return None
+        logger.debug("LeRobot DataProcessorPipeline loaded successfully")
+        return DataProcessorPipeline
     except ImportError:
         logger.debug(
             "LeRobot processor module not available. "
@@ -85,7 +84,7 @@ class ProcessorBridge:
         self._preprocessor = preprocessor
         self._postprocessor = postprocessor
         self._device = device
-        self._modules = _try_import_processor()
+        self._pipeline_cls = _try_import_processor()
 
     @classmethod
     def from_pretrained(
@@ -112,12 +111,10 @@ class ProcessorBridge:
         Returns:
             ProcessorBridge instance with loaded pipelines.
         """
-        modules = _try_import_processor()
-        if modules is None:
+        DataProcessorPipeline = _try_import_processor()
+        if DataProcessorPipeline is None:
             logger.info("LeRobot processor not available, creating passthrough bridge")
             return cls(device=device)
-
-        DataProcessorPipeline = modules["DataProcessorPipeline"]
 
         preprocessor = None
         postprocessor = None
@@ -183,7 +180,7 @@ class ProcessorBridge:
         Raises:
             RuntimeError: If the preprocessor pipeline fails.
         """
-        if self._preprocessor is None or self._modules is None:
+        if self._preprocessor is None or self._pipeline_cls is None:
             return observation
 
         try:
@@ -205,7 +202,7 @@ class ProcessorBridge:
         Raises:
             RuntimeError: If the postprocessor pipeline fails.
         """
-        if self._postprocessor is None or self._modules is None:
+        if self._postprocessor is None or self._pipeline_cls is None:
             return action
 
         try:
@@ -219,22 +216,6 @@ class ProcessorBridge:
             self._preprocessor.reset()
         if self._postprocessor is not None:
             self._postprocessor.reset()
-
-    def get_info(self) -> Dict[str, Any]:
-        """Get information about loaded pipelines."""
-        info: Dict[str, Any] = {
-            "has_preprocessor": self.has_preprocessor,
-            "has_postprocessor": self.has_postprocessor,
-            "is_active": self.is_active,
-            "device": self._device,
-        }
-        if self._preprocessor is not None:
-            info["preprocessor_steps"] = len(self._preprocessor)
-            info["preprocessor_step_names"] = [type(step).__name__ for step in self._preprocessor.steps]
-        if self._postprocessor is not None:
-            info["postprocessor_steps"] = len(self._postprocessor)
-            info["postprocessor_step_names"] = [type(step).__name__ for step in self._postprocessor.steps]
-        return info
 
     def __repr__(self) -> str:
         pre = f"pre={len(self._preprocessor)}steps" if self._preprocessor else "pre=None"

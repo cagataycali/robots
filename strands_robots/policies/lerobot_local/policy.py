@@ -453,6 +453,8 @@ class LerobotLocalPolicy(Policy):
                 logger.debug("VLA tokenization failed: %s", exc)
 
         # Fill task key for models that read it directly from the batch
+        # (e.g. some VLA models read "task" or "observation.task" from the
+        # input dict rather than using tokenized language tokens)
         if instruction and has_lerobot_keys:
             needs_task = any("task" in key for key in self._input_features) and "task" not in batch
             if needs_task:

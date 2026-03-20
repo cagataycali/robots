@@ -739,7 +739,7 @@ class TestProcessorBridge:
         mock_pre = MagicMock()
         mock_pre.process_observation.side_effect = ValueError("bad data")
         bridge = ProcessorBridge(preprocessor=mock_pre)
-        bridge._modules = {"DataProcessorPipeline": MagicMock()}
+        bridge._pipeline_cls = MagicMock()
 
         with pytest.raises(RuntimeError, match="Preprocessor pipeline failed"):
             bridge.preprocess({})
@@ -750,7 +750,7 @@ class TestProcessorBridge:
         mock_post = MagicMock()
         mock_post.process_action.side_effect = ValueError("bad action")
         bridge = ProcessorBridge(postprocessor=mock_post)
-        bridge._modules = {"DataProcessorPipeline": MagicMock()}
+        bridge._pipeline_cls = MagicMock()
 
         with pytest.raises(RuntimeError, match="Postprocessor pipeline failed"):
             bridge.postprocess(torch.zeros(2))
