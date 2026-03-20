@@ -24,6 +24,21 @@ from strands_robots.policies.groot.policy import (
     _to_video_batch,
 )
 
+# Skip marker for tests that need groot-service extras (zmq, msgpack)
+_has_zmq = pytest.importorskip.__module__  # always exists, just need the check below
+try:
+    import msgpack  # noqa: F401
+    import zmq  # noqa: F401
+
+    _groot_service_available = True
+except ImportError:
+    _groot_service_available = False
+
+requires_groot_service = pytest.mark.skipif(
+    not _groot_service_available,
+    reason="groot-service extras not installed (zmq, msgpack)",
+)
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -94,6 +109,7 @@ def _make_policy(data_config="so100", version="n1.6", obs_mapping=None, action_m
 # ---------------------------------------------------------------------------
 
 
+@requires_groot_service
 class TestConstruction:
     def test_service_mode(self):
         p = Gr00tPolicy()
@@ -487,6 +503,7 @@ class TestGetActions:
         acts = asyncio.run(p.get_actions({"cam": np.zeros((64, 64, 3), dtype=np.uint8), "arm": np.zeros(5)}, "t"))
         assert len(acts) == 4
 
+    @requires_groot_service
     def test_service(self):
         p = Gr00tPolicy(data_config="so100", host="localhost", port=19999)
         p._client.get_action = MagicMock(
@@ -504,6 +521,7 @@ class TestGetActions:
 # ---------------------------------------------------------------------------
 
 
+@requires_groot_service
 class TestServiceObs:
     def test_flat_keys(self):
         p = Gr00tPolicy(data_config="so100_dualcam", host="localhost", port=19999)
@@ -515,6 +533,7 @@ class TestServiceObs:
         assert "annotation.human.task_description" in obs
 
 
+@requires_groot_service
 class TestServiceUnpackWithMapping:
     """_unpack_service_actions should apply _action_mapping when available."""
 

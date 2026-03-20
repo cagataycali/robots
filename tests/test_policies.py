@@ -12,6 +12,20 @@ from strands_robots.policies import (
     register_policy,
 )
 
+# Skip marker for tests that need groot-service extras (zmq, msgpack)
+try:
+    import msgpack  # noqa: F401
+    import zmq  # noqa: F401
+
+    _groot_service_available = True
+except ImportError:
+    _groot_service_available = False
+
+requires_groot_service = pytest.mark.skipif(
+    not _groot_service_available,
+    reason="groot-service extras not installed (zmq, msgpack)",
+)
+
 
 class TestMockPolicy:
     """MockPolicy should produce deterministic sinusoidal trajectories."""
@@ -112,6 +126,7 @@ class TestCreatePolicy:
         p = create_policy("kwarg_test", some_key="some_val")
         assert p.captured == {"some_key": "some_val"}
 
+    @requires_groot_service
     def test_create_via_zmq_url_resolves_to_groot(self):
         """A zmq:// URL should resolve to a Gr00tPolicy via smart-string resolution."""
         from strands_robots.policies.groot import Gr00tPolicy
@@ -134,6 +149,7 @@ class TestCreatePolicy:
         with pytest.raises(Exception):
             create_policy("ws://localhost:8080")
 
+    @requires_groot_service
     def test_groot_strict_and_api_token_passthrough(self):
         """strict and api_token kwargs should reach Gr00tPolicy constructor."""
         from strands_robots.policies.groot import Gr00tPolicy
@@ -143,12 +159,14 @@ class TestCreatePolicy:
         assert p._strict is True
         assert p._client.api_token == "test-token"
 
+    @requires_groot_service
     def test_groot_defaults_strict_false(self):
         """strict should default to False for production use."""
 
         p = create_policy("zmq://localhost:5555")
         assert p._strict is False
 
+    @requires_groot_service
     def test_groot_direct_construction_with_new_params(self):
         """Direct Gr00tPolicy() should accept strict and api_token."""
         from strands_robots.policies.groot import Gr00tPolicy

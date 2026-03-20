@@ -2,6 +2,8 @@
 
 Covers: MsgSerializer roundtrips, Gr00tInferenceClient construction, api_token
 handling, and error paths.
+
+Requires: msgpack, pyzmq (groot-service extras). Tests are skipped when not installed.
 """
 
 import logging
@@ -10,8 +12,11 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 
-from strands_robots.policies.groot.client import Gr00tInferenceClient, MsgSerializer
-from strands_robots.policies.groot.data_config import ModalityConfig
+msgpack = pytest.importorskip("msgpack", reason="msgpack not installed — pip install 'strands-robots[groot-service]'")
+zmq = pytest.importorskip("zmq", reason="zmq not installed — pip install 'strands-robots[groot-service]'")
+
+from strands_robots.policies.groot.client import Gr00tInferenceClient, MsgSerializer  # noqa: E402
+from strands_robots.policies.groot.data_config import ModalityConfig  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # MsgSerializer
