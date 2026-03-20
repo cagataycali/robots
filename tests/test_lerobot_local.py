@@ -767,3 +767,257 @@ class TestProcessorBridge:
         with patch("strands_robots.policies.lerobot_local.processor._try_import_processor", return_value=None):
             bridge = ProcessorBridge.from_pretrained("test/model")
             assert not bridge.is_active
+
+
+# ===========================================================================
+# Tests: RTC (Real-Time Chunking)
+# ===========================================================================
+
+
+class TestRTCInit:
+    """Tests for RTC initialization and auto-detection."""
+
+    def test_rtc_default_disabled_when_no_predict_chunk(self):
+        """RTC should be disabled when policy has no predict_action_chunk."""
+        policy = _make_policy()
+        mock_policy = MagicMock(spec=["reset", "eval", "parameters", "select_action"])
+        mock_policy.config = MagicMock()
+        mock_policy.config.device = "cpu"
+        mock_policy.config.input_features = {}
+        mock_policy.config.output_features = {}
+        policy._policy = mock_policy
+        policy._loaded = True
+        policy._init_rtc()
+        assert policy._rtc_enabled is False
+
+    def test_rtc_auto_detect_from_config(self):
+        """RTC should auto-detect from model config.rtc_config.enabled."""
+        policy = _make_policy()
+        mock_policy = MagicMock()
+        mock_policy.predict_action_chunk = MagicMock()
+        rtc_cfg = MagicMock()
+        rtc_cfg.enabled = True
+        rtc_cfg.execution_horizon = 15
+        rtc_cfg.max_guidance_weight = 8.0
+        mock_policy.config.rtc_config = rtc_cfg
+        policy._policy = mock_policy
+        policy._loaded = True
+        policy._rtc_requested = None  # auto-detect
+        policy._init_rtc()
+        assert policy._rtc_enabled is True
+        assert policy._rtc_execution_horizon == 15
+        assert policy._rtc_max_guidance_weight == 8.0
+
+    def test_rtc_explicit_enable(self):
+        """rtc_enabled=True should force-enable even without config."""
+        policy = _make_policy()
+        mock_policy = MagicMock()
+        mock_policy.predict_action_chunk = MagicMock()
+        mock_policy.config = MagicMock(spec=[])
+        policy._policy = mock_policy
+        policy._loaded = True
+        policy._rtc_requested = True
+        policy._init_rtc()
+        assert policy._rtc_enabled is True
+        assert policy._rtc_execution_horizon == 10  # default
+        assert policy._rtc_max_guidance_weight == 10.0  # default
+
+    def test_rtc_explicit_disable(self):
+        """rtc_enabled=False should disable even if config says enabled."""
+        policy = _make_policy()
+        mock_policy = MagicMock()
+        mock_policy.predict_action_chunk = MagicMock()
+        rtc_cfg = MagicMock()
+        rtc_cfg.enabled = True
+        mock_policy.config.rtc_config = rtc_cfg
+        policy._policy = mock_policy
+        policy._loaded = True
+        policy._rtc_requested = False
+        policy._init_rtc()
+        assert policy._rtc_enabled is False
+
+    def test_rtc_user_overrides_config_values(self):
+        """User-provided execution_horizon/max_guidance_weight override config."""
+        policy = _make_policy()
+        mock_policy = MagicMock()
+        mock_policy.predict_action_chunk = MagicMock()
+        rtc_cfg = MagicMock()
+        rtc_cfg.enabled = True
+        rtc_cfg.execution_horizon = 15
+        rtc_cfg.max_guidance_weight = 8.0
+        mock_policy.config.rtc_config = rtc_cfg
+        policy._policy = mock_policy
+        policy._loaded = True
+        policy._rtc_requested = True
+        policy._rtc_execution_horizon = 20
+        policy._rtc_max_guidance_weight = 5.0
+        policy._init_rtc()
+        assert policy._rtc_execution_horizon == 20
+        assert policy._rtc_max_guidance_weight == 5.0
+
+    def test_rtc_warning_when_requested_but_unsupported(self):
+        """Should warn when RTC requested but policy lacks predict_action_chunk."""
+        policy = _make_policy()
+        mock_policy = MagicMock(spec=["reset", "eval", "parameters", "select_action"])
+        policy._policy = mock_policy
+        policy._loaded = True
+        policy._rtc_requested = True
+        with patch("strands_robots.policies.lerobot_local.policy.logger") as mock_logger:
+            policy._init_rtc()
+            mock_logger.warning.assert_called_once()
+        assert policy._rtc_enabled is False
+
+
+class TestRTCInference:
+    """Tests for RTC inference path."""
+
+    def test_predict_with_rtc_first_call_no_prev_chunk(self):
+        """First RTC call should have no prev_chunk_left_over."""
+        policy = _make_policy()
+        policy._rtc_enabled = True
+        policy._rtc_execution_horizon = 10
+        policy._rtc_prev_chunk = None
+        policy.actions_per_step = 1
+
+        mock_policy = MagicMock()
+        mock_policy.predict_action_chunk.return_value = torch.randn(1, 20, 6)
+        policy._policy = mock_policy
+
+        result = policy._predict_with_rtc({})
+
+        call_kwargs = mock_policy.predict_action_chunk.call_args[1]
+        assert "prev_chunk_left_over" not in call_kwargs
+        assert call_kwargs["execution_horizon"] == 10
+        assert result.dim() == 2  # (T, A) after squeeze
+
+    def test_predict_with_rtc_passes_prev_chunk(self):
+        """Subsequent RTC calls should pass prev_chunk_left_over."""
+        policy = _make_policy()
+        policy._rtc_enabled = True
+        policy._rtc_execution_horizon = 10
+        policy._rtc_prev_chunk = torch.randn(15, 6)
+        policy.actions_per_step = 1
+
+        mock_policy = MagicMock()
+        mock_policy.predict_action_chunk.return_value = torch.randn(1, 20, 6)
+        policy._policy = mock_policy
+
+        policy._predict_with_rtc({})
+
+        call_kwargs = mock_policy.predict_action_chunk.call_args[1]
+        assert "prev_chunk_left_over" in call_kwargs
+        assert call_kwargs["prev_chunk_left_over"].shape == (15, 6)
+
+    def test_predict_with_rtc_stores_leftover(self):
+        """After RTC inference, leftover should be stored for next call."""
+        policy = _make_policy()
+        policy._rtc_enabled = True
+        policy._rtc_execution_horizon = 10
+        policy._rtc_prev_chunk = None
+        policy.actions_per_step = 1
+
+        mock_policy = MagicMock()
+        mock_policy.predict_action_chunk.return_value = torch.randn(1, 20, 6)
+        policy._policy = mock_policy
+
+        policy._predict_with_rtc({})
+
+        assert policy._rtc_prev_chunk is not None
+        assert policy._rtc_prev_chunk.dim() == 2
+
+    def test_predict_with_rtc_tracks_latency(self):
+        """RTC should track inference latency for delay estimation."""
+        policy = _make_policy()
+        policy._rtc_enabled = True
+        policy._rtc_execution_horizon = 10
+        policy._rtc_prev_chunk = None
+        policy.actions_per_step = 1
+
+        mock_policy = MagicMock()
+        mock_policy.predict_action_chunk.return_value = torch.randn(1, 20, 6)
+        policy._policy = mock_policy
+
+        policy._predict_with_rtc({})
+
+        assert len(policy._rtc_latency_history) == 1
+        assert policy._rtc_latency_history[0] > 0
+
+
+class TestRTCDelayEstimation:
+    """Tests for inference delay estimation."""
+
+    def test_estimate_delay_empty_history(self):
+        """No history should return delay=0."""
+        policy = _make_policy()
+        assert policy._estimate_inference_delay(fps=30.0) == 0
+
+    def test_estimate_delay_single_sample(self):
+        """Single latency sample should give correct delay."""
+        policy = _make_policy()
+        policy._rtc_latency_history.append(0.1)  # 100ms
+        assert policy._estimate_inference_delay(fps=30.0) == 3
+
+    def test_estimate_delay_uses_p95(self):
+        """Should use p95 latency, not mean or max."""
+        policy = _make_policy()
+        for _ in range(99):
+            policy._rtc_latency_history.append(0.033)
+        policy._rtc_latency_history.append(1.0)  # outlier
+        delay = policy._estimate_inference_delay(fps=30.0)
+        assert delay < 5
+
+
+class TestRTCReset:
+    """Tests for RTC state clearing on reset."""
+
+    def test_reset_clears_rtc_state(self):
+        """reset() should clear all RTC state."""
+        policy = _make_policy()
+        policy._policy = MagicMock()
+        policy._processor_bridge = None
+
+        policy._rtc_prev_chunk = torch.randn(10, 6)
+        policy._rtc_action_queue.extend([torch.randn(6) for _ in range(5)])
+        policy._rtc_latency_history.extend([0.1, 0.2, 0.3])
+        policy._rtc_last_inference_time = 1.5
+
+        policy.reset()
+
+        assert policy._rtc_prev_chunk is None
+        assert len(policy._rtc_action_queue) == 0
+        assert len(policy._rtc_latency_history) == 0
+        assert policy._rtc_last_inference_time == 0.0
+
+
+class TestRTCGetActionsIntegration:
+    """Tests for RTC integration in get_actions flow."""
+
+    def test_get_actions_uses_rtc_when_enabled(self):
+        """get_actions should use predict_action_chunk when RTC enabled."""
+        policy = _make_loaded_policy(action_dim=6)
+        policy._rtc_enabled = True
+        policy._rtc_execution_horizon = 10
+        policy._rtc_prev_chunk = None
+        policy.actions_per_step = 1
+        policy._processor_bridge = None
+        policy.set_robot_state_keys([f"joint_{i}" for i in range(6)])
+
+        policy._policy.predict_action_chunk = MagicMock(return_value=torch.randn(1, 20, 6))
+
+        actions = policy.get_actions_sync({}, "test")
+
+        policy._policy.predict_action_chunk.assert_called_once()
+        policy._policy.select_action.assert_not_called()
+        assert isinstance(actions, list)
+        assert len(actions) >= 1
+
+    def test_get_actions_uses_select_action_when_rtc_disabled(self):
+        """get_actions should use select_action when RTC disabled."""
+        policy = _make_loaded_policy(action_dim=6)
+        policy._rtc_enabled = False
+        policy._processor_bridge = None
+        policy.set_robot_state_keys([f"joint_{i}" for i in range(6)])
+
+        actions = policy.get_actions_sync({}, "test")
+
+        policy._policy.select_action.assert_called_once()

@@ -6,13 +6,24 @@ this policy supports.
 Architecture:
     Observation (dict)
         → ProcessorBridge.preprocess (normalize, device, crop, ...)
-        → LeRobot PreTrainedPolicy.select_action
+        → LeRobot PreTrainedPolicy.select_action / predict_action_chunk (RTC)
         → ProcessorBridge.postprocess (unnormalize, delta-action, ...)
         → Action dict
+
+Real-Time Chunking (RTC):
+    For flow-matching VLA policies (Pi0, Pi0.5, SmolVLA), RTC improves action
+    quality by blending new action chunks with leftover actions from the
+    previous inference step. This compensates for inference latency — while the
+    model is computing, the robot keeps executing, so some timesteps in the new
+    chunk are stale. RTC uses prefix guidance during denoising to smoothly merge
+    the overlap region.
+
+    Enable with: rtc_enabled=True (auto-detected from model config if available)
 """
 
 import logging
 import time
+from collections import deque
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -39,6 +50,10 @@ class LerobotLocalPolicy(Policy):
     postprocessor.json) for automatic normalization, device transfer,
     observation formatting, and action unnormalization.
 
+    For flow-matching policies (Pi0, Pi0.5, SmolVLA), supports Real-Time
+    Chunking (RTC) which blends action chunks across inference calls to
+    compensate for latency and produce smoother robot motion.
+
     Args:
         pretrained_name_or_path: HF model ID or local path. If empty, model
             is not loaded until first inference call.
@@ -50,6 +65,12 @@ class LerobotLocalPolicy(Policy):
         processor_overrides: Dict of overrides for processor pipeline steps.
         tokenizer_max_length: Max token length for VLA language tokenization.
         tokenizer_padding_side: Padding side for VLA tokenizer ("left" or "right").
+        rtc_enabled: Enable Real-Time Chunking for flow-matching policies.
+            Auto-detected from model config if None. Only works with Pi0/SmolVLA.
+        rtc_execution_horizon: Number of timesteps from the prefix to use for
+            guidance. Defaults to model config value or 10.
+        rtc_max_guidance_weight: Maximum guidance weight for RTC correction.
+            Defaults to model config value or 10.0.
     """
 
     def __init__(
@@ -62,6 +83,9 @@ class LerobotLocalPolicy(Policy):
         processor_overrides: Optional[dict] = None,
         tokenizer_max_length: int = _DEFAULT_TOKENIZER_MAX_LENGTH,
         tokenizer_padding_side: str = _DEFAULT_TOKENIZER_PADDING_SIDE,
+        rtc_enabled: Optional[bool] = None,
+        rtc_execution_horizon: Optional[int] = None,
+        rtc_max_guidance_weight: Optional[float] = None,
         **kwargs,
     ):
         self.pretrained_name_or_path = pretrained_name_or_path
@@ -82,6 +106,16 @@ class LerobotLocalPolicy(Policy):
         self._tokenizer_max_length: int = tokenizer_max_length
         self._tokenizer_padding_side: str = tokenizer_padding_side
 
+        # RTC state
+        self._rtc_requested = rtc_enabled
+        self._rtc_enabled = False
+        self._rtc_execution_horizon = rtc_execution_horizon
+        self._rtc_max_guidance_weight = rtc_max_guidance_weight
+        self._rtc_prev_chunk: Optional[torch.Tensor] = None
+        self._rtc_action_queue: deque = deque()
+        self._rtc_latency_history: deque = deque(maxlen=100)
+        self._rtc_last_inference_time: float = 0.0
+
         if pretrained_name_or_path:
             self._load_model()
 
@@ -96,12 +130,20 @@ class LerobotLocalPolicy(Policy):
         LeRobot policies (ACT, Diffusion, etc.) cache internal state such as
         action queues and temporal ensemble buffers. Without resetting, stale
         actions from the previous episode leak into the next one.
+
+        Also clears RTC state (previous chunk leftover, action queue, latency
+        history) to prevent cross-episode contamination.
         """
         if self._policy is not None and hasattr(self._policy, "reset"):
             self._policy.reset()
             logger.debug("Policy internal state reset")
         if self._processor_bridge is not None:
             self._processor_bridge.reset()
+        # Clear RTC state
+        self._rtc_prev_chunk = None
+        self._rtc_action_queue.clear()
+        self._rtc_latency_history.clear()
+        self._rtc_last_inference_time = 0.0
 
     def set_robot_state_keys(self, robot_state_keys: List[str]) -> None:
         """Set robot state keys for observation→tensor mapping.
@@ -353,6 +395,161 @@ class LerobotLocalPolicy(Policy):
                 logger.debug("Processor bridge not loaded: %s", exc)
                 self._processor_bridge = None
 
+        # Initialize RTC if supported by this policy
+        self._init_rtc()
+
+    # ------------------------------------------------------------------
+    # Real-Time Chunking (RTC) support
+    # ------------------------------------------------------------------
+
+    def _init_rtc(self) -> None:
+        """Initialize RTC if the loaded policy supports it.
+
+        RTC is supported by flow-matching policies (Pi0, Pi0.5, SmolVLA)
+        that implement ``predict_action_chunk(**kwargs)``. It requires the
+        policy to have an ``rtc_config`` on its config and a working
+        ``predict_action_chunk`` method.
+
+        Auto-detection: if ``rtc_enabled=None`` (default), RTC is enabled
+        when the model's config has ``rtc_config.enabled=True``.
+        """
+        if not self._loaded or self._policy is None:
+            return
+
+        # Check if policy supports predict_action_chunk (required for RTC)
+        has_predict_chunk = hasattr(self._policy, "predict_action_chunk")
+        if not has_predict_chunk:
+            if self._rtc_requested is True:
+                logger.warning(
+                    "RTC requested but policy '%s' does not implement predict_action_chunk. "
+                    "RTC is only supported for flow-matching policies (Pi0, Pi0.5, SmolVLA).",
+                    type(self._policy).__name__,
+                )
+            self._rtc_enabled = False
+            return
+
+        # Auto-detect from model config
+        config = getattr(self._policy, "config", None)
+        rtc_config = getattr(config, "rtc_config", None) if config else None
+
+        if self._rtc_requested is None:
+            # Auto-detect: use model's rtc_config.enabled
+            self._rtc_enabled = rtc_config is not None and getattr(rtc_config, "enabled", False)
+        elif self._rtc_requested is True:
+            self._rtc_enabled = True
+        else:
+            self._rtc_enabled = False
+
+        if not self._rtc_enabled:
+            logger.debug("RTC disabled for policy '%s'", type(self._policy).__name__)
+            return
+
+        # Read RTC parameters from config, with user overrides
+        if rtc_config is not None:
+            if self._rtc_execution_horizon is None:
+                self._rtc_execution_horizon = getattr(rtc_config, "execution_horizon", 10)
+            if self._rtc_max_guidance_weight is None:
+                self._rtc_max_guidance_weight = getattr(rtc_config, "max_guidance_weight", 10.0)
+        else:
+            if self._rtc_execution_horizon is None:
+                self._rtc_execution_horizon = 10
+            if self._rtc_max_guidance_weight is None:
+                self._rtc_max_guidance_weight = 10.0
+
+        logger.info(
+            "RTC enabled for '%s': execution_horizon=%d, max_guidance_weight=%.1f",
+            type(self._policy).__name__,
+            self._rtc_execution_horizon,
+            self._rtc_max_guidance_weight,
+        )
+
+    def _estimate_inference_delay(self, fps: float = 30.0) -> int:
+        """Estimate the number of action steps consumed during inference.
+
+        Uses the p95 latency from recent inference calls to estimate how many
+        action steps the robot executed while waiting for the new chunk.
+
+        Args:
+            fps: Robot control frequency in Hz. Defaults to 30.
+
+        Returns:
+            Estimated delay in action steps (minimum 0).
+        """
+        if not self._rtc_latency_history:
+            return 0
+
+        # Use p95 of recent latencies for robust delay estimation
+        latencies = list(self._rtc_latency_history)
+        latencies.sort()
+        p95_idx = int(len(latencies) * 0.95)
+        p95_latency = latencies[min(p95_idx, len(latencies) - 1)]
+
+        delay = int(p95_latency * fps)
+        return max(0, delay)
+
+    def _predict_with_rtc(self, batch: Dict[str, Any]) -> torch.Tensor:
+        """Run inference using predict_action_chunk with RTC kwargs.
+
+        This replaces select_action() for RTC-enabled policies. It:
+        1. Calls predict_action_chunk with prev_chunk_left_over and execution_horizon
+        2. Tracks inference latency for delay estimation
+        3. Stores the new chunk's leftover for the next call
+
+        Args:
+            batch: Observation batch tensors ready for the policy.
+
+        Returns:
+            Action tensor — first action(s) from the chunk, accounting for
+            inference delay.
+        """
+        inference_start = time.time()
+
+        # Build RTC kwargs for flow-matching denoiser
+        rtc_kwargs: Dict[str, Any] = {}
+        if self._rtc_prev_chunk is not None:
+            rtc_kwargs["prev_chunk_left_over"] = self._rtc_prev_chunk
+        if self._rtc_execution_horizon is not None:
+            rtc_kwargs["execution_horizon"] = self._rtc_execution_horizon
+
+        # predict_action_chunk returns (batch, chunk_size, action_dim)
+        action_chunk = self._policy.predict_action_chunk(batch, **rtc_kwargs)
+
+        inference_elapsed = time.time() - inference_start
+        self._rtc_latency_history.append(inference_elapsed)
+
+        # Remove batch dim if present: (1, T, A) → (T, A)
+        if action_chunk.dim() == 3 and action_chunk.shape[0] == 1:
+            action_chunk = action_chunk.squeeze(0)
+
+        # Estimate inference delay — how many steps were consumed while computing
+        inference_delay = self._estimate_inference_delay()
+
+        # Store leftover for next RTC call (unconsumed portion of this chunk)
+        # The delay represents steps already consumed, so leftover starts after
+        # the steps we'll actually return
+        steps_to_consume = min(
+            max(self.actions_per_step, inference_delay + self.actions_per_step),
+            action_chunk.shape[0],
+        )
+        if steps_to_consume < action_chunk.shape[0]:
+            self._rtc_prev_chunk = action_chunk[steps_to_consume:].detach()
+        else:
+            self._rtc_prev_chunk = None
+
+        # Skip delay steps — they correspond to time spent during inference
+        usable_start = min(inference_delay, action_chunk.shape[0] - 1)
+        usable_actions = action_chunk[usable_start:]
+
+        logger.debug(
+            "RTC: chunk=%s, delay=%d, usable_start=%d, leftover=%s",
+            action_chunk.shape,
+            inference_delay,
+            usable_start,
+            self._rtc_prev_chunk.shape if self._rtc_prev_chunk is not None else None,
+        )
+
+        return usable_actions
+
     # ------------------------------------------------------------------
     # Inference
     # ------------------------------------------------------------------
@@ -397,7 +594,10 @@ class LerobotLocalPolicy(Policy):
         with torch.inference_mode():
             assert self._policy is not None
             self._policy.eval()
-            action_tensor = self._policy.select_action(batch)
+            if self._rtc_enabled:
+                action_tensor = self._predict_with_rtc(batch)
+            else:
+                action_tensor = self._policy.select_action(batch)
 
         if self._processor_bridge and self._processor_bridge.has_postprocessor:
             action_tensor = self._processor_bridge.postprocess(action_tensor)
