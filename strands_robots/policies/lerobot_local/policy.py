@@ -13,7 +13,6 @@ Architecture:
 
 import logging
 import time
-import warnings
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -272,8 +271,6 @@ class LerobotLocalPolicy(Policy):
             ValueError: If model path is invalid or config cannot be parsed.
             RuntimeError: If model loading fails.
         """
-        warnings.filterwarnings("ignore", message=".*Device.*")
-
         # XVLA compat: Florence2LanguageConfig.forced_bos_token_id missing
         # in transformers 5.x. Florence2 was originally built with an older
         # transformers that had this attribute. Without this patch, XVLA
