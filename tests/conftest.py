@@ -147,11 +147,32 @@ def _install_torch_mock():
                 return MockTensor(self._data + other._data)
             return MockTensor(self._data + other)
 
+        def __truediv__(self, other):
+            if isinstance(other, MockTensor):
+                return MockTensor(self._data / other._data)
+            return MockTensor(self._data / other)
+
+        def __mul__(self, other):
+            if isinstance(other, MockTensor):
+                return MockTensor(self._data * other._data)
+            return MockTensor(self._data * other)
+
+        def numel(self):
+            return int(self._data.size)
+
+        @property
+        def device(self):
+            return MockDevice("cpu")
+
     # --- MockParameter: torch.nn.Parameter ---
     class MockParameter(MockTensor):
         def __init__(self, data=None, requires_grad=True):
             super().__init__(data)
             self.requires_grad = requires_grad
+
+        @property
+        def device(self):
+            return MockDevice("cpu")
 
     # --- MockDevice ---
     class MockDevice:
@@ -220,6 +241,18 @@ def _install_torch_mock():
     torch_mock.stack = _stack
     torch_mock.cat = _cat
     torch_mock.as_tensor = _tensor
+
+    def _randint(low, high, size, dtype=None):
+        return MockTensor(np.random.randint(low, high, size=size).astype(np.float32))
+
+    def _rand(*shape, dtype=None, device=None):
+        if len(shape) == 1 and isinstance(shape[0], (tuple, list)):
+            shape = tuple(shape[0])
+        return MockTensor(np.random.rand(*shape).astype(np.float32))
+
+    torch_mock.randint = _randint
+    torch_mock.rand = _rand
+    torch_mock.long = np.int64
 
     # no_grad context manager
     class _NoGrad:
