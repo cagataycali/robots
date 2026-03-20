@@ -88,6 +88,12 @@ class MockTensor:
     def float(self):
         return self
 
+    def bool(self):
+        return MockTensor(self._data.astype(np.bool_).astype(np.float32))
+
+    def long(self):
+        return MockTensor(self._data.astype(np.int64).astype(np.float32))
+
     def to(self, *args, **kwargs):
         return self
 
