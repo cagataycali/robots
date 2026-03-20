@@ -1,4 +1,4 @@
-"""LeRobot policy class resolution — zero hardcoding.
+"""LeRobot policy class resolution.
 
 Resolves the correct LeRobot policy class from:
 - HuggingFace Hub config.json (auto-detect)
@@ -14,6 +14,7 @@ Resolution strategies (in order):
 """
 
 import importlib
+import inspect
 import json
 import logging
 from pathlib import Path
@@ -25,9 +26,8 @@ logger = logging.getLogger(__name__)
 def resolve_policy_class_from_hub(pretrained_name_or_path: str) -> Tuple[Type, str]:
     """Resolve the LeRobot policy class from a pretrained path or HF repo.
 
-    Zero hardcoding — uses PreTrainedConfig.from_pretrained() which handles
-    config resolution, class lookup, and weight loading via the draccus
-    config registry.
+    Uses PreTrainedConfig.from_pretrained() which handles config resolution,
+    class lookup, and weight loading via the draccus config registry.
 
     Falls back to reading config.json manually + class name matching if
     the draccus path fails (e.g. third-party policies not in registry).
@@ -42,7 +42,10 @@ def resolve_policy_class_from_hub(pretrained_name_or_path: str) -> Tuple[Type, s
         ValueError: If policy type cannot be determined from config.
         ImportError: If the resolved policy class cannot be imported.
     """
-    # Strategy 1: PreTrainedConfig draccus resolution → concrete class
+    # Strategy 1: PreTrainedConfig draccus resolution → concrete class.
+    # We catch broad Exception here because draccus raises its own DecodingError/ParsingError
+    # types when a policy type isn't in the choice registry (e.g. older model configs).
+    # These are not ImportError/ValueError — they're draccus-specific exceptions.
     try:
         from lerobot.configs.policies import PreTrainedConfig
 
@@ -52,6 +55,8 @@ def resolve_policy_class_from_hub(pretrained_name_or_path: str) -> Tuple[Type, s
 
         PolicyClass = resolve_policy_class_by_name(policy_type)
         return PolicyClass, policy_type
+    except ImportError:
+        raise  # Missing lerobot is a real error, don't swallow
     except Exception as exc:
         logger.debug("PreTrainedConfig resolution failed, trying manual: %s", exc)
 
@@ -133,8 +138,6 @@ def resolve_policy_class_by_name(policy_type: str) -> Type:
 
     # Strategy 4: PreTrainedPolicy — only if it's NOT abstract
     try:
-        import inspect
-
         from lerobot.policies.pretrained import PreTrainedPolicy
 
         if not inspect.isabstract(PreTrainedPolicy):
@@ -172,7 +175,7 @@ def _read_policy_type_from_config(pretrained_name_or_path: str) -> str | None:
         with open(config_path) as config_file:
             config = json.load(config_file)
         return config.get("type")
-    except Exception as exc:
+    except (ImportError, OSError, ValueError, KeyError) as exc:
         logger.warning("Could not download config.json: %s", exc)
 
     return None

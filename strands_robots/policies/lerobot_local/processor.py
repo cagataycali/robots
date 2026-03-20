@@ -15,11 +15,7 @@ Architecture:
 """
 
 import logging
-from typing import Any, Dict, List, Optional
-
-import numpy as np
-
-from .. import Policy
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +25,11 @@ POSTPROCESSOR_CONFIG = "policy_postprocessor.json"
 
 
 def _try_import_processor():
-    """Lazy import LeRobot processor module."""
+    """Import LeRobot processor module.
+
+    Returns:
+        Dict of processor classes/functions, or None if not available.
+    """
     try:
         from lerobot.processor.converters import (
             batch_to_transition,
@@ -40,6 +40,7 @@ def _try_import_processor():
         from lerobot.processor.core import EnvTransition, TransitionKey
         from lerobot.processor.pipeline import DataProcessorPipeline
 
+        logger.debug("LeRobot processor module loaded successfully")
         return {
             "DataProcessorPipeline": DataProcessorPipeline,
             "batch_to_transition": batch_to_transition,
@@ -50,6 +51,11 @@ def _try_import_processor():
             "TransitionKey": TransitionKey,
         }
     except ImportError:
+        logger.debug(
+            "LeRobot processor module not available. "
+            "ProcessorBridge will pass data through unchanged. "
+            "Install lerobot >= 0.5.0 for full processor support."
+        )
         return None
 
 
@@ -58,7 +64,6 @@ class ProcessorBridge:
 
     Handles:
     - Loading preprocessor + postprocessor from pretrained model dirs / HF Hub
-    - Converting strands-robots observation dicts to LeRobot EnvTransition format
     - Running the pipeline steps (normalize, device transfer, observation processing, etc.)
     - Converting processed output back to strands-robots format
 
@@ -82,13 +87,6 @@ class ProcessorBridge:
         self._postprocessor = postprocessor
         self._device = device
         self._modules = _try_import_processor()
-
-        if self._modules is None:
-            logger.warning(
-                "LeRobot processor module not available. "
-                "ProcessorBridge will pass data through unchanged. "
-                "Install LeRobot >= 0.4.0 for full processor support."
-            )
 
     @classmethod
     def from_pretrained(
@@ -135,7 +133,7 @@ class ProcessorBridge:
             logger.info("Loaded preprocessor from %s: %d steps", pretrained_name_or_path, len(preprocessor))
         except (FileNotFoundError, ValueError) as exc:
             logger.debug("No preprocessor found: %s", exc)
-        except Exception as exc:
+        except OSError as exc:
             logger.warning("Failed to load preprocessor: %s", exc)
 
         # Load postprocessor
@@ -148,7 +146,7 @@ class ProcessorBridge:
             logger.info("Loaded postprocessor from %s: %d steps", pretrained_name_or_path, len(postprocessor))
         except (FileNotFoundError, ValueError) as exc:
             logger.debug("No postprocessor found: %s", exc)
-        except Exception as exc:
+        except OSError as exc:
             logger.warning("Failed to load postprocessor: %s", exc)
 
         return cls(
@@ -182,6 +180,9 @@ class ProcessorBridge:
 
         Returns:
             Processed observation dict (tensors on target device, normalized, etc.).
+
+        Raises:
+            RuntimeError: If the preprocessor pipeline fails.
         """
         if self._preprocessor is None or self._modules is None:
             return observation
@@ -189,8 +190,7 @@ class ProcessorBridge:
         try:
             return self._preprocessor.process_observation(observation)
         except Exception as exc:
-            logger.warning("Preprocessor failed, passing raw observation: %s", exc)
-            return observation
+            raise RuntimeError(f"Preprocessor pipeline failed: {exc}") from exc
 
     def postprocess(self, action: Any) -> Any:
         """Postprocess a policy action through the pipeline.
@@ -202,6 +202,9 @@ class ProcessorBridge:
 
         Returns:
             Processed action (unnormalized, converted to robot format, etc.).
+
+        Raises:
+            RuntimeError: If the postprocessor pipeline fails.
         """
         if self._postprocessor is None or self._modules is None:
             return action
@@ -209,29 +212,7 @@ class ProcessorBridge:
         try:
             return self._postprocessor.process_action(action)
         except Exception as exc:
-            logger.warning("Postprocessor failed, passing raw action: %s", exc)
-            return action
-
-    def process_full_transition(self, transition: Dict[str, Any]) -> Dict[str, Any]:
-        """Process a full EnvTransition dict through the preprocessor.
-
-        For advanced use cases where you need to process observation + action + reward
-        together (e.g., during training data preparation).
-
-        Args:
-            transition: Full transition dict with observation, action, reward, etc.
-
-        Returns:
-            Processed transition dict.
-        """
-        if self._preprocessor is None or self._modules is None:
-            return transition
-
-        try:
-            return self._preprocessor(transition)
-        except Exception as exc:
-            logger.warning("Full transition processing failed: %s", exc)
-            return transition
+            raise RuntimeError(f"Postprocessor pipeline failed: {exc}") from exc
 
     def reset(self):
         """Reset pipeline state (e.g., clear running stats in stateful steps)."""
@@ -239,20 +220,6 @@ class ProcessorBridge:
             self._preprocessor.reset()
         if self._postprocessor is not None:
             self._postprocessor.reset()
-
-    def wrap_policy(self, policy):
-        """Wrap a strands-robots Policy with pre/post processing.
-
-        Returns a ProcessedPolicy that automatically applies preprocessing
-        to observations and postprocessing to actions.
-
-        Args:
-            policy: A strands-robots Policy instance.
-
-        Returns:
-            ProcessedPolicy wrapper.
-        """
-        return ProcessedPolicy(policy, self)
 
     def get_info(self) -> Dict[str, Any]:
         """Get information about loaded pipelines."""
@@ -276,112 +243,8 @@ class ProcessorBridge:
         return f"ProcessorBridge({pre}, {post})"
 
 
-class ProcessedPolicy(Policy):
-    """Wraps a strands-robots Policy with automatic pre/post processing.
-
-    Transparently applies the ProcessorBridge to observations before inference
-    and to actions after inference. Inherits from Policy so
-    ``isinstance(wrapped, Policy)`` returns True.
-    """
-
-    def __init__(self, policy, bridge: ProcessorBridge):
-        self._policy = policy
-        self._bridge = bridge
-
-    @property
-    def provider_name(self) -> str:
-        return f"processed:{self._policy.provider_name}"
-
-    def set_robot_state_keys(self, robot_state_keys: List[str]) -> None:
-        self._policy.set_robot_state_keys(robot_state_keys)
-
-    async def get_actions(self, observation_dict: Dict[str, Any], instruction: str, **kwargs) -> List[Dict[str, Any]]:
-        """Get actions with automatic pre/post processing."""
-        processed_observation = self._bridge.preprocess(observation_dict)
-        actions = await self._policy.get_actions(processed_observation, instruction, **kwargs)
-
-        if self._bridge.has_postprocessor:
-            processed_actions = []
-            for action in actions:
-                processed = self._bridge.postprocess(action)
-                if isinstance(processed, dict):
-                    processed_actions.append(processed)
-                else:
-                    processed_actions.append(action)
-            return processed_actions
-
-        return actions
-
-    def select_action_sync(self, observation_dict: Dict[str, Any]) -> np.ndarray:
-        """Synchronous inference with pre/post processing."""
-        processed_observation = self._bridge.preprocess(observation_dict)
-        result = self._policy.select_action_sync(processed_observation)
-
-        if self._bridge.has_postprocessor:
-            import torch
-
-            if isinstance(result, np.ndarray):
-                tensor = torch.from_numpy(result)
-            else:
-                tensor = result
-            processed = self._bridge.postprocess(tensor)
-            if isinstance(processed, dict):
-                return np.array(list(processed.values()))
-            elif hasattr(processed, "numpy"):
-                return processed.numpy()
-            return processed
-
-        return result
-
-    def reset(self):
-        """Reset both policy and processor state."""
-        self._bridge.reset()
-        if hasattr(self._policy, "reset"):
-            self._policy.reset()
-
-    def __getattr__(self, name):
-        """Forward unknown attributes to the wrapped policy."""
-        return getattr(self._policy, name)
-
-
-def create_processor_bridge(
-    pretrained_name_or_path: Optional[str] = None,
-    device: Optional[str] = None,
-    stats: Optional[Dict[str, Any]] = None,
-    **kwargs,
-) -> ProcessorBridge:
-    """Factory function to create a ProcessorBridge.
-
-    Args:
-        pretrained_name_or_path: HF model ID or local path (None for passthrough).
-        device: Target device.
-        stats: Custom normalization stats to override model's saved stats.
-        **kwargs: Additional arguments passed to from_pretrained.
-
-    Returns:
-        ProcessorBridge instance.
-    """
-    if pretrained_name_or_path is None:
-        return ProcessorBridge(device=device)
-
-    overrides = kwargs.pop("overrides", {})
-
-    if stats:
-        overrides.setdefault("normalizer_processor", {})["stats"] = stats
-        overrides.setdefault("unnormalizer_processor", {})["stats"] = stats
-
-    return ProcessorBridge.from_pretrained(
-        pretrained_name_or_path,
-        device=device,
-        overrides=overrides,
-        **kwargs,
-    )
-
-
 __all__ = [
     "ProcessorBridge",
-    "ProcessedPolicy",
-    "create_processor_bridge",
     "PREPROCESSOR_CONFIG",
     "POSTPROCESSOR_CONFIG",
 ]

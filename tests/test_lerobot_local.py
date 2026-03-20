@@ -9,10 +9,10 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_policy(**kwargs):
     """Create a LerobotLocalPolicy with model loading disabled."""
@@ -26,6 +26,7 @@ def _make_policy(**kwargs):
 def _make_loaded_policy(action_dim=6, state_dim=6, device="cpu"):
     """Create a LerobotLocalPolicy that appears loaded (mocked internals)."""
     import torch
+
     from strands_robots.policies.lerobot_local.policy import LerobotLocalPolicy
 
     with patch.object(LerobotLocalPolicy, "_load_model"):
@@ -88,6 +89,10 @@ class TestLerobotLocalInit:
     def test_custom_actions_per_step(self):
         policy = _make_policy(actions_per_step=5)
         assert policy.actions_per_step == 5
+
+    def test_custom_max_consecutive_failures(self):
+        policy = _make_policy(max_consecutive_failures=10)
+        assert policy._max_consecutive_failures == 10
 
     def test_is_policy_subclass(self):
         from strands_robots.policies import Policy
@@ -156,7 +161,7 @@ class TestGetActions:
                 policy.robot_state_keys = [f"j{i}" for i in range(6)]
 
             mock_load.side_effect = fake_load
-            actions = policy.get_actions_sync({}, "test")
+            policy.get_actions_sync({}, "test")
             mock_load.assert_called()
 
     def test_returns_list_of_dicts(self):
@@ -172,25 +177,28 @@ class TestGetActions:
         actions = policy.get_actions_sync({}, "pick up")
         assert set(actions[0].keys()) == {"shoulder", "elbow", "gripper"}
 
-    def test_zero_actions_on_no_path(self):
+    def test_no_path_raises_runtime_error(self):
+        """Calling get_actions without a model path should raise RuntimeError."""
         from strands_robots.policies.lerobot_local.policy import LerobotLocalPolicy
 
         policy = LerobotLocalPolicy()
         policy.robot_state_keys = ["a", "b"]
-        actions = policy.get_actions_sync({}, "test")
-        assert actions == [{"a": 0.0, "b": 0.0}]
+        with pytest.raises(RuntimeError, match="No model loaded"):
+            policy.get_actions_sync({}, "test")
 
-    def test_consecutive_failure_tracking(self):
+    def test_consecutive_failure_raises_after_threshold(self):
         policy = _make_loaded_policy(action_dim=3)
         policy.set_robot_state_keys(["a", "b", "c"])
         policy._max_consecutive_failures = 2
 
         policy._policy.select_action.side_effect = RuntimeError("boom")
 
-        actions = policy.get_actions_sync({}, "test")
-        assert actions == [{"a": 0.0, "b": 0.0, "c": 0.0}]
+        # First failure should raise (no silent zero-return)
+        with pytest.raises(RuntimeError, match="boom"):
+            policy.get_actions_sync({}, "test")
         assert policy._consecutive_failures == 1
 
+        # Second failure should raise with "failed N consecutive" message
         with pytest.raises(RuntimeError, match="failed 2 consecutive"):
             policy.get_actions_sync({}, "test")
 
@@ -199,7 +207,7 @@ class TestGetActions:
         policy.set_robot_state_keys(["a", "b"])
         policy._consecutive_failures = 4
 
-        actions = policy.get_actions_sync({}, "test")
+        policy.get_actions_sync({}, "test")
         assert policy._consecutive_failures == 0
 
 
@@ -310,24 +318,14 @@ class TestTensorToActionDicts:
         result = policy._tensor_to_action_dicts(torch.tensor([1.0]))
         assert result[0] == {"a": 1.0, "b": 0.0, "c": 0.0}
 
+    def test_empty_state_keys_raises(self):
+        """With no robot_state_keys, tensor_to_action_dicts should raise."""
+        import torch
 
-# ---------------------------------------------------------------------------
-# Tests: _zero_actions
-# ---------------------------------------------------------------------------
-
-
-class TestZeroActions:
-    def test_returns_zero_dict(self):
-        policy = _make_loaded_policy()
-        policy.set_robot_state_keys(["a", "b", "c"])
-        zeros = policy._zero_actions()
-        assert zeros == [{"a": 0.0, "b": 0.0, "c": 0.0}]
-
-    def test_empty_keys_returns_empty_dict(self):
-        policy = _make_loaded_policy()
+        policy = _make_loaded_policy(action_dim=2)
         policy.robot_state_keys = []
-        zeros = policy._zero_actions()
-        assert zeros == [{}]
+        with pytest.raises(RuntimeError, match="robot_state_keys is empty"):
+            policy._tensor_to_action_dicts(torch.tensor([1.0, 2.0]))
 
 
 # ---------------------------------------------------------------------------

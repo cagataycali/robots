@@ -13,11 +13,11 @@ authors = [
     {name = "AWS", email = "opensource@amazon.com"},
 ]
 keywords = [
-    "robots", "agents", "lerobot", "strands", "sdk",
-    "mujoco", "simulation", "reinforcement-learning",
-    "groot", "nvidia", "isaac-sim", "vla",
+    "robots", "agents", "strands", "sdk",
+    "mujoco", "simulation", "lerobot", "reinforcement-learning",
+    "gr00t", "isaac-sim", "vla",
     "robot-learning", "imitation-learning",
-    "teleoperation", "manipulation",
+    "teleoperation", "manipulation", "strands-agents",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -37,62 +37,41 @@ classifiers = [
 ]
 
 dependencies = [
-    "strands-agents>=1.0.0",
-    "numpy>=1.21.0",
-    "opencv-python-headless>=4.5.0",
-    "Pillow>=8.0.0",
+    "strands-agents>=1.0.0,<2.0.0",
+    "numpy>=1.21.0,<3.0.0",
+    "opencv-python-headless>=4.5.0,<5.0.0",
+    "Pillow>=8.0.0,<12.0.0",
 ]
 
 [project.optional-dependencies]
 groot-service = [
-    "pyzmq>=27.0.0",
-    "msgpack>=1.0.0",
+    "pyzmq>=27.0.0,<28.0.0",
+    "msgpack>=1.0.0,<2.0.0",
 ]
 lerobot = [
-    "lerobot>=0.5.0",
+    "lerobot>=0.5.0,<0.6.0",
 ]
 mujoco = [
-    "mujoco>=3.0.0",
-    "Pillow>=8.0.0",
-]
-isaac = [
-    # Isaac Sim/Lab are installed separately (requires NVIDIA GPU + Isaac Sim runtime)
-    "h5py>=3.0",
-    "mujoco>=3.0.0",
-    "usd-core>=24.0",
+    "mujoco>=3.0.0,<4.0.0",
+    "Pillow>=8.0.0,<12.0.0",
 ]
 newton = [
-    "warp-lang>=1.11.0",
-    "trimesh",
-    "mujoco>=3.5.0",
-    "numpy>=1.24.0",
-]
-cosmos-transfer = [
-    "torch>=2.1.0",
-    "torchvision",
-    "pydantic>=2.0",
-]
-cosmos-predict = [
-    "torch>=2.1.0",
-    "torchvision",
-    "omegaconf>=2.3.0",
-    "loguru>=0.7.0",
-    "tyro>=1.0.0",
-    "h5py>=3.0",
-    "einops>=0.6.0",
-    "filelock>=3.0",
+    "warp-lang>=1.11.0,<2.0.0",
+    "trimesh>=4.0.0,<5.0.0",
+    "mujoco>=3.5.0,<4.0.0",
+    "numpy>=1.24.0,<3.0.0",
 ]
 zenoh = [
-    "eclipse-zenoh>=1.0.0",
+    "eclipse-zenoh>=1.0.0,<2.0.0",
 ]
 policies = [
-    "transformers>=4.40.0",
-    "sentencepiece>=0.1.99",
-    "num2words>=0.5.13",
-    "scipy>=1.10.0",
-    "imageio>=2.30.0",
-    "imageio-ffmpeg>=0.4.0",
-    "av>=10.0.0",
+    "transformers>=4.40.0,<5.0.0",
+    "sentencepiece>=0.1.99,<0.3.0",
+    "num2words>=0.5.13,<0.6.0",
+    "scipy>=1.10.0,<2.0.0",
+    "imageio>=2.30.0,<3.0.0",
+    "imageio-ffmpeg>=0.4.0,<0.5.0",
+    "av>=10.0.0,<14.0.0",
 ]
 all = [
     "strands-robots[groot-service]",
@@ -100,17 +79,15 @@ all = [
     "strands-robots[mujoco]",
     "strands-robots[policies]",
     "strands-robots[newton]",
-    "strands-robots[cosmos-transfer]",
-    "strands-robots[cosmos-predict]",
     "strands-robots[zenoh]",
 ]
 dev = [
-    "pytest>=6.0",
-    "pytest-cov",
-    "black",
-    "isort",
-    "flake8",
-    "mypy",
+    "pytest>=6.0,<9.0.0",
+    "pytest-cov>=4.0.0,<6.0.0",
+    "black>=23.0.0,<25.0.0",
+    "isort>=5.12.0,<6.0.0",
+    "flake8>=6.0.0,<8.0.0",
+    "mypy>=1.0.0,<2.0.0",
 ]
 
 [project.urls]
