@@ -268,6 +268,12 @@ def _rand(*shape, dtype=None, device=None):
     return MockTensor(np.random.rand(*shape).astype(np.float32))
 
 
+def _randn(*shape, dtype=None, device=None):
+    if len(shape) == 1 and isinstance(shape[0], (tuple, list)):
+        shape = tuple(shape[0])
+    return MockTensor(np.random.randn(*shape).astype(np.float32))
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -305,6 +311,7 @@ def install_torch_mock():
     torch_mock.as_tensor = _tensor
     torch_mock.randint = _randint
     torch_mock.rand = _rand
+    torch_mock.randn = _randn
 
     torch_mock.no_grad = _NoGrad
     torch_mock.inference_mode = _NoGrad
