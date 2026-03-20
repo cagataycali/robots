@@ -87,6 +87,21 @@ class LerobotLocalPolicy(Policy):
     def provider_name(self) -> str:
         return "lerobot_local"
 
+    def reset(self) -> None:
+        """Reset policy state between episodes.
+
+        **MUST** be called whenever the environment or task episode resets.
+        LeRobot policies (ACT, Diffusion, etc.) cache internal state such as
+        action queues and temporal ensemble buffers. Without resetting, stale
+        actions from the previous episode leak into the next one.
+        """
+        if self._policy is not None and hasattr(self._policy, "reset"):
+            self._policy.reset()
+            logger.debug("Policy internal state reset")
+        if self._processor_bridge is not None:
+            self._processor_bridge.reset()
+        self._consecutive_failures = 0
+
     def set_robot_state_keys(self, robot_state_keys: List[str]) -> None:
         """Set robot state keys for observation→tensor mapping.
 
@@ -276,7 +291,12 @@ class LerobotLocalPolicy(Policy):
         self._policy = PolicyClass.from_pretrained(self.pretrained_name_or_path)
 
         self._policy.eval()
-        self._device = next(self._policy.parameters()).device
+
+        # Resolve device: prefer config.device, fallback to first parameter's device
+        if hasattr(self._policy, "config") and hasattr(self._policy.config, "device"):
+            self._device = torch.device(self._policy.config.device)
+        else:
+            self._device = next(self._policy.parameters()).device
 
         if hasattr(self._policy, "config"):
             config = self._policy.config
@@ -357,11 +377,20 @@ class LerobotLocalPolicy(Policy):
             if instruction and "task" not in observation:
                 observation["task"] = instruction
 
+            # When the processor bridge has a preprocessor, it handles all
+            # observation conversion (HWC→CHW, uint8→float, normalization,
+            # device transfer, batching).  Feeding its output through
+            # _build_observation_batch would double-normalize images.
             if self._processor_bridge and self._processor_bridge.has_preprocessor:
-                observation = self._processor_bridge.preprocess(observation)
+                batch = self._processor_bridge.preprocess(observation)
+                # Ensure the batch is a dict (processor returns observation dict)
+                if not isinstance(batch, dict):
+                    batch = {"observation.state": batch}
+            else:
+                batch = self._build_observation_batch(observation, instruction)
 
-            batch = self._build_observation_batch(observation, instruction)
-            with torch.no_grad():
+            with torch.inference_mode():
+                self._policy.eval()
                 action_tensor = self._policy.select_action(batch)
 
             if self._processor_bridge and self._processor_bridge.has_postprocessor:
@@ -410,10 +439,14 @@ class LerobotLocalPolicy(Policy):
             observation["task"] = instruction
 
         if self._processor_bridge and self._processor_bridge.has_preprocessor:
-            observation = self._processor_bridge.preprocess(observation)
+            batch = self._processor_bridge.preprocess(observation)
+            if not isinstance(batch, dict):
+                batch = {"observation.state": batch}
+        else:
+            batch = self._build_observation_batch(observation, instruction)
 
-        batch = self._build_observation_batch(observation, instruction)
-        with torch.no_grad():
+        with torch.inference_mode():
+            self._policy.eval()
             action_tensor = self._policy.select_action(batch)
 
         if self._processor_bridge and self._processor_bridge.has_postprocessor:
