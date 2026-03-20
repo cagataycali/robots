@@ -120,9 +120,8 @@ dependencies = [
 [tool.hatch.envs.default.scripts]
 test = "pytest {args:tests}"
 test-integ = "pytest tests_integ/ -v --timeout=300 {args}"
-test-e2e = "pytest tests_e2e/ -v --timeout=600 {args}"
-lint = ["black --check strands_robots tests tests_integ tests_e2e", "isort --check-only strands_robots tests tests_integ tests_e2e", "flake8 strands_robots tests tests_integ tests_e2e", "mypy strands_robots tests tests_integ tests_e2e --ignore-missing-imports"]
-format = ["black strands_robots tests tests_integ tests_e2e", "isort strands_robots tests tests_integ tests_e2e"]
+lint = ["black --check strands_robots tests tests_integ", "isort --check-only strands_robots tests tests_integ", "flake8 strands_robots tests tests_integ", "mypy strands_robots tests tests_integ --ignore-missing-imports"]
+format = ["black strands_robots tests tests_integ", "isort strands_robots tests tests_integ"]
 
 [tool.black]
 line-length = 120
