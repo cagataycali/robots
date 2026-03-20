@@ -1018,6 +1018,7 @@ class TestRTCGetActionsIntegration:
         policy._processor_bridge = None
         policy.set_robot_state_keys([f"joint_{i}" for i in range(6)])
 
-        actions = policy.get_actions_sync({}, "test")
+        result = policy.get_actions_sync({}, "test")
 
         policy._policy.select_action.assert_called_once()
+        assert isinstance(result, list)
