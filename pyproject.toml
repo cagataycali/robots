@@ -120,13 +120,20 @@ dependencies = [
 [tool.hatch.envs.default.scripts]
 test = "pytest {args:tests}"
 test-integ = "pytest tests_integ/ -v --timeout=300 {args}"
-lint = ["black --check strands_robots tests tests_integ", "isort --check-only strands_robots tests tests_integ", "flake8 strands_robots tests tests_integ"]
+lint = ["black --check strands_robots tests tests_integ", "isort --check-only strands_robots tests tests_integ", "flake8 strands_robots tests tests_integ", "mypy strands_robots/policies/lerobot_local --ignore-missing-imports"]
 format = ["black strands_robots tests tests_integ", "isort strands_robots tests tests_integ"]
 
 [tool.black]
 line-length = 120
 target-version = ['py310']
 include = '\.pyi?$'
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = false
+warn_unused_configs = true
+disallow_untyped_defs = false
+ignore_missing_imports = true
 
 [tool.isort]
 profile = "black"

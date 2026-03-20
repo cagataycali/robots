@@ -68,7 +68,7 @@ class LerobotLocalPolicy(Policy):
         self.processor_overrides = processor_overrides
         self.robot_state_keys: List[str] = []
 
-        self._policy = None
+        self._policy: Optional[Any] = None
         self._device: Optional[torch.device] = None
         self._input_features: Dict[str, Any] = {}
         self._output_features: Dict[str, Any] = {}
@@ -289,6 +289,7 @@ class LerobotLocalPolicy(Policy):
             PolicyClass, self.policy_type = resolve_policy_class_from_hub(self.pretrained_name_or_path)
 
         self._policy = PolicyClass.from_pretrained(self.pretrained_name_or_path)
+        assert self._policy is not None
 
         self._policy.eval()
 
@@ -390,6 +391,7 @@ class LerobotLocalPolicy(Policy):
                 batch = self._build_observation_batch(observation, instruction)
 
             with torch.inference_mode():
+                assert self._policy is not None
                 self._policy.eval()
                 action_tensor = self._policy.select_action(batch)
 
@@ -446,6 +448,7 @@ class LerobotLocalPolicy(Policy):
             batch = self._build_observation_batch(observation, instruction)
 
         with torch.inference_mode():
+            assert self._policy is not None
             self._policy.eval()
             action_tensor = self._policy.select_action(batch)
 
@@ -725,8 +728,8 @@ class LerobotLocalPolicy(Policy):
             info["output_features"] = {
                 key: str(val.shape) if hasattr(val, "shape") else str(val) for key, val in self._output_features.items()
             }
-            info["policy_class"] = type(self._policy).__name__
-            info["n_parameters"] = sum(param.numel() for param in self._policy.parameters())
+            info["policy_class"] = type(self._policy).__name__ if self._policy else "None"
+            info["n_parameters"] = sum(param.numel() for param in self._policy.parameters()) if self._policy else 0
         if self._processor_bridge:
             info["processor"] = self._processor_bridge.get_info()
         return info

@@ -223,7 +223,7 @@ class ProcessorBridge:
 
     def get_info(self) -> Dict[str, Any]:
         """Get information about loaded pipelines."""
-        info = {
+        info: Dict[str, Any] = {
             "has_preprocessor": self.has_preprocessor,
             "has_postprocessor": self.has_postprocessor,
             "is_active": self.is_active,
