@@ -120,8 +120,9 @@ dependencies = [
 [tool.hatch.envs.default.scripts]
 test = "pytest {args:tests}"
 test-integ = "pytest tests_integ/ -v --timeout=300 {args}"
-lint = ["black --check strands_robots tests tests_integ", "isort --check-only strands_robots tests tests_integ", "flake8 strands_robots tests tests_integ", "mypy strands_robots tests tests_integ --ignore-missing-imports"]
-format = ["black strands_robots tests tests_integ", "isort strands_robots tests tests_integ"]
+test-e2e = "pytest tests_e2e/ -v --timeout=600 {args}"
+lint = ["black --check strands_robots tests tests_integ tests_e2e", "isort --check-only strands_robots tests tests_integ tests_e2e", "flake8 strands_robots tests tests_integ tests_e2e", "mypy strands_robots tests tests_integ tests_e2e --ignore-missing-imports"]
+format = ["black strands_robots tests tests_integ tests_e2e", "isort strands_robots tests tests_integ tests_e2e"]
 
 [tool.black]
 line-length = 120
@@ -145,4 +146,5 @@ testpaths = ["tests"]
 addopts = "-v --cov=strands_robots --cov-report=term-missing"
 markers = [
     "gpu: requires CUDA GPU (deselected by default, run with: pytest -m gpu)",
+    "e2e: end-to-end tests requiring real models (run with: hatch run test-e2e)",
 ]
