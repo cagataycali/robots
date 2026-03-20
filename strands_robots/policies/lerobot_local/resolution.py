@@ -18,7 +18,7 @@ import inspect
 import json
 import logging
 from pathlib import Path
-from typing import Tuple, Type
+from typing import Optional, Tuple, Type
 
 logger = logging.getLogger(__name__)
 
@@ -43,9 +43,6 @@ def resolve_policy_class_from_hub(pretrained_name_or_path: str) -> Tuple[Type, s
         ImportError: If the resolved policy class cannot be imported.
     """
     # Strategy 1: PreTrainedConfig draccus resolution → concrete class.
-    # We catch broad Exception here because draccus raises its own DecodingError/ParsingError
-    # types when a policy type isn't in the choice registry (e.g. older model configs).
-    # These are not ImportError/ValueError — they're draccus-specific exceptions.
     try:
         from lerobot.configs.policies import PreTrainedConfig
 
@@ -57,7 +54,10 @@ def resolve_policy_class_from_hub(pretrained_name_or_path: str) -> Tuple[Type, s
         return PolicyClass, policy_type
     except ImportError:
         raise  # Missing lerobot is a real error, don't swallow
-    except Exception as exc:
+    except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        # draccus raises its own DecodingError/ParsingError types when a policy
+        # type isn't in the choice registry (e.g. older model configs). These
+        # are subclasses of RuntimeError/ValueError in practice.
         logger.debug("PreTrainedConfig resolution failed, trying manual: %s", exc)
 
     # Strategy 2: Manual config.json reading (fallback for custom/third-party)
@@ -153,7 +153,7 @@ def resolve_policy_class_by_name(policy_type: str) -> Type:
     )
 
 
-def _read_policy_type_from_config(pretrained_name_or_path: str) -> str | None:
+def _read_policy_type_from_config(pretrained_name_or_path: str) -> Optional[str]:
     """Read policy type from config.json (local or HF Hub).
 
     Args:
@@ -162,12 +162,14 @@ def _read_policy_type_from_config(pretrained_name_or_path: str) -> str | None:
     Returns:
         Policy type string or None if not found.
     """
+    # Try local path first
     local_path = Path(pretrained_name_or_path)
     if local_path.is_dir() and (local_path / "config.json").exists():
         with open(local_path / "config.json") as config_file:
             config = json.load(config_file)
         return config.get("type")
 
+    # Try downloading from HuggingFace Hub
     try:
         from huggingface_hub import hf_hub_download
 

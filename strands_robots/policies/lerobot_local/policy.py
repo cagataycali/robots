@@ -14,7 +14,7 @@ Architecture:
 import logging
 import time
 import warnings
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -24,6 +24,10 @@ from .processor import ProcessorBridge
 from .resolution import resolve_policy_class_by_name, resolve_policy_class_from_hub
 
 logger = logging.getLogger(__name__)
+
+# Default tokenizer settings — configurable via constructor kwargs
+_DEFAULT_TOKENIZER_MAX_LENGTH = 48
+_DEFAULT_TOKENIZER_PADDING_SIDE = "right"
 
 
 class LerobotLocalPolicy(Policy):
@@ -45,8 +49,8 @@ class LerobotLocalPolicy(Policy):
         actions_per_step: Number of action steps to return per inference call.
         use_processor: Whether to load the model's processor pipeline.
         processor_overrides: Dict of overrides for processor pipeline steps.
-        max_consecutive_failures: Number of consecutive inference failures
-            before raising instead of returning zero actions.
+        tokenizer_max_length: Max token length for VLA language tokenization.
+        tokenizer_padding_side: Padding side for VLA tokenizer ("left" or "right").
     """
 
     def __init__(
@@ -57,7 +61,8 @@ class LerobotLocalPolicy(Policy):
         actions_per_step: int = 1,
         use_processor: bool = True,
         processor_overrides: Optional[dict] = None,
-        max_consecutive_failures: int = 5,
+        tokenizer_max_length: int = _DEFAULT_TOKENIZER_MAX_LENGTH,
+        tokenizer_padding_side: str = _DEFAULT_TOKENIZER_PADDING_SIDE,
         **kwargs,
     ):
         self.pretrained_name_or_path = pretrained_name_or_path
@@ -75,10 +80,8 @@ class LerobotLocalPolicy(Policy):
         self._loaded = False
         self._processor_bridge: Optional[ProcessorBridge] = None
         self._tokenizer = None
-        self._tokenizer_max_length: int = 48
-        self._tokenizer_padding_side: str = "right"
-        self._consecutive_failures = 0
-        self._max_consecutive_failures = max_consecutive_failures
+        self._tokenizer_max_length: int = tokenizer_max_length
+        self._tokenizer_padding_side: str = tokenizer_padding_side
 
         if pretrained_name_or_path:
             self._load_model()
@@ -100,7 +103,6 @@ class LerobotLocalPolicy(Policy):
             logger.debug("Policy internal state reset")
         if self._processor_bridge is not None:
             self._processor_bridge.reset()
-        self._consecutive_failures = 0
 
     def set_robot_state_keys(self, robot_state_keys: List[str]) -> None:
         """Set robot state keys for observation→tensor mapping.
@@ -109,6 +111,10 @@ class LerobotLocalPolicy(Policy):
             robot_state_keys: List of joint/motor names. If empty, auto-detects
                 from model output_features (action dim) or input_features (state dim).
                 Auto-detected keys are generic (joint_0, joint_1, ...).
+
+        Raises:
+            ValueError: If keys are empty and no model features available for
+                auto-detection.
         """
         if robot_state_keys:
             self.robot_state_keys = robot_state_keys
@@ -147,16 +153,16 @@ class LerobotLocalPolicy(Policy):
                 )
                 return
 
-        logger.warning(
-            "robot_state_keys empty and no model features available for auto-detection. "
-            "Actions will be empty dicts. Call set_robot_state_keys() with actual joint names."
+        raise ValueError(
+            "robot_state_keys is empty and no model features available for auto-detection. "
+            "Call set_robot_state_keys() with the robot's actual joint/motor names."
         )
 
     # ------------------------------------------------------------------
     # Tokenizer resolution (VLA language token injection)
     # ------------------------------------------------------------------
 
-    def _resolve_tokenizer(self):
+    def _resolve_tokenizer(self) -> Optional[Any]:
         """Resolve and cache the tokenizer for VLA language token injection.
 
         Resolution order:
@@ -177,8 +183,9 @@ class LerobotLocalPolicy(Policy):
         if config is None:
             return None
 
-        self._tokenizer_max_length = getattr(config, "tokenizer_max_length", 48)
-        self._tokenizer_padding_side = getattr(config, "tokenizer_padding_side", "right")
+        # Override defaults with model config if present
+        self._tokenizer_max_length = getattr(config, "tokenizer_max_length", self._tokenizer_max_length)
+        self._tokenizer_padding_side = getattr(config, "tokenizer_padding_side", self._tokenizer_padding_side)
 
         # 1. tokenizer_name (explicit config field)
         tokenizer_id = getattr(config, "tokenizer_name", None)
@@ -192,7 +199,7 @@ class LerobotLocalPolicy(Policy):
                 from transformers import AutoTokenizer
 
                 self._tokenizer = AutoTokenizer.from_pretrained(tokenizer_id)
-                self._tokenizer.padding_side = self._tokenizer_padding_side
+                self._tokenizer.padding_side = self._tokenizer_padding_side  # type: ignore[attr-defined]
                 logger.info("Auto-resolved tokenizer from '%s' (%s)", tokenizer_id, type(self._tokenizer).__name__)
                 return self._tokenizer
             except (ImportError, OSError, ValueError) as exc:
@@ -202,13 +209,13 @@ class LerobotLocalPolicy(Policy):
         processor = getattr(self._policy, "processor", None)
         if processor and hasattr(processor, "tokenizer"):
             self._tokenizer = processor.tokenizer
-            self._tokenizer.padding_side = self._tokenizer_padding_side
+            self._tokenizer.padding_side = self._tokenizer_padding_side  # type: ignore[attr-defined]
             logger.info("Using policy's built-in processor tokenizer (%s)", type(self._tokenizer).__name__)
             return self._tokenizer
 
         return None
 
-    def _tokenize_instruction(self, instruction: str):
+    def _tokenize_instruction(self, instruction: str) -> Optional[Tuple[torch.Tensor, Optional[torch.Tensor]]]:
         """Tokenize an instruction into (input_ids, attention_mask) tensors.
 
         Args:
@@ -267,9 +274,10 @@ class LerobotLocalPolicy(Policy):
         """
         warnings.filterwarnings("ignore", message=".*Device.*")
 
-        # XVLA compat: Florence2LanguageConfig.forced_bos_token_id missing in transformers 5.x.
-        # Florence2 was originally built with an older transformers that had this attribute.
-        # Without this patch, XVLA models fail to load with AttributeError.
+        # XVLA compat: Florence2LanguageConfig.forced_bos_token_id missing
+        # in transformers 5.x. Florence2 was originally built with an older
+        # transformers that had this attribute. Without this patch, XVLA
+        # models fail to load with AttributeError.
         try:
             from transformers.models.florence2.configuration_florence2 import Florence2LanguageConfig
 
@@ -293,8 +301,10 @@ class LerobotLocalPolicy(Policy):
 
         self._policy.eval()
 
-        # Resolve device: prefer config.device, fallback to first parameter's device
-        if hasattr(self._policy, "config") and hasattr(self._policy.config, "device"):
+        # Resolve device: prefer user-requested, then config.device, fallback to first param
+        if self.requested_device:
+            self._device = torch.device(self.requested_device)
+        elif hasattr(self._policy, "config") and hasattr(self._policy.config, "device"):
             self._device = torch.device(self._policy.config.device)
         else:
             self._device = next(self._policy.parameters()).device
@@ -361,8 +371,7 @@ class LerobotLocalPolicy(Policy):
             List of action dicts for robot execution.
 
         Raises:
-            RuntimeError: If model is not loaded and no path is set, or
-                if inference fails more than max_consecutive_failures times.
+            RuntimeError: If model is not loaded and no path is set.
         """
         if not self._loaded:
             if self.pretrained_name_or_path:
@@ -373,73 +382,14 @@ class LerobotLocalPolicy(Policy):
                     "Create the policy with a model path or call _load_model() first."
                 )
 
-        try:
-            observation = dict(observation_dict)
-            if instruction and "task" not in observation:
-                observation["task"] = instruction
-
-            # When the processor bridge has a preprocessor, it handles all
-            # observation conversion (HWC→CHW, uint8→float, normalization,
-            # device transfer, batching).  Feeding its output through
-            # _build_observation_batch would double-normalize images.
-            if self._processor_bridge and self._processor_bridge.has_preprocessor:
-                batch = self._processor_bridge.preprocess(observation)
-                # Ensure the batch is a dict (processor returns observation dict)
-                if not isinstance(batch, dict):
-                    batch = {"observation.state": batch}
-            else:
-                batch = self._build_observation_batch(observation, instruction)
-
-            with torch.inference_mode():
-                assert self._policy is not None
-                self._policy.eval()
-                action_tensor = self._policy.select_action(batch)
-
-            if self._processor_bridge and self._processor_bridge.has_postprocessor:
-                action_tensor = self._processor_bridge.postprocess(action_tensor)
-
-            self._consecutive_failures = 0
-            return self._tensor_to_action_dicts(action_tensor)
-        except Exception as exc:
-            self._consecutive_failures += 1
-            logger.error(
-                "Inference error (%d/%d): %s",
-                self._consecutive_failures,
-                self._max_consecutive_failures,
-                exc,
-            )
-            if self._consecutive_failures >= self._max_consecutive_failures:
-                raise RuntimeError(
-                    f"LeRobot policy failed {self._consecutive_failures} consecutive times, " f"last error: {exc}"
-                ) from exc
-            raise
-
-    def select_action_sync(self, observation_dict: Dict[str, Any], instruction: str = "") -> np.ndarray:
-        """Synchronous inference — returns raw action numpy array.
-
-        Convenience for simulation loops that don't need async.
-        Applies processor pipeline if available.
-
-        For VLA models (xvla, smolvla, etc.) that require language tokens:
-        pass ``instruction`` or include a ``'task'`` key in observation_dict.
-
-        Args:
-            observation_dict: Observation dict (state + images).
-            instruction: Natural language instruction for VLA models.
-
-        Returns:
-            Action numpy array with shape (action_dim,).
-        """
-        if not self._loaded:
-            self._load_model()
-
-        if not instruction:
-            instruction = observation_dict.get("task", "")
-
         observation = dict(observation_dict)
         if instruction and "task" not in observation:
             observation["task"] = instruction
 
+        # When the processor bridge has a preprocessor, it handles all
+        # observation conversion (HWC→CHW, uint8→float, normalization,
+        # device transfer, batching).  Feeding its output through
+        # _build_observation_batch would double-normalize images.
         if self._processor_bridge and self._processor_bridge.has_preprocessor:
             batch = self._processor_bridge.preprocess(observation)
             if not isinstance(batch, dict):
@@ -455,9 +405,7 @@ class LerobotLocalPolicy(Policy):
         if self._processor_bridge and self._processor_bridge.has_postprocessor:
             action_tensor = self._processor_bridge.postprocess(action_tensor)
 
-        if hasattr(action_tensor, "cpu"):
-            return action_tensor.cpu().numpy()
-        return np.asarray(action_tensor)
+        return self._tensor_to_action_dicts(action_tensor)
 
     # ------------------------------------------------------------------
     # Observation batch building
@@ -489,9 +437,9 @@ class LerobotLocalPolicy(Policy):
             batch = self._build_batch_from_strands_format(observation_dict, batch)
 
         # Inject tokenized language instruction for VLA models.
-        # VLA models (SmolVLA, XVLA, etc.) expect language tokens as part of the
-        # observation batch. We tokenize the instruction and add it to the batch
-        # only if the model declares language-related input features.
+        # VLA models (SmolVLA, XVLA, etc.) expect language tokens as part
+        # of the observation batch. We only inject if the model declares
+        # language-related input features (tokenizer_name, vlm_model_name).
         if instruction and "observation.language.tokens" not in batch and self._needs_language_tokens():
             try:
                 result = self._tokenize_instruction(instruction)
@@ -512,9 +460,9 @@ class LerobotLocalPolicy(Policy):
                     if "task" in feat_name and feat_name not in batch:
                         batch[feat_name] = instruction
 
-        # Fill missing image features with zero tensors so the model doesn't crash
-        # on missing expected inputs. This handles cases where the robot doesn't have
-        # all cameras the model was trained with.
+        # Fill missing image features with zero tensors so the model doesn't
+        # crash on missing expected inputs. This handles cases where the robot
+        # doesn't have all cameras the model was trained with.
         for feat_name, feat_info in self._input_features.items():
             if feat_name not in batch and "image" in feat_name:
                 shape = feat_info.shape if hasattr(feat_info, "shape") else (3, 480, 640)
@@ -532,6 +480,10 @@ class LerobotLocalPolicy(Policy):
         - State vectors → float32 with batch dim
         - Scalars → float32 tensor with batch dim
 
+        Non-numeric types (strings, pre-batched int64 tokens) are passed through
+        unchanged — LeRobot expects these as-is for task descriptions and
+        pre-tokenized inputs.
+
         Args:
             observation_dict: Dict with "observation.*" prefixed keys.
             batch: Existing batch dict to extend.
@@ -540,7 +492,8 @@ class LerobotLocalPolicy(Policy):
             Updated batch dict with tensors on target device.
         """
         for key, value in observation_dict.items():
-            # Determine if this key represents an image based on key name or feature metadata
+            # Determine if this key represents an image based on key name
+            # or shape metadata from the model's input_features config
             is_image = "image" in key or (
                 key in self._input_features
                 and hasattr(self._input_features.get(key), "shape")
@@ -549,12 +502,13 @@ class LerobotLocalPolicy(Policy):
 
             if isinstance(value, torch.Tensor):
                 tensor = value
+                # Detect unlabeled images by shape: 3D tensor with channel-last layout
                 if not is_image and tensor.dim() == 3 and tensor.shape[-1] in (1, 3, 4):
                     is_image = True
-                # HWC → CHW conversion for images
+                # HWC → CHW: LeRobot expects channel-first image layout
                 if is_image and tensor.dim() == 3 and tensor.shape[-1] in (1, 3, 4):
                     tensor = tensor.permute(2, 0, 1)
-                # Add batch dimension
+                # Add batch dimension (required by policy.select_action)
                 if is_image and tensor.dim() == 3:
                     tensor = tensor.unsqueeze(0)
                 elif tensor.dim() < 2 and not is_image:
@@ -565,13 +519,11 @@ class LerobotLocalPolicy(Policy):
                 tensor = torch.from_numpy(value.copy()).float()
                 if not is_image and value.ndim == 3 and value.shape[-1] in (1, 3, 4):
                     is_image = True
-                # HWC → CHW conversion for images
                 if is_image and tensor.dim() == 3 and tensor.shape[-1] in (1, 3, 4):
                     tensor = tensor.permute(2, 0, 1)
-                # Normalize uint8 images to [0, 1] float range
+                # uint8 images are [0, 255] — normalize to [0, 1] for model input
                 if is_image and value.dtype == np.uint8:
                     tensor = tensor / 255.0
-                # Add batch dimension
                 if is_image and tensor.dim() == 3:
                     tensor = tensor.unsqueeze(0)
                 elif value.ndim < 2 and not is_image:
@@ -585,6 +537,7 @@ class LerobotLocalPolicy(Policy):
                 try:
                     array = np.array(value, dtype=np.float32)
                 except (ValueError, TypeError):
+                    # Non-numeric lists (e.g. string lists) can't be tensorized
                     continue
                 tensor = torch.from_numpy(array).float()
                 if array.ndim >= 2:
@@ -597,7 +550,6 @@ class LerobotLocalPolicy(Policy):
                     batch[key] = tensor.to(self._device)
                 else:
                     batch[key] = tensor.unsqueeze(0).to(self._device)
-            # Non-numeric types (strings, pre-batched int64 tokens) pass through unchanged
 
         return batch
 
@@ -608,7 +560,8 @@ class LerobotLocalPolicy(Policy):
 
         Maps individual joint keys (e.g. {"shoulder": 0.5, "elbow": -0.3}) to
         LeRobot's "observation.state" tensor using robot_state_keys ordering.
-        Camera images are matched to the model's image input features.
+        Camera images are matched to the model's image input features by
+        assigning each ndarray with ndim >= 2 to the first unoccupied image slot.
 
         Args:
             observation_dict: Dict with individual joint/image keys.
@@ -616,14 +569,18 @@ class LerobotLocalPolicy(Policy):
 
         Returns:
             Updated batch dict with "observation.state" and image tensors.
+
+        Raises:
+            ValueError: If robot_state_keys is empty (cannot map joints).
         """
         if not self.robot_state_keys:
-            logger.warning(
-                "robot_state_keys is empty — observation.state will be skipped. "
-                "Call set_robot_state_keys() with the robot's motor names for proper state handling."
+            raise ValueError(
+                "robot_state_keys is empty — cannot map observation to state tensor. "
+                "Call set_robot_state_keys() with the robot's motor names."
             )
 
-        # Collect state values in robot_state_keys order
+        # Collect state values in robot_state_keys order. Each key maps to a
+        # single float value representing one joint/motor position.
         state_values = []
         for key in self.robot_state_keys:
             if key in observation_dict:
@@ -636,7 +593,9 @@ class LerobotLocalPolicy(Policy):
                     state_values.append(float(value))
 
         if state_values:
-            # Pad or truncate to match model's expected state dimension
+            # Pad or truncate to match the model's expected state dimension.
+            # Models are trained with a fixed state vector size — mismatches
+            # cause shape errors in the forward pass.
             state_feature = self._input_features.get("observation.state")
             if state_feature:
                 expected_dim = state_feature.shape[0] if hasattr(state_feature, "shape") else len(state_values)
@@ -647,18 +606,20 @@ class LerobotLocalPolicy(Policy):
 
         # Map camera images to model's image input features.
         # Non-state ndarray values with ndim >= 2 are assumed to be images.
-        # Each image is matched to the first unoccupied image feature slot.
+        # Each image is matched to the first unoccupied image feature slot
+        # from the model's input_features config.
         for key, value in observation_dict.items():
             if key in self.robot_state_keys:
                 continue
             if isinstance(value, np.ndarray) and value.ndim >= 2:
                 image_tensor = torch.from_numpy(value.copy()).float()
-                # HWC → CHW conversion
+                # HWC → CHW: convert from camera output format to model input format
                 if image_tensor.dim() == 3 and image_tensor.shape[-1] in (1, 3, 4):
                     image_tensor = image_tensor.permute(2, 0, 1)
-                # Normalize uint8 to [0, 1]
+                # uint8 [0, 255] → float32 [0, 1]
                 if value.dtype == np.uint8:
                     image_tensor = image_tensor / 255.0
+                # Assign to first available image feature slot
                 for feat_name in self._input_features:
                     if "image" in feat_name and feat_name not in batch:
                         batch[feat_name] = image_tensor.unsqueeze(0).to(self._device)
@@ -673,22 +634,29 @@ class LerobotLocalPolicy(Policy):
     def _tensor_to_action_dicts(self, action_tensor: torch.Tensor) -> List[Dict[str, Any]]:
         """Convert action tensor to list of robot action dicts.
 
-        Maps tensor values to robot_state_keys by index. Handles 1D (single action),
-        2D (action sequence), and 3D (batched action sequence) tensors.
+        Maps tensor values to robot_state_keys by index. Handles:
+        - 1D tensor: single action step (shape [action_dim])
+        - 2D tensor: action sequence (shape [horizon, action_dim])
+        - 3D tensor: batched sequence (shape [batch, horizon, action_dim])
 
         Args:
             action_tensor: Raw action tensor from policy.select_action().
 
         Returns:
             List of action dicts, length capped by actions_per_step.
+
+        Raises:
+            RuntimeError: If robot_state_keys is empty.
         """
         action_array = action_tensor.cpu().numpy()
 
+        # Normalize tensor shape to a list of 1D action arrays
         if action_array.ndim == 1:
             actions_list = [action_array]
         elif action_array.ndim == 2:
             actions_list = [action_array[i] for i in range(min(len(action_array), self.actions_per_step))]
         elif action_array.ndim == 3:
+            # Batched: take first batch element, then slice horizon
             actions_list = [action_array[0, i] for i in range(min(action_array.shape[1], self.actions_per_step))]
         else:
             actions_list = [action_array.flatten()]
@@ -707,29 +675,3 @@ class LerobotLocalPolicy(Policy):
             result.append(action_dict)
 
         return result
-
-    def get_model_info(self) -> Dict[str, Any]:
-        """Return model metadata.
-
-        Returns:
-            Dict with provider, model_id, policy_type, device, features, etc.
-        """
-        info: Dict[str, Any] = {
-            "provider": "lerobot_local",
-            "model_id": self.pretrained_name_or_path,
-            "policy_type": self.policy_type,
-            "loaded": self._loaded,
-            "device": str(self._device) if self._device else None,
-        }
-        if self._loaded:
-            info["input_features"] = {
-                key: str(val.shape) if hasattr(val, "shape") else str(val) for key, val in self._input_features.items()
-            }
-            info["output_features"] = {
-                key: str(val.shape) if hasattr(val, "shape") else str(val) for key, val in self._output_features.items()
-            }
-            info["policy_class"] = type(self._policy).__name__ if self._policy else "None"
-            info["n_parameters"] = sum(param.numel() for param in self._policy.parameters()) if self._policy else 0
-        if self._processor_bridge:
-            info["processor"] = self._processor_bridge.get_info()
-        return info

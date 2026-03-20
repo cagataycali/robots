@@ -24,7 +24,7 @@ PREPROCESSOR_CONFIG = "policy_preprocessor.json"
 POSTPROCESSOR_CONFIG = "policy_postprocessor.json"
 
 
-def _try_import_processor():
+def _try_import_processor() -> Optional[Dict[str, Any]]:
     """Import LeRobot processor module.
 
     Returns:
@@ -40,7 +40,6 @@ def _try_import_processor():
         from lerobot.processor.core import EnvTransition, TransitionKey
         from lerobot.processor.pipeline import DataProcessorPipeline
 
-        logger.debug("LeRobot processor module loaded successfully")
         return {
             "DataProcessorPipeline": DataProcessorPipeline,
             "batch_to_transition": batch_to_transition,
@@ -72,8 +71,8 @@ class ProcessorBridge:
 
     def __init__(
         self,
-        preprocessor=None,
-        postprocessor=None,
+        preprocessor: Optional[Any] = None,
+        postprocessor: Optional[Any] = None,
         device: Optional[str] = None,
     ):
         """Initialize with optional pre/post processor pipelines.
@@ -214,7 +213,7 @@ class ProcessorBridge:
         except Exception as exc:
             raise RuntimeError(f"Postprocessor pipeline failed: {exc}") from exc
 
-    def reset(self):
+    def reset(self) -> None:
         """Reset pipeline state (e.g., clear running stats in stateful steps)."""
         if self._preprocessor is not None:
             self._preprocessor.reset()
