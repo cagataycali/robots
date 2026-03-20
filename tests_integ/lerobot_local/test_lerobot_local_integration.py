@@ -74,6 +74,23 @@ def diffusion_policy():
 
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _build_zero_observation(policy):
+    """Build a zero observation dict matching the policy's expected features."""
+    action_dim = policy._output_features["action"].shape[0]
+    observation = {
+        "observation.state": np.zeros(action_dim, dtype=np.float32),
+    }
+    for feat_name, feat_info in policy._input_features.items():
+        if "image" in feat_name and hasattr(feat_info, "shape"):
+            observation[feat_name] = np.zeros(feat_info.shape, dtype=np.float32)
+    return observation
+
+
+# ---------------------------------------------------------------------------
 # Tests: ACT Policy (14-DOF, aloha sim)
 # ---------------------------------------------------------------------------
 
@@ -82,13 +99,15 @@ class TestACTPolicy:
     """Integration tests for ACT policy with real model inference."""
 
     def test_model_loads_successfully(self, act_policy):
-        """Model should load and report correct metadata."""
-        info = act_policy.get_model_info()
-        assert info["loaded"] is True
-        assert info["provider"] == "lerobot_local"
-        assert info["model_id"] == ACT_MODEL
-        assert info["n_parameters"] > 0
-        logger.info("ACT model info: %s", info)
+        """Model should load with correct internal state."""
+        assert act_policy._loaded is True
+        assert act_policy.provider_name == "lerobot_local"
+        assert act_policy.pretrained_name_or_path == ACT_MODEL
+        assert act_policy._policy is not None
+        # Should have parameters
+        n_params = sum(p.numel() for p in act_policy._policy.parameters())
+        assert n_params > 0
+        logger.info("ACT model: %d parameters", n_params)
 
     def test_policy_type_detected(self, act_policy):
         """Policy type should be auto-detected from config."""
@@ -110,41 +129,9 @@ class TestACTPolicy:
         assert act_policy.robot_state_keys[0] == "joint_0"
         logger.info("ACT auto-generated %d state keys", len(act_policy.robot_state_keys))
 
-    def test_select_action_sync_returns_valid_array(self, act_policy):
-        """Synchronous inference should return a valid numpy array."""
-        action_dim = act_policy._output_features["action"].shape[0]
-
-        # Create zero observation matching the model's expected state dim
-        state_dim = action_dim  # ACT typically has state_dim == action_dim
-        observation = {
-            "observation.state": np.zeros(state_dim, dtype=np.float32),
-        }
-
-        # Fill image features with zeros
-        for feat_name, feat_info in act_policy._input_features.items():
-            if "image" in feat_name and hasattr(feat_info, "shape"):
-                shape = feat_info.shape
-                observation[feat_name] = np.zeros(shape, dtype=np.float32)
-
-        result = act_policy.select_action_sync(observation, "pick up the cube")
-
-        assert isinstance(result, np.ndarray), f"Expected numpy array, got {type(result)}"
-        assert result.squeeze().shape == (action_dim,), f"Expected shape ({action_dim},), got {result.shape}"
-        assert not np.any(np.isnan(result)), "Action contains NaN values"
-        assert not np.any(np.isinf(result)), "Action contains Inf values"
-        assert result.dtype in (np.float32, np.float64), f"Unexpected dtype: {result.dtype}"
-        logger.info("ACT action output: shape=%s, range=[%.4f, %.4f]", result.shape, result.min(), result.max())
-
     def test_get_actions_sync_returns_action_dicts(self, act_policy):
         """get_actions_sync should return list of action dicts with correct keys."""
-        action_dim = act_policy._output_features["action"].shape[0]
-        observation = {
-            "observation.state": np.zeros(action_dim, dtype=np.float32),
-        }
-        for feat_name, feat_info in act_policy._input_features.items():
-            if "image" in feat_name and hasattr(feat_info, "shape"):
-                observation[feat_name] = np.zeros(feat_info.shape, dtype=np.float32)
-
+        observation = _build_zero_observation(act_policy)
         actions = act_policy.get_actions_sync(observation, "pick up the cube")
 
         assert isinstance(actions, list), f"Expected list, got {type(actions)}"
@@ -157,17 +144,21 @@ class TestACTPolicy:
         for key, value in actions[0].items():
             assert isinstance(value, float), f"Key '{key}' is not float: {type(value)}"
             assert np.isfinite(value), f"Key '{key}' is not finite: {value}"
+        logger.info("ACT action: %d keys, sample values: %s", len(actions[0]), list(actions[0].values())[:4])
+
+    def test_action_values_valid(self, act_policy):
+        """Action values from inference should be finite and bounded."""
+        observation = _build_zero_observation(act_policy)
+        actions = act_policy.get_actions_sync(observation, "pick up the cube")
+
+        values = np.array(list(actions[0].values()))
+        assert not np.any(np.isnan(values)), "Action contains NaN values"
+        assert not np.any(np.isinf(values)), "Action contains Inf values"
+        logger.info("ACT action range: [%.4f, %.4f]", values.min(), values.max())
 
     def test_async_get_actions(self, act_policy):
         """Async get_actions should work via event loop."""
-        action_dim = act_policy._output_features["action"].shape[0]
-        observation = {
-            "observation.state": np.zeros(action_dim, dtype=np.float32),
-        }
-        for feat_name, feat_info in act_policy._input_features.items():
-            if "image" in feat_name and hasattr(feat_info, "shape"):
-                observation[feat_name] = np.zeros(feat_info.shape, dtype=np.float32)
-
+        observation = _build_zero_observation(act_policy)
         actions = asyncio.run(act_policy.get_actions(observation, "test"))
 
         assert isinstance(actions, list)
@@ -180,13 +171,7 @@ class TestACTPolicy:
         custom_keys = [f"motor_{i}" for i in range(action_dim)]
         act_policy.set_robot_state_keys(custom_keys)
 
-        observation = {
-            "observation.state": np.zeros(action_dim, dtype=np.float32),
-        }
-        for feat_name, feat_info in act_policy._input_features.items():
-            if "image" in feat_name and hasattr(feat_info, "shape"):
-                observation[feat_name] = np.zeros(feat_info.shape, dtype=np.float32)
-
+        observation = _build_zero_observation(act_policy)
         actions = act_policy.get_actions_sync(observation, "test")
         assert set(actions[0].keys()) == set(custom_keys)
 
@@ -208,28 +193,22 @@ class TestACTPolicy:
                 observation["camera_top"] = np.zeros((h, w, 3), dtype=np.uint8)
                 break
 
-        result = act_policy.select_action_sync(observation, "test")
-        assert isinstance(result, np.ndarray)
-        assert result.squeeze().shape == (action_dim,)
-        assert not np.any(np.isnan(result))
+        actions = act_policy.get_actions_sync(observation, "test")
+        assert isinstance(actions, list)
+        assert len(actions) >= 1
+        values = np.array(list(actions[0].values()))
+        assert not np.any(np.isnan(values))
 
     def test_multiple_inference_calls_stable(self, act_policy):
         """Multiple inference calls should produce stable (bounded, non-NaN) results."""
-        action_dim = act_policy._output_features["action"].shape[0]
-        observation = {
-            "observation.state": np.zeros(action_dim, dtype=np.float32),
-        }
-        for feat_name, feat_info in act_policy._input_features.items():
-            if "image" in feat_name and hasattr(feat_info, "shape"):
-                observation[feat_name] = np.zeros(feat_info.shape, dtype=np.float32)
+        observation = _build_zero_observation(act_policy)
 
-        results = []
         for _ in range(3):
-            result = act_policy.select_action_sync(observation, "test")
-            assert not np.any(np.isnan(result)), "Action contains NaN"
-            assert not np.any(np.isinf(result)), "Action contains Inf"
-            assert np.all(np.abs(result) < 100), "Action values unreasonably large"
-            results.append(result)
+            actions = act_policy.get_actions_sync(observation, "test")
+            values = np.array(list(actions[0].values()))
+            assert not np.any(np.isnan(values)), "Action contains NaN"
+            assert not np.any(np.isinf(values)), "Action contains Inf"
+            assert np.all(np.abs(values) < 100), "Action values unreasonably large"
 
 
 # ---------------------------------------------------------------------------
@@ -241,13 +220,14 @@ class TestDiffusionPolicy:
     """Integration tests for Diffusion policy with real model inference."""
 
     def test_model_loads_successfully(self, diffusion_policy):
-        """Model should load and report correct metadata."""
-        info = diffusion_policy.get_model_info()
-        assert info["loaded"] is True
-        assert info["provider"] == "lerobot_local"
-        assert info["model_id"] == DIFFUSION_MODEL
-        assert info["n_parameters"] > 0
-        logger.info("Diffusion model info: %s", info)
+        """Model should load with correct internal state."""
+        assert diffusion_policy._loaded is True
+        assert diffusion_policy.provider_name == "lerobot_local"
+        assert diffusion_policy.pretrained_name_or_path == DIFFUSION_MODEL
+        assert diffusion_policy._policy is not None
+        n_params = sum(p.numel() for p in diffusion_policy._policy.parameters())
+        assert n_params > 0
+        logger.info("Diffusion model: %d parameters", n_params)
 
     def test_policy_type_detected(self, diffusion_policy):
         """Policy type should be auto-detected from config."""
@@ -262,35 +242,10 @@ class TestDiffusionPolicy:
         assert action_feat.shape[0] == 2, f"Expected 2-DOF for pusht, got {action_feat.shape[0]}"
         logger.info("Diffusion action dim: %s", action_feat.shape)
 
-    def test_select_action_sync_returns_valid_array(self, diffusion_policy):
-        """Synchronous inference should return a valid numpy array."""
-        action_dim = diffusion_policy._output_features["action"].shape[0]
-
-        observation = {
-            "observation.state": np.zeros(2, dtype=np.float32),
-        }
-        for feat_name, feat_info in diffusion_policy._input_features.items():
-            if "image" in feat_name and hasattr(feat_info, "shape"):
-                observation[feat_name] = np.zeros(feat_info.shape, dtype=np.float32)
-
-        result = diffusion_policy.select_action_sync(observation, "push the T block")
-
-        assert isinstance(result, np.ndarray)
-        assert result.squeeze().shape == (action_dim,), f"Expected ({action_dim},), got {result.shape}"
-        assert not np.any(np.isnan(result))
-        assert not np.any(np.isinf(result))
-        logger.info("Diffusion action: shape=%s, range=[%.4f, %.4f]", result.shape, result.min(), result.max())
-
     def test_get_actions_sync_returns_action_dicts(self, diffusion_policy):
         """get_actions_sync should return list of action dicts."""
-        observation = {
-            "observation.state": np.zeros(2, dtype=np.float32),
-        }
-        for feat_name, feat_info in diffusion_policy._input_features.items():
-            if "image" in feat_name and hasattr(feat_info, "shape"):
-                observation[feat_name] = np.zeros(feat_info.shape, dtype=np.float32)
-
-        actions = diffusion_policy.get_actions_sync(observation, "push")
+        observation = _build_zero_observation(diffusion_policy)
+        actions = diffusion_policy.get_actions_sync(observation, "push the T block")
 
         assert isinstance(actions, list)
         assert len(actions) >= 1
@@ -299,19 +254,25 @@ class TestDiffusionPolicy:
             assert isinstance(value, float)
             assert np.isfinite(value)
 
+    def test_action_values_valid(self, diffusion_policy):
+        """Action values from inference should be finite and bounded."""
+        observation = _build_zero_observation(diffusion_policy)
+        actions = diffusion_policy.get_actions_sync(observation, "push the T block")
+
+        values = np.array(list(actions[0].values()))
+        assert not np.any(np.isnan(values)), "Action contains NaN values"
+        assert not np.any(np.isinf(values)), "Action contains Inf values"
+        # Diffusion policy actions should be bounded
+        assert np.all(np.abs(values) < 100), f"Actions seem unreasonably large: {values}"
+        logger.info("Diffusion action range: [%.4f, %.4f]", values.min(), values.max())
+
     def test_action_values_in_reasonable_range(self, diffusion_policy):
         """Action values should be in a reasonable range (not exploding)."""
-        observation = {
-            "observation.state": np.zeros(2, dtype=np.float32),
-        }
-        for feat_name, feat_info in diffusion_policy._input_features.items():
-            if "image" in feat_name and hasattr(feat_info, "shape"):
-                observation[feat_name] = np.zeros(feat_info.shape, dtype=np.float32)
+        observation = _build_zero_observation(diffusion_policy)
+        actions = diffusion_policy.get_actions_sync(observation, "push")
 
-        result = diffusion_policy.select_action_sync(observation, "push")
-
-        # Diffusion policy actions should be bounded (typically [-1, 1] or similar)
-        assert np.all(np.abs(result) < 100), f"Actions seem unreasonably large: {result}"
+        values = np.array(list(actions[0].values()))
+        assert np.all(np.abs(values) < 100), f"Actions seem unreasonably large: {values}"
 
 
 # ---------------------------------------------------------------------------
@@ -339,27 +300,24 @@ class TestFactoryResolution:
         assert policy.provider_name == "lerobot_local"
         assert policy._loaded is True
 
-    def test_get_model_info_complete(self):
-        """get_model_info() should return complete metadata after loading."""
+    def test_loaded_policy_metadata_complete(self):
+        """Loaded policy should have all expected metadata attributes."""
         from strands_robots.policies import create_policy
 
         policy = create_policy(DIFFUSION_MODEL)
-        info = policy.get_model_info()
 
-        assert "provider" in info
-        assert "model_id" in info
-        assert "policy_type" in info
-        assert "loaded" in info
-        assert "device" in info
-        assert "input_features" in info
-        assert "output_features" in info
-        assert "policy_class" in info
-        assert "n_parameters" in info
+        assert policy._loaded is True
+        assert policy.provider_name == "lerobot_local"
+        assert policy.pretrained_name_or_path == DIFFUSION_MODEL
+        assert policy.policy_type is not None
+        assert policy._device is not None
+        assert len(policy._input_features) > 0
+        assert len(policy._output_features) > 0
+        assert policy._policy is not None
 
-        assert info["loaded"] is True
-        assert info["n_parameters"] > 0
-        assert len(info["input_features"]) > 0
-        assert len(info["output_features"]) > 0
+        n_params = sum(p.numel() for p in policy._policy.parameters())
+        assert n_params > 0
+        logger.info("Metadata: type=%s, device=%s, params=%d", policy.policy_type, policy._device, n_params)
 
 
 # ---------------------------------------------------------------------------
@@ -411,19 +369,15 @@ class TestErrorHandling:
         with pytest.raises((ValueError, ImportError, OSError, RuntimeError)):
             LerobotLocalPolicy(pretrained_name_or_path="completely/nonexistent-model-path-xyz")
 
-    def test_consecutive_failures_raise(self, act_policy):
-        """Repeated failures should raise RuntimeError."""
-
-        # Save original and mock to fail
+    def test_inference_error_propagates(self, act_policy):
+        """Inference errors should propagate immediately."""
         original_select_action = act_policy._policy.select_action
         act_policy._policy.select_action = lambda batch: (_ for _ in ()).throw(RuntimeError("test failure"))
-        act_policy._consecutive_failures = 0
 
         observation = {"observation.state": np.zeros(14, dtype=np.float32)}
 
-        with pytest.raises(RuntimeError):
+        with pytest.raises(RuntimeError, match="test failure"):
             act_policy.get_actions_sync(observation, "test")
 
         # Restore
         act_policy._policy.select_action = original_select_action
-        act_policy._consecutive_failures = 0

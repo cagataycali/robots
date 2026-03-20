@@ -22,6 +22,39 @@ from typing import Optional, Tuple, Type
 
 logger = logging.getLogger(__name__)
 
+# Module-level flag: ensures we only attempt draccus registry bootstrap once.
+_CONFIGS_REGISTERED = False
+
+
+def _ensure_policy_configs_registered() -> None:
+    """Ensure LeRobot policy config classes are registered in the draccus choice registry.
+
+    LeRobot 0.5+ uses lazy registration: config classes like ACTConfig are only
+    added to PreTrainedConfig's choice registry when their module is first imported.
+    Importing ANY one of them triggers registration of ALL policies because
+    each config module has module-level side effects that populate the registry.
+
+    This function imports a single known config to bootstrap the entire registry.
+    It's safe to call multiple times — the import is idempotent.
+    """
+    global _CONFIGS_REGISTERED
+    if _CONFIGS_REGISTERED:
+        return
+
+    try:
+        # Importing any policy config triggers registration of ALL policies.
+        # ACTConfig is the most common; if it doesn't exist, lerobot is too old
+        # for draccus-based config and the caller should fall through to manual resolution.
+        importlib.import_module("lerobot.policies.act.configuration_act")
+        _CONFIGS_REGISTERED = True
+        logger.debug("LeRobot policy configs registered in draccus choice registry")
+    except (ImportError, ModuleNotFoundError):
+        # Pre-0.5 lerobot or missing policy subpackage — that's OK,
+        # the caller will fall through to manual resolution.
+        logger.debug("Could not import lerobot policy configs for draccus registration")
+    except Exception as exc:
+        logger.debug("Unexpected error during policy config registration: %s", exc)
+
 
 def resolve_policy_class_from_hub(pretrained_name_or_path: str) -> Tuple[Type, str]:
     """Resolve the LeRobot policy class from a pretrained path or HF repo.
@@ -46,6 +79,12 @@ def resolve_policy_class_from_hub(pretrained_name_or_path: str) -> Tuple[Type, s
     try:
         from lerobot.configs.policies import PreTrainedConfig
 
+        # LeRobot 0.5+ uses a lazy draccus choice registry.  Policy config
+        # classes are only registered when their module is first imported.
+        # Importing any one config (e.g. ACTConfig) triggers registration of
+        # ALL policies via their module-level @ChoiceRegistry decorators.
+        _ensure_policy_configs_registered()
+
         config = PreTrainedConfig.from_pretrained(pretrained_name_or_path)
         policy_type = getattr(config, "type", type(config).__name__.replace("Config", "").lower())
         logger.info("Auto-resolved via PreTrainedConfig: '%s' -> type='%s'", pretrained_name_or_path, policy_type)
@@ -55,10 +94,15 @@ def resolve_policy_class_from_hub(pretrained_name_or_path: str) -> Tuple[Type, s
     except ImportError:
         raise  # Missing lerobot is a real error, don't swallow
     except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
-        # draccus raises its own DecodingError/ParsingError types when a policy
-        # type isn't in the choice registry (e.g. older model configs). These
-        # are subclasses of RuntimeError/ValueError in practice.
         logger.debug("PreTrainedConfig resolution failed, trying manual: %s", exc)
+    except Exception as exc:
+        # draccus raises DecodingError/ParsingError which are NOT subclasses
+        # of RuntimeError/ValueError — they inherit from DraccusException → Exception.
+        # Catch broadly here but only for draccus-related errors.
+        if "draccus" in type(exc).__module__ or "DecodingError" in type(exc).__name__:
+            logger.debug("PreTrainedConfig draccus error, trying manual: %s", exc)
+        else:
+            raise
 
     # Strategy 2: Manual config.json reading (fallback for custom/third-party)
     policy_type = _read_policy_type_from_config(pretrained_name_or_path)
