@@ -512,6 +512,7 @@ class LerobotLocalPolicy(Policy):
             rtc_kwargs["execution_horizon"] = self._rtc_execution_horizon
 
         # predict_action_chunk returns (batch, chunk_size, action_dim)
+        assert self._policy is not None, "Policy not loaded"
         action_chunk = self._policy.predict_action_chunk(batch, **rtc_kwargs)
 
         inference_elapsed = time.time() - inference_start
