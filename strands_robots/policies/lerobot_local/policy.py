@@ -560,8 +560,7 @@ class LerobotLocalPolicy(Policy):
                 self._load_model()
             else:
                 raise RuntimeError(
-                    "No model loaded and no pretrained_name_or_path set. "
-                    "Create the policy with a model path."
+                    "No model loaded and no pretrained_name_or_path set. " "Create the policy with a model path."
                 )
 
         observation = dict(observation_dict)

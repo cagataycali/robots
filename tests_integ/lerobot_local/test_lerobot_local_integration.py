@@ -95,9 +95,7 @@ def _assert_valid_actions(actions, expected_key_count):
     assert isinstance(actions, list), f"Expected list, got {type(actions)}"
     assert len(actions) >= 1, "Expected at least 1 action"
     assert isinstance(actions[0], dict), f"Expected dict, got {type(actions[0])}"
-    assert len(actions[0]) == expected_key_count, (
-        f"Expected {expected_key_count} keys, got {len(actions[0])}"
-    )
+    assert len(actions[0]) == expected_key_count, f"Expected {expected_key_count} keys, got {len(actions[0])}"
     values = np.array([v for a in actions for v in a.values()])
     assert np.all(np.isfinite(values)), f"Non-finite values in actions: {values}"
     assert np.all(np.abs(values) < 100), f"Unreasonably large action values: {values}"
@@ -124,8 +122,10 @@ class TestACTFullPipeline:
         _assert_valid_actions(actions, len(act_policy.robot_state_keys))
         logger.info(
             "ACT: %d params, type=%s, action_dim=%d, got %d actions",
-            n_params, act_policy.policy_type,
-            len(act_policy.robot_state_keys), len(actions),
+            n_params,
+            act_policy.policy_type,
+            len(act_policy.robot_state_keys),
+            len(actions),
         )
 
     def test_custom_state_keys_respected(self, act_policy):
@@ -195,7 +195,8 @@ class TestDiffusionFullPipeline:
         logger.info(
             "Diffusion: type=%s, action_dim=%d, got %d actions",
             diffusion_policy.policy_type,
-            len(diffusion_policy.robot_state_keys), len(actions),
+            len(diffusion_policy.robot_state_keys),
+            len(actions),
         )
 
 
@@ -367,9 +368,7 @@ class TestErrorHandling:
     def test_inference_error_propagates(self, act_policy):
         """Inference errors should propagate, not be silently swallowed."""
         original_select_action = act_policy._policy.select_action
-        act_policy._policy.select_action = lambda batch: (_ for _ in ()).throw(
-            RuntimeError("test failure")
-        )
+        act_policy._policy.select_action = lambda batch: (_ for _ in ()).throw(RuntimeError("test failure"))
 
         observation = {"observation.state": np.zeros(14, dtype=np.float32)}
 

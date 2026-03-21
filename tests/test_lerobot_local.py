@@ -13,6 +13,7 @@ import numpy as np
 import pytest
 import torch  # real or conftest mock — both work
 
+from strands_robots.policies import Policy, create_policy
 from strands_robots.policies.lerobot_local.policy import LerobotLocalPolicy
 from strands_robots.policies.lerobot_local.processor import ProcessorBridge
 from strands_robots.policies.lerobot_local.resolution import (
@@ -20,7 +21,6 @@ from strands_robots.policies.lerobot_local.resolution import (
     resolve_policy_class_by_name,
     resolve_policy_class_from_hub,
 )
-from strands_robots.policies import Policy, create_policy
 from strands_robots.registry import list_policy_providers
 
 # ---------------------------------------------------------------------------
@@ -35,8 +35,17 @@ def _make_policy(**kwargs):
     return policy
 
 
-def _make_loaded_policy(action_dim=6, state_dim=6, device="cpu"):
-    """Create a LerobotLocalPolicy that appears loaded (mocked internals)."""
+def _make_loaded_policy(action_dim=6, state_dim=6, device="cpu", include_images=True):
+    """Create a LerobotLocalPolicy that appears loaded (mocked internals).
+
+    Args:
+        action_dim: Output action dimensions.
+        state_dim: Input state dimensions.
+        device: Torch device string.
+        include_images: If True, include observation.images.top in input features.
+            Set to False when tests don't provide image data to avoid the
+            missing-image validation error.
+    """
     with patch.object(LerobotLocalPolicy, "_load_model"):
         policy = LerobotLocalPolicy(pretrained_name_or_path="test/model")
 
@@ -49,10 +58,12 @@ def _make_loaded_policy(action_dim=6, state_dim=6, device="cpu"):
 
     state_feat = MagicMock()
     state_feat.shape = (state_dim,)
-    policy._input_features = {
+    input_features = {
         "observation.state": state_feat,
-        "observation.images.top": MagicMock(shape=(3, 480, 640)),
     }
+    if include_images:
+        input_features["observation.images.top"] = MagicMock(shape=(3, 480, 640))
+    policy._input_features = input_features
 
     mock_lerobot_policy = MagicMock()
     mock_param = torch.nn.Parameter(torch.zeros(1))
@@ -441,14 +452,14 @@ class TestGetActions:
             mock_load.assert_called()
 
     def test_returns_list_of_dicts(self):
-        policy = _make_loaded_policy(action_dim=3)
+        policy = _make_loaded_policy(action_dim=3, include_images=False)
         policy.set_robot_state_keys(["a", "b", "c"])
         actions = policy.get_actions_sync({}, "test")
         assert isinstance(actions, list)
         assert all(isinstance(action, dict) for action in actions)
 
     def test_action_keys_match_state_keys(self):
-        policy = _make_loaded_policy(action_dim=3)
+        policy = _make_loaded_policy(action_dim=3, include_images=False)
         policy.set_robot_state_keys(["shoulder", "elbow", "gripper"])
         actions = policy.get_actions_sync({}, "pick up")
         assert set(actions[0].keys()) == {"shoulder", "elbow", "gripper"}
@@ -462,7 +473,7 @@ class TestGetActions:
 
     def test_inference_error_raises(self):
         """Inference errors should propagate immediately."""
-        policy = _make_loaded_policy(action_dim=3)
+        policy = _make_loaded_policy(action_dim=3, include_images=False)
         policy.set_robot_state_keys(["a", "b", "c"])
         policy._policy.select_action.side_effect = RuntimeError("boom")
 
@@ -488,7 +499,7 @@ class TestGetActions:
         mock_bridge.preprocess.assert_called_once()
 
     def test_processor_bridge_postprocess_applied(self):
-        policy = _make_loaded_policy(action_dim=2)
+        policy = _make_loaded_policy(action_dim=2, include_images=False)
         policy.set_robot_state_keys(["a", "b"])
 
         mock_bridge = MagicMock()
@@ -510,13 +521,13 @@ class TestGetActions:
 
 class TestBuildObservationBatch:
     def test_lerobot_format_passthrough(self):
-        policy = _make_loaded_policy(state_dim=3)
+        policy = _make_loaded_policy(state_dim=3, include_images=False)
         observation = {"observation.state": torch.tensor([1.0, 2.0, 3.0])}
         batch = policy._build_observation_batch(observation, "test")
         assert "observation.state" in batch
 
     def test_numpy_state_conversion(self):
-        policy = _make_loaded_policy(state_dim=3)
+        policy = _make_loaded_policy(state_dim=3, include_images=False)
         observation = {"observation.state": np.array([1.0, 2.0, 3.0])}
         batch = policy._build_observation_batch(observation, "test")
         assert "observation.state" in batch
@@ -533,7 +544,7 @@ class TestBuildObservationBatch:
         assert batch["observation.images.top"].max() <= 1.0
 
     def test_strands_format_state_mapping(self):
-        policy = _make_loaded_policy(state_dim=3)
+        policy = _make_loaded_policy(state_dim=3, include_images=False)
         policy.set_robot_state_keys(["shoulder", "elbow", "gripper"])
         observation = {"shoulder": 0.5, "elbow": -0.3, "gripper": 1.0}
         batch = policy._build_observation_batch(observation, "test")
@@ -543,16 +554,15 @@ class TestBuildObservationBatch:
         assert abs(state[0, 0].item() - 0.5) < 1e-6
 
     def test_missing_image_features_filled_with_zeros(self):
-        """Missing camera images should be filled with zero tensors."""
-        policy = _make_loaded_policy()
+        """Missing camera images should raise ValueError (fail-fast)."""
+        policy = _make_loaded_policy()  # includes images in _input_features
         # Use lerobot-format keys so it goes through _build_batch_from_lerobot_format
         observation = {"observation.state": torch.zeros(6)}
-        batch = policy._build_observation_batch(observation, "test")
-        assert "observation.images.top" in batch
-        assert batch["observation.images.top"].shape[-2:] == (480, 640)
+        with pytest.raises(ValueError, match="Missing required image feature"):
+            policy._build_observation_batch(observation, "test")
 
     def test_scalar_int_conversion(self):
-        policy = _make_loaded_policy()
+        policy = _make_loaded_policy(include_images=False)
         observation = {"observation.gripper": 1}
         batch = policy._build_observation_batch(observation, "test")
         assert "observation.gripper" in batch
@@ -574,13 +584,12 @@ class TestBuildBatchFromStrandsFormat:
         np.testing.assert_allclose(batch["observation.state"][0].numpy(), [1.5, 2.5], atol=1e-5)
 
     def test_state_padded_to_expected_dim(self):
-        policy = _make_loaded_policy(state_dim=4)
+        """State dimension mismatch should raise ValueError (fail-fast)."""
+        policy = _make_loaded_policy(state_dim=4, include_images=False)
         policy.set_robot_state_keys(["a", "b"])
         observation = {"a": 1.0, "b": 2.0}
-        batch = policy._build_batch_from_strands_format(observation, {})
-        state = batch["observation.state"]
-        assert state.shape == (1, 4)
-        assert state[0, 2].item() == 0.0
+        with pytest.raises(ValueError, match="State dimension mismatch"):
+            policy._build_batch_from_strands_format(observation, {})
 
     def test_empty_state_keys_raises(self):
         """Empty robot_state_keys should raise ValueError."""
@@ -977,7 +986,7 @@ class TestRTCGetActionsIntegration:
 
     def test_get_actions_uses_rtc_when_enabled(self):
         """get_actions should use predict_action_chunk when RTC enabled."""
-        policy = _make_loaded_policy(action_dim=6)
+        policy = _make_loaded_policy(action_dim=6, include_images=False)
         policy._rtc_enabled = True
         policy._rtc_execution_horizon = 10
         policy._rtc_prev_chunk = None
@@ -996,7 +1005,7 @@ class TestRTCGetActionsIntegration:
 
     def test_get_actions_uses_select_action_when_rtc_disabled(self):
         """get_actions should use select_action when RTC disabled."""
-        policy = _make_loaded_policy(action_dim=6)
+        policy = _make_loaded_policy(action_dim=6, include_images=False)
         policy._rtc_enabled = False
         policy._processor_bridge = None
         policy.set_robot_state_keys([f"joint_{i}" for i in range(6)])

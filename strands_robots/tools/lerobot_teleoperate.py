@@ -588,7 +588,7 @@ def lerobot_teleoperate(
             if not session_name:
                 return {"status": "error", "content": [{"text": "❌ Session name required for stop action"}]}
 
-            session_info = session_manager.get_session(session_name)  # type: ignore[no-redef, assignment]  # narrowing from Optional
+            session_info = session_manager.get_session(session_name)  # type: ignore[assignment]  # narrow Optional
             if not session_info:
                 return {"status": "error", "content": [{"text": f"❌ Session '{session_name}' not found"}]}
 
@@ -667,7 +667,7 @@ def lerobot_teleoperate(
             if not session_name:
                 return {"status": "error", "content": [{"text": "❌ Session name required for status action"}]}
 
-            session_info = session_manager.get_session(session_name)  # type: ignore[no-redef, assignment]  # narrowing from Optional
+            session_info = session_manager.get_session(session_name)  # type: ignore[assignment]  # narrow Optional
             if not session_info:
                 return {"status": "error", "content": [{"text": f"❌ Session '{session_name}' not found"}]}
 
