@@ -18,11 +18,7 @@ from strands_robots.policies.groot.data_config import (
     create_custom_data_config,
     load_data_config,
 )
-from strands_robots.policies.groot.policy import (
-    ActionMapping,
-    Gr00tPolicy,
-    ObservationMapping,
-)
+from strands_robots.policies.groot.policy import ActionMapping, Gr00tPolicy, ObservationMapping
 
 __all__ = [
     "Gr00tPolicy",

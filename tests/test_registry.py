@@ -2,16 +2,9 @@
 
 import pytest
 
-from strands_robots.registry import (
-    get_policy_provider,
-    list_policy_providers,
-    resolve_policy,
-)
+from strands_robots.registry import get_policy_provider, list_policy_providers, resolve_policy
 from strands_robots.registry.loader import _load, _validate, reload
-from strands_robots.registry.policies import (
-    build_policy_kwargs,
-    import_policy_class,
-)
+from strands_robots.registry.policies import build_policy_kwargs, import_policy_class
 from strands_robots.registry.robots import (
     format_robot_table,
     get_hardware_type,

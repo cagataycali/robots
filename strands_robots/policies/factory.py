@@ -4,11 +4,7 @@ import logging
 from typing import Callable, Dict, List, Optional, Type
 
 from strands_robots.policies.base import Policy
-from strands_robots.registry import (
-    import_policy_class,
-    list_policy_providers,
-    resolve_policy,
-)
+from strands_robots.registry import import_policy_class, list_policy_providers, resolve_policy
 
 logger = logging.getLogger(__name__)
 

@@ -18,18 +18,12 @@ try:
     import cv2
     from lerobot.cameras.camera import Camera
     from lerobot.cameras.opencv import OpenCVCamera
-    from lerobot.cameras.opencv.configuration_opencv import (
-        ColorMode,
-        Cv2Rotation,
-        OpenCVCameraConfig,
-    )
+    from lerobot.cameras.opencv.configuration_opencv import ColorMode, Cv2Rotation, OpenCVCameraConfig
 
     # Try to import RealSense camera if available
     try:
         from lerobot.cameras.realsense.camera_realsense import RealSenseCamera
-        from lerobot.cameras.realsense.configuration_realsense import (
-            RealSenseCameraConfig,
-        )
+        from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig
 
         REALSENSE_AVAILABLE = True
     except ImportError:

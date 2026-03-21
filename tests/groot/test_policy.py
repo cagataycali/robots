@@ -15,12 +15,7 @@ pytestmark = pytest.mark.skipif(
     reason="groot-service extras not installed",
 )
 
-from strands_robots.policies.groot import (  # noqa: E402
-    DATA_CONFIG_MAP,
-    ActionMapping,
-    Gr00tPolicy,
-    ObservationMapping,
-)
+from strands_robots.policies.groot import DATA_CONFIG_MAP, ActionMapping, Gr00tPolicy, ObservationMapping  # noqa: E402
 from strands_robots.policies.groot.data_config import Gr00tDataConfig  # noqa: E402
 from strands_robots.policies.groot.policy import (  # noqa: E402
     _auto_infer_action_mapping,

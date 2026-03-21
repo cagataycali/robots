@@ -4,13 +4,7 @@ import asyncio
 
 import pytest
 
-from strands_robots.policies import (
-    MockPolicy,
-    Policy,
-    create_policy,
-    list_providers,
-    register_policy,
-)
+from strands_robots.policies import MockPolicy, Policy, create_policy, list_providers, register_policy
 
 # Detect groot-service availability for conditional test grouping.
 try:
