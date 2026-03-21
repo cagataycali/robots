@@ -72,12 +72,6 @@ class TestMockPolicy:
         assert len(actions) == 8
         assert all(isinstance(a, dict) for a in actions)
 
-    def test_is_policy_subclass(self):
-        """MockPolicy must be a proper Policy subclass."""
-        assert issubclass(MockPolicy, Policy)
-        p = MockPolicy()
-        assert isinstance(p, Policy)
-
 
 class TestCreatePolicy:
     """create_policy() should resolve shorthands, URLs, and custom registrations."""

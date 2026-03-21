@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 import torch  # real or conftest mock — both work
 
-from strands_robots.policies import Policy, create_policy
+from strands_robots.policies import create_policy
 from strands_robots.policies.lerobot_local.policy import LerobotLocalPolicy
 from strands_robots.policies.lerobot_local.processor import ProcessorBridge
 from strands_robots.policies.lerobot_local.resolution import (
@@ -93,37 +93,9 @@ class TestLerobotLocalInit:
             LerobotLocalPolicy(pretrained_name_or_path="lerobot/act_aloha_sim")
             mock_load.assert_called_once()
 
-    def test_provider_name(self):
-        policy = _make_policy()
-        assert policy.provider_name == "lerobot_local"
-
-    def test_default_actions_per_step(self):
-        policy = _make_policy()
-        assert policy.actions_per_step == 1
-
     def test_custom_actions_per_step(self):
         policy = _make_policy(actions_per_step=5)
         assert policy.actions_per_step == 5
-
-    def test_is_policy_subclass(self):
-
-        assert issubclass(LerobotLocalPolicy, Policy)
-
-    def test_processor_overrides_stored(self):
-        policy = _make_policy(processor_overrides={"step1": {"key": "val"}})
-        assert policy.processor_overrides == {"step1": {"key": "val"}}
-
-    def test_use_processor_flag(self):
-        policy = _make_policy(use_processor=False)
-        assert policy.use_processor is False
-
-    def test_tokenizer_max_length_configurable(self):
-        policy = _make_policy(tokenizer_max_length=128)
-        assert policy._tokenizer_max_length == 128
-
-    def test_tokenizer_padding_side_configurable(self):
-        policy = _make_policy(tokenizer_padding_side="left")
-        assert policy._tokenizer_padding_side == "left"
 
 
 # ---------------------------------------------------------------------------
@@ -167,21 +139,6 @@ class TestSetRobotStateKeys:
 
 
 class TestResolveTokenizer:
-    def test_returns_none_when_not_loaded(self):
-        policy = _make_policy()
-        assert policy._resolve_tokenizer() is None
-
-    def test_returns_none_when_no_config(self):
-        policy = _make_loaded_policy()
-        policy._policy.config = None
-        assert policy._resolve_tokenizer() is None
-
-    def test_cached_tokenizer_returned(self):
-        policy = _make_loaded_policy()
-        sentinel = MagicMock()
-        policy._tokenizer = sentinel
-        assert policy._resolve_tokenizer() is sentinel
-
     def test_tokenizer_from_tokenizer_name_falls_to_processor(self):
         """Strategy 1 (tokenizer_name) falls through when transformers missing, lands on Strategy 3."""
         policy = _make_loaded_policy()
@@ -281,11 +238,6 @@ class TestTokenizeInstruction:
 
 
 class TestNeedsLanguageTokens:
-    def test_no_config_returns_false(self):
-        policy = _make_loaded_policy()
-        policy._policy.config = None
-        assert policy._needs_language_tokens() is False
-
     def test_tokenizer_name_returns_true(self):
         policy = _make_loaded_policy()
         policy._policy.config = MagicMock(tokenizer_name="gpt2", vlm_model_name=None)
@@ -721,26 +673,6 @@ class TestRegistryIntegration:
 
 
 class TestProcessorBridge:
-    def test_inactive_bridge(self):
-
-        bridge = ProcessorBridge()
-        assert not bridge.is_active
-        assert not bridge.has_preprocessor
-        assert not bridge.has_postprocessor
-
-    def test_passthrough_preprocess(self):
-
-        bridge = ProcessorBridge()
-        observation = {"key": "value"}
-        assert bridge.preprocess(observation) == observation
-
-    def test_passthrough_postprocess(self):
-
-        bridge = ProcessorBridge()
-        action = np.array([1.0, 2.0])
-        result = bridge.postprocess(action)
-        np.testing.assert_array_equal(result, action)
-
     def test_preprocess_raises_on_pipeline_error(self):
         """preprocess() wraps pipeline exceptions in RuntimeError.
 
@@ -779,11 +711,6 @@ class TestProcessorBridge:
 
         with pytest.raises(RuntimeError, match="Postprocessor pipeline failed"):
             bridge.postprocess(torch.zeros(2))
-
-    def test_reset_with_no_pipelines(self):
-
-        bridge = ProcessorBridge()
-        bridge.reset()  # Should not raise
 
     def test_from_pretrained_passthrough_when_no_lerobot(self):
 

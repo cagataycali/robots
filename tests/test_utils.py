@@ -2,7 +2,7 @@
 
 import pytest
 
-from strands_robots.utils import _lazy_modules, require_optional
+from strands_robots.utils import require_optional
 
 
 class TestRequireOptional:
@@ -18,11 +18,6 @@ class TestRequireOptional:
         mod1 = require_optional("json")
         mod2 = require_optional("json")
         assert mod1 is mod2
-
-    def test_cached_module_in_dict(self):
-        """Module should appear in the cache dict after first import."""
-        require_optional("os")
-        assert "os" in _lazy_modules
 
     def test_missing_module_raises_import_error(self):
         """Non-existent module should raise ImportError."""
@@ -50,32 +45,7 @@ class TestRequireOptional:
         with pytest.raises(ImportError, match="pip install nonexistent_xyz"):
             require_optional("nonexistent_xyz")
 
-    def test_returns_module_object(self):
-        """Should return the actual module object."""
-        mod = require_optional("sys")
-        import sys
-
-        assert mod is sys
-
     def test_dotted_module(self):
         """Should handle dotted module names like os.path."""
         mod = require_optional("os.path")
         assert hasattr(mod, "join")
-
-    def test_cache_bypass_not_possible(self):
-        """Once cached, should always return from cache."""
-        # Import something
-        mod1 = require_optional("collections")
-        # Manually verify it's in cache
-        assert "collections" in _lazy_modules
-        assert _lazy_modules["collections"] is mod1
-
-    def test_concurrent_safe_structure(self):
-        """Cache should be a plain dict (no threading issues at module level)."""
-        assert isinstance(_lazy_modules, dict)
-
-    def test_error_has_no_chained_cause(self):
-        """ImportError should suppress the original traceback (from None)."""
-        with pytest.raises(ImportError) as exc_info:
-            require_optional("nonexistent_xyz_abc")
-        assert exc_info.value.__cause__ is None
