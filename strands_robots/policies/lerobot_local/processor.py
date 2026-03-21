@@ -239,6 +239,18 @@ class ProcessorBridge:
         post = f"post={len(self._postprocessor)}steps" if self._postprocessor else "post=None"
         return f"ProcessorBridge({pre}, {post})"
 
+    def get_info(self) -> Dict[str, Any]:
+        """Return a summary dict describing the processor bridge state.
+
+        Useful for diagnostics and integration tests.
+        """
+        return {
+            "has_preprocessor": self.has_preprocessor,
+            "has_postprocessor": self.has_postprocessor,
+            "is_active": self.is_active,
+            "repr": repr(self),
+        }
+
 
 __all__ = [
     "ProcessorBridge",

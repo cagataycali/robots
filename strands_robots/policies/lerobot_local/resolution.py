@@ -119,6 +119,52 @@ def resolve_policy_class_from_hub(pretrained_name_or_path: str) -> Tuple[Type, s
     return PolicyClass, policy_type
 
 
+def _ensure_lerobot_policies_importable() -> None:
+    """Ensure ``lerobot.policies`` is registered in ``sys.modules`` without executing
+    its ``__init__.py``.
+
+    LeRobot 0.5+ has a ``lerobot/policies/__init__.py`` that eagerly imports
+    **all** policy packages (groot, act, diffusion, …).  The groot import chain
+    pulls in ``transformers`` → ``flash_attn`` which can crash at module load
+    time on environments with ABI mismatches (e.g. wrong torch / flash-attn
+    version combo).
+
+    By inserting a lightweight stub package for ``lerobot.policies`` we allow
+    ``importlib.import_module("lerobot.policies.<type>.modeling_<type>")`` to
+    resolve the parent without triggering the heavy ``__init__``.
+
+    This is safe because:
+    - The stub only provides ``__path__`` (required by the import machinery).
+    - Individual policy subpackages (``act/``, ``diffusion/``) have their own
+      ``__init__.py`` and ``modeling_*`` modules that are self-contained.
+    - If ``lerobot.policies`` was already imported successfully (e.g. on a
+      well-configured machine), this function is a no-op.
+    """
+    import sys
+    import types
+
+    key = "lerobot.policies"
+    if key in sys.modules:
+        # Already imported (successfully or via a previous stub) — nothing to do.
+        return
+
+    try:
+        import lerobot
+
+        policies_dir = Path(lerobot.__path__[0]) / "policies"
+        if not policies_dir.is_dir():
+            return  # no policies directory → nothing we can stub
+
+        stub = types.ModuleType(key)
+        stub.__path__ = [str(policies_dir)]
+        stub.__package__ = key
+        stub.__file__ = str(policies_dir / "__init__.py")
+        sys.modules[key] = stub
+        logger.debug("Installed lightweight stub for lerobot.policies (%s)", policies_dir)
+    except Exception as exc:
+        logger.debug("Could not install lerobot.policies stub: %s", exc)
+
+
 def resolve_policy_class_by_name(policy_type: str) -> Type:
     """Resolve policy class from an explicit type string.
 
@@ -141,6 +187,14 @@ def resolve_policy_class_by_name(policy_type: str) -> Type:
     Raises:
         ImportError: If no matching class can be found.
     """
+    # Ensure lerobot.policies parent is importable without triggering its
+    # __init__.py, which in LeRobot 0.5+ eagerly imports groot → transformers
+    # → flash-attention and can crash if the env has ABI mismatches or missing
+    # optional deps.  We inject a lightweight stub module so that
+    # ``importlib.import_module("lerobot.policies.act.modeling_act")``
+    # can resolve the parent package without executing the real __init__.
+    _ensure_lerobot_policies_importable()
+
     # Strategy 1: modeling_* submodule (LeRobot 0.5+ convention)
     for submodule_name in [f"modeling_{policy_type}", "modeling"]:
         try:
