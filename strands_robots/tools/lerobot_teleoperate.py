@@ -513,7 +513,7 @@ def lerobot_teleoperate(
 
                     def auto_respond():
                         try:
-                            time.sleep(2)  # Wait for process to start
+                            time.sleep(2)  # Allow process to initialize before writing to stdin
                             proc.stdin.write("\n")  # Send ENTER
                             proc.stdin.flush()
                             time.sleep(1)
@@ -600,9 +600,9 @@ def lerobot_teleoperate(
             try:
                 # Try graceful termination first
                 os.kill(pid_int, signal.SIGTERM)
-                time.sleep(2)
+                time.sleep(2)  # Grace period for process to flush buffers and exit cleanly
 
-                # Check if still running
+                # Force kill if still running after grace period
                 if psutil.pid_exists(pid_int):
                     os.kill(pid_int, signal.SIGKILL)
 

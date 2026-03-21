@@ -22,6 +22,10 @@ import time
 import numpy as np
 import pytest
 
+from strands_robots.policies import create_policy
+from strands_robots.policies.lerobot_local.policy import LerobotLocalPolicy
+from strands_robots.policies.lerobot_local.processor import ProcessorBridge
+
 logger = logging.getLogger(__name__)
 
 # Models to test — override with env vars for custom models
@@ -42,8 +46,6 @@ pytestmark = pytest.mark.gpu
 @pytest.fixture(scope="module")
 def act_policy():
     """Load ACT policy once for the entire module."""
-    from strands_robots.policies.lerobot_local.policy import LerobotLocalPolicy
-
     logger.info("Loading ACT model: %s", ACT_MODEL)
     start = time.time()
     policy = LerobotLocalPolicy(pretrained_name_or_path=ACT_MODEL)
@@ -59,8 +61,6 @@ def act_policy():
 @pytest.fixture(scope="module")
 def diffusion_policy():
     """Load Diffusion policy once for the entire module."""
-    from strands_robots.policies.lerobot_local.policy import LerobotLocalPolicy
-
     logger.info("Loading Diffusion model: %s", DIFFUSION_MODEL)
     start = time.time()
     policy = LerobotLocalPolicy(pretrained_name_or_path=DIFFUSION_MODEL)
@@ -210,8 +210,6 @@ class TestFactoryResolution:
 
     def test_create_policy_from_smart_string(self):
         """create_policy('lerobot/act_aloha_sim_...') should auto-resolve to lerobot_local."""
-        from strands_robots.policies import create_policy
-
         policy = create_policy(ACT_MODEL)
         assert policy.provider_name == "lerobot_local"
         assert policy._loaded is True
@@ -222,8 +220,6 @@ class TestFactoryResolution:
 
     def test_create_policy_explicit_provider(self):
         """create_policy('lerobot_local', ...) should work with explicit provider."""
-        from strands_robots.policies import create_policy
-
         policy = create_policy("lerobot_local", pretrained_name_or_path=DIFFUSION_MODEL)
         assert policy.provider_name == "lerobot_local"
         assert policy._loaded is True
@@ -239,8 +235,6 @@ class TestProcessorBridgeIntegration:
 
     def test_processor_bridge_loads_from_real_model(self):
         """ProcessorBridge should load (or gracefully skip) from a real model path."""
-        from strands_robots.policies.lerobot_local.processor import ProcessorBridge
-
         bridge = ProcessorBridge.from_pretrained(ACT_MODEL)
         info = bridge.get_info()
 
@@ -251,8 +245,6 @@ class TestProcessorBridgeIntegration:
 
     def test_processor_bridge_passthrough_when_no_configs(self):
         """If model has no processor configs, bridge should pass data through unchanged."""
-        from strands_robots.policies.lerobot_local.processor import ProcessorBridge
-
         bridge = ProcessorBridge.from_pretrained(DIFFUSION_MODEL)
 
         observation = {"observation.state": np.array([1.0, 2.0])}

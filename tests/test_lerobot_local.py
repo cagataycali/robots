@@ -1,8 +1,6 @@
 """Tests for strands_robots.policies.lerobot_local — LerobotLocalPolicy.
 
 All tests run WITHOUT lerobot installed (pure mock/unit testing).
-torch is mocked via conftest.py when not available.
-Integration tests that load real models are in tests_integ/.
 """
 
 import json

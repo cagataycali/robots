@@ -20,7 +20,7 @@ def gr00t_inference(
     action: str,
     checkpoint_path: Optional[str] = None,
     policy_name: Optional[str] = None,
-    port: Optional[int] = None,
+    port: int = 5555,
     data_config: str = "fourier_gr1_arms_only",
     embodiment_tag: str = "gr1",
     denoising_steps: int = 4,
@@ -75,18 +75,15 @@ def gr00t_inference(
     elif action == "list":
         return _list_running_services()
     elif action == "status":
-        if port is None:
-            return {"status": "error", "message": "Port required for status check"}
         return _check_service_status(port)
     elif action == "stop":
-        if port is None:
-            return {"status": "error", "message": "Port required to stop service"}
         return _stop_service(port)
     elif action == "start":
         if checkpoint_path is None:
             return {"status": "error", "message": "Checkpoint path required to start service"}
-        if port is None:
-            port = 8000 if http_server else 5555
+        # HTTP server uses port 8000 by default
+        if http_server and port == 5555:
+            port = 8000
         return _start_service(
             checkpoint_path=checkpoint_path,
             port=port,
@@ -106,8 +103,8 @@ def gr00t_inference(
             api_token=api_token,
         )
     elif action == "restart":
-        if checkpoint_path is None or port is None:
-            return {"status": "error", "message": "Checkpoint path and port required for restart"}
+        if checkpoint_path is None:
+            return {"status": "error", "message": "Checkpoint path required for restart"}
         # Stop existing service and start new one
         _stop_service(port)
         time.sleep(2)  # Brief pause

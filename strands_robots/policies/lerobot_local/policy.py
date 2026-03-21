@@ -36,9 +36,8 @@ class LerobotLocalPolicy(Policy):
     postprocessor.json) for automatic normalization, device transfer,
     observation formatting, and action unnormalization.
 
-    For flow-matching policies that support it, Real-Time Chunking (RTC)
-    blends action chunks across inference calls to compensate for latency
-    and produce smoother robot motion.
+    Optionally supports Real-Time Chunking (RTC) for flow-matching policies,
+    blending action chunks across inference calls to compensate for latency.
 
     Args:
         pretrained_name_or_path: HF model ID or local path. If empty, model
@@ -113,7 +112,7 @@ class LerobotLocalPolicy(Policy):
         """Reset policy state between episodes.
 
         **MUST** be called whenever the environment or task episode resets.
-        LeRobot policies (ACT, Diffusion, etc.) cache internal state such as
+        LeRobot policies cache internal state such as
         action queues and temporal ensemble buffers. Without resetting, stale
         actions from the previous episode leak into the next one.
 
@@ -194,7 +193,7 @@ class LerobotLocalPolicy(Policy):
 
         Resolution order:
             1. Explicit ``tokenizer_name`` on policy config (e.g. xvla)
-            2. ``vlm_model_name`` on policy config (e.g. SmolVLA → SmolVLM2)
+            2. ``vlm_model_name`` on policy config (maps to the VLM's tokenizer)
             3. Policy's own ``.processor.tokenizer`` (e.g. Paligemma-based)
 
         Returns:
@@ -217,7 +216,7 @@ class LerobotLocalPolicy(Policy):
         # 1. tokenizer_name (explicit config field)
         tokenizer_id = getattr(config, "tokenizer_name", None)
 
-        # 2. vlm_model_name (SmolVLA, etc.)
+        # 2. vlm_model_name (VLA models)
         if not tokenizer_id:
             tokenizer_id = getattr(config, "vlm_model_name", None)
 
@@ -526,7 +525,7 @@ class LerobotLocalPolicy(Policy):
         usable_actions = action_chunk[usable_start:]
 
         # Log RTC details at debug level — only every 10th call to avoid log flooding
-        if len(self._rtc_latency_history) % 10 == 1:
+        if len(self._rtc_latency_history) % 100 == 1:  # Log every 100th call (~2s at 50Hz)
             logger.debug(
                 "RTC: chunk=%s, delay=%d, usable_start=%d, leftover=%s, avg_latency=%.3fs",
                 action_chunk.shape,
@@ -681,7 +680,7 @@ class LerobotLocalPolicy(Policy):
             batch = self._build_batch_from_strands_format(observation_dict, batch)
 
         # Inject tokenized language instruction for VLA models.
-        # VLA models (SmolVLA, XVLA, etc.) expect language tokens as part
+        # VLA models that use language tokenization expect language tokens as part
         # of the observation batch. We only inject if the model declares
         # language-related input features (tokenizer_name, vlm_model_name).
         if instruction and "observation.language.tokens" not in batch and self._needs_language_tokens():
