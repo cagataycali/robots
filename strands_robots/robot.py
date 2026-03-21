@@ -622,20 +622,17 @@ class Robot(AgentTool):
 
                 # Start task asynchronously
                 start_result = self.start_task(instruction, policy_port, policy_host, policy_provider, duration)
-                result = {"toolUseId": tool_use_id, **start_result}
-                yield ToolResultEvent(cast(ToolResult, result))
+                yield ToolResultEvent(cast(ToolResult, {"toolUseId": tool_use_id, **start_result}))
 
             elif action == "status":
                 # Get current task status
                 status_result = self.get_task_status()
-                result = {"toolUseId": tool_use_id, **status_result}
-                yield ToolResultEvent(cast(ToolResult, result))
+                yield ToolResultEvent(cast(ToolResult, {"toolUseId": tool_use_id, **status_result}))
 
             elif action == "stop":
                 # Stop current task
                 stop_result = self.stop_task()
-                result = {"toolUseId": tool_use_id, **stop_result}
-                yield ToolResultEvent(cast(ToolResult, result))
+                yield ToolResultEvent(cast(ToolResult, {"toolUseId": tool_use_id, **stop_result}))
 
             else:
                 yield ToolResultEvent(

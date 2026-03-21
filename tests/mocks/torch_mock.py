@@ -1,5 +1,10 @@
 """Comprehensive torch mock for CI environments without PyTorch.
 
+Used by conftest.py to enable running all unit tests in CI without installing
+PyTorch (~2GB). The mock provides numpy-backed replacements sufficient for
+testing policy logic, observation mapping, and action conversion without
+actual GPU inference.
+
 Provides numpy-backed replacements for:
 - torch.Tensor (MockTensor) — arithmetic, reshaping, device, slicing
 - torch.nn.Parameter (MockParameter) — with requires_grad and device
@@ -13,11 +18,14 @@ Usage:
     install_torch_mock()  # no-op if real torch is available
 """
 
+import logging
 import sys
 import types
 from unittest.mock import MagicMock
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 class MockTensor:
@@ -287,9 +295,12 @@ def install_torch_mock():
     try:
         import torch  # noqa: F401
 
+        logger.info("Real torch is available (version=%s) — mock not installed", torch.__version__)
         return  # Real torch available — nothing to do
     except ImportError:
         pass
+
+    logger.info("Installing torch mock (real torch not available)")
 
     # Root module
     torch_mock = types.ModuleType("torch")

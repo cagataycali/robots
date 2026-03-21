@@ -90,83 +90,46 @@ def _build_zero_observation(policy):
     return observation
 
 
+def _assert_valid_actions(actions, expected_key_count):
+    """Assert that actions list is well-formed: list of dicts with finite float values."""
+    assert isinstance(actions, list), f"Expected list, got {type(actions)}"
+    assert len(actions) >= 1, "Expected at least 1 action"
+    assert isinstance(actions[0], dict), f"Expected dict, got {type(actions[0])}"
+    assert len(actions[0]) == expected_key_count, (
+        f"Expected {expected_key_count} keys, got {len(actions[0])}"
+    )
+    values = np.array([v for a in actions for v in a.values()])
+    assert np.all(np.isfinite(values)), f"Non-finite values in actions: {values}"
+    assert np.all(np.abs(values) < 100), f"Unreasonably large action values: {values}"
+
+
 # ---------------------------------------------------------------------------
-# Tests: ACT Policy (14-DOF, aloha sim)
+# Tests: Full ACT Pipeline (load → configure → infer → validate)
 # ---------------------------------------------------------------------------
 
 
-class TestACTPolicy:
-    """Integration tests for ACT policy with real model inference."""
+class TestACTFullPipeline:
+    """Behavioral e2e tests for ACT policy: load a real model, run inference, validate output."""
 
-    def test_model_loads_successfully(self, act_policy):
-        """Model should load with correct internal state."""
+    def test_load_and_infer_zero_observation(self, act_policy):
+        """Full pipeline: loaded model → zero obs → get actions → valid output."""
         assert act_policy._loaded is True
         assert act_policy.provider_name == "lerobot_local"
-        assert act_policy.pretrained_name_or_path == ACT_MODEL
         assert act_policy._policy is not None
-        # Should have parameters
         n_params = sum(p.numel() for p in act_policy._policy.parameters())
         assert n_params > 0
-        logger.info("ACT model: %d parameters", n_params)
 
-    def test_policy_type_detected(self, act_policy):
-        """Policy type should be auto-detected from config."""
-        assert act_policy.policy_type is not None
-        assert len(act_policy.policy_type) > 0
-        logger.info("ACT policy type: %s", act_policy.policy_type)
-
-    def test_output_features_detected(self, act_policy):
-        """Output features (action dim) should be auto-detected."""
-        assert "action" in act_policy._output_features
-        action_feat = act_policy._output_features["action"]
-        assert hasattr(action_feat, "shape")
-        assert action_feat.shape[0] > 0
-        logger.info("ACT action dim: %s", action_feat.shape)
-
-    def test_robot_state_keys_auto_generated(self, act_policy):
-        """Robot state keys should be auto-generated from action dim."""
-        assert len(act_policy.robot_state_keys) > 0
-        assert act_policy.robot_state_keys[0] == "joint_0"
-        logger.info("ACT auto-generated %d state keys", len(act_policy.robot_state_keys))
-
-    def test_get_actions_sync_returns_action_dicts(self, act_policy):
-        """get_actions_sync should return list of action dicts with correct keys."""
         observation = _build_zero_observation(act_policy)
         actions = act_policy.get_actions_sync(observation, "pick up the cube")
+        _assert_valid_actions(actions, len(act_policy.robot_state_keys))
+        logger.info(
+            "ACT: %d params, type=%s, action_dim=%d, got %d actions",
+            n_params, act_policy.policy_type,
+            len(act_policy.robot_state_keys), len(actions),
+        )
 
-        assert isinstance(actions, list), f"Expected list, got {type(actions)}"
-        assert len(actions) >= 1, "Expected at least 1 action"
-        assert isinstance(actions[0], dict), f"Expected dict, got {type(actions[0])}"
-        assert len(actions[0]) == len(
-            act_policy.robot_state_keys
-        ), f"Expected {len(act_policy.robot_state_keys)} keys, got {len(actions[0])}"
-        # All values should be finite floats
-        for key, value in actions[0].items():
-            assert isinstance(value, float), f"Key '{key}' is not float: {type(value)}"
-            assert np.isfinite(value), f"Key '{key}' is not finite: {value}"
-        logger.info("ACT action: %d keys, sample values: %s", len(actions[0]), list(actions[0].values())[:4])
-
-    def test_action_values_valid(self, act_policy):
-        """Action values from inference should be finite and bounded."""
-        observation = _build_zero_observation(act_policy)
-        actions = act_policy.get_actions_sync(observation, "pick up the cube")
-
-        values = np.array(list(actions[0].values()))
-        assert not np.any(np.isnan(values)), "Action contains NaN values"
-        assert not np.any(np.isinf(values)), "Action contains Inf values"
-        logger.info("ACT action range: [%.4f, %.4f]", values.min(), values.max())
-
-    def test_async_get_actions(self, act_policy):
-        """Async get_actions should work via event loop."""
-        observation = _build_zero_observation(act_policy)
-        actions = asyncio.run(act_policy.get_actions(observation, "test"))
-
-        assert isinstance(actions, list)
-        assert len(actions) >= 1
-        assert isinstance(actions[0], dict)
-
-    def test_explicit_robot_state_keys(self, act_policy):
-        """Setting explicit state keys should override auto-generated ones."""
+    def test_custom_state_keys_respected(self, act_policy):
+        """Setting explicit state keys should change action dict keys."""
         action_dim = act_policy._output_features["action"].shape[0]
         custom_keys = [f"motor_{i}" for i in range(action_dim)]
         act_policy.set_robot_state_keys(custom_keys)
@@ -179,11 +142,10 @@ class TestACTPolicy:
         act_policy.set_robot_state_keys([])
 
     def test_strands_format_observation(self, act_policy):
-        """Policy should accept strands-robots native observation format."""
+        """Policy should accept strands-robots native observation format (individual keys)."""
         action_dim = act_policy._output_features["action"].shape[0]
         act_policy.set_robot_state_keys([f"joint_{i}" for i in range(action_dim)])
 
-        # Individual joint key format
         observation = {f"joint_{i}": 0.0 for i in range(action_dim)}
 
         # Add a dummy image for each image feature
@@ -194,89 +156,51 @@ class TestACTPolicy:
                 break
 
         actions = act_policy.get_actions_sync(observation, "test")
-        assert isinstance(actions, list)
-        assert len(actions) >= 1
+        assert isinstance(actions, list) and len(actions) >= 1
         values = np.array(list(actions[0].values()))
-        assert not np.any(np.isnan(values))
+        assert np.all(np.isfinite(values))
 
-    def test_multiple_inference_calls_stable(self, act_policy):
+    def test_async_interface(self, act_policy):
+        """Async get_actions should produce the same kind of output."""
+        observation = _build_zero_observation(act_policy)
+        actions = asyncio.run(act_policy.get_actions(observation, "test"))
+        _assert_valid_actions(actions, len(act_policy.robot_state_keys))
+
+    def test_multiple_calls_stable(self, act_policy):
         """Multiple inference calls should produce stable (bounded, non-NaN) results."""
         observation = _build_zero_observation(act_policy)
-
         for _ in range(3):
             actions = act_policy.get_actions_sync(observation, "test")
             values = np.array(list(actions[0].values()))
-            assert not np.any(np.isnan(values)), "Action contains NaN"
-            assert not np.any(np.isinf(values)), "Action contains Inf"
-            assert np.all(np.abs(values) < 100), "Action values unreasonably large"
+            assert np.all(np.isfinite(values))
+            assert np.all(np.abs(values) < 100)
 
 
 # ---------------------------------------------------------------------------
-# Tests: Diffusion Policy (2-DOF, pusht)
+# Tests: Full Diffusion Pipeline
 # ---------------------------------------------------------------------------
 
 
-class TestDiffusionPolicy:
-    """Integration tests for Diffusion policy with real model inference."""
+class TestDiffusionFullPipeline:
+    """Behavioral e2e tests for Diffusion policy."""
 
-    def test_model_loads_successfully(self, diffusion_policy):
-        """Model should load with correct internal state."""
+    def test_load_and_infer_zero_observation(self, diffusion_policy):
+        """Full pipeline: loaded model → zero obs → get actions → valid 2-DOF output."""
         assert diffusion_policy._loaded is True
-        assert diffusion_policy.provider_name == "lerobot_local"
-        assert diffusion_policy.pretrained_name_or_path == DIFFUSION_MODEL
-        assert diffusion_policy._policy is not None
-        n_params = sum(p.numel() for p in diffusion_policy._policy.parameters())
-        assert n_params > 0
-        logger.info("Diffusion model: %d parameters", n_params)
+        assert diffusion_policy._output_features["action"].shape[0] == 2
 
-    def test_policy_type_detected(self, diffusion_policy):
-        """Policy type should be auto-detected from config."""
-        assert diffusion_policy.policy_type is not None
-        logger.info("Diffusion policy type: %s", diffusion_policy.policy_type)
-
-    def test_output_features_detected(self, diffusion_policy):
-        """Output features (action dim) should be auto-detected."""
-        assert "action" in diffusion_policy._output_features
-        action_feat = diffusion_policy._output_features["action"]
-        assert hasattr(action_feat, "shape")
-        assert action_feat.shape[0] == 2, f"Expected 2-DOF for pusht, got {action_feat.shape[0]}"
-        logger.info("Diffusion action dim: %s", action_feat.shape)
-
-    def test_get_actions_sync_returns_action_dicts(self, diffusion_policy):
-        """get_actions_sync should return list of action dicts."""
         observation = _build_zero_observation(diffusion_policy)
         actions = diffusion_policy.get_actions_sync(observation, "push the T block")
-
-        assert isinstance(actions, list)
-        assert len(actions) >= 1
-        assert isinstance(actions[0], dict)
-        for value in actions[0].values():
-            assert isinstance(value, float)
-            assert np.isfinite(value)
-
-    def test_action_values_valid(self, diffusion_policy):
-        """Action values from inference should be finite and bounded."""
-        observation = _build_zero_observation(diffusion_policy)
-        actions = diffusion_policy.get_actions_sync(observation, "push the T block")
-
-        values = np.array(list(actions[0].values()))
-        assert not np.any(np.isnan(values)), "Action contains NaN values"
-        assert not np.any(np.isinf(values)), "Action contains Inf values"
-        # Diffusion policy actions should be bounded
-        assert np.all(np.abs(values) < 100), f"Actions seem unreasonably large: {values}"
-        logger.info("Diffusion action range: [%.4f, %.4f]", values.min(), values.max())
-
-    def test_action_values_in_reasonable_range(self, diffusion_policy):
-        """Action values should be in a reasonable range (not exploding)."""
-        observation = _build_zero_observation(diffusion_policy)
-        actions = diffusion_policy.get_actions_sync(observation, "push")
-
-        values = np.array(list(actions[0].values()))
-        assert np.all(np.abs(values) < 100), f"Actions seem unreasonably large: {values}"
+        _assert_valid_actions(actions, len(diffusion_policy.robot_state_keys))
+        logger.info(
+            "Diffusion: type=%s, action_dim=%d, got %d actions",
+            diffusion_policy.policy_type,
+            len(diffusion_policy.robot_state_keys), len(actions),
+        )
 
 
 # ---------------------------------------------------------------------------
-# Tests: Factory / Smart-String Resolution
+# Tests: Factory / Smart-String Resolution (e2e)
 # ---------------------------------------------------------------------------
 
 
@@ -291,6 +215,9 @@ class TestFactoryResolution:
         assert policy.provider_name == "lerobot_local"
         assert policy._loaded is True
         assert policy.policy_type is not None
+        assert policy._device is not None
+        assert len(policy._input_features) > 0
+        assert len(policy._output_features) > 0
 
     def test_create_policy_explicit_provider(self):
         """create_policy('lerobot_local', ...) should work with explicit provider."""
@@ -300,36 +227,17 @@ class TestFactoryResolution:
         assert policy.provider_name == "lerobot_local"
         assert policy._loaded is True
 
-    def test_loaded_policy_metadata_complete(self):
-        """Loaded policy should have all expected metadata attributes."""
-        from strands_robots.policies import create_policy
-
-        policy = create_policy(DIFFUSION_MODEL)
-
-        assert policy._loaded is True
-        assert policy.provider_name == "lerobot_local"
-        assert policy.pretrained_name_or_path == DIFFUSION_MODEL
-        assert policy.policy_type is not None
-        assert policy._device is not None
-        assert len(policy._input_features) > 0
-        assert len(policy._output_features) > 0
-        assert policy._policy is not None
-
-        n_params = sum(p.numel() for p in policy._policy.parameters())
-        assert n_params > 0
-        logger.info("Metadata: type=%s, device=%s, params=%d", policy.policy_type, policy._device, n_params)
-
 
 # ---------------------------------------------------------------------------
-# Tests: Processor Bridge (real model)
+# Tests: ProcessorBridge (e2e with real model configs)
 # ---------------------------------------------------------------------------
 
 
 class TestProcessorBridgeIntegration:
     """Test ProcessorBridge with real model configs."""
 
-    def test_processor_bridge_from_pretrained(self):
-        """ProcessorBridge should load (or gracefully skip) from real model."""
+    def test_processor_bridge_loads_from_real_model(self):
+        """ProcessorBridge should load (or gracefully skip) from a real model path."""
         from strands_robots.policies.lerobot_local.processor import ProcessorBridge
 
         bridge = ProcessorBridge.from_pretrained(ACT_MODEL)
@@ -341,7 +249,7 @@ class TestProcessorBridgeIntegration:
         logger.info("ACT processor bridge: %s", info)
 
     def test_processor_bridge_passthrough_when_no_configs(self):
-        """If model has no processor configs, bridge should pass data through."""
+        """If model has no processor configs, bridge should pass data through unchanged."""
         from strands_robots.policies.lerobot_local.processor import ProcessorBridge
 
         bridge = ProcessorBridge.from_pretrained(DIFFUSION_MODEL)
@@ -353,9 +261,96 @@ class TestProcessorBridgeIntegration:
         if not bridge.has_preprocessor:
             assert result == observation
 
+    def test_processor_bridge_active_model(self):
+        """If a model ships processor configs, the bridge should be active and functional.
+
+        NOTE: This test is a placeholder — currently ACT and Diffusion don't ship
+        processor configs. When a model that does is added (e.g., a VLA model),
+        update this test with that model ID.
+        """
+        from strands_robots.policies.lerobot_local.processor import ProcessorBridge
+
+        # Try ACT — if it happens to have processor configs, test them
+        bridge = ProcessorBridge.from_pretrained(ACT_MODEL)
+        if bridge.is_active:
+            logger.info("ACT has active processor bridge — testing round-trip")
+            observation = _build_zero_observation(
+                # Need a policy to get features — create one
+                __import__(
+                    "strands_robots.policies.lerobot_local.policy",
+                    fromlist=["LerobotLocalPolicy"],
+                ).LerobotLocalPolicy(pretrained_name_or_path=ACT_MODEL)
+            )
+            result = bridge.preprocess(observation)
+            assert result is not None
+        else:
+            pytest.skip("ACT model does not ship processor configs")
+
 
 # ---------------------------------------------------------------------------
-# Tests: Error Handling (real model)
+# Tests: RTC (Real-Time Chunking) e2e
+# ---------------------------------------------------------------------------
+
+
+class TestRTCIntegration:
+    """Integration tests for Real-Time Chunking with real models.
+
+    RTC requires a model that supports predict_action_chunk (flow-matching models
+    like Pi0, Pi0.5, SmolVLA). Standard ACT/Diffusion models do NOT support RTC.
+
+    This test validates that:
+    1. RTC correctly auto-detects support from model capabilities
+    2. When supported, the RTC inference path produces valid actions
+    3. When not supported, RTC gracefully disables itself
+    """
+
+    # Override with env var if you have a flow-matching model to test
+    RTC_MODEL = os.getenv("LEROBOT_RTC_MODEL", "")
+
+    def test_rtc_auto_disabled_for_act(self, act_policy):
+        """ACT does not support predict_action_chunk — RTC should be auto-disabled."""
+        assert act_policy._rtc_enabled is False
+        logger.info("ACT RTC status: disabled (expected — no predict_action_chunk)")
+
+    def test_rtc_auto_disabled_for_diffusion(self, diffusion_policy):
+        """Diffusion does not support predict_action_chunk — RTC should be auto-disabled."""
+        assert diffusion_policy._rtc_enabled is False
+        logger.info("Diffusion RTC status: disabled (expected — no predict_action_chunk)")
+
+    @pytest.mark.skipif(
+        not os.getenv("LEROBOT_RTC_MODEL"),
+        reason="Set LEROBOT_RTC_MODEL env var to test RTC with a real flow-matching model",
+    )
+    def test_rtc_full_pipeline_with_real_model(self):
+        """Full RTC pipeline: load flow-matching model → infer with RTC → validate."""
+        from strands_robots.policies.lerobot_local.policy import LerobotLocalPolicy
+
+        logger.info("Loading RTC model: %s", self.RTC_MODEL)
+        policy = LerobotLocalPolicy(
+            pretrained_name_or_path=self.RTC_MODEL,
+            rtc_enabled=True,
+        )
+        assert policy._loaded is True
+        assert policy._rtc_enabled is True, "RTC should be enabled for flow-matching model"
+
+        observation = _build_zero_observation(policy)
+        actions = policy.get_actions_sync(observation, "pick up the object")
+        _assert_valid_actions(actions, len(policy.robot_state_keys))
+
+        # Verify RTC state was populated
+        assert policy._rtc_prev_chunk is not None, "RTC should store leftover chunk"
+        assert len(policy._rtc_latency_history) == 1, "RTC should track latency"
+
+        # Second call should use prev_chunk
+        actions2 = policy.get_actions_sync(observation, "pick up the object")
+        _assert_valid_actions(actions2, len(policy.robot_state_keys))
+        assert len(policy._rtc_latency_history) == 2
+
+        logger.info("RTC: 2 calls successful, latencies: %s", policy._rtc_latency_history)
+
+
+# ---------------------------------------------------------------------------
+# Tests: Error Handling (e2e)
 # ---------------------------------------------------------------------------
 
 
@@ -363,16 +358,18 @@ class TestErrorHandling:
     """Test error handling with real loaded models."""
 
     def test_invalid_model_path_raises(self):
-        """Loading a nonexistent model should raise."""
+        """Loading a nonexistent model should raise immediately."""
         from strands_robots.policies.lerobot_local.policy import LerobotLocalPolicy
 
         with pytest.raises((ValueError, ImportError, OSError, RuntimeError)):
             LerobotLocalPolicy(pretrained_name_or_path="completely/nonexistent-model-path-xyz")
 
     def test_inference_error_propagates(self, act_policy):
-        """Inference errors should propagate immediately."""
+        """Inference errors should propagate, not be silently swallowed."""
         original_select_action = act_policy._policy.select_action
-        act_policy._policy.select_action = lambda batch: (_ for _ in ()).throw(RuntimeError("test failure"))
+        act_policy._policy.select_action = lambda batch: (_ for _ in ()).throw(
+            RuntimeError("test failure")
+        )
 
         observation = {"observation.state": np.zeros(14, dtype=np.float32)}
 

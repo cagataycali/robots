@@ -9,16 +9,6 @@ Architecture:
         → LeRobot PreTrainedPolicy.select_action / predict_action_chunk (RTC)
         → ProcessorBridge.postprocess (unnormalize, delta-action, ...)
         → Action dict
-
-Real-Time Chunking (RTC):
-    For flow-matching VLA policies (Pi0, Pi0.5, SmolVLA), RTC improves action
-    quality by blending new action chunks with leftover actions from the
-    previous inference step. This compensates for inference latency — while the
-    model is computing, the robot keeps executing, so some timesteps in the new
-    chunk are stale. RTC uses prefix guidance during denoising to smoothly merge
-    the overlap region.
-
-    Enable with: rtc_enabled=True (auto-detected from model config if available)
 """
 
 import logging
@@ -35,24 +25,20 @@ from .resolution import resolve_policy_class_by_name, resolve_policy_class_from_
 
 logger = logging.getLogger(__name__)
 
-# Default tokenizer settings — configurable via constructor kwargs
-_DEFAULT_TOKENIZER_MAX_LENGTH = 48
-_DEFAULT_TOKENIZER_PADDING_SIDE = "right"
-
 
 class LerobotLocalPolicy(Policy):
     """Policy that loads and runs LeRobot models directly (no server).
 
     Auto-detects policy type from HF config.json → delegates to LeRobot's
-    own class registry. Supports ACT, Diffusion, Pi0, SmolVLA, XVLA, etc.
+    own class registry.
 
     Optionally loads the model's processor pipeline (preprocessor.json /
     postprocessor.json) for automatic normalization, device transfer,
     observation formatting, and action unnormalization.
 
-    For flow-matching policies (Pi0, Pi0.5, SmolVLA), supports Real-Time
-    Chunking (RTC) which blends action chunks across inference calls to
-    compensate for latency and produce smoother robot motion.
+    For flow-matching policies that support it, Real-Time Chunking (RTC)
+    blends action chunks across inference calls to compensate for latency
+    and produce smoother robot motion.
 
     Args:
         pretrained_name_or_path: HF model ID or local path. If empty, model
@@ -66,7 +52,7 @@ class LerobotLocalPolicy(Policy):
         tokenizer_max_length: Max token length for VLA language tokenization.
         tokenizer_padding_side: Padding side for VLA tokenizer ("left" or "right").
         rtc_enabled: Enable Real-Time Chunking for flow-matching policies.
-            Auto-detected from model config if None. Only works with Pi0/SmolVLA.
+            Auto-detected from model config if None.
         rtc_execution_horizon: Number of timesteps from the prefix to use for
             guidance. Defaults to model config value or 10.
         rtc_max_guidance_weight: Maximum guidance weight for RTC correction.
@@ -81,8 +67,8 @@ class LerobotLocalPolicy(Policy):
         actions_per_step: int = 1,
         use_processor: bool = True,
         processor_overrides: Optional[dict] = None,
-        tokenizer_max_length: int = _DEFAULT_TOKENIZER_MAX_LENGTH,
-        tokenizer_padding_side: str = _DEFAULT_TOKENIZER_PADDING_SIDE,
+        tokenizer_max_length: int = 48,
+        tokenizer_padding_side: str = "right",
         rtc_enabled: Optional[bool] = None,
         rtc_execution_horizon: Optional[int] = None,
         rtc_max_guidance_weight: Optional[float] = None,
@@ -405,10 +391,9 @@ class LerobotLocalPolicy(Policy):
     def _init_rtc(self) -> None:
         """Initialize RTC if the loaded policy supports it.
 
-        RTC is supported by flow-matching policies (Pi0, Pi0.5, SmolVLA)
-        that implement ``predict_action_chunk(**kwargs)``. It requires the
-        policy to have an ``rtc_config`` on its config and a working
-        ``predict_action_chunk`` method.
+        RTC is supported by flow-matching policies that implement
+        ``predict_action_chunk(**kwargs)``. It requires the policy to have
+        an ``rtc_config`` on its config.
 
         Auto-detection: if ``rtc_enabled=None`` (default), RTC is enabled
         when the model's config has ``rtc_config.enabled=True``.
@@ -421,8 +406,7 @@ class LerobotLocalPolicy(Policy):
         if not has_predict_chunk:
             if self._rtc_requested is True:
                 logger.warning(
-                    "RTC requested but policy '%s' does not implement predict_action_chunk. "
-                    "RTC is only supported for flow-matching policies (Pi0, Pi0.5, SmolVLA).",
+                    "RTC requested but policy '%s' does not implement predict_action_chunk.",
                     type(self._policy).__name__,
                 )
             self._rtc_enabled = False
@@ -541,13 +525,16 @@ class LerobotLocalPolicy(Policy):
         usable_start = min(inference_delay, action_chunk.shape[0] - 1)
         usable_actions = action_chunk[usable_start:]
 
-        logger.debug(
-            "RTC: chunk=%s, delay=%d, usable_start=%d, leftover=%s",
-            action_chunk.shape,
-            inference_delay,
-            usable_start,
-            self._rtc_prev_chunk.shape if self._rtc_prev_chunk is not None else None,
-        )
+        # Log RTC details at debug level — only every 10th call to avoid log flooding
+        if len(self._rtc_latency_history) % 10 == 1:
+            logger.debug(
+                "RTC: chunk=%s, delay=%d, usable_start=%d, leftover=%s, avg_latency=%.3fs",
+                action_chunk.shape,
+                inference_delay,
+                usable_start,
+                self._rtc_prev_chunk.shape if self._rtc_prev_chunk is not None else None,
+                sum(self._rtc_latency_history) / len(self._rtc_latency_history),
+            )
 
         return usable_actions
 
@@ -574,7 +561,7 @@ class LerobotLocalPolicy(Policy):
             else:
                 raise RuntimeError(
                     "No model loaded and no pretrained_name_or_path set. "
-                    "Create the policy with a model path or call _load_model() first."
+                    "Create the policy with a model path."
                 )
 
         observation = dict(observation_dict)
@@ -639,16 +626,13 @@ class LerobotLocalPolicy(Policy):
         # of the observation batch. We only inject if the model declares
         # language-related input features (tokenizer_name, vlm_model_name).
         if instruction and "observation.language.tokens" not in batch and self._needs_language_tokens():
-            try:
-                result = self._tokenize_instruction(instruction)
-                if result is not None:
-                    tokens, mask = result
-                    batch["observation.language.tokens"] = tokens
-                    if mask is not None:
-                        batch["observation.language.attention_mask"] = mask
-                    logger.debug("VLA tokenized instruction: '%s...' -> %s", instruction[:50], tokens.shape)
-            except (ImportError, OSError, ValueError) as exc:
-                logger.debug("VLA tokenization failed: %s", exc)
+            result = self._tokenize_instruction(instruction)
+            if result is not None:
+                tokens, mask = result
+                batch["observation.language.tokens"] = tokens
+                if mask is not None:
+                    batch["observation.language.attention_mask"] = mask
+                logger.debug("VLA tokenized instruction: '%s...' -> %s", instruction[:50], tokens.shape)
 
         # Fill task key for models that read it directly from the batch
         # (e.g. some VLA models read "task" or "observation.task" from the
@@ -660,13 +644,15 @@ class LerobotLocalPolicy(Policy):
                     if "task" in feat_name and feat_name not in batch:
                         batch[feat_name] = instruction
 
-        # Fill missing image features with zero tensors so the model doesn't
-        # crash on missing expected inputs. This handles cases where the robot
-        # doesn't have all cameras the model was trained with.
-        for feat_name, feat_info in self._input_features.items():
+        # Validate required image features are present. Missing images would
+        # cause the model to produce garbage outputs silently.
+        for feat_name in self._input_features:
             if feat_name not in batch and "image" in feat_name:
-                shape = feat_info.shape if hasattr(feat_info, "shape") else (3, 480, 640)
-                batch[feat_name] = torch.zeros(1, *shape, device=self._device)
+                raise ValueError(
+                    f"Missing required image feature '{feat_name}' in observation. "
+                    f"The model expects this camera input. Provide it in the observation dict "
+                    f"or check your camera configuration."
+                )
 
         return batch
 
@@ -793,15 +779,17 @@ class LerobotLocalPolicy(Policy):
                     state_values.append(float(value))
 
         if state_values:
-            # Pad or truncate to match the model's expected state dimension.
-            # Models are trained with a fixed state vector size — mismatches
-            # cause shape errors in the forward pass.
+            # Validate state dimension matches what the model expects.
+            # Dimension mismatches cause shape errors in the forward pass.
             state_feature = self._input_features.get("observation.state")
             if state_feature:
                 expected_dim = state_feature.shape[0] if hasattr(state_feature, "shape") else len(state_values)
-                while len(state_values) < expected_dim:
-                    state_values.append(0.0)
-                state_values = state_values[:expected_dim]
+                if len(state_values) != expected_dim:
+                    raise ValueError(
+                        f"State dimension mismatch: got {len(state_values)} values from "
+                        f"robot_state_keys but model expects {expected_dim}. "
+                        f"Check that robot_state_keys matches your robot's actual joint count."
+                    )
             batch["observation.state"] = torch.tensor(state_values, dtype=torch.float32).unsqueeze(0).to(self._device)
 
         # Map camera images to model's image input features.

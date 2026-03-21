@@ -13,6 +13,16 @@ import numpy as np
 import pytest
 import torch  # real or conftest mock — both work
 
+from strands_robots.policies.lerobot_local.policy import LerobotLocalPolicy
+from strands_robots.policies.lerobot_local.processor import ProcessorBridge
+from strands_robots.policies.lerobot_local.resolution import (
+    _read_policy_type_from_config,
+    resolve_policy_class_by_name,
+    resolve_policy_class_from_hub,
+)
+from strands_robots.policies import Policy, create_policy
+from strands_robots.registry import list_policy_providers
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -20,8 +30,6 @@ import torch  # real or conftest mock — both work
 
 def _make_policy(**kwargs):
     """Create a LerobotLocalPolicy with model loading disabled."""
-    from strands_robots.policies.lerobot_local.policy import LerobotLocalPolicy
-
     with patch.object(LerobotLocalPolicy, "_load_model"):
         policy = LerobotLocalPolicy(**kwargs)
     return policy
@@ -29,8 +37,6 @@ def _make_policy(**kwargs):
 
 def _make_loaded_policy(action_dim=6, state_dim=6, device="cpu"):
     """Create a LerobotLocalPolicy that appears loaded (mocked internals)."""
-    from strands_robots.policies.lerobot_local.policy import LerobotLocalPolicy
-
     with patch.object(LerobotLocalPolicy, "_load_model"):
         policy = LerobotLocalPolicy(pretrained_name_or_path="test/model")
 
@@ -65,7 +71,6 @@ def _make_loaded_policy(action_dim=6, state_dim=6, device="cpu"):
 class TestLerobotLocalInit:
     def test_init_without_path(self):
         """Creating without pretrained_name_or_path should not load model."""
-        from strands_robots.policies.lerobot_local.policy import LerobotLocalPolicy
 
         policy = LerobotLocalPolicy()
         assert policy._loaded is False
@@ -74,7 +79,6 @@ class TestLerobotLocalInit:
 
     def test_init_with_path_triggers_load(self):
         """Creating with pretrained_name_or_path should call _load_model."""
-        from strands_robots.policies.lerobot_local.policy import LerobotLocalPolicy
 
         with patch.object(LerobotLocalPolicy, "_load_model") as mock_load:
             LerobotLocalPolicy(pretrained_name_or_path="lerobot/act_aloha_sim")
@@ -93,8 +97,6 @@ class TestLerobotLocalInit:
         assert policy.actions_per_step == 5
 
     def test_is_policy_subclass(self):
-        from strands_robots.policies import Policy
-        from strands_robots.policies.lerobot_local.policy import LerobotLocalPolicy
 
         assert issubclass(LerobotLocalPolicy, Policy)
 
@@ -304,7 +306,6 @@ class TestNeedsLanguageTokens:
 
 class TestLoadModel:
     def test_load_with_explicit_policy_type(self):
-        from strands_robots.policies.lerobot_local.policy import LerobotLocalPolicy
 
         mock_policy_cls = MagicMock()
         mock_inner = MagicMock()
@@ -334,7 +335,6 @@ class TestLoadModel:
         assert policy._device == torch.device("cpu")
 
     def test_load_without_policy_type_resolves_from_hub(self):
-        from strands_robots.policies.lerobot_local.policy import LerobotLocalPolicy
 
         mock_policy_cls = MagicMock()
         mock_inner = MagicMock()
@@ -360,7 +360,6 @@ class TestLoadModel:
         assert policy._loaded is True
 
     def test_device_from_config(self):
-        from strands_robots.policies.lerobot_local.policy import LerobotLocalPolicy
 
         mock_policy_cls = MagicMock()
         mock_inner = MagicMock()
@@ -385,7 +384,6 @@ class TestLoadModel:
         assert policy._device == torch.device("cpu")
 
     def test_auto_generates_state_keys_from_output(self):
-        from strands_robots.policies.lerobot_local.policy import LerobotLocalPolicy
 
         action_feat = MagicMock()
         action_feat.shape = (4,)
@@ -423,7 +421,6 @@ class TestLoadModel:
 
 class TestGetActions:
     def test_not_loaded_triggers_load(self):
-        from strands_robots.policies.lerobot_local.policy import LerobotLocalPolicy
 
         with patch.object(LerobotLocalPolicy, "_load_model") as mock_load:
             policy = LerobotLocalPolicy()
@@ -457,7 +454,6 @@ class TestGetActions:
         assert set(actions[0].keys()) == {"shoulder", "elbow", "gripper"}
 
     def test_no_path_raises_runtime_error(self):
-        from strands_robots.policies.lerobot_local.policy import LerobotLocalPolicy
 
         policy = LerobotLocalPolicy()
         policy.robot_state_keys = ["a", "b"]
@@ -651,19 +647,16 @@ class TestReset:
 
 class TestPolicyResolution:
     def test_resolve_policy_class_by_name_raises_for_unknown(self):
-        from strands_robots.policies.lerobot_local.resolution import resolve_policy_class_by_name
 
         with pytest.raises((ImportError, ValueError)):
             resolve_policy_class_by_name("nonexistent_policy_type_xyz")
 
     def test_resolve_from_hub_raises_without_type(self):
-        from strands_robots.policies.lerobot_local.resolution import resolve_policy_class_from_hub
 
         with pytest.raises((ValueError, ImportError, Exception)):
             resolve_policy_class_from_hub("completely/fake-model-path-that-does-not-exist")
 
     def test_resolve_by_name_modeling_submodule(self):
-        from strands_robots.policies.lerobot_local.resolution import resolve_policy_class_by_name
 
         mock_policy_class = type("ACTPolicy", (), {"from_pretrained": classmethod(lambda cls: None)})
         mock_module = types.ModuleType("lerobot.policies.act.modeling_act")
@@ -674,7 +667,6 @@ class TestPolicyResolution:
             assert result is mock_policy_class
 
     def test_read_policy_type_from_local_config(self, tmp_path):
-        from strands_robots.policies.lerobot_local.resolution import _read_policy_type_from_config
 
         config_dir = tmp_path / "model"
         config_dir.mkdir()
@@ -691,13 +683,11 @@ class TestPolicyResolution:
 
 class TestRegistryIntegration:
     def test_lerobot_local_in_registry(self):
-        from strands_robots.registry import list_policy_providers
 
         providers = list_policy_providers()
         assert "lerobot_local" in providers
 
     def test_create_policy_lerobot_local_without_model(self):
-        from strands_robots.policies import create_policy
 
         policy = create_policy("lerobot_local")
         assert policy.provider_name == "lerobot_local"
@@ -711,7 +701,6 @@ class TestRegistryIntegration:
 
 class TestProcessorBridge:
     def test_inactive_bridge(self):
-        from strands_robots.policies.lerobot_local.processor import ProcessorBridge
 
         bridge = ProcessorBridge()
         assert not bridge.is_active
@@ -719,14 +708,12 @@ class TestProcessorBridge:
         assert not bridge.has_postprocessor
 
     def test_passthrough_preprocess(self):
-        from strands_robots.policies.lerobot_local.processor import ProcessorBridge
 
         bridge = ProcessorBridge()
         observation = {"key": "value"}
         assert bridge.preprocess(observation) == observation
 
     def test_passthrough_postprocess(self):
-        from strands_robots.policies.lerobot_local.processor import ProcessorBridge
 
         bridge = ProcessorBridge()
         action = np.array([1.0, 2.0])
@@ -734,7 +721,6 @@ class TestProcessorBridge:
         np.testing.assert_array_equal(result, action)
 
     def test_preprocess_raises_on_pipeline_error(self):
-        from strands_robots.policies.lerobot_local.processor import ProcessorBridge
 
         mock_pre = MagicMock()
         mock_pre.process_observation.side_effect = ValueError("bad data")
@@ -745,7 +731,6 @@ class TestProcessorBridge:
             bridge.preprocess({})
 
     def test_postprocess_raises_on_pipeline_error(self):
-        from strands_robots.policies.lerobot_local.processor import ProcessorBridge
 
         mock_post = MagicMock()
         mock_post.process_action.side_effect = ValueError("bad action")
@@ -756,13 +741,11 @@ class TestProcessorBridge:
             bridge.postprocess(torch.zeros(2))
 
     def test_reset_with_no_pipelines(self):
-        from strands_robots.policies.lerobot_local.processor import ProcessorBridge
 
         bridge = ProcessorBridge()
         bridge.reset()  # Should not raise
 
     def test_from_pretrained_passthrough_when_no_lerobot(self):
-        from strands_robots.policies.lerobot_local.processor import ProcessorBridge
 
         with patch("strands_robots.policies.lerobot_local.processor._try_import_processor", return_value=None):
             bridge = ProcessorBridge.from_pretrained("test/model")

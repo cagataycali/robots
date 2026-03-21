@@ -628,7 +628,7 @@ def _record_video_sequence(
         camera.connect(warmup=warmup)
 
         # Setup video writer
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # type: ignore[attr-defined]
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # type: ignore[attr-defined]  # cv2 stubs incomplete
         video_writer = cv2.VideoWriter(video_path, fourcc, fps, (width, height))
 
         frames_captured = 0

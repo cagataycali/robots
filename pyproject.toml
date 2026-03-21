@@ -7,7 +7,7 @@ name = "strands-robots"
 dynamic = ["version"]
 description = "AI-powered robot control, simulation, and training for Strands Agents — integrates with MuJoCo, Isaac Sim, Newton, and many more"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12,<3.14"
 license = {text = "Apache-2.0"}
 authors = [
     {name = "AWS", email = "opensource@amazon.com"},
@@ -26,11 +26,8 @@ classifiers = [
     "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
-    "Programming Language :: Python :: 3.14",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Scientific/Engineering :: Physics",
     "Topic :: Software Development :: Libraries :: Python Modules",
@@ -51,35 +48,9 @@ groot-service = [
 lerobot = [
     "lerobot>=0.5.0,<0.6.0",
 ]
-mujoco = [
-    "mujoco>=3.0.0,<4.0.0",
-    "Pillow>=8.0.0,<12.0.0",
-]
-newton = [
-    "warp-lang>=1.11.0,<2.0.0",
-    "trimesh>=4.0.0,<5.0.0",
-    "mujoco>=3.5.0,<4.0.0",
-    "numpy>=1.24.0,<3.0.0",
-]
-zenoh = [
-    "eclipse-zenoh>=1.0.0,<2.0.0",
-]
-policies = [
-    "transformers>=4.40.0,<5.0.0",
-    "sentencepiece>=0.1.99,<0.3.0",
-    "num2words>=0.5.13,<0.6.0",
-    "scipy>=1.10.0,<2.0.0",
-    "imageio>=2.30.0,<3.0.0",
-    "imageio-ffmpeg>=0.4.0,<0.5.0",
-    "av>=10.0.0,<14.0.0",
-]
 all = [
     "strands-robots[groot-service]",
     "strands-robots[lerobot]",
-    "strands-robots[mujoco]",
-    "strands-robots[policies]",
-    "strands-robots[newton]",
-    "strands-robots[zenoh]",
 ]
 dev = [
     "pytest>=6.0,<9.0.0",
@@ -88,6 +59,7 @@ dev = [
     "isort>=5.12.0,<6.0.0",
     "flake8>=6.0.0,<8.0.0",
     "mypy>=1.0.0,<2.0.0",
+    "pytest-timeout>=2.0.0,<3.0.0",
 ]
 
 [project.urls]
@@ -125,14 +97,21 @@ format = ["black strands_robots tests tests_integ", "isort strands_robots tests 
 
 [tool.black]
 line-length = 120
-target-version = ['py310']
+target-version = ['py312']
 include = '\.pyi?$'
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.12"
+# warn_return_any: disabled because LeRobot's PreTrainedPolicy and draccus
+# config classes use dynamic attribute access that returns Any pervasively.
+# Enabling this floods the output with false positives from third-party code.
 warn_return_any = false
 warn_unused_configs = true
+# disallow_untyped_defs: disabled because strands_robots tools use @tool
+# decorator which injects runtime signatures — mypy can't type-check those.
 disallow_untyped_defs = false
+# ignore_missing_imports: lerobot, gr00t, and other optional deps have no
+# type stubs. Required to avoid errors on `import lerobot.*` etc.
 ignore_missing_imports = true
 
 [tool.isort]
@@ -144,6 +123,5 @@ multi_line_output = 3
 testpaths = ["tests"]
 addopts = "-v --cov=strands_robots --cov-report=term-missing"
 markers = [
-    "gpu: requires CUDA GPU (deselected by default, run with: pytest -m gpu)",
-    "e2e: end-to-end tests requiring real models (run with: hatch run test-e2e)",
+    "gpu: requires CUDA GPU and real model weights (run with: pytest -m gpu)",
 ]

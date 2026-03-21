@@ -84,7 +84,6 @@ class ProcessorBridge:
         self._preprocessor = preprocessor
         self._postprocessor = postprocessor
         self._device = device
-        self._pipeline_cls = _try_import_processor()
 
     @classmethod
     def from_pretrained(
@@ -128,9 +127,8 @@ class ProcessorBridge:
             )
             logger.info("Loaded preprocessor from %s: %d steps", pretrained_name_or_path, len(preprocessor))
         except (FileNotFoundError, ValueError) as exc:
+            # No config file found — model doesn't ship a preprocessor. This is normal.
             logger.debug("No preprocessor found: %s", exc)
-        except OSError as exc:
-            logger.warning("Failed to load preprocessor: %s", exc)
 
         # Load postprocessor
         try:
@@ -141,9 +139,8 @@ class ProcessorBridge:
             )
             logger.info("Loaded postprocessor from %s: %d steps", pretrained_name_or_path, len(postprocessor))
         except (FileNotFoundError, ValueError) as exc:
+            # No config file found — model doesn't ship a postprocessor. This is normal.
             logger.debug("No postprocessor found: %s", exc)
-        except OSError as exc:
-            logger.warning("Failed to load postprocessor: %s", exc)
 
         return cls(
             preprocessor=preprocessor,
@@ -180,7 +177,7 @@ class ProcessorBridge:
         Raises:
             RuntimeError: If the preprocessor pipeline fails.
         """
-        if self._preprocessor is None or self._pipeline_cls is None:
+        if self._preprocessor is None:
             return observation
 
         try:
@@ -202,7 +199,7 @@ class ProcessorBridge:
         Raises:
             RuntimeError: If the postprocessor pipeline fails.
         """
-        if self._postprocessor is None or self._pipeline_cls is None:
+        if self._postprocessor is None:
             return action
 
         try:

@@ -6,6 +6,7 @@ Manages GR00T policy inference services running in Docker containers.
 Uses Isaac-GR00T's native inference service for proper ZMQ/HTTP communication.
 """
 
+import os
 import socket
 import subprocess
 import time
@@ -60,11 +61,14 @@ def gr00t_inference(
         llm_dtype: LLM model dtype - "fp16", "nvfp4", or "fp8" (default: nvfp4, only with TensorRT)
         dit_dtype: DiT model dtype - "fp16" or "fp8" (default: fp8, only with TensorRT)
         http_server: Use HTTP server instead of ZMQ (default: False)
-        api_token: API token for authentication (optional)
+        api_token: API token for authentication. Falls back to GROOT_API_TOKEN env var if not provided.
 
     Returns:
         Dict with status and information about the operation
     """
+    # Resolve api_token from env var if not provided as parameter
+    if api_token is None:
+        api_token = os.environ.get("GROOT_API_TOKEN")
 
     if action == "find_containers":
         return _find_gr00t_containers()

@@ -12,18 +12,19 @@ from strands_robots.policies import (
     register_policy,
 )
 
-# Skip marker for tests that need groot-service extras (zmq, msgpack)
+# Skip marker for tests that need groot-service extras (zmq, msgpack).
+# Can't use module-level importorskip here because most tests DON'T need groot.
 try:
     import msgpack  # noqa: F401
     import zmq  # noqa: F401
 
-    _groot_service_available = True
+    _groot_available = True
 except ImportError:
-    _groot_service_available = False
+    _groot_available = False
 
 requires_groot_service = pytest.mark.skipif(
-    not _groot_service_available,
-    reason="groot-service extras not installed (zmq, msgpack)",
+    not _groot_available,
+    reason="groot-service extras not installed — pip install 'strands-robots[groot-service]'",
 )
 
 

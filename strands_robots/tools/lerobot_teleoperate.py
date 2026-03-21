@@ -588,7 +588,7 @@ def lerobot_teleoperate(
             if not session_name:
                 return {"status": "error", "content": [{"text": "❌ Session name required for stop action"}]}
 
-            session_info = session_manager.get_session(session_name)  # type: ignore[no-redef, assignment]
+            session_info = session_manager.get_session(session_name)  # type: ignore[no-redef, assignment]  # narrowing from Optional
             if not session_info:
                 return {"status": "error", "content": [{"text": f"❌ Session '{session_name}' not found"}]}
 
@@ -596,14 +596,15 @@ def lerobot_teleoperate(
             if not pid:
                 return {"status": "error", "content": [{"text": f"❌ No PID found for session '{session_name}'"}]}
 
+            pid_int = int(pid)
             try:
                 # Try graceful termination first
-                os.kill(int(pid), signal.SIGTERM)
+                os.kill(pid_int, signal.SIGTERM)
                 time.sleep(2)
 
                 # Check if still running
-                if psutil.pid_exists(int(pid)):
-                    os.kill(int(pid), signal.SIGKILL)
+                if psutil.pid_exists(pid_int):
+                    os.kill(pid_int, signal.SIGKILL)
 
                 session_manager.remove_session(session_name)
 
@@ -666,7 +667,7 @@ def lerobot_teleoperate(
             if not session_name:
                 return {"status": "error", "content": [{"text": "❌ Session name required for status action"}]}
 
-            session_info = session_manager.get_session(session_name)  # type: ignore[no-redef, assignment]
+            session_info = session_manager.get_session(session_name)  # type: ignore[no-redef, assignment]  # narrowing from Optional
             if not session_info:
                 return {"status": "error", "content": [{"text": f"❌ Session '{session_name}' not found"}]}
 

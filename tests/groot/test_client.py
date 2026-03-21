@@ -15,6 +15,7 @@ import pytest
 msgpack = pytest.importorskip("msgpack", reason="msgpack not installed — pip install 'strands-robots[groot-service]'")
 zmq = pytest.importorskip("zmq", reason="zmq not installed — pip install 'strands-robots[groot-service]'")
 
+# E402: importorskip must execute before these imports to skip the module cleanly.
 from strands_robots.policies.groot.client import Gr00tInferenceClient, MsgSerializer  # noqa: E402
 from strands_robots.policies.groot.data_config import ModalityConfig  # noqa: E402
 
