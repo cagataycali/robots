@@ -567,14 +567,15 @@ class LerobotLocalPolicy(Policy):
         if instruction and "task" not in observation:
             observation["task"] = instruction
 
-        # When the processor bridge has a preprocessor, it handles all
-        # observation conversion (HWC→CHW, uint8→float, normalization,
-        # device transfer, batching).  Feeding its output through
-        # _build_observation_batch would double-normalize images.
+        # When the processor bridge has a preprocessor, delegate normalization
+        # and tokenization to it, then fix up any remaining raw arrays/tensors
+        # that the pipeline did not convert (e.g. images left as HWC uint8
+        # numpy, state tensors missing a batch dimension).
         if self._processor_bridge and self._processor_bridge.has_preprocessor:
             batch = self._processor_bridge.preprocess(observation, instruction=instruction)
             if not isinstance(batch, dict):
                 batch = {"observation.state": batch}
+            batch = self._fixup_preprocessed_batch(batch)
         else:
             batch = self._build_observation_batch(observation, instruction)
 
@@ -594,6 +595,65 @@ class LerobotLocalPolicy(Policy):
     # ------------------------------------------------------------------
     # Observation batch building
     # ------------------------------------------------------------------
+
+    def _fixup_preprocessed_batch(self, batch: Dict[str, Any]) -> Dict[str, Any]:
+        """Fix up a preprocessor-produced batch so every value is a proper batched tensor.
+
+        The LeRobot DataProcessorPipeline may leave some entries in their
+        original format (e.g. images as HWC uint8 numpy arrays, state tensors
+        without a leading batch dimension).  This method ensures every value
+        is a ``torch.Tensor`` on the correct device with the shapes that
+        ``policy.select_action()`` expects:
+
+        - Images: ``(B, C, H, W)`` float32
+        - State: ``(B, D)`` float32
+        - Language tokens/mask: already batched by the tokenizer step
+
+        Args:
+            batch: Dict from ``ProcessorBridge.preprocess()``.
+
+        Returns:
+            Dict with all values as properly shaped device tensors.
+        """
+        import torch
+
+        device = self._device or "cpu"
+        fixed: Dict[str, Any] = {}
+
+        for key, val in batch.items():
+            # --- numpy arrays → torch tensors ---
+            if isinstance(val, np.ndarray):
+                if "image" in key:
+                    # HWC uint8 → CHW float32 → (1,C,H,W)
+                    img = torch.from_numpy(val).float()
+                    if img.ndim == 3 and img.shape[-1] in (1, 3, 4):
+                        img = img.permute(2, 0, 1)  # HWC → CHW
+                    if img.ndim == 3:
+                        img = img.unsqueeze(0)  # CHW → (1,C,H,W)
+                    fixed[key] = img.to(device)
+                else:
+                    t = torch.from_numpy(val).float()
+                    if t.ndim == 1:
+                        t = t.unsqueeze(0)  # (D,) → (1,D)
+                    fixed[key] = t.to(device)
+
+            # --- torch tensors: ensure batch dim + device ---
+            elif isinstance(val, torch.Tensor):
+                t = val
+                if "image" in key:
+                    if t.ndim == 3 and t.shape[-1] in (1, 3, 4):
+                        t = t.permute(2, 0, 1)  # HWC → CHW
+                    if t.ndim == 3:
+                        t = t.unsqueeze(0)  # CHW → (1,C,H,W)
+                elif t.ndim == 1:
+                    t = t.unsqueeze(0)  # (D,) → (1,D)
+                fixed[key] = t.to(device)
+
+            # --- pass through anything else (strings, etc.) ---
+            else:
+                fixed[key] = val
+
+        return fixed
 
     def _build_observation_batch(self, observation_dict: Dict[str, Any], instruction: str) -> Dict[str, Any]:
         """Convert observation dict to LeRobot-compatible batch tensors.

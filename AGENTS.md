@@ -4,9 +4,15 @@
 
 `strands-robots` is an robot control library for [Strands Agents](https://strandsagents.com). It provides policy inference, teleoperation, calibration, and simulation tools for physical robots.
 
-## Project Board
+## Project Dashboard
 
-**Dashboard**: https://github.com/orgs/strands-labs/projects/2
+**Board**: https://github.com/orgs/strands-labs/projects/2
+**Project ID**: `PVT_kwDOD151Fs4BSRJP`
+
+> **RULE**: ALWAYS use the project board to track work. When creating follow-up items,
+> create GitHub issues and add them to this board with Status + Priority set.
+> Never track work only in local markdown — the board is the source of truth.
+
 
 All work is tracked here. When creating follow-up items, create GitHub issues and add them to the board with Status and Priority set.
 
