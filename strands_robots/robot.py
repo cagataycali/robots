@@ -571,7 +571,7 @@ class Robot(AgentTool):
     @staticmethod
     def _make_tool_result(tool_use_id: str, result: Dict[str, Any]) -> ToolResult:
         """Create a ToolResult dict with the given tool_use_id merged into result."""
-        return cast(ToolResult, {'toolUseId': tool_use_id, **result})
+        return cast(ToolResult, {"toolUseId": tool_use_id, **result})
 
     async def stream(
         self, tool_use: ToolUse, invocation_state: dict[str, Any], **kwargs: Any
