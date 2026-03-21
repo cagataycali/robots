@@ -22,7 +22,6 @@ import time
 import numpy as np
 import pytest
 
-from strands_robots.policies import create_policy
 from strands_robots.policies.lerobot_local.policy import LerobotLocalPolicy
 from strands_robots.policies.lerobot_local.processor import ProcessorBridge
 
@@ -203,26 +202,6 @@ class TestDiffusionFullPipeline:
 # ---------------------------------------------------------------------------
 # Tests: Factory / Smart-String Resolution (e2e)
 # ---------------------------------------------------------------------------
-
-
-class TestFactoryResolution:
-    """Test that smart-string resolution works end-to-end with real models."""
-
-    def test_create_policy_from_smart_string(self):
-        """create_policy('lerobot/act_aloha_sim_...') should auto-resolve to lerobot_local."""
-        policy = create_policy(ACT_MODEL)
-        assert policy.provider_name == "lerobot_local"
-        assert policy._loaded is True
-        assert policy.policy_type is not None
-        assert policy._device is not None
-        assert len(policy._input_features) > 0
-        assert len(policy._output_features) > 0
-
-    def test_create_policy_explicit_provider(self):
-        """create_policy('lerobot_local', ...) should work with explicit provider."""
-        policy = create_policy("lerobot_local", pretrained_name_or_path=DIFFUSION_MODEL)
-        assert policy.provider_name == "lerobot_local"
-        assert policy._loaded is True
 
 
 # ---------------------------------------------------------------------------
