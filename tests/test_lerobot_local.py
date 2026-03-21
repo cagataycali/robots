@@ -566,6 +566,20 @@ class TestBuildObservationBatch:
         assert "observation.gripper" in batch
         assert batch["observation.gripper"].shape == (1, 1)
 
+    def test_float64_tensor_auto_cast_to_float32(self):
+        """float64 tensors from ROS/dynamixel drivers should be auto-cast to float32."""
+        policy = _make_loaded_policy(state_dim=3, include_images=False)
+        observation = {"observation.state": torch.tensor([1.0, 2.0, 3.0], dtype=torch.float64)}
+        batch = policy._build_observation_batch(observation, "test")
+        assert batch["observation.state"].dtype == torch.float32
+
+    def test_float64_numpy_auto_cast_to_float32(self):
+        """float64 numpy arrays should be auto-cast to float32."""
+        policy = _make_loaded_policy(state_dim=3, include_images=False)
+        observation = {"observation.state": np.array([1.0, 2.0, 3.0], dtype=np.float64)}
+        batch = policy._build_observation_batch(observation, "test")
+        assert batch["observation.state"].dtype == torch.float32
+
 
 # ---------------------------------------------------------------------------
 # Tests: _build_batch_from_strands_format
@@ -728,21 +742,40 @@ class TestProcessorBridge:
         np.testing.assert_array_equal(result, action)
 
     def test_preprocess_raises_on_pipeline_error(self):
+        """preprocess() wraps pipeline exceptions in RuntimeError.
 
+        The production code calls _preprocessor._forward(transition) after
+        building a transition via create_transition(). We mock _forward to
+        raise and patch the lerobot imports so the transition-building path
+        is exercised regardless of whether lerobot is installed.
+        """
         mock_pre = MagicMock()
-        mock_pre.process_observation.side_effect = ValueError("bad data")
+        mock_pre._forward.side_effect = ValueError("bad data")
         bridge = ProcessorBridge(preprocessor=mock_pre)
-        bridge._pipeline_cls = MagicMock()
 
-        with pytest.raises(RuntimeError, match="Preprocessor pipeline failed"):
-            bridge.preprocess({})
+        # Patch the lerobot imports used inside preprocess()
+        mock_create_transition = MagicMock(return_value={"observation": {}})
+        mock_transition_key = MagicMock()
+        mock_transition_key.OBSERVATION = "observation"
+
+        with patch(
+            "strands_robots.policies.lerobot_local.processor.create_transition",
+            mock_create_transition,
+            create=True,
+        ):
+            with patch(
+                "strands_robots.policies.lerobot_local.processor.TransitionKey",
+                mock_transition_key,
+                create=True,
+            ):
+                with pytest.raises(RuntimeError, match="Preprocessor pipeline failed"):
+                    bridge.preprocess({})
 
     def test_postprocess_raises_on_pipeline_error(self):
 
         mock_post = MagicMock()
         mock_post.process_action.side_effect = ValueError("bad action")
         bridge = ProcessorBridge(postprocessor=mock_post)
-        bridge._pipeline_cls = MagicMock()
 
         with pytest.raises(RuntimeError, match="Postprocessor pipeline failed"):
             bridge.postprocess(torch.zeros(2))

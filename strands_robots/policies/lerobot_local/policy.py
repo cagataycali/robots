@@ -638,7 +638,8 @@ class LerobotLocalPolicy(Policy):
 
             # --- torch tensors: ensure batch dim + device ---
             elif isinstance(val, torch.Tensor):
-                t = val
+                # Auto-cast float64 → float32: ROS/dynamixel drivers often produce float64
+                t = val.float() if val.dtype == torch.float64 else val
                 if "image" in key:
                     if t.ndim == 3 and t.shape[-1] in (1, 3, 4):
                         t = t.permute(2, 0, 1)  # HWC → CHW
@@ -745,7 +746,8 @@ class LerobotLocalPolicy(Policy):
             )
 
             if isinstance(value, torch.Tensor):
-                tensor = value
+                # Auto-cast float64 → float32: common from ROS/dynamixel drivers
+                tensor = value.float() if value.dtype == torch.float64 else value
                 # Detect unlabeled images by shape: 3D tensor with channel-last layout
                 if not is_image and tensor.dim() == 3 and tensor.shape[-1] in (1, 3, 4):
                     is_image = True
