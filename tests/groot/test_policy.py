@@ -9,6 +9,12 @@ import pytest
 msgpack = pytest.importorskip("msgpack", reason="msgpack not installed — pip install 'strands-robots[groot-service]'")
 zmq = pytest.importorskip("zmq", reason="zmq not installed — pip install 'strands-robots[groot-service]'")
 
+# All tests in this file require groot-service extras
+pytestmark = pytest.mark.skipif(
+    not msgpack or not zmq,
+    reason="groot-service extras not installed",
+)
+
 from strands_robots.policies.groot import (  # noqa: E402
     DATA_CONFIG_MAP,
     ActionMapping,

@@ -229,7 +229,7 @@ class LerobotLocalPolicy(Policy):
                 logger.info("Auto-resolved tokenizer from '%s' (%s)", tokenizer_id, type(self._tokenizer).__name__)
                 return self._tokenizer
             except (ImportError, OSError, ValueError) as exc:
-                logger.warning("Failed to load tokenizer from '%s': %s", tokenizer_id, exc)
+                logger.debug("Tokenizer '%s' unavailable (%s), trying next strategy...", tokenizer_id, exc)
 
         # 3. policy.processor.tokenizer (built-in)
         processor = getattr(self._policy, "processor", None)
@@ -377,6 +377,12 @@ class LerobotLocalPolicy(Policy):
                     self._processor_bridge = None
                     logger.debug("No processor configs found, using raw obs/action flow")
             except (FileNotFoundError, ValueError, ImportError) as exc:
+                # Processor bridge is optional — models work without it via raw obs/action flow.
+                # Fail-fast only if the user explicitly requested processor overrides.
+                if self.processor_overrides:
+                    raise RuntimeError(
+                        f"Processor bridge failed to load but processor_overrides were specified: {exc}"
+                    ) from exc
                 logger.debug("Processor bridge not loaded: %s", exc)
                 self._processor_bridge = None
 
@@ -584,8 +590,16 @@ class LerobotLocalPolicy(Policy):
             # RTC uses predict_action_chunk() directly with cross-chunk guidance;
             # non-RTC uses select_action() which manages temporal ensemble + action queue.
             if self._rtc_enabled:
+                # RTC (Real-Time Chunking) path: calls predict_action_chunk() directly
+                # with prev_chunk for temporal blending. Used only for flow-matching
+                # policies that support rtc_config.
                 action_tensor = self._predict_with_rtc(batch)
             else:
+                # Default path: delegates to LeRobot's select_action() which handles
+                # temporal ensemble smoothing (config.temporal_ensemble_coeff) and
+                # action queue management (n_action_steps > 1) internally.
+                # We intentionally use select_action() rather than predict_action_chunk()
+                # here to preserve all upstream action scheduling logic.
                 action_tensor = self._policy.select_action(batch)
 
         if self._processor_bridge and self._processor_bridge.has_postprocessor:
@@ -693,7 +707,7 @@ class LerobotLocalPolicy(Policy):
                 batch["observation.language.tokens"] = tokens
                 if mask is not None:
                     batch["observation.language.attention_mask"] = mask
-                logger.debug("VLA tokenized instruction: '%s...' -> %s", instruction[:50], tokens.shape)
+                logger.debug("VLA tokenized instruction: '%s...' -> %s tokens", instruction[:50], tokens.shape)
 
         # Fill task key for models that read it directly from the batch
         # (e.g. some VLA models read "task" or "observation.task" from the
@@ -785,7 +799,8 @@ class LerobotLocalPolicy(Policy):
                 try:
                     array = np.array(value, dtype=np.float32)
                 except (ValueError, TypeError):
-                    # Non-numeric lists (e.g. string lists) can't be tensorized
+                    # Non-numeric lists (e.g. string lists) — skip silently, they aren't tensor data
+                    logger.debug("Skipping non-numeric list/tuple for key in observation batch")
                     continue
                 tensor = torch.from_numpy(array).float()
                 if array.ndim >= 2:

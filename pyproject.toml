@@ -113,12 +113,16 @@ ignore_missing_imports = false
 [[tool.mypy.overrides]]
 module = ["lerobot.*", "gr00t.*", "draccus.*", "msgpack.*", "zmq.*"]
 ignore_missing_imports = true
-warn_return_any = false
 
 # @tool decorator injects runtime signatures mypy cannot check
 [[tool.mypy.overrides]]
 module = ["strands_robots.tools.*"]
 disallow_untyped_defs = false
+warn_return_any = false
+
+# LeRobot local policy uses dynamic attr access via draccus PreTrainedConfig
+[[tool.mypy.overrides]]
+module = ["strands_robots.policies.lerobot_local.*"]
 warn_return_any = false
 
 [tool.isort]
