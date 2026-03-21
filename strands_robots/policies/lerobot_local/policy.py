@@ -303,7 +303,7 @@ class LerobotLocalPolicy(Policy):
         # transformers that had this attribute. Without this patch, XVLA
         # models fail to load with AttributeError.
         try:
-            from transformers.models.florence2.configuration_florence2 import (  # type: ignore[attr-defined]
+            from transformers.models.florence2.configuration_florence2 import (  # type: ignore[attr-defined,import-not-found]  # noqa: E501
                 Florence2LanguageConfig,
             )
 
