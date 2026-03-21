@@ -13,6 +13,8 @@ Features:
 - Policy abstraction for any VLA provider
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import threading
@@ -20,17 +22,17 @@ import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, AsyncGenerator, Dict, Optional, Union, cast
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, Optional, Union, cast
 
-from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
-from lerobot.robots.config import RobotConfig
-from lerobot.robots.robot import Robot as LeRobotRobot
-from lerobot.robots.utils import make_robot_from_config
 from strands.tools.tools import AgentTool
 from strands.types._events import ToolResultEvent
 from strands.types.tools import ToolResult, ToolSpec, ToolUse
 
-from .policies import Policy, create_policy
+if TYPE_CHECKING:
+    from lerobot.robots.config import RobotConfig
+    from lerobot.robots.robot import Robot as LeRobotRobot
+
+    from .policies import Policy
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +118,9 @@ class Robot(AgentTool):
         self, robot: Union[LeRobotRobot, RobotConfig, str], cameras: Optional[Dict[str, Dict[str, Any]]], **kwargs
     ) -> LeRobotRobot:
         """Initialize LeRobot robot instance using native lerobot patterns."""
+        from lerobot.robots.config import RobotConfig
+        from lerobot.robots.robot import Robot as LeRobotRobot
+        from lerobot.robots.utils import make_robot_from_config
 
         # Direct robot instance - use as-is
         if isinstance(robot, LeRobotRobot):
@@ -140,6 +145,7 @@ class Robot(AgentTool):
         self, robot_type: str, cameras: Optional[Dict[str, Dict[str, Any]]], **kwargs
     ) -> RobotConfig:
         """Create minimal robot config using specific robot config classes."""
+        from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 
         # Convert cameras to lerobot format
         camera_configs = {}
@@ -209,6 +215,7 @@ class Robot(AgentTool):
         self, policy_port: Optional[int] = None, policy_host: str = "localhost", policy_provider: str = "groot"
     ) -> Policy:
         """Create policy on-the-fly from invocation parameters."""
+        from .policies import create_policy
 
         if not policy_port:
             raise ValueError("policy_port is required for robot operation")
