@@ -130,14 +130,13 @@
 ## 🧪 Test Plan
 
 ```bash
-# Local (macOS, no GPU)
+# Local (macOS arm64, Python 3.13) — 281 passed ✅
 pytest tests/ -v --timeout=30
 
-# EC2 (L40S, CUDA)
-ssh ubuntu@13.218.34.208 "cd robots && pip install -e '.[all,dev]' && pytest tests/ -v --timeout=30"
+# EC2 (L40S, CUDA, Python 3.12) — 281 passed ✅
+ssh ubuntu@13.218.34.208 "cd robots && python3 -m pytest tests/ -v --timeout=30"
 
-# Thor (Jetson, CUDA)
-# via GitHub Actions workflow
+# Thor (Jetson, CUDA) — via GitHub Actions workflow
 ```
 
 ## 📝 Commit Plan
