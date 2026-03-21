@@ -11,51 +11,75 @@ Key features:
 - Clean separation between robot control and policy inference
 - Direct policy injection for maximum flexibility
 - Multi-camera support with rich configuration options
+
+Lazy Loading:
+    Heavy imports (Robot, tools, Gr00tPolicy) are deferred until first access.
+    This reduces ``import strands_robots`` from ~60s to <0.1s when lerobot/torch
+    are installed but not yet needed.
+
+    Light-weight symbols (Policy, MockPolicy, create_policy) are available
+    immediately since they don't pull in torch/lerobot.
 """
 
-import warnings
+import importlib as _importlib
+import warnings as _warnings
 
-try:
-    from strands_robots.policies import MockPolicy, Policy, create_policy  # noqa: F401
-    from strands_robots.robot import Robot  # noqa: F401
-    from strands_robots.tools.gr00t_inference import gr00t_inference  # noqa: F401
-    from strands_robots.tools.lerobot_calibrate import lerobot_calibrate  # noqa: F401
-    from strands_robots.tools.lerobot_camera import lerobot_camera  # noqa: F401
-    from strands_robots.tools.lerobot_teleoperate import lerobot_teleoperate  # noqa: F401
-    from strands_robots.tools.pose_tool import pose_tool  # noqa: F401
-    from strands_robots.tools.serial_tool import serial_tool  # noqa: F401
+# ------------------------------------------------------------------
+# Light-weight imports — no torch / lerobot dependency
+# ------------------------------------------------------------------
+from strands_robots.policies import MockPolicy, Policy, create_policy  # noqa: F401
 
-    try:
-        from strands_robots.policies.groot import Gr00tPolicy  # noqa: F401
+# ------------------------------------------------------------------
+# Lazy-loaded heavy symbols
+# ------------------------------------------------------------------
+# Maps public name -> (module_path, attribute_name)
+_LAZY_IMPORTS: dict[str, tuple[str, str]] = {
+    "Robot": ("strands_robots.robot", "Robot"),
+    "Gr00tPolicy": ("strands_robots.policies.groot", "Gr00tPolicy"),
+    "gr00t_inference": ("strands_robots.tools.gr00t_inference", "gr00t_inference"),
+    "lerobot_calibrate": ("strands_robots.tools.lerobot_calibrate", "lerobot_calibrate"),
+    "lerobot_camera": ("strands_robots.tools.lerobot_camera", "lerobot_camera"),
+    "lerobot_teleoperate": ("strands_robots.tools.lerobot_teleoperate", "lerobot_teleoperate"),
+    "pose_tool": ("strands_robots.tools.pose_tool", "pose_tool"),
+    "serial_tool": ("strands_robots.tools.serial_tool", "serial_tool"),
+}
 
-        __all__ = [
-            "Robot",
-            "Policy",
-            "Gr00tPolicy",
-            "MockPolicy",
-            "create_policy",
-            "gr00t_inference",
-            "lerobot_camera",
-            "lerobot_teleoperate",
-            "lerobot_calibrate",
-            "serial_tool",
-            "pose_tool",
-        ]
-    except ImportError as e:
-        warnings.warn(f"GR00T policy not available (missing dependencies): {e}")
-        __all__ = [
-            "Robot",
-            "Policy",
-            "MockPolicy",
-            "create_policy",
-            "gr00t_inference",
-            "lerobot_camera",
-            "lerobot_teleoperate",
-            "lerobot_calibrate",
-            "serial_tool",
-            "pose_tool",
-        ]
+__all__ = [
+    # Always available
+    "Policy",
+    "MockPolicy",
+    "create_policy",
+    # Lazy-loaded
+    "Robot",
+    "Gr00tPolicy",
+    "gr00t_inference",
+    "lerobot_camera",
+    "lerobot_teleoperate",
+    "lerobot_calibrate",
+    "serial_tool",
+    "pose_tool",
+]
 
-except ImportError as e:
-    warnings.warn(f"Could not import core components: {e}")
-    __all__ = []
+
+def __getattr__(name: str):  # noqa: N807
+    """Lazy-load heavy modules on first attribute access.
+
+    This avoids importing torch, lerobot, numpy, pyserial, etc. at
+    ``import strands_robots`` time.  The first access to e.g.
+    ``strands_robots.Robot`` triggers the real import.
+    """
+    if name in _LAZY_IMPORTS:
+        module_path, attr_name = _LAZY_IMPORTS[name]
+        try:
+            module = _importlib.import_module(module_path)
+            value = getattr(module, attr_name)
+            # Cache in module dict so __getattr__ is not called again
+            globals()[name] = value
+            return value
+        except ImportError as exc:
+            _warnings.warn(
+                f"{name} not available (missing dependencies): {exc}",
+                stacklevel=2,
+            )
+            raise AttributeError(name) from exc
+    raise AttributeError(f"module 'strands_robots' has no attribute {name!r}")

@@ -4,18 +4,30 @@ Strands Robotics Tools
 
 Collection of specialized tools for robot control, camera management,
 teleoperation, inference services, and serial communication.
+
+All tools are lazy-loaded to avoid pulling in numpy, pyserial, psutil, etc.
+at ``import strands_robots.tools`` time.
 """
 
-from .gr00t_inference import gr00t_inference
-from .lerobot_camera import lerobot_camera
-from .lerobot_teleoperate import lerobot_teleoperate
-from .pose_tool import pose_tool
-from .serial_tool import serial_tool
+import importlib as _importlib
 
-__all__ = [
-    "gr00t_inference",
-    "lerobot_camera",
-    "lerobot_teleoperate",
-    "serial_tool",
-    "pose_tool",
-]
+_LAZY_IMPORTS: dict[str, tuple[str, str]] = {
+    "gr00t_inference": (".gr00t_inference", "gr00t_inference"),
+    "lerobot_calibrate": (".lerobot_calibrate", "lerobot_calibrate"),
+    "lerobot_camera": (".lerobot_camera", "lerobot_camera"),
+    "lerobot_teleoperate": (".lerobot_teleoperate", "lerobot_teleoperate"),
+    "pose_tool": (".pose_tool", "pose_tool"),
+    "serial_tool": (".serial_tool", "serial_tool"),
+}
+
+__all__ = list(_LAZY_IMPORTS.keys())
+
+
+def __getattr__(name: str):  # noqa: N807
+    if name in _LAZY_IMPORTS:
+        rel_module, attr_name = _LAZY_IMPORTS[name]
+        module = _importlib.import_module(rel_module, __name__)
+        value = getattr(module, attr_name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
