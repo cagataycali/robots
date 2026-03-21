@@ -87,7 +87,7 @@ class LerobotLocalPolicy(Policy):
         self._output_features: Dict[str, Any] = {}
         self._loaded = False
         self._processor_bridge: Optional[ProcessorBridge] = None
-        self._tokenizer = None
+        self._tokenizer: Any = None
         self._tokenizer_max_length: int = tokenizer_max_length
         self._tokenizer_padding_side: str = tokenizer_padding_side
 
@@ -303,7 +303,9 @@ class LerobotLocalPolicy(Policy):
         # transformers that had this attribute. Without this patch, XVLA
         # models fail to load with AttributeError.
         try:
-            from transformers.models.florence2.configuration_florence2 import Florence2LanguageConfig
+            from transformers.models.florence2.configuration_florence2 import (  # type: ignore[attr-defined]
+                Florence2LanguageConfig,
+            )
 
             if not hasattr(Florence2LanguageConfig, "forced_bos_token_id"):
                 Florence2LanguageConfig.forced_bos_token_id = None

@@ -23,6 +23,7 @@ Lazy Loading:
 
 import importlib as _importlib
 import warnings as _warnings
+from typing import Any
 
 # ------------------------------------------------------------------
 # Light-weight imports — no torch / lerobot dependency
@@ -61,7 +62,7 @@ __all__ = [
 ]
 
 
-def __getattr__(name: str):  # noqa: N807
+def __getattr__(name: str) -> Any:  # noqa: N807
     """Lazy-load heavy modules on first attribute access.
 
     This avoids importing torch, lerobot, numpy, pyserial, etc. at

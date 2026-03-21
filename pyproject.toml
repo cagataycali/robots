@@ -111,7 +111,7 @@ ignore_missing_imports = false
 
 # Third-party libs without type stubs
 [[tool.mypy.overrides]]
-module = ["lerobot.*", "gr00t.*", "draccus.*", "msgpack.*", "zmq.*"]
+module = ["lerobot.*", "gr00t.*", "draccus.*", "msgpack.*", "zmq.*", "huggingface_hub.*", "serial.*", "psutil.*"]
 ignore_missing_imports = true
 
 # @tool decorator injects runtime signatures mypy cannot check
@@ -119,10 +119,35 @@ ignore_missing_imports = true
 module = ["strands_robots.tools.*"]
 disallow_untyped_defs = false
 warn_return_any = false
+ignore_missing_imports = true
 
 # LeRobot local policy uses dynamic attr access via draccus PreTrainedConfig
 [[tool.mypy.overrides]]
-module = ["strands_robots.policies.lerobot_local.*"]
+module = ["strands_robots.policies.*"]
+warn_return_any = false
+disallow_untyped_defs = false
+
+# Robot core — complex dynamic assembly, optional deps
+[[tool.mypy.overrides]]
+module = ["strands_robots.robot"]
+disallow_untyped_defs = false
+warn_return_any = false
+
+# __init__.py has lazy import helpers
+[[tool.mypy.overrides]]
+module = ["strands_robots.__init__"]
+disallow_untyped_defs = false
+
+# Registry modules — dynamic YAML loading returns Any
+[[tool.mypy.overrides]]
+module = ["strands_robots.registry.*"]
+warn_return_any = false
+disallow_untyped_defs = false
+
+# Test files — relaxed type checking for mocks, fixtures, and test utilities
+[[tool.mypy.overrides]]
+module = ["tests.*", "tests_integ.*"]
+disallow_untyped_defs = false
 warn_return_any = false
 
 [tool.isort]

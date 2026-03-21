@@ -59,7 +59,8 @@ def get_robot(name: str) -> Optional[Dict[str, Any]]:
     """
     reg = _load("robots")
     canonical = resolve_name(name)
-    return reg.get("robots", {}).get(canonical)
+    result: Optional[Dict[str, Any]] = reg.get("robots", {}).get(canonical)
+    return result
 
 
 def has_sim(name: str) -> bool:
@@ -82,7 +83,8 @@ def get_hardware_type(name: str) -> Optional[str]:
     """
     info = get_robot(name)
     if info and "hardware" in info:
-        return info["hardware"].get("lerobot_type")
+        hw_type: Optional[str] = info["hardware"].get("lerobot_type")
+        return hw_type
     return None
 
 
