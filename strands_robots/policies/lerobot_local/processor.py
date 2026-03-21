@@ -163,13 +163,19 @@ class ProcessorBridge:
         """Whether any processing pipeline is active."""
         return self.has_preprocessor or self.has_postprocessor
 
-    def preprocess(self, observation: Dict[str, Any]) -> Dict[str, Any]:
+    def preprocess(self, observation: Dict[str, Any], instruction: Optional[str] = None) -> Dict[str, Any]:
         """Preprocess a raw observation dict through the pipeline.
 
         If no preprocessor is loaded, returns observation unchanged.
 
+        For VLA models, the instruction is passed as complementary data so that
+        LeRobot's TokenizerProcessorStep can access it via the ``task`` key.
+        Using ``process_observation()`` alone would create a transition without
+        complementary data, causing a ``KeyError: 'task'``.
+
         Args:
             observation: Raw observation dict from robot/sim.
+            instruction: Natural language task instruction for VLA models.
 
         Returns:
             Processed observation dict (tensors on target device, normalized, etc.).
@@ -181,7 +187,21 @@ class ProcessorBridge:
             return observation
 
         try:
-            return self._preprocessor.process_observation(observation)
+            # Build a full transition so complementary_data (containing the
+            # task instruction) is available to all pipeline steps.
+            from lerobot.processor.converters import create_transition
+            from lerobot.processor.core import TransitionKey
+
+            complementary: Dict[str, Any] = {}
+            if instruction:
+                complementary["task"] = instruction
+
+            transition = create_transition(
+                observation=observation,
+                complementary_data=complementary if complementary else None,
+            )
+            processed = self._preprocessor._forward(transition)
+            return processed[TransitionKey.OBSERVATION]
         except Exception as exc:
             raise RuntimeError(f"Preprocessor pipeline failed: {exc}") from exc
 

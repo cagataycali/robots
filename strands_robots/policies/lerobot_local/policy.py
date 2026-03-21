@@ -572,7 +572,7 @@ class LerobotLocalPolicy(Policy):
         # device transfer, batching).  Feeding its output through
         # _build_observation_batch would double-normalize images.
         if self._processor_bridge and self._processor_bridge.has_preprocessor:
-            batch = self._processor_bridge.preprocess(observation)
+            batch = self._processor_bridge.preprocess(observation, instruction=instruction)
             if not isinstance(batch, dict):
                 batch = {"observation.state": batch}
         else:
