@@ -430,6 +430,33 @@ class TestGetActions:
         with pytest.raises(RuntimeError, match="boom"):
             policy.get_actions_sync({}, "test")
 
+    def test_multi_step_uses_predict_action_chunk(self):
+        """actions_per_step > 1 should call predict_action_chunk for full chunk."""
+        policy = _make_loaded_policy(action_dim=3, include_images=False)
+        policy.set_robot_state_keys(["a", "b", "c"])
+        policy.actions_per_step = 4
+
+        # predict_action_chunk returns (batch, horizon, action_dim)
+        policy._policy.predict_action_chunk.return_value = torch.zeros(1, 10, 3)
+
+        actions = policy.get_actions_sync({}, "test")
+
+        # Should have called predict_action_chunk, NOT select_action
+        policy._policy.predict_action_chunk.assert_called_once()
+        policy._policy.select_action.assert_not_called()
+        assert len(actions) == 4
+
+    def test_single_step_uses_select_action(self):
+        """actions_per_step=1 should use select_action for temporal ensemble."""
+        policy = _make_loaded_policy(action_dim=3, include_images=False)
+        policy.set_robot_state_keys(["a", "b", "c"])
+        policy.actions_per_step = 1
+
+        actions = policy.get_actions_sync({}, "test")
+
+        policy._policy.select_action.assert_called_once()
+        assert len(actions) == 1
+
     def test_processor_bridge_preprocess_bypasses_batch_builder(self):
         policy = _make_loaded_policy(action_dim=3)
         policy.set_robot_state_keys(["a", "b", "c"])
@@ -759,18 +786,37 @@ class TestRTCInit:
         assert policy._rtc_max_guidance_weight == 8.0
 
     def test_rtc_explicit_enable(self):
-        """rtc_enabled=True should force-enable even without config."""
+        """rtc_enabled=True should enable when policy has rtc_config."""
         policy = _make_policy()
         mock_policy = MagicMock()
         mock_policy.predict_action_chunk = MagicMock()
-        mock_policy.config = MagicMock(spec=[])
+        rtc_cfg = MagicMock()
+        rtc_cfg.enabled = False  # config says disabled, but user forced True
+        rtc_cfg.execution_horizon = 10
+        rtc_cfg.max_guidance_weight = 10.0
+        mock_policy.config.rtc_config = rtc_cfg
         policy._policy = mock_policy
         policy._loaded = True
         policy._rtc_requested = True
         policy._init_rtc()
         assert policy._rtc_enabled is True
-        assert policy._rtc_execution_horizon == 10  # default
-        assert policy._rtc_max_guidance_weight == 10.0  # default
+        assert policy._rtc_execution_horizon == 10
+        assert policy._rtc_max_guidance_weight == 10.0
+
+    def test_rtc_explicit_enable_without_rtc_config_falls_back(self):
+        """rtc_enabled=True without rtc_config should warn and disable."""
+        policy = _make_policy()
+        mock_policy = MagicMock()
+        mock_policy.predict_action_chunk = MagicMock()
+        mock_policy.config = MagicMock(spec=[])  # no rtc_config attr
+        policy._policy = mock_policy
+        policy._loaded = True
+        policy._rtc_requested = True
+        with patch("strands_robots.policies.lerobot_local.policy.logger") as mock_logger:
+            policy._init_rtc()
+            mock_logger.warning.assert_called_once()
+            assert "no rtc_config" in mock_logger.warning.call_args[0][0]
+        assert policy._rtc_enabled is False
 
     def test_rtc_explicit_disable(self):
         """rtc_enabled=False should disable even if config says enabled."""

@@ -280,14 +280,14 @@ class TestRTCIntegration:
     RTC_MODEL = os.getenv("LEROBOT_RTC_MODEL", "")
 
     def test_rtc_auto_disabled_for_act(self, act_policy):
-        """ACT does not support predict_action_chunk — RTC should be auto-disabled."""
+        """ACT has no rtc_config — RTC should be auto-disabled."""
         assert act_policy._rtc_enabled is False
-        logger.info("ACT RTC status: disabled (expected — no predict_action_chunk)")
+        logger.info("ACT RTC status: disabled (expected — no rtc_config)")
 
     def test_rtc_auto_disabled_for_diffusion(self, diffusion_policy):
-        """Diffusion does not support predict_action_chunk — RTC should be auto-disabled."""
+        """Diffusion has no rtc_config — RTC should be auto-disabled."""
         assert diffusion_policy._rtc_enabled is False
-        logger.info("Diffusion RTC status: disabled (expected — no predict_action_chunk)")
+        logger.info("Diffusion RTC status: disabled (expected — no rtc_config)")
 
     @pytest.mark.skipif(
         not os.getenv("LEROBOT_RTC_MODEL"),

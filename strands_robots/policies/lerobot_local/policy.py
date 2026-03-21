@@ -419,7 +419,13 @@ class LerobotLocalPolicy(Policy):
             self._rtc_enabled = False
             return
 
-        # Auto-detect from model config
+        # Auto-detect from model config.
+        # RTC requires rtc_config on the model — not just predict_action_chunk().
+        # In LeRobot 0.5+, predict_action_chunk() is a base class method that ALL
+        # policies inherit (ACT, Diffusion, etc.), but only flow-matching policies
+        # (Pi0, SmolVLA) have an rtc_config that parameterizes the denoiser for
+        # cross-chunk temporal blending.  Without rtc_config, calling
+        # predict_action_chunk() with RTC kwargs would either be ignored or crash.
         config = getattr(self._policy, "config", None)
         rtc_config = getattr(config, "rtc_config", None) if config else None
 
@@ -427,7 +433,18 @@ class LerobotLocalPolicy(Policy):
             # Auto-detect: use model's rtc_config.enabled
             self._rtc_enabled = rtc_config is not None and getattr(rtc_config, "enabled", False)
         elif self._rtc_requested is True:
-            self._rtc_enabled = True
+            if rtc_config is None:
+                # User explicitly asked for RTC, but this policy has no rtc_config.
+                # This means it's not a flow-matching policy — warn and disable.
+                logger.warning(
+                    "RTC requested but policy '%s' has no rtc_config. "
+                    "RTC is only supported by flow-matching policies (Pi0, SmolVLA). "
+                    "Falling back to select_action().",
+                    type(self._policy).__name__,
+                )
+                self._rtc_enabled = False
+            else:
+                self._rtc_enabled = True
         else:
             self._rtc_enabled = False
 
@@ -596,10 +613,17 @@ class LerobotLocalPolicy(Policy):
                 # with prev_chunk for temporal blending. Used only for flow-matching
                 # policies that support rtc_config.
                 action_tensor = self._predict_with_rtc(batch)
+            elif self.actions_per_step > 1:
+                # Multi-step path: call predict_action_chunk() directly to get the
+                # full action horizon, then slice in _tensor_to_action_dicts().
+                # select_action() uses an internal queue and returns only 1 action
+                # at a time, so it can't return multiple steps per call.
+                action_tensor = self._policy.predict_action_chunk(batch)
             else:
-                # Default path: delegates to LeRobot's select_action() which handles
-                # temporal ensemble smoothing (config.temporal_ensemble_coeff) and
-                # action queue management (n_action_steps > 1) internally.
+                # Default single-step path: delegates to LeRobot's select_action()
+                # which handles temporal ensemble smoothing
+                # (config.temporal_ensemble_coeff) and action queue management
+                # (n_action_steps > 1) internally.
                 # We intentionally use select_action() rather than predict_action_chunk()
                 # here to preserve all upstream action scheduling logic.
                 action_tensor = self._policy.select_action(batch)
