@@ -376,7 +376,7 @@ class LerobotLocalPolicy(Policy):
                 else:
                     self._processor_bridge = None
                     logger.debug("No processor configs found, using raw obs/action flow")
-            except Exception as exc:
+            except (FileNotFoundError, ValueError, ImportError) as exc:
                 logger.debug("Processor bridge not loaded: %s", exc)
                 self._processor_bridge = None
 
@@ -581,6 +581,8 @@ class LerobotLocalPolicy(Policy):
         with torch.inference_mode():
             assert self._policy is not None
             self._policy.eval()
+            # RTC uses predict_action_chunk() directly with cross-chunk guidance;
+            # non-RTC uses select_action() which manages temporal ensemble + action queue.
             if self._rtc_enabled:
                 action_tensor = self._predict_with_rtc(batch)
             else:
