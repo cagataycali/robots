@@ -6,13 +6,12 @@ policy creation, and inference latency across devices.
 ## Quick Start
 
 ```bash
-# Core paths (no GPU/network needed)
+# Run everything (core + all formats)
+python benchmarks/run_all.py --skip-lerobot --skip-groot
+
+# Or individual scripts
 python benchmarks/bench_core.py
-
-# LeRobot local policy (needs torch + lerobot)
 python benchmarks/bench_lerobot.py
-
-# GR00T policy (needs running inference server)
 python benchmarks/bench_groot.py --server 10.0.0.10:50051
 ```
 
@@ -20,37 +19,68 @@ python benchmarks/bench_groot.py --server 10.0.0.10:50051
 
 | Script | What it profiles | Requirements |
 |--------|-----------------|--------------|
+| `run_all.py` | **All formats** — one command | numpy, pytest-benchmark, memray |
 | `bench_core.py` | Imports, registry, mock policy, data configs | numpy only |
 | `bench_lerobot.py` | LeRobot ACT policy end-to-end | torch, lerobot |
 | `bench_groot.py` | GR00T inference via gRPC | running gr00t-server |
+| `test_bench.py` | pytest-benchmark suite (statistical) | pytest-benchmark |
 
-## Output Options
+## Output Formats
+
+| Format | File | Open with | What you see |
+|--------|------|-----------|-------------|
+| **Perfetto** | `*_trace.json` | [ui.perfetto.dev](https://ui.perfetto.dev) | Timeline, flame chart, zoom |
+| **Speedscope** | `core_speedscope.json` | [speedscope.app](https://speedscope.app) | Call flame graph (left-heavy, sandwich) |
+| **memray** | `memray_flamegraph.html` | Browser | Memory allocation flame graph |
+| **memray table** | `memray_table.html` | Browser | Top allocators by size |
+| **pytest-benchmark** | `pytest_bench.json` | CLI or JSON viewer | Statistical comparison across runs |
+| **Histogram** | `hist.svg` | Browser | Distribution of benchmark times |
+| **cProfile** | `core_profile.prof` | `snakeviz`, `gprof2dot` | Raw profiling data |
+| **py-spy** | `pyspy_flame.svg` | Browser | Wall-clock flame graph (Linux only) |
+| **JSON stats** | `bench_*.json` | jq, Python | Full stats + metadata |
+| **CSV** | `*_inference.csv` | Excel, Sheets | Warm inference time series |
+
+## Usage Examples
 
 ```bash
-# Print JSON to stdout
-python benchmarks/bench_core.py --json
+# Full run (skip policies that need GPU/server)
+python benchmarks/run_all.py --skip-lerobot --skip-groot
 
-# Save artifacts to a directory
-python benchmarks/bench_lerobot.py --out results/
+# With LeRobot (needs torch + lerobot installed)
+python benchmarks/run_all.py --skip-groot
 
-# Custom policy / device
-python benchmarks/bench_lerobot.py --policy lerobot/act_aloha_sim --device cuda --n-warm 50
+# With GR00T server
+python benchmarks/run_all.py --groot-server 10.0.0.10:50051
+
+# Custom output directory
+python benchmarks/run_all.py --out /tmp/bench_results/
+
+# Just pytest-benchmark with comparison
+pytest benchmarks/test_bench.py --benchmark-only --benchmark-compare
+
+# Just bench_core with JSON output
+python benchmarks/bench_core.py --json --out results/
+
+# LeRobot with custom policy and device
+python benchmarks/bench_lerobot.py \
+  --policy lerobot/act_aloha_sim_transfer_cube_human \
+  --device cuda \
+  --n-warm 50 \
+  --out results/
 ```
 
-## Output Artifacts
+## Install Dependencies
 
-Each `--out` run creates:
+```bash
+pip install pytest-benchmark[histogram] memray py-spy
+```
 
-| File | Format | Visualize with |
-|------|--------|---------------|
-| `bench_*_<ts>.json` | Full stats + metadata | jq, Python |
-| `bench_*_<ts>_trace.json` | Chrome Trace | [ui.perfetto.dev](https://ui.perfetto.dev) |
-| `bench_*_<ts>_inference.csv` | Warm inference series | Excel, Sheets |
+`py-spy` needs root on macOS, works without sudo on Linux.
 
 ## Device Matrix
 
-| Device | bench_core | bench_lerobot | bench_groot |
-|--------|-----------|---------------|-------------|
+| Device | run_all | bench_lerobot | bench_groot |
+|--------|---------|---------------|-------------|
 | MacBook M3 Max (MPS) | ✅ | ✅ | — |
 | EC2 L40S (CUDA) | 🔲 | 🔲 | 🔲 |
 | Thor Jetson (CUDA) | 🔲 | 🔲 | 🔲 |
