@@ -362,7 +362,12 @@ class TestErrorHandling:
         original_select_action = act_policy._policy.select_action
         act_policy._policy.select_action = lambda batch: (_ for _ in ()).throw(RuntimeError("test failure"))
 
+        # Build a complete observation (state + required images) so the error
+        # reaches select_action rather than failing at batch-building.
         observation = {"observation.state": np.zeros(14, dtype=np.float32)}
+        for feat_name in act_policy._input_features:
+            if "image" in feat_name and feat_name not in observation:
+                observation[feat_name] = np.zeros((3, 480, 640), dtype=np.float32)
 
         with pytest.raises(RuntimeError, match="test failure"):
             act_policy.get_actions_sync(observation, "test")
