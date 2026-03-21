@@ -568,6 +568,11 @@ class Robot(AgentTool):
             },
         }
 
+    @staticmethod
+    def _make_tool_result(tool_use_id: str, result: Dict[str, Any]) -> ToolResult:
+        """Create a ToolResult dict with the given tool_use_id merged into result."""
+        return cast(ToolResult, {'toolUseId': tool_use_id, **result})
+
     async def stream(
         self, tool_use: ToolUse, invocation_state: dict[str, Any], **kwargs: Any
     ) -> AsyncGenerator[ToolResultEvent, None]:
@@ -599,8 +604,7 @@ class Robot(AgentTool):
 
                 # Execute task synchronously
                 task_result = self._execute_task_sync(instruction, policy_port, policy_host, policy_provider, duration)
-                result = {"toolUseId": tool_use_id, **task_result}
-                yield ToolResultEvent(cast(ToolResult, result))
+                yield ToolResultEvent(self._make_tool_result(tool_use_id, task_result))
 
             elif action == "start":
                 # Asynchronous execution start
@@ -622,17 +626,17 @@ class Robot(AgentTool):
 
                 # Start task asynchronously
                 start_result = self.start_task(instruction, policy_port, policy_host, policy_provider, duration)
-                yield ToolResultEvent(cast(ToolResult, {"toolUseId": tool_use_id, **start_result}))
+                yield ToolResultEvent(self._make_tool_result(tool_use_id, start_result))
 
             elif action == "status":
                 # Get current task status
                 status_result = self.get_task_status()
-                yield ToolResultEvent(cast(ToolResult, {"toolUseId": tool_use_id, **status_result}))
+                yield ToolResultEvent(self._make_tool_result(tool_use_id, status_result))
 
             elif action == "stop":
                 # Stop current task
                 stop_result = self.stop_task()
-                yield ToolResultEvent(cast(ToolResult, {"toolUseId": tool_use_id, **stop_result}))
+                yield ToolResultEvent(self._make_tool_result(tool_use_id, stop_result))
 
             else:
                 yield ToolResultEvent(

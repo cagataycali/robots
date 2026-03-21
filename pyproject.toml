@@ -79,22 +79,22 @@ packages = ["strands_robots"]
 
 [tool.hatch.envs.default]
 dependencies = [
-    "pytest>=6.0",
-    "pytest-cov",
-    "black",
-    "isort",
-    "flake8",
-    "mypy",
-    "Pillow>=8.0.0",
-    "requests>=2.28.0",
-    "msgpack>=1.0.0",
-    "pyzmq>=27.0.0",
+    "pytest>=6.0,<9.0.0",
+    "pytest-cov>=4.0.0,<6.0.0",
+    "black>=23.0.0,<25.0.0",
+    "isort>=5.12.0,<6.0.0",
+    "flake8>=6.0.0,<8.0.0",
+    "mypy>=1.0.0,<2.0.0",
+    "Pillow>=8.0.0,<12.0.0",
+    "requests>=2.28.0,<3.0.0",
+    "msgpack>=1.0.0,<2.0.0",
+    "pyzmq>=27.0.0,<28.0.0",
 ]
 
 [tool.hatch.envs.default.scripts]
 test = "pytest {args:tests}"
 test-integ = "pytest tests_integ/ -v --timeout=300 {args}"
-lint = ["black --check strands_robots tests tests_integ", "isort --check-only strands_robots tests tests_integ", "flake8 strands_robots tests tests_integ", "mypy strands_robots tests tests_integ --ignore-missing-imports"]
+lint = ["black --check strands_robots tests tests_integ", "isort --check-only strands_robots tests tests_integ", "flake8 strands_robots tests tests_integ", "mypy strands_robots tests tests_integ"]
 format = ["black strands_robots tests tests_integ", "isort strands_robots tests tests_integ"]
 
 [tool.black]
@@ -104,17 +104,22 @@ include = '\.pyi?$'
 
 [tool.mypy]
 python_version = "3.12"
-# warn_return_any: disabled because LeRobot's PreTrainedPolicy and draccus
-# config classes use dynamic attribute access that returns Any pervasively.
-# Enabling this floods the output with false positives from third-party code.
-warn_return_any = false
+warn_return_any = true
 warn_unused_configs = true
-# disallow_untyped_defs: disabled because strands_robots tools use @tool
-# decorator which injects runtime signatures — mypy can't type-check those.
-disallow_untyped_defs = false
-# ignore_missing_imports: lerobot, gr00t, and other optional deps have no
-# type stubs. Required to avoid errors on `import lerobot.*` etc.
+disallow_untyped_defs = true
+ignore_missing_imports = false
+
+# Third-party libs without type stubs
+[[tool.mypy.overrides]]
+module = ["lerobot.*", "gr00t.*", "draccus.*", "msgpack.*", "zmq.*"]
 ignore_missing_imports = true
+warn_return_any = false
+
+# @tool decorator injects runtime signatures mypy cannot check
+[[tool.mypy.overrides]]
+module = ["strands_robots.tools.*"]
+disallow_untyped_defs = false
+warn_return_any = false
 
 [tool.isort]
 profile = "black"
@@ -123,7 +128,7 @@ multi_line_output = 3
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-v --cov=strands_robots --cov-report=term-missing"
+addopts = "-v --cov=strands_robots --cov-report=term-missing --strict-markers"
 markers = [
     "gpu: requires CUDA GPU and real model weights (run with: pytest -m gpu)",
 ]

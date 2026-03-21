@@ -48,7 +48,7 @@ def gr00t_inference(
             - "find_containers": Find available isaac-gr00t containers
         checkpoint_path: Path to model checkpoint (for start/restart)
         policy_name: Name for the policy service (for registration)
-        port: Port for inference service (default: 5555 for ZMQ, 8000 for HTTP)
+        port: Port for inference service (default: 5555). Auto-switches to 8000 when http_server=True.
         data_config: GR00T data config (so100_dualcam, so100, fourier_gr1_arms_only, etc.)
         embodiment_tag: Embodiment tag for model
         denoising_steps: Number of denoising steps
