@@ -1,0 +1,170 @@
+{
+  "benchmark": "bench_core",
+  "metadata": {
+    "timestamp": "2026-03-21T21:36:15",
+    "platform": "Linux-6.8.0-1008-aws-x86_64-with-glibc2.39",
+    "python": "3.12.3",
+    "arch": "x86_64",
+    "branch": "benchmarks",
+    "commit": "07b5d68"
+  },
+  "phases": [
+    {
+      "name": "import strands_robots",
+      "ms": 164.5,
+      "peak_mb": 4.23
+    },
+    {
+      "name": "import policies.factory",
+      "ms": 0.0,
+      "peak_mb": 0.0
+    },
+    {
+      "name": "import policies.base",
+      "ms": 0.0,
+      "peak_mb": 0.0
+    },
+    {
+      "name": "import registry",
+      "ms": 0.01,
+      "peak_mb": 0.0
+    },
+    {
+      "name": "list_providers()",
+      "ms": 5.99,
+      "peak_mb": 0.02
+    },
+    {
+      "name": "list_robots()",
+      "ms": 6.26,
+      "peak_mb": 0.06
+    },
+    {
+      "name": "list_policy_providers()",
+      "ms": 0.08,
+      "peak_mb": 0.0
+    },
+    {
+      "name": "list_aliases()",
+      "ms": 0.15,
+      "peak_mb": 0.0
+    },
+    {
+      "name": "get_robot(aloha)",
+      "ms": 0.16,
+      "peak_mb": 0.0
+    },
+    {
+      "name": "get_robot(apollo)",
+      "ms": 0.17,
+      "peak_mb": 0.0
+    },
+    {
+      "name": "get_robot(arx_l5)",
+      "ms": 0.16,
+      "peak_mb": 0.0
+    },
+    {
+      "name": "get_robot(asimov_v0)",
+      "ms": 0.16,
+      "peak_mb": 0.0
+    },
+    {
+      "name": "get_robot(bi_openarm)",
+      "ms": 0.16,
+      "peak_mb": 0.0
+    },
+    {
+      "name": "get_robot(cassie)",
+      "ms": 0.16,
+      "peak_mb": 0.0
+    },
+    {
+      "name": "get_policy_provider(groot)",
+      "ms": 0.13,
+      "peak_mb": 0.0
+    },
+    {
+      "name": "get_policy_provider(lerobot_local)",
+      "ms": 0.13,
+      "peak_mb": 0.0
+    },
+    {
+      "name": "get_policy_provider(mock)",
+      "ms": 0.12,
+      "peak_mb": 0.0
+    },
+    {
+      "name": "import groot.client",
+      "ms": 60.73,
+      "peak_mb": 2.12
+    },
+    {
+      "name": "import groot.policy",
+      "ms": 0.01,
+      "peak_mb": 0.0
+    },
+    {
+      "name": "import groot.data_config",
+      "ms": 0.01,
+      "peak_mb": 0.0
+    },
+    {
+      "name": "import mock.MockPolicy",
+      "ms": 0.01,
+      "peak_mb": 0.0
+    },
+    {
+      "name": "MockPolicy(6-DOF) create",
+      "ms": 0.06,
+      "peak_mb": 0.0
+    },
+    {
+      "name": "mock cold inference",
+      "ms": 0.73,
+      "peak_mb": 0.01
+    },
+    {
+      "name": "mock warm inference (100x)",
+      "ms": 0.1231,
+      "peak_mb": 0,
+      "p50_ms": 0.1179,
+      "p99_ms": 0.1538
+    },
+    {
+      "name": "load_data_config('so100')",
+      "ms": 0.01,
+      "peak_mb": 0.0
+    },
+    {
+      "name": "import tools",
+      "ms": 8.59,
+      "peak_mb": 0.1
+    },
+    {
+      "name": "resolve_policy('groot')",
+      "ms": 0.3,
+      "peak_mb": 0.0
+    },
+    {
+      "name": "resolve_policy('lerobot_local')",
+      "ms": 0.27,
+      "peak_mb": 0.0
+    },
+    {
+      "name": "resolve_policy('mock')",
+      "ms": 0.18,
+      "peak_mb": 0.0
+    },
+    {
+      "name": "format_robot_table()",
+      "ms": 1.42,
+      "peak_mb": 0.04
+    },
+    {
+      "name": "import robot.Robot",
+      "ms": 20278.21,
+      "peak_mb": 200.6
+    }
+  ]
+}

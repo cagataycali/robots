@@ -1,7 +1,0 @@
-# Benchmark artifacts (generated, not tracked)
-*.bin
-*.prof
-*.json
-*.html
-*.svg
-*.csv

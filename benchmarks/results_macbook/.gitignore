@@ -1,0 +1,6 @@
+# Raw artifacts (too large for git, use the zip)
+*.bin
+*.prof
+*.html
+*.svg
+*.csv

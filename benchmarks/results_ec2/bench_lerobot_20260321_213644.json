@@ -1,0 +1,176 @@
+{
+  "benchmark": "bench_lerobot",
+  "metadata": {
+    "timestamp": "2026-03-21T21:36:44",
+    "platform": "Linux-6.8.0-1008-aws-x86_64-with-glibc2.39",
+    "python": "3.12.3",
+    "arch": "x86_64",
+    "device": "cuda",
+    "branch": "benchmarks",
+    "commit": "07b5d68",
+    "policy": "lerobot/act_aloha_sim_transfer_cube_human",
+    "n_warm": 10
+  },
+  "phases": [
+    {
+      "name": "import strands_robots",
+      "ms": 4.41,
+      "peak_mb": 0.11
+    },
+    {
+      "name": "import create_policy",
+      "ms": 0.01,
+      "peak_mb": 0.0
+    },
+    {
+      "name": "import LerobotLocalPolicy",
+      "ms": 24.06,
+      "peak_mb": 1.96
+    },
+    {
+      "name": "resolve_policy_from_hub",
+      "ms": 0.64,
+      "peak_mb": 0.01
+    },
+    {
+      "name": "create_policy (full)",
+      "ms": 15087.16,
+      "peak_mb": 148.24
+    },
+    {
+      "name": "build observation",
+      "ms": 3.2,
+      "peak_mb": 0.92
+    },
+    {
+      "name": "inference cold",
+      "ms": 347.56,
+      "peak_mb": 0.93
+    },
+    {
+      "name": "inference warm (10x)",
+      "ms": 1.8679,
+      "peak_mb": 0,
+      "p50_ms": 1.7306,
+      "p95_ms": 2.5274,
+      "p99_ms": 3.039,
+      "min_ms": 1.6942,
+      "max_ms": 3.1669
+    },
+    {
+      "name": "policy.reset()",
+      "ms": 0.15,
+      "peak_mb": 0.0
+    }
+  ],
+  "warm_inference_series_ms": [
+    3.1669,
+    1.7354,
+    1.7192,
+    1.7126,
+    1.7457,
+    1.7362,
+    1.7073,
+    1.6942,
+    1.7333,
+    1.7278
+  ],
+  "trace_events": [
+    {
+      "name": "import strands_robots",
+      "cat": "benchmark",
+      "ph": "X",
+      "ts": 35843,
+      "dur": 4405,
+      "pid": 1,
+      "tid": 1,
+      "args": {
+        "peak_mb": 0.11
+      }
+    },
+    {
+      "name": "import create_policy",
+      "cat": "benchmark",
+      "ph": "X",
+      "ts": 64626,
+      "dur": 10,
+      "pid": 1,
+      "tid": 1,
+      "args": {
+        "peak_mb": 0.0
+      }
+    },
+    {
+      "name": "import LerobotLocalPolicy",
+      "cat": "benchmark",
+      "ph": "X",
+      "ts": 87928,
+      "dur": 24062,
+      "pid": 1,
+      "tid": 1,
+      "args": {
+        "peak_mb": 1.96
+      }
+    },
+    {
+      "name": "resolve_policy_from_hub",
+      "cat": "benchmark",
+      "ph": "X",
+      "ts": 138627,
+      "dur": 642,
+      "pid": 1,
+      "tid": 1,
+      "args": {
+        "peak_mb": 0.01
+      }
+    },
+    {
+      "name": "create_policy (full)",
+      "cat": "benchmark",
+      "ph": "X",
+      "ts": 163521,
+      "dur": 15087158,
+      "pid": 1,
+      "tid": 1,
+      "args": {
+        "peak_mb": 148.24
+      }
+    },
+    {
+      "name": "build observation",
+      "cat": "benchmark",
+      "ph": "X",
+      "ts": 15657845,
+      "dur": 3196,
+      "pid": 1,
+      "tid": 1,
+      "args": {
+        "peak_mb": 0.92
+      }
+    },
+    {
+      "name": "inference cold",
+      "cat": "benchmark",
+      "ph": "X",
+      "ts": 15775231,
+      "dur": 347556,
+      "pid": 1,
+      "tid": 1,
+      "args": {
+        "peak_mb": 0.93
+      }
+    },
+    {
+      "name": "policy.reset()",
+      "cat": "benchmark",
+      "ph": "X",
+      "ts": 16271189,
+      "dur": 145,
+      "pid": 1,
+      "tid": 1,
+      "args": {
+        "peak_mb": 0.0
+      }
+    }
+  ]
+}
