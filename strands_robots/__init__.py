@@ -14,7 +14,7 @@ Key features:
 
 Lazy Loading:
     Heavy imports (Robot, tools, Gr00tPolicy) are deferred until first access.
-    This reduces ``import strands_robots`` from ~60s to <0.1s when lerobot/torch
+    Heavy imports are deferred so ``import strands_robots`` stays fast when lerobot/torch
     are installed but not yet needed.
 
     Light-weight symbols (Policy, MockPolicy, create_policy) are available

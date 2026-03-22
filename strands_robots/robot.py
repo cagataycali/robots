@@ -600,10 +600,15 @@ class Robot(AgentTool):
                 duration = input_data.get("duration", 30.0)
 
                 if not instruction or not policy_port:
-                    yield ToolResultEvent(self._make_tool_result(tool_use_id, {
-                        "status": "error",
-                        "content": [{"text": "❌ instruction and policy_port are required for execute action"}],
-                    }))
+                    yield ToolResultEvent(
+                        self._make_tool_result(
+                            tool_use_id,
+                            {
+                                "status": "error",
+                                "content": [{"text": "❌ instruction and policy_port are required for execute action"}],
+                            },
+                        )
+                    )
                     return
 
                 # Execute task synchronously
@@ -619,10 +624,15 @@ class Robot(AgentTool):
                 duration = input_data.get("duration", 30.0)
 
                 if not instruction or not policy_port:
-                    yield ToolResultEvent(self._make_tool_result(tool_use_id, {
-                        "status": "error",
-                        "content": [{"text": "❌ instruction and policy_port are required for start action"}],
-                    }))
+                    yield ToolResultEvent(
+                        self._make_tool_result(
+                            tool_use_id,
+                            {
+                                "status": "error",
+                                "content": [{"text": "❌ instruction and policy_port are required for start action"}],
+                            },
+                        )
+                    )
                     return
 
                 # Start task asynchronously
@@ -640,17 +650,29 @@ class Robot(AgentTool):
                 yield ToolResultEvent(self._make_tool_result(tool_use_id, stop_result))
 
             else:
-                yield ToolResultEvent(self._make_tool_result(tool_use_id, {
-                    "status": "error",
-                    "content": [{"text": f"❌ Unknown action: {action}. Valid actions: execute, start, status, stop"}],
-                }))
+                yield ToolResultEvent(
+                    self._make_tool_result(
+                        tool_use_id,
+                        {
+                            "status": "error",
+                            "content": [
+                                {"text": f"❌ Unknown action: {action}. Valid actions: execute, start, status, stop"}
+                            ],
+                        },
+                    )
+                )
 
         except Exception as e:
             logger.error(f"❌ {self.tool_name_str} error: {e}")
-            yield ToolResultEvent(self._make_tool_result(tool_use_id, {
-                "status": "error",
-                "content": [{"text": f"❌ {self.tool_name_str} error: {str(e)}"}],
-            }))
+            yield ToolResultEvent(
+                self._make_tool_result(
+                    tool_use_id,
+                    {
+                        "status": "error",
+                        "content": [{"text": f"❌ {self.tool_name_str} error: {str(e)}"}],
+                    },
+                )
+            )
 
     def cleanup(self):
         """Cleanup resources and stop any running tasks."""

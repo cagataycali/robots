@@ -2,7 +2,7 @@
 
 ## Overview
 
-`strands-robots` is an robot control library for [Strands Agents](https://strandsagents.com). It provides policy inference, teleoperation, calibration, and simulation tools for physical robots.
+`strands-robots` is a robot control library for [Strands Agents](https://strandsagents.com). It provides policy inference, teleoperation, calibration, and simulation tools for physical robots.
 
 ## Project Dashboard
 
@@ -65,7 +65,7 @@ hatch run format            # auto-fix formatting
 
 ## Key Conventions
 
-1. **Python 3.12+** — `requires-python = ">=3.12,<3.14"`
+1. **Python 3.10+** — `requires-python = ">=3.10,<3.14"` (lerobot extras require 3.12+)
 2. **Dependency bounds** — `>=1.0` deps: cap major. `<1.0` deps: cap minor. E.g. `lerobot>=0.5.0,<0.6.0`
 3. **`__init__.py` must be thin** — exports only, no logic
 4. **Imports at file top** — unless lazy-loading heavy deps with documented reason

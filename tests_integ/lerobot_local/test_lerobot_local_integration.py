@@ -200,13 +200,6 @@ class TestDiffusionFullPipeline:
 
 
 # ---------------------------------------------------------------------------
-# Tests: Factory / Smart-String Resolution (e2e)
-# ---------------------------------------------------------------------------
-
-
-# ---------------------------------------------------------------------------
-# Tests: ProcessorBridge (e2e with real model configs)
-# ---------------------------------------------------------------------------
 
 
 class TestProcessorBridgeIntegration:
@@ -259,11 +252,6 @@ class TestProcessorBridgeIntegration:
             pytest.skip("ACT model does not ship processor configs")
 
 
-# ---------------------------------------------------------------------------
-# Tests: RTC (Real-Time Chunking) e2e
-# ---------------------------------------------------------------------------
-
-
 class TestRTCIntegration:
     """Integration tests for Real-Time Chunking with real models.
 
@@ -277,7 +265,7 @@ class TestRTCIntegration:
     """
 
     # Override with env var if you have a flow-matching model to test
-    RTC_MODEL = os.getenv("LEROBOT_RTC_MODEL", "")
+    RTC_MODEL = os.getenv("LEROBOT_RTC_MODEL", "lerobot/pi0_base_original")
 
     def test_rtc_auto_disabled_for_act(self, act_policy):
         """ACT has no rtc_config — RTC should be auto-disabled."""
@@ -290,7 +278,7 @@ class TestRTCIntegration:
         logger.info("Diffusion RTC status: disabled (expected — no rtc_config)")
 
     @pytest.mark.skipif(
-        not os.getenv("LEROBOT_RTC_MODEL"),
+        not os.getenv("LEROBOT_RTC_MODEL", "lerobot/pi0_base_original"),
         reason="Set LEROBOT_RTC_MODEL env var to test RTC with a real flow-matching model",
     )
     def test_rtc_full_pipeline_with_real_model(self):
@@ -319,11 +307,6 @@ class TestRTCIntegration:
         assert len(policy._rtc_latency_history) == 2
 
         logger.info("RTC: 2 calls successful, latencies: %s", policy._rtc_latency_history)
-
-
-# ---------------------------------------------------------------------------
-# Tests: Error Handling (e2e)
-# ---------------------------------------------------------------------------
 
 
 class TestErrorHandling:

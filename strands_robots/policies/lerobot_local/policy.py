@@ -100,6 +100,7 @@ class LerobotLocalPolicy(Policy):
         self._rtc_action_queue: deque = deque()
         self._rtc_latency_history: deque = deque(maxlen=100)
         self._rtc_last_inference_time: float = 0.0
+        self._rtc_last_log_time: float = 0.0
 
         if pretrained_name_or_path:
             self._load_model()
@@ -129,6 +130,7 @@ class LerobotLocalPolicy(Policy):
         self._rtc_action_queue.clear()
         self._rtc_latency_history.clear()
         self._rtc_last_inference_time = 0.0
+        self._rtc_last_log_time = 0.0
 
     def set_robot_state_keys(self, robot_state_keys: List[str]) -> None:
         """Set robot state keys for observation→tensor mapping.
@@ -549,8 +551,10 @@ class LerobotLocalPolicy(Policy):
         usable_start = min(inference_delay, action_chunk.shape[0] - 1)
         usable_actions = action_chunk[usable_start:]
 
-        # Log RTC details at debug level — only every 10th call to avoid log flooding
-        if len(self._rtc_latency_history) % 100 == 1:  # Log every 100th call (~2s at 50Hz)
+        # Log RTC details at debug level — throttled to once every 2s regardless of Hz
+        _now = time.monotonic()
+        if _now - self._rtc_last_log_time >= 2.0:
+            self._rtc_last_log_time = _now
             logger.debug(
                 "RTC: chunk=%s, delay=%d, usable_start=%d, leftover=%s, avg_latency=%.3fs",
                 action_chunk.shape,
