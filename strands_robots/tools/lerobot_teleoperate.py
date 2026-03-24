@@ -131,6 +131,8 @@ def build_lerobot_command(
 
     if action == "replay":
         # Build replay command
+        if not dataset_repo_id:
+            raise ValueError("dataset_repo_id is required for replay action")
         cmd = [
             "python",
             "-m",
@@ -511,7 +513,7 @@ def lerobot_teleoperate(
 
                     def auto_respond():
                         try:
-                            time.sleep(2)  # Wait for process to start
+                            time.sleep(2)  # Allow process to initialize before writing to stdin
                             proc.stdin.write("\n")  # Send ENTER
                             proc.stdin.flush()
                             time.sleep(1)
@@ -586,7 +588,7 @@ def lerobot_teleoperate(
             if not session_name:
                 return {"status": "error", "content": [{"text": "❌ Session name required for stop action"}]}
 
-            session_info = session_manager.get_session(session_name)
+            session_info = session_manager.get_session(session_name)  # type: ignore[assignment]  # narrow Optional
             if not session_info:
                 return {"status": "error", "content": [{"text": f"❌ Session '{session_name}' not found"}]}
 
@@ -594,14 +596,15 @@ def lerobot_teleoperate(
             if not pid:
                 return {"status": "error", "content": [{"text": f"❌ No PID found for session '{session_name}'"}]}
 
+            pid_int = int(pid)
             try:
                 # Try graceful termination first
-                os.kill(pid, signal.SIGTERM)
-                time.sleep(2)
+                os.kill(pid_int, signal.SIGTERM)
+                time.sleep(2)  # Grace period for process to flush buffers and exit cleanly
 
-                # Check if still running
-                if psutil.pid_exists(pid):
-                    os.kill(pid, signal.SIGKILL)
+                # Force kill if still running after grace period
+                if psutil.pid_exists(pid_int):
+                    os.kill(pid_int, signal.SIGKILL)
 
                 session_manager.remove_session(session_name)
 
@@ -664,14 +667,15 @@ def lerobot_teleoperate(
             if not session_name:
                 return {"status": "error", "content": [{"text": "❌ Session name required for status action"}]}
 
-            session_info = session_manager.get_session(session_name)
+            session_info = session_manager.get_session(session_name)  # type: ignore[assignment]  # narrow Optional
             if not session_info:
                 return {"status": "error", "content": [{"text": f"❌ Session '{session_name}' not found"}]}
 
             pid = session_info.get("pid")
-            uptime = time.time() - session_info.get("start_time", 0)
+            start_time: float = float(session_info.get("start_time") or 0)
+            uptime = time.time() - start_time
             uptime_min = uptime / 60
-            is_running = pid and psutil.pid_exists(pid)
+            is_running = pid and psutil.pid_exists(int(pid))
 
             content_lines = [
                 f"📊 **Session Status: `{session_name}`**",
@@ -684,12 +688,12 @@ def lerobot_teleoperate(
             ]
 
             # Add log tail if available
-            log_file = session_info.get("log_file")
-            if log_file and Path(log_file).exists():
-                content_lines.append(f"📋 Log file: `{log_file}`")
+            log_file_path = session_info.get("log_file")
+            if log_file_path and Path(str(log_file_path)).exists():
+                content_lines.append(f"📋 Log file: `{log_file_path}`")
 
                 try:
-                    with open(log_file, "r") as f:
+                    with open(str(log_file_path), "r") as f:
                         lines = f.readlines()
                         if lines:
                             tail_lines = lines[-10:]  # Last 10 lines

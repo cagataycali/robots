@@ -14,7 +14,9 @@ class Policy(ABC):
     """
 
     @abstractmethod
-    async def get_actions(self, observation_dict: Dict[str, Any], instruction: str, **kwargs) -> List[Dict[str, Any]]:
+    async def get_actions(
+        self, observation_dict: Dict[str, Any], instruction: str, **kwargs: Any
+    ) -> List[Dict[str, Any]]:
         """Get actions from policy given observation and instruction.
 
         Args:
@@ -26,7 +28,9 @@ class Policy(ABC):
         """
         pass
 
-    def get_actions_sync(self, observation_dict: Dict[str, Any], instruction: str, **kwargs) -> List[Dict[str, Any]]:
+    def get_actions_sync(
+        self, observation_dict: Dict[str, Any], instruction: str, **kwargs: Any
+    ) -> List[Dict[str, Any]]:
         """Synchronous convenience wrapper around get_actions().
 
         Safe to call from sync code, event loops, or notebooks.

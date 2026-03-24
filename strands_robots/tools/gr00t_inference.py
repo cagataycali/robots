@@ -6,10 +6,11 @@ Manages GR00T policy inference services running in Docker containers.
 Uses Isaac-GR00T's native inference service for proper ZMQ/HTTP communication.
 """
 
+import os
 import socket
 import subprocess
 import time
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from strands import tool
 
@@ -17,14 +18,14 @@ from strands import tool
 @tool
 def gr00t_inference(
     action: str,
-    checkpoint_path: str = None,
-    policy_name: str = None,
-    port: int = None,
+    checkpoint_path: Optional[str] = None,
+    policy_name: Optional[str] = None,
+    port: int = 5555,
     data_config: str = "fourier_gr1_arms_only",
     embodiment_tag: str = "gr1",
     denoising_steps: int = 4,
     host: str = "0.0.0.0",
-    container_name: str = None,
+    container_name: Optional[str] = None,
     timeout: int = 60,
     use_tensorrt: bool = False,
     trt_engine_path: str = "gr00t_engine",
@@ -32,7 +33,7 @@ def gr00t_inference(
     llm_dtype: str = "nvfp4",
     dit_dtype: str = "fp8",
     http_server: bool = False,
-    api_token: str = None,
+    api_token: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Manage GR00T inference services in Docker containers using Isaac-GR00T native scripts.
@@ -47,7 +48,7 @@ def gr00t_inference(
             - "find_containers": Find available isaac-gr00t containers
         checkpoint_path: Path to model checkpoint (for start/restart)
         policy_name: Name for the policy service (for registration)
-        port: Port for inference service (default: 5555 for ZMQ, 8000 for HTTP)
+        port: Port for inference service (default: 5555). Auto-switches to 8000 when http_server=True.
         data_config: GR00T data config (so100_dualcam, so100, fourier_gr1_arms_only, etc.)
         embodiment_tag: Embodiment tag for model
         denoising_steps: Number of denoising steps
@@ -60,29 +61,29 @@ def gr00t_inference(
         llm_dtype: LLM model dtype - "fp16", "nvfp4", or "fp8" (default: nvfp4, only with TensorRT)
         dit_dtype: DiT model dtype - "fp16" or "fp8" (default: fp8, only with TensorRT)
         http_server: Use HTTP server instead of ZMQ (default: False)
-        api_token: API token for authentication (optional)
+        api_token: API token for authentication. Falls back to GROOT_API_TOKEN env var if not provided.
 
     Returns:
         Dict with status and information about the operation
     """
+    # Resolve api_token from env var if not provided as parameter
+    if api_token is None:
+        api_token = os.environ.get("GROOT_API_TOKEN")
 
     if action == "find_containers":
         return _find_gr00t_containers()
     elif action == "list":
         return _list_running_services()
     elif action == "status":
-        if port is None:
-            return {"status": "error", "message": "Port required for status check"}
         return _check_service_status(port)
     elif action == "stop":
-        if port is None:
-            return {"status": "error", "message": "Port required to stop service"}
         return _stop_service(port)
     elif action == "start":
         if checkpoint_path is None:
             return {"status": "error", "message": "Checkpoint path required to start service"}
-        if port is None:
-            port = 8000 if http_server else 5555
+        # HTTP server uses port 8000 by default
+        if http_server and port == 5555:
+            port = 8000
         return _start_service(
             checkpoint_path=checkpoint_path,
             port=port,
@@ -102,8 +103,8 @@ def gr00t_inference(
             api_token=api_token,
         )
     elif action == "restart":
-        if checkpoint_path is None or port is None:
-            return {"status": "error", "message": "Checkpoint path and port required for restart"}
+        if checkpoint_path is None:
+            return {"status": "error", "message": "Checkpoint path required for restart"}
         # Stop existing service and start new one
         _stop_service(port)
         time.sleep(2)  # Brief pause
@@ -285,8 +286,8 @@ def _start_service(
     embodiment_tag: str,
     denoising_steps: int,
     host: str,
-    container_name: str,
-    policy_name: str,
+    container_name: Optional[str],
+    policy_name: Optional[str],
     timeout: int,
     use_tensorrt: bool,
     trt_engine_path: str,
@@ -294,7 +295,7 @@ def _start_service(
     llm_dtype: str,
     dit_dtype: str,
     http_server: bool,
-    api_token: str,
+    api_token: Optional[str],
 ) -> Dict[str, Any]:
     """Start GR00T inference service using Isaac-GR00T's native inference service."""
     try:

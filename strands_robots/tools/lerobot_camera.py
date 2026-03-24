@@ -10,7 +10,7 @@ import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
 
@@ -18,18 +18,12 @@ try:
     import cv2
     from lerobot.cameras.camera import Camera
     from lerobot.cameras.opencv import OpenCVCamera
-    from lerobot.cameras.opencv.configuration_opencv import (
-        ColorMode,
-        Cv2Rotation,
-        OpenCVCameraConfig,
-    )
+    from lerobot.cameras.opencv.configuration_opencv import ColorMode, Cv2Rotation, OpenCVCameraConfig
 
     # Try to import RealSense camera if available
     try:
         from lerobot.cameras.realsense.camera_realsense import RealSenseCamera
-        from lerobot.cameras.realsense.configuration_realsense import (
-            RealSenseCameraConfig,
-        )
+        from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig
 
         REALSENSE_AVAILABLE = True
     except ImportError:
@@ -84,10 +78,10 @@ def _frame_to_image_content(frame: np.ndarray, format: str = "jpg") -> Dict[str,
 def lerobot_camera(
     action: str = "list",
     camera_type: str = "opencv",
-    camera_id: Union[int, str] = None,
+    camera_id: Optional[Union[int, str]] = None,
     save_path: str = "./lerobot_captures",
-    filename: str = None,
-    camera_ids: List[Union[int, str]] = None,
+    filename: Optional[str] = None,
+    camera_ids: Optional[List[Union[int, str]]] = None,
     width: int = 640,
     height: int = 480,
     fps: int = 30,
@@ -150,7 +144,7 @@ def lerobot_camera(
                 camera_type,
                 camera_id,
                 save_path,
-                filename,
+                filename or "",
                 width,
                 height,
                 fps,
@@ -168,7 +162,7 @@ def lerobot_camera(
                 camera_type,
                 camera_ids,
                 save_path,
-                filename,
+                filename or "",
                 width,
                 height,
                 fps,
@@ -189,7 +183,7 @@ def lerobot_camera(
                 camera_type,
                 camera_id,
                 save_path,
-                filename,
+                filename or "",
                 width,
                 height,
                 fps,
@@ -327,7 +321,7 @@ def _discover_cameras() -> Dict[str, Any]:
         }
 
 
-def _list_camera_details(camera_type: str, camera_id: Union[int, str] = None) -> Dict[str, Any]:
+def _list_camera_details(camera_type: str, camera_id: Optional[Union[int, str]] = None) -> Dict[str, Any]:
     """List detailed camera information and configurations."""
     try:
         details = []
@@ -628,7 +622,7 @@ def _record_video_sequence(
         camera.connect(warmup=warmup)
 
         # Setup video writer
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # type: ignore[attr-defined]  # cv2 stubs incomplete
         video_writer = cv2.VideoWriter(video_path, fourcc, fps, (width, height))
 
         frames_captured = 0
@@ -870,9 +864,7 @@ def _test_camera_performance(
                 f"   - Async capture: {'✅ Better' if avg_async_time < avg_sync_time else '❌ Worse'}"
                 f" ({avg_async_time:.3f}s)"
             )
-        test_results.append(
-            f"   - Frame rate: {'✅ Stable' if max_sync_time - min_sync_time < 0.05 else '⚠️ Variable'}"
-        )
+        test_results.append(f"   - Frame rate: {'✅ Stable' if max_sync_time - min_sync_time < 0.05 else '⚠️ Variable'}")
 
         return {"status": "success", "content": [{"text": "\n".join(test_results)}]}
 

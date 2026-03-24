@@ -135,7 +135,7 @@ class MotorController:
         self.serial_conn: Optional[serial.Serial] = None
 
         # Default motor configurations for SO-101
-        self.motor_configs = {
+        self.motor_configs: Dict[str, Dict[str, Any]] = {
             "shoulder_pan": {"id": 1, "range": (-180, 180), "resolution": 4095},
             "shoulder_lift": {"id": 2, "range": (-90, 90), "resolution": 4095},
             "elbow_flex": {"id": 3, "range": (-150, 150), "resolution": 4095},
@@ -373,6 +373,8 @@ def pose_tool(
             pose_details = []
             for name in poses:
                 pose = pose_manager.get_pose(name)
+                if pose is None:
+                    continue
                 pose_details.append(
                     {
                         "name": name,

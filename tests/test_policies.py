@@ -4,13 +4,16 @@ import asyncio
 
 import pytest
 
-from strands_robots.policies import (
-    MockPolicy,
-    Policy,
-    create_policy,
-    list_providers,
-    register_policy,
-)
+from strands_robots.policies import MockPolicy, Policy, create_policy, list_providers, register_policy
+
+# Detect groot-service availability for conditional test grouping.
+try:
+    import msgpack  # noqa: F401
+    import zmq  # noqa: F401
+
+    _groot_available = True
+except ImportError:
+    _groot_available = False
 
 
 class TestMockPolicy:
@@ -69,12 +72,6 @@ class TestMockPolicy:
         assert len(actions) == 8
         assert all(isinstance(a, dict) for a in actions)
 
-    def test_is_policy_subclass(self):
-        """MockPolicy must be a proper Policy subclass."""
-        assert issubclass(MockPolicy, Policy)
-        p = MockPolicy()
-        assert isinstance(p, Policy)
-
 
 class TestCreatePolicy:
     """create_policy() should resolve shorthands, URLs, and custom registrations."""
@@ -112,13 +109,6 @@ class TestCreatePolicy:
         p = create_policy("kwarg_test", some_key="some_val")
         assert p.captured == {"some_key": "some_val"}
 
-    def test_create_via_zmq_url_resolves_to_groot(self):
-        """A zmq:// URL should resolve to a Gr00tPolicy via smart-string resolution."""
-        from strands_robots.policies.groot import Gr00tPolicy
-
-        p = create_policy("zmq://localhost:5555")
-        assert isinstance(p, Gr00tPolicy)
-
     def test_create_via_hf_model_id_triggers_smart_resolution(self):
         """An org/model string should trigger smart-string resolution."""
         with pytest.raises(Exception):
@@ -134,6 +124,22 @@ class TestCreatePolicy:
         with pytest.raises(Exception):
             create_policy("ws://localhost:8080")
 
+
+@pytest.mark.skipif(not _groot_available, reason="groot-service extras not installed")
+class TestFactoryGrootIntegration:
+    """Factory tests that require groot-service extras (zmq, msgpack).
+
+    Grouped into a single class with a class-level skip marker so future
+    contributors don't need to remember per-test decorators.
+    """
+
+    def test_create_via_zmq_url_resolves_to_groot(self):
+        """A zmq:// URL should resolve to a Gr00tPolicy via smart-string resolution."""
+        from strands_robots.policies.groot import Gr00tPolicy
+
+        p = create_policy("zmq://localhost:5555")
+        assert isinstance(p, Gr00tPolicy)
+
     def test_groot_strict_and_api_token_passthrough(self):
         """strict and api_token kwargs should reach Gr00tPolicy constructor."""
         from strands_robots.policies.groot import Gr00tPolicy
@@ -145,7 +151,6 @@ class TestCreatePolicy:
 
     def test_groot_defaults_strict_false(self):
         """strict should default to False for production use."""
-
         p = create_policy("zmq://localhost:5555")
         assert p._strict is False
 

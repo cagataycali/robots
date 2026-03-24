@@ -13,6 +13,8 @@ Features:
 - Policy abstraction for any VLA provider
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import threading
@@ -20,17 +22,17 @@ import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, AsyncGenerator, Dict, Optional, Union
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, Optional, Union, cast
 
-from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
-from lerobot.robots.config import RobotConfig
-from lerobot.robots.robot import Robot as LeRobotRobot
-from lerobot.robots.utils import make_robot_from_config
 from strands.tools.tools import AgentTool
 from strands.types._events import ToolResultEvent
-from strands.types.tools import ToolSpec, ToolUse
+from strands.types.tools import ToolResult, ToolSpec, ToolUse
 
-from .policies import Policy, create_policy
+if TYPE_CHECKING:
+    from lerobot.robots.config import RobotConfig
+    from lerobot.robots.robot import Robot as LeRobotRobot
+
+    from .policies import Policy
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +118,9 @@ class Robot(AgentTool):
         self, robot: Union[LeRobotRobot, RobotConfig, str], cameras: Optional[Dict[str, Dict[str, Any]]], **kwargs
     ) -> LeRobotRobot:
         """Initialize LeRobot robot instance using native lerobot patterns."""
+        from lerobot.robots.config import RobotConfig
+        from lerobot.robots.robot import Robot as LeRobotRobot
+        from lerobot.robots.utils import make_robot_from_config
 
         # Direct robot instance - use as-is
         if isinstance(robot, LeRobotRobot):
@@ -140,6 +145,7 @@ class Robot(AgentTool):
         self, robot_type: str, cameras: Optional[Dict[str, Dict[str, Any]]], **kwargs
     ) -> RobotConfig:
         """Create minimal robot config using specific robot config classes."""
+        from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 
         # Convert cameras to lerobot format
         camera_configs = {}
@@ -209,6 +215,7 @@ class Robot(AgentTool):
         self, policy_port: Optional[int] = None, policy_host: str = "localhost", policy_provider: str = "groot"
     ) -> Policy:
         """Create policy on-the-fly from invocation parameters."""
+        from .policies import create_policy
 
         if not policy_port:
             raise ValueError("policy_port is required for robot operation")
@@ -568,6 +575,11 @@ class Robot(AgentTool):
             },
         }
 
+    @staticmethod
+    def _make_tool_result(tool_use_id: str, result: Dict[str, Any]) -> ToolResult:
+        """Create a ToolResult dict with the given tool_use_id merged into result."""
+        return cast(ToolResult, {"toolUseId": tool_use_id, **result})
+
     async def stream(
         self, tool_use: ToolUse, invocation_state: dict[str, Any], **kwargs: Any
     ) -> AsyncGenerator[ToolResultEvent, None]:
@@ -589,18 +601,19 @@ class Robot(AgentTool):
 
                 if not instruction or not policy_port:
                     yield ToolResultEvent(
-                        {
-                            "toolUseId": tool_use_id,
-                            "status": "error",
-                            "content": [{"text": "❌ instruction and policy_port are required for execute action"}],
-                        }
+                        self._make_tool_result(
+                            tool_use_id,
+                            {
+                                "status": "error",
+                                "content": [{"text": "❌ instruction and policy_port are required for execute action"}],
+                            },
+                        )
                     )
                     return
 
                 # Execute task synchronously
                 task_result = self._execute_task_sync(instruction, policy_port, policy_host, policy_provider, duration)
-                result = {"toolUseId": tool_use_id, **task_result}
-                yield ToolResultEvent(result)
+                yield ToolResultEvent(self._make_tool_result(tool_use_id, task_result))
 
             elif action == "start":
                 # Asynchronous execution start
@@ -612,50 +625,53 @@ class Robot(AgentTool):
 
                 if not instruction or not policy_port:
                     yield ToolResultEvent(
-                        {
-                            "toolUseId": tool_use_id,
-                            "status": "error",
-                            "content": [{"text": "❌ instruction and policy_port are required for start action"}],
-                        }
+                        self._make_tool_result(
+                            tool_use_id,
+                            {
+                                "status": "error",
+                                "content": [{"text": "❌ instruction and policy_port are required for start action"}],
+                            },
+                        )
                     )
                     return
 
                 # Start task asynchronously
                 start_result = self.start_task(instruction, policy_port, policy_host, policy_provider, duration)
-                result = {"toolUseId": tool_use_id, **start_result}
-                yield ToolResultEvent(result)
+                yield ToolResultEvent(self._make_tool_result(tool_use_id, start_result))
 
             elif action == "status":
                 # Get current task status
                 status_result = self.get_task_status()
-                result = {"toolUseId": tool_use_id, **status_result}
-                yield ToolResultEvent(result)
+                yield ToolResultEvent(self._make_tool_result(tool_use_id, status_result))
 
             elif action == "stop":
                 # Stop current task
                 stop_result = self.stop_task()
-                result = {"toolUseId": tool_use_id, **stop_result}
-                yield ToolResultEvent(result)
+                yield ToolResultEvent(self._make_tool_result(tool_use_id, stop_result))
 
             else:
                 yield ToolResultEvent(
-                    {
-                        "toolUseId": tool_use_id,
-                        "status": "error",
-                        "content": [
-                            {"text": f"❌ Unknown action: {action}. Valid actions: execute, start, status, stop"}
-                        ],
-                    }
+                    self._make_tool_result(
+                        tool_use_id,
+                        {
+                            "status": "error",
+                            "content": [
+                                {"text": f"❌ Unknown action: {action}. Valid actions: execute, start, status, stop"}
+                            ],
+                        },
+                    )
                 )
 
         except Exception as e:
             logger.error(f"❌ {self.tool_name_str} error: {e}")
             yield ToolResultEvent(
-                {
-                    "toolUseId": tool_use.get("toolUseId", ""),
-                    "status": "error",
-                    "content": [{"text": f"❌ {self.tool_name_str} error: {str(e)}"}],
-                }
+                self._make_tool_result(
+                    tool_use_id,
+                    {
+                        "status": "error",
+                        "content": [{"text": f"❌ {self.tool_name_str} error: {str(e)}"}],
+                    },
+                )
             )
 
     def cleanup(self):

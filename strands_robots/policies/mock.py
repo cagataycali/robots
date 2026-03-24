@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 class MockPolicy(Policy):
     """Mock policy for testing — generates smooth sinusoidal trajectories."""
 
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs: Any) -> None:
         self.robot_state_keys: List[str] = []
         self._step = 0
         logger.info("Mock Policy initialized")
@@ -24,7 +24,9 @@ class MockPolicy(Policy):
     def set_robot_state_keys(self, robot_state_keys: List[str]) -> None:
         self.robot_state_keys = robot_state_keys
 
-    async def get_actions(self, observation_dict: Dict[str, Any], instruction: str, **kwargs) -> List[Dict[str, Any]]:
+    async def get_actions(
+        self, observation_dict: Dict[str, Any], instruction: str, **kwargs: Any
+    ) -> List[Dict[str, Any]]:
         """Return smooth sinusoidal actions."""
         if not self.robot_state_keys:
             if "observation.state" in observation_dict:

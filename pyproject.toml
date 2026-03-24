@@ -13,11 +13,11 @@ authors = [
     {name = "AWS", email = "opensource@amazon.com"},
 ]
 keywords = [
-    "robots", "agents", "lerobot", "strands", "sdk",
-    "mujoco", "simulation", "reinforcement-learning",
-    "groot", "nvidia", "isaac-sim", "vla",
+    "robots", "agents", "strands", "sdk",
+    "mujoco", "simulation", "lerobot", "reinforcement-learning",
+    "gr00t", "isaac-sim", "vla",
     "robot-learning", "imitation-learning",
-    "teleoperation", "manipulation",
+    "teleoperation", "manipulation", "strands-agents",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -30,107 +30,38 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
-    "Programming Language :: Python :: 3.14",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Scientific/Engineering :: Physics",
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 
 dependencies = [
-    "strands-agents>=1.0.0",
-    "numpy>=1.21.0",
-    "opencv-python-headless>=4.5.0",
-    "Pillow>=8.0.0",
+    "strands-agents>=1.0.0,<2.0.0",
+    "numpy>=1.21.0,<3.0.0",
+    "opencv-python-headless>=4.5.0,<5.0.0",
+    "Pillow>=8.0.0,<12.0.0",
 ]
 
 [project.optional-dependencies]
 groot-service = [
-    "pyzmq>=27.0.0",
-    "msgpack>=1.0.0",
+    "pyzmq>=27.0.0,<28.0.0",
+    "msgpack>=1.0.0,<2.0.0",
 ]
 lerobot = [
-    "torch>=2.0.0",
-    "lerobot>=0.4.0",
-    "lerobot[feetech]",
-]
-mujoco = [
-    "mujoco>=3.0.0",
-    "Pillow>=8.0.0",
-]
-isaac = [
-    # Isaac Sim/Lab are installed separately (requires NVIDIA GPU + Isaac Sim runtime)
-    # See docs/isaac.md for EC2 setup instructions
-    "h5py>=3.0",
-    "mujoco>=3.0.0",
-    "usd-core>=24.0",
-]
-newton = [
-    "warp-lang>=1.11.0",
-    "trimesh",
-    "mujoco>=3.5.0",
-    "numpy>=1.24.0",
-]
-cosmos-transfer = [
-    "torch>=2.1.0",
-    "torchvision",
-    "pydantic>=2.0",
-]
-cosmos-predict = [
-    "torch>=2.1.0",
-    "torchvision",
-    "omegaconf>=2.3.0",
-    "loguru>=0.7.0",
-    "tyro>=1.0.0",
-    "h5py>=3.0",
-    "einops>=0.6.0",
-    "filelock>=3.0",
-]
-marble = [
-    "requests>=2.28.0",
-    "trimesh>=4.0.0",
-    "plyfile>=1.0.0",
-]
-robometer = [
-    "torch>=2.0.0",
-    "transformers>=4.40.0",
-    "scipy>=1.10.0",
-]
-zenoh = [
-    "eclipse-zenoh>=1.0.0",
-]
-policies = [
-    "transformers>=4.40.0",
-    "sentencepiece>=0.1.99",
-    "num2words>=0.5.13",
-    "scipy>=1.10.0",
-    "imageio>=2.30.0",
-    "imageio-ffmpeg>=0.4.0",
-    "av>=10.0.0",
-]
-leisaac = [
-    "leisaac[isaaclab]",
-    "lerobot>=0.4.0",
+    "lerobot>=0.5.0,<0.6.0",
 ]
 all = [
     "strands-robots[groot-service]",
     "strands-robots[lerobot]",
-    "strands-robots[mujoco]",
-    "strands-robots[policies]",
-    "strands-robots[newton]",
-    "strands-robots[cosmos-transfer]",
-    "strands-robots[cosmos-predict]",
-    "strands-robots[marble]",
-    "strands-robots[robometer]",
-    "strands-robots[zenoh]",
-    "strands-robots[leisaac]",
 ]
 dev = [
-    "pytest>=6.0",
-    "pytest-cov",
-    "black",
-    "isort",
-    "flake8",
-    "mypy",
+    "pytest>=6.0,<9.0.0",
+    "pytest-cov>=4.0.0,<6.0.0",
+    "black>=23.0.0,<25.0.0",
+    "isort>=5.12.0,<6.0.0",
+    "flake8>=6.0.0,<8.0.0",
+    "mypy>=1.0.0,<2.0.0",
+    "pytest-timeout>=2.0.0,<3.0.0",
 ]
 
 [project.urls]
@@ -148,28 +79,76 @@ packages = ["strands_robots"]
 
 [tool.hatch.envs.default]
 dependencies = [
-    "pytest>=6.0",
-    "pytest-cov",
-    "black",
-    "isort",
-    "flake8",
-    "mypy",
-    "Pillow>=8.0.0",
-    "requests>=2.28.0",
-    "msgpack>=1.0.0",
-    "pyzmq>=27.0.0",
+    "pytest>=6.0,<9.0.0",
+    "pytest-cov>=4.0.0,<6.0.0",
+    "black>=23.0.0,<25.0.0",
+    "isort>=5.12.0,<6.0.0",
+    "flake8>=6.0.0,<8.0.0",
+    "mypy>=1.0.0,<2.0.0",
+    "Pillow>=8.0.0,<12.0.0",
+    "requests>=2.28.0,<3.0.0",
+    "msgpack>=1.0.0,<2.0.0",
+    "pyzmq>=27.0.0,<28.0.0",
 ]
 
 [tool.hatch.envs.default.scripts]
 test = "pytest {args:tests}"
 test-integ = "pytest tests_integ/ -v --timeout=300 {args}"
-lint = ["black --check strands_robots tests tests_integ", "isort --check-only strands_robots tests tests_integ", "flake8 strands_robots tests tests_integ"]
+lint = ["black --check strands_robots tests tests_integ", "isort --check-only strands_robots tests tests_integ", "flake8 strands_robots tests tests_integ", "mypy strands_robots tests tests_integ"]
 format = ["black strands_robots tests tests_integ", "isort strands_robots tests tests_integ"]
 
 [tool.black]
 line-length = 120
 target-version = ['py310']
 include = '\.pyi?$'
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+ignore_missing_imports = false
+
+# Third-party libs without type stubs
+[[tool.mypy.overrides]]
+module = ["lerobot.*", "gr00t.*", "draccus.*", "msgpack.*", "zmq.*", "huggingface_hub.*", "serial.*", "psutil.*", "torch.*", "torchvision.*", "transformers.*", "einops.*"]
+ignore_missing_imports = true
+
+# @tool decorator injects runtime signatures mypy cannot check
+[[tool.mypy.overrides]]
+module = ["strands_robots.tools.*"]
+disallow_untyped_defs = false
+warn_return_any = false
+ignore_missing_imports = true
+
+# LeRobot local policy uses dynamic attr access via draccus PreTrainedConfig
+[[tool.mypy.overrides]]
+module = ["strands_robots.policies.*"]
+warn_return_any = false
+disallow_untyped_defs = false
+
+# Robot core — complex dynamic assembly, optional deps
+[[tool.mypy.overrides]]
+module = ["strands_robots.robot"]
+disallow_untyped_defs = false
+warn_return_any = false
+
+# __init__.py has lazy import helpers
+[[tool.mypy.overrides]]
+module = ["strands_robots.__init__"]
+disallow_untyped_defs = false
+
+# Registry modules — dynamic JSON loading returns Any
+[[tool.mypy.overrides]]
+module = ["strands_robots.registry.*"]
+warn_return_any = false
+disallow_untyped_defs = false
+
+# Test files — relaxed type checking for mocks, fixtures, and test utilities
+[[tool.mypy.overrides]]
+module = ["tests.*", "tests_integ.*"]
+disallow_untyped_defs = false
+warn_return_any = false
 
 [tool.isort]
 profile = "black"
@@ -178,7 +157,7 @@ multi_line_output = 3
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-v --cov=strands_robots --cov-report=term-missing"
+addopts = "-v --cov=strands_robots --cov-report=term-missing --strict-markers"
 markers = [
-    "gpu: requires CUDA GPU (deselected by default, run with: pytest -m gpu)",
+    "gpu: requires CUDA GPU and real model weights (run with: pytest -m gpu)",
 ]

@@ -62,7 +62,7 @@ class LeRobotCalibrationManager:
 
     def get_calibration_structure(self) -> Dict[str, Dict[str, List[str]]]:
         """Get the complete structure of calibration files"""
-        structure = {"teleoperators": {}, "robots": {}}
+        structure: Dict[str, Dict[str, List[str]]] = {"teleoperators": {}, "robots": {}}
 
         for device_type in ["teleoperators", "robots"]:
             device_path = self.base_path / device_type
@@ -447,6 +447,7 @@ def lerobot_calibrate(
                     "content": [{"text": "❌ **view** action requires: device_type, device_model, and device_id"}],
                 }
 
+            assert device_type is not None and device_model is not None and device_id is not None
             info = manager.get_calibration_info(device_type, device_model, device_id)
             if not info:
                 return {
@@ -572,6 +573,7 @@ def lerobot_calibrate(
                     "content": [{"text": "❌ **delete** action requires: device_type, device_model, and device_id"}],
                 }
 
+            assert device_type is not None and device_model is not None and device_id is not None
             if not manager.calibration_exists(device_type, device_model, device_id):
                 return {
                     "status": "error",

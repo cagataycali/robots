@@ -6,14 +6,18 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from strands_robots.policies.groot import (
-    DATA_CONFIG_MAP,
-    ActionMapping,
-    Gr00tPolicy,
-    ObservationMapping,
+msgpack = pytest.importorskip("msgpack", reason="msgpack not installed — pip install 'strands-robots[groot-service]'")
+zmq = pytest.importorskip("zmq", reason="zmq not installed — pip install 'strands-robots[groot-service]'")
+
+# All tests in this file require groot-service extras
+pytestmark = pytest.mark.skipif(
+    not msgpack or not zmq,
+    reason="groot-service extras not installed",
 )
-from strands_robots.policies.groot.data_config import Gr00tDataConfig
-from strands_robots.policies.groot.policy import (
+
+from strands_robots.policies.groot import DATA_CONFIG_MAP, ActionMapping, Gr00tPolicy, ObservationMapping  # noqa: E402
+from strands_robots.policies.groot.data_config import Gr00tDataConfig  # noqa: E402
+from strands_robots.policies.groot.policy import (  # noqa: E402
     _auto_infer_action_mapping,
     _auto_infer_observation_mapping,
     _detect_groot_version,

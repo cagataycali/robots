@@ -295,8 +295,8 @@ class Gr00tPolicy(Policy):
         self.data_config = load_data_config(data_config)
         self.data_config_name = data_config if isinstance(data_config, str) else type(data_config).__name__
 
-        self._local_policy = None
-        self._client = None
+        self._local_policy: Any = None
+        self._client: Optional[Gr00tInferenceClient] = None
         self._groot_version = groot_version or _detect_groot_version()
         self._strict = strict
 
@@ -540,6 +540,8 @@ class Gr00tPolicy(Policy):
         video_dict: Dict[str, np.ndarray] = {}
         state_dict: Dict[str, np.ndarray] = {}
 
+        assert self._obs_mapping is not None, "Observation mapping not initialized"
+
         # ── Video ──
         mapped_video_keys = set(self._obs_mapping.video.keys())
         for robot_key, model_key in self._obs_mapping.video.items():
@@ -597,6 +599,7 @@ class Gr00tPolicy(Policy):
         if not squeezed:
             return []
 
+        assert self._action_mapping is not None, "Action mapping not initialized"
         horizon = next(iter(squeezed.values())).shape[0]
         mapped_keys = set(self._action_mapping.actions.keys())
 
@@ -619,6 +622,7 @@ class Gr00tPolicy(Policy):
 
     def _service_get_actions(self, robot_obs: Dict[str, Any], instruction: str) -> List[Dict[str, Any]]:
         """Service mode: build observation, call server, unpack."""
+        assert self._client is not None, "Service client not initialized"
         if self._obs_mapping is not None:
             nested_obs = self._prepare_observation(robot_obs, instruction)
             action_chunk = self._client.get_action(nested_obs)
