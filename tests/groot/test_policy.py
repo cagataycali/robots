@@ -123,6 +123,24 @@ class TestConstruction:
     def test_api_token(self):
         assert Gr00tPolicy(api_token="t")._client.api_token == "t"
 
+    def test_api_token_from_env(self, monkeypatch):
+        """GROOT_API_TOKEN env var is used when api_token param is None."""
+        monkeypatch.setenv("GROOT_API_TOKEN", "env-secret")
+        p = Gr00tPolicy()
+        assert p._client.api_token == "env-secret"
+
+    def test_api_token_param_overrides_env(self, monkeypatch):
+        """Explicit api_token param takes precedence over env var."""
+        monkeypatch.setenv("GROOT_API_TOKEN", "env-secret")
+        p = Gr00tPolicy(api_token="explicit")
+        assert p._client.api_token == "explicit"
+
+    def test_api_token_none_without_env(self, monkeypatch):
+        """When no env var and no param, api_token is None."""
+        monkeypatch.delenv("GROOT_API_TOKEN", raising=False)
+        p = Gr00tPolicy()
+        assert p._client.api_token is None
+
     def test_unknown_config(self):
         with pytest.raises(ValueError):
             Gr00tPolicy(data_config="nope")

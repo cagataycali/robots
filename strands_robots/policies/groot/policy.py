@@ -20,6 +20,7 @@ mappings.  No positional guessing.  One step in, one step out.
 
 import importlib.util
 import logging
+import os
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -250,7 +251,7 @@ class Gr00tPolicy(Policy):
         device: ``"cuda"`` or ``"cpu"``.
         groot_version: Force ``"n1.5"`` or ``"n1.6"``.
         strict: Strict input validation.
-        api_token: ZMQ auth token.
+        api_token: ZMQ auth token. Falls back to ``GROOT_API_TOKEN`` env var if not provided.
         observation_mapping: ``{robot_key: "video.X" | "state.X"}``.
         action_mapping: ``{"action.X": "robot_key"}``.
         language_key: Override the model's language key.
@@ -318,7 +319,9 @@ class Gr00tPolicy(Policy):
         else:
             self._mode = "service"
             logger.info("GR00T service mode, %s:%s", host, port)
-            self._client = Gr00tInferenceClient(host=host, port=port, api_token=api_token)
+            # Resolve api_token from env var if not provided as parameter
+            resolved_token = api_token or os.environ.get("GROOT_API_TOKEN")
+            self._client = Gr00tInferenceClient(host=host, port=port, api_token=resolved_token)
 
         logger.info(
             "GR00T ready [mode=%s, version=%s, config=%s]",
