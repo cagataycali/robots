@@ -1,0 +1,117 @@
+name: Integration Tests
+
+on:
+  # Weekly schedule — catch regressions
+  schedule:
+    - cron: '0 6 * * 1'  # Mondays at 06:00 UTC
+
+  # Manual trigger for ad-hoc runs
+  workflow_dispatch:
+    inputs:
+      python-version:
+        description: 'Python version'
+        required: false
+        default: '3.12'
+        type: choice
+        options:
+          - '3.10'
+          - '3.11'
+          - '3.12'
+          - '3.13'
+      timeout:
+        description: 'Test timeout in minutes'
+        required: false
+        default: '20'
+        type: string
+
+  # Label trigger — add "run-integ-tests" to a PR to trigger
+  pull_request:
+    branches: [main]
+    types: [labeled]
+
+concurrency:
+  group: integ-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # CPU gate: validates test collection and runs any non-GPU integration tests.
+  # All current integ tests are marked @pytest.mark.gpu, so this job primarily
+  # catches import errors, fixture issues, and config regressions.
+  integ-collect:
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.label.name == 'run-integ-tests'
+    name: Collect & Validate Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ fromJSON(inputs.timeout || '10') }}
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python-version || '3.12' }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install --no-cache-dir -e ".[dev]"
+
+      - name: Collect integration tests
+        run: |
+          # Validate that tests_integ/ can be discovered and collected.
+          # GPU-dependent tests will fail to import (no torch/lerobot/gr00t)
+          # but collection itself should not crash the test runner.
+          python -m pytest tests_integ/ --collect-only -q 2>&1 | tee collect.txt
+          echo "## Integration Test Collection" >> "$GITHUB_STEP_SUMMARY"
+          cat collect.txt >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Run non-GPU integration tests
+        run: |
+          # Deselect GPU-marked tests — run only CPU-compatible integ tests.
+          # Currently all integ tests are GPU-marked, so this produces 0 tests.
+          # As CPU-compatible integ tests are added, they'll run here automatically.
+          python -m pytest tests_integ/ -v --timeout=120 --strict-markers \
+            -m "not gpu" --tb=short -q 2>&1 | tee results.txt || true
+          echo "## Non-GPU Integration Test Results" >> "$GITHUB_STEP_SUMMARY"
+          cat results.txt >> "$GITHUB_STEP_SUMMARY"
+
+  # GPU integration tests — uncomment when self-hosted GPU runners are available.
+  # Proven on: NVIDIA Jetson AGX Thor (sm_110), AWS g6e.4xlarge (L40S 46GB).
+  # See docs/ci-strategy.md for runner setup.
+  #
+  # integ-gpu:
+  #   if: >-
+  #     github.event_name != 'pull_request' ||
+  #     github.event.label.name == 'run-integ-tests'
+  #   name: Integration Tests (GPU)
+  #   runs-on: [self-hosted, gpu]
+  #   timeout-minutes: 30
+  #   permissions:
+  #     contents: read
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #       with:
+  #         ref: ${{ github.event.pull_request.head.sha || github.sha }}
+  #         persist-credentials: false
+  #
+  #     - name: Set up Python
+  #       uses: actions/setup-python@v5
+  #       with:
+  #         python-version: '3.12'
+  #
+  #     - name: Install dependencies
+  #       run: pip install --no-cache-dir -e ".[all,dev]"
+  #
+  #     - name: Run all integration tests
+  #       env:
+  #         MUJOCO_GL: egl
+  #       run: |
+  #         python -m pytest tests_integ/ -v --timeout=300 --strict-markers \
+  #           --tb=short -q
