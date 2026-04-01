@@ -73,18 +73,6 @@ def _get_lerobot_dataset_class():
         ) from exc
 
 
-def _numpy_ify(v):
-    """Convert any value to numpy-friendly format for add_frame."""
-    if hasattr(v, "numpy"):
-        return v.numpy()
-    if hasattr(v, "tolist") and isinstance(v, np.ndarray):
-        return v
-    if isinstance(v, (int, float)):
-        return np.array([v], dtype=np.float32)
-    if isinstance(v, list):
-        return np.array(v, dtype=np.float32)
-    return v
-
 
 class DatasetRecorder:
     """Bridge between strands-robots control loops and LeRobotDataset.
@@ -103,6 +91,7 @@ class DatasetRecorder:
         self.default_task = task
         self.frame_count = 0
         self.dropped_frame_count = 0
+        self.strict = strict
         self.episode_count = 0
         self._closed = False
         self._cached_state_keys: list[str] | None = None
@@ -374,6 +363,8 @@ class DatasetRecorder:
             self.dataset.add_frame(frame)
             self.frame_count += 1
         except Exception as e:
+            if self.strict:
+                raise  # Fail-fast per AGENTS.md convention #5
             self.dropped_frame_count += 1
             n = self.dropped_frame_count
             # Log at 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, then every 1000
