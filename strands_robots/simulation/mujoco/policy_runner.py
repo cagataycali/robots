@@ -238,16 +238,17 @@ class PolicyRunnerMixin:
             step_start = time.time()
             frame = ds[episode_start + frame_idx]
 
-            if "action" in frame:
-                action_vals = frame["action"]
-                if hasattr(action_vals, "numpy"):
-                    action_vals = action_vals.numpy()
-                if hasattr(action_vals, "tolist"):
-                    action_vals = action_vals.tolist()
-                for i in range(min(len(action_vals), n_actuators)):
-                    data.ctrl[i] = float(action_vals[i])
+            with self._lock:
+                if "action" in frame:
+                    action_vals = frame["action"]
+                    if hasattr(action_vals, "numpy"):
+                        action_vals = action_vals.numpy()
+                    if hasattr(action_vals, "tolist"):
+                        action_vals = action_vals.tolist()
+                    for i in range(min(len(action_vals), n_actuators)):
+                        data.ctrl[i] = float(action_vals[i])
 
-            mj.mj_step(model, data)
+                mj.mj_step(model, data)
             frames_applied += 1
 
             elapsed = time.time() - step_start
@@ -323,10 +324,11 @@ class PolicyRunnerMixin:
                 coro_or_result = policy_instance.get_actions(obs, instruction)
                 actions = _resolve_coroutine(coro_or_result)
 
-                if actions:
-                    self._apply_sim_action(robot_name, actions[0])
+                with self._lock:
+                    if actions:
+                        self._apply_sim_action(robot_name, actions[0])
 
-                mj.mj_step(model, data)
+                    mj.mj_step(model, data)
                 steps += 1
 
                 if success_fn == "contact":
