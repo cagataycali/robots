@@ -26,4 +26,4 @@ frame = sim.render(width=640, height=480)
 print(f"Rendered frame: {frame['content'][0]['text']}")
 
 sim.destroy()
-print("✅ Simulation complete")
+print("Done — simulation complete")
