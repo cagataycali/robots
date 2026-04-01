@@ -61,8 +61,11 @@ def _auto_detect_mode(canonical: str) -> str:
             robot_ports = [
                 p
                 for p in ports
-                if any(kw in (p.description + getattr(p, "manufacturer", "")).lower() for kw in servo_keywords)
-                and not any(s in p.description.lower() for s in exclude)
+                if any(
+                    kw in ((p.description or "") + (getattr(p, "manufacturer", None) or "")).lower()
+                    for kw in servo_keywords
+                )
+                and not any(s in (p.description or "").lower() for s in exclude)
             ]
             if robot_ports:
                 logger.info(
