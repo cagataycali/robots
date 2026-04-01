@@ -35,6 +35,7 @@ except ImportError as e:
     raise ImportError(f"LeRobot camera modules not available: {e}")
 
 from strands import tool
+
 from strands_robots.tools._path_validation import validate_save_path
 
 # Configure logging

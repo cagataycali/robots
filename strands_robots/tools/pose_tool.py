@@ -20,6 +20,7 @@ from typing import Any, TypedDict
 import serial
 import serial.tools.list_ports
 from strands import tool
+
 from strands_robots.tools._path_validation import validate_save_path
 
 logger = logging.getLogger(__name__)

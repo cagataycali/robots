@@ -60,8 +60,6 @@ def validate_save_path(path: str, *, label: str = "path") -> str:
     )
     for prefix in _BLOCKED_PREFIXES:
         if resolved.startswith(prefix):
-            raise ValueError(
-                f"{label} resolves to a protected system directory ({prefix}): {resolved}"
-            )
+            raise ValueError(f"{label} resolves to a protected system directory ({prefix}): {resolved}")
 
     return resolved
