@@ -48,16 +48,12 @@ def _validate_data_config(value: str) -> None:
 
 def _validate_embodiment_tag(value: str) -> None:
     if not _EMBODIMENT_TAG_RE.match(value):
-        raise ValueError(
-            f"embodiment_tag must be lowercase alphanumeric/underscore (got {value!r})"
-        )
+        raise ValueError(f"embodiment_tag must be lowercase alphanumeric/underscore (got {value!r})")
 
 
 def _validate_container_name(value: str) -> None:
     if not _CONTAINER_NAME_RE.match(value):
-        raise ValueError(
-            f"container_name must match Docker naming rules (got {value!r})"
-        )
+        raise ValueError(f"container_name must match Docker naming rules (got {value!r})")
 
 
 @tool
@@ -426,16 +422,18 @@ def _stop_service(port: int) -> dict[str, Any]:
                         for pid in pids:
                             pid = pid.strip()
                             if pid and _is_gr00t_process(container_name, pid):
-                                subprocess.run(
-                                    ["docker", "exec", container_name, "kill", "-TERM", pid], check=True
-                                )
+                                subprocess.run(["docker", "exec", container_name, "kill", "-TERM", pid], check=True)
 
                         time.sleep(2)
 
                         result = subprocess.run(
                             [
-                                "docker", "exec", container_name,
-                                "pgrep", "-f", f"inference_service.py.*--port {port}",
+                                "docker",
+                                "exec",
+                                container_name,
+                                "pgrep",
+                                "-f",
+                                f"inference_service.py.*--port {port}",
                             ],
                             capture_output=True,
                             text=True,
@@ -447,9 +445,7 @@ def _stop_service(port: int) -> dict[str, Any]:
                             for pid in pids:
                                 pid = pid.strip()
                                 if pid and _is_gr00t_process(container_name, pid):
-                                    subprocess.run(
-                                        ["docker", "exec", container_name, "kill", "-KILL", pid], check=True
-                                    )
+                                    subprocess.run(["docker", "exec", container_name, "kill", "-KILL", pid], check=True)
 
                         return {
                             "status": "success",
