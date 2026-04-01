@@ -1,8 +1,8 @@
-import re
 """MJCF XML builder — programmatic scene construction."""
 
 import logging
 import os
+import re
 import subprocess
 import tempfile
 
@@ -21,9 +21,7 @@ def _sanitize_name(name: str) -> str:
     Raises ValueError if name contains characters that could cause XML injection.
     """
     if not _VALID_NAME_RE.match(name):
-        raise ValueError(
-            f"Invalid simulation name {name!r}: must match [a-zA-Z0-9_][a-zA-Z0-9_.\\-]{{0,127}}"
-        )
+        raise ValueError(f"Invalid simulation name {name!r}: must match [a-zA-Z0-9_][a-zA-Z0-9_.\\-]{{0,127}}")
     return name
 
 

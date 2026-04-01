@@ -14,6 +14,7 @@ from strands.tools.tools import AgentTool
 from strands.types._events import ToolResultEvent
 from strands.types.tools import ToolSpec, ToolUse
 
+from strands_robots.simulation.base import SimulationBackend
 from strands_robots.simulation.model_registry import (
     list_available_models,
     register_urdf,
@@ -27,7 +28,6 @@ from strands_robots.simulation.mujoco.policy_runner import PolicyRunnerMixin
 from strands_robots.simulation.mujoco.randomization import RandomizationMixin
 from strands_robots.simulation.mujoco.recording import RecordingMixin
 from strands_robots.simulation.mujoco.rendering import RenderingMixin
-from strands_robots.simulation.base import SimulationBackend
 from strands_robots.simulation.mujoco.scene_ops import (
     eject_body_from_scene,
     inject_camera_into_scene,
