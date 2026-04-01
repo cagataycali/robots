@@ -894,7 +894,7 @@ class LerobotLocalPolicy(Policy):
             if state_feature:
                 expected_dim = state_feature.shape[0] if hasattr(state_feature, "shape") else len(state_values)
                 if len(state_values) > expected_dim:
-                    logger.debug(
+                    logger.warning(
                         "State dim %d > model expects %d — truncating to first %d values",
                         len(state_values),
                         expected_dim,
@@ -902,7 +902,7 @@ class LerobotLocalPolicy(Policy):
                     )
                     state_values = state_values[:expected_dim]
                 elif len(state_values) < expected_dim:
-                    logger.debug(
+                    logger.warning(
                         "State dim %d < model expects %d — zero-padding",
                         len(state_values),
                         expected_dim,
