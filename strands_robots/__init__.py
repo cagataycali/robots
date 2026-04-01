@@ -84,6 +84,14 @@ __all__ = [
 # Auto-configure MuJoCo GL backend for headless environments BEFORE any
 # module imports mujoco at the top level.  MuJoCo locks the OpenGL backend
 # at import time, so MUJOCO_GL must be set first.
+#
+# WHY EAGER: This MUST run at module import time, not lazily, because:
+# 1. MuJoCo reads MUJOCO_GL only on first `import mujoco`
+# 2. Any downstream code doing `from strands_robots.simulation import ...`
+#    triggers mujoco import via the lazy-load chain
+# 3. If we defer to first use, the env var would be set too late
+# This is the canonical location — strands_robots/simulation/__init__.py
+# intentionally does NOT duplicate this call.
 try:
     from strands_robots.simulation.mujoco.backend import _configure_gl_backend
 

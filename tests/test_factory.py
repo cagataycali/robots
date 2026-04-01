@@ -139,6 +139,21 @@ class TestRobotFactory:
         with pytest.raises(RuntimeError):
             Robot("test_bot", mode="sim", urdf_path="/nonexistent/robot.xml")
 
+    def test_sim_happy_path_mujoco(self):
+        """Happy-path: create a MuJoCo sim, step physics, destroy."""
+        mujoco = pytest.importorskip("mujoco")
+        sim = Robot("so100", mode="sim", backend="mujoco")
+        try:
+            # Verify it's a working simulation instance
+            assert sim._world is not None
+            assert sim._world._model is not None
+            assert sim._world._data is not None
+            # Step physics once to verify the engine works
+            mujoco.mj_step(sim._world._model, sim._world._data)
+            assert sim._world._data.time > 0
+        finally:
+            sim.destroy()
+
     def test_import_from_top_level(self):
         """Robot and list_robots importable from strands_robots."""
         from strands_robots import Robot as R

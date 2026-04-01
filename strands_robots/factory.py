@@ -70,7 +70,7 @@ def _auto_detect_mode(canonical: str) -> str:
                     [p.device for p in robot_ports],
                 )
                 return "real"
-        except (ImportError, Exception):
+        except (ImportError, OSError):  # USB probing may fail with OSError on permission/device issues
             pass
 
     return "sim"
@@ -165,7 +165,7 @@ def Robot(
 
         result = sim._dispatch_action("add_robot", add_robot_params)
         if result.get("status") == "error":
-            # Extract human-readable message from content
+            sim.destroy()  # Clean up partial initialization (executor, temp dir, MuJoCo world)
             content = result.get("content", [])
             msg = content[0].get("text", str(result)) if content else str(result)
             raise RuntimeError(f"Failed to create sim robot '{canonical}': {msg}")
