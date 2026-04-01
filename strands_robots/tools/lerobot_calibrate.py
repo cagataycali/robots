@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from strands import tool
+from strands_robots.tools._path_validation import validate_save_path
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -205,7 +206,7 @@ class LeRobotCalibrationManager:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             output_dir = BACKUP_DIR / f"backup_{timestamp}"
 
-        output_dir = Path(output_dir)
+        output_dir = Path(validate_save_path(str(output_dir), label="output_dir"))
         output_dir.mkdir(parents=True, exist_ok=True)
 
         structure = self.get_calibration_structure()
@@ -254,7 +255,7 @@ class LeRobotCalibrationManager:
 
     def restore_calibrations(self, backup_dir: Path, overwrite: bool = False) -> tuple[bool, str, int]:
         """Restore calibrations from backup"""
-        backup_dir = Path(backup_dir)
+        backup_dir = Path(validate_save_path(str(backup_dir), label="backup_dir"))
 
         if not backup_dir.exists():
             return False, f"Backup directory not found: {backup_dir}", 0

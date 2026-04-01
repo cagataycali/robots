@@ -35,6 +35,7 @@ except ImportError as e:
     raise ImportError(f"LeRobot camera modules not available: {e}")
 
 from strands import tool
+from strands_robots.tools._path_validation import validate_save_path
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -395,6 +396,9 @@ def _capture_single_image(
 ) -> dict[str, Any]:
     """Capture a single image using LeRobot camera system."""
     try:
+        # Validate save path before any filesystem operations
+        save_path = validate_save_path(save_path, label="save_path")
+
         # Create save directory
         os.makedirs(save_path, exist_ok=True)
 
@@ -480,6 +484,7 @@ def _capture_batch_images(
 ) -> dict[str, Any]:
     """Capture images from multiple cameras simultaneously."""
     try:
+        save_path = validate_save_path(save_path, label="save_path")
         os.makedirs(save_path, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
@@ -607,6 +612,7 @@ def _record_video_sequence(
 ) -> dict[str, Any]:
     """Record a video sequence from camera."""
     try:
+        save_path = validate_save_path(save_path, label="save_path")
         os.makedirs(save_path, exist_ok=True)
 
         # Generate filename
@@ -919,6 +925,7 @@ def _configure_camera_settings(
 
         # Save configuration if requested
         if save_config:
+            save_path = validate_save_path(save_path, label="save_path")
             os.makedirs(save_path, exist_ok=True)
             cam_id_safe = str(camera_id).replace("/", "_")
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
