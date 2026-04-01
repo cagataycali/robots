@@ -27,6 +27,7 @@ from strands_robots.simulation.mujoco.policy_runner import PolicyRunnerMixin
 from strands_robots.simulation.mujoco.randomization import RandomizationMixin
 from strands_robots.simulation.mujoco.recording import RecordingMixin
 from strands_robots.simulation.mujoco.rendering import RenderingMixin
+from strands_robots.simulation.base import SimulationBackend
 from strands_robots.simulation.mujoco.scene_ops import (
     eject_body_from_scene,
     inject_camera_into_scene,
@@ -44,6 +45,7 @@ class Simulation(
     RenderingMixin,
     RecordingMixin,
     RandomizationMixin,
+    SimulationBackend,
     AgentTool,
 ):
     """Programmatic simulation environment as a Strands AgentTool.
