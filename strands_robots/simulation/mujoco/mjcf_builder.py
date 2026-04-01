@@ -53,7 +53,7 @@ class MJCFBuilder:
         parts.append('    <material name="grid_mat" texture="grid_tex" texrepeat="8 8" reflectance="0.1"/>')
         for obj in world.objects.values():
             if obj.shape == "mesh" and obj.mesh_path:
-                parts.append(f'    <mesh name="mesh_{obj.name}" file="{obj.mesh_path}"/>')
+                parts.append(f'    <mesh name="mesh_{_sanitize_name(obj.name)}" file="{obj.mesh_path}"/>')
         parts.append("  </asset>")
 
         parts.append("  <worldbody>")
@@ -67,7 +67,9 @@ class MJCFBuilder:
 
         for cam in world.cameras.values():
             px, py, pz = cam.position
-            parts.append(f'    <camera name="{cam.name}" pos="{px} {py} {pz}" fovy="{cam.fov}" mode="fixed"/>')
+            parts.append(
+                f'    <camera name="{_sanitize_name(cam.name)}" pos="{px} {py} {pz}" fovy="{cam.fov}" mode="fixed"/>'
+            )
 
         for obj in world.objects.values():
             parts.append(MJCFBuilder._object_xml(obj, indent=4))
@@ -89,44 +91,44 @@ class MJCFBuilder:
         lines.append(f'{pad}<body name="{_sanitize_name(obj.name)}" pos="{px} {py} {pz}" quat="{qw} {qx} {qy} {qz}">')
 
         if not obj.is_static:
-            lines.append(f'{pad}  <freejoint name="{obj.name}_joint"/>')
+            lines.append(f'{pad}  <freejoint name="{_sanitize_name(obj.name)}_joint"/>')
             lines.append(f'{pad}  <inertial pos="0 0 0" mass="{obj.mass}" diaginertia="0.001 0.001 0.001"/>')
 
         if obj.shape == "box":
             sx, sy, sz = [s / 2 for s in obj.size]
             lines.append(
-                f'{pad}  <geom name="{obj.name}_geom" type="box" size="{sx} {sy} {sz}" '
+                f'{pad}  <geom name="{_sanitize_name(obj.name)}_geom" type="box" size="{sx} {sy} {sz}" '
                 f'rgba="{r} {g} {b} {a}" condim="3" friction="1 0.5 0.001"/>'
             )
         elif obj.shape == "sphere":
             radius = obj.size[0] / 2 if obj.size else 0.025
             lines.append(
-                f'{pad}  <geom name="{obj.name}_geom" type="sphere" size="{radius}" rgba="{r} {g} {b} {a}" condim="3"/>'
+                f'{pad}  <geom name="{_sanitize_name(obj.name)}_geom" type="sphere" size="{radius}" rgba="{r} {g} {b} {a}" condim="3"/>'
             )
         elif obj.shape == "cylinder":
             radius = obj.size[0] / 2 if obj.size else 0.025
             half_h = obj.size[2] / 2 if len(obj.size) > 2 else 0.05
             lines.append(
-                f'{pad}  <geom name="{obj.name}_geom" type="cylinder" size="{radius} {half_h}" '
+                f'{pad}  <geom name="{_sanitize_name(obj.name)}_geom" type="cylinder" size="{radius} {half_h}" '
                 f'rgba="{r} {g} {b} {a}" condim="3"/>'
             )
         elif obj.shape == "capsule":
             radius = obj.size[0] / 2 if obj.size else 0.025
             half_h = obj.size[2] / 2 if len(obj.size) > 2 else 0.05
             lines.append(
-                f'{pad}  <geom name="{obj.name}_geom" type="capsule" size="{radius} {half_h}" '
+                f'{pad}  <geom name="{_sanitize_name(obj.name)}_geom" type="capsule" size="{radius} {half_h}" '
                 f'rgba="{r} {g} {b} {a}" condim="3"/>'
             )
         elif obj.shape == "mesh" and obj.mesh_path:
             lines.append(
-                f'{pad}  <geom name="{obj.name}_geom" type="mesh" mesh="mesh_{obj.name}" '
+                f'{pad}  <geom name="{_sanitize_name(obj.name)}_geom" type="mesh" mesh="mesh_{_sanitize_name(obj.name)}" '
                 f'rgba="{r} {g} {b} {a}" condim="3"/>'
             )
         elif obj.shape == "plane":
             sx = obj.size[0] if obj.size else 1.0
             sy = obj.size[1] if len(obj.size) > 1 else sx
             lines.append(
-                f'{pad}  <geom name="{obj.name}_geom" type="plane" size="{sx} {sy} 0.01" rgba="{r} {g} {b} {a}"/>'
+                f'{pad}  <geom name="{_sanitize_name(obj.name)}_geom" type="plane" size="{sx} {sy} 0.01" rgba="{r} {g} {b} {a}"/>'
             )
 
         lines.append(f"{pad}</body>")
@@ -176,7 +178,7 @@ class MJCFBuilder:
         parts.append('    <material name="grid_mat" texture="grid_tex" texrepeat="8 8" reflectance="0.1"/>')
         for obj in objects.values():
             if obj.shape == "mesh" and obj.mesh_path:
-                parts.append(f'    <mesh name="mesh_{obj.name}" file="{obj.mesh_path}"/>')
+                parts.append(f'    <mesh name="mesh_{_sanitize_name(obj.name)}" file="{obj.mesh_path}"/>')
         parts.append("  </asset>")
 
         parts.append("  <worldbody>")
@@ -190,7 +192,9 @@ class MJCFBuilder:
 
         for cam in cameras.values():
             px, py, pz = cam.position
-            parts.append(f'    <camera name="{cam.name}" pos="{px} {py} {pz}" fovy="{cam.fov}" mode="fixed"/>')
+            parts.append(
+                f'    <camera name="{_sanitize_name(cam.name)}" pos="{px} {py} {pz}" fovy="{cam.fov}" mode="fixed"/>'
+            )
 
         for robot_name, robot in robots.items():
             xml_path = robot_xmls[robot_name]

@@ -13,7 +13,7 @@ import xml.etree.ElementTree as ET
 
 from strands_robots.simulation.models import SimCamera, SimObject, SimWorld
 from strands_robots.simulation.mujoco.backend import _ensure_mujoco
-from strands_robots.simulation.mujoco.mjcf_builder import MJCFBuilder
+from strands_robots.simulation.mujoco.mjcf_builder import MJCFBuilder, _sanitize_name
 
 logger = logging.getLogger(__name__)
 
@@ -197,7 +197,7 @@ def inject_camera_into_scene(world: SimWorld, cam: SimCamera) -> bool:
             xml_content = f.read()
 
         px, py, pz = cam.position
-        cam_xml = f'    <camera name="{cam.name}" pos="{px} {py} {pz}" fovy="{cam.fov}" mode="fixed"/>'
+        cam_xml = f'    <camera name="{_sanitize_name(cam.name)}" pos="{px} {py} {pz}" fovy="{cam.fov}" mode="fixed"/>'
         xml_content = xml_content.replace("</worldbody>", f"{cam_xml}\n</worldbody>")
 
         with open(scene_path, "w") as f:
