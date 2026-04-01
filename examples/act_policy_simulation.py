@@ -25,6 +25,9 @@ sim.start_recording(
 )
 
 # 3. Run a pretrained ACT policy from HuggingFace (51M params)
+# NOTE: This downloads model weights (~200MB) on first run.
+# For a lightweight test without downloading, use policy_provider="mock":
+#   sim.run_policy(robot_name="aloha", policy_provider="mock", duration=2.0)
 result = sim.run_policy(
     robot_name="aloha",
     policy_provider="lerobot_local",
