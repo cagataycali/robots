@@ -52,6 +52,7 @@ lerobot = [
 ]
 sim = [
     "robot_descriptions>=1.11.0,<2.0.0",
+    "mujoco>=3.0.0,<4.0.0",
 ]
 all = [
     "strands-robots[groot-service]",
