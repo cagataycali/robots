@@ -139,10 +139,36 @@ class TestRobotFactory:
         with pytest.raises(RuntimeError):
             Robot("test_bot", mode="sim", urdf_path="/nonexistent/robot.xml")
 
-    def test_sim_happy_path_mujoco(self):
-        """Happy-path: create a MuJoCo sim, step physics, destroy."""
+    def test_sim_happy_path_mujoco(self, tmp_path):
+        """Happy-path: create a MuJoCo sim, step physics, destroy.
+
+        Uses a minimal inline MJCF so the test works without downloaded assets.
+        """
         mujoco = pytest.importorskip("mujoco")
-        sim = Robot("so100", mode="sim", backend="mujoco")
+
+        # Minimal valid MJCF that MuJoCo can load — a one-joint arm
+        mjcf_xml = """<mujoco model="test_arm">
+          <worldbody>
+            <light pos="0 0 3"/>
+            <geom type="plane" size="1 1 0.1"/>
+            <body name="link0" pos="0 0 0.1">
+              <joint name="joint0" type="hinge" axis="0 0 1"/>
+              <geom type="capsule" size="0.02" fromto="0 0 0  0 0 0.2"/>
+              <body name="link1" pos="0 0 0.2">
+                <joint name="joint1" type="hinge" axis="0 1 0"/>
+                <geom type="capsule" size="0.02" fromto="0 0 0  0 0 0.2"/>
+              </body>
+            </body>
+          </worldbody>
+          <actuator>
+            <motor joint="joint0" ctrlrange="-1 1"/>
+            <motor joint="joint1" ctrlrange="-1 1"/>
+          </actuator>
+        </mujoco>"""
+        mjcf_path = tmp_path / "test_arm.xml"
+        mjcf_path.write_text(mjcf_xml)
+
+        sim = Robot("so100", mode="sim", backend="mujoco", urdf_path=str(mjcf_path))
         try:
             # Verify it's a working simulation instance
             assert sim._world is not None
