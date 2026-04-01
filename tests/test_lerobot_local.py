@@ -575,12 +575,16 @@ class TestBuildBatchFromStrandsFormat:
         np.testing.assert_allclose(batch["observation.state"][0].numpy(), [1.5, 2.5], atol=1e-5)
 
     def test_state_padded_to_expected_dim(self):
-        """State dimension mismatch should raise ValueError (fail-fast)."""
+        """State dimension mismatch should auto-pad (not raise)."""
         policy = _make_loaded_policy(state_dim=4, include_images=False)
         policy.set_robot_state_keys(["a", "b"])
         observation = {"a": 1.0, "b": 2.0}
-        with pytest.raises(ValueError, match="State dimension mismatch"):
-            policy._build_batch_from_strands_format(observation, {})
+        # After bug fix: auto-pads with zeros instead of raising
+        batch = policy._build_batch_from_strands_format(observation, {})
+        state = batch["observation.state"][0].numpy()
+        assert len(state) == 4
+        np.testing.assert_allclose(state[:2], [1.0, 2.0], atol=1e-5)
+        np.testing.assert_allclose(state[2:], [0.0, 0.0], atol=1e-5)
 
     def test_empty_state_keys_raises(self):
         """Empty robot_state_keys should raise ValueError."""
