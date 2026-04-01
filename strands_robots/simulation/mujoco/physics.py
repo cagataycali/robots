@@ -808,11 +808,14 @@ class PhysicsMixin:
             import os
             import tempfile
 
-            tmpfile = tempfile.mktemp(suffix=".xml")
+            with tempfile.NamedTemporaryFile(suffix=".xml", mode="w", delete=False) as tmp:
+                tmpfile = tmp.name
             mj.mj_saveLastXML(tmpfile, self._world._model)
-            with open(tmpfile) as f:
-                xml = f.read()
-            os.unlink(tmpfile)
+            try:
+                with open(tmpfile) as f:
+                    xml = f.read()
+            finally:
+                os.unlink(tmpfile)
             return {
                 "status": "success",
                 "content": [

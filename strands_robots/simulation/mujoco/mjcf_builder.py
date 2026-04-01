@@ -1,3 +1,4 @@
+import re
 """MJCF XML builder — programmatic scene construction."""
 
 import logging
@@ -9,6 +10,21 @@ from strands_robots.simulation.models import SimCamera, SimObject, SimRobot, Sim
 from strands_robots.simulation.mujoco.backend import _ensure_mujoco
 
 logger = logging.getLogger(__name__)
+
+
+_VALID_NAME_RE = re.compile(r"^[a-zA-Z0-9_][a-zA-Z0-9_.\-]{0,127}$")
+
+
+def _sanitize_name(name: str) -> str:
+    """Validate and sanitize an object/body name for safe MJCF XML embedding.
+
+    Raises ValueError if name contains characters that could cause XML injection.
+    """
+    if not _VALID_NAME_RE.match(name):
+        raise ValueError(
+            f"Invalid simulation name {name!r}: must match [a-zA-Z0-9_][a-zA-Z0-9_.\\-]{{0,127}}"
+        )
+    return name
 
 
 class MJCFBuilder:
@@ -72,7 +88,7 @@ class MJCFBuilder:
         r, g, b, a = obj.color
         lines = []
 
-        lines.append(f'{pad}<body name="{obj.name}" pos="{px} {py} {pz}" quat="{qw} {qx} {qy} {qz}">')
+        lines.append(f'{pad}<body name="{_sanitize_name(obj.name)}" pos="{px} {py} {pz}" quat="{qw} {qx} {qy} {qz}">')
 
         if not obj.is_static:
             lines.append(f'{pad}  <freejoint name="{obj.name}_joint"/>')

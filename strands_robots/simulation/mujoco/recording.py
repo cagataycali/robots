@@ -21,7 +21,7 @@ class RecordingMixin:
         root: str = None,
         push_to_hub: bool = False,
         vcodec: str = "libsvtav1",
-        overwrite: bool = True,
+        overwrite: bool = False,
     ) -> dict[str, Any]:
         """Start recording to LeRobotDataset format (parquet + video)."""
         if self._world is None:

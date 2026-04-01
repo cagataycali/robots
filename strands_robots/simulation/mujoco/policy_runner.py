@@ -161,11 +161,23 @@ class PolicyRunnerMixin:
         fast_mode: bool = False,
         **policy_kwargs,
     ) -> dict[str, Any]:
-        """Start policy execution in background (non-blocking)."""
+        """Start policy execution in background (non-blocking).
+
+        Only one policy may run per robot at a time — MuJoCo model/data
+        are not thread-safe for concurrent writes.
+        """
         if self._world is None or self._world._data is None:
             return {"status": "error", "content": [{"text": "❌ No simulation."}]}
         if robot_name not in self._world.robots:
             return {"status": "error", "content": [{"text": f"❌ Robot '{robot_name}' not found."}]}
+
+        # Reject if a policy is already running on this robot (thread-safety)
+        existing = self._policy_threads.get(robot_name)
+        if existing is not None and not existing.done():
+            return {
+                "status": "error",
+                "content": [{"text": f"❌ Policy already running on '{robot_name}'. Stop it first."}],
+            }
 
         future = self._executor.submit(
             self.run_policy,
@@ -303,7 +315,6 @@ class PolicyRunnerMixin:
             mj.mj_resetData(model, data)
             mj.mj_forward(model, data)
 
-            total_reward = 0.0
             success = False
             steps = 0
 
@@ -326,7 +337,7 @@ class PolicyRunnerMixin:
                     if success:
                         break
 
-            results.append({"episode": ep, "steps": steps, "success": success, "reward": total_reward})
+            results.append({"episode": ep, "steps": steps, "success": success})
 
         n_success = sum(1 for r in results if r["success"])
         success_rate = n_success / max(n_episodes, 1)
