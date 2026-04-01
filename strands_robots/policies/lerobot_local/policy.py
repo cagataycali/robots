@@ -895,7 +895,8 @@ class LerobotLocalPolicy(Policy):
                 expected_dim = state_feature.shape[0] if hasattr(state_feature, "shape") else len(state_values)
                 if len(state_values) > expected_dim:
                     logger.warning(
-                        "State dim %d > model expects %d — truncating to first %d values",
+                        "State dim %d > model expects %d — truncating to first %d values. "
+                        "Check that robot_state_keys matches your robot's actual joint count.",
                         len(state_values),
                         expected_dim,
                         expected_dim,
@@ -903,9 +904,11 @@ class LerobotLocalPolicy(Policy):
                     state_values = state_values[:expected_dim]
                 elif len(state_values) < expected_dim:
                     logger.warning(
-                        "State dim %d < model expects %d — zero-padding",
+                        "State dim %d < model expects %d — zero-padding with %d zeros. "
+                        "Check that robot_state_keys matches your robot's actual joint count.",
                         len(state_values),
                         expected_dim,
+                        expected_dim - len(state_values),
                     )
                     state_values.extend([0.0] * (expected_dim - len(state_values)))
             batch["observation.state"] = torch.tensor(state_values, dtype=torch.float32).unsqueeze(0).to(self._device)
