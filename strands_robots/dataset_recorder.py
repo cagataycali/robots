@@ -73,7 +73,6 @@ def _get_lerobot_dataset_class():
         ) from exc
 
 
-
 class DatasetRecorder:
     """Bridge between strands-robots control loops and LeRobotDataset.
 
@@ -86,7 +85,7 @@ class DatasetRecorder:
     Works for both real hardware (robot.py) and simulation (simulation.py).
     """
 
-    def __init__(self, dataset, task: str = ""):
+    def __init__(self, dataset, task: str = "", strict: bool = True):
         self.dataset = dataset
         self.default_task = task
         self.frame_count = 0
