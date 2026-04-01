@@ -1,6 +1,7 @@
 """Policy factory — create_policy() and runtime registration."""
 
 import logging
+import os
 from collections.abc import Callable
 
 from strands_robots.policies.base import Policy
@@ -46,6 +47,46 @@ def list_providers() -> list[str]:
     return sorted(set(names))
 
 
+class UntrustedRemoteCodeError(RuntimeError):
+    """Raised when a HF model requires trust_remote_code but the user has not opted in."""
+
+
+# Providers whose HuggingFace model loading path calls ``trust_remote_code=True``.
+# Any provider that downloads and executes code from a model repository
+# **must** be listed here so users are forced to explicitly opt in.
+_HF_REMOTE_CODE_PROVIDERS: frozenset[str] = frozenset(
+    {
+        "lerobot_local",
+    }
+)
+
+
+def _check_trust_remote_code(provider: str) -> None:
+    """Enforce the trust-remote-code gate for HuggingFace-backed providers.
+
+    Only providers listed in ``_HF_REMOTE_CODE_PROVIDERS`` are gated.
+    These providers load models with ``trust_remote_code=True``, which
+    allows **arbitrary code execution** from the model repository.
+
+    Set the environment variable ``STRANDS_TRUST_REMOTE_CODE=1`` to opt in.
+    """
+    if provider not in _HF_REMOTE_CODE_PROVIDERS:
+        return
+
+    opted_in = os.environ.get("STRANDS_TRUST_REMOTE_CODE", "").strip()
+    if opted_in in ("1", "true", "yes"):
+        return
+
+    raise UntrustedRemoteCodeError(
+        f"Policy provider '{provider}' loads HuggingFace models with "
+        f"trust_remote_code=True, which allows arbitrary code execution "
+        f"from the model repository.\n\n"
+        f"Only load models from organisations you trust.\n\n"
+        f"To acknowledge this risk and proceed, set the environment variable:\n"
+        f"    export STRANDS_TRUST_REMOTE_CODE=1\n"
+    )
+
+
 def create_policy(provider: str, **kwargs) -> Policy:
     """Create a policy instance.
 
@@ -64,16 +105,15 @@ def create_policy(provider: str, **kwargs) -> Policy:
     Returns:
         Policy instance ready for get_actions().
 
-    .. warning:: Security — trust_remote_code
-
-        Most HF VLA providers load models with ``trust_remote_code=True``.
-        Only load models from organisations you trust. Set
-        ``STRANDS_TRUST_REMOTE_CODE=1`` to acknowledge and silence the
-        runtime warning.
+    Raises:
+        UntrustedRemoteCodeError: If the provider loads HF models with
+            ``trust_remote_code=True`` and ``STRANDS_TRUST_REMOTE_CODE``
+            is not set.
     """
     # 1. Check runtime registry first (user-registered providers)
     resolved_name = _runtime_aliases.get(provider, provider)
     if resolved_name in _runtime_registry:
+        _check_trust_remote_code(resolved_name)
         PolicyClass = _runtime_registry[resolved_name]()
         return PolicyClass(**kwargs)
 
@@ -98,9 +138,11 @@ def create_policy(provider: str, **kwargs) -> Policy:
             resolved_kwargs = {}
 
         if resolved_provider:
+            _check_trust_remote_code(resolved_provider)
             PolicyClass = import_policy_class(resolved_provider)
             return PolicyClass(**resolved_kwargs)
 
     # 3. Standard lookup from policies.json
+    _check_trust_remote_code(provider)
     PolicyClass = import_policy_class(provider)
     return PolicyClass(**kwargs)

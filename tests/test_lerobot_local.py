@@ -687,8 +687,8 @@ class TestRegistryIntegration:
         providers = list_policy_providers()
         assert "lerobot_local" in providers
 
-    def test_create_policy_lerobot_local_without_model(self):
-
+    def test_create_policy_lerobot_local_without_model(self, monkeypatch):
+        monkeypatch.setenv("STRANDS_TRUST_REMOTE_CODE", "1")
         policy = create_policy("lerobot_local")
         assert policy.provider_name == "lerobot_local"
         assert policy._loaded is False
