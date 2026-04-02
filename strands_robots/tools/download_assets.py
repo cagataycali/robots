@@ -7,7 +7,7 @@ Falls back to a shallow ``git clone`` when the package is not installed.
 Assets are cached in ``~/.strands_robots/assets/`` (override with
 ``STRANDS_ASSETS_DIR``).  Install the optional dependency::
 
-    pip install strands-robots[sim]   # includes robot_descriptions
+    pip install strands-robots[sim-mujoco]   # includes robot_descriptions
 
 CLI::
 

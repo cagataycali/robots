@@ -52,12 +52,15 @@ lerobot = [
 ]
 sim = [
     "robot_descriptions>=1.11.0,<2.0.0",
+]
+sim-mujoco = [
     "mujoco>=3.0.0,<4.0.0",
 ]
 all = [
     "strands-robots[groot-service]",
     "strands-robots[lerobot]",
     "strands-robots[sim]",
+    "strands-robots[sim-mujoco]",
 ]
 dev = [
     "pytest>=6.0,<9.0.0",

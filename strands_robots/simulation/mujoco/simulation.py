@@ -295,7 +295,7 @@ class Simulation(
                     {
                         "text": (
                             f"❌ Auto-download failed for '{robot_name}': {e}. "
-                            f"Install robot_descriptions: pip install strands-robots[sim]"
+                            f"Install robot_descriptions: pip install strands-robots[sim-mujoco]"
                         )
                     }
                 ],
