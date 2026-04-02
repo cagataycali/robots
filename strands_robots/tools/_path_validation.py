@@ -10,6 +10,23 @@ import re
 # Characters that have no business appearing in file paths supplied by tool callers.
 _DANGEROUS_CHARS = re.compile(r"[\x00]")
 
+# Well-known sensitive system directories that tool callers should never write to.
+# Each entry ends with '/' so ``str.startswith`` only matches paths *inside*
+# the directory, not unrelated paths that share a common prefix
+# (e.g. "/var/spool/crondata" should NOT match "/var/spool/cron/").
+BLOCKED_PREFIXES = (
+    "/etc/",
+    "/usr/",
+    "/bin/",
+    "/sbin/",
+    "/boot/",
+    "/dev/",
+    "/proc/",
+    "/sys/",
+    "/var/spool/cron/",
+    "/var/spool/at/",
+)
+
 
 def validate_save_path(path: str, *, label: str = "path") -> str:
     """Validate and resolve a user-supplied file-system path.
@@ -45,21 +62,12 @@ def validate_save_path(path: str, *, label: str = "path") -> str:
     # Resolve to absolute path (follows symlinks)
     resolved = os.path.realpath(os.path.expanduser(path))
 
-    # Block writes into known sensitive system directories
-    _BLOCKED_PREFIXES = (
-        "/etc/",
-        "/usr/",
-        "/bin/",
-        "/sbin/",
-        "/boot/",
-        "/dev/",
-        "/proc/",
-        "/sys/",
-        "/var/spool/cron",
-        "/var/spool/at",
-    )
-    for prefix in _BLOCKED_PREFIXES:
-        if resolved.startswith(prefix):
+    # Ensure resolved path ends with '/' for directory-prefix matching
+    # (files inside a blocked dir will have the dir prefix + '/')
+    check_path = resolved if resolved.endswith("/") else resolved + "/"
+
+    for prefix in BLOCKED_PREFIXES:
+        if check_path.startswith(prefix):
             raise ValueError(f"{label} resolves to a protected system directory ({prefix}): {resolved}")
 
     return resolved
