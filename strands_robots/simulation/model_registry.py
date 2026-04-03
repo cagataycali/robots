@@ -24,6 +24,14 @@ try:
 except ImportError:
     _HAS_ASSET_MANAGER = False
 
+try:
+    from strands_robots.registry import get_robot as _get_robot
+    from strands_robots.registry import resolve_name as _resolve_name
+
+    _HAS_REGISTRY = True
+except ImportError:
+    _HAS_REGISTRY = False
+
 logger.debug("Asset manager available: %s", _HAS_ASSET_MANAGER)
 
 # Legacy URDF registry — runtime cache for user-registered URDFs
@@ -71,11 +79,9 @@ def resolve_urdf(data_config: str) -> str | None:
             if candidate.exists():
                 return str(candidate)
 
-    try:
-        from strands_robots.registry import get_robot, resolve_name
-
-        canonical = resolve_name(data_config)
-        info = get_robot(canonical)
+    if _HAS_REGISTRY:
+        canonical = _resolve_name(data_config)
+        info = _get_robot(canonical)
         if info and "legacy_urdf" in info:
             urdf_rel = info["legacy_urdf"]
             if os.path.isabs(urdf_rel) and os.path.exists(urdf_rel):
@@ -84,8 +90,6 @@ def resolve_urdf(data_config: str) -> str | None:
                 candidate = search_dir / urdf_rel
                 if candidate.exists():
                     return str(candidate)
-    except ImportError:
-        pass
 
     logger.debug("URDF not found for '%s' in search paths", data_config)
     return None
