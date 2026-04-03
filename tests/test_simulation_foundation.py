@@ -303,18 +303,41 @@ class TestSimulationFactory:
         """Registering an existing name without force raises ValueError."""
 
         class Dummy(SimEngine):
-            def create_world(self, **kw): return {}
-            def destroy(self): return {}
-            def reset(self): return {}
-            def step(self, n_steps=1): return {}
-            def get_state(self): return {}
-            def add_robot(self, name, **kw): return {}
-            def remove_robot(self, name): return {}
-            def add_object(self, name, **kw): return {}
-            def remove_object(self, name): return {}
-            def get_observation(self, **kw): return {}
-            def send_action(self, action, **kw): return None
-            def render(self, **kw): return {}
+            def create_world(self, **kw):
+                return {}
+
+            def destroy(self):
+                return {}
+
+            def reset(self):
+                return {}
+
+            def step(self, n_steps=1):
+                return {}
+
+            def get_state(self):
+                return {}
+
+            def add_robot(self, name, **kw):
+                return {}
+
+            def remove_robot(self, name):
+                return {}
+
+            def add_object(self, name, **kw):
+                return {}
+
+            def remove_object(self, name):
+                return {}
+
+            def get_observation(self, **kw):
+                return {}
+
+            def send_action(self, action, **kw):
+                return None
+
+            def render(self, **kw):
+                return {}
 
         register_backend("dup_test", lambda: Dummy, force=True)
         with pytest.raises(ValueError, match="already registered"):
@@ -324,18 +347,41 @@ class TestSimulationFactory:
         """Registering an alias that conflicts with built-in aliases raises."""
 
         class Dummy(SimEngine):
-            def create_world(self, **kw): return {}
-            def destroy(self): return {}
-            def reset(self): return {}
-            def step(self, n_steps=1): return {}
-            def get_state(self): return {}
-            def add_robot(self, name, **kw): return {}
-            def remove_robot(self, name): return {}
-            def add_object(self, name, **kw): return {}
-            def remove_object(self, name): return {}
-            def get_observation(self, **kw): return {}
-            def send_action(self, action, **kw): return None
-            def render(self, **kw): return {}
+            def create_world(self, **kw):
+                return {}
+
+            def destroy(self):
+                return {}
+
+            def reset(self):
+                return {}
+
+            def step(self, n_steps=1):
+                return {}
+
+            def get_state(self):
+                return {}
+
+            def add_robot(self, name, **kw):
+                return {}
+
+            def remove_robot(self, name):
+                return {}
+
+            def add_object(self, name, **kw):
+                return {}
+
+            def remove_object(self, name):
+                return {}
+
+            def get_observation(self, **kw):
+                return {}
+
+            def send_action(self, action, **kw):
+                return None
+
+            def render(self, **kw):
+                return {}
 
         with pytest.raises(ValueError, match="conflicts with built-in"):
             register_backend("custom_phys", lambda: Dummy, aliases=["mj"])

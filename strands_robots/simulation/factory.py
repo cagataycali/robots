@@ -99,21 +99,13 @@ def register_backend(
     """
     if not force:
         if name in _runtime_registry or name in _BUILTIN_BACKENDS:
-            raise ValueError(
-                f"Backend {name!r} already registered. Use force=True to overwrite."
-            )
+            raise ValueError(f"Backend {name!r} already registered. Use force=True to overwrite.")
         if aliases:
             for alias in aliases:
                 if alias in _BUILTIN_ALIASES:
-                    raise ValueError(
-                        f"Alias {alias!r} conflicts with built-in alias. "
-                        f"Use force=True to overwrite."
-                    )
+                    raise ValueError(f"Alias {alias!r} conflicts with built-in alias. Use force=True to overwrite.")
                 if alias in _runtime_aliases:
-                    raise ValueError(
-                        f"Alias {alias!r} already registered. "
-                        f"Use force=True to overwrite."
-                    )
+                    raise ValueError(f"Alias {alias!r} already registered. Use force=True to overwrite.")
 
     _runtime_registry[name] = loader
     if aliases:
