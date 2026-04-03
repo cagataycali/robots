@@ -8,6 +8,7 @@ import pytest
 
 from strands_robots.simulation.base import SimulationBackend
 from strands_robots.simulation.factory import (
+    create_simulation,
     list_backends,
     register_backend,
 )
@@ -250,7 +251,7 @@ class TestSimulationFactory:
         assert isinstance(list_backends(), list)
 
     def test_register_custom_backend(self):
-        """Can register a custom backend class."""
+        """Can register a custom backend class and create an instance."""
 
         class FakeBackend(SimulationBackend):
             def create_world(self, **kw):
@@ -289,8 +290,51 @@ class TestSimulationFactory:
             def render(self, **kw):
                 return {}
 
-        register_backend("fake", FakeBackend)
-        assert "fake" in list_backends()
+        register_backend("fake_test", lambda: FakeBackend, force=True)
+        assert "fake_test" in list_backends()
+        sim = create_simulation("fake_test")
+        assert isinstance(sim, FakeBackend)
+
+    def test_register_backend_rejects_duplicate(self):
+        """Registering an existing name without force raises ValueError."""
+
+        class Dummy(SimulationBackend):
+            def create_world(self, **kw): return {}
+            def destroy(self): return {}
+            def reset(self): return {}
+            def step(self, n_steps=1): return {}
+            def get_state(self): return {}
+            def add_robot(self, name, **kw): return {}
+            def remove_robot(self, name): return {}
+            def add_object(self, name, **kw): return {}
+            def remove_object(self, name): return {}
+            def get_observation(self, **kw): return {}
+            def send_action(self, action, **kw): return None
+            def render(self, **kw): return {}
+
+        register_backend("dup_test", lambda: Dummy, force=True)
+        with pytest.raises(ValueError, match="already registered"):
+            register_backend("dup_test", lambda: Dummy)
+
+    def test_register_backend_rejects_builtin_alias(self):
+        """Registering an alias that conflicts with built-in aliases raises."""
+
+        class Dummy(SimulationBackend):
+            def create_world(self, **kw): return {}
+            def destroy(self): return {}
+            def reset(self): return {}
+            def step(self, n_steps=1): return {}
+            def get_state(self): return {}
+            def add_robot(self, name, **kw): return {}
+            def remove_robot(self, name): return {}
+            def add_object(self, name, **kw): return {}
+            def remove_object(self, name): return {}
+            def get_observation(self, **kw): return {}
+            def send_action(self, action, **kw): return None
+            def render(self, **kw): return {}
+
+        with pytest.raises(ValueError, match="conflicts with built-in"):
+            register_backend("custom_phys", lambda: Dummy, aliases=["mj"])
 
 
 # ── Model Registry Tests ─────────────────────────────────────────
