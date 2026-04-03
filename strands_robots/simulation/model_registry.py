@@ -47,12 +47,6 @@ _ASSETS_DIR_OVERRIDE = os.getenv("STRANDS_ASSETS_DIR")
 if _ASSETS_DIR_OVERRIDE:
     _URDF_SEARCH_PATHS.insert(0, Path(_ASSETS_DIR_OVERRIDE))
 
-# Deprecated: STRANDS_URDF_DIR (use STRANDS_ASSETS_DIR)
-_URDF_DIR_OVERRIDE = os.getenv("STRANDS_URDF_DIR")
-if _URDF_DIR_OVERRIDE:
-    _URDF_SEARCH_PATHS.insert(0, Path(_URDF_DIR_OVERRIDE))
-
-
 def register_urdf(data_config: str, urdf_path: str):
     """Register a URDF/MJCF file for a data_config name."""
     _URDF_REGISTRY[data_config] = urdf_path
@@ -64,7 +58,7 @@ def resolve_model(name: str, prefer_scene: bool = True) -> str | None:
 
     Resolution order (local assets take priority):
     1. Legacy URDF registry (custom user registrations)
-    2. URDF search paths (STRANDS_URDF_DIR, ./urdfs, CWD, etc.)
+    2. URDF search paths (STRANDS_ASSETS_DIR, ./urdfs, CWD, etc.)
     3. Asset manager (Menagerie — fallback for standard robots)
     """
     # 1+2. Check local/custom paths first (user overrides win)
