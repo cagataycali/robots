@@ -2,7 +2,7 @@
 
 Resolves robot model files (MJCF XML) from:
     1. Bundled assets (``strands_robots/assets/`` — from MuJoCo Menagerie)
-    2. Custom paths (``STRANDS_URDF_DIR`` / ``STRANDS_ASSETS_DIR`` env vars)
+    2. Custom path (``STRANDS_ASSETS_DIR`` env var)
     3. User home (``~/.strands_robots/assets/``)
 """
 
@@ -48,7 +48,7 @@ def get_search_paths() -> list[Path]:
 
     Order:
         1. User cache (``~/.strands_robots/assets/``)
-        2. Custom paths from ``STRANDS_URDF_DIR`` / ``STRANDS_ASSETS_DIR``
+        2. Custom path from ``STRANDS_ASSETS_DIR`` env var
         3. Bundled package dir (``strands_robots/assets/`` — XML only)
         4. CWD/assets
     """
@@ -57,10 +57,25 @@ def get_search_paths() -> list[Path]:
     # User cache first (where downloads go)
     paths.append(get_assets_dir())
 
-    # Custom paths from env
-    custom = os.getenv("STRANDS_URDF_DIR") or os.getenv("STRANDS_ASSETS_DIR")
+    # Custom path from STRANDS_ASSETS_DIR
+    custom = os.getenv("STRANDS_ASSETS_DIR")
     if custom:
         for p in custom.split(":"):
+            cp = Path(p)
+            if cp not in paths:
+                paths.append(cp)
+
+    # Deprecated: STRANDS_URDF_DIR (use STRANDS_ASSETS_DIR instead)
+    legacy = os.getenv("STRANDS_URDF_DIR")
+    if legacy:
+        import warnings
+
+        warnings.warn(
+            "STRANDS_URDF_DIR is deprecated, use STRANDS_ASSETS_DIR instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        for p in legacy.split(":"):
             cp = Path(p)
             if cp not in paths:
                 paths.append(cp)
@@ -75,7 +90,6 @@ def get_search_paths() -> list[Path]:
         paths.append(cwd_assets)
 
     return paths
-
 
 # ─────────────────────────────────────────────────────────────────────
 # Model path resolution (delegates to registry)
