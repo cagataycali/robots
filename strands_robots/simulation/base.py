@@ -24,15 +24,25 @@ logger = logging.getLogger(__name__)
 
 
 class SimEngine(ABC):
-    """Abstract base class for simulation backends.
+    """Abstract base class for simulation engines.
 
     Defines the contract that all backends (MuJoCo, Isaac, Newton) must
     implement. This is the *programmatic* API — the AgentTool layer
     wraps it with tool_spec/stream for LLM access.
 
+    Method categories:
+
+    **Required** (``@abstractmethod``): Core simulation loop — world
+    lifecycle, entity management, observation/action, rendering. Every
+    physics engine must implement these to be usable.
+
+    **Optional** (default raises ``NotImplementedError``): Higher-level
+    features — scene loading, policy running, domain randomization,
+    contact queries. Backends opt in by overriding only what they support.
+
     Lifecycle::
 
-        sim = SomeBackend()
+        sim = SomeEngine()
         sim.create_world()
         sim.add_robot("so100", data_config="so100")
         sim.add_object("cube", shape="box", position=[0.3, 0, 0.05])
@@ -138,7 +148,12 @@ class SimEngine(ABC):
 
     @abstractmethod
     def render(self, camera_name: str = "default", width: int = None, height: int = None) -> dict[str, Any]:
-        """Render a camera view."""
+        """Render a camera view.
+
+        Returns dict with ``"image"`` key (numpy array, RGB uint8) and
+        optional ``"depth"`` key (float32 depth map). Resolution comes
+        from camera config unless ``width``/``height`` are given.
+        """
         ...
 
     # --- Optional overrides (have default no-op implementations) ---
