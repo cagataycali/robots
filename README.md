@@ -486,6 +486,33 @@ while True:
 agent.tool.gr00t_inference(action="stop", port=8000)
 ```
 
+## Configuration
+
+### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `STRANDS_ASSETS_DIR` | Custom directory for robot model assets (MJCF, meshes) | `~/.strands_robots/assets/` |
+| `GROOT_API_TOKEN` | API token for GR00T inference service | — |
+
+> **Deprecated**: `STRANDS_URDF_DIR` — use `STRANDS_ASSETS_DIR` instead.
+
+### Cache Directory
+
+Robot model assets (MJCF XML files and meshes) are cached in:
+
+```
+~/.strands_robots/
+└── assets/           # Downloaded robot models (from robot_descriptions / MuJoCo Menagerie)
+    ├── trs_so_arm100/
+    ├── franka_emika_panda/
+    └── ...
+```
+
+To clear the cache: `rm -rf ~/.strands_robots/assets/`
+
+To change the cache location: `export STRANDS_ASSETS_DIR=/path/to/custom/dir`
+
 ## Contributing
 
 We welcome contributions! Please see:
