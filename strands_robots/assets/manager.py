@@ -65,21 +65,6 @@ def get_search_paths() -> list[Path]:
             if cp not in paths:
                 paths.append(cp)
 
-    # Deprecated: STRANDS_URDF_DIR (use STRANDS_ASSETS_DIR instead)
-    legacy = os.getenv("STRANDS_URDF_DIR")
-    if legacy:
-        import warnings
-
-        warnings.warn(
-            "STRANDS_URDF_DIR is deprecated, use STRANDS_ASSETS_DIR instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        for p in legacy.split(":"):
-            cp = Path(p)
-            if cp not in paths:
-                paths.append(cp)
-
     # Bundled directory (XML files only, no meshes in pip package)
     if _BUNDLED_DIR not in paths:
         paths.append(_BUNDLED_DIR)
