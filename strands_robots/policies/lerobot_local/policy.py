@@ -886,17 +886,31 @@ class LerobotLocalPolicy(Policy):
                     state_values.append(float(value))
 
         if state_values:
-            # Validate state dimension matches what the model expects.
-            # Dimension mismatches cause shape errors in the forward pass.
+            # Auto-adapt state dimension to match what the model expects.
+            # Robots may expose more joints than the policy was trained on
+            # (e.g. aloha has 16 joints but ACT expects 14). Truncate excess
+            # or zero-pad if fewer, rather than raising an error.
             state_feature = self._input_features.get("observation.state")
             if state_feature:
                 expected_dim = state_feature.shape[0] if hasattr(state_feature, "shape") else len(state_values)
-                if len(state_values) != expected_dim:
-                    raise ValueError(
-                        f"State dimension mismatch: got {len(state_values)} values from "
-                        f"robot_state_keys but model expects {expected_dim}. "
-                        f"Check that robot_state_keys matches your robot's actual joint count."
+                if len(state_values) > expected_dim:
+                    logger.warning(
+                        "State dim %d > model expects %d — truncating to first %d values. "
+                        "Check that robot_state_keys matches your robot's actual joint count.",
+                        len(state_values),
+                        expected_dim,
+                        expected_dim,
                     )
+                    state_values = state_values[:expected_dim]
+                elif len(state_values) < expected_dim:
+                    logger.warning(
+                        "State dim %d < model expects %d — zero-padding with %d zeros. "
+                        "Check that robot_state_keys matches your robot's actual joint count.",
+                        len(state_values),
+                        expected_dim,
+                        expected_dim - len(state_values),
+                    )
+                    state_values.extend([0.0] * (expected_dim - len(state_values)))
             batch["observation.state"] = torch.tensor(state_values, dtype=torch.float32).unsqueeze(0).to(self._device)
 
         # Map camera images to model's image input features.
