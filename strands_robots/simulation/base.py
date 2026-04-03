@@ -145,19 +145,19 @@ class SimulationBackend(ABC):
 
     def load_scene(self, scene_path: str) -> dict[str, Any]:
         """Load a complete scene from file. Override per backend."""
-        return {"status": "error", "content": [{"text": "load_scene not supported by this backend"}]}
+        raise NotImplementedError("load_scene not implemented by this backend")
 
     def run_policy(self, robot_name: str, policy_provider: str = "mock", **kwargs) -> dict[str, Any]:
         """Run a policy loop. Override per backend."""
-        return {"status": "error", "content": [{"text": "run_policy not supported by this backend"}]}
+        raise NotImplementedError("run_policy not implemented by this backend")
 
     def randomize(self, **kwargs) -> dict[str, Any]:
         """Apply domain randomization. Override per backend."""
-        return {"status": "error", "content": [{"text": "randomize not supported by this backend"}]}
+        raise NotImplementedError("randomize not implemented by this backend")
 
     def get_contacts(self) -> dict[str, Any]:
         """Get contact information. Override per backend."""
-        return {"status": "success", "content": [{"text": "No contact support in this backend"}]}
+        raise NotImplementedError("get_contacts not implemented by this backend")
 
     def cleanup(self):
         """Release all resources. Called on __del__ / context exit."""
