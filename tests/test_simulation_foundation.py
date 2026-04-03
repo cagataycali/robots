@@ -6,7 +6,7 @@ requiring MuJoCo or any heavy dependencies.
 
 import pytest
 
-from strands_robots.simulation.base import SimulationBackend
+from strands_robots.simulation.base import SimEngine, SimulationBackend
 from strands_robots.simulation.factory import (
     create_simulation,
     list_backends,
@@ -110,15 +110,15 @@ class TestSimModels:
 # ── ABC Tests ────────────────────────────────────────────────────
 
 
-class TestSimulationBackend:
+class TestSimEngine:
     """Test the abstract base class."""
 
     def test_cannot_instantiate_abc(self):
         with pytest.raises(TypeError):
-            SimulationBackend()
+            SimEngine()
 
     def test_has_required_abstract_methods(self):
-        abstract_methods = SimulationBackend.__abstractmethods__
+        abstract_methods = SimEngine.__abstractmethods__
         expected = {
             "create_world",
             "destroy",
@@ -139,7 +139,7 @@ class TestSimulationBackend:
         """Optional methods raise NotImplementedError."""
 
         # Create a minimal concrete subclass
-        class Dummy(SimulationBackend):
+        class Dummy(SimEngine):
             def create_world(self, **kw):
                 return {}
 
@@ -190,7 +190,7 @@ class TestSimulationBackend:
     def test_context_manager(self):
         """ABC supports context manager protocol."""
 
-        class Dummy(SimulationBackend):
+        class Dummy(SimEngine):
             cleaned = False
 
             def create_world(self, **kw):
@@ -236,6 +236,10 @@ class TestSimulationBackend:
             pass
         assert Dummy.cleaned is True
 
+    def test_backward_compat_alias(self):
+        """SimulationBackend is an alias for SimEngine."""
+        assert SimulationBackend is SimEngine
+
 
 # ── Factory Tests ────────────────────────────────────────────────
 
@@ -253,7 +257,7 @@ class TestSimulationFactory:
     def test_register_custom_backend(self):
         """Can register a custom backend class and create an instance."""
 
-        class FakeBackend(SimulationBackend):
+        class FakeBackend(SimEngine):
             def create_world(self, **kw):
                 return {}
 
@@ -298,7 +302,7 @@ class TestSimulationFactory:
     def test_register_backend_rejects_duplicate(self):
         """Registering an existing name without force raises ValueError."""
 
-        class Dummy(SimulationBackend):
+        class Dummy(SimEngine):
             def create_world(self, **kw): return {}
             def destroy(self): return {}
             def reset(self): return {}
@@ -319,7 +323,7 @@ class TestSimulationFactory:
     def test_register_backend_rejects_builtin_alias(self):
         """Registering an alias that conflicts with built-in aliases raises."""
 
-        class Dummy(SimulationBackend):
+        class Dummy(SimEngine):
             def create_world(self, **kw): return {}
             def destroy(self): return {}
             def reset(self): return {}
