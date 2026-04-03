@@ -6,12 +6,18 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# Default URDF search paths (checked in order)
+# Default URDF search paths (checked in order).
+#
+# Resolution order for legacy URDF lookups:
+#   1. STRANDS_ASSETS_DIR (if set) — user override
+#   2. ~/.strands_robots/assets/ — user cache
+#   3. CWD/assets/ — project-local assets
+#
+# For new code, prefer resolve_model() which uses the Menagerie
+# asset manager and falls back to these legacy paths.
 _URDF_SEARCH_PATHS = [
-    Path.cwd() / "urdfs",
-    Path.cwd() / "assets" / "urdfs",
-    Path.cwd() / "robots",
-    Path.home() / ".strands_robots" / "urdfs",
+    Path.home() / ".strands_robots" / "assets",
+    Path.cwd() / "assets",
 ]
 
 try:
@@ -37,6 +43,11 @@ logger.debug("Asset manager available: %s", _HAS_ASSET_MANAGER)
 # Legacy URDF registry — runtime cache for user-registered URDFs
 _URDF_REGISTRY: dict[str, str] = {}
 
+_ASSETS_DIR_OVERRIDE = os.getenv("STRANDS_ASSETS_DIR")
+if _ASSETS_DIR_OVERRIDE:
+    _URDF_SEARCH_PATHS.insert(0, Path(_ASSETS_DIR_OVERRIDE))
+
+# Deprecated: STRANDS_URDF_DIR (use STRANDS_ASSETS_DIR)
 _URDF_DIR_OVERRIDE = os.getenv("STRANDS_URDF_DIR")
 if _URDF_DIR_OVERRIDE:
     _URDF_SEARCH_PATHS.insert(0, Path(_URDF_DIR_OVERRIDE))
