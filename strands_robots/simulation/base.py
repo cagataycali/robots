@@ -136,12 +136,24 @@ class SimEngine(ABC):
 
     @abstractmethod
     def get_observation(self, robot_name: str = None, camera_name: str = None) -> dict[str, Any]:
-        """Get observation from simulation (Robot ABC compatible)."""
+        """Get observation from simulation.
+
+        Convenience method that delegates to the underlying Robot
+        abstraction. Provides a unified interface for agent tools
+        that interact with simulation without needing to distinguish
+        between Robot and Sim layers.
+        """
         ...
 
     @abstractmethod
     def send_action(self, action: dict[str, Any], robot_name: str = None, n_substeps: int = 1) -> None:
-        """Apply action to simulation (Robot ABC compatible)."""
+        """Apply action to simulation.
+
+        Convenience method that delegates to the underlying Robot
+        abstraction. The simulation engine acts as a facade so agent
+        tools can use ``sim.send_action()`` without knowing about
+        the Robot/Policy layer.
+        """
         ...
 
     # --- Rendering ---
@@ -163,7 +175,14 @@ class SimEngine(ABC):
         raise NotImplementedError("load_scene not implemented by this backend")
 
     def run_policy(self, robot_name: str, policy_provider: str = "mock", **kwargs) -> dict[str, Any]:
-        """Run a policy loop. Override per backend."""
+        """Run a policy loop in the simulation.
+
+        Orchestration shortcut: internally creates a Policy, then loops
+        ``obs → policy(obs) → send_action(action) → step()``.
+        Intentionally placed on SimEngine as a facade for agent tools
+        that need a single ``simulation(action="run_policy")`` interface.
+        Override per backend.
+        """
         raise NotImplementedError("run_policy not implemented by this backend")
 
     def randomize(self, **kwargs) -> dict[str, Any]:
