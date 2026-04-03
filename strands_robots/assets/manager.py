@@ -91,6 +91,7 @@ def get_search_paths() -> list[Path]:
 
     return paths
 
+
 # ─────────────────────────────────────────────────────────────────────
 # Model path resolution (delegates to registry)
 # ─────────────────────────────────────────────────────────────────────
@@ -278,6 +279,3 @@ def list_available_robots() -> list[dict]:
             }
         )
     return robots
-
-
-
