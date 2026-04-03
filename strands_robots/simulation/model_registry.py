@@ -51,11 +51,17 @@ def register_urdf(data_config: str, urdf_path: str):
 def resolve_model(name: str, prefer_scene: bool = True) -> str | None:
     """Resolve a robot name or data_config to an MJCF/URDF model path.
 
-    Resolution order:
-    1. Asset manager (32 bundled robots + 40 aliases)
-    2. Legacy URDF registry (custom registrations)
-    3. URDF search paths (STRANDS_URDF_DIR, ./urdfs, etc.)
+    Resolution order (local assets take priority):
+    1. Legacy URDF registry (custom user registrations)
+    2. URDF search paths (STRANDS_URDF_DIR, ./urdfs, CWD, etc.)
+    3. Asset manager (Menagerie — fallback for standard robots)
     """
+    # 1+2. Check local/custom paths first (user overrides win)
+    local = resolve_urdf(name)
+    if local:
+        return local
+
+    # 3. Fall back to asset manager (Menagerie)
     if _HAS_ASSET_MANAGER:
         path = _resolve_menagerie_model(name, prefer_scene=prefer_scene)
         if path and path.exists():
@@ -65,7 +71,7 @@ def resolve_model(name: str, prefer_scene: bool = True) -> str | None:
             if path and path.exists():
                 return str(path)
 
-    return resolve_urdf(name)
+    return None
 
 
 def resolve_urdf(data_config: str) -> str | None:
