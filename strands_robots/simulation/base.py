@@ -1,4 +1,4 @@
-"""Simulation ABC — backend-agnostic interface for all simulation backends.
+"""Simulation ABC — backend-agnostic interface for all simulation engines.
 
 Every simulation backend (MuJoCo, Isaac, Newton) implements this interface.
 Agent tools and the Robot() factory interact through these methods only —
@@ -23,7 +23,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-class SimulationBackend(ABC):
+class SimEngine(ABC):
     """Abstract base class for simulation backends.
 
     Defines the contract that all backends (MuJoCo, Isaac, Newton) must
@@ -174,3 +174,7 @@ class SimulationBackend(ABC):
             self.cleanup()
         except Exception as e:
             logger.debug("Cleanup error during __del__: %s", e)
+
+
+# Backward compatibility alias
+SimulationBackend = SimEngine

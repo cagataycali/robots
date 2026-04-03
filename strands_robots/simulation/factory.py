@@ -27,7 +27,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-from strands_robots.simulation.base import SimulationBackend
+from strands_robots.simulation.base import SimEngine
 
 logger = logging.getLogger(__name__)
 
@@ -60,13 +60,13 @@ DEFAULT_BACKEND = "mujoco"
 # Runtime registration (for user-defined backends not in built-ins)
 # ─────────────────────────────────────────────────────────────────────
 
-_runtime_registry: dict[str, Callable[[], type[SimulationBackend]]] = {}
+_runtime_registry: dict[str, Callable[[], type[SimEngine]]] = {}
 _runtime_aliases: dict[str, str] = {}
 
 
 def register_backend(
     name: str,
-    loader: Callable[[], type[SimulationBackend]],
+    loader: Callable[[], type[SimEngine]],
     aliases: list[str] | None = None,
     force: bool = False,
 ) -> None:
@@ -152,7 +152,7 @@ def _resolve_name(backend: str) -> str:
     return backend
 
 
-def _import_backend_class(name: str) -> type[SimulationBackend]:
+def _import_backend_class(name: str) -> type[SimEngine]:
     """Import and return a backend class by canonical name."""
     # 1. Runtime registry (user-registered)
     if name in _runtime_registry:
@@ -176,7 +176,7 @@ def _import_backend_class(name: str) -> type[SimulationBackend]:
 def create_simulation(
     backend: str = DEFAULT_BACKEND,
     **kwargs: Any,
-) -> SimulationBackend:
+) -> SimEngine:
     """Create a simulation backend instance.
 
     This is the primary entry point for creating simulations.
@@ -189,7 +189,7 @@ def create_simulation(
             constructor (e.g., ``tool_name``, ``timestep``).
 
     Returns:
-        A ``SimulationBackend`` instance ready for ``create_world()``.
+        A ``SimEngine`` instance ready for ``create_world()``.
 
     Raises:
         ValueError: If the backend name is not recognized.
