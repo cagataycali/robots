@@ -27,6 +27,11 @@ _DATA_CONFIG_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _EMBODIMENT_TAG_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 _CONTAINER_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$")
 
+# Allowlists for TensorRT dtype parameters.
+_VALID_VIT_DTYPES = {"fp16", "fp8"}
+_VALID_LLM_DTYPES = {"fp16", "nvfp4", "fp8"}
+_VALID_DIT_DTYPES = {"fp16", "fp8"}
+
 
 def _validate_path(value: str, label: str) -> None:
     """Reject paths containing shell metacharacters, null bytes, or traversal sequences."""
@@ -38,22 +43,53 @@ def _validate_path(value: str, label: str) -> None:
         raise ValueError(f"{label} contains disallowed characters: {value!r}")
 
 
-def _validate_data_config(value: str) -> None:
-    if not _DATA_CONFIG_RE.match(value):
+def validate_inputs(
+    *,
+    data_config: str,
+    embodiment_tag: str,
+    port: int,
+    vit_dtype: str,
+    llm_dtype: str,
+    dit_dtype: str,
+    checkpoint_path: str | None = None,
+    trt_engine_path: str = "gr00t_engine",
+    container_name: str | None = None,
+) -> None:
+    """Validate all user-supplied parameters in one place.
+
+    Raises ValueError for any invalid input. This centralises validation so
+    that the main tool function stays focused on orchestration and each
+    check is independently testable via this single entry-point.
+    """
+    # Enumerable string parameters
+    if not _DATA_CONFIG_RE.match(data_config):
         raise ValueError(
-            f"data_config must be lowercase alphanumeric/underscore (got {value!r}). "
+            f"data_config must be lowercase alphanumeric/underscore (got {data_config!r}). "
             f"See the tool docstring for the full list of accepted configs."
         )
+    if not _EMBODIMENT_TAG_RE.match(embodiment_tag):
+        raise ValueError(f"embodiment_tag must be lowercase alphanumeric/underscore (got {embodiment_tag!r})")
 
+    # Docker container name
+    if container_name is not None and not _CONTAINER_NAME_RE.match(container_name):
+        raise ValueError(f"container_name must match Docker naming rules (got {container_name!r})")
 
-def _validate_embodiment_tag(value: str) -> None:
-    if not _EMBODIMENT_TAG_RE.match(value):
-        raise ValueError(f"embodiment_tag must be lowercase alphanumeric/underscore (got {value!r})")
+    # Filesystem paths — reject shell metacharacters and traversal
+    if checkpoint_path is not None:
+        _validate_path(checkpoint_path, "checkpoint_path")
+    _validate_path(trt_engine_path, "trt_engine_path")
 
+    # TensorRT dtype allowlists
+    if vit_dtype not in _VALID_VIT_DTYPES:
+        raise ValueError(f"vit_dtype must be one of {_VALID_VIT_DTYPES}, got {vit_dtype!r}")
+    if llm_dtype not in _VALID_LLM_DTYPES:
+        raise ValueError(f"llm_dtype must be one of {_VALID_LLM_DTYPES}, got {llm_dtype!r}")
+    if dit_dtype not in _VALID_DIT_DTYPES:
+        raise ValueError(f"dit_dtype must be one of {_VALID_DIT_DTYPES}, got {dit_dtype!r}")
 
-def _validate_container_name(value: str) -> None:
-    if not _CONTAINER_NAME_RE.match(value):
-        raise ValueError(f"container_name must match Docker naming rules (got {value!r})")
+    # Port range
+    if not (1 <= port <= 65535):
+        raise ValueError(f"port must be between 1 and 65535, got {port}")
 
 
 @tool
@@ -221,29 +257,18 @@ def gr00t_inference(
     if api_token is None:
         api_token = os.environ.get("GROOT_API_TOKEN")
 
-    # ── Upfront input validation ──────────────────────────────────────
-    _validate_data_config(data_config)
-    _validate_embodiment_tag(embodiment_tag)
-    if container_name is not None:
-        _validate_container_name(container_name)
-    if checkpoint_path is not None:
-        _validate_path(checkpoint_path, "checkpoint_path")
-    _validate_path(trt_engine_path, "trt_engine_path")
-
-    # Validate dtype values (strict allowlist)
-    _VALID_VIT_DTYPES = {"fp16", "fp8"}
-    _VALID_LLM_DTYPES = {"fp16", "nvfp4", "fp8"}
-    _VALID_DIT_DTYPES = {"fp16", "fp8"}
-    if vit_dtype not in _VALID_VIT_DTYPES:
-        return {"status": "error", "message": f"vit_dtype must be one of {_VALID_VIT_DTYPES}"}
-    if llm_dtype not in _VALID_LLM_DTYPES:
-        return {"status": "error", "message": f"llm_dtype must be one of {_VALID_LLM_DTYPES}"}
-    if dit_dtype not in _VALID_DIT_DTYPES:
-        return {"status": "error", "message": f"dit_dtype must be one of {_VALID_DIT_DTYPES}"}
-
-    # Validate port range
-    if not (1 <= port <= 65535):
-        return {"status": "error", "message": "port must be between 1 and 65535"}
+    # ── Validate all inputs in one call ───────────────────────────────
+    validate_inputs(
+        data_config=data_config,
+        embodiment_tag=embodiment_tag,
+        port=port,
+        vit_dtype=vit_dtype,
+        llm_dtype=llm_dtype,
+        dit_dtype=dit_dtype,
+        checkpoint_path=checkpoint_path,
+        trt_engine_path=trt_engine_path,
+        container_name=container_name,
+    )
 
     if action == "find_containers":
         return _find_gr00t_containers()
