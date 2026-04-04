@@ -1,11 +1,19 @@
 """Tests for strands_robots.tools._path_validation module."""
 
 import os
+import sys
 from unittest.mock import patch
 
 import pytest
 
-from strands_robots.tools._path_validation import BLOCKED_PREFIXES, validate_save_path
+from strands_robots.tools._path_validation import (
+    BLOCKED_PREFIXES,
+    _LINUX_BLOCKED_PREFIXES,
+    _MACOS_BLOCKED_PREFIXES,
+    _WINDOWS_BLOCKED_PREFIXES,
+    _get_blocked_prefixes,
+    validate_save_path,
+)
 
 
 class TestValidateSavePath:
@@ -90,30 +98,37 @@ class TestValidateSavePath:
     def test_rejects_all_blocked_prefixes(self, prefix):
         """Every entry in BLOCKED_PREFIXES must be rejected."""
         dangerous_path = prefix + "evil_file.txt"
-        with pytest.raises(ValueError, match="protected system directory"):
-            validate_save_path(dangerous_path)
+        with patch("os.path.realpath", return_value=prefix + "evil_file.txt"):
+            with pytest.raises(ValueError, match="protected system directory"):
+                validate_save_path(dangerous_path)
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="Linux-specific paths")
     def test_rejects_etc_passwd(self):
         with pytest.raises(ValueError, match="protected system directory"):
             validate_save_path("/etc/passwd")
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="Linux-specific paths")
     def test_rejects_usr_bin(self):
         with pytest.raises(ValueError, match="protected system directory"):
             validate_save_path("/usr/bin/python3")
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="Linux-specific paths")
     def test_rejects_proc_self(self):
         with pytest.raises(ValueError, match="protected system directory"):
             validate_save_path("/proc/self/environ")
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="Linux-specific paths")
     def test_rejects_dev_null_write(self):
         with pytest.raises(ValueError, match="protected system directory"):
             validate_save_path("/dev/sda1")
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="Linux-specific paths")
     def test_rejects_var_spool_cron(self):
         """The /var/spool/cron/ prefix must be blocked."""
         with pytest.raises(ValueError, match="protected system directory"):
             validate_save_path("/var/spool/cron/root")
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="Linux-specific paths")
     def test_rejects_var_spool_at(self):
         """The /var/spool/at/ prefix must be blocked."""
         with pytest.raises(ValueError, match="protected system directory"):
@@ -121,6 +136,7 @@ class TestValidateSavePath:
 
     # ── Trailing-slash correctness (the review comment) ───────────────
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="Linux-specific paths")
     def test_blocked_prefix_trailing_slash_precision(self):
         """Paths that merely share a common prefix but are NOT inside
         the blocked directory should be allowed.
@@ -129,12 +145,11 @@ class TestValidateSavePath:
         prefix but is a *sibling* directory, not a child.  The trailing-
         slash on the blocked prefix ensures this is handled correctly.
         """
-        # This should NOT raise — it's /var/spool/crondata, not /var/spool/cron/
-        # We need to mock realpath since /var/spool/crondata won't exist
         with patch("os.path.realpath", return_value="/var/spool/crondata/myfile"):
             result = validate_save_path("/var/spool/crondata/myfile")
             assert result == "/var/spool/crondata/myfile"
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="Linux-specific paths")
     def test_blocked_prefix_exact_dir_match(self):
         """The exact blocked directory itself (e.g. /var/spool/cron)
         should also be rejected — it's the container directory."""
@@ -142,11 +157,14 @@ class TestValidateSavePath:
             with pytest.raises(ValueError, match="protected system directory"):
                 validate_save_path("/var/spool/cron")
 
-    def test_all_blocked_prefixes_end_with_slash(self):
-        """Invariant: every entry in BLOCKED_PREFIXES must end with '/'
-        for correct startswith matching."""
+    def test_all_blocked_prefixes_end_with_separator(self):
+        """Invariant: every entry in BLOCKED_PREFIXES must end with the
+        appropriate path separator for correct startswith matching."""
+        expected_sep = "\\" if sys.platform == "win32" else "/"
         for prefix in BLOCKED_PREFIXES:
-            assert prefix.endswith("/"), f"BLOCKED_PREFIXES entry missing trailing slash: {prefix!r}"
+            assert prefix.endswith(expected_sep), (
+                f"BLOCKED_PREFIXES entry missing trailing separator: {prefix!r}"
+            )
 
     # ── Custom label tests ────────────────────────────────────────────
 
@@ -158,12 +176,14 @@ class TestValidateSavePath:
         with pytest.raises(ValueError, match="output_dir must not contain"):
             validate_save_path("/../etc", label="output_dir")
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="Linux-specific paths")
     def test_custom_label_in_blocked_error(self):
         with pytest.raises(ValueError, match="storage_dir resolves to"):
             validate_save_path("/etc/crontab", label="storage_dir")
 
     # ── Symlink resolution ────────────────────────────────────────────
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="Symlinks differ on Windows")
     def test_symlink_to_blocked_dir_is_rejected(self, tmp_path):
         """A symlink pointing into a blocked directory should be caught."""
         link = tmp_path / "innocent_link"
@@ -179,3 +199,47 @@ class TestValidateSavePath:
         link.symlink_to(target_dir)
         result = validate_save_path(str(link / "file.txt"))
         assert str(target_dir) in result
+
+
+class TestCrossPlatformPrefixes:
+    """Tests for cross-platform blocked prefix selection."""
+
+    def test_linux_prefixes_returned_on_linux(self):
+        """On Linux, only Linux prefixes should be active."""
+        with patch.object(sys, "platform", "linux"):
+            prefixes = _get_blocked_prefixes()
+            assert "/etc/" in prefixes
+            assert "/usr/" in prefixes
+            # No Windows or macOS-specific prefixes
+            for p in prefixes:
+                assert not p.startswith("C:\\")
+
+    def test_darwin_includes_macos_extras(self):
+        """On macOS, both Linux and macOS prefixes should be active."""
+        with patch.object(sys, "platform", "darwin"):
+            prefixes = _get_blocked_prefixes()
+            assert "/etc/" in prefixes  # Linux shared
+            assert "/System/" in prefixes  # macOS specific
+            assert "/Library/LaunchDaemons/" in prefixes
+
+    def test_windows_prefixes_returned_on_win32(self):
+        """On Windows, Windows-specific prefixes should be active."""
+        with patch.object(sys, "platform", "win32"):
+            prefixes = _get_blocked_prefixes()
+            assert "C:\\Windows\\" in prefixes
+            assert "C:\\Program Files\\" in prefixes
+            # No Linux prefixes
+            for p in prefixes:
+                assert not p.startswith("/")
+
+    def test_all_linux_prefixes_end_with_slash(self):
+        for prefix in _LINUX_BLOCKED_PREFIXES:
+            assert prefix.endswith("/"), f"Missing trailing /: {prefix!r}"
+
+    def test_all_macos_prefixes_end_with_slash(self):
+        for prefix in _MACOS_BLOCKED_PREFIXES:
+            assert prefix.endswith("/"), f"Missing trailing /: {prefix!r}"
+
+    def test_all_windows_prefixes_end_with_backslash(self):
+        for prefix in _WINDOWS_BLOCKED_PREFIXES:
+            assert prefix.endswith("\\"), f"Missing trailing \\: {prefix!r}"
