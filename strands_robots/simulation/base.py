@@ -16,6 +16,8 @@ Usage::
     from strands_robots.simulation.newton import NewtonSimulation
 """
 
+from __future__ import annotations
+
 import logging
 from abc import ABC, abstractmethod
 from typing import Any
@@ -64,8 +66,8 @@ class SimEngine(ABC):
     @abstractmethod
     def create_world(
         self,
-        timestep: float = None,
-        gravity: list[float] = None,
+        timestep: float | None = None,
+        gravity: list[float] | None = None,
         ground_plane: bool = True,
     ) -> dict[str, Any]:
         """Create a new simulation world."""
@@ -97,10 +99,10 @@ class SimEngine(ABC):
     def add_robot(
         self,
         name: str,
-        urdf_path: str = None,
-        data_config: str = None,
-        position: list[float] = None,
-        orientation: list[float] = None,
+        urdf_path: str | None = None,
+        data_config: str | None = None,
+        position: list[float] | None = None,
+        orientation: list[float] | None = None,
     ) -> dict[str, Any]:
         """Add a robot to the simulation."""
         ...
@@ -117,12 +119,12 @@ class SimEngine(ABC):
         self,
         name: str,
         shape: str = "box",
-        position: list[float] = None,
-        size: list[float] = None,
-        color: list[float] = None,
+        position: list[float] | None = None,
+        size: list[float] | None = None,
+        color: list[float] | None = None,
         mass: float = 0.1,
         is_static: bool = False,
-        **kwargs,
+        **kwargs: Any,
     ) -> dict[str, Any]:
         """Add an object to the scene."""
         ...
@@ -135,7 +137,7 @@ class SimEngine(ABC):
     # --- Observation / Action ---
 
     @abstractmethod
-    def get_observation(self, robot_name: str = None, camera_name: str = None) -> dict[str, Any]:
+    def get_observation(self, robot_name: str | None = None, camera_name: str | None = None) -> dict[str, Any]:
         """Get observation from simulation.
 
         Convenience method that delegates to the underlying Robot
@@ -146,7 +148,12 @@ class SimEngine(ABC):
         ...
 
     @abstractmethod
-    def send_action(self, action: dict[str, Any], robot_name: str = None, n_substeps: int = 1) -> None:
+    def send_action(
+        self,
+        action: dict[str, Any],
+        robot_name: str | None = None,
+        n_substeps: int = 1,
+    ) -> None:
         """Apply action to simulation.
 
         Convenience method that delegates to the underlying Robot
@@ -159,7 +166,12 @@ class SimEngine(ABC):
     # --- Rendering ---
 
     @abstractmethod
-    def render(self, camera_name: str = "default", width: int = None, height: int = None) -> dict[str, Any]:
+    def render(
+        self,
+        camera_name: str = "default",
+        width: int | None = None,
+        height: int | None = None,
+    ) -> dict[str, Any]:
         """Render a camera view.
 
         Returns dict with ``"image"`` key (numpy array, RGB uint8) and
@@ -174,7 +186,7 @@ class SimEngine(ABC):
         """Load a complete scene from file. Override per backend."""
         raise NotImplementedError("load_scene not implemented by this backend")
 
-    def run_policy(self, robot_name: str, policy_provider: str = "mock", **kwargs) -> dict[str, Any]:
+    def run_policy(self, robot_name: str, policy_provider: str = "mock", **kwargs: Any) -> dict[str, Any]:
         """Run a policy loop in the simulation.
 
         Orchestration shortcut: internally creates a Policy, then loops
@@ -185,7 +197,7 @@ class SimEngine(ABC):
         """
         raise NotImplementedError("run_policy not implemented by this backend")
 
-    def randomize(self, **kwargs) -> dict[str, Any]:
+    def randomize(self, **kwargs: Any) -> dict[str, Any]:
         """Apply domain randomization. Override per backend."""
         raise NotImplementedError("randomize not implemented by this backend")
 
@@ -193,22 +205,20 @@ class SimEngine(ABC):
         """Get contact information. Override per backend."""
         raise NotImplementedError("get_contacts not implemented by this backend")
 
-    def cleanup(self):
+    def cleanup(self) -> None:
         """Release all resources. Called on __del__ / context exit."""
         pass
 
-    def __enter__(self):
+    def __enter__(self) -> SimEngine:
         return self
 
-    def __exit__(self, *exc):
+    def __exit__(self, *exc: Any) -> None:
         self.cleanup()
 
-    def __del__(self):
+    def __del__(self) -> None:
         try:
             self.cleanup()
         except Exception as e:
-            logger.debug("Cleanup error during __del__: %s", e)
-
-
-# Backward compatibility alias
-SimulationBackend = SimEngine
+            # Best-effort cleanup during GC — exceptions can't propagate
+            # from __del__ (CPython ignores them), so log for visibility.
+            logger.warning("Cleanup error during __del__: %s", e)

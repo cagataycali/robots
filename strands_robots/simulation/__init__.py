@@ -4,7 +4,7 @@ Architecture::
 
     simulation/
     ├── __init__.py          ← this file (re-exports, lazy loading)
-    ├── base.py              ← SimEngine ABC (alias: SimulationBackend)
+    ├── base.py              ← SimEngine ABC
     ├── factory.py           ← create_simulation() + backend registration
     ├── models.py            ← shared dataclasses (SimWorld, SimRobot, ...)
     └── model_registry.py    ← URDF/MJCF resolution (shared across backends)
@@ -28,7 +28,7 @@ Usage::
     from strands_robots.simulation import SimWorld, SimRobot, SimObject
 
     # ABC for custom backends
-    from strands_robots.simulation.base import SimEngine, SimulationBackend
+    from strands_robots.simulation.base import SimEngine
 
 Future backends::
 
@@ -40,7 +40,7 @@ import importlib as _importlib
 from typing import Any
 
 # --- Light imports (no heavy deps — stdlib + dataclasses only) ---
-from strands_robots.simulation.base import SimEngine, SimulationBackend
+from strands_robots.simulation.base import SimEngine
 from strands_robots.simulation.factory import (
     create_simulation,
     list_backends,
@@ -71,7 +71,6 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {}
 __all__ = [
     # ABC
     "SimEngine",
-    "SimulationBackend",  # backward compat alias
     # Factory
     "create_simulation",
     "list_backends",

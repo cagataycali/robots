@@ -1,5 +1,7 @@
 """Robot model resolution — URDF registry + Menagerie asset manager."""
 
+from __future__ import annotations
+
 import logging
 import os
 from pathlib import Path
@@ -38,7 +40,7 @@ try:
 except ImportError:
     _HAS_REGISTRY = False
 
-logger.debug("Asset manager available: %s", _HAS_ASSET_MANAGER)
+logger.info("Asset manager available: %s", _HAS_ASSET_MANAGER)
 
 # Legacy URDF registry — runtime cache for user-registered URDFs
 _URDF_REGISTRY: dict[str, str] = {}
@@ -48,7 +50,7 @@ if _ASSETS_DIR_OVERRIDE:
     _URDF_SEARCH_PATHS.insert(0, Path(_ASSETS_DIR_OVERRIDE))
 
 
-def register_urdf(data_config: str, urdf_path: str):
+def register_urdf(data_config: str, urdf_path: str) -> None:
     """Register a URDF/MJCF file for a data_config name."""
     _URDF_REGISTRY[data_config] = urdf_path
     logger.info("📋 Registered model for '%s': %s", data_config, urdf_path)
@@ -85,7 +87,7 @@ def resolve_urdf(data_config: str) -> str | None:
     if data_config in _URDF_REGISTRY:
         urdf_rel = _URDF_REGISTRY[data_config]
         if os.path.isabs(urdf_rel) and os.path.exists(urdf_rel):
-            return urdf_rel
+            return str(urdf_rel)
         for search_dir in _URDF_SEARCH_PATHS:
             candidate = search_dir / urdf_rel
             if candidate.exists():
@@ -97,7 +99,7 @@ def resolve_urdf(data_config: str) -> str | None:
         if info and "legacy_urdf" in info:
             urdf_rel = info["legacy_urdf"]
             if os.path.isabs(urdf_rel) and os.path.exists(urdf_rel):
-                return urdf_rel
+                return str(urdf_rel)
             for search_dir in _URDF_SEARCH_PATHS:
                 candidate = search_dir / urdf_rel
                 if candidate.exists():
@@ -115,7 +117,7 @@ def list_registered_urdfs() -> dict[str, str | None]:
 def list_available_models() -> str:
     """List all available robot models (Menagerie + custom)."""
     if _HAS_ASSET_MANAGER:
-        return _format_robot_table()
+        return str(_format_robot_table())
 
     lines = ["Registered URDFs:"]
     for name, path in _URDF_REGISTRY.items():
