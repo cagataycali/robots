@@ -47,6 +47,7 @@ _ASSETS_DIR_OVERRIDE = os.getenv("STRANDS_ASSETS_DIR")
 if _ASSETS_DIR_OVERRIDE:
     _URDF_SEARCH_PATHS.insert(0, Path(_ASSETS_DIR_OVERRIDE))
 
+
 def register_urdf(data_config: str, urdf_path: str):
     """Register a URDF/MJCF file for a data_config name."""
     _URDF_REGISTRY[data_config] = urdf_path
