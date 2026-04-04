@@ -23,6 +23,9 @@ Usage::
     sim = create_simulation("custom")
 """
 
+from __future__ import annotations
+
+import importlib
 import logging
 from collections.abc import Callable
 from typing import Any
@@ -148,19 +151,17 @@ def _import_backend_class(name: str) -> type[SimEngine]:
     """Import and return a backend class by canonical name."""
     # 1. Runtime registry (user-registered)
     if name in _runtime_registry:
-        cls = _runtime_registry[name]()
+        cls: type[SimEngine] = _runtime_registry[name]()
         logger.debug("Loaded runtime backend: %s → %s", name, cls.__name__)
         return cls
 
     # 2. Built-in registry
     if name in _BUILTIN_BACKENDS:
         module_path, class_name = _BUILTIN_BACKENDS[name]
-        import importlib
-
         module = importlib.import_module(module_path)
         cls = getattr(module, class_name)
         logger.debug("Loaded built-in backend: %s → %s.%s", name, module_path, class_name)
-        return cls
+        return cls  # type: ignore[return-value]
 
     raise ValueError(f"Unknown simulation backend: {name!r}. Available: {', '.join(list_backends())}")
 

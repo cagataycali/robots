@@ -6,7 +6,7 @@ requiring MuJoCo or any heavy dependencies.
 
 import pytest
 
-from strands_robots.simulation.base import SimEngine, SimulationBackend
+from strands_robots.simulation.base import SimEngine
 from strands_robots.simulation.factory import (
     create_simulation,
     list_backends,
@@ -235,10 +235,6 @@ class TestSimEngine:
         with Dummy() as _d:
             pass
         assert Dummy.cleaned is True
-
-    def test_backward_compat_alias(self):
-        """SimulationBackend is an alias for SimEngine."""
-        assert SimulationBackend is SimEngine
 
 
 # ── Factory Tests ────────────────────────────────────────────────
