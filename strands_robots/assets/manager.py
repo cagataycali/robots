@@ -158,11 +158,13 @@ def resolve_model_path(
         return None
 
     asset = info["asset"]
-    xml_file = asset["scene_xml"] if prefer_scene else asset["model_xml"]
+    # Explicit str() casts: dict subscript returns Any, but Path / Any → Any
+    xml_file: str = str(asset["scene_xml"] if prefer_scene else asset["model_xml"])
+    asset_dir_name: str = str(asset["dir"])
 
-    candidates = []
+    candidates: list[Path] = []
     for search_dir in get_search_paths():
-        model_path = search_dir / asset["dir"] / xml_file
+        model_path = search_dir / asset_dir_name / xml_file
         if model_path.exists():
             candidates.append(model_path)
 
@@ -171,12 +173,12 @@ def resolve_model_path(
         logger.info("No XML found for %s, attempting auto-download...", name)
         if _auto_download_robot(name, info):
             for search_dir in get_search_paths():
-                model_path = search_dir / asset["dir"] / xml_file
+                model_path = search_dir / asset_dir_name / xml_file
                 if model_path.exists():
                     candidates.append(model_path)
 
     if not candidates:
-        logger.warning("Robot model not found: %s → %s/%s", name, asset["dir"], xml_file)
+        logger.warning("Robot model not found: %s → %s/%s", name, asset_dir_name, xml_file)
         return None
 
     # Prefer the candidate whose directory contains mesh files,
@@ -191,7 +193,7 @@ def resolve_model_path(
     if _auto_download_robot(name, info):
         # Re-scan after download (new symlinks may have appeared)
         for search_dir in get_search_paths():
-            model_path = search_dir / asset["dir"] / xml_file
+            model_path = search_dir / asset_dir_name / xml_file
             if model_path.exists() and _has_meshes(model_path.parent):
                 logger.debug("Resolved %s → %s (auto-downloaded)", name, model_path)
                 return model_path
@@ -214,7 +216,7 @@ def resolve_model_dir(name: str) -> Path | None:
     if not info or "asset" not in info:
         return None
 
-    asset_dir = info["asset"]["dir"]
+    asset_dir: str = str(info["asset"]["dir"])
     for search_dir in get_search_paths():
         dir_path = search_dir / asset_dir
         if dir_path.exists():

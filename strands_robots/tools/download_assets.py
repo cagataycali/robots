@@ -38,7 +38,7 @@ try:
     from strands.tools.decorator import tool
 except ImportError:
 
-    def tool(f):
+    def tool(f):  # type: ignore[misc]
         return f
 
 
@@ -128,7 +128,7 @@ def _safe_join(base: Path, untrusted: str) -> Path:
     return joined
 
 
-def _needs_download(name: str, info: dict, force: bool = False) -> bool:
+def _needs_download(name: str, info: dict[str, Any], force: bool = False) -> bool:
     """Return *True* if a robot's mesh files are missing."""
     asset = info.get("asset", {})
     if not asset:
@@ -157,9 +157,9 @@ def _needs_download(name: str, info: dict, force: bool = False) -> bool:
     return True
 
 
-def _get_source(info: dict) -> dict:
+def _get_source(info: dict[str, Any]) -> dict[str, Any]:
     """Get download source for a robot.  Defaults to ``menagerie``."""
-    source = info.get("asset", {}).get("source", {})
+    source: dict[str, Any] = info.get("asset", {}).get("source", {})
     return source if source else {"type": "menagerie"}
 
 
@@ -325,11 +325,14 @@ def download_robots(
         force: Re-download even if present.
     """
     dest_dir = get_user_assets_dir()
-    all_sim = {r["name"]: get_robot(r["name"]) for r in registry_list_robots(mode="sim")}
+    # Filter None values — get_robot() can return None for unknown names
+    all_sim: dict[str, dict[str, Any]] = {
+        r["name"]: info for r in registry_list_robots(mode="sim") if (info := get_robot(r["name"])) is not None
+    }
 
     # Resolve requested robots
     if names:
-        robots = {}
+        robots: dict[str, dict[str, Any]] = {}
         for name in names:
             canonical = resolve_robot_name(name)
             if canonical in all_sim:
@@ -337,15 +340,16 @@ def download_robots(
             else:
                 logger.warning("Unknown robot: %s (resolved: %s)", name, canonical)
     elif category:
-        robots = {n: i for n, i in all_sim.items() if i and i.get("category") == category}
+        robots = {n: i for n, i in all_sim.items() if i.get("category") == category}
     else:
-        robots = {n: i for n, i in all_sim.items() if i}
+        robots = dict(all_sim)
 
     if not robots:
         return {"downloaded": 0, "skipped": 0, "failed": 0, "message": "No matching robots found."}
 
     # Partition: needs download vs already present
-    to_download, skipped = {}, []
+    to_download: dict[str, dict[str, Any]] = {}
+    skipped: list[str] = []
     for name, info in robots.items():
         if _needs_download(name, info, force):
             to_download[name] = info
@@ -362,7 +366,8 @@ def download_robots(
         }
 
     # Partition by source type
-    menagerie_robots, github_robots = {}, {}
+    menagerie_robots: dict[str, dict[str, Any]] = {}
+    github_robots: dict[str, dict[str, Any]] = {}
     for name, info in to_download.items():
         source = _get_source(info)
         bucket = github_robots if source["type"] == "github" else menagerie_robots
@@ -410,8 +415,8 @@ def download_robots(
 @tool
 def download_assets(
     action: str = "download",
-    robots: str = None,
-    category: str = None,
+    robots: str | None = None,
+    category: str | None = None,
     force: bool = False,
 ) -> dict[str, Any]:
     """Download and manage robot model assets (MJCF XML + meshes).
