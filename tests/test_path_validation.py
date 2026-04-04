@@ -7,10 +7,10 @@ from unittest.mock import patch
 import pytest
 
 from strands_robots.tools._path_validation import (
-    BLOCKED_PREFIXES,
     _LINUX_BLOCKED_PREFIXES,
     _MACOS_BLOCKED_PREFIXES,
     _WINDOWS_BLOCKED_PREFIXES,
+    BLOCKED_PREFIXES,
     _get_blocked_prefixes,
     validate_save_path,
 )
@@ -162,9 +162,7 @@ class TestValidateSavePath:
         appropriate path separator for correct startswith matching."""
         expected_sep = "\\" if sys.platform == "win32" else "/"
         for prefix in BLOCKED_PREFIXES:
-            assert prefix.endswith(expected_sep), (
-                f"BLOCKED_PREFIXES entry missing trailing separator: {prefix!r}"
-            )
+            assert prefix.endswith(expected_sep), f"BLOCKED_PREFIXES entry missing trailing separator: {prefix!r}"
 
     # ── Custom label tests ────────────────────────────────────────────
 
