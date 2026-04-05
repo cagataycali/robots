@@ -38,7 +38,7 @@ try:
     from strands.tools.decorator import tool
 except ImportError:
 
-    def tool(f):  # type: ignore[misc]
+    def tool(f):  # type: ignore[no-redef]
         return f
 
 

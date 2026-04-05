@@ -125,7 +125,7 @@ ignore_missing_imports = false
 
 # Third-party libs without type stubs
 [[tool.mypy.overrides]]
-module = ["lerobot.*", "gr00t.*", "draccus.*", "msgpack.*", "zmq.*", "huggingface_hub.*", "serial.*", "psutil.*", "torch.*", "torchvision.*", "transformers.*", "einops.*"]
+module = ["lerobot.*", "gr00t.*", "draccus.*", "msgpack.*", "zmq.*", "huggingface_hub.*", "serial.*", "psutil.*", "torch.*", "torchvision.*", "transformers.*", "einops.*", "robot_descriptions.*"]
 ignore_missing_imports = true
 
 # @tool decorator injects runtime signatures mypy cannot check
