@@ -27,7 +27,12 @@ Usage::
 """
 
 from strands_robots.policies.base import Policy
-from strands_robots.policies.factory import create_policy, list_providers, register_policy
+from strands_robots.policies.factory import (
+    UntrustedRemoteCodeError,
+    create_policy,
+    list_providers,
+    register_policy,
+)
 from strands_robots.policies.mock import MockPolicy
 
 __all__ = [
@@ -36,4 +41,5 @@ __all__ = [
     "create_policy",
     "register_policy",
     "list_providers",
+    "UntrustedRemoteCodeError",
 ]

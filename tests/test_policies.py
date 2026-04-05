@@ -4,7 +4,14 @@ import asyncio
 
 import pytest
 
-from strands_robots.policies import MockPolicy, Policy, create_policy, list_providers, register_policy
+from strands_robots.policies import (
+    MockPolicy,
+    Policy,
+    UntrustedRemoteCodeError,
+    create_policy,
+    list_providers,
+    register_policy,
+)
 
 # Detect groot-service availability for conditional test grouping.
 try:
@@ -162,6 +169,35 @@ class TestFactoryGrootIntegration:
         assert p._strict is True
         assert p._mode == "service"
         assert p._client.api_token == "s3cret"
+
+
+class TestTrustRemoteCodeGate:
+    """STRANDS_TRUST_REMOTE_CODE gate should block lerobot_local without opt-in."""
+
+    def test_lerobot_local_blocked_without_env(self, monkeypatch):
+        """create_policy('lerobot_local') should raise without STRANDS_TRUST_REMOTE_CODE."""
+        monkeypatch.delenv("STRANDS_TRUST_REMOTE_CODE", raising=False)
+        with pytest.raises(UntrustedRemoteCodeError):
+            create_policy("lerobot_local")
+
+    def test_lerobot_local_allowed_with_env(self, monkeypatch):
+        """create_policy('lerobot_local') should succeed with STRANDS_TRUST_REMOTE_CODE=1."""
+        monkeypatch.setenv("STRANDS_TRUST_REMOTE_CODE", "1")
+        p = create_policy("lerobot_local")
+        assert p.provider_name == "lerobot_local"
+
+    def test_mock_never_gated(self, monkeypatch):
+        """Mock provider should never be blocked by trust gate."""
+        monkeypatch.delenv("STRANDS_TRUST_REMOTE_CODE", raising=False)
+        p = create_policy("mock")
+        assert isinstance(p, MockPolicy)
+
+    def test_runtime_registered_not_gated(self, monkeypatch):
+        """Runtime-registered providers (not in HF list) should not be gated."""
+        monkeypatch.delenv("STRANDS_TRUST_REMOTE_CODE", raising=False)
+        register_policy("safe_custom", loader=lambda: MockPolicy, aliases=["sc"])
+        p = create_policy("safe_custom")
+        assert isinstance(p, MockPolicy)
 
 
 class _KwargCapture(Policy):
