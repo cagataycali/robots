@@ -3,7 +3,7 @@
 import io
 import json
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from strands_robots.simulation.mujoco.backend import _can_render, _ensure_mujoco
 
@@ -11,6 +11,15 @@ logger = logging.getLogger(__name__)
 
 
 class RenderingMixin:
+    if TYPE_CHECKING:
+        from strands_robots.simulation.models import SimWorld
+
+        _world: "SimWorld | None"
+        _renderer_model: Any
+        _renderers: dict[tuple[int, int], Any]
+        default_width: int
+        default_height: int
+
     """Rendering capabilities for Simulation. Expects self._world, self.default_width, self.default_height."""
 
     def _get_renderer(self, width: int, height: int):
@@ -22,6 +31,7 @@ class RenderingMixin:
         if not _can_render():
             return None
         mj = _ensure_mujoco()
+        assert self._world is not None  # callers must check
         key = (width, height)
         if self._renderer_model is not self._world._model:
             self._renderers.clear()
@@ -33,6 +43,7 @@ class RenderingMixin:
     def _get_sim_observation(self, robot_name: str, cam_name: str | None = None) -> dict[str, Any]:
         """Get observation from sim (same format as real robot)."""
         mj = _ensure_mujoco()
+        assert self._world is not None  # callers must check
         model, data = self._world._model, self._world._data
         robot = self._world.robots[robot_name]
 
@@ -74,9 +85,10 @@ class RenderingMixin:
 
         return obs
 
-    def _apply_sim_action(self, robot_name: str, action_dict: dict[str, Any], n_substeps: int = 1):
+    def _apply_sim_action(self, robot_name: str, action_dict: dict[str, Any], n_substeps: int = 1) -> None:
         """Apply action dict to sim (same interface as robot.send_action)."""
         mj = _ensure_mujoco()
+        assert self._world is not None  # callers must check
         model, data = self._world._model, self._world._data
 
         for key, value in action_dict.items():
@@ -91,7 +103,9 @@ class RenderingMixin:
         for _ in range(max(1, n_substeps)):
             mj.mj_step(model, data)
 
+        assert self._world is not None
         self._world.sim_time = data.time
+        assert self._world is not None  # callers must check
         self._world.step_count += n_substeps
 
         if hasattr(self, "_viewer_handle") and self._viewer_handle is not None:

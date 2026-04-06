@@ -3,7 +3,7 @@
 import logging
 import shutil
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from strands_robots.simulation.mujoco.backend import _ensure_mujoco
 
@@ -11,6 +11,11 @@ logger = logging.getLogger(__name__)
 
 
 class RecordingMixin:
+    if TYPE_CHECKING:
+        from strands_robots.simulation.models import SimWorld
+
+        _world: "SimWorld | None"
+
     """Trajectory recording for Simulation. Expects self._world."""
 
     def start_recording(
@@ -27,17 +32,17 @@ class RecordingMixin:
         if self._world is None:
             return {"status": "error", "content": [{"text": "No world."}]}
 
+        _DatasetRecorder: Any = None
+        _has_lerobot = False
         try:
             from strands_robots.dataset_recorder import DatasetRecorder as _DatasetRecorder
-            from strands_robots.dataset_recorder import has_lerobot_dataset as _has_lerobot
+            from strands_robots.dataset_recorder import has_lerobot_dataset as _check_lerobot
+
+            _has_lerobot = _check_lerobot()
         except ImportError:
+            pass
 
-            def _has_lerobot():
-                return False
-
-            _DatasetRecorder = None  # type: ignore[assignment]
-
-        if not _has_lerobot() or _DatasetRecorder is None:
+        if not _has_lerobot or _DatasetRecorder is None:
             return {
                 "status": "error",
                 "content": [
@@ -47,8 +52,8 @@ class RecordingMixin:
                 ],
             }
 
-        self._world._recording = True
-        self._world._trajectory = []
+        self._world._backend_state["recording"] = True
+        self._world._backend_state["trajectory"] = []
         self._world._push_to_hub = push_to_hub
 
         try:
@@ -76,7 +81,8 @@ class RecordingMixin:
                 if cam_name:
                     camera_keys.append(cam_name)
 
-            self._world._dataset_recorder = _DatasetRecorder.create(
+            assert _DatasetRecorder is not None  # checked above
+            self._world._backend_state["dataset_recorder"] = _DatasetRecorder.create(
                 repo_id=repo_id,
                 fps=fps,
                 robot_type=robot_type,
@@ -100,17 +106,17 @@ class RecordingMixin:
                 ],
             }
         except Exception as e:
-            self._world._recording = False
+            self._world._backend_state["recording"] = False
             logger.error("Dataset recorder init failed: %s", e)
             return {"status": "error", "content": [{"text": f"Dataset init failed: {e}"}]}
 
     def stop_recording(self, output_path: str | None = None) -> dict[str, Any]:
         """Stop recording and save episode to LeRobotDataset."""
-        if self._world is None or not self._world._recording:
+        if self._world is None or not self._world._backend_state.get("recording", False):
             return {"status": "error", "content": [{"text": "Not recording."}]}
 
-        self._world._recording = False
-        recorder = self._world._dataset_recorder
+        self._world._backend_state["recording"] = False
+        recorder = self._world._backend_state.get("dataset_recorder", None)
 
         if recorder is None:
             return {"status": "error", "content": [{"text": "No dataset recorder active."}]}
@@ -126,8 +132,8 @@ class RecordingMixin:
         root = recorder.root
 
         recorder.finalize()
-        self._world._dataset_recorder = None
-        self._world._trajectory = []
+        self._world._backend_state["dataset_recorder"] = None
+        self._world._backend_state["trajectory"] = []
 
         text = (
             f"Episode saved to LeRobotDataset\n"
@@ -143,8 +149,8 @@ class RecordingMixin:
         if self._world is None:
             return {"status": "error", "content": [{"text": "❌ No world."}]}
 
-        recording = self._world._recording
-        steps = len(self._world._trajectory)
+        recording = self._world._backend_state.get("recording", False)
+        steps = len(self._world._backend_state.get("trajectory", []))
 
         return {
             "status": "success",

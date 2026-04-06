@@ -84,8 +84,8 @@ def _reload_scene_from_xml(world: SimWorld, scene_path: str) -> bool:
 
 def _get_robot_base_dir(world: SimWorld) -> str | None:
     """Get the directory of the original robot model file."""
-    if world._robot_base_xml:
-        return os.path.dirname(os.path.abspath(world._robot_base_xml))
+    if world._backend_state.get("robot_base_xml", ""):
+        return os.path.dirname(os.path.abspath(world._backend_state.get("robot_base_xml", "")))
     return None
 
 
