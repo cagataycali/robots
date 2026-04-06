@@ -84,14 +84,6 @@ class Simulation(
 
         logger.info("🎮 Simulation tool '%s' initialized", tool_name)
 
-        try:
-            from strands_robots.zenoh_mesh import init_mesh
-
-            self.mesh = init_mesh(self, peer_id=peer_id, peer_type="sim", mesh=mesh)
-        except Exception as e:
-            logger.debug("Mesh init skipped: %s", e)
-            self.mesh = None
-
     # --- Public Properties ---
 
     @property
@@ -225,7 +217,7 @@ class Simulation(
     def _compile_world(self):
         mj = _ensure_mujoco()
         xml = MJCFBuilder.build_objects_only(self._world)
-        self._world._xml = xml
+        self._world._backend_state["xml"] = xml
         self._world._model = mj.MjModel.from_xml_string(xml)
         self._world._data = mj.MjData(self._world._model)
         self._world.status = SimStatus.IDLE
@@ -384,7 +376,7 @@ class Simulation(
 
             self._world._model = model
             self._world._data = data
-            self._world._robot_base_xml = resolved_path
+            self._world._backend_state["robot_base_xml"] = resolved_path
             self._world.robots[name] = robot
 
             for _ in range(100):
@@ -668,8 +660,8 @@ class Simulation(
             lines.append(
                 f"🦴 Bodies: {self._world._model.nbody} | 🔩 Joints: {self._world._model.njnt} | ⚡ Actuators: {self._world._model.nu}"
             )
-        if self._world._recording:
-            lines.append(f"🔴 Recording: {len(self._world._trajectory)} steps")
+        if self._world._backend_state.get("recording", False):
+            lines.append(f"🔴 Recording: {len(self._world._backend_state["trajectory"])} steps")
         return {"status": "success", "content": [{"text": "\n".join(lines)}]}
 
     def destroy(self) -> dict[str, Any]:

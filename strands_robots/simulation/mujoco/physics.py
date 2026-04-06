@@ -17,7 +17,7 @@ Exposes the deep MuJoCo C API through clean Python methods:
 
 import json
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -27,6 +27,11 @@ logger = logging.getLogger(__name__)
 
 
 class PhysicsMixin:
+    if TYPE_CHECKING:
+        from strands_robots.simulation.models import SimWorld
+
+        _world: "SimWorld | None"
+
     """Advanced physics capabilities for Simulation.
 
     Expects: self._world (SimWorld with _model, _data)

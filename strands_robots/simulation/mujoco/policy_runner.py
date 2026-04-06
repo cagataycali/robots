@@ -3,7 +3,7 @@
 import logging
 import os
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -15,6 +15,22 @@ logger = logging.getLogger(__name__)
 
 
 class PolicyRunnerMixin:
+    if TYPE_CHECKING:
+        import threading
+        from concurrent.futures import Future, ThreadPoolExecutor
+
+        from strands_robots.simulation.models import SimWorld
+
+        _world: SimWorld | None
+        _lock: threading.Lock
+        _executor: ThreadPoolExecutor
+        _policy_threads: dict[str, Future[Any]]
+
+        # Methods from RenderingMixin — declared here so mypy can verify calls
+        def _get_renderer(self, width: int, height: int) -> Any: ...
+        def _get_sim_observation(self, robot_name: str, cam_name: str | None = None) -> dict[str, Any]: ...
+        def _apply_sim_action(self, robot_name: str, action_dict: dict[str, Any], n_substeps: int = 1) -> None: ...
+
     """Policy execution for Simulation. Expects self._world, self._executor, self._policy_threads."""
 
     def run_policy(
@@ -91,8 +107,8 @@ class PolicyRunnerMixin:
                     if not robot.policy_running:
                         break
 
-                    if self._world._recording:
-                        self._world._trajectory.append(
+                    if self._world._backend_state.get("recording", False):
+                        self._world._backend_state["trajectory"].append(
                             TrajectoryStep(
                                 timestamp=time.time(),
                                 sim_time=self._world.sim_time,
@@ -102,8 +118,8 @@ class PolicyRunnerMixin:
                                 instruction=instruction,
                             )
                         )
-                        if self._world._dataset_recorder is not None:
-                            self._world._dataset_recorder.add_frame(
+                        if self._world._backend_state.get("dataset_recorder") is not None:
+                            self._world._backend_state["dataset_recorder"].add_frame(
                                 observation=observation,
                                 action=action_dict,
                                 task=instruction,

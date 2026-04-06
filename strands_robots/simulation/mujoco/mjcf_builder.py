@@ -143,8 +143,8 @@ class MJCFBuilder:
     ) -> str:
         """Compose a multi-robot scene by merging URDF-derived MJCF fragments."""
         mj = _ensure_mujoco()
-        world._tmpdir = tempfile.TemporaryDirectory(prefix="strands_sim_")
-        tmpdir = world._tmpdir.name
+        world._backend_state["tmpdir"] = tempfile.TemporaryDirectory(prefix="strands_sim_")
+        tmpdir = world._backend_state["tmpdir"].name
 
         robot_xmls = {}
         for robot_name, robot in robots.items():
