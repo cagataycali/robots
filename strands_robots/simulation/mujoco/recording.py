@@ -18,7 +18,7 @@ class RecordingMixin:
         repo_id: str = "local/sim_recording",
         task: str = "",
         fps: int = 30,
-        root: str = None,
+        root: str | None = None,
         push_to_hub: bool = False,
         vcodec: str = "libsvtav1",
         overwrite: bool = False,
@@ -35,7 +35,7 @@ class RecordingMixin:
             def _has_lerobot():
                 return False
 
-            _DatasetRecorder = None
+            _DatasetRecorder = None  # type: ignore[assignment]
 
         if not _has_lerobot() or _DatasetRecorder is None:
             return {
@@ -104,7 +104,7 @@ class RecordingMixin:
             logger.error("Dataset recorder init failed: %s", e)
             return {"status": "error", "content": [{"text": f"Dataset init failed: {e}"}]}
 
-    def stop_recording(self, output_path: str = None) -> dict[str, Any]:
+    def stop_recording(self, output_path: str | None = None) -> dict[str, Any]:
         """Stop recording and save episode to LeRobotDataset."""
         if self._world is None or not self._world._recording:
             return {"status": "error", "content": [{"text": "Not recording."}]}

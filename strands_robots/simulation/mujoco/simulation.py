@@ -61,7 +61,7 @@ class Simulation(
         default_width: int = 640,
         default_height: int = 480,
         mesh: bool = True,
-        peer_id: str = None,
+        peer_id: str | None = None,
         **kwargs,
     ):
         super().__init__()
@@ -106,7 +106,7 @@ class Simulation(
 
     # --- Robot-compatible interface ---
 
-    def get_observation(self, robot_name: str = None, camera_name: str = None) -> dict[str, Any]:
+    def get_observation(self, robot_name: str | None = None, camera_name: str | None = None) -> dict[str, Any]:
         """Get observation from simulation (Robot ABC compatible)."""
         if self._world is None or self._world._model is None:
             return {}
@@ -118,7 +118,7 @@ class Simulation(
             return {}
         return self._get_sim_observation(robot_name, cam_name=camera_name)
 
-    def send_action(self, action: dict[str, Any], robot_name: str = None, n_substeps: int = 1) -> None:
+    def send_action(self, action: dict[str, Any], robot_name: str | None = None, n_substeps: int = 1) -> None:
         """Apply action to simulation (Robot ABC compatible)."""
         if self._world is None or self._world._model is None:
             return
@@ -141,7 +141,7 @@ class Simulation(
             return 0
 
     def create_world(
-        self, timestep: float = None, gravity: list[float] = None, ground_plane: bool = True
+        self, timestep: float | None = None, gravity: list[float] | None = None, ground_plane: bool = True
     ) -> dict[str, Any]:
         """Create a new simulation world."""
         _ensure_mujoco()
@@ -524,10 +524,10 @@ class Simulation(
                     f"Check that the MJCF XML is valid and compatible with the current scene."
                 ) from e
 
-        result = self._recompile_world()
-        if result["status"] == "error":
+        recompile_result = self._recompile_world()
+        if recompile_result["status"] == "error":
             del self._world.objects[name]
-            return result
+            return recompile_result
 
         return {
             "status": "success",
@@ -837,7 +837,7 @@ class Simulation(
             tool_use_id = tool_use.get("toolUseId", "")
             input_data = tool_use.get("input", {})
             result = self._dispatch_action(input_data.get("action", ""), input_data)
-            yield ToolResultEvent({"toolUseId": tool_use_id, **result})
+            yield ToolResultEvent(dict(toolUseId=tool_use_id, **result))  # type: ignore[typeddict-item]
         except Exception as e:
             yield ToolResultEvent(
                 {

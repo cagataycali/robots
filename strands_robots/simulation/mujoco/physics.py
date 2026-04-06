@@ -109,9 +109,9 @@ class PhysicsMixin:
     def apply_force(
         self,
         body_name: str,
-        force: list[float] = None,
-        torque: list[float] = None,
-        point: list[float] = None,
+        force: list[float] | None = None,
+        torque: list[float] | None = None,
+        point: list[float] | None = None,
     ) -> dict[str, Any]:
         """Apply external force and/or torque to a body.
 
@@ -223,9 +223,9 @@ class PhysicsMixin:
 
     def get_jacobian(
         self,
-        body_name: str = None,
-        site_name: str = None,
-        geom_name: str = None,
+        body_name: str | None = None,
+        site_name: str | None = None,
+        geom_name: str | None = None,
     ) -> dict[str, Any]:
         """Compute the Jacobian (position + rotation) for a body, site, or geom.
 
@@ -437,8 +437,8 @@ class PhysicsMixin:
 
     def set_joint_positions(
         self,
-        positions: dict[str, float] = None,
-        robot_name: str = None,
+        positions: dict[str, float] | None = None,
+        robot_name: str | None = None,
     ) -> dict[str, Any]:
         """Set joint positions directly (bypassing actuators).
 
@@ -473,7 +473,7 @@ class PhysicsMixin:
 
     def set_joint_velocities(
         self,
-        velocities: dict[str, float] = None,
+        velocities: dict[str, float] | None = None,
     ) -> dict[str, Any]:
         """Set joint velocities directly.
 
@@ -503,7 +503,7 @@ class PhysicsMixin:
 
     # ── Sensor Readout ──
 
-    def get_sensor_data(self, sensor_name: str = None) -> dict[str, Any]:
+    def get_sensor_data(self, sensor_name: str | None = None) -> dict[str, Any]:
         """Read sensor values from the simulation.
 
         MuJoCo supports: jointpos, jointvel, accelerometer, gyro, force,
@@ -559,7 +559,7 @@ class PhysicsMixin:
     def set_body_properties(
         self,
         body_name: str,
-        mass: float = None,
+        mass: float | None = None,
     ) -> dict[str, Any]:
         """Modify body properties at runtime (no recompile needed).
 
@@ -587,11 +587,11 @@ class PhysicsMixin:
 
     def set_geom_properties(
         self,
-        geom_name: str = None,
-        geom_id: int = None,
-        color: list[float] = None,
-        friction: list[float] = None,
-        size: list[float] = None,
+        geom_name: str | None = None,
+        geom_id: int | None = None,
+        color: list[float] | None = None,
+        friction: list[float] | None = None,
+        size: list[float] | None = None,
     ) -> dict[str, Any]:
         """Modify geom properties at runtime (no recompile needed).
 
@@ -789,7 +789,7 @@ class PhysicsMixin:
 
     # ── Export Model XML ──
 
-    def export_xml(self, output_path: str = None) -> dict[str, Any]:
+    def export_xml(self, output_path: str | None = None) -> dict[str, Any]:
         """Export the current model to MJCF XML.
 
         Uses mj_saveLastXML — exports the exact model currently loaded,

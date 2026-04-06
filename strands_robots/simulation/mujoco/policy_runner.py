@@ -26,9 +26,9 @@ class PolicyRunnerMixin:
         action_horizon: int = 8,
         control_frequency: float = 50.0,
         fast_mode: bool = False,
-        record_video: str = None,
+        record_video: str | None = None,
         video_fps: int = 30,
-        video_camera: str = None,
+        video_camera: str | None = None,
         video_width: int = 640,
         video_height: int = 480,
         **policy_kwargs,
@@ -138,7 +138,7 @@ class PolicyRunnerMixin:
 
             if writer:
                 writer.close()
-                file_kb = os.path.getsize(record_video) / 1024
+                file_kb = os.path.getsize(record_video) / 1024  # type: ignore[arg-type]  # narrowed by `if writer` above
                 result_text += (
                     f"\n🎬 Video: {record_video}\n"
                     f"📹 {frame_count} frames, {video_fps}fps, {video_width}x{video_height} | 💾 {file_kb:.0f} KB"
@@ -198,9 +198,9 @@ class PolicyRunnerMixin:
     def replay_episode(
         self,
         repo_id: str,
-        robot_name: str = None,
+        robot_name: str | None = None,
         episode: int = 0,
-        root: str = None,
+        root: str | None = None,
         speed: float = 1.0,
     ) -> dict[str, Any]:
         """Replay actions from a LeRobotDataset episode in simulation."""
@@ -281,12 +281,12 @@ class PolicyRunnerMixin:
 
     def eval_policy(
         self,
-        robot_name: str = None,
+        robot_name: str | None = None,
         policy_provider: str = "mock",
         instruction: str = "",
         n_episodes: int = 10,
         max_steps: int = 300,
-        success_fn: str = None,
+        success_fn: str | None = None,
         **policy_kwargs,
     ) -> dict[str, Any]:
         """Evaluate a policy over multiple episodes with success metrics."""
