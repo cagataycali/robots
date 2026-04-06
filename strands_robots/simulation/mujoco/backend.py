@@ -4,6 +4,7 @@ import ctypes
 import logging
 import os
 import sys
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,7 @@ def _is_headless() -> bool:
     return True
 
 
-def _configure_gl_backend() -> None:
+def _configure_gl_backend() -> None:  # noqa: C901
     """Auto-configure MuJoCo's OpenGL backend for headless environments.
 
     MuJoCo reads MUJOCO_GL at import time to select the OpenGL backend:
@@ -70,7 +71,7 @@ def _configure_gl_backend() -> None:
     )
 
 
-def _ensure_mujoco():
+def _ensure_mujoco() -> "Any":
     """Lazy import MuJoCo to avoid hard dependency.
 
     Auto-configures the OpenGL backend for headless environments before
