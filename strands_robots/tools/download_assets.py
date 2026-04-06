@@ -23,6 +23,8 @@ Agent::
     agent("Download the SO-100 and Panda robot assets")
 """
 
+from __future__ import annotations
+
 import argparse
 import importlib
 import logging
@@ -58,7 +60,7 @@ MENAGERIE_REPO = "https://github.com/google-deepmind/mujoco_menagerie.git"
 def _robot_descriptions_available() -> bool:
     """Check if ``robot_descriptions`` is installed."""
     try:
-        import robot_descriptions  # noqa: F401
+        import robot_descriptions  # type: ignore[import-not-found]  # noqa: F401
 
         return True
     except ImportError:
@@ -128,8 +130,10 @@ def _safe_join(base: Path, untrusted: str) -> Path:
     return joined
 
 
-def _needs_download(name: str, info: dict[str, Any], force: bool = False) -> bool:
+def _needs_download(name: str, info: dict[str, Any] | None, force: bool = False) -> bool:
     """Return *True* if a robot's mesh files are missing."""
+    if info is None:
+        return False
     asset = info.get("asset", {})
     if not asset:
         return False
@@ -157,9 +161,11 @@ def _needs_download(name: str, info: dict[str, Any], force: bool = False) -> boo
     return True
 
 
-def _get_source(info: dict[str, Any]) -> dict[str, Any]:
+def _get_source(info: dict[str, Any] | None) -> dict[str, Any]:
     """Get download source for a robot.  Defaults to ``menagerie``."""
-    source: dict[str, Any] = info.get("asset", {}).get("source", {})
+    if info is None:
+        return {"type": "menagerie"}
+    source = info.get("asset", {}).get("source", {})
     return source if source else {"type": "menagerie"}
 
 
@@ -219,7 +225,14 @@ def _download_via_robot_descriptions(robots: dict[str, dict], dest_dir: Path) ->
 
             dst = _safe_join(dest_dir, asset_dir)
             if dst.is_symlink() and dst.resolve() == package_path.resolve():
-                results[name] = "downloaded"
+                # Validate existing symlink still has the expected XML
+                expected_xml = dst / info["asset"]["model_xml"]
+                if expected_xml.exists():
+                    results[name] = "downloaded"
+                    continue
+                # Stale symlink — remove and re-download via git
+                dst.unlink()
+                results[name] = f"failed: stale symlink — {info['asset']['model_xml']} not found in {package_path}"
                 continue
             if dst.exists() or dst.is_symlink():
                 dst.unlink() if dst.is_symlink() else shutil.rmtree(str(dst))
@@ -228,6 +241,25 @@ def _download_via_robot_descriptions(robots: dict[str, dict], dest_dir: Path) ->
                 dst.symlink_to(package_path)
             except OSError:
                 shutil.copytree(str(package_path), str(dst), dirs_exist_ok=True)
+
+            # Validate: expected XML must exist in the linked/copied dir
+            expected_xml = dst / info["asset"]["model_xml"]
+            if not expected_xml.exists():
+                logger.warning(
+                    "robot_descriptions module '%s' linked for %s but "
+                    "expected XML '%s' not found — falling back to git",
+                    module_name,
+                    name,
+                    info["asset"]["model_xml"],
+                )
+                if dst.is_symlink():
+                    dst.unlink()
+                else:
+                    shutil.rmtree(str(dst), ignore_errors=True)
+                results[name] = (
+                    f"failed: XML mismatch — module '{module_name}' does not contain {info['asset']['model_xml']}"
+                )
+                continue
 
             results[name] = "downloaded"
         except Exception as exc:
@@ -366,8 +398,8 @@ def download_robots(
         }
 
     # Partition by source type
-    menagerie_robots: dict[str, dict[str, Any]] = {}
-    github_robots: dict[str, dict[str, Any]] = {}
+    menagerie_robots: dict[str, Any] = {}
+    github_robots: dict[str, Any] = {}
     for name, info in to_download.items():
         source = _get_source(info)
         bucket = github_robots if source["type"] == "github" else menagerie_robots

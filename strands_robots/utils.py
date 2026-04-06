@@ -2,6 +2,8 @@
 
 import importlib
 import logging
+import os
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -49,3 +51,71 @@ def require_optional(
             parts.append(f"  pip install 'strands-robots[{extra}]'")
         parts.append(f"  pip install {install_hint}")
         raise ImportError("\n".join(parts)) from None
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Path resolution — single source of truth for all strands-robots paths
+# ─────────────────────────────────────────────────────────────────────
+
+#: Default base directory for all user data.
+DEFAULT_BASE_DIR = Path.home() / ".strands_robots"
+
+
+def get_base_dir() -> Path:
+    """Get the base directory for strands-robots user data.
+
+    If ``STRANDS_ASSETS_DIR`` is set, returns its parent
+    (the assets dir is a subdirectory of the base).
+    Otherwise returns ``~/.strands_robots/``.
+
+    Returns:
+        Path to the base directory (created if needed).
+    """
+    custom = os.getenv("STRANDS_ASSETS_DIR")
+    if custom:
+        d = Path(custom).parent
+    else:
+        d = DEFAULT_BASE_DIR
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def get_assets_dir() -> Path:
+    """Get the assets directory (robot model files, meshes, URDFs).
+
+    Resolution:
+        1. ``STRANDS_ASSETS_DIR`` env var — used as-is
+        2. ``~/.strands_robots/assets/`` — default
+
+    Returns:
+        Path to the assets directory (created if needed).
+    """
+    custom = os.getenv("STRANDS_ASSETS_DIR")
+    if custom:
+        d = Path(custom)
+    else:
+        d = DEFAULT_BASE_DIR / "assets"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def resolve_asset_path(relative_or_absolute: str | Path | None, default_name: str = "") -> Path:
+    """Resolve an asset path against the assets directory.
+
+    Args:
+        relative_or_absolute: Path to resolve.
+            - ``None`` → ``<assets_dir>/<default_name>/``
+            - Absolute (or ``~/...``) → expanded as-is
+            - Relative → ``<assets_dir>/<relative>/``
+        default_name: Fallback subdirectory name when path is None.
+
+    Returns:
+        Resolved absolute Path.
+    """
+    assets = get_assets_dir()
+    if relative_or_absolute is None:
+        return assets / default_name
+    expanded = Path(relative_or_absolute).expanduser()
+    if expanded.is_absolute():
+        return expanded
+    return assets / expanded

@@ -24,23 +24,9 @@ logger = logging.getLogger(__name__)
 # Asset directory resolution
 # ─────────────────────────────────────────────────────────────────────
 
+from strands_robots.utils import get_assets_dir  # noqa: E402 — canonical path resolution
+
 _BUNDLED_DIR = Path(__file__).parent
-_USER_CACHE_DIR = Path.home() / ".strands_robots" / "assets"
-
-
-def get_assets_dir() -> Path:
-    """Get the primary assets directory (user cache).
-
-    Returns ``~/.strands_robots/assets/`` by default (writable, not in pip package).
-    Override with ``STRANDS_ASSETS_DIR`` env var.
-    """
-    custom = os.getenv("STRANDS_ASSETS_DIR")
-    if custom:
-        d = Path(custom)
-    else:
-        d = _USER_CACHE_DIR
-    d.mkdir(parents=True, exist_ok=True)
-    return d
 
 
 def get_search_paths() -> list[Path]:
@@ -163,6 +149,14 @@ def resolve_model_path(
     asset_dir_name: str = str(asset["dir"])
 
     candidates: list[Path] = []
+
+    # Check user-registered asset path first (highest priority)
+    user_path = info.get("_user_asset_path")
+    if user_path:
+        user_model = Path(user_path) / xml_file
+        if user_model.exists():
+            candidates.append(user_model)
+
     for search_dir in get_search_paths():
         model_path = search_dir / asset_dir_name / xml_file
         if model_path.exists():
@@ -186,7 +180,7 @@ def resolve_model_path(
     for path in candidates:
         if _has_meshes(path.parent):
             logger.debug("Resolved %s → %s (has meshes)", name, path)
-            return path
+            return Path(path)
 
     # XML found but no meshes — auto-download and re-check
     logger.info("XML found for %s but no meshes, attempting auto-download...", name)
@@ -196,11 +190,11 @@ def resolve_model_path(
             model_path = search_dir / asset_dir_name / xml_file
             if model_path.exists() and _has_meshes(model_path.parent):
                 logger.debug("Resolved %s → %s (auto-downloaded)", name, model_path)
-                return model_path
+                return Path(model_path)
 
     # Final fallback: return first candidate (some robots have no meshes)
     logger.debug("Resolved %s → %s (no meshes available)", name, candidates[0])
-    return candidates[0]
+    return Path(candidates[0])
 
 
 def resolve_model_dir(name: str) -> Path | None:
@@ -220,7 +214,7 @@ def resolve_model_dir(name: str) -> Path | None:
     for search_dir in get_search_paths():
         dir_path = search_dir / asset_dir
         if dir_path.exists():
-            return dir_path
+            return Path(dir_path)
     return None
 
 

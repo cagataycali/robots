@@ -6,19 +6,21 @@ import logging
 import os
 from pathlib import Path
 
+from strands_robots.utils import get_assets_dir as _get_assets_dir
+
 logger = logging.getLogger(__name__)
 
 # Default URDF search paths (checked in order).
 #
 # Resolution order for legacy URDF lookups:
-#   1. STRANDS_ASSETS_DIR (if set) — user override
+#   1. STRANDS_ASSETS_DIR (if set) — user override (via utils.get_assets_dir)
 #   2. ~/.strands_robots/assets/ — user cache
 #   3. CWD/assets/ — project-local assets
 #
 # For new code, prefer resolve_model() which uses the Menagerie
 # asset manager and falls back to these legacy paths.
 _URDF_SEARCH_PATHS = [
-    Path.home() / ".strands_robots" / "assets",
+    _get_assets_dir(),
     Path.cwd() / "assets",
 ]
 
@@ -45,9 +47,8 @@ logger.info("Asset manager available: %s", _HAS_ASSET_MANAGER)
 # Legacy URDF registry — runtime cache for user-registered URDFs
 _URDF_REGISTRY: dict[str, str] = {}
 
-_ASSETS_DIR_OVERRIDE = os.getenv("STRANDS_ASSETS_DIR")
-if _ASSETS_DIR_OVERRIDE:
-    _URDF_SEARCH_PATHS.insert(0, Path(_ASSETS_DIR_OVERRIDE))
+
+# Note: STRANDS_ASSETS_DIR is handled by utils.get_assets_dir() above.
 
 
 def register_urdf(data_config: str, urdf_path: str) -> None:
