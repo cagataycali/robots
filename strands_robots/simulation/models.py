@@ -105,6 +105,7 @@ class SimWorld:
     _recording: bool = False
     _trajectory: list[TrajectoryStep] = field(default_factory=list)
     # LeRobotDataset recorder
+    _push_to_hub: bool = False
     _dataset_recorder: Any = None
     # Temp directory for scene composition
     _tmpdir: Any = None

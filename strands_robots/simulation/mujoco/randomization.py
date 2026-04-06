@@ -1,7 +1,7 @@
 """Domain randomization mixin."""
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -11,6 +11,11 @@ logger = logging.getLogger(__name__)
 
 
 class RandomizationMixin:
+    if TYPE_CHECKING:
+        from strands_robots.simulation.models import SimWorld
+
+        _world: "SimWorld | None"
+
     """Domain randomization for Simulation. Expects self._world."""
 
     def randomize(
@@ -24,6 +29,7 @@ class RandomizationMixin:
         friction_range: tuple[float, float] = (0.5, 1.5),
         mass_range: tuple[float, float] = (0.5, 2.0),
         seed: int | None = None,
+        **kwargs: Any,
     ) -> dict[str, Any]:
         """Apply domain randomization to the scene."""
         if self._world is None or self._world._model is None:

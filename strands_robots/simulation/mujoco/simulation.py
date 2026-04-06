@@ -84,14 +84,6 @@ class Simulation(
 
         logger.info("🎮 Simulation tool '%s' initialized", tool_name)
 
-        try:
-            from strands_robots.zenoh_mesh import init_mesh
-
-            self.mesh = init_mesh(self, peer_id=peer_id, peer_type="sim", mesh=mesh)
-        except Exception as e:
-            logger.debug("Mesh init skipped: %s", e)
-            self.mesh = None
-
     # --- Public Properties ---
 
     @property

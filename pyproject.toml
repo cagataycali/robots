@@ -133,7 +133,7 @@ ignore_missing_imports = false
 
 # Third-party libs without type stubs
 [[tool.mypy.overrides]]
-module = ["lerobot.*", "gr00t.*", "draccus.*", "msgpack.*", "zmq.*", "huggingface_hub.*", "serial.*", "psutil.*", "torch.*", "torchvision.*", "transformers.*", "einops.*", "robot_descriptions.*", "mujoco.*"]
+module = ["lerobot.*", "gr00t.*", "draccus.*", "msgpack.*", "zmq.*", "huggingface_hub.*", "serial.*", "psutil.*", "torch.*", "torchvision.*", "transformers.*", "einops.*", "robot_descriptions.*", "mujoco.*", "imageio.*"]
 ignore_missing_imports = true
 
 # @tool decorator injects runtime signatures mypy cannot check
@@ -175,7 +175,6 @@ disallow_untyped_defs = false
 module = ["strands_robots.simulation.mujoco.*"]
 disallow_untyped_defs = false
 warn_return_any = false
-disable_error_code = ["attr-defined", "misc", "override", "import-not-found", "import-untyped", "has-type"]
 
 # Async utils and dataset recorder — thin wrappers with dynamic types
 [[tool.mypy.overrides]]

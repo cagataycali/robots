@@ -3,7 +3,7 @@
 import logging
 import shutil
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from strands_robots.simulation.mujoco.backend import _ensure_mujoco
 
@@ -11,6 +11,11 @@ logger = logging.getLogger(__name__)
 
 
 class RecordingMixin:
+    if TYPE_CHECKING:
+        from strands_robots.simulation.models import SimWorld
+
+        _world: "SimWorld | None"
+
     """Trajectory recording for Simulation. Expects self._world."""
 
     def start_recording(
@@ -27,17 +32,17 @@ class RecordingMixin:
         if self._world is None:
             return {"status": "error", "content": [{"text": "No world."}]}
 
+        _DatasetRecorder: Any = None
+        _has_lerobot = False
         try:
             from strands_robots.dataset_recorder import DatasetRecorder as _DatasetRecorder
-            from strands_robots.dataset_recorder import has_lerobot_dataset as _has_lerobot
+            from strands_robots.dataset_recorder import has_lerobot_dataset as _check_lerobot
+
+            _has_lerobot = _check_lerobot()
         except ImportError:
+            pass
 
-            def _has_lerobot():
-                return False
-
-            _DatasetRecorder = None  # type: ignore[assignment]
-
-        if not _has_lerobot() or _DatasetRecorder is None:
+        if not _has_lerobot or _DatasetRecorder is None:
             return {
                 "status": "error",
                 "content": [
@@ -76,6 +81,7 @@ class RecordingMixin:
                 if cam_name:
                     camera_keys.append(cam_name)
 
+            assert _DatasetRecorder is not None  # checked above
             self._world._dataset_recorder = _DatasetRecorder.create(
                 repo_id=repo_id,
                 fps=fps,
