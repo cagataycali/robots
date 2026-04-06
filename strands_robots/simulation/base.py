@@ -120,10 +120,12 @@ class SimEngine(ABC):
         name: str,
         shape: str = "box",
         position: list[float] | None = None,
+        orientation: list[float] | None = None,
         size: list[float] | None = None,
         color: list[float] | None = None,
         mass: float = 0.1,
         is_static: bool = False,
+        mesh_path: str | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Add an object to the scene."""
@@ -190,7 +192,11 @@ class SimEngine(ABC):
         raise NotImplementedError("run_policy not implemented by this backend")
 
     def randomize(self, **kwargs: Any) -> dict[str, Any]:
-        """Apply domain randomization. Override per backend."""
+        """Apply domain randomization.
+
+        Concrete backends define their own parameter signatures.
+        Override per backend.
+        """
         raise NotImplementedError("randomize not implemented by this backend")
 
     def get_contacts(self) -> dict[str, Any]:
