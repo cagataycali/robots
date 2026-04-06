@@ -8,7 +8,7 @@ import concurrent.futures
 _EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="strands_async")
 
 
-def _resolve_coroutine(coro_or_result):
+def _resolve_coroutine(coro_or_result):  # type: ignore[no-untyped-def]
     """Safely resolve a potentially-async result to a sync value.
 
     Handles three cases:

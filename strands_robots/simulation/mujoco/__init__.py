@@ -32,7 +32,7 @@ __all__ = [
 ]
 
 
-def __getattr__(name):
+def __getattr__(name: str) -> "type":
     if name == "MuJoCoSimulation":
         from strands_robots.simulation.mujoco.simulation import Simulation as _Sim
 

@@ -23,7 +23,7 @@ class RandomizationMixin:
         color_range: tuple[float, float] = (0.1, 1.0),
         friction_range: tuple[float, float] = (0.5, 1.5),
         mass_range: tuple[float, float] = (0.5, 2.0),
-        seed: int = None,
+        seed: int | None = None,
     ) -> dict[str, Any]:
         """Apply domain randomization to the scene."""
         if self._world is None or self._world._model is None:
