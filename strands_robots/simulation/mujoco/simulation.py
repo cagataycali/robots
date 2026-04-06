@@ -304,10 +304,10 @@ class Simulation(
     def add_robot(
         self,
         name: str,
-        urdf_path: str = None,
-        data_config: str = None,
-        position: list[float] = None,
-        orientation: list[float] = None,
+        urdf_path: str | None = None,
+        data_config: str | None = None,
+        position: list[float] | None = None,
+        orientation: list[float] | None = None,
     ) -> dict[str, Any]:
         """Add a robot to the simulation."""
         if self._world is None:
@@ -471,13 +471,14 @@ class Simulation(
         self,
         name: str,
         shape: str = "box",
-        position: list[float] = None,
-        orientation: list[float] = None,
-        size: list[float] = None,
-        color: list[float] = None,
+        position: list[float] | None = None,
+        orientation: list[float] | None = None,
+        size: list[float] | None = None,
+        color: list[float] | None = None,
         mass: float = 0.1,
         is_static: bool = False,
-        mesh_path: str = None,
+        mesh_path: str | None = None,
+        **kwargs: Any,
     ) -> dict[str, Any]:
         """Add an object to the simulation."""
         if self._world is None:
@@ -547,7 +548,9 @@ class Simulation(
             self._recompile_world()
         return {"status": "success", "content": [{"text": f"🗑️ '{name}' removed."}]}
 
-    def move_object(self, name: str, position: list[float] = None, orientation: list[float] = None) -> dict[str, Any]:
+    def move_object(
+        self, name: str, position: list[float] | None = None, orientation: list[float] | None = None
+    ) -> dict[str, Any]:
         if self._world is None or self._world._data is None:
             return {"status": "error", "content": [{"text": "❌ No simulation."}]}
         if name not in self._world.objects:
@@ -585,8 +588,8 @@ class Simulation(
     def add_camera(
         self,
         name: str,
-        position: list[float] = None,
-        target: list[float] = None,
+        position: list[float] | None = None,
+        target: list[float] | None = None,
         fov: float = 60.0,
         width: int = 640,
         height: int = 480,
@@ -678,7 +681,7 @@ class Simulation(
         self._world = None
         return {"status": "success", "content": [{"text": "🗑️ World destroyed."}]}
 
-    def set_gravity(self, gravity) -> dict[str, Any]:
+    def set_gravity(self, gravity: list[float] | float | int) -> dict[str, Any]:
         if self._world is None or self._world._model is None:
             return {"status": "error", "content": [{"text": "❌ No world."}]}
         if isinstance(gravity, (int, float)):
@@ -711,7 +714,7 @@ class Simulation(
         except Exception as e:
             return {"status": "error", "content": [{"text": f"❌ Viewer failed: {e}"}]}
 
-    def _close_viewer(self):
+    def _close_viewer(self) -> None:
         if self._viewer_handle is not None:
             try:
                 self._viewer_handle.close()
@@ -921,7 +924,7 @@ class Simulation(
 
     # --- Cleanup ---
 
-    def cleanup(self):
+    def cleanup(self) -> None:
         if hasattr(self, "mesh") and self.mesh:
             self.mesh.stop()
         if self._world:
@@ -938,13 +941,13 @@ class Simulation(
         self._executor.shutdown(wait=False)
         self._shutdown_event.set()
 
-    def __enter__(self):
+    def __enter__(self) -> "Simulation":
         return self
 
-    def __exit__(self, *exc):
+    def __exit__(self, *exc: object) -> None:
         self.cleanup()
 
-    def __del__(self):
+    def __del__(self) -> None:
         try:
             self.cleanup()
         except Exception:
