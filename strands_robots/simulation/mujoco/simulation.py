@@ -14,7 +14,7 @@ from strands.tools.tools import AgentTool
 from strands.types._events import ToolResultEvent
 from strands.types.tools import ToolSpec, ToolUse
 
-from strands_robots.simulation.base import SimulationBackend
+from strands_robots.simulation.base import SimEngine
 from strands_robots.simulation.model_registry import (
     list_available_models,
     register_urdf,
@@ -45,7 +45,7 @@ class Simulation(
     RenderingMixin,
     RecordingMixin,
     RandomizationMixin,
-    SimulationBackend,
+    SimEngine,
     AgentTool,
 ):
     """Programmatic simulation environment as a Strands AgentTool.

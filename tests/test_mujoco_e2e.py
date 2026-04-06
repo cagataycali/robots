@@ -36,7 +36,7 @@ requires_gl = pytest.mark.skipif(
 
 
 from strands_robots.policies import MockPolicy  # noqa: E402
-from strands_robots.simulation.base import SimulationBackend  # noqa: E402
+from strands_robots.simulation.base import SimEngine  # noqa: E402
 from strands_robots.simulation.models import SimObject, SimRobot, SimStatus, SimWorld  # noqa: E402
 
 # ── Fixtures ──
@@ -133,7 +133,7 @@ class TestSimulationBase:
             "render",
         ]
         for method in required:
-            assert hasattr(SimulationBackend, method)
+            assert hasattr(SimEngine, method)
 
     def test_shared_dataclasses(self):
         w = SimWorld()
