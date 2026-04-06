@@ -10,6 +10,7 @@ import numpy as np
 from strands_robots._async_utils import _resolve_coroutine
 from strands_robots.simulation.models import TrajectoryStep
 from strands_robots.simulation.mujoco.backend import _ensure_mujoco
+from strands_robots.utils import require_optional
 
 logger = logging.getLogger(__name__)
 
@@ -72,10 +73,15 @@ class PolicyRunnerMixin:
         frame_count = 0
         cam_id = -1
         if record_video:
-            import imageio
+            imageio = require_optional(
+                "imageio",
+                pip_install="imageio imageio-ffmpeg",
+                extra="sim-mujoco",
+                purpose="video recording",
+            )
 
             os.makedirs(os.path.dirname(os.path.abspath(record_video)), exist_ok=True)
-            writer = imageio.get_writer(record_video, fps=video_fps, quality=8, macro_block_size=1)
+            writer = imageio.get_writer(record_video, fps=video_fps, quality=8, macro_block_size=1)  # type: ignore[attr-defined]
             if video_camera:
                 cam_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_CAMERA, video_camera)
             elif model.ncam > 0:
