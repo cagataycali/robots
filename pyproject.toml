@@ -175,7 +175,7 @@ disallow_untyped_defs = false
 module = ["strands_robots.simulation.mujoco.*"]
 disallow_untyped_defs = false
 warn_return_any = false
-disable_error_code = ["attr-defined", "assignment", "override", "misc", "import-not-found", "import-untyped", "has-type", "typeddict-item", "index", "return-value"]
+disable_error_code = ["attr-defined", "misc", "override", "import-not-found", "import-untyped", "has-type"]
 
 # Async utils and dataset recorder — thin wrappers with dynamic types
 [[tool.mypy.overrides]]
