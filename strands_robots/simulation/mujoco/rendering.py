@@ -30,7 +30,7 @@ class RenderingMixin:
             self._renderers[key] = mj.Renderer(self._world._model, height=height, width=width)
         return self._renderers[key]
 
-    def _get_sim_observation(self, robot_name: str, cam_name: str = None) -> dict[str, Any]:
+    def _get_sim_observation(self, robot_name: str, cam_name: str | None = None) -> dict[str, Any]:
         """Get observation from sim (same format as real robot)."""
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
@@ -97,7 +97,9 @@ class RenderingMixin:
         if hasattr(self, "_viewer_handle") and self._viewer_handle is not None:
             self._viewer_handle.sync()
 
-    def render(self, camera_name: str = "default", width: int = None, height: int = None) -> dict[str, Any]:
+    def render(
+        self, camera_name: str = "default", width: int | None = None, height: int | None = None
+    ) -> dict[str, Any]:
         """Render a camera view as base64 PNG image."""
         if self._world is None or self._world._model is None:
             return {"status": "error", "content": [{"text": "❌ No simulation."}]}
@@ -146,7 +148,9 @@ class RenderingMixin:
         except Exception as e:
             return {"status": "error", "content": [{"text": f"❌ Render failed: {e}"}]}
 
-    def render_depth(self, camera_name: str = "default", width: int = None, height: int = None) -> dict[str, Any]:
+    def render_depth(
+        self, camera_name: str = "default", width: int | None = None, height: int | None = None
+    ) -> dict[str, Any]:
         """Render depth map from a camera."""
         if self._world is None or self._world._model is None:
             return {"status": "error", "content": [{"text": "❌ No simulation."}]}
