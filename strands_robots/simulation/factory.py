@@ -158,9 +158,9 @@ def _import_backend_class(name: str) -> type[SimEngine]:
         import importlib
 
         module = importlib.import_module(module_path)
-        cls = getattr(module, class_name)
+        backend_cls: type[SimEngine] = getattr(module, class_name)  # type: ignore[assignment]
         logger.debug("Loaded built-in backend: %s → %s.%s", name, module_path, class_name)
-        return cls
+        return backend_cls
 
     raise ValueError(f"Unknown simulation backend: {name!r}. Available: {', '.join(list_backends())}")
 

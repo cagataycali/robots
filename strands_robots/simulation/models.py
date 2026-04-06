@@ -51,7 +51,7 @@ class SimObject:
     _original_position: list[float] = field(default_factory=list)
     _original_color: list[float] = field(default_factory=list)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         self._original_position = list(self.position)
         self._original_color = list(self.color)
 
