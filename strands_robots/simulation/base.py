@@ -148,12 +148,7 @@ class SimEngine(ABC):
         ...
 
     @abstractmethod
-    def send_action(
-        self,
-        action: dict[str, Any],
-        robot_name: str | None = None,
-        n_substeps: int = 1,
-    ) -> None:
+    def send_action(self, action: dict[str, Any], robot_name: str | None = None, n_substeps: int = 1) -> None:
         """Apply action to simulation.
 
         Convenience method that delegates to the underlying Robot
@@ -167,10 +162,7 @@ class SimEngine(ABC):
 
     @abstractmethod
     def render(
-        self,
-        camera_name: str = "default",
-        width: int | None = None,
-        height: int | None = None,
+        self, camera_name: str = "default", width: int | None = None, height: int | None = None
     ) -> dict[str, Any]:
         """Render a camera view.
 
@@ -212,7 +204,7 @@ class SimEngine(ABC):
     def __enter__(self) -> SimEngine:
         return self
 
-    def __exit__(self, *exc: Any) -> None:
+    def __exit__(self, *exc: object) -> None:
         self.cleanup()
 
     def __del__(self) -> None:
