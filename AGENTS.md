@@ -13,9 +13,6 @@
 > create GitHub issues and add them to this board with Status + Priority set.
 > Never track work only in local markdown — the board is the source of truth.
 
-
-All work is tracked here. When creating follow-up items, create GitHub issues and add them to the board with Status and Priority set.
-
 ## Repository Structure
 
 ```
@@ -52,7 +49,7 @@ tests_integ/               # Integration tests (run with: hatch run test-integ)
 
 ```bash
 # Install with all optional deps
-pip install -e ".[all]"
+pip install -e ".[all,dev]"
 
 # Run tests
 hatch run test              # unit tests
@@ -63,9 +60,12 @@ hatch run lint              # ruff check, ruff format --check, mypy
 hatch run format            # ruff check --fix, ruff format
 ```
 
+> **Note**: Hatch uses `uv` as installer (`installer = "uv"` in pyproject.toml) for faster
+> environment creation. No manual uv install needed — hatch handles it.
+
 ## Key Conventions
 
-1. **Python 3.10+** — `requires-python = ">=3.10"` (lerobot extras require 3.12+)
+1. **Python 3.12+** — `requires-python = ">=3.12"` (LeRobot >=0.5.0 requires 3.12)
 2. **Dependency bounds** — `>=1.0` deps: cap major. `<1.0` deps: cap minor. E.g. `lerobot>=0.5.0,<0.6.0`
 3. **`__init__.py` must be thin** — exports only, no logic
 4. **Imports at file top** — unless lazy-loading heavy deps with documented reason

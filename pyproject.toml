@@ -7,7 +7,7 @@ name = "strands-robots"
 dynamic = ["version"]
 description = "AI-powered robot control, simulation, and training for Strands Agents — integrates with MuJoCo, Isaac Sim, Newton, and many more"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 license = {text = "Apache-2.0"}
 authors = [
     {name = "AWS", email = "opensource@amazon.com"},
@@ -26,8 +26,6 @@ classifiers = [
     "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
@@ -76,6 +74,7 @@ source = "vcs"
 packages = ["strands_robots"]
 
 [tool.hatch.envs.default]
+installer = "uv"
 dependencies = [
     "pytest>=6.0,<9.0.0",
     "pytest-cov>=4.0.0,<6.0.0",
@@ -95,7 +94,7 @@ format = ["ruff check --fix strands_robots tests tests_integ", "ruff format stra
 
 [tool.ruff]
 line-length = 120
-target-version = "py310"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = [
@@ -117,7 +116,7 @@ quote-style = "double"
 indent-style = "space"
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
