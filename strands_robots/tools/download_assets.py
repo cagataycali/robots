@@ -491,4 +491,3 @@ def download_assets(
     except Exception as exc:
         logger.error("download_assets error: %s", exc)
         return {"status": "error", "content": [{"text": f"❌ Error: {exc}"}]}
-
