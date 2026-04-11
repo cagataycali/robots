@@ -9,10 +9,6 @@ from strands_robots.tools.download_assets import (
     download_assets,
     download_robots,
     get_user_assets_dir,
-    main,
 )
 
-__all__ = ["download_assets", "download_robots", "get_user_assets_dir", "main"]
-
-if __name__ == "__main__":
-    main()
+__all__ = ["download_assets", "download_robots", "get_user_assets_dir"]
