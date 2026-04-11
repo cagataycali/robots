@@ -71,8 +71,9 @@ def _auto_download_robot(name: str, info: dict) -> bool:
     Returns True if download succeeded.
     """
     try:
-        # Lazy: download_assets depends on optional robot_descriptions package
-        from strands_robots.tools.download_assets import (
+        # Lazy import: avoids circular import (manager ↔ download) at module level.
+        # download.py depends on optional robot_descriptions package.
+        from .download import (
             _download_from_github,
             _download_via_robot_descriptions,
             _robot_descriptions_available,
