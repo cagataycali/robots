@@ -77,4 +77,5 @@ __all__ = [
     "list_user_robots",
     # Utilities
     "reload",
+    "invalidate_cache",
 ]

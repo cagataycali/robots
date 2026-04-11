@@ -35,8 +35,7 @@ except ImportError:
     _HAS_ASSET_MANAGER = False
 
 try:
-    from strands_robots.registry import get_robot
-    from strands_robots.registry import resolve_name
+    from strands_robots.registry import get_robot, resolve_name
 
     _HAS_REGISTRY = True
 except ImportError:
