@@ -1,9 +1,10 @@
 """Robot Asset Manager for Strands Robots Simulation.
 
 Resolves robot model files (MJCF XML) from:
-    1. Bundled assets (``strands_robots/assets/`` — from MuJoCo Menagerie)
-    2. Custom path (``STRANDS_ASSETS_DIR`` env var)
-    3. User home (``~/.strands_robots/assets/``)
+    1. Custom path (``STRANDS_ASSETS_DIR`` env var)
+    2. User cache (``~/.strands_robots/assets/``)
+    3. ``robot_descriptions`` package (MuJoCo Menagerie)
+    4. Project-local ``./assets/``
 """
 
 import logging
@@ -26,22 +27,16 @@ logger = logging.getLogger(__name__)
 
 from strands_robots.utils import get_assets_dir  # noqa: E402 — canonical path resolution
 
-_BUNDLED_DIR = Path(__file__).parent
-
 
 def get_search_paths() -> list[Path]:
     """Get ordered list of asset search paths.
 
-    Order:
-        1. User cache (``~/.strands_robots/assets/``)
-        2. Custom path from ``STRANDS_ASSETS_DIR`` env var
-        3. Bundled package dir (``strands_robots/assets/`` — XML only)
-        4. CWD/assets
+    Order (local assets take priority over defaults):
+        1. Custom path from ``STRANDS_ASSETS_DIR`` env var
+        2. User cache (``~/.strands_robots/assets/``)
+        3. CWD/assets (project-local)
     """
     paths = []
-
-    # User cache first (where downloads go)
-    paths.append(get_assets_dir())
 
     # Custom path from STRANDS_ASSETS_DIR
     custom = os.getenv("STRANDS_ASSETS_DIR")
@@ -51,9 +46,10 @@ def get_search_paths() -> list[Path]:
             if cp not in paths:
                 paths.append(cp)
 
-    # Bundled directory (XML files only, no meshes in pip package)
-    if _BUNDLED_DIR not in paths:
-        paths.append(_BUNDLED_DIR)
+    # User cache (where downloads go)
+    user_cache = get_assets_dir()
+    if user_cache not in paths:
+        paths.append(user_cache)
 
     # CWD
     cwd_assets = Path.cwd() / "assets"

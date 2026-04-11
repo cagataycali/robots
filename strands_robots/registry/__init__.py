@@ -29,7 +29,7 @@ Architecture:
         policies.json    ← policy providers (shorthands/urls inside each entry)
 """
 
-from .loader import reload
+from .loader import invalidate_cache, reload
 from .policies import (
     build_policy_kwargs,
     get_policy_provider,

@@ -131,3 +131,17 @@ def reload() -> None:
     """Force-reload all registry files (clears mtime cache)."""
     _cache.clear()
     _mtimes.clear()
+
+
+def invalidate_cache(name: str | None = None) -> None:
+    """Invalidate cached registry data, forcing a reload on next access.
+
+    Args:
+        name: Registry name to invalidate (e.g. "robots"). If None, clears all.
+    """
+    if name is None:
+        _cache.clear()
+        _mtimes.clear()
+    else:
+        _cache.pop(name, None)
+        _mtimes.pop(name, None)

@@ -1,4 +1,4 @@
-"""Robot model resolution — URDF registry + Menagerie asset manager."""
+"""Robot model resolution — URDF registry + asset manager."""
 
 from __future__ import annotations
 
@@ -6,28 +6,28 @@ import logging
 import os
 from pathlib import Path
 
-from strands_robots.utils import get_assets_dir as _get_assets_dir
+from strands_robots.utils import get_assets_dir
 
 logger = logging.getLogger(__name__)
 
 # Default URDF search paths (checked in order).
 #
-# Resolution order for legacy URDF lookups:
+# Resolution order for user-registered URDF lookups:
 #   1. STRANDS_ASSETS_DIR (if set) — user override (via utils.get_assets_dir)
 #   2. ~/.strands_robots/assets/ — user cache
 #   3. CWD/assets/ — project-local assets
 #
-# For new code, prefer resolve_model() which uses the Menagerie
-# asset manager and falls back to these legacy paths.
+# For new code, prefer resolve_model() which uses the
+# asset manager and falls back to these paths.
 _URDF_SEARCH_PATHS = [
-    _get_assets_dir(),
+    get_assets_dir(),
     Path.cwd() / "assets",
 ]
 
 try:
     from strands_robots.assets import (  # noqa: I001
-        format_robot_table as _format_robot_table,
-        resolve_model_path as _resolve_menagerie_model,
+        format_robot_table,
+        resolve_model_path,
     )
 
     _HAS_ASSET_MANAGER = True
@@ -35,8 +35,8 @@ except ImportError:
     _HAS_ASSET_MANAGER = False
 
 try:
-    from strands_robots.registry import get_robot as _get_robot
-    from strands_robots.registry import resolve_name as _resolve_name
+    from strands_robots.registry import get_robot
+    from strands_robots.registry import resolve_name
 
     _HAS_REGISTRY = True
 except ImportError:
@@ -44,7 +44,7 @@ except ImportError:
 
 logger.info("Asset manager available: %s", _HAS_ASSET_MANAGER)
 
-# Legacy URDF registry — runtime cache for user-registered URDFs
+# Runtime cache for user-registered URDFs
 _URDF_REGISTRY: dict[str, str] = {}
 
 
@@ -61,22 +61,22 @@ def resolve_model(name: str, prefer_scene: bool = True) -> str | None:
     """Resolve a robot name or data_config to an MJCF/URDF model path.
 
     Resolution order (local assets take priority):
-    1. Legacy URDF registry (custom user registrations)
-    2. URDF search paths (STRANDS_ASSETS_DIR, ./urdfs, CWD, etc.)
-    3. Asset manager (Menagerie — fallback for standard robots)
+    1. User-registered URDFs (custom user registrations)
+    2. URDF search paths (STRANDS_ASSETS_DIR, CWD, etc.)
+    3. Asset manager (robot_descriptions — fallback for standard robots)
     """
     # 1+2. Check local/custom paths first (user overrides win)
     local = resolve_urdf(name)
     if local:
         return local
 
-    # 3. Fall back to asset manager (Menagerie)
+    # 3. Fall back to asset manager
     if _HAS_ASSET_MANAGER:
-        path = _resolve_menagerie_model(name, prefer_scene=prefer_scene)
+        path = resolve_model_path(name, prefer_scene=prefer_scene)
         if path and path.exists():
             return str(path)
         if prefer_scene:
-            path = _resolve_menagerie_model(name, prefer_scene=False)
+            path = resolve_model_path(name, prefer_scene=False)
             if path and path.exists():
                 return str(path)
 
@@ -84,7 +84,7 @@ def resolve_model(name: str, prefer_scene: bool = True) -> str | None:
 
 
 def resolve_urdf(data_config: str) -> str | None:
-    """Resolve a data_config name to a URDF file path (legacy)."""
+    """Resolve a data_config name to a URDF file path."""
     if data_config in _URDF_REGISTRY:
         urdf_rel = _URDF_REGISTRY[data_config]
         if os.path.isabs(urdf_rel) and os.path.exists(urdf_rel):
@@ -95,8 +95,8 @@ def resolve_urdf(data_config: str) -> str | None:
                 return str(candidate)
 
     if _HAS_REGISTRY:
-        canonical = _resolve_name(data_config)
-        info = _get_robot(canonical)
+        canonical = resolve_name(data_config)
+        info = get_robot(canonical)
         if info and "legacy_urdf" in info:
             urdf_rel = info["legacy_urdf"]
             if os.path.isabs(urdf_rel) and os.path.exists(urdf_rel):
@@ -118,7 +118,7 @@ def list_registered_urdfs() -> dict[str, str | None]:
 def list_available_models() -> str:
     """List all available robot models (Menagerie + custom)."""
     if _HAS_ASSET_MANAGER:
-        return str(_format_robot_table())
+        return str(format_robot_table())
 
     lines = ["Registered URDFs:"]
     for name, path in _URDF_REGISTRY.items():

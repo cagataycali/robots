@@ -43,7 +43,7 @@ from typing import Any
 
 from strands_robots.utils import get_base_dir, resolve_asset_path
 
-from .loader import _cache, _mtimes
+from .loader import invalidate_cache
 
 logger = logging.getLogger(__name__)
 
@@ -268,5 +268,4 @@ def list_user_robots() -> list[dict[str, Any]]:
 
 def _invalidate_cache() -> None:
     """Invalidate the loader cache so merged data is reloaded."""
-    _cache.pop("robots", None)
-    _mtimes.pop("robots", None)
+    invalidate_cache("robots")

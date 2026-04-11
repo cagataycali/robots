@@ -96,10 +96,10 @@ class SimWorld:
     status: SimStatus = SimStatus.IDLE
     sim_time: float = 0.0
     step_count: int = 0
-    # MuJoCo internals (set after world is built)
+    # Engine-specific internals (set after world is built by the backend)
     _xml: str = ""
-    _model: Any = None
-    _data: Any = None
+    _model: Any = None  # Engine-specific model handle (e.g. mj.MjModel)
+    _data: Any = None  # Engine-specific data handle (e.g. mj.MjData)
     _robot_base_xml: str = ""
     # Trajectory recording
     _recording: bool = False

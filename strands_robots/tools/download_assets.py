@@ -36,12 +36,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-try:
-    from strands.tools.decorator import tool
-except ImportError:
-
-    def tool(f):  # type: ignore[no-redef]
-        return f
+from strands.tools.decorator import tool
 
 
 from strands_robots.assets import format_robot_table, get_search_paths
@@ -151,6 +146,8 @@ def _needs_download(name: str, info: dict[str, Any] | None, force: bool = False)
                 return False
             meshdir_match = re.search(r'meshdir="([^"]*)"', content)
             meshdir = meshdir_match.group(1) if meshdir_match else ""
+            # Check only first 3 mesh files as a quick heuristic —
+            # full validation would be expensive for robots with 100+ meshes.
             for mesh in mesh_files[:3]:
                 if not (model_path.parent / meshdir / mesh).exists():
                     return True
@@ -497,34 +494,3 @@ def download_assets(
         logger.error("download_assets error: %s", exc)
         return {"status": "error", "content": [{"text": f"❌ Error: {exc}"}]}
 
-
-# ── CLI ───────────────────────────────────────────────────────────────
-
-
-def main():
-    parser = argparse.ArgumentParser(description="Download robot assets (robot_descriptions / git clone)")
-    parser.add_argument("robots", nargs="*", help="Robot names (default: all)")
-    parser.add_argument(
-        "--category", "-c", choices=["arm", "bimanual", "hand", "humanoid", "mobile", "mobile_manip", "expressive"]
-    )
-    parser.add_argument("--force", "-f", action="store_true")
-    parser.add_argument("--list", "-l", action="store_true")
-    parser.add_argument("--status", "-s", action="store_true")
-    args = parser.parse_args()
-
-    if args.list:
-        print(format_robot_table())
-        return
-    if args.status:
-        for content in download_assets(action="status").get("content", []):
-            print(content.get("text", ""))
-        return
-
-    result = download_robots(names=args.robots or None, category=args.category, force=args.force)
-    print(result["message"])
-    for name, reason in result.get("failed_details", {}).items():
-        print(f"  ❌ {name}: {reason}")
-
-
-if __name__ == "__main__":
-    main()

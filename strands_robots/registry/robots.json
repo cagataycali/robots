@@ -511,8 +511,7 @@
                 "model_xml": "left_hand.xml",
                 "scene_xml": "scene_left.xml",
                 "robot_descriptions_module": "shadow_hand_mj_description"
-            },
-            "aliases": []
+            }
         },
         "adam_lite": {
             "description": "PNDbotics Adam Lite Humanoid (26-DOF)",
