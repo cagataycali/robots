@@ -64,9 +64,9 @@ def _resolve_robot_descriptions_module(name: str, info: dict) -> str | None:
         Module name (e.g. ``panda_mj_description``) or ``None``.
     """
     # Primary: explicit registry entry (preferred, O(1))
-    module_name = info.get("asset", {}).get("robot_descriptions_module")
+    module_name: str | None = info.get("asset", {}).get("robot_descriptions_module")
     if module_name:
-        return module_name
+        return str(module_name)
 
     # Fallback: try common naming conventions (max 3 imports)
     asset_dir = info.get("asset", {}).get("dir", "")
