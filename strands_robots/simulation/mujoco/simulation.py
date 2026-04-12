@@ -82,6 +82,9 @@ class Simulation(
         self._renderers: dict[tuple, Any] = {}
         self._renderer_model = None
 
+        # Fail fast: verify MuJoCo is importable at construction time
+        # so consumers catch missing-dependency errors immediately.
+        self._mj = _ensure_mujoco()
         logger.info("🎮 Simulation tool '%s' initialized", tool_name)
 
     # --- Public Properties ---
@@ -136,7 +139,7 @@ class Simulation(
         self, timestep: float | None = None, gravity: list[float] | None = None, ground_plane: bool = True
     ) -> dict[str, Any]:
         """Create a new simulation world."""
-        _ensure_mujoco()
+        # mujoco verified at __init__
 
         if self._world is not None and self._world._model is not None:
             return {
@@ -187,7 +190,7 @@ class Simulation(
 
     def load_scene(self, scene_path: str) -> dict[str, Any]:
         """Load a complete scene from MJCF XML or URDF file."""
-        mj = _ensure_mujoco()
+        mj = self._mj
 
         if not os.path.exists(scene_path):
             return {"status": "error", "content": [{"text": f"❌ Scene file not found: {scene_path}"}]}
@@ -215,7 +218,7 @@ class Simulation(
             return {"status": "error", "content": [{"text": f"❌ Failed to load scene: {e}"}]}
 
     def _compile_world(self):
-        mj = _ensure_mujoco()
+        mj = self._mj
         xml = MJCFBuilder.build_objects_only(self._world)
         self._world._backend_state["xml"] = xml
         self._world._model = mj.MjModel.from_xml_string(xml)
@@ -327,7 +330,7 @@ class Simulation(
         if not os.path.exists(resolved_path):
             return {"status": "error", "content": [{"text": f"❌ File not found: {resolved_path}"}]}
 
-        mj = _ensure_mujoco()
+        mj = self._mj
 
         robot = SimRobot(
             name=name,
@@ -438,7 +441,7 @@ class Simulation(
         if robot_name not in self._world.robots:
             return {"status": "error", "content": [{"text": f"❌ Robot '{robot_name}' not found."}]}
 
-        mj = _ensure_mujoco()
+        mj = self._mj
         robot = self._world.robots[robot_name]
         model, data = self._world._model, self._world._data
 
@@ -548,7 +551,7 @@ class Simulation(
         if name not in self._world.objects:
             return {"status": "error", "content": [{"text": f"❌ '{name}' not found."}]}
 
-        mj = _ensure_mujoco()
+        mj = self._mj
         model, data = self._world._model, self._world._data
 
         jnt_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, f"{name}_joint")
@@ -623,7 +626,7 @@ class Simulation(
     def step(self, n_steps: int = 1) -> dict[str, Any]:
         if self._world is None or self._world._data is None:
             return {"status": "error", "content": [{"text": "❌ No simulation."}]}
-        mj = _ensure_mujoco()
+        mj = self._mj
         for _ in range(n_steps):
             mj.mj_step(self._world._model, self._world._data)
         self._world.sim_time = self._world._data.time
@@ -638,7 +641,7 @@ class Simulation(
     def reset(self) -> dict[str, Any]:
         if self._world is None or self._world._model is None:
             return {"status": "error", "content": [{"text": "❌ No world."}]}
-        mj = _ensure_mujoco()
+        mj = self._mj
         mj.mj_resetData(self._world._model, self._world._data)
         self._world.sim_time = 0.0
         self._world.step_count = 0
@@ -737,7 +740,7 @@ class Simulation(
         if self._world is None or self._world._model is None:
             return {"status": "error", "content": [{"text": "❌ No simulation."}]}
 
-        mj = _ensure_mujoco()
+        mj = self._mj
         model = self._world._model
 
         joint_names = [mj.mj_id2name(model, mj.mjtObj.mjOBJ_JOINT, i) for i in range(model.njnt)]

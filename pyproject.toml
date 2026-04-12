@@ -48,10 +48,8 @@ groot-service = [
 lerobot = [
     "lerobot>=0.5.0,<0.6.0",
 ]
-sim = [
-    "robot_descriptions>=1.11.0,<2.0.0",
-]
 sim-mujoco = [
+    "robot_descriptions>=1.11.0,<2.0.0",
     "mujoco>=3.0.0,<4.0.0",
     "imageio>=2.28.0,<3.0.0",
     "imageio-ffmpeg>=0.4.0,<1.0.0",
@@ -59,7 +57,6 @@ sim-mujoco = [
 all = [
     "strands-robots[groot-service]",
     "strands-robots[lerobot]",
-    "strands-robots[sim]",
     "strands-robots[sim-mujoco]",
 ]
 dev = [

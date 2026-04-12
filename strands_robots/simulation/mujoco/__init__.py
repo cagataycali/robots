@@ -18,17 +18,8 @@ Or via the top-level alias::
     from strands_robots.simulation import Simulation  # → MuJoCoSimulation
 """
 
-from strands_robots.simulation.mujoco.backend import (
-    _configure_gl_backend,
-    _ensure_mujoco,
-    _is_headless,
-)
-
 __all__ = [
     "MuJoCoSimulation",
-    "_configure_gl_backend",
-    "_ensure_mujoco",
-    "_is_headless",
 ]
 
 

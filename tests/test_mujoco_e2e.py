@@ -267,3 +267,50 @@ class TestDomainRandomization:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestToolSpecActionCoverage:
+    """Verify every action enum in tool_spec.json maps to a real method on Simulation."""
+
+    def test_all_actions_have_methods(self):
+        """Every action in tool_spec.json must resolve to a method on Simulation."""
+        import json
+        from pathlib import Path
+
+        from strands_robots.simulation.mujoco.simulation import Simulation
+
+        spec_path = Path(__file__).parent.parent / "strands_robots" / "simulation" / "mujoco" / "tool_spec.json"
+        with open(spec_path) as f:
+            spec = json.load(f)
+
+        actions = spec["properties"]["action"]["enum"]
+        assert len(actions) > 0, "tool_spec.json should have at least one action"
+
+        # Aliases used by _dispatch_action
+        aliases = {
+            "list_urdfs": "list_urdfs_action",
+            "register_urdf": "register_urdf_action",
+            "stop_policy": "_stop_policy",
+        }
+
+        missing = []
+        for action in actions:
+            method_name = aliases.get(action, action)
+            if not hasattr(Simulation, method_name):
+                missing.append(f"{action} (looked for method '{method_name}')")
+
+        assert not missing, "tool_spec.json actions with no matching Simulation method:\n" + "\n".join(
+            f"  - {m}" for m in missing
+        )
+
+    def test_action_enum_is_not_empty(self):
+        """Sanity: tool_spec.json action enum is populated."""
+        import json
+        from pathlib import Path
+
+        spec_path = Path(__file__).parent.parent / "strands_robots" / "simulation" / "mujoco" / "tool_spec.json"
+        with open(spec_path) as f:
+            spec = json.load(f)
+
+        actions = spec["properties"]["action"]["enum"]
+        assert len(actions) >= 30, f"Expected ≥30 actions, got {len(actions)}"
