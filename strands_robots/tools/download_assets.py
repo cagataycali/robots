@@ -29,8 +29,14 @@ def download_assets(
 ) -> dict[str, Any]:
     """Download and manage robot model assets (MJCF XML + meshes).
 
-    Uses ``robot_descriptions`` (recommended by MuJoCo Menagerie) with git
-    clone fallback.  Assets cached in ``~/.strands_robots/assets/``.
+    Assets are sourced from ``robot_descriptions`` (recommended by MuJoCo
+    Menagerie, requires ``pip install strands-robots[sim-mujoco]``).  When
+    ``robot_descriptions`` is unavailable, falls back to a shallow
+    ``git clone`` of the Menagerie repo.  Robots with a custom GitHub
+    source in the registry are cloned from their respective repos.
+
+    Downloaded assets are cached in ``~/.strands_robots/assets/``
+    (override with ``STRANDS_ASSETS_DIR``).
 
     Args:
         action: ``download`` | ``list`` | ``status``

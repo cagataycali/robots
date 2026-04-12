@@ -20,7 +20,6 @@ from strands_robots.simulation.models import (
     TrajectoryStep,
 )
 
-
 # ── ABC Tests ────────────────────────────────────────────────────
 
 

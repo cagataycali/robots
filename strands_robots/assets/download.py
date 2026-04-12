@@ -134,9 +134,7 @@ def _needs_download(name: str, info: dict[str, Any] | None, force: bool = False)
                 return False
             meshdir_match = re.search(r'meshdir="([^"]*)"', content)
             meshdir = meshdir_match.group(1) if meshdir_match else ""
-            # Check only first 3 mesh files as a quick heuristic —
-            # full validation would be expensive for robots with 100+ meshes.
-            for mesh in mesh_files[:3]:
+            for mesh in mesh_files:
                 if not (model_path.parent / meshdir / mesh).exists():
                     return True
             return force

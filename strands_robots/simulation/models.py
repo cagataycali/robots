@@ -1,4 +1,17 @@
-"""Dataclasses for simulation state."""
+"""Dataclasses for simulation state.
+
+These dataclasses provide a backend-independent typed state representation
+consumed by simulation engine implementations (e.g. MuJoCo backend in
+``strands_robots.simulation.mujoco``).
+
+They enable:
+    - Type-safe state tracking across simulation steps.
+    - Serialisation for checkpoints and trajectory recording.
+    - A backend-independent interface for agent tools.
+
+They are defined alongside the ``SimEngine`` ABC because its method
+signatures reference them (e.g. ``create_world() → SimWorld``).
+"""
 
 from __future__ import annotations
 
@@ -85,7 +98,12 @@ class TrajectoryStep:
 
 @dataclass
 class SimWorld:
-    """Complete simulation world state."""
+    """Complete simulation world state.
+
+    Engine-specific internals (``_model``, ``_data``) are typed as ``Any``
+    so that each backend can store its own native handles without leaking
+    implementation details into this base module.
+    """
 
     robots: dict[str, SimRobot] = field(default_factory=dict)
     objects: dict[str, SimObject] = field(default_factory=dict)
@@ -96,10 +114,12 @@ class SimWorld:
     status: SimStatus = SimStatus.IDLE
     sim_time: float = 0.0
     step_count: int = 0
-    # Engine-specific internals (set after world is built by the backend)
+    # Engine-specific internals (set after world is built by the backend).
+    # Each backend stores its own native handles here — e.g. MuJoCo stores
+    # MjModel/MjData, Isaac Sim would store its Scene/World objects, etc.
     _xml: str = ""
-    _model: Any = None  # Engine-specific model handle (e.g. mj.MjModel)
-    _data: Any = None  # Engine-specific data handle (e.g. mj.MjData)
+    _model: Any = None  # Engine-specific model handle (set by simulation backend)
+    _data: Any = None  # Engine-specific data handle (set by simulation backend)
     _robot_base_xml: str = ""
     # Trajectory recording
     _recording: bool = False

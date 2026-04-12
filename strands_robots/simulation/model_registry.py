@@ -1,4 +1,12 @@
-"""Robot model resolution — URDF registry + asset manager."""
+"""Robot model resolution — URDF registry + asset manager.
+
+Bridges the robot registry with actual URDF/MJCF files on disk.
+
+Resolution order for :func:`resolve_model`:
+    1. User-registered URDFs (:func:`register_urdf`)
+    2. URDF search paths (``STRANDS_ASSETS_DIR``, CWD, etc.)
+    3. Asset manager (``robot_descriptions`` — fallback for standard robots)
+"""
 
 from __future__ import annotations
 
@@ -14,18 +22,14 @@ logger = logging.getLogger(__name__)
 #
 # Resolution order for user-registered URDF lookups:
 #   1. STRANDS_ASSETS_DIR (if set) — user override (via utils.get_assets_dir)
-#   2. ~/.strands_robots/assets/ — user cache
-#   3. CWD/assets/ — project-local assets
-#
-# For new code, prefer resolve_model() which uses the
-# asset manager and falls back to these paths.
+#   2. CWD/assets/ — project-local assets
 _URDF_SEARCH_PATHS = [
     get_assets_dir(),
     Path.cwd() / "assets",
 ]
 
 try:
-    from strands_robots.assets import (  # noqa: I001
+    from strands_robots.assets import (
         format_robot_table,
         resolve_model_path,
     )
@@ -45,9 +49,6 @@ logger.info("Asset manager available: %s", _HAS_ASSET_MANAGER)
 
 # Runtime cache for user-registered URDFs
 _URDF_REGISTRY: dict[str, str] = {}
-
-
-# Note: STRANDS_ASSETS_DIR is handled by utils.get_assets_dir() above.
 
 
 def register_urdf(data_config: str, urdf_path: str) -> None:
@@ -83,7 +84,12 @@ def resolve_model(name: str, prefer_scene: bool = True) -> str | None:
 
 
 def resolve_urdf(data_config: str) -> str | None:
-    """Resolve a data_config name to a URDF file path."""
+    """Resolve a data_config name to a URDF file path.
+
+    Also checks the registry's ``legacy_urdf`` field — a backward-compatible
+    path for robots that were registered before the MJCF asset system
+    was introduced (e.g. robots originally configured with raw URDF paths).
+    """
     if data_config in _URDF_REGISTRY:
         urdf_rel = _URDF_REGISTRY[data_config]
         if os.path.isabs(urdf_rel) and os.path.exists(urdf_rel):
@@ -96,6 +102,9 @@ def resolve_urdf(data_config: str) -> str | None:
     if _HAS_REGISTRY:
         canonical = resolve_name(data_config)
         info = get_robot(canonical)
+        # ``legacy_urdf``: backward-compatible URDF path from before the
+        # MJCF asset system was introduced.  Kept so that existing
+        # user configs referencing raw URDF paths continue to work.
         if info and "legacy_urdf" in info:
             urdf_rel = info["legacy_urdf"]
             if os.path.isabs(urdf_rel) and os.path.exists(urdf_rel):

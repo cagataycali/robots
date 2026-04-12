@@ -1,14 +1,13 @@
 """Robot Asset Manager for Strands Robots Simulation.
 
 Resolves robot model files (MJCF XML) from:
-    1. Custom path (``STRANDS_ASSETS_DIR`` env var)
+    1. ``STRANDS_ASSETS_DIR`` env var (user override)
     2. User cache (``~/.strands_robots/assets/``)
     3. ``robot_descriptions`` package (MuJoCo Menagerie)
     4. Project-local ``./assets/``
 """
 
 import logging
-import os
 from pathlib import Path
 
 from strands_robots.registry import (
@@ -18,40 +17,36 @@ from strands_robots.registry import (
 from strands_robots.registry import (
     resolve_name as resolve_robot_name,
 )
+from strands_robots.utils import get_assets_dir
 
 logger = logging.getLogger(__name__)
+
 
 # ─────────────────────────────────────────────────────────────────────
 # Asset directory resolution
 # ─────────────────────────────────────────────────────────────────────
-
-from strands_robots.utils import get_assets_dir  # noqa: E402 — canonical path resolution
 
 
 def get_search_paths() -> list[Path]:
     """Get ordered list of asset search paths.
 
     Order (local assets take priority over defaults):
-        1. Custom path from ``STRANDS_ASSETS_DIR`` env var
-        2. User cache (``~/.strands_robots/assets/``)
-        3. CWD/assets (project-local)
+        1. User asset dir (``STRANDS_ASSETS_DIR`` or ``~/.strands_robots/assets/``)
+        2. CWD/assets (project-local)
+
+    Note:
+        ``STRANDS_ASSETS_DIR`` handling is centralised in
+        :func:`strands_robots.utils.get_assets_dir` — no need to read
+        the env var again here.
     """
-    paths = []
+    paths: list[Path] = []
 
-    # Custom path from STRANDS_ASSETS_DIR
-    custom = os.getenv("STRANDS_ASSETS_DIR")
-    if custom:
-        for p in custom.split(":"):
-            cp = Path(p)
-            if cp not in paths:
-                paths.append(cp)
-
-    # User cache (where downloads go)
+    # User asset dir (respects STRANDS_ASSETS_DIR if set)
     user_cache = get_assets_dir()
     if user_cache not in paths:
         paths.append(user_cache)
 
-    # CWD
+    # CWD/assets (project-local)
     cwd_assets = Path.cwd() / "assets"
     if cwd_assets not in paths:
         paths.append(cwd_assets)
