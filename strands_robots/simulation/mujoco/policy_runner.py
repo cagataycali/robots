@@ -16,23 +16,17 @@ logger = logging.getLogger(__name__)
 
 
 class PolicyRunnerMixin:
+    """Policy execution for Simulation.
+
+    Expects the composite Simulation class to satisfy SimulationProtocol
+    (provides self._world, self._executor, self._policy_threads, and
+    cross-mixin methods like _get_sim_observation / _apply_sim_action).
+    """
+
     if TYPE_CHECKING:
-        import threading
-        from concurrent.futures import Future, ThreadPoolExecutor
+        from strands_robots.simulation.mujoco.types import SimulationProtocol
 
-        from strands_robots.simulation.models import SimWorld
-
-        _world: SimWorld | None
-        _lock: threading.Lock
-        _executor: ThreadPoolExecutor
-        _policy_threads: dict[str, Future[Any]]
-
-        # Methods from RenderingMixin — declared here so mypy can verify calls
-        def _get_renderer(self, width: int, height: int) -> Any: ...
-        def _get_sim_observation(self, robot_name: str, cam_name: str | None = None) -> dict[str, Any]: ...
-        def _apply_sim_action(self, robot_name: str, action_dict: dict[str, Any], n_substeps: int = 1) -> None: ...
-
-    """Policy execution for Simulation. Expects self._world, self._executor, self._policy_threads."""
+        _: SimulationProtocol  # noqa: F841 — declares the expected interface
 
     def run_policy(
         self,

@@ -19,26 +19,44 @@ logger = logging.getLogger(__name__)
 
 
 def _patch_xml_paths(xml_content: str, robot_base_dir: str) -> str:
-    """Patch meshdir/texturedir in XML to absolute paths for tmpdir loading."""
-    meshdir_match = re.search(r'meshdir="([^"]*)"', xml_content)
-    existing_meshdir = meshdir_match.group(1) if meshdir_match else ""
-    abs_meshdir = os.path.normpath(os.path.join(robot_base_dir, existing_meshdir))
+    """Patch meshdir/texturedir in XML to absolute paths for tmpdir loading.
 
-    texdir_match = re.search(r'texturedir="([^"]*)"', xml_content)
-    existing_texdir = texdir_match.group(1) if texdir_match else ""
-    abs_texdir = os.path.normpath(os.path.join(robot_base_dir, existing_texdir))
+    Uses ElementTree for consistent XML manipulation throughout scene_ops.
+    Falls back to the original string if ET parsing fails (e.g. XML fragments).
+    """
+    try:
+        root = ET.fromstring(xml_content)
+    except ET.ParseError:
+        # Fallback for malformed fragments — use regex as last resort
+        logger.debug("ET parse failed for _patch_xml_paths, using regex fallback")
+        meshdir_match = re.search(r'meshdir="([^"]*)"', xml_content)
+        if meshdir_match:
+            abs_meshdir = os.path.normpath(os.path.join(robot_base_dir, meshdir_match.group(1)))
+            xml_content = re.sub(r'meshdir="[^"]*"', f'meshdir="{abs_meshdir}"', xml_content)
+        texdir_match = re.search(r'texturedir="([^"]*)"', xml_content)
+        if texdir_match:
+            abs_texdir = os.path.normpath(os.path.join(robot_base_dir, texdir_match.group(1)))
+            xml_content = re.sub(r'texturedir="[^"]*"', f'texturedir="{abs_texdir}"', xml_content)
+        return xml_content
 
-    if meshdir_match:
-        xml_content = re.sub(r'meshdir="[^"]*"', f'meshdir="{abs_meshdir}"', xml_content)
-    elif "<compiler" in xml_content:
-        xml_content = xml_content.replace("<compiler", f'<compiler meshdir="{robot_base_dir}"', 1)
+    compiler = root.find("compiler")
+    if compiler is None:
+        # No compiler element — add one with meshdir
+        compiler = ET.SubElement(root, "compiler")
+        # Insert at beginning (after root tag)
+        root.remove(compiler)
+        root.insert(0, compiler)
 
-    if texdir_match:
-        xml_content = re.sub(r'texturedir="[^"]*"', f'texturedir="{abs_texdir}"', xml_content)
-    elif "<compiler" in xml_content and "texturedir" not in xml_content:
-        xml_content = xml_content.replace("<compiler", f'<compiler texturedir="{robot_base_dir}"', 1)
+    existing_meshdir = compiler.get("meshdir", "")
+    compiler.set("meshdir", os.path.normpath(os.path.join(robot_base_dir, existing_meshdir)))
 
-    return xml_content
+    existing_texdir = compiler.get("texturedir", "")
+    if existing_texdir or compiler.get("texturedir") is not None:
+        compiler.set("texturedir", os.path.normpath(os.path.join(robot_base_dir, existing_texdir)))
+    else:
+        compiler.set("texturedir", robot_base_dir)
+
+    return ET.tostring(root, encoding="unicode", xml_declaration=False)
 
 
 def _reload_scene_from_xml(world: SimWorld, scene_path: str) -> bool:
@@ -107,7 +125,10 @@ def _save_and_patch_xml(world: SimWorld, tmpdir: str, filename: str) -> str:
 
 
 def inject_object_into_scene(world: SimWorld, obj: SimObject) -> bool:
-    """Inject object into a running simulation via XML round-trip."""
+    """Inject object into a running simulation via XML round-trip.
+
+    Uses ElementTree for XML manipulation (consistent with eject_body_from_scene).
+    """
     _ensure_mujoco()
     if world._model is None:
         return False
@@ -116,17 +137,25 @@ def inject_object_into_scene(world: SimWorld, obj: SimObject) -> bool:
     try:
         scene_path = _save_and_patch_xml(world, tmpdir, "scene_with_objects.xml")
 
-        with open(scene_path) as f:
-            xml_content = f.read()
+        tree = ET.parse(scene_path)
+        root = tree.getroot()
 
-        obj_xml = MJCFBuilder._object_xml(obj, indent=4)
-        xml_content = xml_content.replace("</worldbody>", f"{obj_xml}\n</worldbody>")
+        # Find <worldbody> and append the object element
+        worldbody = root.find("worldbody")
+        if worldbody is None:
+            logger.error("No <worldbody> found in scene XML")
+            return False
+
+        obj_xml_str = MJCFBuilder._object_xml(obj, indent=4)
+        obj_elem = ET.fromstring(f"<_wrapper>{obj_xml_str}</_wrapper>")
+        for child in obj_elem:
+            worldbody.append(child)
 
         # Remove keyframes — adding a freejoint changes qpos size
-        xml_content = re.sub(r"<keyframe>.*?</keyframe>", "", xml_content, flags=re.DOTALL)
+        for keyframe_elem in root.findall("keyframe"):
+            root.remove(keyframe_elem)
 
-        with open(scene_path, "w") as f:
-            f.write(xml_content)
+        tree.write(scene_path, xml_declaration=True)
 
         return _reload_scene_from_xml(world, scene_path)
     except (ValueError, RuntimeError, OSError) as e:
@@ -184,7 +213,10 @@ def eject_body_from_scene(world: SimWorld, body_name: str) -> bool:
 
 
 def inject_camera_into_scene(world: SimWorld, cam: SimCamera) -> bool:
-    """Inject a camera into a running simulation via XML round-trip."""
+    """Inject a camera into a running simulation via XML round-trip.
+
+    Uses ElementTree for XML manipulation (consistent with eject_body_from_scene).
+    """
     _ensure_mujoco()
     if world._model is None:
         return False
@@ -193,15 +225,22 @@ def inject_camera_into_scene(world: SimWorld, cam: SimCamera) -> bool:
     try:
         scene_path = _save_and_patch_xml(world, tmpdir, "scene_with_cameras.xml")
 
-        with open(scene_path) as f:
-            xml_content = f.read()
+        tree = ET.parse(scene_path)
+        root = tree.getroot()
+
+        worldbody = root.find("worldbody")
+        if worldbody is None:
+            logger.error("No <worldbody> found in scene XML")
+            return False
 
         px, py, pz = cam.position
-        cam_xml = f'    <camera name="{_sanitize_name(cam.name)}" pos="{px} {py} {pz}" fovy="{cam.fov}" mode="fixed"/>'
-        xml_content = xml_content.replace("</worldbody>", f"{cam_xml}\n</worldbody>")
+        cam_elem = ET.SubElement(worldbody, "camera")
+        cam_elem.set("name", _sanitize_name(cam.name))
+        cam_elem.set("pos", f"{px} {py} {pz}")
+        cam_elem.set("fovy", str(cam.fov))
+        cam_elem.set("mode", "fixed")
 
-        with open(scene_path, "w") as f:
-            f.write(xml_content)
+        tree.write(scene_path, xml_declaration=True)
 
         return _reload_scene_from_xml(world, scene_path)
     except (ValueError, RuntimeError, OSError) as e:

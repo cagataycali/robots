@@ -17,6 +17,11 @@ def _is_headless() -> bool:
 
     Returns True on Linux when no DISPLAY or WAYLAND_DISPLAY is set,
     which means GLFW-based rendering will fail.
+
+    Windows and macOS are always False because MuJoCo uses native
+    windowing backends (WGL on Windows, CGL on macOS) that support
+    offscreen rendering without X11/Wayland. The EGL/OSMesa fallback
+    is Linux-specific.
     """
     if sys.platform != "linux":
         return False
@@ -88,7 +93,7 @@ def _ensure_mujoco() -> "Any":
         _mujoco = require_optional(
             "mujoco",
             pip_install="mujoco",
-            extra="sim",
+            extra="sim-mujoco",
             purpose="MuJoCo simulation",
         )
     if _mujoco_viewer is None and not _is_headless():
