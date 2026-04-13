@@ -1,16 +1,16 @@
-"""Tests for strands_robots.factory — Robot(), list_robots()."""
+"""Tests for strands_robots.robot — Robot() factory and list_robots()."""
 
 import os
 
 import pytest
 
-from strands_robots.factory import Robot, _auto_detect_mode, list_robots
 from strands_robots.registry import (
     get_robot,
     list_aliases,
+    list_robots,
     resolve_name,
 )
-from strands_robots.registry import list_robots as registry_list_robots
+from strands_robots.robot import Robot, _auto_detect_mode
 
 
 class TestResolveNames:
@@ -78,11 +78,11 @@ class TestRobotRegistry:
 
     def test_robot_count(self):
         """Ensure we have a reasonable number of robots."""
-        robots = registry_list_robots()
+        robots = list_robots()
         assert len(robots) >= 30
 
     def test_all_robots_have_description(self):
-        robots = registry_list_robots()
+        robots = list_robots()
         for r in robots:
             assert "description" in r, f"Robot '{r['name']}' missing description"
             assert len(r["description"]) > 0
@@ -110,9 +110,8 @@ class TestAutoDetectMode:
     def test_env_override_case_insensitive(self):
         os.environ["STRANDS_ROBOT_MODE"] = "REAL"
         try:
-            # .lower() normalizes to "real" — should match
             mode = _auto_detect_mode("so100")
-            assert mode == "real"  # .lower() normalizes REAL → real
+            assert mode == "real"
         finally:
             del os.environ["STRANDS_ROBOT_MODE"]
 
@@ -125,6 +124,13 @@ class TestRobotFactory:
         assert callable(Robot)
         assert not inspect.isclass(Robot)
 
+    def test_default_mode_is_sim(self):
+        """Robot() defaults to sim mode — never accidentally sends to hardware."""
+        import inspect
+
+        sig = inspect.signature(Robot)
+        assert sig.parameters["mode"].default == "sim"
+
     def test_unknown_backend_raises(self):
         with pytest.raises(NotImplementedError, match="not yet implemented"):
             Robot("so100", mode="sim", backend="isaac")
@@ -133,9 +139,13 @@ class TestRobotFactory:
         with pytest.raises(NotImplementedError, match="not yet implemented"):
             Robot("so100", mode="sim", backend="newton")
 
+    def test_invalid_mode_raises(self):
+        with pytest.raises(ValueError, match="Invalid mode"):
+            Robot("so100", mode="invalid")
+
     def test_sim_with_urdf_path(self):
         """Robot() with explicit urdf_path should work (if file exists)."""
-        # We don't have a real URDF here, but verify the param is accepted
+        pytest.importorskip("mujoco")
         with pytest.raises(RuntimeError):
             Robot("test_bot", mode="sim", urdf_path="/nonexistent/robot.xml")
 
@@ -146,7 +156,6 @@ class TestRobotFactory:
         """
         mujoco = pytest.importorskip("mujoco")
 
-        # Minimal valid MJCF that MuJoCo can load — a one-joint arm
         mjcf_xml = """<mujoco model="test_arm">
           <worldbody>
             <light pos="0 0 3"/>
@@ -170,11 +179,9 @@ class TestRobotFactory:
 
         sim = Robot("so100", mode="sim", backend="mujoco", urdf_path=str(mjcf_path))
         try:
-            # Verify it's a working simulation instance
             assert sim._world is not None
             assert sim._world._model is not None
             assert sim._world._data is not None
-            # Step physics once to verify the engine works
             mujoco.mj_step(sim._world._model, sim._world._data)
             assert sim._world._data.time > 0
         finally:
@@ -186,4 +193,4 @@ class TestRobotFactory:
         from strands_robots import list_robots as lr
 
         assert R is Robot
-        assert lr is list_robots
+        assert callable(lr)

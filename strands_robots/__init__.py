@@ -37,8 +37,8 @@ from strands_robots.policies import MockPolicy, Policy, create_policy  # noqa: F
 # Maps public name -> (module_path, attribute_name)
 _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     # Hardware robot
-    "Robot": ("strands_robots.factory", "Robot"),
-    "list_robots": ("strands_robots.factory", "list_robots"),
+    "Robot": ("strands_robots.robot", "Robot"),
+    "list_robots": ("strands_robots.registry", "list_robots"),
     # Policies
     "Gr00tPolicy": ("strands_robots.policies.groot", "Gr00tPolicy"),
     # Simulation (MuJoCo)

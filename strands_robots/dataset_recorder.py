@@ -1,7 +1,7 @@
 """LeRobotDataset recorder bridge for strands-robots.
 
-Wraps LeRobotDataset so that both robot.py (real hardware) and
-simulation.py (MuJoCo) can produce training-ready datasets with
+Wraps LeRobotDataset so that both strands_robots.hardware_robot and
+strands_robots.simulation (MuJoCo) can produce training-ready datasets with
 a single add_frame() call per control step.
 
 Usage:
@@ -180,6 +180,7 @@ class DatasetRecorder:
         camera_keys: list[str] | None = None,
         joint_names: list[str] | None = None,
         use_videos: bool = True,
+        camera_shapes: dict[str, tuple[int, int, int]] | None = None,
     ) -> dict[str, Any]:
         """Build LeRobot v3-compatible features dict.
 
@@ -199,13 +200,13 @@ class DatasetRecorder:
             for cam_name in camera_keys:
                 key = f"observation.images.{cam_name}"
                 dtype = "video" if use_videos else "image"
+                # Per-camera shape override, default (3, 480, 640) CHW
+                shape = (3, 480, 640)
+                if camera_shapes and cam_name in camera_shapes:
+                    shape = camera_shapes[cam_name]
                 features[key] = {
                     "dtype": dtype,
-                    "shape": (
-                        3,
-                        480,
-                        640,
-                    ),  # CHW default, actual shape set on first frame
+                    "shape": shape,
                     "names": ["channels", "height", "width"],
                 }
 

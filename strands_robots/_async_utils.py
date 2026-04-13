@@ -1,11 +1,16 @@
 """Async-to-sync helper for resolving coroutines in sync contexts."""
 
 import asyncio
-import concurrent.futures
+import atexit
+from concurrent.futures import ThreadPoolExecutor
 
 # Module-level executor reused across calls to avoid creating threads at high frequency.
 # A single worker is sufficient — we only need to offload one asyncio.run() at a time.
-_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="strands_async")
+_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="strands_async")
+
+# Ensure the executor is shut down cleanly on interpreter exit to avoid
+# ResourceWarning and orphaned threads.
+atexit.register(_EXECUTOR.shutdown, wait=False)
 
 
 def _resolve_coroutine(coro_or_result):  # type: ignore[no-untyped-def]

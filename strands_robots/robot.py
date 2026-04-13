@@ -1,758 +1,205 @@
-#!/usr/bin/env python3
+"""Unified Robot factory — convenience layer over ``strands_robots.simulation``
+and ``strands_robots.hardware_robot``.
+
+Provides:
+    - ``Robot("so100")`` → returns a simulation by default (safe)
+    - ``Robot("so100", mode="real")`` → explicit real hardware
+    - ``Robot("so100", mode="auto")`` → auto-detects sim/real
+    - ``list_robots()``  → what's available
+
+Environment Variables:
+    STRANDS_ROBOT_MODE: Override mode detection ("sim" or "real").
+
+Examples::
+
+    # Default: simulation (safe — no physical hardware interaction)
+    sim = Robot("so100")
+
+    # Explicit real hardware
+    hw = Robot("so100", mode="real", cameras={...})
+
+    # Auto-detect (probes USB for servo controllers)
+    robot = Robot("so100", mode="auto")
+
+    # With custom URDF/MJCF path
+    sim = Robot("my_arm", urdf_path="/path/to/robot.xml")
+
+Future (not yet implemented)::
+
+    sim = Robot("unitree_go2", backend="isaac", num_envs=4096)
+    sim = Robot("so100", backend="newton", num_envs=4096)
 """
-Universal Robot Control with Policy Abstraction for Any VLA Provider
 
-This module provides a clean robot interface that works with any LeRobot-compatible
-robot and any VLA provider through the Policy abstraction.
-
-Features:
-- Async robot task execution with real-time status reporting
-- Non-blocking operations - robot moves while tool returns status
-- Stop functionality to interrupt running tasks
-- Connection state management with proper error handling
-- Policy abstraction for any VLA provider
-"""
-
-from __future__ import annotations
-
-import asyncio
 import logging
-import threading
-import time
-from collections.abc import AsyncGenerator
-from concurrent.futures import Future, ThreadPoolExecutor
-from dataclasses import dataclass
-from enum import Enum
-from typing import TYPE_CHECKING, Any, cast
+import os
+from typing import Any
 
-from strands.tools.tools import AgentTool
-from strands.types._events import ToolResultEvent
-from strands.types.tools import ToolResult, ToolSpec, ToolUse
-
-if TYPE_CHECKING:
-    from lerobot.robots.config import RobotConfig
-    from lerobot.robots.robot import Robot as LeRobotRobot
-
-    from .policies import Policy
+from strands_robots.registry import (
+    get_hardware_type,
+    has_hardware,
+    resolve_name,
+)
 
 logger = logging.getLogger(__name__)
 
 
-class TaskStatus(Enum):
-    """Robot task execution status"""
+def _auto_detect_mode(canonical: str) -> str:
+    """Auto-detect sim vs real mode.
 
-    IDLE = "idle"
-    CONNECTING = "connecting"
-    RUNNING = "running"
-    COMPLETED = "completed"
-    STOPPED = "stopped"
-    ERROR = "error"
+    Priority:
+        1. ``STRANDS_ROBOT_MODE`` env var (explicit override)
+        2. Robot-specific USB detection (Feetech/Dynamixel servo controllers)
+        3. Default to sim (safest — never accidentally send commands to hardware)
+    """
+    env_mode = os.getenv("STRANDS_ROBOT_MODE", "").lower()
+    if env_mode in ("sim", "real"):
+        return env_mode
+
+    # Only probe USB if the robot actually has hardware support
+    if has_hardware(canonical):
+        try:
+            import serial.tools.list_ports
+
+            ports = list(serial.tools.list_ports.comports())
+            servo_keywords = ["feetech", "dynamixel", "sts3215", "xl430", "xl330"]
+            exclude = ["bluetooth", "internal", "debug", "apple", "modem"]
+            robot_ports = [
+                p
+                for p in ports
+                if any(
+                    kw in ((p.description or "") + (getattr(p, "manufacturer", None) or "")).lower()
+                    for kw in servo_keywords
+                )
+                and not any(s in (p.description or "").lower() for s in exclude)
+            ]
+            if robot_ports:
+                logger.info(
+                    "Auto-detected robot hardware: %s",
+                    [p.device for p in robot_ports],
+                )
+                return "real"
+        except (ImportError, OSError):  # USB probing may fail with OSError on permission/device issues
+            pass
+
+    return "sim"
 
 
-@dataclass
-class RobotTaskState:
-    """Robot task execution state"""
+def Robot(
+    name: str,
+    mode: str = "sim",
+    backend: str = "mujoco",
+    urdf_path: str | None = None,
+    cameras: dict[str, dict[str, Any]] | None = None,
+    position: list[float] | None = None,
+    **kwargs: Any,
+) -> Any:
+    """Create a robot — returns a Simulation or HardwareRobot instance.
 
-    status: TaskStatus = TaskStatus.IDLE
-    instruction: str = ""
-    start_time: float = 0.0
-    duration: float = 0.0
-    step_count: int = 0
-    error_message: str = ""
-    task_future: Future | None = None
+    This is a convenience factory, NOT a wrapper class.  You get the real
+    backend instance back — with full access to all its methods.
 
+    Defaults to simulation mode so that ``Robot("so100")`` never
+    accidentally sends commands to physical hardware.  Use
+    ``mode="real"`` to explicitly opt into hardware control.
 
-class Robot(AgentTool):
-    """Universal robot control with async task execution and status reporting."""
+    Args:
+        name: Robot name ("so100", "aloha", "unitree_g1", "panda", ...)
+              Accepts any alias defined in ``registry/robots.json``.
+        mode: "sim" (default — safe), "real" (explicit hardware), or
+              "auto" (probes USB for servo controllers, falls back to sim).
+        backend: Simulation backend — currently only "mujoco" (CPU).
+                 Future: "isaac" (GPU), "newton" (GPU).
+        urdf_path: Explicit path to URDF/MJCF file. If not provided,
+                   resolved via ``strands_robots.simulation.model_registry``
+                   (asset manager or ``STRANDS_ASSETS_DIR`` search paths).
+        cameras: Camera config for real hardware. Example::
 
-    def __init__(
-        self,
-        tool_name: str,
-        robot: LeRobotRobot | RobotConfig | str,
-        cameras: dict[str, dict[str, Any]] | None = None,
-        action_horizon: int = 8,
-        data_config: str | Any | None = None,
-        control_frequency: float = 50.0,
-        **kwargs,
-    ):
-        """Initialize Robot with async capabilities.
+            {"wrist": {"type": "opencv", "index_or_path": "/dev/video0", "fps": 30}}
 
-        Args:
-            tool_name: Name for this robot tool
-            robot: LeRobot Robot instance, RobotConfig, or robot type string
-            cameras: Camera configuration dict:
-                {"wrist": {"type": "opencv", "index_or_path": "/dev/video0", "fps": 30}}
-            action_horizon: Actions per inference step
-            data_config: Data configuration (for GR00T compatibility)
-            control_frequency: Control loop frequency in Hz (default: 50Hz)
-            **kwargs: Robot-specific parameters (port, etc.)
-        """
-        super().__init__()
+        position: Robot position in sim world [x, y, z].
+        **kwargs: Forwarded to the underlying backend constructor.
 
-        self.tool_name_str = tool_name
-        self.action_horizon = action_horizon
-        self.data_config = data_config
-        self.control_frequency = control_frequency
-        self.action_sleep_time = 1.0 / control_frequency  # Time between actions
+    Returns:
+        ``strands_robots.simulation.Simulation`` (sim) or
+        ``strands_robots.hardware_robot.Robot`` (real hardware).
 
-        # Task execution state
-        self._task_state = RobotTaskState()
-        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"{tool_name}_executor")
-        self._shutdown_event = threading.Event()
+    Raises:
+        RuntimeError: If the sim world or robot fails to initialize.
+        NotImplementedError: If an unimplemented backend is requested.
 
-        # Initialize robot using lerobot's abstraction
-        self.robot = self._initialize_robot(robot, cameras, **kwargs)
+    Examples::
 
-        logger.info(f"🤖 {tool_name} initialized with async capabilities")
-        logger.info(f"📱 Robot: {self.robot.name} (type: {getattr(self.robot, 'robot_type', 'unknown')})")
-        logger.info(f"⏱️ Control frequency: {control_frequency}Hz ({self.action_sleep_time * 1000:.1f}ms per action)")
+        # Simulation (default — safe)
+        sim = Robot("so100")
 
-        # Get camera info if available
-        if hasattr(self.robot, "config") and hasattr(self.robot.config, "cameras"):
-            cameras_list = list(self.robot.config.cameras.keys())
-            logger.info(f"📹 Cameras: {cameras_list}")
+        # Explicit MJCF model path
+        sim = Robot("my_arm", urdf_path="path/to/robot.xml")
 
-        if data_config:
-            logger.info(f"⚙️ Data config: {data_config}")
+        # Real hardware (explicit opt-in)
+        hw = Robot("so100", mode="real", cameras={...})
 
-    def _initialize_robot(
-        self, robot: LeRobotRobot | RobotConfig | str, cameras: dict[str, dict[str, Any]] | None, **kwargs
-    ) -> LeRobotRobot:
-        """Initialize LeRobot robot instance using native lerobot patterns."""
-        from lerobot.robots.config import RobotConfig
-        from lerobot.robots.robot import Robot as LeRobotRobot
-        from lerobot.robots.utils import make_robot_from_config
+        # Auto-detect (probes USB, falls back to sim)
+        robot = Robot("so100", mode="auto")
 
-        # Direct robot instance - use as-is
-        if isinstance(robot, LeRobotRobot):
-            return robot
+        # The 5-line promise
+        from strands_robots import Robot
+        from strands import Agent
+        robot = Robot("so100")
+        agent = Agent(tools=[robot])
+        agent("Pick up the red cube")
+    """
+    canonical = resolve_name(name)
 
-        # Robot config - use lerobot's factory
-        elif isinstance(robot, RobotConfig):
-            return make_robot_from_config(robot)
+    if mode == "auto":
+        mode = _auto_detect_mode(canonical)
 
-        # Robot type string - create config and use lerobot's factory
-        elif isinstance(robot, str):
-            config = self._create_minimal_config(robot, cameras, **kwargs)
-            return make_robot_from_config(config)
-
-        else:
-            raise ValueError(
-                f"Unsupported robot type: {type(robot)}. "
-                f"Expected LeRobot Robot instance, RobotConfig, or robot type string."
+    # ── Simulation ──
+    if mode == "sim":
+        if backend != "mujoco":
+            raise NotImplementedError(
+                f"Backend {backend!r} is not yet implemented. "
+                f"Currently supported: 'mujoco'. "
+                f"Isaac and Newton backends are on the roadmap."
             )
 
-    def _create_minimal_config(
-        self, robot_type: str, cameras: dict[str, dict[str, Any]] | None, **kwargs
-    ) -> RobotConfig:
-        """Create minimal robot config using specific robot config classes."""
-        from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
+        from strands_robots.simulation import Simulation
 
-        # Convert cameras to lerobot format
-        camera_configs = {}
-        if cameras:
-            for name, config in cameras.items():
-                if config.get("type", "opencv") == "opencv":
-                    camera_configs[name] = OpenCVCameraConfig(
-                        index_or_path=config["index_or_path"],
-                        fps=config.get("fps", 30),
-                        width=config.get("width", 640),
-                        height=config.get("height", 480),
-                        rotation=config.get("rotation", 0),
-                        color_mode=config.get("color_mode", "rgb"),
-                    )
-                else:
-                    raise ValueError(f"Unsupported camera type: {config.get('type')}")
+        sim = Simulation(
+            tool_name=f"{canonical}_sim",
+            **kwargs,
+        )
+        sim._dispatch_action("create_world", {})
 
-        # Map robot type to specific config class
-        config_mapping = {
-            "so101_follower": ("lerobot.robots.so101_follower", "SO101FollowerConfig"),
-            "so100_follower": ("lerobot.robots.so100_follower", "SO100FollowerConfig"),
-            "bi_so100_follower": ("lerobot.robots.bi_so100_follower", "BiSO100FollowerConfig"),
-            "viperx": ("lerobot.robots.viperx", "ViperXConfig"),
-            "koch_follower": ("lerobot.robots.koch_follower", "KochFollowerConfig"),
-            # Add more as needed
+        add_robot_params: dict[str, Any] = {
+            "robot_name": canonical,
+            "data_config": canonical,
+            "position": position or [0.0, 0.0, 0.0],
         }
+        if urdf_path:
+            add_robot_params["urdf_path"] = urdf_path
 
-        if robot_type not in config_mapping:
-            raise ValueError(f"Unsupported robot type: {robot_type}. Supported types: {list(config_mapping.keys())}")
+        result = sim._dispatch_action("add_robot", add_robot_params)
+        if result.get("status") == "error":
+            sim.destroy()  # Clean up partial initialization (executor, temp dir, MuJoCo world)
+            content = result.get("content", [])
+            msg = content[0].get("text", str(result)) if content else str(result)
+            raise RuntimeError(f"Failed to create sim robot '{canonical}': {msg}")
+        return sim
 
-        # Import specific config class dynamically
-        module_name, class_name = config_mapping[robot_type]
-        try:
-            import importlib
+    # ── Real hardware (explicit opt-in) ──
+    elif mode == "real":
+        from strands_robots.hardware_robot import Robot as HardwareRobot
 
-            module = importlib.import_module(module_name)
-            ConfigClass = getattr(module, class_name)
-        except Exception as e:
-            raise ValueError(f"Failed to import {class_name} from {module_name}: {e}")
-
-        # Create config with proper parameters
-        config_data = {
-            "id": self.tool_name_str,
-            "cameras": camera_configs,
-        }
-
-        # Filter kwargs to only include supported fields for this robot type
-        # Port is common for most serial robots
-        if "port" in kwargs:
-            config_data["port"] = kwargs["port"]
-
-        # Add other common fields as needed
-        for key in ["calibration_dir", "mock", "use_degrees"]:
-            if key in kwargs:
-                config_data[key] = kwargs[key]
-
-        try:
-            return ConfigClass(**config_data)
-        except Exception as e:
-            raise ValueError(f"Failed to create {class_name} for robot type '{robot_type}': {e}. Config: {config_data}")
-
-    async def _get_policy(
-        self, policy_port: int | None = None, policy_host: str = "localhost", policy_provider: str = "groot"
-    ) -> Policy:
-        """Create policy on-the-fly from invocation parameters."""
-        from .policies import create_policy
-
-        if not policy_port:
-            raise ValueError("policy_port is required for robot operation")
-
-        policy_config = {"port": policy_port, "host": policy_host}
-
-        if self.data_config:
-            policy_config["data_config"] = self.data_config
-
-        return create_policy(policy_provider, **policy_config)
-
-    async def _connect_robot(self) -> tuple[bool, str]:
-        """Connect to robot hardware with proper error handling.
-
-        Returns:
-            tuple[bool, str]: (success, error_message) - error_message is empty on success
-        """
-        try:
-            # Import lerobot exceptions
-            from lerobot.utils.errors import DeviceAlreadyConnectedError
-
-            # Check if already connected
-            if self.robot.is_connected:
-                logger.info(f"✅ {self.robot} already connected")
-                return True, ""
-
-            logger.info(f"🔌 Connecting to {self.robot}...")
-
-            # Handle robot connection using lerobot's error handling patterns
-            try:
-                if not self.robot.is_connected:
-                    await asyncio.to_thread(self.robot.connect, False)  # calibrate=False
-
-            except DeviceAlreadyConnectedError:
-                # This is expected and fine - robot is already connected
-                logger.info(f"✅ {self.robot} was already connected")
-
-            except Exception as e:
-                # Check if it's the string version of "already connected" error
-                error_str = str(e).lower()
-                if "already connected" in error_str or "is already connected" in error_str:
-                    logger.info(f"✅ {self.robot} connection already established")
-                else:
-                    # Re-raise if it's a different error
-                    raise e
-
-            # Final connection check
-            if not self.robot.is_connected:
-                error_msg = f"Failed to connect to {self.robot}"
-                logger.error(f"❌ {error_msg}")
-                return False, error_msg
-
-            # Check robot calibration
-            if hasattr(self.robot, "is_calibrated") and not self.robot.is_calibrated:
-                error_msg = (
-                    f"Robot {self.robot} is not calibrated. Please calibrate the robot manually"
-                    " first using LeRobot's calibration process (lerobot-calibrate)"
-                )
-                logger.error(f"❌ {error_msg}")
-                return False, error_msg
-
-            logger.info(f"✅ {self.robot} connected and ready")
-            return True, ""
-
-        except Exception as e:
-            error_msg = f"Robot connection failed: {e}. Ensure robot is calibrated and accessible on the specified port"
-            logger.error(f"❌ {error_msg}")
-            return False, error_msg
-
-    async def _initialize_policy(self, policy: Policy) -> bool:
-        """Initialize policy with robot state keys."""
-        try:
-            # Get robot state keys from observation
-            test_obs = await asyncio.to_thread(self.robot.get_observation)
-
-            # Filter out camera keys to get robot state keys
-            camera_keys = []
-            if hasattr(self.robot, "config") and hasattr(self.robot.config, "cameras"):
-                camera_keys = list(self.robot.config.cameras.keys())
-
-            robot_state_keys = [k for k in test_obs.keys() if k not in camera_keys]
-
-            # Set robot state keys in policy
-            policy.set_robot_state_keys(robot_state_keys)
-            return True
-
-        except Exception as e:
-            logger.error(f"❌ Failed to initialize policy: {e}")
-            return False
-
-    async def _execute_task_async(
-        self,
-        instruction: str,
-        policy_port: int | None = None,
-        policy_host: str = "localhost",
-        policy_provider: str = "groot",
-        duration: float = 30.0,
-    ) -> None:
-        """Execute robot task in background thread (internal method)."""
-        try:
-            # Update task state
-            self._task_state.status = TaskStatus.CONNECTING
-            self._task_state.instruction = instruction
-            self._task_state.start_time = time.time()
-            self._task_state.step_count = 0
-            self._task_state.error_message = ""
-
-            # Connect to robot
-            connected, connect_error = await self._connect_robot()
-            if not connected:
-                self._task_state.status = TaskStatus.ERROR
-                self._task_state.error_message = connect_error or f"Failed to connect to {self.tool_name_str}"
-                return
-
-            # Get policy instance
-            policy_instance = await self._get_policy(policy_port, policy_host, policy_provider)
-
-            # Initialize policy with robot state keys
-            if not await self._initialize_policy(policy_instance):
-                self._task_state.status = TaskStatus.ERROR
-                self._task_state.error_message = "Failed to initialize policy"
-                return
-
-            logger.info(f"🎯 Starting task: '{instruction}' on {self.tool_name_str}")
-            logger.info(f"🧠 Using policy: {policy_provider} on {policy_host}:{policy_port}")
-
-            self._task_state.status = TaskStatus.RUNNING
-            start_time = time.time()
-
-            while (
-                time.time() - start_time < duration
-                and self._task_state.status == TaskStatus.RUNNING
-                and not self._shutdown_event.is_set()
-            ):
-                # Get observation from robot
-                observation = await asyncio.to_thread(self.robot.get_observation)
-
-                # Get actions from policy
-                robot_actions = await policy_instance.get_actions(observation, instruction)
-
-                # Execute actions from chunk with proper timing control
-                # Wait between actions for smooth execution
-                for action_dict in robot_actions[: self.action_horizon]:
-                    if self._task_state.status != TaskStatus.RUNNING:
-                        break
-                    await asyncio.to_thread(self.robot.send_action, action_dict)
-                    self._task_state.step_count += 1
-                    # Wait for action to complete before sending next action
-                    # Default 50Hz (0.02s)
-                    await asyncio.sleep(self.action_sleep_time)
-
-            # Update final state
-            elapsed = time.time() - start_time
-            self._task_state.duration = elapsed
-
-            if self._task_state.status == TaskStatus.RUNNING:
-                self._task_state.status = TaskStatus.COMPLETED
-                logger.info(
-                    f"✅ Task completed: '{instruction}' in {elapsed:.1f}s ({self._task_state.step_count} steps)"
-                )
-
-        except Exception as e:
-            logger.error(f"❌ Task execution failed: {e}")
-            self._task_state.status = TaskStatus.ERROR
-            self._task_state.error_message = str(e)
-
-    def _execute_task_sync(
-        self,
-        instruction: str,
-        policy_port: int | None = None,
-        policy_host: str = "localhost",
-        policy_provider: str = "groot",
-        duration: float = 30.0,
-    ) -> dict[str, Any]:
-        """Execute task synchronously in thread - no new event loop."""
-
-        # Import here to avoid conflicts
-        import asyncio
-
-        # Run task without creating new event loop - let it run in thread
-        async def task_runner():
-            await self._execute_task_async(instruction, policy_port, policy_host, policy_provider, duration)
-
-        # Use asyncio.run only if no loop is running, otherwise run in existing loop
-        try:
-            # Try to get the current event loop
-            asyncio.get_running_loop()
-            # If we're already in an event loop, we need to run in a thread
-            import concurrent.futures
-
-            with concurrent.futures.ThreadPoolExecutor() as exec:
-                future = exec.submit(lambda: asyncio.run(task_runner()))
-                future.result()  # Wait for completion
-        except RuntimeError:
-            # No event loop running - safe to create one
-            asyncio.run(task_runner())
-
-        # Return final status
-        return {
-            "status": "success" if self._task_state.status == TaskStatus.COMPLETED else "error",
-            "content": [
-                {
-                    "text": f"✅ Task: '{instruction}' - {self._task_state.status.value}\n"
-                    f"🤖 Robot: {self.tool_name_str} ({self.robot})\n"
-                    f"🧠 Policy: {policy_provider} on {policy_host}:{policy_port}\n"
-                    f"⏱️ Duration: {self._task_state.duration:.1f}s\n"
-                    f"🎯 Steps: {self._task_state.step_count}"
-                    + (f"\n❌ Error: {self._task_state.error_message}" if self._task_state.error_message else "")
-                }
-            ],
-        }
-
-    def start_task(
-        self,
-        instruction: str,
-        policy_port: int | None = None,
-        policy_host: str = "localhost",
-        policy_provider: str = "groot",
-        duration: float = 30.0,
-    ) -> dict[str, Any]:
-        """Start robot task asynchronously and return immediately."""
-
-        # Check if task is already running
-        if self._task_state.status == TaskStatus.RUNNING:
-            return {
-                "status": "error",
-                "content": [{"text": f"❌ Task already running: {self._task_state.instruction}"}],
-            }
-
-        # Start task in background
-        self._task_state.task_future = self._executor.submit(
-            self._execute_task_sync, instruction, policy_port, policy_host, policy_provider, duration
+        real_type = get_hardware_type(canonical) or canonical
+        return HardwareRobot(
+            tool_name=canonical,
+            robot=real_type,
+            cameras=cameras,
+            **kwargs,
         )
 
-        return {
-            "status": "success",
-            "content": [
-                {
-                    "text": f"🚀 Task started: '{instruction}'\n"
-                    f"🤖 Robot: {self.tool_name_str}\n"
-                    f"💡 Use action='status' to check progress\n"
-                    f"💡 Use action='stop' to interrupt"
-                }
-            ],
-        }
+    else:
+        raise ValueError(f"Invalid mode {mode!r}. Choose 'sim', 'real', or 'auto'.")
 
-    def get_task_status(self) -> dict[str, Any]:
-        """Get current task execution status."""
 
-        # Update duration for running tasks
-        if self._task_state.status == TaskStatus.RUNNING:
-            self._task_state.duration = time.time() - self._task_state.start_time
-
-        status_text = f"📊 Robot Status: {self._task_state.status.value.upper()}\n"
-
-        if self._task_state.instruction:
-            status_text += f"🎯 Task: {self._task_state.instruction}\n"
-
-        if self._task_state.status == TaskStatus.RUNNING:
-            status_text += f"⏱️ Duration: {self._task_state.duration:.1f}s\n"
-            status_text += f"🔄 Steps: {self._task_state.step_count}\n"
-        elif self._task_state.status in [TaskStatus.COMPLETED, TaskStatus.STOPPED, TaskStatus.ERROR]:
-            status_text += f"⏱️ Total Duration: {self._task_state.duration:.1f}s\n"
-            status_text += f"🎯 Total Steps: {self._task_state.step_count}\n"
-
-        if self._task_state.error_message:
-            status_text += f"❌ Error: {self._task_state.error_message}\n"
-
-        return {
-            "status": "success",
-            "content": [{"text": status_text}],
-        }
-
-    def stop_task(self) -> dict[str, Any]:
-        """Stop currently running task."""
-
-        if self._task_state.status != TaskStatus.RUNNING:
-            return {
-                "status": "success",
-                "content": [{"text": f"💤 No task running to stop (current: {self._task_state.status.value})"}],
-            }
-
-        # Signal task to stop
-        self._task_state.status = TaskStatus.STOPPED
-
-        # Cancel future if it exists
-        if self._task_state.task_future:
-            self._task_state.task_future.cancel()
-
-        logger.info(f"🛑 Task stopped: {self._task_state.instruction}")
-
-        return {
-            "status": "success",
-            "content": [
-                {
-                    "text": f"🛑 Task stopped: '{self._task_state.instruction}'\n"
-                    f"⏱️ Duration: {self._task_state.duration:.1f}s\n"
-                    f"🎯 Steps completed: {self._task_state.step_count}"
-                }
-            ],
-        }
-
-    @property
-    def tool_name(self) -> str:
-        return self.tool_name_str
-
-    @property
-    def tool_type(self) -> str:
-        return "robot"
-
-    @property
-    def tool_spec(self) -> ToolSpec:
-        """Get tool specification with async actions."""
-        return {
-            "name": self.tool_name_str,
-            "description": f"Universal robot control with async task execution ({self.robot}). "
-            f"Actions: execute (blocking), start (async), status, stop. "
-            f"For execute/start actions: instruction and policy_port are required. "
-            f"For status/stop actions: no additional parameters needed.",
-            "inputSchema": {
-                "json": {
-                    "type": "object",
-                    "properties": {
-                        "action": {
-                            "type": "string",
-                            "description": "Action to perform: execute (blocking), start (async), status, stop",
-                            "enum": ["execute", "start", "status", "stop"],
-                            "default": "execute",
-                        },
-                        "instruction": {
-                            "type": "string",
-                            "description": "Natural language instruction (required for execute/start actions)",
-                        },
-                        "policy_port": {
-                            "type": "integer",
-                            "description": "Policy service port (required for execute/start actions)",
-                        },
-                        "policy_host": {
-                            "type": "string",
-                            "description": "Policy service host (default: localhost)",
-                            "default": "localhost",
-                        },
-                        "policy_provider": {
-                            "type": "string",
-                            "description": "Policy provider (groot, openai, etc.)",
-                            "default": "groot",
-                        },
-                        "duration": {
-                            "type": "number",
-                            "description": "Maximum execution time in seconds",
-                            "default": 30.0,
-                        },
-                    },
-                    "required": ["action"],
-                }
-            },
-        }
-
-    @staticmethod
-    def _make_tool_result(tool_use_id: str, result: dict[str, Any]) -> ToolResult:
-        """Create a ToolResult dict with the given tool_use_id merged into result."""
-        return cast(ToolResult, {"toolUseId": tool_use_id, **result})
-
-    async def stream(
-        self, tool_use: ToolUse, invocation_state: dict[str, Any], **kwargs: Any
-    ) -> AsyncGenerator[ToolResultEvent, None]:
-        """Stream robot task execution with async actions."""
-        try:
-            tool_use_id = tool_use.get("toolUseId", "")
-            input_data = tool_use.get("input", {})
-
-            action = input_data.get("action", "execute")
-
-            # Handle different actions
-            if action == "execute":
-                # Blocking execution (legacy behavior)
-                instruction = input_data.get("instruction", "")
-                policy_port = input_data.get("policy_port")
-                policy_host = input_data.get("policy_host", "localhost")
-                policy_provider = input_data.get("policy_provider", "groot")
-                duration = input_data.get("duration", 30.0)
-
-                if not instruction or not policy_port:
-                    yield ToolResultEvent(
-                        self._make_tool_result(
-                            tool_use_id,
-                            {
-                                "status": "error",
-                                "content": [{"text": "❌ instruction and policy_port are required for execute action"}],
-                            },
-                        )
-                    )
-                    return
-
-                # Execute task synchronously
-                task_result = self._execute_task_sync(instruction, policy_port, policy_host, policy_provider, duration)
-                yield ToolResultEvent(self._make_tool_result(tool_use_id, task_result))
-
-            elif action == "start":
-                # Asynchronous execution start
-                instruction = input_data.get("instruction", "")
-                policy_port = input_data.get("policy_port")
-                policy_host = input_data.get("policy_host", "localhost")
-                policy_provider = input_data.get("policy_provider", "groot")
-                duration = input_data.get("duration", 30.0)
-
-                if not instruction or not policy_port:
-                    yield ToolResultEvent(
-                        self._make_tool_result(
-                            tool_use_id,
-                            {
-                                "status": "error",
-                                "content": [{"text": "❌ instruction and policy_port are required for start action"}],
-                            },
-                        )
-                    )
-                    return
-
-                # Start task asynchronously
-                start_result = self.start_task(instruction, policy_port, policy_host, policy_provider, duration)
-                yield ToolResultEvent(self._make_tool_result(tool_use_id, start_result))
-
-            elif action == "status":
-                # Get current task status
-                status_result = self.get_task_status()
-                yield ToolResultEvent(self._make_tool_result(tool_use_id, status_result))
-
-            elif action == "stop":
-                # Stop current task
-                stop_result = self.stop_task()
-                yield ToolResultEvent(self._make_tool_result(tool_use_id, stop_result))
-
-            else:
-                yield ToolResultEvent(
-                    self._make_tool_result(
-                        tool_use_id,
-                        {
-                            "status": "error",
-                            "content": [
-                                {"text": f"❌ Unknown action: {action}. Valid actions: execute, start, status, stop"}
-                            ],
-                        },
-                    )
-                )
-
-        except Exception as e:
-            logger.error(f"❌ {self.tool_name_str} error: {e}")
-            yield ToolResultEvent(
-                self._make_tool_result(
-                    tool_use_id,
-                    {
-                        "status": "error",
-                        "content": [{"text": f"❌ {self.tool_name_str} error: {str(e)}"}],
-                    },
-                )
-            )
-
-    def cleanup(self):
-        """Cleanup resources and stop any running tasks."""
-        try:
-            # Signal shutdown
-            self._shutdown_event.set()
-
-            # Stop any running task
-            if self._task_state.status == TaskStatus.RUNNING:
-                self.stop_task()
-
-            # Shutdown executor
-            self._executor.shutdown(wait=True)
-
-            logger.info(f"🧹 {self.tool_name_str} cleanup completed")
-
-        except Exception as e:
-            logger.error(f"❌ Cleanup error for {self.tool_name_str}: {e}")
-
-    def __del__(self):
-        """Destructor to ensure cleanup."""
-        try:
-            self.cleanup()
-        except Exception:
-            pass  # Ignore errors in destructor
-
-    async def get_status(self) -> dict[str, Any]:
-        """Get robot status including connection and task state."""
-        try:
-            # Get robot connection status
-            is_connected = self.robot.is_connected if hasattr(self.robot, "is_connected") else False
-            is_calibrated = self.robot.is_calibrated if hasattr(self.robot, "is_calibrated") else True
-
-            # Get camera status
-            camera_status = []
-            if hasattr(self.robot, "config") and hasattr(self.robot.config, "cameras"):
-                for name in self.robot.config.cameras.keys():
-                    camera_status.append(name)
-
-            # Build status dict
-            status_data = {
-                "robot_name": self.tool_name_str,
-                "robot_type": getattr(self.robot, "robot_type", self.robot.name),
-                "robot_info": str(self.robot),
-                "data_config": self.data_config,
-                "is_connected": is_connected,
-                "is_calibrated": is_calibrated,
-                "cameras": camera_status,
-                "task_status": self._task_state.status.value,
-                "current_instruction": self._task_state.instruction,
-                "task_duration": self._task_state.duration,
-                "task_steps": self._task_state.step_count,
-            }
-
-            # Add error info if present
-            if self._task_state.error_message:
-                status_data["task_error"] = self._task_state.error_message
-
-            return status_data
-
-        except Exception as e:
-            logger.error(f"❌ Error getting status for {self.tool_name_str}: {e}")
-            return {
-                "robot_name": self.tool_name_str,
-                "error": str(e),
-                "is_connected": False,
-                "task_status": "error",
-            }
-
-    async def stop(self):
-        """Stop robot and disconnect."""
-        try:
-            # Stop any running task first
-            if self._task_state.status == TaskStatus.RUNNING:
-                self.stop_task()
-
-            # Disconnect robot hardware
-            if hasattr(self.robot, "disconnect"):
-                await asyncio.to_thread(self.robot.disconnect)
-
-            # Cleanup resources
-            self.cleanup()
-
-            logger.info(f"🛑 {self.tool_name_str} stopped and disconnected")
-
-        except Exception as e:
-            logger.error(f"❌ Error stopping robot: {e}")
+__all__ = ["Robot"]
