@@ -1,8 +1,8 @@
 """Dataclasses for simulation state.
 
 These dataclasses provide a backend-independent typed state representation
-consumed by simulation engine implementations (e.g. MuJoCo backend in
-``strands_robots.simulation.mujoco``).
+consumed by simulation engine implementations (e.g. MuJoCo, Isaac Sim,
+PyBullet).
 
 They enable:
     - Type-safe state tracking across simulation steps.
@@ -100,9 +100,10 @@ class TrajectoryStep:
 class SimWorld:
     """Complete simulation world state.
 
-    Engine-specific internals (``_model``, ``_data``) are typed as ``Any``
-    so that each backend can store its own native handles without leaking
-    implementation details into this base module.
+    Backend-independent state with engine-specific internals isolated in
+    ``_model``, ``_data``, and ``_backend_state`` — all typed as ``Any``
+    or ``dict`` so that each backend can store its own native handles
+    without leaking implementation details into this base module.
     """
 
     robots: dict[str, SimRobot] = field(default_factory=dict)
@@ -115,18 +116,17 @@ class SimWorld:
     sim_time: float = 0.0
     step_count: int = 0
     # Engine-specific internals (set after world is built by the backend).
-    # Each backend stores its own native handles here — e.g. MuJoCo stores
-    # MjModel/MjData, Isaac Sim would store its Scene/World objects, etc.
-    _xml: str = ""
-    _model: Any = None  # Engine-specific model handle (set by simulation backend)
-    _data: Any = None  # Engine-specific data handle (set by simulation backend)
-    _robot_base_xml: str = ""
+    # Each backend stores its own native handles here.
+    _model: Any = None  # Engine-specific model handle (e.g. MjModel, Scene)
+    _data: Any = None  # Engine-specific data handle (e.g. MjData, World)
+    # Backend-specific state bag — backends store format-specific data here
+    # instead of polluting this base class with implementation details.
+    # E.g. MuJoCo stores {"xml": str, "robot_base_xml": str, "tmpdir": ...}
+    _backend_state: dict[str, Any] = field(default_factory=dict)
     # Trajectory recording
     _recording: bool = False
     _trajectory: list[TrajectoryStep] = field(default_factory=list)
     # LeRobotDataset recorder
     _dataset_recorder: Any = None
-    # Temp directory for scene composition
-    _tmpdir: Any = None
-    # Physics state checkpoints (used by PhysicsMixin.save_state/restore_state)
+    # Physics state checkpoints (used by save_state/restore_state)
     _checkpoints: dict[str, Any] = field(default_factory=dict)
