@@ -36,6 +36,9 @@ logger = logging.getLogger(__name__)
 
 MENAGERIE_REPO = "https://github.com/google-deepmind/mujoco_menagerie.git"
 
+# Only HTTPS GitHub URLs are allowed for cloning.
+_ALLOWED_CLONE_URL_RE = re.compile(r"^https://github\.com/[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+\.git$")
+
 
 # ── robot_descriptions integration ────────────────────────────────────
 
@@ -153,7 +156,19 @@ def _get_source(info: dict[str, Any] | None) -> dict[str, Any]:
 
 
 def _shallow_clone(repo_url: str, dest: str, *, timeout: int = 120) -> None:
-    """Shallow-clone *repo_url* into *dest*.  Raises on failure."""
+    """Shallow-clone *repo_url* into *dest*.
+
+    Only HTTPS ``github.com`` URLs are accepted — ``ssh://``, ``git://``,
+    ``file://``, and other schemes are rejected to prevent command-injection
+    and SSRF risks.
+
+    Raises:
+        ValueError: If *repo_url* does not match the allowed HTTPS GitHub pattern.
+        subprocess.CalledProcessError: If the ``git clone`` command fails.
+        subprocess.TimeoutExpired: If the clone exceeds *timeout* seconds.
+    """
+    if not _ALLOWED_CLONE_URL_RE.match(repo_url):
+        raise ValueError(f"Blocked clone URL (only HTTPS github.com allowed): {repo_url!r}")
     logger.info("Cloning %s (this may take a moment)...", repo_url)
     subprocess.run(
         ["git", "clone", "--depth", "1", repo_url, dest],
@@ -262,7 +277,7 @@ def _download_via_git(robots: dict[str, dict], dest_dir: Path) -> dict[str, str]
         clone_dir = os.path.join(tmpdir, "mujoco_menagerie")
         try:
             _shallow_clone(MENAGERIE_REPO, clone_dir)
-        except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as exc:
+        except (subprocess.TimeoutExpired, subprocess.CalledProcessError, ValueError) as exc:
             reason = "timeout" if isinstance(exc, subprocess.TimeoutExpired) else str(exc)[:100]
             return {n: f"failed: git clone {reason}" for n in robots}
 
@@ -294,8 +309,9 @@ def _download_from_github(name: str, info: dict, dest_dir: Path) -> str:
     with tempfile.TemporaryDirectory() as tmpdir:
         clone_dir = os.path.join(tmpdir, "repo")
         try:
+            # URL validation is enforced inside _shallow_clone itself
             _shallow_clone(f"https://github.com/{repo}.git", clone_dir)
-        except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as exc:
+        except (subprocess.TimeoutExpired, subprocess.CalledProcessError, ValueError) as exc:
             reason = "timeout" if isinstance(exc, subprocess.TimeoutExpired) else str(exc)[:100]
             return f"failed: git clone {reason}"
 

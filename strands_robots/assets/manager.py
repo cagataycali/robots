@@ -8,6 +8,7 @@ Resolves robot model files (MJCF XML) from:
 """
 
 import logging
+import os
 from pathlib import Path
 
 from strands_robots.registry import (
@@ -20,6 +21,24 @@ from strands_robots.registry import (
 from strands_robots.utils import get_assets_dir
 
 logger = logging.getLogger(__name__)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Path safety
+# ─────────────────────────────────────────────────────────────────────
+
+
+def _safe_join(base: Path, untrusted: str) -> Path:
+    """Join *base* with an untrusted relative path, rejecting traversal.
+
+    Raises:
+        ValueError: If the resulting path escapes *base*.
+    """
+    joined = Path(os.path.normpath(base / untrusted))
+    base_norm = Path(os.path.normpath(base))
+    if not (joined == base_norm or str(joined).startswith(str(base_norm) + os.sep)):
+        raise ValueError(f"Path traversal blocked: {untrusted!r} escapes {base}")
+    return joined
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -105,6 +124,24 @@ def _has_meshes(directory: Path) -> bool:
     return any(f.suffix.lower() in _MESH_EXTS for f in directory.rglob("*") if f.is_file())
 
 
+def _resolve_candidates(asset_dir_name: str, xml_file: str, name: str) -> list[Path]:
+    """Resolve candidate paths for a robot XML, with path-traversal protection.
+
+    Uses ``_safe_join`` to prevent ``../`` in registry-sourced ``asset_dir_name``
+    or ``xml_file`` from escaping the search directories.
+    """
+    candidates: list[Path] = []
+    for search_dir in get_search_paths():
+        try:
+            model_path = _safe_join(search_dir, f"{asset_dir_name}/{xml_file}")
+        except ValueError:
+            logger.warning("Path traversal attempt blocked for robot: %s", name)
+            return []
+        if model_path.exists():
+            candidates.append(model_path)
+    return candidates
+
+
 def resolve_model_path(
     name: str,
     prefer_scene: bool = False,
@@ -149,19 +186,14 @@ def resolve_model_path(
         if user_model.exists():
             candidates.append(user_model)
 
-    for search_dir in get_search_paths():
-        model_path = search_dir / asset_dir_name / xml_file
-        if model_path.exists():
-            candidates.append(model_path)
+    # Search standard paths with traversal protection
+    candidates.extend(_resolve_candidates(asset_dir_name, xml_file, name))
 
     if not candidates:
         # No XML found at all — try auto-download, then re-search
         logger.info("No XML found for %s, attempting auto-download...", name)
         if _auto_download_robot(name, info):
-            for search_dir in get_search_paths():
-                model_path = search_dir / asset_dir_name / xml_file
-                if model_path.exists():
-                    candidates.append(model_path)
+            candidates.extend(_resolve_candidates(asset_dir_name, xml_file, name))
 
     if not candidates:
         logger.warning("Robot model not found: %s → %s/%s", name, asset_dir_name, xml_file)
@@ -178,11 +210,11 @@ def resolve_model_path(
     logger.info("XML found for %s but no meshes, attempting auto-download...", name)
     if _auto_download_robot(name, info):
         # Re-scan after download (new symlinks may have appeared)
-        for search_dir in get_search_paths():
-            model_path = search_dir / asset_dir_name / xml_file
-            if model_path.exists() and _has_meshes(model_path.parent):
-                logger.debug("Resolved %s → %s (auto-downloaded)", name, model_path)
-                return Path(model_path)
+        refreshed = _resolve_candidates(asset_dir_name, xml_file, name)
+        for path in refreshed:
+            if _has_meshes(path.parent):
+                logger.debug("Resolved %s → %s (auto-downloaded)", name, path)
+                return Path(path)
 
     # Final fallback: return first candidate (some robots have no meshes)
     logger.debug("Resolved %s → %s (no meshes available)", name, candidates[0])
@@ -204,7 +236,11 @@ def resolve_model_dir(name: str) -> Path | None:
 
     asset_dir: str = str(info["asset"]["dir"])
     for search_dir in get_search_paths():
-        dir_path = search_dir / asset_dir
+        try:
+            dir_path = _safe_join(search_dir, asset_dir)
+        except ValueError:
+            logger.warning("Path traversal attempt blocked in resolve_model_dir: %s", asset_dir)
+            return None
         if dir_path.exists():
             return Path(dir_path)
     return None
