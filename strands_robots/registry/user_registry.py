@@ -108,6 +108,15 @@ def register_robot(
 ) -> dict[str, Any]:
     """Register a custom robot in the user-local registry.
 
+    .. warning:: Security
+
+        This function is a **library-only** API and must NOT be exposed
+        as an agent @tool without additional safeguards.  A malicious
+        agent could register a robot pointing to attacker-controlled MJCF
+        that executes code via MuJoCo plugins.  If tool exposure is needed
+        in the future, gate it behind STRANDS_TRUST_REMOTE_CODE and
+        validate all paths with _safe_join.
+
     The robot becomes immediately available in ``get_robot()``,
     ``list_robots()``, ``resolve_model_path()``, ``sim.add_robot()``, etc.
 
