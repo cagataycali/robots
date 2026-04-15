@@ -15,7 +15,11 @@ from strands import Agent
 
 from strands_robots import Robot
 
-# Factory creates a MuJoCo sim (auto-downloads assets on first run)
+# Robot("so100") auto-detects mode="sim", picks the "mujoco" backend,
+# constructs a Simulation instance, calls add_robot() to load the SO-100
+# model (auto-downloading URDF/meshes on first run), and returns that
+# Simulation as an AgentTool. You get full access to all Simulation
+# actions — step(), render(), run_policy(), get_observation(), etc.
 robot = Robot("so100")
 
 # The sim IS the tool — pass it directly to Agent
