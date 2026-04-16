@@ -486,30 +486,22 @@ while True:
 agent.tool.gr00t_inference(action="stop", port=8000)
 ```
 
-## Configuration
-
-### Environment Variables
+## Environment Variables
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `STRANDS_ASSETS_DIR` | Custom directory for robot model assets (MJCF, meshes) | `~/.strands_robots/assets/` |
-| `GROOT_API_TOKEN` | API token for GR00T inference service | — |
+| `STRANDS_ROBOT_MODE` | Override auto-detection mode (`sim` or `real`) | (auto-detect) |
+| `STRANDS_ASSETS_DIR` | Custom directory for robot model assets (URDF/MJCF/meshes) | `~/.strands_robots/assets/` |
+| `STRANDS_URDF_DIR` | **Deprecated** — use `STRANDS_ASSETS_DIR` instead | — |
+| `STRANDS_TRUST_REMOTE_CODE` | Set to `1` to allow loading remote HuggingFace policies | (disabled) |
+| `GROOT_API_TOKEN` | API token for NVIDIA GR00T cloud inference | — |
+| `MUJOCO_GL` | OpenGL backend for MuJoCo rendering (`egl`, `osmesa`, `glfw`) | Auto-configured on headless Linux |
 
-### Cache Directory
+**Cache directory:** Robot model assets (URDF, MJCF, meshes) are downloaded on first use to `~/.strands_robots/assets/`. Override with `STRANDS_ASSETS_DIR`. To clear cached assets:
 
-Robot model assets (MJCF XML files and meshes) are cached in:
-
+```bash
+rm -rf ~/.strands_robots/assets/
 ```
-~/.strands_robots/
-└── assets/           # Downloaded robot models (from robot_descriptions / MuJoCo Menagerie)
-    ├── trs_so_arm100/
-    ├── franka_emika_panda/
-    └── ...
-```
-
-To clear the cache: `rm -rf ~/.strands_robots/assets/`
-
-To change the cache location: `export STRANDS_ASSETS_DIR=/path/to/custom/dir`
 
 ## Contributing
 

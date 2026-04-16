@@ -4,6 +4,12 @@ Wraps LeRobotDataset so that both strands_robots.hardware_robot and
 strands_robots.simulation (MuJoCo) can produce training-ready datasets with
 a single add_frame() call per control step.
 
+Why top-level (strands_robots.dataset_recorder) and not under simulation/?
+    Both hardware and simulation code paths need to record datasets.  Placing
+    this module at the package root avoids a circular dependency
+    (simulation -> dataset_recorder -> simulation) and keeps hardware_robot
+    from reaching into the simulation sub-package.
+
 Usage:
     recorder = DatasetRecorder.create(
         repo_id="user/my_dataset",
@@ -456,6 +462,10 @@ class DatasetRecorder:
 
 def load_lerobot_episode(repo_id: str, episode: int = 0, root: str | None = None):
     """Load a LeRobotDataset and resolve the frame range for an episode.
+
+    Used by strands_robots.simulation.mujoco.policy_runner for the
+    replay_episode action — the simulation backend calls this to load
+    recorded joint trajectories and replay them in MuJoCo.
 
     Returns:
         Tuple of (dataset, episode_start, episode_length) on success.
