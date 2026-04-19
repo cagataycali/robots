@@ -67,6 +67,35 @@ class TestMsgSerializer:
         assert decoded.delta_indices == [0, 1]
         assert decoded.modality_keys == ["state.arm"]
 
+    def test_decode_modality_config_n17_with_extra_fields(self):
+        """N1.7's server-side ModalityConfig has extra optional fields.
+
+        Our lightweight client-side dataclass only tracks ``delta_indices`` and
+        ``modality_keys``.  Unknown fields in the wire payload must be silently
+        dropped so clients don't break when NVIDIA adds new metadata in future
+        N1.x releases.  This was discovered live against GR00T-N1.7-3B — the
+        server sends ``sin_cos_embedding_keys``, ``mean_std_embedding_keys``,
+        and ``action_configs`` on every response.
+        """
+        wire = msgpack.packb(
+            {
+                "config": {
+                    "__ModalityConfig_class__": True,
+                    "as_json": {
+                        "delta_indices": [-20, 0],
+                        "modality_keys": ["video.ego_view"],
+                        "sin_cos_embedding_keys": None,
+                        "mean_std_embedding_keys": None,
+                        "action_configs": None,
+                    },
+                }
+            }
+        )
+        decoded = MsgSerializer.from_bytes(wire)["config"]
+        assert isinstance(decoded, ModalityConfig)
+        assert decoded.delta_indices == [-20, 0]
+        assert decoded.modality_keys == ["video.ego_view"]
+
     def test_decode_modality_config_n16_string_form(self):
         """N1.6 server sends `as_json` as a JSON string (Pydantic `model_dump_json`)."""
         import json as _json
@@ -168,12 +197,41 @@ class TestGr00tInferenceClient:
         assert client.socket is original_socket
 
     def test_get_action_calls_endpoint(self):
+        """Accept both bare dict (legacy) and (action, info) tuple (N1.6/N1.7) responses."""
+        client = Gr00tInferenceClient(host="localhost", port=9999)
+        action = {"single_arm": np.zeros((1, 16, 5), dtype=np.float32)}
+        # N1.6/N1.7 servers send (action, info).
+        client.socket.send = MagicMock()
+        client.socket.recv = MagicMock(return_value=MsgSerializer.to_bytes((action, {})))
+        result = client.get_action({"some": "obs"})
+        assert "single_arm" in result
+
+    def test_get_action_legacy_bare_dict(self):
+        """Some older / custom servers return just the action dict."""
         client = Gr00tInferenceClient(host="localhost", port=9999)
         action = {"single_arm": np.zeros((1, 16, 5), dtype=np.float32)}
         client.socket.send = MagicMock()
         client.socket.recv = MagicMock(return_value=MsgSerializer.to_bytes(action))
         result = client.get_action({"some": "obs"})
         assert "single_arm" in result
+
+    def test_get_action_wraps_observation_envelope(self):
+        """Verify that get_action wraps observations in {observation, options}.
+
+        The N1.6/N1.7 PolicyServer spreads request['data'] as kwargs into
+        ``policy.get_action(observation, options)``, so we must send the
+        envelope or the server throws
+        "got an unexpected keyword argument 'video'".
+        """
+        client = Gr00tInferenceClient(host="localhost", port=9999)
+        sent = []
+        client.socket.send = lambda data: sent.append(MsgSerializer.from_bytes(data))
+        client.socket.recv = MagicMock(return_value=MsgSerializer.to_bytes(({"joint": np.zeros(3)}, {})))
+        client.get_action({"video": {"cam": np.zeros((1, 1, 4, 4, 3), dtype=np.uint8)}})
+        data = sent[0]["data"]
+        assert set(data.keys()) == {"observation", "options"}
+        assert data["options"] is None
+        assert "video" in data["observation"]
 
     def test_call_endpoint_data_none_omits_data_key(self):
         client = Gr00tInferenceClient(host="localhost", port=9999)
