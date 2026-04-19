@@ -51,7 +51,13 @@ class MsgSerializer:
         if not isinstance(obj, dict):
             return obj
         if "__ModalityConfig_class__" in obj:
-            return ModalityConfig(**json.loads(obj["as_json"]))
+            # N1.6 serialized `as_json` as a JSON string (Pydantic `model_dump_json`).
+            # N1.7 serializes `as_json` as a plain dict (via `to_json_serializable`).
+            # Accept both so a single client can talk to either server version.
+            payload = obj["as_json"]
+            if isinstance(payload, str):
+                payload = json.loads(payload)
+            return ModalityConfig(**payload)
         if "__ndarray_class__" in obj:
             return np.load(io.BytesIO(obj["as_npy"]), allow_pickle=False)
         return obj

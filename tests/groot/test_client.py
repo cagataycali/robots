@@ -47,6 +47,43 @@ class TestMsgSerializer:
         assert decoded.delta_indices == [0, 1]
         assert decoded.modality_keys == ["state.arm"]
 
+    def test_decode_modality_config_n17_dict_form(self):
+        """N1.7 server sends `as_json` as a dict (not a JSON string).
+
+        This is the wire-format change between N1.6 and N1.7. The client must
+        accept both so a single client binary can talk to either server.
+        """
+        # Hand-craft the exact bytes an N1.7 server would emit.
+        wire = msgpack.packb(
+            {
+                "config": {
+                    "__ModalityConfig_class__": True,
+                    "as_json": {"delta_indices": [0, 1], "modality_keys": ["state.arm"]},
+                }
+            }
+        )
+        decoded = MsgSerializer.from_bytes(wire)["config"]
+        assert isinstance(decoded, ModalityConfig)
+        assert decoded.delta_indices == [0, 1]
+        assert decoded.modality_keys == ["state.arm"]
+
+    def test_decode_modality_config_n16_string_form(self):
+        """N1.6 server sends `as_json` as a JSON string (Pydantic `model_dump_json`)."""
+        import json as _json
+
+        wire = msgpack.packb(
+            {
+                "config": {
+                    "__ModalityConfig_class__": True,
+                    "as_json": _json.dumps({"delta_indices": [-20, 0], "modality_keys": ["video.ego_view"]}),
+                }
+            }
+        )
+        decoded = MsgSerializer.from_bytes(wire)["config"]
+        assert isinstance(decoded, ModalityConfig)
+        assert decoded.delta_indices == [-20, 0]
+        assert decoded.modality_keys == ["video.ego_view"]
+
     def test_roundtrip_nested_arrays(self):
         data = {
             "video": np.zeros((1, 1, 64, 64, 3), dtype=np.uint8),
