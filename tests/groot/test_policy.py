@@ -208,6 +208,83 @@ class TestVersion:
         finally:
             pm._GROOT_VERSION = orig
 
+    def test_detect_n17(self):
+        """N1.7 is detected when the ``gr00t.model.gr00t_n1d7`` subpackage exists.
+
+        N1.6 and N1.7 share ``gr00t.policy.gr00t_policy`` — so we need a
+        version-specific probe.  ``gr00t_n1d7`` was introduced in N1.7.
+        """
+        import strands_robots.policies.groot.policy as pm
+
+        orig = pm._GROOT_VERSION
+        pm._GROOT_VERSION = None
+        try:
+
+            def fake_find_spec(name: str):
+                if name == "gr00t.model.gr00t_n1d7":
+                    return MagicMock()  # N1.7 subpackage found
+                if name == "gr00t.policy.gr00t_policy":
+                    return MagicMock()  # Also present in N1.7, but N1.7 wins first
+                return None
+
+            with patch("importlib.util.find_spec", side_effect=fake_find_spec):
+                assert _detect_groot_version(force=True) == "n1.7"
+            assert pm._GROOT_VERSION == "n1.7"
+        finally:
+            pm._GROOT_VERSION = orig
+
+    def test_detect_n16_when_no_n17_subpackage(self):
+        """N1.6 is reported when ``gr00t.policy.gr00t_policy`` exists but no N1.7 subpackage."""
+        import strands_robots.policies.groot.policy as pm
+
+        orig = pm._GROOT_VERSION
+        pm._GROOT_VERSION = None
+        try:
+
+            def fake_find_spec(name: str):
+                if name == "gr00t.model.gr00t_n1d7":
+                    return None  # N1.7 subpackage absent
+                if name == "gr00t.policy.gr00t_policy":
+                    return MagicMock()  # N1.6 entry point present
+                return None
+
+            with patch("importlib.util.find_spec", side_effect=fake_find_spec):
+                assert _detect_groot_version(force=True) == "n1.6"
+            assert pm._GROOT_VERSION == "n1.6"
+        finally:
+            pm._GROOT_VERSION = orig
+
+    def test_detect_order_prefers_n17(self):
+        """When both N1.7 and N1.6 probes would succeed, N1.7 must win."""
+        import strands_robots.policies.groot.policy as pm
+
+        orig = pm._GROOT_VERSION
+        pm._GROOT_VERSION = None
+        try:
+            # All three probes return a spec—N1.7 must come first.
+            with patch("importlib.util.find_spec", return_value=MagicMock()):
+                assert _detect_groot_version(force=True) == "n1.7"
+        finally:
+            pm._GROOT_VERSION = orig
+
+    def test_detect_n15_legacy_only(self):
+        """Only ``gr00t.model.policy`` => N1.5."""
+        import strands_robots.policies.groot.policy as pm
+
+        orig = pm._GROOT_VERSION
+        pm._GROOT_VERSION = None
+        try:
+
+            def fake_find_spec(name: str):
+                if name == "gr00t.model.policy":
+                    return MagicMock()
+                return None
+
+            with patch("importlib.util.find_spec", side_effect=fake_find_spec):
+                assert _detect_groot_version(force=True) == "n1.5"
+        finally:
+            pm._GROOT_VERSION = orig
+
 
 # ---------------------------------------------------------------------------
 # ObservationMapping

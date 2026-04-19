@@ -37,11 +37,19 @@ logger = logging.getLogger(__name__)
 # Isaac-GR00T version detection
 # ---------------------------------------------------------------------------
 
-_GROOT_VERSION: str | None = None  # "n1.5", "n1.6", or None
+_GROOT_VERSION: str | None = None  # "n1.5", "n1.6", "n1.7", or None
 
 
 def _detect_groot_version(*, force: bool = False) -> str | None:
     """Auto-detect which Isaac-GR00T version (if any) is installed.
+
+    Detection order (newest first):
+      * **N1.7**: ``gr00t.model.gr00t_n1d7`` module (new VLM backbone package).
+      * **N1.6**: ``gr00t.policy.gr00t_policy`` module exists but N1.7 signal absent.
+      * **N1.5**: only ``gr00t.model.policy`` exists (legacy layout).
+
+    N1.6 and N1.7 share the same ``gr00t.policy.gr00t_policy`` entry point,
+    so we probe for the N1.7-specific ``gr00t_n1d7`` subpackage first.
 
     Args:
         force: Re-detect even if a cached value exists.
@@ -52,6 +60,16 @@ def _detect_groot_version(*, force: bool = False) -> str | None:
 
     # Reset before re-detection
     _GROOT_VERSION = None
+
+    # N1.7 first — the new Cosmos-Reason2-2B backbone lives here.
+    # Detecting by subpackage (not enum values) keeps the probe cheap.
+    try:
+        if importlib.util.find_spec("gr00t.model.gr00t_n1d7") is not None:
+            _GROOT_VERSION = "n1.7"
+            logger.info("Detected Isaac-GR00T N1.7")
+            return _GROOT_VERSION
+    except (ModuleNotFoundError, ValueError):
+        pass
 
     try:
         if importlib.util.find_spec("gr00t.policy.gr00t_policy") is not None:
@@ -377,14 +395,19 @@ class Gr00tPolicy(Policy):
         )
 
     def _get_modality_configs(self) -> dict | None:
-        """Get the model's per-embodiment modality configs."""
+        """Get the model's per-embodiment modality configs.
+
+        N1.6 and N1.7 expose ``modality_configs`` directly on ``Gr00tPolicy``
+        (or via an optional ``PolicyWrapper``/``SimPolicyWrapper``).  N1.5 uses
+        the singular ``modality_config`` attribute.
+        """
         try:
-            if self._groot_version == "n1.6":
-                # Direct N16Policy
+            if self._groot_version in ("n1.6", "n1.7"):
+                # Direct policy object
                 mmc = getattr(self._local_policy, "modality_configs", None)
                 if mmc is not None:
                     return mmc
-                # Wrapped via SimPolicyWrapper
+                # Wrapped via PolicyWrapper (N1.7) or SimPolicyWrapper (N1.6)
                 inner = getattr(self._local_policy, "policy", None)
                 if inner is not None:
                     return getattr(inner, "modality_configs", None)
@@ -452,7 +475,9 @@ class Gr00tPolicy(Policy):
     # ------------------------------------------------------------------
 
     def _load_local_policy(self, model_path: str, embodiment_tag: str, device: str):
-        if self._groot_version == "n1.6":
+        if self._groot_version == "n1.7":
+            self._load_n17(model_path, embodiment_tag, device)
+        elif self._groot_version == "n1.6":
             self._load_n16(model_path, embodiment_tag, device)
         elif self._groot_version == "n1.5":
             self._load_n15(model_path, embodiment_tag, device)
@@ -492,6 +517,26 @@ class Gr00tPolicy(Policy):
         )
         logger.info("GR00T N1.6 loaded from %s (direct)", model_path)
 
+    def _load_n17(self, model_path: str, embodiment_tag: str, device: str):
+        """Load N1.7 — identical entry point to N1.6 (same ``Gr00tPolicy`` signature).
+
+        The user-visible policy class is still ``gr00t.policy.gr00t_policy.Gr00tPolicy``;
+        internally it pulls the new Cosmos-Reason2-2B / Qwen3-VL backbone via
+        ``gr00t.model.gr00t_n1d7``. Signature is backwards-compatible with N1.6,
+        so we reuse the same kwargs.
+        """
+        from gr00t.data.embodiment_tags import EmbodimentTag
+        from gr00t.policy.gr00t_policy import Gr00tPolicy as N17Policy
+
+        tag = getattr(EmbodimentTag, embodiment_tag.upper(), EmbodimentTag.NEW_EMBODIMENT)
+        self._local_policy = N17Policy(
+            embodiment_tag=tag,
+            model_path=model_path,
+            device=device,
+            strict=self._strict,
+        )
+        logger.info("GR00T N1.7 loaded from %s (direct)", model_path)
+
     # ------------------------------------------------------------------
     # Policy interface
     # ------------------------------------------------------------------
@@ -516,7 +561,8 @@ class Gr00tPolicy(Policy):
         """Local: prepare nested obs → infer → unpack actions."""
         nested_obs = self._prepare_observation(robot_obs, instruction)
 
-        if self._groot_version == "n1.6":
+        if self._groot_version in ("n1.6", "n1.7"):
+            # Both return (action_dict, info_dict) from get_action().
             actions_raw, _ = self._local_policy.get_action(nested_obs)
         elif self._groot_version == "n1.5":
             actions_raw = self._local_policy.get_action(nested_obs)
