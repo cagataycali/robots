@@ -21,6 +21,8 @@ import serial
 import serial.tools.list_ports
 from strands import tool
 
+from strands_robots.tools._path_validation import validate_save_path
+
 logger = logging.getLogger(__name__)
 
 
@@ -49,7 +51,8 @@ class PoseManager:
 
     def __init__(self, robot_id: str, storage_dir: Path | None = None):
         self.robot_id = robot_id
-        self.storage_dir = Path(storage_dir) if storage_dir else Path.cwd() / ".strands_robots" / "poses"
+        raw_dir = str(storage_dir) if storage_dir else str(Path.cwd() / ".strands_robots" / "poses")
+        self.storage_dir = Path(validate_save_path(raw_dir, label="storage_dir"))
         self.storage_dir.mkdir(parents=True, exist_ok=True)
         self.pose_file = self.storage_dir / f"{robot_id}_poses.json"
         self.poses: dict[str, RobotPose] = {}
