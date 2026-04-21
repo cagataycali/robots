@@ -59,7 +59,7 @@ all = [
     "strands-robots[groot-service]",
     "strands-robots[lerobot]",
     "strands-robots[sim]",
-    "strands-robots[newton]",
+    # "strands-robots[newton]",  # excluded: newton-sim not yet on PyPI
 ]
 dev = [
     "pytest>=6.0,<9.0.0",
