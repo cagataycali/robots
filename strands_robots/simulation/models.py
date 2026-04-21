@@ -121,12 +121,12 @@ class SimWorld:
     _data: Any = None  # Engine-specific data handle (e.g. MjData, World)
     # Backend-specific state bag — backends store format-specific data here
     # instead of polluting this base class with implementation details.
-    # E.g. MuJoCo stores {"xml": str, "robot_base_xml": str, "tmpdir": ...}
+    # Recording state (``_recording``, ``_trajectory``, ``_dataset_recorder``)
+    # and engine-specific handles (e.g. MuJoCo ``xml``, ``robot_base_xml``,
+    # ``tmpdir``) all go in this dict rather than being declared as separate
+    # fields on the base class.
     _backend_state: dict[str, Any] = field(default_factory=dict)
-    # Trajectory recording
-    _recording: bool = False
-    _trajectory: list[TrajectoryStep] = field(default_factory=list)
-    # LeRobotDataset recorder
-    _dataset_recorder: Any = None
-    # Physics state checkpoints (used by save_state/restore_state)
+    # Physics state checkpoints (used by save_state/restore_state in PR #85).
+    # Kept as a top-level field — requested by @yinsong1986 during review to
+    # avoid monkey-patching when ``reset()`` creates a fresh ``SimWorld``.
     _checkpoints: dict[str, Any] = field(default_factory=dict)

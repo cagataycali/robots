@@ -119,3 +119,58 @@ def resolve_asset_path(relative_or_absolute: str | Path | None, default_name: st
     if expanded.is_absolute():
         return expanded
     return assets / expanded
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Path safety — prevent traversal via untrusted components
+# ─────────────────────────────────────────────────────────────────────
+
+
+def safe_join(base: Path, untrusted: str) -> Path:
+    """Join *base* with an untrusted relative path, rejecting traversal.
+
+    Used to protect against ``../`` escapes in registry-sourced or
+    user-supplied path components before they reach the filesystem.
+
+    Args:
+        base: Trusted base directory.
+        untrusted: Relative path component (may contain ``/`` but must not
+            escape *base*).
+
+    Returns:
+        Normalised absolute Path under *base*.
+
+    Raises:
+        ValueError: If the resulting path would escape *base*.
+
+    Example::
+
+        safe_join(Path("/assets"), "robot/model.xml")   # OK
+        safe_join(Path("/assets"), "../etc/passwd")     # ValueError
+    """
+    joined = Path(os.path.normpath(base / untrusted))
+    base_norm = Path(os.path.normpath(base))
+    if not (joined == base_norm or str(joined).startswith(str(base_norm) + os.sep)):
+        raise ValueError(f"Path traversal blocked: {untrusted!r} escapes {base}")
+    return joined
+
+
+def get_search_paths() -> list[Path]:
+    """Get ordered list of asset search paths.
+
+    Used by both :mod:`strands_robots.assets.manager` and
+    :mod:`strands_robots.assets.download` — centralised here to avoid
+    a circular dependency between those two modules.
+
+    Order (local assets take priority over defaults):
+        1. User asset dir (``STRANDS_ASSETS_DIR`` or ``~/.strands_robots/assets/``)
+        2. ``CWD/assets`` (project-local)
+    """
+    paths: list[Path] = []
+    user_cache = get_assets_dir()
+    if user_cache not in paths:
+        paths.append(user_cache)
+    cwd_assets = Path.cwd() / "assets"
+    if cwd_assets not in paths:
+        paths.append(cwd_assets)
+    return paths

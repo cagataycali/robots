@@ -30,7 +30,7 @@ from typing import Any
 from ..registry import get_robot
 from ..registry import list_robots as registry_list_robots
 from ..registry import resolve_name as resolve_robot_name
-from .manager import get_search_paths
+from ..utils import get_assets_dir, get_search_paths, safe_join
 
 logger = logging.getLogger(__name__)
 
@@ -66,8 +66,14 @@ def _resolve_robot_descriptions_module(name: str, info: dict) -> str | None:
     Returns:
         Module name (e.g. ``panda_mj_description``) or ``None``.
     """
+    asset = info.get("asset", {})
+
+    # Explicit opt-out: robot declares it has no robot_descriptions module
+    if asset.get("auto_download") is False:
+        return None
+
     # Primary: explicit registry entry (preferred, O(1))
-    module_name: str | None = info.get("asset", {}).get("robot_descriptions_module")
+    module_name: str | None = asset.get("robot_descriptions_module")
     if module_name:
         return str(module_name)
 
@@ -99,21 +105,8 @@ def _resolve_robot_descriptions_module(name: str, info: dict) -> str | None:
 # ── Helpers ───────────────────────────────────────────────────────────
 
 
-def get_user_assets_dir() -> Path:
-    """Get user-level asset cache directory."""
-    custom = os.getenv("STRANDS_ASSETS_DIR")
-    directory = Path(custom) if custom else Path.home() / ".strands_robots" / "assets"
-    directory.mkdir(parents=True, exist_ok=True)
-    return directory
-
-
-def _safe_join(base: Path, untrusted: str) -> Path:
-    """Join *base* with an untrusted relative path, rejecting traversal."""
-    joined = Path(os.path.normpath(base / untrusted))
-    base_norm = Path(os.path.normpath(base))
-    if not (joined == base_norm or str(joined).startswith(str(base_norm) + os.sep)):
-        raise ValueError(f"Path traversal blocked: {untrusted!r} escapes {base}")
-    return joined
+#: Alias for backward compatibility — use :func:`strands_robots.utils.get_assets_dir`.
+get_user_assets_dir = get_assets_dir
 
 
 def _needs_download(name: str, info: dict[str, Any] | None, force: bool = False) -> bool:
@@ -221,7 +214,7 @@ def _download_via_robot_descriptions(robots: dict[str, dict], dest_dir: Path) ->
                 results[name] = f"failed: PACKAGE_PATH missing: {package_path}"
                 continue
 
-            dst = _safe_join(dest_dir, asset_dir)
+            dst = safe_join(dest_dir, asset_dir)
             if dst.is_symlink() and dst.resolve() == package_path.resolve():
                 # Validate existing symlink still has the expected XML
                 expected_xml = dst / info["asset"]["model_xml"]
@@ -283,12 +276,12 @@ def _download_via_git(robots: dict[str, dict], dest_dir: Path) -> dict[str, str]
 
         for name, info in robots.items():
             asset_dir = info["asset"]["dir"]
-            src = _safe_join(Path(clone_dir), asset_dir)
+            src = safe_join(Path(clone_dir), asset_dir)
             if not src.exists():
                 results[name] = f"failed: {asset_dir} not in menagerie"
                 continue
             try:
-                _copy_and_clean(src, _safe_join(dest_dir, asset_dir))
+                _copy_and_clean(src, safe_join(dest_dir, asset_dir))
                 results[name] = "downloaded"
             except Exception as exc:
                 results[name] = f"failed: {exc}"
@@ -319,7 +312,7 @@ def _download_from_github(name: str, info: dict, dest_dir: Path) -> str:
         if not src.exists():
             return f"failed: subdir '{subdir}' not found in {repo}"
 
-        dst = _safe_join(dest_dir, asset_dir)
+        dst = safe_join(dest_dir, asset_dir)
         try:
             _copy_and_clean(src, dst)
             return "downloaded"
@@ -328,6 +321,41 @@ def _download_from_github(name: str, info: dict, dest_dir: Path) -> str:
 
 
 # ── Orchestrator ──────────────────────────────────────────────────────
+
+
+def auto_download_robot(name: str, info: dict[str, Any]) -> bool:
+    """Auto-download a single robot's assets.
+
+    Called by :func:`strands_robots.assets.manager.resolve_model_path` when
+    XML is present but meshes are missing.  Tries ``robot_descriptions``
+    first, then custom GitHub source if specified in the registry entry.
+
+    Args:
+        name: Robot name (canonical or alias).
+        info: Registry entry for the robot.
+
+    Returns:
+        ``True`` if a download attempt succeeded, ``False`` otherwise.
+    """
+    dest_dir = get_assets_dir()
+    canonical = resolve_robot_name(name)
+
+    # Try robot_descriptions first (covers most Menagerie robots)
+    if _robot_descriptions_available():
+        results = _download_via_robot_descriptions({canonical: info}, dest_dir)
+        if results.get(canonical, "").startswith("downloaded"):
+            logger.info("Auto-downloaded %s via robot_descriptions", canonical)
+            return True
+
+    # Fall back to custom GitHub source
+    source = info.get("asset", {}).get("source", {})
+    if source.get("type") == "github":
+        result = _download_from_github(canonical, info, dest_dir)
+        if result.startswith("downloaded"):
+            logger.info("Auto-downloaded %s from GitHub", canonical)
+            return True
+
+    return False
 
 
 def download_robots(

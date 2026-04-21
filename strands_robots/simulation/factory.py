@@ -101,10 +101,23 @@ def register_backend(
         sim = create_simulation("bullet")
     """
     if not force:
+        # Check name against ALL existing identifiers (backends + aliases)
         if name in _runtime_registry or name in _BUILTIN_BACKENDS:
             raise ValueError(f"Backend {name!r} already registered. Use force=True to overwrite.")
+        if name in _BUILTIN_ALIASES:
+            raise ValueError(
+                f"Name {name!r} conflicts with built-in alias (resolves to {_BUILTIN_ALIASES[name]!r}). Use force=True to overwrite."
+            )
+        if name in _runtime_aliases:
+            raise ValueError(
+                f"Name {name!r} conflicts with runtime alias (resolves to {_runtime_aliases[name]!r}). Use force=True to overwrite."
+            )
         if aliases:
             for alias in aliases:
+                if alias in _BUILTIN_BACKENDS or alias in _runtime_registry:
+                    raise ValueError(
+                        f"Alias {alias!r} conflicts with existing backend name. Use force=True to overwrite."
+                    )
                 if alias in _BUILTIN_ALIASES:
                     raise ValueError(f"Alias {alias!r} conflicts with built-in alias. Use force=True to overwrite.")
                 if alias in _runtime_aliases:

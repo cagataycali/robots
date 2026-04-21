@@ -4,6 +4,8 @@ These tests verify the lightweight simulation abstractions without
 requiring MuJoCo or any heavy dependencies.
 """
 
+from typing import Any
+
 import pytest
 
 from strands_robots.simulation.base import SimEngine
@@ -19,6 +21,62 @@ from strands_robots.simulation.models import (
     SimWorld,
     TrajectoryStep,
 )
+
+# ── Shared fixtures ──────────────────────────────────────────────
+
+
+def _make_dummy_engine_class() -> type[SimEngine]:
+    """Create a minimal concrete SimEngine subclass.
+
+    All 12 required abstract methods return empty dicts / None.
+    Factored out to avoid ~150 lines of repetition across tests.
+    """
+
+    class Dummy(SimEngine):
+        def create_world(self, **kw: Any) -> dict[str, Any]:
+            return {}
+
+        def destroy(self) -> dict[str, Any]:
+            return {}
+
+        def reset(self) -> dict[str, Any]:
+            return {}
+
+        def step(self, n_steps: int = 1) -> dict[str, Any]:
+            return {}
+
+        def get_state(self) -> dict[str, Any]:
+            return {}
+
+        def add_robot(self, name: str, **kw: Any) -> dict[str, Any]:
+            return {}
+
+        def remove_robot(self, name: str) -> dict[str, Any]:
+            return {}
+
+        def add_object(self, name: str, **kw: Any) -> dict[str, Any]:
+            return {}
+
+        def remove_object(self, name: str) -> dict[str, Any]:
+            return {}
+
+        def get_observation(self, **kw: Any) -> dict[str, Any]:
+            return {}
+
+        def send_action(self, action: dict[str, Any], **kw: Any) -> None:
+            return None
+
+        def render(self, **kw: Any) -> dict[str, Any]:
+            return {}
+
+    return Dummy
+
+
+@pytest.fixture
+def dummy_engine_class() -> type[SimEngine]:
+    """Fixture providing a minimal concrete SimEngine subclass."""
+    return _make_dummy_engine_class()
+
 
 # ── ABC Tests ────────────────────────────────────────────────────
 
@@ -48,47 +106,9 @@ class TestSimEngine:
         }
         assert expected == abstract_methods
 
-    def test_optional_methods_raise_not_implemented(self):
+    def test_optional_methods_raise_not_implemented(self, dummy_engine_class):
         """Optional methods on a concrete subclass raise NotImplementedError."""
-
-        class Dummy(SimEngine):
-            def create_world(self, **kw):
-                return {}
-
-            def destroy(self):
-                return {}
-
-            def reset(self):
-                return {}
-
-            def step(self, n_steps=1):
-                return {}
-
-            def get_state(self):
-                return {}
-
-            def add_robot(self, name, **kw):
-                return {}
-
-            def remove_robot(self, name):
-                return {}
-
-            def add_object(self, name, **kw):
-                return {}
-
-            def remove_object(self, name):
-                return {}
-
-            def get_observation(self, **kw):
-                return {}
-
-            def send_action(self, action, **kw):
-                return None
-
-            def render(self, **kw):
-                return {}
-
-        d = Dummy()
+        d = dummy_engine_class()
         with pytest.raises(NotImplementedError):
             d.load_scene("x")
         with pytest.raises(NotImplementedError):
@@ -98,54 +118,17 @@ class TestSimEngine:
         with pytest.raises(NotImplementedError):
             d.get_contacts()
 
-    def test_context_manager_calls_cleanup(self):
+    def test_context_manager_calls_cleanup(self, dummy_engine_class):
         """ABC supports context manager protocol and calls cleanup on exit."""
+        cleaned = {"flag": False}
 
-        class Dummy(SimEngine):
-            cleaned = False
+        class Cleanable(dummy_engine_class):  # type: ignore[misc,valid-type]
+            def cleanup(self) -> None:
+                cleaned["flag"] = True
 
-            def create_world(self, **kw):
-                return {}
-
-            def destroy(self):
-                return {}
-
-            def reset(self):
-                return {}
-
-            def step(self, n_steps=1):
-                return {}
-
-            def get_state(self):
-                return {}
-
-            def add_robot(self, name, **kw):
-                return {}
-
-            def remove_robot(self, name):
-                return {}
-
-            def add_object(self, name, **kw):
-                return {}
-
-            def remove_object(self, name):
-                return {}
-
-            def get_observation(self, **kw):
-                return {}
-
-            def send_action(self, action, **kw):
-                return None
-
-            def render(self, **kw):
-                return {}
-
-            def cleanup(self):
-                Dummy.cleaned = True
-
-        with Dummy() as _d:
+        with Cleanable():
             pass
-        assert Dummy.cleaned is True
+        assert cleaned["flag"] is True
 
 
 # ── Factory Tests ────────────────────────────────────────────────
@@ -158,137 +141,59 @@ class TestSimulationFactory:
         backends = list_backends()
         assert "mujoco" in backends
 
-    def test_register_create_and_use_backend(self):
+    def test_register_create_and_use_backend(self, dummy_engine_class):
         """Register a custom backend, create it via factory, verify instance."""
-
-        class FakeBackend(SimEngine):
-            def create_world(self, **kw):
-                return {}
-
-            def destroy(self):
-                return {}
-
-            def reset(self):
-                return {}
-
-            def step(self, n_steps=1):
-                return {}
-
-            def get_state(self):
-                return {}
-
-            def add_robot(self, name, **kw):
-                return {}
-
-            def remove_robot(self, name):
-                return {}
-
-            def add_object(self, name, **kw):
-                return {}
-
-            def remove_object(self, name):
-                return {}
-
-            def get_observation(self, **kw):
-                return {}
-
-            def send_action(self, action, **kw):
-                return None
-
-            def render(self, **kw):
-                return {}
-
-        register_backend("fake_test", lambda: FakeBackend, force=True)
+        register_backend("fake_test", lambda: dummy_engine_class, force=True)
         assert "fake_test" in list_backends()
         sim = create_simulation("fake_test")
-        assert isinstance(sim, FakeBackend)
+        assert isinstance(sim, dummy_engine_class)
 
-    def test_register_rejects_duplicate(self):
+    def test_register_rejects_duplicate(self, dummy_engine_class):
         """Registering an existing name without force raises ValueError."""
-
-        class Dummy(SimEngine):
-            def create_world(self, **kw):
-                return {}
-
-            def destroy(self):
-                return {}
-
-            def reset(self):
-                return {}
-
-            def step(self, n_steps=1):
-                return {}
-
-            def get_state(self):
-                return {}
-
-            def add_robot(self, name, **kw):
-                return {}
-
-            def remove_robot(self, name):
-                return {}
-
-            def add_object(self, name, **kw):
-                return {}
-
-            def remove_object(self, name):
-                return {}
-
-            def get_observation(self, **kw):
-                return {}
-
-            def send_action(self, action, **kw):
-                return None
-
-            def render(self, **kw):
-                return {}
-
-        register_backend("dup_test", lambda: Dummy, force=True)
+        register_backend("dup_test", lambda: dummy_engine_class, force=True)
         with pytest.raises(ValueError, match="already registered"):
-            register_backend("dup_test", lambda: Dummy)
+            register_backend("dup_test", lambda: dummy_engine_class)
 
-    def test_register_rejects_builtin_alias(self):
-        """Cannot hijack built-in aliases like 'mj'."""
-
-        class Dummy(SimEngine):
-            def create_world(self, **kw):
-                return {}
-
-            def destroy(self):
-                return {}
-
-            def reset(self):
-                return {}
-
-            def step(self, n_steps=1):
-                return {}
-
-            def get_state(self):
-                return {}
-
-            def add_robot(self, name, **kw):
-                return {}
-
-            def remove_robot(self, name):
-                return {}
-
-            def add_object(self, name, **kw):
-                return {}
-
-            def remove_object(self, name):
-                return {}
-
-            def get_observation(self, **kw):
-                return {}
-
-            def send_action(self, action, **kw):
-                return None
-
-            def render(self, **kw):
-                return {}
-
+    def test_register_rejects_builtin_alias_in_aliases(self, dummy_engine_class):
+        """Cannot use a built-in alias as a new backend's alias."""
         with pytest.raises(ValueError, match="conflicts with built-in"):
-            register_backend("custom_phys", lambda: Dummy, aliases=["mj"])
+            register_backend("custom_phys", lambda: dummy_engine_class, aliases=["mj"])
+
+    # ── Regression tests for alias-shadowing bug (PR #84 review) ──
+
+    def test_register_rejects_builtin_alias_as_name(self, dummy_engine_class):
+        """Cannot register a new backend under a built-in alias name.
+
+        Regression test for the bug where ``register_backend("mj", loader)``
+        succeeded without ``force=True`` because the conflict check only
+        looked at ``_BUILTIN_BACKENDS`` and ``_runtime_registry``, missing
+        ``_BUILTIN_ALIASES``.
+        """
+        for builtin_alias in ("mj", "mjc", "mjx"):
+            with pytest.raises(ValueError, match="conflicts with built-in alias"):
+                register_backend(builtin_alias, lambda: dummy_engine_class)
+
+    def test_register_rejects_runtime_alias_as_name(self, dummy_engine_class):
+        """Cannot register a new backend under a runtime-registered alias name."""
+        register_backend("backend_a", lambda: dummy_engine_class, aliases=["short_a"], force=True)
+        with pytest.raises(ValueError, match="conflicts with runtime alias"):
+            register_backend("short_a", lambda: dummy_engine_class)
+
+    def test_register_rejects_backend_name_as_alias(self, dummy_engine_class):
+        """Cannot use an existing backend name as a new backend's alias."""
+        with pytest.raises(ValueError, match="conflicts with existing backend name"):
+            register_backend("new_x", lambda: dummy_engine_class, aliases=["mujoco"])
+
+    def test_register_force_overrides_alias_conflict(self, dummy_engine_class):
+        """force=True bypasses all conflict checks (escape hatch)."""
+        # Should NOT raise
+        register_backend("mj", lambda: dummy_engine_class, force=True)
+        # Clean up — put the real mj alias back by re-importing
+        import importlib
+
+        from strands_robots.simulation import factory
+
+        importlib.reload(factory)
 
 
 # ── Model Registry Tests ─────────────────────────────────────────

@@ -8,9 +8,7 @@ Implementation lives in ``assets/manager.py`` — this file is thin exports only
 """
 
 from strands_robots.assets.manager import (
-    get_assets_dir,
     get_robot_info,
-    get_search_paths,
     list_available_robots,
     resolve_model_dir,
     resolve_model_path,
@@ -25,6 +23,7 @@ from strands_robots.registry import (
 from strands_robots.registry import (
     resolve_name as resolve_robot_name,
 )
+from strands_robots.utils import get_assets_dir, get_search_paths
 
 __all__ = [
     "resolve_model_path",

@@ -8,7 +8,6 @@ Resolves robot model files (MJCF XML) from:
 """
 
 import logging
-import os
 from pathlib import Path
 
 from strands_robots.registry import (
@@ -18,59 +17,9 @@ from strands_robots.registry import (
 from strands_robots.registry import (
     resolve_name as resolve_robot_name,
 )
-from strands_robots.utils import get_assets_dir
+from strands_robots.utils import get_search_paths, safe_join
 
 logger = logging.getLogger(__name__)
-
-
-# ─────────────────────────────────────────────────────────────────────
-# Path safety
-# ─────────────────────────────────────────────────────────────────────
-
-
-def _safe_join(base: Path, untrusted: str) -> Path:
-    """Join *base* with an untrusted relative path, rejecting traversal.
-
-    Raises:
-        ValueError: If the resulting path escapes *base*.
-    """
-    joined = Path(os.path.normpath(base / untrusted))
-    base_norm = Path(os.path.normpath(base))
-    if not (joined == base_norm or str(joined).startswith(str(base_norm) + os.sep)):
-        raise ValueError(f"Path traversal blocked: {untrusted!r} escapes {base}")
-    return joined
-
-
-# ─────────────────────────────────────────────────────────────────────
-# Asset directory resolution
-# ─────────────────────────────────────────────────────────────────────
-
-
-def get_search_paths() -> list[Path]:
-    """Get ordered list of asset search paths.
-
-    Order (local assets take priority over defaults):
-        1. User asset dir (``STRANDS_ASSETS_DIR`` or ``~/.strands_robots/assets/``)
-        2. CWD/assets (project-local)
-
-    Note:
-        ``STRANDS_ASSETS_DIR`` handling is centralised in
-        :func:`strands_robots.utils.get_assets_dir` — no need to read
-        the env var again here.
-    """
-    paths: list[Path] = []
-
-    # User asset dir (respects STRANDS_ASSETS_DIR if set)
-    user_cache = get_assets_dir()
-    if user_cache not in paths:
-        paths.append(user_cache)
-
-    # CWD/assets (project-local)
-    cwd_assets = Path.cwd() / "assets"
-    if cwd_assets not in paths:
-        paths.append(cwd_assets)
-
-    return paths
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -79,43 +28,18 @@ def get_search_paths() -> list[Path]:
 
 
 def _auto_download_robot(name: str, info: dict) -> bool:
-    """Auto-download a single robot's assets via robot_descriptions.
+    """Delegate to :func:`strands_robots.assets.download.auto_download_robot`.
 
-    Called lazily when resolve_model_path finds XML but no meshes.
-    Returns True if download succeeded.
+    Lazy import at call time is retained only to keep ``manager.py`` importable
+    in environments where the optional ``robot_descriptions`` package (and its
+    transitive heavyweight deps) are not installed.
     """
     try:
-        # Lazy import: avoids circular import (manager ↔ download) at module level.
-        # download.py depends on optional robot_descriptions package.
-        from .download import (
-            _download_from_github,
-            _download_via_robot_descriptions,
-            _robot_descriptions_available,
-            get_user_assets_dir,
-        )
+        from .download import auto_download_robot
     except ImportError:
-        logger.warning("Auto-download unavailable: install robot_descriptions for automatic asset downloads")
+        logger.warning("Auto-download unavailable: install strands-robots[sim] for automatic asset downloads")
         return False
-
-    dest_dir = get_user_assets_dir()
-    canonical = resolve_robot_name(name)
-
-    # Try robot_descriptions first (covers most robots)
-    if _robot_descriptions_available():
-        results = _download_via_robot_descriptions({canonical: info}, dest_dir)
-        if results.get(canonical, "").startswith("downloaded"):
-            logger.info("Auto-downloaded %s via robot_descriptions", canonical)
-            return True
-
-    # Try custom GitHub source
-    source = info.get("asset", {}).get("source", {})
-    if source.get("type") == "github":
-        result = _download_from_github(canonical, info, dest_dir)
-        if result.startswith("downloaded"):
-            logger.info("Auto-downloaded %s from GitHub", canonical)
-            return True
-
-    return False
+    return auto_download_robot(name, info)
 
 
 def _has_meshes(directory: Path) -> bool:
@@ -133,7 +57,7 @@ def _resolve_candidates(asset_dir_name: str, xml_file: str, name: str) -> list[P
     candidates: list[Path] = []
     for search_dir in get_search_paths():
         try:
-            model_path = _safe_join(search_dir, f"{asset_dir_name}/{xml_file}")
+            model_path = safe_join(search_dir, f"{asset_dir_name}/{xml_file}")
         except ValueError:
             logger.warning("Path traversal attempt blocked for robot: %s", name)
             return []
@@ -237,7 +161,7 @@ def resolve_model_dir(name: str) -> Path | None:
     asset_dir: str = str(info["asset"]["dir"])
     for search_dir in get_search_paths():
         try:
-            dir_path = _safe_join(search_dir, asset_dir)
+            dir_path = safe_join(search_dir, asset_dir)
         except ValueError:
             logger.warning("Path traversal attempt blocked in resolve_model_dir: %s", asset_dir)
             return None

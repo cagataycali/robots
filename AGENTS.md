@@ -84,3 +84,19 @@ hatch run format            # ruff check --fix, ruff format
 4. Open PR from your fork, address all review comments
 5. Track follow-up items as issues on the [project board](https://github.com/orgs/strands-labs/projects/2)
 6. Squash merge into `main`
+
+
+## Registry conventions (strands_robots/registry/robots.json)
+
+- **Flat asset paths** (e.g. `"model_xml": "scene.xml"`) are the common case.
+- **Nested asset paths** (e.g. `"model_xml": "xmls/asimov.xml"`) are allowed when
+  the upstream source repo uses a subdir layout. Example: `asimov_v0` maps to
+  `asimovinc/asimov-v0` which has `sim-model/xmls/asimov.xml` +
+  `sim-model/assets/`. The `_safe_join` helper in `strands_robots/utils.py`
+  guards against traversal (`..`).
+- **Auto-download strategy** — every robot with an `asset` block must declare
+  exactly one of:
+    1. `asset.robot_descriptions_module` (preferred)
+    2. `asset.source` with `type: "github"`
+    3. `asset.auto_download: false` (explicit opt-out)
+  Enforced by `tests/test_registry_integrity.py`.
