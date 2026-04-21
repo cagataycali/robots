@@ -15,7 +15,7 @@ authors = [
 keywords = [
     "robots", "agents", "strands", "sdk",
     "mujoco", "simulation", "lerobot", "reinforcement-learning",
-    "gr00t", "isaac-sim", "vla",
+    "gr00t", "isaac-sim", "vla", "newton", "warp",
     "robot-learning", "imitation-learning",
     "teleoperation", "manipulation", "strands-agents",
 ]
@@ -51,10 +51,15 @@ lerobot = [
 sim = [
     "robot_descriptions>=1.11.0,<2.0.0",
 ]
+newton = [
+    "warp-lang>=1.1.0,<2.0.0",
+    "newton-sim>=0.4.0,<1.0.0",
+]
 all = [
     "strands-robots[groot-service]",
     "strands-robots[lerobot]",
     "strands-robots[sim]",
+    "strands-robots[newton]",
 ]
 dev = [
     "pytest>=6.0,<9.0.0",
@@ -128,7 +133,7 @@ ignore_missing_imports = false
 
 # Third-party libs without type stubs
 [[tool.mypy.overrides]]
-module = ["lerobot.*", "gr00t.*", "draccus.*", "msgpack.*", "zmq.*", "huggingface_hub.*", "serial.*", "psutil.*", "torch.*", "torchvision.*", "transformers.*", "einops.*", "robot_descriptions.*"]
+module = ["lerobot.*", "gr00t.*", "draccus.*", "msgpack.*", "zmq.*", "huggingface_hub.*", "serial.*", "psutil.*", "torch.*", "torchvision.*", "transformers.*", "einops.*", "robot_descriptions.*", "warp.*", "newton.*"]
 ignore_missing_imports = true
 
 # @tool decorator injects runtime signatures mypy cannot check
