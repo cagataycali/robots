@@ -43,15 +43,20 @@ _BUILTIN_BACKENDS: dict[str, tuple[str, str]] = {
         "strands_robots.simulation.mujoco.simulation",
         "Simulation",
     ),
+    "newton": (
+        "strands_robots.simulation.newton.simulation",
+        "NewtonSimulation",
+    ),
     # Future:
     # "isaac": ("strands_robots.simulation.isaac.simulation", "IsaacSimulation"),
-    # "newton": ("strands_robots.simulation.newton.simulation", "NewtonSimulation"),
 }
 
 _BUILTIN_ALIASES: dict[str, str] = {
     "mj": "mujoco",
     "mjc": "mujoco",
     "mjx": "mujoco",
+    "warp": "newton",
+    "nt": "newton",
     # "isaac_sim": "isaac",
     # "isaacsim": "isaac",
     # "nvidia": "isaac",
