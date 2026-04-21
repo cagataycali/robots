@@ -48,9 +48,13 @@ groot-service = [
 lerobot = [
     "lerobot>=0.5.0,<0.6.0",
 ]
+mesh = [
+    "eclipse-zenoh>=0.11.0,<0.12.0",
+]
 all = [
     "strands-robots[groot-service]",
     "strands-robots[lerobot]",
+    "strands-robots[mesh]",
 ]
 dev = [
     "pytest>=6.0,<9.0.0",
@@ -150,6 +154,11 @@ warn_return_any = false
 [[tool.mypy.overrides]]
 module = ["strands_robots.__init__"]
 disallow_untyped_defs = false
+
+# Mesh session — zenoh types are Any to avoid import-time dependency
+[[tool.mypy.overrides]]
+module = ["strands_robots.mesh_session"]
+warn_return_any = false
 
 # Registry modules — dynamic JSON loading returns Any
 [[tool.mypy.overrides]]
