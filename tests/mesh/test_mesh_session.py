@@ -5,10 +5,10 @@ All tests mock zenoh so no network or real zenoh install is required.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 import json
 import threading
 import time
+from collections.abc import Iterator
 from unittest.mock import MagicMock, patch
 
 import pytest
