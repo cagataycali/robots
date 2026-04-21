@@ -13,9 +13,8 @@ Usage::
     # Explicit backend
     sim = create_simulation("mujoco", timestep=0.001)
 
-    # Future backends
-    sim = create_simulation("isaac", gpu_id=0)
-    sim = create_simulation("newton")
+    # GPU-native Newton backend
+    sim = create_simulation("newton", num_envs=4096, solver="mujoco")
 
     # Custom backend (runtime-registered)
     from strands_robots.simulation.factory import register_backend
@@ -43,15 +42,19 @@ _BUILTIN_BACKENDS: dict[str, tuple[str, str]] = {
         "strands_robots.simulation.mujoco.simulation",
         "Simulation",
     ),
+    "newton": (
+        "strands_robots.simulation.newton.simulation",
+        "NewtonSimulation",
+    ),
     # Future:
     # "isaac": ("strands_robots.simulation.isaac.simulation", "IsaacSimulation"),
-    # "newton": ("strands_robots.simulation.newton.simulation", "NewtonSimulation"),
 }
 
 _BUILTIN_ALIASES: dict[str, str] = {
     "mj": "mujoco",
     "mjc": "mujoco",
     "mjx": "mujoco",
+    "warp": "newton",
     # "isaac_sim": "isaac",
     # "isaacsim": "isaac",
     # "nvidia": "isaac",
@@ -126,7 +129,7 @@ def list_backends() -> list[str]:
     Example::
 
         >>> list_backends()
-        ['mj', 'mjc', 'mjx', 'mujoco']
+        ['mj', 'mjc', 'mjx', 'mujoco', 'newton', 'warp']
     """
     names: set[str] = set()
     names.update(_BUILTIN_BACKENDS.keys())
@@ -177,9 +180,10 @@ def create_simulation(
 
     Args:
         backend: Backend name or alias. Defaults to ``"mujoco"``.
-            Built-in: ``"mujoco"`` (aliases: ``"mj"``, ``"mjc"``, ``"mjx"``).
+            Built-in: ``"mujoco"`` (aliases: ``"mj"``, ``"mjc"``, ``"mjx"``),
+            ``"newton"`` (alias: ``"warp"``).
         **kwargs: Backend-specific keyword arguments passed to the
-            constructor (e.g., ``tool_name``, ``timestep``).
+            constructor (e.g., ``num_envs``, ``solver``).
 
     Returns:
         A ``SimEngine`` instance ready for ``create_world()``.
@@ -196,8 +200,11 @@ def create_simulation(
         sim.create_world()
         sim.add_robot("so100")
 
+        # Newton GPU backend
+        sim = create_simulation("newton", num_envs=4096)
+
         # With alias
-        sim = create_simulation("mj")
+        sim = create_simulation("warp")
 
         # Pass kwargs to backend constructor
         sim = create_simulation("mujoco", tool_name="my_sim")
