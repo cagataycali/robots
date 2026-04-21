@@ -60,10 +60,14 @@ sim-mujoco = [
 benchmark-libero = [
     "libero>=0.1.0,<1.0.0",
 ]
+mesh = [
+    "eclipse-zenoh>=1.0.0,<2.0.0",
+]
 all = [
     "strands-robots[groot-service]",
     "strands-robots[lerobot]",
     "strands-robots[sim-mujoco]",
+    "strands-robots[mesh]",
 ]
 dev = [
     "pytest>=6.0,<9.0.0",
@@ -138,7 +142,7 @@ ignore_missing_imports = false
 
 # Third-party libs without type stubs
 [[tool.mypy.overrides]]
-module = ["lerobot.*", "gr00t.*", "draccus.*", "msgpack.*", "zmq.*", "huggingface_hub.*", "serial.*", "psutil.*", "torch.*", "torchvision.*", "transformers.*", "einops.*", "robot_descriptions.*", "mujoco.*", "imageio.*", "libero.*"]
+module = ["lerobot.*", "gr00t.*", "draccus.*", "msgpack.*", "zmq.*", "huggingface_hub.*", "serial.*", "psutil.*", "torch.*", "torchvision.*", "transformers.*", "einops.*", "robot_descriptions.*", "mujoco.*", "imageio.*", "libero.*", "zenoh.*"]
 ignore_missing_imports = true
 
 # @tool decorator injects runtime signatures mypy cannot check
