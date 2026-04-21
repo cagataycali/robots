@@ -164,6 +164,30 @@ class TestDataConfigMap:
             assert f"state.{part}" in config.state_keys, f"Missing state.{part}"
             assert f"action.{part}" in config.action_keys, f"Missing action.{part}"
 
+    def test_unitree_g1_real_n17_schema(self):
+        """REAL_G1 embodiment (N1.7) — verified live from nvidia/GR00T-N1.7-3B.
+
+        Captures the observation indices [-20, 0] (T=2 video context) and
+        40-step action horizon that are unique to REAL_G1.
+        """
+        config = DATA_CONFIG_MAP["unitree_g1_real"]
+        assert "video.ego_view" in config.video_keys
+        # rot6d end-effector states are the N1.7 signature
+        assert "state.left_wrist_eef_9d" in config.state_keys
+        assert "state.right_wrist_eef_9d" in config.state_keys
+        # locomotion-first action space — navigate_command is new in N1.7
+        assert "action.navigate_command" in config.action_keys
+        assert "action.base_height_command" in config.action_keys
+        # T=2 video (20 frames ago + current) and 40-step horizon
+        assert config.observation_indices == [-20, 0]
+        assert config.action_indices == list(range(40))
+
+    def test_unitree_g1_real_alias(self):
+        """The REAL_G1 embodiment tag value resolves to unitree_g1_real."""
+        alias = DATA_CONFIG_MAP["real_g1_relative_eef_relative_joints"]
+        canonical = DATA_CONFIG_MAP["unitree_g1_real"]
+        assert alias is canonical
+
     def test_fourier_gr1_arms_waist_extends_arms_only(self):
         parent = DATA_CONFIG_MAP["fourier_gr1_arms_only"]
         child = DATA_CONFIG_MAP["fourier_gr1_arms_waist"]

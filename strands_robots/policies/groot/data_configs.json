@@ -891,9 +891,88 @@
         14,
         15
       ]
+    },
+    "unitree_g1_real": {
+      "video_keys": [
+        "video.ego_view"
+      ],
+      "state_keys": [
+        "state.left_wrist_eef_9d",
+        "state.right_wrist_eef_9d",
+        "state.left_hand",
+        "state.right_hand",
+        "state.left_arm",
+        "state.right_arm",
+        "state.waist"
+      ],
+      "action_keys": [
+        "action.navigate_command",
+        "action.base_height_command",
+        "action.left_wrist_eef_9d",
+        "action.right_wrist_eef_9d",
+        "action.left_hand",
+        "action.right_hand",
+        "action.left_arm",
+        "action.right_arm",
+        "action.waist"
+      ],
+      "language_keys": [
+        "annotation.human.task_description"
+      ],
+      "observation_indices": [
+        -20,
+        0
+      ],
+      "action_indices": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39
+      ]
+    },
+    "oxe_droid_relative_eef_relative_joint": {
+      "_extends": "oxe_droid"
     }
   },
   "aliases": {
-    "agibot_dual_arm": "agibot_dual_arm_gripper"
+    "agibot_dual_arm": "agibot_dual_arm_gripper",
+    "real_g1_relative_eef_relative_joints": "unitree_g1_real",
+    "oxe_droid_rel": "oxe_droid_relative_eef_relative_joint"
   }
 }

@@ -21,7 +21,7 @@ strands_robots/
 │   ├── base.py            # Abstract Policy base class
 │   ├── factory.py         # create_policy() factory + registry
 │   ├── mock.py            # MockPolicy for testing
-│   ├── groot/             # NVIDIA GR00T N1.5/N1.6 inference
+│   ├── groot/             # NVIDIA GR00T N1.5/N1.6/N1.7 inference
 │   │   ├── policy.py      # Gr00tPolicy (ZMQ + HTTP modes)
 │   │   ├── client.py      # Gr00tInferenceClient
 │   │   ├── data_config.py # Gr00tDataConfig + ModalityConfig

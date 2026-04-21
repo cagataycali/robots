@@ -51,7 +51,19 @@ class MsgSerializer:
         if not isinstance(obj, dict):
             return obj
         if "__ModalityConfig_class__" in obj:
-            return ModalityConfig(**json.loads(obj["as_json"]))
+            # N1.6 serialized `as_json` as a JSON string (Pydantic `model_dump_json`).
+            # N1.7 serializes `as_json` as a plain dict (via `to_json_serializable`)
+            # and adds fields (sin_cos_embedding_keys, mean_std_embedding_keys, action_configs)
+            # that our minimal ModalityConfig dataclass does not track.
+            # Accept both wire forms AND tolerate unknown N1.7 fields so a single
+            # client can talk to either server version.
+            payload = obj["as_json"]
+            if isinstance(payload, str):
+                payload = json.loads(payload)
+            # Forward-compat: drop fields our dataclass does not know about.
+            _allowed = {"delta_indices", "modality_keys"}
+            filtered = {k: v for k, v in payload.items() if k in _allowed}
+            return ModalityConfig(**filtered)
         if "__ndarray_class__" in obj:
             return np.load(io.BytesIO(obj["as_npy"]), allow_pickle=False)
         return obj
@@ -161,8 +173,25 @@ class Gr00tInferenceClient:
         return response
 
     def get_action(self, observations: dict[str, Any]) -> dict[str, Any]:
-        """Send observations and receive an action chunk."""
-        return self.call_endpoint("get_action", observations)
+        """Send observations and receive an action chunk.
+
+        Uses the envelope used by ``gr00t.policy.server_client.PolicyServer`` in
+        both N1.6 and N1.7: the request body is
+        ``{"observation": <obs>, "options": None}`` so the server can spread
+        it as kwargs into ``policy.get_action(observation, options)``.
+
+        The server returns ``(action, info)`` as a 2-tuple (msgpack-ed to a
+        2-element list); we return just the action dict since the info dict
+        is currently empty in all upstream embodiments.
+        """
+        response = self.call_endpoint("get_action", {"observation": observations, "options": None})
+        # N1.6/N1.7 servers return a (action_dict, info_dict) tuple—msgpack
+        # decodes tuples as lists, so we may see either shape here.
+        if isinstance(response, list | tuple) and len(response) == 2:
+            action, _info = response
+            return action
+        # Older / custom servers may return the bare action dict.
+        return response
 
     def __del__(self):
         if hasattr(self, "socket"):

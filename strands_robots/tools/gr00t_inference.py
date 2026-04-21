@@ -75,7 +75,8 @@ def gr00t_inference(
           ``fourier_gr1_full_upper_body``
 
         **Unitree G1 humanoid:**
-          ``unitree_g1``, ``unitree_g1_full_body``, ``unitree_g1_locomanip``
+          ``unitree_g1``, ``unitree_g1_full_body``, ``unitree_g1_locomanip``,
+          ``unitree_g1_real`` (N1.7 REAL_G1 embodiment — locomotion + bimanual manipulation)
 
         **Franka Panda manipulators:**
           ``single_panda_gripper``, ``bimanual_panda_gripper``, ``bimanual_panda_hand``
