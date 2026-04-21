@@ -5,6 +5,7 @@ All tests mock zenoh so no network or real zenoh install is required.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 import json
 import threading
 import time
@@ -75,10 +76,10 @@ class TestPeerRegistry:
     """Peer registry: thread-safe upsert, prune, query."""
 
     @pytest.fixture(autouse=True)
-    def _clean_peers(self) -> None:
+    def _clean_peers(self) -> Iterator[None]:
         """Ensure a clean registry for every test."""
         clear_peers()
-        yield  # type: ignore[misc]
+        yield
         clear_peers()
 
     def test_update_peer_new_returns_true(self) -> None:
@@ -165,7 +166,7 @@ class TestSessionLifecycle:
     """get_session / release_session with mocked zenoh."""
 
     @pytest.fixture(autouse=True)
-    def _reset_session(self) -> None:
+    def _reset_session(self) -> Iterator[None]:
         """Reset module-level session state between tests."""
         import strands_robots.mesh_session as mod
 
@@ -177,7 +178,7 @@ class TestSessionLifecycle:
                     pass
             mod._SESSION = None
             mod._SESSION_REFS = 0
-        yield  # type: ignore[misc]
+        yield
         with mod._SESSION_LOCK:
             if mod._SESSION is not None:
                 try:
@@ -312,11 +313,11 @@ class TestPut:
     """put() publishes JSON or is a no-op when session is None."""
 
     @pytest.fixture(autouse=True)
-    def _reset_session(self) -> None:
+    def _reset_session(self) -> Iterator[None]:
         import strands_robots.mesh_session as mod
 
         original = mod._SESSION
-        yield  # type: ignore[misc]
+        yield
         with mod._SESSION_LOCK:
             mod._SESSION = original
 
@@ -411,13 +412,13 @@ class TestAtexitCleanup:
     """_atexit_cleanup closes session without raising."""
 
     @pytest.fixture(autouse=True)
-    def _reset_session(self) -> None:
+    def _reset_session(self) -> Iterator[None]:
         import strands_robots.mesh_session as mod
 
         with mod._SESSION_LOCK:
             mod._SESSION = None
             mod._SESSION_REFS = 0
-        yield  # type: ignore[misc]
+        yield
         with mod._SESSION_LOCK:
             mod._SESSION = None
             mod._SESSION_REFS = 0
