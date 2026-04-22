@@ -54,7 +54,7 @@ class RecordingMixin:
 
         self._world._backend_state["recording"] = True
         self._world._backend_state["trajectory"] = []
-        self._world._push_to_hub = push_to_hub
+        self._world._backend_state["push_to_hub"] = push_to_hub
 
         try:
             if overwrite:
@@ -123,7 +123,7 @@ class RecordingMixin:
 
         recorder.save_episode()
         push_result = None
-        if getattr(self._world, "_push_to_hub", False):
+        if self._world._backend_state.get("push_to_hub", False):
             push_result = recorder.push_to_hub(tags=["strands-robots", "sim"])
 
         repo_id = recorder.repo_id
