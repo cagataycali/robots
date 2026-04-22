@@ -21,6 +21,15 @@ from strands_robots.utils import get_search_paths, safe_join
 
 logger = logging.getLogger(__name__)
 
+# Module-level conditional import — keeps manager.py importable in
+# environments where the optional ``robot_descriptions`` package (and its
+# transitive heavyweight deps like ``GitPython``) are not installed.
+# When ``download`` is not available, auto-download simply returns False.
+try:
+    from .download import auto_download_robot as _auto_download_robot_impl
+except ImportError:
+    _auto_download_robot_impl = None  # type: ignore[assignment]
+
 
 # ─────────────────────────────────────────────────────────────────────
 # Model path resolution (delegates to registry)
@@ -30,16 +39,13 @@ logger = logging.getLogger(__name__)
 def _auto_download_robot(name: str, info: dict) -> bool:
     """Delegate to :func:`strands_robots.assets.download.auto_download_robot`.
 
-    Lazy import at call time is retained only to keep ``manager.py`` importable
-    in environments where the optional ``robot_descriptions`` package (and its
-    transitive heavyweight deps) are not installed.
+    Returns ``False`` immediately when the download module is unavailable
+    (e.g. ``robot_descriptions`` not installed).
     """
-    try:
-        from .download import auto_download_robot
-    except ImportError:
-        logger.warning("Auto-download unavailable: install strands-robots[sim] for automatic asset downloads")
+    if _auto_download_robot_impl is None:
+        logger.warning("Auto-download unavailable: install strands-robots[sim-mujoco] for automatic asset downloads")
         return False
-    return auto_download_robot(name, info)
+    return _auto_download_robot_impl(name, info)
 
 
 _MESH_EXTS = frozenset({".stl", ".obj", ".msh", ".ply"})
@@ -91,7 +97,7 @@ def _has_meshes(directory: Path) -> bool:
 def _resolve_candidates(asset_dir_name: str, xml_file: str, name: str) -> list[Path]:
     """Resolve candidate paths for a robot XML, with path-traversal protection.
 
-    Uses ``_safe_join`` to prevent ``../`` in registry-sourced ``asset_dir_name``
+    Uses ``safe_join`` to prevent ``../`` in registry-sourced ``asset_dir_name``
     or ``xml_file`` from escaping the search directories.
     """
     candidates: list[Path] = []
