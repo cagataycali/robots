@@ -42,10 +42,50 @@ def _auto_download_robot(name: str, info: dict) -> bool:
     return auto_download_robot(name, info)
 
 
+_MESH_EXTS = frozenset({".stl", ".obj", ".msh", ".ply"})
+
+# Cache of (directory, mtime) -> has_meshes result. Avoids re-walking the tree
+# when ``resolve_model_path`` checks multiple candidate locations for the same
+# robot and when it re-checks after auto-download.
+_MESH_CACHE: dict[tuple[str, float], bool] = {}
+
+
 def _has_meshes(directory: Path) -> bool:
-    """Check if a directory tree contains mesh files."""
-    _MESH_EXTS = {".stl", ".obj", ".msh", ".ply"}
-    return any(f.suffix.lower() in _MESH_EXTS for f in directory.rglob("*") if f.is_file())
+    """Check if a directory tree contains mesh files (cached, early-exit).
+
+    Uses ``os.scandir`` with an early break on the first mesh found rather
+    than ``rglob("*")``, which stats every file. Result is cached per
+    (directory, mtime) so repeated calls are free.
+    """
+    if not directory.exists():
+        return False
+    try:
+        cache_key = (str(directory), directory.stat().st_mtime)
+    except OSError:
+        cache_key = (str(directory), 0.0)
+    cached = _MESH_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    import os as _os
+
+    def _walk(path: str) -> bool:
+        try:
+            with _os.scandir(path) as it:
+                for entry in it:
+                    if entry.is_file(follow_symlinks=False):
+                        ext = _os.path.splitext(entry.name)[1].lower()
+                        if ext in _MESH_EXTS:
+                            return True
+                    elif entry.is_dir(follow_symlinks=False) and _walk(entry.path):
+                        return True
+        except OSError:
+            return False
+        return False
+
+    result = _walk(str(directory))
+    _MESH_CACHE[cache_key] = result
+    return result
 
 
 def _resolve_candidates(asset_dir_name: str, xml_file: str, name: str) -> list[Path]:
