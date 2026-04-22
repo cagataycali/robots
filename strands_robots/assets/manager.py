@@ -149,11 +149,23 @@ def resolve_model_path(
 
     candidates: list[Path] = []
 
-    # Check user-registered asset path first (highest priority)
+    # Check user-registered asset path first (highest priority).
+    # ``xml_file`` comes from user_robots.json, so we still gate it through
+    # :func:`safe_join` to block path traversal even for user-authored entries
+    # (defense in depth — protects against a compromised user_robots.json and
+    # keeps the trust boundary identical to the built-in registry path).
     user_path = info.get("_user_asset_path")
     if user_path:
-        user_model = Path(user_path) / xml_file
-        if user_model.exists():
+        try:
+            user_model = safe_join(Path(user_path), xml_file)
+        except ValueError:
+            logger.warning(
+                "Path traversal blocked in _user_asset_path for %s: %r",
+                name,
+                xml_file,
+            )
+            user_model = None
+        if user_model is not None and user_model.exists():
             candidates.append(user_model)
 
     # Search standard paths with traversal protection

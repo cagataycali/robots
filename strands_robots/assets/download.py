@@ -171,15 +171,28 @@ def _shallow_clone(repo_url: str, dest: str, *, timeout: int = 120) -> None:
     )
 
 
+# Filenames/patterns that are safe to strip from an upstream source tree before
+# we copy it into the user's asset cache.  Filtering at *copy* time (rather than
+# deleting afterwards) means we never touch files that may already exist in *dst*
+# — which matters when the user keeps notes/README alongside assets.
+_COPY_CLEAN_SKIP = frozenset({"README.md", "LICENSE", "CHANGELOG.md"})
+_COPY_CLEAN_SUFFIX = (".png", ".jpg", ".jpeg")
+
+
 def _copy_and_clean(src: Path, dst: Path) -> None:
-    """Copy *src* tree to *dst* and remove non-essential files."""
-    shutil.copytree(str(src), str(dst), dirs_exist_ok=True)
-    for pattern in ("README.md", "LICENSE", "CHANGELOG.md", "*.png", "*.jpg", ".git*"):
-        for path in dst.glob(pattern):
-            if path.is_file():
-                path.unlink()
-            elif path.is_dir():
-                shutil.rmtree(str(path), ignore_errors=True)
+    """Copy *src* tree to *dst*, skipping non-essential files at copy time.
+
+    Previous implementation deleted matching files from *dst* after copytree,
+    which meant a user's own ``README.md`` in the destination could be wiped.
+    This version filters on read so only files from *src* are dropped.
+    """
+
+    def _ignore(_dir: str, names: list[str]) -> list[str]:
+        return [
+            n for n in names if n in _COPY_CLEAN_SKIP or n.lower().endswith(_COPY_CLEAN_SUFFIX) or n.startswith(".git")
+        ]
+
+    shutil.copytree(str(src), str(dst), dirs_exist_ok=True, ignore=_ignore)
 
 
 # ── Download backends ─────────────────────────────────────────────────

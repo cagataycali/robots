@@ -12,21 +12,15 @@ from __future__ import annotations
 
 import logging
 import os
-from pathlib import Path
 
-from strands_robots.utils import get_assets_dir
+from strands_robots.utils import get_search_paths
 
 logger = logging.getLogger(__name__)
 
-# Default URDF search paths (checked in order).
-#
-# Resolution order for user-registered URDF lookups:
-#   1. STRANDS_ASSETS_DIR (if set) — user override (via utils.get_assets_dir)
-#   2. CWD/assets/ — project-local assets
-_URDF_SEARCH_PATHS = [
-    get_assets_dir(),
-    Path.cwd() / "assets",
-]
+# URDF search paths are resolved lazily via :func:`strands_robots.utils.get_search_paths`
+# at every lookup — this avoids snapshotting ``Path.cwd()`` and ``STRANDS_ASSETS_DIR``
+# at import time, which caused silent wrong-path bugs when tests/notebooks chdir after
+# import.
 
 try:
     from strands_robots.assets import (
@@ -45,7 +39,18 @@ try:
 except ImportError:
     _HAS_REGISTRY = False
 
-logger.info("Asset manager available: %s", _HAS_ASSET_MANAGER)
+# Logged lazily on first resolution via _log_configuration_once() —
+# avoids noisy INFO on every ``import strands_robots``.
+_CONFIG_LOGGED = False
+
+
+def _log_configuration_once() -> None:
+    global _CONFIG_LOGGED
+    if _CONFIG_LOGGED:
+        return
+    logger.debug("Asset manager available: %s", _HAS_ASSET_MANAGER)
+    _CONFIG_LOGGED = True
+
 
 # Runtime cache for user-registered URDFs
 _URDF_REGISTRY: dict[str, str] = {}
@@ -65,6 +70,7 @@ def resolve_model(name: str, prefer_scene: bool = True) -> str | None:
     2. URDF search paths (STRANDS_ASSETS_DIR, CWD, etc.)
     3. Asset manager (robot_descriptions — fallback for standard robots)
     """
+    _log_configuration_once()
     # 1+2. Check local/custom paths first (user overrides win)
     local = resolve_urdf(name)
     if local:
@@ -94,7 +100,7 @@ def resolve_urdf(data_config: str) -> str | None:
         urdf_rel = _URDF_REGISTRY[data_config]
         if os.path.isabs(urdf_rel) and os.path.exists(urdf_rel):
             return str(urdf_rel)
-        for search_dir in _URDF_SEARCH_PATHS:
+        for search_dir in get_search_paths():
             candidate = search_dir / urdf_rel
             if candidate.exists():
                 return str(candidate)
@@ -109,7 +115,7 @@ def resolve_urdf(data_config: str) -> str | None:
             urdf_rel = info["legacy_urdf"]
             if os.path.isabs(urdf_rel) and os.path.exists(urdf_rel):
                 return str(urdf_rel)
-            for search_dir in _URDF_SEARCH_PATHS:
+            for search_dir in get_search_paths():
                 candidate = search_dir / urdf_rel
                 if candidate.exists():
                     return str(candidate)

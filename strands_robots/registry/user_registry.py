@@ -185,9 +185,46 @@ def register_robot(
     # This matches how resolve_model_path works: search_dir / asset["dir"] / xml
     dir_name = resolved_dir.name
 
-    # Validate model_xml exists (if asset_dir exists)
+    # Alias collision detection — warn (don't fail) when a user alias shadows a
+    # canonical name or another alias.  Doing this at registration surfaces the
+    # problem immediately instead of at silent resolution-order time.
+    if aliases and not overwrite:
+        try:
+            from .robots import get_robot as _pkg_get_robot
+            from .robots import list_robots as _pkg_list_robots
+
+            pkg_canonical = {r["name"] for r in _pkg_list_robots()}
+            pkg_aliases: set[str] = set()
+            for r in _pkg_list_robots():
+                pkg_aliases.update(r.get("aliases", []) or [])
+        except Exception:
+            pkg_canonical = set()
+            pkg_aliases = set()
+
+        user_existing = data.get("robots", {})
+        user_canonical = set(user_existing.keys())
+        user_aliases: set[str] = set()
+        for _r in user_existing.values():
+            user_aliases.update(_r.get("aliases", []) or [])
+
+        for alias in aliases:
+            if alias in pkg_canonical or alias in user_canonical:
+                logger.warning("Alias %r shadows an existing robot canonical name.", alias)
+            elif alias in pkg_aliases or alias in user_aliases:
+                logger.warning("Alias %r is already used by another robot.", alias)
+
+    # Validate model_xml exists.  Previously we only checked when
+    # ``resolved_dir`` existed — which silently accepted registrations for
+    # dirs that didn't exist yet and surfaced a confusing error only at
+    # ``add_robot()`` time.  Now we fail-closed on both conditions so the
+    # user gets an immediate, actionable error at registration time.
     model_path = resolved_dir / model_xml
-    if resolved_dir.exists() and not model_path.exists():
+    if not resolved_dir.exists():
+        raise FileNotFoundError(
+            f"Asset directory does not exist: {resolved_dir}\n"
+            f"Create the directory and place '{model_xml}' inside it before registering."
+        )
+    if not model_path.exists():
         raise FileNotFoundError(f"Model XML not found: {model_path}\nEnsure '{model_xml}' exists in '{resolved_dir}'")
 
     # Build entry

@@ -87,3 +87,61 @@ def test_auto_download_false_is_bool_not_string(registry: dict) -> None:
         ad = info.get("asset", {}).get("auto_download")
         if ad is not None:
             assert isinstance(ad, bool), f"{name}.asset.auto_download must be bool, got {type(ad).__name__}: {ad!r}"
+
+
+def _all_canonical_names(registry: dict) -> set[str]:
+    return set(registry.keys())
+
+
+def _collect_aliases(registry: dict) -> dict[str, str]:
+    """Return mapping of alias → owning robot name."""
+    out: dict[str, str] = {}
+    for name, info in registry.items():
+        for alias in info.get("aliases", []) or []:
+            out.setdefault(alias, name)
+    return out
+
+
+def test_aliases_unique_across_registry(registry: dict) -> None:
+    """No two robots may declare the same alias — last-loaded would silently win."""
+    seen: dict[str, str] = {}
+    collisions: list[str] = []
+    for name, info in registry.items():
+        for alias in info.get("aliases", []) or []:
+            if alias in seen and seen[alias] != name:
+                collisions.append(f"{alias!r} used by {seen[alias]} AND {name}")
+            seen[alias] = name
+    assert not collisions, "Alias collisions:\n  " + "\n  ".join(collisions)
+
+
+def test_no_alias_shadows_canonical_name(registry: dict) -> None:
+    """An alias must not equal the canonical name of another robot.
+
+    Shadowing causes resolution order to silently determine the winner, which
+    is fragile — a future reorder of robots.json could flip which robot a
+    name resolves to.
+    """
+    canonical = _all_canonical_names(registry)
+    shadows: list[str] = []
+    for name, info in registry.items():
+        for alias in info.get("aliases", []) or []:
+            if alias in canonical and alias != name:
+                shadows.append(f"{name}.aliases contains {alias!r} which is a canonical robot name")
+    assert not shadows, "Alias shadows canonical:\n  " + "\n  ".join(shadows)
+
+
+def test_hardware_only_robots_declare_lerobot_type(registry: dict) -> None:
+    """Robots without an ``asset`` block must still declare a LeRobot hardware type.
+
+    Prevents silent typos in ``hardware.lerobot_type`` — catches a misspelled
+    type during registry expansion rather than at teleop time.
+    """
+    offenders: list[str] = []
+    for name, info in registry.items():
+        if "asset" in info:
+            continue
+        hw = info.get("hardware") or {}
+        lerobot_type = hw.get("lerobot_type")
+        if not isinstance(lerobot_type, str) or not lerobot_type.strip():
+            offenders.append(name)
+    assert not offenders, "Hardware-only robots missing 'hardware.lerobot_type': " + ", ".join(offenders)

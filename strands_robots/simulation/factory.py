@@ -171,7 +171,18 @@ def _import_backend_class(name: str) -> type[SimEngine]:
     # 2. Built-in registry
     if name in _BUILTIN_BACKENDS:
         module_path, class_name = _BUILTIN_BACKENDS[name]
-        module = importlib.import_module(module_path)
+        try:
+            module = importlib.import_module(module_path)
+        except ModuleNotFoundError as exc:
+            raise ImportError(
+                f"Simulation backend {name!r} is declared in the built-in registry "
+                f"but its implementation module {module_path!r} is not available. "
+                f"This usually means the backend has not been installed yet "
+                f"(e.g. `pip install strands-robots[{name}]`) or the backend "
+                f"implementation has not landed in this release. "
+                f"Register a custom backend via "
+                f"`strands_robots.simulation.factory.register_backend()` to proceed."
+            ) from exc
         backend_cls: type[SimEngine] = getattr(module, class_name)  # type: ignore[assignment]
         logger.debug("Loaded built-in backend: %s → %s.%s", name, module_path, class_name)
         return backend_cls
