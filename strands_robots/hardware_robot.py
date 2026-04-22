@@ -73,8 +73,8 @@ class Robot(AgentTool):
         action_horizon: int = 8,
         data_config: str | Any | None = None,
         control_frequency: float = 50.0,
-        **kwargs,
-    ):
+        **kwargs: Any,
+    ) -> None:
         """Initialize Robot with async capabilities.
 
         Args:
@@ -116,7 +116,7 @@ class Robot(AgentTool):
             logger.info(f"⚙️ Data config: {data_config}")
 
     def _initialize_robot(
-        self, robot: LeRobotRobot | RobotConfig | str, cameras: dict[str, dict[str, Any]] | None, **kwargs
+        self, robot: LeRobotRobot | RobotConfig | str, cameras: dict[str, dict[str, Any]] | None, **kwargs: Any
     ) -> LeRobotRobot:
         """Initialize LeRobot robot instance using native lerobot patterns."""
         from lerobot.robots.config import RobotConfig
@@ -143,7 +143,7 @@ class Robot(AgentTool):
             )
 
     def _create_minimal_config(
-        self, robot_type: str, cameras: dict[str, dict[str, Any]] | None, **kwargs
+        self, robot_type: str, cameras: dict[str, dict[str, Any]] | None, **kwargs: Any
     ) -> RobotConfig:
         """Create minimal robot config using specific robot config classes."""
         from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
@@ -393,7 +393,7 @@ class Robot(AgentTool):
         import asyncio
 
         # Run task without creating new event loop - let it run in thread
-        async def task_runner():
+        async def task_runner() -> None:
             await self._execute_task_async(instruction, policy_port, policy_host, policy_provider, duration)
 
         # Use asyncio.run only if no loop is running, otherwise run in existing loop
@@ -670,7 +670,7 @@ class Robot(AgentTool):
                 )
             )
 
-    def cleanup(self):
+    def cleanup(self) -> None:
         """Cleanup resources and stop any running tasks."""
         try:
             # Signal shutdown
@@ -688,7 +688,7 @@ class Robot(AgentTool):
         except Exception as e:
             logger.error(f"❌ Cleanup error for {self.tool_name_str}: {e}")
 
-    def __del__(self):
+    def __del__(self) -> None:
         """Destructor to ensure cleanup."""
         try:
             self.cleanup()
@@ -738,7 +738,7 @@ class Robot(AgentTool):
                 "task_status": "error",
             }
 
-    async def stop(self):
+    async def stop(self) -> None:
         """Stop robot and disconnect."""
         try:
             # Stop any running task first
