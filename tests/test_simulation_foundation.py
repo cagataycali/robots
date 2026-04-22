@@ -33,7 +33,12 @@ def _make_dummy_engine_class() -> type[SimEngine]:
     """
 
     class Dummy(SimEngine):
-        def create_world(self, **kw: Any) -> dict[str, Any]:
+        def create_world(
+            self,
+            timestep: float | None = None,
+            gravity: list[float] | None = None,
+            ground_plane: bool = True,
+        ) -> dict[str, Any]:
             return {}
 
         def destroy(self) -> dict[str, Any]:
@@ -48,25 +53,46 @@ def _make_dummy_engine_class() -> type[SimEngine]:
         def get_state(self) -> dict[str, Any]:
             return {}
 
-        def add_robot(self, name: str, **kw: Any) -> dict[str, Any]:
+        def add_robot(
+            self,
+            name: str,
+            urdf_path: str | None = None,
+            data_config: str | None = None,
+            position: list[float] | None = None,
+            orientation: list[float] | None = None,
+        ) -> dict[str, Any]:
             return {}
 
         def remove_robot(self, name: str) -> dict[str, Any]:
             return {}
 
-        def add_object(self, name: str, **kw: Any) -> dict[str, Any]:
+        def add_object(
+            self,
+            name: str,
+            shape: str = "box",
+            position: list[float] | None = None,
+            orientation: list[float] | None = None,
+            size: list[float] | None = None,
+            color: list[float] | None = None,
+            mass: float = 0.1,
+            is_static: bool = False,
+            mesh_path: str | None = None,
+            **kwargs: Any,
+        ) -> dict[str, Any]:
             return {}
 
         def remove_object(self, name: str) -> dict[str, Any]:
             return {}
 
-        def get_observation(self, **kw: Any) -> dict[str, Any]:
+        def get_observation(self, robot_name: str | None = None, camera_name: str | None = None) -> dict[str, Any]:
             return {}
 
-        def send_action(self, action: dict[str, Any], **kw: Any) -> None:
+        def send_action(self, action: dict[str, Any], robot_name: str | None = None, n_substeps: int = 1) -> None:
             return None
 
-        def render(self, **kw: Any) -> dict[str, Any]:
+        def render(
+            self, camera_name: str = "default", width: int | None = None, height: int | None = None
+        ) -> dict[str, Any]:
             return {}
 
     return Dummy
