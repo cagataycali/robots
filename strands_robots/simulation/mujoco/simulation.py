@@ -664,7 +664,7 @@ class Simulation(
                 f"🦴 Bodies: {self._world._model.nbody} | 🔩 Joints: {self._world._model.njnt} | ⚡ Actuators: {self._world._model.nu}"
             )
         if self._world._backend_state.get("recording", False):
-            lines.append(f"🔴 Recording: {len(self._world._backend_state["trajectory"])} steps")
+            lines.append(f"🔴 Recording: {len(self._world._backend_state['trajectory'])} steps")
         return {"status": "success", "content": [{"text": "\n".join(lines)}]}
 
     def destroy(self) -> dict[str, Any]:
