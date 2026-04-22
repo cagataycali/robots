@@ -100,10 +100,22 @@ class TrajectoryStep:
 class SimWorld:
     """Complete simulation world state.
 
-    Backend-independent state with engine-specific internals isolated in
-    ``_model``, ``_data``, and ``_backend_state`` — all typed as ``Any``
-    or ``dict`` so that each backend can store its own native handles
-    without leaking implementation details into this base module.
+    Backend-independent state with engine-specific internals kept in three
+    escape hatches, each with a distinct role so backend implementers know
+    which to use:
+
+    * ``_model``: the physics engine's **core model handle** — the single
+      compiled/loaded representation of the scene (e.g. ``mujoco.MjModel``,
+      Isaac's ``Scene``, PyBullet's body registry). Every backend has one.
+    * ``_data``: the physics engine's **core simulation state handle** —
+      the mutable per-step state companion to ``_model``
+      (e.g. ``mujoco.MjData``, Isaac's ``World``). Every backend has one.
+    * ``_backend_state``: a **catch-all dict** for everything else the
+      backend needs to persist — generated XML, temp dirs, recording
+      buffers, caches, etc. Prefer this over adding new fields here.
+
+    All three are typed ``Any``/``dict`` so nothing leaks engine-specific
+    types into this base module.
     """
 
     robots: dict[str, SimRobot] = field(default_factory=dict)
@@ -115,16 +127,15 @@ class SimWorld:
     status: SimStatus = SimStatus.IDLE
     sim_time: float = 0.0
     step_count: int = 0
-    # Engine-specific internals (set after world is built by the backend).
-    # Each backend stores its own native handles here.
+    # Engine core handles — set after the backend builds the world.
+    # Use these for the primary model/state objects only; put everything
+    # else in ``_backend_state`` below.
     _model: Any = None  # Engine-specific model handle (e.g. MjModel, Scene)
     _data: Any = None  # Engine-specific data handle (e.g. MjData, World)
-    # Backend-specific state bag — backends store format-specific data here
-    # instead of polluting this base class with implementation details.
-    # Recording state (``_recording``, ``_trajectory``, ``_dataset_recorder``)
-    # and engine-specific handles (e.g. MuJoCo ``xml``, ``robot_base_xml``,
-    # ``tmpdir``) all go in this dict rather than being declared as separate
-    # fields on the base class.
+    # Catch-all for backend-specific state that isn't the core model/data.
+    # Examples: generated XML strings, temp dirs, recording buffers
+    # (``_recording``, ``_trajectory``, ``_dataset_recorder``), caches, etc.
+    # Prefer this over adding new fields to ``SimWorld``.
     _backend_state: dict[str, Any] = field(default_factory=dict)
     # Physics state checkpoints (used by save_state/restore_state in PR #85).
     # Kept as a top-level field — requested by @yinsong1986 during review to

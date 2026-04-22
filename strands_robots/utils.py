@@ -64,18 +64,25 @@ DEFAULT_BASE_DIR = Path.home() / ".strands_robots"
 def get_base_dir() -> Path:
     """Get the base directory for strands-robots user data.
 
-    If ``STRANDS_ASSETS_DIR`` is set, returns its parent
-    (the assets dir is a subdirectory of the base).
-    Otherwise returns ``~/.strands_robots/``.
+    Resolution (in priority order):
+
+    1. ``STRANDS_BASE_DIR`` env var — explicit override. Use this when
+       you want to relocate *all* strands-robots user data (assets,
+       user registry, caches) to a non-default location.
+    2. ``~/.strands_robots/`` — default.
+
+    Note:
+        ``STRANDS_ASSETS_DIR`` **only** controls the assets subdirectory
+        (see :func:`get_assets_dir`). It does *not* move the base dir,
+        so user-level metadata like ``user_robots.json`` always lands in
+        a predictable location rather than wherever the assets happen
+        to be pointed.
 
     Returns:
         Path to the base directory (created if needed).
     """
-    custom = os.getenv("STRANDS_ASSETS_DIR")
-    if custom:
-        d = Path(custom).parent
-    else:
-        d = DEFAULT_BASE_DIR
+    custom = os.getenv("STRANDS_BASE_DIR")
+    d = Path(custom) if custom else DEFAULT_BASE_DIR
     d.mkdir(parents=True, exist_ok=True)
     return d
 

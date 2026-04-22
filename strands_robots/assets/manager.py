@@ -8,6 +8,7 @@ Resolves robot model files (MJCF XML) from:
 """
 
 import logging
+import os
 from pathlib import Path
 
 from strands_robots.registry import (
@@ -73,14 +74,12 @@ def _has_meshes(directory: Path) -> bool:
     if cached is not None:
         return cached
 
-    import os as _os
-
     def _walk(path: str) -> bool:
         try:
-            with _os.scandir(path) as it:
+            with os.scandir(path) as it:
                 for entry in it:
                     if entry.is_file(follow_symlinks=False):
-                        ext = _os.path.splitext(entry.name)[1].lower()
+                        ext = os.path.splitext(entry.name)[1].lower()
                         if ext in _MESH_EXTS:
                             return True
                     elif entry.is_dir(follow_symlinks=False) and _walk(entry.path):

@@ -35,9 +35,15 @@ _MINIMAL_MJCF = '<mujoco><worldbody><body><geom size="0.1"/></body></worldbody><
 
 @pytest.fixture(autouse=True)
 def _isolate_registry(tmp_path, monkeypatch):
-    """Point STRANDS_ASSETS_DIR to a temp dir and clear caches for every test."""
+    """Point STRANDS_BASE_DIR + STRANDS_ASSETS_DIR to temp dirs for every test.
+
+    ``STRANDS_BASE_DIR`` controls where ``user_robots.json`` lives.
+    ``STRANDS_ASSETS_DIR`` controls where robot asset directories live.
+    The two are independent — the base dir is not derived from the assets dir.
+    """
     assets_dir = tmp_path / "assets"
     assets_dir.mkdir()
+    monkeypatch.setenv("STRANDS_BASE_DIR", str(tmp_path))
     monkeypatch.setenv("STRANDS_ASSETS_DIR", str(assets_dir))
     _invalidate_cache()
     yield
@@ -288,20 +294,34 @@ class TestLoaderMerge:
 
 
 # ===========================================================================
-# STRANDS_ASSETS_DIR integration
+# STRANDS_BASE_DIR integration
 # ===========================================================================
 
 
-class TestStrandsAssetsDirIntegration:
-    """Registry file location respects STRANDS_ASSETS_DIR env var."""
+class TestStrandsBaseDirIntegration:
+    """Registry file location respects STRANDS_BASE_DIR env var.
 
-    def test_registry_file_in_parent_of_assets_dir(self, tmp_path):
-        custom = tmp_path / "custom_assets"
+    STRANDS_ASSETS_DIR intentionally does NOT move the registry — it only
+    controls where asset directories live. See utils.get_base_dir() docstring.
+    """
+
+    def test_registry_file_lives_in_base_dir(self, tmp_path):
+        custom = tmp_path / "custom_base"
         custom.mkdir()
-        with mock.patch.dict(os.environ, {"STRANDS_ASSETS_DIR": str(custom)}):
-            assert _get_user_registry_path().parent == custom.parent
+        with mock.patch.dict(os.environ, {"STRANDS_BASE_DIR": str(custom)}, clear=False):
+            assert _get_user_registry_path().parent == custom
+
+    def test_assets_dir_does_not_move_registry(self, tmp_path, monkeypatch):
+        """Setting only STRANDS_ASSETS_DIR must not change the registry location."""
+        monkeypatch.delenv("STRANDS_BASE_DIR", raising=False)
+        custom_assets = tmp_path / "custom_assets"
+        custom_assets.mkdir()
+        monkeypatch.setenv("STRANDS_ASSETS_DIR", str(custom_assets))
+        # Registry should land under the default base, not the assets dir.
+        assert ".strands_robots" in str(_get_user_registry_path())
 
     def test_defaults_to_dot_strands_robots(self, monkeypatch):
+        monkeypatch.delenv("STRANDS_BASE_DIR", raising=False)
         monkeypatch.delenv("STRANDS_ASSETS_DIR", raising=False)
         assert ".strands_robots" in str(_get_user_registry_path())
 
@@ -328,17 +348,29 @@ class TestGetAssetsDir:
 
 
 class TestGetBaseDir:
-    """get_base_dir() returns parent of STRANDS_ASSETS_DIR or ~/.strands_robots/."""
+    """get_base_dir() returns STRANDS_BASE_DIR or ~/.strands_robots/.
+
+    It is independent of STRANDS_ASSETS_DIR by design — the base dir holds
+    user metadata (user_robots.json) and should not move just because the
+    user repoints the asset cache.
+    """
 
     def test_default(self, monkeypatch):
+        monkeypatch.delenv("STRANDS_BASE_DIR", raising=False)
         monkeypatch.delenv("STRANDS_ASSETS_DIR", raising=False)
         assert str(get_base_dir()).endswith(".strands_robots")
 
     def test_custom(self, tmp_path, monkeypatch):
-        custom = tmp_path / "custom_assets"
+        custom = tmp_path / "custom_base"
         custom.mkdir()
-        monkeypatch.setenv("STRANDS_ASSETS_DIR", str(custom))
-        assert get_base_dir() == tmp_path
+        monkeypatch.setenv("STRANDS_BASE_DIR", str(custom))
+        assert get_base_dir() == custom
+
+    def test_assets_dir_does_not_move_base(self, tmp_path, monkeypatch):
+        """STRANDS_ASSETS_DIR must not affect get_base_dir()."""
+        monkeypatch.delenv("STRANDS_BASE_DIR", raising=False)
+        monkeypatch.setenv("STRANDS_ASSETS_DIR", str(tmp_path / "assets"))
+        assert str(get_base_dir()).endswith(".strands_robots")
 
 
 class TestResolveAssetPath:

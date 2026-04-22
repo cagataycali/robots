@@ -5,8 +5,12 @@ robots that persist across sessions via a ``user_robots.json`` file stored
 alongside the asset cache.
 
 File location (in priority order):
-    1. ``$STRANDS_ASSETS_DIR/user_robots.json``
+    1. ``$STRANDS_BASE_DIR/user_robots.json``
     2. ``~/.strands_robots/user_robots.json``
+
+Note:
+    ``STRANDS_ASSETS_DIR`` only controls where *assets* live, not the
+    user registry. Use ``STRANDS_BASE_DIR`` to relocate user metadata.
 
 At load time the user overlay is merged *on top of* the package
 ``robots.json`` — user entries win on name collision, so you can also
