@@ -1,0 +1,142 @@
+"""Robot model resolution — URDF registry + asset manager.
+
+Bridges the robot registry with actual URDF/MJCF files on disk.
+
+Resolution order for :func:`resolve_model`:
+    1. User-registered URDFs (:func:`register_urdf`)
+    2. URDF search paths (``STRANDS_ASSETS_DIR``, CWD, etc.)
+    3. Asset manager (``robot_descriptions`` — fallback for standard robots)
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+
+from strands_robots.utils import get_search_paths
+
+logger = logging.getLogger(__name__)
+
+# URDF search paths are resolved lazily via :func:`strands_robots.utils.get_search_paths`
+# at every lookup — this avoids snapshotting ``Path.cwd()`` and ``STRANDS_ASSETS_DIR``
+# at import time, which caused silent wrong-path bugs when tests/notebooks chdir after
+# import.
+
+try:
+    from strands_robots.assets import (
+        format_robot_table,
+        resolve_model_path,
+    )
+
+    _HAS_ASSET_MANAGER = True
+except ImportError:
+    _HAS_ASSET_MANAGER = False
+
+try:
+    from strands_robots.registry import get_robot, resolve_name
+
+    _HAS_REGISTRY = True
+except ImportError:
+    _HAS_REGISTRY = False
+
+# Logged lazily on first resolution via _log_configuration_once() —
+# avoids noisy INFO on every ``import strands_robots``.
+_CONFIG_LOGGED = False
+
+
+def _log_configuration_once() -> None:
+    global _CONFIG_LOGGED
+    if _CONFIG_LOGGED:
+        return
+    logger.debug("Asset manager available: %s", _HAS_ASSET_MANAGER)
+    _CONFIG_LOGGED = True
+
+
+# Runtime cache for user-registered URDFs
+_URDF_REGISTRY: dict[str, str] = {}
+
+
+def register_urdf(data_config: str, urdf_path: str) -> None:
+    """Register a URDF/MJCF file for a data_config name."""
+    _URDF_REGISTRY[data_config] = urdf_path
+    logger.info("📋 Registered model for '%s': %s", data_config, urdf_path)
+
+
+def resolve_model(name: str, prefer_scene: bool = True) -> str | None:
+    """Resolve a robot name or data_config to an MJCF/URDF model path.
+
+    Resolution order (local assets take priority):
+    1. User-registered URDFs (custom user registrations)
+    2. URDF search paths (STRANDS_ASSETS_DIR, CWD, etc.)
+    3. Asset manager (robot_descriptions — fallback for standard robots)
+    """
+    _log_configuration_once()
+    # 1+2. Check local/custom paths first (user overrides win)
+    local = resolve_urdf(name)
+    if local:
+        return local
+
+    # 3. Fall back to asset manager
+    if _HAS_ASSET_MANAGER:
+        path = resolve_model_path(name, prefer_scene=prefer_scene)
+        if path and path.exists():
+            return str(path)
+        if prefer_scene:
+            path = resolve_model_path(name, prefer_scene=False)
+            if path and path.exists():
+                return str(path)
+
+    return None
+
+
+def resolve_urdf(data_config: str) -> str | None:
+    """Resolve a data_config name to a URDF file path.
+
+    Also checks the registry's ``legacy_urdf`` field — a backward-compatible
+    path for robots that were registered before the MJCF asset system
+    was introduced (e.g. robots originally configured with raw URDF paths).
+    """
+    if data_config in _URDF_REGISTRY:
+        urdf_rel = _URDF_REGISTRY[data_config]
+        if os.path.isabs(urdf_rel) and os.path.exists(urdf_rel):
+            return str(urdf_rel)
+        for search_dir in get_search_paths():
+            candidate = search_dir / urdf_rel
+            if candidate.exists():
+                return str(candidate)
+
+    if _HAS_REGISTRY:
+        canonical = resolve_name(data_config)
+        info = get_robot(canonical)
+        # ``legacy_urdf``: backward-compatible URDF path from before the
+        # MJCF asset system was introduced.  Kept so that existing
+        # user configs referencing raw URDF paths continue to work.
+        if info and "legacy_urdf" in info:
+            urdf_rel = info["legacy_urdf"]
+            if os.path.isabs(urdf_rel) and os.path.exists(urdf_rel):
+                return str(urdf_rel)
+            for search_dir in get_search_paths():
+                candidate = search_dir / urdf_rel
+                if candidate.exists():
+                    return str(candidate)
+
+    logger.debug("URDF not found for '%s' in search paths", data_config)
+    return None
+
+
+def list_registered_urdfs() -> dict[str, str | None]:
+    """List all registered URDF mappings and their resolved paths."""
+    return {config_name: resolve_urdf(config_name) for config_name in _URDF_REGISTRY}
+
+
+def list_available_models() -> str:
+    """List all available robot models (Menagerie + custom)."""
+    if _HAS_ASSET_MANAGER:
+        return str(format_robot_table())
+
+    lines = ["Registered URDFs:"]
+    for name, path in _URDF_REGISTRY.items():
+        resolved = resolve_urdf(name)
+        status = "✅" if resolved else "❌"
+        lines.append(f"  {status} {name}: {path}")
+    return "\n".join(lines)

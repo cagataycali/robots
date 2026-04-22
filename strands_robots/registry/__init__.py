@@ -29,7 +29,7 @@ Architecture:
         policies.json    ← policy providers (shorthands/urls inside each entry)
 """
 
-from .loader import reload
+from .loader import invalidate_cache, reload
 from .policies import (
     build_policy_kwargs,
     get_policy_provider,
@@ -47,6 +47,11 @@ from .robots import (
     list_robots,
     list_robots_by_category,
     resolve_name,
+)
+from .user_registry import (
+    list_user_robots,
+    register_robot,
+    unregister_robot,
 )
 
 __all__ = [
@@ -66,6 +71,11 @@ __all__ = [
     "resolve_policy",
     "import_policy_class",
     "build_policy_kwargs",
+    # User-local registry
+    "register_robot",
+    "unregister_robot",
+    "list_user_robots",
     # Utilities
     "reload",
+    "invalidate_cache",
 ]

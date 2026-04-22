@@ -35,12 +35,40 @@ def _load(name: str) -> dict:
     if name not in _cache or _mtimes.get(name) != mtime:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
+
+        # Merge user-local robot registry (overlay on top of package JSON)
+        if name == "robots":
+            data = _merge_user_robots(data)
+
         _validate(name, data)
         _cache[name] = data
         _mtimes[name] = mtime
         logger.debug("Loaded registry: %s (%d bytes)", path, path.stat().st_size)
 
     return _cache[name]
+
+
+def _merge_user_robots(data: dict) -> dict:
+    """Merge user-local robot registry on top of package robots.json.
+
+    User entries override package entries on name collision.
+    """
+    try:
+        from .user_registry import get_user_robots
+    except ImportError:
+        return data
+
+    user_robots = get_user_robots()
+    if not user_robots:
+        return data
+
+    merged = dict(data)
+    merged_robots = dict(merged.get("robots", {}))
+    merged_robots.update(user_robots)
+    merged["robots"] = merged_robots
+
+    logger.debug("Merged %d user-registered robot(s) into registry", len(user_robots))
+    return merged
 
 
 def _validate(name: str, data: dict) -> None:
@@ -103,3 +131,17 @@ def reload() -> None:
     """Force-reload all registry files (clears mtime cache)."""
     _cache.clear()
     _mtimes.clear()
+
+
+def invalidate_cache(name: str | None = None) -> None:
+    """Invalidate cached registry data, forcing a reload on next access.
+
+    Args:
+        name: Registry name to invalidate (e.g. "robots"). If None, clears all.
+    """
+    if name is None:
+        _cache.clear()
+        _mtimes.clear()
+    else:
+        _cache.pop(name, None)
+        _mtimes.pop(name, None)

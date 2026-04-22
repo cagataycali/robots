@@ -48,9 +48,13 @@ groot-service = [
 lerobot = [
     "lerobot>=0.5.0,<0.6.0",
 ]
+sim = [
+    "robot_descriptions>=1.11.0,<2.0.0",
+]
 all = [
     "strands-robots[groot-service]",
     "strands-robots[lerobot]",
+    "strands-robots[sim]",
 ]
 dev = [
     "pytest>=6.0,<9.0.0",
@@ -124,7 +128,7 @@ ignore_missing_imports = false
 
 # Third-party libs without type stubs
 [[tool.mypy.overrides]]
-module = ["lerobot.*", "gr00t.*", "draccus.*", "msgpack.*", "zmq.*", "huggingface_hub.*", "serial.*", "psutil.*", "torch.*", "torchvision.*", "transformers.*", "einops.*"]
+module = ["lerobot.*", "gr00t.*", "draccus.*", "msgpack.*", "zmq.*", "huggingface_hub.*", "serial.*", "psutil.*", "torch.*", "torchvision.*", "transformers.*", "einops.*", "robot_descriptions.*"]
 ignore_missing_imports = true
 
 # @tool decorator injects runtime signatures mypy cannot check

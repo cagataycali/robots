@@ -49,3 +49,57 @@ class TestRequireOptional:
         """Should handle dotted module names like os.path."""
         mod = require_optional("os.path")
         assert hasattr(mod, "join")
+
+
+# ── safe_join / get_search_paths tests (added for PR #84 follow-up) ──
+
+
+class TestSafeJoin:
+    """Tests for the centralised path-traversal guard."""
+
+    def test_joins_clean_paths(self, tmp_path):
+        from strands_robots.utils import safe_join
+
+        result = safe_join(tmp_path, "robot/model.xml")
+        assert result == tmp_path / "robot" / "model.xml"
+
+    def test_rejects_traversal(self, tmp_path):
+        from strands_robots.utils import safe_join
+
+        with pytest.raises(ValueError, match="Path traversal blocked"):
+            safe_join(tmp_path, "../etc/passwd")
+
+    def test_rejects_absolute_escape(self, tmp_path):
+        from strands_robots.utils import safe_join
+
+        with pytest.raises(ValueError, match="Path traversal blocked"):
+            safe_join(tmp_path, "robot/../../etc/passwd")
+
+    def test_same_path_is_allowed(self, tmp_path):
+        from strands_robots.utils import safe_join
+
+        # Empty / dot path resolves to base itself — must not raise
+        result = safe_join(tmp_path, ".")
+        assert result == tmp_path
+
+
+class TestGetSearchPaths:
+    """Tests for the centralised search-path resolver."""
+
+    def test_returns_assets_dir_and_cwd_assets(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("STRANDS_ASSETS_DIR", str(tmp_path))
+        monkeypatch.chdir(tmp_path)
+        from strands_robots.utils import get_search_paths
+
+        paths = get_search_paths()
+        assert tmp_path in paths
+        assert (tmp_path / "assets") in paths
+
+    def test_returns_unique_paths(self, tmp_path, monkeypatch):
+        # When CWD is already the assets dir, we shouldn't list the same path twice
+        # (deduping is explicit in the implementation).
+        monkeypatch.setenv("STRANDS_ASSETS_DIR", str(tmp_path))
+        from strands_robots.utils import get_search_paths
+
+        paths = get_search_paths()
+        assert len(paths) == len(set(paths))

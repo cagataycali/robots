@@ -12,6 +12,7 @@ at ``import strands_robots.tools`` time.
 import importlib as _importlib
 
 _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
+    "download_assets": (".download_assets", "download_assets"),
     "gr00t_inference": (".gr00t_inference", "gr00t_inference"),
     "lerobot_calibrate": (".lerobot_calibrate", "lerobot_calibrate"),
     "lerobot_camera": (".lerobot_camera", "lerobot_camera"),
