@@ -171,12 +171,11 @@ def get_search_paths() -> list[Path]:
 
     Order (local assets take priority over defaults):
         1. User asset dir (``STRANDS_ASSETS_DIR`` or ``~/.strands_robots/assets/``)
-        2. ``CWD/assets`` (project-local)
+        2. ``CWD/assets`` (project-local, deduplicated if it resolves to the same dir)
     """
     paths: list[Path] = []
     user_cache = get_assets_dir()
-    if user_cache not in paths:
-        paths.append(user_cache)
+    paths.append(user_cache)
     cwd_assets = Path.cwd() / "assets"
     if cwd_assets not in paths:
         paths.append(cwd_assets)

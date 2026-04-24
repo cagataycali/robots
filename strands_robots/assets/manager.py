@@ -111,6 +111,49 @@ def _resolve_candidates(asset_dir_name: str, xml_file: str, name: str) -> list[P
     return candidates
 
 
+def is_robot_asset_present(name: str) -> bool:
+    """Check whether a robot's model XML exists on disk without triggering downloads.
+
+    Pure filesystem check — no auto-download, no mesh walk, no network.
+    Use this for status queries (e.g. ``download_assets(action="status")``)
+    where you need to quickly check presence without side effects.
+
+    Args:
+        name: Robot name (canonical or alias).
+
+    Returns:
+        True if the model XML file exists on at least one search path.
+    """
+    info = get_robot(name)
+    if not info or "asset" not in info:
+        return False
+
+    asset = info["asset"]
+    xml_file: str = str(asset["model_xml"])
+    asset_dir_name: str = str(asset["dir"])
+
+    # Check user-registered path first
+    user_path = info.get("_user_asset_path")
+    if user_path:
+        try:
+            user_model = safe_join(Path(user_path), xml_file)
+            if user_model.exists():
+                return True
+        except ValueError:
+            pass
+
+    # Check standard search paths
+    for search_dir in get_search_paths():
+        try:
+            model_path = safe_join(search_dir, f"{asset_dir_name}/{xml_file}")
+            if model_path.exists():
+                return True
+        except ValueError:
+            continue
+
+    return False
+
+
 def resolve_model_path(
     name: str,
     prefer_scene: bool = False,
@@ -250,21 +293,28 @@ def get_robot_info(name: str) -> dict | None:
 def list_available_robots() -> list[dict]:
     """List all available robot models with their info.
 
+    Uses :func:`is_robot_asset_present` for a fast filesystem-only check
+    per robot instead of the heavier :func:`resolve_model_path` which can
+    trigger auto-downloads and mesh cache walks.
+
     Returns:
         List of dicts with name, description, joints, category, available, path.
     """
     robots = []
     for r in list_robots(mode="sim"):
-        path = resolve_model_path(r["name"])
-        info = get_robot(r["name"]) or {}
+        name = r["name"]
+        present = is_robot_asset_present(name)
+        info = get_robot(name) or {}
+        # Only resolve full path when asset is present — avoids download attempts
+        path = resolve_model_path(name) if present else None
         robots.append(
             {
-                "name": r["name"],
+                "name": name,
                 "description": r.get("description", ""),
                 "joints": r.get("joints"),
                 "category": r.get("category", ""),
                 "dir": info.get("asset", {}).get("dir", ""),
-                "available": path is not None,
+                "available": present,
                 "path": str(path) if path else None,
             }
         )
