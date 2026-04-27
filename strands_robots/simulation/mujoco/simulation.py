@@ -32,6 +32,7 @@ from strands_robots.simulation.mujoco.scene_ops import (
     eject_body_from_scene,
     inject_camera_into_scene,
     inject_object_into_scene,
+    inject_robot_into_scene,
 )
 
 logger = logging.getLogger(__name__)
@@ -304,7 +305,13 @@ class Simulation(
         position: list[float] | None = None,
         orientation: list[float] | None = None,
     ) -> dict[str, Any]:
-        """Add a robot to the simulation."""
+        """Add a robot to the simulation via XML round-trip composition.
+
+        Instead of replacing the entire world model, this method merges the
+        robot's bodies, actuators, assets, and sensors into the existing scene
+        XML.  This preserves previously-created world state (gravity, objects,
+        cameras, other robots).
+        """
         if self._world is None:
             return {"status": "error", "content": [{"text": "❌ No world. Use action='create_world' first."}]}
         if name in self._world.robots:
@@ -344,31 +351,21 @@ class Simulation(
         try:
             self._ensure_meshes(resolved_path, data_config or name)
 
-            model = mj.MjModel.from_xml_path(str(resolved_path))
-            data = mj.MjData(model)
+            # Pre-scan the robot XML to discover joint/actuator names.
+            # We load a temporary model just for introspection — this is NOT
+            # used as the world model.
+            tmp_model = mj.MjModel.from_xml_path(str(resolved_path))
 
             joint_names = []
-            for i in range(model.njnt):
-                jnt_name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_JOINT, i)
+            for i in range(tmp_model.njnt):
+                jnt_name = mj.mj_id2name(tmp_model, mj.mjtObj.mjOBJ_JOINT, i)
                 if jnt_name:
                     joint_names.append(jnt_name)
-                    robot.joint_ids.append(i)
             robot.joint_names = joint_names
 
-            for i in range(model.nu):
-                act_name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_ACTUATOR, i)
-                if act_name:
-                    jnt_id = model.actuator_trnid[i, 0]
-                    if jnt_id in robot.joint_ids:
-                        robot.actuator_ids.append(i)
-                else:
-                    robot.actuator_ids.append(i)
-            if not robot.actuator_ids:
-                for i in range(model.nu):
-                    robot.actuator_ids.append(i)
-
-            for i in range(model.ncam):
-                cam_name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_CAMERA, i)
+            # Discover cameras from robot model
+            for i in range(tmp_model.ncam):
+                cam_name = mj.mj_id2name(tmp_model, mj.mjtObj.mjOBJ_CAMERA, i)
                 if cam_name and cam_name not in self._world.cameras:
                     self._world.cameras[cam_name] = SimCamera(
                         name=cam_name,
@@ -377,13 +374,42 @@ class Simulation(
                         height=self.default_height,
                     )
 
-            self._world._model = model
-            self._world._data = data
-            self._world._backend_state["robot_base_xml"] = resolved_path
+            # Register the robot BEFORE injection so _reload_scene_from_xml
+            # can re-discover its joint/actuator IDs in the merged model.
             self._world.robots[name] = robot
+            # Track robot base path for asset path resolution.
+            if not self._world._backend_state.get("robot_base_xml"):
+                self._world._backend_state["robot_base_xml"] = resolved_path
 
+            # --- XML round-trip: merge robot into existing world ---
+            ok = inject_robot_into_scene(self._world, robot, resolved_path)
+            if not ok:
+                del self._world.robots[name]
+                return {
+                    "status": "error",
+                    "content": [{"text": f"❌ Failed to inject robot '{name}' into scene."}],
+                }
+
+            # Re-read joint/actuator IDs from the merged model (IDs shifted).
+            model = self._world._model
+            robot.joint_ids = []
+            robot.actuator_ids = []
+            for jnt_name in robot.joint_names:
+                jid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, jnt_name)
+                if jid >= 0:
+                    robot.joint_ids.append(jid)
+            for i in range(model.nu):
+                jnt_id = model.actuator_trnid[i, 0]
+                if jnt_id in robot.joint_ids:
+                    robot.actuator_ids.append(i)
+            if not robot.actuator_ids:
+                # Fallback: assign all actuators (single-robot scene).
+                for i in range(model.nu):
+                    robot.actuator_ids.append(i)
+
+            # Settle physics (100 steps)
             for _ in range(100):
-                mj.mj_step(model, data)
+                mj.mj_step(self._world._model, self._world._data)
 
             source = f"data_config='{data_config}'" if data_config else os.path.basename(resolved_path)
             return {
@@ -403,6 +429,8 @@ class Simulation(
                 ],
             }
         except Exception as e:
+            # Clean up on failure
+            self._world.robots.pop(name, None)
             logger.error("Failed to add robot '%s': %s", name, e)
             return {"status": "error", "content": [{"text": f"❌ Failed to load: {e}"}]}
 
