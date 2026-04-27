@@ -59,6 +59,74 @@ def _patch_xml_paths(xml_content: str, robot_base_dir: str) -> str:
     return ET.tostring(root, encoding="unicode", xml_declaration=False)
 
 
+def _get_abs_meshdir(root: ET.Element) -> str:
+    """Extract the absolute meshdir from a parsed XML root.
+
+    Returns empty string if no compiler/meshdir is set.
+    """
+    compiler = root.find("compiler")
+    if compiler is not None:
+        return compiler.get("meshdir", "")
+    return ""
+
+
+def _rewrite_mesh_paths(
+    robot_asset: ET.Element,
+    robot_meshdir: str,
+    scene_meshdir: str,
+) -> None:
+    """Rewrite mesh ``file=`` attributes so they resolve under scene_meshdir.
+
+    When merging robot assets into the scene XML, the scene's ``<compiler
+    meshdir="...">`` governs where MuJoCo looks for mesh files.  If the
+    robot's meshdir differs (e.g. ``robot_base/assets/`` vs ``robot_base/``),
+    each ``<mesh file="X.stl">`` must be adjusted to be correct relative to
+    the scene's meshdir.
+
+    Strategy: convert each mesh file to an absolute path (via robot_meshdir),
+    then make it relative to scene_meshdir.  If they share no common prefix,
+    fall back to absolute paths.
+    """
+    if not robot_meshdir or not scene_meshdir:
+        return
+    # Normalize: ensure trailing sep for consistent joining
+    robot_meshdir = os.path.normpath(robot_meshdir)
+    scene_meshdir = os.path.normpath(scene_meshdir)
+
+    if robot_meshdir == scene_meshdir:
+        return  # No rewriting needed — meshdirs match
+
+    for child in robot_asset:
+        if child.tag != "mesh":
+            continue
+        file_attr = child.get("file")
+        if not file_attr:
+            continue
+        # Build absolute path of the mesh file under robot's meshdir
+        abs_mesh = os.path.normpath(os.path.join(robot_meshdir, file_attr))
+        # Make it relative to the scene's meshdir
+        try:
+            rel_path = os.path.relpath(abs_mesh, scene_meshdir)
+        except ValueError:
+            # On Windows, relpath fails across drives — use absolute
+            rel_path = abs_mesh
+        child.set("file", rel_path)
+
+    # Also rewrite texture file paths that reference files on disk
+    for child in robot_asset:
+        if child.tag != "texture":
+            continue
+        file_attr = child.get("file")
+        if not file_attr:
+            continue
+        abs_tex = os.path.normpath(os.path.join(robot_meshdir, file_attr))
+        try:
+            rel_path = os.path.relpath(abs_tex, scene_meshdir)
+        except ValueError:
+            rel_path = abs_tex
+        child.set("file", rel_path)
+
+
 def _reload_scene_from_xml(world: SimWorld, scene_path: str) -> bool:
     """Reload MuJoCo model from modified XML, preserving state.
 
@@ -165,7 +233,8 @@ def inject_robot_into_scene(
        canonical MJCF (handles URDF→MJCF conversion).
     3. Parse both XMLs with ElementTree.
     4. Merge robot assets, worldbody children, actuators, and sensors
-       into the world XML.
+       into the world XML.  Mesh ``file=`` paths are rewritten so they
+       resolve correctly under the scene's ``meshdir``.
     5. Reload the combined scene and re-discover joint/actuator IDs.
 
     Note: MuJoCo's ``mj_saveLastXML`` is a global function that always
@@ -218,9 +287,21 @@ def inject_robot_into_scene(
             return False
 
         # Step 4a: Merge assets (meshes, textures, materials)
+        # Robot and scene may have different meshdirs (e.g. robot uses
+        # meshdir="<base>/assets/" while scene uses meshdir="<base>/").
+        # Rewrite robot mesh file= attributes so they resolve under
+        # the scene's meshdir.
         scene_asset = scene_root.find("asset")
         robot_asset = robot_root.find("asset")
+
+        scene_meshdir = _get_abs_meshdir(scene_root)
+        robot_meshdir = _get_abs_meshdir(robot_root)
+
         if robot_asset is not None:
+            # Rewrite mesh/texture file= paths before merging
+            if scene_meshdir and robot_meshdir:
+                _rewrite_mesh_paths(robot_asset, robot_meshdir, scene_meshdir)
+
             if scene_asset is None:
                 scene_asset = ET.SubElement(scene_root, "asset")
             # Collect existing asset names to avoid duplicates
