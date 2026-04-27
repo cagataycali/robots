@@ -114,10 +114,28 @@ def _can_render() -> bool:
 
     Probes once by creating a minimal Renderer. Result is cached.
     Returns False on headless environments without EGL/OSMesa.
+
+    On headless Linux, if MUJOCO_GL is not set after _configure_gl_backend()
+    ran, it means neither EGL nor OSMesa is available. In that case the
+    default GLFW backend would be used, which calls glfw.init() → abort()
+    at the C level (SIGABRT), killing the entire process before Python can
+    catch the error. We short-circuit to False to avoid the fatal probe.
     """
     global _rendering_available
     if _rendering_available is not None:
         return _rendering_available
+
+    # Guard: on headless systems without an offscreen GL backend configured,
+    # mj.Renderer() will use GLFW which triggers a C-level abort (SIGABRT).
+    # Skip the probe entirely — rendering is impossible anyway.
+    if _is_headless() and not os.environ.get("MUJOCO_GL"):
+        _rendering_available = False
+        logger.warning(
+            "Headless environment without EGL/OSMesa — rendering disabled. "
+            "Physics and joint observations will still work. "
+            "Install libegl1-mesa-dev or libosmesa6-dev for camera rendering."
+        )
+        return False
 
     mj = _ensure_mujoco()
     try:

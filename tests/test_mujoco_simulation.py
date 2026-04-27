@@ -19,20 +19,10 @@ import pytest
 
 mj = pytest.importorskip("mujoco")
 
-
-def _has_opengl() -> bool:
-    """Check if OpenGL rendering is available."""
-    try:
-        model = mj.MjModel.from_xml_string("<mujoco><worldbody/></mujoco>")
-        renderer = mj.Renderer(model, height=1, width=1)
-        del renderer
-        return True
-    except Exception:
-        return False
-
+from strands_robots.simulation.mujoco.backend import _can_render  # noqa: E402
 
 requires_gl = pytest.mark.skipif(
-    not _has_opengl(),
+    not _can_render(),
     reason="No OpenGL context available (headless without EGL/OSMesa)",
 )
 
