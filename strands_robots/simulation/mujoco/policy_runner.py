@@ -285,6 +285,10 @@ class PolicyRunnerMixin:
                 time.sleep(sleep_time)
 
         duration = time.time() - start_time
+        # Sync simulation state — mj_step advanced data.time but
+        # sim_time/step_count were not updated during the replay loop.
+        self._world.sim_time = data.time
+        self._world.step_count += frames_applied
         return {
             "status": "success",
             "content": [
@@ -358,6 +362,8 @@ class PolicyRunnerMixin:
                     else:
                         # No actions — still advance physics by one step
                         mj.mj_step(model, data)
+                        self._world.sim_time = data.time
+                        self._world.step_count += 1
                 steps += 1
 
                 if success_fn == "contact":
