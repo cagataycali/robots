@@ -96,9 +96,14 @@ class RenderingMixin:
             if act_id >= 0:
                 data.ctrl[act_id] = float(value)
             else:
+                # Fallback: key is a joint name — find the actuator that
+                # drives this joint via actuator_trnid (joint ID → actuator).
                 jnt_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, key)
-                if jnt_id >= 0 and jnt_id < model.nu:
-                    data.ctrl[jnt_id] = float(value)
+                if jnt_id >= 0:
+                    for ai in range(model.nu):
+                        if model.actuator_trnid[ai, 0] == jnt_id:
+                            data.ctrl[ai] = float(value)
+                            break
 
         for _ in range(max(1, n_substeps)):
             mj.mj_step(model, data)

@@ -118,25 +118,26 @@ class PolicyRunnerMixin:
                     if not robot.policy_running:
                         break
 
-                    if self._world._backend_state.get("recording", False):
-                        self._world._backend_state["trajectory"].append(
-                            TrajectoryStep(
-                                timestamp=time.time(),
-                                sim_time=self._world.sim_time,
-                                robot_name=robot_name,
-                                observation={k: v for k, v in observation.items() if not isinstance(v, np.ndarray)},
-                                action=action_dict,
-                                instruction=instruction,
+                    with self._lock:
+                        if self._world._backend_state.get("recording", False):
+                            self._world._backend_state["trajectory"].append(
+                                TrajectoryStep(
+                                    timestamp=time.time(),
+                                    sim_time=self._world.sim_time,
+                                    robot_name=robot_name,
+                                    observation={k: v for k, v in observation.items() if not isinstance(v, np.ndarray)},
+                                    action=action_dict,
+                                    instruction=instruction,
+                                )
                             )
-                        )
-                        if self._world._backend_state.get("dataset_recorder") is not None:
-                            self._world._backend_state["dataset_recorder"].add_frame(
-                                observation=observation,
-                                action=action_dict,
-                                task=instruction,
-                            )
+                            if self._world._backend_state.get("dataset_recorder") is not None:
+                                self._world._backend_state["dataset_recorder"].add_frame(
+                                    observation=observation,
+                                    action=action_dict,
+                                    task=instruction,
+                                )
 
-                    self._apply_sim_action(robot_name, action_dict)
+                        self._apply_sim_action(robot_name, action_dict)
                     robot.policy_steps += 1
 
                     if writer and robot.policy_steps >= next_frame_step:
@@ -354,8 +355,9 @@ class PolicyRunnerMixin:
                 with self._lock:
                     if actions:
                         self._apply_sim_action(robot_name, actions[0])
-
-                    mj.mj_step(model, data)
+                    else:
+                        # No actions — still advance physics by one step
+                        mj.mj_step(model, data)
                 steps += 1
 
                 if success_fn == "contact":
