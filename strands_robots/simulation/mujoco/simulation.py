@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import threading
+import time
 from collections.abc import AsyncGenerator
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
@@ -24,7 +25,6 @@ from strands_robots.simulation.models import SimCamera, SimObject, SimRobot, Sim
 from strands_robots.simulation.mujoco.backend import _ensure_mujoco
 from strands_robots.simulation.mujoco.mjcf_builder import MJCFBuilder
 from strands_robots.simulation.mujoco.physics import PhysicsMixin
-from strands_robots.simulation.mujoco.policy_runner import PolicyRunnerMixin
 from strands_robots.simulation.mujoco.randomization import RandomizationMixin
 from strands_robots.simulation.mujoco.recording import RecordingMixin
 from strands_robots.simulation.mujoco.rendering import RenderingMixin
@@ -34,6 +34,7 @@ from strands_robots.simulation.mujoco.scene_ops import (
     inject_object_into_scene,
     inject_robot_into_scene,
 )
+from strands_robots.simulation.policy_runner import CooperativeStop
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +43,6 @@ _TOOL_SPEC_PATH = Path(__file__).parent / "tool_spec.json"
 
 class Simulation(
     PhysicsMixin,
-    PolicyRunnerMixin,
     RenderingMixin,
     RecordingMixin,
     RandomizationMixin,
@@ -447,7 +447,30 @@ class Simulation(
         del self._world.robots[name]
         return {"status": "success", "content": [{"text": f"🗑️ Robot '{name}' removed."}]}
 
-    def list_robots(self) -> dict[str, Any]:
+    def list_robots(self) -> list[str]:
+        """Return ordered robot names (SimEngine ABC).
+
+        For the user-facing agent-tool action (rich dict output) see
+        :meth:`list_robots_action`, which the dispatcher aliases to the
+        ``list_robots`` action string.
+        """
+        if self._world is None or not self._world.robots:
+            return []
+        return list(self._world.robots.keys())
+
+    def robot_joint_names(self, robot_name: str) -> list[str]:
+        """Ordered joint names for ``robot_name`` (SimEngine ABC)."""
+        if self._world is None or robot_name not in self._world.robots:
+            return []
+        return list(self._world.robots[robot_name].joint_names)
+
+    def list_robots_action(self) -> dict[str, Any]:
+        """Agent-tool action: pretty-printed robot listing.
+
+        Separate from :meth:`list_robots` (which returns ``list[str]`` for
+        the SimEngine ABC) because the dispatcher needs a dict-shaped
+        response for user display.
+        """
         if self._world is None:
             return {"status": "error", "content": [{"text": "❌ No world."}]}
         if not self._world.robots:
@@ -870,15 +893,159 @@ class Simulation(
                 }
             )
 
+    # --- Policy orchestration overrides (MuJoCo-specific wiring) ---
+
+    def start_policy(
+        self,
+        robot_name: str,
+        policy_provider: str = "mock",
+        policy_config: dict[str, Any] | None = None,
+        instruction: str = "",
+        duration: float = 10.0,
+        fast_mode: bool = False,
+    ) -> dict[str, Any]:
+        """Start policy execution on a background thread (non-blocking).
+
+        MuJoCo override: reuses the ThreadPoolExecutor owned by
+        ``Simulation`` so agent tools can kick off long-running policies
+        without blocking the event loop. Only one policy per robot at a
+        time (MuJoCo model/data are not thread-safe for concurrent writes).
+        """
+        if self._world is None or self._world._data is None:
+            return {"status": "error", "content": [{"text": "❌ No simulation."}]}
+        if robot_name not in self._world.robots:
+            return {"status": "error", "content": [{"text": f"❌ Robot '{robot_name}' not found."}]}
+
+        existing = self._policy_threads.get(robot_name)
+        if existing is not None and not existing.done():
+            return {
+                "status": "error",
+                "content": [{"text": f"❌ Policy already running on '{robot_name}'. Stop it first."}],
+            }
+
+        future = self._executor.submit(
+            self.run_policy,
+            robot_name,
+            policy_provider=policy_provider,
+            policy_config=policy_config,
+            instruction=instruction,
+            duration=duration,
+            fast_mode=fast_mode,
+        )
+        self._policy_threads[robot_name] = future
+
+        return {
+            "status": "success",
+            "content": [{"text": f"🚀 Policy started on '{robot_name}' (async)"}],
+        }
+
+    def _make_run_policy_hook(self, robot_name: str, instruction: str):
+        """MuJoCo override: recording + policy_running flag + lock.
+
+        Returns an ``on_frame(step, obs, action)`` closure that:
+        * flips ``robot.policy_running`` so ``stop_policy`` can interrupt,
+        * appends to ``_backend_state["trajectory"]`` when recording,
+        * forwards frames to the LeRobot ``dataset_recorder`` if attached,
+        * raises ``PolicyStopped`` when the user calls ``stop_policy``.
+        """
+        import numpy as np
+
+        from strands_robots.simulation.models import TrajectoryStep
+
+        world = self._world
+        if world is None or robot_name not in world.robots:
+            return None
+
+        robot = world.robots[robot_name]
+        robot.policy_running = True
+        robot.policy_instruction = instruction
+        robot.policy_steps = 0
+
+        lock = self._lock
+
+        def _hook(step: int, observation: dict[str, Any], action: dict[str, Any]) -> None:
+            # Cooperative cancellation: stop_policy flips this flag.
+            if not robot.policy_running:
+                raise CooperativeStop(f"Policy stopped on '{robot_name}'")
+
+            robot.policy_steps = step + 1
+
+            with lock:
+                if world._backend_state.get("recording", False):
+                    world._backend_state["trajectory"].append(
+                        TrajectoryStep(
+                            timestamp=time.time(),
+                            sim_time=world.sim_time,
+                            robot_name=robot_name,
+                            observation={k: v for k, v in observation.items() if not isinstance(v, np.ndarray)},
+                            action=action,
+                            instruction=instruction,
+                        )
+                    )
+                    rec = world._backend_state.get("dataset_recorder")
+                    if rec is not None:
+                        rec.add_frame(observation=observation, action=action, task=instruction)
+
+        return _hook
+
+    def run_policy(
+        self,
+        robot_name: str,
+        policy_provider: str = "mock",
+        policy_config: dict[str, Any] | None = None,
+        instruction: str = "",
+        duration: float = 10.0,
+        control_frequency: float = 50.0,
+        action_horizon: int = 8,
+        fast_mode: bool = False,
+        record_video: str | None = None,
+        video_fps: int = 30,
+        video_camera: str | None = None,
+        video_width: int = 640,
+        video_height: int = 480,
+    ) -> dict[str, Any]:
+        """MuJoCo ``run_policy`` override: pre-flight world check + graceful stop.
+
+        Delegates to :meth:`SimEngine.run_policy` but clears the MuJoCo
+        ``policy_running`` flag in a ``finally`` clause and swallows
+        ``_PolicyStopped`` (which the ``on_frame`` hook raises on user
+        cancellation) into a normal "policy stopped" result.
+        """
+        if self._world is None or self._world._data is None:
+            return {"status": "error", "content": [{"text": "❌ No simulation."}]}
+
+        try:
+            return super().run_policy(
+                robot_name,
+                policy_provider=policy_provider,
+                policy_config=policy_config,
+                instruction=instruction,
+                duration=duration,
+                control_frequency=control_frequency,
+                action_horizon=action_horizon,
+                fast_mode=fast_mode,
+                record_video=record_video,
+                video_fps=video_fps,
+                video_camera=video_camera,
+                video_width=video_width,
+                video_height=video_height,
+            )
+        finally:
+            if self._world is not None and robot_name in self._world.robots:
+                self._world.robots[robot_name].policy_running = False
+
     def _dispatch_action(self, action: str, d: dict[str, Any]) -> dict[str, Any]:
         """Route action string to method via getattr.
 
-        Method names match action names directly (with a few aliases).
+        Schema-driven: every method parameter is explicit. Policy-provider
+        kwargs are nested under ``policy_config`` (never top-level) so the
+        dispatcher stays backend-agnostic.
         """
         # Aliases for actions whose method names differ
         _ALIASES = {
             "list_urdfs": "list_urdfs_action",
             "register_urdf": "register_urdf_action",
+            "list_robots": "list_robots_action",
             "stop_policy": "_stop_policy",
         }
 
@@ -894,7 +1061,6 @@ class Simulation(
         if method is None or action.startswith("_"):
             return {"status": "error", "content": [{"text": f"❌ Unknown action: {action}"}]}
 
-        # Build kwargs from input dict, excluding 'action' itself
         # Signatures are cached per method to avoid repeated introspection.
         import inspect
 
@@ -904,13 +1070,14 @@ class Simulation(
         if method_name not in cache:
             cache[method_name] = inspect.signature(method)
         sig = cache[method_name]
+
         # Apply field name remapping
         remapped = dict(d)
         for field_key, param_key in _FIELD_MAP.items():
             if field_key in remapped and param_key not in remapped:
                 remapped[param_key] = remapped.pop(field_key)
 
-        kwargs = {}
+        kwargs: dict[str, Any] = {}
         for param_name, param in sig.parameters.items():
             if param_name == "self":
                 continue
@@ -923,27 +1090,10 @@ class Simulation(
                 kwargs["robot_name"] = remapped["name"]
             elif param_name in remapped:
                 kwargs[param_name] = remapped[param_name]
-            # Forward all extra fields through **policy_kwargs / **kwargs so that
-            # policy-specific arguments (observation_mapping, action_mapping,
-            # data_config, host, port, api_token, actions_per_step, use_processor,
-            # processor_overrides, pretrained_name_or_path, policy_type, device,
-            # model_path, policy_host, policy_port, server_address, trust_remote_code,
-            # …) reach `create_policy(...)`.
-            #
-            # Rationale: whitelisting known keys drops new/unknown policy kwargs
-            # silently. A passthrough is mapping-aware and future-proof: the
-            # policy provider itself is the source of truth for which kwargs are
-            # valid, not this dispatcher.
-            elif param.kind == inspect.Parameter.VAR_KEYWORD:
-                _RESERVED = {"action", *sig.parameters.keys()}
-                for k, v in remapped.items():
-                    if k in _RESERVED or k in kwargs:
-                        continue
-                    kwargs[k] = v
 
         return method(**kwargs)
 
-    def _stop_policy(self, robot_name: str = "", **kwargs) -> dict[str, Any]:
+    def _stop_policy(self, robot_name: str = "") -> dict[str, Any]:
         if self._world and robot_name in self._world.robots:
             self._world.robots[robot_name].policy_running = False
             return {"status": "success", "content": [{"text": f"🛑 Stopped on '{robot_name}'"}]}

@@ -288,12 +288,18 @@ class TestRobotManagement:
         assert result["status"] == "error"
 
     def test_list_robots_empty(self, sim_with_world):
-        result = sim_with_world.list_robots()
+        # SimEngine ABC: list[str]
+        assert sim_with_world.list_robots() == []
+        # Agent-tool action surface: dict
+        result = sim_with_world.list_robots_action()
         assert result["status"] == "success"
         assert "No robots" in result["content"][0]["text"]
 
     def test_list_robots_populated(self, sim_with_robot):
-        result = sim_with_robot.list_robots()
+        # SimEngine ABC: list[str]
+        assert "arm1" in sim_with_robot.list_robots()
+        # Agent-tool action surface: dict
+        result = sim_with_robot.list_robots_action()
         assert result["status"] == "success"
         assert "arm1" in result["content"][0]["text"]
 
@@ -680,7 +686,10 @@ class TestErrorPaths:
         assert result["status"] == "error"
 
     def test_list_robots_no_world(self, sim):
-        result = sim.list_robots()
+        # ABC returns empty list when no world
+        assert sim.list_robots() == []
+        # Action-tool surface returns a friendly error dict
+        result = sim.list_robots_action()
         assert result["status"] == "error"
 
     def test_render_no_world(self, sim):

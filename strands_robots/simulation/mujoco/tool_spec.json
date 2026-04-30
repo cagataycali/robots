@@ -163,15 +163,6 @@
     "duration": {
       "type": "number"
     },
-    "policy_port": {
-      "type": "integer"
-    },
-    "policy_host": {
-      "type": "string"
-    },
-    "model_path": {
-      "type": "string"
-    },
     "action_horizon": {
       "type": "integer"
     },
@@ -191,10 +182,6 @@
     "fps": {
       "type": "integer",
       "description": "Video frames per second (for run_policy record_video)"
-    },
-    "pretrained_name_or_path": {
-      "type": "string",
-      "description": "HuggingFace model ID for lerobot_local"
     },
     "randomize_colors": {
       "type": "boolean"
@@ -344,51 +331,10 @@
       "type": "string",
       "description": "Named checkpoint for save_state/load_state"
     },
-    "observation_mapping": {
+    "policy_config": {
       "type": "object",
-      "description": "Policy observation mapping. For GR00T: {robot_key: 'video.X' | 'state.X'} mapping simulated robot observation keys to the policy model's input keys. For lerobot_local: forwarded as processor override. Required for sim\u2194real transfer when joint names don't match the policy's training schema.",
-      "additionalProperties": {
-        "type": "string"
-      }
-    },
-    "action_mapping": {
-      "type": "object",
-      "description": "Policy action mapping. For GR00T: {'action.X': robot_key} mapping policy output keys back to robot joint/actuator names. For lerobot_local: forwarded as processor override. Required when policy action keys differ from simulated robot actuator names.",
-      "additionalProperties": {
-        "type": "string"
-      }
-    },
-    "host": {
-      "type": "string",
-      "description": "Policy service host (GR00T service mode, ZMQ)"
-    },
-    "port": {
-      "type": "integer",
-      "description": "Policy service port (GR00T service mode, ZMQ)"
-    },
-    "api_token": {
-      "type": "string",
-      "description": "API token for remote policy services (GR00T service mode)"
-    },
-    "trust_remote_code": {
-      "type": "boolean",
-      "description": "Opt in to HuggingFace trust_remote_code for lerobot_local (required for SmolVLA and similar policies). Prefer setting STRANDS_TRUST_REMOTE_CODE=1."
-    },
-    "actions_per_step": {
-      "type": "integer",
-      "description": "Number of policy actions to execute per inference (lerobot_local)"
-    },
-    "use_processor": {
-      "type": "boolean",
-      "description": "Use the HF processor pipeline for input preprocessing (lerobot_local, default true)"
-    },
-    "processor_overrides": {
-      "type": "object",
-      "description": "Overrides passed to the lerobot processor (e.g. image keys, state keys)"
-    },
-    "device": {
-      "type": "string",
-      "description": "Torch device (e.g. 'cuda', 'mps', 'cpu'). Auto-detected if omitted."
+      "description": "Provider-specific config dict forwarded to strands_robots.policies.create_policy. Contents depend on policy_provider. For 'groot': host, port, api_token, observation_mapping, action_mapping. For 'lerobot_local': pretrained_name_or_path, device, trust_remote_code, actions_per_step, use_processor, processor_overrides, observation_mapping, action_mapping. For 'mock': {} is fine.",
+      "additionalProperties": true
     }
   },
   "required": [

@@ -66,6 +66,12 @@ def _make_dummy_engine_class() -> type[SimEngine]:
         def remove_robot(self, name: str) -> dict[str, Any]:
             return {}
 
+        def list_robots(self) -> list[str]:
+            return []
+
+        def robot_joint_names(self, robot_name: str) -> list[str]:
+            return []
+
         def add_object(
             self,
             name: str,
@@ -124,6 +130,8 @@ class TestSimEngine:
             "get_state",
             "add_robot",
             "remove_robot",
+            "list_robots",
+            "robot_joint_names",
             "add_object",
             "remove_object",
             "get_observation",
@@ -133,12 +141,15 @@ class TestSimEngine:
         assert expected == abstract_methods
 
     def test_optional_methods_raise_not_implemented(self, dummy_engine_class):
-        """Optional methods on a concrete subclass raise NotImplementedError."""
+        """Optional methods on a concrete subclass raise NotImplementedError.
+
+        Note: ``run_policy`` / ``replay_episode`` / ``eval_policy`` used to
+        be in this set but are now concrete facades on the ABC that
+        delegate to the backend-agnostic ``PolicyRunner``.
+        """
         d = dummy_engine_class()
         with pytest.raises(NotImplementedError):
             d.load_scene("x")
-        with pytest.raises(NotImplementedError):
-            d.run_policy("x")
         with pytest.raises(NotImplementedError):
             d.randomize()
         with pytest.raises(NotImplementedError):

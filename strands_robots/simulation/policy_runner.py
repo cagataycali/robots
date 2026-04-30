@@ -1,0 +1,474 @@
+"""Backend-agnostic policy execution against any ``SimEngine``.
+
+Runs the canonical obs → act → step loop using only the public ``SimEngine``
+interface. Zero knowledge of the underlying physics engine — MuJoCo, Isaac,
+Newton and any future backend get ``run_policy`` / ``replay`` / ``evaluate``
+for free by implementing the ``SimEngine`` primitives.
+
+Three entry points:
+
+* :meth:`PolicyRunner.run` — blocking policy execution with optional video.
+* :meth:`PolicyRunner.replay` — replay a recorded LeRobotDataset episode.
+* :meth:`PolicyRunner.evaluate` — multi-episode evaluation with success metrics.
+
+All three call only these public ``SimEngine`` methods:
+
+* ``get_observation(robot_name, camera_name)``
+* ``send_action(action, robot_name, n_substeps)``
+* ``step(n_steps)``
+* ``reset()``
+* ``render(camera_name, width, height)``
+
+And two public helpers for robot discovery:
+
+* ``list_robots()`` — ordered robot names in the world
+* ``robot_joint_names(robot_name)`` — ordered joint names for a robot
+
+Thread safety: ``PolicyRunner`` itself is stateless per invocation. The
+underlying ``SimEngine`` is responsible for thread-safety inside its own
+methods (e.g. MuJoCo acquires a lock inside ``send_action`` / ``step``).
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import time
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
+
+import numpy as np
+
+from strands_robots._async_utils import _resolve_coroutine
+from strands_robots.utils import require_optional
+
+if TYPE_CHECKING:
+    from strands_robots.policies.base import Policy
+    from strands_robots.simulation.base import SimEngine
+
+logger = logging.getLogger(__name__)
+
+
+# Hook signature: called every control step after send_action.
+#   on_frame(step_idx, observation, action) -> None
+OnFrame = Callable[[int, dict[str, Any], dict[str, Any]], None]
+
+# Success function: called after each step during evaluate().
+#   success_fn(observation) -> bool
+SuccessFn = Callable[[dict[str, Any]], bool]
+
+
+class CooperativeStop(BaseException):
+    """Raised by an ``on_frame`` hook to cooperatively stop a run.
+
+    Inherits ``BaseException`` (not ``Exception``) so hook authors don't
+    accidentally swallow it with a broad ``except Exception``. Re-raised
+    by ``PolicyRunner.run`` and caught at the top of the loop to return
+    a normal stopped-early success result.
+    """
+
+
+class PolicyRunner:
+    """Backend-agnostic policy execution against a ``SimEngine``.
+
+    Construct with any ``SimEngine`` and call :meth:`run`, :meth:`replay`, or
+    :meth:`evaluate`. The runner is stateless across calls — safe to reuse.
+
+    Args:
+        sim: Any ``SimEngine`` implementation.
+    """
+
+    def __init__(self, sim: SimEngine):
+        self.sim = sim
+
+    # ------------------------------------------------------------------
+    # run(): blocking policy execution
+    # ------------------------------------------------------------------
+    def run(
+        self,
+        robot_name: str,
+        policy: Policy,
+        *,
+        instruction: str = "",
+        duration: float = 10.0,
+        control_frequency: float = 50.0,
+        action_horizon: int = 8,
+        fast_mode: bool = False,
+        record_video: str | None = None,
+        video_fps: int = 30,
+        video_camera: str | None = None,
+        video_width: int = 640,
+        video_height: int = 480,
+        on_frame: OnFrame | None = None,
+    ) -> dict[str, Any]:
+        """Run ``policy`` on ``robot_name`` for ``duration`` seconds.
+
+        Args:
+            robot_name: Name of robot in the sim.
+            policy: Already-constructed ``Policy`` instance. Callers (typically
+                ``SimEngine.run_policy``) are responsible for policy
+                construction so tests can inject mocks trivially.
+            instruction: Natural-language instruction forwarded to the policy.
+            duration: Wall-clock seconds to run (interpreted as control steps
+                via ``control_frequency``).
+            control_frequency: Target Hz for ``policy.get_actions`` calls.
+            action_horizon: Max actions consumed per policy call before
+                requerying observation.
+            fast_mode: If True, skip real-time ``time.sleep`` between steps.
+            record_video: Optional path to save an MP4 via :meth:`SimEngine.render`.
+            video_fps / video_camera / video_width / video_height: Recording
+                parameters.
+            on_frame: Optional hook ``(step_idx, obs, action) -> None`` called
+                after every ``send_action``. Used by backends to layer in
+                recording / telemetry without subclassing this runner.
+
+        Returns:
+            ``{"status": "success"|"error", "content": [{"text": ...}]}``.
+        """
+        # Lazy optional import — only imageio is optional.
+        writer = None
+        frame_count = 0
+        frame_interval = 0.0
+        next_frame_step = 0.0
+        if record_video:
+            imageio = require_optional(
+                "imageio",
+                pip_install="imageio imageio-ffmpeg",
+                extra="sim-mujoco",
+                purpose="video recording",
+            )
+            os.makedirs(os.path.dirname(os.path.abspath(record_video)), exist_ok=True)
+            writer = imageio.get_writer(  # type: ignore[attr-defined]
+                record_video, fps=video_fps, quality=8, macro_block_size=1
+            )
+            frame_interval = control_frequency / video_fps
+
+        stopped_early = False
+        try:
+            total_steps = int(duration * control_frequency)
+            action_sleep = 1.0 / control_frequency
+            start_time = time.time()
+            step_count = 0
+
+            while step_count < total_steps:
+                observation = self.sim.get_observation(robot_name=robot_name)
+
+                coro_or_result = policy.get_actions(observation, instruction)
+                actions = _resolve_coroutine(coro_or_result)
+
+                for action_dict in actions[:action_horizon]:
+                    if step_count >= total_steps:
+                        break
+
+                    self.sim.send_action(action_dict, robot_name=robot_name)
+
+                    if on_frame is not None:
+                        try:
+                            on_frame(step_count, observation, action_dict)
+                        except CooperativeStop:
+                            # Backend (e.g. MuJoCo) signalled a graceful stop.
+                            # Break both loops and return a normal success result.
+                            raise
+                        except Exception as e:
+                            # on_frame is user-provided telemetry — never fatal.
+                            logger.warning("on_frame hook raised: %s", e)
+
+                    step_count += 1
+
+                    if writer is not None and step_count >= next_frame_step:
+                        frame = self.sim.render(
+                            camera_name=video_camera or "default",
+                            width=video_width,
+                            height=video_height,
+                        )
+                        img = frame.get("image") if isinstance(frame, dict) else None
+                        if img is not None:
+                            writer.append_data(np.asarray(img))
+                            frame_count += 1
+                        next_frame_step += frame_interval
+
+                    if not fast_mode:
+                        time.sleep(action_sleep)
+
+        except CooperativeStop:
+            stopped_early = True
+        except Exception as e:
+            if writer is not None:
+                writer.close()
+            logger.exception("PolicyRunner.run failed")
+            return {"status": "error", "content": [{"text": f"❌ Policy failed: {e}"}]}
+
+        # Either finished all steps or was cooperatively stopped
+        elapsed = time.time() - start_time
+        sim_time = self._maybe_sim_time()
+        prefix = "🛑 Policy stopped" if stopped_early else "✅ Policy complete"
+        text = (
+            f"{prefix} on '{robot_name}'\n"
+            f"🧠 {type(policy).__name__} | 🎯 {instruction}\n"
+            f"⏱️ {elapsed:.1f}s | 📊 {step_count} steps"
+        )
+        if sim_time is not None:
+            text += f" | 🕐 sim_t={sim_time:.3f}s"
+        if writer is not None:
+            writer.close()
+            file_kb = os.path.getsize(record_video) / 1024  # type: ignore[arg-type]
+            text += (
+                f"\n🎬 Video: {record_video}\n"
+                f"📹 {frame_count} frames, {video_fps}fps, "
+                f"{video_width}x{video_height} | 💾 {file_kb:.0f} KB"
+            )
+        return {"status": "success", "content": [{"text": text}]}
+
+    # ------------------------------------------------------------------
+    # replay(): replay a LeRobotDataset episode
+    # ------------------------------------------------------------------
+    def replay(
+        self,
+        repo_id: str,
+        robot_name: str | None = None,
+        *,
+        episode: int = 0,
+        root: str | None = None,
+        speed: float = 1.0,
+        action_key_map: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Replay a recorded LeRobotDataset episode through ``send_action``.
+
+        Args:
+            repo_id: HuggingFace dataset id (e.g. ``lerobot/pusht``).
+            robot_name: Target robot. Defaults to first robot in the sim.
+            episode: Episode index in the dataset.
+            root: Optional local dataset root override.
+            speed: Playback speed multiplier (1.0 = real time).
+            action_key_map: Optional list of joint names, one per action
+                vector index. Required when dataset joint ordering differs
+                from ``robot_joint_names(robot_name)``. If ``None``, positional
+                mapping to ``robot_joint_names`` is used.
+
+        Returns:
+            Standard status dict with per-frame stats.
+        """
+        try:
+            from strands_robots.dataset_recorder import load_lerobot_episode
+        except ImportError:
+            return {"status": "error", "content": [{"text": "❌ lerobot not installed"}]}
+
+        try:
+            resolved_robot = robot_name or self._require_default_robot()
+        except ValueError as e:
+            return {"status": "error", "content": [{"text": f"❌ {e}"}]}
+
+        try:
+            ds, episode_start, episode_length = load_lerobot_episode(repo_id, episode, root)
+        except Exception as e:  # noqa: BLE001 — library errors are opaque
+            return {"status": "error", "content": [{"text": f"❌ {e}"}]}
+
+        # Resolve joint name ordering for action vector index → action dict.
+        joint_names = list(action_key_map) if action_key_map else self.sim.robot_joint_names(resolved_robot)
+
+        dataset_fps = getattr(ds, "fps", 30)
+        frame_interval = 1.0 / (dataset_fps * speed)
+        frames_applied = 0
+        start_time = time.time()
+
+        for frame_idx in range(episode_length):
+            step_start = time.time()
+            frame = ds[episode_start + frame_idx]
+
+            action_vals = frame.get("action") if isinstance(frame, dict) else None
+            if action_vals is None:
+                # No action at this index — just advance physics one step.
+                self.sim.step(n_steps=1)
+                frames_applied += 1
+            else:
+                if hasattr(action_vals, "numpy"):
+                    action_vals = action_vals.numpy()
+                if hasattr(action_vals, "tolist"):
+                    action_vals = action_vals.tolist()
+
+                action_dict: dict[str, Any] = {}
+                for i, val in enumerate(action_vals):
+                    if i >= len(joint_names):
+                        break
+                    action_dict[joint_names[i]] = float(val)
+
+                self.sim.send_action(action_dict, robot_name=resolved_robot)
+                frames_applied += 1
+
+            sleep_time = frame_interval - (time.time() - step_start)
+            if sleep_time > 0:
+                time.sleep(sleep_time)
+
+        duration = time.time() - start_time
+        return {
+            "status": "success",
+            "content": [
+                {
+                    "text": (
+                        f"▶️ Replayed episode {episode} from {repo_id} on '{resolved_robot}'\n"
+                        f"Frames: {frames_applied}/{episode_length} | "
+                        f"Duration: {duration:.1f}s | Speed: {speed}x"
+                    )
+                },
+                {
+                    "json": {
+                        "episode": episode,
+                        "robot_name": resolved_robot,
+                        "frames_applied": frames_applied,
+                        "total_frames": episode_length,
+                        "duration_s": round(duration, 2),
+                        "speed": speed,
+                    }
+                },
+            ],
+        }
+
+    # ------------------------------------------------------------------
+    # evaluate(): multi-episode success metrics
+    # ------------------------------------------------------------------
+    def evaluate(
+        self,
+        robot_name: str,
+        policy: Policy,
+        *,
+        instruction: str = "",
+        n_episodes: int = 10,
+        max_steps: int = 300,
+        success_fn: SuccessFn | str | None = None,
+    ) -> dict[str, Any]:
+        """Evaluate ``policy`` for ``n_episodes`` episodes.
+
+        Args:
+            robot_name: Robot to evaluate.
+            policy: Already-constructed ``Policy`` instance.
+            instruction: Instruction forwarded to the policy.
+            n_episodes: Number of reset → rollout episodes.
+            max_steps: Cap per episode.
+            success_fn: Either
+
+                * ``None`` — never succeeds (dry run / performance probe).
+                * ``"contact"`` — success when ``sim.get_contacts()`` reports
+                  any penetrating contact. Requires backend to implement
+                  ``get_contacts``; falls back to ``False`` otherwise.
+                * callable ``(observation) -> bool``.
+
+        Returns:
+            Standard status dict with ``success_rate``, per-episode results.
+        """
+        try:
+            resolved_check = self._resolve_success_fn(success_fn)
+        except ValueError as e:
+            return {"status": "error", "content": [{"text": f"❌ {e}"}]}
+
+        results: list[dict[str, Any]] = []
+        for ep in range(n_episodes):
+            self.sim.reset()
+            success = False
+            steps = 0
+
+            for _ in range(max_steps):
+                observation = self.sim.get_observation(robot_name=robot_name)
+                coro_or_result = policy.get_actions(observation, instruction)
+                actions = _resolve_coroutine(coro_or_result)
+
+                if actions:
+                    self.sim.send_action(actions[0], robot_name=robot_name)
+                else:
+                    # Policy returned nothing — still advance one physics step
+                    # so episodes don't hang on degenerate policies.
+                    self.sim.step(n_steps=1)
+
+                steps += 1
+
+                if resolved_check is not None and resolved_check(observation):
+                    success = True
+                    break
+
+            results.append({"episode": ep, "steps": steps, "success": success})
+
+        n_success = sum(1 for r in results if r["success"])
+        success_rate = n_success / max(n_episodes, 1)
+        avg_steps = sum(r["steps"] for r in results) / max(n_episodes, 1)
+
+        return {
+            "status": "success",
+            "content": [
+                {
+                    "text": (
+                        f"📊 Evaluation: {type(policy).__name__} on '{robot_name}'\n"
+                        f"Episodes: {n_episodes} | Success: {n_success}/{n_episodes} "
+                        f"({success_rate:.1%})\n"
+                        f"Avg steps: {avg_steps:.0f}/{max_steps}"
+                    )
+                },
+                {
+                    "json": {
+                        "success_rate": round(success_rate, 4),
+                        "n_episodes": n_episodes,
+                        "n_success": n_success,
+                        "avg_steps": round(avg_steps, 1),
+                        "max_steps": max_steps,
+                        "episodes": results,
+                    }
+                },
+            ],
+        }
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+    def _maybe_sim_time(self) -> float | None:
+        """Best-effort read of sim time from any backend that exposes it."""
+        get_state = getattr(self.sim, "get_state", None)
+        if get_state is None:
+            return None
+        try:
+            state = get_state()
+        except Exception:
+            return None
+        if isinstance(state, dict):
+            return state.get("sim_time")
+        return None
+
+    def _require_default_robot(self) -> str:
+        robots = self.sim.list_robots()
+        if not robots:
+            raise ValueError("No robots in sim. Add one first.")
+        return robots[0]
+
+    def _resolve_success_fn(self, success_fn: SuccessFn | str | None) -> SuccessFn | None:
+        if success_fn is None:
+            return None
+        if callable(success_fn):
+            return success_fn
+        if success_fn == "contact":
+            sim = self.sim
+
+            def _contact_check(_obs: dict[str, Any]) -> bool:
+                get_contacts = getattr(sim, "get_contacts", None)
+                if get_contacts is None:
+                    return False
+                try:
+                    result = get_contacts()
+                except NotImplementedError:
+                    return False
+                except Exception:
+                    return False
+                # Accept either {"contacts": [...]} or {"n_contacts": int}
+                if isinstance(result, dict):
+                    if result.get("n_contacts", 0) > 0:
+                        return True
+                    contacts = result.get("contacts")
+                    if isinstance(contacts, list) and contacts:
+                        return True
+                return False
+
+            return _contact_check
+        raise ValueError(f"Unknown success_fn string: {success_fn!r}")
+
+
+__all__ = ["PolicyRunner", "OnFrame", "SuccessFn", "CooperativeStop"]
+
+# Re-export for callers that want TrajectoryStep nearby (used by MuJoCo's
+# on_frame recording hook). Keeps imports centralised.
+__all__.append("TrajectoryStep")

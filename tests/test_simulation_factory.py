@@ -73,6 +73,12 @@ def test_register_backend_loader_must_be_callable() -> None:
         def remove_robot(self, name):  # type: ignore[override]
             return {}
 
+        def list_robots(self):  # type: ignore[override]
+            return []
+
+        def robot_joint_names(self, robot_name):  # type: ignore[override]
+            return []
+
         def add_object(self, name, **kw):  # type: ignore[override]
             return {}
 
