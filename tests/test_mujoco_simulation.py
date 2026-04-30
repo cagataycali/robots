@@ -933,3 +933,46 @@ class TestMultipleSameConfigRobots:
         # No namespaced keys leak into the observation.
         assert "arm0/shoulder" not in obs0
         assert "arm1/shoulder" not in obs1
+
+
+# ── Physics/recording name resolution after namespacing ──
+
+
+class TestPhysicsNameResolution:
+    """Physics methods (jacobian, body_state, forward_kinematics) accept
+    raw body/joint names. After PR #85 multi-robot namespacing, they now
+    fall back to namespaced lookups so single-robot code keeps working
+    without churn.
+    """
+
+    def test_get_body_state_accepts_short_name_single_robot(self, sim_with_robot):
+        """In a single-robot scene, ``gripper`` should resolve via the
+        namespace fallback (actual body is ``arm1/gripper``)."""
+        # ROBOT_XML has bodies: base, link1, link2. After namespacing the
+        # real names are arm1/base etc. The short name must resolve.
+        r = sim_with_robot._dispatch_action("get_body_state", {"body_name": "link1"})
+        assert r["status"] == "success", r
+
+    def test_get_body_state_rejects_unknown(self, sim_with_robot):
+        r = sim_with_robot._dispatch_action("get_body_state", {"body_name": "nope"})
+        assert r["status"] == "error"
+
+
+class TestRecordingSafeCameraNames:
+    """LeRobot feature names can't contain ``/``. When a robot namespace
+    leaks into the camera name (e.g. ``arm0/wrist_cam``), the dataset
+    recorder must sanitize the separator before handing off to LeRobot.
+    """
+
+    def test_start_recording_sanitizes_namespaced_cameras(self, sim_with_robot, tmp_path):
+        # The sim_with_robot fixture's robot XML injects a camera; for
+        # so101 it becomes ``arm1/wrist_cam``. Without sanitization,
+        # LeRobot raises: "Feature names should not contain '/'".
+        root = str(tmp_path / "ds")
+        r = sim_with_robot._dispatch_action(
+            "start_recording",
+            {"repo_id": "local/test-ns", "root": root},
+        )
+        assert r["status"] == "success", r
+        # cleanup — don't leave a dangling recorder on the fixture
+        sim_with_robot._dispatch_action("stop_recording", {})

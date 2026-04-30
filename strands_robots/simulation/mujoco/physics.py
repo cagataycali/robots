@@ -136,7 +136,7 @@ class PhysicsMixin:
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
 
-        body_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, body_name)
+        body_id = self._resolve_mj_name(mj.mjtObj.mjOBJ_BODY, body_name)
         if body_id < 0:
             return {"status": "error", "content": [{"text": f"❌ Body '{body_name}' not found."}]}
 
@@ -161,6 +161,39 @@ class PhysicsMixin:
         }
 
     # ── Raycasting ──
+
+    def _resolve_mj_name(self, obj_type: int, name: str) -> int:
+        """Look up a MuJoCo name, tolerating robot namespacing.
+
+        For physics/introspection methods that accept raw body/joint/site
+        names (``get_body_state("gripper")`` etc.), we try the name
+        verbatim first, then fall back to trying it prefixed with every
+        robot's namespace. This preserves the pre-namespacing UX for
+        single-robot scenes while still working in multi-robot scenes
+        when the name is unambiguous.
+
+        In multi-robot scenes where multiple robots contain a body with
+        the same short name (e.g. two so101s each having ``gripper``),
+        the caller MUST pass the namespaced form (``arm0/gripper``) to
+        disambiguate. The fallback returns the first match it finds,
+        which is non-deterministic — this is a deliberate
+        "unambiguous or explicit" contract.
+        """
+        import mujoco as _mj
+
+        assert self._world is not None and self._world._model is not None
+        model = self._world._model
+        mid = _mj.mj_name2id(model, obj_type, name)
+        if mid >= 0:
+            return int(mid)
+        if "/" in name:  # already namespaced, no point retrying
+            return -1
+        for robot in self._world.robots.values():
+            if robot.namespace:
+                mid = _mj.mj_name2id(model, obj_type, robot.namespace + name)
+                if mid >= 0:
+                    return int(mid)
+        return -1
 
     def raycast(
         self,
@@ -249,19 +282,19 @@ class PhysicsMixin:
         jacr = np.zeros((3, model.nv))
 
         if body_name:
-            obj_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, body_name)
+            obj_id = self._resolve_mj_name(mj.mjtObj.mjOBJ_BODY, body_name)
             if obj_id < 0:
                 return {"status": "error", "content": [{"text": f"❌ Body '{body_name}' not found."}]}
             mj.mj_jacBody(model, data, jacp, jacr, obj_id)
             label = f"body '{body_name}'"
         elif site_name:
-            obj_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_SITE, site_name)
+            obj_id = self._resolve_mj_name(mj.mjtObj.mjOBJ_SITE, site_name)
             if obj_id < 0:
                 return {"status": "error", "content": [{"text": f"❌ Site '{site_name}' not found."}]}
             mj.mj_jacSite(model, data, jacp, jacr, obj_id)
             label = f"site '{site_name}'"
         elif geom_name:
-            obj_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_GEOM, geom_name)
+            obj_id = self._resolve_mj_name(mj.mjtObj.mjOBJ_GEOM, geom_name)
             if obj_id < 0:
                 return {"status": "error", "content": [{"text": f"❌ Geom '{geom_name}' not found."}]}
             mj.mj_jacGeom(model, data, jacp, jacr, obj_id)
@@ -398,7 +431,7 @@ class PhysicsMixin:
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
 
-        body_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, body_name)
+        body_id = self._resolve_mj_name(mj.mjtObj.mjOBJ_BODY, body_name)
         if body_id < 0:
             return {"status": "error", "content": [{"text": f"❌ Body '{body_name}' not found."}]}
 
@@ -461,7 +494,7 @@ class PhysicsMixin:
 
         set_count = 0
         for jnt_name, value in positions.items():
-            jnt_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, jnt_name)
+            jnt_id = self._resolve_mj_name(mj.mjtObj.mjOBJ_JOINT, jnt_name)
             if jnt_id >= 0:
                 qpos_adr = model.jnt_qposadr[jnt_id]
                 data.qpos[qpos_adr] = float(value)
@@ -495,7 +528,7 @@ class PhysicsMixin:
 
         set_count = 0
         for jnt_name, value in velocities.items():
-            jnt_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, jnt_name)
+            jnt_id = self._resolve_mj_name(mj.mjtObj.mjOBJ_JOINT, jnt_name)
             if jnt_id >= 0:
                 dof_adr = model.jnt_dofadr[jnt_id]
                 data.qvel[dof_adr] = float(value)
@@ -575,7 +608,7 @@ class PhysicsMixin:
 
         mj = _ensure_mujoco()
         model = self._world._model
-        body_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, body_name)
+        body_id = self._resolve_mj_name(mj.mjtObj.mjOBJ_BODY, body_name)
         if body_id < 0:
             return {"status": "error", "content": [{"text": f"❌ Body '{body_name}' not found."}]}
 
@@ -610,7 +643,7 @@ class PhysicsMixin:
 
         gid = geom_id
         if geom_name:
-            gid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_GEOM, geom_name)
+            gid = self._resolve_mj_name(mj.mjtObj.mjOBJ_GEOM, geom_name)
         if gid is None or gid < 0:
             return {"status": "error", "content": [{"text": f"❌ Geom '{geom_name or geom_id}' not found."}]}
 

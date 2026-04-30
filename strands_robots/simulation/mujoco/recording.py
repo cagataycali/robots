@@ -78,8 +78,14 @@ class RecordingMixin:
             mj = _ensure_mujoco()
             for i in range(self._world._model.ncam):
                 cam_name = mj.mj_id2name(self._world._model, mj.mjtObj.mjOBJ_CAMERA, i)
-                if cam_name:
-                    camera_keys.append(cam_name)
+                if not cam_name:
+                    continue
+                # LeRobot feature names can't contain '/' (reserved for
+                # nested-feature addressing). When a robot injects a
+                # namespaced camera (e.g. ``arm0/wrist_cam``), collapse
+                # the separator to ``__`` for the dataset schema.
+                safe_name = cam_name.replace("/", "__")
+                camera_keys.append(safe_name)
 
             assert _DatasetRecorder is not None  # checked above
             self._world._backend_state["dataset_recorder"] = _DatasetRecorder.create(
