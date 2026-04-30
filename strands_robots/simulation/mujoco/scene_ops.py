@@ -149,6 +149,16 @@ def _reload_scene_from_xml(world: SimWorld, scene_path: str) -> bool:
     world._model = new_model
     world._data = new_data
 
+    # Persist the current scene XML so subsequent mj_saveLastXML calls can
+    # reset the MuJoCo global state. Without this, any render/renderer
+    # creation poisons mj_saveLastXML for inject/eject round-trips.
+    try:
+        with open(scene_path) as _f:
+            world._backend_state["xml"] = _f.read()
+    except OSError:
+        # Best-effort — don't fail the reload just because we can't read back.
+        pass
+
     # Re-discover robot joints/actuators (IDs may shift)
     for robot in world.robots.values():
         robot.joint_ids = []
@@ -200,10 +210,29 @@ def _get_all_robot_base_dirs(world: SimWorld) -> list[str]:
 
 
 def _save_and_patch_xml(world: SimWorld, tmpdir: str, filename: str) -> str:
-    """Save current model to XML in tmpdir and patch asset paths."""
+    """Save current model to XML in tmpdir and patch asset paths.
+
+    Note: MuJoCo's ``mj_saveLastXML`` is a global function that always
+    writes the *last loaded* model's XML, ignoring the ``model`` argument.
+    Any renderer creation (``mj.Renderer``) or ancillary model load between
+    our last scene compile and this save will poison the global → we get
+    some *other* model's XML and the inject/eject XML round-trip fails
+    silently (e.g. "Body 'cube' not found in MJCF XML").
+
+    To work around this, we first reload our own stored scene XML into the
+    MuJoCo global state (via ``MjModel.from_xml_string``). The resulting
+    ``_tmp`` model is discarded — its only purpose is to reset
+    ``mj_saveLastXML``'s internal pointer.
+    """
     mj = _ensure_mujoco()
     scene_path = os.path.join(tmpdir, filename)
-    mj.mj_saveLastXML(scene_path, world._model)
+
+    stored_xml = world._backend_state.get("xml")
+    if stored_xml:
+        _tmp = mj.MjModel.from_xml_string(stored_xml)  # noqa: F841
+        mj.mj_saveLastXML(scene_path, _tmp)
+    else:
+        mj.mj_saveLastXML(scene_path, world._model)
 
     robot_base_dir = _get_robot_base_dir(world)
     if robot_base_dir and os.path.isdir(robot_base_dir):
@@ -440,12 +469,10 @@ def inject_object_into_scene(world: SimWorld, obj: SimObject) -> bool:
 
 def eject_body_from_scene(world: SimWorld, body_name: str) -> bool:
     """Remove a named body from the scene via XML round-trip."""
-    mj = _ensure_mujoco()
-
     tmpdir = tempfile.mkdtemp(prefix="strands_eject_")
     try:
-        scene_path = os.path.join(tmpdir, "scene_ejected.xml")
-        mj.mj_saveLastXML(scene_path, world._model)
+        # Use helper so we honour the mj_saveLastXML global-state workaround.
+        scene_path = _save_and_patch_xml(world, tmpdir, "scene_ejected.xml")
 
         tree = ET.parse(scene_path)
         root = tree.getroot()

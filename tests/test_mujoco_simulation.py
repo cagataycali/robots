@@ -786,3 +786,55 @@ class TestRendererThreadSafety:
         # cleanup() should succeed — pre-fix this segfaulted when the
         # worker-thread renderer was closed on the main thread.
         sim_with_robot.cleanup()
+
+
+# ── XML round-trip state poisoning regression ──
+
+
+class TestMjSaveLastXMLGlobalState:
+    """Regression: MuJoCo's ``mj_saveLastXML`` is a global-state function
+    that always emits the *last loaded* model, ignoring its ``model`` arg.
+    Any renderer creation or ancillary model load would poison subsequent
+    inject/eject XML round-trips, causing silent "Body not found" warnings
+    and skipped ejections.
+    """
+
+    def test_remove_object_after_render(self, sim_with_robot):
+        """After rendering, remove_object must still find and eject the body."""
+        sim_with_robot.add_object("cube", shape="box", size=[0.025, 0.025, 0.025], position=[0.25, 0, 0.05])
+        sim_with_robot.add_camera("cam", position=[0.3, -0.3, 0.3], target=[0, 0, 0])
+        # Render poisons mj_saveLastXML (loads an ancillary model internally).
+        obs = sim_with_robot.get_observation("arm1", camera_name="cam")
+        assert "cam" in obs, "render should have produced a camera frame"
+
+        # This used to silently log "Body 'cube' not found in MJCF XML" and
+        # leave the body in the scene.
+        result = sim_with_robot.remove_object("cube")
+        assert result["status"] == "success"
+
+        # Verify the body is really gone from the live model
+        import mujoco as mj
+
+        names = [
+            mj.mj_id2name(sim_with_robot._world._model, mj.mjtObj.mjOBJ_BODY, i)
+            for i in range(sim_with_robot._world._model.nbody)
+        ]
+        assert "cube" not in names, "cube should be ejected from the model"
+
+    def test_remove_object_after_run_policy(self, sim_with_robot):
+        """After a policy runs (creates renderers + observations), eject still works."""
+        sim_with_robot.add_object("cube", shape="box", size=[0.025, 0.025, 0.025], position=[0.25, 0, 0.05])
+        sim_with_robot.add_camera("cam", position=[0.3, -0.3, 0.3], target=[0, 0, 0])
+        r = sim_with_robot.run_policy("arm1", policy_provider="mock", duration=0.1, fast_mode=True)
+        assert r["status"] == "success"
+
+        result = sim_with_robot.remove_object("cube")
+        assert result["status"] == "success"
+
+        import mujoco as mj
+
+        names = [
+            mj.mj_id2name(sim_with_robot._world._model, mj.mjtObj.mjOBJ_BODY, i)
+            for i in range(sim_with_robot._world._model.nbody)
+        ]
+        assert "cube" not in names
