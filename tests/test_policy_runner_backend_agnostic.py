@@ -71,8 +71,8 @@ class FakeSim(SimEngine):
     def remove_object(self, name):
         return {"status": "success"}
 
-    def get_observation(self, robot_name=None, camera_name=None):
-        self.calls.append(("get_observation", robot_name, camera_name))
+    def get_observation(self, robot_name=None):
+        self.calls.append(("get_observation", robot_name))
         return {n: 0.0 for n in self._joint_names}
 
     def send_action(self, action, robot_name=None, n_substeps=1):

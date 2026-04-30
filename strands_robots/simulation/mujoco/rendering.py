@@ -58,8 +58,10 @@ class RenderingMixin:
             renderers[key] = mj.Renderer(self._world._model, height=height, width=width)
         return renderers[key]
 
-    def _get_sim_observation(self, robot_name: str, cam_name: str | None = None) -> dict[str, Any]:
-        """Get observation from sim (same format as real robot).
+    def _get_sim_observation(self, robot_name: str) -> dict[str, Any]:
+        """Get observation from sim: joint state + all cameras.
+
+        Implements :meth:`SimEngine.get_observation`'s schema.
 
         Multi-robot note: when the injected robot XML was namespaced
         (e.g. ``arm0/shoulder_pan`` in MuJoCo to allow multiple same-config
@@ -83,14 +85,12 @@ class RenderingMixin:
             if jnt_id >= 0:
                 obs[jnt_name] = float(data.qpos[model.jnt_qposadr[jnt_id]])
 
-        cameras_to_render = []
-        if cam_name:
-            cameras_to_render = [cam_name]
-        else:
-            cameras_to_render = [mj.mj_id2name(model, mj.mjtObj.mjOBJ_CAMERA, i) for i in range(model.ncam)]
-            for pycam_name in self._world.cameras:
-                if pycam_name not in cameras_to_render:
-                    cameras_to_render.append(pycam_name)
+        # Render every camera defined on the model plus any python-side cameras.
+        # Individual camera failures are logged but do not drop joint state.
+        cameras_to_render = [mj.mj_id2name(model, mj.mjtObj.mjOBJ_CAMERA, i) for i in range(model.ncam)]
+        for pycam_name in self._world.cameras:
+            if pycam_name not in cameras_to_render:
+                cameras_to_render.append(pycam_name)
 
         for cname in cameras_to_render:
             if not cname:

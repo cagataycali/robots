@@ -13,7 +13,7 @@ Three entry points:
 
 All three call only these public ``SimEngine`` methods:
 
-* ``get_observation(robot_name, camera_name)``
+* ``get_observation(robot_name)``
 * ``send_action(action, robot_name, n_substeps)``
 * ``step(n_steps)``
 * ``reset()``

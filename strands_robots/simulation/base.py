@@ -165,13 +165,36 @@ class SimEngine(ABC):
     # --- Observation / Action ---
 
     @abstractmethod
-    def get_observation(self, robot_name: str | None = None, camera_name: str | None = None) -> dict[str, Any]:
-        """Get observation from simulation.
+    def get_observation(self, robot_name: str | None = None) -> dict[str, Any]:
+        """Get full observation for a robot: joint state + all attached cameras.
 
-        Convenience method that delegates to the underlying Robot
-        abstraction. Provides a unified interface for agent tools
-        that interact with simulation without needing to distinguish
-        between Robot and Sim layers.
+        Unified observation consumed by :class:`Policy` and
+        :class:`~strands_robots.simulation.policy_runner.PolicyRunner`.
+        Backends MUST return a dict with the following schema; extra keys
+        are allowed.
+
+        Schema:
+            - ``"<joint_name>"`` (float): One entry per joint on the robot,
+              keyed by the *short* joint name (e.g. ``"shoulder_pan"``).
+              The schema is stable regardless of multi-robot namespacing
+              at the physics-engine level.
+            - ``"<camera_name>"`` (np.ndarray): One RGB uint8 frame per
+              camera associated with the robot, keyed by camera name.
+              Shape ``(H, W, 3)``. Cameras whose render fails MAY be
+              omitted; joint state MUST still be returned.
+
+        Single-camera rendering is :meth:`render`'s job, not this method's.
+        For batched multi-robot observation (future Isaac / Newton), add a
+        separate ``get_observations(robot_names)`` method — do NOT extend
+        this one.
+
+        Args:
+            robot_name: Which robot to observe. If ``None`` and exactly one
+                robot exists, that robot is used; otherwise returns ``{}``.
+
+        Returns:
+            Observation dict per schema above. Returns ``{}`` if the world
+            is not yet created or ``robot_name`` is unknown.
         """
         ...
 

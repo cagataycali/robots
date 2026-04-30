@@ -90,7 +90,7 @@ def _make_dummy_engine_class() -> type[SimEngine]:
         def remove_object(self, name: str) -> dict[str, Any]:
             return {}
 
-        def get_observation(self, robot_name: str | None = None, camera_name: str | None = None) -> dict[str, Any]:
+        def get_observation(self, robot_name: str | None = None) -> dict[str, Any]:
             return {}
 
         def send_action(self, action: dict[str, Any], robot_name: str | None = None, n_substeps: int = 1) -> None:

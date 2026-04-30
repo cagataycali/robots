@@ -85,7 +85,7 @@ def test_register_backend_loader_must_be_callable() -> None:
         def remove_object(self, name):  # type: ignore[override]
             return {}
 
-        def get_observation(self, robot_name=None, camera_name=None):  # type: ignore[override]
+        def get_observation(self, robot_name=None):  # type: ignore[override]
             return {}
 
         def send_action(self, action, robot_name=None, n_substeps=1):  # type: ignore[override]
@@ -136,7 +136,7 @@ class _FakeMinimal(_base.SimEngine):
     def remove_object(self, name):  # type: ignore[override]
         return {}
 
-    def get_observation(self, robot_name=None, camera_name=None):  # type: ignore[override]
+    def get_observation(self, robot_name=None):  # type: ignore[override]
         return {}
 
     def send_action(self, action, robot_name=None, n_substeps=1):  # type: ignore[override]

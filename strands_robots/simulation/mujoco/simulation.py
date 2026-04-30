@@ -105,8 +105,11 @@ class Simulation(
 
     # --- Robot-compatible interface ---
 
-    def get_observation(self, robot_name: str | None = None, camera_name: str | None = None) -> dict[str, Any]:
-        """Get observation from simulation (Robot ABC compatible)."""
+    def get_observation(self, robot_name: str | None = None) -> dict[str, Any]:
+        """Get full observation for a robot: joint state + all attached cameras.
+
+        See :meth:`SimEngine.get_observation` for the schema contract.
+        """
         if self._world is None or self._world._model is None:
             return {}
         if robot_name is None:
@@ -115,7 +118,7 @@ class Simulation(
             robot_name = next(iter(self._world.robots))
         if robot_name not in self._world.robots:
             return {}
-        return self._get_sim_observation(robot_name, cam_name=camera_name)
+        return self._get_sim_observation(robot_name)
 
     def send_action(self, action: dict[str, Any], robot_name: str | None = None, n_substeps: int = 1) -> None:
         """Apply action to simulation (Robot ABC compatible)."""

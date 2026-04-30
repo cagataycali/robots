@@ -330,6 +330,48 @@ class TestRobotManagement:
         # Should have joint positions
         assert len(obs) > 0
 
+    def test_get_observation_schema_joints_plus_cameras(self, sim_with_robot):
+        """get_observation must return {short_joint: float, camera_name: ndarray}.
+
+        Locks the ABC schema contract for downstream policies/backends.
+        """
+        import numpy as np
+
+        sim_with_robot.add_camera("wrist", position=[0.2, -0.2, 0.3], target=[0, 0, 0])
+        obs = sim_with_robot.get_observation(robot_name="arm1")
+
+        # Joint entries: keyed by *short* names, values are floats.
+        joint_names = set(sim_with_robot._world.robots["arm1"].joint_names)
+        joint_entries = {k: v for k, v in obs.items() if k in joint_names}
+        assert joint_entries, "expected at least one joint in observation"
+        for name, value in joint_entries.items():
+            assert isinstance(value, float), f"joint {name} must be float, got {type(value).__name__}"
+
+        # Camera entries: any non-joint key must be an RGB uint8 ndarray.
+        camera_entries = {k: v for k, v in obs.items() if k not in joint_names}
+        assert "wrist" in camera_entries, "user-added camera must appear in observation"
+        for name, frame in camera_entries.items():
+            assert isinstance(frame, np.ndarray), f"camera {name} must be ndarray"
+            assert frame.ndim == 3 and frame.shape[2] == 3, f"camera {name} must be HxWx3, got shape {frame.shape}"
+            assert frame.dtype == np.uint8, f"camera {name} must be uint8, got {frame.dtype}"
+
+    def test_get_observation_signature_has_no_camera_name(self):
+        """Regression: get_observation must not accept a camera_name param.
+
+        Single-camera render belongs to ``render()``. See base.py schema docs.
+        """
+        import inspect
+
+        from strands_robots.simulation.base import SimEngine
+        from strands_robots.simulation.mujoco.simulation import Simulation
+
+        for cls in (SimEngine, Simulation):
+            params = inspect.signature(cls.get_observation).parameters
+            assert "camera_name" not in params, (
+                f"{cls.__name__}.get_observation must not take camera_name; use render() for single-camera rendering."
+            )
+            assert "robot_name" in params
+
     def test_robot_compatible_send_action(self, sim_with_robot):
         """Robot ABC compatible send_action should not crash."""
         sim_with_robot.send_action(
@@ -804,8 +846,8 @@ class TestMjSaveLastXMLGlobalState:
         sim_with_robot.add_object("cube", shape="box", size=[0.025, 0.025, 0.025], position=[0.25, 0, 0.05])
         sim_with_robot.add_camera("cam", position=[0.3, -0.3, 0.3], target=[0, 0, 0])
         # Render poisons mj_saveLastXML (loads an ancillary model internally).
-        obs = sim_with_robot.get_observation("arm1", camera_name="cam")
-        assert "cam" in obs, "render should have produced a camera frame"
+        obs = sim_with_robot.get_observation("arm1")
+        assert "cam" in obs, "get_observation should include the 'cam' camera frame"
 
         # This used to silently log "Body 'cube' not found in MJCF XML" and
         # leave the body in the scene.
