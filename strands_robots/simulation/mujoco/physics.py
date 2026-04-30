@@ -118,10 +118,12 @@ class PhysicsMixin:
         torque: list[float] | None = None,
         point: list[float] | None = None,
     ) -> dict[str, Any]:
-        """Apply external force and/or torque to a body.
+        """Apply a single-shot external force and/or torque to a body.
 
         Uses mj_applyFT for precise force application at a world-frame point.
-        Forces persist for one timestep — call before each step for continuous force.
+        The force is applied once and then the qfrc_applied buffer is zeroed,
+        so the effect lasts only for the next mj_step call. For continuous
+        forces, call this method before every step.
 
         Args:
             body_name: Target body name.
@@ -144,6 +146,10 @@ class PhysicsMixin:
         t = np.array(torque or [0, 0, 0], dtype=np.float64)
         p = np.array(point, dtype=np.float64) if point else data.xipos[body_id].copy()
 
+        # Zero the buffer first so we don't accumulate from prior calls,
+        # then apply. This makes apply_force single-shot: the force acts
+        # only on the next mj_step, matching the docstring contract.
+        data.qfrc_applied[:] = 0.0
         mj.mj_applyFT(model, data, f, t, p, body_id, data.qfrc_applied)
 
         return {

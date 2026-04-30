@@ -309,13 +309,19 @@ class SimEngine(ABC):
         policy_config: dict[str, Any] | None = None,
         instruction: str = "",
         duration: float = 10.0,
+        control_frequency: float = 50.0,
+        action_horizon: int = 8,
         fast_mode: bool = False,
+        video: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Start policy execution in a background thread (non-blocking).
 
         Default implementation: synchronous passthrough to ``run_policy``.
         Backends that support true background execution (like MuJoCo via
         its ``ThreadPoolExecutor``) should override.
+
+        Accepts all parameters that ``run_policy`` does so the tool_spec
+        dispatcher can forward them uniformly.
         """
         return self.run_policy(
             robot_name,
@@ -323,7 +329,10 @@ class SimEngine(ABC):
             policy_config=policy_config,
             instruction=instruction,
             duration=duration,
+            control_frequency=control_frequency,
+            action_horizon=action_horizon,
             fast_mode=fast_mode,
+            video=video,
         )
 
     def replay_episode(

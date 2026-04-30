@@ -347,14 +347,24 @@ class DatasetRecorder:
         frame["task"] = task or self.default_task or "untitled"
 
         # --- Reconcile camera keys between frame and feature schema ---
-        # Only strip *undeclared* cameras from the frame (keys present in obs
-        # but not registered in _build_features). This avoids LeRobot's
-        # "Extra features" error.  Declared-but-missing cameras (e.g. when a
-        # render fails) are left alone — LeRobot tolerates absent columns and
-        # the episode simply won't have that camera's data.
+        # Normalize namespaced camera keys (e.g. "arm0/wrist_cam" → "arm0__wrist_cam")
+        # to match the schema declared in _build_features. MuJoCo uses "/" as a
+        # namespace separator for multi-robot cameras, but LeRobot feature names
+        # cannot contain "/" (reserved for nested-feature addressing).
         declared_cam_keys = {k for k in self.dataset.features if k.startswith("observation.images.")}
-        frame_cam_keys = {k for k in frame if k.startswith("observation.images.")}
-        for extra in frame_cam_keys - declared_cam_keys:
+        frame_cam_keys = {k for k in list(frame.keys()) if k.startswith("observation.images.")}
+        for cam_key in frame_cam_keys:
+            normalized = cam_key.replace("/", "__")
+            if normalized != cam_key and normalized in declared_cam_keys:
+                frame[normalized] = frame.pop(cam_key)
+
+        # Strip undeclared cameras (keys present in obs but not registered in
+        # _build_features). This avoids LeRobot's "Extra features" error.
+        # Declared-but-missing cameras (e.g. when a render fails) are left alone —
+        # LeRobot tolerates absent columns and the episode simply won't have that
+        # camera's data.
+        frame_cam_keys_final = {k for k in frame if k.startswith("observation.images.")}
+        for extra in frame_cam_keys_final - declared_cam_keys:
             del frame[extra]
 
         # --- Add to dataset ---

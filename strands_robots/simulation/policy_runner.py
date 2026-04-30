@@ -47,6 +47,8 @@ if TYPE_CHECKING:
     from strands_robots.policies.base import Policy
     from strands_robots.simulation.base import SimEngine
 
+from strands_robots.simulation.models import TrajectoryStep
+
 logger = logging.getLogger(__name__)
 
 
@@ -512,8 +514,5 @@ class PolicyRunner:
         raise ValueError(f"Unknown success_fn string: {success_fn!r}")
 
 
-__all__ = ["PolicyRunner", "OnFrame", "SuccessFn", "CooperativeStop"]
 
-# Re-export for callers that want TrajectoryStep nearby (used by MuJoCo's
-# on_frame recording hook). Keeps imports centralised.
-__all__.append("TrajectoryStep")
+__all__ = ["PolicyRunner", "OnFrame", "SuccessFn", "CooperativeStop", "TrajectoryStep"]

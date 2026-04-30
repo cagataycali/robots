@@ -137,13 +137,39 @@ def _reload_scene_from_xml(world: SimWorld, scene_path: str) -> bool:
     new_model = mj.MjModel.from_xml_path(str(scene_path))
     new_data = mj.MjData(new_model)
 
-    # Copy state from old model
-    old_nq = min(world._data.qpos.shape[0], new_data.qpos.shape[0])
-    old_nv = min(world._data.qvel.shape[0], new_data.qvel.shape[0])
-    new_data.qpos[:old_nq] = world._data.qpos[:old_nq]
-    new_data.qvel[:old_nv] = world._data.qvel[:old_nv]
-    old_nu = min(world._data.ctrl.shape[0], new_data.ctrl.shape[0])
-    new_data.ctrl[:old_nu] = world._data.ctrl[:old_nu]
+    # Copy state per-joint by name to handle layout shifts when injected
+    # bodies land earlier in the body-tree traversal.  Flat-index copies
+    # (qpos[:old_nq]) are unsafe because MuJoCo allocates qpos in
+    # recursive body-tree order — a new body can shift existing entries.
+    old_model = world._model
+    old_data = world._data
+    for i in range(old_model.njnt):
+        jnt_name = mj.mj_id2name(old_model, mj.mjtObj.mjOBJ_JOINT, i)
+        if not jnt_name:
+            continue
+        new_jid = mj.mj_name2id(new_model, mj.mjtObj.mjOBJ_JOINT, jnt_name)
+        if new_jid < 0:
+            continue  # joint removed from scene
+        # qpos: width depends on joint type (free=7, ball=4, hinge/slide=1)
+        jnt_type = old_model.jnt_type[i]
+        qpos_width = {0: 7, 1: 4, 2: 1, 3: 1}.get(int(jnt_type), 1)
+        old_adr = old_model.jnt_qposadr[i]
+        new_adr = new_model.jnt_qposadr[new_jid]
+        new_data.qpos[new_adr:new_adr + qpos_width] = old_data.qpos[old_adr:old_adr + qpos_width]
+        # qvel: width = joint DoF (free=6, ball=3, hinge/slide=1)
+        dof_width = {0: 6, 1: 3, 2: 1, 3: 1}.get(int(jnt_type), 1)
+        old_dof = old_model.jnt_dofadr[i]
+        new_dof = new_model.jnt_dofadr[new_jid]
+        new_data.qvel[new_dof:new_dof + dof_width] = old_data.qvel[old_dof:old_dof + dof_width]
+
+    # Copy ctrl per-actuator by name (actuator order may also shift)
+    for i in range(old_model.nu):
+        act_name = mj.mj_id2name(old_model, mj.mjtObj.mjOBJ_ACTUATOR, i)
+        if not act_name:
+            continue
+        new_aid = mj.mj_name2id(new_model, mj.mjtObj.mjOBJ_ACTUATOR, act_name)
+        if new_aid >= 0:
+            new_data.ctrl[new_aid] = old_data.ctrl[i]
 
     mj.mj_forward(new_model, new_data)
 
@@ -232,6 +258,13 @@ def _save_and_patch_xml(world: SimWorld, tmpdir: str, filename: str) -> str:
     MuJoCo global state (via ``MjModel.from_xml_string``). The resulting
     ``_tmp`` model is discarded — its only purpose is to reset
     ``mj_saveLastXML``'s internal pointer.
+
+    Multi-robot note: uses the first robot's base dir for compiler paths.
+    Individual robot mesh paths are rewritten to absolute during
+    inject_robot_into_scene (via _rewrite_mesh_paths), so the scene-level
+    meshdir only needs to resolve for the primary robot. Future enhancement:
+    convert all mesh paths to absolute during injection to eliminate
+    first-wins coupling entirely.
     """
     mj = _ensure_mujoco()
     scene_path = os.path.join(tmpdir, filename)
@@ -465,8 +498,18 @@ def inject_robot_into_scene(
         robot_meshdir = _get_abs_meshdir(robot_root)
 
         if robot_asset is not None:
-            # Rewrite mesh/texture file= paths before merging
-            if scene_meshdir and robot_meshdir:
+            # Rewrite mesh/texture file= paths to absolute before merging.
+            # This eliminates the first-wins coupling: each robot's assets
+            # resolve independently regardless of scene-level meshdir.
+            if robot_meshdir:
+                for child in robot_asset:
+                    if child.tag in ('mesh', 'texture'):
+                        file_attr = child.get('file')
+                        if file_attr and not os.path.isabs(file_attr):
+                            child.set('file', os.path.normpath(
+                                os.path.join(robot_meshdir, file_attr)
+                            ))
+            elif scene_meshdir and robot_meshdir:
                 _rewrite_mesh_paths(robot_asset, robot_meshdir, scene_meshdir)
 
             if scene_asset is None:

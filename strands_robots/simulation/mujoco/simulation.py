@@ -121,7 +121,13 @@ class Simulation(
         return self._get_sim_observation(robot_name)
 
     def send_action(self, action: dict[str, Any], robot_name: str | None = None, n_substeps: int = 1) -> None:
-        """Apply action to simulation (Robot ABC compatible)."""
+        """Apply action to simulation (Robot ABC compatible).
+
+        Thread-safety: acquires self._lock around ctrl writes + mj_step,
+        as documented in base.py's SimEngine contract. Concurrent calls
+        from the agent's dispatch thread and a PolicyRunner worker are
+        serialized here.
+        """
         if self._world is None or self._world._model is None:
             return
         if robot_name is None:
@@ -130,7 +136,8 @@ class Simulation(
             robot_name = next(iter(self._world.robots))
         if robot_name not in self._world.robots:
             return
-        self._apply_sim_action(robot_name, action, n_substeps=n_substeps)
+        with self._lock:
+            self._apply_sim_action(robot_name, action, n_substeps=n_substeps)
 
     # --- World Management ---
 
@@ -585,10 +592,12 @@ class Simulation(
                     ],
                 }
             except (ValueError, RuntimeError) as e:
-                raise RuntimeError(
-                    f"Object injection into live scene failed for '{name}': {e}. "
-                    f"Check that the MJCF XML is valid and compatible with the current scene."
-                ) from e
+                # Clean up: object was added to world.objects before injection
+                self._world.objects.pop(name, None)
+                return {
+                    "status": "error",
+                    "content": [{"text": f"❌ Failed to inject '{name}' into live scene: {e}"}],
+                }
 
         recompile_result = self._recompile_world()
         if recompile_result["status"] == "error":
@@ -677,10 +686,12 @@ class Simulation(
             try:
                 inject_camera_into_scene(self._world, cam)
             except (ValueError, RuntimeError) as e:
-                raise RuntimeError(
-                    f"Camera injection into live scene failed for '{name}': {e}. "
-                    f"Check that camera parameters are valid."
-                ) from e
+                # Clean up: camera was added to world.cameras before injection
+                self._world.cameras.pop(name, None)
+                return {
+                    "status": "error",
+                    "content": [{"text": f"❌ Failed to inject camera '{name}' into live scene: {e}"}],
+                }
         else:
             self._recompile_world()
 
@@ -698,10 +709,11 @@ class Simulation(
         if self._world is None or self._world._data is None:
             return {"status": "error", "content": [{"text": "❌ No simulation."}]}
         mj = self._mj
-        for _ in range(n_steps):
-            mj.mj_step(self._world._model, self._world._data)
-        self._world.sim_time = self._world._data.time
-        self._world.step_count += n_steps
+        with self._lock:
+            for _ in range(n_steps):
+                mj.mj_step(self._world._model, self._world._data)
+            self._world.sim_time = self._world._data.time
+            self._world.step_count += n_steps
         return {
             "status": "success",
             "content": [
@@ -922,7 +934,10 @@ class Simulation(
         policy_config: dict[str, Any] | None = None,
         instruction: str = "",
         duration: float = 10.0,
+        control_frequency: float = 50.0,
+        action_horizon: int = 8,
         fast_mode: bool = False,
+        video: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Start policy execution on a background thread (non-blocking).
 
@@ -930,6 +945,10 @@ class Simulation(
         ``Simulation`` so agent tools can kick off long-running policies
         without blocking the event loop. Only one policy per robot at a
         time (MuJoCo model/data are not thread-safe for concurrent writes).
+
+        Forwards all parameters accepted by :meth:`run_policy` so that
+        callers via tool_spec.json can set control_frequency, action_horizon,
+        and video from start_policy as well.
         """
         if self._world is None or self._world._data is None:
             return {"status": "error", "content": [{"text": "❌ No simulation."}]}
@@ -950,7 +969,10 @@ class Simulation(
             policy_config=policy_config,
             instruction=instruction,
             duration=duration,
+            control_frequency=control_frequency,
+            action_horizon=action_horizon,
             fast_mode=fast_mode,
+            video=video,
         )
         self._policy_threads[robot_name] = future
 
