@@ -80,7 +80,10 @@ class Simulation(
         self._viewer_handle = None
         self._viewer_thread = None
 
-        self._renderers: dict[tuple, Any] = {}
+        # Thread-local renderer cache — MuJoCo Renderer uses thread-local GL
+        # contexts (CGL on macOS, GLX on Linux). Sharing renderers across
+        # threads causes SIGSEGV in cgl.free(). Each thread gets its own.
+        self._renderer_tls = threading.local()
         self._renderer_model = None
 
         # Fail fast: verify MuJoCo is importable at construction time
@@ -1109,12 +1112,14 @@ class Simulation(
                 r.policy_running = False
             self._world = None
         self._close_viewer()
-        for renderer in getattr(self, "_renderers", {}).values():
-            try:
-                renderer.close()
-            except Exception:
-                pass
-        self._renderers.clear()
+        # Don't explicitly close renderers — they're thread-local. MuJoCo's
+        # Renderer.__del__ will call close() on whichever thread the Python
+        # ref is finally released on. Calling close() from main when the
+        # renderer was created on a worker thread → SIGSEGV in cgl.free().
+        # Dropping the TLS object drops main-thread refs; worker threads
+        # release theirs when they terminate.
+        if hasattr(self, "_renderer_tls"):
+            self._renderer_tls = threading.local()
         self._executor.shutdown(wait=False)
         self._shutdown_event.set()
 

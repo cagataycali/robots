@@ -16,7 +16,7 @@ class RenderingMixin:
 
         _world: "SimWorld | None"
         _renderer_model: Any
-        _renderers: dict[tuple[int, int], Any]
+        _renderer_tls: Any  # threading.local() — per-thread renderer dict
         default_width: int
         default_height: int
 
@@ -27,18 +27,36 @@ class RenderingMixin:
 
         Returns None if rendering is unavailable (headless without EGL/OSMesa).
         Callers must handle None return.
+
+        Thread-safety: renderers are cached per-thread via ``threading.local``
+        because ``mujoco.Renderer`` binds a GL context to the thread that
+        creates it (CGL on macOS, GLX on Linux). Sharing renderers across
+        threads would cause ``cgl.free()`` segfaults at cleanup time.
         """
         if not _can_render():
             return None
         mj = _ensure_mujoco()
         assert self._world is not None  # callers must check
-        key = (width, height)
-        if self._renderer_model is not self._world._model:
-            self._renderers.clear()
+
+        # Get or create per-thread renderer dict
+        renderers = getattr(self._renderer_tls, "renderers", None)
+        if renderers is None:
+            renderers = {}
+            self._renderer_tls.renderers = renderers
+            self._renderer_tls.model = None
+
+        # Invalidate this thread's cache if model changed (e.g. after recompile)
+        if self._renderer_tls.model is not self._world._model:
+            renderers.clear()
+            self._renderer_tls.model = self._world._model
+            # Keep the per-instance marker for compatibility with any remaining
+            # read paths that checked self._renderer_model.
             self._renderer_model = self._world._model
-        if key not in self._renderers:
-            self._renderers[key] = mj.Renderer(self._world._model, height=height, width=width)
-        return self._renderers[key]
+
+        key = (width, height)
+        if key not in renderers:
+            renderers[key] = mj.Renderer(self._world._model, height=height, width=width)
+        return renderers[key]
 
     def _get_sim_observation(self, robot_name: str, cam_name: str | None = None) -> dict[str, Any]:
         """Get observation from sim (same format as real robot)."""
