@@ -923,19 +923,23 @@ class Simulation(
                 kwargs["robot_name"] = remapped["name"]
             elif param_name in remapped:
                 kwargs[param_name] = remapped[param_name]
-            # Forward policy kwargs
+            # Forward all extra fields through **policy_kwargs / **kwargs so that
+            # policy-specific arguments (observation_mapping, action_mapping,
+            # data_config, host, port, api_token, actions_per_step, use_processor,
+            # processor_overrides, pretrained_name_or_path, policy_type, device,
+            # model_path, policy_host, policy_port, server_address, trust_remote_code,
+            # …) reach `create_policy(...)`.
+            #
+            # Rationale: whitelisting known keys drops new/unknown policy kwargs
+            # silently. A passthrough is mapping-aware and future-proof: the
+            # policy provider itself is the source of truth for which kwargs are
+            # valid, not this dispatcher.
             elif param.kind == inspect.Parameter.VAR_KEYWORD:
-                for k in (
-                    "policy_port",
-                    "policy_host",
-                    "model_path",
-                    "server_address",
-                    "policy_type",
-                    "pretrained_name_or_path",
-                    "device",
-                ):
-                    if k in d:
-                        kwargs[k] = d[k]
+                _RESERVED = {"action", *sig.parameters.keys()}
+                for k, v in remapped.items():
+                    if k in _RESERVED or k in kwargs:
+                        continue
+                    kwargs[k] = v
 
         return method(**kwargs)
 

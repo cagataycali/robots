@@ -343,6 +343,52 @@
     "checkpoint_name": {
       "type": "string",
       "description": "Named checkpoint for save_state/load_state"
+    },
+    "observation_mapping": {
+      "type": "object",
+      "description": "Policy observation mapping. For GR00T: {robot_key: 'video.X' | 'state.X'} mapping simulated robot observation keys to the policy model's input keys. For lerobot_local: forwarded as processor override. Required for sim\u2194real transfer when joint names don't match the policy's training schema.",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "action_mapping": {
+      "type": "object",
+      "description": "Policy action mapping. For GR00T: {'action.X': robot_key} mapping policy output keys back to robot joint/actuator names. For lerobot_local: forwarded as processor override. Required when policy action keys differ from simulated robot actuator names.",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "host": {
+      "type": "string",
+      "description": "Policy service host (GR00T service mode, ZMQ)"
+    },
+    "port": {
+      "type": "integer",
+      "description": "Policy service port (GR00T service mode, ZMQ)"
+    },
+    "api_token": {
+      "type": "string",
+      "description": "API token for remote policy services (GR00T service mode)"
+    },
+    "trust_remote_code": {
+      "type": "boolean",
+      "description": "Opt in to HuggingFace trust_remote_code for lerobot_local (required for SmolVLA and similar policies). Prefer setting STRANDS_TRUST_REMOTE_CODE=1."
+    },
+    "actions_per_step": {
+      "type": "integer",
+      "description": "Number of policy actions to execute per inference (lerobot_local)"
+    },
+    "use_processor": {
+      "type": "boolean",
+      "description": "Use the HF processor pipeline for input preprocessing (lerobot_local, default true)"
+    },
+    "processor_overrides": {
+      "type": "object",
+      "description": "Overrides passed to the lerobot processor (e.g. image keys, state keys)"
+    },
+    "device": {
+      "type": "string",
+      "description": "Torch device (e.g. 'cuda', 'mps', 'cpu'). Auto-detected if omitted."
     }
   },
   "required": [
