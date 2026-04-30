@@ -99,7 +99,7 @@ class TestFlatIndexStatePreservation:
 
         # Verify it's set
         state = sim.get_robot_state("arm1")
-        assert abs(state["content"][1]["text"]) or True  # state returned
+        assert state["status"] == "success"  # state returned
         # Read qpos directly
         model = sim._world._model
         jid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, "arm1/shoulder_pan")
@@ -134,14 +134,19 @@ class TestApplyForceLatchedBehavior:
     """Regression: apply_force is latched (persists across steps)."""
 
     def test_force_persists_across_multiple_steps(self, sim_with_robot):
-        """Apply upward force to a body, step 50 times, verify body moved up.
+        """Apply lateral force to a body, step 50 times, verify body moved.
 
         This validates the docstring contract: force is latched in
         qfrc_applied and applied on every subsequent step.
+
+        NOTE: We use an X-force (lateral) because a Z-force along the
+        kinematic chain of hinge joints produces zero generalized torque
+        (mj_applyFT maps Cartesian force to joint space; Z-force at CoM
+        compresses the chain without creating torques on Y-axis hinges).
         """
         sim = sim_with_robot
 
-        # Get initial z position of link2
+        # Get initial x position of link2
         model = sim._world._model
         data = sim._world._data
         body_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, "arm1/link2")
@@ -149,19 +154,19 @@ class TestApplyForceLatchedBehavior:
             body_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, "link2")
         assert body_id >= 0
 
-        z_before = float(data.xpos[body_id, 2])
+        x_before = float(data.xpos[body_id, 0])
 
-        # Apply strong upward force
-        result = sim.apply_force("link2", force=[0, 0, 100.0])
+        # Apply strong lateral (X) force — this creates torques on Y-axis hinges
+        result = sim.apply_force("link2", force=[100.0, 0, 0])
         assert result["status"] == "success"
 
-        # Step physics 50 times — force should persist
+        # Step physics 50 times — force should persist (latched)
         sim.step(n_steps=50)
 
-        z_after = float(data.xpos[body_id, 2])
-        # Body should have moved upward due to persistent force
-        assert z_after > z_before, (
-            f"Body did not move up (z_before={z_before:.4f}, z_after={z_after:.4f}). "
+        x_after = float(data.xpos[body_id, 0])
+        # Body should have moved laterally due to persistent force
+        assert abs(x_after - x_before) > 1e-4, (
+            f"Body did not move (x_before={x_before:.6f}, x_after={x_after:.6f}). "
             "Force may not be persisting across steps."
         )
 
@@ -169,14 +174,15 @@ class TestApplyForceLatchedBehavior:
         """Apply force, then zero it, verify force buffer is cleared."""
         sim = sim_with_robot
 
-        # Apply force
-        sim.apply_force("link2", force=[0, 0, 50.0])
-        assert np.any(sim._world._data.qfrc_applied != 0)
+        # Apply lateral (X) force — produces non-zero generalized torques
+        sim.apply_force("link2", force=[50.0, 0, 0])
+        assert np.any(sim._world._data.qfrc_applied != 0), (
+            "X-force on link2 should produce non-zero generalized forces"
+        )
 
-        # Zero it
+        # Zero it — apply_force zeros buffer first, then applies zero force
         sim.apply_force("link2", force=[0, 0, 0])
-        # After zeroing + applying zero force, buffer should be all zeros
-        # (mj_applyFT with zero force/torque adds nothing)
+        # After zeroing + applying zero force/torque, buffer should be all zeros
         assert np.allclose(sim._world._data.qfrc_applied, 0.0)
 
 
@@ -249,3 +255,237 @@ class TestThreadSafety:
         t2.join(timeout=10)
 
         assert not errors, f"Thread errors: {errors}"
+
+
+# ── Robot XML for multi-robot asset directory test ──
+
+ROBOT_B_XML = """
+<mujoco model="test_gripper">
+  <compiler angle="radian" autolimits="true"/>
+  <worldbody>
+    <body name="grip_base" pos="0 0 0.05">
+      <geom type="box" size="0.02 0.04 0.02" rgba="0.5 0.5 0.1 1"/>
+      <joint name="grip_slide" type="slide" axis="1 0 0" range="-0.05 0.05"/>
+    </body>
+  </worldbody>
+  <actuator>
+    <position name="grip_act" joint="grip_slide" kp="30"/>
+  </actuator>
+</mujoco>
+"""
+
+
+class TestRecordingRoundtripCameraFrames:
+    """Regression: namespaced cameras survive schema reconcile and have frames.
+
+    @yinsong1986 review (2026-04-30): "Please add a round-trip test:
+    start_recording → run_policy → stop_recording, reopen the dataset,
+    assert the camera feature has non-zero frames."
+    """
+
+    @pytest.fixture
+    def sim_with_namespaced_camera(self, robot_xml_path, tmp_path):
+        """Sim with a robot whose camera name contains '/' (namespace)."""
+        sim = Simulation(tool_name="test_recording", mesh=False)
+        result = sim.create_world(gravity=[0, 0, -9.81])
+        assert result["status"] == "success"
+        result = sim.add_robot("arm1", urdf_path=robot_xml_path)
+        assert result["status"] == "success"
+        yield sim
+        sim.cleanup()
+
+    def test_recording_roundtrip_has_camera_frames(self, sim_with_namespaced_camera, tmp_path):
+        """Record → run mock policy → stop → verify dataset has camera data.
+
+        This validates the /→__ sanitization fix doesn't silently drop frames.
+        The test robot XML has camera 'arm0/wrist_cam' which becomes
+        'arm0__wrist_cam' in the dataset schema.
+        """
+        lerobot = pytest.importorskip("lerobot")
+        from pathlib import Path
+
+        sim = sim_with_namespaced_camera
+        ds_root = str(tmp_path / "roundtrip_ds")
+
+        # Start recording
+        result = sim._dispatch_action(
+            "start_recording",
+            {"repo_id": "local/rt-test", "root": ds_root, "fps": 10, "overwrite": True},
+        )
+        assert result["status"] == "success", f"start_recording failed: {result}"
+
+        # Run mock policy for a short burst (generates frames via on_frame hook)
+        result = sim._dispatch_action(
+            "run_policy",
+            {
+                "robot_name": "arm1",
+                "policy_provider": "mock",
+                "duration": 0.5,
+                "control_frequency": 10,
+            },
+        )
+        assert result["status"] == "success", f"run_policy failed: {result}"
+
+        # Stop recording
+        result = sim._dispatch_action("stop_recording", {})
+        assert result["status"] == "success", f"stop_recording failed: {result}"
+
+        # Verify dataset exists and has frames
+        ds_path = Path(ds_root)
+        assert ds_path.exists(), f"Dataset dir not created at {ds_root}"
+
+        # Reopen dataset and verify camera feature has frames
+        try:
+            from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+
+            ds = LeRobotDataset(repo_id="local/rt-test", root=ds_root)
+            assert len(ds) > 0, f"Dataset has no frames (expected > 0, got {len(ds)})"
+
+            # Check that the camera feature exists (sanitized name)
+            cam_feature_found = False
+            for feat_name in ds.features:
+                if feat_name.startswith("observation.images."):
+                    cam_feature_found = True
+                    break
+
+            assert cam_feature_found, (
+                f"No observation.images.* feature found in dataset. "
+                f"Features: {list(ds.features.keys())}"
+            )
+
+            # Access a frame and verify image data is present
+            sample = ds[0]
+            for feat_name in ds.features:
+                if feat_name.startswith("observation.images."):
+                    assert feat_name in sample, f"Camera feature {feat_name} missing from sample"
+                    img = sample[feat_name]
+                    # Image should be non-empty (tensor or array with shape)
+                    assert hasattr(img, "shape"), f"Camera data has no shape: {type(img)}"
+                    assert img.shape[0] > 0, f"Camera image has zero height: {img.shape}"
+                    break
+
+        except ImportError:
+            pytest.skip("lerobot dataset API not available for verification")
+
+
+class TestMultiRobotDifferentAssetDirs:
+    """Regression: two robots from different asset dirs both compile and render.
+
+    @yinsong1986 review (2026-04-30): "load two robots whose urdf_paths
+    are in different directories; assert both render."
+    """
+
+    def test_two_robots_different_directories_both_load(self):
+        """Load two robots from separate temp dirs, verify both have joints."""
+        tmpdir_a = tempfile.mkdtemp(prefix="robot_a_")
+        tmpdir_b = tempfile.mkdtemp(prefix="robot_b_")
+
+        try:
+            # Write robot A (arm) to dir A
+            path_a = os.path.join(tmpdir_a, "arm.xml")
+            with open(path_a, "w") as f:
+                f.write(ROBOT_XML)
+
+            # Write robot B (gripper) to dir B
+            path_b = os.path.join(tmpdir_b, "gripper.xml")
+            with open(path_b, "w") as f:
+                f.write(ROBOT_B_XML)
+
+            sim = Simulation(tool_name="test_multi_asset", mesh=False)
+            result = sim.create_world(gravity=[0, 0, -9.81])
+            assert result["status"] == "success"
+
+            # Add robot A from dir A
+            result = sim.add_robot("arm1", urdf_path=path_a)
+            assert result["status"] == "success", f"Robot A failed: {result}"
+
+            # Add robot B from dir B (different asset directory)
+            result = sim.add_robot("grip1", urdf_path=path_b, position=[0.3, 0, 0])
+            assert result["status"] == "success", f"Robot B failed: {result}"
+
+            # Both robots should be registered
+            assert "arm1" in sim._world.robots
+            assert "grip1" in sim._world.robots
+
+            # Both should have joints discovered
+            assert len(sim._world.robots["arm1"].joint_names) == 3  # shoulder_pan, shoulder_lift, elbow
+            assert len(sim._world.robots["grip1"].joint_names) == 1  # grip_slide
+
+            # Physics step should succeed (proves combined model compiled)
+            result = sim.step(n_steps=10)
+            assert result["status"] == "success", f"Step failed: {result}"
+
+            # Verify we can read state from both robots
+            state_a = sim.get_robot_state("arm1")
+            assert state_a["status"] == "success", f"State A failed: {state_a}"
+            state_b = sim.get_robot_state("grip1")
+            assert state_b["status"] == "success", f"State B failed: {state_b}"
+
+            sim.cleanup()
+        finally:
+            shutil.rmtree(tmpdir_a, ignore_errors=True)
+            shutil.rmtree(tmpdir_b, ignore_errors=True)
+
+    def test_two_robots_both_render_cameras(self):
+        """Two robots with cameras from different dirs — both cameras render."""
+        # Robot A has arm0/wrist_cam (from ROBOT_XML)
+        # Add a camera to Robot B as well
+        robot_b_with_cam = """
+<mujoco model="gripper_cam">
+  <compiler angle="radian" autolimits="true"/>
+  <worldbody>
+    <camera name="grip_cam" pos="0 0.2 0.3" xyaxes="1 0 0 0 0 1"/>
+    <body name="grip_base" pos="0 0 0.05">
+      <geom type="box" size="0.02 0.04 0.02" rgba="0.5 0.5 0.1 1"/>
+      <joint name="grip_slide" type="slide" axis="1 0 0" range="-0.05 0.05"/>
+    </body>
+  </worldbody>
+  <actuator>
+    <position name="grip_act" joint="grip_slide" kp="30"/>
+  </actuator>
+</mujoco>
+"""
+        tmpdir_a = tempfile.mkdtemp(prefix="robot_a_cam_")
+        tmpdir_b = tempfile.mkdtemp(prefix="robot_b_cam_")
+
+        try:
+            path_a = os.path.join(tmpdir_a, "arm.xml")
+            with open(path_a, "w") as f:
+                f.write(ROBOT_XML)
+
+            path_b = os.path.join(tmpdir_b, "gripper_cam.xml")
+            with open(path_b, "w") as f:
+                f.write(robot_b_with_cam)
+
+            sim = Simulation(tool_name="test_render_multi", mesh=False)
+            result = sim.create_world(gravity=[0, 0, -9.81])
+            assert result["status"] == "success"
+
+            result = sim.add_robot("arm1", urdf_path=path_a)
+            assert result["status"] == "success"
+            result = sim.add_robot("grip1", urdf_path=path_b, position=[0.5, 0, 0])
+            assert result["status"] == "success"
+
+            # Step to settle physics
+            sim.step(n_steps=5)
+
+            # Get observation (includes camera renders)
+            obs = sim._get_sim_observation("arm1")
+
+            # We should have at least one camera rendered (arm0/wrist_cam)
+            cam_frames = {k: v for k, v in obs.items() if isinstance(v, np.ndarray) and v.ndim == 3}
+            assert len(cam_frames) > 0, (
+                f"No camera frames rendered. Observation keys: {list(obs.keys())}"
+            )
+
+            # Verify camera frame is not all-zero (actually rendered something)
+            for cam_name, frame in cam_frames.items():
+                assert frame.shape[2] == 3, f"Camera {cam_name} not RGB: shape={frame.shape}"
+                # At minimum, the frame should have some non-zero pixels
+                # (ground plane + colored geoms should provide contrast)
+                assert frame.sum() > 0, f"Camera {cam_name} rendered all-black frame"
+
+            sim.cleanup()
+        finally:
+            shutil.rmtree(tmpdir_a, ignore_errors=True)
+            shutil.rmtree(tmpdir_b, ignore_errors=True)
