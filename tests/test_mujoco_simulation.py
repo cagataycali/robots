@@ -727,3 +727,62 @@ class TestErrorPaths:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+# ── Thread-safety regression ──
+
+
+class TestRendererThreadSafety:
+    """Regression for SIGSEGV in cgl.free() when renderers cached across threads.
+
+    Bug: renderers were kept in a plain dict on Simulation. Worker threads
+    created renderers via `run_policy`, cached them on the instance, and
+    `cleanup()` on the main thread then called `renderer.close()` →
+    `cgl.free()` on the wrong thread → SIGSEGV.
+
+    Fix: renderers are thread-local; each thread owns its cache.
+    """
+
+    def test_renderer_cache_is_thread_local(self, sim_with_world):
+        """Different threads must see different renderer dicts."""
+        import threading
+
+        sim_with_world.add_object("blk", shape="box", position=[0, 0, 0.1])
+        sim_with_world.add_camera("cam", position=[0.3, -0.3, 0.3], target=[0, 0, 0])
+        sim_with_world.step(n_steps=1)
+
+        main_renderer = sim_with_world._get_renderer(64, 64)
+        if main_renderer is None:
+            import pytest
+
+            pytest.skip("rendering unavailable in this environment")
+        main_id = id(main_renderer)
+
+        worker_id_box = {}
+
+        def worker():
+            r = sim_with_world._get_renderer(64, 64)
+            worker_id_box["id"] = id(r) if r is not None else None
+
+        t = threading.Thread(target=worker)
+        t.start()
+        t.join()
+
+        assert worker_id_box["id"] is not None, "worker got None renderer"
+        assert worker_id_box["id"] != main_id, (
+            "worker thread should get its OWN renderer instance, not the "
+            "main-thread one — otherwise CGL context mismatch on cleanup."
+        )
+
+    def test_cleanup_after_policy_thread_no_segfault(self, sim_with_robot):
+        """start_policy+stop+cleanup must not SIGSEGV (was fatal pre-fix)."""
+        r = sim_with_robot.start_policy("arm1", policy_provider="mock", duration=0.2, fast_mode=True)
+        assert r["status"] == "success"
+        sim_with_robot._stop_policy("arm1")
+        # Wait for the policy thread to drain so its renderer ref is released.
+        future = sim_with_robot._policy_threads.get("arm1")
+        if future is not None:
+            future.result(timeout=5.0)
+        # cleanup() should succeed — pre-fix this segfaulted when the
+        # worker-thread renderer was closed on the main thread.
+        sim_with_robot.cleanup()
