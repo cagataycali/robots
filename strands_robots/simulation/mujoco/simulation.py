@@ -1018,11 +1018,7 @@ class Simulation(
         control_frequency: float = 50.0,
         action_horizon: int = 8,
         fast_mode: bool = False,
-        record_video: str | None = None,
-        video_fps: int = 30,
-        video_camera: str | None = None,
-        video_width: int = 640,
-        video_height: int = 480,
+        video: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """MuJoCo ``run_policy`` override: pre-flight world check + graceful stop.
 
@@ -1044,11 +1040,7 @@ class Simulation(
                 control_frequency=control_frequency,
                 action_horizon=action_horizon,
                 fast_mode=fast_mode,
-                record_video=record_video,
-                video_fps=video_fps,
-                video_camera=video_camera,
-                video_width=video_width,
-                video_height=video_height,
+                video=video,
             )
         finally:
             if self._world is not None and robot_name in self._world.robots:
@@ -1096,6 +1088,23 @@ class Simulation(
         for field_key, param_key in _FIELD_MAP.items():
             if field_key in remapped and param_key not in remapped:
                 remapped[param_key] = remapped.pop(field_key)
+
+        # For run_policy: fold legacy flat video keys (exposed via tool_spec.json
+        # as `output_path`, `fps`, `camera_name`) into a structured `video` dict.
+        # The tool_spec still advertises the flat keys for LLM ergonomics, but
+        # the Python API on SimEngine.run_policy now takes a single `video` dict.
+        if action == "run_policy" and "video" not in remapped:
+            _video_flat = {}
+            if "output_path" in remapped:
+                _video_flat["path"] = remapped["output_path"]
+            if "fps" in remapped:
+                _video_flat["fps"] = remapped["fps"]
+            # camera_name is shared with render(); only treat as video camera
+            # when paired with an output path.
+            if _video_flat.get("path") and "camera_name" in remapped:
+                _video_flat["camera"] = remapped["camera_name"]
+            if _video_flat.get("path"):
+                remapped["video"] = _video_flat
 
         kwargs: dict[str, Any] = {}
         for param_name, param in sig.parameters.items():

@@ -239,11 +239,7 @@ class SimEngine(ABC):
         control_frequency: float = 50.0,
         action_horizon: int = 8,
         fast_mode: bool = False,
-        record_video: str | None = None,
-        video_fps: int = 30,
-        video_camera: str | None = None,
-        video_width: int = 640,
-        video_height: int = 480,
+        video: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Run a policy loop in the simulation (blocking).
 
@@ -267,14 +263,21 @@ class SimEngine(ABC):
             control_frequency: Target Hz for policy queries.
             action_horizon: Max actions per policy call.
             fast_mode: Skip real-time sleep between steps.
-            record_video / video_fps / video_camera / video_width /
-            video_height: Optional MP4 recording via ``self.render``.
+            video: Optional video-recording config dict. Accepted keys:
+                ``path`` (str, output MP4 — required to enable recording),
+                ``fps`` (int, default 30), ``camera`` (str, default backend
+                default), ``width`` (int, default 640), ``height`` (int,
+                default 480). See :class:`~strands_robots.simulation.policy_runner.VideoConfig`.
+                For extension points beyond video (custom telemetry,
+                dataset recording), backends plug into
+                ``PolicyRunner.run``'s ``on_frame`` hook via
+                :meth:`_make_run_policy_hook`.
 
         Returns:
             Standard status dict.
         """
         from strands_robots.policies import create_policy
-        from strands_robots.simulation.policy_runner import PolicyRunner
+        from strands_robots.simulation.policy_runner import PolicyRunner, VideoConfig
 
         if robot_name not in self.list_robots():
             return {
@@ -295,11 +298,7 @@ class SimEngine(ABC):
             control_frequency=control_frequency,
             action_horizon=action_horizon,
             fast_mode=fast_mode,
-            record_video=record_video,
-            video_fps=video_fps,
-            video_camera=video_camera,
-            video_width=video_width,
-            video_height=video_height,
+            video=VideoConfig.from_dict(video),
             on_frame=on_frame,
         )
 

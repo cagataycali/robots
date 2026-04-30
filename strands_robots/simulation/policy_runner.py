@@ -35,6 +35,7 @@ import logging
 import os
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -56,6 +57,48 @@ OnFrame = Callable[[int, dict[str, Any], dict[str, Any]], None]
 # Success function: called after each step during evaluate().
 #   success_fn(observation) -> bool
 SuccessFn = Callable[[dict[str, Any]], bool]
+
+
+@dataclass(frozen=True)
+class VideoConfig:
+    """Configuration for optional MP4 recording during :meth:`PolicyRunner.run`.
+
+    Consolidates the five formerly-flat video parameters on
+    :meth:`SimEngine.run_policy` into one typed object. Recording is an
+    opt-in feature — if ``path`` is falsy, no recording occurs and the
+    other fields are ignored.
+
+    Attributes:
+        path: Output MP4 path. ``None``/empty string → recording disabled.
+        fps: Frames per second to write.
+        camera: Camera name to render from. ``None`` → backend default.
+        width: Render width in pixels.
+        height: Render height in pixels.
+    """
+
+    path: str | None = None
+    fps: int = 30
+    camera: str | None = None
+    width: int = 640
+    height: int = 480
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.path)
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any] | None) -> VideoConfig | None:
+        """Build from a plain dict (tool_spec dispatcher path). ``None`` passthrough."""
+        if not d:
+            return None
+        # Accept both canonical keys and legacy/tool_spec aliases.
+        return cls(
+            path=d.get("path") or d.get("record_video") or d.get("output_path"),
+            fps=int(d.get("fps") or d.get("video_fps") or 30),
+            camera=d.get("camera") or d.get("video_camera") or d.get("camera_name"),
+            width=int(d.get("width") or d.get("video_width") or 640),
+            height=int(d.get("height") or d.get("video_height") or 480),
+        )
 
 
 class CooperativeStop(BaseException):
@@ -94,11 +137,7 @@ class PolicyRunner:
         control_frequency: float = 50.0,
         action_horizon: int = 8,
         fast_mode: bool = False,
-        record_video: str | None = None,
-        video_fps: int = 30,
-        video_camera: str | None = None,
-        video_width: int = 640,
-        video_height: int = 480,
+        video: VideoConfig | None = None,
         on_frame: OnFrame | None = None,
     ) -> dict[str, Any]:
         """Run ``policy`` on ``robot_name`` for ``duration`` seconds.
@@ -115,12 +154,12 @@ class PolicyRunner:
             action_horizon: Max actions consumed per policy call before
                 requerying observation.
             fast_mode: If True, skip real-time ``time.sleep`` between steps.
-            record_video: Optional path to save an MP4 via :meth:`SimEngine.render`.
-            video_fps / video_camera / video_width / video_height: Recording
-                parameters.
+            video: Optional :class:`VideoConfig` — set ``video.path`` to enable
+                MP4 recording via :meth:`SimEngine.render`.
             on_frame: Optional hook ``(step_idx, obs, action) -> None`` called
-                after every ``send_action``. Used by backends to layer in
-                recording / telemetry without subclassing this runner.
+                after every ``send_action``. Public extension point — backends
+                layer in recording / telemetry / graceful-stop via this hook
+                without subclassing the runner.
 
         Returns:
             ``{"status": "success"|"error", "content": [{"text": ...}]}``.
@@ -130,18 +169,22 @@ class PolicyRunner:
         frame_count = 0
         frame_interval = 0.0
         next_frame_step = 0.0
-        if record_video:
+        video_path: str | None = None
+        if video is not None and video.enabled:
+            # video.enabled guarantees video.path is a non-empty str; narrow for mypy.
+            assert video.path is not None
+            video_path = video.path
             imageio = require_optional(
                 "imageio",
                 pip_install="imageio imageio-ffmpeg",
                 extra="sim-mujoco",
                 purpose="video recording",
             )
-            os.makedirs(os.path.dirname(os.path.abspath(record_video)), exist_ok=True)
+            os.makedirs(os.path.dirname(os.path.abspath(video_path)), exist_ok=True)
             writer = imageio.get_writer(  # type: ignore[attr-defined]
-                record_video, fps=video_fps, quality=8, macro_block_size=1
+                video_path, fps=video.fps, quality=8, macro_block_size=1
             )
-            frame_interval = control_frequency / video_fps
+            frame_interval = control_frequency / video.fps
 
         stopped_early = False
         try:
@@ -176,10 +219,11 @@ class PolicyRunner:
                     step_count += 1
 
                     if writer is not None and step_count >= next_frame_step:
+                        assert video is not None  # for mypy: writer only set when video.enabled
                         frame = self.sim.render(
-                            camera_name=video_camera or "default",
-                            width=video_width,
-                            height=video_height,
+                            camera_name=video.camera or "default",
+                            width=video.width,
+                            height=video.height,
                         )
                         img = frame.get("image") if isinstance(frame, dict) else None
                         if img is not None:
@@ -210,12 +254,13 @@ class PolicyRunner:
         if sim_time is not None:
             text += f" | 🕐 sim_t={sim_time:.3f}s"
         if writer is not None:
+            assert video is not None and video_path is not None
             writer.close()
-            file_kb = os.path.getsize(record_video) / 1024  # type: ignore[arg-type]
+            file_kb = os.path.getsize(video_path) / 1024
             text += (
-                f"\n🎬 Video: {record_video}\n"
-                f"📹 {frame_count} frames, {video_fps}fps, "
-                f"{video_width}x{video_height} | 💾 {file_kb:.0f} KB"
+                f"\n🎬 Video: {video_path}\n"
+                f"📹 {frame_count} frames, {video.fps}fps, "
+                f"{video.width}x{video.height} | 💾 {file_kb:.0f} KB"
             )
         return {"status": "success", "content": [{"text": text}]}
 
