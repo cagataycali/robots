@@ -725,9 +725,10 @@ class Simulation(
         if self._world is None or self._world._model is None:
             return {"status": "error", "content": [{"text": "❌ No world."}]}
         mj = self._mj
-        mj.mj_resetData(self._world._model, self._world._data)
-        self._world.sim_time = 0.0
-        self._world.step_count = 0
+        with self._lock:
+            mj.mj_resetData(self._world._model, self._world._data)
+            self._world.sim_time = 0.0
+            self._world.step_count = 0
         for r in self._world.robots.values():
             r.policy_running = False
             r.policy_steps = 0
@@ -764,15 +765,17 @@ class Simulation(
             return {"status": "error", "content": [{"text": "❌ No world."}]}
         if isinstance(gravity, (int, float)):
             gravity = [0.0, 0.0, float(gravity)]
-        self._world._model.opt.gravity[:] = gravity
-        self._world.gravity = gravity
+        with self._lock:
+            self._world._model.opt.gravity[:] = gravity
+            self._world.gravity = gravity
         return {"status": "success", "content": [{"text": f"🌐 Gravity: {gravity}"}]}
 
     def set_timestep(self, timestep: float) -> dict[str, Any]:
         if self._world is None or self._world._model is None:
             return {"status": "error", "content": [{"text": "❌ No world."}]}
-        self._world._model.opt.timestep = timestep
-        self._world.timestep = timestep
+        with self._lock:
+            self._world._model.opt.timestep = timestep
+            self._world.timestep = timestep
         return {"status": "success", "content": [{"text": f"⏱️ Timestep: {timestep}s ({1 / timestep:.0f}Hz)"}]}
 
     # --- Viewer ---

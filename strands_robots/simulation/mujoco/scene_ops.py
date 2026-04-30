@@ -150,6 +150,10 @@ def _reload_scene_from_xml(world: SimWorld, scene_path: str) -> bool:
         new_jid = mj.mj_name2id(new_model, mj.mjtObj.mjOBJ_JOINT, jnt_name)
         if new_jid < 0:
             continue  # joint removed from scene
+        # Defensive: skip copy if joint type changed (extremely unlikely in
+        # inject/eject flow, but prevents stride mismatch → silent corruption).
+        if old_model.jnt_type[i] != new_model.jnt_type[new_jid]:
+            continue
         # qpos: width depends on joint type (free=7, ball=4, hinge/slide=1)
         jnt_type = old_model.jnt_type[i]
         qpos_width = {0: 7, 1: 4, 2: 1, 3: 1}.get(int(jnt_type), 1)
@@ -509,8 +513,9 @@ def inject_robot_into_scene(
                             child.set('file', os.path.normpath(
                                 os.path.join(robot_meshdir, file_attr)
                             ))
-            elif scene_meshdir and robot_meshdir:
-                _rewrite_mesh_paths(robot_asset, robot_meshdir, scene_meshdir)
+            # NOTE: The elif was unreachable (robot_meshdir is falsy in else
+            # branch, making `scene_meshdir and robot_meshdir` always False).
+            # Absolutizing file= attrs above handles all cases correctly.
 
             if scene_asset is None:
                 scene_asset = ET.SubElement(scene_root, "asset")

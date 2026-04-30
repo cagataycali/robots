@@ -28,8 +28,11 @@ logger = logging.getLogger(__name__)
 
 class PhysicsMixin:
     if TYPE_CHECKING:
+        import threading
+
         from strands_robots.simulation.models import SimWorld
 
+        _lock: "threading.Lock"
         _world: "SimWorld | None"
 
     """Advanced physics capabilities for Simulation.
@@ -52,9 +55,10 @@ class PhysicsMixin:
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
 
-        state_size = mj.mj_stateSize(model, mj.mjtState.mjSTATE_PHYSICS)
-        state = np.zeros(state_size)
-        mj.mj_getState(model, data, state, mj.mjtState.mjSTATE_PHYSICS)
+        with self._lock:
+            state_size = mj.mj_stateSize(model, mj.mjtState.mjSTATE_PHYSICS)
+            state = np.zeros(state_size)
+            mj.mj_getState(model, data, state, mj.mjtState.mjSTATE_PHYSICS)
 
         if not hasattr(self._world, "_checkpoints"):
             self._world._checkpoints = {}
@@ -96,11 +100,12 @@ class PhysicsMixin:
         model, data = self._world._model, self._world._data
         checkpoint = checkpoints[name]
 
-        mj.mj_setState(model, data, checkpoint["state"], mj.mjtState.mjSTATE_PHYSICS)
-        mj.mj_forward(model, data)
+        with self._lock:
+            mj.mj_setState(model, data, checkpoint["state"], mj.mjtState.mjSTATE_PHYSICS)
+            mj.mj_forward(model, data)
 
-        self._world.sim_time = checkpoint["sim_time"]
-        self._world.step_count = checkpoint["step_count"]
+            self._world.sim_time = checkpoint["sim_time"]
+            self._world.step_count = checkpoint["step_count"]
 
         return {
             "status": "success",
@@ -118,12 +123,14 @@ class PhysicsMixin:
         torque: list[float] | None = None,
         point: list[float] | None = None,
     ) -> dict[str, Any]:
-        """Apply a single-shot external force and/or torque to a body.
+        """Apply an external force and/or torque to a body (latched).
 
         Uses mj_applyFT for precise force application at a world-frame point.
-        The force is applied once and then the qfrc_applied buffer is zeroed,
-        so the effect lasts only for the next mj_step call. For continuous
-        forces, call this method before every step.
+        The force is latched in ``qfrc_applied`` and applied on every
+        subsequent ``mj_step`` until overwritten by the next ``apply_force``
+        call. Each call zeroes the buffer first (replacing, not accumulating).
+
+        To stop the force: ``apply_force(body, force=[0, 0, 0])``.
 
         Args:
             body_name: Target body name.
@@ -146,11 +153,12 @@ class PhysicsMixin:
         t = np.array(torque or [0, 0, 0], dtype=np.float64)
         p = np.array(point, dtype=np.float64) if point else data.xipos[body_id].copy()
 
-        # Zero the buffer first so we don't accumulate from prior calls,
-        # then apply. This makes apply_force single-shot: the force acts
-        # only on the next mj_step, matching the docstring contract.
-        data.qfrc_applied[:] = 0.0
-        mj.mj_applyFT(model, data, f, t, p, body_id, data.qfrc_applied)
+        # Zero the buffer first so calls are idempotent (replace, not accumulate).
+        # NOTE: MuJoCo does NOT reset qfrc_applied in mj_step — the force
+        # persists on every subsequent step until the next apply_force call.
+        with self._lock:
+            data.qfrc_applied[:] = 0.0
+            mj.mj_applyFT(model, data, f, t, p, body_id, data.qfrc_applied)
 
         return {
             "status": "success",
@@ -499,16 +507,17 @@ class PhysicsMixin:
             return {"status": "error", "content": [{"text": "❌ positions dict required."}]}
 
         set_count = 0
-        for jnt_name, value in positions.items():
-            jnt_id = self._resolve_mj_name(mj.mjtObj.mjOBJ_JOINT, jnt_name)
-            if jnt_id >= 0:
-                qpos_adr = model.jnt_qposadr[jnt_id]
-                data.qpos[qpos_adr] = float(value)
-                set_count += 1
-            else:
-                logger.warning("Joint '%s' not found, skipping", jnt_name)
+        with self._lock:
+            for jnt_name, value in positions.items():
+                jnt_id = self._resolve_mj_name(mj.mjtObj.mjOBJ_JOINT, jnt_name)
+                if jnt_id >= 0:
+                    qpos_adr = model.jnt_qposadr[jnt_id]
+                    data.qpos[qpos_adr] = float(value)
+                    set_count += 1
+                else:
+                    logger.warning("Joint '%s' not found, skipping", jnt_name)
 
-        mj.mj_forward(model, data)
+            mj.mj_forward(model, data)
 
         return {
             "status": "success",
@@ -533,12 +542,13 @@ class PhysicsMixin:
             return {"status": "error", "content": [{"text": "❌ velocities dict required."}]}
 
         set_count = 0
-        for jnt_name, value in velocities.items():
-            jnt_id = self._resolve_mj_name(mj.mjtObj.mjOBJ_JOINT, jnt_name)
-            if jnt_id >= 0:
-                dof_adr = model.jnt_dofadr[jnt_id]
-                data.qvel[dof_adr] = float(value)
-                set_count += 1
+        with self._lock:
+            for jnt_name, value in velocities.items():
+                jnt_id = self._resolve_mj_name(mj.mjtObj.mjOBJ_JOINT, jnt_name)
+                if jnt_id >= 0:
+                    dof_adr = model.jnt_dofadr[jnt_id]
+                    data.qvel[dof_adr] = float(value)
+                    set_count += 1
 
         return {
             "status": "success",
