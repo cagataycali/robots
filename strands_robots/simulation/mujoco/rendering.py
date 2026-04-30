@@ -59,15 +59,27 @@ class RenderingMixin:
         return renderers[key]
 
     def _get_sim_observation(self, robot_name: str, cam_name: str | None = None) -> dict[str, Any]:
-        """Get observation from sim (same format as real robot)."""
+        """Get observation from sim (same format as real robot).
+
+        Multi-robot note: when the injected robot XML was namespaced
+        (e.g. ``arm0/shoulder_pan`` in MuJoCo to allow multiple same-config
+        robots), we look up the prefixed MuJoCo name but return the short
+        name in the observation dict so the policy sees a stable, config-level
+        schema regardless of how many robots are in the scene.
+        """
         mj = _ensure_mujoco()
         assert self._world is not None  # callers must check
         model, data = self._world._model, self._world._data
         robot = self._world.robots[robot_name]
+        pfx = robot.namespace or ""
 
         obs = {}
         for jnt_name in robot.joint_names:
-            jnt_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, jnt_name)
+            # Try namespaced name first (multi-robot), fall back to raw.
+            lookup = pfx + jnt_name if pfx else jnt_name
+            jnt_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, lookup)
+            if jnt_id < 0 and pfx:
+                jnt_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, jnt_name)
             if jnt_id >= 0:
                 obs[jnt_name] = float(data.qpos[model.jnt_qposadr[jnt_id]])
 
@@ -104,19 +116,35 @@ class RenderingMixin:
         return obs
 
     def _apply_sim_action(self, robot_name: str, action_dict: dict[str, Any], n_substeps: int = 1) -> None:
-        """Apply action dict to sim (same interface as robot.send_action)."""
+        """Apply action dict to sim (same interface as robot.send_action).
+
+        Multi-robot note: action keys are *short* names (e.g. ``shoulder_pan``).
+        We look up the namespaced MuJoCo actuator/joint name for this
+        specific ``robot_name`` so the same action dict routes to the right
+        physical actuator when multiple same-config robots exist.
+        """
         mj = _ensure_mujoco()
         assert self._world is not None  # callers must check
         model, data = self._world._model, self._world._data
+        robot = self._world.robots.get(robot_name)
+        pfx = robot.namespace if robot else ""
+
+        def _lookup(obj_type: Any, name: str) -> int:
+            """Try namespaced lookup first, fall back to raw."""
+            if pfx:
+                i = mj.mj_name2id(model, obj_type, pfx + name)
+                if i >= 0:
+                    return i
+            return int(mj.mj_name2id(model, obj_type, name))
 
         for key, value in action_dict.items():
-            act_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_ACTUATOR, key)
+            act_id = _lookup(mj.mjtObj.mjOBJ_ACTUATOR, key)
             if act_id >= 0:
                 data.ctrl[act_id] = float(value)
             else:
                 # Fallback: key is a joint name — find the actuator that
                 # drives this joint via actuator_trnid (joint ID → actuator).
-                jnt_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, key)
+                jnt_id = _lookup(mj.mjtObj.mjOBJ_JOINT, key)
                 if jnt_id >= 0:
                     for ai in range(model.nu):
                         if model.actuator_trnid[ai, 0] == jnt_id:

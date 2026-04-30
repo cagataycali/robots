@@ -10,6 +10,7 @@ import re
 import shutil
 import tempfile
 import xml.etree.ElementTree as ET
+from typing import Any
 
 from strands_robots.simulation.models import SimCamera, SimObject, SimRobot, SimWorld
 from strands_robots.simulation.mujoco.backend import _ensure_mujoco
@@ -159,12 +160,18 @@ def _reload_scene_from_xml(world: SimWorld, scene_path: str) -> bool:
         # Best-effort — don't fail the reload just because we can't read back.
         pass
 
-    # Re-discover robot joints/actuators (IDs may shift)
+    # Re-discover robot joints/actuators (IDs may shift).
+    # Try namespaced name first (multi-robot case), fall back to raw.
     for robot in world.robots.values():
         robot.joint_ids = []
         robot.actuator_ids = []
+        pfx = robot.namespace or ""
         for jnt_name in robot.joint_names:
-            jid = mj.mj_name2id(new_model, mj.mjtObj.mjOBJ_JOINT, jnt_name)
+            jid = -1
+            if pfx:
+                jid = mj.mj_name2id(new_model, mj.mjtObj.mjOBJ_JOINT, pfx + jnt_name)
+            if jid < 0:
+                jid = mj.mj_name2id(new_model, mj.mjtObj.mjOBJ_JOINT, jnt_name)
             if jid >= 0:
                 robot.joint_ids.append(jid)
         for i in range(new_model.nu):
@@ -172,8 +179,10 @@ def _reload_scene_from_xml(world: SimWorld, scene_path: str) -> bool:
             if jnt_id in robot.joint_ids:
                 robot.actuator_ids.append(i)
         if not robot.actuator_ids:
-            for i in range(new_model.nu):
-                robot.actuator_ids.append(i)
+            # Last-resort fallback: all actuators (single-robot scenes).
+            if len(world.robots) == 1:
+                for i in range(new_model.nu):
+                    robot.actuator_ids.append(i)
 
     return True
 
@@ -245,6 +254,129 @@ def _save_and_patch_xml(world: SimWorld, tmpdir: str, filename: str) -> str:
     return scene_path
 
 
+def _prefix_robot_names(robot_root: Any, prefix: str) -> None:
+    """Prefix every named element and reference in a robot MJCF so that
+    multiple robots with the same ``data_config`` can coexist in one scene.
+
+    Without this, two ``so101`` robots share body names (``base``, ``gripper``,
+    ...), joint names (``shoulder_pan``, ...), actuator names, etc. MuJoCo
+    requires all top-level names to be globally unique and rejects the merged
+    XML with ``"repeated name 'base' in body"``.
+
+    The prefix is applied in-place to:
+      - element ``name`` attributes (bodies, joints, actuators, sites, geoms,
+        sensors, tendons, equality constraints, keyframes)
+      - reference attributes that point *into* the robot namespace:
+        ``joint``, ``body``, ``site``, ``geom``, ``tendon``, ``actuator``,
+        ``body1``, ``body2``, ``joint1``, ``joint2``
+
+    Asset references (mesh, material, texture, hfield) and class references
+    are NOT prefixed — they are shared by same-config robots (which is the
+    whole point of the dedupe in assets/defaults).
+
+    Args:
+        robot_root: The parsed ``<mujoco>`` root of the robot XML.
+        prefix: The robot instance name, used as a namespace prefix.
+    """
+    pfx = f"{prefix}/"
+
+    # Tags whose "name" attribute identifies a unique element in the merged
+    # scene. Each instance must get prefixed.
+    _NAMED_TAGS = {
+        "body",
+        "joint",
+        "geom",
+        "site",
+        "camera",
+        "light",
+        "actuator",
+        "general",
+        "motor",
+        "position",
+        "velocity",
+        "sensor",
+        "force",
+        "torque",
+        "jointpos",
+        "jointvel",
+        "framepos",
+        "framequat",
+        "frameangvel",
+        "framelinvel",
+        "framelinacc",
+        "frameangacc",
+        "accelerometer",
+        "gyro",
+        "magnetometer",
+        "rangefinder",
+        "touch",
+        "subtreecom",
+        "subtreelinvel",
+        "subtreeangmom",
+        "velocimeter",
+        "user",
+        "tendon",
+        "fixed",
+        "spatial",
+        "equality",
+        "connect",
+        "weld",
+        "joint_equality",
+        "tendon_equality",
+        "key",  # keyframes
+    }
+
+    # Attributes that reference named elements (in the robot namespace).
+    _REF_ATTRS = {
+        "joint",
+        "body",
+        "site",
+        "geom",
+        "tendon",
+        "actuator",
+        "body1",
+        "body2",
+        "joint1",
+        "joint2",
+        "childclass",  # default classes — prefixed too since we keep per-robot ones? No — keep shared.
+        "target",
+    }
+    # We don't prefix "childclass" because classes are shared (deduped) across
+    # same-config robots. Remove it from the set.
+    _REF_ATTRS.discard("childclass")
+
+    def visit(elem: Any) -> None:
+        # Rename ``name`` attribute if this tag is in the named set.
+        if elem.tag in _NAMED_TAGS:
+            orig = elem.get("name", "")
+            if orig and not orig.startswith(pfx):
+                elem.set("name", pfx + orig)
+
+        # Rewrite reference attributes (they point to robot-local elements).
+        for attr in _REF_ATTRS:
+            val = elem.get(attr)
+            if val and not val.startswith(pfx):
+                elem.set(attr, pfx + val)
+
+        for child in elem:
+            visit(child)
+
+    # We only want to prefix elements inside:
+    #   - worldbody (bodies, their children)
+    #   - actuator
+    #   - sensor
+    #   - equality
+    #   - tendon
+    #   - keyframe
+    # We do NOT prefix contents of <default>, <asset>, <compiler>, <option>
+    # because these are shared across same-config robot instances.
+    for section in ("worldbody", "actuator", "sensor", "equality", "tendon", "keyframe", "contact"):
+        sec = robot_root.find(section)
+        if sec is not None:
+            for child in sec:
+                visit(child)
+
+
 def inject_robot_into_scene(
     world: SimWorld,
     robot: SimRobot,
@@ -309,6 +441,12 @@ def inject_robot_into_scene(
         scene_root = scene_tree.getroot()
         robot_root = ET.fromstring(robot_xml_content)
 
+        # Step 3a: Prefix all names/references inside the robot XML with the
+        # robot's instance name. Required so that multiple robots with the
+        # same ``data_config`` (e.g. three so101s) can coexist — otherwise
+        # MuJoCo rejects the merged XML with "repeated name 'base' in body".
+        _prefix_robot_names(robot_root, robot.name)
+
         scene_worldbody = scene_root.find("worldbody")
         robot_worldbody = robot_root.find("worldbody")
         if scene_worldbody is None or robot_worldbody is None:
@@ -358,25 +496,41 @@ def inject_robot_into_scene(
                 continue  # Skip duplicate lights
             scene_worldbody.append(child)
 
-        # Step 4c: Merge actuators
+        # Step 4c: Merge actuators (dedupe by name — multiple same-config
+        # robots would clash on e.g. "shoulder_pan" actuator).
         scene_actuator = scene_root.find("actuator")
         robot_actuator = robot_root.find("actuator")
         if robot_actuator is not None:
             if scene_actuator is None:
                 scene_actuator = ET.SubElement(scene_root, "actuator")
+            existing_actuators: set[str] = {c.get("name", "") for c in scene_actuator if c.get("name")}
             for child in robot_actuator:
+                n = child.get("name", "")
+                if n and n in existing_actuators:
+                    continue
                 scene_actuator.append(child)
+                if n:
+                    existing_actuators.add(n)
 
-        # Step 4d: Merge sensors
+        # Step 4d: Merge sensors (dedupe by name)
         scene_sensor = scene_root.find("sensor")
         robot_sensor = robot_root.find("sensor")
         if robot_sensor is not None:
             if scene_sensor is None:
                 scene_sensor = ET.SubElement(scene_root, "sensor")
+            existing_sensors: set[str] = {c.get("name", "") for c in scene_sensor if c.get("name")}
             for child in robot_sensor:
+                n = child.get("name", "")
+                if n and n in existing_sensors:
+                    continue
                 scene_sensor.append(child)
+                if n:
+                    existing_sensors.add(n)
 
-        # Step 4e: Merge default classes
+        # Step 4e: Merge default classes (dedupe by class name)
+        # Multiple robots with the same data_config share the same <default
+        # class="..."> block. Appending blindly → XML Error: "repeated default
+        # class name". Skip classes we already have.
         scene_default = scene_root.find("default")
         robot_default = robot_root.find("default")
         if robot_default is not None:
@@ -389,8 +543,24 @@ def inject_robot_into_scene(
                     if child.tag in ("compiler", "option", "size"):
                         insert_idx = i + 1
                 scene_root.insert(insert_idx, scene_default)
+
+            existing_classes: set[str] = set()
+            for child in scene_default:
+                cls = child.get("class", "")
+                if cls:
+                    existing_classes.add(cls)
+                elif child.tag == "default":
+                    # MJCF nested default blocks use <default class="name">
+                    nested_cls = child.get("class", "") or ""
+                    if nested_cls:
+                        existing_classes.add(nested_cls)
             for child in robot_default:
+                cls = child.get("class", "")
+                if cls and cls in existing_classes:
+                    continue  # already merged from a previous same-config robot
                 scene_default.append(child)
+                if cls:
+                    existing_classes.add(cls)
 
         # Step 4f: Merge equality constraints
         scene_equality = scene_root.find("equality")

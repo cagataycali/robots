@@ -394,19 +394,27 @@ class Simulation(
                 }
 
             # Re-read joint/actuator IDs from the merged model (IDs shifted).
+            # Names inside MuJoCo are namespaced (e.g. ``arm0/shoulder_pan``)
+            # when multiple same-config robots are injected, so prefer the
+            # namespaced lookup.
             model = self._world._model
+            pfx = robot.namespace or ""
             robot.joint_ids = []
             robot.actuator_ids = []
             for jnt_name in robot.joint_names:
-                jid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, jnt_name)
+                jid = -1
+                if pfx:
+                    jid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, pfx + jnt_name)
+                if jid < 0:
+                    jid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, jnt_name)
                 if jid >= 0:
                     robot.joint_ids.append(jid)
             for i in range(model.nu):
                 jnt_id = model.actuator_trnid[i, 0]
                 if jnt_id in robot.joint_ids:
                     robot.actuator_ids.append(i)
-            if not robot.actuator_ids:
-                # Fallback: assign all actuators (single-robot scene).
+            if not robot.actuator_ids and len(self._world.robots) == 1:
+                # Fallback: single-robot scene — assign all actuators.
                 for i in range(model.nu):
                     robot.actuator_ids.append(i)
 
@@ -499,9 +507,15 @@ class Simulation(
         robot = self._world.robots[robot_name]
         model, data = self._world._model, self._world._data
 
+        # Namespace-aware joint lookup (see add_robot / _apply_sim_action).
+        pfx = robot.namespace or ""
         state = {}
         for jnt_name in robot.joint_names:
-            jnt_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, jnt_name)
+            jnt_id = -1
+            if pfx:
+                jnt_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, pfx + jnt_name)
+            if jnt_id < 0:
+                jnt_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, jnt_name)
             if jnt_id >= 0:
                 state[jnt_name] = {
                     "position": float(data.qpos[model.jnt_qposadr[jnt_id]]),

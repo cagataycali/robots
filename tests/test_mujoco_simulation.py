@@ -838,3 +838,98 @@ class TestMjSaveLastXMLGlobalState:
             for i in range(sim_with_robot._world._model.nbody)
         ]
         assert "cube" not in names
+
+
+# ── Multi-robot same-config injection ──
+
+
+class TestMultipleSameConfigRobots:
+    """Regression: adding multiple robots with the same ``data_config``
+    used to fail with "XML Error: repeated default class name" / "repeated
+    name 'base' in body".
+
+    Fix: robot bodies/joints/actuators/sensors are namespaced (prefixed
+    with the robot instance name) during MJCF injection; <default> and
+    <asset> blocks are deduped by name/class. The public API still returns
+    short joint names so policies see a config-level schema.
+    """
+
+    def _robot_xml(self, tmp_path):
+        """Write a tiny 1-DOF arm XML to a temp file."""
+        xml = """<mujoco>
+  <default>
+    <default class="arm">
+      <geom rgba="0.8 0.5 0.2 1"/>
+    </default>
+  </default>
+  <worldbody>
+    <body name="base">
+      <geom type="cylinder" size="0.05 0.05" class="arm"/>
+      <body name="link1" pos="0 0 0.05">
+        <joint name="shoulder" type="hinge" axis="0 0 1" range="-3.14 3.14"/>
+        <geom type="capsule" size="0.02 0.1" class="arm"/>
+      </body>
+    </body>
+  </worldbody>
+  <actuator>
+    <position name="shoulder" joint="shoulder" kp="50"/>
+  </actuator>
+</mujoco>
+"""
+        path = tmp_path / "arm.xml"
+        path.write_text(xml)
+        return str(path)
+
+    def test_three_same_config_robots(self, sim, tmp_path):
+        """Three robots using the same XML should inject without error."""
+        xml_path = self._robot_xml(tmp_path)
+        sim.create_world()
+
+        for i in range(3):
+            r = sim.add_robot(f"arm{i}", urdf_path=xml_path, position=[i * 0.5 - 0.5, 0, 0])
+            assert r["status"] == "success", f"add_robot arm{i} failed: {r}"
+
+        assert sim.list_robots() == ["arm0", "arm1", "arm2"]
+
+        # Each robot should have its own joint_ids (no sharing).
+        ids = [set(sim._world.robots[f"arm{i}"].joint_ids) for i in range(3)]
+        assert all(ids[i] for i in range(3)), f"robots with empty joint_ids: {ids}"
+        assert ids[0].isdisjoint(ids[1]) and ids[1].isdisjoint(ids[2]), f"robots share joint IDs: {ids}"
+
+    def test_per_robot_action_isolation(self, sim, tmp_path):
+        """send_action must route to the target robot's actuators only."""
+        xml_path = self._robot_xml(tmp_path)
+        sim.create_world()
+        for i in range(3):
+            sim.add_robot(f"arm{i}", urdf_path=xml_path, position=[i * 0.5 - 0.5, 0, 0])
+
+        # Action on arm0 should set arm0's ctrl, not arm1 or arm2.
+        sim.send_action({"shoulder": 0.7}, robot_name="arm0")
+
+        import numpy as np
+
+        ctrl = np.array(sim._world._data.ctrl)
+        r0 = sim._world.robots["arm0"]
+        r1 = sim._world.robots["arm1"]
+        r2 = sim._world.robots["arm2"]
+
+        assert np.isclose(ctrl[r0.actuator_ids[0]], 0.7)
+        assert np.isclose(ctrl[r1.actuator_ids[0]], 0.0)
+        assert np.isclose(ctrl[r2.actuator_ids[0]], 0.0)
+
+    def test_observation_returns_short_keys(self, sim, tmp_path):
+        """get_observation should return short joint names (e.g. 'shoulder'),
+        not the namespaced MuJoCo names ('arm0/shoulder')."""
+        xml_path = self._robot_xml(tmp_path)
+        sim.create_world()
+        for i in range(2):
+            sim.add_robot(f"arm{i}", urdf_path=xml_path, position=[i * 0.5 - 0.25, 0, 0])
+
+        obs0 = sim.get_observation("arm0")
+        obs1 = sim.get_observation("arm1")
+
+        assert "shoulder" in obs0
+        assert "shoulder" in obs1
+        # No namespaced keys leak into the observation.
+        assert "arm0/shoulder" not in obs0
+        assert "arm1/shoulder" not in obs1
