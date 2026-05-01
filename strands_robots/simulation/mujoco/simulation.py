@@ -729,9 +729,12 @@ class Simulation(
             mj.mj_resetData(self._world._model, self._world._data)
             self._world.sim_time = 0.0
             self._world.step_count = 0
-        for r in self._world.robots.values():
-            r.policy_running = False
-            r.policy_steps = 0
+            # Flip policy_running flag inside the lock so a racing worker
+            # thread cannot slip in one more mj_step between reset and flag
+            # flip (see review feedback 2026-05-01).
+            for r in self._world.robots.values():
+                r.policy_running = False
+                r.policy_steps = 0
         return {"status": "success", "content": [{"text": "🔄 Reset to initial state."}]}
 
     def get_state(self) -> dict[str, Any]:

@@ -159,12 +159,12 @@ def _reload_scene_from_xml(world: SimWorld, scene_path: str) -> bool:
         qpos_width = {0: 7, 1: 4, 2: 1, 3: 1}.get(int(jnt_type), 1)
         old_adr = old_model.jnt_qposadr[i]
         new_adr = new_model.jnt_qposadr[new_jid]
-        new_data.qpos[new_adr:new_adr + qpos_width] = old_data.qpos[old_adr:old_adr + qpos_width]
+        new_data.qpos[new_adr : new_adr + qpos_width] = old_data.qpos[old_adr : old_adr + qpos_width]
         # qvel: width = joint DoF (free=6, ball=3, hinge/slide=1)
         dof_width = {0: 6, 1: 3, 2: 1, 3: 1}.get(int(jnt_type), 1)
         old_dof = old_model.jnt_dofadr[i]
         new_dof = new_model.jnt_dofadr[new_jid]
-        new_data.qvel[new_dof:new_dof + dof_width] = old_data.qvel[old_dof:old_dof + dof_width]
+        new_data.qvel[new_dof : new_dof + dof_width] = old_data.qvel[old_dof : old_dof + dof_width]
 
     # Copy ctrl per-actuator by name (actuator order may also shift)
     for i in range(old_model.nu):
@@ -498,7 +498,6 @@ def inject_robot_into_scene(
         scene_asset = scene_root.find("asset")
         robot_asset = robot_root.find("asset")
 
-        scene_meshdir = _get_abs_meshdir(scene_root)
         robot_meshdir = _get_abs_meshdir(robot_root)
 
         if robot_asset is not None:
@@ -507,12 +506,10 @@ def inject_robot_into_scene(
             # resolve independently regardless of scene-level meshdir.
             if robot_meshdir:
                 for child in robot_asset:
-                    if child.tag in ('mesh', 'texture'):
-                        file_attr = child.get('file')
+                    if child.tag in ("mesh", "texture"):
+                        file_attr = child.get("file")
                         if file_attr and not os.path.isabs(file_attr):
-                            child.set('file', os.path.normpath(
-                                os.path.join(robot_meshdir, file_attr)
-                            ))
+                            child.set("file", os.path.normpath(os.path.join(robot_meshdir, file_attr)))
             # NOTE: The elif was unreachable (robot_meshdir is falsy in else
             # branch, making `scene_meshdir and robot_meshdir` always False).
             # Absolutizing file= attrs above handles all cases correctly.

@@ -176,9 +176,7 @@ class TestApplyForceLatchedBehavior:
 
         # Apply lateral (X) force — produces non-zero generalized torques
         sim.apply_force("link2", force=[50.0, 0, 0])
-        assert np.any(sim._world._data.qfrc_applied != 0), (
-            "X-force on link2 should produce non-zero generalized forces"
-        )
+        assert np.any(sim._world._data.qfrc_applied != 0), "X-force on link2 should produce non-zero generalized forces"
 
         # Zero it — apply_force zeros buffer first, then applies zero force
         sim.apply_force("link2", force=[0, 0, 0])
@@ -301,7 +299,7 @@ class TestRecordingRoundtripCameraFrames:
         The test robot XML has camera 'arm0/wrist_cam' which becomes
         'arm0__wrist_cam' in the dataset schema.
         """
-        lerobot = pytest.importorskip("lerobot")
+        pytest.importorskip("lerobot")
         from pathlib import Path
 
         sim = sim_with_namespaced_camera
@@ -336,7 +334,7 @@ class TestRecordingRoundtripCameraFrames:
 
         # Reopen dataset and verify camera feature has frames
         try:
-            from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+            from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
             ds = LeRobotDataset(repo_id="local/rt-test", root=ds_root)
             assert len(ds) > 0, f"Dataset has no frames (expected > 0, got {len(ds)})"
@@ -349,8 +347,7 @@ class TestRecordingRoundtripCameraFrames:
                     break
 
             assert cam_feature_found, (
-                f"No observation.images.* feature found in dataset. "
-                f"Features: {list(ds.features.keys())}"
+                f"No observation.images.* feature found in dataset. Features: {list(ds.features.keys())}"
             )
 
             # Access a frame and verify image data is present
@@ -474,9 +471,7 @@ class TestMultiRobotDifferentAssetDirs:
 
             # We should have at least one camera rendered (arm0/wrist_cam)
             cam_frames = {k: v for k, v in obs.items() if isinstance(v, np.ndarray) and v.ndim == 3}
-            assert len(cam_frames) > 0, (
-                f"No camera frames rendered. Observation keys: {list(obs.keys())}"
-            )
+            assert len(cam_frames) > 0, f"No camera frames rendered. Observation keys: {list(obs.keys())}"
 
             # Verify camera frame is not all-zero (actually rendered something)
             for cam_name, frame in cam_frames.items():
