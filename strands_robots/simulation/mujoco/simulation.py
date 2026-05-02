@@ -56,7 +56,7 @@ class Simulation(
 
     **Stateful session.** One MuJoCo world per instance; actions form an
     implicit state machine starting with ``create_world``. Tools that mutate
-    the scene (``add_robot``, ``add_object``, ``remove_object``, ``add_camera``,
+    the scene (``add_robot``, ``remove_robot``, ``add_object``, ``remove_object``, ``move_object``, ``add_camera``, ``remove_camera``,
     ``load_scene``) are NOT safe to call while a policy is running via
     ``start_policy`` — stop it first. Call ``destroy()`` or ``cleanup()`` at
     session end to release the ThreadPoolExecutor, temp dirs, and MuJoCo
@@ -470,6 +470,9 @@ class Simulation(
     def remove_robot(self, name: str) -> dict[str, Any]:
         if self._world is None or name not in self._world.robots:
             return {"status": "error", "content": [{"text": f"❌ Robot '{name}' not found."}]}
+        # Guard: remove_robot races the cooperative-stop path if the robot has an active policy.
+        if err := self._require_no_running_policy("remove_robot"):
+            return err
         if name in self._policy_threads:
             self._world.robots[name].policy_running = False
             try:
@@ -646,6 +649,9 @@ class Simulation(
             return {"status": "error", "content": [{"text": "❌ No simulation."}]}
         if name not in self._world.objects:
             return {"status": "error", "content": [{"text": f"❌ '{name}' not found."}]}
+        # Guard: move_object writes qpos + calls mj_forward, racing a running policy.
+        if err := self._require_no_running_policy("move_object"):
+            return err
 
         mj = self._mj
         model, data = self._world._model, self._world._data
@@ -911,7 +917,7 @@ class Simulation(
     def _require_no_running_policy(self, action_name: str) -> dict[str, Any] | None:
         """Return an error dict if a policy is running, else None.
 
-        Scene mutations (add_robot, add_object, remove_object, add_camera,
+        Scene mutations (add_robot, remove_robot, add_object, remove_object, move_object, add_camera, remove_camera,
         load_scene) swap model/data pointers via XML round-trip. A concurrent
         PolicyRunner worker calling mj_step on stale pointers is undefined
         behaviour. Hard-fail so the agent learns to stop the policy first.
@@ -939,7 +945,7 @@ class Simulation(
             "description": (
                 "Programmatic MuJoCo simulation environment (stateful session). "
                 "One world per instance; actions form an implicit state machine starting with "
-                "create_world. Scene mutations (add_robot, add_object, remove_object, add_camera, "
+                "create_world. Scene mutations (add_robot, remove_robot, add_object, remove_object, move_object, add_camera, remove_camera, "
                 "load_scene) are blocked while a policy is running — stop it first. "
                 "Create worlds, add robots from URDF "
                 "(direct path or auto-resolve from data_config name), add objects, run VLA policies, "

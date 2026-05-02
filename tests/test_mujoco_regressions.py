@@ -576,3 +576,59 @@ class TestSceneMutationBlockedDuringPolicy:
             sim._policy_threads["arm1"].result(timeout=5.0)
 
         sim.cleanup()
+
+    def test_move_object_blocked_during_policy(self, robot_path):
+        sim = Simulation(tool_name="test_guard_move", mesh=False)
+        result = sim.create_world(gravity=[0, 0, -9.81])
+        assert result["status"] == "success"
+
+        result = sim.add_robot("arm1", urdf_path=robot_path)
+        assert result["status"] == "success"
+
+        # Add an object to move later
+        result = sim.add_object("cube", shape="box", position=[0.3, 0, 0.05])
+        assert result["status"] == "success"
+
+        result = sim.start_policy("arm1", policy_provider="mock", duration=10.0, fast_mode=True)
+        assert result["status"] == "success"
+
+        # Try moving an object while policy is running — should be blocked
+        result = sim.move_object("cube", position=[0.5, 0, 0.1])
+        assert result["status"] == "error"
+        assert "policy is running" in result["content"][0]["text"].lower()
+
+        sim._stop_policy("arm1")
+        if "arm1" in sim._policy_threads:
+            sim._policy_threads["arm1"].result(timeout=5.0)
+
+        # Now it should work
+        result = sim.move_object("cube", position=[0.5, 0, 0.1])
+        assert result["status"] == "success"
+
+        sim.cleanup()
+
+    def test_remove_robot_blocked_during_policy(self, robot_path):
+        sim = Simulation(tool_name="test_guard_remove_robot", mesh=False)
+        result = sim.create_world(gravity=[0, 0, -9.81])
+        assert result["status"] == "success"
+
+        result = sim.add_robot("arm1", urdf_path=robot_path)
+        assert result["status"] == "success"
+
+        result = sim.start_policy("arm1", policy_provider="mock", duration=10.0, fast_mode=True)
+        assert result["status"] == "success"
+
+        # Try removing robot while policy is running — should be blocked
+        result = sim.remove_robot("arm1")
+        assert result["status"] == "error"
+        assert "policy is running" in result["content"][0]["text"].lower()
+
+        sim._stop_policy("arm1")
+        if "arm1" in sim._policy_threads:
+            sim._policy_threads["arm1"].result(timeout=5.0)
+
+        # Now it should work
+        result = sim.remove_robot("arm1")
+        assert result["status"] == "success"
+
+        sim.cleanup()
