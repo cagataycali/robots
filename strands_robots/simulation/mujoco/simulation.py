@@ -731,7 +731,7 @@ class Simulation(
             self._world.step_count = 0
             # Flip policy_running flag inside the lock so a racing worker
             # thread cannot slip in one more mj_step between reset and flag
-            # flip (see review feedback 2026-05-01).
+            # flip.
             for r in self._world.robots.values():
                 r.policy_running = False
                 r.policy_steps = 0
