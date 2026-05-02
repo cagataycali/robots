@@ -49,10 +49,18 @@ class Simulation(
     SimEngine,
     AgentTool,
 ):
-    """Programmatic simulation environment as a Strands AgentTool.
+    """Programmatic MuJoCo simulation environment as a Strands AgentTool.
 
     Gives AI agents the ability to create, modify, and control MuJoCo
     simulation environments through natural language → tool actions.
+
+    **Stateful session.** One MuJoCo world per instance; actions form an
+    implicit state machine starting with ``create_world``. Tools that mutate
+    the scene (``add_robot``, ``add_object``, ``remove_object``, ``add_camera``,
+    ``load_scene``) are NOT safe to call while a policy is running via
+    ``start_policy`` — stop it first. Call ``destroy()`` or ``cleanup()`` at
+    session end to release the ThreadPoolExecutor, temp dirs, and MuJoCo
+    resources.
     """
 
     def __init__(
@@ -204,6 +212,8 @@ class Simulation(
 
     def load_scene(self, scene_path: str) -> dict[str, Any]:
         """Load a complete scene from MJCF XML or URDF file."""
+        if err := self._require_no_running_policy("load_scene"):
+            return err
         mj = self._mj
 
         if not os.path.exists(scene_path):
@@ -327,6 +337,8 @@ class Simulation(
         """
         if self._world is None:
             return {"status": "error", "content": [{"text": "❌ No world. Use action='create_world' first."}]}
+        if err := self._require_no_running_policy("add_robot"):
+            return err
         if name in self._world.robots:
             return {"status": "error", "content": [{"text": f"❌ Robot '{name}' already exists."}]}
 
@@ -556,6 +568,8 @@ class Simulation(
         """Add an object to the simulation."""
         if self._world is None:
             return {"status": "error", "content": [{"text": "❌ No world."}]}
+        if err := self._require_no_running_policy("add_object"):
+            return err
         if name in self._world.objects:
             return {"status": "error", "content": [{"text": f"❌ Object '{name}' exists."}]}
 
@@ -616,6 +630,8 @@ class Simulation(
     def remove_object(self, name: str) -> dict[str, Any]:
         if self._world is None or name not in self._world.objects:
             return {"status": "error", "content": [{"text": f"❌ Object '{name}' not found."}]}
+        if err := self._require_no_running_policy("remove_object"):
+            return err
         del self._world.objects[name]
         if self._world.robots:
             eject_body_from_scene(self._world, name)
@@ -671,6 +687,8 @@ class Simulation(
     ) -> dict[str, Any]:
         if self._world is None:
             return {"status": "error", "content": [{"text": "❌ No world."}]}
+        if err := self._require_no_running_policy("add_camera"):
+            return err
 
         cam = SimCamera(
             name=name,
@@ -700,6 +718,8 @@ class Simulation(
     def remove_camera(self, name: str) -> dict[str, Any]:
         if self._world is None or name not in self._world.cameras:
             return {"status": "error", "content": [{"text": f"❌ Camera '{name}' not found."}]}
+        if err := self._require_no_running_policy("remove_camera"):
+            return err
         del self._world.cameras[name]
         return {"status": "success", "content": [{"text": f"🗑️ Camera '{name}' removed."}]}
 
@@ -888,6 +908,28 @@ class Simulation(
     def tool_type(self) -> str:
         return "simulation"
 
+    def _require_no_running_policy(self, action_name: str) -> dict[str, Any] | None:
+        """Return an error dict if a policy is running, else None.
+
+        Scene mutations (add_robot, add_object, remove_object, add_camera,
+        load_scene) swap model/data pointers via XML round-trip. A concurrent
+        PolicyRunner worker calling mj_step on stale pointers is undefined
+        behaviour. Hard-fail so the agent learns to stop the policy first.
+        """
+        has_running = any(not f.done() for f in self._policy_threads.values())
+        if has_running:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            f"❌ Cannot '{action_name}' while a policy is running. Stop it first: action='stop_policy'."
+                        )
+                    }
+                ],
+            }
+        return None
+
     @property
     def tool_spec(self) -> ToolSpec:
         with open(_TOOL_SPEC_PATH) as f:
@@ -895,7 +937,11 @@ class Simulation(
         return {
             "name": self.tool_name_str,
             "description": (
-                "Programmatic MuJoCo simulation environment. Create worlds, add robots from URDF "
+                "Programmatic MuJoCo simulation environment (stateful session). "
+                "One world per instance; actions form an implicit state machine starting with "
+                "create_world. Scene mutations (add_robot, add_object, remove_object, add_camera, "
+                "load_scene) are blocked while a policy is running — stop it first. "
+                "Create worlds, add robots from URDF "
                 "(direct path or auto-resolve from data_config name), add objects, run VLA policies, "
                 "render cameras, record trajectories, domain randomize. "
                 "Same Policy ABC as real robot control — sim ↔ real with zero code changes. "
@@ -909,7 +955,8 @@ class Simulation(
                 "randomize, "
                 "start_recording, stop_recording, get_recording_status, "
                 "open_viewer, close_viewer, "
-                "list_urdfs, register_urdf, get_features"
+                "list_urdfs, register_urdf, get_features. "
+                "Call destroy() at session end to release resources."
             ),
             "inputSchema": {"json": schema},
         }

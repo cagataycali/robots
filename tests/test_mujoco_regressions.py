@@ -484,3 +484,95 @@ class TestMultiRobotDifferentAssetDirs:
         finally:
             shutil.rmtree(tmpdir_a, ignore_errors=True)
             shutil.rmtree(tmpdir_b, ignore_errors=True)
+
+
+class TestSceneMutationBlockedDuringPolicy:
+    """Scene mutations must hard-fail while a policy is running.
+
+    A concurrent PolicyRunner worker calling mj_step on stale model/data
+    pointers (swapped by XML round-trip in add_object, add_camera, etc.)
+    is undefined behaviour. The guard ensures agents learn to stop_policy
+    before modifying the scene.
+    """
+
+    @pytest.fixture
+    def robot_path(self, tmp_path):
+        """Write test robot XML to a temp file."""
+        path = tmp_path / "arm.xml"
+        path.write_text(ROBOT_XML)
+        return str(path)
+
+    def test_add_object_blocked_during_policy(self, robot_path):
+        sim = Simulation(tool_name="test_guard_obj", mesh=False)
+        result = sim.create_world(gravity=[0, 0, -9.81])
+        assert result["status"] == "success"
+
+        result = sim.add_robot("arm1", urdf_path=robot_path)
+        assert result["status"] == "success"
+
+        # Start a policy (fast_mode so it completes quickly after stop)
+        result = sim.start_policy("arm1", policy_provider="mock", duration=10.0, fast_mode=True)
+        assert result["status"] == "success"
+
+        # Try adding an object while policy is running — should be blocked
+        result = sim.add_object("cube", shape="box", position=[0.3, 0, 0.05])
+        assert result["status"] == "error"
+        assert "policy is running" in result["content"][0]["text"].lower()
+
+        # Stop the policy
+        sim._stop_policy("arm1")
+        if "arm1" in sim._policy_threads:
+            sim._policy_threads["arm1"].result(timeout=5.0)
+
+        # Now it should work
+        result = sim.add_object("cube", shape="box", position=[0.3, 0, 0.05])
+        assert result["status"] == "success"
+
+        sim.cleanup()
+
+    def test_add_camera_blocked_during_policy(self, robot_path):
+        sim = Simulation(tool_name="test_guard_cam", mesh=False)
+        result = sim.create_world(gravity=[0, 0, -9.81])
+        assert result["status"] == "success"
+
+        result = sim.add_robot("arm1", urdf_path=robot_path)
+        assert result["status"] == "success"
+
+        result = sim.start_policy("arm1", policy_provider="mock", duration=10.0, fast_mode=True)
+        assert result["status"] == "success"
+
+        # Try adding a camera while policy is running — should be blocked
+        result = sim.add_camera("top_cam", position=[0, 0, 2], target=[0, 0, 0])
+        assert result["status"] == "error"
+        assert "policy is running" in result["content"][0]["text"].lower()
+
+        sim._stop_policy("arm1")
+        if "arm1" in sim._policy_threads:
+            sim._policy_threads["arm1"].result(timeout=5.0)
+
+        result = sim.add_camera("top_cam", position=[0, 0, 2], target=[0, 0, 0])
+        assert result["status"] == "success"
+
+        sim.cleanup()
+
+    def test_load_scene_blocked_during_policy(self, robot_path):
+        sim = Simulation(tool_name="test_guard_scene", mesh=False)
+        result = sim.create_world(gravity=[0, 0, -9.81])
+        assert result["status"] == "success"
+
+        result = sim.add_robot("arm1", urdf_path=robot_path)
+        assert result["status"] == "success"
+
+        result = sim.start_policy("arm1", policy_provider="mock", duration=10.0, fast_mode=True)
+        assert result["status"] == "success"
+
+        # load_scene while policy is running — should be blocked
+        result = sim.load_scene(robot_path)
+        assert result["status"] == "error"
+        assert "policy is running" in result["content"][0]["text"].lower()
+
+        sim._stop_policy("arm1")
+        if "arm1" in sim._policy_threads:
+            sim._policy_threads["arm1"].result(timeout=5.0)
+
+        sim.cleanup()
