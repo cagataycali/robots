@@ -330,6 +330,7 @@ class TestRobotManagement:
         # Should have joint positions
         assert len(obs) > 0
 
+    @requires_gl
     def test_get_observation_schema_joints_plus_cameras(self, sim_with_robot):
         """get_observation must return {short_joint: float, camera_name: ndarray}.
 
@@ -833,6 +834,7 @@ class TestRendererThreadSafety:
 # ── XML round-trip state poisoning regression ──
 
 
+@requires_gl
 class TestMjSaveLastXMLGlobalState:
     """Regression: MuJoCo's ``mj_saveLastXML`` is a global-state function
     that always emits the *last loaded* model, ignoring its ``model`` arg.
@@ -1007,6 +1009,7 @@ class TestRecordingSafeCameraNames:
     """
 
     def test_start_recording_sanitizes_namespaced_cameras(self, sim_with_robot, tmp_path):
+        pytest.importorskip("lerobot")
         # The sim_with_robot fixture's robot XML injects a camera; for
         # so101 it becomes ``arm1/wrist_cam``. Without sanitization,
         # LeRobot raises: "Feature names should not contain '/'".

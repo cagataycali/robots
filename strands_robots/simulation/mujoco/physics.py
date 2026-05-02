@@ -629,10 +629,11 @@ class PhysicsMixin:
             return {"status": "error", "content": [{"text": f"❌ Body '{body_name}' not found."}]}
 
         changes = []
-        if mass is not None:
-            old_mass = float(model.body_mass[body_id])
-            model.body_mass[body_id] = mass
-            changes.append(f"mass: {old_mass:.3f} → {mass:.3f}")
+        with self._lock:
+            if mass is not None:
+                old_mass = float(model.body_mass[body_id])
+                model.body_mass[body_id] = mass
+                changes.append(f"mass: {old_mass:.3f} → {mass:.3f}")
 
         return {
             "status": "success",
@@ -666,19 +667,20 @@ class PhysicsMixin:
         label = geom_name or f"geom_{gid}"
         changes = []
 
-        if color is not None:
-            model.geom_rgba[gid] = color[:4] if len(color) >= 4 else color[:3] + [1.0]
-            changes.append(f"color → {model.geom_rgba[gid].tolist()}")
+        with self._lock:
+            if color is not None:
+                model.geom_rgba[gid] = color[:4] if len(color) >= 4 else color[:3] + [1.0]
+                changes.append(f"color → {model.geom_rgba[gid].tolist()}")
 
-        if friction is not None:
-            fric = friction[:3] if len(friction) >= 3 else friction + [0.0] * (3 - len(friction))
-            model.geom_friction[gid] = fric
-            changes.append(f"friction → {fric}")
+            if friction is not None:
+                fric = friction[:3] if len(friction) >= 3 else friction + [0.0] * (3 - len(friction))
+                model.geom_friction[gid] = fric
+                changes.append(f"friction → {fric}")
 
-        if size is not None:
-            n = min(len(size), 3)
-            model.geom_size[gid, :n] = size[:n]
-            changes.append(f"size → {model.geom_size[gid].tolist()}")
+            if size is not None:
+                n = min(len(size), 3)
+                model.geom_size[gid, :n] = size[:n]
+                changes.append(f"size → {model.geom_size[gid].tolist()}")
 
         return {
             "status": "success",

@@ -21,7 +21,13 @@ import pytest
 
 mj = pytest.importorskip("mujoco")
 
+from strands_robots.simulation.mujoco.backend import _can_render  # noqa: E402
 from strands_robots.simulation.mujoco.simulation import Simulation  # noqa: E402
+
+requires_gl = pytest.mark.skipif(
+    not _can_render(),
+    reason="No OpenGL context available (headless without EGL/OSMesa)",
+)
 
 # ── Test robot XML (simple 3-DOF arm) ──
 
@@ -292,6 +298,7 @@ class TestRecordingRoundtripCameraFrames:
         yield sim
         sim.cleanup()
 
+    @requires_gl
     def test_recording_roundtrip_has_camera_frames(self, sim_with_namespaced_camera, tmp_path):
         """Record → run mock policy → stop → verify dataset has camera data.
 
@@ -423,6 +430,7 @@ class TestMultiRobotDifferentAssetDirs:
             shutil.rmtree(tmpdir_a, ignore_errors=True)
             shutil.rmtree(tmpdir_b, ignore_errors=True)
 
+    @requires_gl
     def test_two_robots_both_render_cameras(self):
         """Two robots with cameras from different dirs — both cameras render."""
         # Robot A has arm0/wrist_cam (from ROBOT_XML)
