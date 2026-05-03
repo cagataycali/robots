@@ -35,6 +35,7 @@ def test_list_backends_contains_builtins():
 
 
 def test_create_simulation_with_alias_resolves_to_mujoco():
+    pytest.importorskip("mujoco")
     # `mj` is a built-in alias for `mujoco`
     sim = create_simulation(backend="mj")
     from strands_robots.simulation.mujoco.simulation import Simulation
@@ -178,7 +179,9 @@ def test_import_backend_module_missing_raises_with_actionable_message(monkeypatc
 
 
 def test_default_backend_is_mujoco():
+    pytest.importorskip("mujoco")
     sim = create_simulation()  # defaults to 'mujoco'
+
     from strands_robots.simulation.mujoco.simulation import Simulation
 
     assert isinstance(sim, Simulation)

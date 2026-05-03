@@ -9,6 +9,8 @@ Covers:
 
 from __future__ import annotations
 
+import pytest
+
 from strands_robots.simulation.model_registry import (
     list_available_models,
     register_urdf,
@@ -25,6 +27,7 @@ def test_list_available_models_contains_builtins():
 
 def test_resolve_model_known_builtin_returns_path():
     """A Menagerie-backed robot is always resolvable (panda ships with mujoco_menagerie)."""
+    pytest.importorskip("mujoco")  # panda requires mujoco_menagerie
     path = resolve_model("panda")
     assert path is not None
     assert path.endswith((".xml", ".urdf"))
