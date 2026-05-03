@@ -528,7 +528,7 @@ class TestSceneMutationBlockedDuringPolicy:
         assert "policy is running" in result["content"][0]["text"].lower()
 
         # Stop the policy
-        sim._stop_policy("arm1")
+        sim.stop_policy("arm1")
         if "arm1" in sim._policy_threads:
             sim._policy_threads["arm1"].result(timeout=5.0)
 
@@ -554,7 +554,7 @@ class TestSceneMutationBlockedDuringPolicy:
         assert result["status"] == "error"
         assert "policy is running" in result["content"][0]["text"].lower()
 
-        sim._stop_policy("arm1")
+        sim.stop_policy("arm1")
         if "arm1" in sim._policy_threads:
             sim._policy_threads["arm1"].result(timeout=5.0)
 
@@ -579,7 +579,7 @@ class TestSceneMutationBlockedDuringPolicy:
         assert result["status"] == "error"
         assert "policy is running" in result["content"][0]["text"].lower()
 
-        sim._stop_policy("arm1")
+        sim.stop_policy("arm1")
         if "arm1" in sim._policy_threads:
             sim._policy_threads["arm1"].result(timeout=5.0)
 
@@ -605,7 +605,7 @@ class TestSceneMutationBlockedDuringPolicy:
         assert result["status"] == "error"
         assert "policy is running" in result["content"][0]["text"].lower()
 
-        sim._stop_policy("arm1")
+        sim.stop_policy("arm1")
         if "arm1" in sim._policy_threads:
             sim._policy_threads["arm1"].result(timeout=5.0)
 
@@ -631,7 +631,7 @@ class TestSceneMutationBlockedDuringPolicy:
         assert result["status"] == "error"
         assert "policy is running" in result["content"][0]["text"].lower()
 
-        sim._stop_policy("arm1")
+        sim.stop_policy("arm1")
         if "arm1" in sim._policy_threads:
             sim._policy_threads["arm1"].result(timeout=5.0)
 
