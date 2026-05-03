@@ -8,11 +8,13 @@ from pathlib import Path
 
 import pytest
 
-
-@pytest.mark.skipif(
+_requires_mujoco = pytest.mark.skipif(
     os.environ.get("CI") == "true" and not os.environ.get("ROBOT_TEST_MUJOCO"),
     reason="requires OpenGL; opt-in via ROBOT_TEST_MUJOCO=1",
 )
+
+
+@_requires_mujoco
 def test_render_all_returns_every_camera(tmp_path: Path) -> None:
     """render_all() should return one image block per camera."""
     os.environ.setdefault("MUJOCO_GL", "glfw")
@@ -42,10 +44,7 @@ def test_render_all_returns_every_camera(tmp_path: Path) -> None:
     sim.destroy()
 
 
-@pytest.mark.skipif(
-    os.environ.get("CI") == "true" and not os.environ.get("ROBOT_TEST_MUJOCO"),
-    reason="requires OpenGL; opt-in via ROBOT_TEST_MUJOCO=1",
-)
+@_requires_mujoco
 def test_start_stop_cameras_recording_writes_one_mp4_per_camera(tmp_path: Path) -> None:
     os.environ.setdefault("MUJOCO_GL", "glfw")
     from strands_robots.simulation import Simulation
@@ -88,6 +87,7 @@ def test_start_stop_cameras_recording_writes_one_mp4_per_camera(tmp_path: Path) 
     sim.destroy()
 
 
+@_requires_mujoco
 def test_stop_without_start_is_error() -> None:
     """Calling stop without a running recording should return a clean error."""
     os.environ.setdefault("MUJOCO_GL", "glfw")
@@ -101,6 +101,7 @@ def test_stop_without_start_is_error() -> None:
     sim.destroy()
 
 
+@_requires_mujoco
 def test_status_when_idle_is_success() -> None:
     from strands_robots.simulation import Simulation
 
