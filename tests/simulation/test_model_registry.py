@@ -24,8 +24,8 @@ def test_list_available_models_contains_builtins():
 
 
 def test_resolve_model_known_builtin_returns_path():
-    """so101 is always in the built-in registry."""
-    path = resolve_model("so101")
+    """A Menagerie-backed robot is always resolvable (panda ships with mujoco_menagerie)."""
+    path = resolve_model("panda")
     assert path is not None
     assert path.endswith((".xml", ".urdf"))
 
