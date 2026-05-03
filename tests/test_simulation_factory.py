@@ -6,6 +6,9 @@ registration contracts.
 
 from __future__ import annotations
 
+import importlib
+from unittest.mock import patch
+
 import pytest
 
 from strands_robots.simulation import base as _base
@@ -35,8 +38,19 @@ def test_default_backend_missing_raises_import_error_with_guidance() -> None:
     sys.modules.pop("strands_robots.simulation.mujoco", None)
     sys.modules.pop("strands_robots.simulation.mujoco.simulation", None)
 
-    with pytest.raises(ImportError) as exc:
-        _factory.create_simulation()
+    # Mock importlib.import_module to raise ModuleNotFoundError for the
+    # mujoco backend module — simulating a missing mujoco dependency
+    # regardless of whether mujoco is actually installed in the environment.
+    _real_import_module = importlib.import_module
+
+    def _mock_import_module(name: str, *args, **kwargs):
+        if name == "strands_robots.simulation.mujoco.simulation":
+            raise ModuleNotFoundError("No module named 'mujoco'")
+        return _real_import_module(name, *args, **kwargs)
+
+    with patch("importlib.import_module", side_effect=_mock_import_module):
+        with pytest.raises(ImportError) as exc:
+            _factory.create_simulation()
 
     msg = str(exc.value)
     assert "mujoco" in msg.lower()
