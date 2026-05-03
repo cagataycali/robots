@@ -166,7 +166,7 @@ class RenderingMixin:
     ) -> dict[str, Any]:
         """Render a camera view as base64 PNG image."""
         if self._world is None or self._world._model is None:
-            return {"status": "error", "content": [{"text": "❌ No simulation."}]}
+            return {"status": "error", "content": [{"text": "No simulation."}]}
 
         mj = _ensure_mujoco()
         w = width or self.default_width
@@ -180,7 +180,7 @@ class RenderingMixin:
                     "content": [
                         {
                             "text": (
-                                "❌ Rendering unavailable (no OpenGL context). "
+                                " Rendering unavailable (no OpenGL context). "
                                 "Install EGL or OSMesa for offscreen rendering: "
                                 "apt-get install libosmesa6-dev"
                             )
@@ -210,14 +210,14 @@ class RenderingMixin:
                 ],
             }
         except Exception as e:
-            return {"status": "error", "content": [{"text": f"❌ Render failed: {e}"}]}
+            return {"status": "error", "content": [{"text": f"Render failed: {e}"}]}
 
     def render_depth(
         self, camera_name: str = "default", width: int | None = None, height: int | None = None
     ) -> dict[str, Any]:
         """Render depth map from a camera."""
         if self._world is None or self._world._model is None:
-            return {"status": "error", "content": [{"text": "❌ No simulation."}]}
+            return {"status": "error", "content": [{"text": "No simulation."}]}
 
         mj = _ensure_mujoco()
         w = width or self.default_width
@@ -235,7 +235,7 @@ class RenderingMixin:
                     "content": [
                         {
                             "text": (
-                                "❌ Depth rendering unavailable (no OpenGL context). "
+                                " Depth rendering unavailable (no OpenGL context). "
                                 "Install EGL or OSMesa for offscreen rendering."
                             )
                         }
@@ -262,11 +262,11 @@ class RenderingMixin:
                 ],
             }
         except Exception as e:
-            return {"status": "error", "content": [{"text": f"❌ Depth render failed: {e}"}]}
+            return {"status": "error", "content": [{"text": f"Depth render failed: {e}"}]}
 
     def get_contacts(self) -> dict[str, Any]:
         if self._world is None or self._world._data is None:
-            return {"status": "error", "content": [{"text": "❌ No simulation."}]}
+            return {"status": "error", "content": [{"text": "No simulation."}]}
 
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
@@ -288,17 +288,17 @@ class RenderingMixin:
             "content": [{"text": text}, {"json": {"contacts": contacts}}],
         }
 
-    # ------------------------------------------------------------------
+    
     # Multi-camera capture — Session recording for simulation
-    # ------------------------------------------------------------------
+    
     #
     # Design:
-    #   - render_all(cameras=None, width=, height=) — single-shot snapshot
-    #     of every camera at current sim_time. One PNG per camera.
-    #   - start_cameras_recording(...) — daemon thread, one imageio writer
-    #     per camera, appends frames at fps.
-    #   - stop_cameras_recording() — flushes writers, returns paths + sizes.
-    #   - get_cameras_recording_status() — frame counts, elapsed, per-cam.
+    #  - render_all(cameras=None, width=, height=) — single-shot snapshot
+    #    of every camera at current sim_time. One PNG per camera.
+    #  - start_cameras_recording(...) — daemon thread, one imageio writer
+    #    per camera, appends frames at fps.
+    #  - stop_cameras_recording() — flushes writers, returns paths + sizes.
+    #  - get_cameras_recording_status() — frame counts, elapsed, per-cam.
     #
     # Thread safety: _get_renderer is thread-local (threading.local), so the
     # background thread creates its own GL context. No shared state with
@@ -339,10 +339,10 @@ class RenderingMixin:
                                      {"text": "📸 cam2"}, {"image": {...}}, ...]}``
         """
         if self._world is None or self._world._model is None:
-            return {"status": "error", "content": [{"text": "❌ No simulation."}]}
+            return {"status": "error", "content": [{"text": "No simulation."}]}
         names = self._active_camera_list(cameras)
         if not names:
-            return {"status": "error", "content": [{"text": "❌ No cameras in scene."}]}
+            return {"status": "error", "content": [{"text": "No cameras in scene."}]}
         content = []
         ok, failed = 0, 0
         for cam_name in names:
@@ -357,7 +357,7 @@ class RenderingMixin:
             else:
                 failed += 1
                 err = r.get("content", [{}])[0].get("text", "?")
-                content.append({"text": f"❌ {cam_name}: {err}"})
+                content.append({"text": f"{cam_name}: {err}"})
         summary = (
             f"📸 Multi-camera snapshot at t={self._world.sim_time:.3f}s: "
             f"{ok} ok, {failed} failed, {len(names)} requested"
@@ -402,18 +402,18 @@ class RenderingMixin:
         import uuid as _uuid
 
         if self._world is None or self._world._model is None:
-            return {"status": "error", "content": [{"text": "❌ No simulation."}]}
+            return {"status": "error", "content": [{"text": "No simulation."}]}
 
         if getattr(self, "_cams_rec_state", None) and self._cams_rec_state.get("running"):
             cur = self._cams_rec_state["name"]
             return {
                 "status": "error",
-                "content": [{"text": f"❌ Already recording '{cur}'. Call stop_cameras_recording() first."}],
+                "content": [{"text": f"Already recording '{cur}'. Call stop_cameras_recording() first."}],
             }
 
         names = self._active_camera_list(cameras)
         if not names:
-            return {"status": "error", "content": [{"text": "❌ No cameras to record."}]}
+            return {"status": "error", "content": [{"text": "No cameras to record."}]}
 
         out_dir = _os.path.abspath(output_dir or "/tmp/strands_robots/recordings")
         _os.makedirs(out_dir, exist_ok=True)
@@ -486,7 +486,7 @@ class RenderingMixin:
 
         state = getattr(self, "_cams_rec_state", None)
         if not state or not state.get("running"):
-            return {"status": "error", "content": [{"text": "❌ No active camera recording."}]}
+            return {"status": "error", "content": [{"text": "No active camera recording."}]}
 
         state["running"] = False
         thread = state.get("thread")
@@ -498,7 +498,7 @@ class RenderingMixin:
         except ImportError:
             return {
                 "status": "error",
-                "content": [{"text": "❌ imageio not installed. pip install imageio imageio-ffmpeg"}],
+                "content": [{"text": "imageio not installed. pip install imageio imageio-ffmpeg"}],
             }
 
         elapsed = _time.time() - state["started_at"]

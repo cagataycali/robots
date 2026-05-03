@@ -137,6 +137,6 @@ def list_available_models() -> str:
     lines = ["Registered URDFs:"]
     for name, path in _URDF_REGISTRY.items():
         resolved = resolve_urdf(name)
-        status = "✅" if resolved else "❌"
-        lines.append(f"  {status} {name}: {path}")
+        status = "[OK]" if resolved else "[MISSING]"
+        lines.append(f"{status} {name}: {path}")
     return "\n".join(lines)

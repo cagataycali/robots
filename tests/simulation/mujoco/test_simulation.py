@@ -28,7 +28,7 @@ requires_gl = pytest.mark.skipif(
 
 from strands_robots.simulation.mujoco.simulation import Simulation  # noqa: E402
 
-# ── Test robot XML ──
+# Test robot XML
 
 ROBOT_XML = """
 <mujoco model="test_arm">
@@ -95,7 +95,7 @@ def sim_with_robot(sim_with_world, robot_xml_path):
     return sim_with_world
 
 
-# ── World Management ──
+# World Management 
 
 
 class TestWorldLifecycle:
@@ -191,7 +191,7 @@ class TestWorldLifecycle:
         assert result["status"] == "error"
 
 
-# ── Object Management ──
+# Object Management 
 
 
 class TestObjectManagement:
@@ -256,7 +256,7 @@ class TestObjectManagement:
         assert result["status"] == "error"
 
 
-# ── Robot Management ──
+# Robot Management 
 
 
 class TestRobotManagement:
@@ -383,7 +383,7 @@ class TestRobotManagement:
         assert sim_with_robot._world.sim_time > 0
 
 
-# ── Camera Management ──
+# Camera Management 
 
 
 class TestCameraManagement:
@@ -407,7 +407,7 @@ class TestCameraManagement:
         assert result["status"] == "error"
 
 
-# ── Scene Injection (XML round-trip) ──
+# Scene Injection (XML round-trip) 
 
 
 class TestSceneInjection:
@@ -447,7 +447,7 @@ class TestSceneInjection:
         assert len(robot.actuator_ids) > 0
 
 
-# ── Rendering ──
+# Rendering 
 
 
 @requires_gl
@@ -479,7 +479,7 @@ class TestRendering:
         assert result["status"] == "success"
 
 
-# ── Randomization ──
+# Randomization 
 
 
 class TestRandomization:
@@ -509,7 +509,7 @@ class TestRandomization:
         assert result["status"] == "error"
 
 
-# ── Introspection ──
+# Introspection 
 
 
 class TestIntrospection:
@@ -528,7 +528,7 @@ class TestIntrospection:
         assert result["status"] == "error"
 
 
-# ── URDF Registry ──
+# URDF Registry 
 
 
 class TestURDFRegistry:
@@ -542,7 +542,7 @@ class TestURDFRegistry:
         assert "test_arm" in result["content"][0]["text"]
 
 
-# ── Policy Execution ──
+# Policy Execution 
 
 
 class TestPolicyExecution:
@@ -610,7 +610,7 @@ class TestPolicyExecution:
         assert result["status"] == "error"
 
 
-# ── Action Dispatch ──
+# Action Dispatch 
 
 
 class TestActionDispatch:
@@ -654,7 +654,7 @@ class TestActionDispatch:
         assert result["status"] == "success"
 
 
-# ── Context Manager ──
+# Context Manager 
 
 
 class TestContextManager:
@@ -666,7 +666,7 @@ class TestContextManager:
         assert sim._world is None
 
 
-# ── Tool Spec ──
+# Tool Spec 
 
 
 class TestToolSpec:
@@ -686,7 +686,7 @@ class TestToolSpec:
         assert "action" in schema["properties"]
 
 
-# ── Viewer (headless safe) ──
+# Viewer (headless safe) 
 
 
 class TestViewer:
@@ -699,7 +699,7 @@ class TestViewer:
         assert result["status"] == "success"
 
 
-# ── Error Paths ──
+# Error Paths 
 
 
 class TestErrorPaths:
@@ -773,7 +773,7 @@ if __name__ == "__main__":
     pytest.main([__file__, "-v"])
 
 
-# ── Thread-safety regression ──
+# Thread-safety regression 
 
 
 class TestRendererThreadSafety:
@@ -832,7 +832,7 @@ class TestRendererThreadSafety:
         sim_with_robot.cleanup()
 
 
-# ── XML round-trip state poisoning regression ──
+# XML round-trip state poisoning regression 
 
 
 @requires_gl
@@ -885,7 +885,7 @@ class TestMjSaveLastXMLGlobalState:
         assert "cube" not in names
 
 
-# ── Multi-robot same-config injection ──
+# Multi-robot same-config injection 
 
 
 class TestMultipleSameConfigRobots:
@@ -980,7 +980,7 @@ class TestMultipleSameConfigRobots:
         assert "arm1/shoulder" not in obs1
 
 
-# ── Physics/recording name resolution after namespacing ──
+# Physics/recording name resolution after namespacing 
 
 
 class TestPhysicsNameResolution:

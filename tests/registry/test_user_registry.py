@@ -26,9 +26,9 @@ from strands_robots.registry.user_registry import (
 )
 from strands_robots.utils import get_assets_dir, get_base_dir, resolve_asset_path
 
-# ---------------------------------------------------------------------------
+# (section)
 # Helpers
-# ---------------------------------------------------------------------------
+# (section)
 
 _MINIMAL_MJCF = '<mujoco><worldbody><body><geom size="0.1"/></body></worldbody></mujoco>'
 

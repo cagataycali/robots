@@ -40,7 +40,7 @@ MENAGERIE_REPO = "https://github.com/google-deepmind/mujoco_menagerie.git"
 _ALLOWED_CLONE_URL_RE = re.compile(r"^https://github\.com/[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+\.git$")
 
 
-# ── robot_descriptions integration ────────────────────────────────────
+# robot_descriptions integration
 
 
 def _robot_descriptions_available() -> bool:
@@ -101,8 +101,6 @@ def _resolve_robot_descriptions_module(name: str, info: dict) -> str | None:
 
     return None
 
-
-# ── Helpers ───────────────────────────────────────────────────────────
 
 
 #: Alias for backward compatibility — use :func:`strands_robots.utils.get_assets_dir`.
@@ -194,8 +192,6 @@ def _copy_and_clean(src: Path, dst: Path) -> None:
 
     shutil.copytree(str(src), str(dst), dirs_exist_ok=True, ignore=_ignore)
 
-
-# ── Download backends ─────────────────────────────────────────────────
 
 
 def _download_via_robot_descriptions(robots: dict[str, dict], dest_dir: Path) -> dict[str, str]:
@@ -333,7 +329,7 @@ def _download_from_github(name: str, info: dict, dest_dir: Path) -> str:
             return f"failed: {exc}"
 
 
-# ── Orchestrator ──────────────────────────────────────────────────────
+# Orchestrator  
 
 
 def auto_download_robot(name: str, info: dict[str, Any]) -> bool:

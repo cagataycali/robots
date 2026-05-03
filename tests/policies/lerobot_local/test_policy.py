@@ -21,9 +21,9 @@ from strands_robots.policies.lerobot_local.resolution import (
 )
 from strands_robots.registry import list_policy_providers
 
-# ---------------------------------------------------------------------------
+# (section)
 # Helpers
-# ---------------------------------------------------------------------------
+# (section)
 
 
 def _make_policy(**kwargs):
@@ -72,9 +72,9 @@ def _make_loaded_policy(action_dim=6, state_dim=6, device="cpu", include_images=
     return policy
 
 
-# ---------------------------------------------------------------------------
+# (section)
 # Tests: Initialization
-# ---------------------------------------------------------------------------
+# (section)
 
 
 class TestLerobotLocalInit:
@@ -98,9 +98,9 @@ class TestLerobotLocalInit:
         assert policy.actions_per_step == 5
 
 
-# ---------------------------------------------------------------------------
+# (section)
 # Tests: set_robot_state_keys
-# ---------------------------------------------------------------------------
+# (section)
 
 
 class TestSetRobotStateKeys:
@@ -133,9 +133,9 @@ class TestSetRobotStateKeys:
             policy.set_robot_state_keys([])
 
 
-# ---------------------------------------------------------------------------
+# (section)
 # Tests: Tokenizer resolution (VLA support)
-# ---------------------------------------------------------------------------
+# (section)
 
 
 class TestResolveTokenizer:
@@ -260,9 +260,9 @@ class TestNeedsLanguageTokens:
         assert policy._needs_language_tokens() is False
 
 
-# ---------------------------------------------------------------------------
+# (section)
 # Tests: _load_model
-# ---------------------------------------------------------------------------
+# (section)
 
 
 class TestLoadModel:
@@ -375,9 +375,9 @@ class TestLoadModel:
         assert policy.robot_state_keys == ["joint_0", "joint_1", "joint_2", "joint_3"]
 
 
-# ---------------------------------------------------------------------------
+# (section)
 # Tests: get_actions (async)
-# ---------------------------------------------------------------------------
+# (section)
 
 
 class TestGetActions:
@@ -491,9 +491,9 @@ class TestGetActions:
         assert actions[0]["b"] == 20.0
 
 
-# ---------------------------------------------------------------------------
+# (section)
 # Tests: _build_observation_batch
-# ---------------------------------------------------------------------------
+# (section)
 
 
 class TestBuildObservationBatch:
@@ -560,9 +560,9 @@ class TestBuildObservationBatch:
         assert batch["observation.state"].dtype == torch.float32
 
 
-# ---------------------------------------------------------------------------
+# (section)
 # Tests: _build_batch_from_strands_format
-# ---------------------------------------------------------------------------
+# (section)
 
 
 class TestBuildBatchFromStrandsFormat:
@@ -594,9 +594,9 @@ class TestBuildBatchFromStrandsFormat:
             policy._build_batch_from_strands_format({"x": 1.0}, {})
 
 
-# ---------------------------------------------------------------------------
+# (section)
 # Tests: _tensor_to_action_dicts
-# ---------------------------------------------------------------------------
+# (section)
 
 
 class TestTensorToActionDicts:
@@ -624,9 +624,9 @@ class TestTensorToActionDicts:
             policy._tensor_to_action_dicts(torch.tensor([1.0, 2.0]))
 
 
-# ---------------------------------------------------------------------------
+# (section)
 # Tests: reset
-# ---------------------------------------------------------------------------
+# (section)
 
 
 class TestReset:
@@ -644,9 +644,9 @@ class TestReset:
         policy.reset()  # Should not raise
 
 
-# ---------------------------------------------------------------------------
+# (section)
 # Tests: Policy resolution helpers
-# ---------------------------------------------------------------------------
+# (section)
 
 
 class TestPolicyResolution:
@@ -680,9 +680,9 @@ class TestPolicyResolution:
         assert result == "act"
 
 
-# ---------------------------------------------------------------------------
+# (section)
 # Tests: Registry integration
-# ---------------------------------------------------------------------------
+# (section)
 
 
 class TestRegistryIntegration:
@@ -698,9 +698,9 @@ class TestRegistryIntegration:
         assert policy._loaded is False
 
 
-# ---------------------------------------------------------------------------
+# (section)
 # Tests: ProcessorBridge
-# ---------------------------------------------------------------------------
+# (section)
 
 
 class TestProcessorBridge:

@@ -34,9 +34,7 @@ from strands_robots.simulation.base import SimEngine
 
 logger = logging.getLogger(__name__)
 
-# ─────────────────────────────────────────────────────────────────────
 # Built-in backend registry (lazy loaders — no imports at module load)
-# ─────────────────────────────────────────────────────────────────────
 
 _BUILTIN_BACKENDS: dict[str, tuple[str, str]] = {
     "mujoco": (
@@ -59,9 +57,7 @@ _BUILTIN_ALIASES: dict[str, str] = {
 
 DEFAULT_BACKEND = "mujoco"
 
-# ─────────────────────────────────────────────────────────────────────
 # Runtime registration (for user-defined backends not in built-ins)
-# ─────────────────────────────────────────────────────────────────────
 
 _runtime_registry: dict[str, Callable[[], type[SimEngine]]] = {}
 _runtime_aliases: dict[str, str] = {}

@@ -73,7 +73,7 @@ def _frame_to_image_content(frame: np.ndarray, format: str = "jpg") -> dict[str,
 
     except Exception as e:
         logger.error(f"Failed to convert frame to image content: {e}")
-        return {"text": f"❌ Failed to encode image: {str(e)}"}
+        return {"text": f"Failed to encode image: {str(e)}"}
 
 
 @tool
@@ -140,7 +140,7 @@ def lerobot_camera(
             if camera_id is None:
                 return {
                     "status": "error",
-                    "content": [{"text": "❌ camera_id required for capture action"}],
+                    "content": [{"text": "camera_id required for capture action"}],
                 }
             return _capture_single_image(
                 camera_type,
@@ -179,7 +179,7 @@ def lerobot_camera(
             if camera_id is None:
                 return {
                     "status": "error",
-                    "content": [{"text": "❌ camera_id required for record action"}],
+                    "content": [{"text": "camera_id required for record action"}],
                 }
             return _record_video_sequence(
                 camera_type,
@@ -199,7 +199,7 @@ def lerobot_camera(
             if camera_id is None:
                 return {
                     "status": "error",
-                    "content": [{"text": "❌ camera_id required for preview action"}],
+                    "content": [{"text": "camera_id required for preview action"}],
                 }
             return _preview_camera_live(
                 camera_type,
@@ -218,7 +218,7 @@ def lerobot_camera(
             if camera_id is None:
                 return {
                     "status": "error",
-                    "content": [{"text": "❌ camera_id required for test action"}],
+                    "content": [{"text": "camera_id required for test action"}],
                 }
             return _test_camera_performance(
                 camera_type,
@@ -236,7 +236,7 @@ def lerobot_camera(
             if camera_id is None:
                 return {
                     "status": "error",
-                    "content": [{"text": "❌ camera_id required for configure action"}],
+                    "content": [{"text": "camera_id required for configure action"}],
                 }
             return _configure_camera_settings(
                 camera_type,
@@ -253,13 +253,13 @@ def lerobot_camera(
         else:
             return {
                 "status": "error",
-                "content": [{"text": f"❌ Unknown action: {action}"}],
+                "content": [{"text": f"Unknown action: {action}"}],
             }
 
     except Exception as e:
         return {
             "status": "error",
-            "content": [{"text": f"❌ Camera operation failed: {str(e)}"}],
+            "content": [{"text": f"Camera operation failed: {str(e)}"}],
         }
 
 
@@ -281,10 +281,10 @@ def _discover_cameras() -> dict[str, Any]:
 
         # Format discovery results
         discovery_info = []
-        discovery_info.append("🔍 **Camera Discovery Results**\n")
+        discovery_info.append(" **Camera Discovery Results**\n")
 
         if opencv_cameras:
-            discovery_info.append("📹 **OpenCV Cameras:**")
+            discovery_info.append(" **OpenCV Cameras:**")
             for i, cam in enumerate(opencv_cameras):
                 profile = cam.get("default_stream_profile", {})
                 discovery_info.append(
@@ -298,7 +298,7 @@ def _discover_cameras() -> dict[str, Any]:
             discovery_info.append("")
 
         if realsense_cameras:
-            discovery_info.append("🎯 **RealSense Cameras:**")
+            discovery_info.append(" **RealSense Cameras:**")
             for i, cam in enumerate(realsense_cameras):
                 discovery_info.append(
                     f"  • **{cam.get('name', 'Unknown')}**\n"
@@ -308,9 +308,9 @@ def _discover_cameras() -> dict[str, Any]:
             discovery_info.append("")
 
         if total_cameras == 0:
-            discovery_info.append("❌ **No cameras detected**")
+            discovery_info.append(" **No cameras detected**")
         else:
-            discovery_info.append(f"✅ **Total: {total_cameras} cameras found**")
+            discovery_info.append(f"**Total: {total_cameras} cameras found**")
             discovery_info.append(f"   - OpenCV: {len(opencv_cameras)}")
             discovery_info.append(f"   - RealSense: {len(realsense_cameras)}")
 
@@ -319,7 +319,7 @@ def _discover_cameras() -> dict[str, Any]:
     except Exception as e:
         return {
             "status": "error",
-            "content": [{"text": f"❌ Camera discovery failed: {str(e)}"}],
+            "content": [{"text": f"Camera discovery failed: {str(e)}"}],
         }
 
 
@@ -327,15 +327,15 @@ def _list_camera_details(camera_type: str, camera_id: int | str | None = None) -
     """List detailed camera information and configurations."""
     try:
         details = []
-        details.append("📋 **Camera Configuration Details**\n")
+        details.append(" **Camera Configuration Details**\n")
 
         if camera_type.lower() == "opencv":
-            details.append("🎥 **OpenCV Camera System:**")
+            details.append(" **OpenCV Camera System:**")
             details.append(f"   - Backend: {_get_opencv_backend_name()}")
             details.append(f"   - Version: {cv2.__version__}")
             details.append("   - Available color modes: RGB, BGR")
             details.append("   - Supported rotations: 0°, 90°, 180°, 270°")
-            details.append("   - Async reading: ✅ Supported")
+            details.append("   - Async reading:  Supported")
             details.append("")
 
             if camera_id is not None:
@@ -344,8 +344,8 @@ def _list_camera_details(camera_type: str, camera_id: int | str | None = None) -
                     camera = OpenCVCamera(config)
                     camera.connect(warmup=False)
 
-                    details.append(f"📸 **Camera {camera_id} Details:**")
-                    details.append("   - Connection: ✅ Success")
+                    details.append(f"**Camera {camera_id} Details:**")
+                    details.append("   - Connection:  Success")
                     details.append(f"   - Actual FPS: {camera.fps}")
                     details.append(f"   - Resolution: {camera.width}x{camera.height}")
                     details.append(f"   - Color Mode: {camera.color_mode.value}")
@@ -353,30 +353,30 @@ def _list_camera_details(camera_type: str, camera_id: int | str | None = None) -
                     camera.disconnect()
 
                 except Exception as e:
-                    details.append(f"📸 **Camera {camera_id} Details:**")
-                    details.append(f"   - Connection: ❌ Failed ({str(e)})")
+                    details.append(f"**Camera {camera_id} Details:**")
+                    details.append(f"   - Connection:  Failed ({str(e)})")
 
         elif camera_type.lower() == "realsense" and REALSENSE_AVAILABLE:
-            details.append("🎯 **RealSense Camera System:**")
-            details.append("   - SDK Available: ✅ Yes")
-            details.append("   - Depth Support: ✅ Yes")
+            details.append(" **RealSense Camera System:**")
+            details.append("   - SDK Available:  Yes")
+            details.append("   - Depth Support:  Yes")
             details.append("   - Multiple streams: Color, Depth, Infrared")
             details.append("   - Advanced features: Post-processing, alignment")
 
         else:
             if not REALSENSE_AVAILABLE and camera_type.lower() == "realsense":
-                details.append("🎯 **RealSense Camera System:**")
-                details.append("   - SDK Available: ❌ Not installed")
+                details.append(" **RealSense Camera System:**")
+                details.append("   - SDK Available:  Not installed")
                 details.append("   - Install with: `pip install pyrealsense2`")
             else:
-                details.append(f"❌ **Unknown camera type: {camera_type}**")
+                details.append(f"**Unknown camera type: {camera_type}**")
 
         return {"status": "success", "content": [{"text": "\n".join(details)}]}
 
     except Exception as e:
         return {
             "status": "error",
-            "content": [{"text": f"❌ Camera details failed: {str(e)}"}],
+            "content": [{"text": f"Camera details failed: {str(e)}"}],
         }
 
 
@@ -434,7 +434,7 @@ def _capture_single_image(
         if not success:
             return {
                 "status": "error",
-                "content": [{"text": f"❌ Failed to save image: {file_path}"}],
+                "content": [{"text": f"Failed to save image: {file_path}"}],
             }
 
         # Get image info
@@ -442,15 +442,15 @@ def _capture_single_image(
         file_size = os.path.getsize(file_path)
 
         result_info = [
-            "📸 **Image Capture Success!**",
-            f"🎥 Camera: {camera_type.upper()} @ {camera_id}",
-            f"💾 Saved: `{file_path}`",
-            f"📐 Resolution: {img_width}x{img_height}",
-            f"💿 File size: {file_size:,} bytes",
-            f"⚡ Connect time: {connect_time:.3f}s",
-            f"📷 Capture time: {capture_time:.3f}s",
-            f"🔄 Async mode: {'✅' if async_mode else '❌'}",
-            f"🕐 Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            " **Image Capture Success!**",
+            f"Camera: {camera_type.upper()} @ {camera_id}",
+            f"Saved: `{file_path}`",
+            f"Resolution: {img_width}x{img_height}",
+            f"File size: {file_size:,} bytes",
+            f"Connect time: {connect_time:.3f}s",
+            f"Capture time: {capture_time:.3f}s",
+            f"Async mode: {'' if async_mode else ''}",
+            f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
         ]
 
         # Create image content for Converse API
@@ -464,7 +464,7 @@ def _capture_single_image(
     except Exception as e:
         return {
             "status": "error",
-            "content": [{"text": f"❌ Image capture failed: {str(e)}"}],
+            "content": [{"text": f"Image capture failed: {str(e)}"}],
         }
 
 
@@ -555,13 +555,13 @@ def _capture_batch_images(
         total_time = time.time() - total_time
 
         # Format results and prepare content list
-        result_info = ["📸 **Batch Camera Capture Results:**", ""]
+        result_info = [" **Batch Camera Capture Results:**", ""]
         content_list = []
 
         for result in results:
             if result["status"] == "success":
                 result_info.append(
-                    f"✅ **{result['camera_id']}**: {result['resolution']} "
+                    f"**{result['camera_id']}**: {result['resolution']} "
                     f"({result['file_size']:,} bytes, {result['capture_time']:.3f}s)"
                 )
                 # Add image content if frame is available
@@ -569,16 +569,16 @@ def _capture_batch_images(
                     image_content = _frame_to_image_content(result["frame"], format)
                     content_list.append(image_content)
             else:
-                result_info.append(f"❌ **{result['camera_id']}**: {result['message']}")
+                result_info.append(f"**{result['camera_id']}**: {result['message']}")
 
         result_info.extend(
             [
                 "",
-                "📊 **Summary:**",
+                " **Summary:**",
                 f"   - Success: {successful_captures}/{len(camera_ids)} cameras",
                 f"   - Total time: {total_time:.3f}s",
                 f"   - Save path: `{save_path}`",
-                f"   - Async mode: {'✅' if async_mode else '❌'}",
+                f"   - Async mode: {'' if async_mode else ''}",
             ]
         )
 
@@ -593,7 +593,7 @@ def _capture_batch_images(
     except Exception as e:
         return {
             "status": "error",
-            "content": [{"text": f"❌ Batch capture failed: {str(e)}"}],
+            "content": [{"text": f"Batch capture failed: {str(e)}"}],
         }
 
 
@@ -662,15 +662,15 @@ def _record_video_sequence(
         file_size = os.path.getsize(video_path)
 
         result_info = [
-            "🎬 **Video Recording Complete!**",
-            f"🎥 Camera: {camera_type.upper()} @ {camera_id}",
-            f"💾 Saved: `{video_path}`",
-            f"📐 Resolution: {width}x{height}",
-            f"🎞️  Frames: {frames_captured} @ {fps} FPS",
-            f"⏱️  Duration: {actual_duration:.2f}s (target: {capture_duration:.2f}s)",
-            f"💿 File size: {file_size:,} bytes",
-            f"🔄 Async mode: {'✅' if async_mode else '❌'}",
-            f"🕐 Completed: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            " **Video Recording Complete!**",
+            f"Camera: {camera_type.upper()} @ {camera_id}",
+            f"Saved: `{video_path}`",
+            f"Resolution: {width}x{height}",
+            f"️  Frames: {frames_captured} @ {fps} FPS",
+            f"️  Duration: {actual_duration:.2f}s (target: {capture_duration:.2f}s)",
+            f"File size: {file_size:,} bytes",
+            f"Async mode: {'' if async_mode else ''}",
+            f"Completed: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
         ]
 
         return {"status": "success", "content": [{"text": "\n".join(result_info)}]}
@@ -678,7 +678,7 @@ def _record_video_sequence(
     except Exception as e:
         return {
             "status": "error",
-            "content": [{"text": f"❌ Video recording failed: {str(e)}"}],
+            "content": [{"text": f"Video recording failed: {str(e)}"}],
         }
 
 
@@ -705,8 +705,8 @@ def _preview_camera_live(
         fps_counter_start = time.time()
         fps_frame_count = 0
 
-        print(f"🎥 Starting live preview from {camera_type.upper()} camera {camera_id}")
-        print(f"⏱️  Duration: {preview_duration}s | Press 'q' to quit early")
+        print(f"Starting live preview from {camera_type.upper()} camera {camera_id}")
+        print(f"️  Duration: {preview_duration}s | Press 'q' to quit early")
 
         try:
             while time.time() - start_time < preview_duration:
@@ -740,13 +740,13 @@ def _preview_camera_live(
                 # Calculate and display FPS every second
                 if time.time() - fps_counter_start >= 1.0:
                     actual_fps = fps_frame_count / (time.time() - fps_counter_start)
-                    print(f"📊 Live FPS: {actual_fps:.1f} | Frames: {frames_displayed}")
+                    print(f"Live FPS: {actual_fps:.1f} | Frames: {frames_displayed}")
                     fps_counter_start = time.time()
                     fps_frame_count = 0
 
                 # Check for quit key
                 if cv2.waitKey(1) & 0xFF == ord("q"):
-                    print("👋 Preview stopped by user")
+                    print(" Preview stopped by user")
                     break
 
                 # Maintain target FPS
@@ -763,14 +763,14 @@ def _preview_camera_live(
         avg_fps = frames_displayed / actual_duration if actual_duration > 0 else 0
 
         result_info = [
-            "📺 **Live Preview Complete!**",
-            f"🎥 Camera: {camera_type.upper()} @ {camera_id}",
-            f"📐 Resolution: {width}x{height}",
-            f"🎞️  Frames displayed: {frames_displayed}",
-            f"⏱️  Duration: {actual_duration:.2f}s",
-            f"📊 Average FPS: {avg_fps:.2f}",
-            f"🎯 Target FPS: {fps}",
-            f"🔄 Async mode: {'✅' if async_mode else '❌'}",
+            " **Live Preview Complete!**",
+            f"Camera: {camera_type.upper()} @ {camera_id}",
+            f"Resolution: {width}x{height}",
+            f"️  Frames displayed: {frames_displayed}",
+            f"️  Duration: {actual_duration:.2f}s",
+            f"Average FPS: {avg_fps:.2f}",
+            f"Target FPS: {fps}",
+            f"Async mode: {'' if async_mode else ''}",
         ]
 
         return {"status": "success", "content": [{"text": "\n".join(result_info)}]}
@@ -778,7 +778,7 @@ def _preview_camera_live(
     except Exception as e:
         return {
             "status": "error",
-            "content": [{"text": f"❌ Preview failed: {str(e)}"}],
+            "content": [{"text": f"Preview failed: {str(e)}"}],
         }
 
 
@@ -797,7 +797,7 @@ def _test_camera_performance(
     """Test camera performance and capabilities."""
     try:
         test_results = []
-        test_results.append("🧪 **Camera Performance Test**\n")
+        test_results.append(" **Camera Performance Test**\n")
 
         # Connection test
         start_time = time.time()
@@ -805,7 +805,7 @@ def _test_camera_performance(
         camera.connect(warmup=warmup)
         connect_time = time.time() - start_time
 
-        test_results.append(f"✅ **Connection Test**: {connect_time:.3f}s")
+        test_results.append(f"**Connection Test**: {connect_time:.3f}s")
 
         # Frame capture test (sync)
         capture_times = []
@@ -819,7 +819,7 @@ def _test_camera_performance(
         min_sync_time = np.min(capture_times)
         max_sync_time = np.max(capture_times)
 
-        test_results.append("📷 **Sync Capture (10 frames)**:")
+        test_results.append(" **Sync Capture (10 frames)**:")
         test_results.append(f"   - Average: {avg_sync_time:.3f}s")
         test_results.append(f"   - Min: {min_sync_time:.3f}s")
         test_results.append(f"   - Max: {max_sync_time:.3f}s")
@@ -838,7 +838,7 @@ def _test_camera_performance(
             min_async_time = np.min(async_times)
             max_async_time = np.max(async_times)
 
-            test_results.append("⚡ **Async Capture (10 frames)**:")
+            test_results.append(" **Async Capture (10 frames)**:")
             test_results.append(f"   - Average: {avg_async_time:.3f}s")
             test_results.append(f"   - Min: {min_async_time:.3f}s")
             test_results.append(f"   - Max: {max_async_time:.3f}s")
@@ -846,7 +846,7 @@ def _test_camera_performance(
             test_results.append(f"   - Speedup: {avg_sync_time / avg_async_time:.2f}x")
 
         # Frame properties test
-        test_results.append("📊 **Frame Properties**:")
+        test_results.append(" **Frame Properties**:")
         test_results.append(f"   - Resolution: {frame.shape[1]}x{frame.shape[0]}")
         test_results.append(f"   - Channels: {frame.shape[2]}")
         test_results.append(f"   - Data type: {frame.dtype}")
@@ -854,31 +854,31 @@ def _test_camera_performance(
 
         # Camera properties
         if hasattr(camera, "fps"):
-            test_results.append("⚙️  **Camera Configuration**:")
+            test_results.append("️  **Camera Configuration**:")
             test_results.append(f"   - Configured FPS: {camera.fps}")
             test_results.append(f"   - Resolution: {camera.width}x{camera.height}")
             test_results.append(f"   - Color mode: {camera.color_mode.value}")
 
         camera.disconnect()
 
-        test_results.append("\n🎯 **Performance Summary**:")
-        test_results.append(f"   - Connection: {'✅ Fast' if connect_time < 1.0 else '⚠️ Slow'} ({connect_time:.3f}s)")
+        test_results.append("\n **Performance Summary**:")
+        test_results.append(f"   - Connection: {' Fast' if connect_time < 1.0 else '️ Slow'} ({connect_time:.3f}s)")
         test_results.append(
-            f"   - Sync capture: {'✅ Good' if avg_sync_time < 0.1 else '⚠️ Slow'} ({avg_sync_time:.3f}s)"
+            f"   - Sync capture: {' Good' if avg_sync_time < 0.1 else '️ Slow'} ({avg_sync_time:.3f}s)"
         )
         if async_mode:
             test_results.append(
-                f"   - Async capture: {'✅ Better' if avg_async_time < avg_sync_time else '❌ Worse'}"
-                f" ({avg_async_time:.3f}s)"
+                f"   - Async capture: {' Better' if avg_async_time < avg_sync_time else ' Worse'}"
+                f"({avg_async_time:.3f}s)"
             )
-        test_results.append(f"   - Frame rate: {'✅ Stable' if max_sync_time - min_sync_time < 0.05 else '⚠️ Variable'}")
+        test_results.append(f"   - Frame rate: {' Stable' if max_sync_time - min_sync_time < 0.05 else '️ Variable'}")
 
         return {"status": "success", "content": [{"text": "\n".join(test_results)}]}
 
     except Exception as e:
         return {
             "status": "error",
-            "content": [{"text": f"❌ Performance test failed: {str(e)}"}],
+            "content": [{"text": f"Performance test failed: {str(e)}"}],
         }
 
 
@@ -915,13 +915,13 @@ def _configure_camera_settings(
             actual_config["rotation"] = rotation
 
         config_info = [
-            "⚙️  **Camera Configuration**",
-            f"🎥 Camera: {camera_type.upper()} @ {camera_id}",
-            f"📐 Resolution: {actual_config['width']}x{actual_config['height']}",
-            f"🎞️  FPS: {actual_config['fps']}",
-            f"🎨 Color mode: {actual_config['color_mode']}",
-            f"🔄 Rotation: {actual_config.get('rotation', 'NO_ROTATION')}",
-            f"🔧 Warmup: {'✅' if warmup else '❌'}",
+            "️  **Camera Configuration**",
+            f"Camera: {camera_type.upper()} @ {camera_id}",
+            f"Resolution: {actual_config['width']}x{actual_config['height']}",
+            f"️  FPS: {actual_config['fps']}",
+            f"Color mode: {actual_config['color_mode']}",
+            f"Rotation: {actual_config.get('rotation', 'NO_ROTATION')}",
+            f"Warmup: {'' if warmup else ''}",
         ]
 
         # Save configuration if requested
@@ -939,7 +939,7 @@ def _configure_camera_settings(
             config_info.extend(
                 [
                     "",
-                    "💾 **Configuration Saved**:",
+                    " **Configuration Saved**:",
                     f"   - File: `{config_path}`",
                     "   - Format: JSON",
                 ]
@@ -952,7 +952,7 @@ def _configure_camera_settings(
     except Exception as e:
         return {
             "status": "error",
-            "content": [{"text": f"❌ Configuration failed: {str(e)}"}],
+            "content": [{"text": f"Configuration failed: {str(e)}"}],
         }
 
 

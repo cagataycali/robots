@@ -105,7 +105,7 @@ class Simulation(
         self._mj = _ensure_mujoco()
         logger.info("🎮 Simulation tool '%s' initialized", tool_name)
 
-    # --- Public Properties ---
+    # Public Properties
 
     @property
     def mj_model(self):
@@ -117,7 +117,7 @@ class Simulation(
         """Direct access to the MuJoCo data (mujoco.MjData)."""
         return self._world._data if self._world else None
 
-    # --- Robot-compatible interface ---
+    # Robot-compatible interface
 
     def get_observation(self, robot_name: str | None = None) -> dict[str, Any]:
         """Get full observation for a robot: joint state + all attached cameras.
@@ -153,7 +153,7 @@ class Simulation(
         with self._lock:
             self._apply_sim_action(robot_name, action, n_substeps=n_substeps)
 
-    # --- World Management ---
+    # World Management
 
     def _cheap_robot_count(self) -> int:
         try:
@@ -172,7 +172,7 @@ class Simulation(
         if self._world is not None and self._world._model is not None:
             return {
                 "status": "error",
-                "content": [{"text": "❌ World already exists. Use action='destroy' first, or action='reset'."}],
+                "content": [{"text": "World already exists. Use action='destroy' first, or action='reset'."}],
             }
 
         if gravity is None:
@@ -223,7 +223,7 @@ class Simulation(
         mj = self._mj
 
         if not os.path.exists(scene_path):
-            return {"status": "error", "content": [{"text": f"❌ Scene file not found: {scene_path}"}]}
+            return {"status": "error", "content": [{"text": f"Scene file not found: {scene_path}"}]}
 
         try:
             self._world = SimWorld()
@@ -245,7 +245,7 @@ class Simulation(
             }
         except Exception as e:
             logger.error("Failed to load scene: %s", e)
-            return {"status": "error", "content": [{"text": f"❌ Failed to load scene: {e}"}]}
+            return {"status": "error", "content": [{"text": f"Failed to load scene: {e}"}]}
 
     def _compile_world(self):
         mj = self._mj
@@ -260,9 +260,9 @@ class Simulation(
             self._compile_world()
             return {"status": "success"}
         except Exception as e:
-            return {"status": "error", "content": [{"text": f"❌ Recompile failed: {e}"}]}
+            return {"status": "error", "content": [{"text": f"Recompile failed: {e}"}]}
 
-    # --- Robot Management ---
+    # Robot Management
 
     @staticmethod
     def _ensure_meshes(model_path: str, robot_name: str):
@@ -319,7 +319,7 @@ class Simulation(
                 "content": [
                     {
                         "text": (
-                            f"❌ Auto-download failed for '{robot_name}': {e}. "
+                            f"Auto-download failed for '{robot_name}': {e}. "
                             f"Install robot_descriptions: pip install strands-robots[sim-mujoco]"
                         )
                     }
@@ -342,11 +342,11 @@ class Simulation(
         cameras, other robots).
         """
         if self._world is None:
-            return {"status": "error", "content": [{"text": "❌ No world. Use action='create_world' first."}]}
+            return {"status": "error", "content": [{"text": "No world. Use action='create_world' first."}]}
         if err := self._require_no_running_policy("add_robot"):
             return err
         if name in self._world.robots:
-            return {"status": "error", "content": [{"text": f"❌ Robot '{name}' already exists."}]}
+            return {"status": "error", "content": [{"text": f"Robot '{name}' already exists."}]}
 
         resolved_path = urdf_path
         if not resolved_path and data_config:
@@ -356,7 +356,7 @@ class Simulation(
                     "status": "error",
                     "content": [
                         {
-                            "text": f"❌ No model found for '{data_config}'.\n💡 Use action='list_urdfs' to see available robots"
+                            "text": f"No model found for '{data_config}'.\n💡 Use action='list_urdfs' to see available robots"
                         }
                     ],
                 }
@@ -364,9 +364,9 @@ class Simulation(
             resolved_path = resolve_model(name)
 
         if not resolved_path:
-            return {"status": "error", "content": [{"text": "❌ Either urdf_path or data_config is required."}]}
+            return {"status": "error", "content": [{"text": "Either urdf_path or data_config is required."}]}
         if not os.path.exists(resolved_path):
-            return {"status": "error", "content": [{"text": f"❌ File not found: {resolved_path}"}]}
+            return {"status": "error", "content": [{"text": f"File not found: {resolved_path}"}]}
 
         mj = self._mj
 
@@ -412,13 +412,13 @@ class Simulation(
             if not self._world._backend_state.get("robot_base_xml"):
                 self._world._backend_state["robot_base_xml"] = resolved_path
 
-            # --- XML round-trip: merge robot into existing world ---
+            # XML round-trip: merge robot into existing world
             ok = inject_robot_into_scene(self._world, robot, resolved_path)
             if not ok:
                 del self._world.robots[name]
                 return {
                     "status": "error",
-                    "content": [{"text": f"❌ Failed to inject robot '{name}' into scene."}],
+                    "content": [{"text": f"Failed to inject robot '{name}' into scene."}],
                 }
 
             # Re-read joint/actuator IDs from the merged model (IDs shifted).
@@ -471,11 +471,11 @@ class Simulation(
             # Clean up on failure
             self._world.robots.pop(name, None)
             logger.error("Failed to add robot '%s': %s", name, e)
-            return {"status": "error", "content": [{"text": f"❌ Failed to load: {e}"}]}
+            return {"status": "error", "content": [{"text": f"Failed to load: {e}"}]}
 
     def remove_robot(self, name: str) -> dict[str, Any]:
         if self._world is None or name not in self._world.robots:
-            return {"status": "error", "content": [{"text": f"❌ Robot '{name}' not found."}]}
+            return {"status": "error", "content": [{"text": f"Robot '{name}' not found."}]}
         # Guard: remove_robot races the cooperative-stop path if the robot has an active policy.
         if err := self._require_no_running_policy("remove_robot"):
             return err
@@ -514,7 +514,7 @@ class Simulation(
         response for user display.
         """
         if self._world is None:
-            return {"status": "error", "content": [{"text": "❌ No world."}]}
+            return {"status": "error", "content": [{"text": "No world."}]}
         if not self._world.robots:
             return {"status": "success", "content": [{"text": "No robots. Use action='add_robot'."}]}
 
@@ -530,9 +530,9 @@ class Simulation(
 
     def get_robot_state(self, robot_name: str) -> dict[str, Any]:
         if self._world is None or self._world._data is None:
-            return {"status": "error", "content": [{"text": "❌ No simulation running."}]}
+            return {"status": "error", "content": [{"text": "No simulation running."}]}
         if robot_name not in self._world.robots:
-            return {"status": "error", "content": [{"text": f"❌ Robot '{robot_name}' not found."}]}
+            return {"status": "error", "content": [{"text": f"Robot '{robot_name}' not found."}]}
 
         mj = self._mj
         robot = self._world.robots[robot_name]
@@ -555,11 +555,11 @@ class Simulation(
 
         text = f"🤖 '{robot_name}' state (t={self._world.sim_time:.3f}s):\n"
         for jnt, vals in state.items():
-            text += f"  {jnt}: pos={vals['position']:.4f}, vel={vals['velocity']:.4f}\n"
+            text += f"{jnt}: pos={vals['position']:.4f}, vel={vals['velocity']:.4f}\n"
 
         return {"status": "success", "content": [{"text": text}, {"json": {"state": state}}]}
 
-    # --- Object Management ---
+    # Object Management
 
     def add_object(
         self,
@@ -576,11 +576,11 @@ class Simulation(
     ) -> dict[str, Any]:
         """Add an object to the simulation."""
         if self._world is None:
-            return {"status": "error", "content": [{"text": "❌ No world."}]}
+            return {"status": "error", "content": [{"text": "No world."}]}
         if err := self._require_no_running_policy("add_object"):
             return err
         if name in self._world.objects:
-            return {"status": "error", "content": [{"text": f"❌ Object '{name}' exists."}]}
+            return {"status": "error", "content": [{"text": f"Object '{name}' exists."}]}
 
         obj = SimObject(
             name=name,
@@ -619,7 +619,7 @@ class Simulation(
                 self._world.objects.pop(name, None)
                 return {
                     "status": "error",
-                    "content": [{"text": f"❌ Failed to inject '{name}' into live scene: {e}"}],
+                    "content": [{"text": f"Failed to inject '{name}' into live scene: {e}"}],
                 }
 
         recompile_result = self._recompile_world()
@@ -638,7 +638,7 @@ class Simulation(
 
     def remove_object(self, name: str) -> dict[str, Any]:
         if self._world is None or name not in self._world.objects:
-            return {"status": "error", "content": [{"text": f"❌ Object '{name}' not found."}]}
+            return {"status": "error", "content": [{"text": f"Object '{name}' not found."}]}
         if err := self._require_no_running_policy("remove_object"):
             return err
         del self._world.objects[name]
@@ -652,9 +652,9 @@ class Simulation(
         self, name: str, position: list[float] | None = None, orientation: list[float] | None = None
     ) -> dict[str, Any]:
         if self._world is None or self._world._data is None:
-            return {"status": "error", "content": [{"text": "❌ No simulation."}]}
+            return {"status": "error", "content": [{"text": "No simulation."}]}
         if name not in self._world.objects:
-            return {"status": "error", "content": [{"text": f"❌ '{name}' not found."}]}
+            return {"status": "error", "content": [{"text": f"'{name}' not found."}]}
         # Guard: move_object writes qpos + calls mj_forward, racing a running policy.
         if err := self._require_no_running_policy("move_object"):
             return err
@@ -677,7 +677,7 @@ class Simulation(
 
     def list_objects(self) -> dict[str, Any]:
         if self._world is None:
-            return {"status": "error", "content": [{"text": "❌ No world."}]}
+            return {"status": "error", "content": [{"text": "No world."}]}
         if not self._world.objects:
             return {"status": "success", "content": [{"text": "No objects."}]}
 
@@ -686,7 +686,7 @@ class Simulation(
             lines.append(f"  • {name}: {obj.shape} at {obj.position}, {'static' if obj.is_static else f'{obj.mass}kg'}")
         return {"status": "success", "content": [{"text": "\n".join(lines)}]}
 
-    # --- Camera Management ---
+    # Camera Management
 
     def add_camera(
         self,
@@ -698,7 +698,7 @@ class Simulation(
         height: int = 480,
     ) -> dict[str, Any]:
         if self._world is None:
-            return {"status": "error", "content": [{"text": "❌ No world."}]}
+            return {"status": "error", "content": [{"text": "No world."}]}
         if err := self._require_no_running_policy("add_camera"):
             return err
 
@@ -720,7 +720,7 @@ class Simulation(
                 self._world.cameras.pop(name, None)
                 return {
                     "status": "error",
-                    "content": [{"text": f"❌ Failed to inject camera '{name}' into live scene: {e}"}],
+                    "content": [{"text": f"Failed to inject camera '{name}' into live scene: {e}"}],
                 }
         else:
             self._recompile_world()
@@ -729,17 +729,17 @@ class Simulation(
 
     def remove_camera(self, name: str) -> dict[str, Any]:
         if self._world is None or name not in self._world.cameras:
-            return {"status": "error", "content": [{"text": f"❌ Camera '{name}' not found."}]}
+            return {"status": "error", "content": [{"text": f"Camera '{name}' not found."}]}
         if err := self._require_no_running_policy("remove_camera"):
             return err
         del self._world.cameras[name]
         return {"status": "success", "content": [{"text": f"🗑️ Camera '{name}' removed."}]}
 
-    # --- Simulation Control ---
+    # Simulation Control
 
     def step(self, n_steps: int = 1) -> dict[str, Any]:
         if self._world is None or self._world._data is None:
-            return {"status": "error", "content": [{"text": "❌ No simulation."}]}
+            return {"status": "error", "content": [{"text": "No simulation."}]}
         mj = self._mj
         with self._lock:
             for _ in range(n_steps):
@@ -755,7 +755,7 @@ class Simulation(
 
     def reset(self) -> dict[str, Any]:
         if self._world is None or self._world._model is None:
-            return {"status": "error", "content": [{"text": "❌ No world."}]}
+            return {"status": "error", "content": [{"text": "No world."}]}
         mj = self._mj
         with self._lock:
             mj.mj_resetData(self._world._model, self._world._data)
@@ -771,7 +771,7 @@ class Simulation(
 
     def get_state(self) -> dict[str, Any]:
         if self._world is None:
-            return {"status": "error", "content": [{"text": "❌ No world."}]}
+            return {"status": "error", "content": [{"text": "No world."}]}
         lines = [
             "🌍 Simulation State",
             f"🕐 t={self._world.sim_time:.4f}s (step {self._world.step_count})",
@@ -797,7 +797,7 @@ class Simulation(
 
     def set_gravity(self, gravity: list[float] | float | int) -> dict[str, Any]:
         if self._world is None or self._world._model is None:
-            return {"status": "error", "content": [{"text": "❌ No world."}]}
+            return {"status": "error", "content": [{"text": "No world."}]}
         if isinstance(gravity, (int, float)):
             gravity = [0.0, 0.0, float(gravity)]
         with self._lock:
@@ -807,28 +807,28 @@ class Simulation(
 
     def set_timestep(self, timestep: float) -> dict[str, Any]:
         if self._world is None or self._world._model is None:
-            return {"status": "error", "content": [{"text": "❌ No world."}]}
+            return {"status": "error", "content": [{"text": "No world."}]}
         with self._lock:
             self._world._model.opt.timestep = timestep
             self._world.timestep = timestep
         return {"status": "success", "content": [{"text": f"⏱️ Timestep: {timestep}s ({1 / timestep:.0f}Hz)"}]}
 
-    # --- Viewer ---
+    # Viewer
 
     def open_viewer(self) -> dict[str, Any]:
         if self._world is None or self._world._model is None:
-            return {"status": "error", "content": [{"text": "❌ No simulation to view."}]}
+            return {"status": "error", "content": [{"text": "No simulation to view."}]}
         from strands_robots.simulation.mujoco.backend import _mujoco_viewer
 
         if _mujoco_viewer is None:
-            return {"status": "error", "content": [{"text": "❌ mujoco.viewer not available."}]}
+            return {"status": "error", "content": [{"text": "mujoco.viewer not available."}]}
         if self._viewer_handle is not None:
             return {"status": "success", "content": [{"text": "👁️ Viewer already open."}]}
         try:
             self._viewer_handle = _mujoco_viewer.launch_passive(self._world._model, self._world._data)
             return {"status": "success", "content": [{"text": "👁️ Interactive viewer opened."}]}
         except Exception as e:
-            return {"status": "error", "content": [{"text": f"❌ Viewer failed: {e}"}]}
+            return {"status": "error", "content": [{"text": f"Viewer failed: {e}"}]}
 
     def _close_viewer(self) -> None:
         if self._viewer_handle is not None:
@@ -842,7 +842,7 @@ class Simulation(
         self._close_viewer()
         return {"status": "success", "content": [{"text": "👁️ Viewer closed."}]}
 
-    # --- URDF Registry ---
+    # URDF Registry
 
     def list_urdfs(self) -> dict[str, Any]:
         return {"status": "success", "content": [{"text": list_available_models()}]}
@@ -855,11 +855,11 @@ class Simulation(
             "content": [{"text": f"📋 Registered '{data_config}' → {urdf_path}\nResolved: {resolved or 'NOT FOUND'}"}],
         }
 
-    # --- Introspection ---
+    # Introspection
 
     def get_features(self) -> dict[str, Any]:
         if self._world is None or self._world._model is None:
-            return {"status": "error", "content": [{"text": "❌ No simulation."}]}
+            return {"status": "error", "content": [{"text": "No simulation."}]}
 
         mj = self._mj
         model = self._world._model
@@ -910,7 +910,7 @@ class Simulation(
             "content": [{"text": "\n".join(lines)}, {"json": {"features": features}}],
         }
 
-    # --- AgentTool Interface ---
+    # AgentTool Interface
 
     @property
     def tool_name(self) -> str:
@@ -935,7 +935,7 @@ class Simulation(
                 "content": [
                     {
                         "text": (
-                            f"❌ Cannot '{action_name}' while a policy is running. Stop it first: action='stop_policy'."
+                            f"Cannot '{action_name}' while a policy is running. Stop it first: action='stop_policy'."
                         )
                     }
                 ],
@@ -986,11 +986,11 @@ class Simulation(
                 {
                     "toolUseId": tool_use.get("toolUseId", ""),
                     "status": "error",
-                    "content": [{"text": f"❌ Sim error: {e}"}],
+                    "content": [{"text": f"Sim error: {e}"}],
                 }
             )
 
-    # --- Policy orchestration overrides (MuJoCo-specific wiring) ---
+    # Policy orchestration overrides (MuJoCo-specific wiring)
 
     def start_policy(
         self,
@@ -1017,15 +1017,15 @@ class Simulation(
         and video from start_policy as well.
         """
         if self._world is None or self._world._data is None:
-            return {"status": "error", "content": [{"text": "❌ No simulation."}]}
+            return {"status": "error", "content": [{"text": "No simulation."}]}
         if robot_name not in self._world.robots:
-            return {"status": "error", "content": [{"text": f"❌ Robot '{robot_name}' not found."}]}
+            return {"status": "error", "content": [{"text": f"Robot '{robot_name}' not found."}]}
 
         existing = self._policy_threads.get(robot_name)
         if existing is not None and not existing.done():
             return {
                 "status": "error",
-                "content": [{"text": f"❌ Policy already running on '{robot_name}'. Stop it first."}],
+                "content": [{"text": f"Policy already running on '{robot_name}'. Stop it first."}],
             }
 
         future = self._executor.submit(
@@ -1118,7 +1118,7 @@ class Simulation(
         cancellation) into a normal "policy stopped" result.
         """
         if self._world is None or self._world._data is None:
-            return {"status": "error", "content": [{"text": "❌ No simulation."}]}
+            return {"status": "error", "content": [{"text": "No simulation."}]}
 
         try:
             return super().run_policy(
@@ -1162,7 +1162,7 @@ class Simulation(
         method = getattr(self, method_name, None)
 
         if method is None or action.startswith("_"):
-            return {"status": "error", "content": [{"text": f"❌ Unknown action: {action}"}]}
+            return {"status": "error", "content": [{"text": f"Unknown action: {action}"}]}
 
         cache = getattr(self, "_sig_cache", None)
         if cache is None:
@@ -1219,10 +1219,10 @@ class Simulation(
         """
         if self._world and robot_name in self._world.robots:
             self._world.robots[robot_name].policy_running = False
-            return {"status": "success", "content": [{"text": f"🛑 Stopped on '{robot_name}'"}]}
-        return {"status": "error", "content": [{"text": f"❌ '{robot_name}' not found."}]}
+            return {"status": "success", "content": [{"text": f"Stopped on '{robot_name}'"}]}
+        return {"status": "error", "content": [{"text": f"'{robot_name}' not found."}]}
 
-    # --- Cleanup ---
+    # Cleanup
 
     def cleanup(self) -> None:
         if hasattr(self, "mesh") and self.mesh:

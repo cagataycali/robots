@@ -29,7 +29,7 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-# ── Lazy check for LeRobot availability ──────────────────────────────
+# Lazy check for LeRobot availability
 # We must NOT import lerobot at module level because it pulls in
 # `datasets` → `pandas`, which can crash with a numpy ABI mismatch on
 # systems where the system pandas was compiled against an older numpy
@@ -194,7 +194,7 @@ class DatasetRecorder:
         """
         features = {}
 
-        # --- Observation: cameras → video/image features ---
+        # Observation: cameras → video/image features
         if camera_keys:
             for cam_name in camera_keys:
                 key = f"observation.images.{cam_name}"
@@ -209,7 +209,7 @@ class DatasetRecorder:
                     "names": ["channels", "height", "width"],
                 }
 
-        # --- Observation: state (joint positions) ---
+        # Observation: state (joint positions)
         state_dim = 0
         state_names = []
         if robot_features:
@@ -232,7 +232,7 @@ class DatasetRecorder:
                 "names": state_names,
             }
 
-        # --- Action ---
+        # Action
         action_dim = 0
         action_names = []
         if action_features:
@@ -282,13 +282,13 @@ class DatasetRecorder:
 
         frame = {}
 
-        # --- Detect camera vs state keys ---
+        # Detect camera vs state keys
         if camera_keys is None:
             camera_keys = [k for k, v in observation.items() if isinstance(v, np.ndarray) and v.ndim >= 2]
 
         state_keys = [k for k in observation.keys() if k not in camera_keys]
 
-        # --- Camera images → observation.images.{name} ---
+        # Camera images → observation.images.{name}
         for cam_key in camera_keys:
             img = observation[cam_key]
             if isinstance(img, np.ndarray):
@@ -297,7 +297,7 @@ class DatasetRecorder:
                     img = (np.clip(img, 0, 1) * 255).astype(np.uint8)
                 frame[f"observation.images.{cam_key}"] = img
 
-        # --- State → observation.state (flattened vector) ---
+        # State → observation.state (flattened vector)
         # Use feature schema ordering to match the dataset schema declared in _build_features().
         if state_keys:
             state_vals = []
@@ -320,7 +320,7 @@ class DatasetRecorder:
             if state_vals:
                 frame["observation.state"] = np.array(state_vals, dtype=np.float32)
 
-        # --- Action → flattened vector ---
+        # Action → flattened vector
         # Use feature schema ordering for actions too.
         if action:
             action_vals = []
@@ -343,10 +343,10 @@ class DatasetRecorder:
             if action_vals:
                 frame["action"] = np.array(action_vals, dtype=np.float32)
 
-        # --- Task (mandatory for LeRobot v3) ---
+        # Task (mandatory for LeRobot v3)
         frame["task"] = task or self.default_task or "untitled"
 
-        # --- Reconcile camera keys between frame and feature schema ---
+        # Reconcile camera keys between frame and feature schema
         # Normalize namespaced camera keys (e.g. "arm0/wrist_cam" → "arm0__wrist_cam")
         # to match the schema declared in _build_features. MuJoCo uses "/" as a
         # namespace separator for multi-robot cameras, but LeRobot feature names
@@ -367,7 +367,7 @@ class DatasetRecorder:
         for extra in frame_cam_keys_final - declared_cam_keys:
             del frame[extra]
 
-        # --- Add to dataset ---
+        # Add to dataset
         try:
             self.dataset.add_frame(frame)
             self.frame_count += 1
@@ -460,7 +460,7 @@ class DatasetRecorder:
         return f"DatasetRecorder(repo_id={self.repo_id}, episodes={self.episode_count}, frames={self.frame_count})"
 
 
-# ── Shared replay-episode helpers ────────────────────────────────────
+# Shared replay-episode helpers
 
 
 def load_lerobot_episode(repo_id: str, episode: int = 0, root: str | None = None):

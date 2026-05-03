@@ -53,11 +53,11 @@ logger = logging.getLogger(__name__)
 
 
 # Hook signature: called every control step after send_action.
-#   on_frame(step_idx, observation, action) -> None
+# on_frame(step_idx, observation, action) -> None
 OnFrame = Callable[[int, dict[str, Any], dict[str, Any]], None]
 
 # Success function: called after each step during evaluate().
-#   success_fn(observation) -> bool
+# success_fn(observation) -> bool
 SuccessFn = Callable[[dict[str, Any]], bool]
 
 
@@ -162,9 +162,7 @@ class PolicyRunner:
     def __init__(self, sim: SimEngine):
         self.sim = sim
 
-    # ------------------------------------------------------------------
     # run(): blocking policy execution
-    # ------------------------------------------------------------------
     def run(
         self,
         robot_name: str,
@@ -282,12 +280,12 @@ class PolicyRunner:
             if writer is not None:
                 writer.close()
             logger.exception("PolicyRunner.run failed")
-            return {"status": "error", "content": [{"text": f"❌ Policy failed: {e}"}]}
+            return {"status": "error", "content": [{"text": f"Policy failed: {e}"}]}
 
         # Either finished all steps or was cooperatively stopped
         elapsed = time.time() - start_time
         sim_time = self._maybe_sim_time()
-        prefix = "🛑 Policy stopped" if stopped_early else "✅ Policy complete"
+        prefix = "Policy stopped" if stopped_early else "Policy complete"
         text = (
             f"{prefix} on '{robot_name}'\n"
             f"🧠 {type(policy).__name__} | 🎯 {instruction}\n"
@@ -307,9 +305,9 @@ class PolicyRunner:
                 )
         return {"status": "success", "content": [{"text": text}]}
 
-    # ------------------------------------------------------------------
+    
     # replay(): replay a LeRobotDataset episode
-    # ------------------------------------------------------------------
+    
     def replay(
         self,
         repo_id: str,
@@ -339,17 +337,17 @@ class PolicyRunner:
         try:
             from strands_robots.dataset_recorder import load_lerobot_episode
         except ImportError:
-            return {"status": "error", "content": [{"text": "❌ lerobot not installed"}]}
+            return {"status": "error", "content": [{"text": "lerobot not installed"}]}
 
         try:
             resolved_robot = robot_name or self._require_default_robot()
         except ValueError as e:
-            return {"status": "error", "content": [{"text": f"❌ {e}"}]}
+            return {"status": "error", "content": [{"text": f"{e}"}]}
 
         try:
             ds, episode_start, episode_length = load_lerobot_episode(repo_id, episode, root)
         except Exception as e:  # noqa: BLE001 — library errors are opaque
-            return {"status": "error", "content": [{"text": f"❌ {e}"}]}
+            return {"status": "error", "content": [{"text": f"{e}"}]}
 
         # Resolve joint name ordering for action vector index → action dict.
         joint_names = list(action_key_map) if action_key_map else self.sim.robot_joint_names(resolved_robot)
@@ -411,9 +409,9 @@ class PolicyRunner:
             ],
         }
 
-    # ------------------------------------------------------------------
+    
     # evaluate(): multi-episode success metrics
-    # ------------------------------------------------------------------
+    
     def evaluate(
         self,
         robot_name: str,
@@ -446,7 +444,7 @@ class PolicyRunner:
         try:
             resolved_check = self._resolve_success_fn(success_fn)
         except ValueError as e:
-            return {"status": "error", "content": [{"text": f"❌ {e}"}]}
+            return {"status": "error", "content": [{"text": f"{e}"}]}
 
         results: list[dict[str, Any]] = []
         for ep in range(n_episodes):
@@ -502,9 +500,9 @@ class PolicyRunner:
             ],
         }
 
-    # ------------------------------------------------------------------
+    
     # Helpers
-    # ------------------------------------------------------------------
+    
     def _maybe_sim_time(self) -> float | None:
         """Best-effort read of sim time from any backend that exposes it."""
         get_state = getattr(self.sim, "get_state", None)

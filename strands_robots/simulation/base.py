@@ -71,7 +71,7 @@ class SimEngine(ABC):
         sim.destroy()
     """
 
-    # --- World lifecycle ---
+    # World lifecycle
 
     @abstractmethod
     def create_world(
@@ -103,7 +103,7 @@ class SimEngine(ABC):
         """Get full simulation state summary."""
         ...
 
-    # --- Robot management ---
+    # Robot management
 
     @abstractmethod
     def add_robot(
@@ -141,7 +141,7 @@ class SimEngine(ABC):
         """
         ...
 
-    # --- Object management ---
+    # Object management
 
     @abstractmethod
     def add_object(
@@ -165,7 +165,7 @@ class SimEngine(ABC):
         """Remove an object from the scene."""
         ...
 
-    # --- Observation / Action ---
+    # Observation / Action
 
     @abstractmethod
     def get_observation(self, robot_name: str | None = None) -> dict[str, Any]:
@@ -216,7 +216,7 @@ class SimEngine(ABC):
         """
         ...
 
-    # --- Rendering ---
+    # Rendering
 
     @abstractmethod
     def render(
@@ -230,7 +230,7 @@ class SimEngine(ABC):
         """
         ...
 
-    # --- Policy orchestration (concrete facade, not abstract) ---
+    # Policy orchestration (concrete facade, not abstract)
 
     def run_policy(
         self,
@@ -286,7 +286,7 @@ class SimEngine(ABC):
         if robot_name not in self.list_robots():
             return {
                 "status": "error",
-                "content": [{"text": f"❌ Robot '{robot_name}' not found."}],
+                "content": [{"text": f"Robot '{robot_name}' not found."}],
             }
 
         if policy_object is not None:
@@ -388,12 +388,12 @@ class SimEngine(ABC):
 
         robots = self.list_robots()
         if not robots:
-            return {"status": "error", "content": [{"text": "❌ No robots in sim. Add one first."}]}
+            return {"status": "error", "content": [{"text": "No robots in sim. Add one first."}]}
         resolved_robot = robot_name or robots[0]
         if resolved_robot not in robots:
             return {
                 "status": "error",
-                "content": [{"text": f"❌ Robot '{resolved_robot}' not found."}],
+                "content": [{"text": f"Robot '{resolved_robot}' not found."}],
             }
 
         policy = create_policy(policy_provider, **(policy_config or {}))
@@ -423,7 +423,7 @@ class SimEngine(ABC):
         """
         return None
 
-    # --- Optional overrides (have default no-op implementations) ---
+    # Optional overrides (have default no-op implementations)
 
     def load_scene(self, scene_path: str) -> dict[str, Any]:
         """Load a complete scene from file. Override per backend."""

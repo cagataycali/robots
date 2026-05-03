@@ -36,9 +36,9 @@ from strands_robots.simulation.policy_runner import (
     _extract_frame_ndarray,
 )
 
-# ────────────────────────────────────────────────────────────────────────
+
 # PolicyRunner against FakeSim (backend-agnostic)
-# ────────────────────────────────────────────────────────────────────────
+# 
 
 
 class FakeSim(SimEngine):
@@ -51,7 +51,7 @@ class FakeSim(SimEngine):
         self._sim_time = 0.0
         self._robots = {"fake_robot": self._joint_names}
 
-    # --- Implement abstract methods (bare minimum) ---
+    # Implement abstract methods (bare minimum)
     def create_world(self, timestep=None, gravity=None, ground_plane=True):
         return {"status": "success"}
 
@@ -105,9 +105,6 @@ class FakeSim(SimEngine):
         return {
             "image": np.zeros((height or 48, width or 64, 3), dtype=np.uint8),
         }
-
-
-# ---------------------------------------------------------------------------
 
 
 def test_policy_runner_only_touches_public_api():
@@ -275,9 +272,9 @@ def test_simengine_run_policy_validates_robot_exists():
     assert "not found" in result["content"][0]["text"].lower()
 
 
-# ────────────────────────────────────────────────────────────────────────
+# 
 # run_policy(video=...) regression + helper unit tests
-# ────────────────────────────────────────────────────────────────────────
+# 
 
 
 @pytest.mark.skipif(
@@ -353,9 +350,9 @@ def test_extract_frame_ndarray_handles_render_shape() -> None:
     assert _extract_frame_ndarray({"content": [{"text": "no image here"}]}) is None
 
 
-# ────────────────────────────────────────────────────────────────────────
+# 
 # policy_object kwarg regression
-# ────────────────────────────────────────────────────────────────────────
+# 
 
 
 @pytest.mark.skipif(
@@ -412,9 +409,9 @@ def test_run_policy_object_param_exposed() -> None:
     assert "policy_object" in sig2.parameters
 
 
-# ────────────────────────────────────────────────────────────────────────
+# 
 # VideoConfig dataclass + legacy key consolidation
-# ────────────────────────────────────────────────────────────────────────
+# 
 
 
 class TestVideoConfigDataclass:

@@ -22,7 +22,7 @@ from strands_robots.simulation.models import (
     TrajectoryStep,
 )
 
-# ── Shared fixtures ──────────────────────────────────────────────
+# Shared fixtures  
 
 
 def _make_dummy_engine_class() -> type[SimEngine]:
@@ -110,7 +110,7 @@ def dummy_engine_class() -> type[SimEngine]:
     return _make_dummy_engine_class()
 
 
-# ── ABC Tests ────────────────────────────────────────────────────
+# ABC Tests  
 
 
 class TestSimEngine:
@@ -168,7 +168,7 @@ class TestSimEngine:
         assert cleaned["flag"] is True
 
 
-# ── Factory Tests ────────────────────────────────────────────────
+# Factory Tests  
 
 
 class TestSimulationFactory:
@@ -196,7 +196,7 @@ class TestSimulationFactory:
         with pytest.raises(ValueError, match="conflicts with built-in"):
             register_backend("custom_phys", lambda: dummy_engine_class, aliases=["mj"])
 
-    # ── Regression tests for alias-shadowing bug (PR #84 review) ──
+    # Regression tests for alias-shadowing bug (PR #84 review) 
 
     def test_register_rejects_builtin_alias_as_name(self, dummy_engine_class):
         """Cannot register a new backend under a built-in alias name.
@@ -233,7 +233,7 @@ class TestSimulationFactory:
         importlib.reload(factory)
 
 
-# ── Model Registry Tests ─────────────────────────────────────────
+# Model Registry Tests 
 
 
 class TestModelRegistry:
@@ -266,7 +266,7 @@ class TestModelRegistry:
         assert "list_test_bot" in urdfs
 
 
-# ── Dataclass Behavioral Tests ───────────────────────────────────
+# Dataclass Behavioral Tests
 
 
 class TestSimModelsUsage:

@@ -28,9 +28,9 @@ from strands_robots.policies.groot.policy import (  # noqa: E402
     _to_video_batch,
 )
 
-# ---------------------------------------------------------------------------
+# (section)
 # Helpers
-# ---------------------------------------------------------------------------
+# (section)
 
 _KNOWN_DOF = {
     "single_arm": 5,
@@ -93,9 +93,9 @@ def _make_policy(data_config="so100", version="n1.6", obs_mapping=None, action_m
     return p
 
 
-# ---------------------------------------------------------------------------
+# (section)
 # Construction
-# ---------------------------------------------------------------------------
+# (section)
 
 
 class TestConstruction:
@@ -166,9 +166,9 @@ class TestConstruction:
         p.set_robot_state_keys(["a", "b"])  # should not raise
 
 
-# ---------------------------------------------------------------------------
+# (section)
 # Version detection
-# ---------------------------------------------------------------------------
+# (section)
 
 
 class TestVersion:
@@ -286,9 +286,9 @@ class TestVersion:
             pm._GROOT_VERSION = orig
 
 
-# ---------------------------------------------------------------------------
+# (section)
 # ObservationMapping
-# ---------------------------------------------------------------------------
+# (section)
 
 
 class TestObsMapping:
@@ -320,9 +320,9 @@ class TestObsMapping:
             ObservationMapping(language_key="nope").validate(GR1_MMC)
 
 
-# ---------------------------------------------------------------------------
+# (section)
 # ActionMapping
-# ---------------------------------------------------------------------------
+# (section)
 
 
 class TestActionMapping:
@@ -337,9 +337,9 @@ class TestActionMapping:
             ActionMapping(actions={"nope": "j"}).validate(GR1_MMC)
 
 
-# ---------------------------------------------------------------------------
+# (section)
 # Parsing
-# ---------------------------------------------------------------------------
+# (section)
 
 
 class TestParsing:
@@ -366,9 +366,9 @@ class TestParsing:
         assert m.actions == {"left_arm": "j", "left_hand": "g"}
 
 
-# ---------------------------------------------------------------------------
+# (section)
 # Auto-inference
-# ---------------------------------------------------------------------------
+# (section)
 
 
 class TestAutoInfer:
@@ -386,9 +386,9 @@ class TestAutoInfer:
         assert m.actions["single_arm"] == "single_arm"
 
 
-# ---------------------------------------------------------------------------
+# (section)
 # Shape helpers
-# ---------------------------------------------------------------------------
+# (section)
 
 
 class TestShapes:
@@ -434,9 +434,9 @@ class TestShapes:
         assert _reference_video_shape(obs, video_keys=None) == (128, 128, 3)
 
 
-# ---------------------------------------------------------------------------
+# (section)
 # _prepare_observation — nested dict format
-# ---------------------------------------------------------------------------
+# (section)
 
 
 class TestPrepareObs:
@@ -492,9 +492,9 @@ class TestPrepareObs:
         assert "single_arm" in b["state"]
 
 
-# ---------------------------------------------------------------------------
+# (section)
 # _unpack_actions
-# ---------------------------------------------------------------------------
+# (section)
 
 
 class TestUnpackActions:
@@ -512,9 +512,9 @@ class TestUnpackActions:
         assert _make_policy(action_mapping=ActionMapping())._unpack_actions({}) == []
 
 
-# ---------------------------------------------------------------------------
+# (section)
 # Full local flow
-# ---------------------------------------------------------------------------
+# (section)
 
 
 class TestLocalFlow:
@@ -567,9 +567,9 @@ class TestLocalFlow:
             p._local_get_actions({}, "t")
 
 
-# ---------------------------------------------------------------------------
+# (section)
 # get_actions routing
-# ---------------------------------------------------------------------------
+# (section)
 
 
 class TestGetActions:
@@ -598,9 +598,9 @@ class TestGetActions:
         assert len(acts) == 16
 
 
-# ---------------------------------------------------------------------------
+# (section)
 # Service observation + action unpack
-# ---------------------------------------------------------------------------
+# (section)
 
 
 class TestServiceObs:
@@ -658,9 +658,9 @@ class TestServiceUnpackWithMapping:
         assert "single_arm" in result[0]
 
 
-# ---------------------------------------------------------------------------
+# (section)
 # Exports
-# ---------------------------------------------------------------------------
+# (section)
 
 
 class TestExports:

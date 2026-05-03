@@ -399,12 +399,12 @@ def _prefix_robot_names(robot_root: Any, prefix: str) -> None:
             visit(child)
 
     # We only want to prefix elements inside:
-    #   - worldbody (bodies, their children)
-    #   - actuator
-    #   - sensor
-    #   - equality
-    #   - tendon
-    #   - keyframe
+    #  - worldbody (bodies, their children)
+    #  - actuator
+    #  - sensor
+    #  - equality
+    #  - tendon
+    #  - keyframe
     # We do NOT prefix contents of <default>, <asset>, <compiler>, <option>
     # because these are shared across same-config robot instances.
     for section in ("worldbody", "actuator", "sensor", "equality", "tendon", "keyframe", "contact"):

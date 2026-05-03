@@ -59,10 +59,7 @@ class Gr00tDataConfig:
         }
 
 
-# ---------------------------------------------------------------------------
 # Config resolution with _extends inheritance
-# ---------------------------------------------------------------------------
-
 
 def _resolve_config(name: str, definitions: dict) -> Gr00tDataConfig:
     """Resolve a config name to a :class:`Gr00tDataConfig`, following ``_extends`` chains."""
@@ -88,9 +85,7 @@ def _resolve_config(name: str, definitions: dict) -> Gr00tDataConfig:
     return Gr00tDataConfig(**merged)
 
 
-# ---------------------------------------------------------------------------
 # Load configs from JSON
-# ---------------------------------------------------------------------------
 
 _CONFIG_FILE = Path(__file__).parent / "data_configs.json"
 

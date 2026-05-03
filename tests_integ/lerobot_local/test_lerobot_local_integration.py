@@ -37,9 +37,7 @@ DOWNLOAD_TIMEOUT = int(os.getenv("LEROBOT_DOWNLOAD_TIMEOUT", "300"))
 pytestmark = pytest.mark.gpu
 
 
-# ---------------------------------------------------------------------------
 # Fixtures
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture(scope="module")
@@ -72,9 +70,7 @@ def diffusion_policy():
     yield policy
 
 
-# ---------------------------------------------------------------------------
 # Helpers
-# ---------------------------------------------------------------------------
 
 
 def _build_zero_observation(policy):
@@ -100,9 +96,7 @@ def _assert_valid_actions(actions, expected_key_count):
     assert np.all(np.abs(values) < 100), f"Unreasonably large action values: {values}"
 
 
-# ---------------------------------------------------------------------------
 # Tests: Full ACT Pipeline (load → configure → infer → validate)
-# ---------------------------------------------------------------------------
 
 
 class TestACTFullPipeline:
@@ -175,9 +169,7 @@ class TestACTFullPipeline:
             assert np.all(np.abs(values) < 100)
 
 
-# ---------------------------------------------------------------------------
 # Tests: Full Diffusion Pipeline
-# ---------------------------------------------------------------------------
 
 
 class TestDiffusionFullPipeline:
@@ -199,7 +191,6 @@ class TestDiffusionFullPipeline:
         )
 
 
-# ---------------------------------------------------------------------------
 
 
 class TestProcessorBridgeIntegration:

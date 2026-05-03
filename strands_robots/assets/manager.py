@@ -32,9 +32,9 @@ except ImportError:
     _auto_download_robot_impl = None  # type: ignore[assignment]
 
 
-# ─────────────────────────────────────────────────────────────────────
+#
 # Model path resolution (delegates to registry)
-# ─────────────────────────────────────────────────────────────────────
+#
 
 
 def _auto_download_robot(name: str, info: dict) -> bool:

@@ -22,9 +22,9 @@ _RAW = json.loads(_CONFIG_FILE.read_text())
 _RAW_CONFIGS = _RAW["configs"]
 _RAW_ALIASES = _RAW.get("aliases", {})
 
-# ---------------------------------------------------------------------------
+# (section)
 # ModalityConfig
-# ---------------------------------------------------------------------------
+# (section)
 
 
 class TestModalityConfig:
@@ -47,9 +47,9 @@ class TestModalityConfig:
         assert parsed["modality_keys"] == []
 
 
-# ---------------------------------------------------------------------------
+# (section)
 # Gr00tDataConfig
-# ---------------------------------------------------------------------------
+# (section)
 
 
 class TestGr00tDataConfig:
@@ -109,9 +109,9 @@ class TestGr00tDataConfig:
         assert modality_configs["action"].delta_indices == [0, 1, 2]
 
 
-# ---------------------------------------------------------------------------
+# (section)
 # DATA_CONFIG_MAP + _extends inheritance
-# ---------------------------------------------------------------------------
+# (section)
 
 
 class TestDataConfigMap:
@@ -213,9 +213,9 @@ class TestDataConfigMap:
                 assert config.name == config_name, f"Config '{config_name}' has wrong .name: '{config.name}'"
 
 
-# ---------------------------------------------------------------------------
+# (section)
 # load_data_config
-# ---------------------------------------------------------------------------
+# (section)
 
 
 class TestLoadDataConfig:
@@ -243,9 +243,9 @@ class TestLoadDataConfig:
             assert config is DATA_CONFIG_MAP[target_name]
 
 
-# ---------------------------------------------------------------------------
+# (section)
 # create_custom_data_config
-# ---------------------------------------------------------------------------
+# (section)
 
 
 class TestCreateCustomDataConfig:

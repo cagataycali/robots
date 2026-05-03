@@ -236,7 +236,7 @@ class Robot(AgentTool):
 
             # Check if already connected
             if self.robot.is_connected:
-                logger.info(f"✅ {self.robot} already connected")
+                logger.info(f"{self.robot} already connected")
                 return True, ""
 
             logger.info(f"🔌 Connecting to {self.robot}...")
@@ -248,13 +248,13 @@ class Robot(AgentTool):
 
             except DeviceAlreadyConnectedError:
                 # This is expected and fine - robot is already connected
-                logger.info(f"✅ {self.robot} was already connected")
+                logger.info(f"{self.robot} was already connected")
 
             except Exception as e:
                 # Check if it's the string version of "already connected" error
                 error_str = str(e).lower()
                 if "already connected" in error_str or "is already connected" in error_str:
-                    logger.info(f"✅ {self.robot} connection already established")
+                    logger.info(f"{self.robot} connection already established")
                 else:
                     # Re-raise if it's a different error
                     raise e
@@ -262,7 +262,7 @@ class Robot(AgentTool):
             # Final connection check
             if not self.robot.is_connected:
                 error_msg = f"Failed to connect to {self.robot}"
-                logger.error(f"❌ {error_msg}")
+                logger.error(f"{error_msg}")
                 return False, error_msg
 
             # Check robot calibration
@@ -271,15 +271,15 @@ class Robot(AgentTool):
                     f"Robot {self.robot} is not calibrated. Please calibrate the robot manually"
                     " first using LeRobot's calibration process (lerobot-calibrate)"
                 )
-                logger.error(f"❌ {error_msg}")
+                logger.error(f"{error_msg}")
                 return False, error_msg
 
-            logger.info(f"✅ {self.robot} connected and ready")
+            logger.info(f"{self.robot} connected and ready")
             return True, ""
 
         except Exception as e:
             error_msg = f"Robot connection failed: {e}. Ensure robot is calibrated and accessible on the specified port"
-            logger.error(f"❌ {error_msg}")
+            logger.error(f"{error_msg}")
             return False, error_msg
 
     async def _initialize_policy(self, policy: Policy) -> bool:
@@ -300,7 +300,7 @@ class Robot(AgentTool):
             return True
 
         except Exception as e:
-            logger.error(f"❌ Failed to initialize policy: {e}")
+            logger.error(f"Failed to initialize policy: {e}")
             return False
 
     async def _execute_task_async(
@@ -371,11 +371,11 @@ class Robot(AgentTool):
             if self._task_state.status == TaskStatus.RUNNING:
                 self._task_state.status = TaskStatus.COMPLETED
                 logger.info(
-                    f"✅ Task completed: '{instruction}' in {elapsed:.1f}s ({self._task_state.step_count} steps)"
+                    f"Task completed: '{instruction}' in {elapsed:.1f}s ({self._task_state.step_count} steps)"
                 )
 
         except Exception as e:
-            logger.error(f"❌ Task execution failed: {e}")
+            logger.error(f"Task execution failed: {e}")
             self._task_state.status = TaskStatus.ERROR
             self._task_state.error_message = str(e)
 
@@ -415,12 +415,12 @@ class Robot(AgentTool):
             "status": "success" if self._task_state.status == TaskStatus.COMPLETED else "error",
             "content": [
                 {
-                    "text": f"✅ Task: '{instruction}' - {self._task_state.status.value}\n"
-                    f"🤖 Robot: {self.tool_name_str} ({self.robot})\n"
-                    f"🧠 Policy: {policy_provider} on {policy_host}:{policy_port}\n"
-                    f"⏱️ Duration: {self._task_state.duration:.1f}s\n"
-                    f"🎯 Steps: {self._task_state.step_count}"
-                    + (f"\n❌ Error: {self._task_state.error_message}" if self._task_state.error_message else "")
+                    "text": f"Task: '{instruction}' - {self._task_state.status.value}\n"
+                    f"Robot: {self.tool_name_str} ({self.robot})\n"
+                    f"Policy: {policy_provider} on {policy_host}:{policy_port}\n"
+                    f"Duration: {self._task_state.duration:.1f}s\n"
+                    f"Steps: {self._task_state.step_count}"
+                    + (f"\nError: {self._task_state.error_message}" if self._task_state.error_message else "")
                 }
             ],
         }
@@ -439,7 +439,7 @@ class Robot(AgentTool):
         if self._task_state.status == TaskStatus.RUNNING:
             return {
                 "status": "error",
-                "content": [{"text": f"❌ Task already running: {self._task_state.instruction}"}],
+                "content": [{"text": f"Task already running: {self._task_state.instruction}"}],
             }
 
         # Start task in background
@@ -451,10 +451,10 @@ class Robot(AgentTool):
             "status": "success",
             "content": [
                 {
-                    "text": f"🚀 Task started: '{instruction}'\n"
-                    f"🤖 Robot: {self.tool_name_str}\n"
-                    f"💡 Use action='status' to check progress\n"
-                    f"💡 Use action='stop' to interrupt"
+                    "text": f"Task started: '{instruction}'\n"
+                    f"Robot: {self.tool_name_str}\n"
+                    f"Use action='status' to check progress\n"
+                    f"Use action='stop' to interrupt"
                 }
             ],
         }
@@ -466,20 +466,20 @@ class Robot(AgentTool):
         if self._task_state.status == TaskStatus.RUNNING:
             self._task_state.duration = time.time() - self._task_state.start_time
 
-        status_text = f"📊 Robot Status: {self._task_state.status.value.upper()}\n"
+        status_text = f"Robot Status: {self._task_state.status.value.upper()}\n"
 
         if self._task_state.instruction:
-            status_text += f"🎯 Task: {self._task_state.instruction}\n"
+            status_text += f"Task: {self._task_state.instruction}\n"
 
         if self._task_state.status == TaskStatus.RUNNING:
-            status_text += f"⏱️ Duration: {self._task_state.duration:.1f}s\n"
-            status_text += f"🔄 Steps: {self._task_state.step_count}\n"
+            status_text += f"Duration: {self._task_state.duration:.1f}s\n"
+            status_text += f"Steps: {self._task_state.step_count}\n"
         elif self._task_state.status in [TaskStatus.COMPLETED, TaskStatus.STOPPED, TaskStatus.ERROR]:
-            status_text += f"⏱️ Total Duration: {self._task_state.duration:.1f}s\n"
-            status_text += f"🎯 Total Steps: {self._task_state.step_count}\n"
+            status_text += f"Total Duration: {self._task_state.duration:.1f}s\n"
+            status_text += f"Total Steps: {self._task_state.step_count}\n"
 
         if self._task_state.error_message:
-            status_text += f"❌ Error: {self._task_state.error_message}\n"
+            status_text += f"Error: {self._task_state.error_message}\n"
 
         return {
             "status": "success",
@@ -502,15 +502,15 @@ class Robot(AgentTool):
         if self._task_state.task_future:
             self._task_state.task_future.cancel()
 
-        logger.info(f"🛑 Task stopped: {self._task_state.instruction}")
+        logger.info(f"Task stopped: {self._task_state.instruction}")
 
         return {
             "status": "success",
             "content": [
                 {
-                    "text": f"🛑 Task stopped: '{self._task_state.instruction}'\n"
-                    f"⏱️ Duration: {self._task_state.duration:.1f}s\n"
-                    f"🎯 Steps completed: {self._task_state.step_count}"
+                    "text": f"Task stopped: '{self._task_state.instruction}'\n"
+                    f"Duration: {self._task_state.duration:.1f}s\n"
+                    f"Steps completed: {self._task_state.step_count}"
                 }
             ],
         }
@@ -601,7 +601,7 @@ class Robot(AgentTool):
                             tool_use_id,
                             {
                                 "status": "error",
-                                "content": [{"text": "❌ instruction and policy_port are required for execute action"}],
+                                "content": [{"text": "Instruction and policy_port are required for execute action"}],
                             },
                         )
                     )
@@ -625,7 +625,7 @@ class Robot(AgentTool):
                             tool_use_id,
                             {
                                 "status": "error",
-                                "content": [{"text": "❌ instruction and policy_port are required for start action"}],
+                                "content": [{"text": "Instruction and policy_port are required for start action"}],
                             },
                         )
                     )
@@ -652,20 +652,20 @@ class Robot(AgentTool):
                         {
                             "status": "error",
                             "content": [
-                                {"text": f"❌ Unknown action: {action}. Valid actions: execute, start, status, stop"}
+                                {"text": f"Unknown action: {action}. Valid actions: execute, start, status, stop"}
                             ],
                         },
                     )
                 )
 
         except Exception as e:
-            logger.error(f"❌ {self.tool_name_str} error: {e}")
+            logger.error(f"{self.tool_name_str} error: {e}")
             yield ToolResultEvent(
                 self._make_tool_result(
                     tool_use_id,
                     {
                         "status": "error",
-                        "content": [{"text": f"❌ {self.tool_name_str} error: {str(e)}"}],
+                        "content": [{"text": f"{self.tool_name_str} error: {str(e)}"}],
                     },
                 )
             )
@@ -686,7 +686,7 @@ class Robot(AgentTool):
             logger.info(f"🧹 {self.tool_name_str} cleanup completed")
 
         except Exception as e:
-            logger.error(f"❌ Cleanup error for {self.tool_name_str}: {e}")
+            logger.error(f"Cleanup error for {self.tool_name_str}: {e}")
 
     def __del__(self):
         """Destructor to ensure cleanup."""
@@ -730,7 +730,7 @@ class Robot(AgentTool):
             return status_data
 
         except Exception as e:
-            logger.error(f"❌ Error getting status for {self.tool_name_str}: {e}")
+            logger.error(f"Error getting status for {self.tool_name_str}: {e}")
             return {
                 "robot_name": self.tool_name_str,
                 "error": str(e),
@@ -752,7 +752,7 @@ class Robot(AgentTool):
             # Cleanup resources
             self.cleanup()
 
-            logger.info(f"🛑 {self.tool_name_str} stopped and disconnected")
+            logger.info(f"{self.tool_name_str} stopped and disconnected")
 
         except Exception as e:
-            logger.error(f"❌ Error stopping robot: {e}")
+            logger.error(f"Error stopping robot: {e}")

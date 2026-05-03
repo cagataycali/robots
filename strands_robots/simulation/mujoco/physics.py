@@ -41,7 +41,7 @@ class PhysicsMixin:
     Naming: methods match action names in tool_spec.json for direct dispatch.
     """
 
-    # ── State Checkpointing ──
+    # State Checkpointing 
 
     def save_state(self, name: str = "default") -> dict[str, Any]:
         """Save the full physics state (qpos, qvel, act, time) to a named checkpoint.
@@ -49,7 +49,7 @@ class PhysicsMixin:
         Uses mj_getState with mjSTATE_PHYSICS for complete state capture.
         """
         if self._world is None or self._world._model is None:
-            return {"status": "error", "content": [{"text": "❌ No simulation."}]}
+            return {"status": "error", "content": [{"text": "No simulation."}]}
 
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
@@ -75,8 +75,8 @@ class PhysicsMixin:
                     "text": (
                         f"💾 State '{name}' saved\n"
                         f"  t={self._world.sim_time:.4f}s, step={self._world.step_count}\n"
-                        f"  State vector: {state_size} floats\n"
-                        f"  Checkpoints: {list(self._world._checkpoints.keys())}"
+                        f"State vector: {state_size} floats\n"
+                        f"Checkpoints: {list(self._world._checkpoints.keys())}"
                     )
                 }
             ],
@@ -85,14 +85,14 @@ class PhysicsMixin:
     def load_state(self, name: str = "default") -> dict[str, Any]:
         """Restore physics state from a named checkpoint."""
         if self._world is None or self._world._model is None:
-            return {"status": "error", "content": [{"text": "❌ No simulation."}]}
+            return {"status": "error", "content": [{"text": "No simulation."}]}
 
         checkpoints = getattr(self._world, "_checkpoints", {})
         if name not in checkpoints:
             available = list(checkpoints.keys()) if checkpoints else ["none"]
             return {
                 "status": "error",
-                "content": [{"text": f"❌ Checkpoint '{name}' not found. Available: {available}"}],
+                "content": [{"text": f"Checkpoint '{name}' not found. Available: {available}"}],
             }
 
         mj = _ensure_mujoco()
@@ -113,7 +113,7 @@ class PhysicsMixin:
             ],
         }
 
-    # ── External Forces ──
+    # External Forces 
 
     def apply_force(
         self,
@@ -139,14 +139,14 @@ class PhysicsMixin:
                    Defaults to body CoM if not specified.
         """
         if self._world is None or self._world._model is None:
-            return {"status": "error", "content": [{"text": "❌ No simulation."}]}
+            return {"status": "error", "content": [{"text": "No simulation."}]}
 
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
 
         body_id = self._resolve_mj_name(mj.mjtObj.mjOBJ_BODY, body_name)
         if body_id < 0:
-            return {"status": "error", "content": [{"text": f"❌ Body '{body_name}' not found."}]}
+            return {"status": "error", "content": [{"text": f"Body '{body_name}' not found."}]}
 
         f = np.array(force or [0, 0, 0], dtype=np.float64)
         t = np.array(torque or [0, 0, 0], dtype=np.float64)
@@ -165,15 +165,15 @@ class PhysicsMixin:
                 {
                     "text": (
                         f"💨 Force applied to '{body_name}' (body {body_id})\n"
-                        f"  Force: {f.tolist()} N\n"
-                        f"  Torque: {t.tolist()} N·m\n"
-                        f"  Point: {p.tolist()}"
+                        f"Force: {f.tolist()} N\n"
+                        f"Torque: {t.tolist()} N·m\n"
+                        f"Point: {p.tolist()}"
                     )
                 }
             ],
         }
 
-    # ── Raycasting ──
+    # Raycasting 
 
     def _resolve_mj_name(self, obj_type: int, name: str) -> int:
         """Look up a MuJoCo name, tolerating robot namespacing.
@@ -226,7 +226,7 @@ class PhysicsMixin:
             include_static: Whether to include static geoms.
         """
         if self._world is None or self._world._model is None:
-            return {"status": "error", "content": [{"text": "❌ No simulation."}]}
+            return {"status": "error", "content": [{"text": "No simulation."}]}
 
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
@@ -270,7 +270,7 @@ class PhysicsMixin:
 
         return {"status": "success", "content": [{"text": text}, {"json": result}]}
 
-    # ── Jacobians ──
+    # Jacobians 
 
     def get_jacobian(
         self,
@@ -286,7 +286,7 @@ class PhysicsMixin:
         Returns both positional (3×nv) and rotational (3×nv) Jacobians.
         """
         if self._world is None or self._world._model is None:
-            return {"status": "error", "content": [{"text": "❌ No simulation."}]}
+            return {"status": "error", "content": [{"text": "No simulation."}]}
 
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
@@ -297,23 +297,23 @@ class PhysicsMixin:
         if body_name:
             obj_id = self._resolve_mj_name(mj.mjtObj.mjOBJ_BODY, body_name)
             if obj_id < 0:
-                return {"status": "error", "content": [{"text": f"❌ Body '{body_name}' not found."}]}
+                return {"status": "error", "content": [{"text": f"Body '{body_name}' not found."}]}
             mj.mj_jacBody(model, data, jacp, jacr, obj_id)
             label = f"body '{body_name}'"
         elif site_name:
             obj_id = self._resolve_mj_name(mj.mjtObj.mjOBJ_SITE, site_name)
             if obj_id < 0:
-                return {"status": "error", "content": [{"text": f"❌ Site '{site_name}' not found."}]}
+                return {"status": "error", "content": [{"text": f"Site '{site_name}' not found."}]}
             mj.mj_jacSite(model, data, jacp, jacr, obj_id)
             label = f"site '{site_name}'"
         elif geom_name:
             obj_id = self._resolve_mj_name(mj.mjtObj.mjOBJ_GEOM, geom_name)
             if obj_id < 0:
-                return {"status": "error", "content": [{"text": f"❌ Geom '{geom_name}' not found."}]}
+                return {"status": "error", "content": [{"text": f"Geom '{geom_name}' not found."}]}
             mj.mj_jacGeom(model, data, jacp, jacr, obj_id)
             label = f"geom '{geom_name}'"
         else:
-            return {"status": "error", "content": [{"text": "❌ Specify body_name, site_name, or geom_name."}]}
+            return {"status": "error", "content": [{"text": "Specify body_name, site_name, or geom_name."}]}
 
         return {
             "status": "success",
@@ -323,12 +323,12 @@ class PhysicsMixin:
             ],
         }
 
-    # ── Energy ──
+    # Energy 
 
     def get_energy(self) -> dict[str, Any]:
         """Compute potential and kinetic energy of the system."""
         if self._world is None or self._world._model is None:
-            return {"status": "error", "content": [{"text": "❌ No simulation."}]}
+            return {"status": "error", "content": [{"text": "No simulation."}]}
 
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
@@ -348,7 +348,7 @@ class PhysicsMixin:
             ],
         }
 
-    # ── Mass Matrix ──
+    # Mass Matrix 
 
     def get_mass_matrix(self) -> dict[str, Any]:
         """Compute the full mass (inertia) matrix M(q).
@@ -357,7 +357,7 @@ class PhysicsMixin:
         Useful for dynamics analysis, impedance control, etc.
         """
         if self._world is None or self._world._model is None:
-            return {"status": "error", "content": [{"text": "❌ No simulation."}]}
+            return {"status": "error", "content": [{"text": "No simulation."}]}
 
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
@@ -384,7 +384,7 @@ class PhysicsMixin:
             ],
         }
 
-    # ── Inverse Dynamics ──
+    # Inverse Dynamics 
 
     def inverse_dynamics(self) -> dict[str, Any]:
         """Compute inverse dynamics: given qacc, what forces are needed?
@@ -393,7 +393,7 @@ class PhysicsMixin:
         that would produce the current accelerations.
         """
         if self._world is None or self._world._model is None:
-            return {"status": "error", "content": [{"text": "❌ No simulation."}]}
+            return {"status": "error", "content": [{"text": "No simulation."}]}
 
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
@@ -416,7 +416,7 @@ class PhysicsMixin:
             ],
         }
 
-    # ── Body Introspection ──
+    # Body Introspection 
 
     def get_body_state(
         self,
@@ -427,14 +427,14 @@ class PhysicsMixin:
         Returns Cartesian pose + 6D spatial velocity (linear + angular).
         """
         if self._world is None or self._world._model is None:
-            return {"status": "error", "content": [{"text": "❌ No simulation."}]}
+            return {"status": "error", "content": [{"text": "No simulation."}]}
 
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
 
         body_id = self._resolve_mj_name(mj.mjtObj.mjOBJ_BODY, body_name)
         if body_id < 0:
-            return {"status": "error", "content": [{"text": f"❌ Body '{body_name}' not found."}]}
+            return {"status": "error", "content": [{"text": f"Body '{body_name}' not found."}]}
 
         # Position and orientation
         pos = data.xpos[body_id].tolist()
@@ -472,7 +472,7 @@ class PhysicsMixin:
 
         return {"status": "success", "content": [{"text": text}, {"json": state}]}
 
-    # ── Direct Joint Control ──
+    # Direct Joint Control 
 
     def set_joint_positions(
         self,
@@ -485,13 +485,13 @@ class PhysicsMixin:
         Useful for teleportation, IK solutions, or keyframe setting.
         """
         if self._world is None or self._world._model is None:
-            return {"status": "error", "content": [{"text": "❌ No simulation."}]}
+            return {"status": "error", "content": [{"text": "No simulation."}]}
 
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
 
         if positions is None:
-            return {"status": "error", "content": [{"text": "❌ positions dict required."}]}
+            return {"status": "error", "content": [{"text": "positions dict required."}]}
 
         set_count = 0
         with self._lock:
@@ -520,13 +520,13 @@ class PhysicsMixin:
         Writes to qvel. Useful for initializing dynamics.
         """
         if self._world is None or self._world._model is None:
-            return {"status": "error", "content": [{"text": "❌ No simulation."}]}
+            return {"status": "error", "content": [{"text": "No simulation."}]}
 
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
 
         if velocities is None:
-            return {"status": "error", "content": [{"text": "❌ velocities dict required."}]}
+            return {"status": "error", "content": [{"text": "velocities dict required."}]}
 
         set_count = 0
         with self._lock:
@@ -542,7 +542,7 @@ class PhysicsMixin:
             "content": [{"text": f"💨 Set {set_count}/{len(velocities)} joint velocities"}],
         }
 
-    # ── Sensor Readout ──
+    # Sensor Readout 
 
     def get_sensor_data(self, sensor_name: str | None = None) -> dict[str, Any]:
         """Read sensor values from the simulation.
@@ -554,7 +554,7 @@ class PhysicsMixin:
             sensor_name: Specific sensor name, or None for all sensors.
         """
         if self._world is None or self._world._model is None:
-            return {"status": "error", "content": [{"text": "❌ No simulation."}]}
+            return {"status": "error", "content": [{"text": "No simulation."}]}
 
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
@@ -584,18 +584,18 @@ class PhysicsMixin:
             }
 
         if sensor_name and sensor_name not in sensors:
-            return {"status": "error", "content": [{"text": f"❌ Sensor '{sensor_name}' not found."}]}
+            return {"status": "error", "content": [{"text": f"Sensor '{sensor_name}' not found."}]}
 
         lines = [f"📡 Sensors ({len(sensors)}/{model.nsensor}):"]
         for name, info in sensors.items():
-            lines.append(f"  {name}: {info['values']} (dim={info['dim']})")
+            lines.append(f"{name}: {info['values']} (dim={info['dim']})")
 
         return {
             "status": "success",
             "content": [{"text": "\n".join(lines)}, {"json": {"sensors": sensors}}],
         }
 
-    # ── Runtime Model Modification ──
+    # Runtime Model Modification 
 
     def set_body_properties(
         self,
@@ -607,13 +607,13 @@ class PhysicsMixin:
         Changes take effect on the next mj_step.
         """
         if self._world is None or self._world._model is None:
-            return {"status": "error", "content": [{"text": "❌ No simulation."}]}
+            return {"status": "error", "content": [{"text": "No simulation."}]}
 
         mj = _ensure_mujoco()
         model = self._world._model
         body_id = self._resolve_mj_name(mj.mjtObj.mjOBJ_BODY, body_name)
         if body_id < 0:
-            return {"status": "error", "content": [{"text": f"❌ Body '{body_name}' not found."}]}
+            return {"status": "error", "content": [{"text": f"Body '{body_name}' not found."}]}
 
         changes = []
         with self._lock:
@@ -640,7 +640,7 @@ class PhysicsMixin:
         Changes take effect immediately for rendering (color) or next step (friction, size).
         """
         if self._world is None or self._world._model is None:
-            return {"status": "error", "content": [{"text": "❌ No simulation."}]}
+            return {"status": "error", "content": [{"text": "No simulation."}]}
 
         mj = _ensure_mujoco()
         model = self._world._model
@@ -648,8 +648,8 @@ class PhysicsMixin:
         gid = geom_id
         if geom_name:
             gid = self._resolve_mj_name(mj.mjtObj.mjOBJ_GEOM, geom_name)
-        if gid is None or gid < 0:
-            return {"status": "error", "content": [{"text": f"❌ Geom '{geom_name or geom_id}' not found."}]}
+        if gid is None or gid < 0 or gid >= model.ngeom:
+            return {"status": "error", "content": [{"text": f"Geom '{geom_name or geom_id}' not found."}]}
 
         label = geom_name or f"geom_{gid}"
         changes = []
@@ -674,7 +674,7 @@ class PhysicsMixin:
             "content": [{"text": f"🔧 Geom '{label}': {', '.join(changes)}"}],
         }
 
-    # ── Contact Force Analysis ──
+    # Contact Force Analysis 
 
     def get_contact_forces(self) -> dict[str, Any]:
         """Get detailed contact forces for all active contacts.
@@ -683,7 +683,7 @@ class PhysicsMixin:
         Returns normal and friction forces.
         """
         if self._world is None or self._world._data is None:
-            return {"status": "error", "content": [{"text": "❌ No simulation."}]}
+            return {"status": "error", "content": [{"text": "No simulation."}]}
 
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
@@ -715,7 +715,7 @@ class PhysicsMixin:
 
         lines = [f"💥 {len(contacts)} contacts:"]
         for c in contacts[:15]:
-            lines.append(f"  {c['geom1']} ↔ {c['geom2']}: normal={c['normal_force']:.3f}N, dist={c['distance']:.4f}m")
+            lines.append(f"{c['geom1']} ↔ {c['geom2']}: normal={c['normal_force']:.3f}N, dist={c['distance']:.4f}m")
         if len(contacts) > 15:
             lines.append(f"  ... and {len(contacts) - 15} more")
 
@@ -724,7 +724,7 @@ class PhysicsMixin:
             "content": [{"text": "\n".join(lines)}, {"json": {"contacts": contacts}}],
         }
 
-    # ── Multi-Ray (batch raycasting) ──
+    # Multi-Ray (batch raycasting) 
 
     def multi_raycast(
         self,
@@ -738,7 +738,7 @@ class PhysicsMixin:
         Returns array of distances and hit geoms.
         """
         if self._world is None or self._world._model is None:
-            return {"status": "error", "content": [{"text": "❌ No simulation."}]}
+            return {"status": "error", "content": [{"text": "No simulation."}]}
 
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
@@ -769,7 +769,7 @@ class PhysicsMixin:
             ],
         }
 
-    # ── Forward Kinematics (explicit) ──
+    # Forward Kinematics (explicit) 
 
     def forward_kinematics(self) -> dict[str, Any]:
         """Run forward kinematics to update all body positions/orientations.
@@ -778,7 +778,7 @@ class PhysicsMixin:
         setting qpos to see updated Cartesian positions.
         """
         if self._world is None or self._world._model is None:
-            return {"status": "error", "content": [{"text": "❌ No simulation."}]}
+            return {"status": "error", "content": [{"text": "No simulation."}]}
 
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
@@ -804,12 +804,12 @@ class PhysicsMixin:
             ],
         }
 
-    # ── Total Mass ──
+    # Total Mass 
 
     def get_total_mass(self) -> dict[str, Any]:
         """Get total mass and per-body mass breakdown."""
         if self._world is None or self._world._model is None:
-            return {"status": "error", "content": [{"text": "❌ No simulation."}]}
+            return {"status": "error", "content": [{"text": "No simulation."}]}
 
         mj = _ensure_mujoco()
         model = self._world._model
@@ -830,7 +830,7 @@ class PhysicsMixin:
             ],
         }
 
-    # ── Export Model XML ──
+    # Export Model XML 
 
     def export_xml(self, output_path: str | None = None) -> dict[str, Any]:
         """Export the current model to MJCF XML.
@@ -839,7 +839,7 @@ class PhysicsMixin:
         including any runtime modifications.
         """
         if self._world is None or self._world._model is None:
-            return {"status": "error", "content": [{"text": "❌ No simulation."}]}
+            return {"status": "error", "content": [{"text": "No simulation."}]}
 
         mj = _ensure_mujoco()
 

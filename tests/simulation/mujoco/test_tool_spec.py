@@ -212,8 +212,7 @@ class TestToolSpecIsClean:
                 f"tool_spec.json must not advertise top-level '{leaked}' — it belongs under policy_config"
             )
 
-
-# ── Public-method DX contract ──
+# Public-method DX contract
 
 # Extract live alias table
 

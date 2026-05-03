@@ -186,9 +186,7 @@ class LerobotLocalPolicy(Policy):
             "Call set_robot_state_keys() with the robot's actual joint/motor names."
         )
 
-    # ------------------------------------------------------------------
     # Tokenizer resolution (VLA language token injection)
-    # ------------------------------------------------------------------
 
     def _resolve_tokenizer(self) -> Any | None:
         """Resolve and cache the tokenizer for VLA language token injection.
@@ -288,9 +286,7 @@ class LerobotLocalPolicy(Policy):
 
         return False
 
-    # ------------------------------------------------------------------
     # Model loading
-    # ------------------------------------------------------------------
 
     def _load_model(self) -> None:
         """Load the LeRobot model from pretrained path.
@@ -393,9 +389,7 @@ class LerobotLocalPolicy(Policy):
         # Initialize RTC if supported by this policy
         self._init_rtc()
 
-    # ------------------------------------------------------------------
     # Real-Time Chunking (RTC) support
-    # ------------------------------------------------------------------
 
     def _init_rtc(self) -> None:
         """Initialize RTC if the loaded policy supports it.
@@ -566,9 +560,7 @@ class LerobotLocalPolicy(Policy):
 
         return usable_actions
 
-    # ------------------------------------------------------------------
     # Inference
-    # ------------------------------------------------------------------
 
     async def get_actions(self, observation_dict: dict[str, Any], instruction: str, **kwargs) -> list[dict[str, Any]]:
         """Get actions from policy given observation and instruction.
@@ -637,9 +629,7 @@ class LerobotLocalPolicy(Policy):
 
         return self._tensor_to_action_dicts(action_tensor)
 
-    # ------------------------------------------------------------------
     # Observation batch building
-    # ------------------------------------------------------------------
 
     def _fixup_preprocessed_batch(self, batch: dict[str, Any]) -> dict[str, Any]:
         """Fix up a preprocessor-produced batch so every value is a proper batched tensor.
@@ -666,7 +656,7 @@ class LerobotLocalPolicy(Policy):
         fixed: dict[str, Any] = {}
 
         for key, val in batch.items():
-            # --- numpy arrays → torch tensors ---
+            # numpy arrays → torch tensors
             if isinstance(val, np.ndarray):
                 if "image" in key:
                     # HWC uint8 → CHW float32 → (1,C,H,W)
@@ -682,7 +672,7 @@ class LerobotLocalPolicy(Policy):
                         t = t.unsqueeze(0)  # (D,) → (1,D)
                     fixed[key] = t.to(device)
 
-            # --- torch tensors: ensure batch dim + device ---
+            # torch tensors: ensure batch dim + device
             elif isinstance(val, torch.Tensor):
                 # Auto-cast float64 → float32: ROS/dynamixel drivers often produce float64
                 t = val.float() if val.dtype == torch.float64 else val
@@ -695,7 +685,7 @@ class LerobotLocalPolicy(Policy):
                     t = t.unsqueeze(0)  # (D,) → (1,D)
                 fixed[key] = t.to(device)
 
-            # --- pass through anything else (strings, etc.) ---
+            # pass through anything else (strings, etc.)
             else:
                 fixed[key] = val
 
@@ -936,9 +926,7 @@ class LerobotLocalPolicy(Policy):
 
         return batch
 
-    # ------------------------------------------------------------------
     # Action conversion
-    # ------------------------------------------------------------------
 
     def _tensor_to_action_dicts(self, action_tensor: torch.Tensor) -> list[dict[str, Any]]:
         """Convert action tensor to list of robot action dicts.

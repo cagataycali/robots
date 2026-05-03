@@ -606,8 +606,8 @@ def test_j10_empty_sim_methods_never_raise():
         ):
             assert result["status"] == "error", f"{name} on empty sim should error, got: {result}"
             txt = _content_texts(result)
-            # Every error message contains either ❌ or the word "No"
-            assert "❌" in txt or "No " in txt or "Not " in txt, f"{name}: {txt!r}"
+            # Every error message contains either error or the word "No"
+            assert "error" in txt or "No " in txt or "Not " in txt, f"{name}: {txt!r}"
 
     s.destroy()
 

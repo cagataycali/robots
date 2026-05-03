@@ -9,9 +9,9 @@ from strands_robots.registry import import_policy_class, list_policy_providers, 
 
 logger = logging.getLogger(__name__)
 
-# ─────────────────────────────────────────────────────────────────────
+#
 # Runtime registration (for user-defined providers not in JSON)
-# ─────────────────────────────────────────────────────────────────────
+#
 
 _runtime_registry: dict[str, Callable[[], type[Policy]]] = {}
 _runtime_aliases: dict[str, str] = {}

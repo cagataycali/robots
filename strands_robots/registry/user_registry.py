@@ -34,7 +34,7 @@ Usage::
     from strands_robots.simulation import create_simulation
     sim = create_simulation()
     sim.create_world()
-    sim.add_robot("my_arm")   # ✅ auto-resolved
+    sim.add_robot("my_arm")   # auto-resolved
 
     # Remove it
     unregister_robot("my_arm")

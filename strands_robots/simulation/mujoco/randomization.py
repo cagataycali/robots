@@ -36,7 +36,7 @@ class RandomizationMixin:
     ) -> dict[str, Any]:
         """Apply domain randomization to the scene."""
         if self._world is None or self._world._model is None:
-            return {"status": "error", "content": [{"text": "❌ No simulation."}]}
+            return {"status": "error", "content": [{"text": "No simulation."}]}
 
         rng = np.random.default_rng(seed)
         mj = _ensure_mujoco()

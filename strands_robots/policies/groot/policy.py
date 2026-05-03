@@ -33,9 +33,7 @@ from .data_config import Gr00tDataConfig, load_data_config
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
 # Isaac-GR00T version detection
-# ---------------------------------------------------------------------------
 
 _GROOT_VERSION: str | None = None  # "n1.5", "n1.6", "n1.7", or None
 
@@ -90,9 +88,7 @@ def _detect_groot_version(*, force: bool = False) -> str | None:
     return None
 
 
-# ---------------------------------------------------------------------------
 # Mapping dataclasses
-# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -152,9 +148,7 @@ class ActionMapping:
                 raise ValueError(f"Action mapping: model key '{model_key}' not in model: {sorted(model_action)}")
 
 
-# ---------------------------------------------------------------------------
 # Auto-inference (exact name match → positional fallback)
-# ---------------------------------------------------------------------------
 
 
 def _auto_infer_observation_mapping(
@@ -214,9 +208,7 @@ def _match_keys(ours: list[str], model: list[str], label: str) -> dict[str, str]
     return mapping
 
 
-# ---------------------------------------------------------------------------
 # Parse user-provided flat mapping dicts
-# ---------------------------------------------------------------------------
 
 
 def _parse_observation_mapping(
@@ -247,9 +239,7 @@ def _parse_action_mapping(flat: dict[str, str]) -> ActionMapping:
     return ActionMapping(actions={k.removeprefix("action."): v for k, v in flat.items()})
 
 
-# ---------------------------------------------------------------------------
 # Gr00tPolicy
-# ---------------------------------------------------------------------------
 
 
 class Gr00tPolicy(Policy):
@@ -348,9 +338,7 @@ class Gr00tPolicy(Policy):
             self.data_config_name,
         )
 
-    # ------------------------------------------------------------------
     # Mapping initialization
-    # ------------------------------------------------------------------
 
     def _init_mappings(self) -> None:
         """Initialize observation/action mappings after model load."""
@@ -470,9 +458,7 @@ class Gr00tPolicy(Policy):
         if self._model_state_dof:
             logger.info("Model state DOF: %s", self._model_state_dof)
 
-    # ------------------------------------------------------------------
     # Model loading
-    # ------------------------------------------------------------------
 
     def _load_local_policy(self, model_path: str, embodiment_tag: str, device: str):
         if self._groot_version == "n1.7":
@@ -537,9 +523,9 @@ class Gr00tPolicy(Policy):
         )
         logger.info("GR00T N1.7 loaded from %s (direct)", model_path)
 
-    # ------------------------------------------------------------------
+
     # Policy interface
-    # ------------------------------------------------------------------
+
 
     @property
     def provider_name(self) -> str:
@@ -553,9 +539,8 @@ class Gr00tPolicy(Policy):
             return self._local_get_actions(observation_dict, instruction)
         return self._service_get_actions(observation_dict, instruction)
 
-    # ------------------------------------------------------------------
+
     # Local inference — talks model's native nested-dict format
-    # ------------------------------------------------------------------
 
     def _local_get_actions(self, robot_obs: dict[str, Any], instruction: str) -> list[dict[str, Any]]:
         """Local: prepare nested obs → infer → unpack actions."""
@@ -589,7 +574,7 @@ class Gr00tPolicy(Policy):
 
         assert self._obs_mapping is not None, "Observation mapping not initialized"
 
-        # ── Video ──
+        # Video
         mapped_video_keys = set(self._obs_mapping.video.keys())
         for robot_key, model_key in self._obs_mapping.video.items():
             if robot_key in robot_obs:
@@ -603,7 +588,7 @@ class Gr00tPolicy(Policy):
                     ref = _reference_video_shape(robot_obs, mapped_video_keys)
                     video_dict[model_key] = np.zeros((1, 1, *ref), dtype=np.uint8)
 
-        # ── State ──
+        # State
         for robot_key, model_key in self._obs_mapping.state.items():
             if robot_key in robot_obs:
                 state_dict[model_key] = _to_state_batch(robot_obs[robot_key])
@@ -623,7 +608,7 @@ class Gr00tPolicy(Policy):
                             model_key,
                         )
 
-        # ── Language ──
+        # Language
         lang_key = self._obs_mapping.language_key
         language_dict = {lang_key: [[instruction]]}
 
@@ -663,9 +648,9 @@ class Gr00tPolicy(Policy):
 
         return actions
 
-    # ------------------------------------------------------------------
+    
     # Service inference
-    # ------------------------------------------------------------------
+    
 
     def _service_get_actions(self, robot_obs: dict[str, Any], instruction: str) -> list[dict[str, Any]]:
         """Service mode: build observation, call server, unpack."""
@@ -746,9 +731,7 @@ class Gr00tPolicy(Policy):
         return actions
 
 
-# ---------------------------------------------------------------------------
 # Shape helpers — match Isaac-GR00T's expected formats exactly
-# ---------------------------------------------------------------------------
 
 
 def _to_video_batch(value: np.ndarray) -> np.ndarray:

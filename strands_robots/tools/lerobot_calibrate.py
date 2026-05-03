@@ -406,7 +406,7 @@ def lerobot_calibrate(
                 }
 
             # Format output
-            content_lines = ["🔧 **LeRobot Calibrations**", f"📍 Location: `{manager.base_path}`", ""]
+            content_lines = [" **LeRobot Calibrations**", f"Location: `{manager.base_path}`", ""]
             total_count = 0
 
             for dev_type, models in structure.items():
@@ -416,13 +416,13 @@ def lerobot_calibrate(
                 if not models:
                     continue
 
-                content_lines.append(f"## 📁 **{dev_type.title()}**")
+                content_lines.append(f"##  **{dev_type.title()}**")
 
                 for model, calibrations in models.items():
                     if device_model and device_model != model:
                         continue
 
-                    content_lines.append(f"### 🤖 **{model}** ({len(calibrations)} calibrations)")
+                    content_lines.append(f"###  **{model}** ({len(calibrations)} calibrations)")
 
                     for calib_id in calibrations:
                         info = manager.get_calibration_info(dev_type, model, calib_id)
@@ -448,7 +448,7 @@ def lerobot_calibrate(
             if not all([device_type, device_model, device_id]):
                 return {
                     "status": "error",
-                    "content": [{"text": "❌ **view** action requires: device_type, device_model, and device_id"}],
+                    "content": [{"text": "**view** action requires: device_type, device_model, and device_id"}],
                 }
 
             assert device_type is not None and device_model is not None and device_id is not None
@@ -456,25 +456,25 @@ def lerobot_calibrate(
             if not info:
                 return {
                     "status": "error",
-                    "content": [{"text": f"❌ Calibration not found: `{device_type}/{device_model}/{device_id}`"}],
+                    "content": [{"text": f"Calibration not found: `{device_type}/{device_model}/{device_id}`"}],
                 }
 
             content_lines = [
-                f"🔧 **Calibration Details: `{device_type}/{device_model}/{device_id}`**",
-                f"📍 **Path:** `{info['path']}`",
-                f"📅 **Modified:** {info['modified_time'].strftime('%Y-%m-%d %H:%M:%S')}",
-                f"📏 **Size:** {info['size_bytes']} bytes ({info['size_bytes'] / 1024:.1f} KB)",
+                f"**Calibration Details: `{device_type}/{device_model}/{device_id}`**",
+                f"**Path:** `{info['path']}`",
+                f"**Modified:** {info['modified_time'].strftime('%Y-%m-%d %H:%M:%S')}",
+                f"**Size:** {info['size_bytes']} bytes ({info['size_bytes'] / 1024:.1f} KB)",
                 "",
             ]
 
             if info.get("data") and isinstance(info["data"], dict):
-                content_lines.extend([f"🤖 **Motor Configuration** ({info.get('motor_count', 0)} motors)", ""])
+                content_lines.extend([f"**Motor Configuration** ({info.get('motor_count', 0)} motors)", ""])
 
                 for motor_name, motor_data in info["data"].items():
                     if isinstance(motor_data, dict):
                         content_lines.extend(
                             [
-                                f"### ⚙️ **{motor_name}**",
+                                f"### ️ **{motor_name}**",
                                 f"  - **ID:** {motor_data.get('id', 'N/A')}",
                                 f"  - **Drive Mode:** {motor_data.get('drive_mode', 'N/A')}",
                                 f"  - **Homing Offset:** {motor_data.get('homing_offset', 'N/A')}",
@@ -493,12 +493,12 @@ def lerobot_calibrate(
                 search_desc = f"query '{query}'" if query else "specified criteria"
                 return {
                     "status": "success",
-                    "content": [{"text": f"🔍 **No calibrations found** matching {search_desc}"}],
+                    "content": [{"text": f"**No calibrations found** matching {search_desc}"}],
                     "results": [],
                     "count": 0,
                 }
 
-            content_lines = [f"🔍 **Search Results** ({len(results)} found)", f"📍 Query: `{query or 'all'}`", ""]
+            content_lines = [f"**Search Results** ({len(results)} found)", f"Query: `{query or 'all'}`", ""]
 
             for result in results:
                 modified = result["modified_time"].strftime("%Y-%m-%d %H:%M:%S")
@@ -507,7 +507,7 @@ def lerobot_calibrate(
 
                 content_lines.extend(
                     [
-                        f"### 🤖 **{result['device_type']}/{result['device_model']}/{result['device_id']}**",
+                        f"###  **{result['device_type']}/{result['device_model']}/{result['device_id']}**",
                         f"  - **Modified:** {modified}",
                         f"  - **Size:** {size_kb:.1f} KB",
                         f"  - **Motors:** {motor_info}",
@@ -529,14 +529,14 @@ def lerobot_calibrate(
 
             if success:
                 content_lines = [
-                    "💾 **Backup Completed Successfully**",
-                    f"📁 **Location:** `{message}`",
-                    f"📊 **Files copied:** {count}",
+                    " **Backup Completed Successfully**",
+                    f"**Location:** `{message}`",
+                    f"**Files copied:** {count}",
                     "",
                 ]
 
                 if device_type or device_model or device_id:
-                    content_lines.append("🔍 **Filters applied:**")
+                    content_lines.append(" **Filters applied:**")
                     if device_type:
                         content_lines.append(f"  - Device Type: `{device_type}`")
                     if device_model:
@@ -551,11 +551,11 @@ def lerobot_calibrate(
                     "files_count": count,
                 }
             else:
-                return {"status": "error", "content": [{"text": f"❌ **Backup failed:** {message}"}]}
+                return {"status": "error", "content": [{"text": f"**Backup failed:** {message}"}]}
 
         elif action == "restore":
             if not backup_dir:
-                return {"status": "error", "content": [{"text": "❌ **restore** action requires: backup_dir"}]}
+                return {"status": "error", "content": [{"text": "**restore** action requires: backup_dir"}]}
 
             success, message, count = manager.restore_calibrations(Path(backup_dir), overwrite)
 
@@ -563,25 +563,25 @@ def lerobot_calibrate(
                 return {
                     "status": "success",
                     "content": [
-                        {"text": f"✅ **{message}**\n📁 From: `{backup_dir}`\n🔄 Overwrite mode: `{overwrite}`"}
+                        {"text": f"**{message}**\nFrom: `{backup_dir}`\nOverwrite mode: `{overwrite}`"}
                     ],
                     "restored_count": count,
                 }
             else:
-                return {"status": "error", "content": [{"text": f"❌ **Restore failed:** {message}"}]}
+                return {"status": "error", "content": [{"text": f"**Restore failed:** {message}"}]}
 
         elif action == "delete":
             if not all([device_type, device_model, device_id]):
                 return {
                     "status": "error",
-                    "content": [{"text": "❌ **delete** action requires: device_type, device_model, and device_id"}],
+                    "content": [{"text": "**delete** action requires: device_type, device_model, and device_id"}],
                 }
 
             assert device_type is not None and device_model is not None and device_id is not None
             if not manager.calibration_exists(device_type, device_model, device_id):
                 return {
                     "status": "error",
-                    "content": [{"text": f"❌ Calibration not found: `{device_type}/{device_model}/{device_id}`"}],
+                    "content": [{"text": f"Calibration not found: `{device_type}/{device_model}/{device_id}`"}],
                 }
 
             success = manager.delete_calibration(device_type, device_model, device_id)
@@ -589,19 +589,19 @@ def lerobot_calibrate(
             if success:
                 return {
                     "status": "success",
-                    "content": [{"text": f"🗑️ **Successfully deleted:** `{device_type}/{device_model}/{device_id}`"}],
+                    "content": [{"text": f"️ **Successfully deleted:** `{device_type}/{device_model}/{device_id}`"}],
                 }
             else:
                 return {
                     "status": "error",
-                    "content": [{"text": f"❌ **Failed to delete:** `{device_type}/{device_model}/{device_id}`"}],
+                    "content": [{"text": f"**Failed to delete:** `{device_type}/{device_model}/{device_id}`"}],
                 }
 
         elif action == "analyze":
             structure = manager.get_calibration_structure()
 
             if not any(structure.values()):
-                return {"status": "success", "content": [{"text": "📊 **No calibrations to analyze**"}], "analysis": {}}
+                return {"status": "success", "content": [{"text": "**No calibrations to analyze**"}], "analysis": {}}
 
             total_calibrations = 0
             device_counts = {"teleoperators": 0, "robots": 0}
@@ -631,10 +631,10 @@ def lerobot_calibrate(
                         }
 
             content_lines = [
-                "📊 **Calibration Analysis**",
-                f"📍 **Base Path:** `{manager.base_path}`",
+                " **Calibration Analysis**",
+                f"**Base Path:** `{manager.base_path}`",
                 "",
-                "### 📈 **Summary Statistics**",
+                "###  **Summary Statistics**",
                 f"  - **Total Calibrations:** {total_calibrations}",
                 f"  - **Teleoperators:** {device_counts['teleoperators']}",
                 f"  - **Robots:** {device_counts['robots']}",
@@ -643,7 +643,7 @@ def lerobot_calibrate(
             ]
 
             if model_stats:
-                content_lines.extend(["### 🤖 **Device Model Breakdown**"])
+                content_lines.extend(["###  **Device Model Breakdown**"])
                 for model_key, count in sorted(model_stats.items()):
                     motor_info = ""
                     if model_key in motor_stats:
@@ -671,8 +671,8 @@ def lerobot_calibrate(
                     "status": "success",
                     "content": [
                         {
-                            "text": f"📍 **Calibration Path**\n`{calib_path}`\n\n"
-                            f"{'✅ File exists' if exists else '❌ File does not exist'}"
+                            "text": f"**Calibration Path**\n`{calib_path}`\n\n"
+                            f"{' File exists' if exists else ' File does not exist'}"
                         }
                     ],
                     "path": str(calib_path),
@@ -684,7 +684,7 @@ def lerobot_calibrate(
                     "status": "success",
                     "content": [
                         {
-                            "text": f"📍 **LeRobot Calibration Paths**\n\n"
+                            "text": f"**LeRobot Calibration Paths**\n\n"
                             f"**Base:** `{manager.base_path}`\n"
                             f"**Teleoperators:** `{manager.teleop_path}`\n"
                             f"**Robots:** `{manager.robot_path}`"
@@ -700,7 +700,7 @@ def lerobot_calibrate(
                 "status": "error",
                 "content": [
                     {
-                        "text": f"❌ **Unknown action:** `{action}`\n\n"
+                        "text": f"**Unknown action:** `{action}`\n\n"
                         "Available actions: list, view, search, backup, restore, delete, analyze, path"
                     }
                 ],
@@ -708,4 +708,4 @@ def lerobot_calibrate(
 
     except Exception as e:
         logger.error(f"LeRobot calibrate tool error: {e}")
-        return {"status": "error", "content": [{"text": f"❌ **Tool execution failed:** {str(e)}"}]}
+        return {"status": "error", "content": [{"text": f"**Tool execution failed:** {str(e)}"}]}

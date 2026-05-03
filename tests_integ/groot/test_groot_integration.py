@@ -27,7 +27,7 @@ SERVER_STARTUP_TIMEOUT = int(os.getenv("GROOT_SERVER_TIMEOUT", "180"))
 pytestmark = pytest.mark.gpu
 
 
-# -- Server fixture ----------------------------------------------------------
+# -- Server fixture-------------------------------------------------------
 
 
 @pytest.fixture(scope="module")
@@ -56,7 +56,7 @@ def groot_server():
     _wait_for_server(proc, SERVER_PORT, SERVER_STARTUP_TIMEOUT)
     yield {"port": SERVER_PORT, "process": proc}
 
-    print("\n🛑 Stopping GR00T server...")
+    print("\nStopping GR00T server...")
     try:
         os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
         proc.wait(timeout=10)
@@ -107,7 +107,7 @@ def _wait_for_server(proc, port, timeout):
             if isinstance(reply, dict) and reply.get("status") == "ok":
                 sock.close()
                 context.term()
-                print(f"   ✅ Server ready in {time.time() - start:.1f}s")
+                print(f"   Server ready in {time.time() - start:.1f}s")
                 return
             sock.close()
         except Exception:
@@ -121,7 +121,7 @@ def _wait_for_server(proc, port, timeout):
     pytest.fail(f"Server not ready within {timeout}s.\n{stdout[-2000:]}")
 
 
-# -- Helpers ------------------------------------------------------------------
+# -- Helpers---------------------------------------------------------------
 
 
 def _make_gr1_server_observation(instruction="pick up the cube"):
@@ -171,7 +171,7 @@ def _extract_action(result):
     return result
 
 
-# -- Tests: Service Mode (ZMQ) -----------------------------------------------
+# -- Tests: Service Mode (ZMQ)--------------------------------------------
 
 
 class TestGr00tServiceMode:
@@ -234,7 +234,7 @@ class TestGr00tServiceMode:
         assert all(keys == key_sets[0] for keys in key_sets), f"Inconsistent action keys: {key_sets}"
 
 
-# -- Tests: Version Detection -------------------------------------------------
+# -- Tests: Version Detection----------------------------------------------
 
 
 class TestGr00tVersionDetection:
@@ -254,7 +254,7 @@ class TestGr00tVersionDetection:
         assert version1 == version2 == policy_mod._GROOT_VERSION
 
 
-# -- Tests: Local Mode --------------------------------------------------------
+# -- Tests: Local Mode-----------------------------------------------------
 
 
 class TestGr00tLocalMode:

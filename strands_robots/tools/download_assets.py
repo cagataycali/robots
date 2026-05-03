@@ -48,30 +48,30 @@ def download_assets(
         if action == "list":
             return {
                 "status": "success",
-                "content": [{"text": f"🤖 Available Robots:\n\n{format_robot_table()}"}],
+                "content": [{"text": f"Available Robots:\n\n{format_robot_table()}"}],
             }
 
         if action == "status":
             robots_info = list_available_robots()
             available = sum(1 for r in robots_info if r["available"])
-            lines = [f"📊 {available} available, {len(robots_info) - available} missing"]
+            lines = [f"{available} available, {len(robots_info) - available} missing"]
             lines.extend(
-                f"  {'✅' if r['available'] else '❌'} {r['name']:<20s} {r['category']:<12s} {r['description']}"
+                f"{'' if r['available'] else ''} {r['name']:<20s} {r['category']:<12s} {r['description']}"
                 for r in robots_info
             )
-            lines.append(f"\n📁 Cache: {get_user_assets_dir()}")
+            lines.append(f"\nCache: {get_user_assets_dir()}")
             return {"status": "success", "content": [{"text": "\n".join(lines)}]}
 
         if action == "download":
             robot_names = [r.strip() for r in robots.split(",") if r.strip()] if robots else None
             result = download_robots(names=robot_names, category=category, force=force)
             parts = [
-                f"📦 Downloaded: {result['downloaded']}, Skipped: {result['skipped']}, Failed: {result['failed']}",
+                f"Downloaded: {result['downloaded']}, Skipped: {result['skipped']}, Failed: {result['failed']}",
                 f"Method: {result.get('method', '?')}",
             ]
             if result.get("failed_details"):
-                parts.extend(f"  ❌ {n}: {r}" for n, r in result["failed_details"].items())
-            parts.append(f"📁 Assets: {result.get('assets_dir', '?')}")
+                parts.extend(f"   {n}: {r}" for n, r in result["failed_details"].items())
+            parts.append(f"Assets: {result.get('assets_dir', '?')}")
             return {"status": "success", "content": [{"text": "\n".join(parts)}]}
 
         return {
@@ -81,4 +81,4 @@ def download_assets(
 
     except Exception as exc:
         logger.error("download_assets error: %s", exc)
-        return {"status": "error", "content": [{"text": f"❌ Error: {exc}"}]}
+        return {"status": "error", "content": [{"text": f"Error: {exc}"}]}

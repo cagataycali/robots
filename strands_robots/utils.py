@@ -53,9 +53,9 @@ def require_optional(
         raise ImportError("\n".join(parts)) from None
 
 
-# ─────────────────────────────────────────────────────────────────────
+#
 # Path resolution — single source of truth for all strands-robots paths
-# ─────────────────────────────────────────────────────────────────────
+#
 
 #: Default base directory for all user data.
 DEFAULT_BASE_DIR = Path.home() / ".strands_robots"
@@ -128,9 +128,9 @@ def resolve_asset_path(relative_or_absolute: str | Path | None, default_name: st
     return assets / expanded
 
 
-# ─────────────────────────────────────────────────────────────────────
+# 
 # Path safety — prevent traversal via untrusted components
-# ─────────────────────────────────────────────────────────────────────
+# 
 
 
 def safe_join(base: Path, untrusted: str) -> Path:

@@ -19,9 +19,9 @@ zmq = pytest.importorskip("zmq", reason="zmq not installed — pip install 'stra
 from strands_robots.policies.groot.client import Gr00tInferenceClient, MsgSerializer  # noqa: E402
 from strands_robots.policies.groot.data_config import ModalityConfig  # noqa: E402
 
-# ---------------------------------------------------------------------------
+# (section)
 # MsgSerializer
-# ---------------------------------------------------------------------------
+# (section)
 
 
 class TestMsgSerializer:
@@ -129,9 +129,9 @@ class TestMsgSerializer:
         assert result["num"] == 42
 
 
-# ---------------------------------------------------------------------------
+# (section)
 # Gr00tInferenceClient — construction & api_token
-# ---------------------------------------------------------------------------
+# (section)
 
 
 class TestGr00tInferenceClient:
@@ -251,9 +251,9 @@ class TestGr00tInferenceClient:
         assert sent_data[0]["data"] == {"obs": "test"}
 
 
-# ---------------------------------------------------------------------------
+# (section)
 # Dependency check
-# ---------------------------------------------------------------------------
+# (section)
 
 
 class TestZmqDeps:

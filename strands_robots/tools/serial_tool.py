@@ -93,7 +93,7 @@ def serial_tool(
             }
 
         if not port:
-            return {"status": "error", "content": [{"text": "❌ Port parameter required for this action"}]}
+            return {"status": "error", "content": [{"text": "Port parameter required for this action"}]}
 
         # Open serial connection
         ser = serial.Serial(port, baudrate, timeout=timeout)
@@ -103,13 +103,13 @@ def serial_tool(
                 # Parse hex string (e.g., "FF FF 01 04" -> [0xFF, 0xFF, 0x01, 0x04])
                 hex_bytes = bytes.fromhex(hex_data.replace(" ", ""))
                 ser.write(hex_bytes)
-                response_text = f"✅ Sent hex data: {hex_data}"
+                response_text = f"Sent hex data: {hex_data}"
             elif data:
                 ser.write(data.encode())
-                response_text = f"✅ Sent string data: {data}"
+                response_text = f"Sent string data: {data}"
             else:
                 ser.close()
-                return {"status": "error", "content": [{"text": "❌ No data or hex_data provided"}]}
+                return {"status": "error", "content": [{"text": "No data or hex_data provided"}]}
 
             ser.close()
             return {"status": "success", "content": [{"text": response_text}]}
@@ -140,7 +140,7 @@ def serial_tool(
                 sent_text = f"Sent string: {data}"
             else:
                 ser.close()
-                return {"status": "error", "content": [{"text": "❌ No data to send"}]}
+                return {"status": "error", "content": [{"text": "No data to send"}]}
 
             # Small delay then read response
             time.sleep(0.1)
@@ -160,7 +160,7 @@ def serial_tool(
         elif action == "feetech_position":
             if motor_id is None or position is None:
                 ser.close()
-                return {"status": "error", "content": [{"text": "❌ motor_id and position required"}]}
+                return {"status": "error", "content": [{"text": "motor_id and position required"}]}
 
             # Feetech position command: INST_WRITE (0x03), Goal_Position address (0x2A)
             params = [0x2A, position & 0xFF, (position >> 8) & 0xFF]
@@ -178,7 +178,7 @@ def serial_tool(
         elif action == "feetech_velocity":
             if motor_id is None or velocity is None:
                 ser.close()
-                return {"status": "error", "content": [{"text": "❌ motor_id and velocity required"}]}
+                return {"status": "error", "content": [{"text": "motor_id and velocity required"}]}
 
             # Feetech velocity command: Goal_Velocity address (0x2E)
             params = [0x2E, velocity & 0xFF, (velocity >> 8) & 0xFF]
@@ -191,7 +191,7 @@ def serial_tool(
         elif action == "feetech_ping":
             if motor_id is None:
                 ser.close()
-                return {"status": "error", "content": [{"text": "❌ motor_id required"}]}
+                return {"status": "error", "content": [{"text": "motor_id required"}]}
 
             # Feetech ping command
             packet = build_feetech_packet(motor_id, 0x01, [])  # INST_PING
@@ -240,7 +240,7 @@ def serial_tool(
                 "status": "error",
                 "content": [
                     {
-                        "text": f"❌ Unknown action: {action}\n"
+                        "text": f"Unknown action: {action}\n"
                         "Available: list_ports, send, read, send_read,"
                         " feetech_position, feetech_velocity, feetech_ping, monitor"
                     }
@@ -248,6 +248,6 @@ def serial_tool(
             }
 
     except serial.SerialException as e:
-        return {"status": "error", "content": [{"text": f"❌ Serial error: {e}"}]}
+        return {"status": "error", "content": [{"text": f"Serial error: {e}"}]}
     except Exception as e:
-        return {"status": "error", "content": [{"text": f"❌ Error: {e}"}]}
+        return {"status": "error", "content": [{"text": f"Error: {e}"}]}

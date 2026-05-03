@@ -456,7 +456,7 @@ def lerobot_teleoperate(
 
             # Check if session already exists
             if session_manager.get_session(session_name):
-                return {"status": "error", "content": [{"text": f"❌ Session '{session_name}' already exists"}]}
+                return {"status": "error", "content": [{"text": f"Session '{session_name}' already exists"}]}
 
             # Build command
             try:
@@ -489,7 +489,7 @@ def lerobot_teleoperate(
                     play_sounds=play_sounds,
                 )
             except Exception as e:
-                return {"status": "error", "content": [{"text": f"❌ Command build failed: {str(e)}"}]}
+                return {"status": "error", "content": [{"text": f"Command build failed: {str(e)}"}]}
 
             if background:
                 # Start in background
@@ -586,15 +586,15 @@ def lerobot_teleoperate(
 
         elif action == "stop":
             if not session_name:
-                return {"status": "error", "content": [{"text": "❌ Session name required for stop action"}]}
+                return {"status": "error", "content": [{"text": "Session name required for stop action"}]}
 
             session_info = session_manager.get_session(session_name)  # type: ignore[assignment]  # narrow Optional
             if not session_info:
-                return {"status": "error", "content": [{"text": f"❌ Session '{session_name}' not found"}]}
+                return {"status": "error", "content": [{"text": f"Session '{session_name}' not found"}]}
 
             pid = session_info.get("pid")
             if not pid:
-                return {"status": "error", "content": [{"text": f"❌ No PID found for session '{session_name}'"}]}
+                return {"status": "error", "content": [{"text": f"No PID found for session '{session_name}'"}]}
 
             pid_int = int(pid)
             try:
@@ -610,7 +610,7 @@ def lerobot_teleoperate(
 
                 return {
                     "status": "success",
-                    "content": [{"text": f"🛑 **Session Stopped**\n📝 Session: `{session_name}`\n🆔 PID: {pid}"}],
+                    "content": [{"text": f"**Session Stopped**\n📝 Session: `{session_name}`\n🆔 PID: {pid}"}],
                     "session_name": session_name,
                     "session_info": session_info,
                 }
@@ -620,13 +620,13 @@ def lerobot_teleoperate(
                 session_manager.remove_session(session_name)
                 return {
                     "status": "success",
-                    "content": [{"text": f"✅ Session '{session_name}' was already stopped"}],
+                    "content": [{"text": f"Session '{session_name}' was already stopped"}],
                     "session_name": session_name,
                 }
             except Exception as e:
                 return {
                     "status": "error",
-                    "content": [{"text": f"❌ Failed to stop session '{session_name}': {str(e)}"}],
+                    "content": [{"text": f"Failed to stop session '{session_name}': {str(e)}"}],
                 }
 
         elif action == "list":
@@ -665,11 +665,11 @@ def lerobot_teleoperate(
 
         elif action == "status":
             if not session_name:
-                return {"status": "error", "content": [{"text": "❌ Session name required for status action"}]}
+                return {"status": "error", "content": [{"text": "Session name required for status action"}]}
 
             session_info = session_manager.get_session(session_name)  # type: ignore[assignment]  # narrow Optional
             if not session_info:
-                return {"status": "error", "content": [{"text": f"❌ Session '{session_name}' not found"}]}
+                return {"status": "error", "content": [{"text": f"Session '{session_name}' not found"}]}
 
             pid = session_info.get("pid")
             start_time: float = float(session_info.get("start_time") or 0)
@@ -715,7 +715,7 @@ def lerobot_teleoperate(
 
         elif action == "replay":
             if not dataset_repo_id:
-                return {"status": "error", "content": [{"text": "❌ dataset_repo_id required for replay action"}]}
+                return {"status": "error", "content": [{"text": "dataset_repo_id required for replay action"}]}
 
             try:
                 cmd = build_lerobot_command(
@@ -730,7 +730,7 @@ def lerobot_teleoperate(
                     display_data=display_data,
                 )
             except Exception as e:
-                return {"status": "error", "content": [{"text": f"❌ Replay command build failed: {str(e)}"}]}
+                return {"status": "error", "content": [{"text": f"Replay command build failed: {str(e)}"}]}
 
             # Execute replay
             result = subprocess.run(cmd, capture_output=True, text=True)
@@ -757,8 +757,8 @@ def lerobot_teleoperate(
             }
 
         else:
-            return {"status": "error", "content": [{"text": f"❌ Unknown action: {action}"}]}
+            return {"status": "error", "content": [{"text": f"Unknown action: {action}"}]}
 
     except Exception as e:
         logger.error(f"LeRobot teleoperate error: {e}")
-        return {"status": "error", "content": [{"text": f"❌ Tool execution failed: {str(e)}"}]}
+        return {"status": "error", "content": [{"text": f"Tool execution failed: {str(e)}"}]}
