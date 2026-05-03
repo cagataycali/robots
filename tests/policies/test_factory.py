@@ -5,10 +5,6 @@
 * kwargs forwarding to the chosen provider
 """
 
-"""Tests for strands_robots.policies — behavior-focused tests for the policy system."""
-
-import asyncio
-
 import pytest
 
 from strands_robots.policies import (
@@ -28,7 +24,6 @@ try:
     _groot_available = True
 except ImportError:
     _groot_available = False
-
 
 
 class TestCreatePolicy:

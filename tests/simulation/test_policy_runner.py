@@ -9,24 +9,23 @@ pure-Python ``FakeSim`` stub, plus the real-backend behaviours:
 * ``_extract_frame_ndarray`` decodes render() content blocks
 * ``SimEngine.run_policy`` signature lock: no flat video params leaked.
 """
+
 from __future__ import annotations
 
 import base64
 import inspect
 import io
 import os
+import sys
 import time
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pytest
-
-import strands_robots  # noqa: F401
-import sys
-
 from PIL import Image
 
+import strands_robots  # noqa: F401
 from strands_robots.policies.mock import MockPolicy
 from strands_robots.simulation import Simulation
 from strands_robots.simulation.base import SimEngine
@@ -37,10 +36,10 @@ from strands_robots.simulation.policy_runner import (
     _extract_frame_ndarray,
 )
 
-
 # ────────────────────────────────────────────────────────────────────────
 # PolicyRunner against FakeSim (backend-agnostic)
 # ────────────────────────────────────────────────────────────────────────
+
 
 class FakeSim(SimEngine):
     """Minimal ``SimEngine`` implementation — no physics, records all calls."""
@@ -141,7 +140,6 @@ def test_policy_runner_import_does_not_pull_in_mujoco():
     # Force a fresh import of the runner module
     if "strands_robots.simulation.policy_runner" in sys.modules:
         del sys.modules["strands_robots.simulation.policy_runner"]
-
 
     leaked = [m for m in sys.modules if m.startswith("mujoco")]
     assert not leaked, (
@@ -281,6 +279,7 @@ def test_simengine_run_policy_validates_robot_exists():
 # run_policy(video=...) regression + helper unit tests
 # ────────────────────────────────────────────────────────────────────────
 
+
 @pytest.mark.skipif(
     os.environ.get("CI") == "true" and not os.environ.get("ROBOT_TEST_MUJOCO"),
     reason="requires OpenGL; opt-in via ROBOT_TEST_MUJOCO=1",
@@ -318,7 +317,6 @@ def test_run_policy_video_writes_mp4(tmp_path: Path) -> None:
 
 def test_extract_frame_ndarray_handles_render_shape() -> None:
     """Unit test the helper directly against the real render() output shape."""
-
 
     # Synthetic PNG with bytes source (the common MuJoCo path)
     img = Image.new("RGB", (8, 8), color=(128, 64, 32))
@@ -358,6 +356,7 @@ def test_extract_frame_ndarray_handles_render_shape() -> None:
 # ────────────────────────────────────────────────────────────────────────
 # policy_object kwarg regression
 # ────────────────────────────────────────────────────────────────────────
+
 
 @pytest.mark.skipif(
     os.environ.get("CI") == "true" and not os.environ.get("ROBOT_TEST_MUJOCO"),
@@ -403,7 +402,6 @@ def test_run_policy_reuses_policy_object() -> None:
 def test_run_policy_object_param_exposed() -> None:
     """Signature check — policy_object must be in both base and MuJoCo variants."""
 
-
     sig = inspect.signature(Simulation.run_policy)
     assert "policy_object" in sig.parameters
     # Default must be None so existing callers are unaffected
@@ -417,6 +415,7 @@ def test_run_policy_object_param_exposed() -> None:
 # ────────────────────────────────────────────────────────────────────────
 # VideoConfig dataclass + legacy key consolidation
 # ────────────────────────────────────────────────────────────────────────
+
 
 class TestVideoConfigDataclass:
     def test_default_config_is_disabled(self) -> None:

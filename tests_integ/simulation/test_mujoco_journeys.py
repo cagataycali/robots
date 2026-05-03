@@ -27,11 +27,11 @@ These 10 journeys together touch every tool_spec action that's worth
 exercising, every public method on ``Simulation`` + mixins, and every
 ``PolicyRunner`` entry point (``run``/``replay``/``evaluate``).
 """
+
 from __future__ import annotations
 
 import json
 import os
-import time
 from pathlib import Path
 
 import numpy as np
@@ -71,9 +71,7 @@ def mock_policy(sim):
 
 def _content_texts(result):
     """Pull every text block from a tool result — used in assertions."""
-    return " ".join(
-        c.get("text", "") for c in result.get("content", []) if isinstance(c, dict)
-    )
+    return " ".join(c.get("text", "") for c in result.get("content", []) if isinstance(c, dict))
 
 
 def _content_json(result, idx=1):
@@ -85,9 +83,7 @@ def _content_json(result, idx=1):
 
 
 def _n_images(result):
-    return sum(
-        1 for c in result.get("content", []) if isinstance(c, dict) and "image" in c
-    )
+    return sum(1 for c in result.get("content", []) if isinstance(c, dict) and "image" in c)
 
 
 # =============================================================================
@@ -217,7 +213,14 @@ def test_j2_physics_probe_every_mixin_method(sim):
     assert _content_json(tm)["total_mass"] > 0
 
     # inverse + forward dynamics round-trip (don't compare values, just smoke)
-    for m in ("inverse_dynamics", "forward_kinematics", "get_contacts", "get_contact_forces", "get_body_state", "get_sensor_data"):
+    for m in (
+        "inverse_dynamics",
+        "forward_kinematics",
+        "get_contacts",
+        "get_contact_forces",
+        "get_body_state",
+        "get_sensor_data",
+    ):
         result = getattr(sim, m)(body_name="target") if m == "get_body_state" else getattr(sim, m)()
         assert result["status"] == "success", f"{m}: {result}"
 
@@ -336,6 +339,7 @@ def test_j5_replay_applies_recorded_actions_to_arm(sim, monkeypatch):
 
     # Monkey-patch the module-level loader that replay() calls
     import strands_robots.dataset_recorder as dr
+
     monkeypatch.setattr(dr, "load_lerobot_episode", fake_loader, raising=False)
 
     from strands_robots.simulation.policy_runner import PolicyRunner
@@ -582,7 +586,22 @@ def test_j10_empty_sim_methods_never_raise():
         # recording) legitimately return success with an informational message.
         STATUS_QUERIES_OK_ON_EMPTY = {"get_cameras_recording_status"}
         if (
-            name.startswith(("get_", "list_", "render", "save_", "load_", "remove_", "stop_", "apply_", "raycast", "inverse_", "forward_", "set_"))
+            name.startswith(
+                (
+                    "get_",
+                    "list_",
+                    "render",
+                    "save_",
+                    "load_",
+                    "remove_",
+                    "stop_",
+                    "apply_",
+                    "raycast",
+                    "inverse_",
+                    "forward_",
+                    "set_",
+                )
+            )
             and name not in STATUS_QUERIES_OK_ON_EMPTY
         ):
             assert result["status"] == "error", f"{name} on empty sim should error, got: {result}"

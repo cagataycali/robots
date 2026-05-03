@@ -5,19 +5,11 @@ sinusoidal actions and is the workhorse for every policy-runner / recording /
 evaluate test in the suite.
 """
 
-"""Tests for strands_robots.policies — behavior-focused tests for the policy system."""
-
 import asyncio
-
-import pytest
 
 from strands_robots.policies import (
     MockPolicy,
-    Policy,
-    UntrustedRemoteCodeError,
     create_policy,
-    list_providers,
-    register_policy,
 )
 
 # Detect groot-service availability for conditional test grouping.
@@ -28,7 +20,6 @@ try:
     _groot_available = True
 except ImportError:
     _groot_available = False
-
 
 
 class TestMockPolicy:
@@ -86,5 +77,3 @@ class TestMockPolicy:
         actions = p.get_actions_sync({"observation.state": [0, 0]}, "move")
         assert len(actions) == 8
         assert all(isinstance(a, dict) for a in actions)
-
-
