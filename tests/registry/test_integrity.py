@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-REGISTRY_PATH = Path(__file__).parent.parent / "strands_robots" / "registry" / "robots.json"
+REGISTRY_PATH = Path(__file__).resolve().parents[2] / "strands_robots" / "registry" / "robots.json"
 
 
 @pytest.fixture(scope="module")

@@ -1,18 +1,11 @@
-"""Dispatcher tests for the nested ``policy_config`` shape.
+"""Tests for ``Simulation``'s tool_spec AgentTool interface.
 
-After the backend-agnostic ``PolicyRunner`` refactor, the AgentTool
-dispatcher is schema-driven: every method parameter is explicit, and
-policy-provider-specific kwargs are nested under ``policy_config`` — they
-are NEVER advertised as top-level properties in ``tool_spec.json`` and
-NEVER forwarded via ``**kwargs``.
+Two concerns:
 
-These tests pin:
-
-1. ``policy_config`` nested forwarding works for ``run_policy`` /
-   ``eval_policy`` / ``start_policy``.
-2. ``tool_spec.json`` advertises ``policy_config`` and does NOT advertise
-   any of the old leaked provider-specific fields.
-3. Unknown top-level keys are dropped silently (no ``**kwargs`` passthrough).
+1. ``_dispatch_action`` forwards ``policy_config`` nested-dict correctly and
+   drops unknown top-level keys (no ``**kwargs`` passthrough).
+2. ``tool_spec.json`` every action resolves to a *public* method (the DX
+   contract: no ``sim._private_thing`` behind an alias).
 """
 
 from __future__ import annotations
@@ -25,6 +18,10 @@ import pytest
 
 # Skip the whole module if mujoco isn't available (dev env without [sim-mujoco]).
 pytest.importorskip("mujoco")
+
+import json
+import re
+from pathlib import Path
 
 from strands_robots.simulation.mujoco.simulation import Simulation  # noqa: E402
 
@@ -186,7 +183,7 @@ class TestToolSpecIsClean:
         import json
         from pathlib import Path
 
-        spec_path = Path(__file__).parent.parent / "strands_robots" / "simulation" / "mujoco" / "tool_spec.json"
+        spec_path = Path(__file__).resolve().parents[3] / "strands_robots" / "simulation" / "mujoco" / "tool_spec.json"
         spec = json.loads(spec_path.read_text())
         props = spec["properties"]
 
@@ -214,3 +211,39 @@ class TestToolSpecIsClean:
             assert leaked not in props, (
                 f"tool_spec.json must not advertise top-level '{leaked}' — it belongs under policy_config"
             )
+
+# ── Public-method DX contract ──
+
+# Extract live alias table
+
+
+_src = (Path(__file__).resolve().parents[3] / "strands_robots/simulation/mujoco/simulation.py").read_text()
+_m = re.search(r"_ALIASES\s*=\s*\{([^}]+)\}", _src)
+_LIVE_ALIASES = {}
+if _m:
+    for _line in _m.group(1).splitlines():
+        _mm = re.match(r'\s*"([^"]+)":\s*"([^"]+)"', _line.strip().rstrip(","))
+        if _mm:
+            _LIVE_ALIASES[_mm.group(1)] = _mm.group(2)
+
+
+def test_every_tool_spec_action_has_a_public_method_or_documented_alias():
+    """DevX contract: every action in tool_spec.json resolves to either
+    a PUBLIC method ``sim.<action>()`` or to a PUBLIC method via the
+    dispatcher's documented ``_ALIASES`` table. No private leading-underscore
+    fallbacks are allowed.
+    """
+    spec_path = Path(__file__).resolve().parents[3] / "strands_robots/simulation/mujoco/tool_spec.json"
+    spec = json.loads(spec_path.read_text())
+    actions = spec["properties"]["action"]["enum"]
+
+    offenders = []
+    for action in actions:
+        resolved = _LIVE_ALIASES.get(action, action)
+        method = getattr(Simulation, resolved, None)
+        if method is None:
+            offenders.append(f"{action!r} → method {resolved!r} does not exist")
+        elif resolved.startswith("_"):
+            offenders.append(f"{action!r} → PRIVATE method {resolved!r} (leaky DX)")
+
+    assert not offenders, "tool_spec actions must resolve to PUBLIC methods:\n  - " + "\n  - ".join(offenders)

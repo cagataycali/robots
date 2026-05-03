@@ -24,7 +24,7 @@ import pytest
 # Load registry directly to avoid import side effects
 # ─────────────────────────────────────────────────────────────────────
 
-_REGISTRY_PATH = Path(__file__).resolve().parent.parent / "strands_robots" / "registry" / "robots.json"
+_REGISTRY_PATH = Path(__file__).resolve().parents[2] / "strands_robots" / "registry" / "robots.json"
 
 
 def _load_registry() -> dict:

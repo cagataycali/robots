@@ -279,7 +279,7 @@ class TestToolSpecActionCoverage:
 
         from strands_robots.simulation.mujoco.simulation import Simulation
 
-        spec_path = Path(__file__).parent.parent / "strands_robots" / "simulation" / "mujoco" / "tool_spec.json"
+        spec_path = Path(__file__).resolve().parents[3] / "strands_robots" / "simulation" / "mujoco" / "tool_spec.json"
         with open(spec_path) as f:
             spec = json.load(f)
 
@@ -306,7 +306,7 @@ class TestToolSpecActionCoverage:
         import json
         from pathlib import Path
 
-        spec_path = Path(__file__).parent.parent / "strands_robots" / "simulation" / "mujoco" / "tool_spec.json"
+        spec_path = Path(__file__).resolve().parents[3] / "strands_robots" / "simulation" / "mujoco" / "tool_spec.json"
         with open(spec_path) as f:
             spec = json.load(f)
 
