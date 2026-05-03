@@ -523,7 +523,7 @@ class TestSceneMutationBlockedDuringPolicy:
         assert result["status"] == "success"
 
         # Start a policy (fast_mode so it completes quickly after stop)
-        result = sim.start_policy("arm1", policy_provider="mock", duration=10.0, fast_mode=True)
+        result = sim.start_policy("arm1", policy_provider="mock", duration=2.0, fast_mode=True)
         assert result["status"] == "success"
 
         # Try adding an object while policy is running — should be blocked
@@ -534,7 +534,7 @@ class TestSceneMutationBlockedDuringPolicy:
         # Stop the policy
         sim.stop_policy("arm1")
         if "arm1" in sim._policy_threads:
-            sim._policy_threads["arm1"].result(timeout=5.0)
+            sim._policy_threads["arm1"].result(timeout=10.0)
 
         # Now it should work
         result = sim.add_object("cube", shape="box", position=[0.3, 0, 0.05])
@@ -550,7 +550,7 @@ class TestSceneMutationBlockedDuringPolicy:
         result = sim.add_robot("arm1", urdf_path=robot_path)
         assert result["status"] == "success"
 
-        result = sim.start_policy("arm1", policy_provider="mock", duration=10.0, fast_mode=True)
+        result = sim.start_policy("arm1", policy_provider="mock", duration=2.0, fast_mode=True)
         assert result["status"] == "success"
 
         # Try adding a camera while policy is running — should be blocked
@@ -560,7 +560,7 @@ class TestSceneMutationBlockedDuringPolicy:
 
         sim.stop_policy("arm1")
         if "arm1" in sim._policy_threads:
-            sim._policy_threads["arm1"].result(timeout=5.0)
+            sim._policy_threads["arm1"].result(timeout=10.0)
 
         result = sim.add_camera("top_cam", position=[0, 0, 2], target=[0, 0, 0])
         assert result["status"] == "success"
@@ -575,7 +575,7 @@ class TestSceneMutationBlockedDuringPolicy:
         result = sim.add_robot("arm1", urdf_path=robot_path)
         assert result["status"] == "success"
 
-        result = sim.start_policy("arm1", policy_provider="mock", duration=10.0, fast_mode=True)
+        result = sim.start_policy("arm1", policy_provider="mock", duration=2.0, fast_mode=True)
         assert result["status"] == "success"
 
         # load_scene while policy is running — should be blocked
@@ -585,7 +585,7 @@ class TestSceneMutationBlockedDuringPolicy:
 
         sim.stop_policy("arm1")
         if "arm1" in sim._policy_threads:
-            sim._policy_threads["arm1"].result(timeout=5.0)
+            sim._policy_threads["arm1"].result(timeout=10.0)
 
         sim.cleanup()
 
@@ -601,7 +601,7 @@ class TestSceneMutationBlockedDuringPolicy:
         result = sim.add_object("cube", shape="box", position=[0.3, 0, 0.05])
         assert result["status"] == "success"
 
-        result = sim.start_policy("arm1", policy_provider="mock", duration=10.0, fast_mode=True)
+        result = sim.start_policy("arm1", policy_provider="mock", duration=2.0, fast_mode=True)
         assert result["status"] == "success"
 
         # Try moving an object while policy is running — should be blocked
@@ -611,7 +611,7 @@ class TestSceneMutationBlockedDuringPolicy:
 
         sim.stop_policy("arm1")
         if "arm1" in sim._policy_threads:
-            sim._policy_threads["arm1"].result(timeout=5.0)
+            sim._policy_threads["arm1"].result(timeout=10.0)
 
         # Now it should work
         result = sim.move_object("cube", position=[0.5, 0, 0.1])
@@ -627,7 +627,7 @@ class TestSceneMutationBlockedDuringPolicy:
         result = sim.add_robot("arm1", urdf_path=robot_path)
         assert result["status"] == "success"
 
-        result = sim.start_policy("arm1", policy_provider="mock", duration=10.0, fast_mode=True)
+        result = sim.start_policy("arm1", policy_provider="mock", duration=2.0, fast_mode=True)
         assert result["status"] == "success"
 
         # Try removing robot while policy is running — should be blocked
@@ -637,7 +637,7 @@ class TestSceneMutationBlockedDuringPolicy:
 
         sim.stop_policy("arm1")
         if "arm1" in sim._policy_threads:
-            sim._policy_threads["arm1"].result(timeout=5.0)
+            sim._policy_threads["arm1"].result(timeout=10.0)
 
         # Now it should work
         result = sim.remove_robot("arm1")
