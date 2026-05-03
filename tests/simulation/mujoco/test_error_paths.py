@@ -20,6 +20,8 @@ import tempfile
 
 import pytest
 
+mj = pytest.importorskip("mujoco")
+
 os.environ.setdefault("MUJOCO_GL", "glfw")
 
 # Inline robot XML — avoids network dependency on robot model repos

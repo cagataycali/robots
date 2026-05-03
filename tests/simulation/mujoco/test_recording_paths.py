@@ -18,6 +18,8 @@ import tempfile
 
 import pytest
 
+pytest.importorskip("mujoco")
+
 os.environ.setdefault("MUJOCO_GL", "glfw")
 
 # Inline MJCF XML to avoid network-dependent so101 model downloads.

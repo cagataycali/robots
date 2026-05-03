@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+pytest.importorskip("mujoco")
+
 _requires_mujoco = pytest.mark.skipif(
     os.environ.get("CI") == "true" and not os.environ.get("ROBOT_TEST_MUJOCO"),
     reason="requires OpenGL; opt-in via ROBOT_TEST_MUJOCO=1",

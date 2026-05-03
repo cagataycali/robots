@@ -10,6 +10,8 @@ import os
 
 import pytest
 
+pytest.importorskip("mujoco")
+
 os.environ.setdefault("MUJOCO_GL", "glfw")
 
 
