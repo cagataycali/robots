@@ -68,11 +68,22 @@ def sim():
     s.cleanup()
 
 
+def _extract_json_block(result, idx=1):
+    """Schema-tolerant: accepts both {"json": {...}} (new) and {"text": <json_str>} (legacy).
+
+    The content-block schema is in flux; this helper ensures tests work against either.
+    """
+    block = result["content"][idx]
+    if "json" in block:
+        return block["json"]
+    return json.loads(block["text"])
+
+
 class TestRaycasting:
     def test_raycast_hits_ground(self, sim):
         result = sim.raycast(origin=[0, 0, 2], direction=[0, 0, -1])
         assert result["status"] == "success"
-        data = json.loads(result["content"][1]["text"])
+        data = _extract_json_block(result, 1)
         assert data["hit"] is True
         assert data["distance"] is not None
         assert data["distance"] > 0
@@ -80,21 +91,21 @@ class TestRaycasting:
     def test_raycast_hits_box(self, sim):
         result = sim.raycast(origin=[0, 0, 2], direction=[0, 0, -1])
         assert result["status"] == "success"
-        data = json.loads(result["content"][1]["text"])
+        data = _extract_json_block(result, 1)
         assert data["hit"] is True
         assert data["geom_name"] in ("box_geom", "ground")
 
     def test_raycast_misses(self, sim):
         result = sim.raycast(origin=[0, 0, 2], direction=[0, 0, 1])  # shooting up
         assert result["status"] == "success"
-        data = json.loads(result["content"][1]["text"])
+        data = _extract_json_block(result, 1)
         assert data["hit"] is False
 
     def test_multi_raycast(self, sim):
         dirs = [[0, 0, -1], [1, 0, 0], [0, 1, 0], [0, 0, 1]]
         result = sim.multi_raycast(origin=[0, 0, 2], directions=dirs)
         assert result["status"] == "success"
-        rays = json.loads(result["content"][1]["text"])["rays"]
+        rays = _extract_json_block(result, 1)["rays"]
         assert len(rays) == 4
         # At least the downward ray should hit
         assert rays[0]["distance"] is not None
@@ -104,7 +115,7 @@ class TestJacobians:
     def test_body_jacobian(self, sim):
         result = sim.get_jacobian(body_name="link2")
         assert result["status"] == "success"
-        data = json.loads(result["content"][1]["text"])
+        data = _extract_json_block(result, 1)
         assert len(data["jacp"]) == 3  # 3×nv
         assert data["nv"] == sim._world._model.nv
 
@@ -129,7 +140,7 @@ class TestEnergy:
     def test_get_energy(self, sim):
         result = sim.get_energy()
         assert result["status"] == "success"
-        data = json.loads(result["content"][1]["text"])
+        data = _extract_json_block(result, 1)
         assert "potential" in data
         assert "kinetic" in data
         assert "total" in data
@@ -137,11 +148,11 @@ class TestEnergy:
         assert data["potential"] != 0 or data["kinetic"] != 0
 
     def test_energy_changes_after_step(self, sim):
-        e1 = json.loads(sim.get_energy()["content"][1]["text"])
+        e1 = _extract_json_block(sim.get_energy(), 1)
         # Step physics to let box fall
         for _ in range(100):
             mj.mj_step(sim._world._model, sim._world._data)
-        e2 = json.loads(sim.get_energy()["content"][1]["text"])
+        e2 = _extract_json_block(sim.get_energy(), 1)
         # Kinetic energy should change (box falls)
         assert e1["kinetic"] != e2["kinetic"] or e1["potential"] != e2["potential"]
 
@@ -169,7 +180,7 @@ class TestMassMatrix:
     def test_get_mass_matrix(self, sim):
         result = sim.get_mass_matrix()
         assert result["status"] == "success"
-        data = json.loads(result["content"][1]["text"])
+        data = _extract_json_block(result, 1)
         nv = sim._world._model.nv
         assert data["shape"] == [nv, nv]
         assert data["rank"] > 0
@@ -177,7 +188,7 @@ class TestMassMatrix:
 
     def test_mass_diagonal_positive(self, sim):
         result = sim.get_mass_matrix()
-        diag = json.loads(result["content"][1]["text"])["diagonal"]
+        diag = _extract_json_block(result, 1)["diagonal"]
         assert all(d >= 0 for d in diag)
 
 
@@ -211,7 +222,7 @@ class TestInverseDynamics:
         mj.mj_forward(sim._world._model, sim._world._data)
         result = sim.inverse_dynamics()
         assert result["status"] == "success"
-        forces = json.loads(result["content"][1]["text"])["qfrc_inverse"]
+        forces = _extract_json_block(result, 1)["qfrc_inverse"]
         assert "shoulder" in forces or "elbow" in forces
 
 
@@ -219,7 +230,7 @@ class TestBodyState:
     def test_get_body_state(self, sim):
         result = sim.get_body_state(body_name="box1")
         assert result["status"] == "success"
-        state = json.loads(result["content"][1]["text"])
+        state = _extract_json_block(result, 1)
         assert "position" in state
         assert "quaternion" in state
         assert "linear_velocity" in state
@@ -255,14 +266,14 @@ class TestSensors:
     def test_get_all_sensors(self, sim):
         result = sim.get_sensor_data()
         assert result["status"] == "success"
-        sensors = json.loads(result["content"][1]["text"])["sensors"]
+        sensors = _extract_json_block(result, 1)["sensors"]
         assert "shoulder_pos" in sensors
         assert "elbow_pos" in sensors
 
     def test_get_specific_sensor(self, sim):
         result = sim.get_sensor_data(sensor_name="shoulder_pos")
         assert result["status"] == "success"
-        sensors = json.loads(result["content"][1]["text"])["sensors"]
+        sensors = _extract_json_block(result, 1)["sensors"]
         assert len(sensors) == 1
         assert "shoulder_pos" in sensors
 
@@ -270,7 +281,7 @@ class TestSensors:
         # Set shoulder position
         sim.set_joint_positions(positions={"shoulder": 1.0})
         result = sim.get_sensor_data(sensor_name="shoulder_pos")
-        val = json.loads(result["content"][1]["text"])["sensors"]["shoulder_pos"]["values"]
+        val = _extract_json_block(result, 1)["sensors"]["shoulder_pos"]["values"]
         assert abs(val - 1.0) < 0.01
 
 
@@ -304,7 +315,7 @@ class TestContactForces:
         result = sim.get_contact_forces()
         assert result["status"] == "success"
         # Box should be in contact with ground
-        contacts = json.loads(result["content"][1]["text"])["contacts"]
+        contacts = _extract_json_block(result, 1)["contacts"]
         assert len(contacts) > 0
         assert contacts[0]["normal_force"] != 0
 
@@ -313,7 +324,7 @@ class TestForwardKinematics:
     def test_forward_kinematics(self, sim):
         result = sim.forward_kinematics()
         assert result["status"] == "success"
-        bodies = json.loads(result["content"][1]["text"])["bodies"]
+        bodies = _extract_json_block(result, 1)["bodies"]
         assert "box1" in bodies
         assert "link1" in bodies
         assert len(bodies["box1"]["position"]) == 3
@@ -323,7 +334,7 @@ class TestTotalMass:
     def test_get_total_mass(self, sim):
         result = sim.get_total_mass()
         assert result["status"] == "success"
-        data = json.loads(result["content"][1]["text"])
+        data = _extract_json_block(result, 1)
         assert data["total_mass"] > 0
         assert "box1" in data["bodies"]
         assert data["bodies"]["box1"] == pytest.approx(1.0)

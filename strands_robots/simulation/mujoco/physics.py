@@ -15,7 +15,6 @@ Exposes the deep MuJoCo C API through clean Python methods:
 - Contact force analysis (mj_contactForce)
 """
 
-import json
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -269,7 +268,7 @@ class PhysicsMixin:
         else:
             text = "🎯 Ray: no intersection"
 
-        return {"status": "success", "content": [{"text": text}, {"text": json.dumps(result, default=str)}]}
+        return {"status": "success", "content": [{"text": text}, {"json": result}]}
 
     # ── Jacobians ──
 
@@ -320,16 +319,7 @@ class PhysicsMixin:
             "status": "success",
             "content": [
                 {"text": f"🧮 Jacobian for {label}: pos={jacp.shape}, rot={jacr.shape}, nv={model.nv}"},
-                {
-                    "text": json.dumps(
-                        {
-                            "jacp": jacp.tolist(),
-                            "jacr": jacr.tolist(),
-                            "nv": model.nv,
-                        },
-                        default=str,
-                    )
-                },
+                {"json": {"jacp": jacp.tolist(), "jacr": jacr.tolist(), "nv": model.nv}},
             ],
         }
 
@@ -354,7 +344,7 @@ class PhysicsMixin:
             "status": "success",
             "content": [
                 {"text": f"⚡ Energy: potential={potential:.4f}J, kinetic={kinetic:.4f}J, total={total:.4f}J"},
-                {"text": json.dumps({"potential": potential, "kinetic": kinetic, "total": total}, default=str)},
+                {"json": {"potential": potential, "kinetic": kinetic, "total": total}},
             ],
         }
 
@@ -383,16 +373,13 @@ class PhysicsMixin:
             "content": [
                 {"text": f"🧮 Mass matrix: {nv}×{nv}, rank={rank}, cond={cond:.2e}"},
                 {
-                    "text": json.dumps(
-                        {
-                            "shape": [nv, nv],
-                            "rank": rank,
-                            "condition_number": cond,
-                            "diagonal": np.diag(M).tolist(),
-                            "total_mass": float(np.sum(model.body_mass)),
-                        },
-                        default=str,
-                    )
+                    "json": {
+                        "shape": [nv, nv],
+                        "rank": rank,
+                        "condition_number": cond,
+                        "diagonal": np.diag(M).tolist(),
+                        "total_mass": float(np.sum(model.body_mass)),
+                    }
                 },
             ],
         }
@@ -425,7 +412,7 @@ class PhysicsMixin:
             "status": "success",
             "content": [
                 {"text": f"🔄 Inverse dynamics: {len(forces)} joint forces computed"},
-                {"text": json.dumps({"qfrc_inverse": forces}, default=str)},
+                {"json": {"qfrc_inverse": forces}},
             ],
         }
 
@@ -483,7 +470,7 @@ class PhysicsMixin:
             f"  mass: {mass:.4f}kg, com: {com}"
         )
 
-        return {"status": "success", "content": [{"text": text}, {"text": json.dumps(state, default=str)}]}
+        return {"status": "success", "content": [{"text": text}, {"json": state}]}
 
     # ── Direct Joint Control ──
 
@@ -605,7 +592,7 @@ class PhysicsMixin:
 
         return {
             "status": "success",
-            "content": [{"text": "\n".join(lines)}, {"text": json.dumps({"sensors": sensors}, default=str)}],
+            "content": [{"text": "\n".join(lines)}, {"json": {"sensors": sensors}}],
         }
 
     # ── Runtime Model Modification ──
@@ -734,7 +721,7 @@ class PhysicsMixin:
 
         return {
             "status": "success",
-            "content": [{"text": "\n".join(lines)}, {"text": json.dumps({"contacts": contacts}, default=str)}],
+            "content": [{"text": "\n".join(lines)}, {"json": {"contacts": contacts}}],
         }
 
     # ── Multi-Ray (batch raycasting) ──
@@ -778,7 +765,7 @@ class PhysicsMixin:
             "status": "success",
             "content": [
                 {"text": f"🎯 Multi-ray: {hit_count}/{len(directions)} hits from {origin}"},
-                {"text": json.dumps({"rays": results}, default=str)},
+                {"json": {"rays": results}},
             ],
         }
 
@@ -813,7 +800,7 @@ class PhysicsMixin:
             "status": "success",
             "content": [
                 {"text": f"🦴 FK computed for {model.nbody} bodies"},
-                {"text": json.dumps({"bodies": bodies}, default=str)},
+                {"json": {"bodies": bodies}},
             ],
         }
 
@@ -839,7 +826,7 @@ class PhysicsMixin:
             "status": "success",
             "content": [
                 {"text": f"⚖️ Total mass: {total:.4f}kg ({len(bodies)} bodies with mass)"},
-                {"text": json.dumps({"total_mass": total, "bodies": bodies}, default=str)},
+                {"json": {"total_mass": total, "bodies": bodies}},
             ],
         }
 

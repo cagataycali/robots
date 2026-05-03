@@ -1,5 +1,6 @@
 """MuJoCo Simulation — AgentTool orchestrator composing physics/rendering/policy mixins."""
 
+import inspect
 import json
 import logging
 import os
@@ -9,7 +10,7 @@ import time
 from collections.abc import AsyncGenerator
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from strands.tools.tools import AgentTool
 from strands.types._events import ToolResultEvent
@@ -18,8 +19,10 @@ from strands.types.tools import ToolSpec, ToolUse
 from strands_robots.simulation.base import SimEngine
 from strands_robots.simulation.model_registry import (
     list_available_models,
-    register_urdf,
     resolve_model,
+)
+from strands_robots.simulation.model_registry import (
+    register_urdf as _register_urdf,
 )
 from strands_robots.simulation.models import SimCamera, SimObject, SimRobot, SimStatus, SimWorld
 from strands_robots.simulation.mujoco.backend import _ensure_mujoco
@@ -35,6 +38,9 @@ from strands_robots.simulation.mujoco.scene_ops import (
     inject_robot_into_scene,
 )
 from strands_robots.simulation.policy_runner import CooperativeStop
+
+if TYPE_CHECKING:
+    from strands_robots.policies import Policy
 
 logger = logging.getLogger(__name__)
 
@@ -487,7 +493,7 @@ class Simulation(
         """Return ordered robot names (SimEngine ABC).
 
         For the user-facing agent-tool action (rich dict output) see
-        :meth:`list_robots_action`, which the dispatcher aliases to the
+        :meth:`list_robots_info`, which the dispatcher aliases to the
         ``list_robots`` action string.
         """
         if self._world is None or not self._world.robots:
@@ -500,7 +506,7 @@ class Simulation(
             return []
         return list(self._world.robots[robot_name].joint_names)
 
-    def list_robots_action(self) -> dict[str, Any]:
+    def list_robots_info(self) -> dict[str, Any]:
         """Agent-tool action: pretty-printed robot listing.
 
         Separate from :meth:`list_robots` (which returns ``list[str]`` for
@@ -551,7 +557,7 @@ class Simulation(
         for jnt, vals in state.items():
             text += f"  {jnt}: pos={vals['position']:.4f}, vel={vals['velocity']:.4f}\n"
 
-        return {"status": "success", "content": [{"text": text}, {"text": json.dumps({"state": state}, default=str)}]}
+        return {"status": "success", "content": [{"text": text}, {"json": {"state": state}}]}
 
     # --- Object Management ---
 
@@ -838,11 +844,11 @@ class Simulation(
 
     # --- URDF Registry ---
 
-    def list_urdfs_action(self) -> dict[str, Any]:
+    def list_urdfs(self) -> dict[str, Any]:
         return {"status": "success", "content": [{"text": list_available_models()}]}
 
-    def register_urdf_action(self, data_config: str, urdf_path: str) -> dict[str, Any]:
-        register_urdf(data_config, urdf_path)
+    def register_urdf(self, data_config: str, urdf_path: str) -> dict[str, Any]:
+        _register_urdf(data_config, urdf_path)
         resolved = resolve_model(data_config)
         return {
             "status": "success",
@@ -901,7 +907,7 @@ class Simulation(
 
         return {
             "status": "success",
-            "content": [{"text": "\n".join(lines)}, {"text": json.dumps({"features": features}, default=str)}],
+            "content": [{"text": "\n".join(lines)}, {"json": {"features": features}}],
         }
 
     # --- AgentTool Interface ---
@@ -956,10 +962,10 @@ class Simulation(
                 "add_object, remove_object, move_object, list_objects, "
                 "add_camera, remove_camera, "
                 "run_policy, start_policy, stop_policy, "
-                "render, render_depth, get_contacts, "
+                "render, render_depth, render_all, get_contacts, "
                 "step, set_gravity, set_timestep, "
                 "randomize, "
-                "start_recording, stop_recording, get_recording_status, "
+                "start_recording, stop_recording, get_recording_status, start_cameras_recording, stop_cameras_recording, get_cameras_recording_status, "
                 "open_viewer, close_viewer, "
                 "list_urdfs, register_urdf, get_features. "
                 "Call destroy() at session end to release resources."
@@ -997,6 +1003,7 @@ class Simulation(
         action_horizon: int = 8,
         fast_mode: bool = False,
         video: dict[str, Any] | None = None,
+        policy_object: "Policy | None" = None,
     ) -> dict[str, Any]:
         """Start policy execution on a background thread (non-blocking).
 
@@ -1032,6 +1039,7 @@ class Simulation(
             action_horizon=action_horizon,
             fast_mode=fast_mode,
             video=video,
+            policy_object=policy_object,
         )
         self._policy_threads[robot_name] = future
 
@@ -1100,6 +1108,7 @@ class Simulation(
         action_horizon: int = 8,
         fast_mode: bool = False,
         video: dict[str, Any] | None = None,
+        policy_object: "Policy | None" = None,
     ) -> dict[str, Any]:
         """MuJoCo ``run_policy`` override: pre-flight world check + graceful stop.
 
@@ -1122,6 +1131,7 @@ class Simulation(
                 action_horizon=action_horizon,
                 fast_mode=fast_mode,
                 video=video,
+                policy_object=policy_object,
             )
         finally:
             if self._world is not None and robot_name in self._world.robots:
@@ -1136,10 +1146,10 @@ class Simulation(
         """
         # Aliases for actions whose method names differ
         _ALIASES = {
-            "list_urdfs": "list_urdfs_action",
-            "register_urdf": "register_urdf_action",
-            "list_robots": "list_robots_action",
-            "stop_policy": "_stop_policy",
+            # The "list_robots" tool action returns a rich dict for LLM display,
+            # but Simulation.list_robots() is the SimEngine ABC contract returning
+            # list[str]. Alias maps the tool action to the dict-returning variant.
+            "list_robots": "list_robots_info",
         }
 
         # Map input field names to method parameter names for physics actions
@@ -1153,9 +1163,6 @@ class Simulation(
 
         if method is None or action.startswith("_"):
             return {"status": "error", "content": [{"text": f"❌ Unknown action: {action}"}]}
-
-        # Signatures are cached per method to avoid repeated introspection.
-        import inspect
 
         cache = getattr(self, "_sig_cache", None)
         if cache is None:
@@ -1203,7 +1210,13 @@ class Simulation(
 
         return method(**kwargs)
 
-    def _stop_policy(self, robot_name: str = "") -> dict[str, Any]:
+    def stop_policy(self, robot_name: str = "") -> dict[str, Any]:
+        """Stop a running policy on the given robot (cooperative cancellation).
+
+        Counterpart to ``start_policy``. Flips the robot's ``policy_running``
+        flag; the background loop in ``_run_policy_loop`` sees it and raises
+        :class:`PolicyStopped` which is caught cleanly in ``start_policy``.
+        """
         if self._world and robot_name in self._world.robots:
             self._world.robots[robot_name].policy_running = False
             return {"status": "success", "content": [{"text": f"🛑 Stopped on '{robot_name}'"}]}

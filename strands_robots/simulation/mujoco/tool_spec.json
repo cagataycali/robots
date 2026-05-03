@@ -58,7 +58,11 @@
         "get_contact_forces",
         "forward_kinematics",
         "get_total_mass",
-        "export_xml"
+        "export_xml",
+        "render_all",
+        "start_cameras_recording",
+        "stop_cameras_recording",
+        "get_cameras_recording_status"
       ]
     },
     "scene_path": {
@@ -335,6 +339,17 @@
       "type": "object",
       "description": "Provider-specific config dict forwarded to strands_robots.policies.create_policy. Contents depend on policy_provider. For 'groot': host, port, api_token, observation_mapping, action_mapping. For 'lerobot_local': pretrained_name_or_path, device, trust_remote_code, actions_per_step, use_processor, processor_overrides, observation_mapping, action_mapping. For 'mock': {} is fine.",
       "additionalProperties": true
+    },
+    "cameras": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "List of camera names. Omit to use every camera in the scene. Used by render_all / start_cameras_recording."
+    },
+    "output_dir": {
+      "type": "string",
+      "description": "Directory for start_cameras_recording output. Defaults to /tmp/strands_robots/recordings."
     }
   },
   "required": [

@@ -61,6 +61,42 @@ OnFrame = Callable[[int, dict[str, Any], dict[str, Any]], None]
 SuccessFn = Callable[[dict[str, Any]], bool]
 
 
+def _extract_frame_ndarray(render_result: dict) -> np.ndarray | None:
+    """Decode the PNG bytes emitted by ``SimEngine.render`` into an ndarray.
+
+    ``render()`` returns the image nested inside a content block as
+    ``{"image": {"format": "png", "source": {"bytes": <bytes>}}}``. This
+    helper walks that structure, decodes the PNG, and returns a (H, W, 3|4)
+    numpy array. Returns ``None`` if no image is found — the recorder then
+    skips the frame rather than aborting the rollout.
+    """
+    if not isinstance(render_result, dict):
+        return None
+    for block in render_result.get("content", []) or []:
+        if not isinstance(block, dict):
+            continue
+        image = block.get("image")
+        if not isinstance(image, dict):
+            continue
+        source = image.get("source") or {}
+        png_bytes = source.get("bytes")
+        if png_bytes is None and source.get("data") is not None:
+            import base64
+
+            png_bytes = base64.b64decode(source["data"])
+        if not png_bytes:
+            continue
+        try:
+            import io
+
+            from PIL import Image
+
+            return np.asarray(Image.open(io.BytesIO(png_bytes)).convert("RGB"))
+        except Exception:
+            return None
+    return None
+
+
 @dataclass(frozen=True)
 class VideoConfig:
     """Configuration for optional MP4 recording during :meth:`PolicyRunner.run`.
@@ -227,9 +263,13 @@ class PolicyRunner:
                             width=video.width,
                             height=video.height,
                         )
-                        img = frame.get("image") if isinstance(frame, dict) else None
-                        if img is not None:
-                            writer.append_data(np.asarray(img))
+                        # sim.render() returns {status, content:[{text},{image:{source:{bytes}}}]}
+                        # Decode the PNG bytes from the content block and hand an ndarray
+                        # to imageio. Silently skips when the PNG decode fails rather than
+                        # aborting the whole rollout (renderer errors shouldn't kill training).
+                        img_arr = _extract_frame_ndarray(frame)
+                        if img_arr is not None:
+                            writer.append_data(img_arr)
                             frame_count += 1
                         next_frame_step += frame_interval
 
@@ -258,12 +298,13 @@ class PolicyRunner:
         if writer is not None:
             assert video is not None and video_path is not None
             writer.close()
-            file_kb = os.path.getsize(video_path) / 1024
-            text += (
-                f"\n🎬 Video: {video_path}\n"
-                f"📹 {frame_count} frames, {video.fps}fps, "
-                f"{video.width}x{video.height} | 💾 {file_kb:.0f} KB"
-            )
+            if frame_count > 0 and os.path.exists(video_path):
+                file_kb = os.path.getsize(video_path) / 1024
+                text += (
+                    f"\n🎬 Video: {video_path}\n"
+                    f"📹 {frame_count} frames, {video.fps}fps, "
+                    f"{video.width}x{video.height} | 💾 {file_kb:.0f} KB"
+                )
         return {"status": "success", "content": [{"text": text}]}
 
     # ------------------------------------------------------------------

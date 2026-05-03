@@ -20,7 +20,10 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from strands_robots.policies import Policy
 
 logger = logging.getLogger(__name__)
 
@@ -240,6 +243,7 @@ class SimEngine(ABC):
         action_horizon: int = 8,
         fast_mode: bool = False,
         video: dict[str, Any] | None = None,
+        policy_object: Policy | None = None,
     ) -> dict[str, Any]:
         """Run a policy loop in the simulation (blocking).
 
@@ -285,7 +289,13 @@ class SimEngine(ABC):
                 "content": [{"text": f"❌ Robot '{robot_name}' not found."}],
             }
 
-        policy = create_policy(policy_provider, **(policy_config or {}))
+        if policy_object is not None:
+            # Pre-built policy path — skip the expensive create_policy call.
+            # Caller is responsible for policy.set_robot_state_keys(...) if needed,
+            # but we set it here defensively so the semantics match the provider path.
+            policy = policy_object
+        else:
+            policy = create_policy(policy_provider, **(policy_config or {}))
         policy.set_robot_state_keys(self.robot_joint_names(robot_name))
 
         on_frame = self._make_run_policy_hook(robot_name, instruction)
@@ -313,6 +323,7 @@ class SimEngine(ABC):
         action_horizon: int = 8,
         fast_mode: bool = False,
         video: dict[str, Any] | None = None,
+        policy_object: Policy | None = None,
     ) -> dict[str, Any]:
         """Start policy execution in a background thread (non-blocking).
 
@@ -333,6 +344,7 @@ class SimEngine(ABC):
             action_horizon=action_horizon,
             fast_mode=fast_mode,
             video=video,
+            policy_object=policy_object,
         )
 
     def replay_episode(

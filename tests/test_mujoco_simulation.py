@@ -291,7 +291,7 @@ class TestRobotManagement:
         # SimEngine ABC: list[str]
         assert sim_with_world.list_robots() == []
         # Agent-tool action surface: dict
-        result = sim_with_world.list_robots_action()
+        result = sim_with_world.list_robots_info()
         assert result["status"] == "success"
         assert "No robots" in result["content"][0]["text"]
 
@@ -299,7 +299,7 @@ class TestRobotManagement:
         # SimEngine ABC: list[str]
         assert "arm1" in sim_with_robot.list_robots()
         # Agent-tool action surface: dict
-        result = sim_with_robot.list_robots_action()
+        result = sim_with_robot.list_robots_info()
         assert result["status"] == "success"
         assert "arm1" in result["content"][0]["text"]
 
@@ -516,7 +516,8 @@ class TestIntrospection:
     def test_get_features_with_robot(self, sim_with_robot):
         result = sim_with_robot.get_features()
         assert result["status"] == "success"
-        data = json.loads(result["content"][1]["text"])
+        json_content = result["content"][1]
+        data = json_content.get("json") or json.loads(json_content.get("text", "{}"))
         features = data["features"]
         assert features["n_joints"] > 0
         assert features["n_actuators"] > 0
@@ -532,11 +533,11 @@ class TestIntrospection:
 
 class TestURDFRegistry:
     def test_list_urdfs(self, sim):
-        result = sim.list_urdfs_action()
+        result = sim.list_urdfs()
         assert result["status"] == "success"
 
     def test_register_urdf(self, sim, robot_xml_path):
-        result = sim.register_urdf_action("test_arm", robot_xml_path)
+        result = sim.register_urdf("test_arm", robot_xml_path)
         assert result["status"] == "success"
         assert "test_arm" in result["content"][0]["text"]
 
@@ -597,7 +598,7 @@ class TestPolicyExecution:
         assert "started" in result["content"][0]["text"]
 
         # Stop it
-        result = sim_with_robot._stop_policy("arm1")
+        result = sim_with_robot.stop_policy("arm1")
         assert result["status"] == "success"
 
     def test_start_policy_no_world(self, sim):
@@ -732,7 +733,7 @@ class TestErrorPaths:
         # ABC returns empty list when no world
         assert sim.list_robots() == []
         # Action-tool surface returns a friendly error dict
-        result = sim.list_robots_action()
+        result = sim.list_robots_info()
         assert result["status"] == "error"
 
     def test_render_no_world(self, sim):
@@ -821,7 +822,7 @@ class TestRendererThreadSafety:
         """start_policy+stop+cleanup must not SIGSEGV (was fatal pre-fix)."""
         r = sim_with_robot.start_policy("arm1", policy_provider="mock", duration=0.2, fast_mode=True)
         assert r["status"] == "success"
-        sim_with_robot._stop_policy("arm1")
+        sim_with_robot.stop_policy("arm1")
         # Wait for the policy thread to drain so its renderer ref is released.
         future = sim_with_robot._policy_threads.get("arm1")
         if future is not None:

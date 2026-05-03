@@ -288,9 +288,7 @@ class TestToolSpecActionCoverage:
 
         # Aliases used by _dispatch_action
         aliases = {
-            "list_urdfs": "list_urdfs_action",
-            "register_urdf": "register_urdf_action",
-            "stop_policy": "_stop_policy",
+            "list_robots": "list_robots_info",
         }
 
         missing = []

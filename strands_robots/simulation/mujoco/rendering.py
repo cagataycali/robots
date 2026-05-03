@@ -1,7 +1,6 @@
 """Rendering mixin — render, render_depth, get_contacts, observation helpers."""
 
 import io
-import json
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -259,11 +258,7 @@ class RenderingMixin:
                             f"Min: {float(depth.min()):.3f}m, Max: {float(depth.max()):.3f}m"
                         )
                     },
-                    {
-                        "text": json.dumps(
-                            {"depth_min": float(depth.min()), "depth_max": float(depth.max())}, default=str
-                        )
-                    },
+                    {"json": {"depth_min": float(depth.min()), "depth_max": float(depth.max())}},
                 ],
             }
         except Exception as e:
@@ -290,5 +285,280 @@ class RenderingMixin:
 
         return {
             "status": "success",
-            "content": [{"text": text}, {"text": json.dumps({"contacts": contacts}, default=str)}],
+            "content": [{"text": text}, {"json": {"contacts": contacts}}],
         }
+
+    # ------------------------------------------------------------------
+    # Multi-camera capture — Session recording for simulation
+    # ------------------------------------------------------------------
+    #
+    # Design:
+    #   - render_all(cameras=None, width=, height=) — single-shot snapshot
+    #     of every camera at current sim_time. One PNG per camera.
+    #   - start_cameras_recording(...) — daemon thread, one imageio writer
+    #     per camera, appends frames at fps.
+    #   - stop_cameras_recording() — flushes writers, returns paths + sizes.
+    #   - get_cameras_recording_status() — frame counts, elapsed, per-cam.
+    #
+    # Thread safety: _get_renderer is thread-local (threading.local), so the
+    # background thread creates its own GL context. No shared state with
+    # main dispatch thread.
+
+    def _active_camera_list(self, cameras):
+        """Resolve cameras=None to every camera currently in the world."""
+        if self._world is None or self._world._model is None:
+            return []
+        mj = _ensure_mujoco()
+        model = self._world._model
+        from_model = [mj.mj_id2name(model, mj.mjtObj.mjOBJ_CAMERA, i) for i in range(model.ncam)]
+        from_model = [c for c in from_model if c]
+        py_side = list(self._world.cameras.keys()) if self._world else []
+        all_cams = list(dict.fromkeys(from_model + py_side))
+        if cameras is None:
+            return all_cams
+        missing = [c for c in cameras if c not in all_cams]
+        if missing:
+            logger.warning("Unknown camera(s) requested for capture: %s", missing)
+        return [c for c in cameras if c in all_cams]
+
+    def render_all(self, cameras=None, width=None, height=None):
+        """Render every (or a subset of) camera in one call.
+
+        Counterpart to ``render()`` for multi-view workflows — e.g. stereo,
+        overhead + wrist, or all cameras in a 4-view grid. Each camera ships
+        as its own ``{"image": {...}}`` block in the response.
+
+        Args:
+            cameras: list of camera names; None = every camera.
+            width:   per-camera width (defaults to camera's configured width).
+            height:  per-camera height (same).
+
+        Returns:
+            ``{"status", "content": [{"text": summary},
+                                     {"text": "📸 cam1"}, {"image": {...}},
+                                     {"text": "📸 cam2"}, {"image": {...}}, ...]}``
+        """
+        if self._world is None or self._world._model is None:
+            return {"status": "error", "content": [{"text": "❌ No simulation."}]}
+        names = self._active_camera_list(cameras)
+        if not names:
+            return {"status": "error", "content": [{"text": "❌ No cameras in scene."}]}
+        content = []
+        ok, failed = 0, 0
+        for cam_name in names:
+            r = self.render(camera_name=cam_name, width=width, height=height)
+            if r.get("status") == "success":
+                ok += 1
+                for block in r.get("content", []):
+                    if isinstance(block, dict) and "image" in block:
+                        content.append({"text": f"📸 {cam_name}"})
+                        content.append(block)
+                        break
+            else:
+                failed += 1
+                err = r.get("content", [{}])[0].get("text", "?")
+                content.append({"text": f"❌ {cam_name}: {err}"})
+        summary = (
+            f"📸 Multi-camera snapshot at t={self._world.sim_time:.3f}s: "
+            f"{ok} ok, {failed} failed, {len(names)} requested"
+        )
+        return {
+            "status": "success" if ok else "error",
+            "content": [{"text": summary}, *content],
+        }
+
+    def start_cameras_recording(
+        self,
+        cameras=None,
+        output_dir=None,
+        fps=30,
+        width=None,
+        height=None,
+        name=None,
+        max_frames_per_camera=3000,
+    ):
+        """Start background capture of one ndarray buffer per camera.
+
+        Strategy: the background thread collects raw RGB frames in memory
+        (one list per camera). ``stop_cameras_recording`` then flushes each
+        list to an MP4 on the main thread. This avoids a long-lived ffmpeg
+        subprocess pipe that would break under concurrent imageio writes +
+        policy-loop timing jitter.
+
+        Memory cost: H*W*3 bytes * fps * duration * n_cams. For a 2s / 4-cam /
+        320x240 / 15fps rollout: ~27 MB. Bounded by ``max_frames_per_camera``.
+
+        Args:
+            cameras: list of camera names; None = every camera.
+            output_dir: where to write ``{tag}__{cam}.mp4``.
+            fps: capture rate.
+            width/height: per-frame size.
+            name: filename tag (auto if None).
+            max_frames_per_camera: safety cap on in-memory buffers.
+        """
+        import os as _os
+        import threading as _threading
+        import time as _time
+        import uuid as _uuid
+
+        if self._world is None or self._world._model is None:
+            return {"status": "error", "content": [{"text": "❌ No simulation."}]}
+
+        if getattr(self, "_cams_rec_state", None) and self._cams_rec_state.get("running"):
+            cur = self._cams_rec_state["name"]
+            return {
+                "status": "error",
+                "content": [{"text": f"❌ Already recording '{cur}'. Call stop_cameras_recording() first."}],
+            }
+
+        names = self._active_camera_list(cameras)
+        if not names:
+            return {"status": "error", "content": [{"text": "❌ No cameras to record."}]}
+
+        out_dir = _os.path.abspath(output_dir or "/tmp/strands_robots/recordings")
+        _os.makedirs(out_dir, exist_ok=True)
+        tag = name or f"rec_{_uuid.uuid4().hex[:8]}"
+
+        buffers = {cam: [] for cam in names}
+        paths = {cam: _os.path.join(out_dir, f"{tag}__{cam}.mp4") for cam in names}
+
+        state = {
+            "running": True,
+            "name": tag,
+            "cameras": names,
+            "fps": fps,
+            "width": width,
+            "height": height,
+            "buffers": buffers,
+            "paths": paths,
+            "errors": dict.fromkeys(names, 0),
+            "output_dir": out_dir,
+            "started_at": _time.time(),
+            "thread": None,
+            "max_frames": max_frames_per_camera,
+        }
+
+        def _loop():
+            from strands_robots.simulation.policy_runner import _extract_frame_ndarray
+
+            interval = 1.0 / fps
+            while state["running"]:
+                t0 = _time.time()
+                for cam in names:
+                    if not state["running"]:
+                        break
+                    if len(state["buffers"][cam]) >= state["max_frames"]:
+                        continue
+                    try:
+                        r = self.render(camera_name=cam, width=width, height=height)
+                        arr = _extract_frame_ndarray(r)
+                        if arr is not None:
+                            state["buffers"][cam].append(arr)
+                        else:
+                            state["errors"][cam] += 1
+                    except Exception as e:
+                        state["errors"][cam] += 1
+                        logger.debug("camera recorder (%s) error: %s", cam, e)
+                lag = _time.time() - t0
+                if lag < interval:
+                    _time.sleep(interval - lag)
+
+        state["thread"] = _threading.Thread(target=_loop, daemon=True)
+        state["thread"].start()
+        self._cams_rec_state = state
+
+        msg = (
+            f"🎬 Recording {len(names)} camera(s) @ {fps} FPS → {out_dir}\n"
+            f"   tag: {tag}\n"
+            f"   cameras: {', '.join(names)}"
+        )
+        return {"status": "success", "content": [{"text": msg}]}
+
+    def stop_cameras_recording(self):
+        """Stop capture, flush buffers to MP4 on the MAIN thread.
+
+        Runs ``imageio.get_writer``/``append_data``/``close`` here instead of
+        the recording thread so the ffmpeg pipe doesn't race with policy
+        timing jitter. Returns per-camera frame counts and paths.
+        """
+        import os as _os
+        import time as _time
+
+        state = getattr(self, "_cams_rec_state", None)
+        if not state or not state.get("running"):
+            return {"status": "error", "content": [{"text": "❌ No active camera recording."}]}
+
+        state["running"] = False
+        thread = state.get("thread")
+        if thread is not None:
+            thread.join(timeout=5.0)
+
+        try:
+            import imageio.v2 as imageio
+        except ImportError:
+            return {
+                "status": "error",
+                "content": [{"text": "❌ imageio not installed. pip install imageio imageio-ffmpeg"}],
+            }
+
+        elapsed = _time.time() - state["started_at"]
+        lines = [
+            f"🎬 Stopped '{state['name']}' after {elapsed:.1f}s",
+            f"   output_dir: {state['output_dir']}",
+        ]
+        artifacts = []
+        for cam in state["cameras"]:
+            frames_buffer = state["buffers"][cam]
+            path = state["paths"][cam]
+            errors = state["errors"][cam]
+            frames_written = 0
+            size_kb = 0.0
+            if frames_buffer:
+                writer = imageio.get_writer(path, fps=state["fps"], quality=8, macro_block_size=1)
+                try:
+                    for arr in frames_buffer:
+                        writer.append_data(arr)
+                        frames_written += 1
+                finally:
+                    writer.close()
+                if _os.path.exists(path):
+                    size_kb = _os.path.getsize(path) / 1024
+            lines.append(
+                f"   📹 {cam:20s} {frames_written:>5d} frames  {size_kb:>7.1f} KB  "
+                f"({errors} errors)  → {_os.path.basename(path)}"
+            )
+            artifacts.append(
+                {
+                    "camera": cam,
+                    "path": path,
+                    "frames": frames_written,
+                    "errors": errors,
+                    "size_kb": size_kb,
+                }
+            )
+
+        name = state["name"]
+        self._cams_rec_state = None
+
+        return {
+            "status": "success",
+            "content": [
+                {"text": "\n".join(lines)},
+                {"json": {"recording": name, "artifacts": artifacts}},
+            ],
+        }
+
+    def get_cameras_recording_status(self):
+        """Cheap introspection of an ongoing multi-camera recording."""
+        import time as _time
+
+        state = getattr(self, "_cams_rec_state", None)
+        if not state or not state.get("running"):
+            return {"status": "success", "content": [{"text": "⚪ No active camera recording."}]}
+
+        elapsed = _time.time() - state["started_at"]
+        lines = [f"🟢 Recording '{state['name']}' for {elapsed:.1f}s  @ {state['fps']} FPS"]
+        for cam in state["cameras"]:
+            frames = len(state["buffers"][cam])
+            lines.append(f"   📹 {cam:20s} {frames:>5d} frames  ({state['errors'][cam]} errors)")
+        return {"status": "success", "content": [{"text": "\n".join(lines)}]}
