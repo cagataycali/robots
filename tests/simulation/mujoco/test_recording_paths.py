@@ -13,23 +13,60 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import tempfile
 
 import pytest
 
 os.environ.setdefault("MUJOCO_GL", "glfw")
+
+# Inline MJCF XML to avoid network-dependent so101 model downloads.
+_ROBOT_XML = """
+<mujoco model="test_arm">
+  <compiler angle="radian" autolimits="true"/>
+  <option timestep="0.002"/>
+  <worldbody>
+    <light name="main" pos="0 0 3" dir="0 0 -1"/>
+    <geom name="ground" type="plane" size="5 5 0.01" rgba="0.9 0.9 0.9 1"/>
+    <body name="base" pos="0 0 0.1">
+      <geom type="cylinder" size="0.05 0.05" rgba="0.3 0.3 0.8 1"/>
+      <joint name="shoulder_pan" type="hinge" axis="0 0 1" range="-3.14 3.14"/>
+      <body name="link1" pos="0 0 0.1">
+        <geom type="capsule" size="0.03" fromto="0 0 0 0 0 0.2" rgba="0.8 0.3 0.3 1"/>
+        <joint name="shoulder_lift" type="hinge" axis="0 1 0" range="-1.57 1.57"/>
+        <body name="link2" pos="0 0 0.2">
+          <geom type="capsule" size="0.025" fromto="0 0 0 0 0 0.15" rgba="0.3 0.8 0.3 1"/>
+          <joint name="elbow" type="hinge" axis="0 1 0" range="-2.0 2.0"/>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+  <actuator>
+    <position name="shoulder_pan_act" joint="shoulder_pan" kp="50"/>
+    <position name="shoulder_lift_act" joint="shoulder_lift" kp="50"/>
+    <position name="elbow_act" joint="elbow" kp="50"/>
+  </actuator>
+</mujoco>
+"""
 
 
 @pytest.fixture
 def sim_with_two_robots():
     from strands_robots.simulation import Simulation
 
+    tmpdir = tempfile.mkdtemp()
+    path = os.path.join(tmpdir, "test_arm.xml")
+    with open(path, "w") as f:
+        f.write(_ROBOT_XML)
+
     s = Simulation()
     s.create_world()
-    s.add_robot("alpha", data_config="so101", position=[-0.2, 0, 0])
-    s.add_robot("beta", data_config="so101", position=[0.2, 0, 0])
+    s.add_robot("alpha", urdf_path=path, position=[-0.2, 0, 0])
+    s.add_robot("beta", urdf_path=path, position=[0.2, 0, 0])
     s.step(5)
     yield s
     s.destroy()
+    shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 def test_start_recording_no_world_returns_graceful_error():
