@@ -68,11 +68,20 @@ class RecordingMixin:
                     shutil.rmtree(dataset_dir)
                     logger.info("Removed existing dataset dir: %s", dataset_dir)
 
-            joint_names = []
-            camera_keys = []
+            # Collect joint names from every robot. When the scene contains
+            # more than one robot (e.g. multi-agent dual-task recording), prefix
+            # each joint with the robot's instance name (``alice__shoulder_pan``)
+            # so the dataset schema has unique joint ids per agent. Single-robot
+            # scenes keep the clean ``shoulder_pan`` names for backwards compat.
+            joint_names: list[str] = []
+            camera_keys: list[str] = []
             robot_type = "unknown"
+            multi_robot = len(self._world.robots) > 1
             for rname, robot in self._world.robots.items():
-                joint_names.extend(robot.joint_names)
+                if multi_robot:
+                    joint_names.extend(f"{rname}__{jn}" for jn in robot.joint_names)
+                else:
+                    joint_names.extend(robot.joint_names)
                 robot_type = robot.data_config or rname
 
             mj = _ensure_mujoco()
@@ -153,7 +162,7 @@ class RecordingMixin:
 
     def get_recording_status(self) -> dict[str, Any]:
         if self._world is None:
-            return {"status": "error", "content": [{"text": "❌ No world."}]}
+            return {"status": "error", "content": [{"text": "No world."}]}
 
         recording = self._world._backend_state.get("recording", False)
         steps = len(self._world._backend_state.get("trajectory", []))
