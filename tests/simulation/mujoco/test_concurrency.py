@@ -29,7 +29,7 @@ requires_gl = pytest.mark.skipif(
     reason="No OpenGL context available (headless without EGL/OSMesa)",
 )
 
-# Test robot XML (simple 3-DOF arm) 
+# Test robot XML (simple 3-DOF arm)
 
 ROBOT_XML = """
 <mujoco model="test_arm">
@@ -261,7 +261,7 @@ class TestThreadSafety:
         assert not errors, f"Thread errors: {errors}"
 
 
-# Robot XML for multi-robot asset directory test 
+# Robot XML for multi-robot asset directory test
 
 ROBOT_B_XML = """
 <mujoco model="test_gripper">

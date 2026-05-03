@@ -51,7 +51,7 @@ class TestRequireOptional:
         assert hasattr(mod, "join")
 
 
-# safe_join / get_search_paths tests (added for PR #84 follow-up) 
+# safe_join / get_search_paths tests (added for PR #84 follow-up)
 
 
 class TestSafeJoin:

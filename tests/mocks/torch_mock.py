@@ -231,9 +231,7 @@ class _NoGrad:
         return func
 
 
-
 # Factory functions
-
 
 
 def _tensor(data, dtype=None, device=None):
@@ -282,9 +280,7 @@ def _randn(*shape, dtype=None, device=None):
     return MockTensor(np.random.randn(*shape).astype(np.float32))
 
 
-
 # Public API
-
 
 
 def install_torch_mock():

@@ -12,17 +12,13 @@ The existing test_factory (mocked mujoco import) is preserved here; the
 previously-deselected ImportError-guidance test uses a sentinel strategy
 so it can run even when mujoco IS installed.
 """
-from __future__ import annotations
 
-from typing import Any
-from unittest import mock
+from __future__ import annotations
 
 import pytest
 
 from strands_robots.simulation.base import SimEngine
 from strands_robots.simulation.factory import (
-    _BUILTIN_ALIASES,
-    _BUILTIN_BACKENDS,
     _runtime_aliases,
     _runtime_registry,
     create_simulation,
@@ -30,8 +26,7 @@ from strands_robots.simulation.factory import (
     register_backend,
 )
 
-
-# Resolution + listing 
+# Resolution + listing
 
 
 def test_list_backends_contains_builtins():
@@ -59,14 +54,27 @@ def test_create_simulation_unknown_backend_raises_value_error():
 class _StubBackend(SimEngine):
     """Minimal concrete backend for registration tests."""
 
-    def create_world(self, timestep=None, gravity=None, ground_plane=True): return {"status":"success","content":[]}
-    def destroy(self): return {"status":"success","content":[]}
-    def list_robots(self): return []
-    def robot_joint_names(self, robot_name): return []
-    def get_observation(self, robot_name=None): return {}
+    def create_world(self, timestep=None, gravity=None, ground_plane=True):
+        return {"status": "success", "content": []}
+
+    def destroy(self):
+        return {"status": "success", "content": []}
+
+    def list_robots(self):
+        return []
+
+    def robot_joint_names(self, robot_name):
+        return []
+
+    def get_observation(self, robot_name=None):
+        return {}
+
     def send_action(self, action, robot_name=None, n_substeps=1): ...
-    def step(self, n_steps=1): return {"status":"success","content":[]}
-    def reset(self): return {"status":"success","content":[]}
+    def step(self, n_steps=1):
+        return {"status": "success", "content": []}
+
+    def reset(self):
+        return {"status": "success", "content": []}
 
 
 def _loader():

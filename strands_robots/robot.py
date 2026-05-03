@@ -370,9 +370,7 @@ class Robot(AgentTool):
 
             if self._task_state.status == TaskStatus.RUNNING:
                 self._task_state.status = TaskStatus.COMPLETED
-                logger.info(
-                    f"Task completed: '{instruction}' in {elapsed:.1f}s ({self._task_state.step_count} steps)"
-                )
+                logger.info(f"Task completed: '{instruction}' in {elapsed:.1f}s ({self._task_state.step_count} steps)")
 
         except Exception as e:
             logger.error(f"Task execution failed: {e}")

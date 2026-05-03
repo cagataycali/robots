@@ -8,11 +8,11 @@ Covers:
 * HF-cache repo_id path (repo_id with '/' and no local root)
 * Multi-robot namespace prefix for joint names
 """
+
 from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 
 import pytest
 
@@ -106,9 +106,7 @@ def test_start_recording_namespaced_joint_prefix_with_two_robots(sim_with_two_ro
     if not has_lerobot_dataset():
         pytest.skip("lerobot not installed")
 
-    r = sim_with_two_robots.start_recording(
-        repo_id="local/namespace_probe", fps=20, root=str(tmp_path), overwrite=True
-    )
+    r = sim_with_two_robots.start_recording(repo_id="local/namespace_probe", fps=20, root=str(tmp_path), overwrite=True)
     assert r["status"] == "success"
 
     from strands_robots.policies.mock import MockPolicy

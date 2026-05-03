@@ -102,7 +102,6 @@ def _resolve_robot_descriptions_module(name: str, info: dict) -> str | None:
     return None
 
 
-
 #: Alias for backward compatibility — use :func:`strands_robots.utils.get_assets_dir`.
 get_user_assets_dir = get_assets_dir
 
@@ -191,7 +190,6 @@ def _copy_and_clean(src: Path, dst: Path) -> None:
         ]
 
     shutil.copytree(str(src), str(dst), dirs_exist_ok=True, ignore=_ignore)
-
 
 
 def _download_via_robot_descriptions(robots: dict[str, dict], dest_dir: Path) -> dict[str, str]:
@@ -329,7 +327,7 @@ def _download_from_github(name: str, info: dict, dest_dir: Path) -> str:
             return f"failed: {exc}"
 
 
-# Orchestrator  
+# Orchestrator
 
 
 def auto_download_robot(name: str, info: dict[str, Any]) -> bool:

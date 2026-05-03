@@ -10,23 +10,20 @@ Covers:
 * ``_resolve_success_fn`` "contact" with backend that raises NotImplementedError
 * ``evaluate()`` "never-succeeds" default path (no success_fn)
 """
+
 from __future__ import annotations
 
 import os
-from typing import Any
 
 import numpy as np
-import pytest
 
 os.environ.setdefault("MUJOCO_GL", "glfw")
 
 from strands_robots.policies.mock import MockPolicy
-from strands_robots.simulation.base import SimEngine
 from strands_robots.simulation.policy_runner import (
     PolicyRunner,
     _extract_frame_ndarray,
 )
-
 
 # Import the FakeSim from the sibling test file
 from tests.simulation.test_policy_runner import FakeSim as _BaseFakeSim
@@ -184,9 +181,7 @@ def test_extract_frame_ndarray_bad_image_structure():
 def test_evaluate_unknown_success_fn_string_errors():
     sim = _MinimalSim(robots=["r0"])
     policy = MockPolicy()
-    r = PolicyRunner(sim).evaluate(
-        robot_name="r0", policy=policy, n_episodes=1, success_fn="made_up_string"
-    )
+    r = PolicyRunner(sim).evaluate(robot_name="r0", policy=policy, n_episodes=1, success_fn="made_up_string")
     assert r["status"] == "error"
     assert "Unknown success_fn" in r["content"][0]["text"]
 
@@ -198,7 +193,10 @@ def test_evaluate_with_callable_success_fn():
 
     # Always succeed → success_rate = 1.0
     r = PolicyRunner(sim).evaluate(
-        robot_name="r0", policy=policy, n_episodes=2, max_steps=5,
+        robot_name="r0",
+        policy=policy,
+        n_episodes=2,
+        max_steps=5,
         success_fn=lambda obs: True,
     )
     assert r["status"] == "success"
@@ -210,9 +208,7 @@ def test_evaluate_contact_fn_with_backend_that_raises():
     sim = _MinimalSim(robots=["r0"], raise_on_contacts=True)
     policy = MockPolicy()
     policy.set_robot_state_keys(["j0", "j1", "j2"])
-    r = PolicyRunner(sim).evaluate(
-        robot_name="r0", policy=policy, n_episodes=1, max_steps=3, success_fn="contact"
-    )
+    r = PolicyRunner(sim).evaluate(robot_name="r0", policy=policy, n_episodes=1, max_steps=3, success_fn="contact")
     assert r["status"] == "success"
 
 
@@ -221,9 +217,7 @@ def test_evaluate_none_success_fn_gives_zero_success_rate():
     sim = _MinimalSim(robots=["r0"])
     policy = MockPolicy()
     policy.set_robot_state_keys(["j0", "j1", "j2"])
-    r = PolicyRunner(sim).evaluate(
-        robot_name="r0", policy=policy, n_episodes=2, max_steps=3, success_fn=None
-    )
+    r = PolicyRunner(sim).evaluate(robot_name="r0", policy=policy, n_episodes=2, max_steps=3, success_fn=None)
     assert r["status"] == "success"
     # success_fn=None means no episode ever succeeds
     # Extract json block:

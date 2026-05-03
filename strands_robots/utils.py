@@ -128,9 +128,9 @@ def resolve_asset_path(relative_or_absolute: str | Path | None, default_name: st
     return assets / expanded
 
 
-# 
+#
 # Path safety — prevent traversal via untrusted components
-# 
+#
 
 
 def safe_join(base: Path, untrusted: str) -> Path:

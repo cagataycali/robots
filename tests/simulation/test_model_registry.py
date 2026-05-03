@@ -6,6 +6,7 @@ Covers:
 * ``resolve_urdf`` happy path + unknown-name
 * ``list_available_models`` formatted listing
 """
+
 from __future__ import annotations
 
 from strands_robots.simulation.model_registry import (

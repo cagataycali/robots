@@ -3,12 +3,11 @@
 Covers the ``get_actions_sync`` event-loop dispatch paths: the 'no loop'
 fast path and the 'already-in-event-loop' ThreadPoolExecutor fallback.
 """
+
 from __future__ import annotations
 
 import asyncio
 from typing import Any
-
-import pytest
 
 from strands_robots.policies.base import Policy
 

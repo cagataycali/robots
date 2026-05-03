@@ -288,9 +288,8 @@ class RenderingMixin:
             "content": [{"text": text}, {"json": {"contacts": contacts}}],
         }
 
-    
     # Multi-camera capture — Session recording for simulation
-    
+
     #
     # Design:
     #  - render_all(cameras=None, width=, height=) — single-shot snapshot

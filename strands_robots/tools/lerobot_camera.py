@@ -863,9 +863,7 @@ def _test_camera_performance(
 
         test_results.append("\n **Performance Summary**:")
         test_results.append(f"   - Connection: {' Fast' if connect_time < 1.0 else '️ Slow'} ({connect_time:.3f}s)")
-        test_results.append(
-            f"   - Sync capture: {' Good' if avg_sync_time < 0.1 else '️ Slow'} ({avg_sync_time:.3f}s)"
-        )
+        test_results.append(f"   - Sync capture: {' Good' if avg_sync_time < 0.1 else '️ Slow'} ({avg_sync_time:.3f}s)")
         if async_mode:
             test_results.append(
                 f"   - Async capture: {' Better' if avg_async_time < avg_sync_time else ' Worse'}"

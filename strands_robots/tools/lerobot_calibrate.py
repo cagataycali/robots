@@ -562,9 +562,7 @@ def lerobot_calibrate(
             if success:
                 return {
                     "status": "success",
-                    "content": [
-                        {"text": f"**{message}**\nFrom: `{backup_dir}`\nOverwrite mode: `{overwrite}`"}
-                    ],
+                    "content": [{"text": f"**{message}**\nFrom: `{backup_dir}`\nOverwrite mode: `{overwrite}`"}],
                     "restored_count": count,
                 }
             else:

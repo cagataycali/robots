@@ -39,7 +39,7 @@ from strands_robots.policies import MockPolicy  # noqa: E402
 from strands_robots.simulation.base import SimEngine  # noqa: E402
 from strands_robots.simulation.models import SimObject, SimRobot, SimStatus, SimWorld  # noqa: E402
 
-# Fixtures 
+# Fixtures
 
 ROBOT_XML = """
 <mujoco model="test_arm">
@@ -113,7 +113,7 @@ def apply_action(model, data, action_dict):
             data.ctrl[act_id] = val
 
 
-# Tests 
+# Tests
 
 
 class TestSimulationBase:

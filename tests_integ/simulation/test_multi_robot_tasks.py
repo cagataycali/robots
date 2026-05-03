@@ -15,14 +15,14 @@ Guards several invariants at once:
     * The dataset parquet has ``episode_index=0`` for every row (one
       episode) and has at least one action vector per control step.
 """
+
 from __future__ import annotations
 
 import glob
 import json
 import os
-from pathlib import Path
-import pytest
 
+import pytest
 
 os.environ.setdefault("MUJOCO_GL", "glfw")
 
@@ -35,12 +35,8 @@ def dual_robot_world():
     sim.create_world(timestep=0.002, gravity=[0, 0, -9.81])
     sim.add_robot("alice", data_config="so101", position=[-0.25, 0.0, 0.0])
     sim.add_robot("bob", data_config="so101", position=[0.25, 0.0, 0.0])
-    sim.add_object(
-        "red_cube", shape="box", size=[0.025, 0.025, 0.025], position=[-0.15, 0.2, 0.05], rgba=[1, 0, 0, 1]
-    )
-    sim.add_object(
-        "blue_ball", shape="sphere", size=[0.03, 0.03, 0.03], position=[0.15, 0.2, 0.05], rgba=[0, 0, 1, 1]
-    )
+    sim.add_object("red_cube", shape="box", size=[0.025, 0.025, 0.025], position=[-0.15, 0.2, 0.05], rgba=[1, 0, 0, 1])
+    sim.add_object("blue_ball", shape="sphere", size=[0.03, 0.03, 0.03], position=[0.15, 0.2, 0.05], rgba=[0, 0, 1, 1])
     sim.add_camera("top", position=[0, 0, 0.9], target=[0, 0.2, 0.05])
     sim.step(n_steps=10)
     yield sim
@@ -56,9 +52,7 @@ def test_two_robots_two_tasks_recorded_as_single_episode(dual_robot_world, tmp_p
 
     sim = dual_robot_world
 
-    r = sim.start_recording(
-        repo_id="local/dual_task", task="pick_two", fps=20, root=str(tmp_path), overwrite=True
-    )
+    r = sim.start_recording(repo_id="local/dual_task", task="pick_two", fps=20, root=str(tmp_path), overwrite=True)
     assert r["status"] == "success", r
 
     # Build one policy per robot bound to that robot's joint ordering
@@ -114,7 +108,7 @@ def test_two_robots_two_tasks_recorded_as_single_episode(dual_robot_world, tmp_p
     assert any(jn.startswith("bob__") for jn in joint_names)
 
     # Parquet invariants
-    import pandas as pd
+    import pandas as pd  # type: ignore[import-untyped]
 
     data_parquets = glob.glob(str(tmp_path / "data" / "chunk-*" / "*.parquet"))
     assert data_parquets, "no data parquet written"

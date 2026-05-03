@@ -191,8 +191,6 @@ class TestDiffusionFullPipeline:
         )
 
 
-
-
 class TestProcessorBridgeIntegration:
     """Test ProcessorBridge with real model configs."""
 

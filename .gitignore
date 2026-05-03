@@ -10,3 +10,4 @@ dist
 .strands_robots
 .coverage
 .ideation/
+MUJOCO_LOG.TXT

@@ -3,6 +3,7 @@
 Also locks the scene-composer fallback path (``compose_multi_robot_scene``)
 and the object-geom auto-naming convention (``<name>_geom``).
 """
+
 from __future__ import annotations
 
 import os
@@ -22,12 +23,15 @@ def sim():
     s.destroy()
 
 
-@pytest.mark.parametrize("shape,size,name", [
-    ("box", [0.02, 0.02, 0.02], "a_box"),
-    ("sphere", [0.025, 0.025, 0.025], "a_ball"),
-    ("cylinder", [0.02, 0.02, 0.06], "a_rod"),
-    ("capsule", [0.02, 0.02, 0.06], "a_capsule"),
-])
+@pytest.mark.parametrize(
+    "shape,size,name",
+    [
+        ("box", [0.02, 0.02, 0.02], "a_box"),
+        ("sphere", [0.025, 0.025, 0.025], "a_ball"),
+        ("cylinder", [0.02, 0.02, 0.06], "a_rod"),
+        ("capsule", [0.02, 0.02, 0.06], "a_capsule"),
+    ],
+)
 def test_primitive_shape_roundtrips_to_model(sim, shape, size, name):
     r = sim.add_object(name=name, shape=shape, size=size, position=[0.1, 0.1, 0.05])
     assert r["status"] == "success", r

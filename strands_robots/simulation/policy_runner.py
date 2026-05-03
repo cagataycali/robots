@@ -305,9 +305,8 @@ class PolicyRunner:
                 )
         return {"status": "success", "content": [{"text": text}]}
 
-    
     # replay(): replay a LeRobotDataset episode
-    
+
     def replay(
         self,
         repo_id: str,
@@ -409,9 +408,8 @@ class PolicyRunner:
             ],
         }
 
-    
     # evaluate(): multi-episode success metrics
-    
+
     def evaluate(
         self,
         robot_name: str,
@@ -500,9 +498,8 @@ class PolicyRunner:
             ],
         }
 
-    
     # Helpers
-    
+
     def _maybe_sim_time(self) -> float | None:
         """Best-effort read of sim time from any backend that exposes it."""
         get_state = getattr(self.sim, "get_state", None)

@@ -11,6 +11,7 @@ for:
 This locks the AgentTool contract: the LLM-facing surface must never bubble
 a raw exception.
 """
+
 from __future__ import annotations
 
 import os
@@ -32,7 +33,7 @@ def ready_sim():
     s.destroy()
 
 
-#─ Physics: unknown-name + out-of-bounds────────────────────────────
+# ─ Physics: unknown-name + out-of-bounds────────────────────────────
 
 
 def test_set_geom_properties_out_of_bounds_id_errors_gracefully(ready_sim):
@@ -116,7 +117,7 @@ def test_get_body_state_unknown_body_errors(ready_sim):
     assert r["status"] == "error"
 
 
-#─ State mgmt: ghost checkpoints───────────────────────────────────
+# ─ State mgmt: ghost checkpoints───────────────────────────────────
 
 
 def test_load_state_unknown_checkpoint_errors(ready_sim):
@@ -131,7 +132,7 @@ def test_save_state_then_load_state_round_trips(ready_sim):
     assert r["status"] == "success"
 
 
-#─ Scene mutations: ghosts────────────────────────────────────────
+# ─ Scene mutations: ghosts────────────────────────────────────────
 
 
 def test_remove_robot_ghost_errors(ready_sim):
@@ -154,7 +155,7 @@ def test_move_object_ghost_errors(ready_sim):
     assert r["status"] == "error"
 
 
-#─ Policy lifecycle───────────────────────────────────────────────
+# ─ Policy lifecycle───────────────────────────────────────────────
 
 
 def test_stop_policy_on_idle_robot_errors(ready_sim):
@@ -171,7 +172,7 @@ def test_stop_policy_ghost_robot_errors(ready_sim):
     assert r["status"] == "error"
 
 
-#─ World controls────────────────────────────────────────────────
+# ─ World controls────────────────────────────────────────────────
 
 
 def test_step_zero_is_noop(ready_sim):
@@ -204,7 +205,7 @@ def test_set_timestep_positive(ready_sim):
     assert r["status"] == "success"
 
 
-#─ Rendering: unknown camera, render-unavailable paths──────────
+# ─ Rendering: unknown camera, render-unavailable paths──────────
 
 
 def test_render_all_with_only_missing_cameras_errors(ready_sim):
@@ -220,7 +221,7 @@ def test_render_unknown_camera_falls_back(ready_sim):
     assert r["status"] == "success"
 
 
-#─ Tool-spec dispatch: unknown action + error routing───────────
+# ─ Tool-spec dispatch: unknown action + error routing───────────
 
 
 def test_dispatch_private_action_is_rejected(ready_sim):
@@ -232,13 +233,9 @@ def test_dispatch_private_action_is_rejected(ready_sim):
 
 def test_dispatch_field_remap_checkpoint_name_to_name(ready_sim):
     """The dispatcher remaps ``checkpoint_name`` → ``name`` for save_state."""
-    r = ready_sim._dispatch_action(
-        "save_state", {"action": "save_state", "checkpoint_name": "remap_probe"}
-    )
+    r = ready_sim._dispatch_action("save_state", {"action": "save_state", "checkpoint_name": "remap_probe"})
     assert r["status"] == "success"
-    r = ready_sim._dispatch_action(
-        "load_state", {"action": "load_state", "checkpoint_name": "remap_probe"}
-    )
+    r = ready_sim._dispatch_action("load_state", {"action": "load_state", "checkpoint_name": "remap_probe"})
     assert r["status"] == "success"
 
 

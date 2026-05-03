@@ -41,7 +41,7 @@ class PhysicsMixin:
     Naming: methods match action names in tool_spec.json for direct dispatch.
     """
 
-    # State Checkpointing 
+    # State Checkpointing
 
     def save_state(self, name: str = "default") -> dict[str, Any]:
         """Save the full physics state (qpos, qvel, act, time) to a named checkpoint.
@@ -113,7 +113,7 @@ class PhysicsMixin:
             ],
         }
 
-    # External Forces 
+    # External Forces
 
     def apply_force(
         self,
@@ -173,7 +173,7 @@ class PhysicsMixin:
             ],
         }
 
-    # Raycasting 
+    # Raycasting
 
     def _resolve_mj_name(self, obj_type: int, name: str) -> int:
         """Look up a MuJoCo name, tolerating robot namespacing.
@@ -270,7 +270,7 @@ class PhysicsMixin:
 
         return {"status": "success", "content": [{"text": text}, {"json": result}]}
 
-    # Jacobians 
+    # Jacobians
 
     def get_jacobian(
         self,
@@ -323,7 +323,7 @@ class PhysicsMixin:
             ],
         }
 
-    # Energy 
+    # Energy
 
     def get_energy(self) -> dict[str, Any]:
         """Compute potential and kinetic energy of the system."""
@@ -348,7 +348,7 @@ class PhysicsMixin:
             ],
         }
 
-    # Mass Matrix 
+    # Mass Matrix
 
     def get_mass_matrix(self) -> dict[str, Any]:
         """Compute the full mass (inertia) matrix M(q).
@@ -384,7 +384,7 @@ class PhysicsMixin:
             ],
         }
 
-    # Inverse Dynamics 
+    # Inverse Dynamics
 
     def inverse_dynamics(self) -> dict[str, Any]:
         """Compute inverse dynamics: given qacc, what forces are needed?
@@ -416,7 +416,7 @@ class PhysicsMixin:
             ],
         }
 
-    # Body Introspection 
+    # Body Introspection
 
     def get_body_state(
         self,
@@ -472,7 +472,7 @@ class PhysicsMixin:
 
         return {"status": "success", "content": [{"text": text}, {"json": state}]}
 
-    # Direct Joint Control 
+    # Direct Joint Control
 
     def set_joint_positions(
         self,
@@ -542,7 +542,7 @@ class PhysicsMixin:
             "content": [{"text": f"💨 Set {set_count}/{len(velocities)} joint velocities"}],
         }
 
-    # Sensor Readout 
+    # Sensor Readout
 
     def get_sensor_data(self, sensor_name: str | None = None) -> dict[str, Any]:
         """Read sensor values from the simulation.
@@ -595,7 +595,7 @@ class PhysicsMixin:
             "content": [{"text": "\n".join(lines)}, {"json": {"sensors": sensors}}],
         }
 
-    # Runtime Model Modification 
+    # Runtime Model Modification
 
     def set_body_properties(
         self,
@@ -674,7 +674,7 @@ class PhysicsMixin:
             "content": [{"text": f"🔧 Geom '{label}': {', '.join(changes)}"}],
         }
 
-    # Contact Force Analysis 
+    # Contact Force Analysis
 
     def get_contact_forces(self) -> dict[str, Any]:
         """Get detailed contact forces for all active contacts.
@@ -724,7 +724,7 @@ class PhysicsMixin:
             "content": [{"text": "\n".join(lines)}, {"json": {"contacts": contacts}}],
         }
 
-    # Multi-Ray (batch raycasting) 
+    # Multi-Ray (batch raycasting)
 
     def multi_raycast(
         self,
@@ -769,7 +769,7 @@ class PhysicsMixin:
             ],
         }
 
-    # Forward Kinematics (explicit) 
+    # Forward Kinematics (explicit)
 
     def forward_kinematics(self) -> dict[str, Any]:
         """Run forward kinematics to update all body positions/orientations.
@@ -804,7 +804,7 @@ class PhysicsMixin:
             ],
         }
 
-    # Total Mass 
+    # Total Mass
 
     def get_total_mass(self) -> dict[str, Any]:
         """Get total mass and per-body mass breakdown."""
@@ -830,7 +830,7 @@ class PhysicsMixin:
             ],
         }
 
-    # Export Model XML 
+    # Export Model XML
 
     def export_xml(self, output_path: str | None = None) -> dict[str, Any]:
         """Export the current model to MJCF XML.

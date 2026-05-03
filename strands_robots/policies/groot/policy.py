@@ -523,9 +523,7 @@ class Gr00tPolicy(Policy):
         )
         logger.info("GR00T N1.7 loaded from %s (direct)", model_path)
 
-
     # Policy interface
-
 
     @property
     def provider_name(self) -> str:
@@ -538,7 +536,6 @@ class Gr00tPolicy(Policy):
         if self._mode == "local":
             return self._local_get_actions(observation_dict, instruction)
         return self._service_get_actions(observation_dict, instruction)
-
 
     # Local inference — talks model's native nested-dict format
 
@@ -648,9 +645,7 @@ class Gr00tPolicy(Policy):
 
         return actions
 
-    
     # Service inference
-    
 
     def _service_get_actions(self, robot_obs: dict[str, Any], instruction: str) -> list[dict[str, Any]]:
         """Service mode: build observation, call server, unpack."""

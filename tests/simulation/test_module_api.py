@@ -4,6 +4,7 @@ Covers the lazy-loading tails in:
 * ``strands_robots/simulation/__init__.py``
 * ``strands_robots/simulation/mujoco/__init__.py``
 """
+
 from __future__ import annotations
 
 import pytest

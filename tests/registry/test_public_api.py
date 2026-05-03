@@ -17,7 +17,7 @@ from strands_robots.registry.robots import (
     resolve_name,
 )
 
-# Loader tests 
+# Loader tests
 
 
 class TestLoader:
@@ -115,7 +115,7 @@ class TestLoader:
         _validate("policies", clean_policies)
 
 
-# Policy resolution tests  
+# Policy resolution tests
 
 
 class TestResolvePolicy:
@@ -192,7 +192,7 @@ class TestResolvePolicy:
         assert provider == "groot"
 
 
-# Provider lookup tests  
+# Provider lookup tests
 
 
 class TestProviderLookup:
@@ -228,7 +228,7 @@ class TestProviderLookup:
         assert config["class"] == "MockPolicy"
 
 
-# import_policy_class tests  
+# import_policy_class tests
 
 
 class TestImportPolicyClass:
@@ -254,7 +254,7 @@ class TestImportPolicyClass:
         assert cls is MockPolicy
 
 
-# build_policy_kwargs tests  
+# build_policy_kwargs tests
 
 
 class TestBuildPolicyKwargs:
@@ -298,7 +298,7 @@ class TestBuildPolicyKwargs:
         assert kwargs["host"] == "localhost"  # from defaults
 
 
-# Robot registry tests 
+# Robot registry tests
 
 
 class TestRobotRegistry:
