@@ -28,7 +28,18 @@ class RecordingMixin:
         vcodec: str = "libsvtav1",
         overwrite: bool = False,
     ) -> dict[str, Any]:
-        """Start recording to LeRobotDataset format (parquet + video)."""
+        """Start recording to LeRobotDataset format (parquet + per-camera MP4).
+
+        Requires the ``lerobot`` extra for the dataset schema. If you only
+        need plain MP4 video (no dataset schema, no policy-training metadata),
+        use :meth:`start_cameras_recording` — it runs under the
+        ``[sim-mujoco]`` extra alone (imageio-ffmpeg backend).
+
+        Raises:
+            Friendly error when ``lerobot`` is not installed, directing the
+            caller to :meth:`start_cameras_recording` or to install the
+            optional extra.
+        """
         if self._world is None:
             return {"status": "error", "content": [{"text": "No world."}]}
 
@@ -47,7 +58,14 @@ class RecordingMixin:
                 "status": "error",
                 "content": [
                     {
-                        "text": "lerobot not installed. Install with: pip install lerobot\nRequired for dataset recording."
+                        "text": (
+                            "start_recording produces a LeRobotDataset (parquet + video) and "
+                            "requires the lerobot extra. For plain MP4 video under the "
+                            "[sim-mujoco] extra alone, use start_cameras_recording instead.\n"
+                            "\n"
+                            "  - Dataset + policy training data:  pip install 'strands-robots[lerobot]'\n"
+                            "  - Plain MP4 only:                  start_cameras_recording(cameras=..., output_dir=...)"
+                        )
                     }
                 ],
             }
