@@ -35,8 +35,8 @@ class RandomizationMixin:
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Apply domain randomization to the scene."""
-        if self._world is None or self._world._model is None:
-            return {"status": "error", "content": [{"text": "No simulation."}]}
+        if err := self._require_world():
+            return err
         # T5: domain randomization mutates model arrays; a running policy racing with it is UB
         if err := self._require_no_running_policy("randomize"):
             return err

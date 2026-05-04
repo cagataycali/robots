@@ -165,8 +165,8 @@ class RenderingMixin:
         self, camera_name: str = "default", width: int | None = None, height: int | None = None
     ) -> dict[str, Any]:
         """Render a camera view as base64 PNG image."""
-        if self._world is None or self._world._model is None:
-            return {"status": "error", "content": [{"text": "No simulation."}]}
+        if err := self._require_world():
+            return err
 
         mj = _ensure_mujoco()
         w = width or self.default_width
@@ -231,8 +231,8 @@ class RenderingMixin:
         self, camera_name: str = "default", width: int | None = None, height: int | None = None
     ) -> dict[str, Any]:
         """Render depth map from a camera."""
-        if self._world is None or self._world._model is None:
-            return {"status": "error", "content": [{"text": "No simulation."}]}
+        if err := self._require_world():
+            return err
 
         mj = _ensure_mujoco()
         w = width or self.default_width
@@ -306,8 +306,8 @@ class RenderingMixin:
         return names
 
     def get_contacts(self) -> dict[str, Any]:
-        if self._world is None or self._world._data is None:
-            return {"status": "error", "content": [{"text": "No simulation."}]}
+        if err := self._require_world():
+            return err
 
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
@@ -378,8 +378,8 @@ class RenderingMixin:
                                      {"text": "📸 cam1"}, {"image": {...}},
                                      {"text": "📸 cam2"}, {"image": {...}}, ...]}``
         """
-        if self._world is None or self._world._model is None:
-            return {"status": "error", "content": [{"text": "No simulation."}]}
+        if err := self._require_world():
+            return err
         names = self._active_camera_list(cameras)
         if not names:
             return {"status": "error", "content": [{"text": "No cameras in scene."}]}
@@ -441,8 +441,8 @@ class RenderingMixin:
         import time as _time
         import uuid as _uuid
 
-        if self._world is None or self._world._model is None:
-            return {"status": "error", "content": [{"text": "No simulation."}]}
+        if err := self._require_world():
+            return err
 
         if getattr(self, "_cams_rec_state", None) and self._cams_rec_state.get("running"):
             cur = self._cams_rec_state["name"]

@@ -149,11 +149,16 @@ def test_get_sensor_data_no_sensors_returns_info(ready_sim):
     assert "No sensors" in r["content"][0]["text"]
 
 
-def test_get_sensor_data_unknown_name_returns_info(ready_sim):
-    """Unknown sensor on a model without any sensors also emits info."""
+def test_get_sensor_data_unknown_name_errors(ready_sim):
+    """T45: requesting a specific sensor name on a model with no sensors must
+    report a clear 'not found' error (distinguishable from 'no sensors at all'
+    when no name was given).
+    """
     r = ready_sim.get_sensor_data(sensor_name="__ghost_sensor__")
-    assert r["status"] == "success"
-    assert "No sensors" in r["content"][0]["text"]
+    assert r["status"] == "error"
+    text = r["content"][0]["text"]
+    assert "__ghost_sensor__" in text
+    assert "not found" in text
 
 
 def test_get_body_state_unknown_body_errors(ready_sim):

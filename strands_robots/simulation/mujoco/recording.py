@@ -40,8 +40,8 @@ class RecordingMixin:
             caller to :meth:`start_cameras_recording` or to install the
             optional extra.
         """
-        if self._world is None:
-            return {"status": "error", "content": [{"text": "No world."}]}
+        if err := self._require_world():
+            return err
 
         _DatasetRecorder: Any = None
         _has_lerobot = False
@@ -179,8 +179,8 @@ class RecordingMixin:
         return {"status": "success", "content": [{"text": text}]}
 
     def get_recording_status(self) -> dict[str, Any]:
-        if self._world is None:
-            return {"status": "error", "content": [{"text": "No world."}]}
+        if err := self._require_world():
+            return err
 
         recording = self._world._backend_state.get("recording", False)
         steps = len(self._world._backend_state.get("trajectory", []))

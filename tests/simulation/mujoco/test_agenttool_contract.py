@@ -173,3 +173,77 @@ class TestToolSpecMethodParity:
             result = sim._dispatch_action(action, bad_kwargs)
             # Router must reject; must NOT silently succeed with default values.
             assert result["status"] == "error", f"{action} silently accepted {bad_kwargs}"
+
+
+class TestUnifiedNoWorldMessage:
+    """T14: Every action must use the same 'No world.' message when no world exists."""
+
+    @pytest.fixture
+    def fresh_sim(self):
+        """A sim with NO world."""
+        s = Simulation(tool_name="no_world_test", mesh=False)
+        yield s
+        s.cleanup()
+
+    def _assert_standard_no_world_error(self, result, action):
+        assert result["status"] == "error", f"{action} should error when no world"
+        text = result["content"][0]["text"]
+        assert "No world" in text, f"{action} error text lacks 'No world': {text}"
+
+    def test_step_no_world(self, fresh_sim):
+        self._assert_standard_no_world_error(
+            fresh_sim._dispatch_action("step", {"n_steps": 1}), "step"
+        )
+
+    def test_reset_no_world(self, fresh_sim):
+        self._assert_standard_no_world_error(fresh_sim._dispatch_action("reset", {}), "reset")
+
+    def test_set_gravity_no_world(self, fresh_sim):
+        self._assert_standard_no_world_error(
+            fresh_sim._dispatch_action("set_gravity", {"gravity": [0, 0, -1]}),
+            "set_gravity",
+        )
+
+    def test_render_no_world(self, fresh_sim):
+        # render returns error cleanly when no world, not a crash.
+        result = fresh_sim._dispatch_action("render", {})
+        assert result["status"] == "error"
+        # render uses the unified message now:
+        assert "No world" in result["content"][0]["text"]
+
+    def test_get_state_no_world(self, fresh_sim):
+        self._assert_standard_no_world_error(
+            fresh_sim._dispatch_action("get_state", {}), "get_state"
+        )
+
+
+class TestUnifiedNotFoundMessages:
+    """T15: Unknown-name errors use the consistent '<Kind> X not found.' shape."""
+
+    def test_robot_not_found(self, sim):
+        result = sim._dispatch_action("get_robot_state", {"robot_name": "ghost_bot"})
+        assert result["status"] == "error"
+        text = result["content"][0]["text"]
+        assert "Robot 'ghost_bot' not found" in text
+
+    def test_object_not_found(self, sim):
+        result = sim._dispatch_action(
+            "move_object", {"name": "ghost_box", "position": [0, 0, 0]}
+        )
+        assert result["status"] == "error"
+        assert "Object 'ghost_box' not found" in result["content"][0]["text"]
+
+    def test_body_not_found(self, sim):
+        result = sim._dispatch_action(
+            "apply_force", {"body_name": "ghost_body", "force": [0, 0, 1]}
+        )
+        assert result["status"] == "error"
+        assert "Body 'ghost_body' not found" in result["content"][0]["text"]
+
+    def test_sensor_not_found(self, sim):
+        result = sim._dispatch_action("get_sensor_data", {"sensor_name": "ghost_sensor"})
+        assert result["status"] == "error"
+        text = result["content"][0]["text"]
+        # T45 is about distinguishing "no sensors" vs "not found"; at minimum the
+        # current behaviour must mention the sensor name clearly.
+        assert "ghost_sensor" in text

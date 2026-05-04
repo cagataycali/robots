@@ -520,8 +520,8 @@ class Simulation(
         the SimEngine ABC) because the dispatcher needs a dict-shaped
         response for user display.
         """
-        if self._world is None:
-            return {"status": "error", "content": [{"text": "No world."}]}
+        if err := self._require_world():
+            return err
         if not self._world.robots:
             return {"status": "success", "content": [{"text": "No robots. Use action='add_robot'."}]}
 
@@ -582,8 +582,8 @@ class Simulation(
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Add an object to the simulation."""
-        if self._world is None:
-            return {"status": "error", "content": [{"text": "No world."}]}
+        if err := self._require_world():
+            return err
         if err := self._require_no_running_policy("add_object"):
             return err
         if name in self._world.objects:
@@ -658,10 +658,10 @@ class Simulation(
     def move_object(
         self, name: str, position: list[float] | None = None, orientation: list[float] | None = None
     ) -> dict[str, Any]:
-        if self._world is None or self._world._data is None:
-            return {"status": "error", "content": [{"text": "No simulation."}]}
+        if err := self._require_world():
+            return err
         if name not in self._world.objects:
-            return {"status": "error", "content": [{"text": f"'{name}' not found."}]}
+            return {"status": "error", "content": [{"text": f"Object '{name}' not found."}]}
         # Guard: move_object writes qpos + calls mj_forward, racing a running policy.
         if err := self._require_no_running_policy("move_object"):
             return err
@@ -683,8 +683,8 @@ class Simulation(
         return {"status": "success", "content": [{"text": f"📍 '{name}' moved to {position or 'same'}"}]}
 
     def list_objects(self) -> dict[str, Any]:
-        if self._world is None:
-            return {"status": "error", "content": [{"text": "No world."}]}
+        if err := self._require_world():
+            return err
         if not self._world.objects:
             return {"status": "success", "content": [{"text": "No objects."}]}
 
@@ -704,8 +704,8 @@ class Simulation(
         width: int = 640,
         height: int = 480,
     ) -> dict[str, Any]:
-        if self._world is None:
-            return {"status": "error", "content": [{"text": "No world."}]}
+        if err := self._require_world():
+            return err
         if err := self._require_no_running_policy("add_camera"):
             return err
 
@@ -758,8 +758,8 @@ class Simulation(
     # Simulation Control
 
     def step(self, n_steps: int = 1) -> dict[str, Any]:
-        if self._world is None or self._world._data is None:
-            return {"status": "error", "content": [{"text": "No simulation."}]}
+        if err := self._require_world():
+            return err
         # T9: reject negative, accept zero as no-op
         if not isinstance(n_steps, int):
             try:
@@ -789,8 +789,8 @@ class Simulation(
         }
 
     def reset(self) -> dict[str, Any]:
-        if self._world is None or self._world._model is None:
-            return {"status": "error", "content": [{"text": "No world."}]}
+        if err := self._require_world():
+            return err
         # T5: reset during a running policy races mj_step -> SEGFAULT risk
         if err := self._require_no_running_policy("reset"):
             return err
@@ -808,8 +808,8 @@ class Simulation(
         return {"status": "success", "content": [{"text": "🔄 Reset to initial state."}]}
 
     def get_state(self) -> dict[str, Any]:
-        if self._world is None:
-            return {"status": "error", "content": [{"text": "No world."}]}
+        if err := self._require_world():
+            return err
         lines = [
             "🌍 Simulation State",
             f"🕐 t={self._world.sim_time:.4f}s (step {self._world.step_count})",
@@ -858,8 +858,8 @@ class Simulation(
             tls.model = None
 
     def set_gravity(self, gravity: list[float] | float | int) -> dict[str, Any]:
-        if self._world is None or self._world._model is None:
-            return {"status": "error", "content": [{"text": "No world."}]}
+        if err := self._require_world():
+            return err
         # T5: set_gravity during a running policy races the worker thread
         if err := self._require_no_running_policy("set_gravity"):
             return err
@@ -878,8 +878,8 @@ class Simulation(
         return {"status": "success", "content": [{"text": f"🌐 Gravity: {gravity}"}]}
 
     def set_timestep(self, timestep: float) -> dict[str, Any]:
-        if self._world is None or self._world._model is None:
-            return {"status": "error", "content": [{"text": "No world."}]}
+        if err := self._require_world():
+            return err
         # T5
         if err := self._require_no_running_policy("set_timestep"):
             return err
@@ -943,8 +943,8 @@ class Simulation(
     # Introspection
 
     def get_features(self) -> dict[str, Any]:
-        if self._world is None or self._world._model is None:
-            return {"status": "error", "content": [{"text": "No simulation."}]}
+        if err := self._require_world():
+            return err
 
         mj = self._mj
         model = self._world._model
@@ -1004,6 +1004,26 @@ class Simulation(
     @property
     def tool_type(self) -> str:
         return "simulation"
+
+    def _require_world(self) -> dict[str, Any] | None:
+        """T14: Return unified 'no world' error or None if world is live.
+
+        Replaces scattered ``"No simulation."`` / ``"No world."`` strings. Every
+        action that touches ``self._world`` / ``self._world._model`` /
+        ``self._world._data`` should call this first.
+        """
+        if self._world is None or self._world._model is None or self._world._data is None:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            "No world. Call create_world (or load_scene) first."
+                        )
+                    }
+                ],
+            }
+        return None
 
     def _require_no_running_policy(self, action_name: str) -> dict[str, Any] | None:
         """Return an error dict if a policy is running, else None.
@@ -1101,8 +1121,8 @@ class Simulation(
         callers via tool_spec.json can set control_frequency, action_horizon,
         and video from start_policy as well.
         """
-        if self._world is None or self._world._data is None:
-            return {"status": "error", "content": [{"text": "No simulation."}]}
+        if err := self._require_world():
+            return err
         if robot_name not in self._world.robots:
             return {"status": "error", "content": [{"text": f"Robot '{robot_name}' not found."}]}
 
@@ -1202,8 +1222,8 @@ class Simulation(
         ``_PolicyStopped`` (which the ``on_frame`` hook raises on user
         cancellation) into a normal "policy stopped" result.
         """
-        if self._world is None or self._world._data is None:
-            return {"status": "error", "content": [{"text": "No simulation."}]}
+        if err := self._require_world():
+            return err
 
         try:
             return super().run_policy(
@@ -1429,7 +1449,7 @@ class Simulation(
         if self._world and robot_name in self._world.robots:
             self._world.robots[robot_name].policy_running = False
             return {"status": "success", "content": [{"text": f"Stopped on '{robot_name}'"}]}
-        return {"status": "error", "content": [{"text": f"'{robot_name}' not found."}]}
+        return {"status": "error", "content": [{"text": f"Robot '{robot_name}' not found."}]}
 
     # Cleanup
 
