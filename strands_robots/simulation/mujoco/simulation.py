@@ -577,7 +577,7 @@ class Simulation(
         size: list[float] | None = None,
         color: list[float] | None = None,
         mass: float = 0.1,
-        is_static: bool = False,
+        is_static: bool | None = None,
         mesh_path: str | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
@@ -588,6 +588,21 @@ class Simulation(
             return err
         if name in self._world.objects:
             return {"status": "error", "content": [{"text": f"Object '{name}' exists."}]}
+
+        # T29: planes are infinite and must be static.  Explicit
+        # is_static=False for a plane is an error; None or True both
+        # resolve to True. Non-plane shapes default to dynamic.
+        if shape == "plane":
+            if is_static is False:
+                return {
+                    "status": "error",
+                    "content": [
+                        {"text": "add_object: shape='plane' requires is_static=True (planes are infinite and cannot have dynamic mass)."}
+                    ],
+                }
+            is_static = True
+        elif is_static is None:
+            is_static = False
 
         obj = SimObject(
             name=name,
@@ -721,6 +736,16 @@ class Simulation(
         # Degenerate orientation: position == target means no well-defined look direction.
         if all(abs(pos[i] - tgt[i]) < 1e-9 for i in range(3)):
             return {"status": "error", "content": [{"text": f"add_camera: 'position' and 'target' are identical ({pos}); camera has no look direction."}]}
+
+        # T30/T41: reject duplicate camera names.  Previously a second
+        # add_camera(name=existing) silently overwrote the registry entry but
+        # left the XML's <camera> unchanged, so the old pose stuck around for
+        # rendering.  Explicit error avoids the surprise.
+        if name in self._world.cameras:
+            return {
+                "status": "error",
+                "content": [{"text": f"add_camera: camera '{name}' already exists. Remove it first."}],
+            }
 
         cam = SimCamera(
             name=name,

@@ -801,6 +801,10 @@ class PhysicsMixin:
         gid = geom_id
         if geom_name:
             gid = self._resolve_mj_name(mj.mjtObj.mjOBJ_GEOM, geom_name)
+            # T28: our add_object pipeline names geoms as ``{object_name}_geom``.
+            # Accept the plain object name as a convenience alias.
+            if (gid is None or gid < 0) and not geom_name.endswith("_geom"):
+                gid = self._resolve_mj_name(mj.mjtObj.mjOBJ_GEOM, f"{geom_name}_geom")
         if gid is None or gid < 0 or gid >= model.ngeom:
             return {"status": "error", "content": [{"text": f"Geom '{geom_name or geom_id}' not found."}]}
 

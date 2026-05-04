@@ -49,12 +49,25 @@ def test_primitive_shape_roundtrips_to_model(sim, shape, size, name):
     assert r["status"] == "success"
 
 
-def test_plane_object_rejected_as_dynamic_body(sim):
-    """MuJoCo only permits plane geoms inside static bodies. ``add_object``
-    creates a *dynamic* body, so requesting shape='plane' must surface a
-    clean error rather than a raw exception — this exercises the recompile
-    failure branch in scene_ops.
-    """
+def test_plane_object_auto_static(sim):
+    """T29: shape='plane' auto-sets is_static=True; add_object no longer
+    errors on plane shapes since they're now routed as static bodies
+    automatically."""
     r = sim.add_object(name="floor_mat", shape="plane", size=[0.5, 0.5, 0.001], position=[0, 0, 0.001])
+    assert r["status"] == "success", r
+    assert sim._world.objects["floor_mat"].is_static is True
+
+
+def test_plane_object_explicit_dynamic_rejected(sim):
+    """T29: Explicit is_static=False on a plane is a hard error — planes are
+    infinite and cannot be dynamic bodies in MuJoCo."""
+    r = sim.add_object(
+        name="bad_floor",
+        shape="plane",
+        size=[0.5, 0.5, 0.001],
+        position=[0, 0, 0.001],
+        is_static=False,
+    )
     assert r["status"] == "error"
-    assert "plane" in r["content"][0]["text"].lower()
+    text = r["content"][0]["text"].lower()
+    assert "plane" in text and "is_static" in text

@@ -411,3 +411,74 @@ class TestRegisterUrdfValidation:
         # Router handles empty string as missing? No — it's a truthy string
         # in the presence test. So we hit our explicit empty guard.
         assert "non-empty" in r["content"][0]["text"] or "requires parameter" in r["content"][0]["text"]
+
+
+class TestDuplicateCameraName:
+    """T30 / T41: add_camera rejects duplicate names instead of silently
+    overwriting the registry entry while leaving the XML unchanged."""
+
+    def test_duplicate_camera_rejected(self, sim):
+        r1 = sim._dispatch_action(
+            "add_camera",
+            {"name": "dupe", "position": [0.5, 0.5, 0.5], "target": [0, 0, 0]},
+        )
+        assert r1["status"] == "success", r1
+        r2 = sim._dispatch_action(
+            "add_camera",
+            {"name": "dupe", "position": [1, 0, 0], "target": [0, 0, 0]},
+        )
+        assert r2["status"] == "error"
+        assert "already exists" in r2["content"][0]["text"]
+
+
+class TestPlaneAutoStatic:
+    """T29: add_object(shape='plane') auto-sets is_static=True."""
+
+    def test_plane_default_is_static(self, sim):
+        r = sim._dispatch_action("add_object", {"name": "floor1", "shape": "plane"})
+        assert r["status"] == "success"
+        assert sim._world.objects["floor1"].is_static is True
+
+    def test_plane_with_explicit_dynamic_errors(self, sim):
+        r = sim._dispatch_action(
+            "add_object", {"name": "bad_floor", "shape": "plane", "is_static": False}
+        )
+        assert r["status"] == "error"
+        assert "plane" in r["content"][0]["text"].lower() and "is_static" in r["content"][0]["text"]
+
+
+class TestSetGeomPropertiesAlias:
+    """T28: set_geom_properties accepts the object name as a stand-in for the
+    MJCF-injected '{name}_geom' geom name."""
+
+    def test_object_name_resolves_to_geom(self, sim):
+        sim._dispatch_action(
+            "add_object",
+            {"name": "box_alpha", "shape": "box", "size": [0.05, 0.05, 0.05]},
+        )
+        # Using the object name, not '{name}_geom', should work — the
+        # T28 alias resolves to '{name}_geom' internally.
+        r = sim._dispatch_action(
+            "set_geom_properties", {"geom_name": "box_alpha", "color": [1, 0, 0, 1]}
+        )
+        # Success proves the alias resolved; error with 'Geom not found' would
+        # mean T28 didn't kick in.
+        assert r["status"] == "success", r
+        assert "box_alpha" in r["content"][0]["text"] or "geom" in r["content"][0]["text"].lower()
+
+
+class TestEvalPolicyDefaults:
+    """T34: eval_policy requires robot_name; n_episodes default is 1."""
+
+    def test_eval_policy_missing_robot_name_errors(self, sim):
+        r = sim._dispatch_action("eval_policy", {})
+        assert r["status"] == "error"
+        assert "robot_name" in r["content"][0]["text"]
+
+    def test_eval_policy_unknown_robot_errors(self, sim):
+        r = sim._dispatch_action("eval_policy", {"robot_name": "ghost"})
+        assert r["status"] == "error"
+        # Either "Robot X not found" (world has robots) or "No robots in sim"
+        # (empty scene) — both are correct paths.
+        text = r["content"][0]["text"]
+        assert "ghost" in text or "No robots" in text

@@ -378,23 +378,34 @@ class SimEngine(ABC):
         policy_provider: str = "mock",
         policy_config: dict[str, Any] | None = None,
         instruction: str = "",
-        n_episodes: int = 10,
+        n_episodes: int = 1,
         max_steps: int = 300,
         success_fn: str | None = None,
     ) -> dict[str, Any]:
-        """Multi-episode policy evaluation via ``PolicyRunner.evaluate``."""
+        """Multi-episode policy evaluation via ``PolicyRunner.evaluate``.
+
+        T34: ``robot_name`` is required — eval_policy used to silently pick
+        the first robot, which is surprising in multi-robot scenes.
+        ``n_episodes`` default lowered from 10 to 1 (callers opt in to
+        longer evals explicitly).
+        """
         from strands_robots.policies import create_policy
         from strands_robots.simulation.policy_runner import PolicyRunner
 
+        if not robot_name:
+            return {
+                "status": "error",
+                "content": [{"text": "eval_policy requires 'robot_name'."}],
+            }
         robots = self.list_robots()
         if not robots:
             return {"status": "error", "content": [{"text": "No robots in sim. Add one first."}]}
-        resolved_robot = robot_name or robots[0]
-        if resolved_robot not in robots:
+        if robot_name not in robots:
             return {
                 "status": "error",
-                "content": [{"text": f"Robot '{resolved_robot}' not found."}],
+                "content": [{"text": f"Robot '{robot_name}' not found."}],
             }
+        resolved_robot = robot_name
 
         policy = create_policy(policy_provider, **(policy_config or {}))
         policy.set_robot_state_keys(self.robot_joint_names(resolved_robot))

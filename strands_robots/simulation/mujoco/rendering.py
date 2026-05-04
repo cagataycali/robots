@@ -257,11 +257,18 @@ class RenderingMixin:
             pil_img.save(buffer, format="PNG")
             png_bytes = buffer.getvalue()
 
+            # T27: summary stats so render_all can flag empty-looking frames
+            # without decoding the PNG a second time.
+            import numpy as _np
+            pixel_var = float(_np.var(img))
+            pixel_mean = float(_np.mean(img))
+
             return {
                 "status": "success",
                 "content": [
                     {"text": f"📸 {w}x{h} from '{label}' at t={self._world.sim_time:.3f}s"},
                     {"image": {"format": "png", "source": {"bytes": png_bytes}}},
+                    {"json": {"pixel_variance": pixel_var, "pixel_mean": pixel_mean, "camera": label}},
                 ],
             }
         except Exception as e:
@@ -465,22 +472,36 @@ class RenderingMixin:
             return {"status": "error", "content": [{"text": "No cameras in scene."}]}
         content = []
         ok, failed = 0, 0
+        low_var_warnings: list[str] = []
         for cam_name in names:
             r = self.render(camera_name=cam_name, width=width, height=height)
             if r.get("status") == "success":
                 ok += 1
+                img_block = None
+                stats = None
                 for block in r.get("content", []):
-                    if isinstance(block, dict) and "image" in block:
-                        content.append({"text": f"📸 {cam_name}"})
-                        content.append(block)
-                        break
+                    if isinstance(block, dict):
+                        if "image" in block and img_block is None:
+                            img_block = block
+                        if "json" in block and stats is None:
+                            stats = block["json"]
+                if img_block is not None:
+                    label = f"📸 {cam_name}"
+                    # T27: flag near-uniform frames (all black / all clear).
+                    if stats and float(stats.get("pixel_variance", 99)) < 1.0:
+                        warn = f"⚠️ camera '{cam_name}': image appears empty (variance < 1)"
+                        label = f"{label}  {warn}"
+                        low_var_warnings.append(warn)
+                    content.append({"text": label})
+                    content.append(img_block)
             else:
                 failed += 1
                 err = r.get("content", [{}])[0].get("text", "?")
                 content.append({"text": f"{cam_name}: {err}"})
+        warn_suffix = f", {len(low_var_warnings)} low-variance" if low_var_warnings else ""
         summary = (
             f"📸 Multi-camera snapshot at t={self._world.sim_time:.3f}s: "
-            f"{ok} ok, {failed} failed, {len(names)} requested"
+            f"{ok} ok, {failed} failed, {len(names)} requested{warn_suffix}"
         )
         return {
             "status": "success" if ok else "error",
