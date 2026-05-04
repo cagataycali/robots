@@ -511,6 +511,108 @@ To clear the cache: `rm -rf ~/.strands_robots/assets/`
 
 To change the cache location: `export STRANDS_ASSETS_DIR=/path/to/custom/dir`
 
+## Simulation (MuJoCo)
+
+`strands-robots` ships a MuJoCo-backed simulation AgentTool — 58 actions
+exposed to any Strands agent for world composition, physics, policy
+execution, and video/dataset recording.
+
+### Install
+
+```bash
+pip install "strands-robots[sim-mujoco]"
+# For LeRobotDataset recording (parquet + training data):
+pip install "strands-robots[sim-mujoco,lerobot]"
+```
+
+### Quick start
+
+```python
+from strands_robots.simulation import Simulation
+
+sim = Simulation(tool_name="sim", mesh=False)
+sim.create_world()
+sim.add_robot(name="arm", data_config="so100")
+sim.add_object(name="cube", shape="box", position=[0.3, 0, 0.05])
+sim.add_camera(name="topdown", position=[0, 0, 1.5], target=[0, 0, 0])
+
+sim.run_policy(robot_name="arm", policy_provider="mock", n_steps=200,
+               control_frequency=50.0, fast_mode=True)
+
+frame = sim.render(camera_name="topdown")  # returns {status, content:[text, image]}
+```
+
+### 58 actions grouped
+
+- **World & objects**: `create_world`, `load_scene`, `add_robot`,
+  `add_object`, `move_object`, `list_objects`, `list_robots`,
+  `remove_robot`, `remove_object`, `destroy`, `reset`, `get_state`,
+  `save_state`, `load_state`, `list_checkpoints`.
+- **Physics**: `step`, `set_timestep`, `set_gravity`, `apply_force`,
+  `raycast`, `multi_raycast`, `set_body_properties`,
+  `set_geom_properties`, `get_body_state`, `get_joint_state`,
+  `set_joint_positions`, `set_joint_velocities`, `forward_kinematics`,
+  `get_mass_matrix`, `inverse_dynamics`, `get_total_mass`,
+  `get_jacobian`, `get_energy`, `get_contacts`, `get_sensor_data`.
+- **Cameras & rendering**: `add_camera`, `remove_camera`, `render`,
+  `render_depth`, `render_all`, `start_cameras_recording`,
+  `stop_cameras_recording`, `get_cameras_recording_status`.
+- **Policy**: `start_policy`, `run_policy`, `stop_policy`,
+  `replay_episode`, `eval_policy`.
+- **Randomization**: `randomize`.
+- **Recording (LeRobotDataset)**: `start_recording`, `stop_recording`,
+  `get_recording_status`.
+- **Introspection & util**: `get_features`, `list_urdfs`, `register_urdf`,
+  `export_xml`, `open_viewer`, `close_viewer`.
+
+### Common footguns
+
+- **Planes must be static.** `add_object(shape="plane")` auto-sets
+  `is_static=True`. Passing `is_static=False` on a plane is a hard error
+  (MuJoCo planes are infinite and can't have dynamic mass).
+- **Camera orientation.** Pass `target=[x,y,z]` to look at a point —
+  without it the camera faces forward by default. `target == position`
+  errors.
+- **MP4 vs dataset recording.** `start_cameras_recording` writes plain
+  MP4 per-camera and runs under `[sim-mujoco]` alone. `start_recording`
+  writes a LeRobotDataset (parquet + MP4 + schema) and requires the
+  `[lerobot]` extra.
+- **Policy running → mutations blocked.** While a policy runs on any
+  robot, state-mutating actions (`reset`, `set_gravity`, joint setters,
+  `apply_force`, `set_body_properties`, `set_geom_properties`,
+  `load_state`, `randomize`, `move_object`) error with *"Cannot 'X'
+  while a policy is running."* Stop it first with
+  `stop_policy(robot_name='...')`.
+- **Horizon parameters.** `run_policy` accepts either `duration` +
+  `control_frequency` (real-time) OR `n_steps` + `control_frequency`
+  (step-count). Pass `fast_mode=True` to skip the between-step sleep
+  during batch eval / data collection.
+- **Name collisions.** Objects, bodies, robots, and cameras share the
+  MuJoCo name table. Robot joints and actuators are auto-namespaced as
+  `{robot_name}/{joint}` in multi-robot scenes. Object geoms are
+  injected as `{object_name}_geom`; `set_geom_properties` accepts the
+  bare object name as an alias.
+- **Oversized render**: MuJoCo's offscreen framebuffer is capped by
+  `<global offwidth="W" offheight="H"/>` in MJCF. Requesting a bigger
+  render now errors with a plain message naming the cap — either lower
+  the request or rebuild the model with larger dims.
+
+### Self-healing features
+
+- Unknown parameters are rejected with *"Unknown parameter X for action
+  Y. Valid: [...]"* so the LLM learns the correct name without trial-
+  and-error.
+- Missing required parameters produce *"Action X requires parameter Y."*
+  (no Python `TypeError` leaks).
+- Vector dimensions and numeric dtype are validated before MuJoCo sees
+  them (previously zero-length direction vectors crashed the Python
+  process via `mj_ray` C-level abort).
+- `destroy()` and `cleanup()` empty the renderer TLS cache and shut down
+  the executor — no RSS growth across repeated create/destroy cycles.
+
+For the full action contract and test coverage see
+`tests/simulation/mujoco/test_agenttool_contract.py`.
+
 ## Contributing
 
 We welcome contributions! Please see:

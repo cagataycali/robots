@@ -101,8 +101,7 @@ class RandomizationMixin:
                         model.body_mass[i] *= s
                         mass_scales[bn] = s
                 changes.append(
-                    f"⚙️ Physics: {len(friction_scales)} geoms friction-scaled, "
-                    f"{len(mass_scales)} bodies mass-scaled"
+                    f"⚙️ Physics: {len(friction_scales)} geoms friction-scaled, {len(mass_scales)} bodies mass-scaled"
                 )
                 changes.append(f"   friction_scales={friction_scales}")
                 changes.append(f"   mass_scales={mass_scales}")
