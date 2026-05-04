@@ -393,11 +393,21 @@ class PhysicsMixin:
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
 
+        # T18: data.qM is only valid after a forward pass; running mj_forward
+        # ensures the mass matrix reflects the current qpos (e.g. right after
+        # a reset/load_state).
+        mj.mj_forward(model, data)
         nv = model.nv
         M = np.zeros((nv, nv))
-        mj.mj_fullM(model, M, data.qM)
-        rank = int(np.linalg.matrix_rank(M))
-        cond = float(np.linalg.cond(M)) if rank > 0 else float("inf")
+        if nv > 0:
+            mj.mj_fullM(model, M, data.qM)
+            rank = int(np.linalg.matrix_rank(M))
+            cond = float(np.linalg.cond(M)) if rank > 0 else float("inf")
+        else:
+            # Empty scene (no DOFs yet) — return a well-typed zero payload
+            # instead of crashing in numpy on the empty matrix.
+            rank = 0
+            cond = float("inf")
 
         return {
             "status": "success",

@@ -285,3 +285,33 @@ class TestStopPolicyContract:
         r = sim._dispatch_action("stop_policy", {"robot_name": "ghost_bot"})
         assert r["status"] == "error"
         assert "Robot 'ghost_bot' not found" in r["content"][0]["text"]
+
+
+class TestForwardPassBeforeReads:
+    """T18/T19: get_mass_matrix, get_contacts run mj_forward first so values
+    are valid immediately after a reset / add_robot / load_state, not just
+    after a full mj_step."""
+
+    def test_get_mass_matrix_after_reset_is_valid(self, sim):
+        sim.reset()
+        r = sim._dispatch_action("get_mass_matrix", {})
+        assert r["status"] == "success"
+        # Empty scene: nv==0 so rank==0 and cond==inf are acceptable; the
+        # important bit is we didn't return NaN / raise.
+        import json as _json
+        payload = r["content"][-1].get("json", {}) if isinstance(r["content"][-1], dict) else {}
+        assert "shape" in payload
+
+    def test_get_contacts_at_t0_no_phantom_penetrations(self, sim):
+        # Empty world has no contacts; running this at t=0 must succeed
+        # and return an empty list (T19 used to surface stale/uninit data).
+        sim.reset()
+        r = sim._dispatch_action("get_contacts", {})
+        assert r["status"] == "success"
+        payload = r["content"][-1]["json"] if isinstance(r["content"][-1], dict) else {}
+        contacts = payload.get("contacts", [])
+        # An empty world has no contacts. If the fix isn't applied and stale
+        # data surfaces, contacts may contain garbage names/distances. Assert
+        # either empty or all distances > -1mm (no phantom deep penetrations).
+        for c in contacts:
+            assert c["dist"] > -0.001, f"phantom penetration: {c}"

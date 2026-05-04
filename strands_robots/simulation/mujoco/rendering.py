@@ -306,11 +306,20 @@ class RenderingMixin:
         return names
 
     def get_contacts(self) -> dict[str, Any]:
+        """Return the list of active geom-geom contacts at the current step.
+
+        T19: We run ``mj_forward`` first so the contact list reflects the
+        current qpos/qvel even immediately after ``reset`` or ``add_robot``
+        (without this, stale contacts from the previous step / uninitialised
+        memory can appear as phantom penetrations at t=0).
+        """
         if err := self._require_world():
             return err
 
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
+        # T19: refresh contact list without advancing time.
+        mj.mj_forward(model, data)
 
         contacts = []
         for i in range(data.ncon):
