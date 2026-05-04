@@ -348,6 +348,13 @@ class Simulation(
         if name in self._world.robots:
             return {"status": "error", "content": [{"text": f"Robot '{name}' already exists."}]}
 
+        # Resolution precedence (T22/T49):
+        #   1. explicit `urdf_path` (anything on disk).
+        #   2. `data_config` looked up in the model registry.
+        #   3. DEPRECATED: `name` looked up in the registry (undocumented
+        #      fallback kept for one release with a DeprecationWarning).
+        # Pass `data_config` for new code; the `name`-as-registry-key path
+        # will be removed.
         resolved_path = urdf_path
         if not resolved_path and data_config:
             resolved_path = resolve_model(data_config)
@@ -361,7 +368,16 @@ class Simulation(
                     ],
                 }
         elif not resolved_path and name:
+            # T22: deprecated fallback — try registry by instance name.
+            import warnings as _warnings
             resolved_path = resolve_model(name)
+            if resolved_path:
+                _warnings.warn(
+                    f"add_robot: resolving model via instance name '{name}' is deprecated; "
+                    "pass data_config='<registry-key>' instead.",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
 
         if not resolved_path:
             return {"status": "error", "content": [{"text": "Either urdf_path or data_config is required."}]}
@@ -536,8 +552,11 @@ class Simulation(
         return {"status": "success", "content": [{"text": "\n".join(lines)}]}
 
     def get_robot_state(self, robot_name: str) -> dict[str, Any]:
-        if self._world is None or self._world._data is None:
-            return {"status": "error", "content": [{"text": "No simulation running."}]}
+        """T23: canonical name parameter is ``robot_name``. The router
+        accepts ``name`` as an alias (bidirectional) so legacy LLM calls
+        keep working, but new tool specs should document only robot_name."""
+        if err := self._require_world():
+            return err
         if robot_name not in self._world.robots:
             return {"status": "error", "content": [{"text": f"Robot '{robot_name}' not found."}]}
 
@@ -1206,6 +1225,8 @@ class Simulation(
         fast_mode: bool = False,
         video: dict[str, Any] | None = None,
         policy_object: "Policy | None" = None,
+        n_steps: int | None = None,
+        max_steps: int | None = None,
     ) -> dict[str, Any]:
         """Start policy execution on a background thread (non-blocking).
 
@@ -1214,9 +1235,8 @@ class Simulation(
         without blocking the event loop. Only one policy per robot at a
         time (MuJoCo model/data are not thread-safe for concurrent writes).
 
-        Forwards all parameters accepted by :meth:`run_policy` so that
-        callers via tool_spec.json can set control_frequency, action_horizon,
-        and video from start_policy as well.
+        T25: accepts ``n_steps`` (primary) or legacy ``max_steps`` as an
+        alternate horizon specification; run_policy converts to duration.
         """
         if err := self._require_world():
             return err
@@ -1242,6 +1262,8 @@ class Simulation(
             fast_mode=fast_mode,
             video=video,
             policy_object=policy_object,
+            n_steps=n_steps,
+            max_steps=max_steps,
         )
         self._policy_threads[robot_name] = future
 
@@ -1311,6 +1333,8 @@ class Simulation(
         fast_mode: bool = False,
         video: dict[str, Any] | None = None,
         policy_object: "Policy | None" = None,
+        n_steps: int | None = None,
+        max_steps: int | None = None,
     ) -> dict[str, Any]:
         """MuJoCo ``run_policy`` override: pre-flight world check + graceful stop.
 
@@ -1318,6 +1342,9 @@ class Simulation(
         ``policy_running`` flag in a ``finally`` clause and swallows
         ``_PolicyStopped`` (which the ``on_frame`` hook raises on user
         cancellation) into a normal "policy stopped" result.
+
+        T25: forwards ``n_steps`` / ``max_steps`` to the base so LLM callers
+        can specify horizon in steps rather than wall-clock seconds.
         """
         if err := self._require_world():
             return err
@@ -1334,6 +1361,8 @@ class Simulation(
                 fast_mode=fast_mode,
                 video=video,
                 policy_object=policy_object,
+                n_steps=n_steps,
+                max_steps=max_steps,
             )
         finally:
             if self._world is not None and robot_name in self._world.robots:

@@ -244,6 +244,8 @@ class SimEngine(ABC):
         fast_mode: bool = False,
         video: dict[str, Any] | None = None,
         policy_object: Policy | None = None,
+        n_steps: int | None = None,
+        max_steps: int | None = None,
     ) -> dict[str, Any]:
         """Run a policy loop in the simulation (blocking).
 
@@ -282,6 +284,24 @@ class SimEngine(ABC):
         """
         from strands_robots.policies import create_policy
         from strands_robots.simulation.policy_runner import PolicyRunner, VideoConfig
+
+        # T25: accept n_steps (or legacy max_steps) as an alternate horizon
+        # specification. duration = n_steps / control_frequency. If both
+        # are passed, n_steps wins (primary per T25 DoD).
+        if n_steps is None and max_steps is not None:
+            n_steps = int(max_steps)
+        if n_steps is not None:
+            if n_steps <= 0:
+                return {
+                    "status": "error",
+                    "content": [{"text": f"run_policy: n_steps must be > 0, got {n_steps}."}],
+                }
+            if control_frequency <= 0:
+                return {
+                    "status": "error",
+                    "content": [{"text": "run_policy: control_frequency must be > 0 when n_steps is used."}],
+                }
+            duration = float(n_steps) / float(control_frequency)
 
         if robot_name not in self.list_robots():
             return {
@@ -324,6 +344,8 @@ class SimEngine(ABC):
         fast_mode: bool = False,
         video: dict[str, Any] | None = None,
         policy_object: Policy | None = None,
+        n_steps: int | None = None,
+        max_steps: int | None = None,
     ) -> dict[str, Any]:
         """Start policy execution in a background thread (non-blocking).
 
@@ -331,8 +353,8 @@ class SimEngine(ABC):
         Backends that support true background execution (like MuJoCo via
         its ``ThreadPoolExecutor``) should override.
 
-        Accepts all parameters that ``run_policy`` does so the tool_spec
-        dispatcher can forward them uniformly.
+        T25: accepts ``n_steps`` (primary) or legacy ``max_steps`` as an
+        alternate to ``duration``. See ``run_policy`` for conversion rules.
         """
         return self.run_policy(
             robot_name,
@@ -345,6 +367,8 @@ class SimEngine(ABC):
             fast_mode=fast_mode,
             video=video,
             policy_object=policy_object,
+            n_steps=n_steps,
+            max_steps=max_steps,
         )
 
     def replay_episode(
