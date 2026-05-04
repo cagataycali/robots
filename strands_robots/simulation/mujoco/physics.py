@@ -141,6 +141,19 @@ class PhysicsMixin:
         if self._world is None or self._world._model is None:
             return {"status": "error", "content": [{"text": "No simulation."}]}
 
+        # T10: must supply at least one non-zero force or torque
+        if force is None and torque is None:
+            return {"status": "error", "content": [{"text": "apply_force: specify at least one of 'force' or 'torque' (non-zero vector)."}]}
+
+        # Validate vector lengths before hitting numpy
+        for _name, _vec in (("force", force), ("torque", torque), ("point", point)):
+            if _vec is not None:
+                try:
+                    if len(_vec) != 3:
+                        return {"status": "error", "content": [{"text": f"apply_force: '{_name}' must be a 3-element vector [x,y,z], got {len(_vec)}"}]}
+                except TypeError:
+                    return {"status": "error", "content": [{"text": f"apply_force: '{_name}' must be a list/tuple of 3 numbers"}]}
+
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
 
@@ -150,6 +163,8 @@ class PhysicsMixin:
 
         f = np.array(force or [0, 0, 0], dtype=np.float64)
         t = np.array(torque or [0, 0, 0], dtype=np.float64)
+        # Note: explicit [0,0,0] is a valid "clear the latched force" command; we only
+        # reject the case where the caller forgot both args (handled above).
         p = np.array(point, dtype=np.float64) if point else data.xipos[body_id].copy()
 
         # Zero the buffer first so calls are idempotent (replace, not accumulate).
@@ -228,6 +243,15 @@ class PhysicsMixin:
         if self._world is None or self._world._model is None:
             return {"status": "error", "content": [{"text": "No simulation."}]}
 
+        # T7: validate vector shapes and reject zero-direction (mj_ray aborts the process on len=0)
+        try:
+            if len(origin) != 3:
+                return {"status": "error", "content": [{"text": f"raycast: 'origin' must be 3 elements [x,y,z], got {len(origin)}"}]}
+            if len(direction) != 3:
+                return {"status": "error", "content": [{"text": f"raycast: 'direction' must be 3 elements [dx,dy,dz], got {len(direction)}"}]}
+        except TypeError:
+            return {"status": "error", "content": [{"text": "raycast: 'origin' and 'direction' must be lists of 3 numbers"}]}
+
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
 
@@ -235,8 +259,9 @@ class PhysicsMixin:
         vec = np.array(direction, dtype=np.float64)
         # Normalize direction
         norm = np.linalg.norm(vec)
-        if norm > 0:
-            vec = vec / norm
+        if norm < 1e-10:
+            return {"status": "error", "content": [{"text": "raycast: 'direction' vector is zero-length — supply a non-zero direction."}]}
+        vec = vec / norm
 
         geomid = np.array([-1], dtype=np.int32)
         dist = mj.mj_ray(
@@ -743,14 +768,30 @@ class PhysicsMixin:
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
 
+        # T7: validate origin shape; per-ray zero-direction guard (avoid mj_ray abort)
+        try:
+            if len(origin) != 3:
+                return {"status": "error", "content": [{"text": f"multi_raycast: 'origin' must be 3 elements [x,y,z], got {len(origin)}"}]}
+        except TypeError:
+            return {"status": "error", "content": [{"text": "multi_raycast: 'origin' must be a list of 3 numbers"}]}
+
         pnt = np.array(origin, dtype=np.float64)
         results = []
 
-        for d in directions:
+        for idx, d in enumerate(directions):
+            try:
+                if len(d) != 3:
+                    results.append({"distance": None, "geom_id": None, "error": f"ray[{idx}]: direction must have 3 elements, got {len(d)}"})
+                    continue
+            except TypeError:
+                results.append({"distance": None, "geom_id": None, "error": f"ray[{idx}]: direction must be a list of 3 numbers"})
+                continue
             vec = np.array(d, dtype=np.float64)
             norm = np.linalg.norm(vec)
-            if norm > 0:
-                vec /= norm
+            if norm < 1e-10:
+                results.append({"distance": None, "geom_id": None, "error": f"ray[{idx}]: zero-length direction"})
+                continue
+            vec /= norm
             geomid = np.array([-1], dtype=np.int32)
             dist = mj.mj_ray(model, data, pnt, vec, None, 1, exclude_body, geomid)
             results.append(

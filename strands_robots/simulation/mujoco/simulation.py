@@ -740,6 +740,21 @@ class Simulation(
     def step(self, n_steps: int = 1) -> dict[str, Any]:
         if self._world is None or self._world._data is None:
             return {"status": "error", "content": [{"text": "No simulation."}]}
+        # T9: reject negative, accept zero as no-op
+        if not isinstance(n_steps, int):
+            try:
+                n_steps = int(n_steps)
+            except (TypeError, ValueError):
+                return {"status": "error", "content": [{"text": f"step: n_steps must be an integer, got {type(n_steps).__name__}"}]}
+        if n_steps < 0:
+            return {"status": "error", "content": [{"text": f"step: n_steps must be >= 0, got {n_steps}"}]}
+        if n_steps == 0:
+            return {
+                "status": "success",
+                "content": [
+                    {"text": f"⏩ +0 steps (no-op) | t={self._world.sim_time:.4f}s | total={self._world.step_count}"}
+                ],
+            }
         mj = self._mj
         with self._lock:
             for _ in range(n_steps):
