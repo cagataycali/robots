@@ -265,3 +265,27 @@ class TestPolicyRunningGuards:
         res = sim_with_robot.randomize(seed=42)
         assert res["status"] == "error"
         assert "while a policy is running" in res["content"][0]["text"]
+
+
+# --- T6: add_robot initial state is zero -------------------------------
+
+
+class TestAddRobotInitialState:
+    """After add_robot, qpos/qvel/ctrl must be zero without needing reset()."""
+
+    def test_initial_qpos_is_zero(self):
+        import numpy as np
+        sim = Simulation()
+        try:
+            sim.create_world()
+            res = sim.add_robot(name="panda", data_config="panda")
+            if res["status"] != "success":
+                import pytest as _pytest
+                _pytest.skip(f"panda not available: {res['content'][0]['text']}")
+            # IMPORTANT: do NOT call reset. T6 requires that add_robot itself leaves a clean state.
+            data = sim._world._data
+            assert np.allclose(data.qpos, 0.0), f"qpos should be zero after add_robot, got {data.qpos}"
+            assert np.allclose(data.qvel, 0.0), f"qvel should be zero after add_robot, got {data.qvel}"
+            assert np.allclose(data.ctrl, 0.0), f"ctrl should be zero after add_robot, got {data.ctrl}"
+        finally:
+            sim.destroy()

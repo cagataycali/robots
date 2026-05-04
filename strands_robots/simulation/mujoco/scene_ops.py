@@ -132,10 +132,22 @@ def _reload_scene_from_xml(world: SimWorld, scene_path: str) -> bool:
     """Reload MuJoCo model from modified XML, preserving state.
 
     Copies qpos, qvel, ctrl from old model and re-discovers robot joint/actuator IDs.
+
+    T6: before copying existing state into the new MjData we explicitly call
+    ``mj_resetData`` so that joints NOT present in ``old_model`` (i.e. the
+    freshly-injected robot's joints) start from a well-defined zero state
+    rather than whatever garbage pybind11 happened to hand us from fresh
+    allocation. Old state is then layered on top per-joint-by-name so
+    previously-existing robots/objects keep their positions.
     """
     mj = _ensure_mujoco()
     new_model = mj.MjModel.from_xml_path(str(scene_path))
     new_data = mj.MjData(new_model)
+
+    # T6: zero the whole state buffer before copying old-state on top.
+    # Without this, freshly-added robots show nonzero qpos/qvel/ctrl from
+    # uninitialised memory and any observation taken before reset() is garbage.
+    mj.mj_resetData(new_model, new_data)
 
     # Copy state per-joint by name to handle layout shifts when injected
     # bodies land earlier in the body-tree traversal.  Flat-index copies

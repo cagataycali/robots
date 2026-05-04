@@ -446,9 +446,16 @@ class Simulation(
                 for i in range(model.nu):
                     robot.actuator_ids.append(i)
 
-            # Settle physics (100 steps)
-            for _ in range(100):
-                mj.mj_step(self._world._model, self._world._data)
+            # T6: leave the freshly-added robot in a clean, deterministic
+            # zero state (qpos=qvel=ctrl=0) rather than silently settling
+            # under gravity for 100 steps. Callers that want a pre-settled
+            # pose should call step()/reset() explicitly. This makes
+            # `add_robot` -> `get_robot_state` observations meaningful for
+            # learning pipelines that expect t=0 to be a canonical start.
+            mj.mj_resetData(self._world._model, self._world._data)
+            self._world.sim_time = 0.0
+            self._world.step_count = 0
+            mj.mj_forward(self._world._model, self._world._data)
 
             source = f"data_config='{data_config}'" if data_config else os.path.basename(resolved_path)
             return {
