@@ -830,8 +830,32 @@ class Simulation(
         for r in self._world.robots.values():
             r.policy_running = False
         self._close_viewer()
+        self._close_main_thread_renderers()
         self._world = None
         return {"status": "success", "content": [{"text": "🗑️ World destroyed."}]}
+
+    def _close_main_thread_renderers(self) -> None:
+        """T4: Close any renderers this thread owns and drop the TLS cache.
+
+        Only safe for the main thread because ``mujoco.Renderer`` binds a
+        CGL/GLX context to the thread that created it; closing from another
+        thread can SIGSEGV in ``cgl.free()``. Worker threads drop their
+        renderers via ``threading.Thread`` teardown.
+        """
+        tls = getattr(self, "_renderer_tls", None)
+        if tls is None:
+            return
+        renderers = getattr(tls, "renderers", None)
+        if renderers:
+            for r in list(renderers.values()):
+                try:
+                    r.close()
+                except Exception:
+                    pass
+            renderers.clear()
+        # Forget the model marker so the next _get_renderer() rebuilds fresh.
+        if hasattr(tls, "model"):
+            tls.model = None
 
     def set_gravity(self, gravity: list[float] | float | int) -> dict[str, Any]:
         if self._world is None or self._world._model is None:
@@ -1417,12 +1441,11 @@ class Simulation(
                 r.policy_running = False
             self._world = None
         self._close_viewer()
-        # Don't explicitly close renderers — they're thread-local. MuJoCo's
-        # Renderer.__del__ will call close() on whichever thread the Python
-        # ref is finally released on. Calling close() from main when the
-        # renderer was created on a worker thread → SIGSEGV in cgl.free().
-        # Dropping the TLS object drops main-thread refs; worker threads
-        # release theirs when they terminate.
+        # T4: close main-thread renderers before dropping the TLS object.
+        # Renderers created on worker threads release their GL contexts
+        # when those threads terminate; calling close() cross-thread
+        # SIGSEGVs in cgl.free(), so we stay on main.
+        self._close_main_thread_renderers()
         if hasattr(self, "_renderer_tls"):
             self._renderer_tls = threading.local()
         self._executor.shutdown(wait=False)
