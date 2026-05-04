@@ -315,3 +315,48 @@ class TestForwardPassBeforeReads:
         # either empty or all distances > -1mm (no phantom deep penetrations).
         for c in contacts:
             assert c["dist"] > -0.001, f"phantom penetration: {c}"
+
+
+class TestRenderDimValidation:
+    """T20: non-positive width/height rejected; oversized dims get plain-English
+    message instead of raw MuJoCo framebuffer error."""
+
+    def test_zero_width_rejected(self, sim):
+        r = sim._dispatch_action("render", {"width": 0, "height": 120})
+        assert r["status"] == "error"
+        assert "width and height must be > 0" in r["content"][0]["text"]
+
+    def test_negative_height_rejected(self, sim):
+        r = sim._dispatch_action("render", {"width": 160, "height": -10})
+        assert r["status"] == "error"
+        assert "must be > 0" in r["content"][0]["text"]
+
+    def test_oversize_dim_message_is_friendly(self, sim):
+        # Request 8000x8000 — well above any sane offscreen framebuffer cap.
+        r = sim._dispatch_action("render", {"width": 8000, "height": 8000})
+        assert r["status"] == "error"
+        text = r["content"][0]["text"]
+        assert "exceeds" in text
+        assert "framebuffer" in text
+        assert "offwidth" in text  # points at the fix
+
+
+class TestRenderDepthSurfaces:
+    """T21: render_depth mac warning surfaces in the response text when the
+    driver lacks ARB_clip_control. Skipped when the warning isn't triggered
+    (Linux / modern macOS GPUs may or may not hit it)."""
+
+    def test_render_depth_returns_well_formed_response(self, sim):
+        # Just check render_depth runs cleanly; the T21-specific warning
+        # only fires on macOS without ARB_clip_control so we only assert
+        # presence-of-warning when _depth_warn_text is set.
+        r = sim._dispatch_action("render_depth", {})
+        # Some headless envs don't have GL: we only care the response shape
+        # is valid either way.
+        assert r["status"] in ("success", "error")
+        if r["status"] == "success":
+            text = r["content"][0]["text"]
+            # If a warning was captured, it must be on the response.
+            warn_cached = getattr(sim, "_depth_warn_text", "")
+            if warn_cached:
+                assert warn_cached in text

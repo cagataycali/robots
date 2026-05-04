@@ -21,6 +21,42 @@ class RenderingMixin:
 
     """Rendering capabilities for Simulation. Expects self._world, self.default_width, self.default_height."""
 
+    def _validate_render_dims(self, width: int, height: int) -> dict[str, Any] | None:
+        """T20: reject non-positive render dims; convert MuJoCo's framebuffer
+        overflow to a plain-English message that tells the LLM the actual cap.
+        """
+        if not isinstance(width, int) or not isinstance(height, int):
+            return {
+                "status": "error",
+                "content": [
+                    {"text": f"render: width/height must be int, got {type(width).__name__}/{type(height).__name__}."}
+                ],
+            }
+        if width <= 0 or height <= 0:
+            return {
+                "status": "error",
+                "content": [
+                    {"text": f"render: width and height must be > 0, got {width}x{height}."}
+                ],
+            }
+        if self._world is not None and self._world._model is not None:
+            max_w = int(getattr(self._world._model.vis.global_, "offwidth", 1280))
+            max_h = int(getattr(self._world._model.vis.global_, "offheight", 960))
+            if width > max_w or height > max_h:
+                return {
+                    "status": "error",
+                    "content": [
+                        {
+                            "text": (
+                                f"render: requested {width}x{height} exceeds the offscreen "
+                                f"framebuffer cap ({max_w}x{max_h}). Lower width/height or "
+                                f"rebuild the model with a larger <global offwidth='...' offheight='...'/>."
+                            )
+                        }
+                    ],
+                }
+        return None
+
     def _get_renderer(self, width: int, height: int):
         """Get a cached MuJoCo renderer, creating one only if needed.
 
@@ -169,8 +205,12 @@ class RenderingMixin:
             return err
 
         mj = _ensure_mujoco()
-        w = width or self.default_width
-        h = height or self.default_height
+        # T20: treat `None` as "use default", but `0` / negative values must
+        # still hit the validator (bool coercion would swallow them silently).
+        w = self.default_width if width is None else width
+        h = self.default_height if height is None else height
+        if err := self._validate_render_dims(w, h):
+            return err
 
         try:
             renderer = self._get_renderer(w, h)
@@ -235,8 +275,11 @@ class RenderingMixin:
             return err
 
         mj = _ensure_mujoco()
-        w = width or self.default_width
-        h = height or self.default_height
+        # T20: see note in render() re: None vs 0/negative.
+        w = self.default_width if width is None else width
+        h = self.default_height if height is None else height
+        if err := self._validate_render_dims(w, h):
+            return err
 
         try:
             # T3: strict camera validation (same policy as render())
@@ -269,19 +312,47 @@ class RenderingMixin:
                 renderer.update_scene(self._world._data, camera=cam_id)
             else:
                 renderer.update_scene(self._world._data)
-            renderer.enable_depth_rendering()
-            depth = renderer.render()
-            renderer.disable_depth_rendering()
+            # T21: MuJoCo prints a one-time ARB_clip_control warning on macOS
+            # when depth precision is reduced. Capture stderr on the first
+            # depth render so we can surface the warning in the response
+            # text (the LLM otherwise never hears about it).
+            clip_warn = getattr(self, "_depth_warn_text", None)
+            if clip_warn is None:
+                import contextlib as _ctx, io as _io, os as _os, sys as _sys
+                buf = _io.StringIO()
+                with _ctx.redirect_stderr(buf):
+                    renderer.enable_depth_rendering()
+                    depth = renderer.render()
+                    renderer.disable_depth_rendering()
+                captured = buf.getvalue()
+                # Also forward to the real stderr so logs don't vanish.
+                if captured:
+                    try:
+                        _sys.__stderr__.write(captured)
+                    except Exception:
+                        pass
+                if "ARB_clip_control" in captured:
+                    self._depth_warn_text = (
+                        "⚠️ Depth accuracy limited on this GPU (missing ARB_clip_control)"
+                    )
+                else:
+                    self._depth_warn_text = ""
+                clip_warn = self._depth_warn_text
+            else:
+                renderer.enable_depth_rendering()
+                depth = renderer.render()
+                renderer.disable_depth_rendering()
 
+            text = (
+                f"📸 Depth {w}x{h} from '{label}'\n"
+                f"Min: {float(depth.min()):.3f}m, Max: {float(depth.max()):.3f}m"
+            )
+            if clip_warn:
+                text += f"\n{clip_warn}"
             return {
                 "status": "success",
                 "content": [
-                    {
-                        "text": (
-                            f"📸 Depth {w}x{h} from '{label}'\n"
-                            f"Min: {float(depth.min()):.3f}m, Max: {float(depth.max()):.3f}m"
-                        )
-                    },
+                    {"text": text},
                     {"json": {"depth_min": float(depth.min()), "depth_max": float(depth.max())}},
                 ],
             }
