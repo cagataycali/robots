@@ -36,7 +36,30 @@ class RandomizationMixin:
         seed: int | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """Apply domain randomization to the scene."""
+        """Apply domain randomization to the scene.
+
+        Each flag is opt-in per-axis. Defaults:
+          - ``randomize_colors=True``       — geom RGB re-sampled in ``color_range``.
+          - ``randomize_lighting=True``     — light pos jittered ±0.5m, diffuse resampled.
+          - ``randomize_physics=False``     — friction/mass left untouched unless asked.
+          - ``randomize_positions=False``   — object qpos left untouched unless asked.
+
+        "No flags" means "nothing is randomized" — the call is a no-op. This
+        matches the LLM ergonomics principle: explicit is better than implicit.
+        Randomization IS destructive (writes to ``model.geom_*`` / ``body_*``
+        arrays and to ``data.qpos``); recompile the scene to undo.
+
+        Args:
+            randomize_colors:     Re-sample geom RGB values.
+            randomize_lighting:   Jitter light positions + diffuse colour.
+            randomize_physics:    Scale geom friction and body mass.
+            randomize_positions:  Add uniform noise to dynamic-object xyz.
+            position_noise:       Max ± xyz offset in meters when randomising positions.
+            color_range:          (lo, hi) for uniform RGB sampling.
+            friction_range:       (lo, hi) multiplicative scale on friction[0].
+            mass_range:           (lo, hi) multiplicative scale on body_mass.
+            seed:                 Optional np.random seed for reproducibility.
+        """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
         # domain randomization mutates model arrays; a running policy racing with it is UB
@@ -64,12 +87,25 @@ class RandomizationMixin:
                 changes.append(f"💡 Lighting: {model.nlight} lights randomized")
 
             if randomize_physics:
+                friction_scales = {}
                 for i in range(model.ngeom):
-                    model.geom_friction[i, 0] *= rng.uniform(*friction_range)
+                    gn = mj.mj_id2name(model, mj.mjtObj.mjOBJ_GEOM, i) or f"geom_{i}"
+                    f = float(rng.uniform(*friction_range))
+                    model.geom_friction[i, 0] *= f
+                    friction_scales[gn] = f
+                mass_scales = {}
                 for i in range(model.nbody):
                     if model.body_mass[i] > 0:
-                        model.body_mass[i] *= rng.uniform(*mass_range)
-                changes.append(f"⚙️ Physics: friction×[{friction_range}], mass×[{mass_range}]")
+                        bn = mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, i) or f"body_{i}"
+                        s = float(rng.uniform(*mass_range))
+                        model.body_mass[i] *= s
+                        mass_scales[bn] = s
+                changes.append(
+                    f"⚙️ Physics: {len(friction_scales)} geoms friction-scaled, "
+                    f"{len(mass_scales)} bodies mass-scaled"
+                )
+                changes.append(f"   friction_scales={friction_scales}")
+                changes.append(f"   mass_scales={mass_scales}")
 
             if randomize_positions:
                 for obj_name, obj in self._world.objects.items():

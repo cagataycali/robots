@@ -741,6 +741,17 @@ class Simulation(
         width: int = 640,
         height: int = 480,
     ) -> dict[str, Any]:
+        """Add a camera to the scene (MJCF ``<camera>`` injection).
+
+        Naming: ``add_object(name="X", ...)`` injects its geom as
+        ``"X_geom"`` in MJCF, so cameras share the name table only with
+        other cameras and body names — not with object geoms. Duplicate
+        camera names are rejected upfront.
+
+        Orientation: ``target`` is baked into the camera's ``xyaxes``
+        attribute so the rendered view looks at that point (not just
+        forward-facing). Degenerate cases (target == position) error.
+        """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
         if err := self._require_no_running_policy("add_camera"):

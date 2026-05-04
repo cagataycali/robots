@@ -401,11 +401,26 @@ class RenderingMixin:
         # refresh contact list without advancing time.
         mj.mj_forward(model, data)
 
+        def _resolve_geom(gid: int) -> str:
+            """Prefer the geom name; fall back to its parent body name; then id."""
+            gn = mj.mj_id2name(model, mj.mjtObj.mjOBJ_GEOM, gid)
+            if gn:
+                return gn
+            # Walk to the parent body name.
+            try:
+                bid = int(model.geom_bodyid[gid])
+                bn = mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, bid)
+                if bn:
+                    return f"{bn}/geom_{gid}"
+            except (IndexError, AttributeError):
+                pass
+            return f"geom_{gid}"
+
         contacts = []
         for i in range(data.ncon):
             c = data.contact[i]
-            g1 = mj.mj_id2name(model, mj.mjtObj.mjOBJ_GEOM, c.geom1) or f"geom_{c.geom1}"
-            g2 = mj.mj_id2name(model, mj.mjtObj.mjOBJ_GEOM, c.geom2) or f"geom_{c.geom2}"
+            g1 = _resolve_geom(c.geom1)
+            g2 = _resolve_geom(c.geom2)
             contacts.append({"geom1": g1, "geom2": g2, "dist": float(c.dist), "pos": c.pos.tolist()})
 
         text = f"💥 {len(contacts)} contacts" if contacts else "No contacts."
