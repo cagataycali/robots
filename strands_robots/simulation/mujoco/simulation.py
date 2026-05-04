@@ -933,6 +933,39 @@ class Simulation(
         return {"status": "success", "content": [{"text": list_available_models()}]}
 
     def register_urdf(self, data_config: str, urdf_path: str) -> dict[str, Any]:
+        """T35: validate urdf_path before handing it to the registry.
+
+        The router (T1) already rejects missing required params, so the
+        no-args case produces a friendly 'requires parameter ...' message
+        without hitting this body.
+        """
+        if not urdf_path:
+            return {
+                "status": "error",
+                "content": [{"text": "register_urdf: 'urdf_path' must be a non-empty string."}],
+            }
+        p = Path(urdf_path)
+        if not p.exists():
+            return {
+                "status": "error",
+                "content": [{"text": f"register_urdf: file not found: {urdf_path}"}],
+            }
+        if not p.is_file():
+            return {
+                "status": "error",
+                "content": [{"text": f"register_urdf: not a file: {urdf_path}"}],
+            }
+        try:
+            # Smoke-check readability — mj.MjModel.from_xml_path will surface a
+            # better error later, but permission issues are worth catching now.
+            with p.open("rb"):
+                pass
+        except OSError as e:
+            return {
+                "status": "error",
+                "content": [{"text": f"register_urdf: cannot read {urdf_path}: {e}"}],
+            }
+
         _register_urdf(data_config, urdf_path)
         resolved = resolve_model(data_config)
         return {
@@ -942,29 +975,68 @@ class Simulation(
 
     # Introspection
 
-    def get_features(self) -> dict[str, Any]:
+    def get_features(self, robot_name: str | None = None) -> dict[str, Any]:
+        """Describe the simulation's joints / actuators / cameras / robots.
+
+        T33: If ``robot_name`` is given, the joint / actuator / camera listings
+        are restricted to that robot (its namespaced MuJoCo names).  The
+        ``robots`` map is also filtered to just that entry.
+        """
         if err := self._require_world():
             return err
 
         mj = self._mj
         model = self._world._model
 
-        joint_names = [mj.mj_id2name(model, mj.mjtObj.mjOBJ_JOINT, i) for i in range(model.njnt)]
-        joint_names = [n for n in joint_names if n]
-        actuator_names = [mj.mj_id2name(model, mj.mjtObj.mjOBJ_ACTUATOR, i) for i in range(model.nu)]
-        actuator_names = [n for n in actuator_names if n]
-        camera_names = [mj.mj_id2name(model, mj.mjtObj.mjOBJ_CAMERA, i) for i in range(model.ncam)]
-        camera_names = [n for n in camera_names if n]
+        # All-model name pools
+        all_joint_names = [mj.mj_id2name(model, mj.mjtObj.mjOBJ_JOINT, i) for i in range(model.njnt)]
+        all_joint_names = [n for n in all_joint_names if n]
+        all_actuator_names = [mj.mj_id2name(model, mj.mjtObj.mjOBJ_ACTUATOR, i) for i in range(model.nu)]
+        all_actuator_names = [n for n in all_actuator_names if n]
+        all_camera_names = [mj.mj_id2name(model, mj.mjtObj.mjOBJ_CAMERA, i) for i in range(model.ncam)]
+        all_camera_names = [n for n in all_camera_names if n]
 
-        robots_info = {}
-        for rname, robot in self._world.robots.items():
-            robots_info[rname] = {
-                "joint_names": robot.joint_names,
-                "n_joints": len(robot.joint_names),
-                "n_actuators": len(robot.actuator_ids),
-                "data_config": robot.data_config,
-                "source": os.path.basename(robot.urdf_path),
+        if robot_name is not None:
+            if robot_name not in self._world.robots:
+                return {"status": "error", "content": [{"text": f"Robot '{robot_name}' not found."}]}
+            robot = self._world.robots[robot_name]
+            ns = (getattr(robot, "namespace", "") or "").rstrip("/")
+            prefix = f"{ns}/" if ns else ""
+
+            def _scoped(pool: list[str]) -> list[str]:
+                if not prefix:
+                    # Single-robot scene with no namespace: return the robot's own
+                    # joints/actuators from the robot model rather than the pool.
+                    return pool
+                return [n for n in pool if n.startswith(prefix)]
+
+            joint_names = robot.joint_names or _scoped(all_joint_names)
+            actuator_names = _scoped(all_actuator_names)
+            camera_names = _scoped(all_camera_names)
+
+            robots_info = {
+                robot_name: {
+                    "joint_names": robot.joint_names,
+                    "n_joints": len(robot.joint_names),
+                    "n_actuators": len(robot.actuator_ids),
+                    "data_config": robot.data_config,
+                    "source": os.path.basename(robot.urdf_path),
+                }
             }
+        else:
+            joint_names = all_joint_names
+            actuator_names = all_actuator_names
+            camera_names = all_camera_names
+
+            robots_info = {}
+            for rname, robot in self._world.robots.items():
+                robots_info[rname] = {
+                    "joint_names": robot.joint_names,
+                    "n_joints": len(robot.joint_names),
+                    "n_actuators": len(robot.actuator_ids),
+                    "data_config": robot.data_config,
+                    "source": os.path.basename(robot.urdf_path),
+                }
 
         features = {
             "n_bodies": model.nbody,

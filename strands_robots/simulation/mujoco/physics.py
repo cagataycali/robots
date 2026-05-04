@@ -940,11 +940,15 @@ class PhysicsMixin:
 
     # Forward Kinematics (explicit)
 
-    def forward_kinematics(self) -> dict[str, Any]:
+    def forward_kinematics(self, body_name: str | None = None) -> dict[str, Any]:
         """Run forward kinematics to update all body positions/orientations.
 
         Usually called implicitly by mj_step, but useful after manually
         setting qpos to see updated Cartesian positions.
+
+        T32: If ``body_name`` is given, the response is filtered to that
+        single body (and errors cleanly if the body doesn't exist).
+        Otherwise returns every body as before.
         """
         if err := self._require_world():
             return err
@@ -956,7 +960,22 @@ class PhysicsMixin:
         mj.mj_comPos(model, data)
         mj.mj_camlight(model, data)
 
-        # Build body position summary
+        if body_name is not None:
+            bid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, body_name)
+            if bid < 0:
+                return {"status": "error", "content": [{"text": f"Body '{body_name}' not found."}]}
+            body_payload = {
+                "position": data.xpos[bid].tolist(),
+                "quaternion": data.xquat[bid].tolist(),
+            }
+            return {
+                "status": "success",
+                "content": [
+                    {"text": f"🦴 FK for '{body_name}': pos={body_payload['position']}"},
+                    {"json": {"body": body_name, **body_payload}},
+                ],
+            }
+
         bodies = {}
         for i in range(model.nbody):
             name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, i) or f"body_{i}"

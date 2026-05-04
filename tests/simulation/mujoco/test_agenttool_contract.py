@@ -360,3 +360,54 @@ class TestRenderDepthSurfaces:
             warn_cached = getattr(sim, "_depth_warn_text", "")
             if warn_cached:
                 assert warn_cached in text
+
+
+class TestFeatureFilters:
+    """T32 / T33: forward_kinematics + get_features honor per-entity filters."""
+
+    def test_forward_kinematics_body_name_filters(self, sim):
+        # Empty world: world body exists but any custom name is absent.
+        r = sim._dispatch_action("forward_kinematics", {"body_name": "ghost_body"})
+        assert r["status"] == "error"
+        assert "Body 'ghost_body' not found" in r["content"][0]["text"]
+
+    def test_forward_kinematics_no_filter_returns_all(self, sim):
+        r = sim._dispatch_action("forward_kinematics", {})
+        assert r["status"] == "success"
+        payload = r["content"][-1]["json"] if isinstance(r["content"][-1], dict) else {}
+        assert "bodies" in payload
+
+    def test_get_features_unknown_robot_errors(self, sim):
+        r = sim._dispatch_action("get_features", {"robot_name": "ghost_bot"})
+        assert r["status"] == "error"
+        assert "Robot 'ghost_bot' not found" in r["content"][0]["text"]
+
+    def test_get_features_no_filter_returns_all(self, sim):
+        r = sim._dispatch_action("get_features", {})
+        assert r["status"] == "success"
+
+
+class TestRegisterUrdfValidation:
+    """T35 / T42: register_urdf validates path + router covers no-args."""
+
+    def test_register_urdf_no_args_friendly_error(self, sim):
+        r = sim._dispatch_action("register_urdf", {})
+        assert r["status"] == "error"
+        assert "requires parameter" in r["content"][0]["text"]
+
+    def test_register_urdf_missing_file_errors(self, sim):
+        r = sim._dispatch_action(
+            "register_urdf",
+            {"data_config": "my_bot", "urdf_path": "/nonexistent/nope.urdf"},
+        )
+        assert r["status"] == "error"
+        assert "file not found" in r["content"][0]["text"].lower()
+
+    def test_register_urdf_empty_path_errors(self, sim):
+        r = sim._dispatch_action(
+            "register_urdf", {"data_config": "my_bot", "urdf_path": ""}
+        )
+        assert r["status"] == "error"
+        # Router handles empty string as missing? No — it's a truthy string
+        # in the presence test. So we hit our explicit empty guard.
+        assert "non-empty" in r["content"][0]["text"] or "requires parameter" in r["content"][0]["text"]
