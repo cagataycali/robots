@@ -24,6 +24,60 @@ def _sanitize_name(name: str) -> str:
         raise ValueError(f"Invalid simulation name {name!r}: must match [a-zA-Z0-9_][a-zA-Z0-9_.\\-]{{0,127}}")
     return name
 
+def _camera_xyaxes_from_target(
+    position: list[float],
+    target: list[float],
+    up: tuple[float, float, float] = (0.0, 0.0, 1.0),
+) -> str | None:
+    """T2: compute MJCF ``xyaxes`` attribute so a camera looks at ``target``.
+
+    MuJoCo cameras with ``mode='fixed'`` need an explicit orientation. Without
+    xyaxes/quat MuJoCo uses the default -Z look direction, so ``add_camera``'s
+    ``target`` was completely ignored — every custom camera rendered the
+    default view and three cameras at different positions produced byte-
+    identical near-black PNGs.
+
+    MJCF xyaxes format: "x0 x1 x2  y0 y1 y2" — the camera's LOCAL +X and +Y
+    axes expressed in world frame. Camera looks down its local -Z.
+
+    Convention here:
+      forward (cam -Z)  = normalize(target - position)
+      right   (cam +X)  = normalize(cross(forward, up))
+      down    (cam -Y)  = normalize(cross(right, forward))
+      -> cam +Y         = -down     (i.e. "image up" points toward world up)
+
+    Returns None on a degenerate case (target == position, or colinear up).
+    Callers should surface a clear error in that case rather than silently
+    emitting the default orientation.
+    """
+    import math
+
+    fx, fy, fz = target[0] - position[0], target[1] - position[1], target[2] - position[2]
+    flen = math.sqrt(fx * fx + fy * fy + fz * fz)
+    if flen < 1e-9:
+        return None
+    fx, fy, fz = fx / flen, fy / flen, fz / flen
+
+    ux, uy, uz = up
+    # right = forward × up
+    rx = fy * uz - fz * uy
+    ry = fz * ux - fx * uz
+    rz = fx * uy - fy * ux
+    rlen = math.sqrt(rx * rx + ry * ry + rz * rz)
+    if rlen < 1e-9:
+        # forward is parallel to up — fall back to world-X as right.
+        rx, ry, rz = 1.0, 0.0, 0.0
+        rlen = 1.0
+    rx, ry, rz = rx / rlen, ry / rlen, rz / rlen
+
+    # image-up = right × forward  (so the Y axis points away from world-down)
+    iy_x = ry * fz - rz * fy
+    iy_y = rz * fx - rx * fz
+    iy_z = rx * fy - ry * fx
+
+    return f"{rx:.6f} {ry:.6f} {rz:.6f} {iy_x:.6f} {iy_y:.6f} {iy_z:.6f}"
+
+
 
 class MJCFBuilder:
     """Builds MuJoCo MJCF XML from SimWorld state."""
@@ -67,8 +121,10 @@ class MJCFBuilder:
 
         for cam in world.cameras.values():
             px, py, pz = cam.position
+            xyaxes = _camera_xyaxes_from_target(cam.position, cam.target) if getattr(cam, "target", None) else None
+            orient_attr = f' xyaxes="{xyaxes}"' if xyaxes else ""
             parts.append(
-                f'    <camera name="{_sanitize_name(cam.name)}" pos="{px} {py} {pz}" fovy="{cam.fov}" mode="fixed"/>'
+                f'    <camera name="{_sanitize_name(cam.name)}" pos="{px} {py} {pz}" fovy="{cam.fov}" mode="fixed"{orient_attr}/>'
             )
 
         for obj in world.objects.values():
@@ -192,8 +248,10 @@ class MJCFBuilder:
 
         for cam in cameras.values():
             px, py, pz = cam.position
+            xyaxes = _camera_xyaxes_from_target(cam.position, cam.target) if getattr(cam, "target", None) else None
+            orient_attr = f' xyaxes="{xyaxes}"' if xyaxes else ""
             parts.append(
-                f'    <camera name="{_sanitize_name(cam.name)}" pos="{px} {py} {pz}" fovy="{cam.fov}" mode="fixed"/>'
+                f'    <camera name="{_sanitize_name(cam.name)}" pos="{px} {py} {pz}" fovy="{cam.fov}" mode="fixed"{orient_attr}/>'
             )
 
         for robot_name, robot in robots.items():

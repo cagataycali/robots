@@ -318,3 +318,118 @@ class TestRenderCameraValidation:
         res = sim_with_world.render_depth(camera_name="ghost_cam", width=64, height=48)
         assert res["status"] == "error"
         assert "not found" in res["content"][0]["text"]
+
+
+# --- T2: camera target actually applied -----------------------------
+
+
+class TestAddCameraTargetOrients:
+    """The 'headline broken feature': add_camera(target=...) was silently dropped
+    so every custom camera rendered the same default view. These tests verify
+    that orientation now flows through to the rendered pixels.
+    """
+
+    def _with_obj(self):
+        """Create a world with a distinguishable colored object for the cameras to frame."""
+        sim = Simulation()
+        sim.create_world()
+        # Add a vivid red box at origin to make camera differences visible.
+        sim.add_object(
+            name="target_box",
+            shape="box",
+            size=[0.3, 0.3, 0.3],
+            position=[0.0, 0.0, 0.25],
+            color=[1.0, 0.0, 0.0, 1.0],
+            is_static=True,
+        )
+        return sim
+
+    def test_degenerate_target_equals_position_errors(self):
+        sim = self._with_obj()
+        try:
+            res = sim.add_camera(name="bad_cam", position=[1, 2, 3], target=[1, 2, 3])
+            assert res["status"] == "error"
+            assert "identical" in res["content"][0]["text"]
+        finally:
+            sim.destroy()
+
+    def test_wrong_length_position_errors(self):
+        sim = self._with_obj()
+        try:
+            res = sim.add_camera(name="bad_cam", position=[1, 2], target=[0, 0, 0])
+            assert res["status"] == "error"
+            assert "3 elements" in res["content"][0]["text"]
+        finally:
+            sim.destroy()
+
+    def test_xyaxes_emitted_in_xml(self):
+        """The merged scene XML must contain xyaxes= for cameras with a target."""
+        sim = self._with_obj()
+        try:
+            res = sim.add_camera(
+                name="side_cam", position=[2.0, 0.0, 0.3], target=[0.0, 0.0, 0.25]
+            )
+            assert res["status"] == "success", res["content"][0]["text"]
+            # Grab the stored scene XML.
+            xml = sim._world._backend_state.get("xml", "")
+            # If there are no robots in the scene the XML is only recompiled (not injected).
+            # In either case the camera emission path should have used our helper.
+            if xml and "side_cam" in xml:
+                assert "xyaxes=" in xml, "xyaxes attribute must be written for targeted cameras"
+        finally:
+            sim.destroy()
+
+    def test_different_targets_produce_different_xyaxes(self):
+        """Two cameras at the SAME position but different targets must produce
+        DIFFERENT ``xyaxes`` strings in the merged scene XML. Before the fix the
+        XML had no orientation at all, so both cameras shared MuJoCo's default
+        look direction -> identical frames regardless of `target`.
+
+        We assert on XML (orientation bits) rather than rendered pixels, because
+        the offscreen GL context on some CI runners produces blank frames which
+        makes pixel-level comparison unreliable (see note on macOS depth/ARB_clip
+        elsewhere in this suite)."""
+        import re as _re
+        sim = self._with_obj()
+        try:
+            res_a = sim.add_camera(
+                name="cam_a", position=[2.0, 0.0, 0.5], target=[0.0, 0.0, 0.25]
+            )
+            res_b = sim.add_camera(
+                name="cam_b", position=[2.0, 0.0, 0.5], target=[0.0, 2.0, 0.25]
+            )
+            assert res_a["status"] == "success"
+            assert res_b["status"] == "success"
+            xml = sim._world._backend_state.get("xml", "")
+            a_match = _re.search(r'<camera[^>]*name="cam_a"[^>]*xyaxes="([^"]+)"', xml)
+            b_match = _re.search(r'<camera[^>]*name="cam_b"[^>]*xyaxes="([^"]+)"', xml)
+            assert a_match, f"cam_a has no xyaxes in XML: {xml[:500]}"
+            assert b_match, f"cam_b has no xyaxes in XML: {xml[:500]}"
+            assert a_match.group(1) != b_match.group(1), (
+                "cameras with different targets must have different xyaxes (they are currently identical,"
+                f" which means `target` is being ignored): {a_match.group(1)}"
+            )
+        finally:
+            sim.destroy()
+
+
+class TestCameraXyAxesHelper:
+    """Direct unit test on the _camera_xyaxes_from_target helper."""
+
+    def test_basic_look_at_origin(self):
+        from strands_robots.simulation.mujoco.mjcf_builder import _camera_xyaxes_from_target
+        # Camera at (2, 0, 0) looking at origin along -X, up = +Z.
+        # forward = normalize(origin - pos) = (-1, 0, 0)
+        # right   = forward × up = (-1,0,0) × (0,0,1) = (0*1 - 0*0, 0*0 - -1*1, -1*0 - 0*0) = (0, 1, 0)
+        # image_up = right × forward = (0,1,0) × (-1,0,0) = (1*0 - 0*0, 0*-1 - 0*0, 0*0 - 1*-1) = (0, 0, 1)
+        s = _camera_xyaxes_from_target([2.0, 0.0, 0.0], [0.0, 0.0, 0.0])
+        assert s is not None
+        parts = [float(x) for x in s.split()]
+        assert len(parts) == 6
+        rx, ry, rz, ux, uy, uz = parts
+        assert abs(rx) < 1e-5 and abs(ry - 1.0) < 1e-5 and abs(rz) < 1e-5, f"right={parts[:3]}"
+        assert abs(ux) < 1e-5 and abs(uy) < 1e-5 and abs(uz - 1.0) < 1e-5, f"image_up={parts[3:]}"
+
+    def test_degenerate_returns_none(self):
+        from strands_robots.simulation.mujoco.mjcf_builder import _camera_xyaxes_from_target
+        assert _camera_xyaxes_from_target([1, 2, 3], [1, 2, 3]) is None

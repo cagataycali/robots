@@ -709,10 +709,23 @@ class Simulation(
         if err := self._require_no_running_policy("add_camera"):
             return err
 
+        # T2: validate position / target shape before we bake them into XML.
+        pos = position or [1.0, 1.0, 1.0]
+        tgt = target or [0.0, 0.0, 0.0]
+        for _lbl, _vec in (("position", pos), ("target", tgt)):
+            try:
+                if len(_vec) != 3:
+                    return {"status": "error", "content": [{"text": f"add_camera: '{_lbl}' must be 3 elements [x,y,z], got {len(_vec)}"}]}
+            except TypeError:
+                return {"status": "error", "content": [{"text": f"add_camera: '{_lbl}' must be a list of 3 numbers"}]}
+        # Degenerate orientation: position == target means no well-defined look direction.
+        if all(abs(pos[i] - tgt[i]) < 1e-9 for i in range(3)):
+            return {"status": "error", "content": [{"text": f"add_camera: 'position' and 'target' are identical ({pos}); camera has no look direction."}]}
+
         cam = SimCamera(
             name=name,
-            position=position or [1.0, 1.0, 1.0],
-            target=target or [0.0, 0.0, 0.0],
+            position=pos,
+            target=tgt,
             fov=fov,
             width=width,
             height=height,

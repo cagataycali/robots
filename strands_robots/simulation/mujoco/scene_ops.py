@@ -14,6 +14,7 @@ from typing import Any
 
 from strands_robots.simulation.models import SimCamera, SimObject, SimRobot, SimWorld
 from strands_robots.simulation.mujoco.backend import _ensure_mujoco
+from strands_robots.simulation.mujoco.mjcf_builder import _camera_xyaxes_from_target
 from strands_robots.simulation.mujoco.mjcf_builder import MJCFBuilder, _sanitize_name
 
 logger = logging.getLogger(__name__)
@@ -766,6 +767,20 @@ def inject_camera_into_scene(world: SimWorld, cam: SimCamera) -> bool:
         cam_elem.set("pos", f"{px} {py} {pz}")
         cam_elem.set("fovy", str(cam.fov))
         cam_elem.set("mode", "fixed")
+        # T2: write xyaxes so the camera actually LOOKS at cam.target.
+        # Without this the `target` parameter is cosmetic and all custom
+        # cameras share the MuJoCo default orientation -> identical frames.
+        target = getattr(cam, "target", None)
+        if target:
+            xyaxes = _camera_xyaxes_from_target(cam.position, target)
+            if xyaxes:
+                cam_elem.set("xyaxes", xyaxes)
+            else:
+                # Degenerate (target == position): leave unoriented but log.
+                logger.warning(
+                    "inject_camera: camera '%s' has target == position; xyaxes not emitted",
+                    cam.name,
+                )
 
         tree.write(scene_path, xml_declaration=True)
 
