@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import importlib.util
 import os
-import tempfile
 
 import pytest
 
@@ -43,9 +42,7 @@ class TestCamerasRecordingWithoutLerobot:
 
     def test_start_stop_writes_mp4(self, sim, tmp_path):
         # Ensure at least one camera exists.
-        r = sim.add_camera(
-            name="cam1", position=[0.5, 0.5, 0.5], target=[0.0, 0.0, 0.0]
-        )
+        r = sim.add_camera(name="cam1", position=[0.5, 0.5, 0.5], target=[0.0, 0.0, 0.0])
         assert r["status"] == "success"
 
         out = tmp_path / "mp4out"
@@ -64,6 +61,7 @@ class TestCamerasRecordingWithoutLerobot:
             sim.step(n_steps=1)
             # tiny sleep to let the background capture thread tick
             import time
+
             time.sleep(0.05)
 
         r = sim.stop_cameras_recording()

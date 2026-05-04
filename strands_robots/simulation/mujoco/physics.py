@@ -34,6 +34,8 @@ class PhysicsMixin:
         _lock: "threading.Lock"
         _world: "SimWorld | None"
 
+        def _require_no_running_policy(self, action_name: str) -> dict[str, Any] | None: ...
+
     """Advanced physics capabilities for Simulation.
 
     Expects: self._world (SimWorld with _model, _data)
@@ -48,8 +50,8 @@ class PhysicsMixin:
 
         Uses mj_getState with mjSTATE_PHYSICS for complete state capture.
         """
-        if err := self._require_world():
-            return err
+        if self._world is None or self._world._model is None or self._world._data is None:
+            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
 
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
@@ -84,9 +86,9 @@ class PhysicsMixin:
 
     def load_state(self, name: str = "default") -> dict[str, Any]:
         """Restore physics state from a named checkpoint."""
-        if err := self._require_world():
-            return err
-        # T5: load_state during a running policy races worker thread
+        if self._world is None or self._world._model is None or self._world._data is None:
+            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
+        # load_state during a running policy races worker thread
         if err := self._require_no_running_policy("load_state"):
             return err
 
@@ -141,24 +143,35 @@ class PhysicsMixin:
             point: [px, py, pz] world-frame point of force application.
                    Defaults to body CoM if not specified.
         """
-        if err := self._require_world():
-            return err
-        # T5: apply_force during a running policy races worker thread
+        if self._world is None or self._world._model is None or self._world._data is None:
+            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
+        # apply_force during a running policy races worker thread
         if err := self._require_no_running_policy("apply_force"):
             return err
 
-        # T10: must supply at least one non-zero force or torque
+        # must supply at least one non-zero force or torque
         if force is None and torque is None:
-            return {"status": "error", "content": [{"text": "apply_force: specify at least one of 'force' or 'torque' (non-zero vector)."}]}
+            return {
+                "status": "error",
+                "content": [{"text": "apply_force: specify at least one of 'force' or 'torque' (non-zero vector)."}],
+            }
 
         # Validate vector lengths before hitting numpy
         for _name, _vec in (("force", force), ("torque", torque), ("point", point)):
             if _vec is not None:
                 try:
                     if len(_vec) != 3:
-                        return {"status": "error", "content": [{"text": f"apply_force: '{_name}' must be a 3-element vector [x,y,z], got {len(_vec)}"}]}
+                        return {
+                            "status": "error",
+                            "content": [
+                                {"text": f"apply_force: '{_name}' must be a 3-element vector [x,y,z], got {len(_vec)}"}
+                            ],
+                        }
                 except TypeError:
-                    return {"status": "error", "content": [{"text": f"apply_force: '{_name}' must be a list/tuple of 3 numbers"}]}
+                    return {
+                        "status": "error",
+                        "content": [{"text": f"apply_force: '{_name}' must be a list/tuple of 3 numbers"}],
+                    }
 
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
@@ -246,17 +259,26 @@ class PhysicsMixin:
             exclude_body: Body ID to exclude from intersection (-1 = none).
             include_static: Whether to include static geoms.
         """
-        if err := self._require_world():
-            return err
+        if self._world is None or self._world._model is None or self._world._data is None:
+            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
 
-        # T7: validate vector shapes and reject zero-direction (mj_ray aborts the process on len=0)
+        # validate vector shapes and reject zero-direction (mj_ray aborts the process on len=0)
         try:
             if len(origin) != 3:
-                return {"status": "error", "content": [{"text": f"raycast: 'origin' must be 3 elements [x,y,z], got {len(origin)}"}]}
+                return {
+                    "status": "error",
+                    "content": [{"text": f"raycast: 'origin' must be 3 elements [x,y,z], got {len(origin)}"}],
+                }
             if len(direction) != 3:
-                return {"status": "error", "content": [{"text": f"raycast: 'direction' must be 3 elements [dx,dy,dz], got {len(direction)}"}]}
+                return {
+                    "status": "error",
+                    "content": [{"text": f"raycast: 'direction' must be 3 elements [dx,dy,dz], got {len(direction)}"}],
+                }
         except TypeError:
-            return {"status": "error", "content": [{"text": "raycast: 'origin' and 'direction' must be lists of 3 numbers"}]}
+            return {
+                "status": "error",
+                "content": [{"text": "raycast: 'origin' and 'direction' must be lists of 3 numbers"}],
+            }
 
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
@@ -266,7 +288,10 @@ class PhysicsMixin:
         # Normalize direction
         norm = np.linalg.norm(vec)
         if norm < 1e-10:
-            return {"status": "error", "content": [{"text": "raycast: 'direction' vector is zero-length — supply a non-zero direction."}]}
+            return {
+                "status": "error",
+                "content": [{"text": "raycast: 'direction' vector is zero-length — supply a non-zero direction."}],
+            }
         vec = vec / norm
 
         geomid = np.array([-1], dtype=np.int32)
@@ -316,8 +341,8 @@ class PhysicsMixin:
 
         Returns both positional (3×nv) and rotational (3×nv) Jacobians.
         """
-        if err := self._require_world():
-            return err
+        if self._world is None or self._world._model is None or self._world._data is None:
+            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
 
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
@@ -358,8 +383,8 @@ class PhysicsMixin:
 
     def get_energy(self) -> dict[str, Any]:
         """Compute potential and kinetic energy of the system."""
-        if err := self._require_world():
-            return err
+        if self._world is None or self._world._model is None or self._world._data is None:
+            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
 
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
@@ -387,13 +412,13 @@ class PhysicsMixin:
         M is nv×nv where nv is the number of DoFs.
         Useful for dynamics analysis, impedance control, etc.
         """
-        if err := self._require_world():
-            return err
+        if self._world is None or self._world._model is None or self._world._data is None:
+            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
 
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
 
-        # T18: data.qM is only valid after a forward pass; running mj_forward
+        # data.qM is only valid after a forward pass; running mj_forward
         # ensures the mass matrix reflects the current qpos (e.g. right after
         # a reset/load_state).
         mj.mj_forward(model, data)
@@ -433,8 +458,8 @@ class PhysicsMixin:
         Runs mj_inverse to compute qfrc_inverse — the generalized forces
         that would produce the current accelerations.
         """
-        if err := self._require_world():
-            return err
+        if self._world is None or self._world._model is None or self._world._data is None:
+            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
 
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
@@ -467,8 +492,8 @@ class PhysicsMixin:
 
         Returns Cartesian pose + 6D spatial velocity (linear + angular).
         """
-        if err := self._require_world():
-            return err
+        if self._world is None or self._world._model is None or self._world._data is None:
+            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
 
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
@@ -525,16 +550,16 @@ class PhysicsMixin:
         Writes to qpos and runs mj_forward to update kinematics.
         Useful for teleportation, IK solutions, or keyframe setting.
 
-        Accepts EITHER form (T11):
+        Accepts EITHER form:
 
         * dict: {joint_name: value, ...} — explicit per-joint, safest in multi-robot scenes.
         * list/tuple: [v0, v1, ...] — ordered positional. Must match a single robot's
           joint count (when ``robot_name`` is given, that robot's joints; otherwise the
           world must contain exactly one robot, or the call errors).
         """
-        if err := self._require_world():
-            return err
-        # T5: mutating qpos under a running policy races mj_step
+        if self._world is None or self._world._model is None or self._world._data is None:
+            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
+        # mutating qpos under a running policy races mj_step
         if err := self._require_no_running_policy("set_joint_positions"):
             return err
 
@@ -542,9 +567,12 @@ class PhysicsMixin:
         model, data = self._world._model, self._world._data
 
         if positions is None:
-            return {"status": "error", "content": [{"text": "set_joint_positions: 'positions' is required (list or dict of joint values)."}]}
+            return {
+                "status": "error",
+                "content": [{"text": "set_joint_positions: 'positions' is required (list or dict of joint values)."}],
+            }
 
-        # T11: normalize list input to dict using a deterministic joint ordering
+        # normalize list input to dict using a deterministic joint ordering
         ignored: list[str] = []
         if isinstance(positions, (list, tuple)):
             robots = list(self._world.robots.values())
@@ -553,9 +581,23 @@ class PhysicsMixin:
                 if not robots:
                     return {"status": "error", "content": [{"text": f"Robot '{robot_name}' not found."}]}
             if len(robots) == 0:
-                return {"status": "error", "content": [{"text": "set_joint_positions: list form requires a robot in the world; pass a dict instead, or add a robot first."}]}
+                return {
+                    "status": "error",
+                    "content": [
+                        {
+                            "text": "set_joint_positions: list form requires a robot in the world; pass a dict instead, or add a robot first."
+                        }
+                    ],
+                }
             if len(robots) > 1 and robot_name is None:
-                return {"status": "error", "content": [{"text": f"set_joint_positions: list form is ambiguous with {len(robots)} robots; pass 'robot_name=' or use a dict."}]}
+                return {
+                    "status": "error",
+                    "content": [
+                        {
+                            "text": f"set_joint_positions: list form is ambiguous with {len(robots)} robots; pass 'robot_name=' or use a dict."
+                        }
+                    ],
+                }
             robot = robots[0]
             joint_names = list(getattr(robot, "joint_names", []) or [])
             if not joint_names:
@@ -569,16 +611,23 @@ class PhysicsMixin:
             if len(positions) != len(joint_names):
                 return {
                     "status": "error",
-                    "content": [{
-                        "text": (
-                            f"set_joint_positions: list length {len(positions)} does not match robot "
-                            f"'{robot.name}' joint count {len(joint_names)}. Use a dict for partial updates."
-                        )
-                    }],
+                    "content": [
+                        {
+                            "text": (
+                                f"set_joint_positions: list length {len(positions)} does not match robot "
+                                f"'{robot.name}' joint count {len(joint_names)}. Use a dict for partial updates."
+                            )
+                        }
+                    ],
                 }
             positions = dict(zip(joint_names, positions, strict=True))
         elif not isinstance(positions, dict):
-            return {"status": "error", "content": [{"text": f"set_joint_positions: 'positions' must be a dict or list, got {type(positions).__name__}"}]}
+            return {
+                "status": "error",
+                "content": [
+                    {"text": f"set_joint_positions: 'positions' must be a dict or list, got {type(positions).__name__}"}
+                ],
+            }
 
         set_count = 0
         with self._lock:
@@ -610,11 +659,10 @@ class PhysicsMixin:
         """Set joint velocities directly.
 
         Writes to qvel. Useful for initializing dynamics. Accepts dict or list
-        (see set_joint_positions for list semantics) (T11).
+        (see set_joint_positions for list semantics).
         """
-        if err := self._require_world():
-            return err
-        # T5
+        if self._world is None or self._world._model is None or self._world._data is None:
+            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
         if err := self._require_no_running_policy("set_joint_velocities"):
             return err
 
@@ -622,7 +670,10 @@ class PhysicsMixin:
         model, data = self._world._model, self._world._data
 
         if velocities is None:
-            return {"status": "error", "content": [{"text": "set_joint_velocities: 'velocities' is required (list or dict)."}]}
+            return {
+                "status": "error",
+                "content": [{"text": "set_joint_velocities: 'velocities' is required (list or dict)."}],
+            }
 
         ignored: list[str] = []
         if isinstance(velocities, (list, tuple)):
@@ -632,9 +683,19 @@ class PhysicsMixin:
                 if not robots:
                     return {"status": "error", "content": [{"text": f"Robot '{robot_name}' not found."}]}
             if len(robots) == 0:
-                return {"status": "error", "content": [{"text": "set_joint_velocities: list form requires a robot in the world."}]}
+                return {
+                    "status": "error",
+                    "content": [{"text": "set_joint_velocities: list form requires a robot in the world."}],
+                }
             if len(robots) > 1 and robot_name is None:
-                return {"status": "error", "content": [{"text": f"set_joint_velocities: list form is ambiguous with {len(robots)} robots; pass 'robot_name=' or use a dict."}]}
+                return {
+                    "status": "error",
+                    "content": [
+                        {
+                            "text": f"set_joint_velocities: list form is ambiguous with {len(robots)} robots; pass 'robot_name=' or use a dict."
+                        }
+                    ],
+                }
             robot = robots[0]
             joint_names = list(getattr(robot, "joint_names", []) or [])
             if not joint_names:
@@ -647,16 +708,25 @@ class PhysicsMixin:
             if len(velocities) != len(joint_names):
                 return {
                     "status": "error",
-                    "content": [{
-                        "text": (
-                            f"set_joint_velocities: list length {len(velocities)} does not match robot "
-                            f"'{robot.name}' joint count {len(joint_names)}. Use a dict for partial updates."
-                        )
-                    }],
+                    "content": [
+                        {
+                            "text": (
+                                f"set_joint_velocities: list length {len(velocities)} does not match robot "
+                                f"'{robot.name}' joint count {len(joint_names)}. Use a dict for partial updates."
+                            )
+                        }
+                    ],
                 }
             velocities = dict(zip(joint_names, velocities, strict=True))
         elif not isinstance(velocities, dict):
-            return {"status": "error", "content": [{"text": f"set_joint_velocities: 'velocities' must be a dict or list, got {type(velocities).__name__}"}]}
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": f"set_joint_velocities: 'velocities' must be a dict or list, got {type(velocities).__name__}"
+                    }
+                ],
+            }
 
         set_count = 0
         with self._lock:
@@ -666,10 +736,15 @@ class PhysicsMixin:
                     dof_adr = model.jnt_dofadr[jnt_id]
                     data.qvel[dof_adr] = float(value)
                     set_count += 1
+                else:
+                    ignored.append(jnt_name)
 
+        msg = f"💨 Set {set_count}/{len(velocities)} joint velocities"
+        if ignored:
+            msg += f" (ignored: {ignored})"
         return {
             "status": "success",
-            "content": [{"text": f"💨 Set {set_count}/{len(velocities)} joint velocities"}],
+            "content": [{"text": msg}],
         }
 
     # Sensor Readout
@@ -683,20 +758,18 @@ class PhysicsMixin:
         Args:
             sensor_name: Specific sensor name, or None for all sensors.
         """
-        if err := self._require_world():
-            return err
+        if self._world is None or self._world._model is None or self._world._data is None:
+            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
 
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
 
         if model.nsensor == 0:
-            # T45: distinguish "no sensors at all" from "that specific sensor not found"
+            # distinguish "no sensors at all" from "that specific sensor not found"
             if sensor_name:
                 return {
                     "status": "error",
-                    "content": [
-                        {"text": f"Sensor '{sensor_name}' not found. Model has no sensors."}
-                    ],
+                    "content": [{"text": f"Sensor '{sensor_name}' not found. Model has no sensors."}],
                 }
             return {"status": "success", "content": [{"text": "📡 No sensors in model."}]}
 
@@ -744,20 +817,25 @@ class PhysicsMixin:
 
         Changes take effect on the next mj_step.
         """
-        if err := self._require_world():
-            return err
-        # T5
+        if self._world is None or self._world._model is None or self._world._data is None:
+            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
         if err := self._require_no_running_policy("set_body_properties"):
             return err
 
-        # T8: mass must be > 0 (physics invariant)
+        # mass must be > 0 (physics invariant)
         if mass is not None:
             try:
                 mass = float(mass)
             except (TypeError, ValueError):
-                return {"status": "error", "content": [{"text": f"set_body_properties: 'mass' must be a positive number, got {mass!r}"}]}
+                return {
+                    "status": "error",
+                    "content": [{"text": f"set_body_properties: 'mass' must be a positive number, got {mass!r}"}],
+                }
             if mass <= 0:
-                return {"status": "error", "content": [{"text": f"set_body_properties: 'mass' must be > 0, got {mass}"}]}
+                return {
+                    "status": "error",
+                    "content": [{"text": f"set_body_properties: 'mass' must be > 0, got {mass}"}],
+                }
 
         mj = _ensure_mujoco()
         model = self._world._model
@@ -789,9 +867,8 @@ class PhysicsMixin:
 
         Changes take effect immediately for rendering (color) or next step (friction, size).
         """
-        if err := self._require_world():
-            return err
-        # T5
+        if self._world is None or self._world._model is None or self._world._data is None:
+            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
         if err := self._require_no_running_policy("set_geom_properties"):
             return err
 
@@ -801,7 +878,7 @@ class PhysicsMixin:
         gid = geom_id
         if geom_name:
             gid = self._resolve_mj_name(mj.mjtObj.mjOBJ_GEOM, geom_name)
-            # T28: our add_object pipeline names geoms as ``{object_name}_geom``.
+            # our add_object pipeline names geoms as ``{object_name}_geom``.
             # Accept the plain object name as a convenience alias.
             if (gid is None or gid < 0) and not geom_name.endswith("_geom"):
                 gid = self._resolve_mj_name(mj.mjtObj.mjOBJ_GEOM, f"{geom_name}_geom")
@@ -839,8 +916,8 @@ class PhysicsMixin:
         Uses mj_contactForce for each active contact pair.
         Returns normal and friction forces.
         """
-        if err := self._require_world():
-            return err
+        if self._world is None or self._world._model is None or self._world._data is None:
+            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
 
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
@@ -894,29 +971,40 @@ class PhysicsMixin:
         Efficiently casts N rays using individual mj_ray calls.
         Returns array of distances and hit geoms.
         """
-        if err := self._require_world():
-            return err
+        if self._world is None or self._world._model is None or self._world._data is None:
+            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
 
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
 
-        # T7: validate origin shape; per-ray zero-direction guard (avoid mj_ray abort)
+        # validate origin shape; per-ray zero-direction guard (avoid mj_ray abort)
         try:
             if len(origin) != 3:
-                return {"status": "error", "content": [{"text": f"multi_raycast: 'origin' must be 3 elements [x,y,z], got {len(origin)}"}]}
+                return {
+                    "status": "error",
+                    "content": [{"text": f"multi_raycast: 'origin' must be 3 elements [x,y,z], got {len(origin)}"}],
+                }
         except TypeError:
             return {"status": "error", "content": [{"text": "multi_raycast: 'origin' must be a list of 3 numbers"}]}
 
         pnt = np.array(origin, dtype=np.float64)
-        results = []
+        results: list[dict[str, Any]] = []
 
         for idx, d in enumerate(directions):
             try:
                 if len(d) != 3:
-                    results.append({"distance": None, "geom_id": None, "error": f"ray[{idx}]: direction must have 3 elements, got {len(d)}"})
+                    results.append(
+                        {
+                            "distance": None,
+                            "geom_id": None,
+                            "error": f"ray[{idx}]: direction must have 3 elements, got {len(d)}",
+                        }
+                    )
                     continue
             except TypeError:
-                results.append({"distance": None, "geom_id": None, "error": f"ray[{idx}]: direction must be a list of 3 numbers"})
+                results.append(
+                    {"distance": None, "geom_id": None, "error": f"ray[{idx}]: direction must be a list of 3 numbers"}
+                )
                 continue
             vec = np.array(d, dtype=np.float64)
             norm = np.linalg.norm(vec)
@@ -950,12 +1038,12 @@ class PhysicsMixin:
         Usually called implicitly by mj_step, but useful after manually
         setting qpos to see updated Cartesian positions.
 
-        T32: If ``body_name`` is given, the response is filtered to that
+        If ``body_name`` is given, the response is filtered to that
         single body (and errors cleanly if the body doesn't exist).
         Otherwise returns every body as before.
         """
-        if err := self._require_world():
-            return err
+        if self._world is None or self._world._model is None or self._world._data is None:
+            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
 
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
@@ -1000,8 +1088,8 @@ class PhysicsMixin:
 
     def get_total_mass(self) -> dict[str, Any]:
         """Get total mass and per-body mass breakdown."""
-        if err := self._require_world():
-            return err
+        if self._world is None or self._world._model is None or self._world._data is None:
+            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
 
         mj = _ensure_mujoco()
         model = self._world._model
@@ -1030,8 +1118,8 @@ class PhysicsMixin:
         Uses mj_saveLastXML — exports the exact model currently loaded,
         including any runtime modifications.
         """
-        if err := self._require_world():
-            return err
+        if self._world is None or self._world._model is None or self._world._data is None:
+            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
 
         mj = _ensure_mujoco()
 

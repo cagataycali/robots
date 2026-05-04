@@ -40,8 +40,8 @@ class RecordingMixin:
             caller to :meth:`start_cameras_recording` or to install the
             optional extra.
         """
-        if err := self._require_world():
-            return err
+        if self._world is None or self._world._model is None or self._world._data is None:
+            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
 
         _DatasetRecorder: Any = None
         _has_lerobot = False
@@ -146,7 +146,7 @@ class RecordingMixin:
     def stop_recording(self, output_path: str | None = None) -> dict[str, Any]:
         """Stop recording and save episode to LeRobotDataset.
 
-        T16: idempotent — calling when not recording succeeds with a
+        idempotent — calling when not recording succeeds with a
         'Was not recording' message so callers can safely call it unconditionally.
         """
         if self._world is None or not self._world._backend_state.get("recording", False):
@@ -183,7 +183,7 @@ class RecordingMixin:
         return {"status": "success", "content": [{"text": text}]}
 
     def get_recording_status(self) -> dict[str, Any]:
-        """T31: Returns success in every lifecycle state (no world / not
+        """Returns success in every lifecycle state (no world / not
         recording / recording) with a distinguishing message so callers can
         poll it unconditionally without try/except."""
         if self._world is None:

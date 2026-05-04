@@ -348,7 +348,7 @@ class Simulation(
         if name in self._world.robots:
             return {"status": "error", "content": [{"text": f"Robot '{name}' already exists."}]}
 
-        # Resolution precedence (T22/T49):
+        # Resolution precedence:
         #   1. explicit `urdf_path` (anything on disk).
         #   2. `data_config` looked up in the model registry.
         #   3. DEPRECATED: `name` looked up in the registry (undocumented
@@ -368,8 +368,9 @@ class Simulation(
                     ],
                 }
         elif not resolved_path and name:
-            # T22: deprecated fallback — try registry by instance name.
+            # deprecated fallback — try registry by instance name.
             import warnings as _warnings
+
             resolved_path = resolve_model(name)
             if resolved_path:
                 _warnings.warn(
@@ -462,7 +463,7 @@ class Simulation(
                 for i in range(model.nu):
                     robot.actuator_ids.append(i)
 
-            # T6: leave the freshly-added robot in a clean, deterministic
+            # leave the freshly-added robot in a clean, deterministic
             # zero state (qpos=qvel=ctrl=0) rather than silently settling
             # under gravity for 100 steps. Callers that want a pre-settled
             # pose should call step()/reset() explicitly. This makes
@@ -536,8 +537,8 @@ class Simulation(
         the SimEngine ABC) because the dispatcher needs a dict-shaped
         response for user display.
         """
-        if err := self._require_world():
-            return err
+        if self._world is None or self._world._model is None or self._world._data is None:
+            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
         if not self._world.robots:
             return {"status": "success", "content": [{"text": "No robots. Use action='add_robot'."}]}
 
@@ -552,11 +553,11 @@ class Simulation(
         return {"status": "success", "content": [{"text": "\n".join(lines)}]}
 
     def get_robot_state(self, robot_name: str) -> dict[str, Any]:
-        """T23: canonical name parameter is ``robot_name``. The router
+        """canonical name parameter is ``robot_name``. The router
         accepts ``name`` as an alias (bidirectional) so legacy LLM calls
         keep working, but new tool specs should document only robot_name."""
-        if err := self._require_world():
-            return err
+        if self._world is None or self._world._model is None or self._world._data is None:
+            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
         if robot_name not in self._world.robots:
             return {"status": "error", "content": [{"text": f"Robot '{robot_name}' not found."}]}
 
@@ -601,14 +602,14 @@ class Simulation(
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Add an object to the simulation."""
-        if err := self._require_world():
-            return err
+        if self._world is None or self._world._model is None or self._world._data is None:
+            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
         if err := self._require_no_running_policy("add_object"):
             return err
         if name in self._world.objects:
             return {"status": "error", "content": [{"text": f"Object '{name}' exists."}]}
 
-        # T29: planes are infinite and must be static.  Explicit
+        # planes are infinite and must be static.  Explicit
         # is_static=False for a plane is an error; None or True both
         # resolve to True. Non-plane shapes default to dynamic.
         if shape == "plane":
@@ -616,7 +617,9 @@ class Simulation(
                 return {
                     "status": "error",
                     "content": [
-                        {"text": "add_object: shape='plane' requires is_static=True (planes are infinite and cannot have dynamic mass)."}
+                        {
+                            "text": "add_object: shape='plane' requires is_static=True (planes are infinite and cannot have dynamic mass)."
+                        }
                     ],
                 }
             is_static = True
@@ -692,8 +695,8 @@ class Simulation(
     def move_object(
         self, name: str, position: list[float] | None = None, orientation: list[float] | None = None
     ) -> dict[str, Any]:
-        if err := self._require_world():
-            return err
+        if self._world is None or self._world._model is None or self._world._data is None:
+            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
         if name not in self._world.objects:
             return {"status": "error", "content": [{"text": f"Object '{name}' not found."}]}
         # Guard: move_object writes qpos + calls mj_forward, racing a running policy.
@@ -717,8 +720,8 @@ class Simulation(
         return {"status": "success", "content": [{"text": f"📍 '{name}' moved to {position or 'same'}"}]}
 
     def list_objects(self) -> dict[str, Any]:
-        if err := self._require_world():
-            return err
+        if self._world is None or self._world._model is None or self._world._data is None:
+            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
         if not self._world.objects:
             return {"status": "success", "content": [{"text": "No objects."}]}
 
@@ -738,25 +741,35 @@ class Simulation(
         width: int = 640,
         height: int = 480,
     ) -> dict[str, Any]:
-        if err := self._require_world():
-            return err
+        if self._world is None or self._world._model is None or self._world._data is None:
+            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
         if err := self._require_no_running_policy("add_camera"):
             return err
 
-        # T2: validate position / target shape before we bake them into XML.
+        # validate position / target shape before we bake them into XML.
         pos = position or [1.0, 1.0, 1.0]
         tgt = target or [0.0, 0.0, 0.0]
         for _lbl, _vec in (("position", pos), ("target", tgt)):
             try:
                 if len(_vec) != 3:
-                    return {"status": "error", "content": [{"text": f"add_camera: '{_lbl}' must be 3 elements [x,y,z], got {len(_vec)}"}]}
+                    return {
+                        "status": "error",
+                        "content": [{"text": f"add_camera: '{_lbl}' must be 3 elements [x,y,z], got {len(_vec)}"}],
+                    }
             except TypeError:
                 return {"status": "error", "content": [{"text": f"add_camera: '{_lbl}' must be a list of 3 numbers"}]}
         # Degenerate orientation: position == target means no well-defined look direction.
         if all(abs(pos[i] - tgt[i]) < 1e-9 for i in range(3)):
-            return {"status": "error", "content": [{"text": f"add_camera: 'position' and 'target' are identical ({pos}); camera has no look direction."}]}
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": f"add_camera: 'position' and 'target' are identical ({pos}); camera has no look direction."
+                    }
+                ],
+            }
 
-        # T30/T41: reject duplicate camera names.  Previously a second
+        # reject duplicate camera names.  Previously a second
         # add_camera(name=existing) silently overwrote the registry entry but
         # left the XML's <camera> unchanged, so the old pose stuck around for
         # rendering.  Explicit error avoids the surprise.
@@ -802,14 +815,17 @@ class Simulation(
     # Simulation Control
 
     def step(self, n_steps: int = 1) -> dict[str, Any]:
-        if err := self._require_world():
-            return err
-        # T9: reject negative, accept zero as no-op
+        if self._world is None or self._world._model is None or self._world._data is None:
+            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
+        # reject negative, accept zero as no-op
         if not isinstance(n_steps, int):
             try:
                 n_steps = int(n_steps)
             except (TypeError, ValueError):
-                return {"status": "error", "content": [{"text": f"step: n_steps must be an integer, got {type(n_steps).__name__}"}]}
+                return {
+                    "status": "error",
+                    "content": [{"text": f"step: n_steps must be an integer, got {type(n_steps).__name__}"}],
+                }
         if n_steps < 0:
             return {"status": "error", "content": [{"text": f"step: n_steps must be >= 0, got {n_steps}"}]}
         if n_steps == 0:
@@ -833,9 +849,9 @@ class Simulation(
         }
 
     def reset(self) -> dict[str, Any]:
-        if err := self._require_world():
-            return err
-        # T5: reset during a running policy races mj_step -> SEGFAULT risk
+        if self._world is None or self._world._model is None or self._world._data is None:
+            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
+        # reset during a running policy races mj_step -> SEGFAULT risk
         if err := self._require_no_running_policy("reset"):
             return err
         mj = self._mj
@@ -852,8 +868,8 @@ class Simulation(
         return {"status": "success", "content": [{"text": "🔄 Reset to initial state."}]}
 
     def get_state(self) -> dict[str, Any]:
-        if err := self._require_world():
-            return err
+        if self._world is None or self._world._model is None or self._world._data is None:
+            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
         lines = [
             "🌍 Simulation State",
             f"🕐 t={self._world.sim_time:.4f}s (step {self._world.step_count})",
@@ -879,7 +895,7 @@ class Simulation(
         return {"status": "success", "content": [{"text": "🗑️ World destroyed."}]}
 
     def _close_main_thread_renderers(self) -> None:
-        """T4: Close any renderers this thread owns and drop the TLS cache.
+        """Close any renderers this thread owns and drop the TLS cache.
 
         Only safe for the main thread because ``mujoco.Renderer`` binds a
         CGL/GLX context to the thread that created it; closing from another
@@ -902,36 +918,46 @@ class Simulation(
             tls.model = None
 
     def set_gravity(self, gravity: list[float] | float | int) -> dict[str, Any]:
-        if err := self._require_world():
-            return err
-        # T5: set_gravity during a running policy races the worker thread
+        if self._world is None or self._world._model is None or self._world._data is None:
+            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
+        # set_gravity during a running policy races the worker thread
         if err := self._require_no_running_policy("set_gravity"):
             return err
-        # T38: validate length/dtype before numpy broadcast
+        # validate length/dtype before numpy broadcast
         if isinstance(gravity, (int, float)):
             gravity = [0.0, 0.0, float(gravity)]
         try:
             if len(gravity) != 3:
-                return {"status": "error", "content": [{"text": f"set_gravity: 'gravity' must be a 3-element list [x,y,z], got {len(gravity)}"}]}
+                return {
+                    "status": "error",
+                    "content": [
+                        {"text": f"set_gravity: 'gravity' must be a 3-element list [x,y,z], got {len(gravity)}"}
+                    ],
+                }
             gravity = [float(g) for g in gravity]
         except (TypeError, ValueError) as e:
-            return {"status": "error", "content": [{"text": f"set_gravity: 'gravity' must be a 3-element list of numbers ({e})"}]}
+            return {
+                "status": "error",
+                "content": [{"text": f"set_gravity: 'gravity' must be a 3-element list of numbers ({e})"}],
+            }
         with self._lock:
             self._world._model.opt.gravity[:] = gravity
             self._world.gravity = gravity
         return {"status": "success", "content": [{"text": f"🌐 Gravity: {gravity}"}]}
 
     def set_timestep(self, timestep: float) -> dict[str, Any]:
-        if err := self._require_world():
-            return err
-        # T5
+        if self._world is None or self._world._model is None or self._world._data is None:
+            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
         if err := self._require_no_running_policy("set_timestep"):
             return err
-        # T8: reject non-positive; warn on huge values
+        # reject non-positive; warn on huge values
         try:
             timestep = float(timestep)
         except (TypeError, ValueError):
-            return {"status": "error", "content": [{"text": f"set_timestep: must be a positive number, got {timestep!r}"}]}
+            return {
+                "status": "error",
+                "content": [{"text": f"set_timestep: must be a positive number, got {timestep!r}"}],
+            }
         if timestep <= 0:
             return {"status": "error", "content": [{"text": f"set_timestep: must be > 0, got {timestep}"}]}
         warn = ""
@@ -977,9 +1003,9 @@ class Simulation(
         return {"status": "success", "content": [{"text": list_available_models()}]}
 
     def register_urdf(self, data_config: str, urdf_path: str) -> dict[str, Any]:
-        """T35: validate urdf_path before handing it to the registry.
+        """validate urdf_path before handing it to the registry.
 
-        The router (T1) already rejects missing required params, so the
+        The router already rejects missing required params, so the
         no-args case produces a friendly 'requires parameter ...' message
         without hitting this body.
         """
@@ -1022,12 +1048,12 @@ class Simulation(
     def get_features(self, robot_name: str | None = None) -> dict[str, Any]:
         """Describe the simulation's joints / actuators / cameras / robots.
 
-        T33: If ``robot_name`` is given, the joint / actuator / camera listings
+        If ``robot_name`` is given, the joint / actuator / camera listings
         are restricted to that robot (its namespaced MuJoCo names).  The
         ``robots`` map is also filtered to just that entry.
         """
-        if err := self._require_world():
-            return err
+        if self._world is None or self._world._model is None or self._world._data is None:
+            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
 
         mj = self._mj
         model = self._world._model
@@ -1122,7 +1148,7 @@ class Simulation(
         return "simulation"
 
     def _require_world(self) -> dict[str, Any] | None:
-        """T14: Return unified 'no world' error or None if world is live.
+        """Return unified 'no world' error or None if world is live.
 
         Replaces scattered ``"No simulation."`` / ``"No world."`` strings. Every
         action that touches ``self._world`` / ``self._world._model`` /
@@ -1131,13 +1157,7 @@ class Simulation(
         if self._world is None or self._world._model is None or self._world._data is None:
             return {
                 "status": "error",
-                "content": [
-                    {
-                        "text": (
-                            "No world. Call create_world (or load_scene) first."
-                        )
-                    }
-                ],
+                "content": [{"text": ("No world. Call create_world (or load_scene) first.")}],
             }
         return None
 
@@ -1235,11 +1255,11 @@ class Simulation(
         without blocking the event loop. Only one policy per robot at a
         time (MuJoCo model/data are not thread-safe for concurrent writes).
 
-        T25: accepts ``n_steps`` (primary) or legacy ``max_steps`` as an
+        accepts ``n_steps`` (primary) or legacy ``max_steps`` as an
         alternate horizon specification; run_policy converts to duration.
         """
-        if err := self._require_world():
-            return err
+        if self._world is None or self._world._model is None or self._world._data is None:
+            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
         if robot_name not in self._world.robots:
             return {"status": "error", "content": [{"text": f"Robot '{robot_name}' not found."}]}
 
@@ -1343,11 +1363,11 @@ class Simulation(
         ``_PolicyStopped`` (which the ``on_frame`` hook raises on user
         cancellation) into a normal "policy stopped" result.
 
-        T25: forwards ``n_steps`` / ``max_steps`` to the base so LLM callers
+        forwards ``n_steps`` / ``max_steps`` to the base so LLM callers
         can specify horizon in steps rather than wall-clock seconds.
         """
-        if err := self._require_world():
-            return err
+        if self._world is None or self._world._model is None or self._world._data is None:
+            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
 
         try:
             return super().run_policy(
@@ -1403,7 +1423,7 @@ class Simulation(
     def _validate_and_build_kwargs(
         self, action: str, method_name: str, sig: inspect.Signature, remapped: dict[str, Any]
     ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-        """T1: Validate input against method signature; return (kwargs, error_result).
+        """Validate input against method signature; return (kwargs, error_result).
 
         Exactly one of the tuple elements is non-None.
         """
@@ -1413,16 +1433,11 @@ class Simulation(
         named_params = {
             n: p
             for n, p in sig.parameters.items()
-            if n != "self"
-            and p.kind not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
+            if n != "self" and p.kind not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
         }
-        method_has_var_keyword = any(
-            p.kind is inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
-        )
+        method_has_var_keyword = any(p.kind is inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
         method_param_names = set(named_params)
-        accepted_field_names = (
-            method_param_names | set(self._FIELD_ALIASES.keys()) | self._ROUTER_PASSTHROUGH
-        )
+        accepted_field_names = method_param_names | set(self._FIELD_ALIASES.keys()) | self._ROUTER_PASSTHROUGH
 
         # run_policy folds flat video keys into a structured `video` dict; those
         # flat keys are legitimate at the router boundary even though run_policy
@@ -1444,12 +1459,7 @@ class Simulation(
             return None, {
                 "status": "error",
                 "content": [
-                    {
-                        "text": (
-                            f"Unknown parameter '{unknown[0]}' for action '{action}'. "
-                            f"Valid: {valid_sorted}"
-                        )
-                    }
+                    {"text": (f"Unknown parameter '{unknown[0]}' for action '{action}'. Valid: {valid_sorted}")}
                 ],
             }
 
@@ -1463,20 +1473,13 @@ class Simulation(
             if not hasattr(val, "__len__"):
                 return None, {
                     "status": "error",
-                    "content": [
-                        {"text": f"Parameter '{vparam}' must be a list of {expected_len} numbers."}
-                    ],
+                    "content": [{"text": f"Parameter '{vparam}' must be a list of {expected_len} numbers."}],
                 }
             if len(val) != expected_len:
                 return None, {
                     "status": "error",
                     "content": [
-                        {
-                            "text": (
-                                f"Parameter '{vparam}' must be a list of {expected_len} numbers, "
-                                f"got {len(val)}."
-                            )
-                        }
+                        {"text": (f"Parameter '{vparam}' must be a list of {expected_len} numbers, got {len(val)}.")}
                     ],
                 }
             for i, component in enumerate(val):
@@ -1484,12 +1487,7 @@ class Simulation(
                     return None, {
                         "status": "error",
                         "content": [
-                            {
-                                "text": (
-                                    f"Parameter '{vparam}'[{i}] must be numeric, "
-                                    f"got {type(component).__name__}."
-                                )
-                            }
+                            {"text": (f"Parameter '{vparam}'[{i}] must be numeric, got {type(component).__name__}.")}
                         ],
                     }
 
@@ -1505,9 +1503,7 @@ class Simulation(
             elif param.default is inspect.Parameter.empty:
                 return None, {
                     "status": "error",
-                    "content": [
-                        {"text": f"Action '{action}' requires parameter '{param_name}'."}
-                    ],
+                    "content": [{"text": f"Action '{action}' requires parameter '{param_name}'."}],
                 }
 
         return kwargs, None
@@ -1515,7 +1511,7 @@ class Simulation(
     def _dispatch_action(self, action: str, d: dict[str, Any]) -> dict[str, Any]:
         """Route action to the matching method with full input validation.
 
-        Validation layer (T1):
+        Validation layer:
           * unknown top-level params are rejected with a friendly message,
           * missing required params produce a "requires parameter X" error
             (no raw Python ``TypeError``),
@@ -1573,12 +1569,12 @@ class Simulation(
         :meth:`_run_policy_loop` sees it and raises :class:`PolicyStopped`
         which is caught cleanly inside :meth:`start_policy`.
 
-        T16: idempotent — if the robot exists but no policy is running, we
+        idempotent — if the robot exists but no policy is running, we
         still return success with 'Was not running' so callers can call
         stop_policy unconditionally. The only error case is an unknown
         robot_name.
 
-        T24: empty robot_name returns a clear error instead of a silent
+        empty robot_name returns a clear error instead of a silent
         match against the first robot.
         """
         if not robot_name:
@@ -1604,7 +1600,7 @@ class Simulation(
                 r.policy_running = False
             self._world = None
         self._close_viewer()
-        # T4: close main-thread renderers before dropping the TLS object.
+        # close main-thread renderers before dropping the TLS object.
         # Renderers created on worker threads release their GL contexts
         # when those threads terminate; calling close() cross-thread
         # SIGSEGVs in cgl.free(), so we stay on main.

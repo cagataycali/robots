@@ -133,7 +133,7 @@ def _reload_scene_from_xml(world: SimWorld, scene_path: str) -> bool:
 
     Copies qpos, qvel, ctrl from old model and re-discovers robot joint/actuator IDs.
 
-    T6: before copying existing state into the new MjData we explicitly call
+    before copying existing state into the new MjData we explicitly call
     ``mj_resetData`` so that joints NOT present in ``old_model`` (i.e. the
     freshly-injected robot's joints) start from a well-defined zero state
     rather than whatever garbage pybind11 happened to hand us from fresh
@@ -144,7 +144,7 @@ def _reload_scene_from_xml(world: SimWorld, scene_path: str) -> bool:
     new_model = mj.MjModel.from_xml_path(str(scene_path))
     new_data = mj.MjData(new_model)
 
-    # T6: zero the whole state buffer before copying old-state on top.
+    # zero the whole state buffer before copying old-state on top.
     # Without this, freshly-added robots show nonzero qpos/qvel/ctrl from
     # uninitialised memory and any observation taken before reset() is garbage.
     mj.mj_resetData(new_model, new_data)
@@ -766,7 +766,7 @@ def inject_camera_into_scene(world: SimWorld, cam: SimCamera) -> bool:
         cam_elem.set("pos", f"{px} {py} {pz}")
         cam_elem.set("fovy", str(cam.fov))
         cam_elem.set("mode", "fixed")
-        # T2: write xyaxes so the camera actually LOOKS at cam.target.
+        # write xyaxes so the camera actually LOOKS at cam.target.
         # Without this the `target` parameter is cosmetic and all custom
         # cameras share the MuJoCo default orientation -> identical frames.
         target = getattr(cam, "target", None)

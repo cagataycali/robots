@@ -188,6 +188,7 @@ class TestSetJointPositionsForms:
         joint_names = list(sim_with_robot._world.robots.values())[0].joint_names or []
         if not joint_names:
             import pytest as _pytest
+
             _pytest.skip("robot has no named joints")
         res = sim_with_robot.set_joint_positions(positions={joint_names[0]: 0.1})
         assert res["status"] == "success"
@@ -196,6 +197,7 @@ class TestSetJointPositionsForms:
         joint_names = list(sim_with_robot._world.robots.values())[0].joint_names or []
         if not joint_names:
             import pytest as _pytest
+
             _pytest.skip("robot has no named joints")
         res = sim_with_robot.set_joint_positions(positions=[0.0] * len(joint_names))
         assert res["status"] == "success", res["content"][0]["text"]
@@ -275,12 +277,14 @@ class TestAddRobotInitialState:
 
     def test_initial_qpos_is_zero(self):
         import numpy as np
+
         sim = Simulation()
         try:
             sim.create_world()
             res = sim.add_robot(name="panda", data_config="panda")
             if res["status"] != "success":
                 import pytest as _pytest
+
                 _pytest.skip(f"panda not available: {res['content'][0]['text']}")
             # IMPORTANT: do NOT call reset. T6 requires that add_robot itself leaves a clean state.
             data = sim._world._data
@@ -304,6 +308,7 @@ class TestRenderCameraValidation:
         res = sim_with_world.render(camera_name="default", width=64, height=48)
         if res["status"] != "success":
             import pytest as _pytest
+
             _pytest.skip(f"offscreen render unavailable: {res['content'][0]['text']}")
         assert "free (default)" in res["content"][0]["text"]
 
@@ -311,6 +316,7 @@ class TestRenderCameraValidation:
         res = sim_with_world.render(camera_name="free", width=64, height=48)
         if res["status"] != "success":
             import pytest as _pytest
+
             _pytest.skip(f"offscreen render unavailable: {res['content'][0]['text']}")
         assert "free (default)" in res["content"][0]["text"]
 
@@ -366,9 +372,7 @@ class TestAddCameraTargetOrients:
         """The merged scene XML must contain xyaxes= for cameras with a target."""
         sim = self._with_obj()
         try:
-            res = sim.add_camera(
-                name="side_cam", position=[2.0, 0.0, 0.3], target=[0.0, 0.0, 0.25]
-            )
+            res = sim.add_camera(name="side_cam", position=[2.0, 0.0, 0.3], target=[0.0, 0.0, 0.25])
             assert res["status"] == "success", res["content"][0]["text"]
             # Grab the stored scene XML.
             xml = sim._world._backend_state.get("xml", "")
@@ -390,14 +394,11 @@ class TestAddCameraTargetOrients:
         makes pixel-level comparison unreliable (see note on macOS depth/ARB_clip
         elsewhere in this suite)."""
         import re as _re
+
         sim = self._with_obj()
         try:
-            res_a = sim.add_camera(
-                name="cam_a", position=[2.0, 0.0, 0.5], target=[0.0, 0.0, 0.25]
-            )
-            res_b = sim.add_camera(
-                name="cam_b", position=[2.0, 0.0, 0.5], target=[0.0, 2.0, 0.25]
-            )
+            res_a = sim.add_camera(name="cam_a", position=[2.0, 0.0, 0.5], target=[0.0, 0.0, 0.25])
+            res_b = sim.add_camera(name="cam_b", position=[2.0, 0.0, 0.5], target=[0.0, 2.0, 0.25])
             assert res_a["status"] == "success"
             assert res_b["status"] == "success"
             xml = sim._world._backend_state.get("xml", "")
@@ -418,6 +419,7 @@ class TestCameraXyAxesHelper:
 
     def test_basic_look_at_origin(self):
         from strands_robots.simulation.mujoco.mjcf_builder import _camera_xyaxes_from_target
+
         # Camera at (2, 0, 0) looking at origin along -X, up = +Z.
         # forward = normalize(origin - pos) = (-1, 0, 0)
         # right   = forward × up = (-1,0,0) × (0,0,1) = (0*1 - 0*0, 0*0 - -1*1, -1*0 - 0*0) = (0, 1, 0)
@@ -432,4 +434,5 @@ class TestCameraXyAxesHelper:
 
     def test_degenerate_returns_none(self):
         from strands_robots.simulation.mujoco.mjcf_builder import _camera_xyaxes_from_target
+
         assert _camera_xyaxes_from_target([1, 2, 3], [1, 2, 3]) is None

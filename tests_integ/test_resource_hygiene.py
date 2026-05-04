@@ -88,9 +88,7 @@ class TestRendererCacheBehaviour:
 
         sim.destroy()
         renderers_after = getattr(sim._renderer_tls, "renderers", {})
-        assert not renderers_after, (
-            "destroy() should have closed and cleared the main-thread renderer cache"
-        )
+        assert not renderers_after, "destroy() should have closed and cleared the main-thread renderer cache"
         sim.cleanup()
 
     def test_render_reuses_renderer_for_same_dims(self):

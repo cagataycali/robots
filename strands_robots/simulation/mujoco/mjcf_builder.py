@@ -24,12 +24,13 @@ def _sanitize_name(name: str) -> str:
         raise ValueError(f"Invalid simulation name {name!r}: must match [a-zA-Z0-9_][a-zA-Z0-9_.\\-]{{0,127}}")
     return name
 
+
 def _camera_xyaxes_from_target(
     position: list[float],
     target: list[float],
     up: tuple[float, float, float] = (0.0, 0.0, 1.0),
 ) -> str | None:
-    """T2: compute MJCF ``xyaxes`` attribute so a camera looks at ``target``.
+    """compute MJCF ``xyaxes`` attribute so a camera looks at ``target``.
 
     MuJoCo cameras with ``mode='fixed'`` need an explicit orientation. Without
     xyaxes/quat MuJoCo uses the default -Z look direction, so ``add_camera``'s
@@ -76,7 +77,6 @@ def _camera_xyaxes_from_target(
     iy_z = rx * fy - ry * fx
 
     return f"{rx:.6f} {ry:.6f} {rz:.6f} {iy_x:.6f} {iy_y:.6f} {iy_z:.6f}"
-
 
 
 class MJCFBuilder:

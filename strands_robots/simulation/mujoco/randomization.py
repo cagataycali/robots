@@ -19,6 +19,8 @@ class RandomizationMixin:
         _lock: "threading.Lock"
         _world: "SimWorld | None"
 
+        def _require_no_running_policy(self, action_name: str) -> dict[str, Any] | None: ...
+
     """Domain randomization for Simulation. Expects self._world."""
 
     def randomize(
@@ -35,9 +37,9 @@ class RandomizationMixin:
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Apply domain randomization to the scene."""
-        if err := self._require_world():
-            return err
-        # T5: domain randomization mutates model arrays; a running policy racing with it is UB
+        if self._world is None or self._world._model is None or self._world._data is None:
+            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
+        # domain randomization mutates model arrays; a running policy racing with it is UB
         if err := self._require_no_running_policy("randomize"):
             return err
 

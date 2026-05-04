@@ -23,9 +23,7 @@ class TestRouterRejectsUnknownKwargs:
     """T1 DoD: Unknown top-level params must be rejected with a clear message."""
 
     def test_unknown_kwarg_on_set_gravity(self, sim):
-        result = sim._dispatch_action(
-            "set_gravity", {"gravity": [0, 0, -9.81], "bogus_param": 42}
-        )
+        result = sim._dispatch_action("set_gravity", {"gravity": [0, 0, -9.81], "bogus_param": 42})
         assert result["status"] == "error"
         text = result["content"][0]["text"]
         assert "Unknown parameter 'bogus_param'" in text
@@ -99,9 +97,7 @@ class TestRouterValidatesVectorDims:
         assert "'color'" in result["content"][0]["text"]
 
     def test_non_numeric_vector_component_rejected(self, sim):
-        result = sim._dispatch_action(
-            "set_gravity", {"gravity": [0, 0, "low"]}
-        )
+        result = sim._dispatch_action("set_gravity", {"gravity": [0, 0, "low"]})
         assert result["status"] == "error"
         assert "numeric" in result["content"][0]["text"].lower()
 
@@ -145,9 +141,7 @@ class TestToolSpecMethodParity:
     }
 
     def test_every_action_maps_to_a_method(self, sim):
-        spec_path = Path(
-            "/Users/cagatay/robots/strands_robots/simulation/mujoco/tool_spec.json"
-        )
+        spec_path = Path("/Users/cagatay/robots/strands_robots/simulation/mujoco/tool_spec.json")
         spec = json.loads(spec_path.read_text())
         actions = spec["properties"]["action"]["enum"]
 
@@ -191,9 +185,7 @@ class TestUnifiedNoWorldMessage:
         assert "No world" in text, f"{action} error text lacks 'No world': {text}"
 
     def test_step_no_world(self, fresh_sim):
-        self._assert_standard_no_world_error(
-            fresh_sim._dispatch_action("step", {"n_steps": 1}), "step"
-        )
+        self._assert_standard_no_world_error(fresh_sim._dispatch_action("step", {"n_steps": 1}), "step")
 
     def test_reset_no_world(self, fresh_sim):
         self._assert_standard_no_world_error(fresh_sim._dispatch_action("reset", {}), "reset")
@@ -212,9 +204,7 @@ class TestUnifiedNoWorldMessage:
         assert "No world" in result["content"][0]["text"]
 
     def test_get_state_no_world(self, fresh_sim):
-        self._assert_standard_no_world_error(
-            fresh_sim._dispatch_action("get_state", {}), "get_state"
-        )
+        self._assert_standard_no_world_error(fresh_sim._dispatch_action("get_state", {}), "get_state")
 
 
 class TestUnifiedNotFoundMessages:
@@ -227,16 +217,12 @@ class TestUnifiedNotFoundMessages:
         assert "Robot 'ghost_bot' not found" in text
 
     def test_object_not_found(self, sim):
-        result = sim._dispatch_action(
-            "move_object", {"name": "ghost_box", "position": [0, 0, 0]}
-        )
+        result = sim._dispatch_action("move_object", {"name": "ghost_box", "position": [0, 0, 0]})
         assert result["status"] == "error"
         assert "Object 'ghost_box' not found" in result["content"][0]["text"]
 
     def test_body_not_found(self, sim):
-        result = sim._dispatch_action(
-            "apply_force", {"body_name": "ghost_body", "force": [0, 0, 1]}
-        )
+        result = sim._dispatch_action("apply_force", {"body_name": "ghost_body", "force": [0, 0, 1]})
         assert result["status"] == "error"
         assert "Body 'ghost_body' not found" in result["content"][0]["text"]
 
@@ -298,7 +284,6 @@ class TestForwardPassBeforeReads:
         assert r["status"] == "success"
         # Empty scene: nv==0 so rank==0 and cond==inf are acceptable; the
         # important bit is we didn't return NaN / raise.
-        import json as _json
         payload = r["content"][-1].get("json", {}) if isinstance(r["content"][-1], dict) else {}
         assert "shape" in payload
 
@@ -404,9 +389,7 @@ class TestRegisterUrdfValidation:
         assert "file not found" in r["content"][0]["text"].lower()
 
     def test_register_urdf_empty_path_errors(self, sim):
-        r = sim._dispatch_action(
-            "register_urdf", {"data_config": "my_bot", "urdf_path": ""}
-        )
+        r = sim._dispatch_action("register_urdf", {"data_config": "my_bot", "urdf_path": ""})
         assert r["status"] == "error"
         # Router handles empty string as missing? No — it's a truthy string
         # in the presence test. So we hit our explicit empty guard.
@@ -440,9 +423,7 @@ class TestPlaneAutoStatic:
         assert sim._world.objects["floor1"].is_static is True
 
     def test_plane_with_explicit_dynamic_errors(self, sim):
-        r = sim._dispatch_action(
-            "add_object", {"name": "bad_floor", "shape": "plane", "is_static": False}
-        )
+        r = sim._dispatch_action("add_object", {"name": "bad_floor", "shape": "plane", "is_static": False})
         assert r["status"] == "error"
         assert "plane" in r["content"][0]["text"].lower() and "is_static" in r["content"][0]["text"]
 
@@ -458,9 +439,7 @@ class TestSetGeomPropertiesAlias:
         )
         # Using the object name, not '{name}_geom', should work — the
         # T28 alias resolves to '{name}_geom' internally.
-        r = sim._dispatch_action(
-            "set_geom_properties", {"geom_name": "box_alpha", "color": [1, 0, 0, 1]}
-        )
+        r = sim._dispatch_action("set_geom_properties", {"geom_name": "box_alpha", "color": [1, 0, 0, 1]})
         # Success proves the alias resolved; error with 'Geom not found' would
         # mean T28 didn't kick in.
         assert r["status"] == "success", r
@@ -518,9 +497,7 @@ class TestPolicyHorizonUnification:
     (legacy) as alternatives to duration. duration = n_steps / control_freq."""
 
     def test_run_policy_n_steps_zero_errors(self, sim):
-        r = sim._dispatch_action(
-            "run_policy", {"robot_name": "ghost", "n_steps": 0}
-        )
+        r = sim._dispatch_action("run_policy", {"robot_name": "ghost", "n_steps": 0})
         assert r["status"] == "error"
         # Either n_steps validation fires first, or robot-not-found; both are
         # acceptable error paths — we just want NO silent success.
@@ -528,9 +505,7 @@ class TestPolicyHorizonUnification:
         assert ("n_steps" in text and "> 0" in text) or "Robot" in text
 
     def test_run_policy_negative_n_steps_errors(self, sim):
-        r = sim._dispatch_action(
-            "run_policy", {"robot_name": "ghost", "n_steps": -10}
-        )
+        r = sim._dispatch_action("run_policy", {"robot_name": "ghost", "n_steps": -10})
         assert r["status"] == "error"
 
 
@@ -545,9 +520,7 @@ class TestAddRobotDeprecation:
             # 'mock_never_registered' won't resolve to anything, so the
             # fallback is attempted but also fails.  We only care the
             # warning was triggered in the path.
-            r = sim._dispatch_action(
-                "add_robot", {"name": "mock_never_registered"}
-            )
+            r = sim._dispatch_action("add_robot", {"name": "mock_never_registered"})
         # Either succeeded (name happened to resolve -> warning) or failed.
         # Just verify: if it succeeded via name fallback, a warning fired.
         warn_texts = [str(w.message) for w in captured if issubclass(w.category, DeprecationWarning)]

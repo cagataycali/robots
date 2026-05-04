@@ -285,9 +285,9 @@ class SimEngine(ABC):
         from strands_robots.policies import create_policy
         from strands_robots.simulation.policy_runner import PolicyRunner, VideoConfig
 
-        # T25: accept n_steps (or legacy max_steps) as an alternate horizon
+        # accept n_steps (or legacy max_steps) as an alternate horizon
         # specification. duration = n_steps / control_frequency. If both
-        # are passed, n_steps wins (primary per T25 DoD).
+        # are passed, n_steps wins (primary per DoD).
         if n_steps is None and max_steps is not None:
             n_steps = int(max_steps)
         if n_steps is not None:
@@ -353,7 +353,7 @@ class SimEngine(ABC):
         Backends that support true background execution (like MuJoCo via
         its ``ThreadPoolExecutor``) should override.
 
-        T25: accepts ``n_steps`` (primary) or legacy ``max_steps`` as an
+        accepts ``n_steps`` (primary) or legacy ``max_steps`` as an
         alternate to ``duration``. See ``run_policy`` for conversion rules.
         """
         return self.run_policy(
@@ -408,7 +408,7 @@ class SimEngine(ABC):
     ) -> dict[str, Any]:
         """Multi-episode policy evaluation via ``PolicyRunner.evaluate``.
 
-        T34: ``robot_name`` is required — eval_policy used to silently pick
+        ``robot_name`` is required — eval_policy used to silently pick
         the first robot, which is surprising in multi-robot scenes.
         ``n_episodes`` default lowered from 10 to 1 (callers opt in to
         longer evals explicitly).

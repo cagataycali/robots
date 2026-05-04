@@ -14,6 +14,7 @@ class RenderingMixin:
         from strands_robots.simulation.models import SimWorld
 
         _world: "SimWorld | None"
+
         _renderer_model: Any
         _renderer_tls: Any  # threading.local() — per-thread renderer dict
         default_width: int
@@ -22,7 +23,7 @@ class RenderingMixin:
     """Rendering capabilities for Simulation. Expects self._world, self.default_width, self.default_height."""
 
     def _validate_render_dims(self, width: int, height: int) -> dict[str, Any] | None:
-        """T20: reject non-positive render dims; convert MuJoCo's framebuffer
+        """reject non-positive render dims; convert MuJoCo's framebuffer
         overflow to a plain-English message that tells the LLM the actual cap.
         """
         if not isinstance(width, int) or not isinstance(height, int):
@@ -35,9 +36,7 @@ class RenderingMixin:
         if width <= 0 or height <= 0:
             return {
                 "status": "error",
-                "content": [
-                    {"text": f"render: width and height must be > 0, got {width}x{height}."}
-                ],
+                "content": [{"text": f"render: width and height must be > 0, got {width}x{height}."}],
             }
         if self._world is not None and self._world._model is not None:
             max_w = int(getattr(self._world._model.vis.global_, "offwidth", 1280))
@@ -201,11 +200,11 @@ class RenderingMixin:
         self, camera_name: str = "default", width: int | None = None, height: int | None = None
     ) -> dict[str, Any]:
         """Render a camera view as base64 PNG image."""
-        if err := self._require_world():
-            return err
+        if self._world is None or self._world._model is None or self._world._data is None:
+            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
 
         mj = _ensure_mujoco()
-        # T20: treat `None` as "use default", but `0` / negative values must
+        # treat `None` as "use default", but `0` / negative values must
         # still hit the validator (bool coercion would swallow them silently).
         w = self.default_width if width is None else width
         h = self.default_height if height is None else height
@@ -227,7 +226,7 @@ class RenderingMixin:
                         }
                     ],
                 }
-            # T3: strict camera validation — no silent fallback to default.
+            # strict camera validation — no silent fallback to default.
             # Special 'default' / 'free' tokens route to the free camera; any
             # other name MUST resolve or we error (prevents the LLM from
             # believing it rendered viewpoint X while actually getting free-cam).
@@ -239,7 +238,9 @@ class RenderingMixin:
                 if cam_id < 0:
                     return {
                         "status": "error",
-                        "content": [{"text": f"Camera '{camera_name}' not found. Available: {self._list_camera_names()}"}],
+                        "content": [
+                            {"text": f"Camera '{camera_name}' not found. Available: {self._list_camera_names()}"}
+                        ],
                     }
                 label = camera_name
 
@@ -257,9 +258,10 @@ class RenderingMixin:
             pil_img.save(buffer, format="PNG")
             png_bytes = buffer.getvalue()
 
-            # T27: summary stats so render_all can flag empty-looking frames
+            # summary stats so render_all can flag empty-looking frames
             # without decoding the PNG a second time.
             import numpy as _np
+
             pixel_var = float(_np.var(img))
             pixel_mean = float(_np.mean(img))
 
@@ -278,18 +280,18 @@ class RenderingMixin:
         self, camera_name: str = "default", width: int | None = None, height: int | None = None
     ) -> dict[str, Any]:
         """Render depth map from a camera."""
-        if err := self._require_world():
-            return err
+        if self._world is None or self._world._model is None or self._world._data is None:
+            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
 
         mj = _ensure_mujoco()
-        # T20: see note in render() re: None vs 0/negative.
+        # see note in render() re: None vs 0/negative.
         w = self.default_width if width is None else width
         h = self.default_height if height is None else height
         if err := self._validate_render_dims(w, h):
             return err
 
         try:
-            # T3: strict camera validation (same policy as render())
+            # strict camera validation (same policy as render())
             if camera_name in (None, "", "default", "free"):
                 cam_id = -1
                 label = "free (default)"
@@ -298,7 +300,9 @@ class RenderingMixin:
                 if cam_id < 0:
                     return {
                         "status": "error",
-                        "content": [{"text": f"Camera '{camera_name}' not found. Available: {self._list_camera_names()}"}],
+                        "content": [
+                            {"text": f"Camera '{camera_name}' not found. Available: {self._list_camera_names()}"}
+                        ],
                     }
                 label = camera_name
 
@@ -319,13 +323,16 @@ class RenderingMixin:
                 renderer.update_scene(self._world._data, camera=cam_id)
             else:
                 renderer.update_scene(self._world._data)
-            # T21: MuJoCo prints a one-time ARB_clip_control warning on macOS
+            # MuJoCo prints a one-time ARB_clip_control warning on macOS
             # when depth precision is reduced. Capture stderr on the first
             # depth render so we can surface the warning in the response
             # text (the LLM otherwise never hears about it).
             clip_warn = getattr(self, "_depth_warn_text", None)
             if clip_warn is None:
-                import contextlib as _ctx, io as _io, os as _os, sys as _sys
+                import contextlib as _ctx
+                import io as _io
+                import sys as _sys
+
                 buf = _io.StringIO()
                 with _ctx.redirect_stderr(buf):
                     renderer.enable_depth_rendering()
@@ -333,15 +340,13 @@ class RenderingMixin:
                     renderer.disable_depth_rendering()
                 captured = buf.getvalue()
                 # Also forward to the real stderr so logs don't vanish.
-                if captured:
+                if captured and _sys.__stderr__ is not None:
                     try:
                         _sys.__stderr__.write(captured)
                     except Exception:
                         pass
                 if "ARB_clip_control" in captured:
-                    self._depth_warn_text = (
-                        "⚠️ Depth accuracy limited on this GPU (missing ARB_clip_control)"
-                    )
+                    self._depth_warn_text = "⚠️ Depth accuracy limited on this GPU (missing ARB_clip_control)"
                 else:
                     self._depth_warn_text = ""
                 clip_warn = self._depth_warn_text
@@ -350,10 +355,7 @@ class RenderingMixin:
                 depth = renderer.render()
                 renderer.disable_depth_rendering()
 
-            text = (
-                f"📸 Depth {w}x{h} from '{label}'\n"
-                f"Min: {float(depth.min()):.3f}m, Max: {float(depth.max()):.3f}m"
-            )
+            text = f"📸 Depth {w}x{h} from '{label}'\nMin: {float(depth.min()):.3f}m, Max: {float(depth.max()):.3f}m"
             if clip_warn:
                 text += f"\n{clip_warn}"
             return {
@@ -367,18 +369,18 @@ class RenderingMixin:
             return {"status": "error", "content": [{"text": f"Depth render failed: {e}"}]}
 
     def _list_camera_names(self) -> list[str]:
-        """T3: helper to list all camera names (model-defined + SimCamera aliases)
+        """helper to list all camera names (model-defined + SimCamera aliases)
         for error messages when an unknown camera_name is requested."""
         import mujoco as _mj
+
         names: list[str] = []
         if self._world is not None and self._world._model is not None:
             for cid in range(self._world._model.ncam):
-                nm = _mj.mj_name2id  # silence unused
                 raw = _mj.mj_id2name(self._world._model, _mj.mjtObj.mjOBJ_CAMERA, cid)
                 if raw:
                     names.append(raw)
         # Include SimCamera registry keys (may match model names; dedupe)
-        for k in (self._world.cameras.keys() if self._world else ()):
+        for k in self._world.cameras.keys() if self._world else ():
             if k not in names:
                 names.append(k)
         return names
@@ -386,17 +388,17 @@ class RenderingMixin:
     def get_contacts(self) -> dict[str, Any]:
         """Return the list of active geom-geom contacts at the current step.
 
-        T19: We run ``mj_forward`` first so the contact list reflects the
+        We run ``mj_forward`` first so the contact list reflects the
         current qpos/qvel even immediately after ``reset`` or ``add_robot``
         (without this, stale contacts from the previous step / uninitialised
         memory can appear as phantom penetrations at t=0).
         """
-        if err := self._require_world():
-            return err
+        if self._world is None or self._world._model is None or self._world._data is None:
+            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
 
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
-        # T19: refresh contact list without advancing time.
+        # refresh contact list without advancing time.
         mj.mj_forward(model, data)
 
         contacts = []
@@ -465,8 +467,8 @@ class RenderingMixin:
                                      {"text": "📸 cam1"}, {"image": {...}},
                                      {"text": "📸 cam2"}, {"image": {...}}, ...]}``
         """
-        if err := self._require_world():
-            return err
+        if self._world is None or self._world._model is None or self._world._data is None:
+            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
         names = self._active_camera_list(cameras)
         if not names:
             return {"status": "error", "content": [{"text": "No cameras in scene."}]}
@@ -487,7 +489,7 @@ class RenderingMixin:
                             stats = block["json"]
                 if img_block is not None:
                     label = f"📸 {cam_name}"
-                    # T27: flag near-uniform frames (all black / all clear).
+                    # flag near-uniform frames (all black / all clear).
                     if stats and float(stats.get("pixel_variance", 99)) < 1.0:
                         warn = f"⚠️ camera '{cam_name}': image appears empty (variance < 1)"
                         label = f"{label}  {warn}"
@@ -542,8 +544,8 @@ class RenderingMixin:
         import time as _time
         import uuid as _uuid
 
-        if err := self._require_world():
-            return err
+        if self._world is None or self._world._model is None or self._world._data is None:
+            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
 
         if getattr(self, "_cams_rec_state", None) and self._cams_rec_state.get("running"):
             cur = self._cams_rec_state["name"]
@@ -627,7 +629,7 @@ class RenderingMixin:
 
         state = getattr(self, "_cams_rec_state", None)
         if not state or not state.get("running"):
-            # T16: idempotent — 'already stopped' is a success, not an error.
+            # idempotent — 'already stopped' is a success, not an error.
             return {"status": "success", "content": [{"text": "Was not recording cameras."}]}
 
         state["running"] = False
