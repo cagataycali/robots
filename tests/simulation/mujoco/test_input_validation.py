@@ -122,3 +122,146 @@ class TestApplyForceValidation:
         res = sim_with_robot.apply_force(body_name="link1", force=[1, 2])
         assert res["status"] == "error"
         assert "3-element" in res["content"][0]["text"]
+
+
+# --- T8: negative/invalid mass, timestep -------------------------------
+
+
+class TestMassAndTimestepValidation:
+    def test_set_body_properties_negative_mass_errors(self, sim_with_robot):
+        res = sim_with_robot.set_body_properties(body_name="link1", mass=-1.0)
+        assert res["status"] == "error"
+        assert "must be > 0" in res["content"][0]["text"]
+
+    def test_set_body_properties_zero_mass_errors(self, sim_with_robot):
+        res = sim_with_robot.set_body_properties(body_name="link1", mass=0.0)
+        assert res["status"] == "error"
+
+    def test_set_body_properties_positive_mass_works(self, sim_with_robot):
+        res = sim_with_robot.set_body_properties(body_name="link1", mass=2.5)
+        assert res["status"] == "success"
+
+    def test_set_timestep_negative_errors(self, sim_with_world):
+        res = sim_with_world.set_timestep(-0.01)
+        assert res["status"] == "error"
+        assert "> 0" in res["content"][0]["text"]
+
+    def test_set_timestep_zero_errors(self, sim_with_world):
+        res = sim_with_world.set_timestep(0)
+        assert res["status"] == "error"
+
+    def test_set_timestep_positive_works(self, sim_with_world):
+        res = sim_with_world.set_timestep(0.001)
+        assert res["status"] == "success"
+
+    def test_set_timestep_large_warns_but_succeeds(self, sim_with_world):
+        res = sim_with_world.set_timestep(0.5)
+        assert res["status"] == "success"
+        assert "⚠️" in res["content"][0]["text"] or "unusually" in res["content"][0]["text"]
+
+
+# --- T38: set_gravity dim validation -----------------------------------
+
+
+class TestSetGravityValidation:
+    def test_two_element_gravity_errors(self, sim_with_world):
+        res = sim_with_world.set_gravity([0.0, 0.0])
+        assert res["status"] == "error"
+        assert "3-element" in res["content"][0]["text"]
+
+    def test_scalar_gravity_still_works(self, sim_with_world):
+        # Scalar form convenience (z-only) preserved
+        res = sim_with_world.set_gravity(-9.81)
+        assert res["status"] == "success"
+
+    def test_full_vector_gravity_works(self, sim_with_world):
+        res = sim_with_world.set_gravity([1.0, 2.0, -9.0])
+        assert res["status"] == "success"
+
+
+# --- T11: set_joint_positions list/dict support -----------------------
+
+
+class TestSetJointPositionsForms:
+    def test_dict_form_works(self, sim_with_robot):
+        # Pick a valid joint name from the robot
+        joint_names = list(sim_with_robot._world.robots.values())[0].joint_names or []
+        if not joint_names:
+            import pytest as _pytest
+            _pytest.skip("robot has no named joints")
+        res = sim_with_robot.set_joint_positions(positions={joint_names[0]: 0.1})
+        assert res["status"] == "success"
+
+    def test_list_form_matches_count(self, sim_with_robot):
+        joint_names = list(sim_with_robot._world.robots.values())[0].joint_names or []
+        if not joint_names:
+            import pytest as _pytest
+            _pytest.skip("robot has no named joints")
+        res = sim_with_robot.set_joint_positions(positions=[0.0] * len(joint_names))
+        assert res["status"] == "success", res["content"][0]["text"]
+
+    def test_list_form_wrong_length_errors(self, sim_with_robot):
+        # 999 is almost certainly wrong for any robot
+        res = sim_with_robot.set_joint_positions(positions=[0.1] * 999)
+        assert res["status"] == "error"
+        assert "does not match" in res["content"][0]["text"]
+
+
+# --- T5: policy-running guards -----------------------------------------
+
+
+class TestPolicyRunningGuards:
+    """Simulate policy-running state by poisoning _policy_threads.
+
+    We insert a fake Future whose done() returns False so _require_no_running_policy
+    flags a running policy without actually starting one.
+    """
+
+    def _install_fake_running_policy(self, sim):
+        class _FakeRunningFuture:
+            def done(self):
+                return False
+
+        sim._policy_threads["fake"] = _FakeRunningFuture()
+
+    def test_reset_blocked(self, sim_with_robot):
+        self._install_fake_running_policy(sim_with_robot)
+        res = sim_with_robot.reset()
+        assert res["status"] == "error"
+        assert "while a policy is running" in res["content"][0]["text"]
+
+    def test_set_gravity_blocked(self, sim_with_robot):
+        self._install_fake_running_policy(sim_with_robot)
+        res = sim_with_robot.set_gravity([0, 0, -5])
+        assert res["status"] == "error"
+        assert "while a policy is running" in res["content"][0]["text"]
+
+    def test_set_timestep_blocked(self, sim_with_robot):
+        self._install_fake_running_policy(sim_with_robot)
+        res = sim_with_robot.set_timestep(0.001)
+        assert res["status"] == "error"
+        assert "while a policy is running" in res["content"][0]["text"]
+
+    def test_set_joint_positions_blocked(self, sim_with_robot):
+        self._install_fake_running_policy(sim_with_robot)
+        res = sim_with_robot.set_joint_positions(positions={"nope": 0.0})
+        assert res["status"] == "error"
+        assert "while a policy is running" in res["content"][0]["text"]
+
+    def test_apply_force_blocked(self, sim_with_robot):
+        self._install_fake_running_policy(sim_with_robot)
+        res = sim_with_robot.apply_force(body_name="link1", force=[1, 0, 0])
+        assert res["status"] == "error"
+        assert "while a policy is running" in res["content"][0]["text"]
+
+    def test_set_body_properties_blocked(self, sim_with_robot):
+        self._install_fake_running_policy(sim_with_robot)
+        res = sim_with_robot.set_body_properties(body_name="link1", mass=3.0)
+        assert res["status"] == "error"
+        assert "while a policy is running" in res["content"][0]["text"]
+
+    def test_randomize_blocked(self, sim_with_robot):
+        self._install_fake_running_policy(sim_with_robot)
+        res = sim_with_robot.randomize(seed=42)
+        assert res["status"] == "error"
+        assert "while a policy is running" in res["content"][0]["text"]

@@ -771,6 +771,9 @@ class Simulation(
     def reset(self) -> dict[str, Any]:
         if self._world is None or self._world._model is None:
             return {"status": "error", "content": [{"text": "No world."}]}
+        # T5: reset during a running policy races mj_step -> SEGFAULT risk
+        if err := self._require_no_running_policy("reset"):
+            return err
         mj = self._mj
         with self._lock:
             mj.mj_resetData(self._world._model, self._world._data)
@@ -813,8 +816,18 @@ class Simulation(
     def set_gravity(self, gravity: list[float] | float | int) -> dict[str, Any]:
         if self._world is None or self._world._model is None:
             return {"status": "error", "content": [{"text": "No world."}]}
+        # T5: set_gravity during a running policy races the worker thread
+        if err := self._require_no_running_policy("set_gravity"):
+            return err
+        # T38: validate length/dtype before numpy broadcast
         if isinstance(gravity, (int, float)):
             gravity = [0.0, 0.0, float(gravity)]
+        try:
+            if len(gravity) != 3:
+                return {"status": "error", "content": [{"text": f"set_gravity: 'gravity' must be a 3-element list [x,y,z], got {len(gravity)}"}]}
+            gravity = [float(g) for g in gravity]
+        except (TypeError, ValueError) as e:
+            return {"status": "error", "content": [{"text": f"set_gravity: 'gravity' must be a 3-element list of numbers ({e})"}]}
         with self._lock:
             self._world._model.opt.gravity[:] = gravity
             self._world.gravity = gravity
@@ -823,10 +836,23 @@ class Simulation(
     def set_timestep(self, timestep: float) -> dict[str, Any]:
         if self._world is None or self._world._model is None:
             return {"status": "error", "content": [{"text": "No world."}]}
+        # T5
+        if err := self._require_no_running_policy("set_timestep"):
+            return err
+        # T8: reject non-positive; warn on huge values
+        try:
+            timestep = float(timestep)
+        except (TypeError, ValueError):
+            return {"status": "error", "content": [{"text": f"set_timestep: must be a positive number, got {timestep!r}"}]}
+        if timestep <= 0:
+            return {"status": "error", "content": [{"text": f"set_timestep: must be > 0, got {timestep}"}]}
+        warn = ""
+        if timestep > 0.1:
+            warn = f" ⚠️ unusually large timestep (>{0.1}s); physics may be unstable"
         with self._lock:
             self._world._model.opt.timestep = timestep
             self._world.timestep = timestep
-        return {"status": "success", "content": [{"text": f"⏱️ Timestep: {timestep}s ({1 / timestep:.0f}Hz)"}]}
+        return {"status": "success", "content": [{"text": f"⏱️ Timestep: {timestep}s ({1 / timestep:.0f}Hz){warn}"}]}
 
     # Viewer
 

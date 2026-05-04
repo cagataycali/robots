@@ -86,6 +86,9 @@ class PhysicsMixin:
         """Restore physics state from a named checkpoint."""
         if self._world is None or self._world._model is None:
             return {"status": "error", "content": [{"text": "No simulation."}]}
+        # T5: load_state during a running policy races worker thread
+        if err := self._require_no_running_policy("load_state"):
+            return err
 
         checkpoints = getattr(self._world, "_checkpoints", {})
         if name not in checkpoints:
@@ -140,6 +143,9 @@ class PhysicsMixin:
         """
         if self._world is None or self._world._model is None:
             return {"status": "error", "content": [{"text": "No simulation."}]}
+        # T5: apply_force during a running policy races worker thread
+        if err := self._require_no_running_policy("apply_force"):
+            return err
 
         # T10: must supply at least one non-zero force or torque
         if force is None and torque is None:
@@ -501,22 +507,68 @@ class PhysicsMixin:
 
     def set_joint_positions(
         self,
-        positions: dict[str, float] | None = None,
+        positions: dict[str, float] | list[float] | None = None,
         robot_name: str | None = None,
     ) -> dict[str, Any]:
         """Set joint positions directly (bypassing actuators).
 
         Writes to qpos and runs mj_forward to update kinematics.
         Useful for teleportation, IK solutions, or keyframe setting.
+
+        Accepts EITHER form (T11):
+
+        * dict: {joint_name: value, ...} — explicit per-joint, safest in multi-robot scenes.
+        * list/tuple: [v0, v1, ...] — ordered positional. Must match a single robot's
+          joint count (when ``robot_name`` is given, that robot's joints; otherwise the
+          world must contain exactly one robot, or the call errors).
         """
         if self._world is None or self._world._model is None:
             return {"status": "error", "content": [{"text": "No simulation."}]}
+        # T5: mutating qpos under a running policy races mj_step
+        if err := self._require_no_running_policy("set_joint_positions"):
+            return err
 
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
 
         if positions is None:
-            return {"status": "error", "content": [{"text": "positions dict required."}]}
+            return {"status": "error", "content": [{"text": "set_joint_positions: 'positions' is required (list or dict of joint values)."}]}
+
+        # T11: normalize list input to dict using a deterministic joint ordering
+        ignored: list[str] = []
+        if isinstance(positions, (list, tuple)):
+            robots = list(self._world.robots.values())
+            if robot_name is not None:
+                robots = [r for r in robots if r.name == robot_name]
+                if not robots:
+                    return {"status": "error", "content": [{"text": f"set_joint_positions: Robot '{robot_name}' not found."}]}
+            if len(robots) == 0:
+                return {"status": "error", "content": [{"text": "set_joint_positions: list form requires a robot in the world; pass a dict instead, or add a robot first."}]}
+            if len(robots) > 1 and robot_name is None:
+                return {"status": "error", "content": [{"text": f"set_joint_positions: list form is ambiguous with {len(robots)} robots; pass 'robot_name=' or use a dict."}]}
+            robot = robots[0]
+            joint_names = list(getattr(robot, "joint_names", []) or [])
+            if not joint_names:
+                # Fall back: enumerate joints that belong to this robot via namespace
+                ns = getattr(robot, "namespace", "") or ""
+                joint_names = []
+                for jid in range(model.njnt):
+                    jn = mj.mj_id2name(model, mj.mjtObj.mjOBJ_JOINT, jid)
+                    if jn and (not ns or jn.startswith(ns)):
+                        joint_names.append(jn)
+            if len(positions) != len(joint_names):
+                return {
+                    "status": "error",
+                    "content": [{
+                        "text": (
+                            f"set_joint_positions: list length {len(positions)} does not match robot "
+                            f"'{robot.name}' joint count {len(joint_names)}. Use a dict for partial updates."
+                        )
+                    }],
+                }
+            positions = dict(zip(joint_names, positions, strict=True))
+        elif not isinstance(positions, dict):
+            return {"status": "error", "content": [{"text": f"set_joint_positions: 'positions' must be a dict or list, got {type(positions).__name__}"}]}
 
         set_count = 0
         with self._lock:
@@ -527,31 +579,74 @@ class PhysicsMixin:
                     data.qpos[qpos_adr] = float(value)
                     set_count += 1
                 else:
+                    ignored.append(jnt_name)
                     logger.warning("Joint '%s' not found, skipping", jnt_name)
 
             mj.mj_forward(model, data)
 
+        msg = f"🎯 Set {set_count}/{len(positions)} joint positions, FK updated"
+        if ignored:
+            msg += f" (ignored: {ignored})"
         return {
             "status": "success",
-            "content": [{"text": f"🎯 Set {set_count}/{len(positions)} joint positions, FK updated"}],
+            "content": [{"text": msg}],
         }
 
     def set_joint_velocities(
         self,
-        velocities: dict[str, float] | None = None,
+        velocities: dict[str, float] | list[float] | None = None,
+        robot_name: str | None = None,
     ) -> dict[str, Any]:
         """Set joint velocities directly.
 
-        Writes to qvel. Useful for initializing dynamics.
+        Writes to qvel. Useful for initializing dynamics. Accepts dict or list
+        (see set_joint_positions for list semantics) (T11).
         """
         if self._world is None or self._world._model is None:
             return {"status": "error", "content": [{"text": "No simulation."}]}
+        # T5
+        if err := self._require_no_running_policy("set_joint_velocities"):
+            return err
 
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
 
         if velocities is None:
-            return {"status": "error", "content": [{"text": "velocities dict required."}]}
+            return {"status": "error", "content": [{"text": "set_joint_velocities: 'velocities' is required (list or dict)."}]}
+
+        ignored: list[str] = []
+        if isinstance(velocities, (list, tuple)):
+            robots = list(self._world.robots.values())
+            if robot_name is not None:
+                robots = [r for r in robots if r.name == robot_name]
+                if not robots:
+                    return {"status": "error", "content": [{"text": f"set_joint_velocities: Robot '{robot_name}' not found."}]}
+            if len(robots) == 0:
+                return {"status": "error", "content": [{"text": "set_joint_velocities: list form requires a robot in the world."}]}
+            if len(robots) > 1 and robot_name is None:
+                return {"status": "error", "content": [{"text": f"set_joint_velocities: list form is ambiguous with {len(robots)} robots; pass 'robot_name=' or use a dict."}]}
+            robot = robots[0]
+            joint_names = list(getattr(robot, "joint_names", []) or [])
+            if not joint_names:
+                ns = getattr(robot, "namespace", "") or ""
+                joint_names = []
+                for jid in range(model.njnt):
+                    jn = mj.mj_id2name(model, mj.mjtObj.mjOBJ_JOINT, jid)
+                    if jn and (not ns or jn.startswith(ns)):
+                        joint_names.append(jn)
+            if len(velocities) != len(joint_names):
+                return {
+                    "status": "error",
+                    "content": [{
+                        "text": (
+                            f"set_joint_velocities: list length {len(velocities)} does not match robot "
+                            f"'{robot.name}' joint count {len(joint_names)}. Use a dict for partial updates."
+                        )
+                    }],
+                }
+            velocities = dict(zip(joint_names, velocities, strict=True))
+        elif not isinstance(velocities, dict):
+            return {"status": "error", "content": [{"text": f"set_joint_velocities: 'velocities' must be a dict or list, got {type(velocities).__name__}"}]}
 
         set_count = 0
         with self._lock:
@@ -633,6 +728,18 @@ class PhysicsMixin:
         """
         if self._world is None or self._world._model is None:
             return {"status": "error", "content": [{"text": "No simulation."}]}
+        # T5
+        if err := self._require_no_running_policy("set_body_properties"):
+            return err
+
+        # T8: mass must be > 0 (physics invariant)
+        if mass is not None:
+            try:
+                mass = float(mass)
+            except (TypeError, ValueError):
+                return {"status": "error", "content": [{"text": f"set_body_properties: 'mass' must be a positive number, got {mass!r}"}]}
+            if mass <= 0:
+                return {"status": "error", "content": [{"text": f"set_body_properties: 'mass' must be > 0, got {mass}"}]}
 
         mj = _ensure_mujoco()
         model = self._world._model
@@ -666,6 +773,9 @@ class PhysicsMixin:
         """
         if self._world is None or self._world._model is None:
             return {"status": "error", "content": [{"text": "No simulation."}]}
+        # T5
+        if err := self._require_no_running_policy("set_geom_properties"):
+            return err
 
         mj = _ensure_mujoco()
         model = self._world._model

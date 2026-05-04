@@ -110,15 +110,17 @@ def test_get_jacobian_unknown_geom_errors(ready_sim):
 
 
 def test_set_joint_positions_none_dict_errors(ready_sim):
+    # Post-T11: message updated to explain list OR dict is accepted.
     r = ready_sim.set_joint_positions(positions=None)
     assert r["status"] == "error"
-    assert "positions dict required" in r["content"][0]["text"]
+    assert "'positions' is required" in r["content"][0]["text"]
 
 
 def test_set_joint_velocities_none_dict_errors(ready_sim):
+    # Post-T11: message updated to explain list OR dict is accepted.
     r = ready_sim.set_joint_velocities(velocities=None)
     assert r["status"] == "error"
-    assert "velocities dict required" in r["content"][0]["text"]
+    assert "'velocities' is required" in r["content"][0]["text"]
 
 
 def test_set_joint_positions_unknown_joint_is_skipped_not_raised(ready_sim):
