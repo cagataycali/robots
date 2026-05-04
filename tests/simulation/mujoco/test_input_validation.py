@@ -289,3 +289,32 @@ class TestAddRobotInitialState:
             assert np.allclose(data.ctrl, 0.0), f"ctrl should be zero after add_robot, got {data.ctrl}"
         finally:
             sim.destroy()
+
+
+# --- T3: render camera strict validation -------------------------------
+
+
+class TestRenderCameraValidation:
+    def test_unknown_camera_errors(self, sim_with_world):
+        res = sim_with_world.render(camera_name="does_not_exist", width=64, height=48)
+        assert res["status"] == "error"
+        assert "not found" in res["content"][0]["text"]
+
+    def test_default_camera_labelled_honestly(self, sim_with_world):
+        res = sim_with_world.render(camera_name="default", width=64, height=48)
+        if res["status"] != "success":
+            import pytest as _pytest
+            _pytest.skip(f"offscreen render unavailable: {res['content'][0]['text']}")
+        assert "free (default)" in res["content"][0]["text"]
+
+    def test_free_alias_labelled_honestly(self, sim_with_world):
+        res = sim_with_world.render(camera_name="free", width=64, height=48)
+        if res["status"] != "success":
+            import pytest as _pytest
+            _pytest.skip(f"offscreen render unavailable: {res['content'][0]['text']}")
+        assert "free (default)" in res["content"][0]["text"]
+
+    def test_render_depth_unknown_camera_errors(self, sim_with_world):
+        res = sim_with_world.render_depth(camera_name="ghost_cam", width=64, height=48)
+        assert res["status"] == "error"
+        assert "not found" in res["content"][0]["text"]

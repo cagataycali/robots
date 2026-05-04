@@ -11,3 +11,5 @@ dist
 .coverage
 .ideation/
 MUJOCO_LOG.TXT
+-e TASKS.md
+TASKS_TO_FIX_85.md

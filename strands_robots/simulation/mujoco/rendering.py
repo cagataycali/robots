@@ -187,7 +187,22 @@ class RenderingMixin:
                         }
                     ],
                 }
-            cam_id = mj.mj_name2id(self._world._model, mj.mjtObj.mjOBJ_CAMERA, camera_name)
+            # T3: strict camera validation — no silent fallback to default.
+            # Special 'default' / 'free' tokens route to the free camera; any
+            # other name MUST resolve or we error (prevents the LLM from
+            # believing it rendered viewpoint X while actually getting free-cam).
+            if camera_name in (None, "", "default", "free"):
+                cam_id = -1
+                label = "free (default)"
+            else:
+                cam_id = mj.mj_name2id(self._world._model, mj.mjtObj.mjOBJ_CAMERA, camera_name)
+                if cam_id < 0:
+                    return {
+                        "status": "error",
+                        "content": [{"text": f"Camera '{camera_name}' not found. Available: {self._list_camera_names()}"}],
+                    }
+                label = camera_name
+
             if cam_id >= 0:
                 renderer.update_scene(self._world._data, camera=cam_id)
             else:
@@ -205,7 +220,7 @@ class RenderingMixin:
             return {
                 "status": "success",
                 "content": [
-                    {"text": f"📸 {w}x{h} from '{camera_name}' at t={self._world.sim_time:.3f}s"},
+                    {"text": f"📸 {w}x{h} from '{label}' at t={self._world.sim_time:.3f}s"},
                     {"image": {"format": "png", "source": {"bytes": png_bytes}}},
                 ],
             }
@@ -224,9 +239,18 @@ class RenderingMixin:
         h = height or self.default_height
 
         try:
-            cam_id = -1
-            if camera_name and camera_name != "default":
+            # T3: strict camera validation (same policy as render())
+            if camera_name in (None, "", "default", "free"):
+                cam_id = -1
+                label = "free (default)"
+            else:
                 cam_id = mj.mj_name2id(self._world._model, mj.mjtObj.mjOBJ_CAMERA, camera_name)
+                if cam_id < 0:
+                    return {
+                        "status": "error",
+                        "content": [{"text": f"Camera '{camera_name}' not found. Available: {self._list_camera_names()}"}],
+                    }
+                label = camera_name
 
             renderer = self._get_renderer(w, h)
             if renderer is None:
@@ -254,7 +278,7 @@ class RenderingMixin:
                 "content": [
                     {
                         "text": (
-                            f"📸 Depth {w}x{h} from '{camera_name}'\n"
+                            f"📸 Depth {w}x{h} from '{label}'\n"
                             f"Min: {float(depth.min()):.3f}m, Max: {float(depth.max()):.3f}m"
                         )
                     },
@@ -263,6 +287,23 @@ class RenderingMixin:
             }
         except Exception as e:
             return {"status": "error", "content": [{"text": f"Depth render failed: {e}"}]}
+
+    def _list_camera_names(self) -> list[str]:
+        """T3: helper to list all camera names (model-defined + SimCamera aliases)
+        for error messages when an unknown camera_name is requested."""
+        import mujoco as _mj
+        names: list[str] = []
+        if self._world is not None and self._world._model is not None:
+            for cid in range(self._world._model.ncam):
+                nm = _mj.mj_name2id  # silence unused
+                raw = _mj.mj_id2name(self._world._model, _mj.mjtObj.mjOBJ_CAMERA, cid)
+                if raw:
+                    names.append(raw)
+        # Include SimCamera registry keys (may match model names; dedupe)
+        for k in (self._world.cameras.keys() if self._world else ()):
+            if k not in names:
+                names.append(k)
+        return names
 
     def get_contacts(self) -> dict[str, Any]:
         if self._world is None or self._world._data is None:
