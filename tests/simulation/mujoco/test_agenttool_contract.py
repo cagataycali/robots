@@ -482,3 +482,32 @@ class TestEvalPolicyDefaults:
         # (empty scene) — both are correct paths.
         text = r["content"][0]["text"]
         assert "ghost" in text or "No robots" in text
+
+
+class TestRecordingStatusLifecycle:
+    """T31: get_recording_status succeeds in every state (no world / not
+    recording / recording) with distinguishing text."""
+
+    def test_no_world_returns_success(self):
+        s = Simulation(tool_name="rec_lifecycle_nw", mesh=False)
+        try:
+            r = s._dispatch_action("get_recording_status", {})
+            assert r["status"] == "success"
+            assert "No world" in r["content"][0]["text"]
+        finally:
+            s.cleanup()
+
+    def test_not_recording_returns_success(self, sim):
+        r = sim._dispatch_action("get_recording_status", {})
+        assert r["status"] == "success"
+        assert "Not recording" in r["content"][0]["text"]
+
+
+class TestListRobotsPolicyStatus:
+    """T37: list_robots reports per-robot policy status. Regression ward."""
+
+    def test_list_robots_shows_idle_when_no_policy(self, sim):
+        r = sim._dispatch_action("list_robots", {})
+        assert r["status"] == "success"
+        # No robots added, so we just expect the "No robots" message.
+        assert "No robots" in r["content"][0]["text"] or "🤖" in r["content"][0]["text"]

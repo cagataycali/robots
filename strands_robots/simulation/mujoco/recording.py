@@ -183,13 +183,24 @@ class RecordingMixin:
         return {"status": "success", "content": [{"text": text}]}
 
     def get_recording_status(self) -> dict[str, Any]:
-        if err := self._require_world():
-            return err
+        """T31: Returns success in every lifecycle state (no world / not
+        recording / recording) with a distinguishing message so callers can
+        poll it unconditionally without try/except."""
+        if self._world is None:
+            return {
+                "status": "success",
+                "content": [{"text": "⚪ No world — call create_world to start recording."}],
+            }
 
         recording = self._world._backend_state.get("recording", False)
         steps = len(self._world._backend_state.get("trajectory", []))
 
+        if recording:
+            text = f"🔴 Recording: {steps} steps captured"
+        else:
+            text = f"⚪ Not recording (last episode: {steps} steps)"
+
         return {
             "status": "success",
-            "content": [{"text": f"{'🔴 Recording' if recording else '⚪ Not recording'}: {steps} steps captured"}],
+            "content": [{"text": text}],
         }
