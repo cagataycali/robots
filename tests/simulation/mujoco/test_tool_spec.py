@@ -134,46 +134,31 @@ class TestDispatcherForwardsPolicyConfig:
         assert captured["policy_config"] == cfg
 
 
-class TestDispatcherDropsUnknownTopLevelKeys:
-    """Unknown top-level keys must be dropped silently — no ``**kwargs`` passthrough."""
+class TestDispatcherRejectsUnknownTopLevelKeys:
+    """T1: Unknown top-level keys must be REJECTED with a friendly error."""
 
-    def test_run_policy_ignores_legacy_top_level_policy_kwargs(self, sim):
-        """Old-shape top-level keys are simply not forwarded."""
-        captured: dict[str, Any] = {}
-        with patch.object(sim, "run_policy", _capture_kwargs(captured, sim, "run_policy")):
-            sim._dispatch_action(
-                "run_policy",
-                {
-                    "robot_name": "so100",
-                    "policy_provider": "mock",
-                    # These are no longer accepted at the top level:
-                    "observation_mapping": {"x": "y"},
-                    "device": "mps",
-                    "pretrained_name_or_path": "lerobot/smolvla_base",
-                },
-            )
-        assert captured["robot_name"] == "so100"
-        assert captured["policy_provider"] == "mock"
-        # Leaked legacy keys NOT forwarded
-        assert "observation_mapping" not in captured
-        assert "device" not in captured
-        assert "pretrained_name_or_path" not in captured
-        # policy_config defaults to None when not provided
-        assert captured.get("policy_config") is None
+    def test_run_policy_rejects_legacy_top_level_policy_kwargs(self, sim):
+        """Legacy policy kwargs at the top level must be rejected, not silently dropped."""
+        result = sim._dispatch_action(
+            "run_policy",
+            {
+                "robot_name": "so100",
+                "policy_provider": "mock",
+                "observation_mapping": {"x": "y"},  # not a top-level param anymore
+            },
+        )
+        assert result["status"] == "error"
+        text = result["content"][0]["text"]
+        assert "Unknown parameter 'observation_mapping'" in text
+        assert "run_policy" in text
 
-    def test_non_policy_action_does_not_pick_up_unknown_kwargs(self, sim):
-        captured: dict[str, Any] = {}
-
-        def fake_set_gravity(gravity: list[float] | None = None) -> dict[str, Any]:
-            captured["gravity"] = gravity
-            return {"status": "success", "content": [{"text": "ok"}]}
-
-        with patch.object(sim, "set_gravity", fake_set_gravity):
-            sim._dispatch_action(
-                "set_gravity",
-                {"gravity": [0, 0, -9.81], "device": "mps", "policy_config": {}},
-            )
-        assert captured["gravity"] == [0, 0, -9.81]
+    def test_non_policy_action_rejects_unknown_kwargs(self, sim):
+        result = sim._dispatch_action(
+            "set_gravity",
+            {"gravity": [0, 0, -9.81], "device": "mps"},
+        )
+        assert result["status"] == "error"
+        assert "Unknown parameter 'device'" in result["content"][0]["text"]
 
 
 class TestToolSpecIsClean:

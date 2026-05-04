@@ -1198,28 +1198,164 @@ class Simulation(
             if self._world is not None and robot_name in self._world.robots:
                 self._world.robots[robot_name].policy_running = False
 
-    def _dispatch_action(self, action: str, d: dict[str, Any]) -> dict[str, Any]:
-        """Route action string to method via getattr.
+    # Action name aliases (tool-action -> method-name)
+    _ACTION_ALIASES = {
+        "list_robots": "list_robots_info",
+    }
 
-        Schema-driven: every method parameter is explicit. Policy-provider
-        kwargs are nested under ``policy_config`` (never top-level) so the
-        dispatcher stays backend-agnostic.
+    # Input field name -> method parameter name (syntactic sugar for the LLM)
+    _FIELD_ALIASES = {
+        "checkpoint_name": "name",
+        "torque_vec": "torque",
+    }
+
+    # Params the router passes through but not every method declares.
+    # These are used for cross-cutting concerns (e.g. video on run_policy)
+    # and must not be reported as "unknown" by the router.
+    _ROUTER_PASSTHROUGH = {"action"}
+
+    # Vector params with expected length (for dimension validation before
+    # numpy/MuJoCo sees them). Length 3 = xyz unless noted.
+    _VECTOR_PARAM_LENGTHS: dict[str, int] = {
+        "position": 3,
+        "target": 3,
+        "origin": 3,
+        "force": 3,
+        "torque": 3,
+        "torque_vec": 3,
+        "gravity": 3,
+        "direction": 3,
+        "point": 3,
+        "orientation": 4,  # quaternion (w,x,y,z)
+        "color": 4,  # rgba
+    }
+
+    def _validate_and_build_kwargs(
+        self, action: str, method_name: str, sig: inspect.Signature, remapped: dict[str, Any]
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        """T1: Validate input against method signature; return (kwargs, error_result).
+
+        Exactly one of the tuple elements is non-None.
         """
-        # Aliases for actions whose method names differ
-        _ALIASES = {
-            # The "list_robots" tool action returns a rich dict for LLM display,
-            # but Simulation.list_robots() is the SimEngine ABC contract returning
-            # list[str]. Alias maps the tool action to the dict-returning variant.
-            "list_robots": "list_robots_info",
+        # Strip self + VAR_POSITIONAL (*args) + VAR_KEYWORD (**kwargs) for signature
+        # introspection; **kwargs methods accept arbitrary inputs, so we skip the
+        # unknown-key check for them.
+        named_params = {
+            n: p
+            for n, p in sig.parameters.items()
+            if n != "self"
+            and p.kind not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
         }
+        method_has_var_keyword = any(
+            p.kind is inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+        )
+        method_param_names = set(named_params)
+        accepted_field_names = (
+            method_param_names | set(self._FIELD_ALIASES.keys()) | self._ROUTER_PASSTHROUGH
+        )
 
-        # Map input field names to method parameter names for physics actions
-        _FIELD_MAP = {
-            "checkpoint_name": "name",
-            "torque_vec": "torque",
-        }
+        # run_policy folds flat video keys into a structured `video` dict; those
+        # flat keys are legitimate at the router boundary even though run_policy
+        # itself takes `video=`.
+        if action == "run_policy":
+            accepted_field_names |= {"output_path", "fps", "camera_name"}
 
-        method_name = _ALIASES.get(action, action)
+        # name/robot_name are aliased in both directions in the legacy router;
+        # allow either here so we don't flag the alias as unknown.
+        if "name" in method_param_names:
+            accepted_field_names.add("robot_name")
+        if "robot_name" in method_param_names:
+            accepted_field_names.add("name")
+
+        # 1) Unknown kwargs (skipped for **kwargs methods which legitimately passthrough)
+        unknown = [] if method_has_var_keyword else [k for k in remapped if k not in accepted_field_names]
+        if unknown:
+            valid_sorted = sorted(method_param_names - {"action"})
+            return None, {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            f"Unknown parameter '{unknown[0]}' for action '{action}'. "
+                            f"Valid: {valid_sorted}"
+                        )
+                    }
+                ],
+            }
+
+        # 2) Vector dimension validation (applies before method runs)
+        for vparam, expected_len in self._VECTOR_PARAM_LENGTHS.items():
+            if vparam not in remapped:
+                continue
+            val = remapped[vparam]
+            if val is None:
+                continue
+            if not hasattr(val, "__len__"):
+                return None, {
+                    "status": "error",
+                    "content": [
+                        {"text": f"Parameter '{vparam}' must be a list of {expected_len} numbers."}
+                    ],
+                }
+            if len(val) != expected_len:
+                return None, {
+                    "status": "error",
+                    "content": [
+                        {
+                            "text": (
+                                f"Parameter '{vparam}' must be a list of {expected_len} numbers, "
+                                f"got {len(val)}."
+                            )
+                        }
+                    ],
+                }
+            for i, component in enumerate(val):
+                if not isinstance(component, (int, float)) or isinstance(component, bool):
+                    return None, {
+                        "status": "error",
+                        "content": [
+                            {
+                                "text": (
+                                    f"Parameter '{vparam}'[{i}] must be numeric, "
+                                    f"got {type(component).__name__}."
+                                )
+                            }
+                        ],
+                    }
+
+        # 3) Build kwargs + check required params
+        kwargs: dict[str, Any] = {}
+        for param_name, param in named_params.items():
+            if param_name == "name" and "name" not in remapped and "robot_name" in remapped:
+                kwargs["name"] = remapped["robot_name"]
+            elif param_name == "robot_name" and "robot_name" not in remapped and "name" in remapped:
+                kwargs["robot_name"] = remapped["name"]
+            elif param_name in remapped:
+                kwargs[param_name] = remapped[param_name]
+            elif param.default is inspect.Parameter.empty:
+                return None, {
+                    "status": "error",
+                    "content": [
+                        {"text": f"Action '{action}' requires parameter '{param_name}'."}
+                    ],
+                }
+
+        return kwargs, None
+
+    def _dispatch_action(self, action: str, d: dict[str, Any]) -> dict[str, Any]:
+        """Route action to the matching method with full input validation.
+
+        Validation layer (T1):
+          * unknown top-level params are rejected with a friendly message,
+          * missing required params produce a "requires parameter X" error
+            (no raw Python ``TypeError``),
+          * vector params have length + numeric dtype checked before the
+            value reaches numpy / MuJoCo.
+
+        Policy-provider kwargs are nested under ``policy_config`` (never
+        top-level) so the dispatcher stays backend-agnostic.
+        """
+        method_name = self._ACTION_ALIASES.get(action, action)
         method = getattr(self, method_name, None)
 
         if method is None or action.startswith("_"):
@@ -1232,43 +1368,31 @@ class Simulation(
             cache[method_name] = inspect.signature(method)
         sig = cache[method_name]
 
-        # Apply field name remapping
-        remapped = dict(d)
-        for field_key, param_key in _FIELD_MAP.items():
+        # Field-alias rewriting (before validation so the validator sees
+        # canonical names).
+        remapped = {k: v for k, v in d.items() if k != "action"}
+        for field_key, param_key in self._FIELD_ALIASES.items():
             if field_key in remapped and param_key not in remapped:
                 remapped[param_key] = remapped.pop(field_key)
 
-        # For run_policy: fold legacy flat video keys (exposed via tool_spec.json
-        # as `output_path`, `fps`, `camera_name`) into a structured `video` dict.
-        # The tool_spec still advertises the flat keys for LLM ergonomics, but
-        # the Python API on SimEngine.run_policy now takes a single `video` dict.
-        if action == "run_policy" and "video" not in remapped:
-            _video_flat = {}
+        # Fold flat video keys into `video` dict for run_policy/start_policy.
+        if action in ("run_policy", "start_policy") and "video" not in remapped:
+            _video_flat: dict[str, Any] = {}
             if "output_path" in remapped:
-                _video_flat["path"] = remapped["output_path"]
+                _video_flat["path"] = remapped.pop("output_path")
             if "fps" in remapped:
-                _video_flat["fps"] = remapped["fps"]
+                _video_flat["fps"] = remapped.pop("fps")
             # camera_name is shared with render(); only treat as video camera
             # when paired with an output path.
             if _video_flat.get("path") and "camera_name" in remapped:
-                _video_flat["camera"] = remapped["camera_name"]
+                _video_flat["camera"] = remapped.pop("camera_name")
             if _video_flat.get("path"):
                 remapped["video"] = _video_flat
 
-        kwargs: dict[str, Any] = {}
-        for param_name, param in sig.parameters.items():
-            if param_name == "self":
-                continue
-            # Handle name/robot_name/body_name ambiguity in the input schema
-            if param_name == "name" and "name" not in remapped and "robot_name" in remapped:
-                kwargs["name"] = remapped["robot_name"]
-            elif param_name == "name" and "name" not in remapped and "checkpoint_name" in d:
-                kwargs["name"] = d["checkpoint_name"]
-            elif param_name == "robot_name" and "robot_name" not in remapped and "name" in remapped:
-                kwargs["robot_name"] = remapped["name"]
-            elif param_name in remapped:
-                kwargs[param_name] = remapped[param_name]
-
+        kwargs, err = self._validate_and_build_kwargs(action, method_name, sig, remapped)
+        if err is not None:
+            return err
+        assert kwargs is not None
         return method(**kwargs)
 
     def stop_policy(self, robot_name: str = "") -> dict[str, Any]:

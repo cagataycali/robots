@@ -14,8 +14,7 @@ from typing import Any
 
 from strands_robots.simulation.models import SimCamera, SimObject, SimRobot, SimWorld
 from strands_robots.simulation.mujoco.backend import _ensure_mujoco
-from strands_robots.simulation.mujoco.mjcf_builder import _camera_xyaxes_from_target
-from strands_robots.simulation.mujoco.mjcf_builder import MJCFBuilder, _sanitize_name
+from strands_robots.simulation.mujoco.mjcf_builder import MJCFBuilder, _camera_xyaxes_from_target, _sanitize_name
 
 logger = logging.getLogger(__name__)
 
