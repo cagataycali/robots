@@ -247,3 +247,41 @@ class TestUnifiedNotFoundMessages:
         # T45 is about distinguishing "no sensors" vs "not found"; at minimum the
         # current behaviour must mention the sensor name clearly.
         assert "ghost_sensor" in text
+
+
+class TestIdempotentStopFamily:
+    """T16: stop_recording, stop_cameras_recording, stop_policy and close_viewer
+    can be called unconditionally — when already stopped they succeed with a
+    distinguishable 'Was not ...' message."""
+
+    def test_stop_recording_twice_is_idempotent(self, sim):
+        r1 = sim.stop_recording()
+        assert r1["status"] == "success"
+        r2 = sim.stop_recording()
+        assert r2["status"] == "success"
+        assert "Was not recording" in r2["content"][0]["text"]
+
+    def test_stop_cameras_recording_twice_is_idempotent(self, sim):
+        r1 = sim.stop_cameras_recording()
+        assert r1["status"] == "success"
+        r2 = sim.stop_cameras_recording()
+        assert r2["status"] == "success"
+
+    def test_close_viewer_twice_is_idempotent(self, sim):
+        # close_viewer was already idempotent — pin it with a regression test.
+        assert sim.close_viewer()["status"] == "success"
+        assert sim.close_viewer()["status"] == "success"
+
+
+class TestStopPolicyContract:
+    """T16 + T24: stop_policy requires a robot_name; is idempotent per robot."""
+
+    def test_stop_policy_empty_robot_name_friendly_error(self, sim):
+        r = sim._dispatch_action("stop_policy", {})
+        assert r["status"] == "error"
+        assert "requires" in r["content"][0]["text"].lower() and "robot_name" in r["content"][0]["text"]
+
+    def test_stop_policy_unknown_robot_errors(self, sim):
+        r = sim._dispatch_action("stop_policy", {"robot_name": "ghost_bot"})
+        assert r["status"] == "error"
+        assert "Robot 'ghost_bot' not found" in r["content"][0]["text"]

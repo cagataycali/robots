@@ -526,7 +526,8 @@ class RenderingMixin:
 
         state = getattr(self, "_cams_rec_state", None)
         if not state or not state.get("running"):
-            return {"status": "error", "content": [{"text": "No active camera recording."}]}
+            # T16: idempotent — 'already stopped' is a success, not an error.
+            return {"status": "success", "content": [{"text": "Was not recording cameras."}]}
 
         state["running"] = False
         thread = state.get("thread")

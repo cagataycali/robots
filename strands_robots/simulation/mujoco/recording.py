@@ -144,9 +144,13 @@ class RecordingMixin:
             return {"status": "error", "content": [{"text": f"Dataset init failed: {e}"}]}
 
     def stop_recording(self, output_path: str | None = None) -> dict[str, Any]:
-        """Stop recording and save episode to LeRobotDataset."""
+        """Stop recording and save episode to LeRobotDataset.
+
+        T16: idempotent — calling when not recording succeeds with a
+        'Was not recording' message so callers can safely call it unconditionally.
+        """
         if self._world is None or not self._world._backend_state.get("recording", False):
-            return {"status": "error", "content": [{"text": "Not recording."}]}
+            return {"status": "success", "content": [{"text": "Was not recording."}]}
 
         self._world._backend_state["recording"] = False
         recorder = self._world._backend_state.get("dataset_recorder", None)

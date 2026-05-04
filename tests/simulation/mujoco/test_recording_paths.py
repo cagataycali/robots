@@ -81,10 +81,11 @@ def test_start_recording_no_world_returns_graceful_error():
     s.destroy()
 
 
-def test_stop_recording_without_start_is_error(sim_with_two_robots):
+def test_stop_recording_without_start_is_idempotent(sim_with_two_robots):
+    """T16: idempotent — success with 'Was not recording' message."""
     r = sim_with_two_robots.stop_recording()
-    assert r["status"] == "error"
-    assert "Not recording" in r["content"][0]["text"]
+    assert r["status"] == "success"
+    assert "Was not recording" in r["content"][0]["text"]
 
 
 def test_get_recording_status_shows_active_and_idle(sim_with_two_robots, tmp_path):

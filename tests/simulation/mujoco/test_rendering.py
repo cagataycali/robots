@@ -90,16 +90,17 @@ def test_start_stop_cameras_recording_writes_one_mp4_per_camera(tmp_path: Path) 
 
 
 @_requires_mujoco
-def test_stop_without_start_is_error() -> None:
-    """Calling stop without a running recording should return a clean error."""
+def test_stop_without_start_is_idempotent() -> None:
+    """T16: idempotent — stop_cameras_recording without a running recording
+    returns success with 'Was not recording' instead of erroring."""
     os.environ.setdefault("MUJOCO_GL", "glfw")
     from strands_robots.simulation import Simulation
 
     sim = Simulation()
     sim.create_world()
     r = sim.stop_cameras_recording()
-    assert r["status"] == "error"
-    assert "No active" in r["content"][0]["text"]
+    assert r["status"] == "success"
+    assert "Was not recording" in r["content"][0]["text"]
     sim.destroy()
 
 

@@ -1442,14 +1442,31 @@ class Simulation(
     def stop_policy(self, robot_name: str = "") -> dict[str, Any]:
         """Stop a running policy on the given robot (cooperative cancellation).
 
-        Counterpart to ``start_policy``. Flips the robot's ``policy_running``
-        flag; the background loop in ``_run_policy_loop`` sees it and raises
-        :class:`PolicyStopped` which is caught cleanly in ``start_policy``.
+        Counterpart to :meth:`start_policy`. Flips the robot's
+        ``policy_running`` flag; the background loop in
+        :meth:`_run_policy_loop` sees it and raises :class:`PolicyStopped`
+        which is caught cleanly inside :meth:`start_policy`.
+
+        T16: idempotent — if the robot exists but no policy is running, we
+        still return success with 'Was not running' so callers can call
+        stop_policy unconditionally. The only error case is an unknown
+        robot_name.
+
+        T24: empty robot_name returns a clear error instead of a silent
+        match against the first robot.
         """
-        if self._world and robot_name in self._world.robots:
-            self._world.robots[robot_name].policy_running = False
-            return {"status": "success", "content": [{"text": f"Stopped on '{robot_name}'"}]}
-        return {"status": "error", "content": [{"text": f"Robot '{robot_name}' not found."}]}
+        if not robot_name:
+            return {
+                "status": "error",
+                "content": [{"text": "stop_policy requires 'robot_name'."}],
+            }
+        if self._world is None or robot_name not in self._world.robots:
+            return {"status": "error", "content": [{"text": f"Robot '{robot_name}' not found."}]}
+        robot = self._world.robots[robot_name]
+        was_running = robot.policy_running
+        robot.policy_running = False
+        msg = f"Stopped on '{robot_name}'" if was_running else f"Was not running on '{robot_name}'"
+        return {"status": "success", "content": [{"text": msg}]}
 
     # Cleanup
 
