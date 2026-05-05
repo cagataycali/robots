@@ -73,7 +73,14 @@ class SimObject:
 
 @dataclass
 class SimCamera:
-    """A camera in the simulation."""
+    """A camera in the simulation.
+
+    ``origin_robot`` (post-PR #85): when the camera was discovered inside a
+    robot's URDF during ``add_robot``, this is set to the robot's name so the
+    scene builder knows NOT to re-add the camera at the top level (it'll be
+    re-introduced via ``spec.attach(robot_spec)``). For user-added cameras
+    (via the ``add_camera`` tool action) this stays empty.
+    """
 
     name: str
     position: list[float] = field(default_factory=lambda: [1.0, 1.0, 1.0])
@@ -82,6 +89,7 @@ class SimCamera:
     width: int = 640
     height: int = 480
     camera_id: int = -1
+    origin_robot: str = ""
 
 
 @dataclass

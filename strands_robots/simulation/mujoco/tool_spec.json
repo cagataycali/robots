@@ -7,6 +7,7 @@
       "enum": [
         "create_world",
         "load_scene",
+        "replace_scene_mjcf",
         "reset",
         "get_state",
         "destroy",
@@ -351,6 +352,10 @@
     "output_dir": {
       "type": "string",
       "description": "Directory for start_cameras_recording output. Defaults to /tmp/strands_robots/recordings."
+    },
+    "xml": {
+      "type": "string",
+      "description": "Raw MJCF XML string. Used by replace_scene_mjcf."
     }
   },
   "required": [

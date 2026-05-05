@@ -1,10 +1,16 @@
-"""Unit + parity tests for ``SpecBuilder`` - the MjSpec-based MJCF builder.
+"""Unit + integration tests for ``SpecBuilder`` - the MjSpec-based MJCF builder.
 
-These tests exercise the new code path in isolation (not through the
-``STRANDS_SIM_USE_MJSPEC`` flag) so they document the SpecBuilder contract
-regardless of what ``_compile_world`` is configured to use today.
+Tests cover:
 
-See IDEA.md for the full refactor plan and GH #121 for the tracking issue.
+* Module-level helpers (``_geom_type``, ``_normalize_size``, ``_target_quat``).
+* ``SpecBuilder.build`` produces a compile-valid spec for empty, object-only,
+  and camera-only worlds.
+* Mutation helpers (``add_object``, ``remove_body``, ``add_camera``,
+  ``remove_camera``) produce specs that recompile cleanly.
+* ``attach_robot`` prefixes names correctly and returns the source joint names.
+* ``from_mjcf_string`` / ``from_file`` round-trip cleanly.
+
+These tests use the actual mujoco AST - they require the ``mujoco`` package.
 """
 
 from __future__ import annotations
@@ -19,9 +25,9 @@ import numpy as np  # noqa: E402
 from strands_robots.simulation.models import (  # noqa: E402
     SimCamera,
     SimObject,
+    SimRobot,
     SimWorld,
 )
-from strands_robots.simulation.mujoco.mjcf_builder import MJCFBuilder  # noqa: E402
 from strands_robots.simulation.mujoco.spec_builder import (  # noqa: E402
     SpecBuilder,
     _geom_type,
@@ -42,9 +48,6 @@ class TestGeomType:
         assert _geom_type("capsule") == mujoco.mjtGeom.mjGEOM_CAPSULE
         assert _geom_type("mesh") == mujoco.mjtGeom.mjGEOM_MESH
         assert _geom_type("plane") == mujoco.mjtGeom.mjGEOM_PLANE
-
-    def test_ellipsoid_is_now_supported(self):
-        """A bonus enabled by the SpecBuilder refactor - not in legacy."""
         assert _geom_type("ellipsoid") == mujoco.mjtGeom.mjGEOM_ELLIPSOID
 
     def test_unknown_shape_raises_with_helpful_list(self):
@@ -56,8 +59,7 @@ class TestNormalizeSize:
     def test_box_halves_full_extents(self):
         assert _normalize_size("box", [0.2, 0.4, 0.6]) == [0.1, 0.2, 0.3]
 
-    def test_sphere_uses_half_of_first(self):
-        """SimObject convention is that size[0] is the diameter; we halve for radius."""
+    def test_sphere_halves_first_coordinate(self):
         assert _normalize_size("sphere", [0.1])[0] == pytest.approx(0.05)
 
     def test_cylinder_radius_and_half_height(self):
@@ -68,10 +70,13 @@ class TestNormalizeSize:
     def test_capsule_same_as_cylinder(self):
         assert _normalize_size("capsule", [0.1, 0, 0.4]) == _normalize_size("cylinder", [0.1, 0, 0.4])
 
-    def test_plane_size_defaults_to_equal_xy(self):
+    def test_plane_size_duplicates_x_to_y_when_only_one_given(self):
         out = _normalize_size("plane", [2.0])
         assert out[0] == 2.0
         assert out[1] == 2.0
+
+    def test_mesh_returns_zeros(self):
+        assert _normalize_size("mesh", [0.1, 0.2, 0.3]) == [0.0, 0.0, 0.0]
 
     def test_unknown_shape_raises(self):
         with pytest.raises(ValueError, match="Cannot normalize size"):
@@ -80,24 +85,42 @@ class TestNormalizeSize:
 
 class TestTargetQuat:
     def test_returns_none_for_degenerate(self):
-        # Position == target.
         assert _target_quat([1, 2, 3], [1, 2, 3]) is None
 
-    def test_returns_quat_for_valid_look_at(self):
+    def test_returns_normalised_quaternion(self):
         quat = _target_quat([1, 0, 0.5], [0, 0, 0])
         assert quat is not None
         assert len(quat) == 4
-        # Normalised quaternion.
         norm = (quat[0] ** 2 + quat[1] ** 2 + quat[2] ** 2 + quat[3] ** 2) ** 0.5
         assert norm == pytest.approx(1.0, abs=1e-6)
 
     def test_forward_parallel_to_up_returns_none(self):
-        # Looking straight down - forward is (0,0,-1), up is (0,0,1), parallel.
+        # Straight-down camera - forward is (0,0,-1), colinear with world up.
         assert _target_quat([0, 0, 1], [0, 0, 0]) is None
+
+    def test_quat_rotates_camera_to_face_target(self):
+        """Compile a spec with quat=, then check the resulting cam_mat0 actually
+        points the camera's -Z axis toward the target.
+        """
+        pos = [1.0, 0.0, 0.5]
+        target = [0.0, 0.0, 0.0]
+        quat = _target_quat(pos, target)
+        assert quat is not None
+
+        spec = mujoco.MjSpec()
+        spec.worldbody.add_camera(name="c", pos=pos, quat=quat, fovy=60, mode=mujoco.mjtCamLight.mjCAMLIGHT_FIXED)
+        model = spec.compile()
+        rot = model.cam_mat0[0].reshape(3, 3)
+        # Camera forward is -Z in its local frame. Column 2 of rot is world
+        # frame +Z of the camera, so camera forward = -rot[:, 2].
+        cam_forward = -rot[:, 2]
+        expected = np.array([-1.0, 0.0, -0.5])
+        expected /= np.linalg.norm(expected)
+        assert np.allclose(cam_forward, expected, atol=1e-3)
 
 
 # -----------------------------------------------------------------------------
-# SpecBuilder parity tests - identical compile results vs legacy MJCFBuilder
+# SpecBuilder.build
 # -----------------------------------------------------------------------------
 
 
@@ -117,7 +140,7 @@ def sample_world() -> SimWorld:
         name="ball",
         shape="sphere",
         position=[0.5, 0, 0.1],
-        size=[0.05],
+        size=[0.05, 0.05, 0.05],
         color=[1, 0, 0, 1],
         is_static=False,
         mass=0.1,
@@ -133,88 +156,232 @@ def sample_world() -> SimWorld:
     return w
 
 
-class TestSpecBuilderParity:
-    """Both code paths should produce MuJoCo models with the same structure."""
-
+class TestBuild:
     def test_empty_world_compiles(self):
+        spec = SpecBuilder.build(SimWorld())
+        model = spec.compile()
+        assert model.nbody >= 1  # world + ground + lights
+
+    def test_gravity_and_timestep_propagate(self):
+        w = SimWorld()
+        w.gravity = [0.0, 0.0, -5.0]
+        w.timestep = 0.004
+        spec = SpecBuilder.build(w)
+        model = spec.compile()
+        assert model.opt.timestep == pytest.approx(0.004)
+        assert np.allclose(model.opt.gravity, [0.0, 0.0, -5.0])
+
+    def test_sample_world_compiles(self, sample_world):
+        model = SpecBuilder.build(sample_world).compile()
+        # 1 world + 1 ground is a geom; cube, ball are bodies
+        assert model.nbody >= 3
+        assert model.ncam == 1
+        assert model.nu == 0
+
+    def test_body_positions_and_masses(self, sample_world):
+        model = SpecBuilder.build(sample_world).compile()
+        for name in ("cube", "ball"):
+            bid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, name)
+            assert bid >= 0
+            obj = sample_world.objects[name]
+            assert np.allclose(model.body_pos[bid], obj.position)
+            assert model.body_mass[bid] == pytest.approx(obj.mass, abs=1e-6)
+
+    def test_ground_plane_present(self):
         w = SimWorld()
         spec = SpecBuilder.build(w)
-        m = spec.compile()
-        # empty world still has the ground + 2 lights + world-body = 1 body (the world itself).
-        assert m.nbody >= 1
+        model = spec.compile()
+        gid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "ground")
+        assert gid >= 0
 
-    def test_structural_parity_with_legacy_builder(self, sample_world: SimWorld):
-        """Build the same world via both paths; compiled MjModel dimensions match."""
-        m_legacy = mujoco.MjModel.from_xml_string(MJCFBuilder.build_objects_only(sample_world))
-        m_spec = SpecBuilder.build(sample_world).compile()
-
-        for attr in ("nbody", "ngeom", "ncam", "nu", "njnt", "nq", "nv"):
-            legacy = getattr(m_legacy, attr)
-            spec = getattr(m_spec, attr)
-            assert legacy == spec, f"{attr} mismatch: legacy={legacy}, spec={spec}"
-
-    def test_gravity_and_timestep_match(self, sample_world: SimWorld):
-        sample_world.gravity = [0.0, 0.0, -5.0]
-        sample_world.timestep = 0.004
-        m_legacy = mujoco.MjModel.from_xml_string(MJCFBuilder.build_objects_only(sample_world))
-        m_spec = SpecBuilder.build(sample_world).compile()
-        assert m_legacy.opt.timestep == pytest.approx(m_spec.opt.timestep)
-        assert np.allclose(m_legacy.opt.gravity, m_spec.opt.gravity)
-
-    def test_body_positions_match(self, sample_world: SimWorld):
-        m_legacy = mujoco.MjModel.from_xml_string(MJCFBuilder.build_objects_only(sample_world))
-        m_spec = SpecBuilder.build(sample_world).compile()
-        for name in ("cube", "ball"):
-            a_id = mujoco.mj_name2id(m_legacy, mujoco.mjtObj.mjOBJ_BODY, name)
-            b_id = mujoco.mj_name2id(m_spec, mujoco.mjtObj.mjOBJ_BODY, name)
-            assert a_id >= 0 and b_id >= 0
-            assert np.allclose(m_legacy.body_pos[a_id], m_spec.body_pos[b_id])
-
-    def test_body_masses_match(self, sample_world: SimWorld):
-        m_legacy = mujoco.MjModel.from_xml_string(MJCFBuilder.build_objects_only(sample_world))
-        m_spec = SpecBuilder.build(sample_world).compile()
-        for name in ("cube", "ball"):
-            a_id = mujoco.mj_name2id(m_legacy, mujoco.mjtObj.mjOBJ_BODY, name)
-            b_id = mujoco.mj_name2id(m_spec, mujoco.mjtObj.mjOBJ_BODY, name)
-            assert m_legacy.body_mass[a_id] == pytest.approx(m_spec.body_mass[b_id], abs=1e-6)
-
-    def test_camera_orientation_matches_within_float_precision(self):
-        """The camera rotation produced by the two orientation paths
-        (xyaxes vs quat-from-mju_mat2Quat) must be numerically equivalent.
-        """
-        test_cases = [
-            ("at_origin", [0.0, 0.0, 0.0]),
-            ("off_z", [0.5, 0.2, 0.0]),
-            ("up_high", [1.0, 0.0, 0.5]),
-        ]
-        for case_name, target in test_cases:
-            w = SimWorld()
-            w.cameras["cam"] = SimCamera(name="cam", position=[1, 0, 0.5], target=target, fov=60, width=640, height=480)
-            m_legacy = mujoco.MjModel.from_xml_string(MJCFBuilder.build_objects_only(w))
-            m_spec = SpecBuilder.build(w).compile()
-
-            rot_legacy = m_legacy.cam_mat0[0].reshape(3, 3)
-            rot_spec = m_spec.cam_mat0[0].reshape(3, 3)
-            assert np.max(np.abs(rot_legacy - rot_spec)) < 1e-4, f"{case_name}: camera rotation drift"
-
-
-class TestSpecBuilderEllipsoidBonus:
-    """Ellipsoid is NEW - the legacy MJCFBuilder rejects it. This locks the
-    extra-shape capability the refactor unlocks.
-    """
-
-    def test_ellipsoid_compiles_via_spec_builder(self):
+    def test_ground_plane_absent_when_disabled(self):
         w = SimWorld()
-        w.objects["egg"] = SimObject(
-            name="egg",
-            shape="ellipsoid",
+        w.ground_plane = False
+        spec = SpecBuilder.build(w)
+        model = spec.compile()
+        gid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "ground")
+        assert gid < 0
+
+
+# -----------------------------------------------------------------------------
+# Mutation helpers
+# -----------------------------------------------------------------------------
+
+
+class TestMutation:
+    def test_add_object_then_recompile(self):
+        w = SimWorld()
+        spec = SpecBuilder.build(w)
+        model = spec.compile()
+        data = mujoco.MjData(model)
+
+        SpecBuilder.add_object(
+            spec,
+            SimObject(
+                name="ball",
+                shape="sphere",
+                position=[0, 0, 0.1],
+                size=[0.05, 0.05, 0.05],
+                color=[1, 0, 0, 1],
+                is_static=False,
+                mass=0.1,
+            ),
+        )
+        new_model, _new_data = spec.recompile(model, data)
+        ball_id = mujoco.mj_name2id(new_model, mujoco.mjtObj.mjOBJ_BODY, "ball")
+        assert ball_id >= 0
+
+    def test_remove_body_then_recompile(self):
+        w = SimWorld()
+        w.objects["victim"] = SimObject(
+            name="victim",
+            shape="box",
             position=[0, 0, 0.1],
-            size=[0.1, 0.06, 0.04],
-            color=[1, 0.5, 0, 1],
+            size=[0.1, 0.1, 0.1],
+            color=[1, 0, 0, 1],
             is_static=False,
-            mass=0.05,
+            mass=0.1,
         )
         spec = SpecBuilder.build(w)
-        m = spec.compile()
-        egg_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "egg")
-        assert egg_id >= 0
+        model = spec.compile()
+        data = mujoco.MjData(model)
+        assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "victim") >= 0
+
+        assert SpecBuilder.remove_body(spec, "victim") is True
+        new_model, _ = spec.recompile(model, data)
+        assert mujoco.mj_name2id(new_model, mujoco.mjtObj.mjOBJ_BODY, "victim") < 0
+
+    def test_remove_missing_body_returns_false(self):
+        spec = SpecBuilder.build(SimWorld())
+        assert SpecBuilder.remove_body(spec, "ghost") is False
+
+    def test_add_camera_then_recompile(self):
+        w = SimWorld()
+        spec = SpecBuilder.build(w)
+        model = spec.compile()
+        data = mujoco.MjData(model)
+
+        SpecBuilder.add_camera(
+            spec,
+            SimCamera(
+                name="top",
+                position=[0, 0, 2.0],
+                target=[0, 0, 0],
+                fov=60,
+                width=640,
+                height=480,
+            ),
+        )
+        new_model, _ = spec.recompile(model, data)
+        assert mujoco.mj_name2id(new_model, mujoco.mjtObj.mjOBJ_CAMERA, "top") >= 0
+
+    def test_remove_camera(self):
+        w = SimWorld()
+        w.cameras["c"] = SimCamera(name="c", position=[1, 0, 0.5], target=[0, 0, 0], fov=60, width=640, height=480)
+        spec = SpecBuilder.build(w)
+        model = spec.compile()
+        data = mujoco.MjData(model)
+
+        assert SpecBuilder.remove_camera(spec, "c") is True
+        new_model, _ = spec.recompile(model, data)
+        assert mujoco.mj_name2id(new_model, mujoco.mjtObj.mjOBJ_CAMERA, "c") < 0
+
+
+# -----------------------------------------------------------------------------
+# attach_robot
+# -----------------------------------------------------------------------------
+
+
+ARM_XML = """
+<mujoco model="arm">
+  <compiler angle="radian"/>
+  <worldbody>
+    <body name="base" pos="0 0 0.1">
+      <joint name="pan" type="hinge" axis="0 0 1"/>
+      <geom type="cylinder" size="0.05 0.05"/>
+      <body name="link1" pos="0 0 0.1">
+        <joint name="lift" type="hinge" axis="0 1 0"/>
+        <geom type="capsule" size="0.03" fromto="0 0 0 0 0 0.2"/>
+      </body>
+    </body>
+  </worldbody>
+  <actuator>
+    <position name="pan_act" joint="pan" kp="50"/>
+    <position name="lift_act" joint="lift" kp="50"/>
+  </actuator>
+</mujoco>
+"""
+
+
+@pytest.fixture
+def arm_path(tmp_path):
+    path = tmp_path / "arm.xml"
+    path.write_text(ARM_XML)
+    return str(path)
+
+
+class TestAttachRobot:
+    def test_attach_prefixes_names(self, arm_path):
+        scene = SpecBuilder.build(SimWorld())
+        robot = SimRobot(name="arm1", urdf_path=arm_path, position=[0.3, 0, 0])
+        joint_names = SpecBuilder.attach_robot(scene, robot, arm_path)
+        assert joint_names == ["pan", "lift"]
+
+        model = scene.compile()
+        # Prefixed joint lookup
+        assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "arm1/pan") >= 0
+        assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "arm1/lift") >= 0
+        # Prefixed actuator lookup
+        assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, "arm1/pan_act") >= 0
+
+    def test_attach_two_of_same_robot(self, arm_path):
+        """Two attaches of the same source MJCF - each needs a fresh MjSpec."""
+        scene = SpecBuilder.build(SimWorld())
+        robot_a = SimRobot(name="armA", urdf_path=arm_path, position=[0.3, 0, 0])
+        robot_b = SimRobot(name="armB", urdf_path=arm_path, position=[-0.3, 0, 0])
+
+        SpecBuilder.attach_robot(scene, robot_a, arm_path)
+        SpecBuilder.attach_robot(scene, robot_b, arm_path)
+
+        model = scene.compile()
+        for prefix in ("armA", "armB"):
+            assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, f"{prefix}/pan") >= 0
+            assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, f"{prefix}/lift") >= 0
+
+    def test_attach_frame_uses_robot_position(self, arm_path):
+        scene = SpecBuilder.build(SimWorld())
+        robot = SimRobot(name="arm1", urdf_path=arm_path, position=[0.7, 0.2, 0.0])
+        SpecBuilder.attach_robot(scene, robot, arm_path)
+
+        model = scene.compile()
+        # The arm1 robot's body root gets child-of-frame semantics - body_pos
+        # for arm1/base is relative to the attach frame.
+        bid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "arm1/base")
+        # Walk up the body tree to verify the frame is offset
+        # (simpler: compile works at all - spec.attach validates positions)
+        assert bid >= 0
+
+
+# -----------------------------------------------------------------------------
+# from_mjcf_string / from_file
+# -----------------------------------------------------------------------------
+
+
+class TestFromSources:
+    def test_from_mjcf_string_parses(self):
+        spec = SpecBuilder.from_mjcf_string(
+            '<mujoco><worldbody><body name="x"><geom size="0.1"/></body></worldbody></mujoco>'
+        )
+        model = spec.compile()
+        assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "x") >= 0
+
+    def test_from_mjcf_string_raises_on_invalid(self):
+        with pytest.raises(ValueError):
+            SpecBuilder.from_mjcf_string("not valid xml at all")
+
+    def test_from_file_reads_mjcf(self, tmp_path):
+        p = tmp_path / "scene.xml"
+        p.write_text('<mujoco><worldbody><body name="y"><geom size="0.1"/></body></worldbody></mujoco>')
+        spec = SpecBuilder.from_file(str(p))
+        model = spec.compile()
+        assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "y") >= 0

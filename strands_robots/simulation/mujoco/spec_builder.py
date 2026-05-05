@@ -1,22 +1,20 @@
 """MjSpec-based MJCF builder - programmatic scene construction via the MuJoCo AST.
 
-Replaces the string-concat ``MJCFBuilder`` (see ``mjcf_builder.py``) with direct
-manipulation of ``mujoco.MjSpec`` - the official editable MJCF AST shipped with
-MuJoCo 3.2+. Benefits:
+This is the ONLY path for building / mutating MuJoCo scenes in strands-robots.
+It replaces the string-concat ``MJCFBuilder`` (deleted) and the XML-round-trip
+helpers in ``scene_ops.py``:
 
-* No f-strings, no regex-validated names, no XML injection surface - MuJoCo's
-  own compiler validates every element.
-* No hand-rolled ``_camera_xyaxes_from_target`` - we convert target direction
-  to a quaternion via MuJoCo's own ``mju_mat2Quat``.
-* Live mutation via ``spec.recompile(model, data)`` instead of the tmpdir +
-  ET.parse + mj_saveLastXML round-trip.
+- ``SpecBuilder.build(world)``: build a fresh ``MjSpec`` from a ``SimWorld``.
+- ``add_object`` / ``remove_body`` / ``add_camera``: mutate an existing spec.
+- ``attach_robot``: compose a URDF/MJCF file into a scene with a name prefix.
+- ``replace_scene``: load an agent-authored MJCF string as the new scene.
 
-This module is opt-in behind the ``STRANDS_SIM_USE_MJSPEC`` env var (see
-``Simulation._use_mjspec``). The legacy ``MJCFBuilder`` stays in place until
-every downstream caller migrates.
+All builders return a ``MjSpec`` that the caller compiles via ``spec.compile()``
+or re-compiles in-place via ``spec.recompile(model, data)`` (which preserves
+existing joint state automatically).
 
-See ``IDEA.md`` at repo root for the full staged refactor plan (GH #121 tracks
-execution).
+This module does NOT import any XML / ElementTree / regex machinery - every
+transformation goes through MuJoCo's own AST.
 """
 
 from __future__ import annotations
@@ -26,15 +24,14 @@ from typing import Any
 
 import numpy as np
 
-from strands_robots.simulation.models import SimCamera, SimObject, SimWorld
+from strands_robots.simulation.models import SimCamera, SimObject, SimRobot, SimWorld
 from strands_robots.simulation.mujoco.backend import _ensure_mujoco
 
 logger = logging.getLogger(__name__)
 
 
 # MuJoCo geom-type enum mapping. Populated lazily on first call so module
-# import doesn't require mujoco to be installed (mirrors mjcf_builder's
-# pattern via _ensure_mujoco).
+# import doesn't require mujoco to be installed (backend _ensure_mujoco gates).
 _GEOM_TYPE_CACHE: dict[str, int] | None = None
 
 
@@ -42,8 +39,8 @@ def _geom_type(shape: str) -> int:
     """Map our shape-name vocabulary to MuJoCo's ``mjtGeom`` enum.
 
     Raises ValueError for shapes unsupported by the current pipeline. New
-    shapes (ellipsoid, hfield) can be added here without touching the rest
-    of the builder.
+    shapes (``ellipsoid``, ``hfield``) can be added here without touching
+    the rest of the builder.
     """
     global _GEOM_TYPE_CACHE
     if _GEOM_TYPE_CACHE is None:
@@ -65,30 +62,29 @@ def _geom_type(shape: str) -> int:
 
 
 def _normalize_size(shape: str, size: list[float]) -> list[float]:
-    """Convert SimObject ``size`` convention to MuJoCo's per-type size vector.
+    """Convert SimObject ``size`` convention to MuJoCo's per-geom size vector.
 
     MuJoCo's geom-size conventions (all in the LOCAL frame):
 
-    * ``box``:      half-extents ``[hx, hy, hz]``
-    * ``sphere``:   ``[radius]``   (extra slots ignored)
-    * ``cylinder``: ``[radius, half-height]``
-    * ``capsule``:  ``[radius, half-height]``   (cap hemisphere radius = radius)
-    * ``ellipsoid``:``[rx, ry, rz]``
-    * ``plane``:    ``[hx, hy, grid_spacing]``   (hx/hy are half-sizes)
-    * ``mesh``:     ``[]``   (mesh asset dictates extent; size is ignored)
+    * ``box``:       half-extents ``[hx, hy, hz]``
+    * ``sphere``:    ``[radius]``      (MuJoCo uses size[0] as radius)
+    * ``cylinder``:  ``[radius, half-height]``
+    * ``capsule``:   ``[radius, half-height]``  (cap hemisphere radius = radius)
+    * ``ellipsoid``: ``[rx, ry, rz]``
+    * ``plane``:     ``[hx, hy, grid_spacing]`` (hx/hy are half-sizes)
+    * ``mesh``:      ``[]``            (mesh asset dictates extent; size ignored)
 
-    SimObject stores a single ``size: list[float]`` that we map per shape.
-    This matches the existing ``MJCFBuilder._object_xml`` semantics byte-for-
-    byte (box full-extents -> halved; sphere size[0] -> radius/2 via
-    ``size[0]/2`` which matches the existing code path).
+    ``SimObject.size`` is always 3 floats. Box/ellipsoid use all 3 as full
+    extents, sphere uses ``size[0]`` as diameter (MuJoCo halves it to radius),
+    cylinder/capsule use ``size[0]`` as diameter and ``size[2]`` as full height
+    (both halved), plane uses ``size[0]``/``size[1]`` as full extents (halved).
     """
     if shape == "box":
         sx, sy, sz = size if len(size) >= 3 else (0.1, 0.1, 0.1)
         return [sx / 2, sy / 2, sz / 2]
     if shape == "sphere":
-        # Current MJCFBuilder uses size[0]/2 as radius -> we match exactly.
+        # Legacy builder used size[0]/2 as radius - preserve that.
         radius = size[0] / 2 if size else 0.025
-        # MuJoCo wants a 3-vec size for all geoms; only the first is used.
         return [radius, 0.0, 0.0]
     if shape in ("cylinder", "capsule"):
         radius = size[0] / 2 if size else 0.025
@@ -110,20 +106,16 @@ def _target_quat(position: list[float], target: list[float]) -> list[float] | No
     """Compute the camera orientation quaternion that makes ``position`` look
     at ``target`` with world +Z as the up vector.
 
-    Uses the same camera convention as ``MJCFBuilder._camera_xyaxes_from_target``:
+    Camera convention:
 
     * Forward (cam local -Z) = normalize(target - position)
     * Right   (cam local +X) = normalize(forward x up)
     * Image-up (cam local +Y) = normalize(right x forward)
 
-    Then constructs a 3x3 rotation matrix whose columns are [right, image-up,
-    -forward] (MuJoCo's camera Z axis points OUT of the scene, so world-frame
-    column 3 is -forward), and converts it to a quaternion via MuJoCo's own
-    ``mju_mat2Quat`` so no hand-rolled quaternion math is involved.
+    Returns ``None`` for degenerate cases (target == position, or forward
+    parallel to up). Callers handle the degenerate case upstream.
 
-    Returns ``None`` on a degenerate case (target == position, or forward
-    parallel to up). Callers should surface a clear error in that case -
-    ``MJCFBuilder._camera_xyaxes_from_target`` has the same contract.
+    Uses MuJoCo's ``mju_mat2Quat`` so no hand-rolled quaternion math.
     """
     mujoco = _ensure_mujoco()
 
@@ -137,66 +129,81 @@ def _target_quat(position: list[float], target: list[float]) -> list[float] | No
     right = np.cross(fwd, up)
     rlen = float(np.linalg.norm(right))
     if rlen < 1e-9:
-        # forward parallel to up - caller should reject this upstream.
         return None
     right /= rlen
     image_up = np.cross(right, fwd)
     image_up /= float(np.linalg.norm(image_up))
 
     # Columns of R are [right, image_up, -forward] - the camera's +X, +Y, +Z
-    # basis vectors expressed in world frame. MuJoCo expects row-major here.
+    # basis vectors expressed in world frame. Row-major layout for MuJoCo.
     rot = np.column_stack([right, image_up, -fwd])
     quat = np.zeros(4)
     mujoco.mju_mat2Quat(quat, rot.ravel())
     return quat.tolist()
 
 
-class SpecBuilder:
-    """Builds ``mujoco.MjSpec`` trees from ``SimWorld`` state.
+# =============================================================================
+# SpecBuilder - the public API
+# =============================================================================
 
-    This is the MjSpec equivalent of ``MJCFBuilder``. Every public method
-    returns the MjSpec (not a string), and callers are expected to call
-    ``spec.compile()`` themselves - that gives them a handle to both the
-    spec (for later mutation) and the compiled MjModel in one clean pass.
+
+class SpecBuilder:
+    """Builds and mutates ``mujoco.MjSpec`` trees from ``SimWorld`` state.
+
+    Three distinct operations:
+
+    * :meth:`build(world)` - fresh spec from all world contents. Called by
+      ``Simulation._compile_world`` when first creating a world.
+    * :meth:`add_object` / :meth:`remove_body` / :meth:`add_camera` - mutate
+      an existing spec in-place. Caller calls ``spec.recompile(model, data)``
+      afterwards to propagate changes. State of unchanged joints is preserved
+      automatically by MuJoCo.
+    * :meth:`attach_robot` - compose a robot MJCF/URDF from disk into the
+      scene spec via ``spec.attach(other, prefix=..., frame=...)``. MuJoCo
+      handles name prefixing, asset deduplication, and default-class
+      namespacing natively.
     """
 
+    # --------------------------------------------------------------- full build
     @staticmethod
     def build(world: SimWorld) -> Any:
-        """Build a fresh ``mujoco.MjSpec`` that mirrors ``MJCFBuilder.build_objects_only``.
+        """Build a fresh ``mujoco.MjSpec`` reflecting the current ``SimWorld``.
 
-        Output equivalence target (post-compile, not XML-string):
+        Produces:
+          * option (timestep, gravity)
+          * visual + offscreen framebuffer size
+          * grid texture/material (for the ground plane)
+          * mesh assets for any objects with ``shape == "mesh"``
+          * lights (``main_light``, ``fill_light``)
+          * ground plane (if ``world.ground_plane``)
+          * cameras
+          * objects
 
-        * Same ``nbody`` count (ground + main_light + fill_light + one body
-          per object).
-        * Same ``ngeom`` count (1 ground + 1 per object).
-        * Same ``ncam`` count (one per world.cameras).
-        * Same ``nu`` == 0 (objects have no actuators).
-        * Same ``option.timestep`` and ``option.gravity``.
+        Robots are NOT included here - they're attached separately via
+        :meth:`attach_robot` because each attach consumes a fresh MjSpec
+        loaded from the URDF/MJCF file on disk.
 
-        Returns the **MjSpec**; caller should call ``spec.compile()`` to get
-        an MjModel.
+        Caller is responsible for ``spec.compile()`` to produce an MjModel.
         """
         mujoco = _ensure_mujoco()
 
         spec = mujoco.MjSpec()
         spec.modelname = "strands_sim"
 
-        # Global compiler + simulation options.
-        # In MjSpec 3.8 these are plain attribute writes, not dict updates.
+        # Compiler + simulation options.
         spec.compiler.degree = False  # radians
         spec.compiler.autolimits = True
 
         spec.option.timestep = float(world.timestep)
         spec.option.gravity = list(world.gravity)
 
-        # Visual / offscreen framebuffer size - needed for render() over the
-        # default 640x480 without MuJoCo's cryptic offwidth/offheight error.
+        # Offscreen framebuffer - the default 640x480 is too small for common
+        # camera res. 1280x960 matches what the legacy builder used.
         spec.visual.global_.offwidth = 1280
         spec.visual.global_.offheight = 960
         spec.visual.quality.shadowsize = 4096
 
-        # Ground texture + material - only used when world.ground_plane.
-        # These live at spec level; ``add_texture`` / ``add_material``.
+        # Ground texture + material - MuJoCo's built-in checkerboard.
         grid_tex = spec.add_texture(
             name="grid_tex",
             type=mujoco.mjtTexture.mjTEXTURE_2D,
@@ -206,23 +213,15 @@ class SpecBuilder:
             rgb1=[0.9, 0.9, 0.9],
             rgb2=[0.7, 0.7, 0.7],
         )
-        grid_mat = spec.add_material(
-            name="grid_mat",
-            texrepeat=[8, 8],
-            reflectance=0.1,
-        )
-        # Bind texture to the material's textures[2D] slot via set API (MjSpec
-        # uses a typed index; 2D index is mjTEXROLE_RGB == 1 per MuJoCo headers,
-        # but the pythonic way is the setter below).
+        grid_mat = spec.add_material(name="grid_mat", texrepeat=[8, 8], reflectance=0.1)
         grid_mat.textures[mujoco.mjtTextureRole.mjTEXROLE_RGB] = grid_tex.name
-        # ^ set by role name string; MjSpec resolves by name at compile.
 
         # Mesh assets for objects that declare ``shape == "mesh"``.
         for obj in world.objects.values():
             if obj.shape == "mesh" and obj.mesh_path:
                 spec.add_mesh(name=f"mesh_{obj.name}", file=obj.mesh_path)
 
-        # Lights (world body children).
+        # Lights.
         spec.worldbody.add_light(
             name="main_light",
             pos=[0.0, 0.0, 3.0],
@@ -248,54 +247,54 @@ class SpecBuilder:
                 condim=3,
             )
 
-        # Cameras.
+        # Cameras. Skip cameras that were discovered inside a robot's URDF -
+        # they'll come back automatically via ``spec.attach(robot_spec)``.
+        # Re-adding them at the top level would collide with the attached
+        # namespaced copy at compile time.
         for cam in world.cameras.values():
-            SpecBuilder._add_camera(spec, cam)
+            if getattr(cam, "origin_robot", ""):
+                continue
+            SpecBuilder.add_camera(spec, cam)
 
         # Objects.
         for obj in world.objects.values():
-            SpecBuilder._add_object(spec, obj)
+            SpecBuilder.add_object(spec, obj)
 
         return spec
 
-    # ------------------------------------------------------------------ camera
+    # --------------------------------------------------------------- from_mjcf
     @staticmethod
-    def _add_camera(spec: Any, cam: SimCamera) -> None:
-        """Add a world-fixed camera to ``spec``.
+    def from_mjcf_string(xml: str) -> Any:
+        """Load an MJCF XML string as a fresh spec. Used by ``replace_scene``.
 
-        If ``cam.target`` is set and differs from ``cam.position``, we convert
-        the look-at direction to a quaternion via ``_target_quat`` and attach
-        that to the camera's ``quat`` attribute - so the camera actually looks
-        at its target. Otherwise the camera gets MuJoCo's default -Z look
-        direction.
+        Raises ``ValueError`` on malformed XML via MuJoCo's compiler.
         """
         mujoco = _ensure_mujoco()
-        pos = list(cam.position)
-        kwargs: dict[str, Any] = {
-            "name": cam.name,
-            "pos": pos,
-            "fovy": float(cam.fov),
-            "mode": mujoco.mjtCamLight.mjCAMLIGHT_FIXED,
-        }
-        target = getattr(cam, "target", None)
-        if target is not None:
-            quat = _target_quat(pos, list(target))
-            if quat is not None:
-                kwargs["quat"] = quat
-        spec.worldbody.add_camera(**kwargs)
+        return mujoco.MjSpec.from_string(xml)
 
-    # ------------------------------------------------------------------ object
     @staticmethod
-    def _add_object(spec: Any, obj: SimObject) -> None:
-        """Add a SimObject to ``spec.worldbody``.
+    def from_file(path: str) -> Any:
+        """Load an MJCF/URDF file as a fresh spec.
 
-        Mirrors ``MJCFBuilder._object_xml`` semantics:
+        MuJoCo 3.2+ reads URDF as well as MJCF via the same entry point - the
+        file extension + XML root determines the path. Raises ``ValueError``
+        on invalid files.
+        """
+        mujoco = _ensure_mujoco()
+        return mujoco.MjSpec.from_file(str(path))
 
-        * Dynamic objects (``is_static=False``) get a freejoint + an explicit
-          inertial block (diagonal 0.001 inertia, user-supplied mass).
+    # ------------------------------------------------------------ object add
+    @staticmethod
+    def add_object(spec: Any, obj: SimObject) -> None:
+        """Add a ``SimObject`` to ``spec.worldbody`` in-place.
+
+        * Dynamic objects (``is_static=False``) get a freejoint + explicit
+          inertial block (diag 0.001, user-supplied mass) matching the
+          legacy builder.
         * Static objects skip the freejoint and inertial.
-        * Box/sphere/cylinder/capsule/plane/mesh are handled; ellipsoid is a
-          bonus enabled by the new SHAPE_MAP.
+        * Meshes require a matching ``spec.add_mesh(...)`` to have been
+          registered (usually by :meth:`build`); this method does NOT
+          register mesh assets.
         """
         body = spec.worldbody.add_body(
             name=obj.name,
@@ -305,11 +304,6 @@ class SpecBuilder:
 
         if not obj.is_static:
             body.add_freejoint(name=f"{obj.name}_joint")
-            # Explicit inertial matches the legacy builder: diag 0.001, mass
-            # from SimObject. MuJoCo will auto-compute from geom density
-            # otherwise, which can differ. In MjSpec the inertial properties
-            # are body-level attributes, not a child element - ``explicitinertial``
-            # tells the compiler to honour them verbatim.
             body.mass = float(obj.mass)
             body.inertia = [0.001, 0.001, 0.001]
             body.ipos = [0.0, 0.0, 0.0]
@@ -326,13 +320,128 @@ class SpecBuilder:
         else:
             geom_kwargs["size"] = _normalize_size(obj.shape, list(obj.size))
 
-        # Legacy code adds ``friction="1 0.5 0.001"`` on box only; we keep
-        # that parity to avoid behavioural drift (other shapes use MuJoCo's
-        # default 1 0.005 0.0001).
+        # Legacy code only set explicit friction on boxes; preserve parity.
         if obj.shape == "box":
             geom_kwargs["friction"] = [1.0, 0.5, 0.001]
 
         body.add_geom(**geom_kwargs)
 
+    # ----------------------------------------------------------- camera add
+    @staticmethod
+    def add_camera(spec: Any, cam: SimCamera) -> None:
+        """Add a world-fixed camera. If ``cam.target`` is set, converts the
+        look-at direction to a quaternion via :func:`_target_quat`.
+        """
+        mujoco = _ensure_mujoco()
+        pos = list(cam.position)
+        kwargs: dict[str, Any] = {
+            "name": cam.name,
+            "pos": pos,
+            "fovy": float(cam.fov),
+            "mode": mujoco.mjtCamLight.mjCAMLIGHT_FIXED,
+        }
+        target = getattr(cam, "target", None)
+        if target is not None:
+            quat = _target_quat(pos, list(target))
+            if quat is not None:
+                kwargs["quat"] = quat
+        spec.worldbody.add_camera(**kwargs)
 
-__all__ = ["SpecBuilder", "_geom_type", "_normalize_size", "_target_quat"]
+    # --------------------------------------------------------- body remove
+    @staticmethod
+    def remove_body(spec: Any, name: str) -> bool:
+        """Remove a body by name from the spec.
+
+        Uses ``spec.delete(body)`` which walks the spec's typed registry.
+        Returns ``True`` if the body existed and was removed, ``False``
+        otherwise (to match the legacy scene_ops API).
+
+        Note: this removes ONLY the body; any actuators/sensors referencing
+        its joints must be cleaned up separately via :meth:`remove_refs_by_prefix`.
+        That's only needed for robots - for plain object bodies there are
+        no actuators/sensors tied to them.
+        """
+        try:
+            body = spec.body(name)
+        except (KeyError, ValueError):
+            return False
+        if body is None:
+            return False
+        spec.delete(body)
+        return True
+
+    # ------------------------------------------------------- camera remove
+    @staticmethod
+    def remove_camera(spec: Any, name: str) -> bool:
+        """Remove a camera by name from the spec."""
+        # spec.cameras returns the list; find by name
+        cameras = getattr(spec, "cameras", None)
+        if cameras is None:
+            return False
+        for cam in cameras:
+            if cam.name == name:
+                spec.delete(cam)
+                return True
+        return False
+
+    # ------------------------------------------------------------- attach
+    @staticmethod
+    def attach_robot(
+        scene_spec: Any,
+        robot: SimRobot,
+        robot_file_path: str,
+    ) -> list[str]:
+        """Attach a URDF/MJCF file into the scene spec with a name prefix.
+
+        Uses ``spec.attach(other, prefix=..., frame=...)`` which handles
+        body/joint/geom/actuator/sensor name prefixing automatically, dedups
+        shared assets (meshes, textures, materials), and namespaces default
+        classes - replacing ~400 lines of hand-rolled tree-walking from the
+        legacy ``scene_ops._prefix_robot_names`` +
+        ``_namespace_robot_default_classes``.
+
+        Args:
+            scene_spec: the scene spec to mutate.
+            robot: ``SimRobot`` carrying ``name`` (used as prefix) and
+                ``position`` / ``orientation`` (used as attach frame).
+            robot_file_path: absolute or relative path to an MJCF/URDF file.
+
+        Returns:
+            List of joint names belonging to the attached robot, in the order
+            MuJoCo discovered them (no prefix - caller namespaces via
+            ``robot.namespace`` when it resolves IDs post-compile).
+        """
+        mujoco = _ensure_mujoco()
+
+        robot_spec = mujoco.MjSpec.from_file(str(robot_file_path))
+
+        # Collect source joint names BEFORE attach - attach mutates the child
+        # spec in-place (the child gets reparented).
+        source_joint_names: list[str] = []
+
+        def _walk(body: Any) -> None:
+            for j in body.joints:
+                jname = j.name or ""
+                if jname and jname not in source_joint_names:
+                    source_joint_names.append(jname)
+            for sub in body.bodies:
+                _walk(sub)
+
+        for top_body in robot_spec.worldbody.bodies:
+            _walk(top_body)
+
+        frame = scene_spec.worldbody.add_frame(
+            pos=list(robot.position),
+            quat=list(robot.orientation),
+        )
+        scene_spec.attach(robot_spec, prefix=f"{robot.name}/", frame=frame)
+
+        return source_joint_names
+
+
+__all__ = [
+    "SpecBuilder",
+    "_geom_type",
+    "_normalize_size",
+    "_target_quat",
+]

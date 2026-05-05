@@ -434,27 +434,3 @@ class TestAddCameraTargetOrients:
             )
         finally:
             sim.destroy()
-
-
-class TestCameraXyAxesHelper:
-    """Direct unit test on the _camera_xyaxes_from_target helper."""
-
-    def test_basic_look_at_origin(self):
-        from strands_robots.simulation.mujoco.mjcf_builder import _camera_xyaxes_from_target
-
-        # Camera at (2, 0, 0) looking at origin along -X, up = +Z.
-        # forward = normalize(origin - pos) = (-1, 0, 0)
-        # right   = forward × up = (-1,0,0) × (0,0,1) = (0*1 - 0*0, 0*0 - -1*1, -1*0 - 0*0) = (0, 1, 0)
-        # image_up = right × forward = (0,1,0) × (-1,0,0) = (1*0 - 0*0, 0*-1 - 0*0, 0*0 - 1*-1) = (0, 0, 1)
-        s = _camera_xyaxes_from_target([2.0, 0.0, 0.0], [0.0, 0.0, 0.0])
-        assert s is not None
-        parts = [float(x) for x in s.split()]
-        assert len(parts) == 6
-        rx, ry, rz, ux, uy, uz = parts
-        assert abs(rx) < 1e-5 and abs(ry - 1.0) < 1e-5 and abs(rz) < 1e-5, f"right={parts[:3]}"
-        assert abs(ux) < 1e-5 and abs(uy) < 1e-5 and abs(uz - 1.0) < 1e-5, f"image_up={parts[3:]}"
-
-    def test_degenerate_returns_none(self):
-        from strands_robots.simulation.mujoco.mjcf_builder import _camera_xyaxes_from_target
-
-        assert _camera_xyaxes_from_target([1, 2, 3], [1, 2, 3]) is None

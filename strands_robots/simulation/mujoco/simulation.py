@@ -67,7 +67,6 @@ from strands_robots.simulation.model_registry import (
 )
 from strands_robots.simulation.models import SimCamera, SimObject, SimRobot, SimStatus, SimWorld
 from strands_robots.simulation.mujoco.backend import _ensure_mujoco
-from strands_robots.simulation.mujoco.mjcf_builder import MJCFBuilder
 from strands_robots.simulation.mujoco.physics import PhysicsMixin
 from strands_robots.simulation.mujoco.randomization import RandomizationMixin
 from strands_robots.simulation.mujoco.recording import RecordingMixin
@@ -78,6 +77,7 @@ from strands_robots.simulation.mujoco.scene_ops import (
     inject_camera_into_scene,
     inject_object_into_scene,
     inject_robot_into_scene,
+    replace_scene_mjcf,
 )
 from strands_robots.simulation.mujoco.spec_builder import SpecBuilder
 from strands_robots.simulation.policy_runner import CooperativeStop
@@ -284,18 +284,23 @@ class Simulation(
         }
 
     def load_scene(self, scene_path: str) -> dict[str, Any]:
-        """Load a complete scene from MJCF XML or URDF file.
+        """Load a complete scene from an MJCF XML (or URDF) file.
 
-        Populates ``_backend_state["xml"]`` with the raw scene XML and sets
-        ``_backend_state["scene_loaded"] = True`` so that downstream
-        ``add_object`` / ``add_camera`` calls use the XML round-trip
-        injection path (preserving the loaded scene) instead of
-        ``_recompile_world()`` (which rebuilds from ``MJCFBuilder`` and
-        would wipe the loaded scene's bodies/meshes).
+        Replaces the currently-live spec with one parsed from disk. The
+        loaded spec becomes the source of truth, so downstream
+        ``add_object`` / ``add_camera`` / ``add_robot`` calls mutate it via
+        ``spec.recompile(model, data)`` and preserve the on-disk scene.
 
-        Also records ``_backend_state["scene_base_dir"]`` so that mesh
-        references inside the scene XML still resolve after round-tripping
-        through a tmpdir during injection.
+        Notes:
+
+        * ``_backend_state["scene_loaded"] = True`` stays as a marker for
+          introspection (and for downstream callers that still check it,
+          though the scene_ops path is now uniform across both entry
+          points).
+        * ``_backend_state["scene_base_dir"]`` is recorded in case any
+          consumer needs the original source directory (e.g. for mesh path
+          resolution in followup inject operations on files with relative
+          mesh paths).
         """
         if err := self._require_no_running_policy("load_scene"):
             return err
@@ -306,22 +311,20 @@ class Simulation(
 
         try:
             self._world = SimWorld()
-            self._world._model = mj.MjModel.from_xml_path(str(scene_path))
+            # Load the scene as a live MjSpec - this gives us a mutable AST
+            # for downstream add_object/add_robot operations, matching the
+            # contract produced by _compile_world for fresh worlds.
+            spec = SpecBuilder.from_file(scene_path)
+            self._world._backend_state["spec"] = spec
+            self._world._model = spec.compile()
             self._world._data = mj.MjData(self._world._model)
             self._world.status = SimStatus.IDLE
 
-            # Populate _backend_state so that inject_* round-tripping works.
-            # Without this, inject_object_into_scene / inject_camera_into_scene
-            # hit the `stored_xml is None` branch and rely on mj_saveLastXML
-            # global state, which is unreliable after any renderer creation.
+            # Cache the canonical serialisation; legacy readers use this.
             try:
-                with open(scene_path) as _f:
-                    self._world._backend_state["xml"] = _f.read()
-            except OSError as read_err:
-                # Best-effort - failure to cache the XML is not fatal for
-                # a pure-read-only scene, but injection calls will fail
-                # informatively downstream.
-                logger.warning("Could not cache scene XML: %s", read_err)
+                self._world._backend_state["xml"] = spec.to_xml()
+            except Exception as xml_err:
+                logger.debug("spec.to_xml() on loaded scene failed: %s", xml_err)
 
             self._world._backend_state["scene_loaded"] = True
             self._world._backend_state["scene_base_dir"] = os.path.dirname(os.path.abspath(scene_path))
@@ -342,57 +345,86 @@ class Simulation(
             logger.error("Failed to load scene: %s", e)
             return {"status": "error", "content": [{"text": f"Failed to load scene: {e}"}]}
 
-    def _compile_world(self):
-        """Compile the current ``SimWorld`` state into live ``MjModel`` / ``MjData``.
+    def replace_scene_mjcf(self, xml: str) -> dict[str, Any]:
+        """Atomically replace the entire scene with agent-authored MJCF.
 
-        Two paths, toggled by the ``STRANDS_SIM_USE_MJSPEC`` env var
-        (see IDEA.md + GH #121):
+        Validated by actually compiling it via ``mujoco.MjSpec.from_string``
+        and ``spec.compile()``. On failure returns a standard error dict with
+        MuJoCo's compiler error verbatim; on success the old ``_world._model``,
+        ``_world._data`` and ``_world._backend_state['spec']`` are replaced.
 
-        * ``0`` (default): the legacy ``MJCFBuilder`` string-concat path.
-          Builds an XML string, then ``MjModel.from_xml_string``. Preserved
-          verbatim so downstream scene_ops round-trips (inject / eject) keep
-          working exactly as before.
+        Note: ``self._world.robots`` / ``objects`` / ``cameras`` registries
+        are LEFT UNTOUCHED. The raw MJCF can express elements that those
+        dataclasses can't (``<tendon>``, ``<equality>``, ``<pair>``, etc.) -
+        the agent is responsible for reconciling the registry with the new
+        scene if it cares.
 
-        * ``1``: the new ``SpecBuilder`` path. Builds a ``MjSpec`` (the
-          MuJoCo AST), calls ``spec.compile()``, stashes the spec in
-          ``_backend_state["spec"]`` so later mutation calls can use
-          ``spec.recompile(model, data)`` instead of XML round-tripping.
-          Still exports ``_backend_state["xml"]`` via ``spec.to_xml()`` so
-          existing scene_ops consumers keep reading it.
+        Use this as an escape hatch when the ``add_object`` / ``add_robot``
+        vocabulary is insufficient. For additive changes, prefer those
+        methods - they keep the registry in sync.
+        """
+        if self._world is None:
+            return {"status": "error", "content": [{"text": "No world. Use action='create_world' first."}]}
+        if err := self._require_no_running_policy("replace_scene_mjcf"):
+            return err
+
+        try:
+            replace_scene_mjcf(self._world, xml)
+        except (ValueError, RuntimeError) as e:
+            return {"status": "error", "content": [{"text": f"MJCF compile failed: {e}"}]}
+
+        model = self._world._model
+        return {
+            "status": "success",
+            "content": [
+                {
+                    "text": (
+                        f"🔄 Scene replaced via raw MJCF\n"
+                        f"🦴 Bodies: {model.nbody}, 🔩 Joints: {model.njnt}, ⚡ Actuators: {model.nu}, 📷 Cameras: {model.ncam}\n"
+                        "⚠️ world.robots / world.objects / world.cameras registries were NOT updated - "
+                        "they describe our previous Python-side view of the scene."
+                    )
+                }
+            ],
+        }
+
+    def _compile_world(self) -> None:
+        """Build the MjSpec from ``self._world`` and compile it to MjModel.
+
+        Stashes the live ``MjSpec`` in ``_backend_state["spec"]`` so every
+        subsequent scene mutation uses ``spec.recompile(model, data)`` in
+        place - that preserves existing joint state automatically, replacing
+        the legacy XML-round-trip helpers in ``scene_ops.py``.
+
+        Also exports ``spec.to_xml()`` to ``_backend_state["xml"]`` for any
+        consumer that still reads the raw MJCF string (e.g. ``load_scene``
+        compatibility paths).
         """
         mj = self._mj
-        if self._use_mjspec():
-            spec = SpecBuilder.build(self._world)
-            self._world._backend_state["spec"] = spec
-            self._world._model = spec.compile()
-            # XML is still exported for legacy readers (load_scene flag
-            # consumers, mesh-path patching). New code should prefer the
-            # spec handle.
-            try:
-                self._world._backend_state["xml"] = spec.to_xml()
-            except Exception as xml_err:
-                # Shouldn't happen for well-formed specs, but don't fail
-                # the compile just because we can't serialise.
-                logger.warning("spec.to_xml() failed: %s", xml_err)
-        else:
-            xml = MJCFBuilder.build_objects_only(self._world)
-            self._world._backend_state["xml"] = xml
-            self._world._model = mj.MjModel.from_xml_string(xml)
+        assert self._world is not None  # only called after create_world
+        spec = SpecBuilder.build(self._world)
+        self._world._backend_state["spec"] = spec
+        self._world._model = spec.compile()
         self._world._data = mj.MjData(self._world._model)
+        try:
+            self._world._backend_state["xml"] = spec.to_xml()
+        except Exception as xml_err:
+            # spec.to_xml() is best-effort - if it fails we still have a
+            # valid compiled model. The cached XML is a convenience for
+            # tooling, not a correctness invariant.
+            logger.debug("spec.to_xml() failed: %s", xml_err)
         self._world.status = SimStatus.IDLE
 
-    @staticmethod
-    def _use_mjspec() -> bool:
-        """Return True iff the MjSpec builder path is enabled.
-
-        Gated by ``STRANDS_SIM_USE_MJSPEC`` env var - accepts ``"1"``,
-        ``"true"``, ``"yes"`` (case-insensitive) as truthy, everything else
-        as false. Default false to preserve pre-refactor behaviour.
-        """
-        val = os.getenv("STRANDS_SIM_USE_MJSPEC", "").strip().lower()
-        return val in ("1", "true", "yes")
-
     def _recompile_world(self) -> dict[str, Any]:
+        """Rebuild MjModel from scratch via :meth:`_compile_world`.
+
+        This is the "nuke and pave" path used when the world config changes
+        in a way that can't be expressed as a spec mutation (e.g. clearing
+        every body). For incremental changes (add/remove body, camera),
+        prefer ``_recompile_preserving_state`` in ``scene_ops.py`` which
+        goes through ``spec.recompile(model, data)`` and preserves joint
+        state.
+        """
         try:
             self._compile_world()
             return {"status": "success"}
@@ -550,37 +582,17 @@ class Simulation(
                 self._world.robots.pop(name, None)
                 return mesh_err
 
-            # Pre-scan the robot XML to discover joint/actuator names.
-            # We load a temporary model just for introspection - this is NOT
-            # used as the world model.
-            tmp_model = mj.MjModel.from_xml_path(str(resolved_path))
-
-            joint_names = []
-            for i in range(tmp_model.njnt):
-                jnt_name = mj.mj_id2name(tmp_model, mj.mjtObj.mjOBJ_JOINT, i)
-                if jnt_name:
-                    joint_names.append(jnt_name)
-            robot.joint_names = joint_names
-
-            # Discover cameras from robot model
-            for i in range(tmp_model.ncam):
-                cam_name = mj.mj_id2name(tmp_model, mj.mjtObj.mjOBJ_CAMERA, i)
-                if cam_name and cam_name not in self._world.cameras:
-                    self._world.cameras[cam_name] = SimCamera(
-                        name=cam_name,
-                        camera_id=i,
-                        width=self.default_width,
-                        height=self.default_height,
-                    )
-
-            # Register the robot BEFORE injection so _reload_scene_from_xml
-            # can re-discover its joint/actuator IDs in the merged model.
+            # Register the robot BEFORE attach so scene_ops can re-discover
+            # its joint/actuator IDs inside the merged model.
             self._world.robots[name] = robot
             # Track robot base path for asset path resolution.
             if not self._world._backend_state.get("robot_base_xml"):
                 self._world._backend_state["robot_base_xml"] = resolved_path
 
-            # XML round-trip: merge robot into existing world
+            # Compose into the live spec via spec.attach(). The helper sets
+            # robot.joint_names from the source spec (pre-namespacing) and
+            # then scene_ops._recompile_preserving_state resolves the
+            # post-attach joint/actuator IDs on the compiled model.
             ok = inject_robot_into_scene(self._world, robot, resolved_path)
             if not ok:
                 del self._world.robots[name]
@@ -589,30 +601,29 @@ class Simulation(
                     "content": [{"text": f"Failed to inject robot '{name}' into scene."}],
                 }
 
-            # Re-read joint/actuator IDs from the merged model (IDs shifted).
-            # Names inside MuJoCo are namespaced (e.g. ``arm0/shoulder_pan``)
-            # when multiple same-config robots are injected, so prefer the
-            # namespaced lookup.
-            model = self._world._model
+            # Discover cameras that the robot's source MJCF declared. The
+            # compiled model already has them namespaced under
+            # ``{robot.name}/<cam_name>``. We probe the post-compile model
+            # instead of the source, which avoids loading a second model
+            # just for introspection.
             pfx = robot.namespace or ""
-            robot.joint_ids = []
-            robot.actuator_ids = []
-            for jnt_name in robot.joint_names:
-                jid = -1
-                if pfx:
-                    jid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, pfx + jnt_name)
-                if jid < 0:
-                    jid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, jnt_name)
-                if jid >= 0:
-                    robot.joint_ids.append(jid)
-            for i in range(model.nu):
-                jnt_id = model.actuator_trnid[i, 0]
-                if jnt_id in robot.joint_ids:
-                    robot.actuator_ids.append(i)
-            if not robot.actuator_ids and len(self._world.robots) == 1:
-                # Fallback: single-robot scene - assign all actuators.
-                for i in range(model.nu):
-                    robot.actuator_ids.append(i)
+            model = self._world._model
+            for i in range(model.ncam):
+                cam_name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_CAMERA, i)
+                if not cam_name:
+                    continue
+                # Strip the robot namespace for our Python-side key - the
+                # registry is keyed on the short name and we re-attach the
+                # namespace when passing to the renderer.
+                short = cam_name[len(pfx) :] if cam_name.startswith(pfx) else cam_name
+                if short not in self._world.cameras:
+                    self._world.cameras[short] = SimCamera(
+                        name=cam_name,
+                        camera_id=i,
+                        width=self.default_width,
+                        height=self.default_height,
+                        origin_robot=name,
+                    )
 
             # leave the freshly-added robot in a clean, deterministic
             # zero state (qpos=qvel=ctrl=0) rather than silently settling
@@ -682,17 +693,19 @@ class Simulation(
         if err := self._require_no_running_policy("remove_robot"):
             return err
 
-        # Eject the robot's XML footprint before dropping the registry entry,
-        # so eject_robot_from_scene can still read robot.data_config for the
-        # merged-configs bookkeeping below.
+        # Pop the robot from the registry BEFORE the rebuild - eject_robot_from_scene
+        # rebuilds the spec from the remaining world.robots dict, so the robot
+        # we want to drop must no longer be in it.
+        del self._world.robots[name]
+
         ejected = eject_robot_from_scene(self._world, name)
         if not ejected:
+            # Unlikely - rebuild from world state with one fewer robot.
             return {
                 "status": "error",
                 "content": [{"text": f"Failed to eject robot '{name}' from scene."}],
             }
 
-        del self._world.robots[name]
         return {"status": "success", "content": [{"text": f"🗑️ Robot '{name}' removed."}]}
 
     def list_robots(self) -> list[str]:
@@ -821,46 +834,23 @@ class Simulation(
         )
         self._world.objects[name] = obj
 
-        # Use XML round-trip injection when the scene was loaded from file
-        # (via load_scene) OR when robots have been injected. Otherwise
-        # _recompile_world() rebuilds via MJCFBuilder.build_objects_only
-        # which only knows about objects/gravity/timestep - it would wipe
-        # any scene that was loaded from external MJCF.
-        _scene_loaded = self._world._backend_state.get("scene_loaded", False)
-        if self._world.robots or _scene_loaded:
-            try:
-                result = inject_object_into_scene(self._world, obj)
-                if result:
-                    return {
-                        "status": "success",
-                        "content": [{"text": f"📦 '{name}' spawned: {shape} at {obj.position}"}],
-                    }
-                # Injection returned False - object tracked but not spawned.
-                # This happens rarely (non-fatal round-trip issue); keep the
-                # object registered so the next recompile can pick it up.
-                return {
-                    "status": "success",
-                    "content": [
-                        {
-                            "text": (
-                                f"📦 '{name}' registered: {shape} at {obj.position}\n"
-                                "⚠️ Live injection skipped - object tracked but not physically spawned."
-                            )
-                        }
-                    ],
-                }
-            except (ValueError, RuntimeError) as e:
-                # Clean up: object was added to world.objects before injection
+        # Every scene mutation goes through spec.recompile() - no branching
+        # on robots / scene_loaded, and no XML round-trip. MjSpec preserves
+        # existing joint state automatically on recompile.
+        try:
+            if not inject_object_into_scene(self._world, obj):
+                # Injection returned False (compile error). Clean up.
                 self._world.objects.pop(name, None)
                 return {
                     "status": "error",
-                    "content": [{"text": f"Failed to inject '{name}' into live scene: {e}"}],
+                    "content": [{"text": f"Failed to inject '{name}': spec recompile refused."}],
                 }
-
-        recompile_result = self._recompile_world()
-        if recompile_result["status"] == "error":
-            del self._world.objects[name]
-            return recompile_result
+        except (ValueError, RuntimeError) as e:
+            self._world.objects.pop(name, None)
+            return {
+                "status": "error",
+                "content": [{"text": f"Failed to inject '{name}' into live scene: {e}"}],
+            }
 
         return {
             "status": "success",
@@ -877,14 +867,9 @@ class Simulation(
         if err := self._require_no_running_policy("remove_object"):
             return err
         del self._world.objects[name]
-        # Use XML round-trip ejection when the scene was loaded from file
-        # OR when robots are injected. Otherwise _recompile_world() rebuilds
-        # from MJCFBuilder and would wipe a loaded scene's bodies.
-        _scene_loaded = self._world._backend_state.get("scene_loaded", False)
-        if self._world.robots or _scene_loaded:
-            eject_body_from_scene(self._world, name)
-        else:
-            self._recompile_world()
+        # spec-based path: eject_body_from_scene looks up the body in the
+        # live MjSpec, deletes it, and recompiles preserving remaining state.
+        eject_body_from_scene(self._world, name)
         return {"status": "success", "content": [{"text": f"🗑️ '{name}' removed."}]}
 
     def move_object(
@@ -995,31 +980,53 @@ class Simulation(
         )
         self._world.cameras[name] = cam
 
-        # Use XML round-trip injection when the scene was loaded from file
-        # OR when robots have been injected. Otherwise _recompile_world()
-        # rebuilds via MJCFBuilder and would wipe a loaded scene's bodies.
-        _scene_loaded = self._world._backend_state.get("scene_loaded", False)
-        if (self._world.robots or _scene_loaded) and self._world._model is not None:
-            try:
-                inject_camera_into_scene(self._world, cam)
-            except (ValueError, RuntimeError) as e:
-                # Clean up: camera was added to world.cameras before injection
+        # Spec-based path: inject_camera_into_scene adds the camera to the
+        # live spec and recompiles preserving state.
+        try:
+            if not inject_camera_into_scene(self._world, cam):
                 self._world.cameras.pop(name, None)
                 return {
                     "status": "error",
-                    "content": [{"text": f"Failed to inject camera '{name}' into live scene: {e}"}],
+                    "content": [{"text": f"Failed to inject camera '{name}': spec recompile refused."}],
                 }
-        else:
-            self._recompile_world()
+        except (ValueError, RuntimeError) as e:
+            self._world.cameras.pop(name, None)
+            return {
+                "status": "error",
+                "content": [{"text": f"Failed to inject camera '{name}' into live scene: {e}"}],
+            }
 
         return {"status": "success", "content": [{"text": f"📷 Camera '{name}' added at {cam.position}"}]}
 
     def remove_camera(self, name: str) -> dict[str, Any]:
+        """Remove a named camera from the live scene.
+
+        Pops the Python-side registry entry and then deletes the camera
+        from the MjSpec via :func:`SpecBuilder.remove_camera` so future
+        renders/compiles no longer see it.
+        """
         if self._world is None or name not in self._world.cameras:
             return {"status": "error", "content": [{"text": f"Camera '{name}' not found."}]}
         if err := self._require_no_running_policy("remove_camera"):
             return err
-        del self._world.cameras[name]
+        cam = self._world.cameras.pop(name)
+
+        spec = self._world._backend_state.get("spec")
+        if spec is not None:
+            # Use the namespaced MuJoCo name if we have it (camera came from
+            # a robot's URDF), else the short name.
+            mj_name = cam.name or name
+            SpecBuilder.remove_camera(spec, mj_name)
+            # Recompile so nbody/ncam in _model match the new spec.
+            try:
+                self._world._model, self._world._data = spec.recompile(self._world._model, self._world._data)
+                try:
+                    self._world._backend_state["xml"] = spec.to_xml()
+                except Exception:
+                    pass
+            except (ValueError, RuntimeError) as e:
+                logger.warning("remove_camera recompile failed: %s", e)
+
         return {"status": "success", "content": [{"text": f"🗑️ Camera '{name}' removed."}]}
 
     # Simulation Control

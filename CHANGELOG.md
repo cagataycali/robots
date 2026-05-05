@@ -5,6 +5,57 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## Unreleased - PR #85 (MuJoCo backend remediation)
 
+### MJCF builder refactor: string-concat -> MjSpec AST (closes #121, #122-#126)
+
+The ``MJCFBuilder`` string-concat path and the ``scene_ops`` XML-round-trip
+machinery (~700 lines total) are replaced by direct manipulation of
+``mujoco.MjSpec`` - the editable MJCF AST shipped with MuJoCo 3.2+.
+
+What changed under the hood:
+- **New module** ``strands_robots/simulation/mujoco/spec_builder.py``. The
+  ``SpecBuilder`` class owns scene construction + mutation (``build``,
+  ``add_object``, ``remove_body``, ``add_camera``, ``remove_camera``,
+  ``attach_robot``, ``from_mjcf_string``, ``from_file``).
+- **Deleted**: ``strands_robots/simulation/mujoco/mjcf_builder.py`` (273
+  lines of f-string MJCF and the ``_camera_xyaxes_from_target`` helper).
+- **Rewrote**: ``strands_robots/simulation/mujoco/scene_ops.py`` from
+  ~980 lines of tmpdir + ``mj_saveLastXML`` + ``ElementTree`` round-trips
+  down to ~295 lines that go through ``spec.recompile(model, data)``.
+- **Bumped**: ``mujoco>=3.0.0`` -> ``>=3.2.0`` in ``pyproject.toml`` so
+  ``MjSpec`` is always available. Current hatch env runs 3.8.0.
+
+Agent-visible wins:
+- **New action** ``replace_scene_mjcf(xml=...)`` - atomically replace the
+  whole scene with agent-authored MJCF. Validated by actually compiling
+  it, so ``<tendon>``, ``<equality>``, ``<pair>``, custom solref/solimp,
+  sites, hfield, etc. all work without needing new ``SimObject`` shape
+  vocabulary. On malformed XML returns a clean error dict (no process
+  abort).
+- **``ellipsoid`` shape** now works in ``add_object`` - it's a free
+  bonus MuJoCo geom type the string-concat builder rejected.
+- **Camera orientation** uses ``quat`` (computed via
+  ``mujoco.mju_mat2Quat``) instead of a hand-rolled ``xyaxes`` string.
+  Compiled ``cam_mat0`` is numerically identical within ~4e-7.
+- **``spec.recompile(model, data)``** preserves existing joint qpos/qvel
+  for unchanged joints automatically - no manual "copy state by name"
+  loop. Object freejoints added post-compile get initialised to the
+  body's ``pos``/``quat``.
+- **No more XML injection surface**: names go straight into MjSpec which
+  validates them itself, so the old ``_sanitize_name`` regex gate +
+  fuzz test are no longer needed.
+
+Downstream API is unchanged: ``add_object``, ``add_robot``, ``remove_object``,
+``remove_robot``, ``add_camera``, ``remove_camera``, ``load_scene`` all keep
+their tool-action signatures. Tests that asserted on exact XML strings
+were rewritten to assert on compiled ``MjModel`` properties (``cam_mat0``,
+``mj_name2id``) so they are representation-agnostic.
+
+Known constraint: ``remove_robot`` now rebuilds the scene from scratch
+(drops joint qpos state) rather than going through ``spec.delete()`` on
+attached bodies. This sidesteps a MuJoCo 3.8 double-free bug where
+``spec.delete(attached_body)`` + interpreter shutdown crashes. Trade-off
+is documented in ``scene_ops.eject_robot_from_scene``.
+
 ### Breaking
 
 These changes tighten the MuJoCo AgentTool contract. Legacy callers that

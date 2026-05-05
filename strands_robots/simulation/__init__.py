@@ -11,9 +11,9 @@ Architecture::
     └ mujoco/              ← MuJoCo CPU backend
         ├ __init__.py
         ├ backend.py       ← lazy mujoco import + GL config
-        ├ mjcf_builder.py  ← MJCF XML builder
+        ├ spec_builder.py  ← MjSpec-based scene builder/mutator
         ├ physics.py       ← advanced physics (raycasting, jacobians, forces)
-        ├ scene_ops.py     ← XML round-trip inject/eject
+        ├ scene_ops.py     ← live scene mutation via spec.recompile()
         ├ rendering.py     ← render RGB/depth, observations
         ├ policy_runner.py ← run_policy, eval_policy, replay
         ├ randomization.py ← domain randomization
@@ -76,7 +76,7 @@ from strands_robots.simulation.models import (
 _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "Simulation": ("strands_robots.simulation.mujoco.simulation", "Simulation"),
     "MuJoCoSimulation": ("strands_robots.simulation.mujoco.simulation", "Simulation"),
-    "MJCFBuilder": ("strands_robots.simulation.mujoco.mjcf_builder", "MJCFBuilder"),
+    "SpecBuilder": ("strands_robots.simulation.mujoco.spec_builder", "SpecBuilder"),
     "_configure_gl_backend": ("strands_robots.simulation.mujoco.backend", "_configure_gl_backend"),
     "_ensure_mujoco": ("strands_robots.simulation.mujoco.backend", "_ensure_mujoco"),
     "_is_headless": ("strands_robots.simulation.mujoco.backend", "_is_headless"),
@@ -100,8 +100,8 @@ __all__ = [
     "SimCamera",
     "SimWorld",
     "TrajectoryStep",
-    # MuJoCo builder
-    "MJCFBuilder",
+    # MuJoCo scene builder (MjSpec-based, replaces MJCFBuilder)
+    "SpecBuilder",
     # Model registry
     "register_urdf",
     "resolve_model",
