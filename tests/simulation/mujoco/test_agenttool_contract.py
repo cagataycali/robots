@@ -564,3 +564,44 @@ class TestMixedDataConfigRobots:
         # Ensure the physics actually advanced (forward kinematics would be
         # blocked by any lingering compile error).
         assert abs(sim._world.sim_time - 0.010) < 1e-9
+
+
+class TestRemoveRobotActuallyRemoves:
+    """Regression: remove_robot used to only pop the Python dict entry;
+    the robot's MJCF bodies/actuators/sensors stayed in the compiled model.
+    That blocked re-adding the same name and left stale DOFs consuming
+    physics time per step.
+    """
+
+    def test_remove_robot_empties_model(self, sim):
+        r = sim.add_robot(name="alice", data_config="so100")
+        assert r["status"] == "success"
+        njnt_before = sim._world._model.njnt
+        assert njnt_before > 0, "precondition: robot should have added joints"
+
+        r = sim.remove_robot(name="alice")
+        assert r["status"] == "success"
+        assert sim._world._model.njnt == 0
+        assert sim._world._model.nbody == 1  # just the world root body
+        assert "alice" not in sim._world.robots
+
+    def test_readd_same_name_after_remove(self, sim):
+        """Adding a robot, removing it, then adding again with the same name
+        must succeed (MuJoCo rejects duplicate body names otherwise)."""
+        assert sim.add_robot(name="alice", data_config="so100")["status"] == "success"
+        assert sim.remove_robot(name="alice")["status"] == "success"
+        r = sim.add_robot(name="alice", data_config="so100")
+        assert r["status"] == "success", r["content"][0].get("text")
+        assert sim._world._model.njnt == 6  # so100 has 6 joints
+
+    def test_remove_middle_of_three_robots(self, sim):
+        sim.add_robot(name="alice", data_config="so100", position=[-0.5, 0, 0])
+        sim.add_robot(name="bob", data_config="so100", position=[0.5, 0, 0])
+        sim.add_robot(name="carol", data_config="h1", position=[0, 1, 0])
+        njnt_before = sim._world._model.njnt
+
+        r = sim.remove_robot(name="bob")
+        assert r["status"] == "success"
+        assert set(sim._world.robots) == {"alice", "carol"}
+        # bob was 6 joints; alice (6) + carol (19) = 25 should remain.
+        assert sim._world._model.njnt == njnt_before - 6

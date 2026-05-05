@@ -844,6 +844,83 @@ def eject_body_from_scene(world: SimWorld, body_name: str) -> bool:
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
+def eject_robot_from_scene(world: SimWorld, robot_name: str) -> bool:
+    """Remove a robot's root body, actuators, sensors, and namespaced elements.
+
+    Unlike ``eject_body_from_scene`` (which only strips one body), this helper
+    also purges every element whose MuJoCo ``name`` starts with
+    ``"{robot_name}/"`` from worldbody / actuator / sensor / equality /
+    tendon / keyframe sections — matching the scope of
+    ``_prefix_robot_names`` in the inject path.
+
+    Default classes + assets are left in place so future robots that reuse
+    the same ``data_config`` can still reference them.
+    """
+    tmpdir = tempfile.mkdtemp(prefix="strands_eject_robot_")
+    try:
+        scene_path = _save_and_patch_xml(world, tmpdir, "scene_robot_ejected.xml")
+
+        tree = ET.parse(scene_path)
+        root = tree.getroot()
+
+        # Patch meshdir/texturedir to absolute so _reload_scene_from_xml can
+        # resolve assets after the ejection.
+        robot_base_dir = _get_robot_base_dir(world)
+        if robot_base_dir:
+            compiler = root.find("compiler")
+            if compiler is not None:
+                existing_meshdir = compiler.get("meshdir", "")
+                compiler.set("meshdir", os.path.normpath(os.path.join(robot_base_dir, existing_meshdir)))
+                existing_texdir = compiler.get("texturedir", "")
+                compiler.set("texturedir", os.path.normpath(os.path.join(robot_base_dir, existing_texdir)))
+
+        prefix = f"{robot_name}/"
+
+        def _strip_section(section_tag: str) -> int:
+            """Remove every child of the top-level <section_tag> element whose
+            name= starts with the robot prefix. Returns count removed."""
+            sec = root.find(section_tag)
+            if sec is None:
+                return 0
+            removed = 0
+            for child in list(sec):
+                n = child.get("name", "")
+                if n.startswith(prefix):
+                    sec.remove(child)
+                    removed += 1
+            return removed
+
+        # Worldbody: the robot's root body (alice/Base) is a direct child.
+        wb = root.find("worldbody")
+        wb_removed = 0
+        if wb is not None:
+            for child in list(wb):
+                n = child.get("name", "")
+                if n.startswith(prefix):
+                    wb.remove(child)
+                    wb_removed += 1
+
+        act_removed = _strip_section("actuator")
+        sensor_removed = _strip_section("sensor")
+        eq_removed = _strip_section("equality")
+        tendon_removed = _strip_section("tendon")
+
+        # Keyframes reference full qpos — safer to drop them.
+        for kf in root.findall("keyframe"):
+            root.remove(kf)
+
+        if (wb_removed + act_removed + sensor_removed + eq_removed + tendon_removed) == 0:
+            logger.warning("eject_robot_from_scene: no elements matched prefix %r", prefix)
+
+        tree.write(scene_path, xml_declaration=True)
+        return _reload_scene_from_xml(world, scene_path)
+    except (ValueError, RuntimeError, OSError) as e:
+        logger.error("Robot ejection failed for '%s': %s", robot_name, e)
+        return False
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
 def inject_camera_into_scene(world: SimWorld, cam: SimCamera) -> bool:
     """Inject a camera into a running simulation via XML round-trip.
 

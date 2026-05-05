@@ -33,6 +33,7 @@ from strands_robots.simulation.mujoco.recording import RecordingMixin
 from strands_robots.simulation.mujoco.rendering import RenderingMixin
 from strands_robots.simulation.mujoco.scene_ops import (
     eject_body_from_scene,
+    eject_robot_from_scene,
     inject_camera_into_scene,
     inject_object_into_scene,
     inject_robot_into_scene,
@@ -498,6 +499,14 @@ class Simulation(
             return {"status": "error", "content": [{"text": f"Failed to load: {e}"}]}
 
     def remove_robot(self, name: str) -> dict[str, Any]:
+        """Remove a robot and every element it injected (bodies, actuators,
+        sensors, equality/tendon refs) from the MJCF scene, then recompile.
+
+        Previously remove_robot only popped the Python-side dict entry,
+        leaving the robot's MJCF in place. That blocked re-adding a robot
+        with the same name (MuJoCo rejects duplicates on compile) and left
+        stale bodies in the physics loop.
+        """
         if self._world is None or name not in self._world.robots:
             return {"status": "error", "content": [{"text": f"Robot '{name}' not found."}]}
         # Guard: remove_robot races the cooperative-stop path if the robot has an active policy.
@@ -510,6 +519,17 @@ class Simulation(
             except Exception:
                 pass
             del self._policy_threads[name]
+
+        # Eject the robot's XML footprint before dropping the registry entry,
+        # so eject_robot_from_scene can still read robot.data_config for the
+        # merged-configs bookkeeping below.
+        ejected = eject_robot_from_scene(self._world, name)
+        if not ejected:
+            return {
+                "status": "error",
+                "content": [{"text": f"Failed to eject robot '{name}' from scene."}],
+            }
+
         del self._world.robots[name]
         return {"status": "success", "content": [{"text": f"🗑️ Robot '{name}' removed."}]}
 
