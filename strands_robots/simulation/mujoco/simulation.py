@@ -359,8 +359,15 @@ class Simulation(
     # Robot Management
 
     @staticmethod
-    def _ensure_meshes(model_path: str, robot_name: str):
-        """Check if mesh files referenced by a model XML exist; auto-download if missing."""
+    def _ensure_meshes(model_path: str, robot_name: str) -> dict[str, Any] | None:
+        """Check if mesh files referenced by a model XML exist; auto-download if missing.
+
+        Returns ``None`` on success (meshes present or downloaded cleanly) and
+        a standard error dict on auto-download failure. Caller MUST propagate
+        the error dict back to the agent - previously the return value was
+        ignored and the error was silently swallowed, leaving the agent to
+        hit a cryptic 'mesh not found' from MuJoCo instead.
+        """
         model_dir = os.path.dirname(os.path.abspath(model_path))
 
         files_to_check = [model_path]
@@ -398,7 +405,7 @@ class Simulation(
                 break
 
         if not missing:
-            return
+            return None
 
         logger.info("Downloading mesh files for '%s' from MuJoCo Menagerie (first time only)...", robot_name)
         try:
@@ -419,6 +426,7 @@ class Simulation(
                     }
                 ],
             }
+        return None
 
     def add_robot(
         self,
@@ -491,7 +499,13 @@ class Simulation(
         )
 
         try:
-            self._ensure_meshes(resolved_path, data_config or name)
+            # Propagate auto-download failure back to the agent instead of
+            # silently eating it (previously this dict was discarded and
+            # the next MuJoCo load threw a cryptic 'mesh not found').
+            mesh_err = self._ensure_meshes(resolved_path, data_config or name)
+            if mesh_err is not None:
+                self._world.robots.pop(name, None)
+                return mesh_err
 
             # Pre-scan the robot XML to discover joint/actuator names.
             # We load a temporary model just for introspection - this is NOT
