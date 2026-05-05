@@ -10,6 +10,23 @@ logger = logging.getLogger(__name__)
 
 
 class RenderingMixin:
+    """Rendering + observation helpers mixed into ``Simulation``.
+
+    Owns ``render``, ``render_depth``, ``render_all``, ``get_contacts``, and
+    the low-level ``_apply_sim_action`` (MuJoCo ``ctrl[]`` write + mj_step).
+
+    **Coupling** (see simulation.py top-level docstring): mixin reaches
+    into ``self._world``, ``self._renderer_tls``, ``self._renderer_model``,
+    ``self.default_width`` / ``self.default_height``, ``self._lock`` and
+    ``self._viewer_handle``. ``TYPE_CHECKING`` stubs below exist so mypy
+    accepts those lookups; they are a documentary contract, not an
+    enforceable protocol.
+
+    Thread-safety note: MuJoCo ``Renderer`` uses thread-local GL contexts
+    (CGL on macOS, GLX on Linux). A renderer created on thread A cannot be
+    reused from thread B - we keep one per-thread via ``_renderer_tls``.
+    """
+
     if TYPE_CHECKING:
         from strands_robots.simulation.models import SimWorld
 
@@ -19,8 +36,6 @@ class RenderingMixin:
         _renderer_tls: Any  # threading.local() - per-thread renderer dict
         default_width: int
         default_height: int
-
-    """Rendering capabilities for Simulation. Expects self._world, self.default_width, self.default_height."""
 
     def _validate_render_dims(self, width: int, height: int) -> dict[str, Any] | None:
         """reject non-positive render dims; convert MuJoCo's framebuffer

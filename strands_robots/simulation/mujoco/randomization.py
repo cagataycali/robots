@@ -11,6 +11,18 @@ logger = logging.getLogger(__name__)
 
 
 class RandomizationMixin:
+    """Domain randomization mixed into ``Simulation``.
+
+    Recolors geoms, perturbs lighting, and scales body mass / geom friction
+    by a random factor inside a user-supplied range.
+
+    **Coupling** (see simulation.py top-level docstring): mixin reaches
+    into ``self._world``, ``self._lock``, and the host's
+    ``_require_no_running_policy`` / ``_require_world`` helpers. ``TYPE_CHECKING``
+    stubs below exist so mypy accepts those lookups; they are a
+    documentary contract, not an enforceable protocol.
+    """
+
     if TYPE_CHECKING:
         import threading
 
@@ -19,9 +31,10 @@ class RandomizationMixin:
         _lock: "threading.Lock"
         _world: "SimWorld | None"
 
-        def _require_no_running_policy(self, action_name: str) -> dict[str, Any] | None: ...
-
-    """Domain randomization for Simulation. Expects self._world."""
+        def _require_no_running_policy(
+            self, action_name: str, robot_name: str | None = None
+        ) -> dict[str, Any] | None: ...
+        def _require_world(self) -> dict[str, Any] | None: ...
 
     def randomize(
         self,

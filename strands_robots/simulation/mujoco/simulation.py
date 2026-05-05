@@ -1,4 +1,45 @@
-"""MuJoCo Simulation - AgentTool orchestrator composing physics/rendering/policy mixins."""
+"""MuJoCo Simulation backend - AgentTool orchestrator + shared state host.
+
+Architecture notes (honest version, see GH #118)
+------------------------------------------------
+The ``Simulation`` class uses multiple-inheritance to compose four mixins
+(``PhysicsMixin``, ``RenderingMixin``, ``RecordingMixin``, ``RandomizationMixin``)
+on top of the ``SimEngine`` ABC and the Strands ``AgentTool`` base. The
+split keeps each file navigable (physics.py ~1150 lines, rendering.py ~730,
+etc.) but the mixin boundaries describe *where code lives*, NOT the
+coupling graph.
+
+Every mixin reaches back into this class for the same shared state:
+
+    self._world              - SimWorld handle (model + data + bookkeeping)
+    self._lock               - serializes mj_step and ctrl[] writes
+    self._mj                 - cached ``mujoco`` module reference
+    self._policy_threads     - per-robot Future dict (GH #114)
+    self._renderer_tls       - thread-local renderer cache (macOS CGL)
+    self._executor           - ThreadPoolExecutor for async policies
+
+AND the cross-cutting helpers:
+
+    self._require_world()              - "is the world live?" guard
+    self._require_no_running_policy()  - scene-mutation safety gate
+    self._prune_done_futures()         - cleanup of stale Future refs
+    self._active_policy_robots()       - introspection + prune
+
+Mixins declare these via ``if TYPE_CHECKING`` stubs so mypy accepts the
+attribute lookups. This is NOT a Protocol - mixins are not enforceable;
+the contract is *documentary*. The stubs exist so edits to the helpers
+in this file propagate to the mixin type-checks without manual sync.
+
+The alternative (extract a ``_SimulationState`` dataclass + pass it to
+mixins) was explored and rejected: threading the state through every
+method would blow up the diff across every mutation call, and mypy
+narrowing of ``state.world._model`` after a ``_require_world(state)``
+call does not work any better than narrowing through a bound method
+(same limitation that led commit f5c8518 to back out the helper-based
+dedup).
+
+So: the split is honest about being for file-size, not for decoupling.
+"""
 
 import inspect
 import json

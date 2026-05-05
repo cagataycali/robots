@@ -11,12 +11,24 @@ logger = logging.getLogger(__name__)
 
 
 class RecordingMixin:
+    """Trajectory recording mixed into ``Simulation``.
+
+    Writes per-step observations + actions + instruction to a LeRobotDataset
+    via ``start_recording`` / ``stop_recording`` and the ``on_frame`` hook
+    in ``PolicyRunner``. Separately from that, ``start_cameras_recording``
+    dumps raw per-camera MP4s.
+
+    **Coupling** (see simulation.py top-level docstring): mixin reaches
+    into ``self._world`` (trajectory buffer + dataset_recorder live in
+    ``_world._backend_state``). ``TYPE_CHECKING`` stub below exists so mypy
+    accepts the ``_world`` lookup; it is a documentary contract, not an
+    enforceable protocol.
+    """
+
     if TYPE_CHECKING:
         from strands_robots.simulation.models import SimWorld
 
         _world: "SimWorld | None"
-
-    """Trajectory recording for Simulation. Expects self._world."""
 
     def start_recording(
         self,

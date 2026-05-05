@@ -26,6 +26,21 @@ logger = logging.getLogger(__name__)
 
 
 class PhysicsMixin:
+    """Advanced MuJoCo physics capabilities mixed into ``Simulation``.
+
+    Lives at roughly ``self._world._data`` + ``self._world._model`` level:
+    reads/writes MuJoCo arrays directly for checkpointing, raycasts,
+    jacobians, joint control, sensor readout, etc.
+
+    **Coupling** (see simulation.py top-level docstring): mixin reaches
+    into ``self._world``, ``self._lock``, and the host's
+    ``_require_no_running_policy`` / ``_require_world`` / ``_prune_done_futures``
+    helpers. ``TYPE_CHECKING`` stubs below exist so mypy accepts those
+    lookups; they are a documentary contract, not an enforceable protocol.
+
+    Naming: methods match action names in tool_spec.json for direct dispatch.
+    """
+
     if TYPE_CHECKING:
         import threading
 
@@ -34,14 +49,10 @@ class PhysicsMixin:
         _lock: "threading.Lock"
         _world: "SimWorld | None"
 
-        def _require_no_running_policy(self, action_name: str) -> dict[str, Any] | None: ...
-
-    """Advanced physics capabilities for Simulation.
-
-    Expects: self._world (SimWorld with _model, _data)
-
-    Naming: methods match action names in tool_spec.json for direct dispatch.
-    """
+        def _require_no_running_policy(
+            self, action_name: str, robot_name: str | None = None
+        ) -> dict[str, Any] | None: ...
+        def _require_world(self) -> dict[str, Any] | None: ...
 
     # State Checkpointing
 
