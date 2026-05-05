@@ -79,6 +79,7 @@ from strands_robots.simulation.mujoco.scene_ops import (
     inject_object_into_scene,
     inject_robot_into_scene,
 )
+from strands_robots.simulation.mujoco.spec_builder import SpecBuilder
 from strands_robots.simulation.policy_runner import CooperativeStop
 
 if TYPE_CHECKING:
@@ -342,12 +343,54 @@ class Simulation(
             return {"status": "error", "content": [{"text": f"Failed to load scene: {e}"}]}
 
     def _compile_world(self):
+        """Compile the current ``SimWorld`` state into live ``MjModel`` / ``MjData``.
+
+        Two paths, toggled by the ``STRANDS_SIM_USE_MJSPEC`` env var
+        (see IDEA.md + GH #121):
+
+        * ``0`` (default): the legacy ``MJCFBuilder`` string-concat path.
+          Builds an XML string, then ``MjModel.from_xml_string``. Preserved
+          verbatim so downstream scene_ops round-trips (inject / eject) keep
+          working exactly as before.
+
+        * ``1``: the new ``SpecBuilder`` path. Builds a ``MjSpec`` (the
+          MuJoCo AST), calls ``spec.compile()``, stashes the spec in
+          ``_backend_state["spec"]`` so later mutation calls can use
+          ``spec.recompile(model, data)`` instead of XML round-tripping.
+          Still exports ``_backend_state["xml"]`` via ``spec.to_xml()`` so
+          existing scene_ops consumers keep reading it.
+        """
         mj = self._mj
-        xml = MJCFBuilder.build_objects_only(self._world)
-        self._world._backend_state["xml"] = xml
-        self._world._model = mj.MjModel.from_xml_string(xml)
+        if self._use_mjspec():
+            spec = SpecBuilder.build(self._world)
+            self._world._backend_state["spec"] = spec
+            self._world._model = spec.compile()
+            # XML is still exported for legacy readers (load_scene flag
+            # consumers, mesh-path patching). New code should prefer the
+            # spec handle.
+            try:
+                self._world._backend_state["xml"] = spec.to_xml()
+            except Exception as xml_err:
+                # Shouldn't happen for well-formed specs, but don't fail
+                # the compile just because we can't serialise.
+                logger.warning("spec.to_xml() failed: %s", xml_err)
+        else:
+            xml = MJCFBuilder.build_objects_only(self._world)
+            self._world._backend_state["xml"] = xml
+            self._world._model = mj.MjModel.from_xml_string(xml)
         self._world._data = mj.MjData(self._world._model)
         self._world.status = SimStatus.IDLE
+
+    @staticmethod
+    def _use_mjspec() -> bool:
+        """Return True iff the MjSpec builder path is enabled.
+
+        Gated by ``STRANDS_SIM_USE_MJSPEC`` env var - accepts ``"1"``,
+        ``"true"``, ``"yes"`` (case-insensitive) as truthy, everything else
+        as false. Default false to preserve pre-refactor behaviour.
+        """
+        val = os.getenv("STRANDS_SIM_USE_MJSPEC", "").strip().lower()
+        return val in ("1", "true", "yes")
 
     def _recompile_world(self) -> dict[str, Any]:
         try:

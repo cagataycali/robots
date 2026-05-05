@@ -368,32 +368,49 @@ class TestAddCameraTargetOrients:
         finally:
             sim.destroy()
 
-    def test_xyaxes_emitted_in_xml(self):
-        """The merged scene XML must contain xyaxes= for cameras with a target."""
+    def test_camera_orientation_written(self):
+        """A target'd camera must end up with a non-default orientation in the
+        compiled model. Previously this test asserted on the raw ``xyaxes="..."``
+        attribute in the scene XML, which the MjSpec builder path replaces with
+        a ``quat`` attribute. Both representations resolve to the same rotation
+        matrix in the compiled MjModel (``cam_mat0``) - which is what we
+        actually care about for rendering.
+        """
+        import numpy as np
+
         sim = self._with_obj()
         try:
             res = sim.add_camera(name="side_cam", position=[2.0, 0.0, 0.3], target=[0.0, 0.0, 0.25])
             assert res["status"] == "success", res["content"][0]["text"]
-            # Grab the stored scene XML.
-            xml = sim._world._backend_state.get("xml", "")
-            # If there are no robots in the scene the XML is only recompiled (not injected).
-            # In either case the camera emission path should have used our helper.
-            if xml and "side_cam" in xml:
-                assert "xyaxes=" in xml, "xyaxes attribute must be written for targeted cameras"
+
+            mj = sim._mj
+            model = sim._world._model
+            assert model is not None
+            cam_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_CAMERA, "side_cam")
+            assert cam_id >= 0, "camera was not registered in compiled model"
+
+            # MuJoCo's default camera orientation is identity (looks along -Z).
+            # Our target->quat conversion for position [2, 0, 0.3] looking at
+            # [0, 0, 0.25] must produce a non-identity rotation.
+            rot = model.cam_mat0[cam_id].reshape(3, 3)
+            assert not np.allclose(rot, np.eye(3)), "camera has default (identity) orientation - target was ignored"
         finally:
             sim.destroy()
 
-    def test_different_targets_produce_different_xyaxes(self):
+    def test_different_targets_produce_different_orientations(self):
         """Two cameras at the SAME position but different targets must produce
-        DIFFERENT ``xyaxes`` strings in the merged scene XML. Before the fix the
-        XML had no orientation at all, so both cameras shared MuJoCo's default
-        look direction -> identical frames regardless of `target`.
+        DIFFERENT rotation matrices in the compiled MjModel. Before the
+        camera-target fix (T* in PR #85) both cameras shared MuJoCo's default
+        look direction, so rendered frames were identical regardless of the
+        ``target`` argument.
 
-        We assert on XML (orientation bits) rather than rendered pixels, because
-        the offscreen GL context on some CI runners produces blank frames which
-        makes pixel-level comparison unreliable (see note on macOS depth/ARB_clip
-        elsewhere in this suite)."""
-        import re as _re
+        We assert on ``cam_mat0`` (the rotation matrix of the camera frame
+        at qpos0) rather than rendered pixels, because offscreen GL on some
+        CI runners produces blank frames and makes pixel comparison
+        unreliable. cam_mat0 is representation-agnostic - works under both
+        legacy MJCFBuilder (xyaxes-based) and SpecBuilder (quat-based) paths.
+        """
+        import numpy as np
 
         sim = self._with_obj()
         try:
@@ -401,14 +418,19 @@ class TestAddCameraTargetOrients:
             res_b = sim.add_camera(name="cam_b", position=[2.0, 0.0, 0.5], target=[0.0, 2.0, 0.25])
             assert res_a["status"] == "success"
             assert res_b["status"] == "success"
-            xml = sim._world._backend_state.get("xml", "")
-            a_match = _re.search(r'<camera[^>]*name="cam_a"[^>]*xyaxes="([^"]+)"', xml)
-            b_match = _re.search(r'<camera[^>]*name="cam_b"[^>]*xyaxes="([^"]+)"', xml)
-            assert a_match, f"cam_a has no xyaxes in XML: {xml[:500]}"
-            assert b_match, f"cam_b has no xyaxes in XML: {xml[:500]}"
-            assert a_match.group(1) != b_match.group(1), (
-                "cameras with different targets must have different xyaxes (they are currently identical,"
-                f" which means `target` is being ignored): {a_match.group(1)}"
+
+            mj = sim._mj
+            model = sim._world._model
+            a_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_CAMERA, "cam_a")
+            b_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_CAMERA, "cam_b")
+            assert a_id >= 0 and b_id >= 0
+
+            rot_a = model.cam_mat0[a_id].reshape(3, 3)
+            rot_b = model.cam_mat0[b_id].reshape(3, 3)
+            assert not np.allclose(rot_a, rot_b, atol=1e-3), (
+                "cameras with different targets must have different orientations "
+                "(their cam_mat0 rotation matrices are currently identical, which means "
+                "`target` is being ignored)."
             )
         finally:
             sim.destroy()
