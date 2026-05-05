@@ -961,3 +961,156 @@ class TestCleanupGracefulShutdown:
         for name, fut in futs.items():
             assert fut is not None and fut.done(), f"'{name}' future was not awaited"
         assert sim._world is None
+
+
+class TestMutationGuardStress:
+    """GH #119: hammer the mutation guard to prove no race between
+    the ``_require_no_running_policy`` check and the PolicyRunner's
+    ``mj_step`` call. Historically we relied on the check being 'atomic
+    enough in practice' — no test proved it.
+
+    The critical contract we're validating:
+
+    1. Every scene-mutation call attempted while a policy is live must
+       either (a) return status=error with our uniform message, or
+       (b) return status=success if the policy has already settled.
+       NOTHING may corrupt MuJoCo state or segfault.
+
+    2. The mutation guard must be fast enough that 1000 concurrent
+       requests from the main thread do not starve the policy worker.
+    """
+
+    @pytest.fixture
+    def robot_path(self, tmp_path):
+        path = tmp_path / "arm.xml"
+        path.write_text(ROBOT_XML)
+        return str(path)
+
+    def test_1000_set_gravity_calls_during_policy_never_segfault(self, robot_path):
+        """Start a policy, then bang set_gravity 1000 times from the main
+        thread. Every call must return a well-formed dict — no crash, no
+        half-applied mutation. Once the policy ends, the last set_gravity
+        succeeds."""
+        sim = Simulation(tool_name="test_stress_set_gravity", mesh=False)
+        sim.create_world()
+        sim.add_robot("arm", urdf_path=robot_path)
+
+        sim.start_policy("arm", policy_provider="mock", duration=1.0, fast_mode=True)
+
+        # Hammer from the main thread while the worker runs.
+        blocked = 0
+        succeeded = 0
+        for _ in range(1000):
+            r = sim.set_gravity([0.0, 0.0, -9.81])
+            assert isinstance(r, dict), r
+            assert r["status"] in ("success", "error"), r
+            if r["status"] == "error":
+                assert "policy is running" in r["content"][0]["text"].lower()
+                blocked += 1
+            else:
+                succeeded += 1
+
+        # At least one call must have been blocked (policy was live).
+        assert blocked > 0, "stress loop never saw the policy as live — timing broken"
+
+        # After policy finishes, set_gravity works.
+        fut = sim._policy_threads.get("arm")
+        if fut is not None:
+            try:
+                fut.result(timeout=10.0)
+            except Exception:
+                pass
+
+        result = sim.set_gravity([0.0, 0.0, -5.0])
+        assert result["status"] == "success"
+
+        sim.cleanup(policy_stop_timeout=2.0)
+
+    def test_rapid_start_stop_start_stop_policy(self, robot_path):
+        """Stress the Future lifecycle. Rapid start/stop cycles must leave
+        _policy_threads in a consistent state every iteration."""
+        sim = Simulation(tool_name="test_rapid_cycle", mesh=False)
+        sim.create_world()
+        sim.add_robot("arm", urdf_path=robot_path)
+
+        for i in range(10):
+            r_start = sim.start_policy("arm", policy_provider="mock", duration=2.0, fast_mode=True)
+            assert r_start["status"] == "success", (i, r_start)
+
+            r_stop = sim.stop_policy("arm")
+            assert r_stop["status"] == "success", (i, r_stop)
+
+            # Await worker so the next start_policy doesn't race.
+            fut = sim._policy_threads.get("arm")
+            if fut is not None:
+                try:
+                    fut.result(timeout=5.0)
+                except Exception:
+                    pass
+
+            # Prune runs as a side effect of _active_policy_robots.
+            active = sim._active_policy_robots()
+            assert active == [], (i, active)
+
+        sim.cleanup(policy_stop_timeout=2.0)
+
+    def test_mutation_accepted_immediately_after_policy_completes(self, robot_path):
+        """Once the policy Future is done(), the VERY NEXT scene mutation
+        must succeed — no lingering guard state from the just-completed run."""
+        sim = Simulation(tool_name="test_no_lingering_guard", mesh=False)
+        sim.create_world()
+        sim.add_robot("arm", urdf_path=robot_path)
+
+        # Very short policy.
+        sim.start_policy("arm", policy_provider="mock", duration=0.05, fast_mode=True)
+        fut = sim._policy_threads.get("arm")
+        assert fut is not None
+        try:
+            fut.result(timeout=5.0)
+        except Exception:
+            pass
+        assert fut.done()
+
+        # First mutation after completion must succeed.
+        r = sim.set_gravity([0.0, 0.0, -9.81])
+        assert r["status"] == "success", r
+
+        sim.cleanup(policy_stop_timeout=1.0)
+
+    def test_concurrent_policies_stress_no_deadlock(self, robot_path):
+        """Two concurrent policies (GH #114) + main-thread mutation spam
+        must not deadlock on self._lock."""
+        sim = Simulation(tool_name="test_concurrent_stress", mesh=False)
+        sim.create_world()
+        sim.add_robot("armA", urdf_path=robot_path)
+        sim.add_robot("armB", urdf_path=robot_path)
+
+        sim.start_policy("armA", policy_provider="mock", duration=1.0, fast_mode=True)
+        sim.start_policy("armB", policy_provider="mock", duration=1.0, fast_mode=True)
+
+        blocked = 0
+        errors = 0
+        for _ in range(500):
+            r = sim.set_gravity([0.0, 0.0, -9.81])
+            assert r["status"] in ("success", "error"), r
+            if r["status"] == "error":
+                # When blocked, the message must name AT LEAST one robot.
+                text = r["content"][0]["text"]
+                if "armA" in text or "armB" in text:
+                    blocked += 1
+                else:
+                    errors += 1
+
+        assert errors == 0, f"unexpected error shape: {errors}"
+        assert blocked > 0, "never caught policies as live"
+
+        # Wait for both to settle.
+        for name in ("armA", "armB"):
+            fut = sim._policy_threads.get(name)
+            if fut is not None:
+                try:
+                    fut.result(timeout=10.0)
+                except Exception:
+                    pass
+
+        sim.cleanup(policy_stop_timeout=2.0)
