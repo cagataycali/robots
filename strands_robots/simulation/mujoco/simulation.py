@@ -1521,6 +1521,7 @@ class Simulation(
         policy_object: "Policy | None" = None,
         n_steps: int | None = None,
         max_steps: int | None = None,
+        max_onframe_failures: int | None = None,
     ) -> dict[str, Any]:
         """MuJoCo ``run_policy`` override: pre-flight world check + graceful stop.
 
@@ -1549,6 +1550,7 @@ class Simulation(
                 policy_object=policy_object,
                 n_steps=n_steps,
                 max_steps=max_steps,
+                max_onframe_failures=max_onframe_failures,
             )
         finally:
             if self._world is not None and robot_name in self._world.robots:

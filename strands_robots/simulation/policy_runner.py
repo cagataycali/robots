@@ -139,6 +139,17 @@ class VideoConfig:
         )
 
 
+# on_frame hooks that raise are logged at WARN — user-provided telemetry is
+# not allowed to kill the rollout. BUT if the hook raises on every single step
+# (e.g. a recording hook with a typo'd observation key), we'd complete a 500-step
+# episode with zero frames written and silently corrupt the dataset. After this
+# many *consecutive* failures, the runner raises and fails the episode loudly.
+#
+# Overridable via the ``max_onframe_failures`` kwarg on ``PolicyRunner.run``.
+# See GH #117.
+_MAX_CONSECUTIVE_ONFRAME_FAILURES = 5
+
+
 class CooperativeStop(BaseException):
     """Raised by an ``on_frame`` hook to cooperatively stop a run.
 
@@ -175,6 +186,7 @@ class PolicyRunner:
         fast_mode: bool = False,
         video: VideoConfig | None = None,
         on_frame: OnFrame | None = None,
+        max_onframe_failures: int | None = None,
     ) -> dict[str, Any]:
         """Run ``policy`` on ``robot_name`` for ``duration`` seconds.
 
@@ -196,6 +208,13 @@ class PolicyRunner:
                 after every ``send_action``. Public extension point — backends
                 layer in recording / telemetry / graceful-stop via this hook
                 without subclassing the runner.
+            max_onframe_failures: Maximum *consecutive* non-``CooperativeStop``
+                exceptions from the ``on_frame`` hook before the runner aborts
+                the episode. ``None`` (default) uses
+                ``_MAX_CONSECUTIVE_ONFRAME_FAILURES`` (currently ``5``). A
+                broken recording hook otherwise silently produces empty
+                datasets — see GH #117. Non-consecutive failures reset the
+                counter.
 
         Returns:
             ``{"status": "success"|"error", "content": [{"text": ...}]}``.
@@ -231,6 +250,10 @@ class PolicyRunner:
             start_time = time.time()
             step_count = 0
 
+            onframe_failure_limit = (
+                max_onframe_failures if max_onframe_failures is not None else _MAX_CONSECUTIVE_ONFRAME_FAILURES
+            )
+            consecutive_onframe_failures = 0
             while step_count < total_steps:
                 observation = self.sim.get_observation(robot_name=robot_name, skip_images=_skip_images)
 
@@ -246,13 +269,31 @@ class PolicyRunner:
                     if on_frame is not None:
                         try:
                             on_frame(step_count, observation, action_dict)
+                            consecutive_onframe_failures = 0
                         except CooperativeStop:
                             # Backend (e.g. MuJoCo) signalled a graceful stop.
                             # Break both loops and return a normal success result.
                             raise
                         except Exception as e:
-                            # on_frame is user-provided telemetry — never fatal.
-                            logger.warning("on_frame hook raised: %s", e)
+                            # on_frame is user-provided telemetry — never fatal
+                            # *per call*. But if it fails on every step, a 500-
+                            # step episode completes "successfully" with zero
+                            # frames recorded and the dataset is silently empty.
+                            # Count consecutive failures and fail the episode
+                            # after ``onframe_failure_limit`` in a row. See GH #117.
+                            consecutive_onframe_failures += 1
+                            logger.warning(
+                                "on_frame hook failed (%d/%d consecutive): %s",
+                                consecutive_onframe_failures,
+                                onframe_failure_limit,
+                                e,
+                            )
+                            if consecutive_onframe_failures >= onframe_failure_limit:
+                                raise RuntimeError(
+                                    f"on_frame hook failed {onframe_failure_limit} times in a row; "
+                                    f"aborting episode to avoid silent dataset corruption. "
+                                    f"Last error: {e!r}"
+                                ) from e
 
                     step_count += 1
 

@@ -246,6 +246,7 @@ class SimEngine(ABC):
         policy_object: Policy | None = None,
         n_steps: int | None = None,
         max_steps: int | None = None,
+        max_onframe_failures: int | None = None,
     ) -> dict[str, Any]:
         """Run a policy loop in the simulation (blocking).
 
@@ -330,6 +331,7 @@ class SimEngine(ABC):
             fast_mode=fast_mode,
             video=VideoConfig.from_dict(video),
             on_frame=on_frame,
+            max_onframe_failures=max_onframe_failures,
         )
 
     def start_policy(

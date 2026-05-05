@@ -62,6 +62,116 @@ class TestPolicyRunnerRun:
         assert calls == sorted(calls)
 
 
+class TestOnFrameFailureCounter:
+    """GH #117: on_frame exceptions must abort the episode after N consecutive
+    failures so a broken recording hook can't silently corrupt a dataset."""
+
+    def test_single_onframe_failure_is_tolerated(self, sim_with_robot):
+        """One failure then success must NOT abort the episode."""
+        policy = MockPolicy()
+        policy.set_robot_state_keys(sim_with_robot.robot_joint_names("alice"))
+
+        calls = {"count": 0}
+
+        def flaky(step: int, obs: dict, action: dict) -> None:
+            calls["count"] += 1
+            if calls["count"] == 2:
+                raise ValueError("transient")
+
+        runner = PolicyRunner(sim_with_robot)
+        result = runner.run(
+            "alice",
+            policy,
+            duration=0.2,
+            control_frequency=50,
+            fast_mode=True,
+            on_frame=flaky,
+            max_onframe_failures=3,
+        )
+        # Single failure in a sea of successes: episode completes.
+        assert result["status"] == "success", result
+
+    def test_consecutive_onframe_failures_abort_episode(self, sim_with_robot):
+        """N consecutive on_frame failures must make run() return an error,
+        preventing the silent-empty-dataset footgun described in GH #117."""
+        policy = MockPolicy()
+        policy.set_robot_state_keys(sim_with_robot.robot_joint_names("alice"))
+
+        call_count = {"n": 0}
+
+        def always_fails(step: int, obs: dict, action: dict) -> None:
+            call_count["n"] += 1
+            raise ValueError(f"boom-{step}")
+
+        runner = PolicyRunner(sim_with_robot)
+        result = runner.run(
+            "alice",
+            policy,
+            duration=5.0,  # plenty of time — early-abort is the point
+            control_frequency=50,
+            fast_mode=True,
+            on_frame=always_fails,
+            max_onframe_failures=3,
+        )
+        assert result["status"] == "error", result
+        text = result["content"][0]["text"]
+        assert "3 times in a row" in text
+        # Hook was called exactly the threshold number of times, not more.
+        # (Third raise aborts.)
+        assert call_count["n"] == 3
+
+    def test_consecutive_counter_resets_on_success(self, sim_with_robot):
+        """Two failures then a success then two more failures must NOT abort
+        at threshold=3 — the counter resets on a successful call."""
+        policy = MockPolicy()
+        policy.set_robot_state_keys(sim_with_robot.robot_joint_names("alice"))
+
+        calls = {"n": 0}
+
+        def mixed(step: int, obs: dict, action: dict) -> None:
+            calls["n"] += 1
+            # Fail on calls 1,2, succeed on 3, fail on 4,5, succeed on 6+
+            if calls["n"] in (1, 2, 4, 5):
+                raise RuntimeError(f"bad-{calls['n']}")
+
+        runner = PolicyRunner(sim_with_robot)
+        result = runner.run(
+            "alice",
+            policy,
+            duration=0.3,
+            control_frequency=50,
+            fast_mode=True,
+            on_frame=mixed,
+            max_onframe_failures=3,
+        )
+        assert result["status"] == "success", result
+
+    def test_default_threshold_is_5(self, sim_with_robot):
+        """Without explicit max_onframe_failures, default kicks in at 5."""
+        policy = MockPolicy()
+        policy.set_robot_state_keys(sim_with_robot.robot_joint_names("alice"))
+
+        calls = {"n": 0}
+
+        def always_fails(step: int, obs: dict, action: dict) -> None:
+            calls["n"] += 1
+            raise ValueError(f"boom-{calls['n']}")
+
+        runner = PolicyRunner(sim_with_robot)
+        result = runner.run(
+            "alice",
+            policy,
+            duration=5.0,
+            control_frequency=50,
+            fast_mode=True,
+            on_frame=always_fails,
+            # max_onframe_failures omitted — default is 5
+        )
+        assert result["status"] == "error"
+        assert "5 times in a row" in result["content"][0]["text"]
+        assert calls["n"] == 5
+
+
 # -- evaluate() ----------------------------------------------------------------
 
 
