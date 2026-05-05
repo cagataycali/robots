@@ -426,6 +426,78 @@ def _prefix_robot_names(robot_root: Any, prefix: str) -> None:
                 visit(child)
 
 
+def _collect_existing_class_names(scene_default: Any | None) -> set[str]:
+    """Walk a <default> subtree and return every ``class="X"`` ever declared."""
+    names: set[str] = set()
+    if scene_default is None:
+        return names
+    stack = list(scene_default)
+    while stack:
+        node = stack.pop()
+        cls = node.get("class", "")
+        if cls:
+            names.add(cls)
+        stack.extend(list(node))
+    return names
+
+
+def _namespace_robot_default_classes(robot_root: Any, namespace: str, skip: set[str]) -> dict[str, str]:
+    """Rename ``<default class="X">`` blocks to ``<default class="{namespace}__X">``.
+
+    MuJoCo flattens all nested ``<default class="X">`` names into a single
+    global namespace at compile time. Two robots that each declare a nested
+    class named ``visual`` (common in MuJoCo Menagerie models) collide with
+    ``"repeated default class name"`` even though they live in different
+    parent ``<default>`` blocks in the source XML.
+
+    This helper renames every class declared in the robot's ``<default>``
+    tree to a namespaced form, EXCEPT for classes listed in ``skip`` (names
+    that already exist in the merged scene from a robot sharing the same
+    ``data_config`` — those we want to reuse, not duplicate).
+
+    It then rewrites every ``class=`` and ``childclass=`` attribute in the
+    robot's other sections (``worldbody``, ``actuator``, ``sensor``, etc.)
+    so the references still resolve to the renamed classes.
+
+    Args:
+        robot_root: The <mujoco> root of the robot's canonical MJCF.
+        namespace: A prefix unique to this robot's ``data_config`` — typically
+            the data_config key itself (e.g. ``"h1"`` or ``"so100"``).
+        skip: Class names that already exist in the scene (leave them alone).
+
+    Returns:
+        Mapping from old → new class names (only for classes we renamed).
+    """
+    robot_default = robot_root.find("default")
+    if robot_default is None:
+        return {}
+
+    mapping: dict[str, str] = {}
+    stack = list(robot_default)
+    while stack:
+        node = stack.pop()
+        cls = node.get("class", "")
+        if cls and cls not in skip and cls not in mapping:
+            mapping[cls] = f"{namespace}__{cls}"
+        stack.extend(list(node))
+
+    if not mapping:
+        return {}
+
+    # Apply the rename everywhere in the robot tree: <default class=..>, and
+    # class=/childclass= on body/geom/joint/site/camera/... references.
+    def rewrite(elem: Any) -> None:
+        for attr in ("class", "childclass"):
+            v = elem.get(attr)
+            if v and v in mapping:
+                elem.set(attr, mapping[v])
+        for child in elem:
+            rewrite(child)
+
+    rewrite(robot_root)
+    return mapping
+
+
 def inject_robot_into_scene(
     world: SimWorld,
     robot: SimRobot,
@@ -584,12 +656,45 @@ def inject_robot_into_scene(
                 if n:
                     existing_sensors.add(n)
 
-        # Step 4e: Merge default classes (dedupe by class name)
-        # Multiple robots with the same data_config share the same <default
-        # class="..."> block. Appending blindly → XML Error: "repeated default
-        # class name". Skip classes we already have.
+        # Step 4e: Merge default classes.
+        # - Robots that share a data_config reuse the same classes (dedupe).
+        # - Robots with DIFFERENT data_configs often declare colliding class
+        #   names (e.g. every MuJoCo Menagerie model has its own nested
+        #   ``<default class="visual">``). Namespace those classes per
+        #   data_config so both can coexist.
         scene_default = scene_root.find("default")
         robot_default = robot_root.find("default")
+
+        merged_configs = world._backend_state.setdefault("merged_configs", set())
+        robot_cfg = robot.data_config or robot.name
+        if robot_default is not None and robot_cfg not in merged_configs:
+            existing_class_names = _collect_existing_class_names(scene_default)
+            _namespace_robot_default_classes(robot_root, robot_cfg, existing_class_names)
+            # Re-fetch after in-place rewrite.
+            robot_default = robot_root.find("default")
+            merged_configs.add(robot_cfg)
+        elif robot_cfg in merged_configs:
+            # Same config already merged — drop this robot's <default> entirely,
+            # and rewrite class/childclass on its bodies to point at the
+            # already-merged, already-namespaced classes so references resolve.
+            if robot_default is not None:
+                for node in list(robot_default):
+                    pass  # no-op; we'll strip robot_default below
+
+            # Walk once to rewrite references using the existing scheme:
+            # classes were namespaced as "{cfg}__{origname}" the first time.
+            def _rewrite_refs(elem: Any) -> None:
+                for attr in ("class", "childclass"):
+                    v = elem.get(attr)
+                    if v and "__" not in v:
+                        elem.set(attr, f"{robot_cfg}__{v}")
+                for child in elem:
+                    _rewrite_refs(child)
+
+            _rewrite_refs(robot_root)
+            # Zero out robot_default so the merge below is a no-op.
+            robot_default = None
+
         if robot_default is not None:
             if scene_default is None:
                 scene_default = ET.SubElement(scene_root, "default")

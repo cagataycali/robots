@@ -528,3 +528,39 @@ class TestAddRobotDeprecation:
         warn_texts = [str(w.message) for w in captured if issubclass(w.category, DeprecationWarning)]
         if r["status"] == "success":
             assert any("deprecated" in t.lower() for t in warn_texts)
+
+
+class TestMixedDataConfigRobots:
+    """Regression: robots with different ``data_config`` values can coexist
+    in one scene even when their MJCFs declare colliding nested default
+    class names (e.g. ``<default class="visual">`` in both).
+
+    Pre-fix, adding an ``h1`` humanoid after two ``so100`` arms errored with
+    MuJoCo's *"repeated default class name"*. Fixed by per-config namespacing
+    in scene_ops.
+    """
+
+    def test_two_arms_plus_humanoid_coexist(self, sim):
+        r1 = sim.add_robot(name="alice", data_config="so100", position=[-0.6, 0, 0])
+        assert r1["status"] == "success", r1["content"][0].get("text")
+        r2 = sim.add_robot(name="bob", data_config="so100", position=[0.6, 0, 0])
+        assert r2["status"] == "success", r2["content"][0].get("text")
+        r3 = sim.add_robot(name="carol", data_config="h1", position=[0, 1.0, 0])
+        assert r3["status"] == "success", r3["content"][0].get("text")
+        assert set(sim._world.robots.keys()) == {"alice", "bob", "carol"}
+
+    def test_four_different_configs_coexist(self, sim):
+        specs = [
+            ("alice", "so100", [-0.6, 0, 0]),
+            ("bob", "so100", [0.6, 0, 0]),
+            ("carol", "h1", [0, 1.0, 0]),
+            ("dan", "panda", [0, -1.0, 0]),
+        ]
+        for name, cfg, pos in specs:
+            r = sim.add_robot(name=name, data_config=cfg, position=pos)
+            assert r["status"] == "success", f"add_robot({name}, {cfg}) failed: {r['content'][0].get('text')}"
+        r = sim.step(n_steps=5)
+        assert r["status"] == "success"
+        # Ensure the physics actually advanced (forward kinematics would be
+        # blocked by any lingering compile error).
+        assert abs(sim._world.sim_time - 0.010) < 1e-9
