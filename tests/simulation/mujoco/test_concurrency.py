@@ -871,3 +871,93 @@ class TestConcurrentPerRobotPolicies:
         assert sim._world.robots["armB"].policy_steps > 0, "armB never stepped — concurrent scheduling broke it"
 
         sim.cleanup()
+
+
+class TestCleanupGracefulShutdown:
+    """GH #116: cleanup() must wait for live policy workers before nulling
+    the world, otherwise an in-flight mj_step segfaults on freed arrays.
+    """
+
+    @pytest.fixture
+    def robot_path(self, tmp_path):
+        path = tmp_path / "arm.xml"
+        path.write_text(ROBOT_XML)
+        return str(path)
+
+    def test_cleanup_awaits_running_policy(self, robot_path):
+        """Start a long-running policy, call cleanup, verify the worker
+        completed (Future.done()) before cleanup returned and we do NOT
+        segfault on world nulling."""
+        sim = Simulation(tool_name="test_cleanup_await", mesh=False)
+        sim.create_world()
+        sim.add_robot("armA", urdf_path=robot_path)
+
+        sim.start_policy("armA", policy_provider="mock", duration=5.0, fast_mode=True)
+        fut = sim._policy_threads.get("armA")
+        assert fut is not None and not fut.done(), "policy should be live"
+
+        # Cleanup with tight timeout — the cooperative-stop flag is read
+        # every step so 1s is plenty for MockPolicy to exit.
+        sim.cleanup(policy_stop_timeout=2.0)
+
+        # Post-cleanup invariants.
+        assert fut.done(), "Future must have terminated before cleanup returned"
+        assert sim._world is None, "world must be nulled after cleanup"
+        assert sim._policy_threads == {}, "policy_threads must be drained"
+
+    def test_cleanup_tolerates_wedged_policy(self, robot_path):
+        """A policy that refuses to stop within the timeout must NOT hang
+        the whole process. Cleanup logs a warning and proceeds."""
+        sim = Simulation(tool_name="test_cleanup_wedged", mesh=False)
+        sim.create_world()
+        sim.add_robot("armA", urdf_path=robot_path)
+
+        sim.start_policy("armA", policy_provider="mock", duration=5.0, fast_mode=True)
+
+        # Aggressively short timeout forces the "wedged" path even if the
+        # mock is fast — the test is that cleanup RETURNS in bounded time,
+        # not that the future is done.
+        import time as _time
+
+        t0 = _time.monotonic()
+        sim.cleanup(policy_stop_timeout=0.001)
+        elapsed = _time.monotonic() - t0
+
+        # Even with timeout=1ms, total cleanup must complete quickly.
+        # We allow some slack for teardown of renderers/viewer.
+        assert elapsed < 10.0, f"cleanup blocked too long: {elapsed:.2f}s"
+        assert sim._world is None
+
+    def test_cleanup_is_idempotent_with_no_policies(self, robot_path):
+        """Calling cleanup with no live policies must be a straight no-op
+        for the policy-drain path (no Futures to wait on)."""
+        sim = Simulation(tool_name="test_cleanup_noop", mesh=False)
+        sim.create_world()
+        sim.add_robot("armA", urdf_path=robot_path)
+        # No start_policy call.
+
+        sim.cleanup(policy_stop_timeout=0.1)
+
+        assert sim._world is None
+        assert sim._policy_threads == {}
+
+    def test_cleanup_drains_multiple_concurrent_policies(self, robot_path):
+        """With concurrent per-robot policies (GH #114), cleanup must await
+        BOTH before nulling the world."""
+        sim = Simulation(tool_name="test_cleanup_multi", mesh=False)
+        sim.create_world()
+        sim.add_robot("armA", urdf_path=robot_path)
+        sim.add_robot("armB", urdf_path=robot_path)
+
+        sim.start_policy("armA", policy_provider="mock", duration=5.0, fast_mode=True)
+        sim.start_policy("armB", policy_provider="mock", duration=5.0, fast_mode=True)
+
+        futs = {name: sim._policy_threads.get(name) for name in ("armA", "armB")}
+        assert all(f is not None and not f.done() for f in futs.values())
+
+        sim.cleanup(policy_stop_timeout=3.0)
+
+        # Both worker futures settled before cleanup returned.
+        for name, fut in futs.items():
+            assert fut is not None and fut.done(), f"'{name}' future was not awaited"
+        assert sim._world is None

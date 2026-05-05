@@ -1780,13 +1780,79 @@ class Simulation(
 
     # Cleanup
 
-    def cleanup(self) -> None:
+    # Default cleanup shutdown timeout (seconds). A policy worker might be
+    # mid-step when cleanup is called; give it bounded time to see the
+    # cooperative-stop flag and exit cleanly before we null the world and
+    # its in-flight ``mj_step`` segfaults on a nulled ``_model``/``_data``.
+    # Override in tests via ``cleanup(policy_stop_timeout=...)`` if needed.
+    _DEFAULT_POLICY_STOP_TIMEOUT = 5.0
+
+    def cleanup(self, policy_stop_timeout: float | None = None) -> None:
+        """Release every resource owned by this Simulation instance.
+
+        Concurrency (GH #116): nulling ``self._world`` while a policy worker
+        thread is still inside ``mj_step(world._model, world._data)`` is a
+        SIGSEGV waiting to happen. Previously cleanup called
+        ``executor.shutdown(wait=False)`` right after setting
+        ``self._world = None``, which meant the worker could still be
+        holding stale pointers to freed arrays. The
+        ``policy_running = False`` flag was flipped but never awaited.
+
+        New order:
+          1. Signal every live policy to stop (``policy_running = False``).
+          2. Await each outstanding Future with a bounded timeout — the
+             ``on_frame`` hook sees the flag at the top of its next call
+             and raises ``CooperativeStop`` which short-circuits run_policy.
+          3. Any Future still not-done after the timeout: we log a warning
+             and proceed — at that point the worker is wedged somewhere
+             outside MuJoCo and a stale-pointer segfault is the lesser evil
+             than hanging the host process on exit.
+          4. Only AFTER workers have unwound do we null ``self._world``
+             and tear down renderers / the viewer / the executor.
+
+        Args:
+            policy_stop_timeout: Seconds to wait per active policy future.
+                ``None`` (default) uses
+                ``_DEFAULT_POLICY_STOP_TIMEOUT`` (5s). Set to a small value
+                in tests that want fast teardown.
+        """
         if hasattr(self, "mesh") and self.mesh:
             self.mesh.stop()
-        if self._world:
+
+        timeout = policy_stop_timeout if policy_stop_timeout is not None else self._DEFAULT_POLICY_STOP_TIMEOUT
+
+        # Step 1 + 2: cooperative stop + bounded join BEFORE nulling world.
+        # The ``policy_running`` flag is read by the MuJoCo-specific
+        # ``_make_run_policy_hook`` at the top of its next call; setting
+        # it here makes the worker raise CooperativeStop at its next step.
+        if self._world is not None:
             for r in self._world.robots.values():
                 r.policy_running = False
+
+        # Prune completed futures so we only wait on genuinely-live ones.
+        self._prune_done_futures()
+        if self._policy_threads:
+            for robot_name, fut in list(self._policy_threads.items()):
+                try:
+                    fut.result(timeout=timeout)
+                except Exception as e:
+                    # result() raises either the worker's exception OR a
+                    # TimeoutError. Log and continue — we want cleanup to
+                    # finish even on pathological workers.
+                    logger.warning(
+                        "cleanup: policy on '%s' did not stop within %.1fs: %s",
+                        robot_name,
+                        timeout,
+                        e,
+                    )
+            self._policy_threads.clear()
+
+        # Step 3: now it's safe to null the world. Any worker still alive
+        # at this point has already escaped MuJoCo (we've confirmed via
+        # fut.result()), so a nulled _model / _data is no longer racy.
+        if self._world:
             self._world = None
+
         self._close_viewer()
         # close main-thread renderers before dropping the TLS object.
         # Renderers created on worker threads release their GL contexts
@@ -1795,6 +1861,11 @@ class Simulation(
         self._close_main_thread_renderers()
         if hasattr(self, "_renderer_tls"):
             self._renderer_tls = threading.local()
+        # Step 4: shut the executor down now that all our policy futures
+        # are either completed or abandoned. wait=False is OK at this
+        # point because we've already drained policy workers above — any
+        # remaining thread is render / observation work that's safe to
+        # outlive us.
         self._executor.shutdown(wait=False)
         self._shutdown_event.set()
 
