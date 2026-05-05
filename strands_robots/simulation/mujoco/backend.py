@@ -3,6 +3,7 @@
 import ctypes
 import logging
 import os
+import subprocess
 import sys
 from typing import Any
 
@@ -34,9 +35,9 @@ def _configure_gl_backend() -> None:  # noqa: C901
     """Auto-configure MuJoCo's OpenGL backend for headless environments.
 
     MuJoCo reads MUJOCO_GL at import time to select the OpenGL backend:
-    - "egl"    → EGL (GPU-accelerated offscreen, requires libEGL + NVIDIA driver)
-    - "osmesa" → OSMesa (CPU software rendering, slower but always works)
-    - "glfw"   → GLFW (default, requires X11/Wayland display server)
+    - "egl"    - EGL (GPU-accelerated offscreen, requires libEGL + NVIDIA driver)
+    - "osmesa" - OSMesa (CPU software rendering, slower but always works)
+    - "glfw"   - GLFW (default, requires X11/Wayland display server)
 
     This function MUST be called before `import mujoco`. Setting MUJOCO_GL
     after import has no effect - the backend is locked at import time.
@@ -112,14 +113,19 @@ _rendering_available: bool | None = None
 def _can_render() -> bool:
     """Check if MuJoCo offscreen rendering is available.
 
-    Probes once by creating a minimal Renderer. Result is cached.
+    Probes once by creating a minimal Renderer in a subprocess. Result is cached.
     Returns False on headless environments without EGL/OSMesa.
 
     On headless Linux, if MUJOCO_GL is not set after _configure_gl_backend()
     ran, it means neither EGL nor OSMesa is available. In that case the
-    default GLFW backend would be used, which calls glfw.init() → abort()
+    default GLFW backend would be used, which calls glfw.init() - abort()
     at the C level (SIGABRT), killing the entire process before Python can
     catch the error. We short-circuit to False to avoid the fatal probe.
+
+    When MUJOCO_GL IS set (e.g. "egl"), the library may still be dysfunctional
+    (libEGL.so.1 loadable but no GPU/driver). In that case mj.Renderer() aborts
+    at the C level too. We run the probe in a subprocess so a SIGABRT in the
+    child doesn't kill the host process.
     """
     global _rendering_available
     if _rendering_available is not None:
@@ -137,20 +143,45 @@ def _can_render() -> bool:
         )
         return False
 
-    mj = _ensure_mujoco()
+    # Probe rendering in a subprocess to survive C-level aborts (SIGABRT).
+    # On some CI environments, libEGL.so.1 is loadable but non-functional -
+    # mj.Renderer() triggers a fatal abort that kills the entire process.
+    # By running the probe in a child process, we detect the failure safely.
+    probe_script = (
+        "import os;"
+        f"os.environ.setdefault('MUJOCO_GL','{os.environ.get('MUJOCO_GL', '')}');"
+        "import mujoco;"
+        "m=mujoco.MjModel.from_xml_string('<mujoco><worldbody/></mujoco>');"
+        "r=mujoco.Renderer(m,height=1,width=1);"
+        "r.close()"
+    )
     try:
-        model = mj.MjModel.from_xml_string("<mujoco><worldbody/></mujoco>")
-        renderer = mj.Renderer(model, height=1, width=1)
-        renderer.close()
-        del renderer
-        _rendering_available = True
-        logger.info("MuJoCo rendering available")
-    except Exception as e:
+        result = subprocess.run(
+            [sys.executable, "-c", probe_script],
+            capture_output=True,
+            timeout=10,
+            env=os.environ.copy(),
+        )
+        if result.returncode == 0:
+            _rendering_available = True
+            logger.info("MuJoCo rendering available (subprocess probe passed)")
+        else:
+            _rendering_available = False
+            stderr = result.stderr.decode(errors="replace").strip()
+            # Truncate for readability
+            if len(stderr) > 200:
+                stderr = stderr[:200] + "..."
+            logger.warning(
+                "MuJoCo rendering unavailable (subprocess probe failed, rc=%d): %s. "
+                "Physics/policy will work, but render/camera observations will be skipped.",
+                result.returncode,
+                stderr,
+            )
+    except (subprocess.TimeoutExpired, OSError) as e:
         _rendering_available = False
         logger.warning(
-            "MuJoCo rendering unavailable: %s. "
-            "Physics/policy will work, but render/camera observations will be skipped. "
-            "Install EGL or OSMesa for offscreen rendering.",
+            "MuJoCo rendering probe timed out or failed to run: %s. Rendering disabled.",
             e,
         )
-    return _rendering_available
+
+    return _rendering_available  # type: ignore[return-value]

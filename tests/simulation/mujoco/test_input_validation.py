@@ -7,8 +7,14 @@ aborts that were caught by autonomous local testing on PR #85.
 import pytest
 
 pytest.importorskip("mujoco")
+from strands_robots.simulation.mujoco.backend import _can_render  # noqa: E402
 
-from strands_robots.simulation.mujoco.simulation import Simulation
+requires_gl = pytest.mark.skipif(
+    not _can_render(),
+    reason="No GL context available (headless CI without EGL/OSMesa)",
+)
+
+from strands_robots.simulation.mujoco.simulation import Simulation  # noqa: E402
 
 
 @pytest.fixture
@@ -298,6 +304,7 @@ class TestAddRobotInitialState:
 # --- T3: render camera strict validation -------------------------------
 
 
+@requires_gl
 class TestRenderCameraValidation:
     def test_unknown_camera_errors(self, sim_with_world):
         res = sim_with_world.render(camera_name="does_not_exist", width=64, height=48)

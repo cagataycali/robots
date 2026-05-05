@@ -23,6 +23,12 @@ import pytest
 mj = pytest.importorskip("mujoco")
 
 os.environ.setdefault("MUJOCO_GL", "glfw")
+from strands_robots.simulation.mujoco.backend import _can_render  # noqa: E402
+
+requires_gl = pytest.mark.skipif(
+    not _can_render(),
+    reason="No GL context available (headless CI without EGL/OSMesa)",
+)
 
 # Inline robot XML - avoids network dependency on robot model repos
 _ROBOT_XML = """
@@ -257,12 +263,14 @@ def test_set_timestep_positive(ready_sim):
 # ─ Rendering: unknown camera, render-unavailable paths──────────
 
 
+@requires_gl
 def test_render_all_with_only_missing_cameras_errors(ready_sim):
     """Explicit camera list that matches nothing returns an error."""
     r = ready_sim.render_all(cameras=["ghost_cam_a", "ghost_cam_b"])
     assert r["status"] == "error"
 
 
+@requires_gl
 def test_render_unknown_camera_falls_back(ready_sim):
     """Unknown camera_name → fallback renders with the default view."""
     r = ready_sim.render(camera_name="__not_a_camera__", width=32, height=24)

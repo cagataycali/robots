@@ -14,7 +14,13 @@ import os
 
 import pytest
 
-from strands_robots.simulation.mujoco.simulation import Simulation
+from strands_robots.simulation.mujoco.backend import _can_render  # noqa: E402
+
+requires_gl = pytest.mark.skipif(
+    not _can_render(),
+    reason="No GL context available (headless CI without EGL/OSMesa)",
+)
+from strands_robots.simulation.mujoco.simulation import Simulation  # noqa: E402
 
 has_lerobot = importlib.util.find_spec("lerobot") is not None
 
@@ -37,6 +43,7 @@ class TestStartRecordingErrorWithoutLerobot:
         assert "lerobot" in text.lower()
 
 
+@requires_gl
 class TestCamerasRecordingWithoutLerobot:
     """start_cameras_recording must work under [sim-mujoco] alone."""
 
