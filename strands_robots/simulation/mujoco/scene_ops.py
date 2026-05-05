@@ -67,6 +67,12 @@ def _recompile_preserving_state(world: SimWorld, spec: Any) -> bool:
     world._model = new_model
     world._data = new_data
 
+    # Forward pass so newly-injected bodies have valid xpos/xquat and any
+    # camera xforms are populated. Without this, the next render() call
+    # after add_object / add_robot / add_camera returns a 100% black frame
+    # because the MjData arrays still hold their initialization zeros.
+    mj.mj_forward(new_model, new_data)
+
     # Keep the cached XML in sync with the spec for legacy readers (e.g.
     # load_scene + add_robot round-trip).
     try:
@@ -294,6 +300,14 @@ def replace_scene_mjcf(world: SimWorld, xml: str) -> bool:
     world._backend_state["spec"] = new_spec
     world._model = new_model
     world._data = new_data
+
+    # Run a single forward pass so geom positions / camera xforms are
+    # populated. Without this, the very first sim.render() call after
+    # replace_scene_mjcf hits `data.xpos == 0 for all bodies` and the
+    # renderer dumps a 100% black frame. Matches the semantics of
+    # _compile_world() which also calls mj_forward after MjData construction.
+    mj.mj_forward(new_model, new_data)
+
     try:
         world._backend_state["xml"] = new_spec.to_xml()
     except Exception:
@@ -503,6 +517,13 @@ def patch_scene_mjcf(world: SimWorld, ops: list[dict[str, Any]]) -> int:
 
     # One recompile for the whole batch - preserves qpos/qvel for unchanged joints.
     world._model, world._data = spec.recompile(world._model, world._data)
+
+    # Forward pass so new bodies' xpos / xquat / cam_xmat are populated for
+    # the very next render() or get_body_state() call. Same reasoning as
+    # replace_scene_mjcf.
+    mj = _ensure_mujoco()
+    mj.mj_forward(world._model, world._data)
+
     try:
         world._backend_state["xml"] = spec.to_xml()
     except Exception:
