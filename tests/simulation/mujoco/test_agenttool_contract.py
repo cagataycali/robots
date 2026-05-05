@@ -141,7 +141,8 @@ class TestToolSpecMethodParity:
     }
 
     def test_every_action_maps_to_a_method(self, sim):
-        spec_path = Path("/Users/cagatay/robots/strands_robots/simulation/mujoco/tool_spec.json")
+        import strands_robots.simulation.mujoco as _mj_mod
+        spec_path = Path(_mj_mod.__file__).parent / "tool_spec.json"
         spec = json.loads(spec_path.read_text())
         actions = spec["properties"]["action"]["enum"]
 
