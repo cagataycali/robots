@@ -1,22 +1,18 @@
-"""Regression test for export_xml after replace_scene_mjcf.
+"""Regression test for export_xml after replace_scene_mjcf / patch_scene_mjcf.
 
-Prior to the MjSpec refactor, ``export_xml`` called ``mj.mj_saveLastXML``
-which relies on MuJoCo's internal "last loaded XML" cache. That cache is
-only populated when the model was loaded from an XML file via
-``mj_loadLastXML`` / ``mj.MjModel.from_xml_*``. After the MjSpec-based
-``replace_scene_mjcf`` (which compiles from an MjSpec instead), the
-cache is empty and ``mj_saveLastXML`` raises a C-level ``FatalError``:
-``No XML model loaded``.
+In the MjSpec backend every code path (create_world, load_scene,
+replace_scene_mjcf, patch_scene_mjcf, inject_*) stashes the live
+``MjSpec`` in ``world._backend_state["spec"]``. ``export_xml`` therefore
+dumps via ``spec.to_xml()`` which always reflects the live scene - no
+need to rely on ``mj.mj_saveLastXML`` (which raises a C-level
+``FatalError`` when the model wasn't loaded from an XML file).
 
-The fix is to prefer ``spec.to_xml()`` when the world has a tracked
-MjSpec in ``_backend_state['spec']``, falling back to ``mj_saveLastXML``
-only when no spec is tracked (e.g. legacy ``load_scene`` paths).
-
-Surfaced by the agent-in-the-loop probe at
+The agent-in-the-loop probe at
 ``/tmp/e2e_agentic_test_85/notebooks/e2e_agentic_test_85.ipynb``
-scenario ``S2_equality``, where the LLM called ``export_xml`` after
-``replace_scene_mjcf`` and got an unhandled exception instead of a
-clean tool-result dict.
+(scenario ``S2_equality``) originally surfaced this by calling
+``export_xml`` right after ``replace_scene_mjcf`` and getting an
+unhandled exception. These tests cover the critical combinations
+(replace+export, patch+export, export-to-file, no-world).
 """
 
 from __future__ import annotations

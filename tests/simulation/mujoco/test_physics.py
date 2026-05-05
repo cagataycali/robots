@@ -55,12 +55,20 @@ ROBOT_XML = """
 
 @pytest.fixture
 def sim():
-    """Create a Simulation with the test scene loaded directly."""
+    """Create a Simulation with the test scene loaded directly.
+
+    Builds a live ``MjSpec`` from the fixture XML so the world satisfies
+    the backend contract (every SimWorld has ``_backend_state["spec"]``).
+    This is the same contract produced by ``load_scene`` /
+    ``_compile_world`` / ``replace_scene_mjcf``.
+    """
     from strands_robots.simulation.models import SimStatus, SimWorld
 
     s = Simulation(tool_name="test_sim", mesh=False)
     s._world = SimWorld()
-    s._world._model = mj.MjModel.from_xml_string(ROBOT_XML)
+    spec = mj.MjSpec.from_string(ROBOT_XML)
+    s._world._backend_state["spec"] = spec
+    s._world._model = spec.compile()
     s._world._data = mj.MjData(s._world._model)
     s._world.status = SimStatus.IDLE
     mj.mj_forward(s._world._model, s._world._data)

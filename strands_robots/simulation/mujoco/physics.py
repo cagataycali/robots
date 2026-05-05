@@ -1124,57 +1124,32 @@ class PhysicsMixin:
     # Export Model XML
 
     def export_xml(self, output_path: str | None = None) -> dict[str, Any]:
-        """Export the current model to MJCF XML.
+        """Export the current scene as canonical MJCF via ``spec.to_xml()``.
 
-        Prefers ``spec.to_xml()`` (canonical output of the live MjSpec, so it
-        reflects any runtime mutation through ``patch_scene_mjcf`` /
-        ``replace_scene_mjcf`` / ``inject_*``).
-
-        Falls back to ``mj.mj_saveLastXML`` only if there's no spec in
-        ``_backend_state`` (legacy paths that loaded a model from disk
-        without going through SpecBuilder). ``mj_saveLastXML`` fails with
-        a C-level FatalError when the model wasn't loaded from XML, so
-        we never call it unless we know it will succeed.
+        Every code path in the MjSpec backend stashes the live ``MjSpec`` in
+        ``_backend_state["spec"]`` (``create_world`` / ``load_scene`` /
+        ``replace_scene_mjcf`` / ``patch_scene_mjcf`` / the ``inject_*``
+        helpers all do this). The serialised XML reflects any runtime
+        mutation, so no extra caching or round-tripping is needed.
         """
-        if self._world is None or self._world._model is None or self._world._data is None:
+        if self._world is None or self._world._model is None:
             return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
 
-        mj = _ensure_mujoco()
-
-        # Prefer the live MjSpec - always has a valid to_xml() output.
         spec = self._world._backend_state.get("spec") if self._world._backend_state else None
-        xml: str | None = None
-        if spec is not None:
-            try:
-                xml = spec.to_xml()
-            except Exception as e:
-                # Very rare - spec exists but to_xml fails. Surface a clean error.
-                return {"status": "error", "content": [{"text": f"spec.to_xml() failed: {e}"}]}
+        if spec is None:
+            # Should never happen in the MjSpec backend. Surfacing as an
+            # error is better than a C-level crash via mj_saveLastXML.
+            return {
+                "status": "error",
+                "content": [
+                    {"text": "No MjSpec tracked on this world - cannot export. This is a bug; please file an issue."}
+                ],
+            }
 
-        if xml is None:
-            # Fall back to mj_saveLastXML. This only works when the model was
-            # originally loaded from an XML file (not constructed via MjSpec).
-            import os
-            import tempfile
-
-            try:
-                with tempfile.NamedTemporaryFile(suffix=".xml", mode="w", delete=False) as tmp:
-                    tmpfile = tmp.name
-                mj.mj_saveLastXML(tmpfile, self._world._model)
-                with open(tmpfile) as f:
-                    xml = f.read()
-            except Exception as e:
-                return {
-                    "status": "error",
-                    "content": [
-                        {"text": f"export_xml failed: {e}. (No MjSpec tracked; falling back to mj_saveLastXML.)"}
-                    ],
-                }
-            finally:
-                try:
-                    os.unlink(tmpfile)
-                except Exception:
-                    pass
+        try:
+            xml = spec.to_xml()
+        except Exception as e:
+            return {"status": "error", "content": [{"text": f"spec.to_xml() failed: {e}"}]}
 
         if output_path:
             with open(output_path, "w") as f:
