@@ -23,6 +23,7 @@
         "run_policy",
         "start_policy",
         "stop_policy",
+        "list_policies_running",
         "render",
         "render_depth",
         "get_contacts",

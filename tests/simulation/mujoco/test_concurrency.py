@@ -619,7 +619,12 @@ class TestSceneMutationBlockedDuringPolicy:
 
         sim.cleanup()
 
-    def test_remove_robot_blocked_during_policy(self, robot_path):
+    def test_remove_robot_stops_own_policy_and_succeeds(self, robot_path):
+        """Per-robot scoping (GH #114): remove_robot(X) gracefully stops X's
+        own policy before removing it. Previously this errored, forcing the
+        agent into a two-step stop-then-remove dance even in the common
+        'delete the robot I'm running' case.
+        """
         sim = Simulation(tool_name="test_guard_remove_robot", mesh=False)
         result = sim.create_world(gravity=[0, 0, -9.81])
         assert result["status"] == "success"
@@ -630,17 +635,239 @@ class TestSceneMutationBlockedDuringPolicy:
         result = sim.start_policy("arm1", policy_provider="mock", duration=2.0, fast_mode=True)
         assert result["status"] == "success"
 
-        # Try removing robot while policy is running — should be blocked
+        # GH #114: remove_robot on the same arm gracefully stops its policy
+        # and proceeds. No two-step dance required.
         result = sim.remove_robot("arm1")
+        assert result["status"] == "success", result
+        assert "arm1" in result["content"][0]["text"]
+        # Policy future was pruned.
+        assert "arm1" not in sim._policy_threads
+
+        sim.cleanup()
+
+    def test_remove_robot_blocked_by_OTHER_robot_policy(self, robot_path):
+        """Global-scope guard (GH #114): remove_robot(A) still errors if
+        a policy is active on a different robot B, because the XML round-trip
+        invalidates cached actuator/joint IDs held by B's PolicyRunner.
+        """
+        sim = Simulation(tool_name="test_guard_other_robot", mesh=False)
+        assert sim.create_world(gravity=[0, 0, -9.81])["status"] == "success"
+        assert sim.add_robot("armA", urdf_path=robot_path)["status"] == "success"
+        assert sim.add_robot("armB", urdf_path=robot_path)["status"] == "success"
+
+        # Policy on B...
+        assert sim.start_policy("armB", policy_provider="mock", duration=5.0, fast_mode=True)["status"] == "success"
+
+        # ...blocks remove_robot on A (scene mutation invalidates IDs).
+        result = sim.remove_robot("armA")
         assert result["status"] == "error"
         assert "policy is running" in result["content"][0]["text"].lower()
+        assert "armB" in result["content"][0]["text"]
+
+        sim.stop_policy("armB")
+        if "armB" in sim._policy_threads:
+            sim._policy_threads["armB"].result(timeout=10.0)
+
+        # Now removal works.
+        assert sim.remove_robot("armA")["status"] == "success"
+
+        sim.cleanup()
+
+
+class TestConcurrentPerRobotPolicies:
+    """GH #114: two or more policies can run concurrently on different robots.
+
+    Proves the post-fix semantics:
+
+    * ``start_policy`` only blocks on the SAME robot; a second start_policy
+      on a DIFFERENT robot while the first is running now succeeds.
+    * ``list_policies_running`` accurately reports all active ones and
+      prunes completed Futures as a side-effect.
+    * Two policies mutating their own ``ctrl[]`` slots in parallel never
+      corrupt MuJoCo state (``self._lock`` still serializes ``mj_step``).
+    """
+
+    @pytest.fixture
+    def robot_path(self, tmp_path):
+        path = tmp_path / "arm.xml"
+        path.write_text(ROBOT_XML)
+        return str(path)
+
+    def test_start_policy_allowed_on_second_robot_while_first_runs(self, robot_path):
+        sim = Simulation(tool_name="test_concurrent_start", mesh=False)
+        assert sim.create_world()["status"] == "success"
+        assert sim.add_robot("armA", urdf_path=robot_path)["status"] == "success"
+        assert sim.add_robot("armB", urdf_path=robot_path)["status"] == "success"
+
+        # First policy starts.
+        r1 = sim.start_policy("armA", policy_provider="mock", duration=3.0, fast_mode=True)
+        assert r1["status"] == "success", r1
+
+        # Second policy on a DIFFERENT robot also starts (per-robot gate).
+        r2 = sim.start_policy("armB", policy_provider="mock", duration=3.0, fast_mode=True)
+        assert r2["status"] == "success", r2
+
+        # Both active.
+        active = sim._active_policy_robots()
+        assert set(active) == {"armA", "armB"}, active
+
+        sim.stop_policy("armA")
+        sim.stop_policy("armB")
+        # Wait for graceful stop.
+        for name in ("armA", "armB"):
+            fut = sim._policy_threads.get(name)
+            if fut is not None:
+                try:
+                    fut.result(timeout=10.0)
+                except Exception:
+                    pass
+        sim.cleanup()
+
+    def test_start_policy_still_rejected_on_SAME_robot(self, robot_path):
+        """Per-robot gate still fires when we start twice on the same robot."""
+        sim = Simulation(tool_name="test_concurrent_same", mesh=False)
+        assert sim.create_world()["status"] == "success"
+        assert sim.add_robot("arm1", urdf_path=robot_path)["status"] == "success"
+
+        r1 = sim.start_policy("arm1", policy_provider="mock", duration=3.0, fast_mode=True)
+        assert r1["status"] == "success"
+
+        r2 = sim.start_policy("arm1", policy_provider="mock", duration=3.0, fast_mode=True)
+        assert r2["status"] == "error"
+        assert "arm1" in r2["content"][0]["text"]
 
         sim.stop_policy("arm1")
-        if "arm1" in sim._policy_threads:
-            sim._policy_threads["arm1"].result(timeout=10.0)
+        fut = sim._policy_threads.get("arm1")
+        if fut is not None:
+            try:
+                fut.result(timeout=10.0)
+            except Exception:
+                pass
+        sim.cleanup()
 
-        # Now it should work
-        result = sim.remove_robot("arm1")
-        assert result["status"] == "success"
+    def test_list_policies_running_reports_active(self, robot_path):
+        sim = Simulation(tool_name="test_list_policies", mesh=False)
+        sim.create_world()
+        sim.add_robot("armA", urdf_path=robot_path)
+        sim.add_robot("armB", urdf_path=robot_path)
+
+        # None active.
+        r = sim.list_policies_running()
+        assert r["status"] == "success"
+        assert "No policies" in r["content"][0]["text"]
+
+        # One active.
+        sim.start_policy("armA", policy_provider="mock", duration=3.0, fast_mode=True)
+        r = sim.list_policies_running()
+        assert r["status"] == "success"
+        assert "armA" in r["content"][0]["text"]
+        assert "armB" not in r["content"][0]["text"]
+
+        # Two active.
+        sim.start_policy("armB", policy_provider="mock", duration=3.0, fast_mode=True)
+        r = sim.list_policies_running()
+        assert "armA" in r["content"][0]["text"]
+        assert "armB" in r["content"][0]["text"]
+
+        # Clean shutdown.
+        sim.stop_policy("armA")
+        sim.stop_policy("armB")
+        for name in ("armA", "armB"):
+            fut = sim._policy_threads.get(name)
+            if fut is not None:
+                try:
+                    fut.result(timeout=10.0)
+                except Exception:
+                    pass
+
+        # After both stop, list is empty again (stale prune).
+        r = sim.list_policies_running()
+        assert "No policies" in r["content"][0]["text"]
+        assert sim._policy_threads == {}
+
+        sim.cleanup()
+
+    def test_completed_futures_are_pruned(self, robot_path):
+        """GH #120 (companion fix): completed Futures must not linger in
+        _policy_threads forever.
+        """
+        sim = Simulation(tool_name="test_prune", mesh=False)
+        sim.create_world()
+        sim.add_robot("armA", urdf_path=robot_path)
+
+        # Very short policy — let it complete naturally.
+        sim.start_policy("armA", policy_provider="mock", duration=0.1, fast_mode=True)
+        fut = sim._policy_threads.get("armA")
+        assert fut is not None
+        try:
+            fut.result(timeout=10.0)
+        except Exception:
+            pass
+
+        # Future is done — one introspection call prunes it.
+        active = sim._active_policy_robots()
+        assert active == [], active
+        assert "armA" not in sim._policy_threads
+
+        sim.cleanup()
+
+    def test_scene_mutation_lists_which_robots_are_running(self, robot_path):
+        """Error message names the active-policy robots so the LLM can
+        stop_policy on each without guessing.
+        """
+        sim = Simulation(tool_name="test_err_msg", mesh=False)
+        sim.create_world()
+        sim.add_robot("armA", urdf_path=robot_path)
+        sim.add_robot("armB", urdf_path=robot_path)
+
+        sim.start_policy("armA", policy_provider="mock", duration=3.0, fast_mode=True)
+        sim.start_policy("armB", policy_provider="mock", duration=3.0, fast_mode=True)
+
+        r = sim.set_gravity([0, 0, -5.0])
+        assert r["status"] == "error"
+        text = r["content"][0]["text"]
+        assert "armA" in text
+        assert "armB" in text
+
+        sim.stop_policy("armA")
+        sim.stop_policy("armB")
+        for name in ("armA", "armB"):
+            fut = sim._policy_threads.get(name)
+            if fut is not None:
+                try:
+                    fut.result(timeout=10.0)
+                except Exception:
+                    pass
+        sim.cleanup()
+
+    def test_two_policies_no_segfault_under_stress(self, robot_path):
+        """Smoke test: two concurrent policies actually *run* (not just
+        both "started") and produce step_count > 0 on both robots, with
+        self._lock serializing the shared mj_step safely.
+
+        Uses a short duration + fast_mode so the test finishes under
+        a second.
+        """
+        sim = Simulation(tool_name="test_stress_concurrent", mesh=False)
+        sim.create_world()
+        sim.add_robot("armA", urdf_path=robot_path)
+        sim.add_robot("armB", urdf_path=robot_path)
+
+        sim.start_policy("armA", policy_provider="mock", duration=0.5, fast_mode=True)
+        sim.start_policy("armB", policy_provider="mock", duration=0.5, fast_mode=True)
+
+        # Let both run to completion.
+        for name in ("armA", "armB"):
+            fut = sim._policy_threads.get(name)
+            if fut is not None:
+                try:
+                    fut.result(timeout=15.0)
+                except Exception:
+                    pass
+
+        # Both robots advanced their step counter — proves both ran.
+        assert sim._world is not None
+        assert sim._world.robots["armA"].policy_steps > 0, "armA never stepped — concurrent scheduling broke it"
+        assert sim._world.robots["armB"].policy_steps > 0, "armB never stepped — concurrent scheduling broke it"
 
         sim.cleanup()

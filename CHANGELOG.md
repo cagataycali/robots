@@ -84,8 +84,30 @@ produce undefined behaviour or SIGSEGV:
     set_joint_velocities, apply_force, set_body_properties,
     set_geom_properties, load_state, randomize, move_object
 
-The error message is uniform: *"Cannot 'X' while a policy is running.
-Stop it first: action='stop_policy'."*
+The error now lists *which* robot(s) are active so the LLM can
+``stop_policy`` on each without guessing: *"Cannot 'X' while a policy
+is running on 'armA', 'armB'. Stop it first: action='stop_policy'."*
+
+### Concurrent per-robot policies (GH #114)
+
+Multiple ``start_policy`` calls on *different* robots now run
+concurrently. MuJoCo physics is still serialized via ``self._lock``
+(``mj_step`` and ``ctrl[]`` writes are not thread-safe for concurrent
+mutation), but each policy owns a disjoint slice of ``data.ctrl[]`` so
+two VLA arms can operate in the same scene without semantic conflict.
+
+- ``start_policy("armA")`` + ``start_policy("armB")`` both succeed.
+  Second call no longer hits a global "policy already running" gate.
+- ``start_policy`` on the *same* robot while its policy is active
+  still errors (unchanged).
+- ``remove_robot("X")`` now gracefully stops X's own policy before
+  removing, instead of requiring a prior ``stop_policy("X")``. Still
+  errors if a *different* robot has an active policy (XML round-trip
+  invalidates cached IDs everywhere).
+- New action ``list_policies_running`` returns the names of robots
+  with live policies. Prunes completed Futures as a side-effect.
+- Completed policy Futures are no longer retained forever in
+  ``_policy_threads`` (GH #120 companion fix).
 
 ### Error message consistency
 
@@ -128,6 +150,9 @@ Stop it first: action='stop_policy'."*
   (primary) or legacy ``max_steps`` as an alternative to
   ``duration``+``control_frequency``. ``duration = n_steps /
   control_frequency`` when ``n_steps`` is set.
+- **New ``list_policies_running``** action returns the names of robots
+  with a live policy — pairs with the new concurrent-policy support
+  (see *Concurrent per-robot policies* above).
 - ``randomize(randomize_physics=True)`` now reports per-body mass scales
   and per-geom friction scales in the response (not just range
   endpoints).

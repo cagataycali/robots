@@ -93,8 +93,23 @@ class Simulation(
 
         self._world: SimWorld | None = None
         self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix=f"{tool_name}_sim")
+        # Per-robot Future refs for *active* policies. Completed futures are
+        # pruned by ``_active_policy_futures()``/``_prune_done_futures()`` so
+        # the dict never grows unboundedly and never reports stale "running".
         self._policy_threads: dict[str, Future] = {}
         self._shutdown_event = threading.Event()
+        # ``self._lock`` serializes writes to MuJoCo ``model``/``data`` arrays
+        # and calls to ``mj_step`` — MuJoCo physics is NOT safe for concurrent
+        # mutation from multiple threads. This lock is the single point that
+        # makes concurrent per-robot policies safe:
+        #
+        #   * Two policies on different robots can run in parallel at the
+        #     *inference* level (observation build, action compute).
+        #   * When either policy calls ``send_action``, it serializes here
+        #     briefly to write its own ``ctrl[]`` slots and advance physics.
+        #   * ``mj_step`` advances the whole scene — so two robots sharing
+        #     one world share one physics clock. That's correct: one tick of
+        #     physical time advances all bodies.
         self._lock = threading.Lock()
 
         self._viewer_handle = None
@@ -543,12 +558,19 @@ class Simulation(
         leaving the robot's MJCF in place. That blocked re-adding a robot
         with the same name (MuJoCo rejects duplicates on compile) and left
         stale bodies in the physics loop.
+
+        Concurrency (GH #114): this is a *global-scope* mutation — the XML
+        round-trip reallocates ``model``/``data`` and invalidates cached
+        actuator/joint IDs held by every running PolicyRunner. We stop the
+        target robot's own policy first (cooperatively), then require no
+        OTHER robot is running a policy.
         """
         if self._world is None or name not in self._world.robots:
             return {"status": "error", "content": [{"text": f"Robot '{name}' not found."}]}
-        # Guard: remove_robot races the cooperative-stop path if the robot has an active policy.
-        if err := self._require_no_running_policy("remove_robot"):
-            return err
+
+        # Step 1: cooperatively stop THIS robot's policy if running.
+        # Has to happen before the global check so remove_robot works even
+        # when the target robot has an active policy (the common case).
         if name in self._policy_threads:
             self._world.robots[name].policy_running = False
             try:
@@ -556,6 +578,11 @@ class Simulation(
             except Exception:
                 pass
             del self._policy_threads[name]
+
+        # Step 2: after stopping our own, there must be no OTHER policy
+        # running — an XML round-trip will invalidate cached IDs everywhere.
+        if err := self._require_no_running_policy("remove_robot"):
+            return err
 
         # Eject the robot's XML footprint before dropping the registry entry,
         # so eject_robot_from_scene can still read robot.data_config for the
@@ -1246,22 +1273,73 @@ class Simulation(
             }
         return None
 
-    def _require_no_running_policy(self, action_name: str) -> dict[str, Any] | None:
-        """Return an error dict if a policy is running, else None.
+    def _prune_done_futures(self) -> None:
+        """Drop completed Future refs from self._policy_threads.
 
-        Scene mutations (add_robot, remove_robot, add_object, remove_object, move_object, add_camera, remove_camera,
-        load_scene) swap model/data pointers via XML round-trip. A concurrent
-        PolicyRunner worker calling mj_step on stale pointers is undefined
-        behaviour. Hard-fail so the agent learns to stop the policy first.
+        Without this, list_policies_running and stale-active checks see
+        historical entries forever (see GH #120).
         """
-        has_running = any(not f.done() for f in self._policy_threads.values())
-        if has_running:
+        done = [k for k, f in self._policy_threads.items() if f.done()]
+        for k in done:
+            self._policy_threads.pop(k, None)
+
+    def _active_policy_robots(self) -> list[str]:
+        """Names of robots with a live (not-done) policy Future.
+
+        Prunes stale entries as a side-effect so the returned list is
+        authoritative. Callers can introspect via ``list_policies_running``.
+        """
+        self._prune_done_futures()
+        return list(self._policy_threads.keys())
+
+    def _require_no_running_policy(self, action_name: str, robot_name: str | None = None) -> dict[str, Any] | None:
+        """Return an error dict if a disallowed policy is running, else None.
+
+        Two scopes (GH #114):
+
+        * ``robot_name=None`` (default) — **global scope**. Used by scene
+          mutations that touch the whole XML / model pointer (``add_robot``,
+          ``remove_robot``, ``add_object``, ``remove_object``, ``move_object``,
+          ``add_camera``, ``remove_camera``, ``load_scene``, ``set_gravity``,
+          ``set_timestep``). An XML round-trip swaps ``self._world._model``
+          and ``self._world._data``; any live PolicyRunner worker holding
+          pointers to the old arrays will segfault when it next calls
+          ``mj_step``. Hard-fail.
+
+        * ``robot_name="..."`` — **per-robot scope**. Used by actions that
+          are safe to run while *other* robots' policies are active
+          (start_policy on the same robot, stop_policy, etc.). Policies on
+          different robots can execute concurrently because MuJoCo physics
+          is serialized by ``self._lock`` and each robot writes to a
+          disjoint slice of ``data.ctrl[]``.
+        """
+        self._prune_done_futures()
+        if robot_name is not None:
+            fut = self._policy_threads.get(robot_name)
+            if fut is not None and not fut.done():
+                return {
+                    "status": "error",
+                    "content": [
+                        {
+                            "text": (
+                                f"Cannot '{action_name}' on '{robot_name}' while its policy is running. "
+                                f"Stop it first: action='stop_policy', name='{robot_name}'."
+                            )
+                        }
+                    ],
+                }
+            return None
+
+        active = [name for name, f in self._policy_threads.items() if not f.done()]
+        if active:
+            names = ", ".join(f"'{n}'" for n in active)
             return {
                 "status": "error",
                 "content": [
                     {
                         "text": (
-                            f"Cannot '{action_name}' while a policy is running. Stop it first: action='stop_policy'."
+                            f"Cannot '{action_name}' while a policy is running on {names}. "
+                            "Stop it first: action='stop_policy'."
                         )
                     }
                 ],
@@ -1286,7 +1364,7 @@ class Simulation(
                 "add_robot, remove_robot, list_robots, get_robot_state, "
                 "add_object, remove_object, move_object, list_objects, "
                 "add_camera, remove_camera, "
-                "run_policy, start_policy, stop_policy, "
+                "run_policy, start_policy, stop_policy, list_policies_running, "
                 "render, render_depth, render_all, get_contacts, "
                 "step, set_gravity, set_timestep, "
                 "randomize, "
@@ -1336,8 +1414,15 @@ class Simulation(
 
         MuJoCo override: reuses the ThreadPoolExecutor owned by
         ``Simulation`` so agent tools can kick off long-running policies
-        without blocking the event loop. Only one policy per robot at a
-        time (MuJoCo model/data are not thread-safe for concurrent writes).
+        without blocking the event loop.
+
+        Concurrency (GH #114): multiple policies can run simultaneously on
+        *different* robots. MuJoCo's ``mj_step`` and ``ctrl[]`` writes are
+        still serialized via ``self._lock`` (MuJoCo ``model``/``data`` are
+        not thread-safe for concurrent mutation), but each robot owns a
+        disjoint slice of ``data.ctrl[]`` so there's no semantic conflict.
+
+        A second ``start_policy`` on the *same* robot is still rejected.
 
         accepts ``n_steps`` (primary) or legacy ``max_steps`` as an
         alternate horizon specification; run_policy converts to duration.
@@ -1347,12 +1432,9 @@ class Simulation(
         if robot_name not in self._world.robots:
             return {"status": "error", "content": [{"text": f"Robot '{robot_name}' not found."}]}
 
-        existing = self._policy_threads.get(robot_name)
-        if existing is not None and not existing.done():
-            return {
-                "status": "error",
-                "content": [{"text": f"Policy already running on '{robot_name}'. Stop it first."}],
-            }
+        # Per-robot gate: another policy running on a DIFFERENT robot is fine.
+        if err := self._require_no_running_policy("start_policy", robot_name=robot_name):
+            return err
 
         future = self._executor.submit(
             self.run_policy,
@@ -1673,6 +1755,26 @@ class Simulation(
         robot.policy_running = False
         msg = f"Stopped on '{robot_name}'" if was_running else f"Was not running on '{robot_name}'"
         return {"status": "success", "content": [{"text": msg}]}
+
+    def list_policies_running(self) -> dict[str, Any]:
+        """Return the names of robots currently running a policy.
+
+        Useful for inspecting concurrent-policy state when running two or
+        more VLA arms in the same scene (GH #114). Always returns a
+        success dict so the LLM can parse it uniformly. Prunes stale
+        completed Future entries as a side effect.
+        """
+        active = self._active_policy_robots()
+        if not active:
+            return {
+                "status": "success",
+                "content": [{"text": "⚪ No policies running."}],
+            }
+        robot_lines = "\n".join(f"  • 🟢 {n}" for n in active)
+        return {
+            "status": "success",
+            "content": [{"text": f"🟢 Active policies ({len(active)}):\n{robot_lines}"}],
+        }
 
     # Cleanup
 
