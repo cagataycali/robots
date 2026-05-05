@@ -27,9 +27,6 @@ SERVER_STARTUP_TIMEOUT = int(os.getenv("GROOT_SERVER_TIMEOUT", "180"))
 pytestmark = pytest.mark.gpu
 
 
-# -- Server fixture-------------------------------------------------------
-
-
 @pytest.fixture(scope="module")
 def groot_server():
     server_script = _find_server_script()
@@ -121,9 +118,6 @@ def _wait_for_server(proc, port, timeout):
     pytest.fail(f"Server not ready within {timeout}s.\n{stdout[-2000:]}")
 
 
-# -- Helpers---------------------------------------------------------------
-
-
 def _make_gr1_server_observation(instruction="pick up the cube"):
     """GR1 nested observation for direct server calls (B=1, T=1 shape)."""
     rng = np.random.RandomState(42)
@@ -171,7 +165,7 @@ def _extract_action(result):
     return result
 
 
-# -- Tests: Service Mode (ZMQ)--------------------------------------------
+# Tests: Service Mode (ZMQ)
 
 
 class TestGr00tServiceMode:
@@ -234,7 +228,7 @@ class TestGr00tServiceMode:
         assert all(keys == key_sets[0] for keys in key_sets), f"Inconsistent action keys: {key_sets}"
 
 
-# -- Tests: Version Detection----------------------------------------------
+# Tests: Version Detection
 
 
 class TestGr00tVersionDetection:
@@ -252,9 +246,6 @@ class TestGr00tVersionDetection:
         version1 = _detect_groot_version()
         version2 = _detect_groot_version()
         assert version1 == version2 == policy_mod._GROOT_VERSION
-
-
-# -- Tests: Local Mode-----------------------------------------------------
 
 
 class TestGr00tLocalMode:

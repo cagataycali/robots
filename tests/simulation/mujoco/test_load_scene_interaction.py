@@ -80,9 +80,7 @@ def _world(sim: Simulation):
     return sim._world
 
 
-# -----------------------------------------------------------------------------
 # _backend_state population contract
-# -----------------------------------------------------------------------------
 
 
 def test_load_scene_populates_backend_xml(sim: Simulation, scene_path: str) -> None:
@@ -111,9 +109,7 @@ def test_load_scene_records_scene_base_dir(sim: Simulation, scene_path: str) -> 
     assert os.path.abspath(base) == os.path.dirname(os.path.abspath(scene_path))
 
 
-# -----------------------------------------------------------------------------
 # Scene survives downstream add_* mutations
-# -----------------------------------------------------------------------------
 
 
 def test_add_object_after_load_scene_preserves_scene_bodies(sim: Simulation, scene_path: str) -> None:
@@ -204,9 +200,7 @@ def test_create_world_does_not_set_scene_loaded(sim: Simulation) -> None:
     assert not _world(sim)._backend_state.get("scene_loaded", False)
 
 
-# -----------------------------------------------------------------------------
 # load_scene + add_robot: the original scenario from the BRUTAL_REVIEW.md
-# -----------------------------------------------------------------------------
 
 
 ROBOT_XML_FOR_INJECTION = """

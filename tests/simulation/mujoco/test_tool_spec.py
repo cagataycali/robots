@@ -235,9 +235,7 @@ def test_every_tool_spec_action_has_a_public_method_or_documented_alias():
     assert not offenders, "tool_spec actions must resolve to PUBLIC methods:\n  - " + "\n  - ".join(offenders)
 
 
-# -----------------------------------------------------------------------------
 # Schema-load performance contract
-# -----------------------------------------------------------------------------
 
 
 def test_tool_spec_schema_cached_at_module_load(sim: Simulation) -> None:

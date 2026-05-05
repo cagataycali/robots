@@ -20,9 +20,6 @@ def sim_with_robot():
     s.cleanup()
 
 
-# -- run() ----------------------------------------------------------------
-
-
 class TestPolicyRunnerRun:
     def test_run_returns_success(self, sim_with_robot):
         policy = MockPolicy()
@@ -172,9 +169,6 @@ class TestOnFrameFailureCounter:
         assert calls["n"] == 5
 
 
-# -- evaluate() ----------------------------------------------------------------
-
-
 class TestPolicyRunnerEvaluate:
     def test_evaluate_default_success_fn(self, sim_with_robot):
         policy = MockPolicy()
@@ -209,7 +203,7 @@ class TestPolicyRunnerEvaluate:
         assert result["status"] == "error"
 
 
-# -- require_default_robot / _maybe_sim_time ----------------------------------
+# require_default_robot / _maybe_sim_time
 
 
 class TestHelpers:
@@ -244,7 +238,7 @@ class TestHelpers:
         assert runner._require_default_robot() == "alpha"
 
 
-# -- replay() error paths (no lerobot → clean error) -------------------------
+# replay() error paths (no lerobot -> clean error)
 
 
 class TestReplayErrorPaths:
@@ -277,9 +271,6 @@ class TestReplayErrorPaths:
         assert "lerobot" in result["content"][0]["text"].lower()
 
 
-# -- coroutine resolver ------------------------------------------------------
-
-
 class TestResolveCoroutine:
     def test_passthrough_for_plain_list(self):
         assert _resolve_coroutine([{"j": 0.1}]) == [{"j": 0.1}]
@@ -289,9 +280,6 @@ class TestResolveCoroutine:
             return [{"j": 0.2}]
 
         assert _resolve_coroutine(inner()) == [{"j": 0.2}]
-
-
-# -- VideoConfig -----------------------------------------------------------
 
 
 class TestVideoConfig:

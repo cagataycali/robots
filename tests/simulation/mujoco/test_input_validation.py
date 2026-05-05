@@ -40,7 +40,7 @@ def sim_with_robot():
     sim.destroy()
 
 
-# --- T9: step validation --------------------------------------------------
+# T9: step validation
 
 
 class TestStepValidation:
@@ -67,7 +67,7 @@ class TestStepValidation:
         assert sim_with_world._world.step_count == 3
 
 
-# --- T7: raycast zero-direction guard -------------------------------------
+# Raycast zero-direction guard
 
 
 class TestRaycastValidation:
@@ -105,9 +105,6 @@ class TestRaycastValidation:
         assert "zero-length" in rays[1]["error"]
 
 
-# --- T10: apply_force must reject missing-both --------------------------
-
-
 class TestApplyForceValidation:
     def test_missing_both_force_and_torque_errors(self, sim_with_robot):
         """apply_force(body='link1') with no force/torque must error, not silent success."""
@@ -130,7 +127,7 @@ class TestApplyForceValidation:
         assert "3-element" in res["content"][0]["text"]
 
 
-# --- T8: negative/invalid mass, timestep -------------------------------
+# negative/invalid mass, timestep
 
 
 class TestMassAndTimestepValidation:
@@ -166,7 +163,7 @@ class TestMassAndTimestepValidation:
         assert "⚠️" in res["content"][0]["text"] or "unusually" in res["content"][0]["text"]
 
 
-# --- T38: set_gravity dim validation -----------------------------------
+# set_gravity dim validation
 
 
 class TestSetGravityValidation:
@@ -185,7 +182,7 @@ class TestSetGravityValidation:
         assert res["status"] == "success"
 
 
-# --- T11: set_joint_positions list/dict support -----------------------
+# set_joint_positions list/dict support
 
 
 class TestSetJointPositionsForms:
@@ -215,7 +212,7 @@ class TestSetJointPositionsForms:
         assert "does not match" in res["content"][0]["text"]
 
 
-# --- T5: policy-running guards -----------------------------------------
+# Policy-running guards
 
 
 class TestPolicyRunningGuards:
@@ -275,7 +272,7 @@ class TestPolicyRunningGuards:
         assert "while a policy is running" in res["content"][0]["text"]
 
 
-# --- T6: add_robot initial state is zero -------------------------------
+# add_robot initial state is zero
 
 
 class TestAddRobotInitialState:
@@ -301,7 +298,7 @@ class TestAddRobotInitialState:
             sim.destroy()
 
 
-# --- T3: render camera strict validation -------------------------------
+# render camera strict validation
 
 
 @requires_gl
@@ -333,7 +330,7 @@ class TestRenderCameraValidation:
         assert "not found" in res["content"][0]["text"]
 
 
-# --- T2: camera target actually applied -----------------------------
+# camera target actually applied
 
 
 class TestAddCameraTargetOrients:

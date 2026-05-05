@@ -1,7 +1,6 @@
 """End-to-end integration suite, one test per user journey.
 
 Design principles
------------------
 
 * **Journey-per-test**: each test executes a realistic user sequence end-to-end
   (scene build → physics probe → policy rollout → teardown). No mocks for the
@@ -21,7 +20,6 @@ Design principles
   < 30 s on MPS.
 
 Coverage targets
-----------------
 
 These 10 journeys together touch every tool_spec action that's worth
 exercising, every public method on ``Simulation`` + mixins, and every

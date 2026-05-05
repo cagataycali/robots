@@ -162,7 +162,7 @@ class SpecBuilder:
       namespacing natively.
     """
 
-    # --------------------------------------------------------------- full build
+    # full build
     @staticmethod
     def build(world: SimWorld) -> Any:
         """Build a fresh ``mujoco.MjSpec`` reflecting the current ``SimWorld``.
@@ -260,7 +260,7 @@ class SpecBuilder:
 
         return spec
 
-    # --------------------------------------------------------------- from_mjcf
+    # from_mjcf
     @staticmethod
     def from_mjcf_string(xml: str) -> Any:
         """Load an MJCF XML string as a fresh spec. Used by ``replace_scene``.
@@ -281,7 +281,7 @@ class SpecBuilder:
         mujoco = _ensure_mujoco()
         return mujoco.MjSpec.from_file(str(path))
 
-    # ------------------------------------------------------------ object add
+    # object add
     @staticmethod
     def add_object(spec: Any, obj: SimObject) -> None:
         """Add a ``SimObject`` to ``spec.worldbody`` in-place.
@@ -324,7 +324,7 @@ class SpecBuilder:
 
         body.add_geom(**geom_kwargs)
 
-    # ----------------------------------------------------------- camera add
+    # camera add
     @staticmethod
     def add_camera(spec: Any, cam: SimCamera) -> None:
         """Add a world-fixed camera. If ``cam.target`` is set, converts the
@@ -345,7 +345,7 @@ class SpecBuilder:
                 kwargs["quat"] = quat
         spec.worldbody.add_camera(**kwargs)
 
-    # --------------------------------------------------------- body remove
+    # body remove
     @staticmethod
     def remove_body(spec: Any, name: str) -> bool:
         """Remove a body by name from the spec.
@@ -368,7 +368,7 @@ class SpecBuilder:
         spec.delete(body)
         return True
 
-    # ------------------------------------------------------- camera remove
+    # camera remove
     @staticmethod
     def remove_camera(spec: Any, name: str) -> bool:
         """Remove a camera by name from the spec."""
@@ -382,7 +382,7 @@ class SpecBuilder:
                 return True
         return False
 
-    # ------------------------------------------------------------- attach
+    # -attach
     @staticmethod
     def attach_robot(
         scene_spec: Any,

@@ -1,7 +1,7 @@
 """MuJoCo Simulation backend - AgentTool orchestrator + shared state host.
 
 Architecture notes (honest version, see GH #118)
-------------------------------------------------
+
 The ``Simulation`` class uses multiple-inheritance to compose four mixins
 (``PhysicsMixin``, ``RenderingMixin``, ``RecordingMixin``, ``RandomizationMixin``)
 on top of the ``SimEngine`` ABC and the Strands ``AgentTool`` base. The
