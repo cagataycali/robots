@@ -1126,33 +1126,62 @@ class PhysicsMixin:
     def export_xml(self, output_path: str | None = None) -> dict[str, Any]:
         """Export the current model to MJCF XML.
 
-        Uses mj_saveLastXML - exports the exact model currently loaded,
-        including any runtime modifications.
+        Prefers ``spec.to_xml()`` (canonical output of the live MjSpec, so it
+        reflects any runtime mutation through ``patch_scene_mjcf`` /
+        ``replace_scene_mjcf`` / ``inject_*``).
+
+        Falls back to ``mj.mj_saveLastXML`` only if there's no spec in
+        ``_backend_state`` (legacy paths that loaded a model from disk
+        without going through SpecBuilder). ``mj_saveLastXML`` fails with
+        a C-level FatalError when the model wasn't loaded from XML, so
+        we never call it unless we know it will succeed.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
 
         mj = _ensure_mujoco()
 
-        if output_path:
-            mj.mj_saveLastXML(output_path, self._world._model)
-            return {"status": "success", "content": [{"text": f"📄 Model exported to {output_path}"}]}
-        else:
-            # Return XML string via saveLastXML to temp file
+        # Prefer the live MjSpec - always has a valid to_xml() output.
+        spec = self._world._backend_state.get("spec") if self._world._backend_state else None
+        xml: str | None = None
+        if spec is not None:
+            try:
+                xml = spec.to_xml()
+            except Exception as e:
+                # Very rare - spec exists but to_xml fails. Surface a clean error.
+                return {"status": "error", "content": [{"text": f"spec.to_xml() failed: {e}"}]}
+
+        if xml is None:
+            # Fall back to mj_saveLastXML. This only works when the model was
+            # originally loaded from an XML file (not constructed via MjSpec).
             import os
             import tempfile
 
-            with tempfile.NamedTemporaryFile(suffix=".xml", mode="w", delete=False) as tmp:
-                tmpfile = tmp.name
-            mj.mj_saveLastXML(tmpfile, self._world._model)
             try:
+                with tempfile.NamedTemporaryFile(suffix=".xml", mode="w", delete=False) as tmp:
+                    tmpfile = tmp.name
+                mj.mj_saveLastXML(tmpfile, self._world._model)
                 with open(tmpfile) as f:
                     xml = f.read()
+            except Exception as e:
+                return {
+                    "status": "error",
+                    "content": [
+                        {"text": f"export_xml failed: {e}. (No MjSpec tracked; falling back to mj_saveLastXML.)"}
+                    ],
+                }
             finally:
-                os.unlink(tmpfile)
-            return {
-                "status": "success",
-                "content": [
-                    {"text": f"📄 Model XML ({len(xml)} chars):\n{xml[:2000]}{'...' if len(xml) > 2000 else ''}"}
-                ],
-            }
+                try:
+                    os.unlink(tmpfile)
+                except Exception:
+                    pass
+
+        if output_path:
+            with open(output_path, "w") as f:
+                f.write(xml)
+            return {"status": "success", "content": [{"text": f"📄 Model exported to {output_path}"}]}
+
+        return {
+            "status": "success",
+            "content": [{"text": f"📄 Model XML ({len(xml)} chars):\n{xml[:2000]}{'...' if len(xml) > 2000 else ''}"}],
+        }
