@@ -14,7 +14,13 @@ import pytest
 
 pytest.importorskip("mujoco")
 
+from strands_robots.simulation.mujoco.backend import _can_render  # noqa: E402
 from strands_robots.simulation.mujoco.simulation import Simulation  # noqa: E402
+
+requires_gl = pytest.mark.skipif(
+    not _can_render(),
+    reason="No OpenGL context available (EGL/OSMesa required for offscreen rendering)",
+)
 
 ARM_XML = """
 <mujoco model="arm">
@@ -68,6 +74,7 @@ class TestVideoCameraPreValidation:
         # No stub MP4 should have been written
         assert not video_path.exists() or video_path.stat().st_size == 0
 
+    @requires_gl
     def test_namespaced_camera_succeeds(self, sim_with_arm, tmp_path):
         """Happy path: the correctly-namespaced camera compiles, records, closes."""
         video_path = tmp_path / "ok.mp4"
