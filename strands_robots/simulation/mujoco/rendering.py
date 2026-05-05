@@ -36,6 +36,7 @@ class RenderingMixin:
         _renderer_tls: Any  # threading.local() - per-thread renderer dict
         default_width: int
         default_height: int
+        _lock: Any  # threading.Lock from Simulation
 
     def _validate_render_dims(self, width: int, height: int) -> dict[str, Any] | None:
         """reject non-positive render dims; convert MuJoCo's framebuffer
@@ -416,8 +417,22 @@ class RenderingMixin:
 
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
-        # refresh contact list without advancing time.
-        mj.mj_forward(model, data)
+        # Lock while running mj_forward + snapshotting contacts so a policy
+        # thread's mj_step can't mutate data.ncon / data.contact[] between our
+        # forward pass and the iteration. We copy the contact records under
+        # the lock; name resolution can then run lock-free.
+        with self._lock:
+            mj.mj_forward(model, data)
+            ncon = int(data.ncon)
+            contact_snapshot = [
+                {
+                    "geom1": int(data.contact[i].geom1),
+                    "geom2": int(data.contact[i].geom2),
+                    "dist": float(data.contact[i].dist),
+                    "pos": data.contact[i].pos.tolist(),
+                }
+                for i in range(ncon)
+            ]
 
         def _resolve_geom(gid: int) -> str:
             """Prefer the geom name; fall back to its parent body name; then id."""
@@ -435,11 +450,10 @@ class RenderingMixin:
             return f"geom_{gid}"
 
         contacts = []
-        for i in range(data.ncon):
-            c = data.contact[i]
-            g1 = _resolve_geom(c.geom1)
-            g2 = _resolve_geom(c.geom2)
-            contacts.append({"geom1": g1, "geom2": g2, "dist": float(c.dist), "pos": c.pos.tolist()})
+        for c in contact_snapshot:
+            g1 = _resolve_geom(c["geom1"])
+            g2 = _resolve_geom(c["geom2"])
+            contacts.append({"geom1": g1, "geom2": g2, "dist": c["dist"], "pos": c["pos"]})
 
         text = f"💥 {len(contacts)} contacts" if contacts else "No contacts."
         if contacts:

@@ -25,6 +25,13 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from strands_robots.policies import Policy
 
+# PolicyRunner and VideoConfig are used by run_policy / replay / eval_policy.
+# We could defer these with inline lazy imports (and historically did), but
+# policy_runner.py only imports `SimEngine` from base under TYPE_CHECKING so
+# the runtime cycle doesn't actually exist. Keep the imports at module level
+# to break the AST-visible cycle that static analysers flag.
+from strands_robots.simulation.policy_runner import PolicyRunner, VideoConfig
+
 logger = logging.getLogger(__name__)
 
 
@@ -284,7 +291,6 @@ class SimEngine(ABC):
             Standard status dict.
         """
         from strands_robots.policies import create_policy
-        from strands_robots.simulation.policy_runner import PolicyRunner, VideoConfig
 
         # accept n_steps (or legacy max_steps) as an alternate horizon
         # specification. duration = n_steps / control_frequency. If both
@@ -387,7 +393,6 @@ class SimEngine(ABC):
         Override per backend for optimised replay (e.g. direct ctrl
         writes) only when measured necessary.
         """
-        from strands_robots.simulation.policy_runner import PolicyRunner
 
         return PolicyRunner(self).replay(
             repo_id,
@@ -416,7 +421,6 @@ class SimEngine(ABC):
         longer evals explicitly).
         """
         from strands_robots.policies import create_policy
-        from strands_robots.simulation.policy_runner import PolicyRunner
 
         if not robot_name:
             return {

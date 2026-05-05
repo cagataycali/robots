@@ -229,6 +229,43 @@ class PolicyRunner:
             # video.enabled guarantees video.path is a non-empty str; narrow for mypy.
             assert video.path is not None
             video_path = video.path
+
+            # Pre-validate the camera name ONCE before the step loop. This
+            # surfaces "camera not found" as a clean up-front error rather
+            # than silently writing a 0-byte MP4 (sim.render() returns
+            # status=error, _extract_frame_ndarray() returns None, the
+            # rollout runs to completion, writer.close() produces an empty
+            # file, and the user gets no hint in the result text).
+            probe_cam = video.camera or "default"
+            try:
+                _probe = self.sim.render(
+                    camera_name=probe_cam,
+                    width=video.width,
+                    height=video.height,
+                )
+            except Exception as e:
+                return {
+                    "status": "error",
+                    "content": [{"text": f"Video recording requested but render probe crashed: {e}"}],
+                }
+            if _probe.get("status") != "success":
+                probe_text = (_probe.get("content") or [{}])[0].get("text", "")
+                return {
+                    "status": "error",
+                    "content": [
+                        {
+                            "text": (
+                                f"Video recording requested but camera "
+                                f"'{probe_cam}' is not renderable.\n"
+                                f"{probe_text}\n"
+                                "Hint: robot cameras are namespaced, e.g. a "
+                                "camera named 'side' inside robot 'arm1' compiles "
+                                "as 'arm1/side'. Pass video={'camera': 'arm1/side', ...}."
+                            )
+                        }
+                    ],
+                }
+
             imageio = require_optional(
                 "imageio",
                 pip_install="imageio imageio-ffmpeg",
@@ -346,6 +383,18 @@ class PolicyRunner:
                     f"📹 {frame_count} frames, {video.fps}fps, "
                     f"{video.width}x{video.height} | 💾 {file_kb:.0f} KB"
                 )
+            else:
+                # Log a loud warning so the user isn't blindsided by a silent
+                # 0-byte MP4. We already pre-validate the camera name up-front,
+                # so hitting this branch means frames failed DURING the rollout
+                # (e.g. the camera was removed mid-episode).
+                logger.warning(
+                    "video recording requested but wrote 0 frames to %s - "
+                    "MP4 file will be empty or absent. Check that the camera "
+                    "remained valid throughout the rollout.",
+                    video_path,
+                )
+                text += f"\n⚠️ Video requested but 0 frames captured ({video_path})"
         return {"status": "success", "content": [{"text": text}]}
 
     # replay(): replay a LeRobotDataset episode

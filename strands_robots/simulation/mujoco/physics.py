@@ -429,21 +429,22 @@ class PhysicsMixin:
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
 
-        # data.qM is only valid after a forward pass; running mj_forward
-        # ensures the mass matrix reflects the current qpos (e.g. right after
-        # a reset/load_state).
-        mj.mj_forward(model, data)
-        nv = model.nv
-        M = np.zeros((nv, nv))
-        if nv > 0:
-            mj.mj_fullM(model, M, data.qM)
-            rank = int(np.linalg.matrix_rank(M))
-            cond = float(np.linalg.cond(M)) if rank > 0 else float("inf")
-        else:
-            # Empty scene (no DOFs yet) - return a well-typed zero payload
-            # instead of crashing in numpy on the empty matrix.
-            rank = 0
-            cond = float("inf")
+        # data.qM is only valid after a forward pass. Serialize the
+        # forward+fullM read against concurrent policy threads (GH: concurrency
+        # audit) so a sibling robot's mj_step can't mutate data mid-read.
+        with self._lock:
+            mj.mj_forward(model, data)
+            nv = model.nv
+            M = np.zeros((nv, nv))
+            if nv > 0:
+                mj.mj_fullM(model, M, data.qM)
+                rank = int(np.linalg.matrix_rank(M))
+                cond = float(np.linalg.cond(M)) if rank > 0 else float("inf")
+            else:
+                # Empty scene (no DOFs yet) - return a well-typed zero payload
+                # instead of crashing in numpy on the empty matrix.
+                rank = 0
+                cond = float("inf")
 
         return {
             "status": "success",
@@ -784,7 +785,14 @@ class PhysicsMixin:
                 }
             return {"status": "success", "content": [{"text": "📡 No sensors in model."}]}
 
-        mj.mj_forward(model, data)
+        # Lock while running mj_forward + reading sensordata so a policy
+        # thread's mj_step can't mutate data between our forward pass and
+        # the slice read. Also snapshot sensor metadata under the lock
+        # because the model could theoretically change during this call
+        # (it's not gated with _require_no_running_policy).
+        with self._lock:
+            mj.mj_forward(model, data)
+            sensordata_snapshot = np.asarray(data.sensordata).copy()
 
         sensors = {}
         for i in range(model.nsensor):
@@ -794,7 +802,7 @@ class PhysicsMixin:
 
             adr = model.sensor_adr[i]
             dim = model.sensor_dim[i]
-            values = data.sensordata[adr : adr + dim].tolist()
+            values = sensordata_snapshot[adr : adr + dim].tolist()
 
             if sensor_name and name != sensor_name:
                 continue
