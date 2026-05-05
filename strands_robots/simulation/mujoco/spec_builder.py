@@ -142,9 +142,7 @@ def _target_quat(position: list[float], target: list[float]) -> list[float] | No
     return quat.tolist()
 
 
-# =============================================================================
 # SpecBuilder - the public API
-# =============================================================================
 
 
 class SpecBuilder:

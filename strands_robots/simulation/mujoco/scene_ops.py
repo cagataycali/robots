@@ -101,9 +101,7 @@ def _recompile_preserving_state(world: SimWorld, spec: Any) -> bool:
     return True
 
 
-# =============================================================================
 # Inject
-# =============================================================================
 
 
 def inject_robot_into_scene(
@@ -168,9 +166,7 @@ def inject_camera_into_scene(world: SimWorld, cam: SimCamera) -> bool:
     return _recompile_preserving_state(world, spec)
 
 
-# =============================================================================
 # Eject
-# =============================================================================
 
 
 def eject_body_from_scene(world: SimWorld, body_name: str) -> bool:
@@ -276,9 +272,7 @@ def eject_robot_from_scene(world: SimWorld, robot_name: str) -> bool:
     return True
 
 
-# =============================================================================
 # Agent-authored raw MJCF (Stage 6)
-# =============================================================================
 
 
 def replace_scene_mjcf(world: SimWorld, xml: str) -> bool:
@@ -307,9 +301,7 @@ def replace_scene_mjcf(world: SimWorld, xml: str) -> bool:
     return True
 
 
-# =============================================================================
 # Structured-op patching of the live spec (Stage 6, part 2 - GH #125)
-# =============================================================================
 
 # Supported ops for patch_scene_mjcf. Kept narrow on purpose - adding unchecked
 # attribute setters would make the tool an arbitrary-code hole. Agents that

@@ -39,10 +39,7 @@ import pytest
 
 os.environ.setdefault("MUJOCO_GL", "glfw")
 
-
-# =============================================================================
 # Shared fixtures
-# =============================================================================
 
 
 @pytest.fixture
@@ -86,9 +83,7 @@ def _n_images(result):
     return sum(1 for c in result.get("content", []) if isinstance(c, dict) and "image" in c)
 
 
-# =============================================================================
 # J1 · SCENE BUILD - multi-robot, multi-object, multi-camera composition
-# =============================================================================
 
 
 def test_j1_scene_build_multi_robot_multi_camera():
@@ -156,9 +151,7 @@ def test_j1_scene_build_multi_robot_multi_camera():
     sim.destroy()
 
 
-# =============================================================================
 # J2 · PHYSICS PROBE - every physics introspection method on a live sim
-# =============================================================================
 
 
 def test_j2_physics_probe_every_mixin_method(sim):
@@ -242,9 +235,7 @@ def test_j2_physics_probe_every_mixin_method(sim):
     sim.step(n_steps=5)
 
 
-# =============================================================================
 # J3 · SNAPSHOT - save_state → perturb → load_state → bit-exact rollback
-# =============================================================================
 
 
 def test_j3_snapshot_save_load_round_trip(sim):
@@ -270,9 +261,7 @@ def test_j3_snapshot_save_load_round_trip(sim):
     assert np.allclose(qpos_restored, qpos_pre, atol=1e-9), "snapshot must be bit-exact"
 
 
-# =============================================================================
 # J4 · POLICY ROLLOUT - mock policy drives the arm, qpos + sim_time advance
-# =============================================================================
 
 
 def test_j4_policy_mock_rollout_moves_arm(sim, mock_policy):
@@ -302,9 +291,7 @@ def test_j4_policy_mock_rollout_moves_arm(sim, mock_policy):
     assert delta > 1e-3, f"mock policy must move the arm (Δ={delta})"
 
 
-# =============================================================================
 # J5 · REPLAY - feed a synthetic "dataset" through PolicyRunner.replay
-# =============================================================================
 
 
 def test_j5_replay_applies_recorded_actions_to_arm(sim, monkeypatch):
@@ -360,9 +347,7 @@ def test_j5_replay_applies_recorded_actions_to_arm(sim, monkeypatch):
     assert np.abs(qpos_post - qpos_pre).sum() > 1e-3, "replay must move the arm"
 
 
-# =============================================================================
 # J6 · EVALUATE - multi-episode eval with a string success_fn
-# =============================================================================
 
 
 def test_j6_evaluate_multi_episode_contact_success(sim, mock_policy):
@@ -401,9 +386,7 @@ def test_j6_evaluate_multi_episode_contact_success(sim, mock_policy):
     assert bad["status"] == "error"
 
 
-# =============================================================================
 # J7 · MULTI-CAM RECORDING - background recorder concurrent with policy
-# =============================================================================
 
 
 def test_j7_multicam_recording_concurrent_with_policy(sim, mock_policy, tmp_path):
@@ -458,9 +441,7 @@ def test_j7_multicam_recording_concurrent_with_policy(sim, mock_policy, tmp_path
     assert double_stop["status"] == "error"
 
 
-# =============================================================================
 # J8 · SINGLE-CAMERA RUN_POLICY VIDEO - the path that used to silently fail
-# =============================================================================
 
 
 def test_j8_run_policy_video_writes_mp4(sim, mock_policy, tmp_path):
@@ -488,9 +469,7 @@ def test_j8_run_policy_video_writes_mp4(sim, mock_policy, tmp_path):
     assert "frames" in text
 
 
-# =============================================================================
 # J9 · AGENTIC DISPATCH - tool-schema path with real field remapping
-# =============================================================================
 
 
 def test_j9_agent_dispatch_routes_actions_through_tool_spec(sim):
@@ -529,9 +508,7 @@ def test_j9_agent_dispatch_routes_actions_through_tool_spec(sim):
     assert "Unknown action" in _content_texts(r)
 
 
-# =============================================================================
 # J10 · ERROR GRAMMAR - empty sim, every public method, no raises
-# =============================================================================
 
 
 def test_j10_empty_sim_methods_never_raise():
@@ -612,9 +589,7 @@ def test_j10_empty_sim_methods_never_raise():
     s.destroy()
 
 
-# =============================================================================
 # J11 · LEROBOT DATASET RECORDING - start_recording (episode write round-trip)
-# =============================================================================
 
 
 def test_j11_lerobot_dataset_recording_round_trip(sim, mock_policy, tmp_path):

@@ -17,9 +17,7 @@ pytest.importorskip("mujoco")
 
 from strands_robots.simulation.mujoco.simulation import Simulation  # noqa: E402
 
-# -----------------------------------------------------------------------------
 # Fixtures
-# -----------------------------------------------------------------------------
 
 
 @pytest.fixture
@@ -31,9 +29,7 @@ def sim():
         s.cleanup(policy_stop_timeout=0.5)
 
 
-# -----------------------------------------------------------------------------
 # Happy-path tests
-# -----------------------------------------------------------------------------
 
 
 class TestReplaceSceneMjcf:
@@ -128,9 +124,7 @@ class TestReplaceSceneMjcf:
         assert sim._world._data.time == 0.0
 
 
-# -----------------------------------------------------------------------------
 # Error paths
-# -----------------------------------------------------------------------------
 
 
 class TestReplaceSceneMjcfErrors:
@@ -196,9 +190,7 @@ class TestReplaceSceneMjcfErrors:
             sim.cleanup(policy_stop_timeout=2.0)
 
 
-# -----------------------------------------------------------------------------
 # tool_spec integration
-# -----------------------------------------------------------------------------
 
 
 class TestReplaceSceneMjcfToolSpec:
