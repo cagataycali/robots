@@ -1,6 +1,6 @@
 """Policy Abstraction for Universal VLA Support.
 
-Plugin-based registry — all provider definitions live in registry/policies.json.
+Plugin-based registry - all provider definitions live in registry/policies.json.
 No hardcoded if/elif chains. New providers are auto-discovered or registered at runtime.
 
 Built-in providers (see policies.json for full list):

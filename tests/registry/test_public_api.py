@@ -1,4 +1,4 @@
-"""Tests for strands_robots.registry — tests for loader, policies, and robots modules."""
+"""Tests for strands_robots.registry - tests for loader, policies, and robots modules."""
 
 import pytest
 
@@ -21,7 +21,7 @@ from strands_robots.registry.robots import (
 
 
 class TestLoader:
-    """loader.py — JSON loading, caching, hot-reload, and validation."""
+    """loader.py - JSON loading, caching, hot-reload, and validation."""
 
     def test_load_caches_and_returns_same_object(self):
         """Consecutive loads without file change should return cached data."""
@@ -302,7 +302,7 @@ class TestBuildPolicyKwargs:
 
 
 class TestRobotRegistry:
-    """robots.py — resolve, query, filter, and format robot definitions."""
+    """robots.py - resolve, query, filter, and format robot definitions."""
 
     def test_resolve_name_canonical(self):
         assert resolve_name("so100") == "so100"

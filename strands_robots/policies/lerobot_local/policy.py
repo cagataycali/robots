@@ -1,4 +1,4 @@
-"""LeRobot Local Policy — Direct HuggingFace model inference (no server needed).
+"""LeRobot Local Policy - Direct HuggingFace model inference (no server needed).
 
 Uses LeRobot's own factory for auto-detection. Any model LeRobot supports,
 this policy supports.
@@ -377,7 +377,7 @@ class LerobotLocalPolicy(Policy):
                     self._processor_bridge = None
                     logger.debug("No processor configs found, using raw obs/action flow")
             except (FileNotFoundError, ValueError, ImportError) as exc:
-                # Processor bridge is optional — models work without it via raw obs/action flow.
+                # Processor bridge is optional - models work without it via raw obs/action flow.
                 # Fail-fast only if the user explicitly requested processor overrides.
                 if self.processor_overrides:
                     raise RuntimeError(
@@ -416,7 +416,7 @@ class LerobotLocalPolicy(Policy):
             return
 
         # Auto-detect from model config.
-        # RTC requires rtc_config on the model — not just predict_action_chunk().
+        # RTC requires rtc_config on the model - not just predict_action_chunk().
         # In LeRobot 0.5+, predict_action_chunk() is a base class method that ALL
         # policies inherit (ACT, Diffusion, etc.), but only flow-matching policies
         # (Pi0, SmolVLA) have an rtc_config that parameterizes the denoiser for
@@ -431,7 +431,7 @@ class LerobotLocalPolicy(Policy):
         elif self._rtc_requested is True:
             if rtc_config is None:
                 # User explicitly asked for RTC, but this policy has no rtc_config.
-                # This means it's not a flow-matching policy — warn and disable.
+                # This means it's not a flow-matching policy - warn and disable.
                 logger.warning(
                     "RTC requested but policy '%s' has no rtc_config. "
                     "RTC is only supported by flow-matching policies (Pi0, SmolVLA). "
@@ -503,7 +503,7 @@ class LerobotLocalPolicy(Policy):
             batch: Observation batch tensors ready for the policy.
 
         Returns:
-            Action tensor — first action(s) from the chunk, accounting for
+            Action tensor - first action(s) from the chunk, accounting for
             inference delay.
         """
         inference_start = time.time()
@@ -526,7 +526,7 @@ class LerobotLocalPolicy(Policy):
         if action_chunk.dim() == 3 and action_chunk.shape[0] == 1:
             action_chunk = action_chunk.squeeze(0)
 
-        # Estimate inference delay — how many steps were consumed while computing
+        # Estimate inference delay - how many steps were consumed while computing
         inference_delay = self._estimate_inference_delay()
 
         # Store leftover for next RTC call (unconsumed portion of this chunk)
@@ -541,11 +541,11 @@ class LerobotLocalPolicy(Policy):
         else:
             self._rtc_prev_chunk = None
 
-        # Skip delay steps — they correspond to time spent during inference
+        # Skip delay steps - they correspond to time spent during inference
         usable_start = min(inference_delay, action_chunk.shape[0] - 1)
         usable_actions = action_chunk[usable_start:]
 
-        # Log RTC details at debug level — throttled to once every 2s regardless of Hz
+        # Log RTC details at debug level - throttled to once every 2s regardless of Hz
         _now = time.monotonic()
         if _now - self._rtc_last_log_time >= 2.0:
             self._rtc_last_log_time = _now
@@ -762,7 +762,7 @@ class LerobotLocalPolicy(Policy):
         - Scalars → float32 tensor with batch dim
 
         Non-numeric types (strings, pre-batched int64 tokens) are passed through
-        unchanged — LeRobot expects these as-is for task descriptions and
+        unchanged - LeRobot expects these as-is for task descriptions and
         pre-tokenized inputs.
 
         Args:
@@ -803,7 +803,7 @@ class LerobotLocalPolicy(Policy):
                     is_image = True
                 if is_image and tensor.dim() == 3 and tensor.shape[-1] in (1, 3, 4):
                     tensor = tensor.permute(2, 0, 1)
-                # uint8 images are [0, 255] — normalize to [0, 1] for model input
+                # uint8 images are [0, 255] - normalize to [0, 1] for model input
                 if is_image and value.dtype == np.uint8:
                     tensor = tensor / 255.0
                 if is_image and tensor.dim() == 3:
@@ -819,7 +819,7 @@ class LerobotLocalPolicy(Policy):
                 try:
                     array = np.array(value, dtype=np.float32)
                 except (ValueError, TypeError):
-                    # Non-numeric lists (e.g. string lists) — skip silently, they aren't tensor data
+                    # Non-numeric lists (e.g. string lists) - skip silently, they aren't tensor data
                     logger.debug("Skipping non-numeric list/tuple for key in observation batch")
                     continue
                 tensor = torch.from_numpy(array).float()
@@ -858,7 +858,7 @@ class LerobotLocalPolicy(Policy):
         """
         if not self.robot_state_keys:
             raise ValueError(
-                "robot_state_keys is empty — cannot map observation to state tensor. "
+                "robot_state_keys is empty - cannot map observation to state tensor. "
                 "Call set_robot_state_keys() with the robot's motor names."
             )
 
@@ -885,7 +885,7 @@ class LerobotLocalPolicy(Policy):
                 expected_dim = state_feature.shape[0] if hasattr(state_feature, "shape") else len(state_values)
                 if len(state_values) > expected_dim:
                     logger.warning(
-                        "State dim %d > model expects %d — truncating to first %d values. "
+                        "State dim %d > model expects %d - truncating to first %d values. "
                         "Check that robot_state_keys matches your robot's actual joint count.",
                         len(state_values),
                         expected_dim,
@@ -894,7 +894,7 @@ class LerobotLocalPolicy(Policy):
                     state_values = state_values[:expected_dim]
                 elif len(state_values) < expected_dim:
                     logger.warning(
-                        "State dim %d < model expects %d — zero-padding with %d zeros. "
+                        "State dim %d < model expects %d - zero-padding with %d zeros. "
                         "Check that robot_state_keys matches your robot's actual joint count.",
                         len(state_values),
                         expected_dim,

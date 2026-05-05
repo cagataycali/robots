@@ -1,4 +1,4 @@
-"""Tests for strands_robots.simulation.factory — backend registration + creation."""
+"""Tests for strands_robots.simulation.factory - backend registration + creation."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ def _clear_runtime():
 class _FakeSim:
     """Plain class stand-in for a simulation backend.
 
-    Not a real ``SimEngine`` subclass — the factory only calls the loader
+    Not a real ``SimEngine`` subclass - the factory only calls the loader
     callable and the returned class's ``__init__``; it does not enforce the
     ABC contract. Using a plain class here keeps the test focused on the
     factory's own logic (registration, lookup, aliasing).

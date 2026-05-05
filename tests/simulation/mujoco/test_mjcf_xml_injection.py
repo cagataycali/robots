@@ -13,7 +13,7 @@ If the regex ever loosens to allow ``<``, ``>``, ``"``, ``'``, ``&``
 through, or if output drifts from input (which would break name lookup
 downstream), this test fails.
 
-No ``hypothesis`` dep — hand-rolled brute-force is enough for a single
+No ``hypothesis`` dep - hand-rolled brute-force is enough for a single
 regex contract and avoids pulling a fuzzing library into dev deps.
 """
 
@@ -29,7 +29,7 @@ from strands_robots.simulation.mujoco.mjcf_builder import _sanitize_name
 # Characters an MJCF XML attribute value MUST NOT contain verbatim.
 _XML_DANGEROUS = set("<>&\"'")
 
-# Every printable ASCII char — the full universe the regex must classify.
+# Every printable ASCII char - the full universe the regex must classify.
 _PRINTABLE = string.printable
 
 
@@ -44,7 +44,7 @@ def _random_name(rng: random.Random, max_len: int = 140) -> str:
 
 
 class TestSanitizeNameXmlInjection:
-    """Fuzz ``_sanitize_name`` — for any input it MUST either raise or return
+    """Fuzz ``_sanitize_name`` - for any input it MUST either raise or return
     a value free of XML-dangerous chars, equal to the input."""
 
     @pytest.mark.parametrize("seed", [0, 1, 42, 1337, 2026])
@@ -56,7 +56,7 @@ class TestSanitizeNameXmlInjection:
             try:
                 out = _sanitize_name(name)
             except ValueError:
-                continue  # acceptable — name rejected
+                continue  # acceptable - name rejected
             # Must be identity (downstream code looks names up by exact string).
             assert out == name, f"_sanitize_name returned {out!r} != input {name!r}; downstream lookup would break."
             # And the output MUST be XML-safe.
@@ -105,7 +105,7 @@ class TestSanitizeNameXmlInjection:
     def test_accepts_legitimate_names(self, name: str) -> None:
         """Names following the documented grammar round-trip unchanged."""
         # Grammar: ^[a-zA-Z0-9_][a-zA-Z0-9_.\-]{0,127}$
-        # The `/` in `arm0/shoulder_pan` is NOT in the grammar — but MuJoCo
+        # The `/` in `arm0/shoulder_pan` is NOT in the grammar - but MuJoCo
         # uses it as a namespace separator. Filter those out of this test.
         if "/" in name:
             with pytest.raises(ValueError):
@@ -114,7 +114,7 @@ class TestSanitizeNameXmlInjection:
         assert _sanitize_name(name) == name
 
     def test_namespace_separator_is_rejected(self) -> None:
-        """``/`` is a MuJoCo namespace separator — users must not pass it raw.
+        """``/`` is a MuJoCo namespace separator - users must not pass it raw.
 
         Regression guard: the grammar intentionally excludes ``/`` so that
         ``arm0/shoulder_pan`` (which exists only in the injected XML, not

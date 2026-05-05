@@ -1,11 +1,11 @@
-"""Robot model resolution — URDF registry + asset manager.
+"""Robot model resolution - URDF registry + asset manager.
 
 Bridges the robot registry with actual URDF/MJCF files on disk.
 
 Resolution order for :func:`resolve_model`:
     1. User-registered URDFs (:func:`register_urdf`)
     2. URDF search paths (``STRANDS_ASSETS_DIR``, CWD, etc.)
-    3. Asset manager (``robot_descriptions`` — fallback for standard robots)
+    3. Asset manager (``robot_descriptions`` - fallback for standard robots)
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from strands_robots.utils import get_search_paths
 logger = logging.getLogger(__name__)
 
 # URDF search paths are resolved lazily via :func:`strands_robots.utils.get_search_paths`
-# at every lookup — this avoids snapshotting ``Path.cwd()`` and ``STRANDS_ASSETS_DIR``
+# at every lookup - this avoids snapshotting ``Path.cwd()`` and ``STRANDS_ASSETS_DIR``
 # at import time, which caused silent wrong-path bugs when tests/notebooks chdir after
 # import.
 
@@ -39,7 +39,7 @@ try:
 except ImportError:
     _HAS_REGISTRY = False
 
-# Logged lazily on first resolution via _log_configuration_once() —
+# Logged lazily on first resolution via _log_configuration_once() -
 # avoids noisy INFO on every ``import strands_robots``.
 _CONFIG_LOGGED = False
 
@@ -68,7 +68,7 @@ def resolve_model(name: str, prefer_scene: bool = True) -> str | None:
     Resolution order (local assets take priority):
     1. User-registered URDFs (custom user registrations)
     2. URDF search paths (STRANDS_ASSETS_DIR, CWD, etc.)
-    3. Asset manager (robot_descriptions — fallback for standard robots)
+    3. Asset manager (robot_descriptions - fallback for standard robots)
     """
     _log_configuration_once()
     # 1+2. Check local/custom paths first (user overrides win)
@@ -92,7 +92,7 @@ def resolve_model(name: str, prefer_scene: bool = True) -> str | None:
 def resolve_urdf(data_config: str) -> str | None:
     """Resolve a data_config name to a URDF file path.
 
-    Also checks the registry's ``legacy_urdf`` field — a backward-compatible
+    Also checks the registry's ``legacy_urdf`` field - a backward-compatible
     path for robots that were registered before the MJCF asset system
     was introduced (e.g. robots originally configured with raw URDF paths).
     """

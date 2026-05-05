@@ -24,7 +24,7 @@ mj = pytest.importorskip("mujoco")
 
 os.environ.setdefault("MUJOCO_GL", "glfw")
 
-# Inline robot XML — avoids network dependency on robot model repos
+# Inline robot XML - avoids network dependency on robot model repos
 _ROBOT_XML = """
 <mujoco model="test_arm">
   <compiler angle="radian" autolimits="true"/>
@@ -124,7 +124,7 @@ def test_set_joint_velocities_none_dict_errors(ready_sim):
 
 
 def test_set_joint_positions_unknown_joint_is_skipped_not_raised(ready_sim):
-    """Unknown joint names are logged and skipped — not fatal."""
+    """Unknown joint names are logged and skipped - not fatal."""
     joints = ready_sim.robot_joint_names("arm")
     assert len(joints) > 0, "Fixture robot must have joints"
     r = ready_sim.set_joint_positions(positions={joints[0]: 0.1, "__nope__": 0.2})
@@ -266,7 +266,7 @@ def test_render_all_with_only_missing_cameras_errors(ready_sim):
 def test_render_unknown_camera_falls_back(ready_sim):
     """Unknown camera_name → fallback renders with the default view."""
     r = ready_sim.render(camera_name="__not_a_camera__", width=32, height=24)
-    # MuJoCo falls back to a free camera when cam_id < 0 — should succeed
+    # MuJoCo falls back to a free camera when cam_id < 0 - should succeed
     # unless GL context is unavailable, in which case error is acceptable
     assert r["status"] in ("success", "error")
 

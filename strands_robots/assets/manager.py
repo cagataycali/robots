@@ -22,7 +22,7 @@ from strands_robots.utils import get_search_paths, safe_join
 
 logger = logging.getLogger(__name__)
 
-# Module-level conditional import — keeps manager.py importable in
+# Module-level conditional import - keeps manager.py importable in
 # environments where the optional ``robot_descriptions`` package (and its
 # transitive heavyweight deps like ``GitPython``) are not installed.
 # When ``download`` is not available, auto-download simply returns False.
@@ -114,7 +114,7 @@ def _resolve_candidates(asset_dir_name: str, xml_file: str, name: str) -> list[P
 def is_robot_asset_present(name: str) -> bool:
     """Check whether a robot's model XML exists on disk without triggering downloads.
 
-    Pure filesystem check — no auto-download, no mesh walk, no network.
+    Pure filesystem check - no auto-download, no mesh walk, no network.
     Use this for status queries (e.g. ``download_assets(action="status")``)
     where you need to quickly check presence without side effects.
 
@@ -194,7 +194,7 @@ def resolve_model_path(
     # Check user-registered asset path first (highest priority).
     # ``xml_file`` comes from user_robots.json, so we still gate it through
     # :func:`safe_join` to block path traversal even for user-authored entries
-    # (defense in depth — protects against a compromised user_robots.json and
+    # (defense in depth - protects against a compromised user_robots.json and
     # keeps the trust boundary identical to the built-in registry path).
     user_path = info.get("_user_asset_path")
     if user_path:
@@ -214,7 +214,7 @@ def resolve_model_path(
     candidates.extend(_resolve_candidates(asset_dir_name, xml_file, name))
 
     if not candidates:
-        # No XML found at all — try auto-download, then re-search
+        # No XML found at all - try auto-download, then re-search
         logger.info("No XML found for %s, attempting auto-download...", name)
         if _auto_download_robot(name, info):
             candidates.extend(_resolve_candidates(asset_dir_name, xml_file, name))
@@ -230,7 +230,7 @@ def resolve_model_path(
             logger.debug("Resolved %s → %s (has meshes)", name, path)
             return Path(path)
 
-    # XML found but no meshes — auto-download and re-check
+    # XML found but no meshes - auto-download and re-check
     logger.info("XML found for %s but no meshes, attempting auto-download...", name)
     if _auto_download_robot(name, info):
         # Re-scan after download (new symlinks may have appeared)
@@ -305,7 +305,7 @@ def list_available_robots() -> list[dict]:
         name = r["name"]
         present = is_robot_asset_present(name)
         info = get_robot(name) or {}
-        # Only resolve full path when asset is present — avoids download attempts
+        # Only resolve full path when asset is present - avoids download attempts
         path = resolve_model_path(name) if present else None
         robots.append(
             {

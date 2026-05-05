@@ -39,7 +39,7 @@ def _configure_gl_backend() -> None:  # noqa: C901
     - "glfw"   → GLFW (default, requires X11/Wayland display server)
 
     This function MUST be called before `import mujoco`. Setting MUJOCO_GL
-    after import has no effect — the backend is locked at import time.
+    after import has no effect - the backend is locked at import time.
 
     Never overrides a user-set MUJOCO_GL value.
     """
@@ -50,11 +50,11 @@ def _configure_gl_backend() -> None:  # noqa: C901
     if not _is_headless():
         return
 
-    # Headless Linux — probe for EGL first (GPU-accelerated), then fall back to OSMesa (CPU)
+    # Headless Linux - probe for EGL first (GPU-accelerated), then fall back to OSMesa (CPU)
     try:
         ctypes.cdll.LoadLibrary("libEGL.so.1")
         os.environ["MUJOCO_GL"] = "egl"
-        logger.info("Headless environment detected — using MUJOCO_GL=egl (GPU-accelerated offscreen)")
+        logger.info("Headless environment detected - using MUJOCO_GL=egl (GPU-accelerated offscreen)")
         return
     except OSError:
         pass
@@ -62,7 +62,7 @@ def _configure_gl_backend() -> None:  # noqa: C901
     try:
         ctypes.cdll.LoadLibrary("libOSMesa.so")
         os.environ["MUJOCO_GL"] = "osmesa"
-        logger.info("Headless environment detected — using MUJOCO_GL=osmesa (CPU software rendering)")
+        logger.info("Headless environment detected - using MUJOCO_GL=osmesa (CPU software rendering)")
         return
     except OSError:
         pass
@@ -127,11 +127,11 @@ def _can_render() -> bool:
 
     # Guard: on headless systems without an offscreen GL backend configured,
     # mj.Renderer() will use GLFW which triggers a C-level abort (SIGABRT).
-    # Skip the probe entirely — rendering is impossible anyway.
+    # Skip the probe entirely - rendering is impossible anyway.
     if _is_headless() and not os.environ.get("MUJOCO_GL"):
         _rendering_available = False
         logger.warning(
-            "Headless environment without EGL/OSMesa — rendering disabled. "
+            "Headless environment without EGL/OSMesa - rendering disabled. "
             "Physics and joint observations will still work. "
             "Install libegl1-mesa-dev or libosmesa6-dev for camera rendering."
         )

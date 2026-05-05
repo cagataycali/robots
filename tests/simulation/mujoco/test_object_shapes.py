@@ -59,7 +59,7 @@ def test_plane_object_auto_static(sim):
 
 
 def test_plane_object_explicit_dynamic_rejected(sim):
-    """T29: Explicit is_static=False on a plane is a hard error — planes are
+    """T29: Explicit is_static=False on a plane is a hard error - planes are
     infinite and cannot be dynamic bodies in MuJoCo."""
     r = sim.add_object(
         name="bad_floor",

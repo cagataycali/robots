@@ -1,7 +1,7 @@
 """End-to-end MuJoCo simulation test with Policy ABC.
 
 Tests the full observe → policy → act → step → render pipeline
-without requiring strands SDK or lerobot — just mujoco + numpy.
+without requiring strands SDK or lerobot - just mujoco + numpy.
 
 Run: python -m pytest tests/test_mujoco_e2e.py -v
 """

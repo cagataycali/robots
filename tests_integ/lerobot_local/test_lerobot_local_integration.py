@@ -1,4 +1,4 @@
-"""Integration tests for lerobot_local policy — requires real model downloads.
+"""Integration tests for lerobot_local policy - requires real model downloads.
 
 Run explicitly: hatch run test-integ
 Or: pytest tests_integ/lerobot_local/ -v --timeout=300
@@ -6,7 +6,7 @@ Or: pytest tests_integ/lerobot_local/ -v --timeout=300
 Requirements: lerobot>=0.5.0, internet access (HuggingFace Hub model downloads)
 
 These tests download real models from HuggingFace Hub and run actual inference.
-They are NOT run in CI by default — they require ~2GB disk for model weights
+They are NOT run in CI by default - they require ~2GB disk for model weights
 and several minutes for first-run downloads.
 
 Models tested:
@@ -27,7 +27,7 @@ from strands_robots.policies.lerobot_local.processor import ProcessorBridge
 
 logger = logging.getLogger(__name__)
 
-# Models to test — override with env vars for custom models
+# Models to test - override with env vars for custom models
 ACT_MODEL = os.getenv("LEROBOT_ACT_MODEL", "lerobot/act_aloha_sim_transfer_cube_human")
 DIFFUSION_MODEL = os.getenv("LEROBOT_DIFFUSION_MODEL", "lerobot/diffusion_pusht")
 
@@ -199,7 +199,7 @@ class TestProcessorBridgeIntegration:
         bridge = ProcessorBridge.from_pretrained(ACT_MODEL)
         info = bridge.get_info()
 
-        # ACT may or may not have processor configs — either is valid
+        # ACT may or may not have processor configs - either is valid
         assert "has_preprocessor" in info
         assert "has_postprocessor" in info
         logger.info("ACT processor bridge: %s", info)
@@ -218,18 +218,18 @@ class TestProcessorBridgeIntegration:
     def test_processor_bridge_active_model(self):
         """If a model ships processor configs, the bridge should be active and functional.
 
-        NOTE: This test is a placeholder — currently ACT and Diffusion don't ship
+        NOTE: This test is a placeholder - currently ACT and Diffusion don't ship
         processor configs. When a model that does is added (e.g., a VLA model),
         update this test with that model ID.
         """
         from strands_robots.policies.lerobot_local.processor import ProcessorBridge
 
-        # Try ACT — if it happens to have processor configs, test them
+        # Try ACT - if it happens to have processor configs, test them
         bridge = ProcessorBridge.from_pretrained(ACT_MODEL)
         if bridge.is_active:
-            logger.info("ACT has active processor bridge — testing round-trip")
+            logger.info("ACT has active processor bridge - testing round-trip")
             observation = _build_zero_observation(
-                # Need a policy to get features — create one
+                # Need a policy to get features - create one
                 __import__(
                     "strands_robots.policies.lerobot_local.policy",
                     fromlist=["LerobotLocalPolicy"],
@@ -257,14 +257,14 @@ class TestRTCIntegration:
     RTC_MODEL = os.getenv("LEROBOT_RTC_MODEL", "lerobot/pi0_base_original")
 
     def test_rtc_auto_disabled_for_act(self, act_policy):
-        """ACT has no rtc_config — RTC should be auto-disabled."""
+        """ACT has no rtc_config - RTC should be auto-disabled."""
         assert act_policy._rtc_enabled is False
-        logger.info("ACT RTC status: disabled (expected — no rtc_config)")
+        logger.info("ACT RTC status: disabled (expected - no rtc_config)")
 
     def test_rtc_auto_disabled_for_diffusion(self, diffusion_policy):
-        """Diffusion has no rtc_config — RTC should be auto-disabled."""
+        """Diffusion has no rtc_config - RTC should be auto-disabled."""
         assert diffusion_policy._rtc_enabled is False
-        logger.info("Diffusion RTC status: disabled (expected — no rtc_config)")
+        logger.info("Diffusion RTC status: disabled (expected - no rtc_config)")
 
     @pytest.mark.skipif(
         not os.getenv("LEROBOT_RTC_MODEL", "lerobot/pi0_base_original"),

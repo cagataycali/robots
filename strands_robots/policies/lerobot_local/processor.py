@@ -127,7 +127,7 @@ class ProcessorBridge:
             )
             logger.info("Loaded preprocessor from %s: %d steps", pretrained_name_or_path, len(preprocessor))
         except (FileNotFoundError, ValueError) as exc:
-            # No config file found — model doesn't ship a preprocessor. This is normal.
+            # No config file found - model doesn't ship a preprocessor. This is normal.
             logger.debug("No preprocessor found: %s", exc)
 
         # Load postprocessor
@@ -139,7 +139,7 @@ class ProcessorBridge:
             )
             logger.info("Loaded postprocessor from %s: %d steps", pretrained_name_or_path, len(postprocessor))
         except (FileNotFoundError, ValueError) as exc:
-            # No config file found — model doesn't ship a postprocessor. This is normal.
+            # No config file found - model doesn't ship a postprocessor. This is normal.
             logger.debug("No postprocessor found: %s", exc)
 
         return cls(

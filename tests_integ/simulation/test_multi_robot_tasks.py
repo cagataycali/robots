@@ -1,4 +1,4 @@
-"""Multi-robot dual-task integration — the scenario the PR exists for.
+"""Multi-robot dual-task integration - the scenario the PR exists for.
 
 Two robots in one world, each given its own instruction via its own policy,
 the whole scene captured as a single LeRobotDataset episode.

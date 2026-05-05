@@ -1,4 +1,4 @@
-"""GR00T data configuration — typed embodiment key mappings.
+"""GR00T data configuration - typed embodiment key mappings.
 
 Provides :class:`Gr00tDataConfig` dataclasses and an ``_extends`` inheritance
 mechanism so new robot configs can be defined by overriding only what differs

@@ -35,7 +35,7 @@ def _ensure_policy_configs_registered() -> None:
     each config module has module-level side effects that populate the registry.
 
     This function imports a single known config to bootstrap the entire registry.
-    It's safe to call multiple times — the import is idempotent.
+    It's safe to call multiple times - the import is idempotent.
     """
     global _CONFIGS_REGISTERED
     if _CONFIGS_REGISTERED:
@@ -49,7 +49,7 @@ def _ensure_policy_configs_registered() -> None:
         _CONFIGS_REGISTERED = True
         logger.debug("LeRobot policy configs registered in draccus choice registry")
     except (ImportError, ModuleNotFoundError):
-        # Pre-0.5 lerobot or missing policy subpackage — that's OK,
+        # Pre-0.5 lerobot or missing policy subpackage - that's OK,
         # the caller will fall through to manual resolution.
         logger.debug("Could not import lerobot policy configs for draccus registration")
     except Exception as exc:
@@ -97,7 +97,7 @@ def resolve_policy_class_from_hub(pretrained_name_or_path: str) -> tuple[type[An
         logger.debug("PreTrainedConfig resolution failed, trying manual: %s", exc)
     except Exception as exc:
         # draccus raises DecodingError/ParsingError which are NOT subclasses
-        # of RuntimeError/ValueError — they inherit from DraccusException → Exception.
+        # of RuntimeError/ValueError - they inherit from DraccusException → Exception.
         # Catch broadly here but only for draccus-related errors.
         if "draccus" in type(exc).__module__ or "DecodingError" in type(exc).__name__:
             logger.debug("PreTrainedConfig draccus error, trying manual: %s", exc)
@@ -124,7 +124,7 @@ def _ensure_lerobot_policies_importable() -> None:
     its ``__init__.py``.
 
     LeRobot 0.5+ has a ``lerobot/policies/__init__.py`` that eagerly imports
-    **all** policy packages (groot, act, diffusion, …).  The groot import chain
+    **all** policy packages (groot, act, diffusion, ...).  The groot import chain
     pulls in ``transformers`` → ``flash_attn`` which can crash at module load
     time on environments with ABI mismatches (e.g. wrong torch / flash-attn
     version combo).
@@ -145,7 +145,7 @@ def _ensure_lerobot_policies_importable() -> None:
 
     key = "lerobot.policies"
     if key in sys.modules:
-        # Already imported (successfully or via a previous stub) — nothing to do.
+        # Already imported (successfully or via a previous stub) - nothing to do.
         return
 
     try:
@@ -234,7 +234,7 @@ def resolve_policy_class_by_name(policy_type: str) -> type[Any]:
     except (ImportError, AttributeError, RuntimeError):
         pass
 
-    # Strategy 4: PreTrainedPolicy — only if it's NOT abstract
+    # Strategy 4: PreTrainedPolicy - only if it's NOT abstract
     try:
         from lerobot.policies.pretrained import PreTrainedPolicy
 

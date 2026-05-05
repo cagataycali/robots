@@ -1,4 +1,4 @@
-"""T1/T13: AgentTool router contract — unknown kwargs rejected, required args friendly,
+"""T1/T13: AgentTool router contract - unknown kwargs rejected, required args friendly,
 vector dims validated, tool_spec matches method signatures."""
 
 from __future__ import annotations
@@ -131,7 +131,7 @@ class TestToolSpecMethodParity:
     SPEC_ONLY_ALLOWED = {
         # action is the dispatch key itself
         "action",
-        # video composite params — folded into `video` by the router
+        # video composite params - folded into `video` by the router
         "output_path",
         "fps",
         # name/robot_name are aliased bi-directionally
@@ -239,7 +239,7 @@ class TestUnifiedNotFoundMessages:
 
 class TestIdempotentStopFamily:
     """T16: stop_recording, stop_cameras_recording, stop_policy and close_viewer
-    can be called unconditionally — when already stopped they succeed with a
+    can be called unconditionally - when already stopped they succeed with a
     distinguishable 'Was not ...' message."""
 
     def test_stop_recording_twice_is_idempotent(self, sim):
@@ -256,7 +256,7 @@ class TestIdempotentStopFamily:
         assert r2["status"] == "success"
 
     def test_close_viewer_twice_is_idempotent(self, sim):
-        # close_viewer was already idempotent — pin it with a regression test.
+        # close_viewer was already idempotent - pin it with a regression test.
         assert sim.close_viewer()["status"] == "success"
         assert sim.close_viewer()["status"] == "success"
 
@@ -319,7 +319,7 @@ class TestRenderDimValidation:
         assert "must be > 0" in r["content"][0]["text"]
 
     def test_oversize_dim_message_is_friendly(self, sim):
-        # Request 8000x8000 — well above any sane offscreen framebuffer cap.
+        # Request 8000x8000 - well above any sane offscreen framebuffer cap.
         r = sim._dispatch_action("render", {"width": 8000, "height": 8000})
         assert r["status"] == "error"
         text = r["content"][0]["text"]
@@ -393,7 +393,7 @@ class TestRegisterUrdfValidation:
     def test_register_urdf_empty_path_errors(self, sim):
         r = sim._dispatch_action("register_urdf", {"data_config": "my_bot", "urdf_path": ""})
         assert r["status"] == "error"
-        # Router handles empty string as missing? No — it's a truthy string
+        # Router handles empty string as missing? No - it's a truthy string
         # in the presence test. So we hit our explicit empty guard.
         assert "non-empty" in r["content"][0]["text"] or "requires parameter" in r["content"][0]["text"]
 
@@ -439,7 +439,7 @@ class TestSetGeomPropertiesAlias:
             "add_object",
             {"name": "box_alpha", "shape": "box", "size": [0.05, 0.05, 0.05]},
         )
-        # Using the object name, not '{name}_geom', should work — the
+        # Using the object name, not '{name}_geom', should work - the
         # T28 alias resolves to '{name}_geom' internally.
         r = sim._dispatch_action("set_geom_properties", {"geom_name": "box_alpha", "color": [1, 0, 0, 1]})
         # Success proves the alias resolved; error with 'Geom not found' would
@@ -460,7 +460,7 @@ class TestEvalPolicyDefaults:
         r = sim._dispatch_action("eval_policy", {"robot_name": "ghost"})
         assert r["status"] == "error"
         # Either "Robot X not found" (world has robots) or "No robots in sim"
-        # (empty scene) — both are correct paths.
+        # (empty scene) - both are correct paths.
         text = r["content"][0]["text"]
         assert "ghost" in text or "No robots" in text
 
@@ -502,7 +502,7 @@ class TestPolicyHorizonUnification:
         r = sim._dispatch_action("run_policy", {"robot_name": "ghost", "n_steps": 0})
         assert r["status"] == "error"
         # Either n_steps validation fires first, or robot-not-found; both are
-        # acceptable error paths — we just want NO silent success.
+        # acceptable error paths - we just want NO silent success.
         text = r["content"][0]["text"]
         assert ("n_steps" in text and "> 0" in text) or "Robot" in text
 

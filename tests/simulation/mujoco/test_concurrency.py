@@ -162,11 +162,11 @@ class TestApplyForceLatchedBehavior:
 
         x_before = float(data.xpos[body_id, 0])
 
-        # Apply strong lateral (X) force — this creates torques on Y-axis hinges
+        # Apply strong lateral (X) force - this creates torques on Y-axis hinges
         result = sim.apply_force("link2", force=[100.0, 0, 0])
         assert result["status"] == "success"
 
-        # Step physics 50 times — force should persist (latched)
+        # Step physics 50 times - force should persist (latched)
         sim.step(n_steps=50)
 
         x_after = float(data.xpos[body_id, 0])
@@ -180,11 +180,11 @@ class TestApplyForceLatchedBehavior:
         """Apply force, then zero it, verify force buffer is cleared."""
         sim = sim_with_robot
 
-        # Apply lateral (X) force — produces non-zero generalized torques
+        # Apply lateral (X) force - produces non-zero generalized torques
         sim.apply_force("link2", force=[50.0, 0, 0])
         assert np.any(sim._world._data.qfrc_applied != 0), "X-force on link2 should produce non-zero generalized forces"
 
-        # Zero it — apply_force zeros buffer first, then applies zero force
+        # Zero it - apply_force zeros buffer first, then applies zero force
         sim.apply_force("link2", force=[0, 0, 0])
         # After zeroing + applying zero force/torque, buffer should be all zeros
         assert np.allclose(sim._world._data.qfrc_applied, 0.0)
@@ -436,7 +436,7 @@ class TestMultiRobotDifferentAssetDirs:
 
     @requires_gl
     def test_two_robots_both_render_cameras(self):
-        """Two robots with cameras from different dirs — both cameras render."""
+        """Two robots with cameras from different dirs - both cameras render."""
         # Robot A has arm0/wrist_cam (from ROBOT_XML)
         # Add a camera to Robot B as well
         robot_b_with_cam = """
@@ -526,7 +526,7 @@ class TestSceneMutationBlockedDuringPolicy:
         result = sim.start_policy("arm1", policy_provider="mock", duration=2.0, fast_mode=True)
         assert result["status"] == "success"
 
-        # Try adding an object while policy is running — should be blocked
+        # Try adding an object while policy is running - should be blocked
         result = sim.add_object("cube", shape="box", position=[0.3, 0, 0.05])
         assert result["status"] == "error"
         assert "policy is running" in result["content"][0]["text"].lower()
@@ -553,7 +553,7 @@ class TestSceneMutationBlockedDuringPolicy:
         result = sim.start_policy("arm1", policy_provider="mock", duration=2.0, fast_mode=True)
         assert result["status"] == "success"
 
-        # Try adding a camera while policy is running — should be blocked
+        # Try adding a camera while policy is running - should be blocked
         result = sim.add_camera("top_cam", position=[0, 0, 2], target=[0, 0, 0])
         assert result["status"] == "error"
         assert "policy is running" in result["content"][0]["text"].lower()
@@ -578,7 +578,7 @@ class TestSceneMutationBlockedDuringPolicy:
         result = sim.start_policy("arm1", policy_provider="mock", duration=2.0, fast_mode=True)
         assert result["status"] == "success"
 
-        # load_scene while policy is running — should be blocked
+        # load_scene while policy is running - should be blocked
         result = sim.load_scene(robot_path)
         assert result["status"] == "error"
         assert "policy is running" in result["content"][0]["text"].lower()
@@ -604,7 +604,7 @@ class TestSceneMutationBlockedDuringPolicy:
         result = sim.start_policy("arm1", policy_provider="mock", duration=2.0, fast_mode=True)
         assert result["status"] == "success"
 
-        # Try moving an object while policy is running — should be blocked
+        # Try moving an object while policy is running - should be blocked
         result = sim.move_object("cube", position=[0.5, 0, 0.1])
         assert result["status"] == "error"
         assert "policy is running" in result["content"][0]["text"].lower()
@@ -795,7 +795,7 @@ class TestConcurrentPerRobotPolicies:
         sim.create_world()
         sim.add_robot("armA", urdf_path=robot_path)
 
-        # Very short policy — let it complete naturally.
+        # Very short policy - let it complete naturally.
         sim.start_policy("armA", policy_provider="mock", duration=0.1, fast_mode=True)
         fut = sim._policy_threads.get("armA")
         assert fut is not None
@@ -804,7 +804,7 @@ class TestConcurrentPerRobotPolicies:
         except Exception:
             pass
 
-        # Future is done — one introspection call prunes it.
+        # Future is done - one introspection call prunes it.
         active = sim._active_policy_robots()
         assert active == [], active
         assert "armA" not in sim._policy_threads
@@ -865,10 +865,10 @@ class TestConcurrentPerRobotPolicies:
                 except Exception:
                     pass
 
-        # Both robots advanced their step counter — proves both ran.
+        # Both robots advanced their step counter - proves both ran.
         assert sim._world is not None
-        assert sim._world.robots["armA"].policy_steps > 0, "armA never stepped — concurrent scheduling broke it"
-        assert sim._world.robots["armB"].policy_steps > 0, "armB never stepped — concurrent scheduling broke it"
+        assert sim._world.robots["armA"].policy_steps > 0, "armA never stepped - concurrent scheduling broke it"
+        assert sim._world.robots["armB"].policy_steps > 0, "armB never stepped - concurrent scheduling broke it"
 
         sim.cleanup()
 
@@ -896,7 +896,7 @@ class TestCleanupGracefulShutdown:
         fut = sim._policy_threads.get("armA")
         assert fut is not None and not fut.done(), "policy should be live"
 
-        # Cleanup with tight timeout — the cooperative-stop flag is read
+        # Cleanup with tight timeout - the cooperative-stop flag is read
         # every step so 1s is plenty for MockPolicy to exit.
         sim.cleanup(policy_stop_timeout=2.0)
 
@@ -915,7 +915,7 @@ class TestCleanupGracefulShutdown:
         sim.start_policy("armA", policy_provider="mock", duration=5.0, fast_mode=True)
 
         # Aggressively short timeout forces the "wedged" path even if the
-        # mock is fast — the test is that cleanup RETURNS in bounded time,
+        # mock is fast - the test is that cleanup RETURNS in bounded time,
         # not that the future is done.
         import time as _time
 
@@ -967,7 +967,7 @@ class TestMutationGuardStress:
     """GH #119: hammer the mutation guard to prove no race between
     the ``_require_no_running_policy`` check and the PolicyRunner's
     ``mj_step`` call. Historically we relied on the check being 'atomic
-    enough in practice' — no test proved it.
+    enough in practice' - no test proved it.
 
     The critical contract we're validating:
 
@@ -988,7 +988,7 @@ class TestMutationGuardStress:
 
     def test_1000_set_gravity_calls_during_policy_never_segfault(self, robot_path):
         """Start a policy, then bang set_gravity 1000 times from the main
-        thread. Every call must return a well-formed dict — no crash, no
+        thread. Every call must return a well-formed dict - no crash, no
         half-applied mutation. Once the policy ends, the last set_gravity
         succeeds."""
         sim = Simulation(tool_name="test_stress_set_gravity", mesh=False)
@@ -1011,7 +1011,7 @@ class TestMutationGuardStress:
                 succeeded += 1
 
         # At least one call must have been blocked (policy was live).
-        assert blocked > 0, "stress loop never saw the policy as live — timing broken"
+        assert blocked > 0, "stress loop never saw the policy as live - timing broken"
 
         # After policy finishes, set_gravity works.
         fut = sim._policy_threads.get("arm")
@@ -1056,7 +1056,7 @@ class TestMutationGuardStress:
 
     def test_mutation_accepted_immediately_after_policy_completes(self, robot_path):
         """Once the policy Future is done(), the VERY NEXT scene mutation
-        must succeed — no lingering guard state from the just-completed run."""
+        must succeed - no lingering guard state from the just-completed run."""
         sim = Simulation(tool_name="test_no_lingering_guard", mesh=False)
         sim.create_world()
         sim.add_robot("arm", urdf_path=robot_path)

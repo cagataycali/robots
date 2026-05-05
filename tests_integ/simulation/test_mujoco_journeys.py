@@ -5,7 +5,7 @@ Design principles
 
 * **Journey-per-test**: each test executes a realistic user sequence end-to-end
   (scene build → physics probe → policy rollout → teardown). No mocks for the
-  simulator itself — only the few optional dependencies (HF dataset) get
+  simulator itself - only the few optional dependencies (HF dataset) get
   lightweight fakes where shipping a real dataset would be wasteful.
 
 * **One sim instance per test**: we *destroy* at the end so tests are
@@ -70,7 +70,7 @@ def mock_policy(sim):
 
 
 def _content_texts(result):
-    """Pull every text block from a tool result — used in assertions."""
+    """Pull every text block from a tool result - used in assertions."""
     return " ".join(c.get("text", "") for c in result.get("content", []) if isinstance(c, dict))
 
 
@@ -87,7 +87,7 @@ def _n_images(result):
 
 
 # =============================================================================
-# J1 · SCENE BUILD — multi-robot, multi-object, multi-camera composition
+# J1 · SCENE BUILD - multi-robot, multi-object, multi-camera composition
 # =============================================================================
 
 
@@ -157,7 +157,7 @@ def test_j1_scene_build_multi_robot_multi_camera():
 
 
 # =============================================================================
-# J2 · PHYSICS PROBE — every physics introspection method on a live sim
+# J2 · PHYSICS PROBE - every physics introspection method on a live sim
 # =============================================================================
 
 
@@ -224,18 +224,18 @@ def test_j2_physics_probe_every_mixin_method(sim):
         result = getattr(sim, m)(body_name="target") if m == "get_body_state" else getattr(sim, m)()
         assert result["status"] == "success", f"{m}: {result}"
 
-    # set_body_properties — bump mass, re-read total_mass
+    # set_body_properties - bump mass, re-read total_mass
     tm_before = _content_json(sim.get_total_mass())["total_mass"]
     r = sim.set_body_properties(body_name="target", mass=0.5)
     assert r["status"] == "success"
     tm_after = _content_json(sim.get_total_mass())["total_mass"]
     assert abs(tm_after - tm_before) > 1e-6, "Mass change must propagate"
 
-    # set_geom_properties — tweak colour, verify no crash
+    # set_geom_properties - tweak colour, verify no crash
     r = sim.set_geom_properties(geom_name="target_geom", color=[0.5, 0.5, 0.5, 1.0])
     assert r["status"] == "success"
 
-    # set_joint_velocities — non-zero velocity on the first arm joint
+    # set_joint_velocities - non-zero velocity on the first arm joint
     joints = sim.robot_joint_names("arm")
     r = sim.set_joint_velocities(velocities={joints[0]: 0.3})
     assert r["status"] == "success"
@@ -243,7 +243,7 @@ def test_j2_physics_probe_every_mixin_method(sim):
 
 
 # =============================================================================
-# J3 · SNAPSHOT — save_state → perturb → load_state → bit-exact rollback
+# J3 · SNAPSHOT - save_state → perturb → load_state → bit-exact rollback
 # =============================================================================
 
 
@@ -271,7 +271,7 @@ def test_j3_snapshot_save_load_round_trip(sim):
 
 
 # =============================================================================
-# J4 · POLICY ROLLOUT — mock policy drives the arm, qpos + sim_time advance
+# J4 · POLICY ROLLOUT - mock policy drives the arm, qpos + sim_time advance
 # =============================================================================
 
 
@@ -303,7 +303,7 @@ def test_j4_policy_mock_rollout_moves_arm(sim, mock_policy):
 
 
 # =============================================================================
-# J5 · REPLAY — feed a synthetic "dataset" through PolicyRunner.replay
+# J5 · REPLAY - feed a synthetic "dataset" through PolicyRunner.replay
 # =============================================================================
 
 
@@ -361,7 +361,7 @@ def test_j5_replay_applies_recorded_actions_to_arm(sim, monkeypatch):
 
 
 # =============================================================================
-# J6 · EVALUATE — multi-episode eval with a string success_fn
+# J6 · EVALUATE - multi-episode eval with a string success_fn
 # =============================================================================
 
 
@@ -372,7 +372,7 @@ def test_j6_evaluate_multi_episode_contact_success(sim, mock_policy):
     Covers the string-dispatch branch in ``_resolve_success_fn`` that
     previously had 0% coverage.
     """
-    # Drop a cube that will collide with the arm — gives contact a chance
+    # Drop a cube that will collide with the arm - gives contact a chance
     sim.add_object("hit_me", shape="box", size=[0.03] * 3, position=[0.1, 0.2, 0.03])
 
     from strands_robots.simulation.policy_runner import PolicyRunner
@@ -391,7 +391,7 @@ def test_j6_evaluate_multi_episode_contact_success(sim, mock_policy):
     assert data["n_episodes"] == 2
     assert len(data["episodes"]) == 2
 
-    # unknown string should be a clean error — NOT a raise
+    # unknown string should be a clean error - NOT a raise
     bad = PolicyRunner(sim).evaluate(
         robot_name="arm",
         policy=mock_policy,
@@ -402,7 +402,7 @@ def test_j6_evaluate_multi_episode_contact_success(sim, mock_policy):
 
 
 # =============================================================================
-# J7 · MULTI-CAM RECORDING — background recorder concurrent with policy
+# J7 · MULTI-CAM RECORDING - background recorder concurrent with policy
 # =============================================================================
 
 
@@ -411,7 +411,7 @@ def test_j7_multicam_recording_concurrent_with_policy(sim, mock_policy, tmp_path
     one MP4 per camera, non-zero size, no recorder errors.
 
     Guards the recent 4-camera recorder bug: the background thread fills
-    ndarray buffers, the main thread flushes them to MP4 on stop — this
+    ndarray buffers, the main thread flushes them to MP4 on stop - this
     pattern was introduced to avoid ffmpeg pipe races under concurrent load.
     """
     sim.add_camera("overhead", position=[0, 0, 0.7], target=[0, 0, 0.1])
@@ -459,7 +459,7 @@ def test_j7_multicam_recording_concurrent_with_policy(sim, mock_policy, tmp_path
 
 
 # =============================================================================
-# J8 · SINGLE-CAMERA RUN_POLICY VIDEO — the path that used to silently fail
+# J8 · SINGLE-CAMERA RUN_POLICY VIDEO - the path that used to silently fail
 # =============================================================================
 
 
@@ -489,7 +489,7 @@ def test_j8_run_policy_video_writes_mp4(sim, mock_policy, tmp_path):
 
 
 # =============================================================================
-# J9 · AGENTIC DISPATCH — tool-schema path with real field remapping
+# J9 · AGENTIC DISPATCH - tool-schema path with real field remapping
 # =============================================================================
 
 
@@ -530,7 +530,7 @@ def test_j9_agent_dispatch_routes_actions_through_tool_spec(sim):
 
 
 # =============================================================================
-# J10 · ERROR GRAMMAR — empty sim, every public method, no raises
+# J10 · ERROR GRAMMAR - empty sim, every public method, no raises
 # =============================================================================
 
 
@@ -613,7 +613,7 @@ def test_j10_empty_sim_methods_never_raise():
 
 
 # =============================================================================
-# J11 · LEROBOT DATASET RECORDING — start_recording (episode write round-trip)
+# J11 · LEROBOT DATASET RECORDING - start_recording (episode write round-trip)
 # =============================================================================
 
 

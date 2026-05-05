@@ -1,4 +1,4 @@
-"""Recording mixin — start/stop trajectory recording to LeRobotDataset."""
+"""Recording mixin - start/stop trajectory recording to LeRobotDataset."""
 
 import logging
 import shutil
@@ -32,7 +32,7 @@ class RecordingMixin:
 
         Requires the ``lerobot`` extra for the dataset schema. If you only
         need plain MP4 video (no dataset schema, no policy-training metadata),
-        use :meth:`start_cameras_recording` — it runs under the
+        use :meth:`start_cameras_recording` - it runs under the
         ``[sim-mujoco]`` extra alone (imageio-ffmpeg backend).
 
         Raises:
@@ -146,7 +146,7 @@ class RecordingMixin:
     def stop_recording(self, output_path: str | None = None) -> dict[str, Any]:
         """Stop recording and save episode to LeRobotDataset.
 
-        idempotent — calling when not recording succeeds with a
+        idempotent - calling when not recording succeeds with a
         'Was not recording' message so callers can safely call it unconditionally.
         """
         if self._world is None or not self._world._backend_state.get("recording", False):
@@ -189,7 +189,7 @@ class RecordingMixin:
         if self._world is None:
             return {
                 "status": "success",
-                "content": [{"text": "⚪ No world — call create_world to start recording."}],
+                "content": [{"text": "⚪ No world - call create_world to start recording."}],
             }
 
         recording = self._world._backend_state.get("recording", False)

@@ -1,4 +1,4 @@
-"""Simulation factory — create_simulation() and runtime backend registration.
+"""Simulation factory - create_simulation() and runtime backend registration.
 
 Mirrors the policy factory pattern: JSON-driven defaults with runtime
 override capability. Backends are lazy-loaded on first use.
@@ -34,7 +34,7 @@ from strands_robots.simulation.base import SimEngine
 
 logger = logging.getLogger(__name__)
 
-# Built-in backend registry (lazy loaders — no imports at module load)
+# Built-in backend registry (lazy loaders - no imports at module load)
 
 _BUILTIN_BACKENDS: dict[str, tuple[str, str]] = {
     "mujoco": (

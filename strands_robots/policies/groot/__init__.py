@@ -1,4 +1,4 @@
-"""GR00T Policy — NVIDIA GR00T N1.5 and N1.6 support.
+"""GR00T Policy - NVIDIA GR00T N1.5 and N1.6 support.
 
 Two inference modes:
 

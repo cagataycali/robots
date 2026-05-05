@@ -493,7 +493,7 @@ agent.tool.gr00t_inference(action="stop", port=8000)
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `STRANDS_ASSETS_DIR` | Custom directory for robot model assets (MJCF, meshes) | `~/.strands_robots/assets/` |
-| `GROOT_API_TOKEN` | API token for GR00T inference service | — |
+| `GROOT_API_TOKEN` | API token for GR00T inference service | - |
 
 ### Cache Directory
 
@@ -513,7 +513,7 @@ To change the cache location: `export STRANDS_ASSETS_DIR=/path/to/custom/dir`
 
 ## Simulation (MuJoCo)
 
-`strands-robots` ships a MuJoCo-backed simulation AgentTool — 58 actions
+`strands-robots` ships a MuJoCo-backed simulation AgentTool - 58 actions
 exposed to any Strands agent for world composition, physics, policy
 execution, and video/dataset recording.
 
@@ -570,7 +570,7 @@ frame = sim.render(camera_name="topdown")  # returns {status, content:[text, ima
 - **Planes must be static.** `add_object(shape="plane")` auto-sets
   `is_static=True`. Passing `is_static=False` on a plane is a hard error
   (MuJoCo planes are infinite and can't have dynamic mass).
-- **Camera orientation.** Pass `target=[x,y,z]` to look at a point —
+- **Camera orientation.** Pass `target=[x,y,z]` to look at a point -
   without it the camera faces forward by default. `target == position`
   errors.
 - **MP4 vs dataset recording.** `start_cameras_recording` writes plain
@@ -594,7 +594,7 @@ frame = sim.render(camera_name="topdown")  # returns {status, content:[text, ima
   bare object name as an alias.
 - **Oversized render**: MuJoCo's offscreen framebuffer is capped by
   `<global offwidth="W" offheight="H"/>` in MJCF. Requesting a bigger
-  render now errors with a plain message naming the cap — either lower
+  render now errors with a plain message naming the cap - either lower
   the request or rebuild the model with larger dims.
 
 ### Self-healing features
@@ -608,7 +608,7 @@ frame = sim.render(camera_name="topdown")  # returns {status, content:[text, ima
   them (previously zero-length direction vectors crashed the Python
   process via `mj_ray` C-level abort).
 - `destroy()` and `cleanup()` empty the renderer TLS cache and shut down
-  the executor — no RSS growth across repeated create/destroy cycles.
+  the executor - no RSS growth across repeated create/destroy cycles.
 
 For the full action contract and test coverage see
 `tests/simulation/mujoco/test_agenttool_contract.py`.

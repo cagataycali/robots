@@ -1,4 +1,4 @@
-"""T4/D3: Resource hygiene — no RSS leak on create_world/destroy cycles or
+"""T4/D3: Resource hygiene - no RSS leak on create_world/destroy cycles or
 repeated render at fixed dims.
 
 Skipped when psutil isn't installed. Runs as part of `hatch run test-integ`.

@@ -1,4 +1,4 @@
-"""Tests for strands_robots.policies.lerobot_local — LerobotLocalPolicy.
+"""Tests for strands_robots.policies.lerobot_local - LerobotLocalPolicy.
 
 All tests run WITHOUT lerobot installed (pure mock/unit testing).
 """
@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
-import torch  # real or conftest mock — both work
+import torch  # real or conftest mock - both work
 
 from strands_robots.policies import create_policy
 from strands_robots.policies.lerobot_local.policy import LerobotLocalPolicy

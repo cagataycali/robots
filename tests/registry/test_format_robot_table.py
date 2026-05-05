@@ -1,4 +1,4 @@
-"""Tests for ``format_robot_table`` — column width handling (issue #113)."""
+"""Tests for ``format_robot_table`` - column width handling (issue #113)."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ class TestDefaultWidth:
     def test_default_max_line_length_is_bounded(self):
         table = format_robot_table()  # default max_width=100
         max_len = max(len(line) for line in table.split("\n"))
-        # Allow a small margin — the rule is the longest line; data rows
+        # Allow a small margin - the rule is the longest line; data rows
         # should fit inside max_width + some padding for the header/rule.
         assert max_len <= 101, f"max line {max_len} exceeds 100 chars"
 
@@ -40,19 +40,19 @@ class TestNarrowWidth:
         assert max_len <= 81, f"max line {max_len} exceeds 80 chars"
 
     def test_descriptions_are_truncated_with_ellipsis(self):
-        """Long descriptions should end with the truncation marker '…'."""
+        """Long descriptions should end with the truncation marker '...'."""
         narrow = format_robot_table(max_width=80)
         wide = format_robot_table(max_width=1000)
         # At least one row must have been truncated at narrow width.
-        assert "…" in narrow
+        assert "..." in narrow
         # And that same row is longer in the wide rendering.
-        assert "…" not in wide
+        assert "..." not in wide
 
 
 class TestWideWidth:
     def test_wide_width_disables_truncation(self):
         table = format_robot_table(max_width=1000)
-        assert "…" not in table
+        assert "..." not in table
 
     def test_minimum_desc_width_is_enforced(self):
         """Even at absurdly narrow widths we keep a 20-char Description column

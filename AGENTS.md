@@ -1,4 +1,4 @@
-# AGENTS.md — strands-labs/robots
+# AGENTS.md - strands-labs/robots
 
 ## Overview
 
@@ -11,7 +11,7 @@
 
 > **RULE**: ALWAYS use the project board to track work. When creating follow-up items,
 > create GitHub issues and add them to this board with Status + Priority set.
-> Never track work only in local markdown — the board is the source of truth.
+> Never track work only in local markdown - the board is the source of truth.
 
 ## Repository Structure
 
@@ -61,20 +61,20 @@ hatch run format            # ruff check --fix, ruff format
 ```
 
 > **Note**: Hatch uses `uv` as installer (`installer = "uv"` in pyproject.toml) for faster
-> environment creation. No manual uv install needed — hatch handles it.
+> environment creation. No manual uv install needed - hatch handles it.
 
 ## Key Conventions
 
-1. **Python 3.12+** — `requires-python = ">=3.12"` (LeRobot >=0.5.0 requires 3.12)
-2. **Dependency bounds** — `>=1.0` deps: cap major. `<1.0` deps: cap minor. E.g. `lerobot>=0.5.0,<0.6.0`
-3. **`__init__.py` must be thin** — exports only, no logic
-4. **Imports at file top** — unless lazy-loading heavy deps with documented reason
-5. **Raise on fatal errors** — never warn-and-continue if the system will behave unexpectedly
-6. **No silent defaults on error** — returning zero-valued actions on failure is forbidden
-7. **Use `require_optional()`** — from `strands_robots/utils.py` for all optional deps
-8. **Integration tests required** — each policy needs `tests_integ/` tests with real inference
-9. **Test behavior, not implementation** — assert on outputs, not internal state
-10. **No dead code** — if it's not called and not part of base class, delete it
+1. **Python 3.12+** - `requires-python = ">=3.12"` (LeRobot >=0.5.0 requires 3.12)
+2. **Dependency bounds** - `>=1.0` deps: cap major. `<1.0` deps: cap minor. E.g. `lerobot>=0.5.0,<0.6.0`
+3. **`__init__.py` must be thin** - exports only, no logic
+4. **Imports at file top** - unless lazy-loading heavy deps with documented reason
+5. **Raise on fatal errors** - never warn-and-continue if the system will behave unexpectedly
+6. **No silent defaults on error** - returning zero-valued actions on failure is forbidden
+7. **Use `require_optional()`** - from `strands_robots/utils.py` for all optional deps
+8. **Integration tests required** - each policy needs `tests_integ/` tests with real inference
+9. **Test behavior, not implementation** - assert on outputs, not internal state
+10. **No dead code** - if it's not called and not part of base class, delete it
 
 ## PR Workflow
 
@@ -94,7 +94,7 @@ hatch run format            # ruff check --fix, ruff format
   `asimovinc/asimov-v0` which has `sim-model/xmls/asimov.xml` +
   `sim-model/assets/`. The `_safe_join` helper in `strands_robots/utils.py`
   guards against traversal (`..`).
-- **Auto-download strategy** — every robot with an `asset` block must declare
+- **Auto-download strategy** - every robot with an `asset` block must declare
   exactly one of:
     1. `asset.robot_descriptions_module` (preferred)
     2. `asset.source` with `type: "github"`

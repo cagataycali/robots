@@ -42,7 +42,7 @@ from strands_robots.simulation.policy_runner import (
 
 
 class FakeSim(SimEngine):
-    """Minimal ``SimEngine`` implementation — no physics, records all calls."""
+    """Minimal ``SimEngine`` implementation - no physics, records all calls."""
 
     def __init__(self, joint_names: tuple[str, ...] = ("j0", "j1", "j2")):
         self._joint_names = list(joint_names)
@@ -235,7 +235,7 @@ def test_evaluate_success_fn_callable():
 def test_simengine_run_policy_facade_works_with_fake_sim():
     """The SimEngine.run_policy facade delegates to PolicyRunner correctly."""
     sim = FakeSim()
-    # MockPolicy is the default — no policy_config needed.
+    # MockPolicy is the default - no policy_config needed.
     result = sim.run_policy(
         "fake_robot",
         policy_provider="mock",
@@ -397,7 +397,7 @@ def test_run_policy_reuses_policy_object() -> None:
 
 
 def test_run_policy_object_param_exposed() -> None:
-    """Signature check — policy_object must be in both base and MuJoCo variants."""
+    """Signature check - policy_object must be in both base and MuJoCo variants."""
 
     sig = inspect.signature(Simulation.run_policy)
     assert "policy_object" in sig.parameters

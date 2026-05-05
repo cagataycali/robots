@@ -1,4 +1,4 @@
-"""Robot registry — query, resolve, and list robot definitions.
+"""Robot registry - query, resolve, and list robot definitions.
 
 All robot definitions live in robots.json.  This module provides
 the public read API; the JSON file is the only thing you edit to add
@@ -55,7 +55,7 @@ def get_robot(name: str) -> dict[str, Any] | None:
 
     Returns:
         Robot dict with keys like description, category, joints, asset,
-        hardware — or None if not found.
+        hardware - or None if not found.
     """
     reg = _load("robots")
     canonical = resolve_name(name)
@@ -92,7 +92,7 @@ def list_robots(mode: str = "all") -> list[dict[str, Any]]:
     """List available robots, optionally filtered.
 
     Args:
-        mode: Filter — "all", "sim", "real", or "both" (has sim AND real).
+        mode: Filter - "all", "sim", "real", or "both" (has sim AND real).
 
     Returns:
         List of dicts with name, description, has_sim, has_real.
@@ -176,7 +176,7 @@ def format_robot_table(max_width: int = 100) -> str:
             joints = str(r["joints"]) if r["joints"] else "?"
             desc = r["description"] or ""
             if len(desc) > desc_width:
-                desc = desc[: desc_width - 1].rstrip() + "…"
+                desc = desc[: desc_width - 3].rstrip() + "..."
             lines.append(
                 f"{r['name']:<{_NAME_WIDTH}} "
                 f"{r['category']:<{_CAT_WIDTH}} "

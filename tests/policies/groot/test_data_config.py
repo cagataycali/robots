@@ -1,4 +1,4 @@
-"""Tests for strands_robots.policies.groot.data_config — typed config system.
+"""Tests for strands_robots.policies.groot.data_config - typed config system.
 
 Covers: Gr00tDataConfig, ModalityConfig, load_data_config, create_custom_data_config,
 _extends inheritance, DATA_CONFIG_MAP, and edge cases.
@@ -135,7 +135,7 @@ class TestDataConfigMap:
             assert DATA_CONFIG_MAP[alias_name] is DATA_CONFIG_MAP[target_name]
 
     def test_extends_inherits_parent_fields(self):
-        """so100_dualcam extends so100 — should inherit state/action keys."""
+        """so100_dualcam extends so100 - should inherit state/action keys."""
         parent = DATA_CONFIG_MAP["so100"]
         child = DATA_CONFIG_MAP["so100_dualcam"]
         assert child.video_keys == ["video.front", "video.wrist"]
@@ -165,7 +165,7 @@ class TestDataConfigMap:
             assert f"action.{part}" in config.action_keys, f"Missing action.{part}"
 
     def test_unitree_g1_real_n17_schema(self):
-        """REAL_G1 embodiment (N1.7) — verified live from nvidia/GR00T-N1.7-3B.
+        """REAL_G1 embodiment (N1.7) - verified live from nvidia/GR00T-N1.7-3B.
 
         Captures the observation indices [-20, 0] (T=2 video context) and
         40-step action horizon that are unique to REAL_G1.
@@ -175,7 +175,7 @@ class TestDataConfigMap:
         # rot6d end-effector states are the N1.7 signature
         assert "state.left_wrist_eef_9d" in config.state_keys
         assert "state.right_wrist_eef_9d" in config.state_keys
-        # locomotion-first action space — navigate_command is new in N1.7
+        # locomotion-first action space - navigate_command is new in N1.7
         assert "action.navigate_command" in config.action_keys
         assert "action.base_height_command" in config.action_keys
         # T=2 video (20 frames ago + current) and 40-step horizon

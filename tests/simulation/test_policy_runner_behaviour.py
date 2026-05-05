@@ -1,4 +1,4 @@
-"""Behavioural tests for PolicyRunner — run/replay/evaluate with a mock policy."""
+"""Behavioural tests for PolicyRunner - run/replay/evaluate with a mock policy."""
 
 from __future__ import annotations
 
@@ -107,7 +107,7 @@ class TestOnFrameFailureCounter:
         result = runner.run(
             "alice",
             policy,
-            duration=5.0,  # plenty of time — early-abort is the point
+            duration=5.0,  # plenty of time - early-abort is the point
             control_frequency=50,
             fast_mode=True,
             on_frame=always_fails,
@@ -122,7 +122,7 @@ class TestOnFrameFailureCounter:
 
     def test_consecutive_counter_resets_on_success(self, sim_with_robot):
         """Two failures then a success then two more failures must NOT abort
-        at threshold=3 — the counter resets on a successful call."""
+        at threshold=3 - the counter resets on a successful call."""
         policy = MockPolicy()
         policy.set_robot_state_keys(sim_with_robot.robot_joint_names("alice"))
 
@@ -165,7 +165,7 @@ class TestOnFrameFailureCounter:
             control_frequency=50,
             fast_mode=True,
             on_frame=always_fails,
-            # max_onframe_failures omitted — default is 5
+            # max_onframe_failures omitted - default is 5
         )
         assert result["status"] == "error"
         assert "5 times in a row" in result["content"][0]["text"]

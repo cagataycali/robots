@@ -76,7 +76,7 @@ def gr00t_inference(
 
         **Unitree G1 humanoid:**
           ``unitree_g1``, ``unitree_g1_full_body``, ``unitree_g1_locomanip``,
-          ``unitree_g1_real`` (N1.7 REAL_G1 embodiment — locomotion + bimanual manipulation)
+          ``unitree_g1_real`` (N1.7 REAL_G1 embodiment - locomotion + bimanual manipulation)
 
         **Franka Panda manipulators:**
           ``single_panda_gripper``, ``bimanual_panda_gripper``, ``bimanual_panda_hand``
@@ -98,7 +98,7 @@ def gr00t_inference(
         Set ``use_tensorrt=True`` to enable TensorRT inference. This compiles the model
         into an optimized engine on first run (may take several minutes). Subsequent runs
         load from ``trt_engine_path``. Dtype flags (``vit_dtype``, ``llm_dtype``, ``dit_dtype``)
-        control precision—lower precision (fp8/nvfp4) trades accuracy for speed.
+        control precision - lower precision (fp8/nvfp4) trades accuracy for speed.
 
     Authentication:
         The ``api_token`` parameter authenticates with the inference service. If omitted,
@@ -118,9 +118,9 @@ def gr00t_inference(
         timeout: Seconds to wait for service startup (default: 60).
         use_tensorrt: Enable TensorRT acceleration (default: False).
         trt_engine_path: Directory for TensorRT engine cache (default: ``gr00t_engine``).
-        vit_dtype: ViT precision with TensorRT—``fp16`` or ``fp8`` (default: ``fp8``).
-        llm_dtype: LLM precision with TensorRT—``fp16``, ``nvfp4``, or ``fp8`` (default: ``nvfp4``).
-        dit_dtype: DiT precision with TensorRT—``fp16`` or ``fp8`` (default: ``fp8``).
+        vit_dtype: ViT precision with TensorRT - ``fp16`` or ``fp8`` (default: ``fp8``).
+        llm_dtype: LLM precision with TensorRT - ``fp16``, ``nvfp4``, or ``fp8`` (default: ``nvfp4``).
+        dit_dtype: DiT precision with TensorRT - ``fp16`` or ``fp8`` (default: ``fp8``).
         http_server: Use HTTP REST API instead of ZMQ (default: False).
         api_token: API token for authentication. Falls back to ``GROOT_API_TOKEN`` env var.
 

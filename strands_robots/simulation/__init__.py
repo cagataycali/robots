@@ -1,4 +1,4 @@
-"""Strands Robots Simulation — multi-backend simulation framework.
+"""Strands Robots Simulation - multi-backend simulation framework.
 
 Architecture::
 
@@ -49,7 +49,7 @@ Future backends::
 import importlib as _importlib
 from typing import Any
 
-# Light imports (no heavy deps — stdlib + dataclasses only)
+# Light imports (no heavy deps - stdlib + dataclasses only)
 from strands_robots.simulation.base import SimEngine
 from strands_robots.simulation.factory import (
     create_simulation,
@@ -72,7 +72,7 @@ from strands_robots.simulation.models import (
     TrajectoryStep,
 )
 
-# Heavy imports (lazy — need strands SDK + mujoco)
+# Heavy imports (lazy - need strands SDK + mujoco)
 _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "Simulation": ("strands_robots.simulation.mujoco.simulation", "Simulation"),
     "MuJoCoSimulation": ("strands_robots.simulation.mujoco.simulation", "Simulation"),
@@ -123,4 +123,4 @@ def __getattr__(name: str) -> Any:
 
 # NOTE: MuJoCo GL backend configuration lives in the top-level
 # strands_robots/__init__.py to ensure it runs before any `import mujoco`.
-# Do NOT duplicate it here — see PR #86 for the canonical location.
+# Do NOT duplicate it here - see PR #86 for the canonical location.

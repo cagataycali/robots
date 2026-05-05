@@ -39,7 +39,7 @@ def _isolate_registry(tmp_path, monkeypatch):
 
     ``STRANDS_BASE_DIR`` controls where ``user_robots.json`` lives.
     ``STRANDS_ASSETS_DIR`` controls where robot asset directories live.
-    The two are independent — the base dir is not derived from the assets dir.
+    The two are independent - the base dir is not derived from the assets dir.
     """
     assets_dir = tmp_path / "assets"
     assets_dir.mkdir()
@@ -301,7 +301,7 @@ class TestLoaderMerge:
 class TestStrandsBaseDirIntegration:
     """Registry file location respects STRANDS_BASE_DIR env var.
 
-    STRANDS_ASSETS_DIR intentionally does NOT move the registry — it only
+    STRANDS_ASSETS_DIR intentionally does NOT move the registry - it only
     controls where asset directories live. See utils.get_base_dir() docstring.
     """
 
@@ -350,7 +350,7 @@ class TestGetAssetsDir:
 class TestGetBaseDir:
     """get_base_dir() returns STRANDS_BASE_DIR or ~/.strands_robots/.
 
-    It is independent of STRANDS_ASSETS_DIR by design — the base dir holds
+    It is independent of STRANDS_ASSETS_DIR by design - the base dir holds
     user metadata (user_robots.json) and should not move just because the
     user repoints the asset cache.
     """

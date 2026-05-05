@@ -1,15 +1,15 @@
 """Backend-agnostic policy execution against any ``SimEngine``.
 
 Runs the canonical obs → act → step loop using only the public ``SimEngine``
-interface. Zero knowledge of the underlying physics engine — MuJoCo, Isaac,
+interface. Zero knowledge of the underlying physics engine - MuJoCo, Isaac,
 Newton and any future backend get ``run_policy`` / ``replay`` / ``evaluate``
 for free by implementing the ``SimEngine`` primitives.
 
 Three entry points:
 
-* :meth:`PolicyRunner.run` — blocking policy execution with optional video.
-* :meth:`PolicyRunner.replay` — replay a recorded LeRobotDataset episode.
-* :meth:`PolicyRunner.evaluate` — multi-episode evaluation with success metrics.
+* :meth:`PolicyRunner.run` - blocking policy execution with optional video.
+* :meth:`PolicyRunner.replay` - replay a recorded LeRobotDataset episode.
+* :meth:`PolicyRunner.evaluate` - multi-episode evaluation with success metrics.
 
 All three call only these public ``SimEngine`` methods:
 
@@ -21,8 +21,8 @@ All three call only these public ``SimEngine`` methods:
 
 And two public helpers for robot discovery:
 
-* ``list_robots()`` — ordered robot names in the world
-* ``robot_joint_names(robot_name)`` — ordered joint names for a robot
+* ``list_robots()`` - ordered robot names in the world
+* ``robot_joint_names(robot_name)`` - ordered joint names for a robot
 
 Thread safety: ``PolicyRunner`` itself is stateless per invocation. The
 underlying ``SimEngine`` is responsible for thread-safety inside its own
@@ -67,7 +67,7 @@ def _extract_frame_ndarray(render_result: dict) -> np.ndarray | None:
     ``render()`` returns the image nested inside a content block as
     ``{"image": {"format": "png", "source": {"bytes": <bytes>}}}``. This
     helper walks that structure, decodes the PNG, and returns a (H, W, 3|4)
-    numpy array. Returns ``None`` if no image is found — the recorder then
+    numpy array. Returns ``None`` if no image is found - the recorder then
     skips the frame rather than aborting the rollout.
     """
     if not isinstance(render_result, dict):
@@ -103,7 +103,7 @@ class VideoConfig:
 
     Consolidates the five formerly-flat video parameters on
     :meth:`SimEngine.run_policy` into one typed object. Recording is an
-    opt-in feature — if ``path`` is falsy, no recording occurs and the
+    opt-in feature - if ``path`` is falsy, no recording occurs and the
     other fields are ignored.
 
     Attributes:
@@ -139,7 +139,7 @@ class VideoConfig:
         )
 
 
-# on_frame hooks that raise are logged at WARN — user-provided telemetry is
+# on_frame hooks that raise are logged at WARN - user-provided telemetry is
 # not allowed to kill the rollout. BUT if the hook raises on every single step
 # (e.g. a recording hook with a typo'd observation key), we'd complete a 500-step
 # episode with zero frames written and silently corrupt the dataset. After this
@@ -164,7 +164,7 @@ class PolicyRunner:
     """Backend-agnostic policy execution against a ``SimEngine``.
 
     Construct with any ``SimEngine`` and call :meth:`run`, :meth:`replay`, or
-    :meth:`evaluate`. The runner is stateless across calls — safe to reuse.
+    :meth:`evaluate`. The runner is stateless across calls - safe to reuse.
 
     Args:
         sim: Any ``SimEngine`` implementation.
@@ -202,10 +202,10 @@ class PolicyRunner:
             action_horizon: Max actions consumed per policy call before
                 requerying observation.
             fast_mode: If True, skip real-time ``time.sleep`` between steps.
-            video: Optional :class:`VideoConfig` — set ``video.path`` to enable
+            video: Optional :class:`VideoConfig` - set ``video.path`` to enable
                 MP4 recording via :meth:`SimEngine.render`.
             on_frame: Optional hook ``(step_idx, obs, action) -> None`` called
-                after every ``send_action``. Public extension point — backends
+                after every ``send_action``. Public extension point - backends
                 layer in recording / telemetry / graceful-stop via this hook
                 without subclassing the runner.
             max_onframe_failures: Maximum *consecutive* non-``CooperativeStop``
@@ -213,13 +213,13 @@ class PolicyRunner:
                 the episode. ``None`` (default) uses
                 ``_MAX_CONSECUTIVE_ONFRAME_FAILURES`` (currently ``5``). A
                 broken recording hook otherwise silently produces empty
-                datasets — see GH #117. Non-consecutive failures reset the
+                datasets - see GH #117. Non-consecutive failures reset the
                 counter.
 
         Returns:
             ``{"status": "success"|"error", "content": [{"text": ...}]}``.
         """
-        # Lazy optional import — only imageio is optional.
+        # Lazy optional import - only imageio is optional.
         writer = None
         frame_count = 0
         frame_interval = 0.0
@@ -275,7 +275,7 @@ class PolicyRunner:
                             # Break both loops and return a normal success result.
                             raise
                         except Exception as e:
-                            # on_frame is user-provided telemetry — never fatal
+                            # on_frame is user-provided telemetry - never fatal
                             # *per call*. But if it fails on every step, a 500-
                             # step episode completes "successfully" with zero
                             # frames recorded and the dataset is silently empty.
@@ -388,7 +388,7 @@ class PolicyRunner:
 
         try:
             ds, episode_start, episode_length = load_lerobot_episode(repo_id, episode, root)
-        except Exception as e:  # noqa: BLE001 — library errors are opaque
+        except Exception as e:  # noqa: BLE001 - library errors are opaque
             return {"status": "error", "content": [{"text": f"{e}"}]}
 
         # Resolve joint name ordering for action vector index → action dict.
@@ -405,7 +405,7 @@ class PolicyRunner:
 
             action_vals = frame.get("action") if isinstance(frame, dict) else None
             if action_vals is None:
-                # No action at this index — just advance physics one step.
+                # No action at this index - just advance physics one step.
                 self.sim.step(n_steps=1)
                 frames_applied += 1
             else:
@@ -473,8 +473,8 @@ class PolicyRunner:
             max_steps: Cap per episode.
             success_fn: Either
 
-                * ``None`` — never succeeds (dry run / performance probe).
-                * ``"contact"`` — success when ``sim.get_contacts()`` reports
+                * ``None`` - never succeeds (dry run / performance probe).
+                * ``"contact"`` - success when ``sim.get_contacts()`` reports
                   any penetrating contact. Requires backend to implement
                   ``get_contacts``; falls back to ``False`` otherwise.
                 * callable ``(observation) -> bool``.
@@ -503,7 +503,7 @@ class PolicyRunner:
                 if actions:
                     self.sim.send_action(actions[0], robot_name=robot_name)
                 else:
-                    # Policy returned nothing — still advance one physics step
+                    # Policy returned nothing - still advance one physics step
                     # so episodes don't hang on degenerate policies.
                     self.sim.step(n_steps=1)
 
@@ -549,7 +549,7 @@ class PolicyRunner:
         """Best-effort read of sim time from any backend that exposes it.
 
         Tries two paths:
-          1. ``sim._world.sim_time`` — fast path for backends that keep a
+          1. ``sim._world.sim_time`` - fast path for backends that keep a
              structured world object (MuJoCo, and any other backend using
              ``strands_robots.simulation.models.SimWorld``).
           2. ``sim.get_state()`` fallback for backends that only expose the

@@ -82,7 +82,7 @@ def test_start_recording_no_world_returns_graceful_error():
 
 
 def test_stop_recording_without_start_is_idempotent(sim_with_two_robots):
-    """T16: idempotent — success with 'Was not recording' message."""
+    """T16: idempotent - success with 'Was not recording' message."""
     r = sim_with_two_robots.stop_recording()
     assert r["status"] == "success"
     assert "Was not recording" in r["content"][0]["text"]
@@ -160,7 +160,7 @@ def test_start_recording_namespaced_joint_prefix_with_two_robots(sim_with_two_ro
 
     info = json.loads((tmp_path / "meta" / "info.json").read_text())
     joint_names = info["features"]["observation.state"]["names"]
-    # Unique joint names — the fix we pushed
+    # Unique joint names - the fix we pushed
     assert len(joint_names) == len(set(joint_names)), f"dup names: {joint_names}"
     # Both robots prefixed
     assert any(jn.startswith("alpha__") for jn in joint_names)

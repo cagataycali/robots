@@ -1,4 +1,4 @@
-"""Unit tests for MJCFBuilder helpers — pure functions, no MuJoCo round-trip.
+"""Unit tests for MJCFBuilder helpers - pure functions, no MuJoCo round-trip.
 
 Targets the previously uncovered branches in
 strands_robots/simulation/mujoco/mjcf_builder.py.
@@ -65,7 +65,7 @@ def _dot(a, b):
 
 class TestCameraXYAxes:
     def test_looks_along_negative_z_axis(self):
-        # Camera at (0,0,1) looking at (0,0,0) — forward is -Z in world.
+        # Camera at (0,0,1) looking at (0,0,0) - forward is -Z in world.
         s = _camera_xyaxes_from_target([0, 0, 1], [0, 0, 0])
         assert s is not None
         # Near-parallel up+forward case falls back to world-X as right.
@@ -85,7 +85,7 @@ class TestCameraXYAxes:
         assert _norm(image_up) == pytest.approx(1.0, abs=1e-5)
 
     def test_side_view(self):
-        # Camera at (2, 0, 0) looking at origin — forward is -X.
+        # Camera at (2, 0, 0) looking at origin - forward is -X.
         s = _camera_xyaxes_from_target([2, 0, 0], [0, 0, 0])
         assert s is not None
         right, image_up = _axes_from_str(s)

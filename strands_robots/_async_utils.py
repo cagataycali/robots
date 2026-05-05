@@ -4,7 +4,7 @@ import asyncio
 import concurrent.futures
 
 # Module-level executor reused across calls to avoid creating threads at high frequency.
-# A single worker is sufficient — we only need to offload one asyncio.run() at a time.
+# A single worker is sufficient - we only need to offload one asyncio.run() at a time.
 _EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="strands_async")
 
 

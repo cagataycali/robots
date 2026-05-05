@@ -1,4 +1,4 @@
-"""Physics mixin — advanced MuJoCo physics introspection and manipulation.
+"""Physics mixin - advanced MuJoCo physics introspection and manipulation.
 
 Exposes the deep MuJoCo C API through clean Python methods:
 - Raycasting (mj_ray)
@@ -187,7 +187,7 @@ class PhysicsMixin:
         p = np.array(point, dtype=np.float64) if point else data.xipos[body_id].copy()
 
         # Zero the buffer first so calls are idempotent (replace, not accumulate).
-        # NOTE: MuJoCo does NOT reset qfrc_applied in mj_step — the force
+        # NOTE: MuJoCo does NOT reset qfrc_applied in mj_step - the force
         # persists on every subsequent step until the next apply_force call.
         with self._lock:
             data.qfrc_applied[:] = 0.0
@@ -223,7 +223,7 @@ class PhysicsMixin:
         the same short name (e.g. two so101s each having ``gripper``),
         the caller MUST pass the namespaced form (``arm0/gripper``) to
         disambiguate. The fallback returns the first match it finds,
-        which is non-deterministic — this is a deliberate
+        which is non-deterministic - this is a deliberate
         "unambiguous or explicit" contract.
         """
         import mujoco as _mj
@@ -290,7 +290,7 @@ class PhysicsMixin:
         if norm < 1e-10:
             return {
                 "status": "error",
-                "content": [{"text": "raycast: 'direction' vector is zero-length — supply a non-zero direction."}],
+                "content": [{"text": "raycast: 'direction' vector is zero-length - supply a non-zero direction."}],
             }
         vec = vec / norm
 
@@ -429,7 +429,7 @@ class PhysicsMixin:
             rank = int(np.linalg.matrix_rank(M))
             cond = float(np.linalg.cond(M)) if rank > 0 else float("inf")
         else:
-            # Empty scene (no DOFs yet) — return a well-typed zero payload
+            # Empty scene (no DOFs yet) - return a well-typed zero payload
             # instead of crashing in numpy on the empty matrix.
             rank = 0
             cond = float("inf")
@@ -455,7 +455,7 @@ class PhysicsMixin:
     def inverse_dynamics(self) -> dict[str, Any]:
         """Compute inverse dynamics: given qacc, what forces are needed?
 
-        Runs mj_inverse to compute qfrc_inverse — the generalized forces
+        Runs mj_inverse to compute qfrc_inverse - the generalized forces
         that would produce the current accelerations.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
@@ -552,8 +552,8 @@ class PhysicsMixin:
 
         Accepts EITHER form:
 
-        * dict: {joint_name: value, ...} — explicit per-joint, safest in multi-robot scenes.
-        * list/tuple: [v0, v1, ...] — ordered positional. Must match a single robot's
+        * dict: {joint_name: value, ...} - explicit per-joint, safest in multi-robot scenes.
+        * list/tuple: [v0, v1, ...] - ordered positional. Must match a single robot's
           joint count (when ``robot_name`` is given, that robot's joints; otherwise the
           world must contain exactly one robot, or the call errors).
         """
@@ -1115,7 +1115,7 @@ class PhysicsMixin:
     def export_xml(self, output_path: str | None = None) -> dict[str, Any]:
         """Export the current model to MJCF XML.
 
-        Uses mj_saveLastXML — exports the exact model currently loaded,
+        Uses mj_saveLastXML - exports the exact model currently loaded,
         including any runtime modifications.
         """
         if self._world is None or self._world._model is None or self._world._data is None:

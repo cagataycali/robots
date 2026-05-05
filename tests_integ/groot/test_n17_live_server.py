@@ -134,8 +134,8 @@ def test_get_action_real_inference(client):
     # Sanity: no NaN / inf in actions (common sign of server-side numerical blow-up)
     for key, arr in actions.items():
         a = np.asarray(arr)
-        assert np.isfinite(a).all(), f"{key} contains NaN/Inf — server numerical issue?"
+        assert np.isfinite(a).all(), f"{key} contains NaN/Inf - server numerical issue?"
 
-    # Loose latency sanity — warm inference is sub-500ms on Thor but cold can
+    # Loose latency sanity - warm inference is sub-500ms on Thor but cold can
     # be much higher (bfloat16 weight upload). Just warn, don't fail.
     print(f"\nREAL_G1 inference latency: {dt_ms:.0f}ms  (informational)")

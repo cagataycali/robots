@@ -1,4 +1,4 @@
-"""Policy factory — create_policy() and runtime registration."""
+"""Policy factory - create_policy() and runtime registration."""
 
 import logging
 import os

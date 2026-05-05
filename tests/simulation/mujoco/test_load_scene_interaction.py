@@ -25,7 +25,7 @@ pytest.importorskip("mujoco")
 
 from strands_robots.simulation.mujoco.simulation import Simulation  # noqa: E402
 
-# Minimal scene: a ground plane + a named block body. This is *not* a robot —
+# Minimal scene: a ground plane + a named block body. This is *not* a robot -
 # there are no joints/actuators/sensors. The original bug triggered when
 # ``self._world.robots`` was empty, which is the case here.
 SCENE_XML = """
@@ -120,7 +120,7 @@ def test_add_object_after_load_scene_preserves_scene_bodies(sim: Simulation, sce
     """add_object after load_scene must inject via XML round-trip, not rebuild.
 
     The original bug: with no robots registered, add_object fell through to
-    _recompile_world() which called MJCFBuilder.build_objects_only — that
+    _recompile_world() which called MJCFBuilder.build_objects_only - that
     builder only knows about ``world.objects`` and rebuilt from scratch,
     silently deleting every body from the loaded scene.
     """

@@ -3,7 +3,7 @@
 All notable behavioural changes to `strands-robots` are logged here. Follows
 [Keep a Changelog](https://keepachangelog.com/) conventions.
 
-## Unreleased — PR #85 (MuJoCo backend remediation)
+## Unreleased - PR #85 (MuJoCo backend remediation)
 
 ### Breaking
 
@@ -45,7 +45,7 @@ silently worked by accident will now receive a clear error instead:
   ``is_static=False`` on a plane is a hard error.
 - **Duplicate camera name** rejected. Previously a second ``add_camera``
   with an existing name silently overwrote the registry entry while
-  leaving the old camera in the XML — ghost behaviour. Use
+  leaving the old camera in the XML - ghost behaviour. Use
   ``remove_camera`` + ``add_camera`` to replace.
 - **stop_policy(robot_name='')** errors with *"stop_policy requires
   'robot_name'."* instead of silently matching the first robot.
@@ -60,7 +60,7 @@ silently worked by accident will now receive a clear error instead:
   requires the ``[lerobot]`` extra. Its error message when lerobot is
   missing now points callers at ``start_cameras_recording`` for plain
   MP4 (which runs under ``[sim-mujoco]`` alone via imageio-ffmpeg).
-- No API change — the fix is informational.
+- No API change - the fix is informational.
 
 ### Resource hygiene
 
@@ -151,7 +151,7 @@ two VLA arms can operate in the same scene without semantic conflict.
   ``duration``+``control_frequency``. ``duration = n_steps /
   control_frequency`` when ``n_steps`` is set.
 - **New ``list_policies_running``** action returns the names of robots
-  with a live policy — pairs with the new concurrent-policy support
+  with a live policy - pairs with the new concurrent-policy support
   (see *Concurrent per-robot policies* above).
 - ``randomize(randomize_physics=True)`` now reports per-body mass scales
   and per-geom friction scales in the response (not just range
@@ -164,21 +164,21 @@ two VLA arms can operate in the same scene without semantic conflict.
 
 ### Tests
 
-- New: ``tests/simulation/mujoco/test_agenttool_contract.py`` — ~50
+- New: ``tests/simulation/mujoco/test_agenttool_contract.py`` - ~50
   tests that lock in router validation, tool_spec ↔ method parity,
   unified error messages, idempotent stop family, ``mj_forward`` before
   reads, render-dim validation, feature filters, camera duplicate
   policy, plane auto-static, policy horizon unification, and more.
-- New: ``tests/simulation/mujoco/test_renderer_hygiene.py`` — 4 tests
+- New: ``tests/simulation/mujoco/test_renderer_hygiene.py`` - 4 tests
   asserting TLS cache is emptied on ``destroy``, renderer reuse works
   for identical ``(w,h)``, and ``create_world`` after ``destroy``
   rebuilds cleanly.
-- New: ``tests/simulation/mujoco/test_recording_backends.py`` — 2 tests
+- New: ``tests/simulation/mujoco/test_recording_backends.py`` - 2 tests
   (one skipped when ``lerobot`` IS installed) pinning the
   MP4-without-lerobot backend.
-- New: ``tests/simulation/mujoco/test_input_validation.py`` — 11 tests
+- New: ``tests/simulation/mujoco/test_input_validation.py`` - 11 tests
   for step/raycast/apply_force validation.
-- New: ``tests_integ/test_resource_hygiene.py`` — 3 integration tests
+- New: ``tests_integ/test_resource_hygiene.py`` - 3 integration tests
   (require ``psutil``): 50 create/destroy cycles grow RSS < 50 MB; 500
   renders at fixed dims grow RSS < 100 MB; TLS cache cleared on destroy.
 

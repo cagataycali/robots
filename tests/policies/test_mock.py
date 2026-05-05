@@ -1,6 +1,6 @@
 """Tests for ``strands_robots.policies.mock.MockPolicy``.
 
-MockPolicy is the only non-ML policy provider — it generates smooth
+MockPolicy is the only non-ML policy provider - it generates smooth
 sinusoidal actions and is the workhorse for every policy-runner / recording /
 evaluate test in the suite.
 """

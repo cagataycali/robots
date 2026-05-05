@@ -39,12 +39,12 @@ class RandomizationMixin:
         """Apply domain randomization to the scene.
 
         Each flag is opt-in per-axis. Defaults:
-          - ``randomize_colors=True``       — geom RGB re-sampled in ``color_range``.
-          - ``randomize_lighting=True``     — light pos jittered ±0.5m, diffuse resampled.
-          - ``randomize_physics=False``     — friction/mass left untouched unless asked.
-          - ``randomize_positions=False``   — object qpos left untouched unless asked.
+          - ``randomize_colors=True`` - geom RGB re-sampled in ``color_range``.
+          - ``randomize_lighting=True`` - light pos jittered ±0.5m, diffuse resampled.
+          - ``randomize_physics=False`` - friction/mass left untouched unless asked.
+          - ``randomize_positions=False`` - object qpos left untouched unless asked.
 
-        "No flags" means "nothing is randomized" — the call is a no-op. This
+        "No flags" means "nothing is randomized" - the call is a no-op. This
         matches the LLM ergonomics principle: explicit is better than implicit.
         Randomization IS destructive (writes to ``model.geom_*`` / ``body_*``
         arrays and to ``data.qpos``); recompile the scene to undo.

@@ -1,4 +1,4 @@
-"""User-local robot registry — runtime registration without editing package JSON.
+"""User-local robot registry - runtime registration without editing package JSON.
 
 Provides ``register_robot()`` and ``unregister_robot()`` for adding custom
 robots that persist across sessions via a ``user_robots.json`` file stored
@@ -13,7 +13,7 @@ Note:
     user registry. Use ``STRANDS_BASE_DIR`` to relocate user metadata.
 
 At load time the user overlay is merged *on top of* the package
-``robots.json`` — user entries win on name collision, so you can also
+``robots.json`` - user entries win on name collision, so you can also
 override built-in robots locally.
 
 Usage::
@@ -176,7 +176,7 @@ def register_robot(
 
             if _pkg_get_robot(name) is not None:
                 logger.info(
-                    "Robot '%s' exists in package registry — user registration will override it.",
+                    "Robot '%s' exists in package registry - user registration will override it.",
                     name,
                 )
         except ImportError:
@@ -189,7 +189,7 @@ def register_robot(
     # This matches how resolve_model_path works: search_dir / asset["dir"] / xml
     dir_name = resolved_dir.name
 
-    # Alias collision detection — warn (don't fail) when a user alias shadows a
+    # Alias collision detection - warn (don't fail) when a user alias shadows a
     # canonical name or another alias.  Doing this at registration surfaces the
     # problem immediately instead of at silent resolution-order time.
     if aliases and not overwrite:
@@ -218,7 +218,7 @@ def register_robot(
                 logger.warning("Alias %r is already used by another robot.", alias)
 
     # Validate model_xml exists.  Previously we only checked when
-    # ``resolved_dir`` existed — which silently accepted registrations for
+    # ``resolved_dir`` existed - which silently accepted registrations for
     # dirs that didn't exist yet and surfaced a confusing error only at
     # ``add_robot()`` time.  Now we fail-closed on both conditions so the
     # user gets an immediate, actionable error at registration time.
@@ -283,7 +283,7 @@ def unregister_robot(name: str) -> bool:
     data = _load_user_registry()
 
     if name not in data.get("robots", {}):
-        logger.info("Robot '%s' not in user registry — nothing to remove.", name)
+        logger.info("Robot '%s' not in user registry - nothing to remove.", name)
         return False
 
     del data["robots"][name]

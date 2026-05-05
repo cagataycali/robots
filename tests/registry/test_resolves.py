@@ -8,7 +8,7 @@ path is a valid relative path that would resolve under the search directories
     - Missing ``dir`` or ``model_xml`` keys in sim-capable robots
     - Path traversal sequences in registry entries
 
-The test does NOT require downloaded assets or GPU — it only validates the
+The test does NOT require downloaded assets or GPU - it only validates the
 registry metadata itself (directory/file names, path safety). Run it in the
 unit or integ hatch env.
 

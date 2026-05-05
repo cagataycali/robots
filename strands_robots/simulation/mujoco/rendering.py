@@ -1,4 +1,4 @@
-"""Rendering mixin — render, render_depth, get_contacts, observation helpers."""
+"""Rendering mixin - render, render_depth, get_contacts, observation helpers."""
 
 import io
 import logging
@@ -16,7 +16,7 @@ class RenderingMixin:
         _world: "SimWorld | None"
 
         _renderer_model: Any
-        _renderer_tls: Any  # threading.local() — per-thread renderer dict
+        _renderer_tls: Any  # threading.local() - per-thread renderer dict
         default_width: int
         default_height: int
 
@@ -179,7 +179,7 @@ class RenderingMixin:
             if act_id >= 0:
                 data.ctrl[act_id] = float(value)
             else:
-                # Fallback: key is a joint name — find the actuator that
+                # Fallback: key is a joint name - find the actuator that
                 # drives this joint via actuator_trnid (joint ID → actuator).
                 jnt_id = _lookup(mj.mjtObj.mjOBJ_JOINT, key)
                 if jnt_id >= 0:
@@ -229,7 +229,7 @@ class RenderingMixin:
                         }
                     ],
                 }
-            # strict camera validation — no silent fallback to default.
+            # strict camera validation - no silent fallback to default.
             # Special 'default' / 'free' tokens route to the free camera; any
             # other name MUST resolve or we error (prevents the LLM from
             # believing it rendered viewpoint X while actually getting free-cam).
@@ -436,16 +436,16 @@ class RenderingMixin:
             "content": [{"text": text}, {"json": {"contacts": contacts}}],
         }
 
-    # Multi-camera capture — Session recording for simulation
+    # Multi-camera capture - Session recording for simulation
 
     #
     # Design:
-    #  - render_all(cameras=None, width=, height=) — single-shot snapshot
+    #  - render_all(cameras=None, width=, height=) - single-shot snapshot
     #    of every camera at current sim_time. One PNG per camera.
-    #  - start_cameras_recording(...) — daemon thread, one imageio writer
+    #  - start_cameras_recording(...) - daemon thread, one imageio writer
     #    per camera, appends frames at fps.
-    #  - stop_cameras_recording() — flushes writers, returns paths + sizes.
-    #  - get_cameras_recording_status() — frame counts, elapsed, per-cam.
+    #  - stop_cameras_recording() - flushes writers, returns paths + sizes.
+    #  - get_cameras_recording_status() - frame counts, elapsed, per-cam.
     #
     # Thread safety: _get_renderer is thread-local (threading.local), so the
     # background thread creates its own GL context. No shared state with
@@ -471,7 +471,7 @@ class RenderingMixin:
     def render_all(self, cameras=None, width=None, height=None):
         """Render every (or a subset of) camera in one call.
 
-        Counterpart to ``render()`` for multi-view workflows — e.g. stereo,
+        Counterpart to ``render()`` for multi-view workflows - e.g. stereo,
         overhead + wrist, or all cameras in a 4-view grid. Each camera ships
         as its own ``{"image": {...}}`` block in the response.
 
@@ -647,7 +647,7 @@ class RenderingMixin:
 
         state = getattr(self, "_cams_rec_state", None)
         if not state or not state.get("running"):
-            # idempotent — 'already stopped' is a success, not an error.
+            # idempotent - 'already stopped' is a success, not an error.
             return {"status": "success", "content": [{"text": "Was not recording cameras."}]}
 
         state["running"] = False

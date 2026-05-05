@@ -1,4 +1,4 @@
-"""Integration tests for GR00T N1.6 policy — requires CUDA + Isaac-GR00T.
+"""Integration tests for GR00T N1.6 policy - requires CUDA + Isaac-GR00T.
 
 Run explicitly: hatch run test-integ
 Or: pytest tests_integ/ -v --timeout=300
@@ -150,7 +150,7 @@ def _make_gr1_server_observation(instruction="pick up the cube"):
 def _make_gr1_robot_observation():
     """GR1 robot-side observation (raw sensor values, no batching).
 
-    This is what a robot would produce — single frames and 1D state vectors.
+    This is what a robot would produce - single frames and 1D state vectors.
     The policy's mapping layer handles all reshaping.
     """
     rng = np.random.RandomState(42)

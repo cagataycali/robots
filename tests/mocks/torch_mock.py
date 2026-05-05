@@ -6,9 +6,9 @@ testing policy logic, observation mapping, and action conversion without
 actual GPU inference.
 
 Provides numpy-backed replacements for:
-- torch.Tensor (MockTensor) — arithmetic, reshaping, device, slicing
-- torch.nn.Parameter (MockParameter) — with requires_grad and device
-- torch.device (MockDevice) — type string, equality, hashing
+- torch.Tensor (MockTensor) - arithmetic, reshaping, device, slicing
+- torch.nn.Parameter (MockParameter) - with requires_grad and device
+- torch.device (MockDevice) - type string, equality, hashing
 - Factory functions: tensor, zeros, ones, randint, rand, from_numpy, stack, cat
 - Context managers: no_grad, inference_mode
 - Submodules: torch.nn, torch.cuda, torch.backends, torch.amp
@@ -291,8 +291,8 @@ def install_torch_mock():
     try:
         import torch  # noqa: F401
 
-        logger.info("Real torch is available (version=%s) — mock not installed", torch.__version__)
-        return  # Real torch available — nothing to do
+        logger.info("Real torch is available (version=%s) - mock not installed", torch.__version__)
+        return  # Real torch available - nothing to do
     except ImportError:
         pass
 

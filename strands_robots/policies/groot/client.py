@@ -1,4 +1,4 @@
-"""GR00T inference client — ZMQ client for inference-service communication.
+"""GR00T inference client - ZMQ client for inference-service communication.
 
 Handles serialization of numpy arrays and ModalityConfig objects over ZMQ
 using msgpack with custom encode/decode hooks.
@@ -138,7 +138,7 @@ class Gr00tInferenceClient:
         """Check server connectivity.
 
         Returns True if the server responds, False otherwise.
-        Does NOT auto-reconnect — call :meth:`reconnect` explicitly if needed.
+        Does NOT auto-reconnect - call :meth:`reconnect` explicitly if needed.
         """
         try:
             self.call_endpoint("ping")
@@ -185,7 +185,7 @@ class Gr00tInferenceClient:
         is currently empty in all upstream embodiments.
         """
         response = self.call_endpoint("get_action", {"observation": observations, "options": None})
-        # N1.6/N1.7 servers return a (action_dict, info_dict) tuple—msgpack
+        # N1.6/N1.7 servers return a (action_dict, info_dict) tuple - msgpack
         # decodes tuples as lists, so we may see either shape here.
         if isinstance(response, list | tuple) and len(response) == 2:
             action, _info = response

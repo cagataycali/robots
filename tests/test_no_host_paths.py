@@ -10,7 +10,7 @@ fails fast if anyone re-introduces a ``/Users/<name>/``, ``/home/<name>/`` or
 ``C:\\Users\\`` string. Prefer module-relative paths, ``pathlib.Path`` +
 ``__file__``, ``importlib.resources``, or fixtures.
 
-Allowlist patterns live below — keep it narrow.
+Allowlist patterns live below - keep it narrow.
 """
 
 from __future__ import annotations
@@ -33,13 +33,13 @@ HOST_PATH_PATTERNS = [
     re.compile(r"[A-Za-z]:\\Users\\[A-Za-z0-9._-]+\\"),
 ]
 
-# Explicit allowlist — files or string occurrences that are ABOUT these patterns
+# Explicit allowlist - files or string occurrences that are ABOUT these patterns
 # (documentation, validators themselves, regex sources).
 ALLOWED_FILES = {
     # This test itself defines the patterns above.
     "tests/test_no_host_paths.py",
     # Path validation logic *contains* Windows system paths as blocklist entries;
-    # those are C:\Windows\, C:\Program Files\ — not user profiles.
+    # those are C:\Windows\, C:\Program Files\ - not user profiles.
     "strands_robots/tools/_path_validation.py",
     "tests/tools/test_path_validation.py",
 }

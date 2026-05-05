@@ -194,7 +194,7 @@ class TestToolSpecIsClean:
             "model_path",
         ):
             assert leaked not in props, (
-                f"tool_spec.json must not advertise top-level '{leaked}' — it belongs under policy_config"
+                f"tool_spec.json must not advertise top-level '{leaked}' - it belongs under policy_config"
             )
 
 
@@ -252,7 +252,7 @@ def test_tool_spec_schema_cached_at_module_load(sim: Simulation) -> None:
 
     spec_a = sim.tool_spec
     spec_b = sim.tool_spec
-    # Identity check — same dict object, not just equal content
+    # Identity check - same dict object, not just equal content
     assert spec_a["inputSchema"]["json"] is _TOOL_SPEC_SCHEMA
     assert spec_b["inputSchema"]["json"] is _TOOL_SPEC_SCHEMA
     assert spec_a["inputSchema"]["json"] is spec_b["inputSchema"]["json"]

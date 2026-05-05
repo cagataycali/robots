@@ -1,7 +1,7 @@
-"""Simulation ABC — backend-agnostic interface for all simulation engines.
+"""Simulation ABC - backend-agnostic interface for all simulation engines.
 
 Every simulation backend (MuJoCo, Isaac, Newton) implements this interface.
-Agent tools and the Robot() factory interact through these methods only —
+Agent tools and the Robot() factory interact through these methods only -
 they never touch backend-specific APIs directly.
 
 Usage::
@@ -32,12 +32,12 @@ class SimEngine(ABC):
     """Abstract base class for simulation engines.
 
     Defines the contract that all backends (MuJoCo, Isaac, Newton) must
-    implement. This is the *programmatic* API — the AgentTool layer
+    implement. This is the *programmatic* API - the AgentTool layer
     wraps it with tool_spec/stream for LLM access.
 
     Method categories:
 
-    **Required** (``@abstractmethod``): Core simulation loop — world
+    **Required** (``@abstractmethod``): Core simulation loop - world
     lifecycle, entity management, observation/action, rendering, robot
     discovery. Every physics engine must implement these to be usable.
 
@@ -49,7 +49,7 @@ class SimEngine(ABC):
     policy inference on Isaac).
 
     **Optional** (default raises ``NotImplementedError``): Higher-level
-    features — scene loading, domain randomization, contact queries.
+    features - scene loading, domain randomization, contact queries.
     Backends opt in by overriding only what they support.
 
     Lifecycle::
@@ -188,7 +188,7 @@ class SimEngine(ABC):
 
         Single-camera rendering is :meth:`render`'s job, not this method's.
         For batched multi-robot observation (future Isaac / Newton), add a
-        separate ``get_observations(robot_names)`` method — do NOT extend
+        separate ``get_observations(robot_names)`` method - do NOT extend
         this one.
 
         Args:
@@ -264,14 +264,14 @@ class SimEngine(ABC):
                 ``port``, ``api_token``, ``pretrained_name_or_path``,
                 ``trust_remote_code``, ``actions_per_step``,
                 ``use_processor``, ``processor_overrides``, ``device``,
-                …). Forwarded verbatim to ``create_policy``.
+                ...). Forwarded verbatim to ``create_policy``.
             instruction: Natural-language instruction for the policy.
             duration: Wall-clock seconds to run.
             control_frequency: Target Hz for policy queries.
             action_horizon: Max actions per policy call.
             fast_mode: Skip real-time sleep between steps.
             video: Optional video-recording config dict. Accepted keys:
-                ``path`` (str, output MP4 — required to enable recording),
+                ``path`` (str, output MP4 - required to enable recording),
                 ``fps`` (int, default 30), ``camera`` (str, default backend
                 default), ``width`` (int, default 640), ``height`` (int,
                 default 480). See :class:`~strands_robots.simulation.policy_runner.VideoConfig`.
@@ -311,7 +311,7 @@ class SimEngine(ABC):
             }
 
         if policy_object is not None:
-            # Pre-built policy path — skip the expensive create_policy call.
+            # Pre-built policy path - skip the expensive create_policy call.
             # Caller is responsible for policy.set_robot_state_keys(...) if needed,
             # but we set it here defensively so the semantics match the provider path.
             policy = policy_object
@@ -410,7 +410,7 @@ class SimEngine(ABC):
     ) -> dict[str, Any]:
         """Multi-episode policy evaluation via ``PolicyRunner.evaluate``.
 
-        ``robot_name`` is required — eval_policy used to silently pick
+        ``robot_name`` is required - eval_policy used to silently pick
         the first robot, which is surprising in multi-robot scenes.
         ``n_episodes`` default lowered from 10 to 1 (callers opt in to
         longer evals explicitly).
@@ -492,6 +492,6 @@ class SimEngine(ABC):
         try:
             self.cleanup()
         except Exception as e:
-            # Best-effort cleanup during GC — exceptions can't propagate
+            # Best-effort cleanup during GC - exceptions can't propagate
             # from __del__ (CPython ignores them), so log for visibility.
             logger.warning("Cleanup error during __del__: %s", e)

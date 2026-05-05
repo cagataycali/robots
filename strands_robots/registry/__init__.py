@@ -1,4 +1,4 @@
-"""Unified Registry — single source of truth for robots and policies.
+"""Unified Registry - single source of truth for robots and policies.
 
 Loads robot definitions and policy provider configs from JSON files.
 
@@ -6,7 +6,7 @@ Features:
     - **One file to edit**: Add a robot → edit robots.json, done.
     - **Hot-reload**: JSON is re-read when the file changes (mtime check).
     - **Self-contained entries**: Each robot/policy owns its aliases,
-      shorthands, and URL patterns — no separate lookup tables.
+      shorthands, and URL patterns - no separate lookup tables.
     - **Validation**: Duplicate aliases, shorthands, and URL patterns
       are caught on load with clear error messages.
 

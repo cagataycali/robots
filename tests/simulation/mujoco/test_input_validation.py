@@ -25,7 +25,7 @@ def sim_with_robot():
     """A simulation with a single robot for physics-validation tests."""
     sim = Simulation()
     sim.create_world()
-    # Use a built-in registry robot — no network I/O
+    # Use a built-in registry robot - no network I/O
     res = sim.add_robot(name="panda", data_config="panda")
     if res["status"] != "success":
         pytest.skip(f"panda not available: {res['content'][0]['text']}")
@@ -114,7 +114,7 @@ class TestApplyForceValidation:
         # First latch a force
         r1 = sim_with_robot.apply_force(body_name="link1", force=[10, 0, 0])
         assert r1["status"] == "success"
-        # Then clear with explicit zero — this MUST remain valid
+        # Then clear with explicit zero - this MUST remain valid
         r2 = sim_with_robot.apply_force(body_name="link1", force=[0, 0, 0])
         assert r2["status"] == "success"
 

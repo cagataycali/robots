@@ -1,4 +1,4 @@
-"""Download robot model assets — Strands Agent ``@tool`` wrapper.
+"""Download robot model assets - Strands Agent ``@tool`` wrapper.
 
 Thin wrapper around :mod:`strands_robots.assets.download` that exposes
 ``download_robots()`` as an agent tool.  All download logic lives in the

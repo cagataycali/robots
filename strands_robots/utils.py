@@ -54,7 +54,7 @@ def require_optional(
 
 
 #
-# Path resolution — single source of truth for all strands-robots paths
+# Path resolution - single source of truth for all strands-robots paths
 #
 
 #: Default base directory for all user data.
@@ -66,10 +66,10 @@ def get_base_dir() -> Path:
 
     Resolution (in priority order):
 
-    1. ``STRANDS_BASE_DIR`` env var — explicit override. Use this when
+    1. ``STRANDS_BASE_DIR`` env var - explicit override. Use this when
        you want to relocate *all* strands-robots user data (assets,
        user registry, caches) to a non-default location.
-    2. ``~/.strands_robots/`` — default.
+    2. ``~/.strands_robots/`` - default.
 
     Note:
         ``STRANDS_ASSETS_DIR`` **only** controls the assets subdirectory
@@ -91,8 +91,8 @@ def get_assets_dir() -> Path:
     """Get the assets directory (robot model files, meshes, URDFs).
 
     Resolution:
-        1. ``STRANDS_ASSETS_DIR`` env var — used as-is
-        2. ``~/.strands_robots/assets/`` — default
+        1. ``STRANDS_ASSETS_DIR`` env var - used as-is
+        2. ``~/.strands_robots/assets/`` - default
 
     Returns:
         Path to the assets directory (created if needed).
@@ -129,7 +129,7 @@ def resolve_asset_path(relative_or_absolute: str | Path | None, default_name: st
 
 
 #
-# Path safety — prevent traversal via untrusted components
+# Path safety - prevent traversal via untrusted components
 #
 
 
@@ -166,7 +166,7 @@ def get_search_paths() -> list[Path]:
     """Get ordered list of asset search paths.
 
     Used by both :mod:`strands_robots.assets.manager` and
-    :mod:`strands_robots.assets.download` — centralised here to avoid
+    :mod:`strands_robots.assets.download` - centralised here to avoid
     a circular dependency between those two modules.
 
     Order (local assets take priority over defaults):

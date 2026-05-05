@@ -1,7 +1,7 @@
 """Integration tests for the MuJoCo Simulation class.
 
 Tests the full Simulation public API through behavioral end-to-end scenarios
-— create worlds, add robots/objects/cameras, step physics, render, record,
+- create worlds, add robots/objects/cameras, step physics, render, record,
 randomize, dispatch actions, and clean up.
 
 Every test exercises real user-visible behavior. No isinstance checks or
@@ -815,7 +815,7 @@ class TestRendererThreadSafety:
         assert worker_id_box["id"] is not None, "worker got None renderer"
         assert worker_id_box["id"] != main_id, (
             "worker thread should get its OWN renderer instance, not the "
-            "main-thread one — otherwise CGL context mismatch on cleanup."
+            "main-thread one - otherwise CGL context mismatch on cleanup."
         )
 
     def test_cleanup_after_policy_thread_no_segfault(self, sim_with_robot):
@@ -827,7 +827,7 @@ class TestRendererThreadSafety:
         future = sim_with_robot._policy_threads.get("arm1")
         if future is not None:
             future.result(timeout=5.0)
-        # cleanup() should succeed — pre-fix this segfaulted when the
+        # cleanup() should succeed - pre-fix this segfaulted when the
         # worker-thread renderer was closed on the main thread.
         sim_with_robot.cleanup()
 
@@ -1020,5 +1020,5 @@ class TestRecordingSafeCameraNames:
             {"repo_id": "local/test-ns", "root": root},
         )
         assert r["status"] == "success", r
-        # cleanup — don't leave a dangling recorder on the fixture
+        # cleanup - don't leave a dangling recorder on the fixture
         sim_with_robot._dispatch_action("stop_recording", {})

@@ -150,7 +150,7 @@ class TestValidateSavePath:
     @pytest.mark.skipif(sys.platform == "win32", reason="Linux-specific paths")
     def test_blocked_prefix_exact_dir_match(self):
         """The exact blocked directory itself (e.g. /var/spool/cron)
-        should also be rejected — it's the container directory."""
+        should also be rejected - it's the container directory."""
         with patch("os.path.realpath", return_value="/var/spool/cron"):
             with pytest.raises(ValueError, match="protected system directory"):
                 validate_save_path("/var/spool/cron")

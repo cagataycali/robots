@@ -1,4 +1,4 @@
-"""T4: Renderer TLS cache hygiene — destroy and cleanup empty the cache; same
+"""T4: Renderer TLS cache hygiene - destroy and cleanup empty the cache; same
 (w,h) reuses an existing renderer. Unit-level (no RSS measurement; see
 tests_integ/test_resource_hygiene.py for the process-memory checks)."""
 

@@ -1,4 +1,4 @@
-"""Tests for simulation foundation — models, ABC, factory, model_registry.
+"""Tests for simulation foundation - models, ABC, factory, model_registry.
 
 These tests verify the lightweight simulation abstractions without
 requiring MuJoCo or any heavy dependencies.
@@ -172,7 +172,7 @@ class TestSimEngine:
 
 
 class TestSimulationFactory:
-    """Test backend registration and creation — full round-trip."""
+    """Test backend registration and creation - full round-trip."""
 
     def test_list_backends_includes_mujoco(self):
         backends = list_backends()
@@ -225,7 +225,7 @@ class TestSimulationFactory:
         """force=True bypasses all conflict checks (escape hatch)."""
         # Should NOT raise
         register_backend("mj", lambda: dummy_engine_class, force=True)
-        # Clean up — put the real mj alias back by re-importing
+        # Clean up - put the real mj alias back by re-importing
         import importlib
 
         from strands_robots.simulation import factory
@@ -248,7 +248,7 @@ class TestModelRegistry:
         assert len(models) > 100
 
     def test_register_and_resolve_urdf(self, tmp_path):
-        """Register a URDF, resolve it back — full round-trip."""
+        """Register a URDF, resolve it back - full round-trip."""
         from strands_robots.simulation.model_registry import register_urdf, resolve_urdf
 
         urdf_file = tmp_path / "robot.urdf"
@@ -273,7 +273,7 @@ class TestSimModelsUsage:
     """Test that simulation models behave correctly in real usage patterns."""
 
     def test_sim_world_tracks_robots(self):
-        """SimWorld can add robots and objects — simulates real world setup."""
+        """SimWorld can add robots and objects - simulates real world setup."""
         world = SimWorld()
         robot = SimRobot(name="so100", urdf_path="/p")
         world.robots["so100"] = robot

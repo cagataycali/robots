@@ -1,4 +1,4 @@
-"""MuJoCo Simulation — AgentTool orchestrator composing physics/rendering/policy mixins."""
+"""MuJoCo Simulation - AgentTool orchestrator composing physics/rendering/policy mixins."""
 
 import inspect
 import json
@@ -70,7 +70,7 @@ class Simulation(
     implicit state machine starting with ``create_world``. Tools that mutate
     the scene (``add_robot``, ``remove_robot``, ``add_object``, ``remove_object``, ``move_object``, ``add_camera``, ``remove_camera``,
     ``load_scene``) are NOT safe to call while a policy is running via
-    ``start_policy`` — stop it first. Call ``destroy()`` or ``cleanup()`` at
+    ``start_policy`` - stop it first. Call ``destroy()`` or ``cleanup()`` at
     session end to release the ThreadPoolExecutor, temp dirs, and MuJoCo
     resources.
     """
@@ -99,7 +99,7 @@ class Simulation(
         self._policy_threads: dict[str, Future] = {}
         self._shutdown_event = threading.Event()
         # ``self._lock`` serializes writes to MuJoCo ``model``/``data`` arrays
-        # and calls to ``mj_step`` — MuJoCo physics is NOT safe for concurrent
+        # and calls to ``mj_step`` - MuJoCo physics is NOT safe for concurrent
         # mutation from multiple threads. This lock is the single point that
         # makes concurrent per-robot policies safe:
         #
@@ -107,7 +107,7 @@ class Simulation(
         #     *inference* level (observation build, action compute).
         #   * When either policy calls ``send_action``, it serializes here
         #     briefly to write its own ``ctrl[]`` slots and advance physics.
-        #   * ``mj_step`` advances the whole scene — so two robots sharing
+        #   * ``mj_step`` advances the whole scene - so two robots sharing
         #     one world share one physics clock. That's correct: one tick of
         #     physical time advances all bodies.
         self._lock = threading.Lock()
@@ -115,7 +115,7 @@ class Simulation(
         self._viewer_handle = None
         self._viewer_thread = None
 
-        # Thread-local renderer cache — MuJoCo Renderer uses thread-local GL
+        # Thread-local renderer cache - MuJoCo Renderer uses thread-local GL
         # contexts (CGL on macOS, GLX on Linux). Sharing renderers across
         # threads causes SIGSEGV in cgl.free(). Each thread gets its own.
         self._renderer_tls = threading.local()
@@ -276,7 +276,7 @@ class Simulation(
                 with open(scene_path) as _f:
                     self._world._backend_state["xml"] = _f.read()
             except OSError as read_err:
-                # Best-effort — failure to cache the XML is not fatal for
+                # Best-effort - failure to cache the XML is not fatal for
                 # a pure-read-only scene, but injection calls will fail
                 # informatively downstream.
                 logger.warning("Could not cache scene XML: %s", read_err)
@@ -421,7 +421,7 @@ class Simulation(
                     ],
                 }
         elif not resolved_path and name:
-            # deprecated fallback — try registry by instance name.
+            # deprecated fallback - try registry by instance name.
             import warnings as _warnings
 
             resolved_path = resolve_model(name)
@@ -453,7 +453,7 @@ class Simulation(
             self._ensure_meshes(resolved_path, data_config or name)
 
             # Pre-scan the robot XML to discover joint/actuator names.
-            # We load a temporary model just for introspection — this is NOT
+            # We load a temporary model just for introspection - this is NOT
             # used as the world model.
             tmp_model = mj.MjModel.from_xml_path(str(resolved_path))
 
@@ -512,7 +512,7 @@ class Simulation(
                 if jnt_id in robot.joint_ids:
                     robot.actuator_ids.append(i)
             if not robot.actuator_ids and len(self._world.robots) == 1:
-                # Fallback: single-robot scene — assign all actuators.
+                # Fallback: single-robot scene - assign all actuators.
                 for i in range(model.nu):
                     robot.actuator_ids.append(i)
 
@@ -559,7 +559,7 @@ class Simulation(
         with the same name (MuJoCo rejects duplicates on compile) and left
         stale bodies in the physics loop.
 
-        Concurrency (GH #114): this is a *global-scope* mutation — the XML
+        Concurrency (GH #114): this is a *global-scope* mutation - the XML
         round-trip reallocates ``model``/``data`` and invalidates cached
         actuator/joint IDs held by every running PolicyRunner. We stop the
         target robot's own policy first (cooperatively), then require no
@@ -580,7 +580,7 @@ class Simulation(
             del self._policy_threads[name]
 
         # Step 2: after stopping our own, there must be no OTHER policy
-        # running — an XML round-trip will invalidate cached IDs everywhere.
+        # running - an XML round-trip will invalidate cached IDs everywhere.
         if err := self._require_no_running_policy("remove_robot"):
             return err
 
@@ -726,7 +726,7 @@ class Simulation(
         # Use XML round-trip injection when the scene was loaded from file
         # (via load_scene) OR when robots have been injected. Otherwise
         # _recompile_world() rebuilds via MJCFBuilder.build_objects_only
-        # which only knows about objects/gravity/timestep — it would wipe
+        # which only knows about objects/gravity/timestep - it would wipe
         # any scene that was loaded from external MJCF.
         _scene_loaded = self._world._backend_state.get("scene_loaded", False)
         if self._world.robots or _scene_loaded:
@@ -737,7 +737,7 @@ class Simulation(
                         "status": "success",
                         "content": [{"text": f"📦 '{name}' spawned: {shape} at {obj.position}"}],
                     }
-                # Injection returned False — object tracked but not spawned.
+                # Injection returned False - object tracked but not spawned.
                 # This happens rarely (non-fatal round-trip issue); keep the
                 # object registered so the next recompile can pick it up.
                 return {
@@ -746,7 +746,7 @@ class Simulation(
                         {
                             "text": (
                                 f"📦 '{name}' registered: {shape} at {obj.position}\n"
-                                "⚠️ Live injection skipped — object tracked but not physically spawned."
+                                "⚠️ Live injection skipped - object tracked but not physically spawned."
                             )
                         }
                     ],
@@ -842,7 +842,7 @@ class Simulation(
 
         Naming: ``add_object(name="X", ...)`` injects its geom as
         ``"X_geom"`` in MJCF, so cameras share the name table only with
-        other cameras and body names — not with object geoms. Duplicate
+        other cameras and body names - not with object geoms. Duplicate
         camera names are rejected upfront.
 
         Orientation: ``target`` is baked into the camera's ``xyaxes``
@@ -1138,7 +1138,7 @@ class Simulation(
                 "content": [{"text": f"register_urdf: not a file: {urdf_path}"}],
             }
         try:
-            # Smoke-check readability — mj.MjModel.from_xml_path will surface a
+            # Smoke-check readability - mj.MjModel.from_xml_path will surface a
             # better error later, but permission issues are worth catching now.
             with p.open("rb"):
                 pass
@@ -1297,7 +1297,7 @@ class Simulation(
 
         Two scopes (GH #114):
 
-        * ``robot_name=None`` (default) — **global scope**. Used by scene
+        * ``robot_name=None`` (default) - **global scope**. Used by scene
           mutations that touch the whole XML / model pointer (``add_robot``,
           ``remove_robot``, ``add_object``, ``remove_object``, ``move_object``,
           ``add_camera``, ``remove_camera``, ``load_scene``, ``set_gravity``,
@@ -1306,7 +1306,7 @@ class Simulation(
           pointers to the old arrays will segfault when it next calls
           ``mj_step``. Hard-fail.
 
-        * ``robot_name="..."`` — **per-robot scope**. Used by actions that
+        * ``robot_name="..."`` - **per-robot scope**. Used by actions that
           are safe to run while *other* robots' policies are active
           (start_policy on the same robot, stop_policy, etc.). Policies on
           different robots can execute concurrently because MuJoCo physics
@@ -1355,11 +1355,11 @@ class Simulation(
                 "Programmatic MuJoCo simulation environment (stateful session). "
                 "One world per instance; actions form an implicit state machine starting with "
                 "create_world. Scene mutations (add_robot, remove_robot, add_object, remove_object, move_object, add_camera, remove_camera, "
-                "load_scene) are blocked while a policy is running — stop it first. "
+                "load_scene) are blocked while a policy is running - stop it first. "
                 "Create worlds, add robots from URDF "
                 "(direct path or auto-resolve from data_config name), add objects, run VLA policies, "
                 "render cameras, record trajectories, domain randomize. "
-                "Same Policy ABC as real robot control — sim ↔ real with zero code changes. "
+                "Same Policy ABC as real robot control - sim ↔ real with zero code changes. "
                 "Actions: create_world, load_scene, reset, get_state, destroy, "
                 "add_robot, remove_robot, list_robots, get_robot_state, "
                 "add_object, remove_object, move_object, list_objects, "
@@ -1737,7 +1737,7 @@ class Simulation(
         :meth:`_run_policy_loop` sees it and raises :class:`PolicyStopped`
         which is caught cleanly inside :meth:`start_policy`.
 
-        idempotent — if the robot exists but no policy is running, we
+        idempotent - if the robot exists but no policy is running, we
         still return success with 'Was not running' so callers can call
         stop_policy unconditionally. The only error case is an unknown
         robot_name.
@@ -1800,11 +1800,11 @@ class Simulation(
 
         New order:
           1. Signal every live policy to stop (``policy_running = False``).
-          2. Await each outstanding Future with a bounded timeout — the
+          2. Await each outstanding Future with a bounded timeout - the
              ``on_frame`` hook sees the flag at the top of its next call
              and raises ``CooperativeStop`` which short-circuits run_policy.
           3. Any Future still not-done after the timeout: we log a warning
-             and proceed — at that point the worker is wedged somewhere
+             and proceed - at that point the worker is wedged somewhere
              outside MuJoCo and a stale-pointer segfault is the lesser evil
              than hanging the host process on exit.
           4. Only AFTER workers have unwound do we null ``self._world``
@@ -1837,7 +1837,7 @@ class Simulation(
                     fut.result(timeout=timeout)
                 except Exception as e:
                     # result() raises either the worker's exception OR a
-                    # TimeoutError. Log and continue — we want cleanup to
+                    # TimeoutError. Log and continue - we want cleanup to
                     # finish even on pathological workers.
                     logger.warning(
                         "cleanup: policy on '%s' did not stop within %.1fs: %s",
@@ -1863,7 +1863,7 @@ class Simulation(
             self._renderer_tls = threading.local()
         # Step 4: shut the executor down now that all our policy futures
         # are either completed or abandoned. wait=False is OK at this
-        # point because we've already drained policy workers above — any
+        # point because we've already drained policy workers above - any
         # remaining thread is render / observation work that's safe to
         # outlive us.
         self._executor.shutdown(wait=False)

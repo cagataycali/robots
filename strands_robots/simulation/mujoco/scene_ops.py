@@ -28,7 +28,7 @@ def _patch_xml_paths(xml_content: str, robot_base_dir: str) -> str:
     try:
         root = ET.fromstring(xml_content)
     except ET.ParseError:
-        # Fallback for malformed fragments — use regex as last resort
+        # Fallback for malformed fragments - use regex as last resort
         logger.debug("ET parse failed for _patch_xml_paths, using regex fallback")
         meshdir_match = re.search(r'meshdir="([^"]*)"', xml_content)
         if meshdir_match:
@@ -42,7 +42,7 @@ def _patch_xml_paths(xml_content: str, robot_base_dir: str) -> str:
 
     compiler = root.find("compiler")
     if compiler is None:
-        # No compiler element — add one with meshdir
+        # No compiler element - add one with meshdir
         compiler = ET.SubElement(root, "compiler")
         # Insert at beginning (after root tag)
         root.remove(compiler)
@@ -95,7 +95,7 @@ def _rewrite_mesh_paths(
     scene_meshdir = os.path.normpath(scene_meshdir)
 
     if robot_meshdir == scene_meshdir:
-        return  # No rewriting needed — meshdirs match
+        return  # No rewriting needed - meshdirs match
 
     for child in robot_asset:
         if child.tag != "mesh":
@@ -109,7 +109,7 @@ def _rewrite_mesh_paths(
         try:
             rel_path = os.path.relpath(abs_mesh, scene_meshdir)
         except ValueError:
-            # On Windows, relpath fails across drives — use absolute
+            # On Windows, relpath fails across drives - use absolute
             rel_path = abs_mesh
         child.set("file", rel_path)
 
@@ -152,7 +152,7 @@ def _reload_scene_from_xml(world: SimWorld, scene_path: str) -> bool:
     # Copy state per-joint by name to handle layout shifts when injected
     # bodies land earlier in the body-tree traversal.  Flat-index copies
     # (qpos[:old_nq]) are unsafe because MuJoCo allocates qpos in
-    # recursive body-tree order — a new body can shift existing entries.
+    # recursive body-tree order - a new body can shift existing entries.
     old_model = world._model
     old_data = world._data
     for i in range(old_model.njnt):
@@ -199,7 +199,7 @@ def _reload_scene_from_xml(world: SimWorld, scene_path: str) -> bool:
         with open(scene_path) as _f:
             world._backend_state["xml"] = _f.read()
     except OSError:
-        # Best-effort — don't fail the reload just because we can't read back.
+        # Best-effort - don't fail the reload just because we can't read back.
         pass
 
     # Re-discover robot joints/actuators (IDs may shift).
@@ -279,7 +279,7 @@ def _save_and_patch_xml(world: SimWorld, tmpdir: str, filename: str) -> str:
 
     To work around this, we first reload our own stored scene XML into the
     MuJoCo global state (via ``MjModel.from_xml_string``). The resulting
-    ``_tmp`` model is discarded — its only purpose is to reset
+    ``_tmp`` model is discarded - its only purpose is to reset
     ``mj_saveLastXML``'s internal pointer.
 
     Multi-robot note: uses the first robot's base dir for compiler paths.
@@ -327,7 +327,7 @@ def _prefix_robot_names(robot_root: Any, prefix: str) -> None:
         ``body1``, ``body2``, ``joint1``, ``joint2``
 
     Asset references (mesh, material, texture, hfield) and class references
-    are NOT prefixed — they are shared by same-config robots (which is the
+    are NOT prefixed - they are shared by same-config robots (which is the
     whole point of the dedupe in assets/defaults).
 
     Args:
@@ -394,7 +394,7 @@ def _prefix_robot_names(robot_root: Any, prefix: str) -> None:
         "body2",
         "joint1",
         "joint2",
-        "childclass",  # default classes — prefixed too since we keep per-robot ones? No — keep shared.
+        "childclass",  # default classes - prefixed too since we keep per-robot ones? No - keep shared.
         "target",
     }
     # We don't prefix "childclass" because classes are shared (deduped) across
@@ -460,7 +460,7 @@ def _namespace_robot_default_classes(robot_root: Any, namespace: str, skip: set[
     This helper renames every class declared in the robot's ``<default>``
     tree to a namespaced form, EXCEPT for classes listed in ``skip`` (names
     that already exist in the merged scene from a robot sharing the same
-    ``data_config`` — those we want to reuse, not duplicate).
+    ``data_config`` - those we want to reuse, not duplicate).
 
     It then rewrites every ``class=`` and ``childclass=`` attribute in the
     robot's other sections (``worldbody``, ``actuator``, ``sensor``, etc.)
@@ -468,7 +468,7 @@ def _namespace_robot_default_classes(robot_root: Any, namespace: str, skip: set[
 
     Args:
         robot_root: The <mujoco> root of the robot's canonical MJCF.
-        namespace: A prefix unique to this robot's ``data_config`` — typically
+        namespace: A prefix unique to this robot's ``data_config`` - typically
             the data_config key itself (e.g. ``"h1"`` or ``"so100"``).
         skip: Class names that already exist in the scene (leave them alone).
 
@@ -571,7 +571,7 @@ def inject_robot_into_scene(
 
         # Step 3a: Prefix all names/references inside the robot XML with the
         # robot's instance name. Required so that multiple robots with the
-        # same ``data_config`` (e.g. three so101s) can coexist — otherwise
+        # same ``data_config`` (e.g. three so101s) can coexist - otherwise
         # MuJoCo rejects the merged XML with "repeated name 'base' in body".
         _prefix_robot_names(robot_root, robot.name)
 
@@ -619,7 +619,7 @@ def inject_robot_into_scene(
                     scene_asset.append(child)
                     existing_assets.add(name)
                 elif not name:
-                    # Unnamed assets (rare) — append unconditionally
+                    # Unnamed assets (rare) - append unconditionally
                     scene_asset.append(child)
 
         # Step 4b: Merge worldbody children (robot bodies, lights, etc.)
@@ -632,7 +632,7 @@ def inject_robot_into_scene(
                 continue  # Skip duplicate lights
             scene_worldbody.append(child)
 
-        # Step 4c: Merge actuators (dedupe by name — multiple same-config
+        # Step 4c: Merge actuators (dedupe by name - multiple same-config
         # robots would clash on e.g. "shoulder_pan" actuator).
         scene_actuator = scene_root.find("actuator")
         robot_actuator = robot_root.find("actuator")
@@ -681,7 +681,7 @@ def inject_robot_into_scene(
             robot_default = robot_root.find("default")
             merged_configs.add(robot_cfg)
         elif robot_cfg in merged_configs:
-            # Same config already merged — drop this robot's <default> entirely,
+            # Same config already merged - drop this robot's <default> entirely,
             # and rewrite class/childclass on its bodies to point at the
             # already-merged, already-namespaced classes so references resolve.
             if robot_default is not None:
@@ -749,7 +749,7 @@ def inject_robot_into_scene(
             for child in robot_tendon:
                 scene_tendon.append(child)
 
-        # Remove keyframes — adding joints changes qpos size
+        # Remove keyframes - adding joints changes qpos size
         for keyframe_elem in scene_root.findall("keyframe"):
             scene_root.remove(keyframe_elem)
 
@@ -792,7 +792,7 @@ def inject_object_into_scene(world: SimWorld, obj: SimObject) -> bool:
         for child in obj_elem:
             worldbody.append(child)
 
-        # Remove keyframes — adding a freejoint changes qpos size
+        # Remove keyframes - adding a freejoint changes qpos size
         for keyframe_elem in root.findall("keyframe"):
             root.remove(keyframe_elem)
 
@@ -835,7 +835,7 @@ def eject_body_from_scene(world: SimWorld, body_name: str) -> bool:
                     removed = True
 
         if not removed:
-            logger.warning(f"Body '{body_name}' not found in MJCF XML — skipping ejection.")
+            logger.warning(f"Body '{body_name}' not found in MJCF XML - skipping ejection.")
 
         # Remove keyframes
         for keyframe_elem in root.findall("keyframe"):
@@ -857,7 +857,7 @@ def eject_robot_from_scene(world: SimWorld, robot_name: str) -> bool:
     Unlike ``eject_body_from_scene`` (which only strips one body), this helper
     also purges every element whose MuJoCo ``name`` starts with
     ``"{robot_name}/"`` from worldbody / actuator / sensor / equality /
-    tendon / keyframe sections — matching the scope of
+    tendon / keyframe sections - matching the scope of
     ``_prefix_robot_names`` in the inject path.
 
     Default classes + assets are left in place so future robots that reuse
@@ -912,7 +912,7 @@ def eject_robot_from_scene(world: SimWorld, robot_name: str) -> bool:
         eq_removed = _strip_section("equality")
         tendon_removed = _strip_section("tendon")
 
-        # Keyframes reference full qpos — safer to drop them.
+        # Keyframes reference full qpos - safer to drop them.
         for kf in root.findall("keyframe"):
             root.remove(kf)
 

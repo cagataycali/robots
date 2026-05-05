@@ -1,4 +1,4 @@
-"""Tests for PhysicsMixin — advanced MuJoCo physics features.
+"""Tests for PhysicsMixin - advanced MuJoCo physics features.
 
 Tests: raycasting, jacobians, energy, forces, state checkpointing,
 inverse dynamics, sensor readout, body introspection, runtime modification.

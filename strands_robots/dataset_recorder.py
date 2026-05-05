@@ -77,10 +77,10 @@ class DatasetRecorder:
     """Bridge between strands-robots control loops and LeRobotDataset.
 
     Handles the full lifecycle:
-    1. create() — build LeRobotDataset with correct features
-    2. add_frame() — called every control step with obs + action
-    3. save_episode() — finalize episode (encodes video, writes parquet)
-    4. push_to_hub() — upload to HuggingFace
+    1. create() - build LeRobotDataset with correct features
+    2. add_frame() - called every control step with obs + action
+    3. save_episode() - finalize episode (encodes video, writes parquet)
+    4. push_to_hub() - upload to HuggingFace
 
     Works for both real hardware (robot.py) and simulation (simulation.py).
     """
@@ -133,7 +133,7 @@ class DatasetRecorder:
             image_writer_threads: Threads for writing image frames
             video_backend: Video backend for encoding ("auto" for HW encoder auto-detect)
         """
-        # Lazy import — this is where we actually need lerobot
+        # Lazy import - this is where we actually need lerobot
         LeRobotDatasetCls = _get_lerobot_dataset_class()
 
         # Build features dict in LeRobot format
@@ -268,7 +268,7 @@ class DatasetRecorder:
     ) -> None:
         """Add a single control-loop frame to the dataset.
 
-        This is the key method — called every step in the control loop.
+        This is the key method - called every step in the control loop.
 
         Args:
             observation: Raw observation dict from robot/sim
@@ -360,7 +360,7 @@ class DatasetRecorder:
 
         # Strip undeclared cameras (keys present in obs but not registered in
         # _build_features). This avoids LeRobot's "Extra features" error.
-        # Declared-but-missing cameras (e.g. when a render fails) are left alone —
+        # Declared-but-missing cameras (e.g. when a render fails) are left alone -
         # LeRobot tolerates absent columns and the episode simply won't have that
         # camera's data.
         frame_cam_keys_final = {k for k in frame if k.startswith("observation.images.")}
@@ -386,7 +386,7 @@ class DatasetRecorder:
                 )
 
     def save_episode(self) -> dict[str, Any]:
-        """Finalize current episode — writes parquet, encodes video, computes stats.
+        """Finalize current episode - writes parquet, encodes video, computes stats.
 
         LeRobot v3: save_episode() takes no task argument. Tasks are stored
         per-frame in the episode buffer via add_frame().

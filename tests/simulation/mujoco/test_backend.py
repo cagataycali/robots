@@ -1,4 +1,4 @@
-"""Unit tests for mujoco/backend.py — GL backend auto-configuration."""
+"""Unit tests for mujoco/backend.py - GL backend auto-configuration."""
 
 from __future__ import annotations
 
@@ -67,7 +67,7 @@ class TestConfigureGLBackend:
                 assert os.environ.get("MUJOCO_GL") == "egl"
                 load.assert_called_once()
             finally:
-                # explicit teardown — monkeypatch.delenv only covers vars it had seen at yield time
+                # explicit teardown - monkeypatch.delenv only covers vars it had seen at yield time
                 os.environ.pop("MUJOCO_GL", None)
 
     def test_headless_falls_back_to_osmesa(self, restore_env):
@@ -115,7 +115,7 @@ class TestCanRender:
         self._clear_cache()
 
     def test_headless_without_mujoco_gl_short_circuits(self, restore_env):
-        """Probe must NOT run when headless+no-GL — otherwise GLFW SIGABRTs."""
+        """Probe must NOT run when headless+no-GL - otherwise GLFW SIGABRTs."""
         self._clear_cache()
         with patch.object(sys, "platform", "linux"):
             # No DISPLAY, no MUJOCO_GL.

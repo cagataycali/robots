@@ -1,4 +1,4 @@
-"""MJCF XML builder — programmatic scene construction."""
+"""MJCF XML builder - programmatic scene construction."""
 
 import logging
 import os
@@ -34,11 +34,11 @@ def _camera_xyaxes_from_target(
 
     MuJoCo cameras with ``mode='fixed'`` need an explicit orientation. Without
     xyaxes/quat MuJoCo uses the default -Z look direction, so ``add_camera``'s
-    ``target`` was completely ignored — every custom camera rendered the
+    ``target`` was completely ignored - every custom camera rendered the
     default view and three cameras at different positions produced byte-
     identical near-black PNGs.
 
-    MJCF xyaxes format: "x0 x1 x2  y0 y1 y2" — the camera's LOCAL +X and +Y
+    MJCF xyaxes format: "x0 x1 x2  y0 y1 y2" - the camera's LOCAL +X and +Y
     axes expressed in world frame. Camera looks down its local -Z.
 
     Convention here:
@@ -66,7 +66,7 @@ def _camera_xyaxes_from_target(
     rz = fx * uy - fy * ux
     rlen = math.sqrt(rx * rx + ry * ry + rz * rz)
     if rlen < 1e-9:
-        # forward is parallel to up — fall back to world-X as right.
+        # forward is parallel to up - fall back to world-X as right.
         rx, ry, rz = 1.0, 0.0, 0.0
         rlen = 1.0
     rx, ry, rz = rx / rlen, ry / rlen, rz / rlen
