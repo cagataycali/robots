@@ -109,6 +109,36 @@ two VLA arms can operate in the same scene without semantic conflict.
 - Completed policy Futures are no longer retained forever in
   ``_policy_threads`` (GH #120 companion fix).
 
+### Policy-hook robustness (GH #117)
+
+``PolicyRunner.run`` previously caught *all* ``on_frame`` exceptions at
+WARN level and kept iterating. A recording hook with a typo'd observation
+key would log 500 lines and produce an empty dataset. Now we count
+*consecutive* failures and abort the episode after a threshold (default
+5, tunable via new ``max_onframe_failures`` kwarg).
+
+- A single transient failure still logs + continues; counter resets on
+  the next successful call.
+- ``N`` consecutive failures raise ``RuntimeError`` so ``run()`` returns
+  ``status='error'`` with a clear message, preventing silent dataset
+  corruption.
+
+### Cleanup graceful shutdown (GH #116)
+
+``Simulation.cleanup()`` no longer races the policy worker. Previously
+cleanup set ``self._world = None`` and called ``executor.shutdown(wait=False)``
+nearly simultaneously - a policy still inside ``mj_step`` segfaulted on
+freed arrays. Now cleanup:
+
+1. Signals every live policy to stop (``policy_running = False``).
+2. Awaits each outstanding Future with a bounded timeout (default 5s,
+   overridable via new ``cleanup(policy_stop_timeout=...)`` kwarg).
+3. Only AFTER workers unwind do we null ``self._world`` and tear down
+   renderers / viewer / executor.
+
+Wedged workers that don't stop in time get logged as a warning - cleanup
+proceeds rather than hanging the host process on exit.
+
 ### Error message consistency
 
 - All "no world" paths return the same string:
