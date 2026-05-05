@@ -137,19 +137,54 @@ def list_aliases() -> dict[str, str]:
     return _build_alias_map()
 
 
-def format_robot_table() -> str:
-    """Human-readable table of all robots for CLI/tool output."""
-    lines = [
-        f"{'Name':<20} {'Category':<15} {'Joints':<8} {'Sim':<5} {'Real':<5} Description",
-        "─" * 100,
-    ]
-    for cat in ["arm", "bimanual", "hand", "humanoid", "expressive", "mobile", "mobile_manip"]:
+_NAME_WIDTH = 20
+_CAT_WIDTH = 15
+_JOINTS_WIDTH = 8
+_SIM_WIDTH = 5
+_REAL_WIDTH = 5
+# Width of the fixed prefix columns, including single-space separators.
+_FIXED_PREFIX_WIDTH = _NAME_WIDTH + 1 + _CAT_WIDTH + 1 + _JOINTS_WIDTH + 1 + _SIM_WIDTH + 1 + _REAL_WIDTH + 1
+
+
+def format_robot_table(max_width: int = 100) -> str:
+    """Human-readable table of all robots for CLI/tool output.
+
+    Args:
+        max_width: Target terminal width. The ``Description`` column is
+            truncated with an ellipsis to fit. Pass a large value (e.g.
+            ``1000``) to disable truncation entirely. Default 100 is safe
+            for a typical 100-column terminal.
+    """
+    desc_width = max(20, max_width - _FIXED_PREFIX_WIDTH)
+
+    header = (
+        f"{'Name':<{_NAME_WIDTH}} "
+        f"{'Category':<{_CAT_WIDTH}} "
+        f"{'Joints':<{_JOINTS_WIDTH}} "
+        f"{'Sim':<{_SIM_WIDTH}} "
+        f"{'Real':<{_REAL_WIDTH}} "
+        f"Description"
+    )
+    rule_width = min(max(max_width, len(header)), _FIXED_PREFIX_WIDTH + desc_width)
+    lines = [header, "─" * rule_width]
+
+    for cat in ["arm", "bimanual", "hand", "humanoid", "expressive", "mobile", "mobile_manip", "aerial"]:
         by_cat = list_robots_by_category()
         for r in by_cat.get(cat, []):
             sim = "✅" if r["has_sim"] else "  "
             real = "✅" if r["has_real"] else "  "
             joints = str(r["joints"]) if r["joints"] else "?"
-            lines.append(f"{r['name']:<20} {r['category']:<15} {joints:<8} {sim:<5} {real:<5} {r['description']}")
+            desc = r["description"] or ""
+            if len(desc) > desc_width:
+                desc = desc[: desc_width - 1].rstrip() + "…"
+            lines.append(
+                f"{r['name']:<{_NAME_WIDTH}} "
+                f"{r['category']:<{_CAT_WIDTH}} "
+                f"{joints:<{_JOINTS_WIDTH}} "
+                f"{sim:<{_SIM_WIDTH}} "
+                f"{real:<{_REAL_WIDTH}} "
+                f"{desc}"
+            )
 
     robots = list_robots()
     lines.append("")
