@@ -92,8 +92,8 @@ class RenderingMixin:
             renderers[key] = mj.Renderer(self._world._model, height=height, width=width)
         return renderers[key]
 
-    def _get_sim_observation(self, robot_name: str) -> dict[str, Any]:
-        """Get observation from sim: joint state + all cameras.
+    def _get_sim_observation(self, robot_name: str, *, skip_images: bool = False) -> dict[str, Any]:
+        """Get observation from sim: joint state + cameras (unless skipped).
 
         Implements :meth:`SimEngine.get_observation`'s schema.
 
@@ -118,6 +118,9 @@ class RenderingMixin:
                 jnt_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, jnt_name)
             if jnt_id >= 0:
                 obs[jnt_name] = float(data.qpos[model.jnt_qposadr[jnt_id]])
+
+        if skip_images:
+            return obs
 
         # Render every camera defined on the model plus any python-side cameras.
         # Individual camera failures are logged but do not drop joint state.

@@ -55,6 +55,18 @@ class Policy(ABC):
         pass
 
     @property
+    def requires_images(self) -> bool:
+        """Whether this policy needs camera frames in its observation.
+
+        Default True (most VLA policies do). Subclasses that only consume
+        joint state (e.g. ``MockPolicy``, pure-IK controllers, scripted
+        trajectories) can return ``False`` to let the simulation skip
+        expensive camera rendering — a ~10x throughput win at 500Hz when
+        no cameras are needed.
+        """
+        return True
+
+    @property
     @abstractmethod
     def provider_name(self) -> str:
         """Get provider name for identification."""

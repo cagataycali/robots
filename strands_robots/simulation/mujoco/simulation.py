@@ -120,7 +120,7 @@ class Simulation(
 
     # Robot-compatible interface
 
-    def get_observation(self, robot_name: str | None = None) -> dict[str, Any]:
+    def get_observation(self, robot_name: str | None = None, *, skip_images: bool = False) -> dict[str, Any]:
         """Get full observation for a robot: joint state + all attached cameras.
 
         See :meth:`SimEngine.get_observation` for the schema contract.
@@ -133,7 +133,11 @@ class Simulation(
             robot_name = next(iter(self._world.robots))
         if robot_name not in self._world.robots:
             return {}
-        return self._get_sim_observation(robot_name)
+        if skip_images and self._world is not None and self._world._backend_state.get("recording"):
+            # T26: dataset recording needs every frame's image obs. Override
+            # the policy's skip hint when an active recorder is attached.
+            skip_images = False
+        return self._get_sim_observation(robot_name, skip_images=skip_images)
 
     def send_action(self, action: dict[str, Any], robot_name: str | None = None, n_substeps: int = 1) -> None:
         """Apply action to simulation (Robot ABC compatible).

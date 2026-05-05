@@ -168,7 +168,7 @@ class SimEngine(ABC):
     # Observation / Action
 
     @abstractmethod
-    def get_observation(self, robot_name: str | None = None) -> dict[str, Any]:
+    def get_observation(self, robot_name: str | None = None, *, skip_images: bool = False) -> dict[str, Any]:
         """Get full observation for a robot: joint state + all attached cameras.
 
         Unified observation consumed by :class:`Policy` and

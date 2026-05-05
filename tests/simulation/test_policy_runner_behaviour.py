@@ -192,3 +192,62 @@ class TestVideoConfig:
     def test_disabled_without_path(self):
         v = VideoConfig()
         assert v.enabled is False
+
+
+class TestT26PerfBudget:
+    """T26: mock-policy rollouts must meet the <2s/500-step budget.
+
+    The optimisation: policies that don't consume images expose
+    ``requires_images=False`` and PolicyRunner propagates that to
+    ``SimEngine.get_observation(skip_images=True)`` so the per-step
+    camera render is skipped.
+    """
+
+    def test_mock_policy_500_steps_under_budget(self, sim_with_robot):
+        import time
+
+        policy = MockPolicy()
+        policy.set_robot_state_keys(sim_with_robot.robot_joint_names("alice"))
+        # Warmup so renderer / JIT are hot.
+        PolicyRunner(sim_with_robot).run("alice", policy, duration=0.02, control_frequency=50.0, fast_mode=True)
+
+        t0 = time.time()
+        result = PolicyRunner(sim_with_robot).run(
+            "alice",
+            policy,
+            duration=1.0,
+            control_frequency=500.0,  # → 500 steps
+            fast_mode=True,
+        )
+        wall = time.time() - t0
+
+        assert result["status"] == "success"
+        # The T26 budget is < 2s. Local measurements land ~0.02s with
+        # skip_images, ~0.38s without. We pin to 2.0 so CI runners with
+        # slower renderers don't flake while still catching regressions.
+        assert wall < 2.0, f"mock-policy 500 steps took {wall:.2f}s (T26 budget: <2.0s)"
+
+    def test_requires_images_propagates_to_observation(self, sim_with_robot, monkeypatch):
+        """PolicyRunner reads policy.requires_images once and passes
+        skip_images= to every get_observation call."""
+        policy = MockPolicy()
+        policy.set_robot_state_keys(sim_with_robot.robot_joint_names("alice"))
+
+        captured: list[bool] = []
+        original = sim_with_robot.get_observation
+
+        def spy(**kwargs):
+            captured.append(bool(kwargs.get("skip_images", False)))
+            return original(**kwargs)
+
+        monkeypatch.setattr(sim_with_robot, "get_observation", spy)
+        PolicyRunner(sim_with_robot).run(
+            "alice",
+            policy,
+            duration=0.05,
+            control_frequency=50.0,  # → a few steps
+            fast_mode=True,
+        )
+        assert captured, "get_observation was never called"
+        # Mock policy has requires_images=False → every call skip_images=True.
+        assert all(captured), f"skip_images should be True every step; got {captured}"

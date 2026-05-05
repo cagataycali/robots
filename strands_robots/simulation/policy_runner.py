@@ -223,6 +223,8 @@ class PolicyRunner:
             frame_interval = control_frequency / video.fps
 
         stopped_early = False
+        # T26: skip camera rendering when the policy does not need images.
+        _skip_images = not getattr(policy, "requires_images", True)
         try:
             total_steps = int(duration * control_frequency)
             action_sleep = 1.0 / control_frequency
@@ -230,7 +232,7 @@ class PolicyRunner:
             step_count = 0
 
             while step_count < total_steps:
-                observation = self.sim.get_observation(robot_name=robot_name)
+                observation = self.sim.get_observation(robot_name=robot_name, skip_images=_skip_images)
 
                 coro_or_result = policy.get_actions(observation, instruction)
                 actions = _resolve_coroutine(coro_or_result)
@@ -444,6 +446,8 @@ class PolicyRunner:
         except ValueError as e:
             return {"status": "error", "content": [{"text": f"{e}"}]}
 
+        # T26: skip camera rendering when the policy does not need images.
+        _skip_images = not getattr(policy, "requires_images", True)
         results: list[dict[str, Any]] = []
         for ep in range(n_episodes):
             self.sim.reset()
@@ -451,7 +455,7 @@ class PolicyRunner:
             steps = 0
 
             for _ in range(max_steps):
-                observation = self.sim.get_observation(robot_name=robot_name)
+                observation = self.sim.get_observation(robot_name=robot_name, skip_images=_skip_images)
                 coro_or_result = policy.get_actions(observation, instruction)
                 actions = _resolve_coroutine(coro_or_result)
 
