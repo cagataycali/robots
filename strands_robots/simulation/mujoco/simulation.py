@@ -77,6 +77,7 @@ from strands_robots.simulation.mujoco.scene_ops import (
     inject_camera_into_scene,
     inject_object_into_scene,
     inject_robot_into_scene,
+    patch_scene_mjcf,
     replace_scene_mjcf,
 )
 from strands_robots.simulation.mujoco.spec_builder import SpecBuilder
@@ -383,6 +384,48 @@ class Simulation(
                         f"🦴 Bodies: {model.nbody}, 🔩 Joints: {model.njnt}, ⚡ Actuators: {model.nu}, 📷 Cameras: {model.ncam}\n"
                         "⚠️ world.robots / world.objects / world.cameras registries were NOT updated - "
                         "they describe our previous Python-side view of the scene."
+                    )
+                }
+            ],
+        }
+
+    def patch_scene_mjcf(self, ops: list[dict[str, Any]]) -> dict[str, Any]:
+        """Apply a list of structured ops to the live MjSpec atomically.
+
+        Each op is a small dict. Supported kinds::
+
+            {"op": "add_body",      "parent": "world", "name": "foo", "pos": [0,0,1]}
+            {"op": "add_geom",      "body": "foo",     "type": "sphere", "size": [0.1]}
+            {"op": "add_site",      "body": "foo",     "name": "tip",    "pos": [0,0,0.2]}
+            {"op": "set_body_pos",  "name": "foo",     "pos": [1,0,1]}
+            {"op": "set_body_quat", "name": "foo",     "quat": [1,0,0,0]}
+            {"op": "delete_body",   "name": "foo"}
+
+        The whole batch is applied, then the spec is recompiled once. If any
+        op fails, the batch is rejected and the world is rolled back to its
+        pre-patch state (from an XML snapshot). Use this for fast iterative
+        edits; use ``replace_scene_mjcf`` when you need to express MJCF
+        elements not covered by the supported op vocabulary.
+        """
+        if self._world is None:
+            return {"status": "error", "content": [{"text": "No world. Use action='create_world' first."}]}
+        if err := self._require_no_running_policy("patch_scene_mjcf"):
+            return err
+
+        try:
+            applied = patch_scene_mjcf(self._world, ops)
+        except (ValueError, RuntimeError) as e:
+            return {"status": "error", "content": [{"text": f"MJCF patch failed: {e}"}]}
+
+        model = self._world._model
+        return {
+            "status": "success",
+            "content": [
+                {
+                    "text": (
+                        f"🩹 Patched scene: {applied} op(s) applied\n"
+                        f"🦴 Bodies: {model.nbody}, 🔩 Joints: {model.njnt}, ⚡ Actuators: {model.nu}, 📷 Cameras: {model.ncam}\n"
+                        "⚠️ world.robots / world.objects / world.cameras registries were NOT updated."
                     )
                 }
             ],

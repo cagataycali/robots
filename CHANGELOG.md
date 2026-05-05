@@ -25,6 +25,13 @@ What changed under the hood:
   ``MjSpec`` is always available. Current hatch env runs 3.8.0.
 
 Agent-visible wins:
+- **New action** ``patch_scene_mjcf(ops=[...])`` - apply a list of
+  structured ops (add_body, add_geom, add_site, set_body_pos,
+  set_body_quat, delete_body) to the live spec atomically. Whole batch
+  is rolled back from an XML snapshot if any op fails; one
+  ``spec.recompile()`` for the whole batch, so qpos/qvel for unchanged
+  joints are preserved. Narrower surface than ``replace_scene_mjcf``
+  but much cheaper for surgical edits (no full-scene XML round-trip).
 - **New action** ``replace_scene_mjcf(xml=...)`` - atomically replace the
   whole scene with agent-authored MJCF. Validated by actually compiling
   it, so ``<tendon>``, ``<equality>``, ``<pair>``, custom solref/solimp,

@@ -305,3 +305,214 @@ def replace_scene_mjcf(world: SimWorld, xml: str) -> bool:
     except Exception:
         pass
     return True
+
+
+# =============================================================================
+# Structured-op patching of the live spec (Stage 6, part 2 - GH #125)
+# =============================================================================
+
+# Supported ops for patch_scene_mjcf. Kept narrow on purpose - adding unchecked
+# attribute setters would make the tool an arbitrary-code hole. Agents that
+# need exotic MJCF should go through replace_scene_mjcf with a full XML.
+_PATCH_OPS = {
+    "add_body",
+    "add_geom",
+    "add_site",
+    "set_body_pos",
+    "set_body_quat",
+    "delete_body",
+}
+
+
+def _find_body(spec: Any, name: str, new_bodies: dict[str, Any]) -> Any:
+    """Locate a body by name in a live spec, checking batch-local additions.
+
+    MuJoCo 3.8 ``spec.body(name)`` only resolves bodies that existed at the
+    last ``compile()`` / ``recompile()`` call. Bodies added mid-batch are
+    not visible through that lookup but ARE present on the spec - we track
+    their handles in ``new_bodies`` so ``add_geom`` / ``add_site`` /
+    ``set_body_pos`` etc. can reference them within the same patch.
+    """
+    if name == "world":
+        return spec.worldbody
+    if name in new_bodies:
+        return new_bodies[name]
+    b = spec.body(name)
+    if b is not None:
+        return b
+    # Fallback: scan all bodies. Catches bodies introduced via spec.attach()
+    # (e.g. robots composed into the scene) that aren't in new_bodies because
+    # we didn't create them in this batch.
+    for body in spec.bodies:
+        if body.name == name:
+            return body
+    return None
+
+
+def _apply_patch_op(spec: Any, op: dict[str, Any], new_bodies: dict[str, Any]) -> None:
+    """Apply a single structured op to a live MjSpec.
+
+    Raises ``ValueError`` with a human-readable message on bad input;
+    MuJoCo compile errors surface on the enclosing ``recompile`` call.
+    ``new_bodies`` is a batch-local cache of body handles added earlier
+    in the same patch (see ``_find_body`` for why this is needed).
+    """
+    if not isinstance(op, dict):
+        raise ValueError(f"each op must be a dict, got {type(op).__name__}")
+
+    kind = op.get("op")
+    if kind not in _PATCH_OPS:
+        raise ValueError(f"unknown op '{kind}'. Supported: {sorted(_PATCH_OPS)}")
+
+    if kind == "add_body":
+        parent = op.get("parent", "world")
+        name = op.get("name")
+        if not name:
+            raise ValueError("add_body requires 'name'")
+        pos = op.get("pos", [0.0, 0.0, 0.0])
+        quat = op.get("quat", [1.0, 0.0, 0.0, 0.0])
+        parent_body = _find_body(spec, parent, new_bodies)
+        if parent_body is None:
+            raise ValueError(f"add_body: parent '{parent}' not found")
+        new_body = parent_body.add_body(name=name, pos=pos, quat=quat)
+        new_bodies[name] = new_body
+        return
+
+    if kind == "add_geom":
+        body_name = op.get("body")
+        if not body_name:
+            raise ValueError("add_geom requires 'body'")
+        body = _find_body(spec, body_name, new_bodies)
+        if body is None:
+            raise ValueError(f"add_geom: body '{body_name}' not found")
+
+        shape = op.get("type", "box")
+        from strands_robots.simulation.mujoco.spec_builder import (
+            _geom_type,
+            _normalize_size,
+        )
+
+        geom_kwargs: dict[str, Any] = {
+            "type": _geom_type(shape),
+            "size": _normalize_size(shape, op.get("size", [0.1, 0.1, 0.1])),
+            "rgba": op.get("rgba", [0.5, 0.5, 0.5, 1.0]),
+        }
+        if "name" in op:
+            geom_kwargs["name"] = op["name"]
+        if "pos" in op:
+            geom_kwargs["pos"] = op["pos"]
+        if "quat" in op:
+            geom_kwargs["quat"] = op["quat"]
+        body.add_geom(**geom_kwargs)
+        return
+
+    if kind == "add_site":
+        body_name = op.get("body", "world")
+        body = _find_body(spec, body_name, new_bodies)
+        if body is None:
+            raise ValueError(f"add_site: body '{body_name}' not found")
+        name = op.get("name")
+        if not name:
+            raise ValueError("add_site requires 'name'")
+        site_kwargs: dict[str, Any] = {
+            "name": name,
+            "pos": op.get("pos", [0.0, 0.0, 0.0]),
+        }
+        if "size" in op:
+            site_kwargs["size"] = op["size"]
+        if "rgba" in op:
+            site_kwargs["rgba"] = op["rgba"]
+        body.add_site(**site_kwargs)
+        return
+
+    if kind == "set_body_pos":
+        name = op.get("name")
+        if not name:
+            raise ValueError("set_body_pos requires 'name'")
+        body = _find_body(spec, name, new_bodies)
+        if body is None:
+            raise ValueError(f"set_body_pos: body '{name}' not found")
+        body.pos = op.get("pos", [0.0, 0.0, 0.0])
+        return
+
+    if kind == "set_body_quat":
+        name = op.get("name")
+        if not name:
+            raise ValueError("set_body_quat requires 'name'")
+        body = _find_body(spec, name, new_bodies)
+        if body is None:
+            raise ValueError(f"set_body_quat: body '{name}' not found")
+        body.quat = op.get("quat", [1.0, 0.0, 0.0, 0.0])
+        return
+
+    if kind == "delete_body":
+        name = op.get("name")
+        if not name:
+            raise ValueError("delete_body requires 'name'")
+        body = _find_body(spec, name, new_bodies)
+        if body is None:
+            raise ValueError(f"delete_body: body '{name}' not found")
+        spec.delete(body)
+        new_bodies.pop(name, None)
+        return
+
+
+def patch_scene_mjcf(world: SimWorld, ops: list[dict[str, Any]]) -> int:
+    """Apply a sequence of structured ops to the live spec in order.
+
+    Each op is a small dict like::
+
+        {"op": "add_body", "parent": "world", "name": "foo", "pos": [0,0,1]}
+        {"op": "add_geom", "body": "foo", "type": "sphere", "size": [0.1]}
+        {"op": "set_body_pos", "name": "foo", "pos": [1,0,1]}
+        {"op": "delete_body", "name": "foo"}
+
+    The list is applied atomically: if any op raises, the whole patch is
+    rejected and the world is left in its original state. After all ops
+    succeed, ``spec.recompile(model, data)`` is called once, so joint
+    qpos/qvel for unchanged joints are preserved automatically.
+
+    Returns the number of ops applied (same as ``len(ops)`` on success).
+    """
+    if not isinstance(ops, list):
+        raise ValueError(f"ops must be a list, got {type(ops).__name__}")
+    if not ops:
+        return 0
+
+    spec = world._backend_state.get("spec")
+    if spec is None:
+        raise RuntimeError("world has no spec; patch_scene_mjcf requires a compiled world")
+
+    # Apply ops on a *clone* of the spec so we can atomically reject on failure.
+    # MjSpec doesn't expose a cheap deep-copy, but round-tripping through XML
+    # is safe: it's the same canonical form used by the compiler.
+    try:
+        backup_xml = spec.to_xml()
+    except Exception as e:  # pragma: no cover - spec.to_xml on brand-new specs is fine
+        raise RuntimeError(f"failed to snapshot spec before patch: {e}") from e
+
+    applied = 0
+    new_bodies: dict[str, Any] = {}
+    try:
+        for op in ops:
+            _apply_patch_op(spec, op, new_bodies)
+            applied += 1
+    except Exception as err:
+        # Restore from backup.
+        try:
+            restored = SpecBuilder.from_mjcf_string(backup_xml)
+            world._backend_state["spec"] = restored
+        except Exception:
+            # If even the backup round-trip fails, the world is in a bad state
+            # and the caller should rebuild. Propagate the original error
+            # either way so the user sees what went wrong.
+            pass
+        raise ValueError(f"patch op #{applied + 1} failed: {err}") from err
+
+    # One recompile for the whole batch - preserves qpos/qvel for unchanged joints.
+    world._model, world._data = spec.recompile(world._model, world._data)
+    try:
+        world._backend_state["xml"] = spec.to_xml()
+    except Exception:
+        pass
+    return applied

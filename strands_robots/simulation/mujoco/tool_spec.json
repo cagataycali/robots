@@ -8,6 +8,7 @@
         "create_world",
         "load_scene",
         "replace_scene_mjcf",
+        "patch_scene_mjcf",
         "reset",
         "get_state",
         "destroy",
@@ -356,6 +357,13 @@
     "xml": {
       "type": "string",
       "description": "Raw MJCF XML string. Used by replace_scene_mjcf."
+    },
+    "ops": {
+      "type": "array",
+      "description": "List of structured MJCF edit ops for action='patch_scene_mjcf'. Each op is a dict like {'op': 'add_body', 'parent': 'world', 'name': 'foo', 'pos': [0,0,1]}, {'op': 'add_geom', 'body': 'foo', 'type': 'sphere', 'size': [0.1]}, {'op': 'add_site', 'body': 'foo', 'name': 'tip', 'pos': [0,0,0.2]}, {'op': 'set_body_pos', 'name': 'foo', 'pos': [1,0,1]}, {'op': 'set_body_quat', 'name': 'foo', 'quat': [1,0,0,0]}, or {'op': 'delete_body', 'name': 'foo'}. Applied atomically: if any op fails, the whole batch is rolled back.",
+      "items": {
+        "type": "object"
+      }
     }
   },
   "required": [
