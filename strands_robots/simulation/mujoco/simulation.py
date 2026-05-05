@@ -47,6 +47,11 @@ logger = logging.getLogger(__name__)
 
 _TOOL_SPEC_PATH = Path(__file__).parent / "tool_spec.json"
 
+# Tool schema is 357 lines of JSON. `tool_spec` property is on the LLM hot path
+# (called on every `strands` invocation). Load once at import, not per access.
+with open(_TOOL_SPEC_PATH) as _f:
+    _TOOL_SPEC_SCHEMA: dict[str, Any] = json.load(_f)
+
 
 class Simulation(
     PhysicsMixin,
@@ -1220,8 +1225,7 @@ class Simulation(
 
     @property
     def tool_spec(self) -> ToolSpec:
-        with open(_TOOL_SPEC_PATH) as f:
-            schema = json.load(f)
+        # schema cached at module load; see _TOOL_SPEC_SCHEMA
         return {
             "name": self.tool_name_str,
             "description": (
@@ -1246,7 +1250,7 @@ class Simulation(
                 "list_urdfs, register_urdf, get_features. "
                 "Call destroy() at session end to release resources."
             ),
-            "inputSchema": {"json": schema},
+            "inputSchema": {"json": _TOOL_SPEC_SCHEMA},
         }
 
     async def stream(

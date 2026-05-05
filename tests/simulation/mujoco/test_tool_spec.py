@@ -233,3 +233,36 @@ def test_every_tool_spec_action_has_a_public_method_or_documented_alias():
             offenders.append(f"{action!r} → PRIVATE method {resolved!r} (leaky DX)")
 
     assert not offenders, "tool_spec actions must resolve to PUBLIC methods:\n  - " + "\n  - ".join(offenders)
+
+
+# -----------------------------------------------------------------------------
+# Schema-load performance contract
+# -----------------------------------------------------------------------------
+
+
+def test_tool_spec_schema_cached_at_module_load(sim: Simulation) -> None:
+    """tool_spec property must not re-open/parse the 357-line JSON per access.
+
+    The property is called on every strands agent LLM invocation (hot path).
+    The cached ``_TOOL_SPEC_SCHEMA`` dict must be the exact object returned
+    under ``inputSchema.json`` across repeated accesses, proving there's no
+    reload in the property body.
+    """
+    from strands_robots.simulation.mujoco.simulation import _TOOL_SPEC_SCHEMA
+
+    spec_a = sim.tool_spec
+    spec_b = sim.tool_spec
+    # Identity check — same dict object, not just equal content
+    assert spec_a["inputSchema"]["json"] is _TOOL_SPEC_SCHEMA
+    assert spec_b["inputSchema"]["json"] is _TOOL_SPEC_SCHEMA
+    assert spec_a["inputSchema"]["json"] is spec_b["inputSchema"]["json"]
+
+
+def test_tool_spec_schema_has_expected_shape() -> None:
+    """Cached schema must still expose the canonical JSON-schema top keys."""
+    from strands_robots.simulation.mujoco.simulation import _TOOL_SPEC_SCHEMA
+
+    assert isinstance(_TOOL_SPEC_SCHEMA, dict)
+    assert "type" in _TOOL_SPEC_SCHEMA
+    assert "properties" in _TOOL_SPEC_SCHEMA
+    assert "required" in _TOOL_SPEC_SCHEMA
