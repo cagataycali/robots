@@ -227,7 +227,19 @@ class Simulation(
         }
 
     def load_scene(self, scene_path: str) -> dict[str, Any]:
-        """Load a complete scene from MJCF XML or URDF file."""
+        """Load a complete scene from MJCF XML or URDF file.
+
+        Populates ``_backend_state["xml"]`` with the raw scene XML and sets
+        ``_backend_state["scene_loaded"] = True`` so that downstream
+        ``add_object`` / ``add_camera`` calls use the XML round-trip
+        injection path (preserving the loaded scene) instead of
+        ``_recompile_world()`` (which rebuilds from ``MJCFBuilder`` and
+        would wipe the loaded scene's bodies/meshes).
+
+        Also records ``_backend_state["scene_base_dir"]`` so that mesh
+        references inside the scene XML still resolve after round-tripping
+        through a tmpdir during injection.
+        """
         if err := self._require_no_running_policy("load_scene"):
             return err
         mj = self._mj
@@ -240,6 +252,22 @@ class Simulation(
             self._world._model = mj.MjModel.from_xml_path(str(scene_path))
             self._world._data = mj.MjData(self._world._model)
             self._world.status = SimStatus.IDLE
+
+            # Populate _backend_state so that inject_* round-tripping works.
+            # Without this, inject_object_into_scene / inject_camera_into_scene
+            # hit the `stored_xml is None` branch and rely on mj_saveLastXML
+            # global state, which is unreliable after any renderer creation.
+            try:
+                with open(scene_path) as _f:
+                    self._world._backend_state["xml"] = _f.read()
+            except OSError as read_err:
+                # Best-effort — failure to cache the XML is not fatal for
+                # a pure-read-only scene, but injection calls will fail
+                # informatively downstream.
+                logger.warning("Could not cache scene XML: %s", read_err)
+
+            self._world._backend_state["scene_loaded"] = True
+            self._world._backend_state["scene_base_dir"] = os.path.dirname(os.path.abspath(scene_path))
 
             return {
                 "status": "success",
@@ -668,7 +696,13 @@ class Simulation(
         )
         self._world.objects[name] = obj
 
-        if self._world.robots:
+        # Use XML round-trip injection when the scene was loaded from file
+        # (via load_scene) OR when robots have been injected. Otherwise
+        # _recompile_world() rebuilds via MJCFBuilder.build_objects_only
+        # which only knows about objects/gravity/timestep — it would wipe
+        # any scene that was loaded from external MJCF.
+        _scene_loaded = self._world._backend_state.get("scene_loaded", False)
+        if self._world.robots or _scene_loaded:
             try:
                 result = inject_object_into_scene(self._world, obj)
                 if result:
@@ -676,13 +710,16 @@ class Simulation(
                         "status": "success",
                         "content": [{"text": f"📦 '{name}' spawned: {shape} at {obj.position}"}],
                     }
+                # Injection returned False — object tracked but not spawned.
+                # This happens rarely (non-fatal round-trip issue); keep the
+                # object registered so the next recompile can pick it up.
                 return {
                     "status": "success",
                     "content": [
                         {
                             "text": (
                                 f"📦 '{name}' registered: {shape} at {obj.position}\n"
-                                "⚠️ Robot scene loaded — object is tracked but not physically spawned."
+                                "⚠️ Live injection skipped — object tracked but not physically spawned."
                             )
                         }
                     ],
@@ -715,7 +752,11 @@ class Simulation(
         if err := self._require_no_running_policy("remove_object"):
             return err
         del self._world.objects[name]
-        if self._world.robots:
+        # Use XML round-trip ejection when the scene was loaded from file
+        # OR when robots are injected. Otherwise _recompile_world() rebuilds
+        # from MJCFBuilder and would wipe a loaded scene's bodies.
+        _scene_loaded = self._world._backend_state.get("scene_loaded", False)
+        if self._world.robots or _scene_loaded:
             eject_body_from_scene(self._world, name)
         else:
             self._recompile_world()
@@ -829,7 +870,11 @@ class Simulation(
         )
         self._world.cameras[name] = cam
 
-        if self._world.robots and self._world._model is not None:
+        # Use XML round-trip injection when the scene was loaded from file
+        # OR when robots have been injected. Otherwise _recompile_world()
+        # rebuilds via MJCFBuilder and would wipe a loaded scene's bodies.
+        _scene_loaded = self._world._backend_state.get("scene_loaded", False)
+        if (self._world.robots or _scene_loaded) and self._world._model is not None:
             try:
                 inject_camera_into_scene(self._world, cam)
             except (ValueError, RuntimeError) as e:

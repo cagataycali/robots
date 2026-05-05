@@ -230,13 +230,20 @@ def _reload_scene_from_xml(world: SimWorld, scene_path: str) -> bool:
 
 
 def _get_robot_base_dir(world: SimWorld) -> str | None:
-    """Get the directory of the first robot model file.
+    """Get the base directory for resolving MJCF asset references.
 
     For multi-robot scenes with different asset directories, use
     ``_get_all_robot_base_dirs()`` instead.
+
+    Falls back to the scene base dir when the world was loaded via
+    ``load_scene`` and has no robots yet (otherwise mesh ``file=`` refs
+    inside a round-tripped scene XML would fail to resolve under tmpdir).
     """
     if world._backend_state.get("robot_base_xml", ""):
         return os.path.dirname(os.path.abspath(world._backend_state.get("robot_base_xml", "")))
+    scene_base = world._backend_state.get("scene_base_dir", "")
+    if scene_base and os.path.isdir(scene_base):
+        return scene_base
     return None
 
 
