@@ -501,7 +501,22 @@ class PolicyRunner:
     # Helpers
 
     def _maybe_sim_time(self) -> float | None:
-        """Best-effort read of sim time from any backend that exposes it."""
+        """Best-effort read of sim time from any backend that exposes it.
+
+        Tries two paths:
+          1. ``sim._world.sim_time`` — fast path for backends that keep a
+             structured world object (MuJoCo, and any other backend using
+             ``strands_robots.simulation.models.SimWorld``).
+          2. ``sim.get_state()`` fallback for backends that only expose the
+             status-dict shape. If the dict's ``json`` block (or top level)
+             has a ``sim_time`` key, we return it.
+        """
+        world = getattr(self.sim, "_world", None)
+        if world is not None:
+            t = getattr(world, "sim_time", None)
+            if isinstance(t, (int, float)):
+                return float(t)
+
         get_state = getattr(self.sim, "get_state", None)
         if get_state is None:
             return None
@@ -510,7 +525,13 @@ class PolicyRunner:
         except Exception:
             return None
         if isinstance(state, dict):
-            return state.get("sim_time")
+            if "sim_time" in state:
+                return float(state["sim_time"])
+            for blk in state.get("content", []):
+                if isinstance(blk, dict) and isinstance(blk.get("json"), dict):
+                    t = blk["json"].get("sim_time")
+                    if isinstance(t, (int, float)):
+                        return float(t)
         return None
 
     def _require_default_robot(self) -> str:
