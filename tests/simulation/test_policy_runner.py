@@ -17,6 +17,7 @@ import inspect
 import io
 import os
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -546,6 +547,7 @@ class TestDispatcherFoldsFlatVideoKeys:
                 return {"status": "success", "content": [{"text": "ok"}]}
 
         sim = _CapturingSim.__new__(_CapturingSim)
+        sim._lock = threading.RLock()
         return sim, captured
 
     def test_dispatcher_folds_flat_keys(self) -> None:

@@ -117,7 +117,7 @@ class PhysicsMixin:
         checkpoint = checkpoints[name]
 
         with self._lock:
-            mj.mj_setState(model, data, checkpoint["state"], mj.mjtState.mjSTATE_PHYSICS)
+            mj.mj_setState(model, data, checkpoint["state"], mj.mjtState.mjSTATE_FULLPHYSICS)
             mj.mj_forward(model, data)
 
             self._world.sim_time = checkpoint["sim_time"]
