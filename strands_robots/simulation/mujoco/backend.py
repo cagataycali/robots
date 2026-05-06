@@ -148,8 +148,6 @@ def _can_render() -> bool:
     # mj.Renderer() triggers a fatal abort that kills the entire process.
     # By running the probe in a child process, we detect the failure safely.
     probe_script = (
-        "import os;"
-        f"os.environ.setdefault('MUJOCO_GL','{os.environ.get('MUJOCO_GL', '')}');"
         "import mujoco;"
         "m=mujoco.MjModel.from_xml_string('<mujoco><worldbody/></mujoco>');"
         "r=mujoco.Renderer(m,height=1,width=1);"
