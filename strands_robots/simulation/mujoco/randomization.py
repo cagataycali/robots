@@ -28,7 +28,7 @@ class RandomizationMixin:
 
         from strands_robots.simulation.models import SimWorld
 
-        _lock: "threading.Lock"
+        _lock: "threading.RLock"
         _world: "SimWorld | None"
 
         def _require_no_running_policy(

@@ -281,11 +281,12 @@ class PolicyRunner:
         stopped_early = False
         # T26: skip camera rendering when the policy does not need images.
         _skip_images = not getattr(policy, "requires_images", True)
+        # Initialize BEFORE try so CooperativeStop never sees unbound names.
+        start_time = time.time()
+        step_count = 0
         try:
             total_steps = int(duration * control_frequency)
             action_sleep = 1.0 / control_frequency
-            start_time = time.time()
-            step_count = 0
 
             onframe_failure_limit = (
                 max_onframe_failures if max_onframe_failures is not None else _MAX_CONSECUTIVE_ONFRAME_FAILURES

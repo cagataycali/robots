@@ -210,16 +210,16 @@ class SimEngine(ABC):
 
     @abstractmethod
     def send_action(self, action: dict[str, Any], robot_name: str | None = None, n_substeps: int = 1) -> None:
-        """Apply action to simulation.
+        """Apply action and advance physics by n_substeps.
 
-        Convenience method that delegates to the underlying Robot
-        abstraction. The simulation engine acts as a facade so agent
-        tools can use ``sim.send_action()`` without knowing about
-        the Robot/Policy layer.
+        Contract: each call writes actuator/ctrl values and then runs
+        ``n_substeps`` physics steps (e.g. mj_step). PolicyRunner.run()
+        relies on this — it calls send_action once per control step and
+        does NOT call sim.step() separately.
 
         Backends are responsible for internal thread-safety (e.g.
-        MuJoCo must acquire an internal lock here). ``PolicyRunner``
-        does not manage locks.
+        MuJoCo acquires self._lock here). PolicyRunner does not manage
+        locks.
         """
         ...
 

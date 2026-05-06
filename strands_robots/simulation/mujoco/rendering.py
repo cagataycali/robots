@@ -36,7 +36,7 @@ class RenderingMixin:
         _renderer_tls: Any  # threading.local() - per-thread renderer dict
         default_width: int
         default_height: int
-        _lock: Any  # threading.Lock from Simulation
+        _lock: Any  # threading.RLock from Simulation
 
     def _validate_render_dims(self, width: int, height: int) -> dict[str, Any] | None:
         """reject non-positive render dims; convert MuJoCo's framebuffer
@@ -53,6 +53,13 @@ class RenderingMixin:
             return {
                 "status": "error",
                 "content": [{"text": f"render: width and height must be > 0, got {width}x{height}."}],
+            }
+        # Hard absolute ceiling regardless of model config (OOM protection).
+        _ABS_MAX = 4096
+        if width > _ABS_MAX or height > _ABS_MAX:
+            return {
+                "status": "error",
+                "content": [{"text": f"render: {width}x{height} exceeds absolute maximum {_ABS_MAX}x{_ABS_MAX}."}],
             }
         if self._world is not None and self._world._model is not None:
             max_w = int(getattr(self._world._model.vis.global_, "offwidth", 1280))
@@ -105,6 +112,16 @@ class RenderingMixin:
 
         key = (width, height)
         if key not in renderers:
+            # Bound the cache: max 4 resolutions per thread. Evict oldest
+            # (first-inserted) to prevent unbounded GL context accumulation.
+            _MAX_RENDERERS_PER_THREAD = 4
+            if len(renderers) >= _MAX_RENDERERS_PER_THREAD:
+                oldest_key = next(iter(renderers))
+                try:
+                    renderers[oldest_key].close()
+                except Exception:
+                    pass
+                del renderers[oldest_key]
             renderers[key] = mj.Renderer(self._world._model, height=height, width=width)
         return renderers[key]
 
@@ -209,7 +226,6 @@ class RenderingMixin:
 
         assert self._world is not None
         self._world.sim_time = data.time
-        assert self._world is not None  # callers must check
         self._world.step_count += n_substeps
 
         if hasattr(self, "_viewer_handle") and self._viewer_handle is not None:
@@ -481,7 +497,12 @@ class RenderingMixin:
     # main dispatch thread.
 
     def _active_camera_list(self, cameras):
-        """Resolve cameras=None to every camera currently in the world."""
+        """Resolve cameras=None to every camera currently in the world.
+
+        Handles namespaced camera names (e.g. 'arm0/wrist_cam') by also
+        checking the short suffix form ('wrist_cam'). Returns only names
+        that can be resolved to a model camera ID.
+        """
         if self._world is None or self._world._model is None:
             return []
         mj = _ensure_mujoco()
@@ -492,10 +513,24 @@ class RenderingMixin:
         all_cams = list(dict.fromkeys(from_model + py_side))
         if cameras is None:
             return all_cams
-        missing = [c for c in cameras if c not in all_cams]
-        if missing:
-            logger.warning("Unknown camera(s) requested for capture: %s", missing)
-        return [c for c in cameras if c in all_cams]
+        # Try to resolve unknown names via namespace prefix matching.
+        resolved = []
+        for c in cameras:
+            if c in all_cams:
+                resolved.append(c)
+            else:
+                # Try suffix match: 'side' → 'arm0/side'
+                matches = [ac for ac in all_cams if ac.endswith("/" + c)]
+                if len(matches) == 1:
+                    resolved.append(matches[0])
+                    logger.debug("Camera '%s' resolved to namespaced '%s'", c, matches[0])
+                else:
+                    logger.warning(
+                        "Camera '%s' not found. Available: %s",
+                        c,
+                        ", ".join(all_cams) or "(none)",
+                    )
+        return resolved
 
     def render_all(self, cameras=None, width=None, height=None):
         """Render every (or a subset of) camera in one call.

@@ -46,7 +46,7 @@ class PhysicsMixin:
 
         from strands_robots.simulation.models import SimWorld
 
-        _lock: "threading.Lock"
+        _lock: "threading.RLock"
         _world: "SimWorld | None"
 
         def _require_no_running_policy(
@@ -59,7 +59,8 @@ class PhysicsMixin:
     def save_state(self, name: str = "default") -> dict[str, Any]:
         """Save the full physics state (qpos, qvel, act, time) to a named checkpoint.
 
-        Uses mj_getState with mjSTATE_PHYSICS for complete state capture.
+        Uses mj_getState with mjSTATE_FULLPHYSICS for complete state capture
+        including ctrl and qfrc_applied buffers.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
@@ -68,9 +69,9 @@ class PhysicsMixin:
         model, data = self._world._model, self._world._data
 
         with self._lock:
-            state_size = mj.mj_stateSize(model, mj.mjtState.mjSTATE_PHYSICS)
+            state_size = mj.mj_stateSize(model, mj.mjtState.mjSTATE_FULLPHYSICS)
             state = np.zeros(state_size)
-            mj.mj_getState(model, data, state, mj.mjtState.mjSTATE_PHYSICS)
+            mj.mj_getState(model, data, state, mj.mjtState.mjSTATE_FULLPHYSICS)
 
         if not hasattr(self._world, "_checkpoints"):
             self._world._checkpoints = {}
@@ -361,26 +362,27 @@ class PhysicsMixin:
         jacp = np.zeros((3, model.nv))
         jacr = np.zeros((3, model.nv))
 
-        if body_name:
-            obj_id = self._resolve_mj_name(mj.mjtObj.mjOBJ_BODY, body_name)
-            if obj_id < 0:
-                return {"status": "error", "content": [{"text": f"Body '{body_name}' not found."}]}
-            mj.mj_jacBody(model, data, jacp, jacr, obj_id)
-            label = f"body '{body_name}'"
-        elif site_name:
-            obj_id = self._resolve_mj_name(mj.mjtObj.mjOBJ_SITE, site_name)
-            if obj_id < 0:
-                return {"status": "error", "content": [{"text": f"Site '{site_name}' not found."}]}
-            mj.mj_jacSite(model, data, jacp, jacr, obj_id)
-            label = f"site '{site_name}'"
-        elif geom_name:
-            obj_id = self._resolve_mj_name(mj.mjtObj.mjOBJ_GEOM, geom_name)
-            if obj_id < 0:
-                return {"status": "error", "content": [{"text": f"Geom '{geom_name}' not found."}]}
-            mj.mj_jacGeom(model, data, jacp, jacr, obj_id)
-            label = f"geom '{geom_name}'"
-        else:
-            return {"status": "error", "content": [{"text": "Specify body_name, site_name, or geom_name."}]}
+        with self._lock:
+            if body_name:
+                obj_id = self._resolve_mj_name(mj.mjtObj.mjOBJ_BODY, body_name)
+                if obj_id < 0:
+                    return {"status": "error", "content": [{"text": f"Body '{body_name}' not found."}]}
+                mj.mj_jacBody(model, data, jacp, jacr, obj_id)
+                label = f"body '{body_name}'"
+            elif site_name:
+                obj_id = self._resolve_mj_name(mj.mjtObj.mjOBJ_SITE, site_name)
+                if obj_id < 0:
+                    return {"status": "error", "content": [{"text": f"Site '{site_name}' not found."}]}
+                mj.mj_jacSite(model, data, jacp, jacr, obj_id)
+                label = f"site '{site_name}'"
+            elif geom_name:
+                obj_id = self._resolve_mj_name(mj.mjtObj.mjOBJ_GEOM, geom_name)
+                if obj_id < 0:
+                    return {"status": "error", "content": [{"text": f"Geom '{geom_name}' not found."}]}
+                mj.mj_jacGeom(model, data, jacp, jacr, obj_id)
+                label = f"geom '{geom_name}'"
+            else:
+                return {"status": "error", "content": [{"text": "Specify body_name, site_name, or geom_name."}]}
 
         return {
             "status": "success",
@@ -400,11 +402,11 @@ class PhysicsMixin:
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
 
-        mj.mj_energyPos(model, data)
-        mj.mj_energyVel(model, data)
-
-        potential = float(data.energy[0])
-        kinetic = float(data.energy[1])
+        with self._lock:
+            mj.mj_energyPos(model, data)
+            mj.mj_energyVel(model, data)
+            potential = float(data.energy[0])
+            kinetic = float(data.energy[1])
         total = potential + kinetic
 
         return {
@@ -476,15 +478,15 @@ class PhysicsMixin:
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
 
-        mj.mj_inverse(model, data)
-
-        # Build named force mapping
-        forces = {}
-        for i in range(model.njnt):
-            name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_JOINT, i)
-            if name:
-                dof_adr = model.jnt_dofadr[i]
-                forces[name] = float(data.qfrc_inverse[dof_adr])
+        with self._lock:
+            mj.mj_inverse(model, data)
+            # Build named force mapping
+            forces = {}
+            for i in range(model.njnt):
+                name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_JOINT, i)
+                if name:
+                    dof_adr = model.jnt_dofadr[i]
+                    forces[name] = float(data.qfrc_inverse[dof_adr])
 
         return {
             "status": "success",
@@ -514,20 +516,21 @@ class PhysicsMixin:
         if body_id < 0:
             return {"status": "error", "content": [{"text": f"Body '{body_name}' not found."}]}
 
-        # Position and orientation
-        pos = data.xpos[body_id].tolist()
-        quat = data.xquat[body_id].tolist()
-        rotmat = data.xmat[body_id].reshape(3, 3).tolist()
+        with self._lock:
+            # Position and orientation
+            pos = data.xpos[body_id].tolist()
+            quat = data.xquat[body_id].tolist()
+            rotmat = data.xmat[body_id].reshape(3, 3).tolist()
 
-        # Velocity (6D: angular then linear in world frame)
-        vel = np.zeros(6)
-        mj.mj_objectVelocity(model, data, mj.mjtObj.mjOBJ_BODY, body_id, vel, 0)
-        linvel = vel[3:].tolist()
-        angvel = vel[:3].tolist()
+            # Velocity (6D: angular then linear in world frame)
+            vel = np.zeros(6)
+            mj.mj_objectVelocity(model, data, mj.mjtObj.mjOBJ_BODY, body_id, vel, 0)
+            linvel = vel[3:].tolist()
+            angvel = vel[:3].tolist()
 
-        # Mass and inertia
-        mass = float(model.body_mass[body_id])
-        com = data.xipos[body_id].tolist()
+            # Mass and inertia
+            mass = float(model.body_mass[body_id])
+            com = data.xipos[body_id].tolist()
 
         state = {
             "position": pos,
@@ -942,26 +945,27 @@ class PhysicsMixin:
         model, data = self._world._model, self._world._data
 
         contacts = []
-        for i in range(data.ncon):
-            c = data.contact[i]
-            g1 = mj.mj_id2name(model, mj.mjtObj.mjOBJ_GEOM, c.geom1) or f"geom_{c.geom1}"
-            g2 = mj.mj_id2name(model, mj.mjtObj.mjOBJ_GEOM, c.geom2) or f"geom_{c.geom2}"
+        with self._lock:
+            for i in range(data.ncon):
+                c = data.contact[i]
+                g1 = mj.mj_id2name(model, mj.mjtObj.mjOBJ_GEOM, c.geom1) or f"geom_{c.geom1}"
+                g2 = mj.mj_id2name(model, mj.mjtObj.mjOBJ_GEOM, c.geom2) or f"geom_{c.geom2}"
 
-            # Get contact force (normal + friction in contact frame)
-            force = np.zeros(6)
-            mj.mj_contactForce(model, data, i, force)
+                # Get contact force (normal + friction in contact frame)
+                force = np.zeros(6)
+                mj.mj_contactForce(model, data, i, force)
 
-            contacts.append(
-                {
-                    "geom1": g1,
-                    "geom2": g2,
-                    "distance": float(c.dist),
-                    "position": c.pos.tolist(),
-                    "normal_force": float(force[0]),
-                    "friction_force": force[1:3].tolist(),
-                    "full_wrench": force.tolist(),
-                }
-            )
+                contacts.append(
+                    {
+                        "geom1": g1,
+                        "geom2": g2,
+                        "distance": float(c.dist),
+                        "position": c.pos.tolist(),
+                        "normal_force": float(force[0]),
+                        "friction_force": force[1:3].tolist(),
+                        "full_wrench": force.tolist(),
+                    }
+                )
 
         if not contacts:
             return {"status": "success", "content": [{"text": "💥 No active contacts."}]}
@@ -1067,33 +1071,34 @@ class PhysicsMixin:
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
 
-        mj.mj_kinematics(model, data)
-        mj.mj_comPos(model, data)
-        mj.mj_camlight(model, data)
+        with self._lock:
+            mj.mj_kinematics(model, data)
+            mj.mj_comPos(model, data)
+            mj.mj_camlight(model, data)
 
-        if body_name is not None:
-            bid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, body_name)
-            if bid < 0:
-                return {"status": "error", "content": [{"text": f"Body '{body_name}' not found."}]}
-            body_payload = {
-                "position": data.xpos[bid].tolist(),
-                "quaternion": data.xquat[bid].tolist(),
-            }
-            return {
-                "status": "success",
-                "content": [
-                    {"text": f"🦴 FK for '{body_name}': pos={body_payload['position']}"},
-                    {"json": {"body": body_name, **body_payload}},
-                ],
-            }
+            if body_name is not None:
+                bid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, body_name)
+                if bid < 0:
+                    return {"status": "error", "content": [{"text": f"Body '{body_name}' not found."}]}
+                body_payload = {
+                    "position": data.xpos[bid].tolist(),
+                    "quaternion": data.xquat[bid].tolist(),
+                }
+                return {
+                    "status": "success",
+                    "content": [
+                        {"text": f"🦴 FK for '{body_name}': pos={body_payload['position']}"},
+                        {"json": {"body": body_name, **body_payload}},
+                    ],
+                }
 
-        bodies = {}
-        for i in range(model.nbody):
-            name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, i) or f"body_{i}"
-            bodies[name] = {
-                "position": data.xpos[i].tolist(),
-                "quaternion": data.xquat[i].tolist(),
-            }
+            bodies = {}
+            for i in range(model.nbody):
+                name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, i) or f"body_{i}"
+                bodies[name] = {
+                    "position": data.xpos[i].tolist(),
+                    "quaternion": data.xquat[i].tolist(),
+                }
 
         return {
             "status": "success",

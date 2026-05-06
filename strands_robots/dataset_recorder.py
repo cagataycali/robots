@@ -180,6 +180,8 @@ class DatasetRecorder:
         camera_keys: list[str] | None = None,
         joint_names: list[str] | None = None,
         use_videos: bool = True,
+        video_height: int = 480,
+        video_width: int = 640,
     ) -> dict[str, Any]:
         """Build LeRobot v3-compatible features dict.
 
@@ -201,11 +203,7 @@ class DatasetRecorder:
                 dtype = "video" if use_videos else "image"
                 features[key] = {
                     "dtype": dtype,
-                    "shape": (
-                        3,
-                        480,
-                        640,
-                    ),  # CHW default, actual shape set on first frame
+                    "shape": (3, video_height, video_width),
                     "names": ["channels", "height", "width"],
                 }
 
@@ -409,7 +407,11 @@ class DatasetRecorder:
             }
         except Exception as e:
             logger.error("save_episode failed: %s", e)
-            return {"status": "error", "message": str(e)}
+            # Mark recorder as poisoned — the LeRobot episode buffer is in
+            # undefined state after a failed save. Subsequent add_frame calls
+            # would silently corrupt the dataset. Close to prevent drift.
+            self._closed = True
+            return {"status": "error", "message": f"save_episode failed (recorder closed): {e}"}
 
     def finalize(self) -> None:
         """Finalize the dataset (close parquet writers, flush metadata)."""

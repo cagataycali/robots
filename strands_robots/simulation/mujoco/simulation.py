@@ -12,7 +12,7 @@ coupling graph.
 Every mixin reaches back into this class for the same shared state:
 
     self._world              - SimWorld handle (model + data + bookkeeping)
-    self._lock               - serializes mj_step and ctrl[] writes
+    self._lock               - RLock serializing ALL model/data access
     self._mj                 - cached ``mujoco`` module reference
     self._policy_threads     - per-robot Future dict (GH #114)
     self._renderer_tls       - thread-local renderer cache (macOS CGL)
@@ -141,19 +141,19 @@ class Simulation(
         # the dict never grows unboundedly and never reports stale "running".
         self._policy_threads: dict[str, Future] = {}
         self._shutdown_event = threading.Event()
-        # ``self._lock`` serializes writes to MuJoCo ``model``/``data`` arrays
-        # and calls to ``mj_step`` - MuJoCo physics is NOT safe for concurrent
-        # mutation from multiple threads. This lock is the single point that
-        # makes concurrent per-robot policies safe:
+        # ``self._lock`` (RLock) serializes ALL access to MuJoCo
+        # ``model``/``data`` arrays — both reads and writes. MuJoCo arrays
+        # are NOT safe for concurrent reads during mutation (a racing
+        # mj_step can produce torn/stale values). The lock is acquired:
         #
-        #   * Two policies on different robots can run in parallel at the
-        #     *inference* level (observation build, action compute).
-        #   * When either policy calls ``send_action``, it serializes here
-        #     briefly to write its own ``ctrl[]`` slots and advance physics.
-        #   * ``mj_step`` advances the whole scene - so two robots sharing
-        #     one world share one physics clock. That's correct: one tick of
-        #     physical time advances all bodies.
-        self._lock = threading.Lock()
+        #   * In ``_dispatch_action`` — so every agent-dispatched action
+        #     (all 37 handlers) is automatically serialized.
+        #   * In ``send_action`` / ``get_observation`` — so the
+        #     PolicyRunner worker thread is also serialized against the
+        #     agent's dispatch thread.
+        #   * RLock allows nested acquisition (methods that also acquire
+        #     the lock internally are harmless when called via dispatch).
+        self._lock = threading.RLock()
 
         self._viewer_handle = None
         self._viewer_thread = None
@@ -169,16 +169,26 @@ class Simulation(
         self._mj = _ensure_mujoco()
         logger.info("🎮 Simulation tool '%s' initialized", tool_name)
 
-    # Public Properties
+    # Public Properties — read-only introspection.
+    # WARNING: callers MUST NOT mutate the returned objects without holding
+    # self._lock. Prefer using action methods which serialize automatically.
 
     @property
     def mj_model(self):
-        """Direct access to the MuJoCo model (mujoco.MjModel)."""
+        """Read-only access to the MuJoCo model (mujoco.MjModel).
+
+        Callers must NOT mutate the model without holding self._lock.
+        Use action methods (set_gravity, set_timestep, etc.) instead.
+        """
         return self._world._model if self._world else None
 
     @property
     def mj_data(self):
-        """Direct access to the MuJoCo data (mujoco.MjData)."""
+        """Read-only access to the MuJoCo data (mujoco.MjData).
+
+        Callers must NOT mutate data without holding self._lock.
+        Use action methods (send_action, step, etc.) instead.
+        """
         return self._world._data if self._world else None
 
     # Robot-compatible interface
@@ -187,6 +197,8 @@ class Simulation(
         """Get full observation for a robot: joint state + all attached cameras.
 
         See :meth:`SimEngine.get_observation` for the schema contract.
+        Thread-safety: acquires self._lock to prevent torn reads while a
+        concurrent mj_step is mutating data arrays.
         """
         if self._world is None or self._world._model is None:
             return {}
@@ -200,7 +212,8 @@ class Simulation(
             # T26: dataset recording needs every frame's image obs. Override
             # the policy's skip hint when an active recorder is attached.
             skip_images = False
-        return self._get_sim_observation(robot_name, skip_images=skip_images)
+        with self._lock:
+            return self._get_sim_observation(robot_name, skip_images=skip_images)
 
     def send_action(self, action: dict[str, Any], robot_name: str | None = None, n_substeps: int = 1) -> None:
         """Apply action to simulation (Robot ABC compatible).
@@ -1074,6 +1087,9 @@ class Simulation(
 
     # Simulation Control
 
+    _MAX_STEPS_PER_CALL = 100_000  # Hard ceiling to prevent unbounded lock hold.
+    _STEPS_PER_BATCH = 1000  # Release lock every N steps for cancellation.
+
     def step(self, n_steps: int = 1) -> dict[str, Any]:
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
@@ -1095,12 +1111,27 @@ class Simulation(
                     {"text": f"⏩ +0 steps (no-op) | t={self._world.sim_time:.4f}s | total={self._world.step_count}"}
                 ],
             }
+        if n_steps > self._MAX_STEPS_PER_CALL:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": f"step: n_steps={n_steps} exceeds max {self._MAX_STEPS_PER_CALL}. Break into smaller calls."
+                    }
+                ],
+            }
         mj = self._mj
-        with self._lock:
-            for _ in range(n_steps):
-                mj.mj_step(self._world._model, self._world._data)
-            self._world.sim_time = self._world._data.time
-            self._world.step_count += n_steps
+        # Process in batches, releasing lock between batches so stop_policy
+        # and other actions can interleave on long runs.
+        remaining = n_steps
+        while remaining > 0:
+            batch = min(remaining, self._STEPS_PER_BATCH)
+            with self._lock:
+                for _ in range(batch):
+                    mj.mj_step(self._world._model, self._world._data)
+                self._world.sim_time = self._world._data.time
+                self._world.step_count += batch
+            remaining -= batch
         return {
             "status": "success",
             "content": [
@@ -1145,13 +1176,15 @@ class Simulation(
         return {"status": "success", "content": [{"text": "\n".join(lines)}]}
 
     def destroy(self) -> dict[str, Any]:
+        """Destroy the world and release all resources.
+
+        Delegates to cleanup() which properly joins running policy Futures
+        before nulling self._world — prevents SIGSEGV from workers holding
+        stale model/data pointers.
+        """
         if self._world is None:
             return {"status": "success", "content": [{"text": "No world to destroy."}]}
-        for r in self._world.robots.values():
-            r.policy_running = False
-        self._close_viewer()
-        self._close_main_thread_renderers()
-        self._world = None
+        self.cleanup()
         return {"status": "success", "content": [{"text": "🗑️ World destroyed."}]}
 
     def _close_main_thread_renderers(self) -> None:
@@ -1875,7 +1908,13 @@ class Simulation(
         if err is not None:
             return err
         assert kwargs is not None
-        return method(**kwargs)
+        # All dispatched actions are serialized under self._lock (RLock).
+        # This is the single chokepoint that prevents concurrent reads/writes
+        # to MuJoCo model/data from the agent thread while a PolicyRunner
+        # worker is mid-mj_step. Individual methods that also acquire the
+        # lock are harmless (RLock is reentrant on the same thread).
+        with self._lock:
+            return method(**kwargs)
 
     def stop_policy(self, robot_name: str = "") -> dict[str, Any]:
         """Stop a running policy on the given robot (cooperative cancellation).
