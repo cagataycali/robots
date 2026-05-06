@@ -59,7 +59,11 @@ class RenderingMixin:
         if width > _ABS_MAX or height > _ABS_MAX:
             return {
                 "status": "error",
-                "content": [{"text": f"render: {width}x{height} exceeds absolute maximum offscreen framebuffer cap ({_ABS_MAX}x{_ABS_MAX}). Lower width/height or set offwidth/offheight in the model."}],
+                "content": [
+                    {
+                        "text": f"render: {width}x{height} exceeds absolute maximum offscreen framebuffer cap ({_ABS_MAX}x{_ABS_MAX}). Lower width/height or set offwidth/offheight in the model."
+                    }
+                ],
             }
         if self._world is not None and self._world._model is not None:
             max_w = int(getattr(self._world._model.vis.global_, "offwidth", 1280))
