@@ -170,11 +170,14 @@ def _import_backend_class(name: str) -> type[SimEngine]:
         try:
             module = importlib.import_module(module_path)
         except ModuleNotFoundError as exc:
+            # Map backend names to their pip extras (extras use "sim-" prefix)
+            _BACKEND_EXTRAS = {"mujoco": "sim-mujoco"}
+            extra = _BACKEND_EXTRAS.get(name, f"sim-{name}")
             raise ImportError(
                 f"Simulation backend {name!r} is declared in the built-in registry "
                 f"but its implementation module {module_path!r} is not available. "
                 f"This usually means the backend has not been installed yet "
-                f"(e.g. `pip install strands-robots[{name}]`) or the backend "
+                f"(e.g. `pip install strands-robots[{extra}]`) or the backend "
                 f"implementation has not landed in this release. "
                 f"Register a custom backend via "
                 f"`strands_robots.simulation.factory.register_backend()` to proceed."

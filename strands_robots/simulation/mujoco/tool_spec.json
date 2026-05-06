@@ -352,7 +352,7 @@
     },
     "output_dir": {
       "type": "string",
-      "description": "Directory for start_cameras_recording output. Defaults to /tmp/strands_robots/recordings."
+      "description": "Directory for start_cameras_recording output. Defaults to a platform-appropriate temp directory (tempfile.gettempdir()/strands_robots/recordings)."
     },
     "xml": {
       "type": "string",

@@ -626,6 +626,7 @@ class RenderingMixin:
             max_frames_per_camera: safety cap on in-memory buffers.
         """
         import os as _os
+        import tempfile as _tempfile
         import threading as _threading
         import time as _time
         import uuid as _uuid
@@ -644,7 +645,7 @@ class RenderingMixin:
         if not names:
             return {"status": "error", "content": [{"text": "No cameras to record."}]}
 
-        out_dir = _os.path.abspath(output_dir or "/tmp/strands_robots/recordings")
+        out_dir = _os.path.abspath(output_dir or _os.path.join(_tempfile.gettempdir(), "strands_robots", "recordings"))
         _os.makedirs(out_dir, exist_ok=True)
         tag = name or f"rec_{_uuid.uuid4().hex[:8]}"
 
