@@ -216,6 +216,26 @@ class TestCrossPlatformPrefixes:
             assert "/System/" in prefixes  # macOS specific
             assert "/Library/LaunchDaemons/" in prefixes
 
+    def test_darwin_includes_private_variants(self):
+        """Regression: on macOS, ``os.path.realpath`` maps ``/etc`` →
+        ``/private/etc`` (and same for ``/var``, ``/tmp``). The blocked
+        prefix list MUST include the ``/private/``-prefixed variants,
+        otherwise resolved paths bypass the check entirely. Fixes the
+        bug where ``/etc/passwd`` was silently accepted on macOS."""
+        with patch.object(sys, "platform", "darwin"):
+            prefixes = _get_blocked_prefixes()
+            assert "/private/etc/" in prefixes
+            assert "/private/var/spool/cron/" in prefixes
+            assert "/private/var/spool/at/" in prefixes
+
+    def test_linux_excludes_private_variants(self):
+        """On Linux ``/private/`` is not a special path; the variants
+        should only be added on darwin."""
+        with patch.object(sys, "platform", "linux"):
+            prefixes = _get_blocked_prefixes()
+            for p in prefixes:
+                assert not p.startswith("/private/"), f"Linux should not block /private/* prefixes: {p!r}"
+
     def test_windows_prefixes_returned_on_win32(self):
         """On Windows, Windows-specific prefixes should be active."""
         with patch.object(sys, "platform", "win32"):

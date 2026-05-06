@@ -605,3 +605,113 @@ class TestRemoveRobotActuallyRemoves:
         assert set(sim._world.robots) == {"alice", "carol"}
         # bob was 6 joints; alice (6) + carol (19) = 25 should remain.
         assert sim._world._model.njnt == njnt_before - 6
+
+
+class TestRemoveRobotPreservesState:
+    """Regression tests for PR #85 follow-up (AGENTS.md "Per-name state
+    copy, not flat index"): removing one robot must NOT reset the state
+    of surviving robots or objects.
+
+    Before the fix, ``eject_robot_from_scene`` rebuilt the scene from
+    scratch and reset every remaining qpos/qvel to 0 (robots) or body
+    pose (objects). Agents that called ``remove_robot`` mid-simulation
+    silently lost physics state.
+    """
+
+    def test_surviving_robot_joint_state_is_preserved(self, sim):
+        """After ``remove_robot(bob)``, alice's joints keep their qpos."""
+        sim.add_robot(name="alice", data_config="so100", position=[-0.5, 0, 0])
+        sim.add_robot(name="bob", data_config="so100", position=[0.5, 0, 0])
+
+        # Drive alice's joints to a non-zero pose and step forward so
+        # qpos actually reflects applied ctrl (not just a zero default).
+        import numpy as np
+
+        alice = sim._world.robots["alice"]
+        # Write directly to qpos for a deterministic snapshot (avoids
+        # ctrl-dynamics dependency). Each joint gets a distinct non-zero
+        # value so accidental index shifts would be obvious.
+        target = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
+        for jid, val in zip(alice.joint_ids, target):
+            qadr = sim._world._model.jnt_qposadr[jid]
+            sim._world._data.qpos[qadr] = val
+
+        snapshot_before = np.array(
+            [sim._world._data.qpos[sim._world._model.jnt_qposadr[jid]] for jid in alice.joint_ids]
+        )
+
+        # Remove bob - alice should survive with her joint state intact.
+        r = sim.remove_robot(name="bob")
+        assert r["status"] == "success"
+
+        alice_after = sim._world.robots["alice"]
+        snapshot_after = np.array(
+            [sim._world._data.qpos[sim._world._model.jnt_qposadr[jid]] for jid in alice_after.joint_ids]
+        )
+
+        np.testing.assert_allclose(
+            snapshot_before,
+            snapshot_after,
+            atol=1e-10,
+            err_msg="alice's joint qpos was reset by remove_robot(bob)",
+        )
+
+    def test_surviving_object_freejoint_pose_is_preserved(self, sim):
+        """An object's freejoint qpos (position + quat) survives the
+        eject rebuild. Before the fix, objects snapped back to their
+        ``add_object`` spawn pose."""
+        import numpy as np
+
+        sim.add_robot(name="alice", data_config="so100")
+        sim.add_robot(name="bob", data_config="so100", position=[1, 0, 0])
+        sim.add_object(name="cube", shape="box", size=[0.05, 0.05, 0.05], position=[0.3, 0, 0.05])
+
+        mj = sim._mj
+        cube_jid = mj.mj_name2id(sim._world._model, mj.mjtObj.mjOBJ_JOINT, "cube_joint")
+        assert cube_jid >= 0, "cube freejoint must exist"
+        cube_qadr = int(sim._world._model.jnt_qposadr[cube_jid])
+
+        # Move the cube to a distinct position + tilted orientation so
+        # the test fails loudly if state is reset to spawn pose.
+        new_pose = [0.7, -0.2, 0.15, 0.7071, 0.0, 0.7071, 0.0]
+        for i, v in enumerate(new_pose):
+            sim._world._data.qpos[cube_qadr + i] = v
+        mj.mj_forward(sim._world._model, sim._world._data)
+
+        # Eject bob.
+        r = sim.remove_robot(name="bob")
+        assert r["status"] == "success"
+
+        # Cube freejoint must still be there at the moved pose.
+        cube_jid2 = mj.mj_name2id(sim._world._model, mj.mjtObj.mjOBJ_JOINT, "cube_joint")
+        assert cube_jid2 >= 0, "cube freejoint disappeared after remove_robot"
+        cube_qadr2 = int(sim._world._model.jnt_qposadr[cube_jid2])
+        restored = np.array([sim._world._data.qpos[cube_qadr2 + i] for i in range(7)])
+        np.testing.assert_allclose(
+            restored,
+            new_pose,
+            atol=1e-10,
+            err_msg="cube freejoint pose was reset by remove_robot",
+        )
+
+    def test_ejected_robot_state_is_not_restored(self, sim):
+        """The ejected robot's joints should NOT appear in the new model.
+        This is the contrapositive of the preservation tests - confirms
+        the snapshot/restore loop only touches surviving joints.
+        """
+        sim.add_robot(name="alice", data_config="so100")
+        sim.add_robot(name="bob", data_config="so100", position=[1, 0, 0])
+
+        bob = sim._world.robots["bob"]
+        bob_prefix = bob.namespace  # e.g. "bob/"
+        assert bob_prefix, "bob must have a namespace for this test to be meaningful"
+
+        r = sim.remove_robot(name="bob")
+        assert r["status"] == "success"
+
+        mj = sim._mj
+        # No joint under bob's prefix should exist anymore.
+        model = sim._world._model
+        for jid in range(model.njnt):
+            name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_JOINT, jid)
+            assert name is None or not name.startswith(bob_prefix), f"ejected robot's joint survived: {name!r}"

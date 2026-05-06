@@ -44,11 +44,19 @@ _WINDOWS_BLOCKED_PREFIXES = (
 
 
 def _get_blocked_prefixes() -> tuple[str, ...]:
-    """Return blocked prefixes for the current platform."""
+    """Return blocked prefixes for the current platform.
+
+    On macOS, many system directories (``/etc``, ``/var``, ``/tmp``) are
+    symlinks into ``/private/``. Since :func:`validate_save_path` compares
+    against ``os.path.realpath`` output, we must include the ``/private/``-
+    prefixed variants so that ``/etc/passwd`` (which resolves to
+    ``/private/etc/passwd``) is still rejected.
+    """
     if sys.platform == "win32":
         return _WINDOWS_BLOCKED_PREFIXES
     elif sys.platform == "darwin":
-        return _LINUX_BLOCKED_PREFIXES + _MACOS_BLOCKED_PREFIXES
+        private_variants = tuple("/private" + p for p in _LINUX_BLOCKED_PREFIXES)
+        return _LINUX_BLOCKED_PREFIXES + private_variants + _MACOS_BLOCKED_PREFIXES
     else:
         return _LINUX_BLOCKED_PREFIXES
 

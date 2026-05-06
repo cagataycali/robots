@@ -128,11 +128,41 @@ class Simulation(
         peer_id: str | None = None,
         **kwargs,
     ):
+        """Construct a MuJoCo Simulation AgentTool.
+
+        Args:
+            tool_name: Identifier surfaced to the agent and used as the
+                thread-name prefix for the executor.
+            default_timestep: Default physics timestep (seconds). Can be
+                overridden via ``create_world(timestep=...)``.
+            default_width: Default render width (pixels) used when a
+                caller does not pass explicit dimensions to ``render``.
+            default_height: Default render height (pixels).
+            mesh: Optional mesh-networking hook. Falsy (default) keeps
+                the Simulation standalone - all mesh code paths are
+                no-ops. When set to a live mesh-client object exposing
+                ``.stop()``, ``cleanup()`` will detach this Simulation
+                from the peer network before tearing down the MuJoCo
+                world. The attribute is plain (not a property), so
+                consumers may attach a client after construction.
+            peer_id: Stable identifier the mesh transport uses to
+                address this Simulation. Opaque to MuJoCo itself; only
+                consulted when ``mesh`` is truthy.
+            **kwargs: Forwarded to ``AgentTool.__init__`` for subclass
+                compatibility.
+        """
         super().__init__()
         self.tool_name_str = tool_name
         self.default_timestep = default_timestep
         self.default_width = default_width
         self.default_height = default_height
+
+        # Mesh attributes are stored plainly (no property wrapper) so
+        # downstream code can swap in a real mesh client after
+        # construction without a setter dance. See the ``mesh`` /
+        # ``peer_id`` docstring entries above for the contract.
+        self.mesh: Any = mesh if mesh else None
+        self.peer_id: str | None = peer_id
 
         self._world: SimWorld | None = None
         self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix=f"{tool_name}_sim")
@@ -2008,7 +2038,13 @@ class Simulation(
                 ``_DEFAULT_POLICY_STOP_TIMEOUT`` (5s). Set to a small value
                 in tests that want fast teardown.
         """
-        if hasattr(self, "mesh") and self.mesh:
+        # Detach from the mesh network first (if attached). A truthy
+        # ``self.mesh`` is any object exposing ``.stop()``; falsy values
+        # (the default) mean this Simulation never joined a mesh and
+        # there's nothing to release. Done BEFORE stopping policies so
+        # peer-visible state is torn down cleanly even if the policy
+        # teardown below hits the fallback ``wait=False`` path.
+        if self.mesh:
             self.mesh.stop()
 
         timeout = policy_stop_timeout if policy_stop_timeout is not None else self._DEFAULT_POLICY_STOP_TIMEOUT
