@@ -29,6 +29,8 @@ class RecordingMixin:
         from strands_robots.simulation.models import SimWorld
 
         _world: "SimWorld | None"
+        default_width: int
+        default_height: int
 
     def start_recording(
         self,
@@ -136,6 +138,8 @@ class RecordingMixin:
                 task=task,
                 root=root,
                 vcodec=vcodec,
+                video_width=self.default_width,
+                video_height=self.default_height,
             )
             return {
                 "status": "success",

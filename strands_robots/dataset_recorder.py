@@ -113,6 +113,8 @@ class DatasetRecorder:
         streaming_encoding: bool = True,
         image_writer_threads: int = 4,
         video_backend: str = "auto",
+        video_width: int = 640,
+        video_height: int = 480,
     ) -> "DatasetRecorder":
         """Create a new DatasetRecorder with auto-detected features.
 
@@ -143,6 +145,8 @@ class DatasetRecorder:
             camera_keys=camera_keys,
             joint_names=joint_names,
             use_videos=use_videos,
+            video_width=video_width,
+            video_height=video_height,
         )
 
         logger.info(f"Creating LeRobotDataset: {repo_id} @ {fps}fps, {len(features)} features, robot_type={robot_type}")

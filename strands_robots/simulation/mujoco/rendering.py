@@ -394,14 +394,31 @@ class RenderingMixin:
                 depth = renderer.render()
                 renderer.disable_depth_rendering()
 
-            text = f"📸 Depth {w}x{h} from '{label}'\nMin: {float(depth.min()):.3f}m, Max: {float(depth.max()):.3f}m"
+            # Linearize OpenGL depth buffer to metric depth (meters).
+            # MuJoCo renderer returns normalized values in [0, 1] where 0 = near,
+            # 1 = far plane. Convert: z = znear*zfar / (zfar - d*(zfar - znear))
+            import numpy as _np
+
+            extent = float(self._world._model.stat.extent)
+            znear = float(self._world._model.vis.map.znear) * extent
+            zfar = float(self._world._model.vis.map.zfar) * extent
+            # Avoid division by zero for pixels at exactly the far plane
+            denom = zfar - depth * (zfar - znear)
+            denom = _np.where(denom == 0, 1e-10, denom)
+            depth_m = znear * zfar / denom
+            # Clamp: pixels at far plane (depth==1) → zfar
+            depth_m = _np.clip(depth_m, znear, zfar)
+
+            text = (
+                f"📸 Depth {w}x{h} from '{label}'\nMin: {float(depth_m.min()):.4f}m, Max: {float(depth_m.max()):.4f}m"
+            )
             if clip_warn:
                 text += f"\n{clip_warn}"
             return {
                 "status": "success",
                 "content": [
                     {"text": text},
-                    {"json": {"depth_min": float(depth.min()), "depth_max": float(depth.max())}},
+                    {"json": {"depth_min": float(depth_m.min()), "depth_max": float(depth_m.max())}},
                 ],
             }
         except Exception as e:
@@ -644,6 +661,17 @@ class RenderingMixin:
         names = self._active_camera_list(cameras)
         if not names:
             return {"status": "error", "content": [{"text": "No cameras to record."}]}
+        # Strict validation: if user specified cameras, error on any unresolved names
+        # (same policy as render() and render_depth() — fail loudly, don't silently drop).
+        if cameras is not None:
+            unresolved = [c for c in cameras if c not in names]
+            if unresolved:
+                return {
+                    "status": "error",
+                    "content": [
+                        {"text": (f"Camera(s) not found: {unresolved}. Available: {self._list_camera_names()}")}
+                    ],
+                }
 
         out_dir = _os.path.abspath(output_dir or _os.path.join(_tempfile.gettempdir(), "strands_robots", "recordings"))
         _os.makedirs(out_dir, exist_ok=True)

@@ -44,6 +44,7 @@ So: the split is honest about being for file-size, not for decoupling.
 import inspect
 import json
 import logging
+import math
 import os
 import re
 import threading
@@ -209,6 +210,12 @@ class Simulation(
 
         Callers must NOT mutate the model without holding self._lock.
         Use action methods (set_gravity, set_timestep, etc.) instead.
+
+        Warning: reads also race with a running PolicyRunner worker's mj_step
+        (which mutates model arrays in-place for warm-start caches). For agent
+        flows via stream()/dispatch, serialization is handled automatically.
+        Direct Python consumers should either read between steps or accept
+        that values may be momentarily stale during a running policy.
         """
         return self._world._model if self._world else None
 
@@ -218,6 +225,10 @@ class Simulation(
 
         Callers must NOT mutate data without holding self._lock.
         Use action methods (send_action, step, etc.) instead.
+
+        Warning: reads race with a running PolicyRunner worker's mj_step.
+        For agent flows via stream()/dispatch, the lock is held automatically.
+        Direct Python consumers should use the action API or accept stale reads.
         """
         return self._world._data if self._world else None
 
@@ -1263,6 +1274,11 @@ class Simulation(
                 "status": "error",
                 "content": [{"text": f"set_gravity: 'gravity' must be a 3-element list of numbers ({e})"}],
             }
+        if not all(math.isfinite(g) for g in gravity):
+            return {
+                "status": "error",
+                "content": [{"text": f"set_gravity: all components must be finite, got {gravity}"}],
+            }
         with self._lock:
             self._world._model.opt.gravity[:] = gravity
             self._world.gravity = gravity
@@ -1281,8 +1297,11 @@ class Simulation(
                 "status": "error",
                 "content": [{"text": f"set_timestep: must be a positive number, got {timestep!r}"}],
             }
-        if timestep <= 0:
-            return {"status": "error", "content": [{"text": f"set_timestep: must be > 0, got {timestep}"}]}
+        if not math.isfinite(timestep) or timestep <= 0:
+            return {
+                "status": "error",
+                "content": [{"text": f"set_timestep: must be a finite positive number, got {timestep}"}],
+            }
         warn = ""
         if timestep > 0.1:
             warn = f" ⚠️ unusually large timestep (>{0.1}s); physics may be unstable"

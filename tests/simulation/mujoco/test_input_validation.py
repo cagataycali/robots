@@ -147,7 +147,7 @@ class TestMassAndTimestepValidation:
     def test_set_timestep_negative_errors(self, sim_with_world):
         res = sim_with_world.set_timestep(-0.01)
         assert res["status"] == "error"
-        assert "> 0" in res["content"][0]["text"]
+        assert "positive" in res["content"][0]["text"]
 
     def test_set_timestep_zero_errors(self, sim_with_world):
         res = sim_with_world.set_timestep(0)
@@ -161,6 +161,29 @@ class TestMassAndTimestepValidation:
         res = sim_with_world.set_timestep(0.5)
         assert res["status"] == "success"
         assert "⚠️" in res["content"][0]["text"] or "unusually" in res["content"][0]["text"]
+
+    def test_set_timestep_nan_errors(self, sim_with_world):
+        """NaN must not pass the positivity guard (nan <= 0 is False)."""
+
+        res = sim_with_world.set_timestep(float("nan"))
+        assert res["status"] == "error"
+        assert "finite" in res["content"][0]["text"]
+
+    def test_set_timestep_inf_errors(self, sim_with_world):
+        res = sim_with_world.set_timestep(float("inf"))
+        assert res["status"] == "error"
+        assert "finite" in res["content"][0]["text"]
+
+    def test_set_gravity_nan_errors(self, sim_with_world):
+        """NaN in gravity components must be rejected."""
+        res = sim_with_world.set_gravity([0, 0, float("nan")])
+        assert res["status"] == "error"
+        assert "finite" in res["content"][0]["text"]
+
+    def test_set_gravity_inf_errors(self, sim_with_world):
+        res = sim_with_world.set_gravity([0, float("inf"), -9.81])
+        assert res["status"] == "error"
+        assert "finite" in res["content"][0]["text"]
 
 
 # set_gravity dim validation
