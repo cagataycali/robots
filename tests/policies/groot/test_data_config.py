@@ -182,6 +182,27 @@ class TestDataConfigMap:
         assert config.observation_indices == [-20, 0]
         assert config.action_indices == list(range(40))
 
+    def test_unitree_g1_sonic_schema(self):
+        """UNITREE_G1_SONIC — whole-body controller with SONIC latent action space.
+
+        Uses motion_token + hand joints as action keys with 40-step horizon.
+        State includes projected_gravity for proprioception.
+        """
+        config = DATA_CONFIG_MAP["unitree_g1_sonic"]
+        assert "video.ego_view" in config.video_keys
+        # Full body state with projected gravity
+        assert "state.left_leg" in config.state_keys
+        assert "state.right_leg" in config.state_keys
+        assert "state.projected_gravity" in config.state_keys
+        # SONIC latent action space
+        assert "action.motion_token" in config.action_keys
+        assert "action.left_hand_joints" in config.action_keys
+        assert "action.right_hand_joints" in config.action_keys
+        # Single observation frame, 40-step action horizon
+        assert config.observation_indices == [0]
+        assert config.action_indices == list(range(40))
+
+
     def test_unitree_g1_real_alias(self):
         """The REAL_G1 embodiment tag value resolves to unitree_g1_real."""
         alias = DATA_CONFIG_MAP["real_g1_relative_eef_relative_joints"]
