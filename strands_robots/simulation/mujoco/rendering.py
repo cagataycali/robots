@@ -385,7 +385,17 @@ class RenderingMixin:
                     except Exception:
                         pass
                 if "ARB_clip_control" in captured:
-                    self._depth_warn_text = "⚠️ Depth accuracy limited on this GPU (missing ARB_clip_control)"
+                    # ARB_clip_control missing → OpenGL depth buffer uses
+                    # default [0,1] range with compressed far-plane precision.
+                    # After linearization below, Min/Max are still in meters,
+                    # but their precision (especially for distant pixels) is
+                    # degraded vs. a GPU with ARB_clip_control. Downstream
+                    # consumers should treat these values as approximate.
+                    self._depth_warn_text = (
+                        "⚠️ Depth accuracy limited on this GPU (missing ARB_clip_control). "
+                        "Linearized Min/Max are in meters but precision is degraded "
+                        "(especially for far-plane pixels) — treat as approximate."
+                    )
                 else:
                     self._depth_warn_text = ""
                 clip_warn = self._depth_warn_text
@@ -397,6 +407,11 @@ class RenderingMixin:
             # Linearize OpenGL depth buffer to metric depth (meters).
             # MuJoCo renderer returns normalized values in [0, 1] where 0 = near,
             # 1 = far plane. Convert: z = znear*zfar / (zfar - d*(zfar - znear))
+            #
+            # On MuJoCo >= 3.0, `model.vis.map.{znear,zfar}` are fractions of
+            # `model.stat.extent` (the model's bounding scale), NOT absolute
+            # meters — multiply by extent to get real clip-plane distances.
+            # pyproject.toml pins mujoco>=3.2, so this convention is safe here.
             import numpy as _np
 
             extent = float(self._world._model.stat.extent)
@@ -518,14 +533,21 @@ class RenderingMixin:
     # main dispatch thread.
 
     def _active_camera_list(self, cameras):
-        """Resolve cameras=None to every camera currently in the world.
+        """Resolve cameras to concrete camera names currently in the world.
 
         Handles namespaced camera names (e.g. 'arm0/wrist_cam') by also
-        checking the short suffix form ('wrist_cam'). Returns only names
-        that can be resolved to a model camera ID.
+        checking the short suffix form ('wrist_cam').
+
+        Returns
+        -------
+        resolved : list[str]
+            Camera names that resolved to real model cameras.
+        unresolved_inputs : list[str]
+            User-supplied camera names that could NOT be resolved (empty
+            list when cameras is None or when every input matched).
         """
         if self._world is None or self._world._model is None:
-            return []
+            return [], []
         mj = _ensure_mujoco()
         model = self._world._model
         from_model = [mj.mj_id2name(model, mj.mjtObj.mjOBJ_CAMERA, i) for i in range(model.ncam)]
@@ -533,9 +555,10 @@ class RenderingMixin:
         py_side = list(self._world.cameras.keys()) if self._world else []
         all_cams = list(dict.fromkeys(from_model + py_side))
         if cameras is None:
-            return all_cams
+            return all_cams, []
         # Try to resolve unknown names via namespace prefix matching.
-        resolved = []
+        resolved: list[str] = []
+        unresolved: list[str] = []
         for c in cameras:
             if c in all_cams:
                 resolved.append(c)
@@ -546,12 +569,13 @@ class RenderingMixin:
                     resolved.append(matches[0])
                     logger.debug("Camera '%s' resolved to namespaced '%s'", c, matches[0])
                 else:
+                    unresolved.append(c)
                     logger.warning(
                         "Camera '%s' not found. Available: %s",
                         c,
                         ", ".join(all_cams) or "(none)",
                     )
-        return resolved
+        return resolved, unresolved
 
     def render_all(self, cameras=None, width=None, height=None):
         """Render every (or a subset of) camera in one call.
@@ -572,7 +596,12 @@ class RenderingMixin:
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
-        names = self._active_camera_list(cameras)
+        names, unresolved = self._active_camera_list(cameras)
+        if cameras is not None and unresolved:
+            return {
+                "status": "error",
+                "content": [{"text": f"Camera(s) not found: {unresolved}. Available: {self._list_camera_names()}"}],
+            }
         if not names:
             return {"status": "error", "content": [{"text": "No cameras in scene."}]}
         content = []
@@ -658,20 +687,18 @@ class RenderingMixin:
                 "content": [{"text": f"Already recording '{cur}'. Call stop_cameras_recording() first."}],
             }
 
-        names = self._active_camera_list(cameras)
-        if not names:
-            return {"status": "error", "content": [{"text": "No cameras to record."}]}
+        names, unresolved = self._active_camera_list(cameras)
         # Strict validation: if user specified cameras, error on any unresolved names
         # (same policy as render() and render_depth() — fail loudly, don't silently drop).
-        if cameras is not None:
-            unresolved = [c for c in cameras if c not in names]
-            if unresolved:
-                return {
-                    "status": "error",
-                    "content": [
-                        {"text": (f"Camera(s) not found: {unresolved}. Available: {self._list_camera_names()}")}
-                    ],
-                }
+        # NOTE: `unresolved` contains the raw user inputs that didn't map, so the
+        # namespace-suffix resolution path (e.g. 'side' → 'arm0/side') is preserved.
+        if cameras is not None and unresolved:
+            return {
+                "status": "error",
+                "content": [{"text": (f"Camera(s) not found: {unresolved}. Available: {self._list_camera_names()}")}],
+            }
+        if not names:
+            return {"status": "error", "content": [{"text": "No cameras to record."}]}
 
         out_dir = _os.path.abspath(output_dir or _os.path.join(_tempfile.gettempdir(), "strands_robots", "recordings"))
         _os.makedirs(out_dir, exist_ok=True)

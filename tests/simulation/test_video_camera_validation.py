@@ -95,3 +95,58 @@ class TestVideoCameraPreValidation:
         text = r["content"][0]["text"]
         assert "🎬 Video" in text or "Video:" in text, text
         assert video_path.exists() and video_path.stat().st_size > 0
+
+
+class TestCamerasRecordingSuffixResolution:
+    """Regression for PR #85 follow-up review (yinsong1986, 2026-05-07 02:06):
+
+    `start_cameras_recording` used to compare raw user inputs to the already-
+    namespaced `names` list returned by `_active_camera_list`. Users who
+    passed the short form (e.g. 'side' when the scene had 'arm1/side') hit
+    a spurious "not found" error even though the suffix resolution had
+    correctly resolved their input.
+
+    The fix: `_active_camera_list` now returns (resolved, unresolved_inputs)
+    so the strict check operates on actual user input, not the resolved set.
+    """
+
+    @requires_gl
+    def test_short_name_resolves_to_namespaced(self, sim_with_arm, tmp_path):
+        """start_cameras_recording must accept 'side' when scene has 'arm1/side'."""
+        out_dir = tmp_path / "recs"
+        r = sim_with_arm.start_cameras_recording(
+            cameras=["side"],
+            fps=5,
+            width=64,
+            height=48,
+            output_dir=str(out_dir),
+            name="suffix_test",
+        )
+        assert r["status"] == "success", r
+        # Stop cleanly
+        sim_with_arm.stop_cameras_recording()
+
+    def test_bogus_name_still_errors(self, sim_with_arm):
+        """A name that neither matches directly nor by suffix must still error."""
+        r = sim_with_arm.start_cameras_recording(
+            cameras=["definitely_not_a_camera"],
+            fps=5,
+            width=64,
+            height=48,
+        )
+        assert r["status"] == "error", r
+        text = r["content"][0]["text"]
+        assert "not found" in text.lower()
+        assert "definitely_not_a_camera" in text
+
+    def test_mixed_resolvable_and_bogus(self, sim_with_arm):
+        """If any input doesn't resolve, fail loudly — don't silently shrink."""
+        r = sim_with_arm.start_cameras_recording(
+            cameras=["side", "nope"],
+            fps=5,
+            width=64,
+            height=48,
+        )
+        assert r["status"] == "error", r
+        text = r["content"][0]["text"]
+        assert "nope" in text

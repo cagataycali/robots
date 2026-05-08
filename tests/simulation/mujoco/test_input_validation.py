@@ -185,6 +185,23 @@ class TestMassAndTimestepValidation:
         assert res["status"] == "error"
         assert "finite" in res["content"][0]["text"]
 
+    def test_set_gravity_scalar_nan_errors(self, sim_with_world):
+        """Scalar NaN must be rejected even though it goes through the
+        `[0, 0, scalar]` expansion path before the finite check.
+
+        Regression guard: prevents someone from accidentally moving the
+        isfinite loop ahead of the scalar expansion and re-opening the gap.
+        """
+        res = sim_with_world.set_gravity(float("nan"))
+        assert res["status"] == "error"
+        assert "finite" in res["content"][0]["text"]
+
+    def test_set_gravity_scalar_inf_errors(self, sim_with_world):
+        """Scalar ±Inf must also be rejected through the expansion path."""
+        res = sim_with_world.set_gravity(float("inf"))
+        assert res["status"] == "error"
+        assert "finite" in res["content"][0]["text"]
+
 
 # set_gravity dim validation
 
