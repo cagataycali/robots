@@ -202,7 +202,6 @@ class TestDataConfigMap:
         assert config.observation_indices == [0]
         assert config.action_indices == list(range(40))
 
-
     def test_unitree_g1_real_alias(self):
         """The REAL_G1 embodiment tag value resolves to unitree_g1_real."""
         alias = DATA_CONFIG_MAP["real_g1_relative_eef_relative_joints"]
