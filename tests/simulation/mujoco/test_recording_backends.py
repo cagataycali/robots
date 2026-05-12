@@ -14,6 +14,8 @@ import os
 
 import pytest
 
+pytest.importorskip("mujoco")
+
 from strands_robots.simulation.mujoco.backend import _can_render  # noqa: E402
 
 requires_gl = pytest.mark.skipif(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import sys
 from unittest.mock import patch
@@ -125,6 +126,10 @@ class TestCanRender:
         self._clear_cache()
 
 
+@pytest.mark.skipif(
+    not importlib.util.find_spec("mujoco"),
+    reason="mujoco not installed",
+)
 class TestEnsureMujoco:
     """``_ensure_mujoco`` returns a module-like object with MjModel/MjData."""
 

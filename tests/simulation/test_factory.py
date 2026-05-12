@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import importlib.util
+
 import pytest
 
 from strands_robots.simulation import factory
@@ -101,6 +103,10 @@ class TestRegisterBackend:
         assert type(sim).__name__ == "_OtherSim"
 
 
+@pytest.mark.skipif(
+    not importlib.util.find_spec("mujoco"),
+    reason="mujoco not installed",
+)
 class TestCreateSimulation:
     def test_default_is_mujoco(self):
         sim = create_simulation()

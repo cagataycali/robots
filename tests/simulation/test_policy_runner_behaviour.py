@@ -6,6 +6,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+pytest.importorskip("mujoco")
+
 from strands_robots.policies.mock import MockPolicy
 from strands_robots.simulation.mujoco.simulation import Simulation
 from strands_robots.simulation.policy_runner import PolicyRunner, VideoConfig, _resolve_coroutine

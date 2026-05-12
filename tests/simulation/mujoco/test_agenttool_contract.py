@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+pytest.importorskip("mujoco")
+
 from strands_robots.simulation.mujoco.simulation import Simulation
 
 
