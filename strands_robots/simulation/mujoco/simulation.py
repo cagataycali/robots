@@ -2,7 +2,7 @@
 
 Architecture notes (honest version, see GH #118)
 
-The ``Simulation`` class uses multiple-inheritance to compose four mixins
+The ``MuJoCoSimEngine`` class uses multiple-inheritance to compose four mixins
 (``PhysicsMixin``, ``RenderingMixin``, ``RecordingMixin``, ``RandomizationMixin``)
 on top of the ``SimEngine`` ABC and the Strands ``AgentTool`` base. The
 split keeps each file navigable (physics.py ~1150 lines, rendering.py ~730,
@@ -97,7 +97,7 @@ with open(_TOOL_SPEC_PATH) as _f:
     _TOOL_SPEC_SCHEMA: dict[str, Any] = json.load(_f)
 
 
-class Simulation(
+class MuJoCoSimEngine(
     PhysicsMixin,
     RenderingMixin,
     RecordingMixin,
@@ -121,7 +121,7 @@ class Simulation(
 
     def __init__(
         self,
-        tool_name: str = "sim",
+        tool_name: str = "mujoco_simulation",
         default_timestep: float = 0.002,
         default_width: int = 640,
         default_height: int = 480,
@@ -198,7 +198,7 @@ class Simulation(
         # Fail fast: verify MuJoCo is importable at construction time
         # so consumers catch missing-dependency errors immediately.
         self._mj = _ensure_mujoco()
-        logger.info("🎮 Simulation tool '%s' initialized", tool_name)
+        logger.info("MuJoCo simulation tool '%s' initialized", tool_name)
 
     # Public Properties — read-only introspection.
     # WARNING: callers MUST NOT mutate the returned objects without holding
@@ -278,11 +278,17 @@ class Simulation(
     # World Management
 
     def _cheap_robot_count(self) -> int:
-        try:
-            from strands_robots.registry import list_robots as _registry_list_robots
+        """Count available sim-compatible robot models.
 
-            return len(_registry_list_robots(mode="sim"))
+        Delegates to :func:`~strands_robots.simulation.model_registry.count_sim_robots`.
+        Logs a warning and returns 0 when the registry is not installed.
+        """
+        from strands_robots.simulation.model_registry import count_sim_robots
+
+        try:
+            return count_sim_robots()
         except ImportError:
+            logger.warning("Robot registry not available - install strands-robots[registry] for model discovery")
             return 0
 
     def create_world(
@@ -2127,3 +2133,7 @@ class Simulation(
             self.cleanup()
         except Exception:
             pass
+
+
+# Backward-compatible alias — callers using the old internal name still work.
+Simulation = MuJoCoSimEngine

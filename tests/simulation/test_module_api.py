@@ -29,3 +29,10 @@ def test_mujoco_getattr_raises_on_unknown():
 
     with pytest.raises(AttributeError, match="has no attribute 'NotARealClass'"):
         _ = mod.NotARealClass
+
+
+def test_mujoco_sim_engine_alias():
+    from strands_robots.simulation.mujoco import MuJoCoSimEngine
+    from strands_robots.simulation.mujoco.simulation import MuJoCoSimEngine as _Direct
+
+    assert MuJoCoSimEngine is _Direct

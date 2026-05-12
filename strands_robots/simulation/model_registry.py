@@ -140,3 +140,20 @@ def list_available_models() -> str:
         status = "[OK]" if resolved else "[MISSING]"
         lines.append(f"{status} {name}: {path}")
     return "\n".join(lines)
+
+
+def count_sim_robots() -> int:
+    """Count robot models available for simulation.
+
+    Queries the robot registry for models with ``mode="sim"``.
+    This is reusable across any simulation backend (MuJoCo, Isaac, Newton).
+
+    Returns:
+        Number of available simulation-compatible robot models.
+
+    Raises:
+        ImportError: If the registry module is not installed.
+    """
+    from strands_robots.registry import list_robots as _registry_list_robots
+
+    return len(_registry_list_robots(mode="sim"))

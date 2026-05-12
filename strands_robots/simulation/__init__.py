@@ -57,6 +57,7 @@ from strands_robots.simulation.factory import (
     register_backend,
 )
 from strands_robots.simulation.model_registry import (
+    count_sim_robots,
     list_available_models,
     list_registered_urdfs,
     register_urdf,
@@ -74,8 +75,9 @@ from strands_robots.simulation.models import (
 
 # Heavy imports (lazy - need strands SDK + mujoco)
 _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
-    "Simulation": ("strands_robots.simulation.mujoco.simulation", "Simulation"),
-    "MuJoCoSimulation": ("strands_robots.simulation.mujoco.simulation", "Simulation"),
+    "Simulation": ("strands_robots.simulation.mujoco.simulation", "MuJoCoSimEngine"),
+    "MuJoCoSimulation": ("strands_robots.simulation.mujoco.simulation", "MuJoCoSimEngine"),
+    "MuJoCoSimEngine": ("strands_robots.simulation.mujoco.simulation", "MuJoCoSimEngine"),
     "SpecBuilder": ("strands_robots.simulation.mujoco.spec_builder", "SpecBuilder"),
     "_configure_gl_backend": ("strands_robots.simulation.mujoco.backend", "_configure_gl_backend"),
     "_ensure_mujoco": ("strands_robots.simulation.mujoco.backend", "_ensure_mujoco"),
@@ -92,6 +94,7 @@ __all__ = [
     "register_backend",
     # Default backend alias
     "Simulation",
+    "MuJoCoSimEngine",
     "MuJoCoSimulation",
     # Shared dataclasses
     "SimStatus",
@@ -107,6 +110,7 @@ __all__ = [
     "resolve_model",
     "resolve_urdf",
     "list_registered_urdfs",
+    "count_sim_robots",
     "list_available_models",
 ]
 
