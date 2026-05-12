@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 _BUILTIN_BACKENDS: dict[str, tuple[str, str]] = {
     "mujoco": (
         "strands_robots.simulation.mujoco.simulation",
-        "Simulation",
+        "MuJoCoSimEngine",
     ),
     # Future:
     # "isaac": ("strands_robots.simulation.isaac.simulation", "IsaacSimulation"),

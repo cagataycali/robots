@@ -140,3 +140,14 @@ def list_available_models() -> str:
         status = "[OK]" if resolved else "[MISSING]"
         lines.append(f"{status} {name}: {path}")
     return "\n".join(lines)
+
+
+def count_sim_robots() -> int:
+    """Count available robot models in simulation registry.
+
+    Useful for displaying available model count in status messages.
+    Raises ImportError if the registry module is not available.
+    """
+    from strands_robots.registry import list_robots as _registry_list_robots
+
+    return len(_registry_list_robots(mode="sim"))

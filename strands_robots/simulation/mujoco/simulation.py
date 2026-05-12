@@ -60,6 +60,7 @@ from strands.types.tools import ToolSpec, ToolUse
 
 from strands_robots.simulation.base import SimEngine
 from strands_robots.simulation.model_registry import (
+    count_sim_robots,
     list_available_models,
     resolve_model,
 )
@@ -97,7 +98,7 @@ with open(_TOOL_SPEC_PATH) as _f:
     _TOOL_SPEC_SCHEMA: dict[str, Any] = json.load(_f)
 
 
-class Simulation(
+class MuJoCoSimEngine(
     PhysicsMixin,
     RenderingMixin,
     RecordingMixin,
@@ -121,7 +122,7 @@ class Simulation(
 
     def __init__(
         self,
-        tool_name: str = "sim",
+        tool_name: str = "mujoco_simulation",
         default_timestep: float = 0.002,
         default_width: int = 640,
         default_height: int = 480,
@@ -198,7 +199,7 @@ class Simulation(
         # Fail fast: verify MuJoCo is importable at construction time
         # so consumers catch missing-dependency errors immediately.
         self._mj = _ensure_mujoco()
-        logger.info("🎮 Simulation tool '%s' initialized", tool_name)
+        logger.info("MuJoCo simulation tool '%s' initialized", tool_name)
 
     # Public Properties — read-only introspection.
     # WARNING: callers MUST NOT mutate the returned objects without holding
@@ -278,11 +279,11 @@ class Simulation(
     # World Management
 
     def _cheap_robot_count(self) -> int:
+        """Count available sim robot models (delegated to model_registry)."""
         try:
-            from strands_robots.registry import list_robots as _registry_list_robots
-
-            return len(_registry_list_robots(mode="sim"))
-        except ImportError:
+            return count_sim_robots()
+        except (ImportError, Exception) as e:
+            logger.warning("Could not count sim robots: %s", e)
             return 0
 
     def create_world(
@@ -2127,3 +2128,8 @@ class Simulation(
             self.cleanup()
         except Exception:
             pass
+
+
+# Backward-compatible aliases (PR #85 shipped as ``Simulation``)
+Simulation = MuJoCoSimEngine
+MuJoCoSimulation = MuJoCoSimEngine
