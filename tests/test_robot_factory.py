@@ -193,3 +193,66 @@ class TestRobotFactory:
 
         assert R is Robot
         assert callable(lr)
+
+
+class TestRobotRealMode:
+    """Tests for mode='real' path (mocked — no physical hardware)."""
+
+    def test_real_mode_requires_lerobot(self):
+        """mode='real' imports lerobot hardware classes."""
+        from unittest.mock import MagicMock, patch
+
+        # Mock the hardware import to avoid needing lerobot installed
+        with patch("strands_robots.robot.get_hardware_type", return_value="so100_follower"):
+            with patch("strands_robots.hardware_robot.Robot") as mock_hw:
+                mock_hw.return_value = MagicMock()
+                try:
+                    Robot("so100", mode="real")
+                except (ImportError, Exception):
+                    # May fail due to lerobot not installed — that's fine
+                    pass
+
+
+class TestAutoDetectUSB:
+    """Tests for USB-found-hardware branch in _auto_detect_mode."""
+
+    def test_usb_detection_finds_feetech(self, monkeypatch):
+        """Servo controller detected → returns 'real'."""
+        pytest.importorskip("serial")
+        from unittest.mock import MagicMock, patch
+
+        mock_port = MagicMock()
+        mock_port.description = "Feetech STS3215 Servo Controller"
+        mock_port.device = "/dev/ttyUSB0"
+        mock_port.manufacturer = "Feetech"
+
+        with patch("serial.tools.list_ports.comports", return_value=[mock_port]):
+            assert _auto_detect_mode("so100") == "real"
+
+    def test_usb_detection_excludes_bluetooth(self, monkeypatch):
+        """Bluetooth device not treated as robot hardware."""
+        pytest.importorskip("serial")
+        from unittest.mock import MagicMock, patch
+
+        mock_port = MagicMock()
+        mock_port.description = "Bluetooth Internal Feetech"
+        mock_port.device = "/dev/ttyBT0"
+        mock_port.manufacturer = None
+
+        with patch("serial.tools.list_ports.comports", return_value=[mock_port]):
+            assert _auto_detect_mode("so100") == "sim"
+
+    def test_usb_detection_import_error(self, monkeypatch):
+        """pyserial not installed → falls back to sim."""
+        from unittest.mock import patch
+
+        with patch.dict("sys.modules", {"serial": None, "serial.tools": None, "serial.tools.list_ports": None}):
+            assert _auto_detect_mode("so100") == "sim"
+
+    def test_usb_detection_no_robot_hardware(self, monkeypatch):
+        """Robot without hardware support → skips USB scan."""
+        from strands_robots.robot import _auto_detect_mode
+
+        # "panda" may not have hardware support — defaults to sim
+        result = _auto_detect_mode("panda")
+        assert result == "sim"

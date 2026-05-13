@@ -416,7 +416,7 @@ class Robot(AgentTool):
                     "text": f"Task: '{instruction}' - {self._task_state.status.value}\n"
                     f"Robot: {self.tool_name_str} ({self.robot})\n"
                     f"Policy: {policy_provider} on {policy_host}:{policy_port}\n"
-                    f"️ Duration: {self._task_state.duration:.1f}s\n"
+                    f"Duration: {self._task_state.duration:.1f}s\n"
                     f"Steps: {self._task_state.step_count}"
                     + (f"\nError: {self._task_state.error_message}" if self._task_state.error_message else "")
                 }
@@ -451,8 +451,8 @@ class Robot(AgentTool):
                 {
                     "text": f"Task started: '{instruction}'\n"
                     f"Robot: {self.tool_name_str}\n"
-                    f"💡 Use action='status' to check progress\n"
-                    f"💡 Use action='stop' to interrupt"
+                    f"Use action='status' to check progress\n"
+                    f"Use action='stop' to interrupt"
                 }
             ],
         }
@@ -470,10 +470,10 @@ class Robot(AgentTool):
             status_text += f"Task: {self._task_state.instruction}\n"
 
         if self._task_state.status == TaskStatus.RUNNING:
-            status_text += f"️ Duration: {self._task_state.duration:.1f}s\n"
-            status_text += f"🔄 Steps: {self._task_state.step_count}\n"
+            status_text += f"Duration: {self._task_state.duration:.1f}s\n"
+            status_text += f"Steps: {self._task_state.step_count}\n"
         elif self._task_state.status in [TaskStatus.COMPLETED, TaskStatus.STOPPED, TaskStatus.ERROR]:
-            status_text += f"️ Total Duration: {self._task_state.duration:.1f}s\n"
+            status_text += f"Total Duration: {self._task_state.duration:.1f}s\n"
             status_text += f"Total Steps: {self._task_state.step_count}\n"
 
         if self._task_state.error_message:
@@ -507,7 +507,7 @@ class Robot(AgentTool):
             "content": [
                 {
                     "text": f"Task stopped: '{self._task_state.instruction}'\n"
-                    f"️ Duration: {self._task_state.duration:.1f}s\n"
+                    f"Duration: {self._task_state.duration:.1f}s\n"
                     f"Steps completed: {self._task_state.step_count}"
                 }
             ],
