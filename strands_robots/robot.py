@@ -30,15 +30,21 @@ Future (not yet implemented)::
     sim = Robot("so100", backend="newton", num_envs=4096)
 """
 
+from __future__ import annotations
+
 import logging
 import os
-from typing import Any
+from typing import TYPE_CHECKING, Any, Literal, overload
 
 from strands_robots.registry import (
     get_hardware_type,
     has_hardware,
     resolve_name,
 )
+
+if TYPE_CHECKING:
+    from strands_robots.hardware_robot import Robot as HardwareRobot
+    from strands_robots.simulation import Simulation
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +60,8 @@ def _auto_detect_mode(canonical: str) -> str:
     env_mode = os.getenv("STRANDS_ROBOT_MODE", "").lower()
     if env_mode in ("sim", "real"):
         return env_mode
+    if env_mode:
+        logger.warning("STRANDS_ROBOT_MODE=%r ignored (expected 'sim' or 'real')", env_mode)
 
     # Only probe USB if the robot actually has hardware support
     if has_hardware(canonical):
@@ -84,15 +92,55 @@ def _auto_detect_mode(canonical: str) -> str:
     return "sim"
 
 
+@overload
 def Robot(
+    name: str,
+    mode: Literal["sim"] = ...,
+    backend: str = ...,
+    urdf_path: str | None = ...,
+    cameras: dict[str, dict[str, Any]] | None = ...,
+    position: list[float] | None = ...,
+    data_config: str | None = ...,
+    **kwargs: Any,
+) -> Simulation: ...
+
+
+@overload
+def Robot(
+    name: str,
+    mode: Literal["real"],
+    backend: str = ...,
+    urdf_path: str | None = ...,
+    cameras: dict[str, dict[str, Any]] | None = ...,
+    position: list[float] | None = ...,
+    data_config: str | None = ...,
+    **kwargs: Any,
+) -> HardwareRobot: ...
+
+
+@overload
+def Robot(
+    name: str,
+    mode: Literal["auto"] | str = ...,
+    backend: str = ...,
+    urdf_path: str | None = ...,
+    cameras: dict[str, dict[str, Any]] | None = ...,
+    position: list[float] | None = ...,
+    data_config: str | None = ...,
+    **kwargs: Any,
+) -> Simulation | HardwareRobot: ...
+
+
+def Robot(  # noqa: N802 — uppercase by design (factory mimicking a class constructor)
     name: str,
     mode: str = "sim",
     backend: str = "mujoco",
     urdf_path: str | None = None,
     cameras: dict[str, dict[str, Any]] | None = None,
     position: list[float] | None = None,
+    data_config: str | None = None,
     **kwargs: Any,
-) -> Any:
+) -> Simulation | HardwareRobot:
     """Create a robot — returns a Simulation or HardwareRobot instance.
 
     This is a convenience factory, NOT a wrapper class.  You get the real
@@ -109,6 +157,7 @@ def Robot(
               "auto" (probes USB for servo controllers, falls back to sim).
         backend: Simulation backend — currently only "mujoco" (CPU).
                  Future: "isaac" (GPU), "newton" (GPU).
+                 Only applies to ``mode="sim"``; ignored for ``mode="real"``.
         urdf_path: Explicit path to URDF/MJCF file. If not provided,
                    resolved via ``strands_robots.simulation.model_registry``
                    (asset manager or ``STRANDS_ASSETS_DIR`` search paths).
@@ -116,7 +165,14 @@ def Robot(
 
             {"wrist": {"type": "opencv", "index_or_path": "/dev/video0", "fps": 30}}
 
+            Note: In ``mode="sim"``, cameras are not yet forwarded (use
+            ``sim._dispatch_action("add_camera", {...})`` after creation).
+            This will be improved once ``SimCamera.parent_body`` lands.
+
         position: Robot position in sim world [x, y, z].
+        data_config: Data configuration name for observation/action schema.
+                     Defaults to the canonical robot name. For multi-camera
+                     setups, specify explicitly: ``data_config="so100_dualcam"``.
         **kwargs: Forwarded to the underlying backend constructor.
 
     Returns:
@@ -126,6 +182,7 @@ def Robot(
     Raises:
         RuntimeError: If the sim world or robot fails to initialize.
         NotImplementedError: If an unimplemented backend is requested.
+        ValueError: If cameras are passed to sim mode, or mode is invalid.
 
     Examples::
 
@@ -162,17 +219,30 @@ def Robot(
                 f"Isaac and Newton backends are on the roadmap."
             )
 
+        if cameras is not None:
+            raise ValueError(
+                "cameras= is only supported in mode='real'. "
+                "For sim cameras, use sim._dispatch_action('add_camera', {...}) "
+                "after creation."
+            )
+
         from strands_robots.simulation import Simulation
 
         sim = Simulation(
             tool_name=f"{canonical}_sim",
             **kwargs,
         )
-        sim._dispatch_action("create_world", {})
+
+        result = sim._dispatch_action("create_world", {})
+        if result.get("status") == "error":
+            sim.destroy()
+            content = result.get("content", [])
+            msg = content[0].get("text", str(result)) if content else str(result)
+            raise RuntimeError(f"Failed to create sim world for '{canonical}': {msg}")
 
         add_robot_params: dict[str, Any] = {
             "robot_name": canonical,
-            "data_config": canonical,
+            "data_config": data_config or canonical,
             "position": position or [0.0, 0.0, 0.0],
         }
         if urdf_path:
@@ -188,10 +258,16 @@ def Robot(
 
     # ── Real hardware (explicit opt-in) ──
     elif mode == "real":
-        from strands_robots.hardware_robot import Robot as HardwareRobot
+        if backend != "mujoco":
+            logger.debug(
+                "backend=%r ignored in mode='real' (hardware uses direct servo control)",
+                backend,
+            )
+
+        from strands_robots.hardware_robot import Robot as HardwareRobotCls
 
         real_type = get_hardware_type(canonical) or canonical
-        return HardwareRobot(
+        return HardwareRobotCls(
             tool_name=canonical,
             robot=real_type,
             cameras=cameras,

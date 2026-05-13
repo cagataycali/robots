@@ -1,7 +1,5 @@
 """Tests for strands_robots.robot — Robot() factory and list_robots()."""
 
-import os
-
 import pytest
 
 from strands_robots.registry import (
@@ -93,27 +91,23 @@ class TestAutoDetectMode:
         """No hardware plugged in → sim."""
         assert _auto_detect_mode("so100") == "sim"
 
-    def test_env_override_real(self):
-        os.environ["STRANDS_ROBOT_MODE"] = "real"
-        try:
-            assert _auto_detect_mode("so100") == "real"
-        finally:
-            del os.environ["STRANDS_ROBOT_MODE"]
+    def test_env_override_real(self, monkeypatch):
+        monkeypatch.setenv("STRANDS_ROBOT_MODE", "real")
+        assert _auto_detect_mode("so100") == "real"
 
-    def test_env_override_sim(self):
-        os.environ["STRANDS_ROBOT_MODE"] = "sim"
-        try:
-            assert _auto_detect_mode("so100") == "sim"
-        finally:
-            del os.environ["STRANDS_ROBOT_MODE"]
+    def test_env_override_sim(self, monkeypatch):
+        monkeypatch.setenv("STRANDS_ROBOT_MODE", "sim")
+        assert _auto_detect_mode("so100") == "sim"
 
-    def test_env_override_case_insensitive(self):
-        os.environ["STRANDS_ROBOT_MODE"] = "REAL"
-        try:
-            mode = _auto_detect_mode("so100")
-            assert mode == "real"
-        finally:
-            del os.environ["STRANDS_ROBOT_MODE"]
+    def test_env_override_case_insensitive(self, monkeypatch):
+        monkeypatch.setenv("STRANDS_ROBOT_MODE", "REAL")
+        assert _auto_detect_mode("so100") == "real"
+
+    def test_unrecognized_env_value_falls_through(self, monkeypatch):
+        """Unrecognized STRANDS_ROBOT_MODE value is ignored with warning."""
+        monkeypatch.setenv("STRANDS_ROBOT_MODE", "foo")
+        # Falls through to default sim (logs warning)
+        assert _auto_detect_mode("so100") == "sim"
 
 
 class TestRobotFactory:
@@ -142,6 +136,11 @@ class TestRobotFactory:
     def test_invalid_mode_raises(self):
         with pytest.raises(ValueError, match="Invalid mode"):
             Robot("so100", mode="invalid")
+
+    def test_cameras_rejected_in_sim_mode(self):
+        """Passing cameras= in sim mode raises ValueError."""
+        with pytest.raises(ValueError, match="cameras= is only supported in mode='real'"):
+            Robot("so100", mode="sim", cameras={"wrist": {"type": "opencv"}})
 
     def test_sim_with_urdf_path(self):
         """Robot() with explicit urdf_path should work (if file exists)."""

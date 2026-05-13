@@ -90,14 +90,20 @@ __all__ = [
 # 2. Any downstream code doing `from strands_robots.simulation import ...`
 #    triggers mujoco import via the lazy-load chain
 # 3. If we defer to first use, the env var would be set too late
+#
+# GUARD: Skip when mujoco is not installed so users without the [sim-mujoco]
+# extra do not pay import-attempt cost on every `import strands_robots`.
 # This is the canonical location — strands_robots/simulation/__init__.py
 # intentionally does NOT duplicate this call.
-try:
-    from strands_robots.simulation.mujoco.backend import _configure_gl_backend
+import importlib.util as _importlib_util  # noqa: E402
 
-    _configure_gl_backend()
-except (ImportError, AttributeError, OSError):
-    pass
+if _importlib_util.find_spec("mujoco") is not None:
+    try:
+        from strands_robots.simulation.mujoco.backend import _configure_gl_backend
+
+        _configure_gl_backend()
+    except (ImportError, AttributeError, OSError):
+        pass
 
 
 def __getattr__(name: str) -> Any:  # noqa: N807
