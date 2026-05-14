@@ -256,3 +256,185 @@ class TestAutoDetectUSB:
         # "panda" may not have hardware support — defaults to sim
         result = _auto_detect_mode("panda")
         assert result == "sim"
+
+
+class TestModeNormalization:
+    """Mode parameter and STRANDS_ROBOT_MODE env var should agree on case/whitespace."""
+
+    def test_mode_param_uppercase_accepted(self):
+        """Robot('so100', mode='SIM') should work — env var path is case-insensitive,
+        the direct param should be too."""
+        pytest.importorskip("mujoco")
+        sim = Robot("so100", mode="SIM")
+        try:
+            from strands_robots.simulation import Simulation
+
+            assert isinstance(sim, Simulation)
+        finally:
+            sim.destroy()
+
+    def test_mode_param_with_whitespace(self):
+        """mode=' sim ' should be normalized like the env var is."""
+        pytest.importorskip("mujoco")
+        sim = Robot("so100", mode=" sim ")
+        try:
+            from strands_robots.simulation import Simulation
+
+            assert isinstance(sim, Simulation)
+        finally:
+            sim.destroy()
+
+    def test_env_var_with_whitespace(self, monkeypatch):
+        """STRANDS_ROBOT_MODE='  sim  ' should resolve cleanly without firing the
+        'ignored' warning."""
+        from strands_robots.robot import _auto_detect_mode
+
+        monkeypatch.setenv("STRANDS_ROBOT_MODE", "  sim  ")
+        assert _auto_detect_mode("so100") == "sim"
+
+    def test_env_var_auto_is_no_op(self, monkeypatch):
+        """STRANDS_ROBOT_MODE=auto means 'do detection' — same as not setting it.
+        Should not warn."""
+        from strands_robots.robot import _auto_detect_mode
+
+        monkeypatch.setenv("STRANDS_ROBOT_MODE", "auto")
+        # Auto-detect with no USB hardware → falls back to sim
+        assert _auto_detect_mode("so100") == "sim"
+
+
+class TestUnknownNameRejected:
+    """Empty / whitespace / unknown robot names should raise ValueError before
+    we descend into the sim or hardware backend, so the user sees one clean
+    error instead of a confusing two-stage stderr+exception."""
+
+    def test_empty_name_rejected(self):
+        with pytest.raises(ValueError, match="Invalid robot name"):
+            Robot("")
+
+    def test_whitespace_name_rejected(self):
+        with pytest.raises(ValueError, match="Invalid robot name"):
+            Robot("  ")
+
+    def test_unknown_name_rejected(self):
+        with pytest.raises(ValueError, match="Unknown robot"):
+            Robot("definitely_not_a_robot_xyz")
+
+    def test_unknown_name_rejected_in_real_mode(self):
+        with pytest.raises(ValueError, match="Unknown robot"):
+            Robot("definitely_not_a_robot_xyz", mode="real")
+
+    def test_unknown_name_with_urdf_path_does_not_raise(self):
+        """Explicit urdf_path bypasses the registry check — user knows what they
+        want, we don't second-guess."""
+        pytest.importorskip("mujoco")
+        # Use a clearly-bogus path so the underlying load fails (as RuntimeError),
+        # not a ValueError from validation. Cleanup is also covered separately.
+        with pytest.raises(RuntimeError):
+            Robot("my_custom_arm", urdf_path="/nonexistent/foo.xml")
+
+
+class TestCleanupOnDispatchRaise:
+    """If sim._dispatch_action itself raises (vs returns status=error), the
+    Simulation must still be destroyed. Pins the cleanup path that the original
+    review caught only for the status=error variant."""
+
+    def test_destroy_called_when_create_world_raises(self):
+        """OSError (or any exception) from create_world must trigger destroy()."""
+        pytest.importorskip("mujoco")
+        from unittest.mock import patch
+
+        from strands_robots.simulation.mujoco.simulation import Simulation as SimImpl
+
+        destroyed = []
+        real_destroy = SimImpl.destroy
+
+        def track(self):
+            destroyed.append(self)
+            return real_destroy(self)
+
+        original_dispatch = SimImpl._dispatch_action
+
+        def raising_dispatch(self, action, params):
+            if action == "create_world":
+                raise OSError("simulated disk full")
+            return original_dispatch(self, action, params)
+
+        with (
+            patch.object(SimImpl, "_dispatch_action", raising_dispatch),
+            patch.object(SimImpl, "destroy", track),
+        ):
+            with pytest.raises(OSError, match="simulated disk full"):
+                Robot("so100")
+
+        assert len(destroyed) == 1, f"destroy() should have been called once, was {len(destroyed)}x"
+
+    def test_destroy_called_when_add_robot_raises(self):
+        """RuntimeError from add_robot must trigger destroy()."""
+        pytest.importorskip("mujoco")
+        from unittest.mock import patch
+
+        from strands_robots.simulation.mujoco.simulation import Simulation as SimImpl
+
+        destroyed = []
+        real_destroy = SimImpl.destroy
+
+        def track(self):
+            destroyed.append(self)
+            return real_destroy(self)
+
+        original_dispatch = SimImpl._dispatch_action
+
+        def raising_dispatch(self, action, params):
+            if action == "add_robot":
+                raise RuntimeError("simulated MJCF compile error")
+            return original_dispatch(self, action, params)
+
+        with (
+            patch.object(SimImpl, "_dispatch_action", raising_dispatch),
+            patch.object(SimImpl, "destroy", track),
+        ):
+            with pytest.raises(RuntimeError, match="simulated MJCF compile error"):
+                Robot("so100")
+
+        assert len(destroyed) == 1, f"destroy() should have been called once, was {len(destroyed)}x"
+
+
+class TestUSBProbeFallsBackOnRuntimeError:
+    """libusb hub glitches can surface as RuntimeError from comports().
+    _auto_detect_mode must fall back to sim, not propagate the exception."""
+
+    def test_runtime_error_during_usb_probe(self):
+        from unittest.mock import patch
+
+        from strands_robots.robot import _auto_detect_mode
+
+        def raise_runtime(*a, **kw):
+            raise RuntimeError("simulated libusb hub glitch")
+
+        with patch("serial.tools.list_ports.comports", side_effect=raise_runtime):
+            # Must return "sim" (safe fallback), not raise.
+            assert _auto_detect_mode("so100") == "sim"
+
+
+class TestDashedNameAlias:
+    """Common typo: users write 'so-100' (matches marketing). Should resolve to
+    canonical 'so100' rather than producing a confusing 'Unknown robot' error."""
+
+    def test_dashed_name_resolves_to_canonical(self):
+        from strands_robots.registry import resolve_name
+
+        assert resolve_name("so-100") == "so100"
+        assert resolve_name("so_100") == "so100"
+        assert resolve_name("SO-100") == "so100"
+
+
+class TestCameraErrorMessage:
+    """The cameras-in-sim error must NOT recommend the private _dispatch_action
+    method — that's been a recurring review request."""
+
+    def test_camera_error_does_not_leak_private_api(self):
+        with pytest.raises(ValueError) as excinfo:
+            Robot("so100", cameras={"wrist": {"type": "opencv"}})
+        assert "_dispatch_action" not in str(excinfo.value), (
+            "Error message should not mention the private _dispatch_action method"
+        )

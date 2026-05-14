@@ -8,7 +8,8 @@ Provides:
     - ``list_robots()``  → what's available
 
 Environment Variables:
-    STRANDS_ROBOT_MODE: Override mode detection ("sim" or "real").
+    STRANDS_ROBOT_MODE: Override mode detection ("sim", "real", "auto").
+        Case-insensitive; surrounding whitespace ignored.
 
 Examples::
 
@@ -38,7 +39,9 @@ from typing import TYPE_CHECKING, Any, Literal, overload
 
 from strands_robots.registry import (
     get_hardware_type,
+    get_robot,
     has_hardware,
+    has_sim,
     resolve_name,
 )
 
@@ -47,6 +50,16 @@ if TYPE_CHECKING:
     from strands_robots.simulation import Simulation
 
 logger = logging.getLogger(__name__)
+
+_VALID_MODES = ("sim", "real", "auto")
+
+
+def _normalize_mode(mode: Any) -> str:
+    """Lowercase + strip a mode value if it's a string. Pass non-str through unchanged
+    so the caller can produce a clean ValueError later."""
+    if isinstance(mode, str):
+        return mode.lower().strip()
+    return mode
 
 
 def _auto_detect_mode(canonical: str) -> str:
@@ -57,11 +70,14 @@ def _auto_detect_mode(canonical: str) -> str:
         2. Robot-specific USB detection (Feetech/Dynamixel servo controllers)
         3. Default to sim (safest — never accidentally send commands to hardware)
     """
-    env_mode = os.getenv("STRANDS_ROBOT_MODE", "").lower()
+    env_mode = os.getenv("STRANDS_ROBOT_MODE", "").lower().strip()
     if env_mode in ("sim", "real"):
         return env_mode
-    if env_mode:
-        logger.warning("STRANDS_ROBOT_MODE=%r ignored (expected 'sim' or 'real')", env_mode)
+    if env_mode == "auto":
+        # Explicit no-op: user asked for detection, which is what we already do.
+        pass
+    elif env_mode:
+        logger.warning("STRANDS_ROBOT_MODE=%r ignored (expected 'sim', 'real', or 'auto')", env_mode)
 
     # Only probe USB if the robot actually has hardware support
     if has_hardware(canonical):
@@ -86,10 +102,32 @@ def _auto_detect_mode(canonical: str) -> str:
                     [p.device for p in robot_ports],
                 )
                 return "real"
-        except (ImportError, OSError):  # USB probing may fail with OSError on permission/device issues
-            pass
+        except Exception as e:
+            # USB enumeration is best-effort. pyserial usually raises OSError
+            # (incl. PermissionError, SerialException) but libusb backends have
+            # been observed to raise RuntimeError on hub glitches. Falling back
+            # to sim is always safe; we log at debug for diagnosis.
+            logger.debug("USB probe failed (%s: %s); falling back to sim", type(e).__name__, e)
 
     return "sim"
+
+
+def _validate_known_robot(canonical: str, original: str, urdf_path: str | None) -> None:
+    """Reject empty/unknown robot names with a single clean error before we
+    descend into the sim or hardware backends. ``urdf_path`` short-circuits the
+    check because users supplying an explicit MJCF/URDF don't need a registry
+    entry."""
+    if urdf_path:
+        return
+    if not canonical:
+        raise ValueError(
+            f"Invalid robot name {original!r}. Pass a registered name (see ``list_robots()``) or supply ``urdf_path=``."
+        )
+    if get_robot(canonical) is None and not (has_sim(canonical) or has_hardware(canonical)):
+        raise ValueError(
+            f"Unknown robot {original!r} (resolved to {canonical!r}). "
+            "Pass a registered name (see ``list_robots()``) or supply ``urdf_path=``."
+        )
 
 
 @overload
@@ -155,6 +193,7 @@ def Robot(  # noqa: N802 — uppercase by design (factory mimicking a class cons
               Accepts any alias defined in ``registry/robots.json``.
         mode: "sim" (default — safe), "real" (explicit hardware), or
               "auto" (probes USB for servo controllers, falls back to sim).
+              Case-insensitive; surrounding whitespace ignored.
         backend: Simulation backend — currently only "mujoco" (CPU).
                  Future: "isaac" (GPU), "newton" (GPU).
                  Only applies to ``mode="sim"``; ignored for ``mode="real"``.
@@ -165,9 +204,9 @@ def Robot(  # noqa: N802 — uppercase by design (factory mimicking a class cons
 
             {"wrist": {"type": "opencv", "index_or_path": "/dev/video0", "fps": 30}}
 
-            Note: In ``mode="sim"``, cameras are not yet forwarded (use
-            ``sim._dispatch_action("add_camera", {...})`` after creation).
-            This will be improved once ``SimCamera.parent_body`` lands.
+            Note: In ``mode="sim"``, cameras must be added after creation
+            via the simulation tool (``add_camera`` action). They cannot
+            be passed to the factory yet.
 
         position: Robot position in sim world [x, y, z].
         data_config: Data configuration name for observation/action schema.
@@ -180,9 +219,11 @@ def Robot(  # noqa: N802 — uppercase by design (factory mimicking a class cons
         ``strands_robots.hardware_robot.Robot`` (real hardware).
 
     Raises:
+        ValueError: If ``mode`` is not 'sim'/'real'/'auto', if ``cameras=``
+                    is passed in sim mode, or if the robot name is empty
+                    or not in the registry (and no ``urdf_path=`` given).
+        NotImplementedError: If an unimplemented sim backend is requested.
         RuntimeError: If the sim world or robot fails to initialize.
-        NotImplementedError: If an unimplemented backend is requested.
-        ValueError: If cameras are passed to sim mode, or mode is invalid.
 
     Examples::
 
@@ -206,11 +247,14 @@ def Robot(  # noqa: N802 — uppercase by design (factory mimicking a class cons
         agent("Pick up the red cube")
     """
     canonical = resolve_name(name)
+    _validate_known_robot(canonical, name, urdf_path)
+
+    mode = _normalize_mode(mode)
 
     if mode == "auto":
         mode = _auto_detect_mode(canonical)
 
-    # ── Simulation ──
+    # --- Simulation ---
     if mode == "sim":
         if backend != "mujoco":
             raise NotImplementedError(
@@ -222,8 +266,8 @@ def Robot(  # noqa: N802 — uppercase by design (factory mimicking a class cons
         if cameras is not None:
             raise ValueError(
                 "cameras= is only supported in mode='real'. "
-                "For sim cameras, use sim._dispatch_action('add_camera', {...}) "
-                "after creation."
+                "For sim cameras, add them via the simulation tool's "
+                "'add_camera' action after creation."
             )
 
         from strands_robots.simulation import Simulation
@@ -233,30 +277,38 @@ def Robot(  # noqa: N802 — uppercase by design (factory mimicking a class cons
             **kwargs,
         )
 
-        result = sim._dispatch_action("create_world", {})
-        if result.get("status") == "error":
+        try:
+            result = sim._dispatch_action("create_world", {})
+            if result.get("status") == "error":
+                content = result.get("content", [])
+                msg = content[0].get("text", str(result)) if content else str(result)
+                raise RuntimeError(f"Failed to create sim world for {canonical!r}: {msg}")
+
+            add_robot_params: dict[str, Any] = {
+                "robot_name": canonical,
+                "data_config": data_config or canonical,
+                "position": position or [0.0, 0.0, 0.0],
+            }
+            if urdf_path:
+                add_robot_params["urdf_path"] = urdf_path
+
+            result = sim._dispatch_action("add_robot", add_robot_params)
+            if result.get("status") == "error":
+                content = result.get("content", [])
+                msg = content[0].get("text", str(result)) if content else str(result)
+                raise RuntimeError(f"Failed to create sim robot {canonical!r}: {msg}")
+        except BaseException:
+            # Cleanup ANY partial-init failure: explicit RuntimeError above OR
+            # an unexpected exception from _dispatch_action itself (OOM, OS
+            # error during temp-file write, MuJoCo error surfaced as exception).
+            # KeyboardInterrupt during creation also lands here so the executor
+            # + temp dir + MuJoCo world get released.
             sim.destroy()
-            content = result.get("content", [])
-            msg = content[0].get("text", str(result)) if content else str(result)
-            raise RuntimeError(f"Failed to create sim world for '{canonical}': {msg}")
+            raise
 
-        add_robot_params: dict[str, Any] = {
-            "robot_name": canonical,
-            "data_config": data_config or canonical,
-            "position": position or [0.0, 0.0, 0.0],
-        }
-        if urdf_path:
-            add_robot_params["urdf_path"] = urdf_path
-
-        result = sim._dispatch_action("add_robot", add_robot_params)
-        if result.get("status") == "error":
-            sim.destroy()  # Clean up partial initialization (executor, temp dir, MuJoCo world)
-            content = result.get("content", [])
-            msg = content[0].get("text", str(result)) if content else str(result)
-            raise RuntimeError(f"Failed to create sim robot '{canonical}': {msg}")
         return sim
 
-    # ── Real hardware (explicit opt-in) ──
+    # --- Real hardware (explicit opt-in) ---
     elif mode == "real":
         if backend != "mujoco":
             logger.debug(
@@ -275,7 +327,7 @@ def Robot(  # noqa: N802 — uppercase by design (factory mimicking a class cons
         )
 
     else:
-        raise ValueError(f"Invalid mode {mode!r}. Choose 'sim', 'real', or 'auto'.")
+        raise ValueError(f"Invalid mode {mode!r}. Choose 'sim', 'real', or 'auto' (case-insensitive).")
 
 
 __all__ = ["Robot"]

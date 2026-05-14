@@ -24,7 +24,31 @@ Lazy Loading:
 
 import importlib as _importlib
 import warnings as _warnings
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+# TYPE_CHECKING-only eager imports so type-checkers see concrete types for
+# the lazy attributes below (the runtime __getattr__ resolves them to Any
+# from the static analyzer's perspective). PEP 562.
+if TYPE_CHECKING:
+    from strands_robots.policies.groot import Gr00tPolicy
+    from strands_robots.registry import list_robots
+    from strands_robots.robot import Robot
+    from strands_robots.simulation import (
+        SimCamera,
+        SimObject,
+        SimRobot,
+        Simulation,
+        SimWorld,
+        create_simulation,
+        list_backends,
+        register_backend,
+    )
+    from strands_robots.tools.gr00t_inference import gr00t_inference
+    from strands_robots.tools.lerobot_calibrate import lerobot_calibrate
+    from strands_robots.tools.lerobot_camera import lerobot_camera
+    from strands_robots.tools.lerobot_teleoperate import lerobot_teleoperate
+    from strands_robots.tools.pose_tool import pose_tool
+    from strands_robots.tools.serial_tool import serial_tool
 
 # ------------------------------------------------------------------
 # Light-weight imports — no torch / lerobot / mujoco dependency
@@ -72,6 +96,10 @@ __all__ = [
     "SimRobot",
     "SimObject",
     "SimCamera",
+    "list_robots",
+    "create_simulation",
+    "list_backends",
+    "register_backend",
     "gr00t_inference",
     "lerobot_camera",
     "lerobot_teleoperate",

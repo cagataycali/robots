@@ -44,7 +44,18 @@ def resolve_name(name: str) -> str:
     """
     normalized = name.lower().strip().replace("-", "_")
     alias_map = _build_alias_map()
-    return alias_map.get(normalized, normalized)
+    if normalized in alias_map:
+        return alias_map[normalized]
+    if normalized in alias_map.values():  # already canonical
+        return normalized
+    # Fallback: try with all underscores stripped (e.g. "so_100" -> "so100").
+    # Only return the stripped form if it actually matches something we know.
+    stripped = normalized.replace("_", "")
+    if stripped in alias_map:
+        return alias_map[stripped]
+    if stripped in alias_map.values():
+        return stripped
+    return normalized
 
 
 def get_robot(name: str) -> dict[str, Any] | None:

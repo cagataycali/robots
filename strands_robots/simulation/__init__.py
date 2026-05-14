@@ -47,7 +47,14 @@ Future backends::
 """
 
 import importlib as _importlib
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+# TYPE_CHECKING-only eager imports so mypy can resolve the heavy classes
+# below to concrete types instead of the dynamic __getattr__ -> Any. PEP 562.
+if TYPE_CHECKING:
+    from strands_robots.simulation.mujoco.simulation import Simulation
+    from strands_robots.simulation.mujoco.simulation import Simulation as MuJoCoSimulation
+    from strands_robots.simulation.mujoco.spec_builder import SpecBuilder
 
 # Light imports (no heavy deps - stdlib + dataclasses only)
 from strands_robots.simulation.base import SimEngine
