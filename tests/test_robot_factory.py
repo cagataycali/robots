@@ -404,6 +404,7 @@ class TestUSBProbeFallsBackOnRuntimeError:
     _auto_detect_mode must fall back to sim, not propagate the exception."""
 
     def test_runtime_error_during_usb_probe(self):
+        pytest.importorskip("serial")
         from unittest.mock import patch
 
         from strands_robots.robot import _auto_detect_mode
