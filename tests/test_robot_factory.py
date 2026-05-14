@@ -208,8 +208,9 @@ class TestRobotRealMode:
                 mock_hw.return_value = MagicMock()
                 try:
                     Robot("so100", mode="real")
-                except (ImportError, Exception):
-                    # May fail due to lerobot not installed — that's fine
+                    mock_hw.assert_called_once()
+                except ImportError:
+                    # lerobot not installed — acceptable in unit CI
                     pass
 
 
