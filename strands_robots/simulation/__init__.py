@@ -51,6 +51,19 @@ from typing import Any
 
 # Light imports (no heavy deps - stdlib + dataclasses only)
 from strands_robots.simulation.base import SimEngine
+from strands_robots.simulation.benchmark import (
+    BenchmarkCompatibilityError,
+    BenchmarkProtocol,
+    StepInfo,
+    get_benchmark,
+    list_benchmarks,
+    register_benchmark,
+    unregister_benchmark,
+)
+from strands_robots.simulation.benchmark_spec import (
+    DeclarativeBenchmark,
+    register_benchmark_from_file,
+)
 from strands_robots.simulation.factory import (
     create_simulation,
     list_backends,
@@ -70,6 +83,11 @@ from strands_robots.simulation.models import (
     SimStatus,
     SimWorld,
     TrajectoryStep,
+)
+from strands_robots.simulation.predicates import (
+    PREDICATE_REGISTRY,
+    make_predicate,
+    register_predicate,
 )
 
 # Heavy imports (lazy - need strands SDK + mujoco)
@@ -108,6 +126,20 @@ __all__ = [
     "resolve_urdf",
     "list_registered_urdfs",
     "list_available_models",
+    # Benchmark protocol + registry
+    "BenchmarkProtocol",
+    "BenchmarkCompatibilityError",
+    "StepInfo",
+    "register_benchmark",
+    "unregister_benchmark",
+    "get_benchmark",
+    "list_benchmarks",
+    # Declarative DSL + predicates
+    "DeclarativeBenchmark",
+    "register_benchmark_from_file",
+    "PREDICATE_REGISTRY",
+    "make_predicate",
+    "register_predicate",
 ]
 
 

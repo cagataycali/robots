@@ -65,7 +65,10 @@
         "render_all",
         "start_cameras_recording",
         "stop_cameras_recording",
-        "get_cameras_recording_status"
+        "get_cameras_recording_status",
+        "list_benchmarks",
+        "register_benchmark_from_file",
+        "evaluate_benchmark"
       ]
     },
     "scene_path": {
@@ -364,6 +367,14 @@
       "items": {
         "type": "object"
       }
+    },
+    "benchmark_name": {
+      "type": "string",
+      "description": "Name of a registered BenchmarkProtocol (for register_benchmark_from_file / evaluate_benchmark)"
+    },
+    "spec_path": {
+      "type": "string",
+      "description": "Path to a declarative benchmark spec file (.json, .yaml, .yml). Used by register_benchmark_from_file."
     }
   },
   "required": [
