@@ -5,7 +5,7 @@ The Robot() factory auto-detects mode (defaults to sim when no hardware
 is connected) and returns a ready-to-use MuJoCo simulation.
 
 Requirements:
-    pip install strands-robots[sim]
+    pip install strands-robots[sim-mujoco]
 
 Usage:
     python examples/01_sim_quickstart.py

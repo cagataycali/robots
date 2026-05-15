@@ -2,10 +2,10 @@
 """Run a HuggingFace ACT policy in MuJoCo and export a LeRobot dataset.
 
 Downloads a pretrained ACT policy, runs it in simulation, records multi-camera
-video + joint data as a LeRobot v3 dataset. The full pipeline in ~20 lines.
+video + joint data as a LeRobot v3 dataset.
 
 Requirements:
-    pip install strands-robots[sim] lerobot torch
+    pip install "strands-robots[sim-mujoco,lerobot]" torch
 
 Usage:
     python examples/act_policy_simulation.py
@@ -24,18 +24,21 @@ sim.start_recording(
     root="/tmp/act_aloha_dataset",
 )
 
-# 3. Run a pretrained ACT policy from HuggingFace (51M params)
-# NOTE: This downloads model weights (~200MB) on first run.
-# For a lightweight test without downloading, use policy_provider="mock":
-#   sim.run_policy(robot_name="aloha", policy_provider="mock", duration=2.0)
+# 3. Run a pretrained ACT policy from HuggingFace (~51M params).
+#    NOTE: This downloads model weights (~200MB) on first run.
+#    For a lightweight test, swap policy_provider="mock" and drop policy_config.
+#    Provider-specific kwargs (pretrained_name_or_path, device, ...) go inside
+#    ``policy_config``. Video output goes inside the ``video`` dict.
 result = sim.run_policy(
     robot_name="aloha",
     policy_provider="lerobot_local",
-    pretrained_name_or_path="lerobot/act_aloha_sim_transfer_cube_human",
+    policy_config={
+        "pretrained_name_or_path": "lerobot/act_aloha_sim_transfer_cube_human",
+    },
     instruction="transfer cube",
     duration=2.0,  # seconds of sim time
     fast_mode=True,  # no wall-clock sleep between steps
-    record_video="/tmp/act_aloha_rollout.mp4",
+    video={"path": "/tmp/act_aloha_rollout.mp4", "fps": 30},
 )
 print(result["content"][0]["text"])
 

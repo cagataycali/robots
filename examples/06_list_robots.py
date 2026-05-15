@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """List all supported robots and their capabilities.
 
-The registry contains 38+ robots with simulation assets and/or hardware
+The registry contains 60+ robots with simulation assets and/or hardware
 support. Use list_robots() to discover what's available.
 
 Requirements:
@@ -13,11 +13,16 @@ Usage:
 
 from strands_robots import list_robots
 
+
+def _flag(present: bool, label: str) -> str:
+    return f"[{label}]" if present else f"[{' ' * len(label)}]"
+
+
 print("=== All Robots ===")
 for r in list_robots(mode="all"):
-    sim = "🎮" if r.get("has_sim") else "  "
-    real = "🔧" if r.get("has_real") else "  "
-    print(f"  {sim} {real}  {r['name']:25s} {r.get('description', '')}")
+    sim_flag = _flag(r.get("has_sim", False), "sim")
+    real_flag = _flag(r.get("has_real", False), "real")
+    print(f"  {sim_flag} {real_flag}  {r['name']:25s} {r.get('description', '')}")
 
 print(f"\n=== Sim-only ({len(list_robots(mode='sim'))} robots) ===")
 for r in list_robots(mode="sim")[:5]:

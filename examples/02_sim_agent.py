@@ -5,7 +5,7 @@ Robot() returns an AgentTool with 35+ simulation actions. Hand it to a
 Strands Agent and control the robot through conversation.
 
 Requirements:
-    pip install strands-agents strands-robots[sim]
+    pip install strands-agents strands-robots[sim-mujoco]
 
 Usage:
     python examples/02_sim_agent.py

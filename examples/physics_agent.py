@@ -10,7 +10,7 @@ apply forces, checkpoint/restore state, read sensors, and analyze contacts
 — all through natural language.
 
 Requirements:
-    pip install strands-agents strands-robots[sim]
+    pip install strands-agents strands-robots[sim-mujoco]
 
 Usage:
     python examples/physics_agent.py
@@ -33,7 +33,7 @@ agent = Agent(
     ),
 )
 
-# ─── Example 1: Full physics analysis in natural language ────────────────────
+# --- Example 1: Full physics analysis in natural language --------------------
 print("=" * 70)
 print("Example 1: Agent-driven physics analysis")
 print("=" * 70)
@@ -48,7 +48,7 @@ result = agent(
 )
 print(result)
 
-# ─── Example 2: Raycasting for obstacle detection ───────────────────────────
+# --- Example 2: Raycasting for obstacle detection ---------------------------
 print("\n" + "=" * 70)
 print("Example 2: Agent uses raycasting for spatial reasoning")
 print("=" * 70)
@@ -60,9 +60,9 @@ result = agent(
 )
 print(result)
 
-# ─── Example 3: State checkpointing + force experiments ─────────────────────
+# --- Example 3: State checkpointing + force experiments ---------------------
 print("\n" + "=" * 70)
-print("Example 3: Save state → experiment → restore")
+print("Example 3: Save state, experiment, then restore")
 print("=" * 70)
 
 result = agent(
@@ -78,7 +78,7 @@ result = agent(
 )
 print(result)
 
-# ─── Example 4: Jacobian + inverse dynamics ─────────────────────────────────
+# --- Example 4: Jacobian + inverse dynamics ---------------------------------
 print("\n" + "=" * 70)
 print("Example 4: Dynamics analysis")
 print("=" * 70)
@@ -89,7 +89,7 @@ result = agent(
 )
 print(result)
 
-# ─── Example 5: Contact analysis ────────────────────────────────────────────
+# --- Example 5: Contact analysis --------------------------------------------
 print("\n" + "=" * 70)
 print("Example 5: Contact force analysis")
 print("=" * 70)
@@ -103,4 +103,4 @@ print(result)
 
 # Clean up
 sim.destroy()
-print("\n✅ Done — all physics examples complete.")
+print("\nDone. All physics examples complete.")

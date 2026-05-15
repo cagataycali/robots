@@ -31,7 +31,7 @@
   </p>
 </div>
 
-Control and simulate robots with natural language through [Strands Agents](https://github.com/strands-agents/sdk-python). Simulate 38 robots in MuJoCo, run policies, record LeRobot datasets, and deploy to real hardware — all from the same API.
+Control and simulate robots with natural language through [Strands Agents](https://github.com/strands-agents/sdk-python). Simulate 60+ robots in MuJoCo, run policies, record LeRobot datasets, and deploy to real hardware — all from the same API.
 
 ## The 5-Line Promise
 
@@ -81,7 +81,7 @@ pip install strands-robots
 ### With simulation (MuJoCo)
 
 ```bash
-pip install "strands-robots[sim]"
+pip install "strands-robots[sim-mujoco]"
 ```
 
 ### With everything
@@ -256,7 +256,7 @@ The MuJoCo simulation backend exposes **35 actions** as a Strands AgentTool:
 | **Randomization** | `randomize` (colors, physics, lighting, cameras) |
 | **Assets** | `list_urdfs`, `register_urdf`, `get_features` |
 
-### Supported Robots (38 robots, 120+ aliases)
+### Supported Robots (60+ robots, 120+ aliases)
 
 Any robot in the registry works in simulation. Assets auto-download from MuJoCo Menagerie on first use.
 
