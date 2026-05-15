@@ -59,7 +59,7 @@ _URDF_REGISTRY: dict[str, str] = {}
 def register_urdf(data_config: str, urdf_path: str) -> None:
     """Register a URDF/MJCF file for a data_config name."""
     _URDF_REGISTRY[data_config] = urdf_path
-    logger.info("📋 Registered model for '%s': %s", data_config, urdf_path)
+    logger.info("Registered model for '%s': %s", data_config, urdf_path)
 
 
 def resolve_model(name: str, prefer_scene: bool = True) -> str | None:
