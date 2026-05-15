@@ -33,6 +33,7 @@ Future (not yet implemented)::
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 from typing import TYPE_CHECKING, Any, Literal, overload
@@ -239,10 +240,10 @@ def Robot(  # noqa: N802 — uppercase by design (factory mimicking a class cons
         # Auto-detect (probes USB, falls back to sim)
         robot = Robot("so100", mode="auto")
 
-        # The 5-line promise
+        # The 5-line promise (defaults to sim — safe, no hardware needed)
         from strands_robots import Robot
         from strands import Agent
-        robot = Robot("so100")
+        robot = Robot("so100")  # mode="sim" (default)
         agent = Agent(tools=[robot])
         agent("Pick up the red cube")
     """
@@ -303,7 +304,9 @@ def Robot(  # noqa: N802 — uppercase by design (factory mimicking a class cons
             # error during temp-file write, MuJoCo error surfaced as exception).
             # KeyboardInterrupt during creation also lands here so the executor
             # + temp dir + MuJoCo world get released.
-            sim.destroy()
+            # suppress() ensures destroy() errors don't mask the original exception.
+            with contextlib.suppress(Exception):
+                sim.destroy()
             raise
 
         return sim
