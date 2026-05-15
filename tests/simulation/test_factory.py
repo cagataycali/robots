@@ -103,11 +103,13 @@ class TestRegisterBackend:
 
 class TestCreateSimulation:
     def test_default_is_mujoco(self):
+        pytest.importorskip("mujoco")
         sim = create_simulation()
         assert type(sim).__name__ == "MuJoCoSimEngine"
         sim.cleanup()
 
     def test_by_alias(self):
+        pytest.importorskip("mujoco")
         sim = create_simulation("mj")
         assert type(sim).__name__ == "MuJoCoSimEngine"
         sim.cleanup()
