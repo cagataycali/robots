@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import logging
 import os
+import random
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -46,6 +47,7 @@ from strands_robots.utils import require_optional
 if TYPE_CHECKING:
     from strands_robots.policies.base import Policy
     from strands_robots.simulation.base import SimEngine
+    from strands_robots.simulation.benchmark import BenchmarkProtocol
 
 from strands_robots.simulation.models import TrajectoryStep
 
@@ -512,26 +514,67 @@ class PolicyRunner:
         n_episodes: int = 10,
         max_steps: int = 300,
         success_fn: SuccessFn | str | None = None,
+        spec: BenchmarkProtocol | None = None,
+        seed: int | None = None,
     ) -> dict[str, Any]:
         """Evaluate ``policy`` for ``n_episodes`` episodes.
+
+        Two evaluation paths:
+
+        * **``spec=``** (preferred): drive a full :class:`BenchmarkProtocol`.
+          Per-episode seeded RNG, ``on_episode_start`` / ``on_step`` /
+          ``is_success`` / ``is_failure`` hooks, cumulative dense reward,
+          robot-compatibility validation. ``max_steps`` from the spec wins.
+        * **``success_fn=``**: legacy sparse-success path kept for
+          backwards compatibility with PR #85. Equivalent to a
+          ``BenchmarkProtocol`` whose ``on_step`` always returns
+          ``StepInfo(reward=0.0, done=False)``.
+
+        Passing both ``spec`` and ``success_fn`` is an error - benchmarks
+        define their own success predicate.
 
         Args:
             robot_name: Robot to evaluate.
             policy: Already-constructed ``Policy`` instance.
             instruction: Instruction forwarded to the policy.
             n_episodes: Number of reset → rollout episodes.
-            max_steps: Cap per episode.
-            success_fn: Either
-
-                * ``None`` - never succeeds (dry run / performance probe).
-                * ``"contact"`` - success when ``sim.get_contacts()`` reports
-                  any penetrating contact. Requires backend to implement
-                  ``get_contacts``; falls back to ``False`` otherwise.
-                * callable ``(observation) -> bool``.
+            max_steps: Cap per episode. Ignored when ``spec`` is provided
+                (``spec.max_steps`` wins).
+            success_fn: Legacy success predicate (see above).
+            spec: :class:`BenchmarkProtocol` to drive the eval. When
+                provided, overrides the ``success_fn`` path.
+            seed: Master RNG seed. Each episode derives a child RNG from it,
+                so evaluations are reproducible within a process. Only used
+                when ``spec`` is provided.
 
         Returns:
-            Standard status dict with ``success_rate``, per-episode results.
+            Standard status dict. When ``spec`` is used, the JSON payload
+            also contains ``cumulative_reward`` and ``avg_reward`` fields
+            per episode and aggregate.
         """
+        if spec is not None and success_fn is not None:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            "evaluate() accepts either 'spec' or 'success_fn', not both. "
+                            "'spec' defines its own success predicate."
+                        )
+                    }
+                ],
+            }
+
+        if spec is not None:
+            return self._evaluate_with_spec(
+                robot_name,
+                policy,
+                spec,
+                instruction=instruction,
+                n_episodes=n_episodes,
+                seed=seed,
+            )
+
         try:
             resolved_check = self._resolve_success_fn(success_fn)
         except ValueError as e:
@@ -587,6 +630,156 @@ class PolicyRunner:
                         "n_success": n_success,
                         "avg_steps": round(avg_steps, 1),
                         "max_steps": max_steps,
+                        "episodes": results,
+                    }
+                },
+            ],
+        }
+
+    def _evaluate_with_spec(
+        self,
+        robot_name: str,
+        policy: Policy,
+        spec: BenchmarkProtocol,
+        *,
+        instruction: str,
+        n_episodes: int,
+        seed: int | None,
+    ) -> dict[str, Any]:
+        """Drive a :class:`BenchmarkProtocol` for ``n_episodes`` episodes.
+
+        Split out from :meth:`evaluate` to keep the legacy-path body small;
+        both routes share the same return-dict schema plus the spec route
+        layers on cumulative-reward accounting.
+
+        Robot compatibility is validated before episode 1: if the sim's
+        loaded robot declares a ``data_config`` not in
+        ``spec.supported_robots`` (non-empty), we return a structured error
+        with the allowed list instead of silently running a mismatched
+        evaluation.
+        """
+        # Lazy import to avoid circular reference (benchmark module imports
+        # `SimEngine` from base which imports this module under TYPE_CHECKING).
+        from strands_robots.simulation.benchmark import BenchmarkCompatibilityError
+
+        # T26: skip camera rendering when the policy does not need images.
+        _skip_images = not getattr(policy, "requires_images", True)
+        master_rng = random.Random(seed)
+        spec_name = type(spec).__name__
+        max_steps = spec.max_steps
+        results: list[dict[str, Any]] = []
+
+        for ep in range(n_episodes):
+            self.sim.reset()
+            # Per-episode seeded RNG - deterministic given the master seed
+            # and the episode index.
+            episode_seed = master_rng.randint(0, 2**31 - 1)
+            episode_rng = random.Random(episode_seed)
+
+            try:
+                spec.on_episode_start(self.sim, episode_rng)
+            except BenchmarkCompatibilityError as e:
+                # Surface the structured error with the supported list -
+                # agents can fix this without retrying.
+                return {
+                    "status": "error",
+                    "content": [
+                        {
+                            "text": (
+                                f"Benchmark compatibility error: robot '{e.robot_name}' "
+                                f"has data_config={e.data_config!r}, but benchmark "
+                                f"{spec_name} supports {e.supported}."
+                            )
+                        }
+                    ],
+                }
+            except Exception as e:  # noqa: BLE001 - surface as structured error
+                logger.exception("on_episode_start failed")
+                return {
+                    "status": "error",
+                    "content": [{"text": f"on_episode_start failed in {spec_name}: {e}"}],
+                }
+
+            success = False
+            failure = False
+            steps = 0
+            cumulative_reward = 0.0
+            last_info: dict[str, Any] = {}
+
+            for _ in range(max_steps):
+                observation = self.sim.get_observation(robot_name=robot_name, skip_images=_skip_images)
+                coro_or_result = policy.get_actions(observation, instruction)
+                actions = _resolve_coroutine(coro_or_result)
+
+                if actions:
+                    action_applied: dict[str, Any] = dict(actions[0])
+                    self.sim.send_action(action_applied, robot_name=robot_name)
+                else:
+                    # Degenerate policy - advance physics so loop terminates.
+                    action_applied = {}
+                    self.sim.step(n_steps=1)
+
+                steps += 1
+                try:
+                    info = spec.on_step(self.sim, observation, action_applied)
+                except Exception as e:  # noqa: BLE001
+                    logger.exception("on_step failed in %s", spec_name)
+                    return {
+                        "status": "error",
+                        "content": [{"text": f"on_step failed in {spec_name}: {e}"}],
+                    }
+                cumulative_reward += float(info.reward)
+                last_info = dict(info.info) if info.info else {}
+
+                if info.done:
+                    break
+                if spec.is_failure(self.sim):
+                    failure = True
+                    break
+                if spec.is_success(self.sim):
+                    success = True
+                    break
+
+            results.append(
+                {
+                    "episode": ep,
+                    "steps": steps,
+                    "success": success,
+                    "failure": failure,
+                    "cumulative_reward": round(cumulative_reward, 4),
+                    "seed": episode_seed,
+                    "info": last_info,
+                }
+            )
+
+        n_success = sum(1 for r in results if r["success"])
+        n_failure = sum(1 for r in results if r["failure"])
+        success_rate = n_success / max(n_episodes, 1)
+        avg_steps = sum(r["steps"] for r in results) / max(n_episodes, 1)
+        avg_reward = sum(r["cumulative_reward"] for r in results) / max(n_episodes, 1)
+
+        return {
+            "status": "success",
+            "content": [
+                {
+                    "text": (
+                        f"📊 Benchmark: {spec_name} | policy {type(policy).__name__} on '{robot_name}'\n"
+                        f"Episodes: {n_episodes} | Success: {n_success} | Failure: {n_failure} "
+                        f"({success_rate:.1%} success)\n"
+                        f"Avg reward: {avg_reward:.2f} | Avg steps: {avg_steps:.0f}/{max_steps}"
+                    )
+                },
+                {
+                    "json": {
+                        "success_rate": round(success_rate, 4),
+                        "n_episodes": n_episodes,
+                        "n_success": n_success,
+                        "n_failure": n_failure,
+                        "avg_steps": round(avg_steps, 1),
+                        "avg_reward": round(avg_reward, 4),
+                        "max_steps": max_steps,
+                        "seed": seed,
+                        "benchmark_class": spec_name,
                         "episodes": results,
                     }
                 },
