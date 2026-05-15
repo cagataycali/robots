@@ -417,6 +417,20 @@ policy = create_policy(
 
 # Mock policy (for testing)
 policy = create_policy(provider="mock")
+
+# LeRobot policy — direct HuggingFace inference (act / diffusion / smolvla / pi0 / ...)
+policy = create_policy(
+    provider="lerobot_local",
+    pretrained_name_or_path="lerobot/act_aloha_sim",
+)
+
+# MolmoAct2 (Allen AI VLA) — auto-routes to lerobot_local via the registry
+# Requires: pip install "lerobot>=0.6.0" (once huggingface/lerobot#3604 lands)
+policy = create_policy(
+    provider="lerobot_local",
+    pretrained_name_or_path="allenai/MolmoAct2-LIBERO-LeRobot",
+    policy_type="molmoact2",
+)
 ```
 
 ## Project Structure

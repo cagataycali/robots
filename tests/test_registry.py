@@ -167,6 +167,29 @@ class TestResolvePolicy:
         _, kwargs = resolve_policy("zmq://host:1234", data_config="abc")
         assert kwargs["data_config"] == "abc"
 
+    def test_huggingface_model_id_allenai_routes_to_lerobot_local(self):
+        """allenai/* HF model IDs should resolve to lerobot_local (MolmoAct2 family)."""
+        for model_id in (
+            "allenai/MolmoAct2-LIBERO-LeRobot",
+            "allenai/MolmoAct2-SO100_101",
+            "allenai/MolmoAct2-DROID",
+        ):
+            provider, kwargs = resolve_policy(model_id)
+            assert provider == "lerobot_local", f"'{model_id}' should route to lerobot_local"
+            assert kwargs["pretrained_name_or_path"] == model_id
+
+    def test_huggingface_model_id_override_molmoact_legacy(self):
+        """allenai/MolmoAct-* (legacy v1) should also route via model_id_overrides."""
+        provider, kwargs = resolve_policy("allenai/MolmoAct-7B-D-Pretrain-0812")
+        assert provider == "lerobot_local"
+        assert kwargs["pretrained_name_or_path"] == "allenai/MolmoAct-7B-D-Pretrain-0812"
+
+    def test_policy_type_kwarg_forwarded_for_molmoact2(self):
+        """policy_type should pass through unchanged for explicit type pinning."""
+        provider, kwargs = resolve_policy("allenai/MolmoAct2-LIBERO-LeRobot", policy_type="molmoact2")
+        assert provider == "lerobot_local"
+        assert kwargs["policy_type"] == "molmoact2"
+
     def test_unrecognised_string_falls_back(self):
         """A random string should fall back to lerobot_local."""
         provider, kwargs = resolve_policy("totally_unknown_string_xyz")

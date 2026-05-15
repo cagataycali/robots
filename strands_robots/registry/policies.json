@@ -45,7 +45,7 @@
         "lerobot_local": {
             "module": "strands_robots.policies.lerobot_local",
             "class": "LerobotLocalPolicy",
-            "description": "Direct HuggingFace inference (no server)",
+            "description": "Direct HuggingFace inference for LeRobot policies (act, diffusion, smolvla, pi0, molmoact2, ...)",
             "requires": [],
             "config_keys": [
                 "pretrained_name_or_path",
@@ -58,7 +58,11 @@
                 "lerobot"
             ],
             "hf_orgs": [
-                "lerobot"
+                "lerobot",
+                "allenai"
+            ],
+            "model_id_overrides": [
+                "allenai/molmoact"
             ],
             "is_hf_default": true
         }
