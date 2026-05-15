@@ -335,19 +335,26 @@ def _compile_ast(expr: Any) -> Node:
     head = expr[0]
     if not isinstance(head, str):
         raise BDDLParseError(f"expected symbol head, got {head!r}")
-    if head == "and":
+    # PDDL grammar is case-insensitive for predicates and connectives. Real
+    # LIBERO BDDL files mix cases: every spatial / object / goal task uses
+    # ``(And (On ...))``  with capital initials in the goal, even though
+    # ``PREDICATE_VOCABULARY`` and the connective branches below were
+    # written in lowercase. Normalise once at the head; keep the original
+    # ``head`` for error messages so debugging shows the source casing.
+    head_norm = head.lower()
+    if head_norm == "and":
         if len(expr) == 1:
             raise BDDLParseError("(and ...) requires at least one clause")
         return And(tuple(_compile_ast(c) for c in expr[1:]))
-    if head == "or":
+    if head_norm == "or":
         if len(expr) == 1:
             raise BDDLParseError("(or ...) requires at least one clause")
         return Or(tuple(_compile_ast(c) for c in expr[1:]))
-    if head == "not":
+    if head_norm == "not":
         if len(expr) != 2:
             raise BDDLParseError(f"(not ...) expects 1 clause, got {len(expr) - 1}")
         return Not(_compile_ast(expr[1]))
-    if head not in PREDICATE_VOCABULARY:
+    if head_norm not in PREDICATE_VOCABULARY:
         valid = sorted(PREDICATE_VOCABULARY)
         raise BDDLParseError(f"unknown predicate {head!r}. Supported: {valid}")
     # Leaf predicate - args are the remainder, must all be strings.
@@ -357,9 +364,11 @@ def _compile_ast(expr: Any) -> Node:
             raise BDDLParseError(f"predicate {head!r}: expected string args, got {a!r}")
         args.append(a)
     # Validate arity by attempting the kwargs conversion now (fail-fast).
-    _, adapter = PREDICATE_VOCABULARY[head]
+    _, adapter = PREDICATE_VOCABULARY[head_norm]
     adapter(args)  # raises BDDLParseError on bad arity
-    return Pred(name=head, args=tuple(args))
+    # Store the normalised name so ``compile_goal`` can look it up in
+    # ``PREDICATE_VOCABULARY`` (whose keys are all lowercase).
+    return Pred(name=head_norm, args=tuple(args))
 
 
 # Compile AST → callable

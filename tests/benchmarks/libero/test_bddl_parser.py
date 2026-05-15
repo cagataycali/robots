@@ -369,3 +369,88 @@ class TestParseBDDLFile:
     def test_not_a_file(self, tmp_path):
         with pytest.raises(ValueError):
             parse_bddl_file(tmp_path)
+
+
+# Case-insensitivity (PDDL grammar is case-insensitive)
+#
+# Real LIBERO BDDL files mix lowercase predicate vocabulary keys (`on`,
+# `grasped`, …) with capital-initial spelling in the source files
+# (`(And (On cube_1 plate_1))`). The parser needs to accept both forms;
+# this section pins the contract.
+
+
+class TestCaseInsensitivity:
+    def test_capital_and_connective(self):
+        """``(And ...)`` parses identically to ``(and ...)``."""
+        text = """
+            (define (problem p)
+              (:goal (And (on cube_1 plate_1) (upright cube_1))))
+        """
+        problem = parse_bddl(text)
+        assert isinstance(problem.goal, And)
+        assert len(problem.goal.clauses) == 2
+
+    def test_capital_or_and_not_connectives(self):
+        text = """
+            (define (problem p)
+              (:goal (Or (grasped cube_1) (Not (on cube_1 table_1)))))
+        """
+        problem = parse_bddl(text)
+        assert isinstance(problem.goal, Or)
+        assert isinstance(problem.goal.clauses[1], Not)
+
+    def test_capital_predicate_normalises_to_lowercase(self):
+        """Leaf predicate names are normalised so ``compile_goal`` can look
+        them up against the lowercase ``PREDICATE_VOCABULARY``."""
+        text = """
+            (define (problem p)
+              (:goal (On cube_1 plate_1)))
+        """
+        problem = parse_bddl(text)
+        assert isinstance(problem.goal, Pred)
+        assert problem.goal.name == "on"  # normalised, not "On"
+        assert problem.goal.args == ("cube_1", "plate_1")
+
+    def test_real_libero_spatial_shape_round_trips(self):
+        """End-to-end shape mirroring real LIBERO ``libero_spatial`` BDDLs:
+        capital connectives, capital predicate, typed objects, init clauses.
+        Every spatial / object / goal task in upstream LIBERO follows this
+        layout, so this is the regression that gates ``load_libero_suite``
+        actually registering tasks instead of skipping all of them."""
+        text = """
+            (define (problem libero_pick_bowl)
+              (:domain kitchen)
+              (:language "pick up the black bowl and place it on the plate")
+              (:objects akita_black_bowl_1 plate_1 - object)
+              (:init
+                (On akita_black_bowl_1 main_table_region)
+                (On plate_1 main_table_plate_region))
+              (:goal
+                (And (On akita_black_bowl_1 plate_1))))
+        """
+        problem = parse_bddl(text)
+        assert problem.name == "libero_pick_bowl"
+        assert problem.language == "pick up the black bowl and place it on the plate"
+        assert isinstance(problem.goal, And)
+        assert len(problem.goal.clauses) == 1
+        inner = problem.goal.clauses[0]
+        assert isinstance(inner, Pred)
+        assert inner.name == "on"
+        assert inner.args == ("akita_black_bowl_1", "plate_1")
+
+    def test_unknown_predicate_error_preserves_source_casing(self):
+        """When a predicate is genuinely unknown (not just mis-cased), the
+        error message should show the original casing so users see exactly
+        what they wrote in the BDDL file."""
+        with pytest.raises(BDDLParseError, match="'NotAPredicate'"):
+            parse_bddl("(define (problem p) (:goal (NotAPredicate cube_1)))")
+
+    def test_compile_goal_works_after_capital_parse(self):
+        """A capital-cased BDDL should compile to a working goal callable."""
+        text = """
+            (define (problem p)
+              (:goal (Grasped cube_1)))
+        """
+        problem = parse_bddl(text)
+        callable_ = compile_goal(problem.goal)
+        assert callable(callable_)
