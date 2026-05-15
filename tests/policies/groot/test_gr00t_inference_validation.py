@@ -183,3 +183,63 @@ class TestValidateInputs:
             dit_dtype="fp8",
             container_name=None,
         )
+
+
+class TestIsGr00tProcess:
+    """Test the _is_gr00t_process helper verifies port binding."""
+
+    def test_rejects_wrong_port(self, monkeypatch):
+        """_is_gr00t_process should reject a GR00T process on a different port."""
+        import subprocess as sp
+
+        from strands_robots.tools.gr00t_inference import _is_gr00t_process
+
+        # Simulate cmdline: "python inference_service.py --port 8000"
+        fake_result = sp.CompletedProcess(
+            args=[], returncode=0, stdout="python\x00inference_service.py\x00--port\x008000\x00"
+        )
+        monkeypatch.setattr(sp, "run", lambda *a, **kw: fake_result)
+
+        # Asking for port 80 should return False even though it's a gr00t process
+        assert _is_gr00t_process("container", "123", port=80) is False
+
+    def test_accepts_matching_port(self, monkeypatch):
+        """_is_gr00t_process should accept when port matches."""
+        import subprocess as sp
+
+        from strands_robots.tools.gr00t_inference import _is_gr00t_process
+
+        fake_result = sp.CompletedProcess(
+            args=[], returncode=0, stdout="python\x00inference_service.py\x00--port\x008000\x00"
+        )
+        monkeypatch.setattr(sp, "run", lambda *a, **kw: fake_result)
+
+        assert _is_gr00t_process("container", "123", port=8000) is True
+
+    def test_no_port_check_when_none(self, monkeypatch):
+        """_is_gr00t_process without port param should not verify port."""
+        import subprocess as sp
+
+        from strands_robots.tools.gr00t_inference import _is_gr00t_process
+
+        fake_result = sp.CompletedProcess(
+            args=[], returncode=0, stdout="python\x00inference_service.py\x00--port\x008000\x00"
+        )
+        monkeypatch.setattr(sp, "run", lambda *a, **kw: fake_result)
+
+        # Without port, just checks if it's a gr00t process
+        assert _is_gr00t_process("container", "123") is True
+
+    def test_accepts_equals_style_port(self, monkeypatch):
+        """_is_gr00t_process should accept --port=N style."""
+        import subprocess as sp
+
+        from strands_robots.tools.gr00t_inference import _is_gr00t_process
+
+        fake_result = sp.CompletedProcess(
+            args=[], returncode=0, stdout="python\x00inference_service.py\x00--port=5555\x00"
+        )
+        monkeypatch.setattr(sp, "run", lambda *a, **kw: fake_result)
+
+        assert _is_gr00t_process("container", "123", port=5555) is True
+        assert _is_gr00t_process("container", "123", port=6666) is False

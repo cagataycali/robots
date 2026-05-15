@@ -603,11 +603,16 @@ def _check_service_status(port: int) -> dict[str, Any]:
         }
 
 
-def _is_gr00t_process(container_name: str, pid: str) -> bool:
+def _is_gr00t_process(container_name: str, pid: str, *, port: int | None = None) -> bool:
     """Verify that a PID inside a container belongs to a GR00T inference process.
 
     This prevents accidentally killing unrelated processes that happen to
     be listening on the same port.
+
+    Args:
+        container_name: Docker container name to inspect.
+        pid: Process ID to check.
+        port: If provided, also verify the process is bound to this port.
     """
     try:
         result = subprocess.run(
@@ -618,7 +623,12 @@ def _is_gr00t_process(container_name: str, pid: str) -> bool:
         )
         if result.returncode == 0:
             cmdline = result.stdout.replace("\x00", " ")
-            return "inference_service" in cmdline or "gr00t" in cmdline.lower()
+            is_gr00t = "inference_service" in cmdline or "gr00t" in cmdline.lower()
+            if is_gr00t and port is not None:
+                # Verify the process is serving on the requested port
+                # Use word-boundary regex to avoid partial matches (e.g. port 80 vs 8000)
+                return bool(re.search(rf"--port[= ]{port}(?:\s|$)", cmdline))
+            return is_gr00t
     except Exception:
         pass
     return False
@@ -645,7 +655,7 @@ def _stop_service(port: int) -> dict[str, Any]:
                         pids = result.stdout.strip().split("\n")
                         for pid in pids:
                             pid = pid.strip()
-                            if pid and _is_gr00t_process(container_name, pid):
+                            if pid and _is_gr00t_process(container_name, pid, port=port):
                                 subprocess.run(["docker", "exec", container_name, "kill", "-TERM", pid], check=True)
 
                         time.sleep(2)
@@ -668,7 +678,7 @@ def _stop_service(port: int) -> dict[str, Any]:
                             pids = result.stdout.strip().split("\n")
                             for pid in pids:
                                 pid = pid.strip()
-                                if pid and _is_gr00t_process(container_name, pid):
+                                if pid and _is_gr00t_process(container_name, pid, port=port):
                                     subprocess.run(["docker", "exec", container_name, "kill", "-KILL", pid], check=True)
 
                         return {
