@@ -160,9 +160,12 @@ def mock_session(monkeypatch):
 def mock_put():
     """Patch put at all locations where it's imported."""
     from strands_robots.mesh import sensors as mesh_sensors
+
     calls = []
+
     def _spy(key, data):
         calls.append((key, data))
+
     with patch.object(mesh_session, "put", side_effect=_spy):
         with patch.object(mesh_core, "put", side_effect=_spy):
             with patch.object(mesh_sensors, "put", side_effect=_spy):
@@ -180,6 +183,7 @@ class TestImportPaths:
     def test_mesh_session_importable_from_package(self):
         """strands_robots.mesh.session should be the correct import path."""
         from strands_robots.mesh import session
+
         assert hasattr(session, "get_session")
         assert hasattr(session, "put")
         assert hasattr(session, "PeerInfo")
@@ -187,11 +191,13 @@ class TestImportPaths:
     def test_mesh_core_has_put(self):
         """core.py imports put from session — verify it's accessible."""
         from strands_robots.mesh import core
+
         assert callable(core.put)
 
     def test_mesh_package_exports_put(self):
         """put is re-exported from mesh package for backward compat."""
         import strands_robots.mesh as mesh_pkg
+
         assert hasattr(mesh_pkg, "put")
         assert callable(mesh_pkg.put)
 
@@ -203,6 +209,7 @@ class TestImportPaths:
     def test_mesh_exports_correct_symbols(self):
         """__all__ should include core + session helpers."""
         from strands_robots.mesh import __all__
+
         # Must include core mesh types
         assert "Mesh" in __all__
         assert "InputPublisher" in __all__
@@ -382,9 +389,7 @@ class TestMeshLifecycleEdge:
         """If declare_subscriber fails on 3rd call, first 2 are undeclared."""
         sub1 = MagicMock()
         sub2 = MagicMock()
-        mock_session.declare_subscriber.side_effect = [
-            sub1, sub2, RuntimeError("zenoh error"), MagicMock()
-        ]
+        mock_session.declare_subscriber.side_effect = [sub1, sub2, RuntimeError("zenoh error"), MagicMock()]
 
         m = Mesh(FakeRobot(), peer_id="fail-sub")
         m.start()
@@ -460,9 +465,7 @@ class TestRPCRobustness:
         m = Mesh(FakeRobot(), peer_id="rpc-1")
         m.start()
         sample = MagicMock()
-        sample.payload.to_bytes.return_value = json.dumps(
-            {"turn_id": 12345, "result": {"x": 1}}
-        ).encode()
+        sample.payload.to_bytes.return_value = json.dumps({"turn_id": 12345, "result": {"x": 1}}).encode()
         m._on_response(sample)
         # No crash, no pending entries
         with m._rpc_lock:
@@ -585,10 +588,12 @@ class TestSensorLoops:
 
     def test_hand_loop(self, mock_session, mock_put):
         """Hand loop publishes per-hand state."""
-        robot = FakeRobot(hands={
-            "left": {"joints": [0.1, 0.2, 0.3], "force": 1.5},
-            "right": {"joints": [0.4, 0.5, 0.6], "force": 2.0},
-        })
+        robot = FakeRobot(
+            hands={
+                "left": {"joints": [0.1, 0.2, 0.3], "force": 1.5},
+                "right": {"joints": [0.4, 0.5, 0.6], "force": 2.0},
+            }
+        )
         m = Mesh(robot, peer_id="hand-1")
         m.start()
         time.sleep(0.05)  # HAND_HZ=50
@@ -631,14 +636,18 @@ class TestSensorLoops:
 
     def test_sensor_loops_no_crash_on_exception(self, mock_session):
         """Sensor loops don't crash if the robot attribute raises."""
+
         class ExplodingRobot:
             tool_name_str = "exploder"
+
             @property
             def _pose(self):
                 raise RuntimeError("sensor failure")
+
             @property
             def _imu(self):
                 raise ValueError("imu broken")
+
             @property
             def _battery(self):
                 raise OSError("battery read failed")
@@ -754,11 +763,13 @@ class TestInputPublisherReceiver:
         """Publisher survives when get_action raises."""
         teleop = MagicMock()
         call_count = [0]
+
         def side_effect():
             call_count[0] += 1
             if call_count[0] % 3 == 0:
                 raise RuntimeError("teleop disconnected")
             return {"j0": 0.5}
+
         teleop.get_action.side_effect = side_effect
 
         m = Mesh(FakeRobot(), peer_id="pub-err")
@@ -776,6 +787,7 @@ class TestInputPublisherReceiver:
     def test_publisher_normalize_numpy_action(self, mock_session, mock_put):
         """Numpy array actions are normalized to dict."""
         import numpy as np
+
         teleop = MagicMock()
         teleop.get_action.return_value = np.array([0.1, 0.2, 0.3])
 
@@ -809,14 +821,8 @@ class TestInputPublisherReceiver:
         recv.start()
 
         # Simulate incoming data
-        recv._on_input(
-            "strands/leader-1/input/leader",
-            {"action": {"j0": 0.5, "j1": 0.3}, "seq": 0}
-        )
-        recv._on_input(
-            "strands/leader-1/input/leader",
-            {"action": {"j0": 0.6, "j1": 0.4}, "seq": 1}
-        )
+        recv._on_input("strands/leader-1/input/leader", {"action": {"j0": 0.5, "j1": 0.3}, "seq": 0})
+        recv._on_input("strands/leader-1/input/leader", {"action": {"j0": 0.6, "j1": 0.4}, "seq": 1})
 
         stats = recv.stop()
 
@@ -969,7 +975,7 @@ class TestSubscribeRaces:
         msg_thread = threading.Thread(
             target=handler,
             args=(MagicMock(key_expr="test/topic", payload=MagicMock(to_bytes=MagicMock(return_value=b'{"x":1}'))),),
-            daemon=True
+            daemon=True,
         )
         msg_thread.start()
         time.sleep(0.05)
@@ -1058,6 +1064,7 @@ class TestRobotMeshTool:
     def test_peers_action_no_mesh(self):
         """peers action when no local mesh exists."""
         from strands_robots.tools.robot_mesh import robot_mesh
+
         result = robot_mesh(action="peers")
         assert result["status"] == "success"
         assert "0 local" in result["content"][0]["text"]
@@ -1065,6 +1072,7 @@ class TestRobotMeshTool:
     def test_tell_without_target_errors(self, mock_session):
         """tell action without target returns error."""
         from strands_robots.tools.robot_mesh import robot_mesh
+
         m = Mesh(FakeRobot(), peer_id="tool-test")
         m.start()
         result = robot_mesh(action="tell", instruction="go")
@@ -1074,6 +1082,7 @@ class TestRobotMeshTool:
     def test_send_invalid_json(self, mock_session):
         """send with non-JSON command returns error."""
         from strands_robots.tools.robot_mesh import robot_mesh
+
         m = Mesh(FakeRobot(), peer_id="tool-json")
         m.start()
         result = robot_mesh(action="send", target="peer-x", command="not{json")
@@ -1084,6 +1093,7 @@ class TestRobotMeshTool:
     def test_unknown_action(self, mock_session):
         """Unknown action returns helpful error."""
         from strands_robots.tools.robot_mesh import robot_mesh
+
         m = Mesh(FakeRobot(), peer_id="tool-unk")
         m.start()
         result = robot_mesh(action="foobar")
@@ -1094,6 +1104,7 @@ class TestRobotMeshTool:
     def test_resolve_mesh_avoids_self_gateway(self, mock_session):
         """When sending to a local peer, _resolve_mesh picks a different one."""
         from strands_robots.tools.robot_mesh import _resolve_mesh
+
         m1 = Mesh(FakeRobot(), peer_id="local-a")
         m2 = Mesh(FakeRobot(), peer_id="local-b")
         m1.start()
