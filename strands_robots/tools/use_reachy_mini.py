@@ -290,7 +290,8 @@ def use_reachy_mini(
     except requests.ConnectionError:
         return _err(f"Cannot connect to Reachy Mini at {host}:{port}. Is it on?")
     except requests.HTTPError as e:
-        return _err(f"HTTP error: {e.response.status_code} {e.response.text[:200]}")
+        resp = e.response
+        return _err(f"HTTP error: {resp.status_code} {resp.text[:200]}" if resp is not None else f"HTTP error: {e}")
     except json.JSONDecodeError as e:
         return _err(f"Invalid JSON input: {e}")
     except Exception as e:
