@@ -82,6 +82,7 @@ cosmos = [
     "transformers>=4.40.0",
     "huggingface-hub>=0.20.0",
     "accelerate>=0.25.0",
+    "requests>=2.28.0,<3.0.0",
 ]
 all = [
     "strands-robots[groot-service]",
@@ -164,7 +165,7 @@ ignore_missing_imports = false
 
 # Third-party libs without type stubs
 [[tool.mypy.overrides]]
-module = ["lerobot.*", "gr00t.*", "cosmos_predict2.*", "draccus.*", "msgpack.*", "zmq.*", "huggingface_hub.*", "serial.*", "psutil.*", "torch.*", "torchvision.*", "transformers.*", "einops.*", "robot_descriptions.*", "mujoco.*", "imageio.*", "libero.*", "zenoh.*", "boto3", "boto3.*", "awscrt", "awscrt.*", "awsiot", "awsiot.*", "botocore.*"]
+module = ["lerobot.*", "gr00t.*", "cosmos_predict2.*", "requests.*", "draccus.*", "msgpack.*", "zmq.*", "huggingface_hub.*", "serial.*", "psutil.*", "torch.*", "torchvision.*", "transformers.*", "einops.*", "robot_descriptions.*", "mujoco.*", "imageio.*", "libero.*", "zenoh.*", "boto3", "boto3.*", "awscrt", "awscrt.*", "awsiot", "awsiot.*", "botocore.*"]
 ignore_missing_imports = true
 
 # @tool decorator injects runtime signatures mypy cannot check
