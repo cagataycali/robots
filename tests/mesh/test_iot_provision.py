@@ -285,3 +285,79 @@ class TestProvisionedThingDataclass:
             "STRANDS_IOT_CERT_DIR",
             "STRANDS_MESH_BACKEND",
         }
+
+
+class TestCleanupStaleCerts:
+    """Re-running provision_robot must not accumulate certs.
+
+    Regression coverage for the security-relevant bug found in cycle 9 of
+    the deep-test sweep: AWS IoT CreateKeysAndCertificate always returns a
+    new cert (private keys aren't recoverable post-issuance), so without
+    explicit cleanup a Thing accumulates ACTIVE certs across re-runs —
+    each one a potential impersonation credential.
+    """
+
+    def test_cleanup_runs_before_new_cert_issuance(self, fake_iot_client, tmp_cert_dir, monkeypatch):
+        """provision_robot must call _cleanup_stale_certs *before* creating
+        the new cert."""
+        monkeypatch.setattr(
+            "strands_robots.mesh.iot.provision._require_boto3",
+            lambda: MagicMock(client=lambda *a, **kw: fake_iot_client),
+        )
+        (tmp_cert_dir / "AmazonRootCA1.pem").write_text("fake-ca")
+
+        # Pretend the Thing already has an old cert attached.
+        old_cert_arn = "arn:aws:iot:us-west-2:123:cert/old-cert-id-aaaaa"
+        fake_iot_client.list_thing_principals.return_value = {"principals": [old_cert_arn]}
+        fake_iot_client.list_attached_policies.return_value = {"policies": [{"policyName": "strands-robot"}]}
+
+        provision_robot("test-thing", cert_dir=tmp_cert_dir)
+
+        # The old cert must have been detached + deleted.
+        fake_iot_client.detach_thing_principal.assert_called_once_with(thingName="test-thing", principal=old_cert_arn)
+        fake_iot_client.detach_policy.assert_called_with(policyName="strands-robot", target=old_cert_arn)
+        fake_iot_client.update_certificate.assert_called_once()
+        fake_iot_client.delete_certificate.assert_called_once_with(certificateId="old-cert-id-aaaaa", forceDelete=True)
+        # Then the new cert is created.
+        fake_iot_client.create_keys_and_certificate.assert_called_once()
+        # And attached.
+        fake_iot_client.attach_thing_principal.assert_called()
+
+    def test_cleanup_swallows_cert_delete_failures(self, fake_iot_client, tmp_cert_dir, monkeypatch):
+        """If the old cert can't be deleted (e.g. revoked elsewhere), the
+        new cert MUST still be issued. Cleanup is best-effort."""
+        monkeypatch.setattr(
+            "strands_robots.mesh.iot.provision._require_boto3",
+            lambda: MagicMock(client=lambda *a, **kw: fake_iot_client),
+        )
+        (tmp_cert_dir / "AmazonRootCA1.pem").write_text("fake-ca")
+
+        fake_iot_client.list_thing_principals.return_value = {
+            "principals": ["arn:aws:iot:us-west-2:123:cert/cant-delete"]
+        }
+        fake_iot_client.list_attached_policies.return_value = {"policies": []}
+        fake_iot_client.delete_certificate.side_effect = RuntimeError("cannot delete")
+
+        # Must NOT raise — proceeds to create the new cert.
+        result = provision_robot("test-thing", cert_dir=tmp_cert_dir)
+        assert result.thing_name == "test-thing"
+        fake_iot_client.create_keys_and_certificate.assert_called_once()
+
+    def test_cleanup_handles_missing_thing(self):
+        """When list_thing_principals raises NotFound, _cleanup_stale_certs
+        returns 0 cleanly (no detach/delete attempted)."""
+        from strands_robots.mesh.iot.provision import _cleanup_stale_certs
+
+        iot = MagicMock()
+
+        class _NotFound(Exception):
+            pass
+
+        iot.exceptions = MagicMock()
+        iot.exceptions.ResourceNotFoundException = _NotFound
+        iot.list_thing_principals.side_effect = _NotFound("missing")
+
+        n = _cleanup_stale_certs(iot, "missing-thing")
+        assert n == 0
+        iot.detach_thing_principal.assert_not_called()
+        iot.delete_certificate.assert_not_called()

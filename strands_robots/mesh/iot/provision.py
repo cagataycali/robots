@@ -279,6 +279,13 @@ def provision_robot(
     logger.info("[provision] %s: using policy %s", thing_name, policy_arn)
 
     # 3. Cert + key
+    # Clean up stale certs from prior provision_robot runs on the same Thing.
+    # Each call to AWS IoT CreateKeysAndCertificate yields a brand-new cert
+    # (private keys cannot be recovered after issuance), so without cleanup
+    # the Thing would accumulate certs across re-runs — every leftover is
+    # an active credential that could impersonate the robot.
+    _cleanup_stale_certs(iot, thing_name)
+
     cert_path = cert_dir / f"{thing_name}.cert.pem"
     key_path = cert_dir / f"{thing_name}.private.key"
     cert_arn, cert_id = _create_cert(iot, cert_path, key_path)
@@ -334,6 +341,9 @@ def provision_operator(
     thing_arn = _ensure_thing(iot, thing_name, attributes)
     policy_arn = _ensure_policy(iot, OPERATOR_POLICY_NAME, _OPERATOR_POLICY_DOC)
     logger.info("[provision] %s: using policy %s", thing_name, policy_arn)
+
+    # Clean up stale certs from prior provision_operator runs.
+    _cleanup_stale_certs(iot, thing_name)
 
     cert_path = cert_dir / f"{thing_name}.cert.pem"
     key_path = cert_dir / f"{thing_name}.private.key"
@@ -460,6 +470,55 @@ def _ensure_policy(iot: Any, name: str, document: dict[str, Any]) -> str:
     )
     logger.info("[provision] policy %s created", name)
     return resp["policyArn"]
+
+
+def _cleanup_stale_certs(iot: Any, thing_name: str) -> int:
+    """Detach + delete any certificates already attached to *thing_name*.
+
+    Re-running :func:`provision_robot` on the same Thing has historically
+    caused certs to accumulate (each run issues a fresh cert because
+    AWS doesn't expose previously-generated private keys). That left
+    Things with 5–10 ACTIVE certs after a few dev iterations, which is
+    a footgun: every old cert is a credential that *could* be used to
+    impersonate the robot.
+
+    This helper detaches every existing principal, removes its policy
+    attachments, marks the cert INACTIVE, and force-deletes it. Failures
+    are logged at DEBUG and swallowed so a partial cleanup never blocks
+    the new cert issuance — the new cert is what users actually want.
+
+    Returns the number of certs cleaned up (for logging in the caller).
+    """
+    cleaned = 0
+    try:
+        existing = iot.list_thing_principals(thingName=thing_name).get("principals", [])
+    except iot.exceptions.ResourceNotFoundException:
+        return 0
+
+    for cert_arn in existing:
+        cert_id = cert_arn.rsplit("/", 1)[-1]
+        try:
+            iot.detach_thing_principal(thingName=thing_name, principal=cert_arn)
+        except Exception as exc:
+            logger.debug("[provision] detach %s from %s: %s", cert_id, thing_name, exc)
+        try:
+            for pol in iot.list_attached_policies(target=cert_arn).get("policies", []):
+                iot.detach_policy(policyName=pol["policyName"], target=cert_arn)
+        except Exception as exc:
+            logger.debug("[provision] detach policies from %s: %s", cert_id, exc)
+        try:
+            iot.update_certificate(certificateId=cert_id, newStatus="INACTIVE")
+            iot.delete_certificate(certificateId=cert_id, forceDelete=True)
+            cleaned += 1
+        except Exception as exc:
+            logger.warning("[provision] could not delete stale cert %s: %s", cert_id, exc)
+    if cleaned:
+        logger.info(
+            "[provision] cleaned up %d stale cert(s) on %s before issuing new one",
+            cleaned,
+            thing_name,
+        )
+    return cleaned
 
 
 def _create_cert(iot: Any, cert_path: Path, key_path: Path) -> tuple[str, str]:

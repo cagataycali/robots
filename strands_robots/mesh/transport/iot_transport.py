@@ -193,28 +193,49 @@ def _qos_and_retain_for(topic: str) -> tuple[int, bool]:
         return 0, False
 
     rest = topic[len("strands/") :]
+    if not rest:
+        return 0, False
+
     rest_segments = rest.split("/")
+    first = rest_segments[0]
 
-    # Build candidate suffixes from longest to shortest by trimming peer prefix.
-    # Two layouts to consider:
-    #   (a) The first segment IS the topic kind (broadcast, safety/estop)
-    #   (b) The first segment is a peer_id; the topic kind starts at segment 1
-    candidates: list[str] = []
+    # Two distinct topic layouts in the strands-robots scheme. They MUST NOT
+    # be tried as a fallback chain — a peer_id that happens to be named
+    # "broadcast" or "safety" must NOT pick up the top-level policy entry.
+    #
+    #   (a) Top-level system topics — first segment IS the kind:
+    #         strands/broadcast
+    #         strands/safety/estop
+    #
+    #   (b) Per-peer topics — first segment is the peer_id, topic kind
+    #       starts at segment 1:
+    #         strands/{peer}/{kind}            (e.g. presence, state, cmd)
+    #         strands/{peer}/{kind}/{sub}      (e.g. lidar/summary, response/{turn})
+    #
+    # We resolve the layout by checking whether *first* is one of the
+    # reserved top-level kinds. The set is small and closed — extending
+    # the topic scheme means extending this set.
+    _TOP_LEVEL_KINDS = {"broadcast", "safety"}
 
-    # (a) full suffix from segment 0 — increasingly less specific
-    for n in range(len(rest_segments), 0, -1):
-        candidates.append("/".join(rest_segments[:n]))
-    # (b) suffix from segment 1 — increasingly less specific (only if 2+ segments)
-    if len(rest_segments) >= 2:
-        for n in range(len(rest_segments), 1, -1):
-            candidate = "/".join(rest_segments[1:n])
-            if candidate not in candidates:
-                candidates.append(candidate)
-        # Also the immediate kind segment
-        if rest_segments[1] not in candidates:
-            candidates.append(rest_segments[1])
+    if first in _TOP_LEVEL_KINDS:
+        # Layout (a) — match suffixes that include the first segment.
+        for n in range(len(rest_segments), 0, -1):
+            candidate = "/".join(rest_segments[:n])
+            entry = _TOPIC_POLICY.get(candidate)
+            if entry is not None:
+                qos_or_drop, retain = entry
+                if qos_or_drop == "DROP":
+                    return -1, False
+                return int(qos_or_drop), retain
+        return 0, False
 
-    for candidate in candidates:
+    # Layout (b) — first segment is a peer_id; skip it.
+    if len(rest_segments) < 2:
+        return 0, False
+
+    # Match suffixes from rest_segments[1:] longest-first.
+    for n in range(len(rest_segments), 1, -1):
+        candidate = "/".join(rest_segments[1:n])
         entry = _TOPIC_POLICY.get(candidate)
         if entry is not None:
             qos_or_drop, retain = entry
