@@ -26,6 +26,20 @@ Topic schema
 ``strands/{peer_id}/state``
     Numeric state snapshot at :data:`STATE_HZ`.  Camera frames and other
     high-dimensional tensors are filtered out.
+``strands/{peer_id}/camera/{cam_name}``
+    Optional per-camera frame stream.  Disabled by default (``CAMERA_HZ=0``)
+    because frames are bandwidth-heavy.  Opt in via
+    ``STRANDS_MESH_CAMERA_HZ`` (e.g. ``5`` for 5 fps).  Payload schema::
+
+        {
+            "peer_id": "<owner>",
+            "cam": "<camera-name>",
+            "t": <unix-time>,
+            "shape": [H, W, C],
+            "dtype": "uint8",
+            "encoding": "jpeg" | "raw",
+            "data": "<base64-string>",
+        }
 
 Environment variables
 ---------------------
@@ -63,6 +77,7 @@ from typing import Any
 
 from strands_robots.mesh_audit import log_safety_event
 from strands_robots.mesh_session import (
+    CAMERA_HZ,
     HEARTBEAT_HZ,
     STATE_HZ,
     current_session,
@@ -250,6 +265,19 @@ class Mesh:
             heartbeat.start()
             state_thread.start()
 
+            # Optional camera loop — opt-in via STRANDS_MESH_CAMERA_HZ.
+            camera_hz = self._resolve_camera_hz()
+            if camera_hz > 0:
+                cam_thread = threading.Thread(
+                    target=self._camera_loop,
+                    args=(camera_hz,),
+                    name=f"mesh-camera-{self.peer_id}",
+                    daemon=True,
+                )
+                self._threads.append(cam_thread)
+                cam_thread.start()
+                logger.info("[mesh] %s camera stream enabled @ %.1f Hz", self.peer_id, camera_hz)
+
             logger.info("[mesh] %s on mesh (%s)", self.peer_id, self.peer_type)
 
     def stop(self) -> None:
@@ -360,6 +388,10 @@ class Mesh:
                     payload["connected"] = bool(inner.is_connected)
                 if hasattr(inner, "name"):
                     payload["hw"] = inner.name
+                # Advertise camera names so peers can discover frame topics.
+                cam_cfg = getattr(getattr(inner, "config", None), "cameras", None)
+                if isinstance(cam_cfg, dict) and cam_cfg:
+                    payload["cameras"] = list(cam_cfg.keys())
         except Exception:  # noqa: BLE001
             pass
 
@@ -512,6 +544,122 @@ class Mesh:
 
         # Only return a snapshot if it has more than the bookkeeping fields.
         return snapshot if len(snapshot) > 2 else None
+
+    # ------------------------------------------------------------------
+    # Cameras — outgoing (opt-in)
+    # ------------------------------------------------------------------
+
+    def _resolve_camera_hz(self) -> float:
+        """Determine camera publish rate from env / module default.
+
+        ``STRANDS_MESH_CAMERA_HZ`` overrides :data:`CAMERA_HZ`.  Returns 0
+        (loop disabled) if unset, malformed, or non-positive.
+        """
+        env = os.getenv("STRANDS_MESH_CAMERA_HZ")
+        if env is None or env.strip() == "":
+            hz = CAMERA_HZ
+        else:
+            try:
+                hz = float(env)
+            except ValueError:
+                logger.warning(
+                    "STRANDS_MESH_CAMERA_HZ=%r is not a number; camera loop disabled",
+                    env,
+                )
+                return 0.0
+        return hz if hz > 0 else 0.0
+
+    def _camera_loop(self, hz: float) -> None:
+        """Publish camera frames on ``strands/{peer_id}/camera/{cam_name}``.
+
+        Best-effort and defensive: any per-camera error is swallowed so a
+        single bad camera never kills the loop or the other cameras.
+
+        Frames are JPEG-encoded when OpenCV is available (saves >10× bandwidth
+        vs raw); otherwise falls back to base64 of the raw bytes.
+        """
+        period = 1.0 / hz
+        while self._running:
+            try:
+                self._publish_cameras_once()
+            except Exception as exc:  # noqa: BLE001 — never let the loop die
+                logger.debug("[mesh] %s: camera tick error: %s", self.peer_id, exc)
+            if self._stop_event.wait(period):
+                break
+
+    def _publish_cameras_once(self) -> None:
+        """Read one frame from each camera and publish to its mesh topic."""
+        import base64
+
+        r = self.robot
+        inner = getattr(r, "robot", None)
+        if inner is None or not getattr(inner, "is_connected", False):
+            return
+        cam_cfg = getattr(getattr(inner, "config", None), "cameras", None)
+        if not isinstance(cam_cfg, dict) or not cam_cfg:
+            return
+
+        # Pull a fresh observation; cameras live alongside joint keys.
+        try:
+            obs = inner.get_observation()
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("[mesh] %s: get_observation failed: %s", self.peer_id, exc)
+            return
+
+        try:
+            import cv2  # type: ignore[import-not-found]
+
+            have_cv2 = True
+        except Exception:  # noqa: BLE001
+            have_cv2 = False
+
+        for cam_name in cam_cfg:
+            try:
+                frame = obs.get(cam_name)
+                if frame is None:
+                    continue
+                shape = getattr(frame, "shape", None)
+                if shape is None or len(shape) < 2:
+                    continue
+
+                # Convert to numpy uint8 if needed.
+                if hasattr(frame, "detach"):  # torch tensor
+                    frame = frame.detach().cpu().numpy()
+                if hasattr(frame, "astype"):
+                    import numpy as np  # local import keeps module light
+
+                    if frame.dtype != np.uint8:
+                        frame = frame.astype(np.uint8)
+
+                if have_cv2:
+                    ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                    if not ok:
+                        continue
+                    encoded = base64.b64encode(buf.tobytes()).decode("ascii")
+                    encoding = "jpeg"
+                else:
+                    encoded = base64.b64encode(bytes(frame)).decode("ascii")
+                    encoding = "raw"
+
+                put(
+                    f"strands/{self.peer_id}/camera/{cam_name}",
+                    {
+                        "peer_id": self.peer_id,
+                        "cam": cam_name,
+                        "t": time.time(),
+                        "shape": list(shape),
+                        "dtype": "uint8",
+                        "encoding": encoding,
+                        "data": encoded,
+                    },
+                )
+            except Exception as exc:  # noqa: BLE001 — per-camera best-effort
+                logger.debug(
+                    "[mesh] %s: camera %s publish failed: %s",
+                    self.peer_id,
+                    cam_name,
+                    exc,
+                )
 
     # ------------------------------------------------------------------
     # RPC — incoming command dispatch (PR3)

@@ -59,6 +59,11 @@ HEARTBEAT_HZ: float = 2.0
 #: Default state-publishing frequency (Hz).
 STATE_HZ: float = 10.0
 
+#: Default camera-publishing frequency (Hz).  ``0`` disables the camera
+#: loop — opt-in via the ``STRANDS_MESH_CAMERA_HZ`` environment variable
+#: because frames are large and bandwidth-heavy.
+CAMERA_HZ: float = 0.0
+
 #: Seconds without a heartbeat before a peer is considered dead.
 PEER_TIMEOUT: float = 10.0
 
