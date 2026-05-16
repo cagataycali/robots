@@ -11,6 +11,8 @@ from unittest.mock import patch
 import pytest
 
 from strands_robots.mesh.transport import factory
+from strands_robots.mesh.transport.iot_transport import IotMqttTransport
+from strands_robots.mesh.transport.zenoh_transport import ZenohTransport
 
 
 @pytest.fixture(autouse=True)
@@ -74,7 +76,7 @@ class TestRefCounting:
         """If the constructed transport's connect() returns False, get_transport
         returns None and does NOT install a singleton."""
         monkeypatch.setenv("STRANDS_MESH_BACKEND", "zenoh")
-        with patch.object(factory.ZenohTransport, "connect", return_value=False):
+        with patch.object(ZenohTransport, "connect", return_value=False):
             result = factory.get_transport()
             assert result is None
             assert factory._TRANSPORT is None
@@ -82,8 +84,8 @@ class TestRefCounting:
 
     def test_second_call_reuses_singleton(self, monkeypatch):
         monkeypatch.setenv("STRANDS_MESH_BACKEND", "zenoh")
-        with patch.object(factory.ZenohTransport, "connect", return_value=True):
-            with patch.object(factory.ZenohTransport, "is_alive", return_value=True):
+        with patch.object(ZenohTransport, "connect", return_value=True):
+            with patch.object(ZenohTransport, "is_alive", return_value=True):
                 t1 = factory.get_transport()
                 t2 = factory.get_transport()
                 assert t1 is t2
@@ -91,9 +93,9 @@ class TestRefCounting:
 
     def test_release_decrements_then_closes(self, monkeypatch):
         monkeypatch.setenv("STRANDS_MESH_BACKEND", "zenoh")
-        with patch.object(factory.ZenohTransport, "connect", return_value=True):
-            with patch.object(factory.ZenohTransport, "is_alive", return_value=True):
-                with patch.object(factory.ZenohTransport, "close") as mock_close:
+        with patch.object(ZenohTransport, "connect", return_value=True):
+            with patch.object(ZenohTransport, "is_alive", return_value=True):
+                with patch.object(ZenohTransport, "close") as mock_close:
                     factory.get_transport()
                     factory.get_transport()
                     assert factory._TRANSPORT_REFS == 2
@@ -116,8 +118,8 @@ class TestRefCounting:
 
     def test_current_transport_does_not_bump_refcount(self, monkeypatch):
         monkeypatch.setenv("STRANDS_MESH_BACKEND", "zenoh")
-        with patch.object(factory.ZenohTransport, "connect", return_value=True):
-            with patch.object(factory.ZenohTransport, "is_alive", return_value=True):
+        with patch.object(ZenohTransport, "connect", return_value=True):
+            with patch.object(ZenohTransport, "is_alive", return_value=True):
                 factory.get_transport()
                 assert factory._TRANSPORT_REFS == 1
                 t = factory.current_transport()
@@ -126,7 +128,7 @@ class TestRefCounting:
 
     def test_current_backend_after_init(self, monkeypatch):
         monkeypatch.setenv("STRANDS_MESH_BACKEND", "zenoh")
-        with patch.object(factory.ZenohTransport, "connect", return_value=True):
+        with patch.object(ZenohTransport, "connect", return_value=True):
             assert factory.current_backend() == ""
             factory.get_transport()
             assert factory.current_backend() == "zenoh"
@@ -139,16 +141,16 @@ class TestIotBackendSelection:
 
     def test_iot_backend_constructs_iot_transport(self, monkeypatch):
         monkeypatch.setenv("STRANDS_MESH_BACKEND", "iot")
-        with patch.object(factory.IotMqttTransport, "connect", return_value=True):
-            with patch.object(factory.IotMqttTransport, "is_alive", return_value=True):
+        with patch.object(IotMqttTransport, "connect", return_value=True):
+            with patch.object(IotMqttTransport, "is_alive", return_value=True):
                 t = factory.get_transport()
                 assert t is not None
-                assert isinstance(t, factory.IotMqttTransport)
+                assert isinstance(t, IotMqttTransport)
                 assert factory.current_backend() == "iot"
 
     def test_iot_connect_failure_returns_none(self, monkeypatch):
         monkeypatch.setenv("STRANDS_MESH_BACKEND", "iot")
-        with patch.object(factory.IotMqttTransport, "connect", return_value=False):
+        with patch.object(IotMqttTransport, "connect", return_value=False):
             assert factory.get_transport() is None
             assert factory._TRANSPORT is None
 
@@ -160,8 +162,8 @@ class TestThreadSafety:
     def test_concurrent_get_returns_same_instance(self, monkeypatch):
         monkeypatch.setenv("STRANDS_MESH_BACKEND", "zenoh")
         results: list = []
-        with patch.object(factory.ZenohTransport, "connect", return_value=True):
-            with patch.object(factory.ZenohTransport, "is_alive", return_value=True):
+        with patch.object(ZenohTransport, "connect", return_value=True):
+            with patch.object(ZenohTransport, "is_alive", return_value=True):
                 threads = [threading.Thread(target=lambda: results.append(factory.get_transport())) for _ in range(8)]
                 for t in threads:
                     t.start()

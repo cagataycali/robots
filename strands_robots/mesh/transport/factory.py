@@ -29,9 +29,6 @@ import os
 import threading
 
 from strands_robots.mesh.transport.base import MeshTransport
-from strands_robots.mesh.transport.bridge_transport import BridgeTransport
-from strands_robots.mesh.transport.iot_transport import IotMqttTransport
-from strands_robots.mesh.transport.zenoh_transport import ZenohTransport
 
 logger = logging.getLogger(__name__)
 
@@ -56,11 +53,22 @@ def _select_backend() -> str:
 
 
 def _construct(backend: str) -> MeshTransport:
-    """Build a fresh transport for *backend*."""
+    """Build a fresh transport for *backend*.
+
+    Imports are deferred (inside this function) to avoid import-time
+    circular dependencies: factory → zenoh_transport → session → factory.
+    """
     if backend == "iot":
+        from strands_robots.mesh.transport.iot_transport import IotMqttTransport
+
         return IotMqttTransport()
     if backend == "bridge":
+        from strands_robots.mesh.transport.bridge_transport import BridgeTransport
+
         return BridgeTransport()
+
+    from strands_robots.mesh.transport.zenoh_transport import ZenohTransport
+
     return ZenohTransport()
 
 

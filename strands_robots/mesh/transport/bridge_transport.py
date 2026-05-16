@@ -44,12 +44,25 @@ import logging
 import os
 import threading
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from strands_robots.mesh.transport.iot_transport import IotMqttTransport
-from strands_robots.mesh.transport.zenoh_transport import ZenohTransport
+if TYPE_CHECKING:
+    from strands_robots.mesh.transport.iot_transport import IotMqttTransport
+    from strands_robots.mesh.transport.zenoh_transport import ZenohTransport
 
 logger = logging.getLogger(__name__)
+
+
+def _get_zenoh_transport_class() -> type[ZenohTransport]:
+    """Lazily import ZenohTransport to avoid circular dependency."""
+    from strands_robots.mesh.transport.zenoh_transport import ZenohTransport as _ZT
+    return _ZT
+
+
+def _get_iot_transport_class() -> type[IotMqttTransport]:
+    """Lazily import IotMqttTransport to avoid circular dependency."""
+    from strands_robots.mesh.transport.iot_transport import IotMqttTransport as _IT
+    return _IT
 
 
 # Default bridge filter — derived from cost / latency analysis.
@@ -182,8 +195,10 @@ class BridgeTransport:
         iot: IotMqttTransport | None = None,
         bridge_suffixes: frozenset[str] | None = None,
     ) -> None:
-        self._zenoh = zenoh or ZenohTransport()
-        self._iot = iot or IotMqttTransport()
+        ZenohTransportCls = _get_zenoh_transport_class()
+        IotMqttTransportCls = _get_iot_transport_class()
+        self._zenoh = zenoh or ZenohTransportCls()
+        self._iot = iot or IotMqttTransportCls()
         self._bridge_suffixes = bridge_suffixes if bridge_suffixes is not None else _resolve_bridge_filter()
         self._zenoh_alive = False
         self._iot_alive = False
