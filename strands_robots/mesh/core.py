@@ -799,4 +799,20 @@ def init_mesh(
 
     instance = Mesh(robot, peer_id=peer_id, peer_type=peer_type)
     instance.start()
+
+    # Auto-wire IoT enrichments when the active transport supports them.
+    # Both calls are no-ops when STRANDS_MESH_BACKEND=zenoh (the default),
+    # so this is purely additive — Zenoh-LAN behaviour is unchanged.
+    if instance.alive:
+        try:
+            from strands_robots.mesh.iot import (
+                enable_camera_offload_for_mesh,
+                enable_shadow_for_mesh,
+            )
+
+            enable_shadow_for_mesh(instance)
+            enable_camera_offload_for_mesh(instance)
+        except Exception as exc:  # noqa: BLE001 — IoT enrichment is best-effort
+            logger.debug("[mesh] IoT enrichment failed (continuing): %s", exc)
+
     return instance

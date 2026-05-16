@@ -14,6 +14,7 @@ from strands_robots.mesh.transport.base import (
     Sample,
     SubHandle,
 )
+from strands_robots.mesh.transport.bridge_transport import BridgeTransport
 from strands_robots.mesh.transport.factory import (
     current_backend,
     current_transport,
@@ -29,6 +30,7 @@ __all__ = [
     "SubHandle",
     "ZenohTransport",
     "IotMqttTransport",
+    "BridgeTransport",
     "get_transport",
     "release_transport",
     "current_transport",

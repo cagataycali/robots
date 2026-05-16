@@ -49,9 +49,9 @@ import json
 import logging
 import os
 import threading
-import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -88,9 +88,9 @@ _TOPIC_POLICY: dict[str, tuple[int, bool]] = {
 # Topics we strictly never publish over MQTT, regardless of caller intent.
 # Camera frames hit MQTT's 128 KB cap; teleop input has fatal latency over WAN.
 _NEVER_BRIDGE_PREFIXES: tuple[str, ...] = (
-    "camera/",     # JPEG frames — use S3 offload (Layer 3)
-    "input/",      # 50 Hz teleop — LAN-only
-    "hand/",       # 50 Hz hand control — LAN-only
+    "camera/",  # JPEG frames — use S3 offload (Layer 3)
+    "input/",  # 50 Hz teleop — LAN-only
+    "hand/",  # 50 Hz hand control — LAN-only
 )
 
 
@@ -128,7 +128,7 @@ class _MqttSubHandle:
     is transport-agnostic.
     """
 
-    def __init__(self, transport: "IotMqttTransport", topic_filter: str) -> None:
+    def __init__(self, transport: IotMqttTransport, topic_filter: str) -> None:
         self._transport = transport
         self._topic_filter = topic_filter
         self._undeclared = False
@@ -167,9 +167,7 @@ def _zenoh_to_mqtt_filter(key_expr: str) -> str:
             # DEBUG (caller is using a Zenoh idiom that doesn't translate) and
             # leave the rest verbatim — broker will reject.
             if i != len(segments) - 1:
-                logger.debug(
-                    "Zenoh '**' is not in tail position in %r — MQTT may reject", key_expr
-                )
+                logger.debug("Zenoh '**' is not in tail position in %r — MQTT may reject", key_expr)
             out.append("#")
         elif seg == "*":
             out.append("+")
@@ -194,7 +192,7 @@ def _qos_and_retain_for(topic: str) -> tuple[int, bool]:
     if not topic.startswith("strands/"):
         return 0, False
 
-    rest = topic[len("strands/"):]
+    rest = topic[len("strands/") :]
     rest_segments = rest.split("/")
 
     # Build candidate suffixes from longest to shortest by trimming peer prefix.
@@ -260,14 +258,8 @@ class IotMqttTransport:
     ) -> None:
         self._thing_name = thing_name or os.getenv("STRANDS_IOT_THING_NAME", "")
         self._endpoint = endpoint or os.getenv("STRANDS_IOT_ENDPOINT", "")
-        self._cert_dir = Path(
-            cert_dir
-            or os.getenv("STRANDS_IOT_CERT_DIR")
-            or Path.home() / ".strands_robots" / "iot"
-        )
-        self._ca_file = ca_file or os.getenv("STRANDS_IOT_CA_FILE") or str(
-            self._cert_dir / "AmazonRootCA1.pem"
-        )
+        self._cert_dir = Path(cert_dir or os.getenv("STRANDS_IOT_CERT_DIR") or Path.home() / ".strands_robots" / "iot")
+        self._ca_file = ca_file or os.getenv("STRANDS_IOT_CA_FILE") or str(self._cert_dir / "AmazonRootCA1.pem")
         self._connect_timeout = connect_timeout
 
         self._client: Any | None = None
@@ -290,7 +282,6 @@ class IotMqttTransport:
                 return True
 
             try:
-                from awscrt import mqtt5
                 from awsiot import mqtt5_client_builder
             except ImportError:
                 logger.error(
@@ -375,7 +366,7 @@ class IotMqttTransport:
 
     @property
     def thing_name(self) -> str:
-        return self._thing_name
+        return self._thing_name or ""
 
     # Pub/Sub
 
@@ -399,9 +390,7 @@ class IotMqttTransport:
         try:
             from awscrt import mqtt5
 
-            qos_enum = (
-                mqtt5.QoS.AT_MOST_ONCE if qos == 0 else mqtt5.QoS.AT_LEAST_ONCE
-            )
+            qos_enum = mqtt5.QoS.AT_MOST_ONCE if qos == 0 else mqtt5.QoS.AT_LEAST_ONCE
             self._client.publish(
                 mqtt5.PublishPacket(
                     topic=key,
@@ -413,9 +402,7 @@ class IotMqttTransport:
         except Exception as exc:
             logger.debug("MQTT put error on %s: %s", key, exc)
 
-    def declare_subscriber(
-        self, key_expr: str, handler: Callable[[Any], None]
-    ) -> Any:
+    def declare_subscriber(self, key_expr: str, handler: Callable[[Any], None]) -> Any:
         """Subscribe to *key_expr* (Zenoh form) translated to an MQTT topic filter.
 
         Multiple subscribers to the same filter are allowed — handlers are
@@ -451,9 +438,7 @@ class IotMqttTransport:
                     self._handlers.get(topic_filter, []).remove(handler)
                     if not self._handlers.get(topic_filter):
                         self._handlers.pop(topic_filter, None)
-                raise RuntimeError(
-                    f"MQTT subscribe to {topic_filter!r} failed: {exc}"
-                ) from exc
+                raise RuntimeError(f"MQTT subscribe to {topic_filter!r} failed: {exc}") from exc
 
         return _MqttSubHandle(self, topic_filter)
 
@@ -476,9 +461,7 @@ class IotMqttTransport:
         if self._client is None:
             return
         try:
-            self._client.unsubscribe(
-                mqtt5.UnsubscribePacket(topic_filters=[topic_filter])
-            ).result(timeout=5)
+            self._client.unsubscribe(mqtt5.UnsubscribePacket(topic_filters=[topic_filter])).result(timeout=5)
         except Exception as exc:
             logger.debug("MQTT unsubscribe error on %s: %s", topic_filter, exc)
 
@@ -505,11 +488,7 @@ class IotMqttTransport:
         # filter, but our handler-dict is keyed by the original filter — so
         # we need to test each registered filter for a topic match.
         with self._lock:
-            matching = [
-                (f, list(handlers))
-                for f, handlers in self._handlers.items()
-                if _mqtt_topic_matches(f, topic)
-            ]
+            matching = [(f, list(handlers)) for f, handlers in self._handlers.items() if _mqtt_topic_matches(f, topic)]
 
         if not matching:
             return

@@ -374,9 +374,7 @@ def teardown_thing(thing_name: str, *, region: str | None = None) -> None:
     iot = boto3.client("iot", region_name=region)
 
     try:
-        principals = iot.list_thing_principals(thingName=thing_name).get(
-            "principals", []
-        )
+        principals = iot.list_thing_principals(thingName=thing_name).get("principals", [])
     except iot.exceptions.ResourceNotFoundException:
         logger.info("[teardown] thing %s not found, skipping", thing_name)
         principals = []
@@ -424,15 +422,12 @@ def _require_boto3() -> Any:
         import boto3
     except ImportError as exc:
         raise ImportError(
-            "boto3 is required for AWS IoT provisioning. "
-            "Install with: pip install 'strands-robots[mesh-iot]'"
+            "boto3 is required for AWS IoT provisioning. Install with: pip install 'strands-robots[mesh-iot]'"
         ) from exc
     return boto3
 
 
-def _ensure_thing(
-    iot: Any, thing_name: str, attributes: dict[str, str] | None
-) -> str:
+def _ensure_thing(iot: Any, thing_name: str, attributes: dict[str, str] | None) -> str:
     """Create the Thing if absent, otherwise return its ARN unchanged."""
     try:
         existing = iot.describe_thing(thingName=thing_name)

@@ -15,20 +15,16 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from strands_robots.mesh.iot.provision import (
-    DEFAULT_CERT_DIR,
+    _OPERATOR_POLICY_DOC,
+    _ROBOT_POLICY_DOC,
     OPERATOR_POLICY_NAME,
     ROBOT_POLICY_NAME,
     ProvisionedThing,
-    _OPERATOR_POLICY_DOC,
-    _ROBOT_POLICY_DOC,
-    _ensure_ca,
-    _ensure_thing,
     _ensure_policy,
+    _ensure_thing,
     provision_operator,
     provision_robot,
-    teardown_thing,
 )
-
 
 # Test fixtures
 
@@ -110,10 +106,7 @@ class TestPolicyDocuments:
         """iot:RetainPublish must be granted alongside iot:Publish for retained
         topics. Discovered as a footgun in the spike (PUBACK 135 otherwise)."""
         # Find the AllowOwnTopics statement
-        own = next(
-            s for s in _ROBOT_POLICY_DOC["Statement"]
-            if s["Sid"] == "AllowOwnTopics"
-        )
+        own = next(s for s in _ROBOT_POLICY_DOC["Statement"] if s["Sid"] == "AllowOwnTopics")
         assert "iot:RetainPublish" in own["Action"]
         assert "iot:Publish" in own["Action"]
 
@@ -122,10 +115,7 @@ class TestPolicyDocuments:
         assert "${iot:Connection.Thing.ThingName}" in doc_str
 
     def test_operator_can_publish_to_fleet(self):
-        pub = next(
-            s for s in _OPERATOR_POLICY_DOC["Statement"]
-            if s["Sid"] == "OperatorPublishToFleet"
-        )
+        pub = next(s for s in _OPERATOR_POLICY_DOC["Statement"] if s["Sid"] == "OperatorPublishToFleet")
         # Must allow operator to publish to ANY robot's /cmd
         assert any("strands/*/cmd" in r for r in pub["Resource"])
         assert any("strands/broadcast" in r for r in pub["Resource"])
@@ -133,10 +123,7 @@ class TestPolicyDocuments:
     def test_operator_response_topics_use_substitution(self):
         """OperatorReceiveResponses must use the variable so each operator
         can only see its OWN responses."""
-        resp = next(
-            s for s in _OPERATOR_POLICY_DOC["Statement"]
-            if s["Sid"] == "OperatorReceiveResponses"
-        )
+        resp = next(s for s in _OPERATOR_POLICY_DOC["Statement"] if s["Sid"] == "OperatorReceiveResponses")
         for r in resp["Resource"]:
             assert "${iot:Connection.Thing.ThingName}" in r
 
@@ -170,9 +157,7 @@ class TestEnsurePolicy:
     """``_ensure_policy`` is idempotent."""
 
     def test_creates_when_missing(self, fake_iot_client):
-        arn = _ensure_policy(
-            fake_iot_client, "strands-robot", _ROBOT_POLICY_DOC
-        )
+        arn = _ensure_policy(fake_iot_client, "strands-robot", _ROBOT_POLICY_DOC)
         fake_iot_client.create_policy.assert_called_once()
         assert "policy/strands-robot" in arn
 
@@ -182,9 +167,7 @@ class TestEnsurePolicy:
             "policyArn": "arn:aws:iot:us-west-2:123456789012:policy/strands-robot",
             "defaultVersionId": "3",
         }
-        arn = _ensure_policy(
-            fake_iot_client, "strands-robot", _ROBOT_POLICY_DOC
-        )
+        arn = _ensure_policy(fake_iot_client, "strands-robot", _ROBOT_POLICY_DOC)
         fake_iot_client.create_policy.assert_not_called()
         assert "policy/strands-robot" in arn
 
@@ -192,9 +175,7 @@ class TestEnsurePolicy:
 class TestProvisionRobot:
     """End-to-end provisioning with all AWS calls mocked."""
 
-    def test_writes_certs_with_correct_permissions(
-        self, fake_iot_client, tmp_cert_dir, monkeypatch
-    ):
+    def test_writes_certs_with_correct_permissions(self, fake_iot_client, tmp_cert_dir, monkeypatch):
         """provision_robot must write the cert + key with mode 0o600."""
         monkeypatch.setattr(
             "strands_robots.mesh.iot.provision._require_boto3",
@@ -218,9 +199,7 @@ class TestProvisionRobot:
         assert oct(result.cert_path.stat().st_mode)[-3:] == "600"
         assert oct(result.key_path.stat().st_mode)[-3:] == "600"
 
-    def test_attaches_policy_to_cert_and_thing(
-        self, fake_iot_client, tmp_cert_dir, monkeypatch
-    ):
+    def test_attaches_policy_to_cert_and_thing(self, fake_iot_client, tmp_cert_dir, monkeypatch):
         monkeypatch.setattr(
             "strands_robots.mesh.iot.provision._require_boto3",
             lambda: MagicMock(client=lambda *a, **kw: fake_iot_client),
@@ -257,9 +236,7 @@ class TestProvisionRobot:
 class TestProvisionOperator:
     """Operator provisioning uses the operator policy, not the robot policy."""
 
-    def test_uses_operator_policy(
-        self, fake_iot_client, tmp_cert_dir, monkeypatch
-    ):
+    def test_uses_operator_policy(self, fake_iot_client, tmp_cert_dir, monkeypatch):
         monkeypatch.setattr(
             "strands_robots.mesh.iot.provision._require_boto3",
             lambda: MagicMock(client=lambda *a, **kw: fake_iot_client),

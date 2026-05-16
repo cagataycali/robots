@@ -11,6 +11,7 @@ Selection is done at the first :func:`get_transport` call:
 
 - ``zenoh`` (default) — :class:`ZenohTransport`
 - ``iot``             — :class:`IotMqttTransport`
+- ``bridge``          — :class:`BridgeTransport` (Zenoh + IoT)
 
 Subsequent calls in the same process bump the refcount but do NOT switch
 backends. To change the backend, every consumer must release first
@@ -26,9 +27,9 @@ from __future__ import annotations
 import logging
 import os
 import threading
-from typing import Any
 
 from strands_robots.mesh.transport.base import MeshTransport
+from strands_robots.mesh.transport.bridge_transport import BridgeTransport
 from strands_robots.mesh.transport.iot_transport import IotMqttTransport
 from strands_robots.mesh.transport.zenoh_transport import ZenohTransport
 
@@ -48,10 +49,8 @@ def _select_backend() -> str:
     keep the mesh running rather than crash the host on a typo.
     """
     raw = os.getenv("STRANDS_MESH_BACKEND", "zenoh").strip().lower()
-    if raw not in ("zenoh", "iot"):
-        logger.warning(
-            "Unknown STRANDS_MESH_BACKEND=%r — falling back to 'zenoh'", raw
-        )
+    if raw not in ("zenoh", "iot", "bridge"):
+        logger.warning("Unknown STRANDS_MESH_BACKEND=%r — falling back to 'zenoh'", raw)
         return "zenoh"
     return raw
 
@@ -60,6 +59,8 @@ def _construct(backend: str) -> MeshTransport:
     """Build a fresh transport for *backend*."""
     if backend == "iot":
         return IotMqttTransport()
+    if backend == "bridge":
+        return BridgeTransport()
     return ZenohTransport()
 
 

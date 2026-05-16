@@ -70,15 +70,11 @@ class TestBackendSelection:
 class TestRefCounting:
     """``get_transport`` / ``release_transport`` are ref-counted."""
 
-    def test_first_call_constructs_zenoh_when_connect_fails_returns_none(
-        self, monkeypatch
-    ):
+    def test_first_call_constructs_zenoh_when_connect_fails_returns_none(self, monkeypatch):
         """If the constructed transport's connect() returns False, get_transport
         returns None and does NOT install a singleton."""
         monkeypatch.setenv("STRANDS_MESH_BACKEND", "zenoh")
-        with patch.object(
-            factory.ZenohTransport, "connect", return_value=False
-        ):
+        with patch.object(factory.ZenohTransport, "connect", return_value=False):
             result = factory.get_transport()
             assert result is None
             assert factory._TRANSPORT is None
@@ -143,12 +139,8 @@ class TestIotBackendSelection:
 
     def test_iot_backend_constructs_iot_transport(self, monkeypatch):
         monkeypatch.setenv("STRANDS_MESH_BACKEND", "iot")
-        with patch.object(
-            factory.IotMqttTransport, "connect", return_value=True
-        ):
-            with patch.object(
-                factory.IotMqttTransport, "is_alive", return_value=True
-            ):
+        with patch.object(factory.IotMqttTransport, "connect", return_value=True):
+            with patch.object(factory.IotMqttTransport, "is_alive", return_value=True):
                 t = factory.get_transport()
                 assert t is not None
                 assert isinstance(t, factory.IotMqttTransport)
@@ -156,9 +148,7 @@ class TestIotBackendSelection:
 
     def test_iot_connect_failure_returns_none(self, monkeypatch):
         monkeypatch.setenv("STRANDS_MESH_BACKEND", "iot")
-        with patch.object(
-            factory.IotMqttTransport, "connect", return_value=False
-        ):
+        with patch.object(factory.IotMqttTransport, "connect", return_value=False):
             assert factory.get_transport() is None
             assert factory._TRANSPORT is None
 
@@ -172,10 +162,7 @@ class TestThreadSafety:
         results: list = []
         with patch.object(factory.ZenohTransport, "connect", return_value=True):
             with patch.object(factory.ZenohTransport, "is_alive", return_value=True):
-                threads = [
-                    threading.Thread(target=lambda: results.append(factory.get_transport()))
-                    for _ in range(8)
-                ]
+                threads = [threading.Thread(target=lambda: results.append(factory.get_transport())) for _ in range(8)]
                 for t in threads:
                     t.start()
                 for t in threads:

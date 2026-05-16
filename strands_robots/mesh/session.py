@@ -34,6 +34,7 @@ from __future__ import annotations
 import atexit
 import json
 import logging
+import os
 import threading
 import time
 from dataclasses import dataclass, field
@@ -90,6 +91,27 @@ HAND_HZ: float = 50.0
 
 #: Map info publishing frequency (Hz).
 MAP_INFO_HZ: float = 0.2
+
+
+# Backend selection helpers — when STRANDS_MESH_BACKEND is "iot" or "bridge",
+# get_session() / put() / current_session() / session_alive() delegate to the
+# transport factory instead of opening a Zenoh session directly. The "zenoh"
+# default keeps the historical behaviour byte-for-byte so the 200+ existing
+# mesh tests pass unmodified.
+
+
+def _backend_choice() -> str:
+    """Read STRANDS_MESH_BACKEND. Defaults to ``zenoh``. Unknown values fall
+    back to ``zenoh`` (matches strands_robots.mesh.transport.factory)."""
+    raw = os.getenv("STRANDS_MESH_BACKEND", "zenoh").strip().lower()
+    if raw not in ("zenoh", "iot", "bridge"):
+        return "zenoh"
+    return raw
+
+
+def _is_transport_backend() -> bool:
+    """True when the backend is anything other than the legacy zenoh path."""
+    return _backend_choice() in ("iot", "bridge")
 
 
 # PeerInfo
@@ -216,8 +238,6 @@ def _build_config() -> Any:
     Raises:
         ImportError: If ``eclipse-zenoh`` is not installed.
     """
-    import os
-
     import zenoh
 
     config = zenoh.Config()
@@ -236,30 +256,49 @@ def _build_config() -> Any:
 
 
 def current_session() -> Any | None:
-    """Return the existing session without bumping the refcount.
+    """Return the existing session/transport without bumping the refcount.
 
-    Returns ``None`` when no session has been opened.  Callers that already
-    hold a reference (via :func:`get_session`) and just need to access the
-    underlying object — e.g. to declare a piggy-backed subscriber that lives
-    for the duration of an existing reference — should use this instead of
-    calling :func:`get_session` and immediately :func:`release_session`,
-    which is fragile across error paths.
+    Backend-aware: returns the active transport singleton when
+    ``STRANDS_MESH_BACKEND`` is ``iot`` / ``bridge``, otherwise the raw
+    Zenoh session (legacy behaviour).
     """
+    if _is_transport_backend():
+        from strands_robots.mesh.transport.factory import current_transport
+
+        return current_transport()
+
     with _SESSION_LOCK:
         return _SESSION
 
 
 def get_session() -> Any | None:
-    """Acquire the shared Zenoh session (lazy, ref-counted).
+    """Acquire the shared mesh transport (lazy, ref-counted).
 
-    * First call opens the session; subsequent calls increment the refcount.
-    * If ``eclipse-zenoh`` is not installed, returns ``None``.
-    * Thread-safe.
+    Backend selection comes from ``STRANDS_MESH_BACKEND``:
+
+    - ``zenoh`` (default) — open / reuse a ``zenoh.Session`` exactly as before.
+      Returned object is the raw session; callers can ``.declare_subscriber()``
+      on it.
+    - ``iot`` / ``bridge`` — delegate to
+      :mod:`strands_robots.mesh.transport.factory`; the returned object is an
+      :class:`~strands_robots.mesh.transport.IotMqttTransport` or
+      :class:`~strands_robots.mesh.transport.BridgeTransport` which **also**
+      exposes ``put()`` / ``declare_subscriber()`` / ``close()`` so existing
+      Mesh code works unchanged.
 
     Returns:
-        An open ``zenoh.Session``, or ``None`` if Zenoh is unavailable.
+        Backend-dependent: ``zenoh.Session``, ``IotMqttTransport``,
+        ``BridgeTransport``, or ``None`` if the chosen backend is unavailable.
     """
     global _SESSION, _SESSION_REFS  # noqa: PLW0603
+
+    if _is_transport_backend():
+        # Delegate to the transport factory. The factory holds its own
+        # refcount independently of _SESSION_REFS — that's fine, callers
+        # that release_session() will see the matching release_transport().
+        from strands_robots.mesh.transport.factory import get_transport
+
+        return get_transport()
 
     with _SESSION_LOCK:
         if _SESSION is not None:
@@ -271,8 +310,6 @@ def get_session() -> Any | None:
         except ImportError:
             logger.debug("eclipse-zenoh not installed — mesh disabled")
             return None
-
-        import os
 
         # STRANDS_MESH_PORT is read at session-open time so a process can be
         # configured via env vars without re-importing.  Bad input falls back
@@ -342,11 +379,18 @@ def get_session() -> Any | None:
 
 
 def release_session() -> None:
-    """Release one reference to the shared session.
+    """Release one reference to the shared mesh session.
 
-    When the refcount reaches zero the underlying ``zenoh.Session`` is closed.
+    Delegates to the transport factory when the active backend is
+    ``iot`` / ``bridge``; otherwise falls back to the legacy Zenoh refcount.
     """
     global _SESSION, _SESSION_REFS  # noqa: PLW0603
+
+    if _is_transport_backend():
+        from strands_robots.mesh.transport.factory import release_transport
+
+        release_transport()
+        return
 
     with _SESSION_LOCK:
         if _SESSION_REFS <= 0:
@@ -363,7 +407,13 @@ def release_session() -> None:
 
 
 def session_alive() -> bool:
-    """Return ``True`` if a Zenoh session is currently open."""
+    """Return ``True`` if the current backend's session/transport is open."""
+    if _is_transport_backend():
+        from strands_robots.mesh.transport.factory import current_transport
+
+        t = current_transport()
+        return t is not None and t.is_alive()
+
     with _SESSION_LOCK:
         return _SESSION is not None
 
@@ -374,13 +424,24 @@ def session_alive() -> bool:
 def put(key: str, data: dict[str, Any]) -> None:
     """Publish a JSON payload to the mesh.
 
-    This is a fire-and-forget helper.  If no session is open the call is a
-    no-op (no exception raised).
+    Fire-and-forget. No-op when no session/transport is open.
 
-    Args:
-        key: Zenoh key expression (e.g. ``"strands/picker/presence"``).
-        data: JSON-serialisable dictionary.
+    Backend-aware: delegates to the active transport's ``put()`` when
+    running under ``STRANDS_MESH_BACKEND=iot`` / ``bridge``; otherwise
+    encodes JSON and pushes to the Zenoh session directly (legacy path).
     """
+    if _is_transport_backend():
+        from strands_robots.mesh.transport.factory import current_transport
+
+        t = current_transport()
+        if t is None:
+            return
+        try:
+            t.put(key, data)
+        except Exception as exc:
+            logger.debug("Mesh transport put error on %s: %s", key, exc)
+        return
+
     if _SESSION is None:
         return
     try:

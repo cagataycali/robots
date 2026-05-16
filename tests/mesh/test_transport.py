@@ -8,8 +8,7 @@ delegation. The real AWS-backed integration test lives in
 
 from __future__ import annotations
 
-import threading
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -17,17 +16,15 @@ from strands_robots.mesh.transport import (
     IotMqttTransport,
     MeshTransport,
     Sample,
-    SubHandle,
     ZenohTransport,
 )
 from strands_robots.mesh.transport.iot_transport import (
-    _MqttSample,
     _mqtt_topic_matches,
+    _MqttSample,
     _qos_and_retain_for,
     _should_drop,
     _zenoh_to_mqtt_filter,
 )
-
 
 # Protocol shape
 
@@ -100,9 +97,7 @@ class TestTopicPolicy:
         assert retain is False
 
     def test_response_is_qos1(self):
-        qos, retain = _qos_and_retain_for(
-            "strands/so100-01/response/abc123def"
-        )
+        qos, retain = _qos_and_retain_for("strands/so100-01/response/abc123def")
         assert qos == 1
 
     def test_broadcast_is_qos1(self):

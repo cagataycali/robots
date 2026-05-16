@@ -28,16 +28,12 @@ import pytest
 awsiot = pytest.importorskip("awsiot", reason="awsiotsdk not installed")
 awscrt = pytest.importorskip("awscrt", reason="awscrt not installed")
 
-from strands_robots.mesh.transport import IotMqttTransport
-
+from strands_robots.mesh.transport import IotMqttTransport  # noqa: E402
 
 # Skip whole module if env not configured
 
 _ENDPOINT = os.getenv("STRANDS_IOT_ENDPOINT", "")
-_CERT_DIR = Path(
-    os.getenv("STRANDS_IOT_CERT_DIR")
-    or Path.home() / ".strands_robots" / "iot"
-)
+_CERT_DIR = Path(os.getenv("STRANDS_IOT_CERT_DIR") or Path.home() / ".strands_robots" / "iot")
 _ROBOT_THING_A = os.getenv("STRANDS_IOT_TEST_ROBOT_A", "so100-spike-01")
 _ROBOT_THING_B = os.getenv("STRANDS_IOT_TEST_ROBOT_B", "so100-spike-02")
 _OPERATOR_THING = os.getenv("STRANDS_IOT_TEST_OPERATOR", "bedrock-agent-spike-01")
@@ -52,9 +48,7 @@ def _have_certs(thing: str) -> bool:
 
 
 pytestmark = pytest.mark.skipif(
-    not _ENDPOINT
-    or not _have_certs(_ROBOT_THING_A)
-    or not _have_certs(_OPERATOR_THING),
+    not _ENDPOINT or not _have_certs(_ROBOT_THING_A) or not _have_certs(_OPERATOR_THING),
     reason=(
         f"AWS IoT integration not configured. Set STRANDS_IOT_ENDPOINT and "
         f"provide certs in {_CERT_DIR} for {_ROBOT_THING_A!r} and "
@@ -107,10 +101,7 @@ def test_robot_connects_and_publishes_presence():
     robot.put(f"strands/{_ROBOT_THING_A}/presence", presence_payload)
 
     try:
-        assert received_event.wait(10), (
-            f"Operator did not receive presence within 10s. "
-            f"Got: {[t for t, _ in received]}"
-        )
+        assert received_event.wait(10), f"Operator did not receive presence within 10s. Got: {[t for t, _ in received]}"
         # Verify the payload roundtripped intact
         matching = [p for t, p in received if p.get("robot_id") == _ROBOT_THING_A]
         assert matching
@@ -183,9 +174,7 @@ def test_operator_to_robot_rpc_roundtrip():
         response_payload.update(data)
         response_received.set()
 
-    resp_sub = operator.declare_subscriber(
-        f"strands/{_OPERATOR_THING}/response/**", on_response
-    )
+    resp_sub = operator.declare_subscriber(f"strands/{_OPERATOR_THING}/response/**", on_response)
     time.sleep(0.5)  # let subscriptions settle
 
     # Operator → Robot RPC
@@ -249,9 +238,7 @@ def test_camera_topic_is_dropped_silently():
     time.sleep(2)  # wait for round-trip if it were going to happen
 
     try:
-        assert received_camera == [], (
-            f"Camera frame leaked over MQTT! topics={received_camera}"
-        )
+        assert received_camera == [], f"Camera frame leaked over MQTT! topics={received_camera}"
     finally:
         sub.undeclare()
         robot.close()
@@ -290,9 +277,7 @@ def test_input_topic_is_dropped_silently():
     time.sleep(2)
 
     try:
-        assert received == [], (
-            f"Input topic leaked over MQTT! topics={received}"
-        )
+        assert received == [], f"Input topic leaked over MQTT! topics={received}"
     finally:
         sub.undeclare()
         robot.close()

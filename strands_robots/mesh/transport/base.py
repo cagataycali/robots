@@ -25,7 +25,8 @@ through unchanged.
 
 from __future__ import annotations
 
-from typing import Any, Callable, Protocol, runtime_checkable
+from collections.abc import Callable
+from typing import Any, Protocol, runtime_checkable
 
 
 @runtime_checkable
@@ -96,9 +97,7 @@ class MeshTransport(Protocol):
         """
         ...
 
-    def declare_subscriber(
-        self, key_expr: str, handler: Callable[[Sample], None]
-    ) -> SubHandle:
+    def declare_subscriber(self, key_expr: str, handler: Callable[[Sample], None]) -> SubHandle:
         """Subscribe to a key expression and route inbound messages to *handler*.
 
         ``handler`` receives a :class:`Sample`-shaped object. For Zenoh that's

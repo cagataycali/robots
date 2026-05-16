@@ -25,7 +25,8 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -119,9 +120,7 @@ class ZenohTransport:
 
         put(key, data)
 
-    def declare_subscriber(
-        self, key_expr: str, handler: Callable[[Any], None]
-    ) -> Any:
+    def declare_subscriber(self, key_expr: str, handler: Callable[[Any], None]) -> Any:
         """Subscribe to *key_expr* and route inbound samples to *handler*.
 
         Returns the raw ``zenoh.Subscriber`` directly — already exposes
