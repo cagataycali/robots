@@ -85,8 +85,14 @@ def fake_session() -> MagicMock:
 
 
 @pytest.fixture
-def patch_session(fake_session: MagicMock) -> Iterator[MagicMock]:
-    """Patch get_session in the mesh module so start() succeeds."""
+def patch_session(fake_session: MagicMock, monkeypatch: pytest.MonkeyPatch) -> Iterator[MagicMock]:
+    """Patch get_session in the mesh module so start() succeeds.
+
+    Also clears the ``STRANDS_MESH`` env var (set by ``tests/conftest.py``
+    for the rest of the suite) so :func:`init_mesh` is not short-circuited
+    by the global kill switch.
+    """
+    monkeypatch.delenv("STRANDS_MESH", raising=False)
     with patch("strands_robots.mesh.get_session", return_value=fake_session):
         # Also stop start() from acquiring a real session ref count by
         # patching release_session to a no-op MagicMock so we can assert calls.

@@ -51,14 +51,17 @@ Example
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import socket
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from typing import Any
 
+from strands_robots.mesh_audit import log_safety_event
 from strands_robots.mesh_session import (
     HEARTBEAT_HZ,
     STATE_HZ,
@@ -133,6 +136,21 @@ class Mesh:
         self._threads: list[threading.Thread] = []
         self._lifecycle_lock = threading.Lock()
 
+        # ── RPC correlation state (send/broadcast/tell) ───────────────
+        # _pending: turn_id -> Event used by the calling thread to wait
+        # _responses: turn_id -> list of response payloads accumulated
+        # All access must hold _rpc_lock since the response subscriber
+        # thread writes while the calling thread reads/clears.
+        self._rpc_lock = threading.Lock()
+        self._pending: dict[str, threading.Event] = {}
+        self._responses: dict[str, list[dict[str, Any]]] = {}
+
+        # ── User-facing subscribe() state ─────────────────────────────
+        # inbox[name] -> list[(topic, data)] for buffered subscribers
+        # _user_subs[name] -> the zenoh subscription handle
+        self.inbox: dict[str, list[tuple[str, dict[str, Any]]]] = {}
+        self._user_subs: dict[str, Any] = {}
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
@@ -159,11 +177,23 @@ class Mesh:
             # Command and response subscribers land in PR3; the user-facing
             # subscribe() and stream subscribers land in PR4.
             try:
+                # Presence — discover peers
                 self._subs.append(session.declare_subscriber("strands/*/presence", self._on_presence))
+                # Inbound RPC commands (directed to us)
+                self._subs.append(session.declare_subscriber(f"strands/{self.peer_id}/cmd", self._on_cmd))
+                # Broadcast commands (fan-out RPC — every peer sees them)
+                self._subs.append(session.declare_subscriber("strands/broadcast", self._on_cmd))
+                # Responses to our outgoing send/broadcast
+                self._subs.append(
+                    session.declare_subscriber(
+                        f"strands/{self.peer_id}/response/**",
+                        self._on_response,
+                    )
+                )
             except Exception as exc:  # pragma: no cover — depends on zenoh runtime
                 # If we cannot subscribe to presence we cannot discover peers,
                 # so abort cleanly rather than running half-broken.
-                logger.warning("[mesh] %s: failed to declare presence subscriber: %s", self.peer_id, exc)
+                logger.warning("[mesh] %s: failed to declare subscribers: %s", self.peer_id, exc)
                 release_session()
                 self._has_session_ref = False
                 return
@@ -214,6 +244,16 @@ class Mesh:
                 # log and continue so we always reach release_session().
                 logger.debug("[mesh] %s: subscriber undeclare failed: %s", self.peer_id, exc)
         self._subs.clear()
+        self._user_subs.clear()
+        self.inbox.clear()
+
+        # Wake any callers blocked in send/broadcast so they exit cleanly
+        # rather than waiting out a useless timeout against a dead mesh.
+        with self._rpc_lock:
+            for ev in self._pending.values():
+                ev.set()
+            self._pending.clear()
+            self._responses.clear()
 
         # Daemon threads observe ``_running == False`` on their next tick and
         # exit; we deliberately do not join them to keep stop() non-blocking.
@@ -428,6 +468,434 @@ class Mesh:
 
         # Only return a snapshot if it has more than the bookkeeping fields.
         return snapshot if len(snapshot) > 2 else None
+
+    # ------------------------------------------------------------------
+    # RPC — incoming command dispatch (PR3)
+    # ------------------------------------------------------------------
+
+    def _on_cmd(self, sample: Any) -> None:
+        """Subscriber callback for ``strands/{peer_id}/cmd`` and
+        ``strands/broadcast``.
+
+        Decodes the payload and hands the command off to a daemon thread so
+        the subscriber callback returns immediately and the dispatch logic is
+        free to call into long-running robot methods.
+
+        Self-loop guard: messages whose ``sender_id`` equals our peer_id are
+        ignored (relevant for broadcast).
+        """
+        try:
+            raw = sample.payload.to_bytes().decode()
+            data = json.loads(raw)
+        except Exception:  # noqa: BLE001 — untrusted peer payload
+            return
+
+        if data.get("sender_id") == self.peer_id:
+            return
+
+        threading.Thread(
+            target=self._exec_cmd,
+            args=(data,),
+            name=f"mesh-exec-{self.peer_id}",
+            daemon=True,
+        ).start()
+
+    def _exec_cmd(self, data: dict[str, Any]) -> None:
+        """Run dispatch for a received command and publish a response.
+
+        Errors thrown by the robot dispatch are wrapped into a ``type=error``
+        response so the caller's :meth:`send` returns a useful payload rather
+        than timing out.
+        """
+        sender = data.get("sender_id", "")
+        turn = data.get("turn_id") or uuid.uuid4().hex[:8]
+        cmd = data.get("command", data)
+        if isinstance(cmd, str):
+            # Convenience: raw string command becomes an execute action.
+            cmd = {"action": "execute", "instruction": cmd}
+
+        rkey = f"strands/{sender}/response/{turn}" if sender else None
+
+        try:
+            result = self._dispatch(cmd)
+            if rkey is not None:
+                put(
+                    rkey,
+                    {
+                        "type": "response",
+                        "responder_id": self.peer_id,
+                        "turn_id": turn,
+                        "result": result,
+                        "timestamp": time.time(),
+                    },
+                )
+        except Exception as exc:  # noqa: BLE001 — never let a thread die
+            logger.warning("[mesh] %s: dispatch error: %s", self.peer_id, exc)
+            if rkey is not None:
+                put(
+                    rkey,
+                    {
+                        "type": "error",
+                        "responder_id": self.peer_id,
+                        "turn_id": turn,
+                        "error": str(exc),
+                        "timestamp": time.time(),
+                    },
+                )
+
+    def _dispatch(self, cmd: dict[str, Any]) -> dict[str, Any]:
+        """Route a parsed command to the owning robot's methods.
+
+        The action vocabulary is intentionally small and stable:
+            - ``status``       → robot.get_task_status()
+            - ``stop``         → robot.stop_task()
+            - ``features``     → robot.get_features()
+            - ``state``        → self._read_state()
+            - ``execute`` /
+              ``start``        → robot._execute_task_sync / start_task
+            - ``step``         → robot.step(N) (sim only)
+            - ``reset``        → robot.reset() (sim only)
+
+        Unknown actions return ``{"error": "unknown action: ..."}`` rather
+        than raising so the wire protocol stays consistent.
+        """
+        action = cmd.get("action", "status")
+        r = self.robot
+
+        if action == "status":
+            if hasattr(r, "get_task_status"):
+                return dict(r.get_task_status())
+            ts = getattr(r, "_task_state", None)
+            return {"status": getattr(getattr(ts, "status", None), "value", "unknown")}
+
+        if action == "stop":
+            if hasattr(r, "stop_task"):
+                return dict(r.stop_task())
+            return {"ok": True}
+
+        if action == "features":
+            return dict(r.get_features()) if hasattr(r, "get_features") else {}
+
+        if action == "state":
+            return self._read_state() or {}
+
+        if action in ("execute", "start"):
+            instruction = cmd.get("instruction", "")
+            if not instruction:
+                return {"error": "instruction required"}
+            policy_provider = cmd.get("policy_provider", "mock")
+            policy_port = cmd.get("policy_port")
+            policy_host = cmd.get("policy_host", "localhost")
+            duration = cmd.get("duration", 30.0)
+            extra = {
+                k: cmd[k]
+                for k in (
+                    "model_path",
+                    "server_address",
+                    "policy_type",
+                    "pretrained_name_or_path",
+                )
+                if k in cmd
+            }
+            if action == "execute" and hasattr(r, "_execute_task_sync"):
+                return dict(
+                    r._execute_task_sync(instruction, policy_provider, policy_port, policy_host, duration, **extra)
+                )
+            if action == "start" and hasattr(r, "start_task"):
+                return dict(r.start_task(instruction, policy_provider, policy_port, policy_host, duration, **extra))
+
+        if action == "step" and hasattr(r, "step"):
+            return dict(r.step(cmd.get("steps", 1)))
+
+        if action == "reset" and hasattr(r, "reset"):
+            return dict(r.reset())
+
+        return {"error": f"unknown action: {action}"}
+
+    def _on_response(self, sample: Any) -> None:
+        """Subscriber callback for ``strands/{self.peer_id}/response/**``.
+
+        Looks up the matching ``turn_id`` and signals the waiting thread.
+        Responses for unknown turn_ids are dropped (the caller already
+        timed out).
+        """
+        try:
+            raw = sample.payload.to_bytes().decode()
+            data = json.loads(raw)
+        except Exception:  # noqa: BLE001 — untrusted peer payload
+            return
+
+        turn = data.get("turn_id")
+        if not isinstance(turn, str):
+            return
+
+        with self._rpc_lock:
+            event = self._pending.get(turn)
+            if event is None:
+                return
+            self._responses.setdefault(turn, []).append(data)
+        # Set outside the lock so waiting threads can re-acquire if needed.
+        event.set()
+
+    # ------------------------------------------------------------------
+    # RPC — outgoing (PR3)
+    # ------------------------------------------------------------------
+
+    def send(self, target: str, cmd: dict[str, Any], timeout: float = 30.0) -> dict[str, Any]:
+        """Send a command to a single peer and return the first response.
+
+        Args:
+            target: Peer id of the recipient.
+            cmd: Command payload — ``{"action": "...", ...}``.
+            timeout: Seconds to wait for a response.
+
+        Returns:
+            The first response dict, or ``{"status": "timeout"}`` when no
+            response arrives in time.
+        """
+        if not self._running:
+            return {"status": "error", "error": "mesh not running"}
+
+        turn = uuid.uuid4().hex[:8]
+        event = threading.Event()
+        with self._rpc_lock:
+            self._pending[turn] = event
+            self._responses[turn] = []
+
+        msg = {
+            "sender_id": self.peer_id,
+            "turn_id": turn,
+            "command": cmd,
+            "timestamp": time.time(),
+        }
+        try:
+            put(f"strands/{target}/cmd", msg)
+            event.wait(timeout=timeout)
+        finally:
+            with self._rpc_lock:
+                resps = self._responses.pop(turn, [])
+                self._pending.pop(turn, None)
+
+        return resps[0] if resps else {"status": "timeout"}
+
+    def broadcast(self, cmd: dict[str, Any], timeout: float = 5.0) -> list[dict[str, Any]]:
+        """Broadcast a command to every peer and return all collected responses.
+
+        Args:
+            cmd: Command payload — ``{"action": "...", ...}``.
+            timeout: Seconds to wait before collecting responses.
+
+        Returns:
+            All response dicts received during the timeout window. Empty
+            list when no peers respond.
+        """
+        if not self._running:
+            return []
+
+        turn = uuid.uuid4().hex[:8]
+        event = threading.Event()
+        with self._rpc_lock:
+            self._pending[turn] = event
+            self._responses[turn] = []
+
+        msg = {
+            "sender_id": self.peer_id,
+            "turn_id": turn,
+            "command": cmd,
+            "timestamp": time.time(),
+        }
+        try:
+            put("strands/broadcast", msg)
+            event.wait(timeout=timeout)
+            # Allow late stragglers a brief window after the first response.
+            time.sleep(0.3)
+        finally:
+            with self._rpc_lock:
+                resps = self._responses.pop(turn, [])
+                self._pending.pop(turn, None)
+        return resps
+
+    def tell(self, target: str, instruction: str, **kw: Any) -> dict[str, Any]:
+        """Shorthand: ask a peer to execute a natural-language instruction.
+
+        Equivalent to ``send(target, {"action": "execute", "instruction": ...})``.
+        """
+        cmd = {"action": "execute", "instruction": instruction, **kw}
+        return self.send(target, cmd)
+
+    # ------------------------------------------------------------------
+    # User subscribe / publish_step / on_stream (PR4)
+    # ------------------------------------------------------------------
+
+    def subscribe(
+        self,
+        topic: str,
+        callback: Callable[[str, dict[str, Any]], None] | None = None,
+        name: str | None = None,
+    ) -> str | None:
+        """Subscribe to any Zenoh topic and receive parsed JSON dicts.
+
+        Wildcards are supported (e.g. ``"reachy_mini/*"``,
+        ``"*/joint_positions"``).  When *callback* is ``None`` messages are
+        buffered into ``self.inbox[name]`` so the caller can poll them later.
+
+        Args:
+            topic: Zenoh key expression (supports wildcards).
+            callback: Called as ``callback(topic, data)`` on each message.
+            name: Subscription name used for inbox access and unsubscribe.
+                Defaults to *topic*.
+
+        Returns:
+            The subscription name (use it with :meth:`unsubscribe`), or
+            ``None`` when the mesh is not running.
+        """
+        if not self._running:
+            return None
+        session = get_session()
+        if session is None:
+            return None
+
+        sub_name = name or topic
+        # release one of the refs we just acquired — get_session() bumps it.
+        # We do NOT hold a separate ref for user subscriptions; they piggy-back
+        # on the mesh's main session reference. release here keeps the count
+        # balanced (start() acquired exactly one ref).
+        release_session()
+
+        self.inbox.setdefault(sub_name, [])
+
+        def handler(sample: Any) -> None:
+            try:
+                key = str(sample.key_expr)
+                raw = sample.payload.to_bytes().decode()
+                try:
+                    data = json.loads(raw)
+                except json.JSONDecodeError:
+                    data = {"raw": raw}
+                if callback is not None:
+                    callback(key, data)
+                else:
+                    buf = self.inbox.setdefault(sub_name, [])
+                    buf.append((key, data))
+                    # Cap buffer at 1000 — slice to last 500 to amortise.
+                    if len(buf) > 1000:
+                        del buf[: len(buf) - 500]
+            except Exception as exc:  # noqa: BLE001 — best-effort callback
+                logger.debug("[mesh] %s: subscribe handler error on %s: %s", self.peer_id, topic, exc)
+
+        try:
+            sub = session.declare_subscriber(topic, handler)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[mesh] %s: declare_subscriber(%s) failed: %s", self.peer_id, topic, exc)
+            return None
+
+        self._subs.append(sub)
+        self._user_subs[sub_name] = sub
+        logger.info("[sub] %s subscribed to: %s", self.peer_id, topic)
+        return sub_name
+
+    def unsubscribe(self, name: str) -> None:
+        """Unsubscribe from a topic by *name*.
+
+        Idempotent — unknown names are ignored.
+        """
+        sub = self._user_subs.pop(name, None)
+        if sub is None:
+            return
+        try:
+            sub.undeclare()
+        except Exception as exc:  # noqa: BLE001 — best-effort teardown
+            logger.debug("[mesh] %s: subscriber undeclare(%s) failed: %s", self.peer_id, name, exc)
+        try:
+            self._subs.remove(sub)
+        except ValueError:
+            pass
+        self.inbox.pop(name, None)
+
+    def publish_step(
+        self,
+        step: int,
+        observation: dict[str, Any],
+        action: dict[str, Any],
+        instruction: str = "",
+        policy: str = "",
+    ) -> None:
+        """Publish one VLA execution step to the mesh.
+
+        Camera frames and other tensors with more than one dimension are
+        filtered out so consumers can subscribe to the stream without paying
+        the bandwidth cost of video.
+        """
+        if not self._running:
+            return
+
+        obs_numeric: dict[str, Any] = {}
+        for key, value in observation.items():
+            shape = getattr(value, "shape", None)
+            if shape is not None and len(shape) > 1:
+                continue  # skip images / tensors
+            if hasattr(value, "tolist"):
+                obs_numeric[key] = value.tolist()
+            elif isinstance(value, (int, float, bool, str)):
+                obs_numeric[key] = value
+            elif isinstance(value, (list, tuple)) and len(value) < 100:
+                obs_numeric[key] = list(value)
+
+        act_numeric: dict[str, Any] = {}
+        for key, value in action.items():
+            if hasattr(value, "tolist"):
+                act_numeric[key] = value.tolist()
+            elif isinstance(value, (int, float, bool, str, list, tuple)):
+                act_numeric[key] = value if not isinstance(value, tuple) else list(value)
+
+        put(
+            f"strands/{self.peer_id}/stream",
+            {
+                "peer_id": self.peer_id,
+                "step": step,
+                "t": time.time(),
+                "instruction": instruction,
+                "policy": policy,
+                "observation": obs_numeric,
+                "action": act_numeric,
+            },
+        )
+
+    def on_stream(
+        self,
+        peer_id: str,
+        callback: Callable[[str, dict[str, Any]], None] | None = None,
+    ) -> str | None:
+        """Subscribe to another peer's VLA execution stream.
+
+        Convenience wrapper around :meth:`subscribe` that subscribes to
+        ``strands/{peer_id}/stream`` under the name ``stream:{peer_id}``.
+        """
+        return self.subscribe(f"strands/{peer_id}/stream", callback, name=f"stream:{peer_id}")
+
+    # ------------------------------------------------------------------
+    # Safety — emergency stop with audit log (PR5)
+    # ------------------------------------------------------------------
+
+    def emergency_stop(self) -> list[dict[str, Any]]:
+        """Broadcast a stop command to every peer and audit the event.
+
+        The audit log lives at ``~/.strands_robots/mesh_audit.jsonl`` (override
+        with ``STRANDS_MESH_AUDIT_DIR``) with mode ``0o600``.
+        """
+        responses = self.broadcast({"action": "stop"}, timeout=3.0)
+        try:
+            log_safety_event(
+                event_type="emergency_stop",
+                peer_id=self.peer_id,
+                payload={
+                    "sender_id": self.peer_id,
+                    "responses_received": len(responses),
+                },
+            )
+        except Exception as exc:  # noqa: BLE001 — audit log must never break stop
+            logger.warning("[mesh] audit log write failed: %s", exc)
+        return responses
 
 
 # ---------------------------------------------------------------------------
