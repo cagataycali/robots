@@ -61,6 +61,37 @@
                 "lerobot"
             ],
             "is_hf_default": true
+        },
+        "cosmos_predict": {
+            "module": "strands_robots.policies.cosmos_predict",
+            "class": "CosmosPredictPolicy",
+            "description": "NVIDIA Cosmos-Predict2.5 robot policy (direct from nvidia-cosmos)",
+            "requires": [],
+            "config_keys": [
+                "model_id",
+                "suite",
+                "device",
+                "chunk_size",
+                "num_denoising_steps",
+                "server_url"
+            ],
+            "defaults": {
+                "model_id": "nvidia/Cosmos-Policy-LIBERO-Predict2-2B",
+                "suite": "libero"
+            },
+            "shorthands": [
+                "cosmos_predict",
+                "cosmos",
+                "predict2.5",
+                "cosmos-predict"
+            ],
+            "hf_orgs": [
+                "nvidia"
+            ],
+            "model_id_overrides": [
+                "nvidia/Cosmos-Policy-LIBERO-Predict2-2B",
+                "nvidia/Cosmos-Policy-RoboCasa-Predict2-2B"
+            ]
         }
     }
 }
