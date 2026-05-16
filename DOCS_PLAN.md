@@ -96,7 +96,7 @@ When all 39 boxes are ticked, run a final `mkdocs build --strict --clean`, fix a
 ## Cycle checklist (work through top-down)
 
 ### Foundation (cycles 1-2)
-- [ ] **Cycle 1** — touch all 39 placeholder files so `mkdocs build` doesn't 404. Write index.md (page 01) AND learning-path.md (page 02). Build clean.
+- [x] **Cycle 1** — touch all 39 placeholder files so `mkdocs build` doesn't 404. Write index.md (page 01) AND learning-path.md (page 02). Build clean.
 - [ ] **Cycle 2** — write architecture.md (page 36). This is the single source of truth diagram every other page references.
 
 ### Tutorial track (cycles 3-7) — high impact, written first
