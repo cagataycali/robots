@@ -22,28 +22,29 @@ import gc
 import json
 import os
 import sys
-import tempfile
 import threading
 import time
 import weakref
-from collections.abc import Iterator
 from types import SimpleNamespace
-from typing import Any
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 # Correct import paths after refactor (commit 8f0eb6c)
-from strands_robots.mesh import Mesh, InputPublisher, InputReceiver, get_local_robots, init_mesh
+from strands_robots.mesh import InputPublisher, InputReceiver, Mesh, get_local_robots, init_mesh
 from strands_robots.mesh import core as mesh_core
 from strands_robots.mesh import session as mesh_session
+from strands_robots.mesh.audit import log_safety_event, read_audit_log
 from strands_robots.mesh.session import (
-    PeerInfo, clear_peers, get_peer, get_peers, peer_count,
-    prune_peers, put, update_peer, get_session, release_session,
-    session_alive, current_session,
+    clear_peers,
+    get_peer,
+    get_session,
+    prune_peers,
+    put,
+    release_session,
+    session_alive,
+    update_peer,
 )
-from strands_robots.mesh.audit import audit_log_path, log_safety_event, read_audit_log
-
 
 # ===========================================================================
 # Fixtures
@@ -305,7 +306,7 @@ class TestSessionRobustness:
         with patch.dict("sys.modules", {"zenoh": mock_zenoh}):
             os.environ.pop("ZENOH_CONNECT", None)
             os.environ.pop("ZENOH_LISTEN", None)
-            s = get_session()
+            get_session()  # verify no raise
         # It should have warned and used 7447
 
 
@@ -396,7 +397,7 @@ class TestMeshLifecycleEdge:
         """After stop(), the Mesh should be GC-able (no circular refs)."""
         m = Mesh(FakeRobot(), peer_id="gc-test")
         m.start()
-        ref = weakref.ref(m)
+        _ref = weakref.ref(m)  # noqa: F841
         m.stop()
         del m
         gc.collect()
@@ -990,7 +991,7 @@ class TestSubscribeRaces:
         m = Mesh(FakeRobot(), peer_id="inbox-overflow")
         m.start()
 
-        name = m.subscribe("overflow/topic", name="overflow")
+        m.subscribe("overflow/topic", name="overflow")
         handler = mock_session.declare_subscriber.call_args_list[-1].args[1]
 
         # Pump 1200 messages
