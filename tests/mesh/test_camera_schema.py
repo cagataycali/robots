@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -27,7 +26,7 @@ def fake_robot_with_camera():
 def _make_frame(h=4, w=4, c=3):
     import numpy as np
 
-    return (np.arange(h * w * c, dtype=np.uint8).reshape(h, w, c))
+    return np.arange(h * w * c, dtype=np.uint8).reshape(h, w, c)
 
 
 def test_presence_includes_cameras(fake_robot_with_camera):
