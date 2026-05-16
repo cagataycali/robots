@@ -237,7 +237,7 @@ def use_dds(
                 import zenoh
                 zenoh_key = f"rt{topic}" if topic.startswith("/") else f"rt/{topic}"
                 session = zenoh.open(zenoh.Config())
-                samples = []
+                samples: list[dict] = []
                 try:
                     sub = session.declare_subscriber(zenoh_key)
                     deadline = time.time() + timeout_s
@@ -283,10 +283,10 @@ def use_dds(
                             "Specify msg_type parameter."
                         )
                 cmd = ["ros2", "topic", "pub", "--once", topic, msg_type, message]
-                output = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-                if output.returncode == 0:
+                proc = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+                if proc.returncode == 0:
                     return _ok(f"Published to {topic} ({msg_type}): {message}")
-                return _err(f"Publish failed: {output.stderr}")
+                return _err(f"Publish failed: {proc.stderr}")
             else:
                 # Via Zenoh
                 import zenoh
@@ -323,12 +323,12 @@ def use_dds(
                     cmd.append(msg_type)
                 if message:
                     cmd.append(message)
-                output = subprocess.run(
+                proc = subprocess.run(
                     cmd, capture_output=True, text=True, timeout=timeout_s + 5
                 )
-                if output.returncode == 0:
-                    return _ok(f"Service call {service}:\n{output.stdout}")
-                return _err(f"Service call failed: {output.stderr}")
+                if proc.returncode == 0:
+                    return _ok(f"Service call {service}:\n{proc.stdout}")
+                return _err(f"Service call failed: {proc.stderr}")
             else:
                 return _err(
                     "Service calls via Zenoh bridge not yet supported. "
