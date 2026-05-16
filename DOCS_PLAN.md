@@ -97,7 +97,7 @@ When all 39 boxes are ticked, run a final `mkdocs build --strict --clean`, fix a
 
 ### Foundation (cycles 1-2)
 - [x] **Cycle 1** — touch all 39 placeholder files so `mkdocs build` doesn't 404. Write index.md (page 01) AND learning-path.md (page 02). Build clean.
-- [ ] **Cycle 2** — write architecture.md (page 36). This is the single source of truth diagram every other page references.
+- [x] **Cycle 2** — write architecture.md (page 36). This is the single source of truth diagram every other page references.
 
 ### Tutorial track (cycles 3-7) — high impact, written first
 - [ ] **Cycle 3** — tutorial/index.md + 01-your-first-robot.md + 02-simulation.md
