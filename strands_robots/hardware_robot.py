@@ -115,6 +115,12 @@ class Robot(AgentTool):
         if data_config:
             logger.info("Data config: %s", data_config)
 
+        # Mesh attributes — populated by the Robot() factory after init.
+        # Plain attributes (not properties) so test code can swap a fake mesh
+        # in without going through the factory.
+        self.mesh: Any = None
+        self.peer_id: str | None = None
+
     def _initialize_robot(
         self, robot: LeRobotRobot | RobotConfig | str, cameras: dict[str, dict[str, Any]] | None, **kwargs: Any
     ) -> LeRobotRobot:
