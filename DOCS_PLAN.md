@@ -123,7 +123,7 @@ When all 39 boxes are ticked, run a final `mkdocs build --strict --clean`, fix a
 - [x] **Cycle 17** — Walk every page, replace TODOs and stub code with real working examples. Add Run-It-Yourself tabs.
 - [x] **Cycle 18** — Add a "What's New" admonition at top of index pointing to recent merges (Robot factory, mesh, libero benchmark, etc.). Verify every robot in `registry/robots.json` is listed in the right category page with its render image.
 - [x] **Cycle 19** — `mkdocs build --strict --clean`. Open every warning. Fix every broken link, every missing image, every orphan page. Run `mkdocs serve` once and visually walk the nav tree.
-- [ ] **Cycle 20** — Final pass: write the PR description, push to fork, open PR. End with `[AMBIENT_DONE]`.
+- [x] **Cycle 20** — Final pass: write the PR description, push to fork, open PR. End with `[AMBIENT_DONE]`.
 
 ## Code-grounding cheatsheet (open these files when writing)
 
@@ -140,9 +140,9 @@ When all 39 boxes are ticked, run a final `mkdocs build --strict --clean`, fix a
 
 ## Done definition
 
-- [ ] `mkdocs build --strict --clean` exits 0 with zero warnings
-- [ ] Every page in the site map has substantive content (>30 non-blank lines)
-- [ ] Every code block compiles (smoke-tested)
-- [ ] Every robot in `registry/robots.json` appears on its category page
-- [ ] PR opened against `strands-labs/robots:main` from `cagataycali:docs/mkdocs-site`
-- [ ] Final response on the autonomous loop ends with `[AMBIENT_DONE]`
+- [x] `mkdocs build --strict --clean` exits 0 with zero warnings
+- [x] Every page in the site map has substantive content (>30 non-blank lines)
+- [x] Every code block compiles (smoke-tested)
+- [x] Every robot in `registry/robots.json` appears on its category page
+- [x] PR opened against `strands-labs/robots:main` from `cagataycali:docs/mkdocs-site` (#160)
+- [x] Final response on the autonomous loop ends with `[AMBIENT_DONE]`
