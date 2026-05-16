@@ -116,7 +116,7 @@ When all 39 boxes are ticked, run a final `mkdocs build --strict --clean`, fix a
 ### Hardware + ops (cycles 13-15)
 - [x] **Cycle 13** — hardware/{robot-control,tools}.md
 - [x] **Cycle 14** — recording.md + training/overview.md + examples/overview.md
-- [ ] **Cycle 15** — api-reference.md (auto-generated from docstrings, per-module)
+- [x] **Cycle 15** — api-reference.md (auto-generated from docstrings, per-module)
 
 ### Polish (cycles 16-20)
 - [ ] **Cycle 16** — contributing.md + troubleshooting.md. Verify every internal link resolves.
