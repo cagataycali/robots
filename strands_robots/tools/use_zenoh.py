@@ -52,11 +52,11 @@ def _ok(text: str) -> dict[str, Any]:
     return {"status": "success", "content": [{"text": text}]}
 
 
-def _get_session(config: str | None = None):
+def _get_session(config: str | None = None) -> Any:
     """Get or create a Zenoh session (cached)."""
     global _SESSION, _SESSION_CONFIG
 
-    zenoh = require_optional("zenoh", package="eclipse-zenoh", extra="mesh")
+    zenoh: Any = require_optional("zenoh", pip_install="eclipse-zenoh", extra="mesh")
 
     if _SESSION is not None and _SESSION_CONFIG == config:
         return _SESSION
@@ -126,7 +126,7 @@ def use_zenoh(
         Dict with status and content
     """
     try:
-        zenoh = require_optional("zenoh", package="eclipse-zenoh", extra="mesh")
+        zenoh: Any = require_optional("zenoh", pip_install="eclipse-zenoh", extra="mesh")
     except Exception as e:
         return _err(f"Zenoh not available: {e}. Install with: pip install eclipse-zenoh")
 
@@ -176,7 +176,7 @@ def use_zenoh(
                         scout_results.append({
                             "zid": str(hello.zid),
                             "whatami": str(hello.whatami),
-                            "locators": [str(l) for l in hello.locators],
+                            "locators": [str(loc) for loc in hello.locators],
                         })
                     if scout_results:
                         return _ok(
