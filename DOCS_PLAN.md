@@ -103,7 +103,7 @@ When all 39 boxes are ticked, run a final `mkdocs build --strict --clean`, fix a
 - [x] **Cycle 3** — tutorial/index.md + 01-your-first-robot.md + 02-simulation.md
 - [x] **Cycle 4** — tutorial/03-policies.md + 04-agents.md
 - [x] **Cycle 5** — tutorial/05-multi-robot.md (uses mesh from PR101 if merged, else stub) + 06-recording.md
-- [ ] **Cycle 6** — tutorial/07-training.md + 08-real-hardware.md
+- [x] **Cycle 6** — tutorial/07-training.md + 08-real-hardware.md
 - [ ] **Cycle 7** — tutorial/09-advanced.md (covers Robot factory internals, custom backends, custom data_configs)
 
 ### Reference (cycles 8-12)
