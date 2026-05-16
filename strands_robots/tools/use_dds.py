@@ -51,6 +51,7 @@ def _has_rclpy() -> bool:
     """Check if rclpy is available."""
     try:
         import rclpy  # noqa: F401
+
         return True
     except ImportError:
         return False
@@ -61,7 +62,8 @@ def _has_ros2_cli() -> bool:
     try:
         result = subprocess.run(
             ["ros2", "--help"],
-            capture_output=True, timeout=5,
+            capture_output=True,
+            timeout=5,
         )
         return result.returncode == 0
     except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -72,6 +74,7 @@ def _has_zenoh_bridge() -> bool:
     """Check if zenoh-bridge-ros2dds is available or Zenoh DDS plugin."""
     try:
         import zenoh  # noqa: F401
+
         return True
     except ImportError:
         return False
@@ -116,10 +119,12 @@ def _zenoh_ros2_get(key_pattern: str, timeout_ms: int = 3000) -> list[dict]:
                     value = json.loads(payload.decode("utf-8"))
                 except (json.JSONDecodeError, UnicodeDecodeError):
                     value = payload.hex()
-                results.append({
-                    "key": str(reply.ok.key_expr),
-                    "value": value,
-                })
+                results.append(
+                    {
+                        "key": str(reply.ok.key_expr),
+                        "value": value,
+                    }
+                )
         return results
     finally:
         session.close()
@@ -200,10 +205,7 @@ def use_dds(
                     results = _zenoh_ros2_get("@ros2/topic/**", timeout_ms)
 
                 if not results:
-                    return _ok(
-                        "No ROS 2 topics found via Zenoh.\n"
-                        "Ensure zenoh-bridge-ros2dds is running."
-                    )
+                    return _ok("No ROS 2 topics found via Zenoh.\nEnsure zenoh-bridge-ros2dds is running.")
                 topics = sorted(set(r["key"] for r in results))
                 text = f"ROS 2 Topics via Zenoh ({len(topics)}):\n"
                 for t in topics:
@@ -235,6 +237,7 @@ def use_dds(
             else:
                 # Via Zenoh - subscribe to rt/<topic>
                 import zenoh
+
                 zenoh_key = f"rt{topic}" if topic.startswith("/") else f"rt/{topic}"
                 session = zenoh.open(zenoh.Config())
                 samples: list[dict] = []
@@ -278,10 +281,7 @@ def use_dds(
                         type_output = _ros2_cli(["topic", "type", topic], timeout=5)
                         msg_type = type_output.strip()
                     except Exception:
-                        return _err(
-                            f"Cannot infer message type for {topic}. "
-                            "Specify msg_type parameter."
-                        )
+                        return _err(f"Cannot infer message type for {topic}. Specify msg_type parameter.")
                 cmd = ["ros2", "topic", "pub", "--once", topic, msg_type, message]
                 proc = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
                 if proc.returncode == 0:
@@ -290,6 +290,7 @@ def use_dds(
             else:
                 # Via Zenoh
                 import zenoh
+
                 zenoh_key = f"rt{topic}" if topic.startswith("/") else f"rt/{topic}"
                 session = zenoh.open(zenoh.Config())
                 try:
@@ -323,9 +324,7 @@ def use_dds(
                     cmd.append(msg_type)
                 if message:
                     cmd.append(message)
-                proc = subprocess.run(
-                    cmd, capture_output=True, text=True, timeout=timeout_s + 5
-                )
+                proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_s + 5)
                 if proc.returncode == 0:
                     return _ok(f"Service call {service}:\n{proc.stdout}")
                 return _err(f"Service call failed: {proc.stderr}")
@@ -360,14 +359,12 @@ def use_dds(
                     return _err("Provide 'topic', 'node', or 'service' for info action")
             else:
                 return _ok(
-                    "Detailed info requires ros2 CLI.\n"
-                    "Use use_zenoh(action='get', key='...') for direct queries."
+                    "Detailed info requires ros2 CLI.\nUse use_zenoh(action='get', key='...') for direct queries."
                 )
 
         else:
             return _err(
-                f"Unknown action: '{action}'. "
-                "Valid: topics, echo, publish, services, call_service, nodes, info"
+                f"Unknown action: '{action}'. Valid: topics, echo, publish, services, call_service, nodes, info"
             )
 
     except Exception as e:
