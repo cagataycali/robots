@@ -19,6 +19,7 @@ API plus a few discovery helpers:
 ``subscribe``       ``mesh.subscribe(target, name=...)`` (buffer mode)
 ``watch``           ``mesh.on_stream(target)``
 ``inbox``           Read buffered messages from a subscription
+``unsubscribe``     Unsubscribe from a topic by name
 ==================  ===================================================
 
 The tool always returns a Strands-compatible dict::
@@ -97,7 +98,7 @@ def robot_mesh(
     Args:
         action: One of ``peers`` / ``status`` / ``tell`` / ``send`` /
             ``broadcast`` / ``stop`` / ``emergency_stop`` / ``subscribe`` /
-            ``watch`` / ``inbox``.
+            ``unsubscribe`` / ``watch`` / ``inbox``.
         target: Peer id (for ``tell`` / ``send`` / ``stop`` / ``watch``) or
             Zenoh topic pattern (for ``subscribe``).
         instruction: Natural-language instruction for ``tell``.
@@ -253,9 +254,17 @@ def robot_mesh(
             text += f"  - {topic}: {json.dumps(data, default=str)[:200]}\n"
         return _ok(text.rstrip())
 
+    # ── action: unsubscribe ────────────────────────────────────────────────
+    if action == "unsubscribe":
+        sub_name = name or target
+        if not sub_name:
+            return _err("unsubscribe requires name (or target)")
+        mesh.unsubscribe(sub_name)
+        return _ok(f"[unsub] unsubscribed from '{sub_name}'")
+
     return _err(
         f"unknown action: {action!r}. Valid: peers, status, tell, send, "
-        "broadcast, stop, emergency_stop, subscribe, watch, inbox."
+        "broadcast, stop, emergency_stop, subscribe, unsubscribe, watch, inbox."
     )
 
 
