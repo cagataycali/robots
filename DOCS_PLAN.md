@@ -109,7 +109,7 @@ When all 39 boxes are ticked, run a final `mkdocs build --strict --clean`, fix a
 ### Reference (cycles 8-12)
 - [x] **Cycle 8** — getting-started/* (quickstart, installation, robot-factory)
 - [x] **Cycle 9** — robots/index.md + robots/arms.md
-- [ ] **Cycle 10** — robots/{bimanual,hands,humanoids,mobile}.md
+- [x] **Cycle 10** — robots/{bimanual,hands,humanoids,mobile}.md
 - [ ] **Cycle 11** — simulation/{overview,world-building,domain-randomization,gymnasium-env}.md
 - [ ] **Cycle 12** — policies/{overview,groot,lerobot-local,custom-policies,gear-sonic}.md
 
