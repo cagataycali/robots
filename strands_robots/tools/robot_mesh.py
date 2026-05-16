@@ -49,22 +49,33 @@ def _ok(text: str) -> dict[str, Any]:
 
 
 def _resolve_mesh(target: str) -> Any | None:
-    """Return any local Mesh in this process — used as the gateway for RPC.
+    """Return a local Mesh in this process to use as the gateway for RPC.
 
     The agent does not need to know its own peer_id: any local mesh in
     ``_LOCAL_ROBOTS`` is functionally equivalent for outbound calls because
     they all share the same Zenoh session.
 
-    A specific peer can be selected via *target* matching the local peer_id.
+    Important: when *target* matches a local peer_id, we deliberately pick a
+    *different* local mesh as the gateway. Using the target as its own
+    gateway triggers ``_on_cmd``'s self-loop drop (``sender_id == peer_id``)
+    and the call silently times out. When the target IS the only local mesh,
+    we still return it — the caller will get a timeout, which is the
+    expected behaviour for "send to yourself".
     """
     from strands_robots.mesh import get_local_robots
 
     locals_ = get_local_robots()
     if not locals_:
         return None
-    if target and target in locals_:
-        return locals_[target]
-    # Otherwise return any one — Mesh.send/broadcast all use the shared session.
+    if target:
+        # Prefer a local mesh whose peer_id is NOT the target so we don't
+        # send-to-self via the target's own session.
+        for pid, m in locals_.items():
+            if pid != target:
+                return m
+    # Either no target was specified or every local mesh IS the target —
+    # fall back to "any one" (matching the original behaviour for the
+    # single-mesh case).
     return next(iter(locals_.values()))
 
 
