@@ -239,6 +239,125 @@ agent("Use my_arm to pick up the red block using GR00T policy on port 8000")
               └────────────────────────────────┘
 ```
 
+## Mesh Networking
+
+Every `Robot()` and `Simulation()` is automatically a peer on a peer-to-peer
+[Zenoh](https://zenoh.io) mesh. Robots, simulations, and agents on the same
+LAN discover each other with zero configuration; cross-network discovery
+works through any Zenoh router or Cloudflare/Tailscale tunnel.
+
+```python
+from strands_robots import Robot
+
+# Each Robot() auto-joins the mesh — no extra setup
+sim_a = Robot("so100")          # process A
+sim_b = Robot("so100")          # process B (same machine or remote)
+
+print(sim_a.mesh.peers)         # discovers sim_b within ~1s
+sim_a.mesh.tell(sim_b.mesh.peer_id, "pick up the cube")
+sim_a.mesh.emergency_stop()     # broadcast E-STOP, audited to ~/.strands_robots/mesh_audit.jsonl
+```
+
+### What every peer publishes
+
+```
+strands/{peer_id}/presence       — 2 Hz heartbeat (peer discovery)
+strands/{peer_id}/state          — 10 Hz joints / sim time / task status
+strands/{peer_id}/cmd            — incoming RPC commands
+strands/{peer_id}/response/{turn}— RPC replies (turn_id correlated)
+strands/{peer_id}/stream         — VLA execution steps (publish_step)
+strands/{peer_id}/pose           — SE(3) pose from SLAM/odometry/VIO
+strands/{peer_id}/imu            — Roll/pitch/yaw, gyro, accel
+strands/{peer_id}/odom           — Dead-reckoning odometry
+strands/{peer_id}/health         — Battery, CPU, memory, temps
+strands/{peer_id}/lidar/summary  — Point cloud stats
+strands/{peer_id}/hand/{name}/state — End-effector joints / force
+strands/{peer_id}/map/info       — Map metadata
+strands/{peer_id}/input/{device} — Teleoperator action stream
+strands/broadcast                — Fan-out RPC to every peer
+```
+
+Sensor topics auto-publish only when the host robot exposes the relevant
+attribute (e.g. `robot._imu`, `robot._lidar_summary`) — zero cost when unused.
+
+### Mesh-aware agent tool
+
+The `robot_mesh` tool exposes the mesh to a Strands agent through 10 actions:
+
+| Action | What it does |
+|--------|--------------|
+| `peers` | List local + remote peers |
+| `status` | One-line mesh summary |
+| `tell` | Natural-language instruction to a specific peer |
+| `send` | Raw JSON RPC command to a peer |
+| `broadcast` | Fan-out RPC to every peer |
+| `stop` | Stop a single peer's running task |
+| `emergency_stop` | Broadcast E-STOP (audited to disk) |
+| `subscribe` | Subscribe to any Zenoh topic (wildcards supported) |
+| `watch` | Watch another peer's VLA execution stream |
+| `inbox` | Read buffered messages from a subscription |
+
+```python
+from strands import Agent
+from strands_robots import Robot
+from strands_robots.tools import robot_mesh
+
+sim = Robot("so100")
+agent = Agent(tools=[sim, robot_mesh])
+agent("Find every robot on the mesh and ask each one to report its status")
+```
+
+### Teleoperation over the mesh
+
+Stream a leader arm's joint positions to a follower on another machine via
+`InputPublisher` / `InputReceiver`:
+
+```python
+from strands_robots.mesh import InputPublisher, InputReceiver
+
+# Machine A — leader arm publishes at 50 Hz
+leader = Robot("so100", mode="real")
+pub = InputPublisher(leader.mesh, leader_teleoperator, device_name="leader")
+pub.start()
+
+# Machine B — follower receives + applies actions
+follower = Robot("so100", mode="real")
+rec = InputReceiver(follower.mesh, follower.robot, source_peer_id=leader.mesh.peer_id)
+rec.start()
+```
+
+Topic schema for `strands/{peer_id}/input/{device}`:
+
+```json
+{
+    "peer_id": "leader-a1b2c3d4",
+    "device": "leader",
+    "method": "arm",
+    "t": 1736975234.123,
+    "seq": 42,
+    "action": {"shoulder.pos": 1.23, "elbow.pos": -0.5, "gripper.pos": 0.0},
+    "events": {"terminate_episode": false}
+}
+```
+
+### Safety: emergency stop with audit log
+
+`mesh.emergency_stop()` broadcasts `{"action": "stop"}` to every peer and
+appends a tamper-evident record to `~/.strands_robots/mesh_audit.jsonl`
+(file mode `0o600`, parent dir `0o700`). Override the location with
+`STRANDS_MESH_AUDIT_DIR`.
+
+### Disable
+
+| How | Scope |
+|-----|-------|
+| `STRANDS_MESH=false` | Process-wide kill switch |
+| `Robot("so100", mesh=False)` | Per-robot opt-out |
+
+`pip install strands-robots` is enough — Zenoh installs as part of the
+default `[mesh]` extra. Use `pip install strands-robots[mesh]` explicitly
+if you've pinned `strands-robots` without extras.
+
 ## Simulation Features
 
 The MuJoCo simulation backend exposes **35 actions** as a Strands AgentTool:
@@ -425,7 +544,24 @@ See [AGENTS.md](AGENTS.md) for detailed testing guide, manual E2E validation scr
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `STRANDS_ASSETS_DIR` | Custom directory for robot model assets (MJCF, meshes) | `~/.strands_robots/assets/` |
+| `STRANDS_ROBOT_MODE` | Default mode for `Robot()`: `sim` / `real` / `auto` | `sim` |
+| `STRANDS_TRUST_REMOTE_CODE` | Allow downloading + executing model code | `false` |
+| `MUJOCO_GL` | GL backend for the MuJoCo renderer | auto |
 | `GROOT_API_TOKEN` | API token for GR00T inference service | - |
+| `STRANDS_MESH` | Set to `false` to disable Zenoh mesh networking globally | `true` |
+| `STRANDS_MESH_PORT` | TCP port for the local Zenoh router (validated, falls back to default on bad input) | `7447` |
+| `ZENOH_CONNECT` | Comma-separated remote Zenoh endpoints to connect to | - |
+| `ZENOH_LISTEN` | Comma-separated endpoints for the local listener | - |
+| `STRANDS_MESH_AUDIT_DIR` | Directory for the safety audit log `mesh_audit.jsonl` | `~/.strands_robots/` |
+| `STRANDS_MESH_POSE_HZ` | Pose-loop frequency (0 disables) | `10.0` |
+| `STRANDS_MESH_IMU_HZ` | IMU-loop frequency (0 disables) | `10.0` |
+| `STRANDS_MESH_ODOM_HZ` | Odometry-loop frequency (0 disables) | `10.0` |
+| `STRANDS_MESH_HEALTH_HZ` | Health-loop frequency (0 disables) | `0.5` |
+| `STRANDS_MESH_LIDAR_SUMMARY_HZ` | LiDAR summary frequency | `5.0` |
+| `STRANDS_MESH_LIDAR_STATE_HZ` | LiDAR state frequency | `1.0` |
+| `STRANDS_MESH_HAND_HZ` | End-effector state frequency | `50.0` |
+| `STRANDS_MESH_MAP_INFO_HZ` | Map metadata frequency | `0.2` |
+| `STRANDS_MESH_CAMERA_HZ` | Camera-frame publish rate (0 disables; opt-in) | `0` |
 
 ### Cache Directory
 
