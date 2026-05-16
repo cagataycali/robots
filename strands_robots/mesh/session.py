@@ -128,6 +128,9 @@ class PeerInfo:
             **self.caps,
         }
 
+    def __repr__(self) -> str:
+        return f"PeerInfo(peer_id={self.peer_id!r}, type={self.peer_type!r}, age={self.age:.1f}s)"
+
 
 # Peer registry — shared across all Mesh instances in the same process
 

@@ -63,6 +63,10 @@ class InputPublisher:
         self._frame_count = 0
         self._start_time = 0.0
 
+    def __repr__(self) -> str:
+        state = "running" if self._running else "stopped"
+        return f"InputPublisher(device={self.device_name!r}, method={self.method!r}, {state})"
+
     @property
     def topic(self) -> str:
         return f"strands/{self.mesh.peer_id}/input/{self.device_name}"
@@ -199,6 +203,10 @@ class InputReceiver:
         self._last_seq = -1
         self._drops = 0
         self._start_time = 0.0
+
+    def __repr__(self) -> str:
+        state = "running" if self._running else "stopped"
+        return f"InputReceiver(source={self.source_peer_id!r}, device={self.device_name!r}, {state})"
 
     @property
     def topic(self) -> str:

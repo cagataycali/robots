@@ -45,21 +45,27 @@ from strands_robots.mesh.session import (
 )
 
 __all__ = [
+    # Core types
     "Mesh",
     "InputPublisher",
     "InputReceiver",
-    "get_local_robots",
+    # Factory & registry
     "init_mesh",
+    "get_local_robots",
+    # Session helpers (re-exported from .session for convenience)
     "put",
     "get_session",
     "release_session",
     "current_session",
     "session_alive",
+    # Peer registry
     "get_peers",
     "update_peer",
     "clear_peers",
     "prune_peers",
+    # Safety
     "log_safety_event",
+    # Private (exposed for test patching only)
     "_LOCAL_ROBOTS",
     "_LOCAL_ROBOTS_LOCK",
 ]

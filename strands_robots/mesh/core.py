@@ -80,6 +80,10 @@ class Mesh(SensorLoopsMixin):
         self.inbox: dict[str, list[tuple[str, dict[str, Any]]]] = {}
         self._user_subs: dict[str, Any] = {}
 
+    def __repr__(self) -> str:
+        state = "alive" if self._running else "stopped"
+        return f"Mesh(peer_id={self.peer_id!r}, type={self.peer_type!r}, {state})"
+
     # Lifecycle
     def start(self) -> None:
         """Acquire a Zenoh session and start all publishing loops."""
