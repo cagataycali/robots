@@ -184,3 +184,101 @@ def test_actions_without_local_mesh_fail(fake_no_local):
     out = _strands_call(action="tell", target="peer-b", instruction="go")
     assert out["status"] == "error"
     assert "no local mesh" in out["content"][0]["text"]
+
+
+# ---------------------------------------------------------------------------
+# Regression: _resolve_mesh self-loop fix
+#
+# Before this fix, when the agent issued ``send/tell/stop`` to a target that
+# matched a *local* peer_id, ``_resolve_mesh`` would return the target's own
+# Mesh as the gateway.  ``Mesh.send`` then published on
+# ``strands/{target}/cmd`` with ``sender_id == target`` — the receiving
+# subscriber drops self-loops, so the call silently timed out.  The fix:
+# pick a *different* local mesh as the gateway whenever one exists.
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_mesh_avoids_self_loop_when_alternative_exists():
+    """When target matches a local peer_id, pick a different local mesh."""
+    from strands_robots.tools.robot_mesh import _resolve_mesh
+
+    mesh_a = MagicMock(name="mesh_a")
+    mesh_a.peer_id = "robot-a"
+    mesh_b = MagicMock(name="mesh_b")
+    mesh_b.peer_id = "robot-b"
+
+    locals_ = {"robot-a": mesh_a, "robot-b": mesh_b}
+
+    with patch("strands_robots.mesh.get_local_robots", return_value=locals_):
+        gateway = _resolve_mesh("robot-b")
+        # MUST be mesh_a (the OTHER local mesh) — never mesh_b itself,
+        # which would self-loop.
+        assert gateway is mesh_a, (
+            f"_resolve_mesh returned {gateway.peer_id!r} but should have "
+            "returned 'robot-a' to avoid the send-to-self self-loop."
+        )
+
+
+def test_resolve_mesh_fallback_when_target_is_only_local():
+    """When the target IS the only local mesh, fall back to it.
+
+    The caller will get a timeout (since the message self-drops) — that's
+    the expected behaviour for "send to yourself" with no other local
+    gateway available.
+    """
+    from strands_robots.tools.robot_mesh import _resolve_mesh
+
+    only = MagicMock(name="only")
+    only.peer_id = "robot-x"
+
+    with patch("strands_robots.mesh.get_local_robots", return_value={"robot-x": only}):
+        gateway = _resolve_mesh("robot-x")
+        assert gateway is only
+
+
+def test_resolve_mesh_returns_first_when_target_is_remote():
+    """When target doesn't match any local peer, any local mesh is a fine gateway."""
+    from strands_robots.tools.robot_mesh import _resolve_mesh
+
+    mesh_a = MagicMock(name="mesh_a")
+    mesh_a.peer_id = "robot-a"
+    mesh_b = MagicMock(name="mesh_b")
+    mesh_b.peer_id = "robot-b"
+
+    with patch(
+        "strands_robots.mesh.get_local_robots",
+        return_value={"robot-a": mesh_a, "robot-b": mesh_b},
+    ):
+        gateway = _resolve_mesh("remote-c")
+        assert gateway in (mesh_a, mesh_b)
+
+
+def test_send_to_local_peer_does_not_use_target_as_gateway(fake_no_local):
+    """End-to-end: robot_mesh(action='send', target=local_peer) must not
+    route the call through the target's own Mesh (would self-loop)."""
+    from strands_robots.tools.robot_mesh import robot_mesh
+
+    mesh_a = MagicMock(name="mesh_a")
+    mesh_a.peer_id = "alpha"
+    mesh_a.send.return_value = {"ok": "from-a"}
+
+    mesh_b = MagicMock(name="mesh_b")
+    mesh_b.peer_id = "beta"
+    mesh_b.send.return_value = {"should-not-be-called": True}
+
+    locals_ = {"alpha": mesh_a, "beta": mesh_b}
+    with patch("strands_robots.mesh.get_local_robots", return_value=locals_):
+        out = _strands_call(
+            action="send",
+            target="beta",
+            command='{"action": "status"}',
+            timeout=2.0,
+        )
+
+    assert out["status"] == "success"
+    # mesh_a must be the gateway because target == "beta" must NOT route via
+    # mesh_b (would self-loop).
+    mesh_a.send.assert_called_once()
+    mesh_b.send.assert_not_called()
+    args = mesh_a.send.call_args
+    assert args.args[0] == "beta"  # outbound target unchanged
