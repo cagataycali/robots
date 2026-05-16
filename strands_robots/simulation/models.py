@@ -55,14 +55,6 @@ class SimRobot:
     policy_running: bool = False
     policy_steps: int = 0
     policy_instruction: str = ""
-    # Per-robot mesh attachment (PR #101 follow-up): each SimRobot can join
-    # the zenoh mesh as its own peer so agents can address robots inside a
-    # simulation directly, not just the parent Simulation container.
-    # Stored as Any (no import-time dependency on mesh module) — the
-    # Simulation.add_robot path sets this to a started Mesh instance,
-    # remove_robot calls .stop() and clears it.
-    mesh: Any = None
-    peer_id: str | None = None
     # Per-robot mesh peer. Populated by ``Simulation.add_robot`` when the
     # parent sim is on a mesh; ``None`` otherwise. Carried as ``Any`` to
     # avoid a hard import dependency on ``strands_robots.mesh.Mesh`` from
