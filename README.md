@@ -493,7 +493,36 @@ agent.tool.gr00t_inference(action="stop", port=8000)
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `STRANDS_ASSETS_DIR` | Custom directory for robot model assets (MJCF, meshes) | `~/.strands_robots/assets/` |
+| `STRANDS_ROBOT_MODE` | Default mode for `Robot()` factory: `sim` / `real` / `auto` | `sim` |
+| `STRANDS_TRUST_REMOTE_CODE` | Allow downloading + executing model code | `false` |
+| `MUJOCO_GL` | GL backend for the MuJoCo renderer | auto |
+| `STRANDS_MESH` | Set to `false` to disable Zenoh mesh networking globally | `true` |
+| `STRANDS_MESH_PORT` | TCP port for the local Zenoh router | `7447` |
+| `ZENOH_CONNECT` | Comma-separated list of remote Zenoh endpoints to connect to | - |
+| `ZENOH_LISTEN` | Comma-separated list of endpoints for the local Zenoh listener | - |
+| `STRANDS_MESH_AUDIT_DIR` | Directory for the safety audit log (`mesh_audit.jsonl`) | `~/.strands_robots/` |
 | `GROOT_API_TOKEN` | API token for GR00T inference service | - |
+
+### Mesh Networking
+
+Every `Robot()` and `Simulation()` constructed in a process is automatically a
+peer on the local Zenoh mesh — no manual setup required.  Peers on the same
+LAN discover each other via Zenoh multicast scouting, and a single
+process-wide `zenoh.Session` is shared (ref-counted) across every robot or
+simulation in the same Python process.
+
+```python
+from strands_robots import Robot
+sim_a = Robot("so100")          # auto-joins the mesh as a peer
+sim_b = Robot("so100")          # second peer in another process
+print(sim_a.mesh.peers)         # discovers sim_b
+sim_a.mesh.tell(sim_b.mesh.peer_id, "pick up the cube")
+sim_a.mesh.emergency_stop()     # broadcast E-STOP, audited to disk
+```
+
+Disable globally with `STRANDS_MESH=false` or per-robot with
+`Robot("so100", mesh=False)`.  Install the optional dependency with
+`pip install strands-robots[mesh]`.
 
 ### Cache Directory
 
