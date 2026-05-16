@@ -67,12 +67,20 @@ class _FakeRobot:
 
 @pytest.fixture
 def fake_session() -> Iterator[MagicMock]:
-    """Patch get_session() to return a MagicMock and capture put() calls."""
+    """Patch get_session() / current_session() to return a MagicMock and
+    capture put() calls.
+
+    Both names are patched because :meth:`Mesh.start` uses ``get_session``
+    while :meth:`Mesh.subscribe` uses ``current_session`` (no refcount
+    bump).  Patching both keeps the in-test session identity stable.
+    """
     sess = MagicMock()
     sess.declare_subscriber = MagicMock()
     with (
         patch.object(mesh_session, "get_session", return_value=sess),
+        patch.object(mesh_session, "current_session", return_value=sess),
         patch.object(mesh_mod, "get_session", return_value=sess),
+        patch.object(mesh_mod, "current_session", return_value=sess),
         patch.object(mesh_mod, "release_session"),
     ):
         yield sess

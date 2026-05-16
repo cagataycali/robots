@@ -65,6 +65,7 @@ from strands_robots.mesh_audit import log_safety_event
 from strands_robots.mesh_session import (
     HEARTBEAT_HZ,
     STATE_HZ,
+    current_session,
     get_session,
     prune_peers,
     put,
@@ -136,6 +137,24 @@ class Mesh:
         self._threads: list[threading.Thread] = []
         self._lifecycle_lock = threading.Lock()
 
+        # _subs_lock protects the _subs list and _user_subs dict against
+        # concurrent appends from start() / subscribe() / stop().  Without
+        # this, two threads calling subscribe() could race the underlying
+        # list.append() calls.
+        self._subs_lock = threading.Lock()
+
+        # _inbox_lock guards every read/write to self.inbox and its contained
+        # buffers.  The subscriber callback writes on the zenoh worker thread;
+        # external callers (e.g. the robot_mesh tool) read from the agent
+        # thread.  Without this lock the cap-trim logic (`del buf[:N]`) can
+        # race with `append` and corrupt the list.
+        self._inbox_lock = threading.Lock()
+
+        # _stop_event lets the heartbeat / state loops exit immediately on
+        # stop() instead of waiting out the next 0.5s tick.  It is set from
+        # stop() and observed by `Event.wait(period)` in each loop.
+        self._stop_event = threading.Event()
+
         # ── RPC correlation state (send/broadcast/tell) ───────────────
         # _pending: turn_id -> Event used by the calling thread to wait
         # _responses: turn_id -> list of response payloads accumulated
@@ -176,27 +195,40 @@ class Mesh:
             # Subscribers — only presence is needed at the PR2 layer.
             # Command and response subscribers land in PR3; the user-facing
             # subscribe() and stream subscribers land in PR4.
+            # Each subscription is declared inside its own try/except so a
+            # mid-way failure can be cleanly torn down (Issue #10).  A
+            # half-subscribed mesh is worse than no mesh because some keys
+            # are observable and others silently aren't.
+            declared: list[Any] = []
             try:
-                # Presence — discover peers
-                self._subs.append(session.declare_subscriber("strands/*/presence", self._on_presence))
-                # Inbound RPC commands (directed to us)
-                self._subs.append(session.declare_subscriber(f"strands/{self.peer_id}/cmd", self._on_cmd))
-                # Broadcast commands (fan-out RPC — every peer sees them)
-                self._subs.append(session.declare_subscriber("strands/broadcast", self._on_cmd))
-                # Responses to our outgoing send/broadcast
-                self._subs.append(
+                declared.append(session.declare_subscriber("strands/*/presence", self._on_presence))
+                declared.append(session.declare_subscriber(f"strands/{self.peer_id}/cmd", self._on_cmd))
+                declared.append(session.declare_subscriber("strands/broadcast", self._on_cmd))
+                declared.append(
                     session.declare_subscriber(
                         f"strands/{self.peer_id}/response/**",
                         self._on_response,
                     )
                 )
             except Exception as exc:  # pragma: no cover — depends on zenoh runtime
-                # If we cannot subscribe to presence we cannot discover peers,
-                # so abort cleanly rather than running half-broken.
+                # Tear down whatever we managed to declare so we don't leak
+                # subscribers into the shared session.
+                for sub in declared:
+                    try:
+                        sub.undeclare()
+                    except Exception as undecl_exc:  # noqa: BLE001
+                        logger.debug(
+                            "[mesh] %s: cleanup undeclare failed: %s",
+                            self.peer_id,
+                            undecl_exc,
+                        )
                 logger.warning("[mesh] %s: failed to declare subscribers: %s", self.peer_id, exc)
                 release_session()
                 self._has_session_ref = False
                 return
+
+            with self._subs_lock:
+                self._subs.extend(declared)
 
             self._running = True
             with _LOCAL_ROBOTS_LOCK:
@@ -231,21 +263,28 @@ class Mesh:
             if not self._running:
                 return
             self._running = False
+            # Wake the heartbeat / state loops so they exit promptly instead
+            # of sleeping out the next 0.5s tick (Issue #7).
+            self._stop_event.set()
 
         # Drop from registry first so concurrent peer-listing doesn't see us.
         with _LOCAL_ROBOTS_LOCK:
             _LOCAL_ROBOTS.pop(self.peer_id, None)
 
-        for sub in self._subs:
+        with self._subs_lock:
+            subs_to_drop = list(self._subs)
+            self._subs.clear()
+            self._user_subs.clear()
+        with self._inbox_lock:
+            self.inbox.clear()
+
+        for sub in subs_to_drop:
             try:
                 sub.undeclare()
             except Exception as exc:  # noqa: BLE001 — best-effort teardown
                 # Subscribers belong to a session that may already be closing;
                 # log and continue so we always reach release_session().
                 logger.debug("[mesh] %s: subscriber undeclare failed: %s", self.peer_id, exc)
-        self._subs.clear()
-        self._user_subs.clear()
-        self.inbox.clear()
 
         # Wake any callers blocked in send/broadcast so they exit cleanly
         # rather than waiting out a useless timeout against a dead mesh.
@@ -357,7 +396,11 @@ class Mesh:
                 prune_peers()
             except Exception as exc:  # noqa: BLE001 — never let the loop die
                 logger.debug("[mesh] %s: heartbeat tick error: %s", self.peer_id, exc)
-            time.sleep(period)
+            # Event.wait returns True when set() is called from stop(), letting
+            # us bail out of the sleep immediately instead of waiting out the
+            # full period.
+            if self._stop_event.wait(period):
+                break
 
     def _on_presence(self, sample: Any) -> None:
         """Subscriber callback for ``strands/*/presence``.
@@ -401,7 +444,8 @@ class Mesh:
                     put(f"strands/{self.peer_id}/state", state)
             except Exception as exc:  # noqa: BLE001 — never let the loop die
                 logger.debug("[mesh] %s: state tick error: %s", self.peer_id, exc)
-            time.sleep(period)
+            if self._stop_event.wait(period):
+                break
 
     def _read_state(self) -> dict[str, Any] | None:
         """Read a numeric snapshot of the robot's current state.
@@ -751,18 +795,17 @@ class Mesh:
         """
         if not self._running:
             return None
-        session = get_session()
+        # subscribe() piggy-backs on the session reference held by start();
+        # using current_session() (no refcount bump) keeps the get/release
+        # semantics simple and matches the lifetime contract: the user
+        # subscription dies with the mesh.
+        session = current_session()
         if session is None:
             return None
 
         sub_name = name or topic
-        # release one of the refs we just acquired — get_session() bumps it.
-        # We do NOT hold a separate ref for user subscriptions; they piggy-back
-        # on the mesh's main session reference. release here keeps the count
-        # balanced (start() acquired exactly one ref).
-        release_session()
-
-        self.inbox.setdefault(sub_name, [])
+        with self._inbox_lock:
+            self.inbox.setdefault(sub_name, [])
 
         def handler(sample: Any) -> None:
             try:
@@ -775,11 +818,14 @@ class Mesh:
                 if callback is not None:
                     callback(key, data)
                 else:
-                    buf = self.inbox.setdefault(sub_name, [])
-                    buf.append((key, data))
-                    # Cap buffer at 1000 — slice to last 500 to amortise.
-                    if len(buf) > 1000:
-                        del buf[: len(buf) - 500]
+                    # _inbox_lock prevents the cap-trim logic from racing the
+                    # append — without it, two concurrent samples on the same
+                    # subscription corrupt the buffer's tail.
+                    with self._inbox_lock:
+                        buf = self.inbox.setdefault(sub_name, [])
+                        buf.append((key, data))
+                        if len(buf) > 1000:
+                            del buf[: len(buf) - 500]
             except Exception as exc:  # noqa: BLE001 — best-effort callback
                 logger.debug("[mesh] %s: subscribe handler error on %s: %s", self.peer_id, topic, exc)
 
@@ -789,8 +835,9 @@ class Mesh:
             logger.warning("[mesh] %s: declare_subscriber(%s) failed: %s", self.peer_id, topic, exc)
             return None
 
-        self._subs.append(sub)
-        self._user_subs[sub_name] = sub
+        with self._subs_lock:
+            self._subs.append(sub)
+            self._user_subs[sub_name] = sub
         logger.info("[sub] %s subscribed to: %s", self.peer_id, topic)
         return sub_name
 
@@ -799,18 +846,21 @@ class Mesh:
 
         Idempotent — unknown names are ignored.
         """
-        sub = self._user_subs.pop(name, None)
+        with self._subs_lock:
+            sub = self._user_subs.pop(name, None)
+            if sub is not None:
+                try:
+                    self._subs.remove(sub)
+                except ValueError:
+                    pass
         if sub is None:
             return
         try:
             sub.undeclare()
         except Exception as exc:  # noqa: BLE001 — best-effort teardown
             logger.debug("[mesh] %s: subscriber undeclare(%s) failed: %s", self.peer_id, name, exc)
-        try:
-            self._subs.remove(sub)
-        except ValueError:
-            pass
-        self.inbox.pop(name, None)
+        with self._inbox_lock:
+            self.inbox.pop(name, None)
 
     def publish_step(
         self,
@@ -943,7 +993,10 @@ def init_mesh(
 
     if peer_id is None:
         base = getattr(robot, "tool_name_str", None) or "robot"
-        peer_id = f"{base}-{uuid.uuid4().hex[:4]}"
+        # 8 hex chars = 32 bits of entropy — avoids collisions when many
+        # peers join the mesh at once. Larger than the 4-char prefix used by
+        # the dev branch so tests stay forward-compatible.
+        peer_id = f"{base}-{uuid.uuid4().hex[:8]}"
 
     instance = Mesh(robot, peer_id=peer_id, peer_type=peer_type)
     instance.start()

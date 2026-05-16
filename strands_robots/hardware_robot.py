@@ -687,6 +687,21 @@ class Robot(AgentTool):
             # Shutdown executor
             self._executor.shutdown(wait=True)
 
+            # Tear down the Zenoh mesh component if one was attached.
+            # ``self.mesh`` is any object exposing ``.stop()``; falsy values
+            # (None — the construction-time default and what a hardware robot
+            # gets when ``mesh=False``) are skipped silently.
+            if self.mesh:
+                try:
+                    self.mesh.stop()
+                except Exception as mesh_exc:  # noqa: BLE001
+                    # Mesh teardown should never block hardware cleanup.
+                    logger.warning(
+                        "%s: mesh.stop() raised during cleanup: %s",
+                        self.tool_name_str,
+                        mesh_exc,
+                    )
+
             logger.info(f"{self.tool_name_str} cleanup completed")
 
         except Exception as e:
