@@ -1,0 +1,39 @@
+[02:27:53.806] ======================================================================
+[02:27:53.806] PR #101 mesh × GR00T N1.7 LIBERO × MuJoCo — end-to-end test
+[02:27:53.806] output: artifacts/pr101-gr00t-mesh-e2e
+[02:27:53.806] GR00T: tcp://localhost:5555
+[02:27:53.806] ======================================================================
+[02:27:53.842] 1. Connecting to GR00T N1.7 server...
+[02:27:53.851]    ✅ ping OK
+[02:27:53.851]    ✅ modalities: ['video', 'state', 'action', 'language']
+[02:27:53.851]      video keys: ['image', 'wrist_image']
+[02:27:53.851]      state keys: ['x', 'y', 'z', 'roll', 'pitch', 'yaw', 'gripper']
+[02:27:53.851]      action keys: ['x', 'y', 'z', 'roll', 'pitch', 'yaw', 'gripper']
+[02:27:53.851]      action horizon: 16 steps
+[02:27:54.150] 2. Building MuJoCo LIBERO-style scene...
+[02:27:54.881]    ✅ scene: robots=['panda']
+[02:27:54.881] 3. Joining zenoh mesh as peer 'sim-panda-libero'...
+[02:27:55.897]    ✅ mesh alive=True, peers seen so far: 0
+[02:27:58.411] 4. LeRobot dataset recorder available: True
+[02:27:58.413]    start_recording → success
+[02:27:58.413] 
+--- Episode 1/3 — 'pick up the alphabet soup and place it in the basket' ---
+[02:27:58.414]    start_cameras_recording → success
+[02:28:09.996]    stop_cameras_recording → 2 videos, frames_per_cam: [205, 205]
+[02:28:09.997]    📊 ep done: median=196.4ms p99=219.0ms wall=11.1s
+[02:28:09.997] 
+--- Episode 2/3 — 'pick up the cream cheese box and place it in the basket' ---
+[02:28:10.016]    start_cameras_recording → success
+[02:28:20.255]    stop_cameras_recording → 2 videos, frames_per_cam: [195, 194]
+[02:28:20.256]    📊 ep done: median=189.3ms p99=214.4ms wall=9.8s
+[02:28:20.256] 
+--- Episode 3/3 — 'pick up the chocolate pudding and place it in the basket' ---
+[02:28:20.277]    start_cameras_recording → success
+[02:28:31.153]    stop_cameras_recording → 2 videos, frames_per_cam: [208, 208]
+[02:28:31.154]    📊 ep done: median=199.6ms p99=217.6ms wall=10.5s
+[02:28:31.156] 
+📦 dataset stop_recording → success
+[02:28:31.157]    parquet files: 0  total bytes: 0
+[02:28:31.157]    📝 actions.jsonl written (2629 bytes)
+[02:28:31.157] 
+🌐 mesh: alive=True, peers=[]

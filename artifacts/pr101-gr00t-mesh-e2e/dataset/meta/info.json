@@ -1,0 +1,124 @@
+{
+    "codebase_version": "v3.0",
+    "robot_type": "single_panda_gripper",
+    "total_episodes": 0,
+    "total_frames": 0,
+    "total_tasks": 0,
+    "chunks_size": 1000,
+    "data_files_size_in_mb": 100,
+    "video_files_size_in_mb": 200,
+    "fps": 20,
+    "splits": {},
+    "data_path": "data/chunk-{chunk_index:03d}/file-{file_index:03d}.parquet",
+    "video_path": "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4",
+    "features": {
+        "observation.images.default": {
+            "dtype": "video",
+            "shape": [
+                3,
+                480,
+                640
+            ],
+            "names": [
+                "channels",
+                "height",
+                "width"
+            ]
+        },
+        "observation.images.front": {
+            "dtype": "video",
+            "shape": [
+                3,
+                480,
+                640
+            ],
+            "names": [
+                "channels",
+                "height",
+                "width"
+            ]
+        },
+        "observation.images.wrist": {
+            "dtype": "video",
+            "shape": [
+                3,
+                480,
+                640
+            ],
+            "names": [
+                "channels",
+                "height",
+                "width"
+            ]
+        },
+        "observation.state": {
+            "dtype": "float32",
+            "shape": [
+                9
+            ],
+            "names": [
+                "joint1",
+                "joint2",
+                "joint3",
+                "joint4",
+                "joint5",
+                "joint6",
+                "joint7",
+                "finger_joint1",
+                "finger_joint2"
+            ]
+        },
+        "action": {
+            "dtype": "float32",
+            "shape": [
+                9
+            ],
+            "names": [
+                "joint1",
+                "joint2",
+                "joint3",
+                "joint4",
+                "joint5",
+                "joint6",
+                "joint7",
+                "finger_joint1",
+                "finger_joint2"
+            ]
+        },
+        "timestamp": {
+            "dtype": "float32",
+            "shape": [
+                1
+            ],
+            "names": null
+        },
+        "frame_index": {
+            "dtype": "int64",
+            "shape": [
+                1
+            ],
+            "names": null
+        },
+        "episode_index": {
+            "dtype": "int64",
+            "shape": [
+                1
+            ],
+            "names": null
+        },
+        "index": {
+            "dtype": "int64",
+            "shape": [
+                1
+            ],
+            "names": null
+        },
+        "task_index": {
+            "dtype": "int64",
+            "shape": [
+                1
+            ],
+            "names": null
+        }
+    }
+}
