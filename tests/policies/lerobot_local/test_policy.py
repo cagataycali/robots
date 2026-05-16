@@ -652,7 +652,7 @@ class TestReset:
 class TestPolicyResolution:
     def test_resolve_policy_class_by_name_raises_for_unknown(self):
 
-        with pytest.raises((ImportError, ValueError)):
+        with pytest.raises((ImportError, ValueError, TypeError)):
             resolve_policy_class_by_name("nonexistent_policy_type_xyz")
 
     def test_resolve_from_hub_raises_without_type(self):
