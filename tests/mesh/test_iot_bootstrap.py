@@ -150,3 +150,97 @@ class TestEnsureRuleIdempotence:
 
         # Rule was created (UnauthorizedException treated as not-found).
         iot.create_topic_rule.assert_called_once()
+
+
+class TestEnsureLogGroup:
+    def test_creates_when_missing(self):
+        from strands_robots.mesh.iot.bootstrap import LOG_GROUP_NAME, BootstrappedAccount, _ensure_log_group
+
+        logs = MagicMock()
+        # First describe returns no matching group
+        logs.describe_log_groups.side_effect = [
+            {"logGroups": []},  # initial check
+            {
+                "logGroups": [{"arn": "arn:aws:logs:us-west-2:123:log-group:test", "logGroupName": LOG_GROUP_NAME}]
+            },  # post-create check
+        ]
+        a = BootstrappedAccount(region="us-west-2", account_id="123")
+        arn = _ensure_log_group(logs, a)
+        assert arn.startswith("arn:aws:logs")
+        logs.create_log_group.assert_called_once()
+        logs.put_retention_policy.assert_called_once()
+        assert f"logs:{LOG_GROUP_NAME}" in a.created
+
+    def test_skips_when_present(self):
+        from strands_robots.mesh.iot.bootstrap import LOG_GROUP_NAME, BootstrappedAccount, _ensure_log_group
+
+        logs = MagicMock()
+        logs.describe_log_groups.return_value = {"logGroups": [{"arn": "arn:logs", "logGroupName": LOG_GROUP_NAME}]}
+        a = BootstrappedAccount(region="us-west-2", account_id="123")
+        arn = _ensure_log_group(logs, a)
+        assert arn == "arn:logs"
+        logs.create_log_group.assert_not_called()
+        assert f"logs:{LOG_GROUP_NAME}" in a.skipped
+
+
+class TestEnsureLambdaRole:
+    def test_skips_when_present(self):
+        from strands_robots.mesh.iot.bootstrap import ESTOP_LAMBDA_ROLE, BootstrappedAccount, _ensure_lambda_role
+
+        iam = MagicMock()
+        iam.get_role.return_value = {"Role": {"Arn": "arn:iam:role"}}
+        a = BootstrappedAccount(region="us-west-2", account_id="123")
+        arn = _ensure_lambda_role(iam, a)
+        assert arn == "arn:iam:role"
+        iam.create_role.assert_not_called()
+        assert f"iam:{ESTOP_LAMBDA_ROLE}" in a.skipped
+
+
+class TestEnsureEstopLambda:
+    def test_skips_when_present(self):
+        from strands_robots.mesh.iot.bootstrap import BootstrappedAccount, _ensure_estop_lambda
+
+        lam = MagicMock()
+        lam.get_function.return_value = {"Configuration": {"FunctionArn": "arn:lambda"}}
+        a = BootstrappedAccount(region="us-west-2", account_id="123")
+        arn = _ensure_estop_lambda(lam, "arn:role", a)
+        assert arn == "arn:lambda"
+        lam.create_function.assert_not_called()
+
+
+class TestGrantIotInvokeLambda:
+    def test_grants_permission_when_missing(self):
+        from strands_robots.mesh.iot.bootstrap import BootstrappedAccount, _grant_iot_invoke_lambda
+
+        lam = MagicMock()
+        a = BootstrappedAccount(region="us-west-2", account_id="123")
+        _grant_iot_invoke_lambda(lam, "arn:lambda", a)
+        lam.add_permission.assert_called_once()
+        kwargs = lam.add_permission.call_args.kwargs
+        assert kwargs["Principal"] == "iot.amazonaws.com"
+        assert kwargs["Action"] == "lambda:InvokeFunction"
+
+    def test_swallows_existing_permission(self):
+        from strands_robots.mesh.iot.bootstrap import BootstrappedAccount, _grant_iot_invoke_lambda
+
+        class _Conflict(Exception):
+            pass
+
+        lam = MagicMock()
+        lam.exceptions = MagicMock()
+        lam.exceptions.ResourceConflictException = _Conflict
+        lam.add_permission.side_effect = _Conflict("already granted")
+        a = BootstrappedAccount(region="us-west-2", account_id="123")
+        # Must not raise
+        _grant_iot_invoke_lambda(lam, "arn:lambda", a)
+
+
+class TestBootstrappedAccountEnv:
+    """Sanity checks — names locked in."""
+
+    def test_lambda_zip_size_reasonable(self):
+        from strands_robots.mesh.iot.bootstrap import _build_lambda_zip
+
+        zb = _build_lambda_zip()
+        # Lambda source is ~2 KB; zipped should be well under 10 KB.
+        assert 500 < len(zb) < 10_000

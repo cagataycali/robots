@@ -56,12 +56,14 @@ logger = logging.getLogger(__name__)
 def _get_zenoh_transport_class() -> type[ZenohTransport]:
     """Lazily import ZenohTransport to avoid circular dependency."""
     from strands_robots.mesh.transport.zenoh_transport import ZenohTransport as _ZT
+
     return _ZT
 
 
 def _get_iot_transport_class() -> type[IotMqttTransport]:
     """Lazily import IotMqttTransport to avoid circular dependency."""
     from strands_robots.mesh.transport.iot_transport import IotMqttTransport as _IT
+
     return _IT
 
 

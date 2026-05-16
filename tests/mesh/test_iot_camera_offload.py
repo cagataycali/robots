@@ -139,3 +139,106 @@ class TestEnableForMesh:
         assert off.bucket == "frames"
         # The wrapper should be a different callable than the original
         assert mesh._publish_cameras_once != mesh._publish_cameras_once.__class__
+
+
+class TestEnableForMeshOffloadWrapper:
+    """White-box tests for camera_offload.enable_for_mesh — exercise the
+    wrapper that runs inside Mesh._publish_cameras_once when the bucket is set."""
+
+    def test_wrapper_skips_when_robot_not_connected(self, monkeypatch):
+        """If the underlying robot isn't connected, the offload path
+        returns silently — no S3 call, no exception."""
+        monkeypatch.setenv("STRANDS_MESH_CAMERA_S3_BUCKET", "frames")
+        from strands_robots.mesh.iot.camera_offload import enable_for_mesh
+
+        mesh = MagicMock()
+        mesh.peer_id = "p"
+
+        # robot.robot.is_connected = False
+        inner = type("I", (), {})()
+        inner.is_connected = False
+        inner.config = type("C", (), {"cameras": {"front": {}}})()
+        mesh.robot = type("R", (), {})()
+        mesh.robot.robot = inner
+
+        # original publish_cameras_once exists and is callable
+        original_called = []
+        mesh._publish_cameras_once = lambda: original_called.append(1)
+
+        with (
+            patch(
+                "strands_robots.mesh.transport.factory.current_backend",
+                return_value="iot",
+            ),
+            patch(
+                "strands_robots.mesh.transport.factory.current_transport",
+                return_value=MagicMock(is_alive=MagicMock(return_value=True)),
+            ),
+        ):
+            off = enable_for_mesh(mesh)
+        assert off is not None
+        # Drive the wrapper — it should call original AND early-return on offload
+        mesh._publish_cameras_once()
+        assert original_called == [1]
+
+    def test_wrapper_handles_get_observation_failure(self, monkeypatch):
+        """If get_observation raises, the wrapper swallows the error."""
+        monkeypatch.setenv("STRANDS_MESH_CAMERA_S3_BUCKET", "frames")
+        from strands_robots.mesh.iot.camera_offload import enable_for_mesh
+
+        mesh = MagicMock()
+        mesh.peer_id = "p"
+
+        inner = type("I", (), {})()
+        inner.is_connected = True
+        inner.config = type("C", (), {"cameras": {"front": {}}})()
+        # get_observation raises — wrapper should bail without raising
+        inner.get_observation = MagicMock(side_effect=RuntimeError("camera dead"))
+        mesh.robot = type("R", (), {})()
+        mesh.robot.robot = inner
+
+        original_called = []
+        mesh._publish_cameras_once = lambda: original_called.append(1)
+
+        with (
+            patch(
+                "strands_robots.mesh.transport.factory.current_backend",
+                return_value="iot",
+            ),
+            patch(
+                "strands_robots.mesh.transport.factory.current_transport",
+                return_value=MagicMock(is_alive=MagicMock(return_value=True)),
+            ),
+        ):
+            enable_for_mesh(mesh)
+
+        # Must not raise
+        mesh._publish_cameras_once()
+        assert original_called == [1]
+
+    def test_wrapper_no_op_when_no_cameras_in_config(self, monkeypatch):
+        monkeypatch.setenv("STRANDS_MESH_CAMERA_S3_BUCKET", "frames")
+        from strands_robots.mesh.iot.camera_offload import enable_for_mesh
+
+        mesh = MagicMock()
+        mesh.peer_id = "p"
+        inner = type("I", (), {})()
+        inner.is_connected = True
+        inner.config = type("C", (), {"cameras": {}})()  # empty
+        mesh.robot = type("R", (), {})()
+        mesh.robot.robot = inner
+        mesh._publish_cameras_once = lambda: None
+
+        with (
+            patch(
+                "strands_robots.mesh.transport.factory.current_backend",
+                return_value="iot",
+            ),
+            patch(
+                "strands_robots.mesh.transport.factory.current_transport",
+                return_value=MagicMock(is_alive=MagicMock(return_value=True)),
+            ),
+        ):
+            enable_for_mesh(mesh)
+
+        mesh._publish_cameras_once()  # must not raise
