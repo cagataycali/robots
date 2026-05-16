@@ -4,7 +4,7 @@ Requires the ``[mesh]`` extra: ``pip install -e ".[mesh]"``.
 Skipped automatically when ``eclipse-zenoh`` is not installed.
 
 These tests run two ``Mesh`` instances inside the same process — the
-process-wide session refcounting in :mod:`strands_robots.mesh_session`
+process-wide session refcounting in :mod:`strands_robots.mesh.session`
 already exercises the multi-process discovery path because both meshes
 publish + subscribe through the same Zenoh session.  Real two-process
 discovery is covered by the manual ``examples/mesh_two_robots.ipynb``
@@ -36,7 +36,7 @@ class _FakeRobot:
 def test_two_meshes_discover_each_other():
     """Two Mesh instances in one process see each other in their peer registry."""
     from strands_robots.mesh import Mesh
-    from strands_robots.mesh_session import session_alive
+    from strands_robots.mesh.session import session_alive
 
     a = Mesh(_FakeRobot("alpha"), peer_id="alpha-1", peer_type="robot")
     b = Mesh(_FakeRobot("beta"), peer_id="beta-1", peer_type="sim")
@@ -91,7 +91,7 @@ def test_two_meshes_rpc_round_trip():
 def test_emergency_stop_writes_audit_log(tmp_path, monkeypatch):
     """E-STOP broadcast triggers the audit log."""
     from strands_robots.mesh import Mesh
-    from strands_robots.mesh_audit import read_audit_log
+    from strands_robots.mesh.audit import read_audit_log
 
     monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
 

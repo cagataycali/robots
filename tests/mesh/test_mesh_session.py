@@ -1,4 +1,4 @@
-"""Tests for strands_robots.mesh_session — session singleton + peer registry.
+"""Tests for strands_robots.mesh.session — session singleton + peer registry.
 
 All tests mock zenoh so no network or real zenoh install is required.
 """
@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from strands_robots.mesh_session import (
+from strands_robots.mesh.session import (
     PeerInfo,
     clear_peers,
     get_peer,
@@ -115,7 +115,7 @@ class TestPeerRegistry:
     def test_prune_removes_stale(self) -> None:
         update_peer("fresh", "robot", "", {})
         # Manually backdate one peer
-        from strands_robots.mesh_session import _PEERS, _PEERS_LOCK
+        from strands_robots.mesh.session import _PEERS, _PEERS_LOCK
 
         with _PEERS_LOCK:
             _PEERS["stale"] = PeerInfo(peer_id="stale", last_seen=time.time() - 30)
@@ -168,7 +168,7 @@ class TestSessionLifecycle:
     @pytest.fixture(autouse=True)
     def _reset_session(self) -> Iterator[None]:
         """Reset module-level session state between tests."""
-        import strands_robots.mesh_session as mod
+        import strands_robots.mesh.session as mod
 
         with mod._SESSION_LOCK:
             if mod._SESSION is not None:
@@ -189,7 +189,7 @@ class TestSessionLifecycle:
             mod._SESSION_REFS = 0
 
     def test_returns_none_when_zenoh_missing(self) -> None:
-        from strands_robots.mesh_session import get_session
+        from strands_robots.mesh.session import get_session
 
         with patch.dict("sys.modules", {"zenoh": None}):
             with patch("builtins.__import__", side_effect=ImportError("no zenoh")):
@@ -203,7 +203,7 @@ class TestSessionLifecycle:
         mock_zenoh.open.return_value = mock_session
         mock_zenoh.Config.return_value = MagicMock()
 
-        from strands_robots.mesh_session import get_session
+        from strands_robots.mesh.session import get_session
 
         with patch.dict("sys.modules", {"zenoh": mock_zenoh}), patch.dict("os.environ", {}, clear=False):
             # Remove any env overrides that might interfere
@@ -219,7 +219,7 @@ class TestSessionLifecycle:
 
     def test_refcount_increments(self) -> None:
         """Second call to get_session increments refcount, doesn't re-open."""
-        import strands_robots.mesh_session as mod
+        import strands_robots.mesh.session as mod
 
         mock_session = MagicMock()
         with mod._SESSION_LOCK:
@@ -231,7 +231,7 @@ class TestSessionLifecycle:
         assert mod._SESSION_REFS == 2
 
     def test_release_decrements(self) -> None:
-        import strands_robots.mesh_session as mod
+        import strands_robots.mesh.session as mod
 
         mock_session = MagicMock()
         with mod._SESSION_LOCK:
@@ -243,7 +243,7 @@ class TestSessionLifecycle:
         assert mod._SESSION is mock_session  # still open
 
     def test_release_closes_at_zero(self) -> None:
-        import strands_robots.mesh_session as mod
+        import strands_robots.mesh.session as mod
 
         mock_session = MagicMock()
         with mod._SESSION_LOCK:
@@ -257,13 +257,13 @@ class TestSessionLifecycle:
 
     def test_release_noop_when_no_session(self) -> None:
         """release_session on an already-closed session doesn't crash."""
-        import strands_robots.mesh_session as mod
+        import strands_robots.mesh.session as mod
 
         mod.release_session()  # should not raise
         assert mod._SESSION_REFS == 0
 
     def test_session_alive(self) -> None:
-        import strands_robots.mesh_session as mod
+        import strands_robots.mesh.session as mod
 
         assert mod.session_alive() is False
         with mod._SESSION_LOCK:
@@ -273,7 +273,7 @@ class TestSessionLifecycle:
 
     def test_listener_fallback_to_client(self) -> None:
         """If listen fails (port taken), should fall back to client mode."""
-        import strands_robots.mesh_session as mod
+        import strands_robots.mesh.session as mod
 
         mock_zenoh = MagicMock()
         mock_session = MagicMock()
@@ -314,7 +314,7 @@ class TestPut:
 
     @pytest.fixture(autouse=True)
     def _reset_session(self) -> Iterator[None]:
-        import strands_robots.mesh_session as mod
+        import strands_robots.mesh.session as mod
 
         original = mod._SESSION
         yield
@@ -322,7 +322,7 @@ class TestPut:
             mod._SESSION = original
 
     def test_put_noop_when_no_session(self) -> None:
-        import strands_robots.mesh_session as mod
+        import strands_robots.mesh.session as mod
 
         with mod._SESSION_LOCK:
             mod._SESSION = None
@@ -331,7 +331,7 @@ class TestPut:
         put("strands/test/presence", {"peer_id": "test"})
 
     def test_put_publishes_json(self) -> None:
-        import strands_robots.mesh_session as mod
+        import strands_robots.mesh.session as mod
 
         mock_session = MagicMock()
         with mod._SESSION_LOCK:
@@ -347,7 +347,7 @@ class TestPut:
 
     def test_put_swallows_exception(self) -> None:
         """put() logs but doesn't raise on publish failure."""
-        import strands_robots.mesh_session as mod
+        import strands_robots.mesh.session as mod
 
         mock_session = MagicMock()
         mock_session.put.side_effect = RuntimeError("network down")
@@ -375,7 +375,7 @@ class TestConnectionConfig:
             patch.dict("sys.modules", {"zenoh": mock_zenoh}),
             patch.dict("os.environ", {"ZENOH_CONNECT": "tcp/10.0.0.1:7447,tcp/10.0.0.2:7447"}),
         ):
-            from strands_robots.mesh_session import _build_config
+            from strands_robots.mesh.session import _build_config
 
             _build_config()
 
@@ -393,7 +393,7 @@ class TestConnectionConfig:
             patch.dict("sys.modules", {"zenoh": mock_zenoh}),
             patch.dict("os.environ", {"ZENOH_LISTEN": "tcp/0.0.0.0:7448"}),
         ):
-            from strands_robots.mesh_session import _build_config
+            from strands_robots.mesh.session import _build_config
 
             _build_config()
 
@@ -413,7 +413,7 @@ class TestAtexitCleanup:
 
     @pytest.fixture(autouse=True)
     def _reset_session(self) -> Iterator[None]:
-        import strands_robots.mesh_session as mod
+        import strands_robots.mesh.session as mod
 
         with mod._SESSION_LOCK:
             mod._SESSION = None
@@ -424,7 +424,7 @@ class TestAtexitCleanup:
             mod._SESSION_REFS = 0
 
     def test_cleanup_closes_session(self) -> None:
-        import strands_robots.mesh_session as mod
+        import strands_robots.mesh.session as mod
 
         mock_session = MagicMock()
         with mod._SESSION_LOCK:
@@ -438,7 +438,7 @@ class TestAtexitCleanup:
         mock_session.close.assert_called_once()
 
     def test_cleanup_noop_when_no_session(self) -> None:
-        import strands_robots.mesh_session as mod
+        import strands_robots.mesh.session as mod
 
         with mod._SESSION_LOCK:
             mod._SESSION = None

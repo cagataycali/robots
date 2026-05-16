@@ -163,7 +163,7 @@ def test_invalid_mesh_port_falls_back_to_default(
 ) -> None:
     """Bad STRANDS_MESH_PORT must warn and fall back to 7447 — never raise."""
     # Reset module-level state so get_session re-runs the open path.
-    import strands_robots.mesh_session as ms
+    import strands_robots.mesh.session as ms
 
     monkeypatch.setenv("STRANDS_MESH_PORT", "definitely_not_a_number")
     monkeypatch.delenv("ZENOH_CONNECT", raising=False)
@@ -179,7 +179,7 @@ def test_invalid_mesh_port_falls_back_to_default(
     fake_zenoh.open.return_value = fake_session
 
     with patch.dict("sys.modules", {"zenoh": fake_zenoh}):
-        with caplog.at_level("WARNING", logger="strands_robots.mesh_session"):
+        with caplog.at_level("WARNING", logger="strands_robots.mesh.session"):
             sess = ms.get_session()
 
     # Did not raise, returned a session.
@@ -206,7 +206,7 @@ def test_current_session_does_not_change_refcount(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """get_session bumps; current_session must not."""
-    import strands_robots.mesh_session as ms
+    import strands_robots.mesh.session as ms
 
     monkeypatch.setattr(ms, "_SESSION", MagicMock(name="fake_sess"))
     monkeypatch.setattr(ms, "_SESSION_REFS", 1)
