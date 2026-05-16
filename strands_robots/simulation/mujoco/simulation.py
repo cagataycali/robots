@@ -601,6 +601,81 @@ class MuJoCoSimEngine(
             }
         return None
 
+    def _attach_robot_to_mesh(self, robot: SimRobot) -> None:
+        """Best-effort: register *robot* as its own peer on the parent's mesh.
+
+        When the parent ``Simulation`` is on a Zenoh mesh (``self.mesh`` set
+        and ``self.peer_id`` populated), every robot added via ``add_robot``
+        becomes addressable on the mesh in its own right — the agent can
+        ``robot_mesh tell target=<robot.peer_id>`` instead of having to ask
+        the sim container to route by ``robot_name``.
+
+        Stays a no-op (and silently swallows failures) when:
+
+        * the parent sim never joined a mesh (``self.mesh`` is falsy), or
+        * ``init_mesh`` returns ``None`` because ``STRANDS_MESH=false``, or
+        * ``zenoh`` is not installed, or
+        * any unexpected exception bubbles up from the mesh stack.
+
+        On success, mutates ``robot.mesh`` + ``robot.peer_id`` in place so
+        ``remove_robot`` / ``cleanup`` can tear it down later.
+        """
+        if not self.mesh:
+            # Sim itself isn't on a mesh — nothing to attach to. Stays a
+            # no-op so unit tests that construct a bare ``Simulation``
+            # without zenoh keep working.
+            return
+        try:
+            # Local import to avoid pulling zenoh into the import graph for
+            # users who run the sim entirely off-mesh.
+            from strands_robots.mesh import init_mesh
+
+            # Derive a stable peer_id from the parent sim + robot name so
+            # the same robot in two different sims still gets distinct ids.
+            # Format: ``<parent_peer_id>:<robot_name>`` e.g.
+            # ``so100_sim-a1b2c3d4:so100``. Keeps the parent's uuid suffix
+            # so collisions across processes stay impossible.
+            parent_id = self.peer_id or "sim"
+            child_peer_id = f"{parent_id}:{robot.name}"
+
+            # We pass the SimRobot dataclass as the owner. Mesh is duck-
+            # typed and only needs ``hasattr`` accesses, so the dataclass
+            # works even though it has no ``tool_name_str`` etc.
+            child_mesh = init_mesh(
+                robot,
+                peer_id=child_peer_id,
+                peer_type="robot",
+                mesh=True,
+            )
+            if child_mesh is not None:
+                robot.mesh = child_mesh
+                robot.peer_id = child_mesh.peer_id
+        except Exception as exc:  # noqa: BLE001 — mesh enrichment is best-effort
+            logger.warning(
+                "Failed to attach robot %r to mesh (sim peer_id=%s): %s",
+                robot.name,
+                self.peer_id,
+                exc,
+            )
+
+    def _detach_robot_from_mesh(self, robot: SimRobot) -> None:
+        """Stop *robot*'s mesh peer if it has one. Best-effort, no-raise."""
+        m = getattr(robot, "mesh", None)
+        if not m:
+            return
+        try:
+            m.stop()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Failed to stop mesh peer for robot %r (peer_id=%s): %s",
+                robot.name,
+                getattr(robot, "peer_id", "?"),
+                exc,
+            )
+        finally:
+            robot.mesh = None
+            robot.peer_id = ""
+
     def add_robot(
         self,
         name: str,
@@ -734,7 +809,16 @@ class MuJoCoSimEngine(
             self._world.step_count = 0
             mj.mj_forward(self._world._model, self._world._data)
 
+            # Attach the robot to the mesh as its own peer so the agent can
+            # address it directly (e.g. ``robot_mesh tell target=<peer_id>``)
+            # rather than going through the sim container. Best-effort: a
+            # mesh failure must not prevent ``add_robot`` from returning a
+            # working robot. Only attempt when the parent sim is itself
+            # already on a mesh.
+            self._attach_robot_to_mesh(robot)
+
             source = f"data_config='{data_config}'" if data_config else os.path.basename(resolved_path)
+            mesh_line = f"\n🌐 Mesh peer: {robot.peer_id}" if robot.peer_id else ""
             return {
                 "status": "success",
                 "content": [
@@ -745,7 +829,8 @@ class MuJoCoSimEngine(
                             f"📍 Position: {robot.position}\n"
                             f"🔩 Joints: {len(robot.joint_names)} ({', '.join(robot.joint_names[:8])}{'...' if len(robot.joint_names) > 8 else ''})\n"
                             f"⚡ Actuators: {len(robot.actuator_ids)}\n"
-                            f"📷 Cameras: {list(self._world.cameras.keys())}\n"
+                            f"📷 Cameras: {list(self._world.cameras.keys())}"
+                            f"{mesh_line}\n"
                             f"💡 Run policy: action='run_policy', robot_name='{name}'"
                         )
                     }
@@ -794,7 +879,13 @@ class MuJoCoSimEngine(
         # Pop the robot from the registry BEFORE the rebuild - eject_robot_from_scene
         # rebuilds the spec from the remaining world.robots dict, so the robot
         # we want to drop must no longer be in it.
+        robot_obj = self._world.robots[name]
         del self._world.robots[name]
+
+        # Detach the robot's per-peer mesh (if any) BEFORE the XML rebuild
+        # so external peers see the peer leave the mesh promptly. This is
+        # the inverse of the announce in ``add_robot`` / ``_attach_robot_to_mesh``.
+        self._detach_robot_from_mesh(robot_obj)
 
         ejected = eject_robot_from_scene(self._world, name)
         if not ejected:
@@ -2064,6 +2155,16 @@ class MuJoCoSimEngine(
         # there's nothing to release. Done BEFORE stopping policies so
         # peer-visible state is torn down cleanly even if the policy
         # teardown below hits the fallback ``wait=False`` path.
+        #
+        # PR #101 follow-up: each robot added via ``add_robot`` may have
+        # its own per-peer mesh (see ``_attach_robot_to_mesh``). Stop those
+        # FIRST so external peers see them leave before the sim container
+        # itself goes down — leaving the inverse order ("sim drops, robots
+        # linger") would create zombie peer entries in remote ``get_peers``
+        # results until their heartbeats expire.
+        if self._world is not None:
+            for r in list(self._world.robots.values()):
+                self._detach_robot_from_mesh(r)
         if self.mesh:
             self.mesh.stop()
 
