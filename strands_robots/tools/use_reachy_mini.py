@@ -38,7 +38,6 @@ import logging
 from typing import Any
 
 import requests
-
 from strands import tool
 
 logger = logging.getLogger(__name__)
@@ -161,8 +160,9 @@ def use_reachy_mini(
         elif action == "get_imu":
             # IMU is only available via Zenoh subscription
             try:
-                import zenoh
                 import time
+
+                import zenoh
 
                 session = zenoh.open(zenoh.Config())
                 samples = []
@@ -205,23 +205,23 @@ def use_reachy_mini(
             if len(body) == 1:  # only duration
                 return _err("Provide at least one of: head_pose, antennas, body_yaw")
 
-            result = _post(host, port, "/api/move/goto", body)
+            _post(host, port, "/api/move/goto", body)
             return _ok(f"Goto started (duration={duration}s): {json.dumps(body)[:200]}")
 
         elif action == "set_target":
-            body: dict[str, Any] = {}
+            target_body: dict[str, Any] = {}
             if head_pose:
-                body["head"] = json.loads(head_pose)
+                target_body["head"] = json.loads(head_pose)
             if antennas:
-                body["antennas"] = json.loads(antennas)
+                target_body["antennas"] = json.loads(antennas)
             if body_yaw:
-                body["body_yaw"] = float(body_yaw)
+                target_body["body_yaw"] = float(body_yaw)
 
-            if not body:
+            if not target_body:
                 return _err("Provide at least one of: head_pose, antennas, body_yaw")
 
-            result = _post(host, port, "/api/move/set_target", body)
-            return _ok(f"Target set: {json.dumps(body)[:200]}")
+            _post(host, port, "/api/move/set_target", target_body)
+            return _ok(f"Target set: {json.dumps(target_body)[:200]}")
 
         elif action == "wake_up":
             _post(host, port, "/api/move/play/wake_up")
