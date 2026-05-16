@@ -208,7 +208,7 @@ def resolve_policy_class_by_name(policy_type: str) -> type[Any]:
                     and hasattr(obj, "from_pretrained")
                 ):
                     return obj
-        except ImportError:
+        except (ImportError, TypeError):
             pass
 
     # Strategy 2: Direct package-level import
@@ -223,7 +223,7 @@ def resolve_policy_class_by_name(policy_type: str) -> type[Any]:
                 and hasattr(obj, "from_pretrained")
             ):
                 return obj
-    except ImportError:
+    except (ImportError, TypeError):
         pass
 
     # Strategy 3: Legacy get_policy_class (LeRobot <0.4)
@@ -231,7 +231,7 @@ def resolve_policy_class_by_name(policy_type: str) -> type[Any]:
         from lerobot.policies.factory import get_policy_class
 
         return get_policy_class(policy_type)
-    except (ImportError, AttributeError, RuntimeError):
+    except (ImportError, AttributeError, RuntimeError, TypeError):
         pass
 
     # Strategy 4: PreTrainedPolicy - only if it's NOT abstract
@@ -240,7 +240,7 @@ def resolve_policy_class_by_name(policy_type: str) -> type[Any]:
 
         if not inspect.isabstract(PreTrainedPolicy):
             return PreTrainedPolicy
-    except ImportError:
+    except (ImportError, TypeError):
         pass
 
     raise ImportError(
