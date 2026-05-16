@@ -23,7 +23,13 @@ Submodules
 - ``input`` — InputPublisher / InputReceiver for teleoperation over mesh
 """
 
-from strands_robots.mesh.core import Mesh, get_local_robots, init_mesh
+from strands_robots.mesh.core import (
+    _LOCAL_ROBOTS,
+    _LOCAL_ROBOTS_LOCK,
+    Mesh,
+    get_local_robots,
+    init_mesh,
+)
 from strands_robots.mesh.input import InputPublisher, InputReceiver
 
 __all__ = [
@@ -32,4 +38,6 @@ __all__ = [
     "InputReceiver",
     "get_local_robots",
     "init_mesh",
+    "_LOCAL_ROBOTS",
+    "_LOCAL_ROBOTS_LOCK",
 ]

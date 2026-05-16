@@ -38,14 +38,14 @@ logger = logging.getLogger(__name__)
 
 
 # Module-level registry of local meshes
-_LOCAL_ROBOTS: dict[str, "Mesh"] = {}
+_LOCAL_ROBOTS: dict[str, Mesh] = {}
 _LOCAL_ROBOTS_LOCK = threading.Lock()
 
-def get_local_robots() -> dict[str, "Mesh"]:
+
+def get_local_robots() -> dict[str, Mesh]:
     """Return a snapshot of in-process mesh-enabled robots."""
     with _LOCAL_ROBOTS_LOCK:
         return dict(_LOCAL_ROBOTS)
-
 
 
 class Mesh(SensorLoopsMixin):
@@ -80,7 +80,6 @@ class Mesh(SensorLoopsMixin):
         self.inbox: dict[str, list[tuple[str, dict[str, Any]]]] = {}
         self._user_subs: dict[str, Any] = {}
 
-
     # Lifecycle
     def start(self) -> None:
         """Acquire a Zenoh session and start all publishing loops."""
@@ -100,11 +99,7 @@ class Mesh(SensorLoopsMixin):
                 declared.append(session.declare_subscriber("strands/*/presence", self._on_presence))
                 declared.append(session.declare_subscriber(f"strands/{self.peer_id}/cmd", self._on_cmd))
                 declared.append(session.declare_subscriber("strands/broadcast", self._on_cmd))
-                declared.append(
-                    session.declare_subscriber(
-                        f"strands/{self.peer_id}/response/**", self._on_response
-                    )
-                )
+                declared.append(session.declare_subscriber(f"strands/{self.peer_id}/response/**", self._on_response))
             except Exception as exc:
                 for sub in declared:
                     try:
@@ -127,9 +122,7 @@ class Mesh(SensorLoopsMixin):
             heartbeat = threading.Thread(
                 target=self._heartbeat_loop, name=f"mesh-heartbeat-{self.peer_id}", daemon=True
             )
-            state_thread = threading.Thread(
-                target=self._state_loop, name=f"mesh-state-{self.peer_id}", daemon=True
-            )
+            state_thread = threading.Thread(target=self._state_loop, name=f"mesh-state-{self.peer_id}", daemon=True)
             self._threads = [heartbeat, state_thread]
             heartbeat.start()
             state_thread.start()
@@ -158,9 +151,7 @@ class Mesh(SensorLoopsMixin):
                 ("map-info", self._map_info_loop),
             ]
             for loop_name, loop_fn in extended_loops:
-                t = threading.Thread(
-                    target=loop_fn, name=f"mesh-{loop_name}-{self.peer_id}", daemon=True
-                )
+                t = threading.Thread(target=loop_fn, name=f"mesh-{loop_name}-{self.peer_id}", daemon=True)
                 self._threads.append(t)
                 t.start()
 
@@ -210,7 +201,6 @@ class Mesh(SensorLoopsMixin):
     def peers(self) -> list[dict[str, Any]]:
         return [p for p in _session_get_peers() if p.get("peer_id") != self.peer_id]
 
-    
     # Presence — outgoing
     def _build_presence(self) -> dict[str, Any]:
         r = self.robot
@@ -276,7 +266,11 @@ class Mesh(SensorLoopsMixin):
         # Advertise available extended topics
         available_topics: list[str] = []
         try:
-            if getattr(r, "_pose", None) is not None or getattr(r, "_slam_pose", None) is not None or getattr(r, "_odom_pose", None) is not None:
+            if (
+                getattr(r, "_pose", None) is not None
+                or getattr(r, "_slam_pose", None) is not None
+                or getattr(r, "_odom_pose", None) is not None
+            ):
                 available_topics.append("pose")
             if getattr(r, "_imu", None) is not None:
                 available_topics.append("imu")
@@ -328,7 +322,6 @@ class Mesh(SensorLoopsMixin):
         if is_new:
             logger.info("[mesh] new peer: %s (%s)", peer_id, data.get("robot_type", "?"))
 
-    
     # State — outgoing
     def _state_loop(self) -> None:
         period = 1.0 / STATE_HZ
@@ -394,7 +387,6 @@ class Mesh(SensorLoopsMixin):
 
         return snapshot if len(snapshot) > 2 else None
 
-    
     # Cameras — outgoing (opt-in)
     def _resolve_camera_hz(self) -> float:
         env = os.getenv("STRANDS_MESH_CAMERA_HZ")
@@ -497,7 +489,6 @@ class Mesh(SensorLoopsMixin):
             except Exception as exc:
                 logger.debug("[mesh] %s: camera %s publish failed: %s", self.peer_id, cam_name, exc)
 
-    
     # RPC — incoming
     def _on_cmd(self, sample: Any) -> None:
         try:
@@ -520,11 +511,29 @@ class Mesh(SensorLoopsMixin):
         try:
             result = self._dispatch(cmd)
             if rkey is not None:
-                put(rkey, {"type": "response", "responder_id": self.peer_id, "turn_id": turn, "result": result, "timestamp": time.time()})
+                put(
+                    rkey,
+                    {
+                        "type": "response",
+                        "responder_id": self.peer_id,
+                        "turn_id": turn,
+                        "result": result,
+                        "timestamp": time.time(),
+                    },
+                )
         except Exception as exc:
             logger.warning("[mesh] %s: dispatch error: %s", self.peer_id, exc)
             if rkey is not None:
-                put(rkey, {"type": "error", "responder_id": self.peer_id, "turn_id": turn, "error": str(exc), "timestamp": time.time()})
+                put(
+                    rkey,
+                    {
+                        "type": "error",
+                        "responder_id": self.peer_id,
+                        "turn_id": turn,
+                        "error": str(exc),
+                        "timestamp": time.time(),
+                    },
+                )
 
     def _dispatch(self, cmd: dict[str, Any]) -> dict[str, Any]:
         action = cmd.get("action", "status")
@@ -551,9 +560,15 @@ class Mesh(SensorLoopsMixin):
             policy_port = cmd.get("policy_port")
             policy_host = cmd.get("policy_host", "localhost")
             duration = cmd.get("duration", 30.0)
-            extra = {k: cmd[k] for k in ("model_path", "server_address", "policy_type", "pretrained_name_or_path") if k in cmd}
+            extra = {
+                k: cmd[k]
+                for k in ("model_path", "server_address", "policy_type", "pretrained_name_or_path")
+                if k in cmd
+            }
             if action == "execute" and hasattr(r, "_execute_task_sync"):
-                return dict(r._execute_task_sync(instruction, policy_provider, policy_port, policy_host, duration, **extra))
+                return dict(
+                    r._execute_task_sync(instruction, policy_provider, policy_port, policy_host, duration, **extra)
+                )
             if action == "start" and hasattr(r, "start_task"):
                 return dict(r.start_task(instruction, policy_provider, policy_port, policy_host, duration, **extra))
         if action == "step" and hasattr(r, "step"):
@@ -595,7 +610,6 @@ class Mesh(SensorLoopsMixin):
             self._responses.setdefault(turn, []).append(data)
         event.set()
 
-    
     # RPC — outgoing
     def send(self, target: str, cmd: dict[str, Any], timeout: float = 30.0) -> dict[str, Any]:
         """Send a command to a single peer and return the first response."""
@@ -640,9 +654,10 @@ class Mesh(SensorLoopsMixin):
         """Shorthand: ask a peer to execute a natural-language instruction."""
         return self.send(target, {"action": "execute", "instruction": instruction, **kw})
 
-    
     # Subscribe / publish_step / on_stream
-    def subscribe(self, topic: str, callback: Callable[[str, dict[str, Any]], None] | None = None, name: str | None = None) -> str | None:
+    def subscribe(
+        self, topic: str, callback: Callable[[str, dict[str, Any]], None] | None = None, name: str | None = None
+    ) -> str | None:
         """Subscribe to any Zenoh topic and receive parsed JSON dicts."""
         if not self._running:
             return None
@@ -702,7 +717,9 @@ class Mesh(SensorLoopsMixin):
         with self._inbox_lock:
             self.inbox.pop(name, None)
 
-    def publish_step(self, step: int, observation: dict[str, Any], action: dict[str, Any], instruction: str = "", policy: str = "") -> None:
+    def publish_step(
+        self, step: int, observation: dict[str, Any], action: dict[str, Any], instruction: str = "", policy: str = ""
+    ) -> None:
         """Publish one VLA execution step to the mesh."""
         if not self._running:
             return
@@ -725,17 +742,23 @@ class Mesh(SensorLoopsMixin):
             elif isinstance(value, (int, float, bool, str, list, tuple)):
                 act_numeric[key] = value if not isinstance(value, tuple) else list(value)
 
-        put(f"strands/{self.peer_id}/stream", {
-            "peer_id": self.peer_id, "step": step, "t": time.time(),
-            "instruction": instruction, "policy": policy,
-            "observation": obs_numeric, "action": act_numeric,
-        })
+        put(
+            f"strands/{self.peer_id}/stream",
+            {
+                "peer_id": self.peer_id,
+                "step": step,
+                "t": time.time(),
+                "instruction": instruction,
+                "policy": policy,
+                "observation": obs_numeric,
+                "action": act_numeric,
+            },
+        )
 
     def on_stream(self, peer_id: str, callback: Callable[[str, dict[str, Any]], None] | None = None) -> str | None:
         """Subscribe to another peer's VLA execution stream."""
         return self.subscribe(f"strands/{peer_id}/stream", callback, name=f"stream:{peer_id}")
 
-    
     # Safety — emergency stop
     def emergency_stop(self) -> list[dict[str, Any]]:
         """Broadcast stop to every peer and audit the event."""
@@ -747,7 +770,6 @@ class Mesh(SensorLoopsMixin):
             payload={"sender_id": self.peer_id, "responses_received": len(responses)},
         )
         return responses
-
 
 
 # init_mesh — the only public constructor

@@ -1,0 +1,32 @@
+"""Backward-compat shim -- re-exports from strands_robots.mesh.session."""
+
+# Re-export everything including private symbols used by tests
+from strands_robots.mesh.session import (  # noqa: F401
+    _PEERS,
+    _PEERS_LOCK,
+    _SESSION,
+    _SESSION_LOCK,
+    _SESSION_REFS,
+    HAND_HZ,
+    HEALTH_HZ,
+    IMU_HZ,
+    LIDAR_STATE_HZ,
+    LIDAR_SUMMARY_HZ,
+    MAP_INFO_HZ,
+    ODOM_HZ,
+    POSE_HZ,
+    PeerInfo,
+    _atexit_cleanup,
+    _build_config,
+    clear_peers,
+    current_session,
+    get_peer,
+    get_peers,
+    get_session,
+    peer_count,
+    prune_peers,
+    put,
+    release_session,
+    session_alive,
+    update_peer,
+)

@@ -832,12 +832,14 @@ class Robot(AgentTool):
 
         return {
             "status": "success",
-            "content": [{
-                "text": f"Input publisher started: {device_name} ({method} @ {hz}Hz)\n"
-                        f"Topic: {publisher.topic}\n"
-                        f"Peer ID: {self.peer_id}\n"
-                        f"Remote peers can receive with: start_teleop_receive(source_peer_id='{self.peer_id}')"
-            }],
+            "content": [
+                {
+                    "text": f"Input publisher started: {device_name} ({method} @ {hz}Hz)\n"
+                    f"Topic: {publisher.topic}\n"
+                    f"Peer ID: {self.peer_id}\n"
+                    f"Remote peers can receive with: start_teleop_receive(source_peer_id='{self.peer_id}')"
+                }
+            ],
         }
 
     def start_teleop_receive(
@@ -885,11 +887,13 @@ class Robot(AgentTool):
 
         return {
             "status": "success",
-            "content": [{
-                "text": f"Input receiver started: listening to {source_peer_id}/{device_name}\n"
-                        f"Topic: {receiver.topic}\n"
-                        f"Actions will be applied to: {self.tool_name_str}"
-            }],
+            "content": [
+                {
+                    "text": f"Input receiver started: listening to {source_peer_id}/{device_name}\n"
+                    f"Topic: {receiver.topic}\n"
+                    f"Actions will be applied to: {self.tool_name_str}"
+                }
+            ],
         }
 
     def stop_teleop(self, device_name: str | None = None) -> dict[str, Any]:
@@ -958,11 +962,19 @@ class Robot(AgentTool):
             "status": "success",
             "publishers": publishers,
             "receivers": receivers,
-            "content": [{
-                "text": f"Teleop status:\n"
-                        f"  Publishers: {len(publishers)} active\n"
-                        f"  Receivers: {len(receivers)} active\n"
-                        + "".join(f"  [pub] {n}: {s.get('frames', 0)} frames @ {s.get('hz_actual', 0):.1f}Hz\n" for n, s in publishers.items())
-                        + "".join(f"  [rcv] {k}: {s.get('frames_received', 0)} frames @ {s.get('hz_actual', 0):.1f}Hz\n" for k, s in receivers.items())
-            }],
+            "content": [
+                {
+                    "text": f"Teleop status:\n"
+                    f"  Publishers: {len(publishers)} active\n"
+                    f"  Receivers: {len(receivers)} active\n"
+                    + "".join(
+                        f"  [pub] {n}: {s.get('frames', 0)} frames @ {s.get('hz_actual', 0):.1f}Hz\n"
+                        for n, s in publishers.items()
+                    )
+                    + "".join(
+                        f"  [rcv] {k}: {s.get('frames_received', 0)} frames @ {s.get('hz_actual', 0):.1f}Hz\n"
+                        for k, s in receivers.items()
+                    )
+                }
+            ],
         }

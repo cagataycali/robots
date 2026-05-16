@@ -19,8 +19,12 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    pass
 
 from strands_robots.mesh.audit import log_safety_event
 from strands_robots.mesh.session import (
@@ -52,6 +56,11 @@ def _resolve_hz(env_name: str, default: float) -> float:
 
 
 class SensorLoopsMixin:
+    # Type hints for attrs provided by host class (Mesh)
+    peer_id: str
+    robot: Any
+    _running: bool
+    _stop_event: threading.Event
     """Mixin providing all extended sensor publishing loops for Mesh.
 
     Requires the host class to have:
@@ -61,9 +70,7 @@ class SensorLoopsMixin:
     - self._stop_event: threading.Event
     """
 
-    
     # Pose
-    
 
     def _pose_loop(self) -> None:
         hz = _resolve_hz("STRANDS_MESH_POSE_HZ", POSE_HZ)
@@ -141,9 +148,7 @@ class SensorLoopsMixin:
 
         return None
 
-    
     # Health
-    
 
     def _health_loop(self) -> None:
         hz = _resolve_hz("STRANDS_MESH_HEALTH_HZ", HEALTH_HZ)
@@ -225,9 +230,7 @@ class SensorLoopsMixin:
 
         return health if has_data else None
 
-    
     # IMU
-    
 
     def _imu_loop(self) -> None:
         hz = _resolve_hz("STRANDS_MESH_IMU_HZ", IMU_HZ)
@@ -278,9 +281,7 @@ class SensorLoopsMixin:
 
         return None
 
-    
     # Odometry
-    
 
     def _odom_loop(self) -> None:
         hz = _resolve_hz("STRANDS_MESH_ODOM_HZ", ODOM_HZ)
@@ -310,9 +311,7 @@ class SensorLoopsMixin:
             pass
         return None
 
-    
     # LiDAR
-    
 
     def _lidar_loop(self) -> None:
         hz = _resolve_hz("STRANDS_MESH_LIDAR_SUMMARY_HZ", LIDAR_SUMMARY_HZ)
@@ -363,9 +362,7 @@ class SensorLoopsMixin:
             pass
         return None
 
-    
     # Hand / End-Effector
-    
 
     def _hand_loop(self) -> None:
         hz = _resolve_hz("STRANDS_MESH_HAND_HZ", HAND_HZ)
@@ -399,9 +396,7 @@ class SensorLoopsMixin:
             pass
         return None
 
-    
     # Map Info
-    
 
     def _map_info_loop(self) -> None:
         hz = _resolve_hz("STRANDS_MESH_MAP_INFO_HZ", MAP_INFO_HZ)
@@ -430,9 +425,7 @@ class SensorLoopsMixin:
             pass
         return None
 
-    
     # Safety events
-    
 
     def publish_safety_event(
         self,

@@ -145,9 +145,7 @@ class InputPublisher:
             except Exception as exc:
                 self._error_count += 1
                 if self._error_count <= 5:
-                    logger.warning(
-                        "[mesh] input publish error (%s): %s", self.device_name, exc
-                    )
+                    logger.warning("[mesh] input publish error (%s): %s", self.device_name, exc)
 
             elapsed = time.perf_counter() - loop_start
             sleep_time = period - elapsed

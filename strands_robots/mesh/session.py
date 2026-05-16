@@ -92,9 +92,7 @@ HAND_HZ: float = 50.0
 MAP_INFO_HZ: float = 0.2
 
 
-
 # PeerInfo
-
 
 
 @dataclass
@@ -129,7 +127,6 @@ class PeerInfo:
             "age": round(self.age, 1),
             **self.caps,
         }
-
 
 
 # Peer registry — shared across all Mesh instances in the same process
@@ -204,9 +201,7 @@ def clear_peers() -> None:
         _PEERS_VERSION += 1
 
 
-
 # Session lifecycle
-
 
 
 def _build_config() -> Any:
@@ -370,9 +365,7 @@ def session_alive() -> bool:
         return _SESSION is not None
 
 
-
 # Publish helper
-
 
 
 def put(key: str, data: dict[str, Any]) -> None:
@@ -393,9 +386,7 @@ def put(key: str, data: dict[str, Any]) -> None:
         logger.debug("Zenoh put error on %s: %s", key, exc)
 
 
-
 # Process cleanup
-
 
 
 def _atexit_cleanup() -> None:
