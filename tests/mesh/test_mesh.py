@@ -448,11 +448,14 @@ class TestInitMesh:
         m.stop()
 
     def test_default_peer_id_format(self, patch_session: MagicMock) -> None:
-        """Default peer_id is f'{tool_name_str}-{4 hex chars}'."""
+        """Default peer_id is f'{tool_name_str}-{8 hex chars}'."""
         m = init_mesh(_FakeRobot(tool_name="bot"), peer_id=None)
         assert m is not None
         assert m.peer_id.startswith("bot-")
-        assert len(m.peer_id) == len("bot-") + 4
+        # 8 hex chars (32 bits) — sized to avoid collisions on a busy mesh.
+        assert len(m.peer_id) == len("bot-") + 8
+        # Suffix is hex.
+        assert all(c in "0123456789abcdef" for c in m.peer_id.split("-")[-1])
         m.stop()
 
     def test_default_peer_id_when_no_tool_name(self, patch_session: MagicMock) -> None:

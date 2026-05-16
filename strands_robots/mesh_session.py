@@ -208,6 +208,20 @@ def _build_config() -> Any:
     return config
 
 
+def current_session() -> Any | None:
+    """Return the existing session without bumping the refcount.
+
+    Returns ``None`` when no session has been opened.  Callers that already
+    hold a reference (via :func:`get_session`) and just need to access the
+    underlying object — e.g. to declare a piggy-backed subscriber that lives
+    for the duration of an existing reference — should use this instead of
+    calling :func:`get_session` and immediately :func:`release_session`,
+    which is fragile across error paths.
+    """
+    with _SESSION_LOCK:
+        return _SESSION
+
+
 def get_session() -> Any | None:
     """Acquire the shared Zenoh session (lazy, ref-counted).
 
@@ -233,7 +247,22 @@ def get_session() -> Any | None:
 
         import os
 
-        mesh_port = int(os.getenv("STRANDS_MESH_PORT", "7447"))
+        # STRANDS_MESH_PORT is read at session-open time so a process can be
+        # configured via env vars without re-importing.  Bad input falls back
+        # to the default and warns once — never raises (the default behaviour
+        # is to keep the mesh quietly off rather than crash the host robot).
+        port_env = os.getenv("STRANDS_MESH_PORT", "7447")
+        try:
+            mesh_port = int(port_env)
+            if not (1 <= mesh_port <= 65535):
+                raise ValueError(f"port {mesh_port} out of range")
+        except ValueError as exc:
+            logger.warning(
+                "Invalid STRANDS_MESH_PORT=%r (%s) — falling back to 7447",
+                port_env,
+                exc,
+            )
+            mesh_port = 7447
         local_ep = f"tcp/127.0.0.1:{mesh_port}"
 
         connect_env = os.getenv("ZENOH_CONNECT")
@@ -249,9 +278,16 @@ def get_session() -> Any | None:
                 _SESSION_REFS = 1
                 logger.info("Zenoh mesh session opened (listener on %s)", local_ep)
                 return _SESSION
-            except Exception:
-                # Port already bound — another process is the local router.
-                pass
+            except Exception as exc:  # noqa: BLE001 — fall back to client mode
+                # Port already bound (the most common case) is not an error.
+                # Log at debug so a real misconfiguration (e.g. bad iface) can
+                # still be diagnosed without spamming WARNING during the
+                # normal "second process joining the mesh" flow.
+                logger.debug(
+                    "Zenoh listener on %s unavailable (%s) — trying client mode",
+                    local_ep,
+                    exc,
+                )
 
             # Fall back to client mode — connect to the existing listener.
             try:
