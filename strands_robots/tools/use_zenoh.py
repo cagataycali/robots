@@ -84,9 +84,11 @@ def _format_sample(sample) -> dict[str, Any]:
         try:
             if len(payload) == 4:
                 import struct
+
                 value = struct.unpack("<f", payload)[0]
             elif len(payload) == 8:
                 import struct
+
                 value = struct.unpack("<d", payload)[0]
             else:
                 value = payload.hex()
@@ -173,11 +175,13 @@ def use_zenoh(
                     )
                     scout_results = []
                     for hello in hello_msgs:
-                        scout_results.append({
-                            "zid": str(hello.zid),
-                            "whatami": str(hello.whatami),
-                            "locators": [str(loc) for loc in hello.locators],
-                        })
+                        scout_results.append(
+                            {
+                                "zid": str(hello.zid),
+                                "whatami": str(hello.whatami),
+                                "locators": [str(loc) for loc in hello.locators],
+                            }
+                        )
                     if scout_results:
                         return _ok(
                             f"Scouted {len(scout_results)} Zenoh node(s):\n"
@@ -216,9 +220,7 @@ def use_zenoh(
                 return _ok(f"No data for key '{key}' (timeout {timeout_ms}ms)")
 
             if len(samples) == 1:
-                return _ok(
-                    f"Key: {samples[0]['key']}\nValue: {json.dumps(samples[0]['value'], indent=2)}"
-                )
+                return _ok(f"Key: {samples[0]['key']}\nValue: {json.dumps(samples[0]['value'], indent=2)}")
 
             text = f"Got {len(samples)} response(s) for '{key}':\n"
             for s in samples:
@@ -264,8 +266,7 @@ def use_zenoh(
 
             if not samples:
                 return _ok(
-                    f"No messages received on '{key}' within {timeout_ms}ms.\n"
-                    "The key may not be actively published."
+                    f"No messages received on '{key}' within {timeout_ms}ms.\nThe key may not be actively published."
                 )
 
             text = f"Received {len(samples)} message(s) on '{key}':\n"
@@ -326,10 +327,7 @@ def use_zenoh(
             return _ok(text)
 
         else:
-            return _err(
-                f"Unknown action: '{action}'. "
-                "Valid: discover, get, put, subscribe, query, list_keys, info"
-            )
+            return _err(f"Unknown action: '{action}'. Valid: discover, get, put, subscribe, query, list_keys, info")
 
     except Exception as e:
         logger.error(f"use_zenoh error: {e}", exc_info=True)
