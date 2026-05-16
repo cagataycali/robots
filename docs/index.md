@@ -5,6 +5,14 @@ hide:
 
 # Strands Robots
 
+!!! tip "Recently shipped"
+
+    - **Robot factory** — `Robot("name", mode=...)` returns a Simulation or HardwareRobot from the same call (PR #86).
+    - **MuJoCo simulation backend** — 35+ AgentTool actions, full sim/real parity (PR #85).
+    - **Mesh networking** — every `Robot()` auto-joins a Zenoh mesh; `mesh.tell` / `mesh.broadcast` / `emergency_stop` for fleet coordination (PR #101).
+    - **LIBERO benchmark adapter** — BDDL parser + suite definitions in `strands_robots.benchmarks.libero` (PR #110, #130, #147).
+    - **GR00T N1.7 support** — full container lifecycle helpers + (B,T,...) wire format (PR #149-#152, #155).
+
 **Robot control for Strands Agents — three lines from natural language to motion.**
 
 ```python

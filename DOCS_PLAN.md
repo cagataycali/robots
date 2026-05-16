@@ -120,9 +120,9 @@ When all 39 boxes are ticked, run a final `mkdocs build --strict --clean`, fix a
 
 ### Polish (cycles 16-20)
 - [x] **Cycle 16** — contributing.md + troubleshooting.md. Verify every internal link resolves.
-- [ ] **Cycle 17** — Walk every page, replace TODOs and stub code with real working examples. Add Run-It-Yourself tabs.
-- [ ] **Cycle 18** — Add a "What's New" admonition at top of index pointing to recent merges (Robot factory, mesh, libero benchmark, etc.). Verify every robot in `registry/robots.json` is listed in the right category page with its render image.
-- [ ] **Cycle 19** — `mkdocs build --strict --clean`. Open every warning. Fix every broken link, every missing image, every orphan page. Run `mkdocs serve` once and visually walk the nav tree.
+- [x] **Cycle 17** — Walk every page, replace TODOs and stub code with real working examples. Add Run-It-Yourself tabs.
+- [x] **Cycle 18** — Add a "What's New" admonition at top of index pointing to recent merges (Robot factory, mesh, libero benchmark, etc.). Verify every robot in `registry/robots.json` is listed in the right category page with its render image.
+- [x] **Cycle 19** — `mkdocs build --strict --clean`. Open every warning. Fix every broken link, every missing image, every orphan page. Run `mkdocs serve` once and visually walk the nav tree.
 - [ ] **Cycle 20** — Final pass: write the PR description, push to fork, open PR. End with `[AMBIENT_DONE]`.
 
 ## Code-grounding cheatsheet (open these files when writing)
