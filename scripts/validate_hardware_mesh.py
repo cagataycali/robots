@@ -97,8 +97,7 @@ def cmd_observe(args: argparse.Namespace) -> int:
     target = None
     while time.time() < deadline:
         for peer in get_peers():
-            caps = peer.get("caps", {}) or {}
-            if caps.get("connected") and caps.get("hw"):
+            if peer.get("connected") and peer.get("hw"):
                 target = peer
                 break
         if target is not None:
@@ -110,15 +109,14 @@ def cmd_observe(args: argparse.Namespace) -> int:
         mesh.stop()
         return 1
 
-    caps = target.get("caps", {}) or {}
-    cameras = caps.get("cameras") or []
+    cameras = target.get("cameras") or []
     report = {
         "peer_id": target.get("peer_id"),
-        "type": caps.get("robot_type"),
-        "hw": caps.get("hw"),
-        "connected": caps.get("connected"),
+        "type": target.get("robot_type"),
+        "hw": target.get("hw"),
+        "connected": target.get("connected"),
         "cameras": cameras,
-        "instruction": caps.get("instruction"),
+        "instruction": target.get("instruction"),
     }
     print("[observe] discovered hardware peer:")
     print(json.dumps(report, indent=2))

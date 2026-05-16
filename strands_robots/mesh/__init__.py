@@ -1,0 +1,35 @@
+"""Robot mesh networking — peer-to-peer presence, state, RPC, and teleoperation.
+
+This package provides the Zenoh-based mesh layer for strands-robots. Each robot
+(hardware or simulated) owns a :class:`Mesh` component that broadcasts its
+presence, publishes sensor streams, and responds to RPC commands from peers.
+
+Typical usage::
+
+    from strands_robots.mesh import init_mesh
+
+    mesh = init_mesh(robot, peer_id="arm-001")
+    if mesh is not None:
+        print(mesh.alive)   # True
+        print(mesh.peers)   # discovered peers
+        mesh.stop()
+
+Submodules
+----------
+- ``session`` — Shared Zenoh session singleton and peer registry
+- ``audit`` — Append-only safety event audit log
+- ``core`` — The Mesh class (lifecycle, presence, state, RPC, subscribe)
+- ``sensors`` — Extended sensor topic loops (pose, health, IMU, odom, lidar, hand, map)
+- ``input`` — InputPublisher / InputReceiver for teleoperation over mesh
+"""
+
+from strands_robots.mesh.core import Mesh, get_local_robots, init_mesh
+from strands_robots.mesh.input import InputPublisher, InputReceiver
+
+__all__ = [
+    "Mesh",
+    "InputPublisher",
+    "InputReceiver",
+    "get_local_robots",
+    "init_mesh",
+]

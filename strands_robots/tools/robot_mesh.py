@@ -123,7 +123,7 @@ def robot_mesh(
     """
     try:
         from strands_robots.mesh import get_local_robots
-        from strands_robots.mesh_session import get_peers
+        from strands_robots.mesh.session import get_peers
     except ImportError as exc:
         return _err(f"mesh module unavailable: {exc}")
 

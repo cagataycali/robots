@@ -41,17 +41,17 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
+
 # Session singleton — one ``zenoh.Session`` per process, ref-counted
-# ---------------------------------------------------------------------------
+
 
 _SESSION: Any | None = None  # zenoh.Session when open, else None
 _SESSION_LOCK = threading.Lock()
 _SESSION_REFS: int = 0
 
-# ---------------------------------------------------------------------------
+
 # Constants
-# ---------------------------------------------------------------------------
+
 
 #: Default heartbeat frequency (Hz).  Presence payloads are published at this rate.
 HEARTBEAT_HZ: float = 2.0
@@ -66,11 +66,35 @@ CAMERA_HZ: float = 0.0
 
 #: Seconds without a heartbeat before a peer is considered dead.
 PEER_TIMEOUT: float = 10.0
+#: Pose publishing frequency (Hz).  Publishes SE(3) pose when a pose
+#: provider (SLAM, odometry, VIO) is available on the robot.
+POSE_HZ: float = 10.0
+
+#: IMU publishing frequency (Hz).  Downsampled from hardware rate.
+IMU_HZ: float = 10.0
+
+#: Odometry publishing frequency (Hz).
+ODOM_HZ: float = 10.0
+
+#: Health/fleet-monitoring publishing frequency (Hz).
+HEALTH_HZ: float = 0.5
+
+#: LiDAR summary publishing frequency (Hz).
+LIDAR_SUMMARY_HZ: float = 5.0
+
+#: LiDAR state publishing frequency (Hz).
+LIDAR_STATE_HZ: float = 1.0
+
+#: Hand/end-effector state publishing frequency (Hz).
+HAND_HZ: float = 50.0
+
+#: Map info publishing frequency (Hz).
+MAP_INFO_HZ: float = 0.2
 
 
-# ---------------------------------------------------------------------------
+
 # PeerInfo
-# ---------------------------------------------------------------------------
+
 
 
 @dataclass
@@ -107,9 +131,9 @@ class PeerInfo:
         }
 
 
-# ---------------------------------------------------------------------------
+
 # Peer registry — shared across all Mesh instances in the same process
-# ---------------------------------------------------------------------------
+
 
 _PEERS: dict[str, PeerInfo] = {}
 _PEERS_VERSION: int = 0
@@ -180,9 +204,9 @@ def clear_peers() -> None:
         _PEERS_VERSION += 1
 
 
-# ---------------------------------------------------------------------------
+
 # Session lifecycle
-# ---------------------------------------------------------------------------
+
 
 
 def _build_config() -> Any:
@@ -346,9 +370,9 @@ def session_alive() -> bool:
         return _SESSION is not None
 
 
-# ---------------------------------------------------------------------------
+
 # Publish helper
-# ---------------------------------------------------------------------------
+
 
 
 def put(key: str, data: dict[str, Any]) -> None:
@@ -369,9 +393,9 @@ def put(key: str, data: dict[str, Any]) -> None:
         logger.debug("Zenoh put error on %s: %s", key, exc)
 
 
-# ---------------------------------------------------------------------------
+
 # Process cleanup
-# ---------------------------------------------------------------------------
+
 
 
 def _atexit_cleanup() -> None:
