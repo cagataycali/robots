@@ -76,12 +76,20 @@ mesh-iot = [
     "awscrt>=0.20.0,<1.0.0",
     "boto3>=1.34.0,<2.0.0",
 ]
+cosmos = [
+    "torch>=2.0.0",
+    "torchvision>=0.15.0",
+    "transformers>=4.40.0",
+    "huggingface-hub>=0.20.0",
+    "accelerate>=0.25.0",
+]
 all = [
     "strands-robots[groot-service]",
     "strands-robots[lerobot]",
     "strands-robots[sim-mujoco]",
     "strands-robots[mesh]",
     "strands-robots[mesh-iot]",
+    "strands-robots[cosmos]",
 ]
 dev = [
     "pytest>=6.0,<9.0.0",
@@ -156,7 +164,7 @@ ignore_missing_imports = false
 
 # Third-party libs without type stubs
 [[tool.mypy.overrides]]
-module = ["lerobot.*", "gr00t.*", "draccus.*", "msgpack.*", "zmq.*", "huggingface_hub.*", "serial.*", "psutil.*", "torch.*", "torchvision.*", "transformers.*", "einops.*", "robot_descriptions.*", "mujoco.*", "imageio.*", "libero.*", "zenoh.*", "boto3", "boto3.*", "awscrt", "awscrt.*", "awsiot", "awsiot.*", "botocore.*"]
+module = ["lerobot.*", "gr00t.*", "cosmos_predict2.*", "draccus.*", "msgpack.*", "zmq.*", "huggingface_hub.*", "serial.*", "psutil.*", "torch.*", "torchvision.*", "transformers.*", "einops.*", "robot_descriptions.*", "mujoco.*", "imageio.*", "libero.*", "zenoh.*", "boto3", "boto3.*", "awscrt", "awscrt.*", "awsiot", "awsiot.*", "botocore.*"]
 ignore_missing_imports = true
 
 # @tool decorator injects runtime signatures mypy cannot check
