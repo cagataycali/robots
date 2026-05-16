@@ -256,7 +256,6 @@ def test_resolve_mesh_returns_first_when_target_is_remote():
 def test_send_to_local_peer_does_not_use_target_as_gateway(fake_no_local):
     """End-to-end: robot_mesh(action='send', target=local_peer) must not
     route the call through the target's own Mesh (would self-loop)."""
-    from strands_robots.tools.robot_mesh import robot_mesh
 
     mesh_a = MagicMock(name="mesh_a")
     mesh_a.peer_id = "alpha"
