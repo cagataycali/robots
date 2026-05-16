@@ -87,7 +87,7 @@ def test_publish_cameras_once_calls_put(fake_robot_with_camera):
     from strands_robots.mesh import Mesh
 
     m = Mesh(fake_robot_with_camera, peer_id="test-cam-6")
-    with patch("strands_robots.mesh.put") as mock_put:
+    with patch("strands_robots.mesh.core.put") as mock_put:
         m._publish_cameras_once()
 
     assert mock_put.called, "put() should have been called for the camera"
@@ -112,7 +112,7 @@ def test_publish_cameras_once_skips_disconnected():
     )
     r = SimpleNamespace(tool_name_str="so101", robot=inner)
     m = Mesh(r, peer_id="test-cam-7")
-    with patch("strands_robots.mesh.put") as mock_put:
+    with patch("strands_robots.mesh.core.put") as mock_put:
         m._publish_cameras_once()
     assert not mock_put.called
     assert not inner.get_observation.called
@@ -124,6 +124,6 @@ def test_publish_cameras_once_handles_missing_frame(fake_robot_with_camera):
 
     fake_robot_with_camera.robot.get_observation = MagicMock(return_value={"wrist": None})
     m = Mesh(fake_robot_with_camera, peer_id="test-cam-8")
-    with patch("strands_robots.mesh.put") as mock_put:
+    with patch("strands_robots.mesh.core.put") as mock_put:
         m._publish_cameras_once()
     assert not mock_put.called

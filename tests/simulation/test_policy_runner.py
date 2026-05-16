@@ -283,6 +283,7 @@ def test_simengine_run_policy_validates_robot_exists():
     reason="requires OpenGL; opt-in via ROBOT_TEST_MUJOCO=1",
 )
 def test_run_policy_video_writes_mp4(tmp_path: Path) -> None:
+    pytest.importorskip("mujoco")
     os.environ.setdefault("MUJOCO_GL", "glfw")
 
     video_path = tmp_path / "rollout.mp4"
@@ -361,6 +362,7 @@ def test_extract_frame_ndarray_handles_render_shape() -> None:
     reason="requires OpenGL; opt-in via ROBOT_TEST_MUJOCO=1",
 )
 def test_run_policy_reuses_policy_object() -> None:
+    pytest.importorskip("mujoco")
     """Two rollouts with a single pre-built MockPolicy should both succeed."""
     os.environ.setdefault("MUJOCO_GL", "glfw")
 

@@ -17,8 +17,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from strands_robots import mesh as mesh_mod
-from strands_robots import mesh_session
 from strands_robots.mesh import Mesh, get_local_robots, init_mesh
+from strands_robots.mesh import session as mesh_session
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -93,17 +93,17 @@ def patch_session(fake_session: MagicMock, monkeypatch: pytest.MonkeyPatch) -> I
     by the global kill switch.
     """
     monkeypatch.delenv("STRANDS_MESH", raising=False)
-    with patch("strands_robots.mesh.get_session", return_value=fake_session):
+    with patch("strands_robots.mesh.core.get_session", return_value=fake_session):
         # Also stop start() from acquiring a real session ref count by
         # patching release_session to a no-op MagicMock so we can assert calls.
-        with patch("strands_robots.mesh.release_session") as release_mock:
+        with patch("strands_robots.mesh.core.release_session") as release_mock:
             yield release_mock
 
 
 @pytest.fixture
 def patch_no_session() -> Iterator[None]:
     """Patch get_session to return None (zenoh unavailable)."""
-    with patch("strands_robots.mesh.get_session", return_value=None):
+    with patch("strands_robots.mesh.core.get_session", return_value=None):
         yield
 
 
@@ -173,8 +173,8 @@ class TestLifecycle:
         """If declare_subscriber raises, start() must release_session()
         immediately and stop() must not release a second time."""
         fake_session.declare_subscriber.side_effect = RuntimeError("boom")
-        with patch("strands_robots.mesh.get_session", return_value=fake_session):
-            with patch("strands_robots.mesh.release_session") as release_mock:
+        with patch("strands_robots.mesh.core.get_session", return_value=fake_session):
+            with patch("strands_robots.mesh.core.release_session") as release_mock:
                 m = Mesh(_FakeRobot(), peer_id="bot-8")
                 m.start()
                 # start() failed cleanly
@@ -376,7 +376,10 @@ class TestLoops:
     """Heartbeat and state loops publish to the right keys and can be stopped."""
 
     def test_heartbeat_publishes_and_prunes(self, patch_session: MagicMock) -> None:
-        with patch("strands_robots.mesh.put") as put_mock, patch("strands_robots.mesh.prune_peers") as prune_mock:
+        with (
+            patch("strands_robots.mesh.core.put") as put_mock,
+            patch("strands_robots.mesh.core.prune_peers") as prune_mock,
+        ):
             m = Mesh(_FakeRobot(), peer_id="hb-1")
             m.start()
             # Wait for at least one heartbeat tick (>500ms at 2Hz).
@@ -390,7 +393,7 @@ class TestLoops:
             assert prune_mock.called
 
     def test_state_loop_publishes_when_state_present(self, patch_session: MagicMock) -> None:
-        with patch("strands_robots.mesh.put") as put_mock:
+        with patch("strands_robots.mesh.core.put") as put_mock:
             m = Mesh(_FakeRobot(with_world=True), peer_id="st-1", peer_type="sim")
             m.start()
             time.sleep(0.3)  # >100ms at 10Hz → at least one state tick
@@ -399,7 +402,7 @@ class TestLoops:
             assert any(k == "strands/st-1/state" for k in keys)
 
     def test_state_loop_skips_publish_when_no_state(self, patch_session: MagicMock) -> None:
-        with patch("strands_robots.mesh.put") as put_mock:
+        with patch("strands_robots.mesh.core.put") as put_mock:
             # _FakeRobot() with nothing → _read_state returns None → no state publish
             m = Mesh(_FakeRobot(), peer_id="st-2")
             m.start()
@@ -432,12 +435,12 @@ class TestInitMesh:
 
     def test_returns_none_when_env_disabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("STRANDS_MESH", "false")
-        with patch("strands_robots.mesh.get_session", return_value=MagicMock()):
+        with patch("strands_robots.mesh.core.get_session", return_value=MagicMock()):
             assert init_mesh(_FakeRobot(), peer_id="x") is None
 
     def test_env_kill_switch_case_insensitive(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("STRANDS_MESH", "  FALSE  ")
-        with patch("strands_robots.mesh.get_session", return_value=MagicMock()):
+        with patch("strands_robots.mesh.core.get_session", return_value=MagicMock()):
             assert init_mesh(_FakeRobot(), peer_id="x") is None
 
     def test_returns_started_mesh(self, patch_session: MagicMock) -> None:

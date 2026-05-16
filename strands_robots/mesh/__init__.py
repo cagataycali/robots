@@ -23,6 +23,7 @@ Submodules
 - ``input`` — InputPublisher / InputReceiver for teleoperation over mesh
 """
 
+from strands_robots.mesh.audit import log_safety_event
 from strands_robots.mesh.core import (
     _LOCAL_ROBOTS,
     _LOCAL_ROBOTS_LOCK,
@@ -31,6 +32,17 @@ from strands_robots.mesh.core import (
     init_mesh,
 )
 from strands_robots.mesh.input import InputPublisher, InputReceiver
+from strands_robots.mesh.session import (
+    clear_peers,
+    current_session,
+    get_peers,
+    get_session,
+    prune_peers,
+    put,
+    release_session,
+    session_alive,
+    update_peer,
+)
 
 __all__ = [
     "Mesh",
@@ -38,6 +50,16 @@ __all__ = [
     "InputReceiver",
     "get_local_robots",
     "init_mesh",
+    "put",
+    "get_session",
+    "release_session",
+    "current_session",
+    "session_alive",
+    "get_peers",
+    "update_peer",
+    "clear_peers",
+    "prune_peers",
+    "log_safety_event",
     "_LOCAL_ROBOTS",
     "_LOCAL_ROBOTS_LOCK",
 ]

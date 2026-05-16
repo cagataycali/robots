@@ -15,9 +15,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from strands_robots import mesh as mesh_mod
-from strands_robots import mesh_session
 from strands_robots.mesh import Mesh, init_mesh
+from strands_robots.mesh import core as mesh_core
+from strands_robots.mesh import session as mesh_session
 
 
 class _FakeRobot:
@@ -33,9 +33,9 @@ def fake_session(monkeypatch: pytest.MonkeyPatch) -> Iterator[MagicMock]:
     with (
         patch.object(mesh_session, "get_session", return_value=sess),
         patch.object(mesh_session, "current_session", return_value=sess),
-        patch.object(mesh_mod, "get_session", return_value=sess),
-        patch.object(mesh_mod, "current_session", return_value=sess),
-        patch.object(mesh_mod, "release_session"),
+        patch.object(mesh_core, "get_session", return_value=sess),
+        patch.object(mesh_core, "current_session", return_value=sess),
+        patch.object(mesh_core, "release_session"),
     ):
         yield sess
 
@@ -139,8 +139,8 @@ def test_partial_init_failure_cleans_up_declared_subscribers(
 
     with (
         patch.object(mesh_session, "get_session", return_value=sess),
-        patch.object(mesh_mod, "get_session", return_value=sess),
-        patch.object(mesh_mod, "release_session") as release_mock,
+        patch.object(mesh_core, "get_session", return_value=sess),
+        patch.object(mesh_core, "release_session") as release_mock,
     ):
         m = Mesh(_FakeRobot(), peer_id="rob-partial", peer_type="robot")
         m.start()

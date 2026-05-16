@@ -17,8 +17,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from strands_robots import mesh as mesh_mod
-from strands_robots import mesh_session
 from strands_robots.mesh import Mesh
+from strands_robots.mesh import core as mesh_core
+from strands_robots.mesh import session as mesh_session
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -79,9 +80,9 @@ def fake_session() -> Iterator[MagicMock]:
     with (
         patch.object(mesh_session, "get_session", return_value=sess),
         patch.object(mesh_session, "current_session", return_value=sess),
-        patch.object(mesh_mod, "get_session", return_value=sess),
-        patch.object(mesh_mod, "current_session", return_value=sess),
-        patch.object(mesh_mod, "release_session"),
+        patch.object(mesh_core, "get_session", return_value=sess),
+        patch.object(mesh_core, "current_session", return_value=sess),
+        patch.object(mesh_core, "release_session"),
     ):
         yield sess
 
@@ -94,7 +95,7 @@ def captured_puts() -> Iterator[list[tuple[str, dict[str, Any]]]]:
     def _spy(key: str, data: dict[str, Any]) -> None:
         seen.append((key, data))
 
-    with patch.object(mesh_mod, "put", side_effect=_spy):
+    with patch.object(mesh_core, "put", side_effect=_spy):
         yield seen
 
 

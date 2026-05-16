@@ -8,7 +8,7 @@ import time
 
 import pytest
 
-from strands_robots import mesh_audit
+from strands_robots.mesh import audit as mesh_audit
 
 
 @pytest.fixture

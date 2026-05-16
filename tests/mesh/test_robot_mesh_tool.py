@@ -29,7 +29,7 @@ def fake_local_mesh():
             "strands_robots.mesh.get_local_robots",
             return_value={"local-a": fake},
         ),
-        patch("strands_robots.mesh_session.get_peers", return_value=[]),
+        patch("strands_robots.mesh.session.get_peers", return_value=[]),
     ):
         yield fake
 
@@ -39,14 +39,14 @@ def fake_no_local():
     """Patch get_local_robots()/get_peers() to return empty."""
     with (
         patch("strands_robots.mesh.get_local_robots", return_value={}),
-        patch("strands_robots.mesh_session.get_peers", return_value=[]),
+        patch("strands_robots.mesh.session.get_peers", return_value=[]),
     ):
         yield
 
 
 def test_peers_lists_local_and_remote(fake_local_mesh):
     with patch(
-        "strands_robots.mesh_session.get_peers",
+        "strands_robots.mesh.session.get_peers",
         return_value=[{"peer_id": "remote-1", "type": "robot", "hostname": "host1", "age": 3}],
     ):
         out = _strands_call(action="peers")
