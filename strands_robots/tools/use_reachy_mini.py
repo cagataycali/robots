@@ -135,11 +135,11 @@ def use_reachy_mini(
                 f"  Version: {daemon.get('version', '?')}\n"
                 f"  Motors: {ctrl}\n"
                 f"  Wireless: {daemon.get('wireless_version', '?')}\n"
-                f"  Head pose: roll={hp.get('roll',0):.3f} pitch={hp.get('pitch',0):.3f} yaw={hp.get('yaw',0):.3f}\n"
-                f"  Head xyz: x={hp.get('x',0):.4f} y={hp.get('y',0):.4f} z={hp.get('z',0):.4f}\n"
+                f"  Head pose: roll={hp.get('roll', 0):.3f} pitch={hp.get('pitch', 0):.3f} yaw={hp.get('yaw', 0):.3f}\n"
+                f"  Head xyz: x={hp.get('x', 0):.4f} y={hp.get('y', 0):.4f} z={hp.get('z', 0):.4f}\n"
                 f"  Body yaw: {by:.4f} rad\n"
-                f"  Antennas [R, L]: {[round(a,3) for a in ant]}\n"
-                f"  Control loop: ~{daemon.get('backend_status',{}).get('control_loop_stats',{}).get('mean_control_loop_frequency',0):.1f} Hz"
+                f"  Antennas [R, L]: {[round(a, 3) for a in ant]}\n"
+                f"  Control loop: ~{daemon.get('backend_status', {}).get('control_loop_stats', {}).get('mean_control_loop_frequency', 0):.1f} Hz"
             )
             return _ok(text)
 
@@ -151,10 +151,10 @@ def use_reachy_mini(
             ts = state.get("timestamp", "?")
             return _ok(
                 f"Joint State (at {ts}):\n"
-                f"  Head pose: roll={hp.get('roll',0):.4f} pitch={hp.get('pitch',0):.4f} yaw={hp.get('yaw',0):.4f}\n"
-                f"  Head position: x={hp.get('x',0):.4f} y={hp.get('y',0):.4f} z={hp.get('z',0):.4f}\n"
+                f"  Head pose: roll={hp.get('roll', 0):.4f} pitch={hp.get('pitch', 0):.4f} yaw={hp.get('yaw', 0):.4f}\n"
+                f"  Head position: x={hp.get('x', 0):.4f} y={hp.get('y', 0):.4f} z={hp.get('z', 0):.4f}\n"
                 f"  Body yaw: {by:.4f}\n"
-                f"  Antennas [R, L]: {[round(a,4) for a in ant]}"
+                f"  Antennas [R, L]: {[round(a, 4) for a in ant]}"
             )
 
         elif action == "get_imu":
@@ -179,9 +179,9 @@ def use_reachy_mini(
                     imu = samples[-1]
                     return _ok(
                         f"IMU Data:\n"
-                        f"  Accelerometer: {[round(x,3) for x in imu.get('accelerometer',[])]}\n"
-                        f"  Gyroscope: {[round(x,5) for x in imu.get('gyroscope',[])]}\n"
-                        f"  Quaternion: {[round(x,4) for x in imu.get('quaternion',[])]}\n"
+                        f"  Accelerometer: {[round(x, 3) for x in imu.get('accelerometer', [])]}\n"
+                        f"  Gyroscope: {[round(x, 5) for x in imu.get('gyroscope', [])]}\n"
+                        f"  Quaternion: {[round(x, 4) for x in imu.get('quaternion', [])]}\n"
                         f"  Temperature: {imu.get('temperature')} C"
                     )
                 return _ok("No IMU data received (zenoh timeout)")
