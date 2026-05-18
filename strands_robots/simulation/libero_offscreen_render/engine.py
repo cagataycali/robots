@@ -374,19 +374,32 @@ class LiberoOffScreenRenderEngine(SimEngine):
                     obs[name] = float(joint_qpos[i])
 
         # Images: V-flipped agentview + robot0_eye_in_hand. Upstream's
-        # OffScreenRenderEnv returns OpenGL bottom-row-zero convention;
-        # NVIDIA's ``LiberoEnv._process_observation`` applies
-        # ``[::-1, ::-1]`` to convert. We do the same here so policies
-        # see images in training-image convention without further
-        # client-side rotation. (Equivalent to round-39 fix in our
-        # MuJoCo adapter path, but applied directly to upstream output.)
+        # ``OffScreenRenderEnv`` returns OpenGL bottom-row-zero
+        # convention; we just reverse the H axis here so producer output
+        # matches OpenGL framebuffer convention. The policy's
+        # ``image_rotation_180`` flag (set on ``libero_panda``'s
+        # ``Gr00tDataConfig``) then applies the second flip to convert
+        # OpenGL → training convention. This matches the contract the
+        # ``LiberoAdapter`` (MuJoCo path) uses since round 39.
+        #
+        # Pre-#169 this baked the full ``[::-1, ::-1]`` rotation here,
+        # producing training-convention output directly. That worked for
+        # LOCAL inference (which doesn't apply the policy-side rotation
+        # flag) but DOUBLE-rotated in SERVICE mode (engine 180° + policy
+        # 180° = identity = OpenGL OOD), causing #169's
+        # ``success_rate=0`` against the docker GR00T server. The fix
+        # moves the second flip into the policy's
+        # ``_build_service_observation`` /
+        # ``_prepare_observation`` (now consistent across
+        # transports) so this engine just produces OpenGL convention
+        # like every other observation producer.
         if not skip_images:
             agent_img = raw.get("agentview_image")
             if isinstance(agent_img, np.ndarray):
-                obs["image"] = np.ascontiguousarray(agent_img[::-1, ::-1])
+                obs["image"] = np.ascontiguousarray(agent_img[::-1, :])
             wrist_img = raw.get("robot0_eye_in_hand_image")
             if isinstance(wrist_img, np.ndarray):
-                obs["wrist_image"] = np.ascontiguousarray(wrist_img[::-1, ::-1])
+                obs["wrist_image"] = np.ascontiguousarray(wrist_img[::-1, :])
 
         return obs
 

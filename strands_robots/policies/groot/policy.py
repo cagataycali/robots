@@ -609,6 +609,18 @@ class Gr00tPolicy(Policy):
         lang_key = self._obs_mapping.language_key
         language_dict = {lang_key: [[instruction]]}
 
+        # Match Isaac-GR00T training preprocessing for embodiments that need
+        # it (#169) - same rotation that ``_build_service_observation``
+        # applies, kept consistent so LOCAL and SERVICE inference modes
+        # see identical observations. Pre-#169 the rotation was service-
+        # only, which silently fed local-mode users (and the round-43
+        # ``LiberoOffScreenRenderEngine`` LOCAL path) upside-down or
+        # reversed-direction images relative to training. The helper
+        # operates on the 5D ``(1, 1, H, W, C)`` tensor directly via
+        # negative-axis flips so the rotation always lands on H/W.
+        if self.data_config.image_rotation_180:
+            _apply_image_rotation_180_inplace(video_dict, list(video_dict.keys()))
+
         return {
             "video": video_dict,
             "state": state_dict,
@@ -696,27 +708,12 @@ class Gr00tPolicy(Policy):
                 obs[vk] = robot_obs[bare]
                 video_keys.append(vk)
         # Match Isaac-GR00T training preprocessing for embodiments that need
-        # it - the GR00T-N1.7-LIBERO checkpoint was trained on data the
-        # upstream pipeline rotates 180 deg via Isaac-GR00T's
-        # ``examples/Libero/eval/utils.py:get_libero_image()``. Without this
-        # rotation at eval time, every observation the policy sees is
-        # upside-down relative to its training distribution and the success
-        # rate collapses to 0 (#168 round-7 bug H). The flag is set to True
-        # only on the ``libero_panda`` entry of ``data_configs.json``;
-        # other configs (so100, oxe_droid, etc.) leave it at the default
-        # ``False`` so this loop is a no-op for them. Applied BEFORE the
-        # newaxis fanout below so the slice indexes the H/W axes, not the
-        # leading B/T axes.
+        # it - see :func:`_apply_image_rotation_180_inplace` for the algebra.
+        # #169 moved the inline implementation into the shared helper and
+        # added a parallel call in :meth:`_prepare_observation` so
+        # local-mode inference applies the same rotation.
         if self.data_config.image_rotation_180:
-            for vk in video_keys:
-                v = obs.get(vk)
-                if isinstance(v, np.ndarray) and v.ndim >= 2:
-                    # ``[::-1, ::-1]`` reverses dim 0 (H) and dim 1 (W).
-                    # ``ascontiguousarray`` materialises the flipped view as
-                    # a fresh contiguous buffer - downstream serialization
-                    # (msgpack / numpy.tobytes()) requires C-contiguous
-                    # memory; reversed views are not contiguous.
-                    obs[vk] = np.ascontiguousarray(v[::-1, ::-1])
+            _apply_image_rotation_180_inplace(obs, video_keys)
         for sk in self.data_config.state_keys:
             bare = sk.removeprefix("state.")
             if bare in robot_obs:
@@ -794,6 +791,51 @@ class Gr00tPolicy(Policy):
 
 
 # Shape helpers - match Isaac-GR00T's expected formats exactly
+
+
+def _apply_image_rotation_180_inplace(obs: dict[str, Any], video_keys: list[str]) -> None:
+    """Apply 180° H/W rotation to ``video_keys`` in ``obs``.
+
+    Match Isaac-GR00T training preprocessing for embodiments that need it.
+    The GR00T-N1.7-LIBERO checkpoint was trained on data the upstream
+    pipeline rotates 180° via Isaac-GR00T's
+    ``examples/Libero/eval/utils.py:get_libero_image()``. Without this
+    rotation at eval time, every observation the policy sees is
+    upside-down relative to its training distribution and the success
+    rate collapses to 0 (#168 round-7 bug H, re-broken in service mode
+    by #168 round 43, fixed by #169).
+
+    Producers (``LiberoAdapter.augment_observation``,
+    ``LiberoOffScreenRenderEngine.get_observation``) are expected to
+    deliver images in OpenGL framebuffer convention (bottom-row-zero).
+    This helper applies the second 180° to convert OpenGL → training
+    convention, matching what NVIDIA's reference eval does.
+
+    Operates IN PLACE on ``obs``: the rotated array replaces the
+    original entry with an ``np.ascontiguousarray`` view (downstream
+    msgpack / ``np.tobytes()`` requires C-contiguous memory; reversed
+    views are not contiguous).
+
+    Handles any-dim input where H and W are the trailing-3rd and
+    trailing-2nd axes (e.g. raw 3D ``(H, W, C)`` or batched 4D
+    ``(B, H, W, C)`` / 5D ``(B, T, H, W, C)``). Uses ``np.flip`` with
+    a negative-axis tuple so the rotation lands on H/W regardless of
+    whether the leading B/T axes have been added yet.
+
+    Called from BOTH service-mode (``_build_service_observation``) and
+    local-mode (``_prepare_observation``) paths so the rotation is
+    applied consistently regardless of inference transport. Pre-#169 it
+    was service-only, which made the LOCAL+adapter path silently OOD
+    and the SERVICE+``LiberoOffScreenRenderEngine`` path silently OOD
+    in the opposite direction (engine bakes 180°, policy applies 180° →
+    net identity = OpenGL).
+    """
+    for vk in video_keys:
+        v = obs.get(vk)
+        if isinstance(v, np.ndarray) and v.ndim >= 3:
+            # Negative-axis indexing handles 3D / 4D / 5D uniformly:
+            # H = axis -3, W = axis -2, C = axis -1.
+            obs[vk] = np.ascontiguousarray(np.flip(v, axis=(-3, -2)))
 
 
 def _to_video_batch(value: np.ndarray) -> np.ndarray:

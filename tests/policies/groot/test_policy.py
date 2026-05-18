@@ -795,6 +795,211 @@ class TestServiceObsImageRotation180:
             assert cfg.image_rotation_180 is False, f"{name} unexpectedly has rotation enabled"
 
 
+class TestLocalObsImageRotation180:
+    """#169: ``image_rotation_180`` is applied in LOCAL inference mode too,
+    not just SERVICE mode.
+
+    Pre-#169 the rotation lived only in ``_build_service_observation``,
+    which made:
+
+    - LOCAL + ``LiberoAdapter`` (V-flipped → OpenGL): policy got
+      OpenGL convention images (no rotation), training expected
+      training convention. Silent OOD.
+    - SERVICE + ``LiberoOffScreenRenderEngine`` (engine 180° baked in):
+      engine produced training convention, policy applied another
+      180° → net OpenGL → OOD. This was issue #169 (success_rate=0
+      against the docker GR00T server while in-process got 5/5).
+
+    The fix moves the rotation into a shared helper called from BOTH
+    paths, and makes the engine match the adapter's contract by only
+    V-flipping (delivering OpenGL convention to the policy). Both
+    inference modes now consistently see training-convention images.
+    """
+
+    def _libero_panda_local_policy(self):
+        """Build a LOCAL-mode policy with libero_panda's rotation flag."""
+        # Use _make_policy helper but with libero_panda's data_config
+        # AND a custom obs_mapping that maps the test image keys.
+        p = _make_policy(
+            data_config="libero_panda",
+            obs_mapping=ObservationMapping(
+                video={"image": "video.image", "wrist_image": "video.wrist_image"},
+                state={"x": "state.x"},
+                language_key="annotation.human.action.task_description",
+            ),
+            mmc=_mock_mmc(
+                video_keys=["video.image", "video.wrist_image"],
+                state_keys=["state.x"],
+                action_keys=["action.x"],
+                language_keys=["annotation.human.action.task_description"],
+            ),
+        )
+        return p
+
+    def test_local_rotates_video_180_when_flag_is_true(self):
+        """LOCAL mode applies the same rotation SERVICE mode does, when
+        ``data_config.image_rotation_180`` is True (e.g. libero_panda).
+
+        Sentinel: top-left pixel of input → bottom-right of output, and
+        vice versa. This is a strict 180° rotation.
+        """
+        p = self._libero_panda_local_policy()
+        h, w = 16, 8
+        img = np.arange(h * w * 3, dtype=np.uint8).reshape(h, w, 3)
+        original_top_left = img[0, 0].copy()
+        original_bottom_right = img[h - 1, w - 1].copy()
+
+        out = p._prepare_observation(
+            {"image": img.copy(), "wrist_image": img.copy(), "x": 0.0},
+            "pick the cube",
+        )
+        # video_dict shape is (1, 1, H, W, C) post-fanout
+        out_image = out["video"]["video.image"]
+        assert out_image.shape == (1, 1, h, w, 3)
+        np.testing.assert_array_equal(out_image[0, 0, 0, 0], original_bottom_right)
+        np.testing.assert_array_equal(out_image[0, 0, h - 1, w - 1], original_top_left)
+        # Wrist channel rotates too.
+        out_wrist = out["video"]["video.wrist_image"]
+        np.testing.assert_array_equal(out_wrist[0, 0, 0, 0], original_bottom_right)
+
+    def test_local_does_not_rotate_when_flag_is_false(self):
+        """LOCAL mode skips rotation when the data_config flag is False
+        (the default; e.g. so100). Pin so non-LIBERO embodiments don't
+        get silently rotated by the new local-mode wiring."""
+        p = _make_policy(
+            data_config="so100",
+            obs_mapping=ObservationMapping(
+                video={"webcam": "webcam"},
+                state={"single_arm": "single_arm"},
+                language_key="annotation.human.task_description",
+            ),
+        )
+        h, w = 8, 8
+        img = np.arange(h * w * 3, dtype=np.uint8).reshape(h, w, 3)
+        original_top_left = img[0, 0].copy()
+
+        out = p._prepare_observation(
+            {"webcam": img.copy(), "single_arm": np.zeros(6)},
+            "t",
+        )
+        out_image = out["video"]["webcam"]
+        # No rotation: top-left should match original top-left.
+        np.testing.assert_array_equal(out_image[0, 0, 0, 0], original_top_left)
+
+    def test_local_and_service_produce_identical_image_after_rotation(self):
+        """#169 invariant: for the same input, LOCAL and SERVICE modes
+        deliver the SAME image content to the policy after rotation.
+
+        This is the strongest test that the two paths can't drift again.
+        Prior to #169, LOCAL skipped rotation while SERVICE applied it,
+        so the same observation produced different model inputs depending
+        on transport — exactly the bug class issue #169 covers."""
+        p_local = self._libero_panda_local_policy()
+        p_svc = Gr00tPolicy(data_config="libero_panda", host="localhost", port=19999)
+        p_svc._groot_version = "n1.7"
+
+        h, w = 16, 16
+        img = np.arange(h * w * 3, dtype=np.uint8).reshape(h, w, 3)
+
+        local_out = p_local._prepare_observation(
+            {"image": img.copy(), "wrist_image": img.copy(), "x": 0.0},
+            "t",
+        )
+        svc_out = p_svc._build_service_observation(
+            {"image": img.copy(), "wrist_image": img.copy(), "x": 0.0},
+            "t",
+        )
+
+        local_img = local_out["video"]["video.image"]  # (1, 1, H, W, C)
+        svc_img = svc_out["video.image"]  # (1, 1, H, W, C) for n1.7
+        # Squeeze leading axes for comparison.
+        np.testing.assert_array_equal(local_img.squeeze(), svc_img.squeeze())
+
+    def test_local_rotation_output_is_contiguous(self):
+        """``np.ascontiguousarray`` materialises the rotated view as a
+        fresh contiguous buffer. The local-mode pass-through to
+        ``Gr00tPolicy.get_action`` doesn't strictly need contiguous
+        memory (no msgpack), but consistency with service mode + any
+        downstream code that calls ``.tobytes()`` matters."""
+        p = self._libero_panda_local_policy()
+        img = np.arange(8 * 8 * 3, dtype=np.uint8).reshape(8, 8, 3)
+        out = p._prepare_observation(
+            {"image": img, "wrist_image": img, "x": 0.0},
+            "t",
+        )
+        out_image = out["video"]["video.image"]
+        assert out_image.flags["C_CONTIGUOUS"], "rotated image must be C-contiguous for serialisation"
+
+
+class TestApplyImageRotation180Helper:
+    """#169: the shared ``_apply_image_rotation_180_inplace`` helper
+    handles 3D, 4D, and 5D inputs uniformly via negative-axis indexing.
+
+    Pin the multi-shape behaviour so future refactors that change tensor
+    shapes don't silently break either inference path.
+    """
+
+    def test_3d_input_rotated(self):
+        """Bare ``(H, W, C)`` input rotates correctly."""
+        from strands_robots.policies.groot.policy import _apply_image_rotation_180_inplace
+
+        h, w = 4, 4
+        img = np.arange(h * w * 3, dtype=np.uint8).reshape(h, w, 3)
+        original_top_left = img[0, 0].copy()
+        obs = {"video.image": img.copy()}
+        _apply_image_rotation_180_inplace(obs, ["video.image"])
+        np.testing.assert_array_equal(obs["video.image"][h - 1, w - 1], original_top_left)
+
+    def test_4d_input_rotated_on_hw_axes(self):
+        """``(B, H, W, C)`` rotates H/W (axes 1/2), leaves B alone."""
+        from strands_robots.policies.groot.policy import _apply_image_rotation_180_inplace
+
+        b, h, w = 2, 4, 4
+        img = np.arange(b * h * w * 3, dtype=np.uint8).reshape(b, h, w, 3)
+        # Put a unique marker at (b=1, top-left) so we can detect axis confusion.
+        img[1, 0, 0] = [200, 201, 202]
+        obs = {"video.image": img.copy()}
+        _apply_image_rotation_180_inplace(obs, ["video.image"])
+        # After 180° on H/W: marker at b=1 should now be at bottom-right.
+        np.testing.assert_array_equal(obs["video.image"][1, h - 1, w - 1], [200, 201, 202])
+        # And b=0 should NOT have that marker (would happen if B axis was flipped).
+        assert not np.array_equal(obs["video.image"][0, h - 1, w - 1], [200, 201, 202])
+
+    def test_5d_input_rotated_on_hw_axes(self):
+        """``(B, T, H, W, C)`` rotates H/W (axes 2/3), leaves B/T alone."""
+        from strands_robots.policies.groot.policy import _apply_image_rotation_180_inplace
+
+        h, w = 4, 4
+        img = np.arange(h * w * 3, dtype=np.uint8).reshape(1, 1, h, w, 3)
+        original_top_left = img[0, 0, 0, 0].copy()
+        obs = {"video.image": img.copy()}
+        _apply_image_rotation_180_inplace(obs, ["video.image"])
+        np.testing.assert_array_equal(obs["video.image"][0, 0, h - 1, w - 1], original_top_left)
+
+    def test_skips_non_ndarray_values(self):
+        """Best-effort: non-ndarray entries (e.g. zero-fills, mocks) are
+        passed through unchanged. The helper is opt-in via the keys list,
+        so a mistyped key produces a no-op rather than a crash."""
+        from strands_robots.policies.groot.policy import _apply_image_rotation_180_inplace
+
+        obs = {"video.image": "not an array", "video.wrist": [1, 2, 3]}
+        _apply_image_rotation_180_inplace(obs, ["video.image", "video.wrist"])
+        assert obs["video.image"] == "not an array"
+        assert obs["video.wrist"] == [1, 2, 3]
+
+    def test_skips_dim_lt_3(self):
+        """``(H, W)`` shape (2D) without channel axis is skipped — the
+        helper only rotates when there are ≥3 dims so the H/W axes are
+        unambiguous via negative indexing."""
+        from strands_robots.policies.groot.policy import _apply_image_rotation_180_inplace
+
+        img_2d = np.arange(16, dtype=np.uint8).reshape(4, 4)
+        obs = {"video.image": img_2d.copy()}
+        _apply_image_rotation_180_inplace(obs, ["video.image"])
+        # 2D unchanged.
+        np.testing.assert_array_equal(obs["video.image"], img_2d)
+
+
 class TestServiceUnpackWithMapping:
     """_unpack_service_actions should apply _action_mapping when available."""
 
