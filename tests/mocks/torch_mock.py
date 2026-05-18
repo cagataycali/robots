@@ -324,6 +324,9 @@ def install_torch_mock():
     torch_mock.inference_mode = _NoGrad
     torch_mock.manual_seed = lambda seed: None
 
+    # Seeding (used by policy_runner._set_eval_seed)
+    torch_mock.manual_seed = lambda seed: None
+
     # torch.nn
     nn_mock = types.ModuleType("torch.nn")
     nn_mock.Parameter = MockParameter
