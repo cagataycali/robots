@@ -562,6 +562,10 @@ See [AGENTS.md](AGENTS.md) for detailed testing guide, manual E2E validation scr
 | `STRANDS_MESH_HAND_HZ` | End-effector state frequency | `50.0` |
 | `STRANDS_MESH_MAP_INFO_HZ` | Map metadata frequency | `0.2` |
 | `STRANDS_MESH_CAMERA_HZ` | Camera-frame publish rate (0 disables; opt-in) | `0` |
+| `STRANDS_LIBERO_ACTION_LOG` | Set to `1` to emit per-step diagnostic logs from the LIBERO OSC controller (action keys, delta scale, EEF tracking, gripper polarity, qpos/ctrl deltas). Logs the first N steps per episode. | unset |
+| `STRANDS_LIBERO_ACTION_LOG_MAX` | Max number of `apply()` calls to log per episode when `STRANDS_LIBERO_ACTION_LOG=1`. | `50` |
+| `STRANDS_LIBERO_STATE_LOG` | Set to `1` to emit per-step diagnostic logs of the state values (`state.x/y/z/roll/pitch/yaw/gripper`) the LIBERO adapter feeds to the GR00T policy. Pairs with `STRANDS_LIBERO_ACTION_LOG` for end-to-end interface bisection. | unset |
+| `STRANDS_LIBERO_STATE_LOG_MAX` | Max number of `augment_observation()` calls to log per episode when `STRANDS_LIBERO_STATE_LOG=1`. | `50` |
 
 ### Cache Directory
 

@@ -676,6 +676,125 @@ class TestServiceObs:
         assert arr.shape == (1, 1)
 
 
+class TestServiceObsImageRotation180:
+    """``Gr00tDataConfig.image_rotation_180`` triggers a 180-deg rotation of
+    every video tensor at observation-build time (#168 round-7 bug H).
+
+    The ``nvidia/GR00T-N1.7-LIBERO`` checkpoint was trained on data that
+    Isaac-GR00T's ``examples/Libero/eval/utils.py:get_libero_image()``
+    rotates 180 deg at preprocessing time. Without this rotation at eval
+    time the policy sees every observation upside-down relative to its
+    training distribution and the success rate collapses to 0.
+
+    The flag is gated by data_config so other configs (so100, oxe_droid,
+    etc.) don't pay any rotation cost - it's enabled in
+    ``data_configs.json`` only on the ``libero_panda`` entry.
+    """
+
+    def test_libero_panda_rotates_video_180(self):
+        """End-to-end: ``data_config='libero_panda'`` rotates ``image`` 180."""
+        p = Gr00tPolicy(data_config="libero_panda", host="localhost", port=19999)
+        p._groot_version = None  # n1.5/1.6 wire shape so we get (B, H, W, C)
+        # Build an obviously-asymmetric image so a 180 rotation flips
+        # corner intensities in a verifiable way.
+        h, w = 16, 8
+        img = np.arange(h * w * 3, dtype=np.uint8).reshape(h, w, 3)
+        original_top_left = img[0, 0].copy()
+        original_bottom_right = img[h - 1, w - 1].copy()
+
+        obs = p._build_service_observation(
+            {"image": img.copy(), "wrist_image": img.copy()},
+            "pick the cube",
+        )
+        out_image = obs["video.image"]
+        assert out_image.shape == (1, h, w, 3)  # (B, H, W, C)
+        # After 180 rotation: top-left of output == bottom-right of input,
+        # bottom-right of output == top-left of input.
+        np.testing.assert_array_equal(out_image[0, 0, 0], original_bottom_right)
+        np.testing.assert_array_equal(out_image[0, h - 1, w - 1], original_top_left)
+        # Wrist channel must rotate too - otherwise GR00T-LIBERO sees a
+        # mismatched-orientation pair.
+        out_wrist = obs["video.wrist_image"]
+        np.testing.assert_array_equal(out_wrist[0, 0, 0], original_bottom_right)
+
+    def test_libero_panda_rotation_works_under_n17_wire_shape(self):
+        """N1.7 servers add a leading time axis - rotation must apply
+        BEFORE the newaxis fanout so the slice indexes the H/W axes,
+        not the leading B/T axes."""
+        p = Gr00tPolicy(data_config="libero_panda", host="localhost", port=19999)
+        p._groot_version = "n1.7"
+        h, w = 8, 8
+        img = np.arange(h * w * 3, dtype=np.uint8).reshape(h, w, 3)
+        original_top_left = img[0, 0].copy()
+        obs = p._build_service_observation({"image": img.copy()}, "t")
+        out = obs["video.image"]
+        # (B=1, T=1, H, W, C)
+        assert out.shape == (1, 1, h, w, 3)
+        # Bottom-right of rotated == top-left of original.
+        np.testing.assert_array_equal(out[0, 0, h - 1, w - 1], original_top_left)
+
+    def test_so100_does_not_rotate_video(self):
+        """Configs without ``image_rotation_180`` flag keep the legacy
+        no-rotation behaviour. Pin so so100 / oxe_droid / etc. are
+        unaffected by the new flag - the bug-H fix is gated, not global."""
+        p = Gr00tPolicy(data_config="so100_dualcam", host="localhost", port=19999)
+        p._groot_version = None
+        h, w = 8, 8
+        img = np.arange(h * w * 3, dtype=np.uint8).reshape(h, w, 3)
+        original_top_left = img[0, 0].copy()
+        obs = p._build_service_observation(
+            {"front": img.copy(), "wrist": img.copy()},
+            "t",
+        )
+        out = obs["video.front"]
+        # No rotation: top-left should match original top-left.
+        np.testing.assert_array_equal(out[0, 0, 0], original_top_left)
+
+    def test_rotation_output_is_contiguous(self):
+        """``np.ascontiguousarray`` materialises the flipped view as a
+        fresh contiguous buffer. Required because msgpack serialisation
+        and ``ndarray.tobytes()`` produce wrong bytes for non-contiguous
+        views; reversed views are NOT C-contiguous."""
+        p = Gr00tPolicy(data_config="libero_panda", host="localhost", port=19999)
+        p._groot_version = None
+        img = np.arange(8 * 8 * 3, dtype=np.uint8).reshape(8, 8, 3)
+        obs = p._build_service_observation({"image": img}, "t")
+        out = obs["video.image"]
+        assert out.flags["C_CONTIGUOUS"], "rotated image must be C-contiguous for serialisation"
+
+    def test_rotation_does_not_mutate_input_obs(self):
+        """The rotation builds a fresh ndarray; the original
+        ``robot_obs[bare]`` must be unchanged. Required because the
+        observation dict may be reused (e.g. recorded for replay,
+        or passed to a second policy)."""
+        p = Gr00tPolicy(data_config="libero_panda", host="localhost", port=19999)
+        p._groot_version = None
+        img = np.arange(8 * 8 * 3, dtype=np.uint8).reshape(8, 8, 3)
+        original_copy = img.copy()
+        robot_obs = {"image": img}
+        p._build_service_observation(robot_obs, "t")
+        np.testing.assert_array_equal(robot_obs["image"], original_copy)
+
+    def test_libero_panda_data_config_has_rotation_flag(self):
+        """Sanity: the ``libero_panda`` entry in data_configs.json has
+        ``image_rotation_180=True``. Without this the runtime check in
+        ``_build_service_observation`` no-ops and bug H reappears."""
+        from strands_robots.policies.groot.data_config import DATA_CONFIG_MAP
+
+        cfg = DATA_CONFIG_MAP["libero_panda"]
+        assert cfg.image_rotation_180 is True
+
+    def test_other_data_configs_default_to_no_rotation(self):
+        """Spot-check that the flag is OFF for non-libero embodiments.
+        If somebody accidentally sets it globally, GR00T policies on
+        other robots would silently rotate their inputs and break."""
+        from strands_robots.policies.groot.data_config import DATA_CONFIG_MAP
+
+        for name in ("so100", "so100_dualcam"):
+            cfg = DATA_CONFIG_MAP[name]
+            assert cfg.image_rotation_180 is False, f"{name} unexpectedly has rotation enabled"
+
+
 class TestServiceUnpackWithMapping:
     """_unpack_service_actions should apply _action_mapping when available."""
 

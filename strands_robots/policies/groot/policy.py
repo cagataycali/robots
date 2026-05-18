@@ -695,6 +695,28 @@ class Gr00tPolicy(Policy):
             if bare in robot_obs:
                 obs[vk] = robot_obs[bare]
                 video_keys.append(vk)
+        # Match Isaac-GR00T training preprocessing for embodiments that need
+        # it - the GR00T-N1.7-LIBERO checkpoint was trained on data the
+        # upstream pipeline rotates 180 deg via Isaac-GR00T's
+        # ``examples/Libero/eval/utils.py:get_libero_image()``. Without this
+        # rotation at eval time, every observation the policy sees is
+        # upside-down relative to its training distribution and the success
+        # rate collapses to 0 (#168 round-7 bug H). The flag is set to True
+        # only on the ``libero_panda`` entry of ``data_configs.json``;
+        # other configs (so100, oxe_droid, etc.) leave it at the default
+        # ``False`` so this loop is a no-op for them. Applied BEFORE the
+        # newaxis fanout below so the slice indexes the H/W axes, not the
+        # leading B/T axes.
+        if self.data_config.image_rotation_180:
+            for vk in video_keys:
+                v = obs.get(vk)
+                if isinstance(v, np.ndarray) and v.ndim >= 2:
+                    # ``[::-1, ::-1]`` reverses dim 0 (H) and dim 1 (W).
+                    # ``ascontiguousarray`` materialises the flipped view as
+                    # a fresh contiguous buffer - downstream serialization
+                    # (msgpack / numpy.tobytes()) requires C-contiguous
+                    # memory; reversed views are not contiguous.
+                    obs[vk] = np.ascontiguousarray(v[::-1, ::-1])
         for sk in self.data_config.state_keys:
             bare = sk.removeprefix("state.")
             if bare in robot_obs:

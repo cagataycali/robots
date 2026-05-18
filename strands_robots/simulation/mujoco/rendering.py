@@ -129,6 +129,41 @@ class RenderingMixin:
             renderers[key] = mj.Renderer(self._world._model, height=height, width=width)
         return renderers[key]
 
+    def _get_viz_option(self) -> Any:
+        """Return an ``mujoco.MjvOption`` from ``world._backend_state["viz_option"]``, or ``None``.
+
+        The optional ``viz_option`` override lets benchmark adapters (e.g.
+        :class:`~strands_robots.benchmarks.libero.adapter.LiberoAdapter`)
+        configure render-time visualisation flags - things like
+        ``mjvOption.geomgroup[0] = 0`` to hide collision geoms,
+        ``sitegroup[*] = 0`` to hide site markers, ``mjVIS_JOINT/mjVIS_ACTUATOR/mjVIS_COM = 0``
+        to hide joint/actuator/COM debug widgets - without changing the
+        loaded MJCF or affecting non-LIBERO callers. RoboSuite /
+        ``OffScreenRenderEnv`` set these in their viewer; when adapters
+        running through ``MuJoCoSimulation`` need parity, they populate
+        ``_backend_state["viz_option"]`` and the render path here threads
+        the option through to ``Renderer.update_scene(..., scene_option=...)``.
+
+        Returns ``None`` (the default) when no adapter has set the
+        override. ``Renderer.update_scene`` accepts ``scene_option=None``
+        as the no-op meaning, so non-LIBERO callers see zero behaviour
+        change.
+
+        Storing the option on ``world._backend_state`` (per the convention
+        documented at :class:`~strands_robots.simulation.models.SimWorld`)
+        ties its lifecycle to the loaded scene: a subsequent
+        :meth:`Simulation.load_scene` replaces ``self._world`` and the
+        option goes with it. Matches the lifecycle of the other state
+        keys in ``_backend_state`` (``spec``, ``xml``, ``scene_loaded``,
+        etc.).
+        """
+        if self._world is None:
+            return None
+        state = getattr(self._world, "_backend_state", None)
+        if not isinstance(state, dict):
+            return None
+        return state.get("viz_option")
+
     def _get_sim_observation(self, robot_name: str, *, skip_images: bool = False) -> dict[str, Any]:
         """Get observation from sim: joint state + cameras (unless skipped).
 
@@ -177,10 +212,11 @@ class RenderingMixin:
                 renderer = self._get_renderer(w, h)
                 if renderer is None:
                     continue
+                viz_option = self._get_viz_option()
                 if cam_id >= 0:
-                    renderer.update_scene(data, camera=cam_id)
+                    renderer.update_scene(data, camera=cam_id, scene_option=viz_option)
                 else:
-                    renderer.update_scene(data)
+                    renderer.update_scene(data, scene_option=viz_option)
                 obs[cname] = renderer.render().copy()
             except (RuntimeError, ValueError) as e:
                 # Individual camera failure shouldn't stop joint state collection.
@@ -196,12 +232,127 @@ class RenderingMixin:
         We look up the namespaced MuJoCo actuator/joint name for this
         specific ``robot_name`` so the same action dict routes to the right
         physical actuator when multiple same-config robots exist.
+
+        Action-controller hook (#168 round 23): when a benchmark adapter
+        has installed a custom action controller via
+        ``world._backend_state["action_controller"]`` (mirroring the
+        ``viz_option`` pattern from #168 round 9), dispatch to it
+        instead of the actuator/joint-name lookup loop. Used by
+        :class:`LiberoAdapter` to convert GR00T's task-space delta-EEF
+        actions (7-dim ``{x, y, z, roll, pitch, yaw, gripper}``) into
+        the LIBERO scene's torque-mode joint actuators (9-dim
+        ``robot0_torq_j1..7`` + gripper) via RoboSuite's
+        ``OperationalSpaceController`` (OSC_POSE). Without this hook,
+        ``_apply_sim_action`` would silently drop every key (no name
+        match), the policy would effectively send 0 torque, and any
+        observed motion would be gravity / drift only.
+
+        Default (no controller installed) preserves the existing
+        actuator/joint-name lookup path verbatim. Non-LIBERO callers
+        and existing tests see zero behaviour change.
+
+        Owns-stepping flag (#168 round 27): controllers may declare
+        ``owns_stepping = True`` on the controller object to signal
+        that ``apply()`` itself advances physics by the correct number
+        of substeps for the policy step (LIBERO: 25 mj_step calls per
+        ``apply()`` so OSC torques recompute every physics step at
+        500 Hz while policy commands arrive at 20 Hz). When the flag
+        is true the outer ``mj_step`` loop here is skipped to avoid
+        double-stepping. The default (flag absent / False) preserves
+        the original 1-substep-per-apply contract.
         """
         mj = _ensure_mujoco()
         assert self._world is not None  # callers must check
         model, data = self._world._model, self._world._data
         robot = self._world.robots.get(robot_name)
         pfx = robot.namespace if robot else ""
+
+        # Action-controller fast path: adapter-installed transform
+        # from action_dict (e.g. task-space deltas) to data.ctrl
+        # writes (joint torques). When set, the controller takes
+        # full responsibility for the data.ctrl update; the
+        # actuator/joint-name lookup loop is skipped.
+        controller = self._get_action_controller()
+        controller_handled_stepping = False
+        if controller is not None:
+            try:
+                controller.apply(action_dict, model, data, robot_name)
+                # Round 27 (#168): some controllers (e.g. LIBERO's
+                # OSC_POSE wrapper) need to advance physics themselves
+                # at a controller-defined rate (e.g. 25 substeps per
+                # policy step at 20 Hz LIBERO control / 500 Hz physics).
+                # When the controller declares ``owns_stepping = True``,
+                # skip the outer ``mj_step`` loop below — the controller
+                # has already advanced ``data.time`` by the full control
+                # timestep. Without this, we'd double-step (the outer
+                # loop would run an extra mj_step on top of the
+                # controller's substeps), corrupting trajectories.
+                controller_handled_stepping = bool(getattr(controller, "owns_stepping", False))
+            except Exception as e:  # noqa: BLE001 - never abort eval on a controller failure
+                logger.warning(
+                    "_apply_sim_action: action_controller.apply raised %s; falling through to "
+                    "name-lookup path (action may be dropped)",
+                    e,
+                )
+                self._apply_action_by_name(model, data, action_dict, pfx, mj)
+        else:
+            self._apply_action_by_name(model, data, action_dict, pfx, mj)
+
+        if not controller_handled_stepping:
+            for _ in range(max(1, n_substeps)):
+                mj.mj_step(model, data)
+
+        assert self._world is not None
+        self._world.sim_time = data.time
+        # When the controller advanced physics itself, ``step_count``
+        # should reflect the actual number of mj_step calls (typically
+        # 25 for LIBERO @ 20 Hz / 500 Hz), not the policy-step count.
+        if controller_handled_stepping:
+            self._world.step_count = int(getattr(self._world, "step_count", 0)) + int(
+                getattr(controller, "physics_substeps_per_control", n_substeps)
+            )
+        else:
+            self._world.step_count += n_substeps
+
+        if hasattr(self, "_viewer_handle") and self._viewer_handle is not None:
+            self._viewer_handle.sync()
+
+    def _get_action_controller(self) -> Any:
+        """Return an installed action-controller or ``None``.
+
+        Mirrors :meth:`_get_viz_option`. The controller (if present)
+        is set by a benchmark adapter via
+        ``world._backend_state["action_controller"]`` and is expected
+        to expose an ``apply(action_dict, model, data, robot_name)``
+        method that writes to ``data.ctrl``. See
+        :meth:`LiberoAdapter._install_action_controller` for the
+        canonical use case.
+
+        Returns ``None`` (the default) when no adapter has set the
+        override. The actuator/joint-name lookup loop in
+        :meth:`_apply_sim_action` is the fallback in that case.
+        """
+        if self._world is None:
+            return None
+        state = getattr(self._world, "_backend_state", None)
+        if not isinstance(state, dict):
+            return None
+        return state.get("action_controller")
+
+    def _apply_action_by_name(
+        self,
+        model: Any,
+        data: Any,
+        action_dict: dict[str, Any],
+        pfx: str,
+        mj: Any,
+    ) -> None:
+        """Default action-application: look up actuator / joint by name.
+
+        Extracted from :meth:`_apply_sim_action` so the
+        ``action_controller`` fast path can fall back to it on
+        controller failure (the same path non-LIBERO callers use).
+        """
 
         def _lookup(obj_type: Any, name: str) -> int:
             """Try namespaced lookup first, fall back to raw."""
@@ -224,16 +375,6 @@ class RenderingMixin:
                         if model.actuator_trnid[ai, 0] == jnt_id:
                             data.ctrl[ai] = float(value)
                             break
-
-        for _ in range(max(1, n_substeps)):
-            mj.mj_step(model, data)
-
-        assert self._world is not None
-        self._world.sim_time = data.time
-        self._world.step_count += n_substeps
-
-        if hasattr(self, "_viewer_handle") and self._viewer_handle is not None:
-            self._viewer_handle.sync()
 
     def render(
         self, camera_name: str = "default", width: int | None = None, height: int | None = None
@@ -284,9 +425,9 @@ class RenderingMixin:
                 label = camera_name
 
             if cam_id >= 0:
-                renderer.update_scene(self._world._data, camera=cam_id)
+                renderer.update_scene(self._world._data, camera=cam_id, scene_option=self._get_viz_option())
             else:
-                renderer.update_scene(self._world._data)
+                renderer.update_scene(self._world._data, scene_option=self._get_viz_option())
 
             img = renderer.render().copy()
 
@@ -359,9 +500,9 @@ class RenderingMixin:
                     ],
                 }
             if cam_id >= 0:
-                renderer.update_scene(self._world._data, camera=cam_id)
+                renderer.update_scene(self._world._data, camera=cam_id, scene_option=self._get_viz_option())
             else:
-                renderer.update_scene(self._world._data)
+                renderer.update_scene(self._world._data, scene_option=self._get_viz_option())
             # MuJoCo prints a one-time ARB_clip_control warning on macOS
             # when depth precision is reduced. Capture stderr on the first
             # depth render so we can surface the warning in the response
@@ -725,6 +866,91 @@ class RenderingMixin:
 
         def _loop():
             from strands_robots.simulation.policy_runner import _extract_frame_ndarray
+
+            # Warm up the recorder thread's GL context BEFORE the
+            # timing loop starts capturing into buffers. MuJoCo's
+            # ``mujoco.GLContext.make_current()`` is thread-bound:
+            # ``mujoco.egl.GLContext`` allocates a fresh EGL context
+            # per calling thread. A main-thread ``sim.render()`` call
+            # warms only the main thread's context; this daemon
+            # thread starts cold. Without warmup, the first ~15
+            # render calls per camera return the GL clear-colour
+            # gradient before the context settles.
+            #
+            # History: rounds 11/12/13 added thread-side warmup; round
+            # 14 reverted because the load-scene-without-mj_forward
+            # bug was bigger. Round 15 fixed mj_forward in load_scene,
+            # which made warmup unnecessary IN THE SLOW PATH. Round
+            # 17's prewarm-fresh-ep0 fast-path skips load_scene,
+            # leaving no per-recorder-thread render before capture.
+            # Round 19 tried main-thread warmup (thread-isolation
+            # made it ineffective). Round 20 re-applied the round-13
+            # 2-pass thread-side warmup. Round-20 verification showed
+            # 2 passes was insufficient: image channel stayed cold for
+            # ~15 frames while wrist cleared at frame 3 - per-camera
+            # warmup latency varies across cameras (likely GPU
+            # command-buffer flush ordering).
+            #
+            # Round 21 (this code): replace fixed-pass warmup with an
+            # adaptive warmup loop. Render each camera until it
+            # produces output with column-stddev above the cold-
+            # gradient threshold. The cold gradient artifact is uniform
+            # skybox blue->grey with col-std ~0.6; real geometry has
+            # col-std > 25 (background plane + objects + textures).
+            # Threshold of 5.0 cleanly separates the two regimes
+            # without false-positives on legitimately uniform scenes
+            # (those would still be > 1.0 from JPEG/encoding noise
+            # if they're real renders, not the GL clear-colour).
+            #
+            # Cap: 30 attempts per camera. At 30 fps that's 1.0 s of
+            # wall-time worst-case before the timing loop starts
+            # capturing - invisible vs the 250+ s eval wall-time.
+            # Common case: ~3-5 attempts per camera, total ~100-200 ms
+            # bounded by the slowest-warming camera in the rotation.
+            #
+            # Errors during warmup are swallowed at DEBUG. Persistent
+            # render failures will resurface as
+            # ``state["errors"][cam]`` accumulating in the timing
+            # loop below (visible via
+            # :meth:`get_cameras_recording_status`).
+            _max_warmup_attempts = 30
+            _cold_std_threshold = 5.0
+            _warm: dict[str, bool] = dict.fromkeys(names, False)
+            for _attempt in range(_max_warmup_attempts):
+                if all(_warm.values()):
+                    break
+                for cam in names:
+                    if _warm[cam]:
+                        continue
+                    try:
+                        r = self.render(camera_name=cam, width=width, height=height)
+                        arr = _extract_frame_ndarray(r)
+                    except Exception as e:  # noqa: BLE001 - warmup failures non-fatal
+                        logger.debug("recorder thread warmup render failed for %s: %s", cam, e)
+                        continue
+                    if arr is None:
+                        continue
+                    # arr.std(axis=0) is per-column std-dev; .mean()
+                    # collapses to a scalar. Cold gradients have
+                    # near-zero values; real geometry > 5.
+                    col_std = float(arr.std(axis=0).mean())
+                    if col_std > _cold_std_threshold:
+                        _warm[cam] = True
+                        logger.debug(
+                            "recorder thread warmup: %r warmed at attempt %d (col_std=%.2f)",
+                            cam,
+                            _attempt + 1,
+                            col_std,
+                        )
+            if not all(_warm.values()):
+                cold = [c for c, w in _warm.items() if not w]
+                logger.warning(
+                    "recorder thread warmup: %d cameras still cold after %d attempts: %s. "
+                    "First captured frames may show gradient artifact.",
+                    len(cold),
+                    _max_warmup_attempts,
+                    cold,
+                )
 
             interval = 1.0 / fps
             while state["running"]:

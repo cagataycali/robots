@@ -8,7 +8,7 @@ LIBERO ships ~130 tasks split across five suites:
 * ``libero-10`` - 10 tasks, "short-horizon diverse"
 * ``libero-90`` - 90 tasks, "long-horizon diverse"
 
-Rather than have agents call :func:`register_benchmark` 130× manually,
+Rather than have agents call :func:`register_benchmark` 130x manually,
 :func:`load_libero_suite` walks the upstream package's BDDL directory and
 registers every task under a predictable ``libero-<suite>-<task>`` key.
 Tasks that fail to parse are logged and skipped - a single malformed BDDL
@@ -25,9 +25,28 @@ between releases, :func:`load_libero_suite` accepts an explicit
 locations when not given. The scene resolver behaves similarly via
 ``scene_dir=``.
 
+Init states
+-----------
+
+LIBERO ships task-specific *init states* alongside its benchmark suites -
+each task has 50 sampled starting configurations of the canonical "ready"
+pose plus per-object free-joint placements. :func:`load_libero_suite`
+lazily imports ``libero.libero.benchmark`` and pulls
+``ts.get_task_init_states(task_id)`` for every registered task, then
+forwards as ``init_states=`` into :meth:`LiberoAdapter.from_file`. Without
+this the robot starts at ``qpos=0`` (joint-default "stretched flat"
+pose), the policy issues actions calibrated for the canonical "ready"
+pose against a totally different body configuration, and the success
+rate collapses to 0 (#168 round-7 bug I). When ``libero`` isn't
+importable (e.g. minimal CI), init_states loading no-ops and the
+adapter falls back to its snapshot-and-restore branch.
+
 Callers who already have the BDDL files on disk (e.g. vendored into their
 repo) do **not** need the ``libero`` package installed - just pass
-``bddl_dir=`` and the function registers from there.
+``bddl_dir=`` and the function registers from there. Init-state loading
+also short-circuits in that case - the
+``benchmark.get_benchmark_dict()[suite]()`` call requires the upstream
+package's package-data path resolution.
 """
 
 from __future__ import annotations
@@ -35,7 +54,9 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterable
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+
+import numpy as np
 
 from strands_robots.benchmarks.libero.adapter import LiberoAdapter
 from strands_robots.benchmarks.libero.bddl_parser import BDDLParseError
@@ -104,6 +125,108 @@ def _resolve_libero_root() -> Path:
     return Path(libero_file).resolve().parent.parent
 
 
+def _load_init_states_by_bddl(suite: str) -> dict[str, np.ndarray]:
+    """Build a ``{bddl_filename: init_states_ndarray}`` map for ``suite``.
+
+    Returns an empty dict (with a warning) when the upstream ``libero``
+    package isn't importable, when the suite name isn't a recognised
+    benchmark, or when any individual task fails to load its init
+    states. The empty-dict fallback is intentional - a missing init-state
+    file shouldn't block suite registration; the adapter will fall back
+    to its snapshot-and-restore branch in
+    :meth:`LiberoAdapter._apply_canonical_state`.
+
+    Important wart: ``benchmark.get_benchmark_dict()[suite]()`` permutes
+    task order per ``task_orders[task_order_index]`` for every suite
+    *except* ``libero_90``. The map this function builds keys on the
+    BDDL filename returned by ``ts.get_task_bddl_files()[i]``, which
+    is post-permutation - so the matching to BDDL files in
+    :func:`load_libero_suite` is order-independent and correct
+    regardless of which permutation libero applies internally.
+
+    State width per task varies (libero_10 alone ships tasks with
+    init-state widths of 45 / 47 / 51 / 71 / 84 / 123). Each task's
+    init_states ndarray has shape ``(50, 1+nq+nv)`` for that task's
+    specific ``nq`` / ``nv``.
+
+    Source-of-truth for the API:
+    ``/opt/conda/lib/python3.12/site-packages/libero/libero/benchmark/__init__.py:115-165``.
+    """
+    try:
+        from libero.libero import benchmark
+    except ImportError as e:
+        logger.debug(
+            "LiberoAdapter: libero not importable (%s); init_states loading skipped, "
+            "adapter will fall back to snapshot-and-restore",
+            e,
+        )
+        return {}
+
+    benchmark_dict = getattr(benchmark, "get_benchmark_dict", None)
+    if benchmark_dict is None:
+        logger.warning("LiberoAdapter: libero.benchmark has no get_benchmark_dict(); init_states skipped")
+        return {}
+
+    try:
+        suites_map = benchmark_dict()
+    except Exception as e:  # noqa: BLE001 - never fatal for suite registration
+        logger.warning("LiberoAdapter: benchmark.get_benchmark_dict() raised %s; init_states skipped", e)
+        return {}
+
+    suite_factory = suites_map.get(suite)
+    if suite_factory is None:
+        logger.debug(
+            "LiberoAdapter: %r not in benchmark.get_benchmark_dict() (%s); init_states skipped",
+            suite,
+            sorted(suites_map.keys()),
+        )
+        return {}
+
+    try:
+        ts = suite_factory()
+    except Exception as e:  # noqa: BLE001 - never fatal for suite registration
+        logger.warning("LiberoAdapter: instantiating benchmark %r raised %s; init_states skipped", suite, e)
+        return {}
+
+    n_tasks = int(ts.get_num_tasks())
+    bddl_files: list[str]
+    try:
+        bddl_files = list(ts.get_task_bddl_files())
+    except Exception as e:  # noqa: BLE001 - never fatal
+        logger.warning("LiberoAdapter: ts.get_task_bddl_files() raised %s; init_states skipped", e)
+        return {}
+
+    out: dict[str, np.ndarray] = {}
+    for task_id in range(n_tasks):
+        if task_id >= len(bddl_files):
+            logger.debug(
+                "LiberoAdapter: task_id=%d out of range for bddl_files (len=%d); skipping",
+                task_id,
+                len(bddl_files),
+            )
+            continue
+        bddl_filename = Path(bddl_files[task_id]).name  # bare filename, no dir
+        try:
+            states = ts.get_task_init_states(task_id)
+        except Exception as e:  # noqa: BLE001 - per-task failure shouldn't block the rest
+            logger.warning(
+                "LiberoAdapter: get_task_init_states(%d) for suite %r raised %s; task %r skipped",
+                task_id,
+                suite,
+                e,
+                bddl_filename,
+            )
+            continue
+        out[bddl_filename] = np.asarray(states)
+    logger.debug(
+        "LiberoAdapter: loaded init_states for %d/%d tasks in suite %r",
+        len(out),
+        n_tasks,
+        suite,
+    )
+    return out
+
+
 def load_libero_suite(
     suite_name: str,
     *,
@@ -112,6 +235,7 @@ def load_libero_suite(
     max_steps: int | None = None,
     init_jitter: float = 0.02,
     key_prefix: str = "libero",
+    load_init_states: bool = True,
 ) -> dict[str, LiberoAdapter]:
     """Register every task in ``suite_name`` under the benchmark registry.
 
@@ -129,6 +253,18 @@ def load_libero_suite(
         init_jitter: Forwarded to every :class:`LiberoAdapter`.
         key_prefix: Registry key format is ``<key_prefix>-<suite>-<task>``.
             Pass ``key_prefix=""`` for ``<suite>-<task>``.
+        load_init_states: When ``True`` (default), lazily import
+            ``libero.libero.benchmark`` and pull
+            ``ts.get_task_init_states(task_id)`` for every registered
+            task. Required for ``success_rate > 0`` against
+            ``nvidia/GR00T-N1.7-LIBERO`` - without it the robot starts
+            at ``qpos=0`` instead of LIBERO's canonical "ready" pose
+            (#168 round-7 bug I). Set to ``False`` to disable for unit
+            tests / minimal CI / when ``libero`` isn't installed (the
+            loader silently no-ops in those cases anyway, but the flag
+            documents intent). When ``True`` and libero loading fails,
+            registration continues with init_states=None and the
+            adapter falls back to snapshot-and-restore.
 
     Returns:
         ``{registry_name: LiberoAdapter}`` for every successfully registered
@@ -145,6 +281,8 @@ def load_libero_suite(
     resolved_bddl_dir = _locate_bddl_dir(suite, bddl_dir)
     resolved_scene_dir = Path(scene_dir).expanduser().resolve() if scene_dir else None
 
+    init_states_by_bddl: dict[str, Any] = _load_init_states_by_bddl(suite) if load_init_states else {}
+
     registered: dict[str, LiberoAdapter] = {}
     failures: list[tuple[str, str]] = []
 
@@ -158,12 +296,18 @@ def load_libero_suite(
             if candidate.exists():
                 scene_path = str(candidate)
 
+        # init_states are keyed by BDDL filename (post-permutation, see
+        # _load_init_states_by_bddl docstring). May be None when the suite
+        # didn't ship init states for this task or libero wasn't importable.
+        task_init_states = init_states_by_bddl.get(bddl_file.name)
+
         try:
             adapter = LiberoAdapter.from_file(
                 bddl_file,
                 scene_path=scene_path,
                 max_steps=max_steps,
                 init_jitter=init_jitter,
+                init_states=task_init_states,
             )
         except (BDDLParseError, FileNotFoundError, ValueError) as e:
             logger.warning("Skipping LIBERO task %s: %s", bddl_file.name, e)
@@ -173,10 +317,11 @@ def load_libero_suite(
         registered[registry_name] = adapter
 
     logger.info(
-        "📚 Registered %d LIBERO tasks from %s (skipped %d malformed)",
+        "Registered %d LIBERO tasks from %s (skipped %d malformed, init_states=%d)",
         len(registered),
         resolved_bddl_dir,
         len(failures),
+        len(init_states_by_bddl),
     )
     return registered
 

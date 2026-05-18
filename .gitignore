@@ -14,3 +14,4 @@ MUJOCO_LOG.TXT
 TASKS.md
 TASKS_TO_FIX_85.md
 .coverage.*
+AGENTS.local.md
