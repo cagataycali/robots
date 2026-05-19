@@ -322,6 +322,7 @@ def install_torch_mock():
 
     torch_mock.no_grad = _NoGrad
     torch_mock.inference_mode = _NoGrad
+    torch_mock.manual_seed = lambda seed: None
 
     # torch.nn
     nn_mock = types.ModuleType("torch.nn")
@@ -336,6 +337,7 @@ def install_torch_mock():
     cuda_mock = types.ModuleType("torch.cuda")
     cuda_mock.is_available = lambda: False
     cuda_mock.device_count = lambda: 0
+    cuda_mock.manual_seed_all = lambda seed: None
     torch_mock.cuda = cuda_mock
 
     # torch.backends
@@ -343,6 +345,10 @@ def install_torch_mock():
     mps_mock = types.ModuleType("torch.backends.mps")
     mps_mock.is_available = lambda: False
     backends_mock.mps = mps_mock
+    cudnn_mock = types.ModuleType("torch.backends.cudnn")
+    cudnn_mock.deterministic = False
+    cudnn_mock.benchmark = True
+    backends_mock.cudnn = cudnn_mock
     torch_mock.backends = backends_mock
 
     # torch.amp
@@ -357,6 +363,7 @@ def install_torch_mock():
     sys.modules["torch.cuda"] = cuda_mock
     sys.modules["torch.backends"] = backends_mock
     sys.modules["torch.backends.mps"] = mps_mock
+    sys.modules["torch.backends.cudnn"] = cudnn_mock
     sys.modules["torch.amp"] = amp_mock
 
     # torchvision
