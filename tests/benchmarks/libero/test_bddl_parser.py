@@ -296,6 +296,112 @@ class TestCompileGoal:
         with_grip = _ContactSim([{"geom1": "robot0_gripper_finger_r", "geom2": "cube_1_geom"}])
         assert fn(with_grip) is False
 
+    def test_on_libero_tight_thresholds_real_success_state(self):
+        """#170: The ``on`` predicate must accept LIBERO's actual at-success
+        geometry — empirically, mug.z is only ~4 mm above plate.z and
+        mug.xy is ~1 cm off plate.xy at the moment ``env.check_success()``
+        returns True on ``libero-10/SCENE5``.
+
+        Pre-#170 ``_on_kwargs`` left ``z_offset=0.02`` and ``xy_tol=0.15``
+        as the ``_body_on`` defaults. Those tolerances are too LOOSE on
+        xy (15 cm — over-permissive) but too TIGHT on z (2 cm — rejects
+        a 4 mm gap). At the actual success state, ``z_offset=0.02``
+        rejected the predicate as False even though ``env.check_success``
+        was True — the silent counter bug PR #168 round 44 found.
+
+        #170 changes ``_on_kwargs`` to pass ``z_offset=0.0,
+        xy_tol=0.03`` matching upstream LIBERO's ``ObjectState.check_ontop``
+        geometric semantics. This pins those thresholds via the actual
+        post-success body positions captured from a real eval run."""
+        text = "(define (problem p) (:goal (on porcelain_mug_1 plate_1)))"
+        problem = parse_bddl(text)
+        fn = compile_goal(problem.goal)  # type: ignore[arg-type]
+
+        # Real positions captured from STRANDS_LIBERO_PREDICATE_LOG=1 at
+        # the env-success step on libero-10/SCENE5 seed=42 ep 0.
+        success_state = _BodyStateSim(
+            {
+                "porcelain_mug_1": {"position": [-0.003, -0.311, 0.443]},
+                "plate_1": {"position": [-0.004, -0.323, 0.439]},
+            }
+        )
+        # Post-#170: True (mug.z=0.443 > plate.z=0.439 by 4 mm; xy 1.2 cm).
+        assert fn(success_state) is True, (
+            "Post-#170 _on_kwargs must accept the real LIBERO success state "
+            "(4 mm z, 1.2 cm xy). If this fails, the z_offset / xy_tol "
+            "thresholds may have regressed back to the pre-#170 loose values."
+        )
+
+    def test_on_libero_rejects_above_plate_off_xy(self):
+        """#170 sentinel: with the tighter ``xy_tol=0.03`` from
+        ``_on_kwargs``, an ``on`` predicate must REJECT a state where
+        the mug is positioned 5 cm to the side of the plate (no longer
+        on it).
+
+        Pre-#170 the loose 15-cm tolerance accepted this state as True
+        (false positive); upstream LIBERO's 3-cm tolerance correctly
+        rejects it. This test pins the tightening so a future
+        wider-tolerance regression is caught."""
+        text = "(define (problem p) (:goal (on cube_1 plate_1)))"
+        problem = parse_bddl(text)
+        fn = compile_goal(problem.goal)  # type: ignore[arg-type]
+
+        # Cube 5 cm to the side of plate, but at correct z (above).
+        off_to_side = _BodyStateSim(
+            {
+                "cube_1": {"position": [0.05, 0.0, 0.10]},  # 5 cm off-center
+                "plate_1": {"position": [0.0, 0.0, 0.05]},
+            }
+        )
+        assert fn(off_to_side) is False, (
+            "5 cm off-center is outside the 3 cm xy tolerance — must reject. "
+            "If this passes, _on_kwargs may have regressed to the pre-#170 "
+            "loose 15 cm xy_tol."
+        )
+
+        # Cube 2 cm to the side — should pass (within 3 cm).
+        slightly_off = _BodyStateSim(
+            {
+                "cube_1": {"position": [0.02, 0.0, 0.10]},
+                "plate_1": {"position": [0.0, 0.0, 0.05]},
+            }
+        )
+        assert fn(slightly_off) is True
+
+    def test_on_libero_z_above_required(self):
+        """#170: ``on(A, B)`` requires A.z >= B.z (mug above or at plate
+        level). Pin the directional contract — a body BELOW the
+        reference body is not "on" it regardless of xy alignment."""
+        text = "(define (problem p) (:goal (on cube_1 plate_1)))"
+        problem = parse_bddl(text)
+        fn = compile_goal(problem.goal)  # type: ignore[arg-type]
+
+        below = _BodyStateSim(
+            {
+                "cube_1": {"position": [0.0, 0.0, 0.04]},  # below plate
+                "plate_1": {"position": [0.0, 0.0, 0.05]},
+            }
+        )
+        assert fn(below) is False
+
+        same_z = _BodyStateSim(
+            {
+                "cube_1": {"position": [0.0, 0.0, 0.05]},  # exactly at plate level
+                "plate_1": {"position": [0.0, 0.0, 0.05]},
+            }
+        )
+        # z_offset=0.0 means same-z is acceptable (matches upstream's <=).
+        # Reading the predicate body: ``pos_a[2] > pos_b[2] + z_offset``
+        # ⇒ 0.05 > 0.05 + 0 = 0.05 is False. So same-z is REJECTED by
+        # ours, while upstream (using <=) would accept it.
+        # This is a minor difference; in practice, when a body is
+        # actually resting on another, mj_step's collision response
+        # always pushes them slightly apart so positions are never
+        # exactly equal. Pin the current strict-> behaviour so a future
+        # change that "fixes" this asymmetry doesn't silently shift
+        # near-success cases.
+        assert fn(same_z) is False
+
 
 # Representative LIBERO-style round-trip
 

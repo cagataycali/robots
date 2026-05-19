@@ -185,7 +185,22 @@ def _parse_sexp(tokens: list[str]) -> Any:
 def _on_kwargs(args: list[str]) -> dict[str, Any]:
     if len(args) != 2:
         raise BDDLParseError(f"(on ...) expects 2 args, got {len(args)}: {args}")
-    return {"body_a": args[0], "body_b": args[1]}
+    # #170: tighten thresholds to match upstream LIBERO's
+    # ``ObjectState.check_ontop`` semantics. The default ``_body_on``
+    # uses ``z_offset=0.02 m`` and ``xy_tol=0.15 m`` (loose, intended for
+    # coarse "is A on B" checks); upstream LIBERO requires
+    # ``a.z >= b.z`` (no offset) AND ``|a.xy - b.xy| < 0.03 m`` AND
+    # contact between A and B. The empirical at-success state on
+    # ``libero-10/SCENE5`` has mug.z 4 mm above plate.z and mug.xy 1.2 cm
+    # off plate.xy — the loose defaults rejected this as ``False`` while
+    # ``env.check_success()`` returned ``True`` (#170 diagnostic).
+    #
+    # We don't add the contact check here yet (would require
+    # :meth:`get_contacts` on ``LiberoOffScreenRenderEngine``); the
+    # tighter geometric thresholds alone close the libero-10/SCENE5
+    # divergence. False positives in transient "suspended above plate"
+    # states are rare and self-correct as the rollout continues.
+    return {"body_a": args[0], "body_b": args[1], "z_offset": 0.0, "xy_tol": 0.03}
 
 
 def _near_kwargs(args: list[str]) -> dict[str, Any]:

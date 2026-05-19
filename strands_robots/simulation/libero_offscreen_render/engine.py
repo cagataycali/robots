@@ -448,6 +448,104 @@ class LiberoOffScreenRenderEngine(SimEngine):
         except Exception as e:  # noqa: BLE001
             logger.warning("LiberoOffScreenRenderEngine.send_action: env.step raised %s", e)
 
+    # State queries (predicates need these)
+
+    def get_body_state(self, body_name: str) -> dict[str, Any]:
+        """Body pose lookup matching :meth:`MuJoCoSimEngine.get_body_state`'s contract.
+
+        Required by ``strands_robots.simulation.predicates._body_position``
+        which the BDDL goal evaluator uses to evaluate ``On``, ``Inside``,
+        ``Near``, ``Upright``, etc. Without this method the evaluator
+        returns ``None`` for every body lookup and every position-based
+        predicate silently returns ``False`` — manifested as #170's
+        false-negative success rate on ``MuJoCoSimEngine``-style
+        evaluation paths.
+
+        Looks up ``body_name`` via ``self._env.env.obj_body_id`` (the
+        BDDL-name → MJCF-body-id mapping that LIBERO's
+        ``BDDLBaseDomain._setup_references`` builds). Falls back to
+        ``self._env.env.sim.model.body_name2id(body_name)`` when the
+        BDDL name doesn't resolve in ``obj_body_id`` (e.g. for engineered
+        scene bodies the BDDL doesn't enumerate, like ``robot0_base``).
+
+        ``self._env`` is the LIBERO ``OffScreenRenderEnv`` wrapper;
+        ``self._env.env`` is the underlying robosuite env that holds the
+        ``obj_body_id`` dict and the ``sim`` attribute. The wrapper
+        layer is transparent for state queries.
+
+        Returns the same status-dict + JSON-payload format
+        ``MuJoCoSimEngine`` returns so the predicate evaluator's
+        ``_extract_json`` works unchanged.
+        """
+        if self._env is None:
+            return {
+                "status": "error",
+                "content": [{"text": "get_body_state: env not initialized. Call setup_libero_task first."}],
+            }
+
+        # Unwrap OffScreenRenderEnv → underlying robosuite env.
+        inner_env = getattr(self._env, "env", None)
+        if inner_env is None:
+            return {
+                "status": "error",
+                "content": [{"text": "get_body_state: OffScreenRenderEnv has no inner env attribute."}],
+            }
+
+        # Resolve body ID. Prefer the BDDL-name dict (handles names like
+        # ``porcelain_mug_1`` that LIBERO maps to the MJCF body
+        # ``porcelain_mug_1_main``); fall back to raw MJCF name for
+        # engineered scene bodies.
+        body_id: int | None = None
+        obj_body_id = getattr(inner_env, "obj_body_id", None)
+        if isinstance(obj_body_id, dict) and body_name in obj_body_id:
+            try:
+                body_id = int(obj_body_id[body_name])
+            except (TypeError, ValueError):
+                body_id = None
+        if body_id is None:
+            try:
+                model = inner_env.sim.model
+                # robosuite's MjModel wrapper exposes body_name2id; -1 ⇒ not found.
+                raw = model.body_name2id(body_name)
+                if raw >= 0:
+                    body_id = int(raw)
+            except (AttributeError, ValueError, KeyError):
+                body_id = None
+        if body_id is None:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": f"Body {body_name!r} not found in OffScreenRenderEnv (no obj_body_id entry, no MJCF body)."
+                    }
+                ],
+            }
+
+        try:
+            sim_data = inner_env.sim.data
+            pos = list(np.asarray(sim_data.body_xpos[body_id], dtype=np.float64).tolist())
+            quat = list(np.asarray(sim_data.body_xquat[body_id], dtype=np.float64).tolist())
+        except (AttributeError, IndexError, ValueError) as e:
+            return {
+                "status": "error",
+                "content": [
+                    {"text": f"get_body_state: failed to read pose for body {body_name!r} (id={body_id}): {e}"}
+                ],
+            }
+
+        return {
+            "status": "success",
+            "content": [
+                {"text": f"🏷️ Body {body_name!r} (id={body_id}): pos={pos} quat={quat}"},
+                {
+                    "json": {
+                        "position": pos,
+                        "quaternion": quat,
+                    }
+                },
+            ],
+        }
+
     # Rendering
 
     def render(

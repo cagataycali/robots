@@ -515,6 +515,30 @@ class LiberoAdapter(BenchmarkProtocol):
             self._state_log_max = 50
         self._state_log_step: int = 0
 
+        # Round 170 (#170) — diagnostic gate for the BDDL predicate
+        # evaluator's disagreement with ``env.check_success`` discovered
+        # in PR #168 round 44. Set ``STRANDS_LIBERO_PREDICATE_LOG=1`` to
+        # emit a per-step log line when the two verdicts differ
+        # (capped at ``STRANDS_LIBERO_PREDICATE_LOG_MAX`` per episode,
+        # default 10). Only fires when the sim wraps an
+        # ``OffScreenRenderEnv`` (so we have ``env.check_success`` as
+        # ground truth); silent on backends without it.
+        self._predicate_log_enabled = os.environ.get("STRANDS_LIBERO_PREDICATE_LOG", "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        )
+        try:
+            self._predicate_log_max = int(os.environ.get("STRANDS_LIBERO_PREDICATE_LOG_MAX", "10"))
+        except ValueError:
+            logger.warning(
+                "STRANDS_LIBERO_PREDICATE_LOG_MAX=%r is not an integer; defaulting to 10",
+                os.environ.get("STRANDS_LIBERO_PREDICATE_LOG_MAX"),
+            )
+            self._predicate_log_max = 10
+        self._predicate_log_count: int = 0
+
     # Construction helpers
 
     @classmethod
@@ -941,6 +965,9 @@ class LiberoAdapter(BenchmarkProtocol):
         # round-29 behaviour for ACTION_LOG via the controller's
         # reset() call inside _install_action_controller above).
         self._state_log_step = 0
+        # Round 170: reset per-episode disagreement counter so each
+        # episode logs its own first N divergences.
+        self._predicate_log_count = 0
 
     def prewarm(self, sim: SimEngine) -> None:
         """Idempotent setup that should run BEFORE ``sim.start_cameras_recording``.
@@ -1737,26 +1764,78 @@ class LiberoAdapter(BenchmarkProtocol):
         path remains as a fallback for backends without an
         ``OffScreenRenderEnv`` (e.g. our ``MuJoCoSimEngine``); the
         residual bug in the BDDL predicate evaluator is a separate
-        investigation track.
+        investigation track (see #170).
 
         Best-effort: if any introspection step fails (the env
         doesn't have ``check_success``, or ``check_success`` raises),
         falls back to the BDDL predicate tree. This keeps
         ``LiberoAdapter`` working on engines that don't have an
         upstream env.
+
+        **Diagnostic mode (#170)**. Set
+        ``STRANDS_LIBERO_PREDICATE_LOG=1`` to log BOTH verdicts (env
+        and BDDL) for every step where they disagree. Used to bisect
+        which predicate / body lookup is wrong in the BDDL evaluator
+        without affecting the returned verdict (always uses the env
+        path when available, so eval correctness is preserved).
+        Diagnostics fire only on the first ``STRANDS_LIBERO_PREDICATE_LOG_MAX``
+        (default 10) disagreements per episode to keep logs tractable.
         """
         env = getattr(sim, "_env", None)
+        env_verdict: bool | None = None
         if env is not None:
             check = getattr(env, "check_success", None)
             if callable(check):
                 try:
-                    return bool(check())
+                    env_verdict = bool(check())
                 except Exception as e:  # noqa: BLE001
                     logger.debug(
                         "LiberoAdapter.is_success: env.check_success raised %s; "
                         "falling back to BDDL predicate evaluator",
                         e,
                     )
+
+        # Round 170 diagnostic: log both verdicts when:
+        # (a) env says success (env=True) — to verify BDDL agrees on the
+        #     success transition, and identify the divergent leaf if not, OR
+        # (b) they disagree at any point (env != bddl) — to capture
+        #     transient divergences.
+        # Gated on env var so production eval pays zero cost.
+        if self._predicate_log_enabled and env_verdict is not None:
+            try:
+                bddl_verdict = bool(self._success_fn(sim))
+            except Exception as e:  # noqa: BLE001
+                bddl_verdict = None
+                logger.debug("predicate_log: BDDL evaluator raised %s", e)
+            should_log = (
+                bddl_verdict is not None
+                and (env_verdict or env_verdict != bddl_verdict)
+                and self._predicate_log_count < self._predicate_log_max
+            )
+            if should_log:
+                # Walk the goal tree to find which sub-predicate
+                # diverges. Each leaf reports its own verdict so we
+                # can grep the divergent one.
+                logger.warning(
+                    "PREDICATE_LOG ep=%d log#%d: env=%s bddl=%s; goal=%r",
+                    self._episode_count,
+                    self._predicate_log_count,
+                    env_verdict,
+                    bddl_verdict,
+                    self.problem.goal,
+                )
+                # Per-leaf verdicts, recursive walk.
+                for leaf_repr, leaf_verdict in _walk_predicate_tree(self.problem.goal, sim):
+                    logger.warning(
+                        "PREDICATE_LOG ep=%d   leaf %s = %s",
+                        self._episode_count,
+                        leaf_repr,
+                        leaf_verdict,
+                    )
+                self._predicate_log_count += 1
+
+        if env_verdict is not None:
+            return env_verdict
         return bool(self._success_fn(sim))
 
     # Internals
@@ -2972,6 +3051,67 @@ def _extract_position(state: dict[str, Any]) -> list[float] | None:
             if isinstance(pos, list) and len(pos) == 3 and all(isinstance(c, (int, float)) for c in pos):
                 return [float(c) for c in pos]
     return None
+
+
+def _walk_predicate_tree(node: Any, sim: SimEngine) -> list[tuple[str, bool]]:
+    """Walk a BDDL goal tree and return ``(repr, verdict)`` for every leaf.
+
+    Round 170 (#170) diagnostic helper. Used by
+    :meth:`LiberoAdapter.is_success` when
+    ``STRANDS_LIBERO_PREDICATE_LOG=1`` is set, so we can identify which
+    sub-predicate disagrees with ``env.check_success`` instead of just
+    knowing the top-level goal disagrees. Compiles each ``Pred`` leaf in
+    isolation via the existing ``compile_goal`` machinery and runs it
+    against the live ``sim``.
+
+    Each reported leaf string includes the actual body positions
+    looked up via ``sim.get_body_state`` so we can see why a position-
+    based predicate (``on``, ``inside``, etc.) returned its verdict —
+    distinguishes between "name doesn't resolve" (None pos), "wrong
+    geometric threshold" (positions present but predicate still False),
+    and "true success" (positions present and predicate True).
+
+    Returns a list of ``(human-readable predicate, verdict)`` tuples,
+    one per leaf, in tree-traversal order. Combinators (``And`` / ``Or``
+    / ``Not``) are reported as nested-string prefixes.
+    """
+    from strands_robots.benchmarks.libero.bddl_parser import And, Not, Or, Pred, compile_goal
+    from strands_robots.simulation.predicates import _body_position
+
+    out: list[tuple[str, bool]] = []
+
+    def _arg_diag(arg: str) -> str:
+        """Render a body name + its position for diagnostic output."""
+        pos = _body_position(sim, arg)
+        if pos is None:
+            return f"{arg}=NONE"
+        return f"{arg}=[{pos[0]:.3f}, {pos[1]:.3f}, {pos[2]:.3f}]"
+
+    def visit(n: Any, prefix: str = "") -> None:
+        if isinstance(n, Pred):
+            try:
+                verdict = bool(compile_goal(n)(sim))
+            except Exception as e:  # noqa: BLE001
+                out.append((f"{prefix}({n.name} {' '.join(n.args)})", False))
+                logger.debug("predicate_log: leaf %r raised %s", n, e)
+                return
+            arg_diag = " ".join(_arg_diag(a) for a in n.args)
+            out.append((f"{prefix}({n.name} {arg_diag})", verdict))
+            return
+        if isinstance(n, And):
+            for c in n.clauses:
+                visit(c, prefix + "AND/")
+            return
+        if isinstance(n, Or):
+            for c in n.clauses:
+                visit(c, prefix + "OR/")
+            return
+        if isinstance(n, Not):
+            visit(n.clause, prefix + "NOT/")
+            return
+
+    visit(node)
+    return out
 
 
 def _extract_pose(state: dict[str, Any] | None) -> tuple[list[float] | None, list[float] | None]:

@@ -304,6 +304,186 @@ class TestIsSuccess:
         assert adapter.is_success(sim_gripped) is False
 
 
+class TestIsSuccessRound170Diagnostic:
+    """#170: when ``STRANDS_LIBERO_PREDICATE_LOG=1`` is set,
+    :meth:`LiberoAdapter.is_success` emits structured WARNING log lines
+    for every step where ``env.check_success() != self._success_fn(sim)``
+    OR where ``env.check_success() == True`` (so we can verify the BDDL
+    evaluator agrees on the success transition).
+
+    The diagnostic was used to bisect the round-44 silent counter bug:
+    ``_body_position`` returning ``None`` for every body (engine had no
+    ``get_body_state``) AND the ``_on_kwargs`` defaults rejecting the
+    actual success geometry (4 mm z gap, 1.2 cm xy off — too tight for
+    the loose 2 cm/15 cm defaults to fire).
+
+    These tests pin the diagnostic surface so future refactors can't
+    silently drop the per-step logging that #170 needed."""
+
+    def test_disabled_by_default(self, monkeypatch, caplog):
+        """No ``STRANDS_LIBERO_PREDICATE_LOG`` env var ⇒ no logs even
+        when env and BDDL disagree."""
+        import logging as _logging
+
+        monkeypatch.delenv("STRANDS_LIBERO_PREDICATE_LOG", raising=False)
+
+        adapter = LiberoAdapter.from_text(PICK_CUBE_BDDL)
+        # Force a disagreement: env says True via the wrapped env's
+        # check_success, but BDDL evaluates False on a fake-world that
+        # has the cube below the plate.
+        sim = FakeSim(
+            bodies={
+                "cube_1": {"position": [0, 0, 0.05]},
+                "plate_1": {"position": [0, 0, 0.10]},
+            }
+        )
+
+        class _StubEnv:
+            @staticmethod
+            def check_success() -> bool:
+                return True
+
+        sim._env = _StubEnv()  # type: ignore[attr-defined]
+
+        with caplog.at_level(_logging.WARNING, logger="strands_robots.benchmarks.libero.adapter"):
+            verdict = adapter.is_success(sim)
+
+        # Returned verdict still uses env path.
+        assert verdict is True
+        # No diagnostic logs.
+        assert not any("PREDICATE_LOG" in r.getMessage() for r in caplog.records)
+
+    def test_enabled_logs_disagreement(self, monkeypatch, caplog):
+        """With ``STRANDS_LIBERO_PREDICATE_LOG=1`` and env=True / BDDL=False
+        (the round-44 disagreement case), emit a structured log line
+        per disagreement, capped at ``STRANDS_LIBERO_PREDICATE_LOG_MAX``."""
+        import logging as _logging
+
+        monkeypatch.setenv("STRANDS_LIBERO_PREDICATE_LOG", "1")
+        monkeypatch.setenv("STRANDS_LIBERO_PREDICATE_LOG_MAX", "2")
+
+        adapter = LiberoAdapter.from_text(PICK_CUBE_BDDL)
+        sim = FakeSim(
+            bodies={
+                # Cube positioned so the BDDL evaluator can't decide
+                # "on plate_1" — z below plate.
+                "cube_1": {"position": [0, 0, 0.05]},
+                "plate_1": {"position": [0, 0, 0.10]},
+            }
+        )
+
+        class _StubEnv:
+            @staticmethod
+            def check_success() -> bool:
+                return True
+
+        sim._env = _StubEnv()  # type: ignore[attr-defined]
+
+        with caplog.at_level(_logging.WARNING, logger="strands_robots.benchmarks.libero.adapter"):
+            adapter.is_success(sim)
+
+        log_records = [r for r in caplog.records if "PREDICATE_LOG" in r.getMessage()]
+        # At least the top-level "log#0" line + per-leaf walk lines.
+        assert len(log_records) >= 1, "expected at least one PREDICATE_LOG line"
+        top_msg = next(r.getMessage() for r in log_records if "log#0" in r.getMessage())
+        assert "env=True" in top_msg
+        assert "bddl=False" in top_msg
+
+    def test_max_cap_applied(self, monkeypatch, caplog):
+        """``STRANDS_LIBERO_PREDICATE_LOG_MAX`` caps the number of
+        disagreement log lines per episode (avoids flooding the logs
+        on long rollouts)."""
+        import logging as _logging
+
+        monkeypatch.setenv("STRANDS_LIBERO_PREDICATE_LOG", "1")
+        monkeypatch.setenv("STRANDS_LIBERO_PREDICATE_LOG_MAX", "2")
+
+        adapter = LiberoAdapter.from_text(PICK_CUBE_BDDL)
+        sim = FakeSim(
+            bodies={
+                "cube_1": {"position": [0, 0, 0.05]},
+                "plate_1": {"position": [0, 0, 0.10]},
+            }
+        )
+
+        class _StubEnv:
+            @staticmethod
+            def check_success() -> bool:
+                return True
+
+        sim._env = _StubEnv()  # type: ignore[attr-defined]
+
+        # Call is_success 5 times — should only log 2 (the cap).
+        with caplog.at_level(_logging.WARNING, logger="strands_robots.benchmarks.libero.adapter"):
+            for _ in range(5):
+                adapter.is_success(sim)
+
+        # Count "log#0" / "log#1" lines (one per emission cycle).
+        emit_count = sum(1 for r in caplog.records if "log#" in r.getMessage())
+        assert emit_count == 2, f"expected 2 emissions (cap=2), got {emit_count}"
+
+    def test_counter_resets_on_episode_start(self, monkeypatch):
+        """Per-episode ``_predicate_log_count`` resets so each episode
+        emits its own first N disagreements."""
+        monkeypatch.setenv("STRANDS_LIBERO_PREDICATE_LOG", "1")
+
+        adapter = LiberoAdapter.from_text(PICK_CUBE_BDDL)
+        adapter._predicate_log_count = 7  # simulate prior episode
+
+        sim = FakeSim(data_config="panda")
+        adapter.on_episode_start(sim, random.Random(0))
+        assert adapter._predicate_log_count == 0, "on_episode_start must reset the per-episode predicate-log counter"
+
+    def test_walk_predicate_tree_reports_leaf_positions(self):
+        """``_walk_predicate_tree`` reports each leaf's verdict with the
+        actual body positions so reviewers can see why a predicate
+        returned its verdict (e.g., body name didn't resolve = ``=NONE``;
+        positions present + verdict=False = threshold-rejection)."""
+        from strands_robots.benchmarks.libero.adapter import _walk_predicate_tree
+        from strands_robots.benchmarks.libero.bddl_parser import parse_bddl
+
+        text = "(define (problem p) (:goal (on cube_1 plate_1)))"
+        problem = parse_bddl(text)
+        sim = FakeSim(
+            bodies={
+                "cube_1": {"position": [0.001, -0.305, 0.443]},
+                "plate_1": {"position": [-0.004, -0.323, 0.439]},
+            }
+        )
+        leaves = _walk_predicate_tree(problem.goal, sim)
+        assert len(leaves) == 1
+        leaf_repr, verdict = leaves[0]
+        # Verdict reflects the new tighter thresholds (mug 4mm above
+        # plate, 1cm xy → True).
+        assert verdict is True
+        # Positions are rendered for human inspection.
+        assert "cube_1=[" in leaf_repr
+        assert "plate_1=[" in leaf_repr
+        # 3-decimal precision so reviewers can eyeball the diagnostic.
+        assert "0.443" in leaf_repr or "0.44" in leaf_repr
+
+    def test_walk_predicate_tree_reports_missing_body_as_none(self):
+        """When a body name doesn't resolve in the sim, the leaf
+        diagnostic shows ``=NONE`` so reviewers can immediately see
+        the look-up failure (the round-170 smoking gun)."""
+        from strands_robots.benchmarks.libero.adapter import _walk_predicate_tree
+        from strands_robots.benchmarks.libero.bddl_parser import parse_bddl
+
+        text = "(define (problem p) (:goal (on missing_body_1 plate_1)))"
+        problem = parse_bddl(text)
+        sim = FakeSim(
+            bodies={
+                # Only plate_1 is registered; missing_body_1 doesn't exist.
+                "plate_1": {"position": [0, 0, 0.10]},
+            }
+        )
+        leaves = _walk_predicate_tree(problem.goal, sim)
+        assert len(leaves) == 1
+        leaf_repr, verdict = leaves[0]
+        assert verdict is False
+        assert "missing_body_1=NONE" in leaf_repr
+
+
 class TestOnEpisodeStart:
     def test_loads_scene_before_compat_check(self, tmp_path):
         """``scene_path`` load must happen before ``super().on_episode_start``
