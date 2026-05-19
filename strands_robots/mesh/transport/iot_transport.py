@@ -128,16 +128,17 @@ class _MqttSubHandle:
     is transport-agnostic.
     """
 
-    def __init__(self, transport: IotMqttTransport, topic_filter: str) -> None:
+    def __init__(self, transport: IotMqttTransport, topic_filter: str, handler: Any = None) -> None:
         self._transport = transport
         self._topic_filter = topic_filter
+        self._handler = handler
         self._undeclared = False
 
     def undeclare(self) -> None:
         if self._undeclared:
             return
         self._undeclared = True
-        self._transport._unsubscribe(self._topic_filter)
+        self._transport._unsubscribe(self._topic_filter, self._handler)
 
 
 def _zenoh_to_mqtt_filter(key_expr: str) -> str:
@@ -461,19 +462,25 @@ class IotMqttTransport:
                         self._handlers.pop(topic_filter, None)
                 raise RuntimeError(f"MQTT subscribe to {topic_filter!r} failed: {exc}") from exc
 
-        return _MqttSubHandle(self, topic_filter)
+        return _MqttSubHandle(self, topic_filter, handler)
 
     # Internal
 
-    def _unsubscribe(self, topic_filter: str) -> None:
-        """Remove one handler for *topic_filter*; unsubscribe if last."""
+    def _unsubscribe(self, topic_filter: str, handler: Any = None) -> None:
+        """Remove *handler* for *topic_filter*; unsubscribe if last."""
         from awscrt import mqtt5
 
         with self._lock:
             handlers = self._handlers.get(topic_filter)
             if not handlers:
                 return
-            handlers.pop()  # remove one handler (FIFO order doesn't matter — same topic)
+            if handler is not None:
+                try:
+                    handlers.remove(handler)
+                except ValueError:
+                    pass  # handler already gone
+            else:
+                handlers.pop()  # legacy fallback: remove last
             if handlers:
                 return  # other subscribers still active
             self._handlers.pop(topic_filter, None)

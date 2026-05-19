@@ -11,6 +11,7 @@ import base64
 import json
 import logging
 import os
+import re
 import socket
 import threading
 import time
@@ -796,6 +797,21 @@ def init_mesh(
     if peer_id is None:
         base = getattr(robot, "tool_name_str", None) or "robot"
         peer_id = f"{base}-{uuid.uuid4().hex[:8]}"
+
+    # Validate peer_id — reject reserved names and MQTT-unsafe characters.
+    _RESERVED_PEER_IDS = {"broadcast", "safety"}
+    _PEER_ID_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._\-]{0,127}$")
+    if peer_id in _RESERVED_PEER_IDS:
+        raise ValueError(
+            f"peer_id={peer_id!r} is reserved for system use. "
+            f"Reserved names: {sorted(_RESERVED_PEER_IDS)}"
+        )
+    if not _PEER_ID_PATTERN.match(peer_id):
+        raise ValueError(
+            f"peer_id={peer_id!r} contains invalid characters. "
+            "Must match [a-zA-Z0-9][a-zA-Z0-9._-]{{0,127}} "
+            "(no /, +, # — these break MQTT topic structure and AWS Thing-name rules)."
+        )
 
     instance = Mesh(robot, peer_id=peer_id, peer_type=peer_type)
     instance.start()

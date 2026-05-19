@@ -220,7 +220,7 @@ _OPERATOR_POLICY_DOC: dict[str, Any] = {
             "Effect": "Allow",
             "Action": ["iot:GetThingShadow", "iot:UpdateThingShadow"],
             "Resource": [
-                "arn:aws:iot:*:*:thing/*",
+                "arn:aws:iot:*:*:thing/strands-mesh-robot-*",
             ],
         },
     ],

@@ -240,7 +240,15 @@ def _ensure_lambda_role(iam: Any, account: BootstrappedAccount) -> str:
                 "Statement": [
                     {
                         "Effect": "Allow",
-                        "Action": ["iot:Publish", "iot:ListThings"],
+                        "Action": ["iot:Publish"],
+                        "Resource": [
+                            "arn:aws:iot:*:*:topic/strands/*",
+                            "arn:aws:iot:*:*:topic/strands/safety/estop",
+                        ],
+                    },
+                    {
+                        "Effect": "Allow",
+                        "Action": ["iot:ListThings"],
                         "Resource": "*",
                     }
                 ],
@@ -553,19 +561,73 @@ def _ensure_provisioning_role(account: BootstrappedAccount) -> str:
 # Public API
 
 
-def bootstrap_account(*, region: str | None = None) -> BootstrappedAccount:
+def bootstrap_account(
+    *,
+    region: str | None = None,
+    confirm: bool = False,
+    dry_run: bool = True,
+    account_id_expected: str | None = None,
+    profile: str | None = None,
+) -> BootstrappedAccount:
     """Bring up every account-wide resource the strands-mesh fleet needs.
 
     Idempotent. Safe to run multiple times; existing resources are skipped
     and only listed in :attr:`BootstrappedAccount.skipped`.
 
+    Args:
+        region: AWS region (defaults to session default).
+        confirm: Must be True to actually create resources. Raises ValueError
+            if False and dry_run is also False.
+        dry_run: When True (default), prints the resources that *would* be
+            created without making API calls. Set to False + confirm=True
+            to actually provision.
+        account_id_expected: If provided, abort if the resolved account ID
+            does not match — guards against wrong-account provisioning.
+        profile: AWS profile name to use (passed to boto3.Session).
+
     Returns:
         :class:`BootstrappedAccount` with every ARN and a record of what
         was created vs skipped.
+
+    Raises:
+        ValueError: If confirm=False and dry_run=False, or if account_id_expected
+            does not match the resolved account.
     """
+    if not dry_run and not confirm:
+        raise ValueError(
+            "bootstrap_account() creates persistent AWS resources. "
+            "Pass confirm=True to proceed, or keep dry_run=True (default) "
+            "to preview what would be created."
+        )
+
     boto3 = _require_boto3()
-    sts = boto3.client("sts", region_name=region)
+    session = boto3.Session(profile_name=profile) if profile else boto3
+    sts = session.client("sts", region_name=region)
     account_id = sts.get_caller_identity()["Account"]
+
+    if account_id_expected and account_id != account_id_expected:
+        raise ValueError(
+            f"Resolved AWS account {account_id} does not match "
+            f"expected {account_id_expected}. Aborting to prevent "
+            "provisioning in the wrong account."
+        )
+
+    if dry_run:
+        import sys
+        print(
+            f"[dry_run] Would create strands-mesh fleet resources in "
+            f"account {account_id}, region {sts.meta.region_name}:\n"
+            f"  - IoT Thing Type: strands-mesh-robot\n"
+            f"  - IoT Policy: strands-mesh-robot-policy\n"
+            f"  - IAM Role: strands-mesh-estop-lambda-role\n"
+            f"  - Lambda: strands-mesh-estop\n"
+            f"  - DynamoDB Table: strands-mesh-fleet\n"
+            f"  - CloudWatch Log Group: /strands/mesh\n"
+            f"  - IoT Topic Rule: strands_mesh_audit\n"
+            f"\nPass dry_run=False, confirm=True to create.",
+            file=sys.stderr,
+        )
+        return BootstrappedAccount(region=sts.meta.region_name, account_id=account_id)
     region = sts.meta.region_name
 
     iot = boto3.client("iot", region_name=region)

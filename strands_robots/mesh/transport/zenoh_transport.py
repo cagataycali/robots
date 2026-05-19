@@ -63,9 +63,9 @@ class ZenohTransport:
             if self._has_ref:
                 return True
 
-            from strands_robots.mesh.session import get_session
+            from strands_robots.mesh.session import _get_zenoh_session_directly
 
-            session = get_session()
+            session = _get_zenoh_session_directly()
             if session is None:
                 return False
             self._has_ref = True

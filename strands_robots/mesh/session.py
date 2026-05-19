@@ -378,6 +378,88 @@ def get_session() -> Any | None:
             return None
 
 
+
+def _get_zenoh_session_directly() -> Any | None:
+    """Open/reuse the Zenoh session directly, bypassing transport-backend routing.
+
+    This is used by :class:`~strands_robots.mesh.transport.zenoh_transport.ZenohTransport`
+    when it is instantiated as part of a :class:`BridgeTransport`. In that scenario,
+    ``get_session()`` would re-enter the factory's ``_LOCK`` (since
+    ``_is_transport_backend()`` returns True for bridge mode) causing a deadlock.
+
+    This function always goes through the raw Zenoh path regardless of
+    ``STRANDS_MESH_BACKEND``. It shares the same ``_SESSION`` singleton and
+    ``_SESSION_LOCK``.
+    """
+    global _SESSION, _SESSION_REFS  # noqa: PLW0603
+
+    with _SESSION_LOCK:
+        if _SESSION is not None:
+            _SESSION_REFS += 1
+            return _SESSION
+
+        try:
+            import zenoh
+        except ImportError:
+            logger.debug("eclipse-zenoh not installed — mesh disabled")
+            return None
+
+        port_env = os.getenv("STRANDS_MESH_PORT", "7447")
+        try:
+            mesh_port = int(port_env)
+            if not (1 <= mesh_port <= 65535):
+                raise ValueError(f"port {mesh_port} out of range")
+        except ValueError as exc:
+            logger.warning(
+                "Invalid STRANDS_MESH_PORT=%r (%s) — falling back to 7447",
+                port_env,
+                exc,
+            )
+            mesh_port = 7447
+        local_ep = f"tcp/127.0.0.1:{mesh_port}"
+
+        connect_env = os.getenv("ZENOH_CONNECT")
+        listen_env = os.getenv("ZENOH_LISTEN")
+
+        if not connect_env and not listen_env:
+            try:
+                cfg = zenoh.Config()
+                cfg.insert_json5("listen/endpoints", json.dumps([local_ep]))
+                cfg.insert_json5("connect/endpoints", json.dumps([local_ep]))
+                _SESSION = zenoh.open(cfg)
+                _SESSION_REFS = 1
+                logger.info("Zenoh mesh session opened (listener on %s)", local_ep)
+                return _SESSION
+            except Exception as exc:  # noqa: BLE001
+                logger.debug(
+                    "Zenoh listener on %s unavailable (%s) — trying client mode",
+                    local_ep,
+                    exc,
+                )
+
+            try:
+                cfg = _build_config()
+                cfg.insert_json5("mode", '"client"')
+                cfg.insert_json5("connect/endpoints", json.dumps([local_ep]))
+                _SESSION = zenoh.open(cfg)
+                _SESSION_REFS = 1
+                logger.info("Zenoh mesh session opened (client → %s)", local_ep)
+                return _SESSION
+            except Exception as exc:
+                logger.warning("Zenoh session open failed (client mode): %s", exc)
+                return None
+
+        try:
+            cfg = _build_config()
+            _SESSION = zenoh.open(cfg)
+            _SESSION_REFS = 1
+            logger.info("Zenoh mesh session opened")
+            return _SESSION
+        except Exception as exc:
+            logger.warning("Zenoh session open failed: %s", exc)
+            return None
+
+
 def release_session() -> None:
     """Release one reference to the shared mesh session.
 
