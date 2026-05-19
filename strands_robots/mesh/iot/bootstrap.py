@@ -250,7 +250,7 @@ def _ensure_lambda_role(iam: Any, account: BootstrappedAccount) -> str:
                         "Effect": "Allow",
                         "Action": ["iot:ListThings"],
                         "Resource": "*",
-                    }
+                    },
                 ],
             }
         ),
@@ -614,6 +614,7 @@ def bootstrap_account(
 
     if dry_run:
         import sys
+
         print(
             f"[dry_run] Would create strands-mesh fleet resources in "
             f"account {account_id}, region {sts.meta.region_name}:\n"

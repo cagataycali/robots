@@ -803,8 +803,7 @@ def init_mesh(
     _PEER_ID_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._\-]{0,127}$")
     if peer_id in _RESERVED_PEER_IDS:
         raise ValueError(
-            f"peer_id={peer_id!r} is reserved for system use. "
-            f"Reserved names: {sorted(_RESERVED_PEER_IDS)}"
+            f"peer_id={peer_id!r} is reserved for system use. Reserved names: {sorted(_RESERVED_PEER_IDS)}"
         )
     if not _PEER_ID_PATTERN.match(peer_id):
         raise ValueError(

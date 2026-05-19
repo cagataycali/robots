@@ -378,7 +378,6 @@ def get_session() -> Any | None:
             return None
 
 
-
 def _get_zenoh_session_directly() -> Any | None:
     """Open/reuse the Zenoh session directly, bypassing transport-backend routing.
 
