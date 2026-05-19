@@ -86,8 +86,7 @@ class LiberoAdapter(BenchmarkProtocol):
             ``MultiStepConfig.max_episode_steps`` for LIBERO eval —
             see ``Isaac-GR00T/gr00t/eval/rollout_policy.py``). Override
             per-task by passing ``max_steps=`` to the constructor or
-            mutating the attribute after construction. Pre-#168
-            #168 we used the LIBERO repository's lifelong-learning
+            mutating the attribute after construction. Pre-#168 we used the LIBERO repository's lifelong-learning
             convention of 300; that was too short for libero_10's
             longer-horizon manipulation tasks (e.g. multi-step pick-
             and-place chains) and was contributing to ``success_rate=0``
@@ -347,8 +346,7 @@ class LiberoAdapter(BenchmarkProtocol):
                 explicitly. Without this kwarg the robot starts at
                 ``qpos=0`` (the joint-default "stretched flat" pose)
                 instead of the canonical "ready" pose GR00T-LIBERO
-                expects, which alone drives ``success_rate=0`` (#168
-                #168 bug I).
+                expects, which alone drives ``success_rate=0`` (#168 bug I).
             bddl_source: Original BDDL text - stored on the adapter so
                 the scene generator can pass it back to ``libero`` (which
                 only accepts a *file* path). Set automatically by
@@ -408,11 +406,11 @@ class LiberoAdapter(BenchmarkProtocol):
         # State-side gripper joint names (#168). LIBERO trains
         # ``state.gripper`` on a 2-element vector ``[finger1.qpos, finger2.qpos]``
         # — the two fingers have OPPOSITE-sign qpos by physical
-        # convention (they move apart). pre-#168 we read ONE
+        # convention (they move apart). Pre-#168 we read ONE
         # finger from ``obs[gripper_joint_name]`` and packed it as
         # ``[v, v]`` (both positive), which is structurally
         # out-of-distribution for GR00T-LIBERO and produced the
-        # near-zero deltas observed across earlier iterations. #168
+        # near-zero deltas observed across earlier iterations. The current implementation
         # reads both finger qpos directly from ``data.qpos[jnt_qposadr]``.
         # Default auto-derives ``["<gripper_prefix>finger_joint1",
         # "<gripper_prefix>finger_joint2"]`` (i.e.
@@ -469,8 +467,7 @@ class LiberoAdapter(BenchmarkProtocol):
         # :meth:`prewarm`'s init-state apply (which always uses
         # idx 0) match the policy's actual starting state for
         # episode 0 - the recorder's t=0.00 frame and the policy's
-        # first observation are then visually identical (#168
-        # #168 bug D-residual).
+        # first observation are then visually identical (#168 bug D-residual).
         self._episode_count: int = 0
         # Snapshot-and-restore fallback for procedurally-generated MJCFs that
         # don't ship a <keyframe> (the case the post-#168 verification
@@ -694,7 +691,7 @@ class LiberoAdapter(BenchmarkProtocol):
         #168: LIBERO trains ``state.gripper`` on a 2-element
         vector ``[finger1.qpos, finger2.qpos]`` whose elements have
         OPPOSITE signs by physical convention (the two fingers move
-        apart). pre-#168 we read ONE finger and packed it as
+        apart). Pre-#168 we read ONE finger and packed it as
         ``[v, v]`` (both positive), which fed GR00T structurally
         out-of-distribution state. The property returns the names in
         the order they appear in the trained state vector.
@@ -1027,7 +1024,7 @@ class LiberoAdapter(BenchmarkProtocol):
         because :meth:`_install_render_options` runs as part of
         ``on_episode_start``.
 
-        #168 verification (#168) revealed a second, more severe
+        Earlier verification (#168) revealed a second, more severe
         race: the renderer returns a skybox-only gradient for any
         ``render(camera=...)`` call when ``data.xpos`` / ``data.xmat``
         haven't been populated yet. ``mujoco.MjData`` allocates these
@@ -1481,7 +1478,7 @@ class LiberoAdapter(BenchmarkProtocol):
         # ``[gripper0_finger_joint1.qpos, gripper0_finger_joint2.qpos]``.
         # The two fingers have OPPOSITE-sign qpos by physical
         # convention (they move apart); typical at-rest values are
-        # ``[+0.0208, -0.0208]``. pre-#168 we read only one finger
+        # ``[+0.0208, -0.0208]``. Pre-#168 we read only one finger
         # via ``obs[self._gripper_joint_name]`` and packed it as
         # ``[v, v]`` (both positive), which fed GR00T structurally
         # out-of-distribution state — manifest as near-zero policy
@@ -1724,7 +1721,7 @@ class LiberoAdapter(BenchmarkProtocol):
         finger joints; their values have OPPOSITE signs by physical
         convention (the Panda gripper's two-finger MJCF puts each
         finger on its own joint with mirrored ranges, e.g.
-        ``[0, +0.04]`` and ``[-0.04, 0]``). pre-#168 the adapter
+        ``[0, +0.04]`` and ``[-0.04, 0]``). Pre-#168 the adapter
         read ONE finger's value and packed it as ``[v, v]`` (both
         positive), which is structurally OOD from training.
 
@@ -2048,8 +2045,8 @@ class LiberoAdapter(BenchmarkProtocol):
 
         ``_LIBERO_MJCF_TRANSFORM_VERSION`` is bumped whenever the
         post-process logic in :meth:`_generate_scene_from_bddl`
-        changes (history at the constant's definition - #168 added
-        collision-geom hiding + headlight boost; #168 reverted both
+        changes (history at the constant's definition - #168 initially added
+        collision-geom hiding + headlight boost, then reverted both
         and moved visualisation hiding to render-time mjvOption).
         Bumping invalidates stale on-disk caches generated by prior
         versions so users picking up the upgrade automatically
@@ -3473,10 +3470,10 @@ def _rename_mjcf_cameras(xml: str, aliases: dict[str, str]) -> str:
 #
 # History:
 # * ``v1``: implicit (pre-#168, alias map alone in cache key).
-# * ``v2``: #168 — applied ``_apply_libero_visual_fixes`` (rgba alpha=0 on
+# * ``v2``: #168 (initial attempt) — applied ``_apply_libero_visual_fixes`` (rgba alpha=0 on
 #   collision geoms + custom ``<visual>`` block with stacked ``<headlight>``).
 #   Empirically wrong direction (washed out contrast); reverted in v3.
-# * ``v3``: #168 — cached MJCF matches upstream ``OffScreenRenderEnv.sim.model.get_xml()``
+# * ``v3``: #168 (subsequent revert) — cached MJCF matches upstream ``OffScreenRenderEnv.sim.model.get_xml()``
 #   verbatim except for the camera-name aliases. Visual fidelity is
 #   handled at render time via ``world._backend_state["viz_option"]``
 #   (set by :meth:`LiberoAdapter._install_render_options`), not via
@@ -3693,7 +3690,7 @@ class _LiberoOSCController:
         # substeps per policy action. Mismatch ⇒ the OSC controller
         # under-/over-shoots its delta target every step, manifesting as
         # `success_rate=0` even though motion looks correct in cameras.
-        # See PR #168 verification + #168 fix.
+        # See PR #168 (verification then fix in subsequent commits).
         self.physics_substeps_per_control = max(1, int(physics_substeps_per_control))
 
         # Stateful ``current_action`` for the gripper, mirroring
@@ -4518,7 +4515,7 @@ def _to_scalar(value: Any) -> float:
     PR #162 introduced for ``state.gripper``, applied to every
     action channel).
 
-    The first #168 attempt fixed only ``gripper``; #168
+    An earlier commit in #168 fixed only ``gripper``; subsequent
     verification showed the same ``float(list)`` bug raises on
     ``x/y/z/roll/pitch/yaw`` too - GR00T sends ALL keys list-shaped.
     This helper centralises the coercion so all 7 action channels go
