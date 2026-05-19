@@ -525,3 +525,264 @@ class TestSimEngineFacades:
         result = sim.register_benchmark_from_file(benchmark_name="bad", spec_path=str(spec_path))
         assert result["status"] == "error"
         assert "default_robot" in result["content"][0]["text"]
+
+
+class TestActionHorizon:
+    """Round 34 (#168): ``evaluate_benchmark`` accepts ``action_horizon``
+    to control how many actions are consumed per ``policy.get_actions``
+    inference call.
+
+    Round 36 (#168): default flipped from ``1`` to ``8`` to match
+    NVIDIA's upstream GR00T LIBERO eval (``MultiStepWrapper`` with
+    ``n_action_steps=8``). GR00T-N1.7-LIBERO checkpoints were trained
+    against 8-step open-loop chunk replay, so an ``action_horizon=1``
+    default put eval out-of-distribution from training. Set
+    ``action_horizon=1`` explicitly for closed-loop receding-horizon
+    control (OpenVLA convention).
+    """
+
+    def test_default_action_horizon_is_eight_chunk_replay(self):
+        """Round 36 (#168): default ``action_horizon=8`` consumes up to
+        eight actions per ``policy.get_actions`` call before re-querying.
+
+        ``MockPolicy`` returns 8 actions per call. With
+        ``action_horizon=8`` all eight are applied per inference.
+        Pin the chunk-replay default so users running GR00T-N1.7-LIBERO
+        match NVIDIA's reference eval setup."""
+        sim = FakeSim()
+        spec = _CountingBenchmark()
+        register_benchmark("default-horizon", spec)
+
+        result = sim.evaluate_benchmark(
+            benchmark_name="default-horizon",
+            robot_name="fake_robot",
+            policy_provider="mock",
+            n_episodes=1,
+            seed=3,
+        )
+        assert result["status"] == "success", result
+        payload = next(c["json"] for c in result["content"] if "json" in c)
+        # max_steps=20 ⇒ 2 chunks of 8 (16) + 4 from the 3rd chunk
+        # (mid-chunk cap) = 20. on_step still called per APPLIED
+        # action.
+        assert spec.on_step_calls == 20
+        assert payload["episodes"][0]["steps"] == 20
+
+    def test_action_horizon_greater_than_one_consumes_chunk(self):
+        """Round 34 (#168): ``action_horizon=4`` consumes 4 actions per
+        policy.get_actions call. With ``MockPolicy`` returning 8 actions
+        per call, 4 of them get applied, then we re-query.
+
+        ``max_steps=20`` ⇒ 5 inferences × 4 actions = 20 step total.
+        ``on_step_calls`` matches because the loop calls on_step per
+        applied action, not per inference."""
+        sim = FakeSim()
+        spec = _CountingBenchmark()
+        register_benchmark("h-equals-4", spec)
+
+        result = sim.evaluate_benchmark(
+            benchmark_name="h-equals-4",
+            robot_name="fake_robot",
+            policy_provider="mock",
+            n_episodes=1,
+            seed=3,
+            action_horizon=4,
+        )
+        assert result["status"] == "success"
+        payload = next(c["json"] for c in result["content"] if "json" in c)
+        # max_steps=20 ⇒ 5 inferences × 4 actions per chunk = 20 steps
+        # (on_step still called per APPLIED action, which is 20).
+        assert spec.on_step_calls == 20
+        assert payload["episodes"][0]["steps"] == 20
+
+    def test_action_horizon_caps_at_max_steps_mid_chunk(self):
+        """Round 34 (#168): when ``max_steps`` is reached mid-chunk, the
+        remaining actions in the chunk are NOT applied. Pin so the
+        chunk-replay logic respects the spec's ``max_steps`` bound and
+        doesn't run physics past the episode budget."""
+        sim = FakeSim()
+        # max_steps=15, so 3 full chunks of 4 (12 actions) then 3 of
+        # the 4 from the 4th chunk (15 total). The 4th action of the
+        # 4th chunk should NOT fire.
+        spec = _CountingBenchmark()
+        spec.max_steps = 15  # type: ignore[misc]
+        register_benchmark("max-steps-mid-chunk", spec)
+
+        result = sim.evaluate_benchmark(
+            benchmark_name="max-steps-mid-chunk",
+            robot_name="fake_robot",
+            policy_provider="mock",
+            n_episodes=1,
+            seed=3,
+            action_horizon=4,
+        )
+        assert result["status"] == "success"
+        payload = next(c["json"] for c in result["content"] if "json" in c)
+        assert spec.on_step_calls == 15
+        assert payload["episodes"][0]["steps"] == 15
+
+    def test_action_horizon_zero_rejected(self):
+        """Round 34 (#168): ``action_horizon=0`` is invalid and rejected
+        with a structured error. Pin so a typo doesn't silently produce
+        an episode that never applies any action and exits at
+        ``max_steps`` with success_rate=0."""
+        sim = FakeSim()
+        register_benchmark("h-zero", _CountingBenchmark())
+        result = sim.evaluate_benchmark(
+            benchmark_name="h-zero",
+            robot_name="fake_robot",
+            policy_provider="mock",
+            n_episodes=1,
+            action_horizon=0,
+        )
+        assert result["status"] == "error"
+        assert "action_horizon" in result["content"][0]["text"]
+
+    def test_action_horizon_negative_rejected(self):
+        """Round 34 (#168): negative ``action_horizon`` is rejected."""
+        sim = FakeSim()
+        register_benchmark("h-neg", _CountingBenchmark())
+        result = sim.evaluate_benchmark(
+            benchmark_name="h-neg",
+            robot_name="fake_robot",
+            policy_provider="mock",
+            n_episodes=1,
+            action_horizon=-1,
+        )
+        assert result["status"] == "error"
+        assert "action_horizon" in result["content"][0]["text"]
+
+    def test_early_success_terminates_within_chunk(self):
+        """Round 34 (#168): when ``is_success`` flips mid-chunk, the
+        episode terminates and remaining chunk actions are NOT applied.
+
+        Pin so reward / step accounting reflects the actual applied
+        actions, not the full chunk that was queued."""
+        sim = FakeSim()
+        # Success after exactly 5 steps ⇒ should NOT consume the 6th.
+        spec = _CountingBenchmark(success_after=5)
+        register_benchmark("early-success-chunk", spec)
+
+        result = sim.evaluate_benchmark(
+            benchmark_name="early-success-chunk",
+            robot_name="fake_robot",
+            policy_provider="mock",
+            n_episodes=1,
+            seed=3,
+            action_horizon=8,
+        )
+        assert result["status"] == "success"
+        payload = next(c["json"] for c in result["content"] if "json" in c)
+        assert spec.on_step_calls == 5
+        assert payload["episodes"][0]["steps"] == 5
+        assert payload["episodes"][0]["success"] is True
+
+
+class TestEvalSeeding:
+    """Round 38 (#168): ``_evaluate_with_spec`` calls ``_set_eval_seed``
+    once before the episode loop to seed Python / NumPy / torch / cuDNN
+    so policy stochastic ops (e.g. sampling, dropout) are reproducible
+    across re-runs.
+
+    Mirrors NVIDIA's upstream ``set_seed`` in
+    ``Isaac-GR00T/scripts/deployment/standalone_inference_script.py:81``,
+    minus the global ``CUBLAS_WORKSPACE_CONFIG`` env var and
+    ``torch.use_deterministic_algorithms(...)`` flag that would persist
+    after the eval. Tests target the seeding helper directly + verify
+    the per-episode RNG path still works via ``episode_rng``.
+    """
+
+    def test_set_eval_seed_seeds_python_random(self):
+        """Round 38 (#168): ``_set_eval_seed`` seeds the Python ``random``
+        module so two calls with the same seed produce the same draw.
+
+        Pin the basic contract in case future refactors move the seeding
+        out of the helper."""
+        import random as _stdlib_random
+
+        from strands_robots.simulation.policy_runner import _set_eval_seed
+
+        _set_eval_seed(42)
+        first = [_stdlib_random.random() for _ in range(5)]
+        _set_eval_seed(42)
+        second = [_stdlib_random.random() for _ in range(5)]
+        assert first == second
+
+    def test_set_eval_seed_seeds_numpy(self):
+        """Round 38 (#168): ``_set_eval_seed`` seeds NumPy's legacy
+        global RNG (``np.random.seed``). Pin so policies that use
+        ``np.random.rand`` etc. are reproducible across re-runs."""
+        import numpy as np
+
+        from strands_robots.simulation.policy_runner import _set_eval_seed
+
+        _set_eval_seed(42)
+        first = np.random.rand(5).tolist()
+        _set_eval_seed(42)
+        second = np.random.rand(5).tolist()
+        assert first == second
+
+    def test_set_eval_seed_tolerates_missing_torch(self, monkeypatch):
+        """Round 38 (#168): ``_set_eval_seed`` no-ops the torch branch
+        when torch isn't importable (mock-policy / minimal-CI installs).
+
+        Pin so the function works on installs without torch — the
+        ``ImportError`` should be swallowed silently."""
+        import builtins
+        import sys
+
+        from strands_robots.simulation.policy_runner import _set_eval_seed
+
+        real_import = builtins.__import__
+
+        def fake_import(name, *args, **kwargs):
+            if name == "torch" or name.startswith("torch."):
+                raise ImportError(f"simulated missing torch ({name})")
+            return real_import(name, *args, **kwargs)
+
+        # Drop any cached torch modules so the lazy import inside
+        # _set_eval_seed actually goes through fake_import.
+        for mod in list(sys.modules):
+            if mod == "torch" or mod.startswith("torch."):
+                monkeypatch.delitem(sys.modules, mod, raising=False)
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+
+        # Should not raise.
+        _set_eval_seed(42)
+
+    def test_evaluate_benchmark_re_run_yields_same_episode_count(self):
+        """Round 38 (#168): re-running ``evaluate_benchmark`` with the
+        same seed and a deterministic spec produces the same outcome.
+
+        ``MockPolicy`` is deterministic so the per-step trajectory is
+        identical regardless of seed; this test pins that the seeding
+        path doesn't accidentally introduce non-determinism (e.g. by
+        re-seeding mid-episode)."""
+        sim_a = FakeSim()
+        sim_b = FakeSim()
+        spec_a = _CountingBenchmark()
+        spec_b = _CountingBenchmark()
+        register_benchmark("seed-rerun-a", spec_a)
+        register_benchmark("seed-rerun-b", spec_b)
+
+        result_a = sim_a.evaluate_benchmark(
+            benchmark_name="seed-rerun-a",
+            robot_name="fake_robot",
+            policy_provider="mock",
+            n_episodes=2,
+            seed=12345,
+        )
+        result_b = sim_b.evaluate_benchmark(
+            benchmark_name="seed-rerun-b",
+            robot_name="fake_robot",
+            policy_provider="mock",
+            n_episodes=2,
+            seed=12345,
+        )
+        assert result_a["status"] == "success"
+        assert result_b["status"] == "success"
+        payload_a = next(c["json"] for c in result_a["content"] if "json" in c)
+        payload_b = next(c["json"] for c in result_b["content"] if "json" in c)
+        assert payload_a["success_rate"] == payload_b["success_rate"]
+        assert payload_a["n_episodes"] == payload_b["n_episodes"]
+        assert spec_a.on_step_calls == spec_b.on_step_calls

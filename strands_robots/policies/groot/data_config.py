@@ -39,6 +39,19 @@ class Gr00tDataConfig:
         language_keys: Natural-language instruction keys.
         observation_indices: Temporal indices for observations.
         action_indices: Temporal indices for actions (horizon).
+        image_rotation_180: When ``True``, video tensors get a 180-degree
+            rotation applied at observation-build time before being sent
+            to the GR00T server. Required for the
+            ``nvidia/GR00T-N1.7-LIBERO`` checkpoint, which was trained on
+            data that Isaac-GR00T's
+            ``examples/Libero/eval/utils.py:get_libero_image()`` flips
+            top-to-bottom AND left-to-right (180 deg) at preprocessing
+            time. Without the rotation the policy sees every observation
+            upside-down relative to its training distribution and the
+            success rate collapses to 0 (#168 round-7 bug H). Default
+            ``False`` because most checkpoints (so100, oxe_droid, etc.)
+            don't need it; enabled in ``data_configs.json`` only on the
+            ``libero_panda`` entry.
     """
 
     name: str = ""
@@ -48,6 +61,7 @@ class Gr00tDataConfig:
     language_keys: list[str] = field(default_factory=list)
     observation_indices: list[int] = field(default_factory=list)
     action_indices: list[int] = field(default_factory=list)
+    image_rotation_180: bool = False
 
     def modality_config(self) -> dict[str, ModalityConfig]:
         """Build per-modality config dict (used by Isaac-GR00T loaders)."""
@@ -75,6 +89,8 @@ def _resolve_config(name: str, definitions: dict) -> Gr00tDataConfig:
             "language_keys": list(parent.language_keys),
             "observation_indices": list(parent.observation_indices),
             "action_indices": list(parent.action_indices),
+            # Boolean / scalar fields inherit by value, not by ref.
+            "image_rotation_180": parent.image_rotation_180,
         }
         for field_name, field_value in definition.items():
             if field_name != "_extends":
@@ -138,6 +154,7 @@ def create_custom_data_config(
     language_keys: list[str] | None = None,
     observation_indices: list[int] | None = None,
     action_indices: list[int] | None = None,
+    image_rotation_180: bool = False,
 ) -> Gr00tDataConfig:
     """Create and register a custom data config at runtime.
 
@@ -152,6 +169,7 @@ def create_custom_data_config(
         language_keys=language_keys or ["annotation.human.task_description"],
         observation_indices=observation_indices or [0],
         action_indices=action_indices or list(range(16)),
+        image_rotation_180=image_rotation_180,
     )
     DATA_CONFIG_MAP[name] = config
     logger.info("Registered custom config '%s': cameras=%s state=%s", name, video_keys, state_keys)

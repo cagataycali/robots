@@ -625,7 +625,8 @@
         13,
         14,
         15
-      ]
+      ],
+      "image_rotation_180": true
     },
     "agibot_genie1": {
       "video_keys": [
@@ -651,7 +652,7 @@
         "action.robot_velocity"
       ],
       "language_keys": [
-        "annotation.language.action_text"
+        "annotation.human.action.task_description"
       ],
       "observation_indices": [
         0
@@ -673,7 +674,8 @@
         13,
         14,
         15
-      ]
+      ],
+      "image_rotation_180": true
     },
     "agibot_dual_arm_gripper": {
       "video_keys": [

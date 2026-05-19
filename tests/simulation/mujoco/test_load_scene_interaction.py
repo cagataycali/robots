@@ -289,3 +289,92 @@ def test_add_robot_then_add_object_after_load_scene(
     assert mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, "my_arm/arm_base") >= 0
     assert mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, "box_a") >= 0
     assert mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, "box_b") >= 0
+
+
+# load_scene must leave MjData forward-evaluated (#168 round 15 bug D)
+
+
+def test_load_scene_leaves_data_forward_evaluated(sim: Simulation, scene_path: str) -> None:
+    """``load_scene`` must call ``mj_forward(model, data)`` before returning
+    so ``data.xpos`` / ``data.xmat`` are populated.
+
+    Pin for #168 round-15 bug-D fix: pre-fix, ``MjData(model)``
+    zeros these arrays at construction. ``mj_forward`` is what computes
+    them from ``qpos`` / kinematic tree. Until ``mj_forward`` runs,
+    ``Renderer.update_scene`` finds the body transforms unset and
+    returns a skybox-only gradient on every call (the bug-D pattern).
+
+    Round 14 attempted to fix this by calling ``mj_forward`` in
+    :meth:`LiberoAdapter.prewarm`, but ``LiberoAdapter.on_episode_start``
+    immediately calls ``load_scene`` again, which resets the MjData
+    via ``mj.MjData(model)``. The race window between the second
+    ``load_scene`` and ``_apply_canonical_state`` (which forwards) is
+    where the recorder thread captures gradient frames. The round-15
+    fix moves ``mj_forward`` into ``load_scene`` itself - any caller
+    of ``load_scene`` (LIBERO adapter or otherwise) gets a sim that's
+    safe to render from immediately.
+    """
+    import numpy as np
+
+    result = sim.load_scene(scene_path)
+    assert result["status"] == "success"
+
+    data = _world(sim)._data
+    # Body 0 is the world body (always at origin); check a real scene
+    # body. ``scene_block`` is at pos="1.0 0 0.1" in the scene XML.
+    mj = sim._mj
+    block_id = mj.mj_name2id(_world(sim)._model, mj.mjtObj.mjOBJ_BODY, "scene_block")
+    assert block_id > 0, "scene_block should exist after load_scene"
+
+    # data.xpos[block_id] should be approximately (1.0, 0, 0.1) AFTER
+    # mj_forward has been called. Without the fix, it would be (0, 0, 0).
+    expected_pos = np.array([1.0, 0.0, 0.1])
+    actual_pos = np.asarray(data.xpos[block_id])
+    np.testing.assert_allclose(actual_pos, expected_pos, atol=1e-6)
+
+
+def test_load_scene_render_returns_real_geometry_immediately(sim: Simulation, scene_path: str) -> None:
+    """End-to-end: a render call IMMEDIATELY after ``load_scene`` returns
+    real geometry, not the skybox-only gradient.
+
+    Pin for #168 round-15: this is the user-visible symptom of the
+    mj_forward fix. Pre-fix, the first render after load_scene
+    returned mean RGB (138, 150, 177) col-std 0.62 (skybox gradient).
+    Post-fix, the first render returns real geometry (col-std > 5).
+
+    Gated behind ``_requires_mujoco`` because it needs a real GL
+    context.
+    """
+    pytest.importorskip("mujoco")
+    if os.environ.get("CI") == "true" and not os.environ.get("ROBOT_TEST_MUJOCO"):
+        pytest.skip("requires OpenGL; opt-in via ROBOT_TEST_MUJOCO=1")
+
+    os.environ.setdefault("MUJOCO_GL", "glfw")
+    import io
+
+    import numpy as np
+    from PIL import Image
+
+    sim.load_scene(scene_path)
+    # Add a camera so render() has something to point at.
+    sim.add_camera(name="cam", position=[2.0, 2.0, 1.0], target=[0.0, 0.0, 0.1])
+
+    # Render immediately - no step, no further setup. Pre-fix, this
+    # would return a gradient.
+    r = sim.render(camera_name="cam", width=64, height=48)
+    if r["status"] != "success":
+        pytest.skip(f"render unavailable in this environment: {r}")
+
+    # Decode the PNG and check column std.
+    image_block = next(c for c in r["content"] if isinstance(c, dict) and "image" in c)
+    png_bytes = image_block["image"]["source"]["bytes"]
+    img = np.asarray(Image.open(io.BytesIO(png_bytes)).convert("RGB"))
+    col_std = float(img.std(axis=0).mean())
+    # Real geometry: col-std typically > 30 for our test scene's
+    # mix of plane + colored bodies. Cold-start gradient: col-std ~0.6.
+    # Use a conservative threshold of 5 to be robust across GL backends.
+    assert col_std > 5.0, (
+        f"first render after load_scene appears to be cold-start gradient "
+        f"(col_std={col_std:.2f}); expected real geometry (col_std > 5). "
+        f"This indicates load_scene didn't call mj_forward, regressing #168 round 15."
+    )

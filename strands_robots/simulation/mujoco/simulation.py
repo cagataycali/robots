@@ -374,6 +374,21 @@ class MuJoCoSimEngine(
             self._world._backend_state["spec"] = spec
             self._world._model = spec.compile()
             self._world._data = mj.MjData(self._world._model)
+            # Forward the freshly-allocated MjData so derived state
+            # (xpos / xquat / xmat / sensor data) is populated. Without
+            # this, ``Renderer.update_scene`` finds the body transforms
+            # unset and returns a skybox-only gradient on the first
+            # render call after load_scene - the bug-D pattern that
+            # rounds 11/12/13 in #168 chased through several wrong
+            # directions before round-14 verification isolated it to
+            # this missing forward call (#168 round 15).
+            #
+            # Cost: O(model.nbody) - negligible for typical scenes.
+            # Failure here is genuinely a bug in the loaded MJCF
+            # (e.g. inconsistent qpos vs joint definitions), so let it
+            # propagate to the outer ``except Exception`` below where
+            # it gets converted to a structured error response.
+            mj.mj_forward(self._world._model, self._world._data)
             self._world.status = SimStatus.IDLE
 
             # Cache the canonical serialisation; legacy readers use this.
@@ -504,6 +519,12 @@ class MuJoCoSimEngine(
         self._world._backend_state["spec"] = spec
         self._world._model = spec.compile()
         self._world._data = mj.MjData(self._world._model)
+        # Forward the freshly-allocated MjData so derived state
+        # (xpos / xquat / xmat) is populated - same rationale as in
+        # ``load_scene`` (#168 round 15). Without this, the first
+        # render after ``_compile_world`` returns the skybox-only
+        # gradient because body transforms are zero-initialised.
+        mj.mj_forward(self._world._model, self._world._data)
         try:
             self._world._backend_state["xml"] = spec.to_xml()
         except Exception as xml_err:

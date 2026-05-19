@@ -54,6 +54,66 @@ from strands_robots.simulation.models import TrajectoryStep
 logger = logging.getLogger(__name__)
 
 
+def _set_eval_seed(seed: int) -> None:
+    """Seed Python / NumPy / torch RNGs for reproducible eval rollouts.
+
+    Mirrors NVIDIA's ``set_seed`` from
+    ``Isaac-GR00T/scripts/deployment/standalone_inference_script.py:81``,
+    minus two global side effects that would persist after the eval and
+    affect unrelated callers in the same process:
+
+    * ``os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"`` — leaks into
+      every subsequent torch op in the process.
+    * ``torch.use_deterministic_algorithms(True, warn_only=True)`` —
+      can break callers downstream that rely on non-deterministic CUDA
+      kernels (e.g. some loss functions).
+
+    Users who want NVIDIA's exact strict-determinism mode can set those
+    themselves before calling :meth:`evaluate_benchmark`. The defaults
+    here cover the common case: reproducible rollouts of the SAME
+    policy + seed combination, without forcing the rest of the process
+    into deterministic-only mode.
+
+    Seeds applied:
+
+    * Python ``random.seed``.
+    * NumPy ``np.random.seed`` (the legacy global RNG; matches what
+      most policies use under the hood).
+    * PyTorch CPU (``torch.manual_seed``) — if torch is importable.
+    * PyTorch CUDA all devices (``torch.cuda.manual_seed_all``) — if
+      torch is importable AND CUDA is available.
+    * cuDNN ``deterministic=True`` / ``benchmark=False`` — if torch
+      is importable. These are the standard reproducibility knobs and
+      are scoped to torch (not the broader environment) so the side
+      effect surface is acceptable.
+
+    Per-episode reproducibility additionally depends on the spec's
+    ``episode_rng`` derived from this master seed inside
+    :meth:`_evaluate_with_spec`.
+
+    NumPy / torch are imported lazily so this helper works on minimal
+    installs that don't have torch (e.g. ``policy_provider="mock"``
+    smoke tests).
+    """
+    random.seed(seed)
+    try:
+        import numpy as _np
+
+        _np.random.seed(seed)
+    except ImportError:
+        pass
+    try:
+        import torch as _torch
+
+        _torch.manual_seed(seed)
+        if _torch.cuda.is_available():
+            _torch.cuda.manual_seed_all(seed)
+        _torch.backends.cudnn.deterministic = True
+        _torch.backends.cudnn.benchmark = False
+    except ImportError:
+        pass
+
+
 # Hook signature: called every control step after send_action.
 # on_frame(step_idx, observation, action) -> None
 OnFrame = Callable[[int, dict[str, Any], dict[str, Any]], None]
@@ -516,6 +576,7 @@ class PolicyRunner:
         success_fn: SuccessFn | str | None = None,
         spec: BenchmarkProtocol | None = None,
         seed: int | None = None,
+        action_horizon: int = 8,
     ) -> dict[str, Any]:
         """Evaluate ``policy`` for ``n_episodes`` episodes.
 
@@ -573,6 +634,7 @@ class PolicyRunner:
                 instruction=instruction,
                 n_episodes=n_episodes,
                 seed=seed,
+                action_horizon=action_horizon,
             )
 
         try:
@@ -645,6 +707,7 @@ class PolicyRunner:
         instruction: str,
         n_episodes: int,
         seed: int | None,
+        action_horizon: int = 8,
     ) -> dict[str, Any]:
         """Drive a :class:`BenchmarkProtocol` for ``n_episodes`` episodes.
 
@@ -664,6 +727,15 @@ class PolicyRunner:
 
         # T26: skip camera rendering when the policy does not need images.
         _skip_images = not getattr(policy, "requires_images", True)
+        # Round 38 (#168): seed Python / NumPy / torch / cuDNN once before
+        # the episode loop so policy stochastic ops (e.g. attention
+        # dropout, sampling temperature) are reproducible across re-runs
+        # at the same ``seed``. Mirrors NVIDIA's upstream ``set_seed`` in
+        # ``Isaac-GR00T/scripts/deployment/standalone_inference_script.py``.
+        # Per-episode reproducibility still flows through ``episode_rng``
+        # below for the spec's per-episode RNG-driven init / jitter.
+        if seed is not None:
+            _set_eval_seed(seed)
         master_rng = random.Random(seed)
         spec_name = type(spec).__name__
         max_steps = spec.max_steps
@@ -726,34 +798,76 @@ class PolicyRunner:
                 coro_or_result = policy.get_actions(observation, instruction)
                 actions = _resolve_coroutine(coro_or_result)
 
-                if actions:
-                    action_applied: dict[str, Any] = dict(actions[0])
-                    self.sim.send_action(action_applied, robot_name=robot_name)
-                else:
+                # Round 36 (#168): consume up to ``action_horizon`` actions
+                # per inference. Default ``action_horizon=8`` matches NVIDIA's
+                # upstream GR00T LIBERO eval (``MultiStepWrapper`` with
+                # ``n_action_steps=8``) — the GR00T-N1.7-LIBERO checkpoints
+                # were trained against an 8-step open-loop chunk replay.
+                # Round 34's earlier ``=1`` default (closed-loop OpenVLA
+                # convention) put eval out-of-distribution from training
+                # and was a contributing factor to ``success_rate=0``.
+                # Set to ``1`` for closed-loop receding-horizon control.
+                # ``on_step`` and success/failure checks run after EACH
+                # applied action so per-step rewards / early termination
+                # work whether action_horizon is 1 or 8.
+                action_applied: dict[str, Any] = {}
+                stop_episode = False
+                if not actions:
                     # Degenerate policy - advance physics so loop terminates.
-                    action_applied = {}
                     self.sim.step(n_steps=1)
-
-                steps += 1
-                try:
-                    info = spec.on_step(self.sim, observation, action_applied)
-                except Exception as e:  # noqa: BLE001
-                    logger.exception("on_step failed in %s", spec_name)
-                    return {
-                        "status": "error",
-                        "content": [{"text": f"on_step failed in {spec_name}: {e}"}],
-                    }
-                cumulative_reward += float(info.reward)
-                last_info = dict(info.info) if info.info else {}
-
-                if info.done:
+                else:
+                    for action_in_chunk in actions[:action_horizon]:
+                        if steps >= max_steps:
+                            break
+                        action_applied = dict(action_in_chunk)
+                        self.sim.send_action(action_applied, robot_name=robot_name)
+                        steps += 1
+                        try:
+                            info = spec.on_step(self.sim, observation, action_applied)
+                        except Exception as e:  # noqa: BLE001
+                            logger.exception("on_step failed in %s", spec_name)
+                            return {
+                                "status": "error",
+                                "content": [{"text": f"on_step failed in {spec_name}: {e}"}],
+                            }
+                        cumulative_reward += float(info.reward)
+                        last_info = dict(info.info) if info.info else {}
+                        if info.done:
+                            stop_episode = True
+                            break
+                        if spec.is_failure(self.sim):
+                            failure = True
+                            stop_episode = True
+                            break
+                        if spec.is_success(self.sim):
+                            success = True
+                            stop_episode = True
+                            break
+                if stop_episode:
                     break
-                if spec.is_failure(self.sim):
-                    failure = True
-                    break
-                if spec.is_success(self.sim):
-                    success = True
-                    break
+                if not actions:
+                    # Degenerate-policy branch already advanced steps via
+                    # sim.step(n_steps=1); count it like an applied step
+                    # so the outer loop terminates.
+                    steps += 1
+                    try:
+                        info = spec.on_step(self.sim, observation, action_applied)
+                    except Exception as e:  # noqa: BLE001
+                        logger.exception("on_step failed in %s", spec_name)
+                        return {
+                            "status": "error",
+                            "content": [{"text": f"on_step failed in {spec_name}: {e}"}],
+                        }
+                    cumulative_reward += float(info.reward)
+                    last_info = dict(info.info) if info.info else {}
+                    if info.done:
+                        break
+                    if spec.is_failure(self.sim):
+                        failure = True
+                        break
+                    if spec.is_success(self.sim):
+                        success = True
+                        break
 
             results.append(
                 {

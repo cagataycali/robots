@@ -502,6 +502,15 @@ agent.tool.gr00t_inference(action="stop", port=8000)
 | `ZENOH_LISTEN` | Comma-separated list of endpoints for the local Zenoh listener | - |
 | `STRANDS_MESH_AUDIT_DIR` | Directory for the safety audit log (`mesh_audit.jsonl`) | `~/.strands_robots/` |
 | `GROOT_API_TOKEN` | API token for GR00T inference service | - |
+| `STRANDS_ROBOT_MODE` | Override `Robot()` factory mode detection (`sim`, `real`, `auto`) | `auto` |
+| `STRANDS_TRUST_REMOTE_CODE` | Set to `1` to opt into HuggingFace `trust_remote_code` for `lerobot_local` policies | unset |
+| `MUJOCO_GL` | OpenGL backend for MuJoCo (`egl`, `osmesa`, `glfw`) | auto-detected |
+| `STRANDS_LIBERO_ACTION_LOG` | Set to `1` to emit per-step diagnostic logs from the LIBERO OSC controller (action keys, delta scale, EEF tracking, gripper polarity, qpos/ctrl deltas). Logs the first N steps per episode. | unset |
+| `STRANDS_LIBERO_ACTION_LOG_MAX` | Max number of `apply()` calls to log per episode when `STRANDS_LIBERO_ACTION_LOG=1`. | `50` |
+| `STRANDS_LIBERO_STATE_LOG` | Set to `1` to emit per-step diagnostic logs of the state values (`state.x/y/z/roll/pitch/yaw/gripper`) the LIBERO adapter feeds to the GR00T policy. Pairs with `STRANDS_LIBERO_ACTION_LOG` for end-to-end interface bisection. | unset |
+| `STRANDS_LIBERO_STATE_LOG_MAX` | Max number of `augment_observation()` calls to log per episode when `STRANDS_LIBERO_STATE_LOG=1`. | `50` |
+| `STRANDS_LIBERO_PREDICATE_LOG` | Set to `1` to emit per-step diagnostic logs from `LiberoAdapter.is_success` showing both the BDDL evaluator's verdict and the upstream `env.check_success()` verdict (when available), with per-leaf predicate breakdowns. Used to bisect BDDL predicate evaluator vs robosuite `check_success` disagreements (see #170). | unset |
+| `STRANDS_LIBERO_PREDICATE_LOG_MAX` | Max number of `is_success` calls to log per episode when `STRANDS_LIBERO_PREDICATE_LOG=1`. | `10` |
 
 ### Mesh Networking
 

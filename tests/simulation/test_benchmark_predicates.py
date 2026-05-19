@@ -198,6 +198,58 @@ class TestBodyPositionPredicates:
         pred = make_predicate("body_above_z", body="cube", z=0)
         assert pred(sim) is False
 
+    def test_body_position_libero_main_suffix_fallback(self):
+        """Round 46 (#176 sub-task 3d) — LIBERO objects' BDDL names
+        (``porcelain_mug_1``) map to MJCF root bodies suffixed with
+        ``_main`` (``porcelain_mug_1_main``). The predicate evaluator
+        must transparently retry with the suffix when the bare name
+        misses, mirroring upstream LIBERO's
+        ``env.objects_dict[name].root_body`` resolution. Without this,
+        BDDL goal predicates like ``(On porcelain_mug_1 plate_1)``
+        silently resolve to ``False`` even when physics has the mug
+        on the plate.
+
+        Pin: a sim that only exposes ``porcelain_mug_1_main`` (NOT
+        ``porcelain_mug_1``) must still resolve via the predicate as
+        if the bare name worked.
+        """
+        # Sim only knows the suffixed name (mimics MJCF body naming).
+        sim = _BodyStateSim({"porcelain_mug_1_main": [0.0, 0.0, 0.5]})
+        pred = make_predicate("body_above_z", body="porcelain_mug_1", z=0.4)
+        assert pred(sim) is True, (
+            "body_above_z with bare BDDL name should fall back to ``<name>_main`` "
+            "for LIBERO scenes; round-46 fix may have regressed."
+        )
+
+    def test_body_position_main_suffix_no_double_suffix(self):
+        """Already-suffixed names must not double-suffix on retry.
+        Round 46 (#176 sub-task 3d).
+        """
+        # Sim only knows the suffixed name; caller passes already-suffixed.
+        sim = _BodyStateSim({"plate_1_main": [0.0, 0.0, 0.4]})
+        pred = make_predicate("body_above_z", body="plate_1_main", z=0.3)
+        assert pred(sim) is True
+
+    def test_body_position_bare_name_wins_over_suffix(self):
+        """When BOTH ``<name>`` and ``<name>_main`` exist, prefer the
+        bare lookup. This preserves the contract for fixtures /
+        explicit-named bodies (e.g. ``living_room_table``) which don't
+        use the LIBERO suffix.
+
+        Round 46 (#176 sub-task 3d).
+        """
+        sim = _BodyStateSim(
+            {
+                "living_room_table": [0.0, 0.0, 0.46],
+                "living_room_table_main": [99.0, 99.0, 99.0],  # decoy
+            }
+        )
+        pred = make_predicate("body_above_z", body="living_room_table", z=0.4)
+        assert pred(sim) is True
+        # Decoy at 99.0 should not be reached if bare lookup wins.
+        pred2 = make_predicate("body_above_z", body="living_room_table", z=98.0)
+        assert pred2(sim) is False, "bare name should win over _main suffix; double-resolve detected"
+
 
 # Joint predicates
 
