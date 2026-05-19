@@ -330,6 +330,37 @@ class TestIotMqttTransportInternals:
     """White-box tests for IotMqttTransport methods that are not normally
     reached without a live broker (callbacks, _unsubscribe, _on_publish_received)."""
 
+    def setup_method(self):
+        """Install a mock awscrt module so lazy imports inside IoT transport work."""
+        import sys
+        from types import SimpleNamespace
+
+        self._mock_mqtt5 = MagicMock()
+        self._mock_mqtt5.QoS.AT_MOST_ONCE = 0
+        self._mock_mqtt5.QoS.AT_LEAST_ONCE = 1
+        # PublishPacket/UnsubscribePacket capture kwargs as attributes
+        self._mock_mqtt5.PublishPacket = lambda **kw: SimpleNamespace(**kw)
+        self._mock_mqtt5.UnsubscribePacket = lambda **kw: SimpleNamespace(**kw)
+        self._mock_awscrt = MagicMock()
+        self._mock_awscrt.mqtt5 = self._mock_mqtt5
+        self._saved_awscrt = sys.modules.get("awscrt")
+        self._saved_mqtt5 = sys.modules.get("awscrt.mqtt5")
+        sys.modules["awscrt"] = self._mock_awscrt
+        sys.modules["awscrt.mqtt5"] = self._mock_mqtt5
+
+    def teardown_method(self):
+        """Restore original module state."""
+        import sys
+
+        if self._saved_awscrt is None:
+            sys.modules.pop("awscrt", None)
+        else:
+            sys.modules["awscrt"] = self._saved_awscrt
+        if self._saved_mqtt5 is None:
+            sys.modules.pop("awscrt.mqtt5", None)
+        else:
+            sys.modules["awscrt.mqtt5"] = self._saved_mqtt5
+
     def _make_transport_with_fake_client(self):
         from strands_robots.mesh.transport.iot_transport import IotMqttTransport
 
@@ -405,16 +436,15 @@ class TestIotMqttTransportInternals:
     def test_put_publishes_with_correct_qos_for_presence(self):
         t = self._make_transport_with_fake_client()
         t.put("strands/p/presence", {"v": 1})
-        # awscrt is imported lazily; patch the call
         assert t._client.publish.called
         pkt = t._client.publish.call_args.args[0]
         # presence is QoS 1, retained
-        # awscrt enum compares — we check shape via attrs
         assert pkt.retain is True
 
     def test_put_publishes_state_qos0_no_retain(self):
         t = self._make_transport_with_fake_client()
         t.put("strands/p/state", {"v": 1})
+        assert t._client.publish.called
         pkt = t._client.publish.call_args.args[0]
         assert pkt.retain is False
 

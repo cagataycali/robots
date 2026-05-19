@@ -468,8 +468,6 @@ class IotMqttTransport:
 
     def _unsubscribe(self, topic_filter: str, handler: Any = None) -> None:
         """Remove *handler* for *topic_filter*; unsubscribe if last."""
-        from awscrt import mqtt5
-
         with self._lock:
             handlers = self._handlers.get(topic_filter)
             if not handlers:
@@ -489,6 +487,8 @@ class IotMqttTransport:
         if self._client is None:
             return
         try:
+            from awscrt import mqtt5
+
             self._client.unsubscribe(mqtt5.UnsubscribePacket(topic_filters=[topic_filter])).result(timeout=5)
         except Exception as exc:
             logger.debug("MQTT unsubscribe error on %s: %s", topic_filter, exc)
