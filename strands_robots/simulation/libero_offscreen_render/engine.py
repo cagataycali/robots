@@ -11,13 +11,13 @@ This engine exists because rounds 36-41 verified-correct fixes
 RLDS→robosuite polarity) didn't move ``success_rate`` off 0 against
 ``nvidia/GR00T-N1.7-LIBERO``, while NVIDIA's own reference eval
 (``run_gr00t_sim_policy``) gets ``success_rate = 1.0`` in 54s for 5 eps
-on the same checkpoint+task. Round-42 step-by-step instrumentation
+on the same checkpoint+task. #168 step-by-step instrumentation
 (``/tmp/opencode/eval-runs/instrument_*.py``) measured a 50× action
 divergence at near-identical state inputs, suggesting the residual gap
 is in our scene+controller path that the structural fixes couldn't
 close.
 
-Round 43 sidesteps the gap by routing through the upstream env directly.
+#168 sidesteps the gap by routing through the upstream env directly.
 
 NOT FOR GENERAL USE: this engine ONLY supports LIBERO tasks. It rejects
 all the SimEngine methods that don't make sense for the upstream env
@@ -43,7 +43,7 @@ Lifecycle:
    upstream LIBERO data see exactly the inputs they were trained on.
 6. ``destroy()`` — closes the underlying env.
 
-Round 43 (#168). See PR #168 round-43 commit message for the full
+#168. See PR #168 commit message for the full
 bisect history that motivated this engine.
 """
 
@@ -88,7 +88,7 @@ def _invert_gripper_action(action: np.ndarray) -> np.ndarray:
 def _quat_xyzw_to_rpy_xyz(quat_xyzw: np.ndarray) -> tuple[float, float, float]:
     """Convert (x, y, z, w) quaternion → extrinsic XYZ Euler (roll, pitch, yaw).
 
-    Same axes='sxyz' convention upstream LIBERO uses. Round-32 of
+    Same axes='sxyz' convention upstream LIBERO uses. #168 of
     ``LiberoAdapter`` does the same conversion from a (w, x, y, z) quat
     via ``_quat_wxyz_to_rpy_xyz``; we reorder here because robosuite's
     ``robot0_eef_quat`` is xyzw.
@@ -380,7 +380,7 @@ class LiberoOffScreenRenderEngine(SimEngine):
         # ``image_rotation_180`` flag (set on ``libero_panda``'s
         # ``Gr00tDataConfig``) then applies the second flip to convert
         # OpenGL → training convention. This matches the contract the
-        # ``LiberoAdapter`` (MuJoCo path) uses since round 39.
+        # ``LiberoAdapter`` (MuJoCo path) uses since #168.
         #
         # Pre-#169 this baked the full ``[::-1, ::-1]`` rotation here,
         # producing training-convention output directly. That worked for

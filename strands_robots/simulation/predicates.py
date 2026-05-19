@@ -90,7 +90,7 @@ def _body_position(sim: SimEngine, body: str) -> list[float] | None:
     ``env.objects_dict[name].root_body`` (see
     ``libero/libero/envs/bddl_base_domain.py``). We mirror that with a
     bounded fallback: try the bare name first, then ``<name>_main`` if
-    the bare lookup fails. Round 46 (#176 sub-task 3d) — without this
+    the bare lookup fails. #176 (sub-task 3d) — without this
     fallback, BDDL goal predicates like ``(On porcelain_mug_1
     plate_1)`` resolve to ``None`` (body not found) → predicate
     silently False even when the mug is physically on the plate.

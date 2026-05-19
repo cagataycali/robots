@@ -41,7 +41,7 @@ _BUILTIN_BACKENDS: dict[str, tuple[str, str]] = {
         "strands_robots.simulation.mujoco.simulation",
         "MuJoCoSimEngine",
     ),
-    # Round 43 (#168) — LIBERO-only backend that delegates physics +
+    # #168 — LIBERO-only backend that delegates physics +
     # rendering to upstream ``libero.libero.envs.OffScreenRenderEnv``.
     # Use this for GR00T-N1.7-LIBERO eval; use ``mujoco`` for general
     # use. See the engine module docstring for the rationale.

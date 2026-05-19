@@ -727,7 +727,7 @@ class PolicyRunner:
 
         # T26: skip camera rendering when the policy does not need images.
         _skip_images = not getattr(policy, "requires_images", True)
-        # Round 38 (#168): seed Python / NumPy / torch / cuDNN once before
+        # #168: seed Python / NumPy / torch / cuDNN once before
         # the episode loop so policy stochastic ops (e.g. attention
         # dropout, sampling temperature) are reproducible across re-runs
         # at the same ``seed``. Mirrors NVIDIA's upstream ``set_seed`` in
@@ -798,12 +798,12 @@ class PolicyRunner:
                 coro_or_result = policy.get_actions(observation, instruction)
                 actions = _resolve_coroutine(coro_or_result)
 
-                # Round 36 (#168): consume up to ``action_horizon`` actions
+                # #168: consume up to ``action_horizon`` actions
                 # per inference. Default ``action_horizon=8`` matches NVIDIA's
                 # upstream GR00T LIBERO eval (``MultiStepWrapper`` with
                 # ``n_action_steps=8``) — the GR00T-N1.7-LIBERO checkpoints
                 # were trained against an 8-step open-loop chunk replay.
-                # Round 34's earlier ``=1`` default (closed-loop OpenVLA
+                # The earlier ``=1`` default (closed-loop OpenVLA
                 # convention) put eval out-of-distribution from training
                 # and was a contributing factor to ``success_rate=0``.
                 # Set to ``1`` for closed-loop receding-horizon control.

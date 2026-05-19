@@ -380,8 +380,8 @@ class MuJoCoSimEngine(
             # unset and returns a skybox-only gradient on the first
             # render call after load_scene - the bug-D pattern that
             # rounds 11/12/13 in #168 chased through several wrong
-            # directions before round-14 verification isolated it to
-            # this missing forward call (#168 round 15).
+            # directions before #168 verification isolated it to
+            # this missing forward call (#168).
             #
             # Cost: O(model.nbody) - negligible for typical scenes.
             # Failure here is genuinely a bug in the loaded MJCF
@@ -521,7 +521,7 @@ class MuJoCoSimEngine(
         self._world._data = mj.MjData(self._world._model)
         # Forward the freshly-allocated MjData so derived state
         # (xpos / xquat / xmat) is populated - same rationale as in
-        # ``load_scene`` (#168 round 15). Without this, the first
+        # ``load_scene`` (#168). Without this, the first
         # render after ``_compile_world`` returns the skybox-only
         # gradient because body transforms are zero-initialised.
         mj.mj_forward(self._world._model, self._world._data)
