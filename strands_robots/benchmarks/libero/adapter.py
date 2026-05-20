@@ -973,7 +973,7 @@ class LiberoAdapter(BenchmarkProtocol):
         #
         # The downstream effect: the policy emits actions that are
         # ~2x off from what the offscreen path emits on identical
-        # tasks, which (combined with the OSC torque divergence from
+        # tasks, which (combined with the OSC torque-mode fix from
         # #168) is enough to keep success_rate at 0 on libero-10.
         # After this fix, the first observation matches upstream within
         # numerical noise (qpos diff < 1e-9 verified empirically).
@@ -1601,12 +1601,12 @@ class LiberoAdapter(BenchmarkProtocol):
         body's orientation deliberately because that's what the
         downstream observable + dataset expects.
 
-        #168 found we read both pos AND quat from the
+        #168 (initial diagnosis): we read both pos AND quat from the
         wrist body — pos was 71.8 mm off in z and orientation 180°
-        off in roll. #168 moved BOTH to the site, which fixed
-        position (within 5 mm) but introduced a 90° yaw offset
-        because site_xmat ≠ body xquat. #168 splits the reads
-        the way RoboSuite does.
+        off in roll. #168 (first attempt): moved BOTH to the site,
+        which fixed position (within 5 mm) but introduced a 90° yaw
+        offset because site_xmat ≠ body xquat. #168 (final fix):
+        splits the reads the way RoboSuite does.
 
         Returns ``(pos, quat_wxyz)``, either or both of which may be
         ``None`` on failure (logged at DEBUG; caller selectively injects
