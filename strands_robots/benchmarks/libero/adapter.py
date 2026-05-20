@@ -4134,7 +4134,7 @@ class _LiberoOSCController:
         #   gripper_in = 0.5             → -sign(0)  =  0 (no motion)
         #   gripper_in = 1.0 (RLDS open)  → -sign(+1) = -1 (LIBERO open)  ✓
         #
-        # pre-#168 we passed the raw model output to our OSC's
+        # Pre-#168 we passed the raw model output to our OSC's
         # ``np.sign(gripper_value)`` directly. Since the model's typical
         # outputs are in [0, 1], every "open" intent (model output ≈ 1)
         # collapsed to ``sign=+1``, which our OSC interprets as CLOSE — so
