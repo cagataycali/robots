@@ -219,9 +219,12 @@ _OPERATOR_POLICY_DOC: dict[str, Any] = {
             "Sid": "OperatorShadow",
             "Effect": "Allow",
             "Action": ["iot:GetThingShadow", "iot:UpdateThingShadow"],
-            "Resource": [
-                "arn:aws:iot:*:*:thing/strands-mesh-robot-*",
-            ],
+            "Resource": ["arn:aws:iot:*:*:thing/*"],
+            "Condition": {
+                "StringEquals": {
+                    "iot:Connection.Thing.Attributes.strands-mesh-role": "robot",
+                },
+            },
         },
     ],
 }
@@ -265,11 +268,11 @@ def provision_robot(
     iot = boto3.client("iot", region_name=region)
     region = iot.meta.region_name
 
-    # Enforce naming prefix for ACL consistency — the OperatorShadow policy
-    # grants GetThingShadow/UpdateThingShadow only on thing/strands-mesh-robot-*.
-    _ROBOT_PREFIX = "strands-mesh-robot-"
-    if not thing_name.startswith(_ROBOT_PREFIX):
-        thing_name = f"{_ROBOT_PREFIX}{thing_name}"
+    # Inject strands-mesh-role attribute for ACL — the OperatorShadow policy
+    # uses an attribute condition to scope shadow access to robot Things only.
+    attributes = dict(attributes) if attributes else {}
+    attributes.setdefault("strands-mesh-role", "robot")
+
     cert_dir = Path(cert_dir) if cert_dir else DEFAULT_CERT_DIR
     cert_dir.mkdir(parents=True, exist_ok=True)
     try:
@@ -338,11 +341,11 @@ def provision_operator(
     iot = boto3.client("iot", region_name=region)
     region = iot.meta.region_name
 
-    # Enforce naming prefix for ACL consistency — operators use a separate
-    # prefix so OperatorShadow policy (thing/strands-mesh-robot-*) excludes them.
-    _OPERATOR_PREFIX = "strands-mesh-operator-"
-    if not thing_name.startswith(_OPERATOR_PREFIX):
-        thing_name = f"{_OPERATOR_PREFIX}{thing_name}"
+    # Inject strands-mesh-role attribute — operators get role=operator so the
+    # OperatorShadow attribute condition (role=robot) excludes their shadows.
+    attributes = dict(attributes) if attributes else {}
+    attributes.setdefault("strands-mesh-role", "operator")
+
     cert_dir = Path(cert_dir) if cert_dir else DEFAULT_CERT_DIR
     cert_dir.mkdir(parents=True, exist_ok=True)
     try:

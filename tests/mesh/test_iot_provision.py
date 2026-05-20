@@ -190,7 +190,7 @@ class TestProvisionRobot:
         )
 
         assert isinstance(result, ProvisionedThing)
-        assert result.thing_name == "strands-mesh-robot-test-robot-01"
+        assert result.thing_name == "test-robot-01"
         assert result.policy_name == ROBOT_POLICY_NAME
         assert result.endpoint == "fake-ats.iot.us-west-2.amazonaws.com"
         assert result.cert_path.exists()
@@ -225,12 +225,55 @@ class TestProvisionRobot:
 
         result = provision_robot("e2", cert_dir=tmp_cert_dir)
         env = result.env_vars()
-        assert env["STRANDS_IOT_THING_NAME"] == "strands-mesh-robot-e2"
+        assert env["STRANDS_IOT_THING_NAME"] == "e2"
         assert env["STRANDS_MESH_BACKEND"] == "iot"
         assert env["STRANDS_IOT_ENDPOINT"] == "fake-ats.iot.us-west-2.amazonaws.com"
         # export_lines is the eval-friendly form
         lines = result.export_lines()
         assert any("STRANDS_MESH_BACKEND=iot" in line for line in lines)
+
+    def test_injects_strands_mesh_role_attribute(self, fake_iot_client, tmp_cert_dir, monkeypatch):
+        """provision_robot auto-injects strands-mesh-role=robot attribute for ACL."""
+        monkeypatch.setattr(
+            "strands_robots.mesh.iot.provision._require_boto3",
+            lambda: MagicMock(client=lambda *a, **kw: fake_iot_client),
+        )
+        (tmp_cert_dir / "AmazonRootCA1.pem").write_text("fake-ca")
+
+        provision_robot("my-robot", cert_dir=tmp_cert_dir)
+
+        # create_thing should have been called with the role attribute
+        call_kwargs = fake_iot_client.create_thing.call_args.kwargs
+        assert call_kwargs["attributePayload"]["attributes"]["strands-mesh-role"] == "robot"
+
+    def test_preserves_user_attributes(self, fake_iot_client, tmp_cert_dir, monkeypatch):
+        """User-supplied attributes are preserved alongside the injected role."""
+        monkeypatch.setattr(
+            "strands_robots.mesh.iot.provision._require_boto3",
+            lambda: MagicMock(client=lambda *a, **kw: fake_iot_client),
+        )
+        (tmp_cert_dir / "AmazonRootCA1.pem").write_text("fake-ca")
+
+        provision_robot("my-robot", cert_dir=tmp_cert_dir, attributes={"hw": "so100"})
+
+        call_kwargs = fake_iot_client.create_thing.call_args.kwargs
+        attrs = call_kwargs["attributePayload"]["attributes"]
+        assert attrs["strands-mesh-role"] == "robot"
+        assert attrs["hw"] == "so100"
+
+    def test_user_can_override_role_attribute(self, fake_iot_client, tmp_cert_dir, monkeypatch):
+        """If user explicitly sets strands-mesh-role, their value is kept."""
+        monkeypatch.setattr(
+            "strands_robots.mesh.iot.provision._require_boto3",
+            lambda: MagicMock(client=lambda *a, **kw: fake_iot_client),
+        )
+        (tmp_cert_dir / "AmazonRootCA1.pem").write_text("fake-ca")
+
+        provision_robot("my-robot", cert_dir=tmp_cert_dir, attributes={"strands-mesh-role": "custom"})
+
+        call_kwargs = fake_iot_client.create_thing.call_args.kwargs
+        attrs = call_kwargs["attributePayload"]["attributes"]
+        assert attrs["strands-mesh-role"] == "custom"
 
 
 class TestProvisionOperator:
@@ -314,9 +357,7 @@ class TestCleanupStaleCerts:
         provision_robot("test-thing", cert_dir=tmp_cert_dir)
 
         # The old cert must have been detached + deleted.
-        fake_iot_client.detach_thing_principal.assert_called_once_with(
-            thingName="strands-mesh-robot-test-thing", principal=old_cert_arn
-        )
+        fake_iot_client.detach_thing_principal.assert_called_once_with(thingName="test-thing", principal=old_cert_arn)
         fake_iot_client.detach_policy.assert_called_with(policyName="strands-robot", target=old_cert_arn)
         fake_iot_client.update_certificate.assert_called_once()
         fake_iot_client.delete_certificate.assert_called_once_with(certificateId="old-cert-id-aaaaa", forceDelete=True)
@@ -342,7 +383,7 @@ class TestCleanupStaleCerts:
 
         # Must NOT raise — proceeds to create the new cert.
         result = provision_robot("test-thing", cert_dir=tmp_cert_dir)
-        assert result.thing_name == "strands-mesh-robot-test-thing"
+        assert result.thing_name == "test-thing"
         fake_iot_client.create_keys_and_certificate.assert_called_once()
 
     def test_cleanup_handles_missing_thing(self):
