@@ -973,8 +973,8 @@ class LiberoAdapter(BenchmarkProtocol):
         #
         # The downstream effect: the policy emits actions that are
         # ~2x off from what the offscreen path emits on identical
-        # tasks, which (combined with the OSC torque-mode fix from
-        # #168) is enough to keep success_rate at 0 on libero-10.
+        # tasks, which (combined with the OSC torque divergence)
+        # is enough to keep success_rate at 0 on libero-10.
         # After this fix, the first observation matches upstream within
         # numerical noise (qpos diff < 1e-9 verified empirically).
         #
