@@ -548,3 +548,23 @@ def _atexit_cleanup() -> None:
 
 
 atexit.register(_atexit_cleanup)
+
+
+def _session_alive_directly() -> bool:
+    """Return ``True`` if the raw Zenoh session is open, bypassing backend routing.
+
+    Used by :class:`~strands_robots.mesh.transport.zenoh_transport.ZenohTransport`
+    to avoid recursion when operating inside a :class:`BridgeTransport`.
+    """
+    with _SESSION_LOCK:
+        return _SESSION is not None
+
+
+def _current_zenoh_session_directly() -> Any | None:
+    """Return the raw Zenoh session without bumping refcount, bypassing backend routing.
+
+    Used by :class:`~strands_robots.mesh.transport.zenoh_transport.ZenohTransport`
+    to avoid recursion when operating inside a :class:`BridgeTransport`.
+    """
+    with _SESSION_LOCK:
+        return _SESSION

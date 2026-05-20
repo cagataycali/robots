@@ -92,9 +92,9 @@ class ZenohTransport:
         currently holds a reference."""
         if not self._has_ref:
             return False
-        from strands_robots.mesh.session import session_alive
+        from strands_robots.mesh.session import _session_alive_directly
 
-        return session_alive()
+        return _session_alive_directly()
 
     @property
     def raw_session(self) -> Any | None:
@@ -105,9 +105,9 @@ class ZenohTransport:
         code should not depend on this — use :meth:`put` and
         :meth:`declare_subscriber`.
         """
-        from strands_robots.mesh.session import current_session
+        from strands_robots.mesh.session import _current_zenoh_session_directly
 
-        return current_session()
+        return _current_zenoh_session_directly()
 
     # Pub/Sub
 

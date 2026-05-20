@@ -52,6 +52,7 @@ logger = logging.getLogger(__name__)
 SAFETY_TABLE_NAME = "strands-mesh-safety-events"
 ESTOP_LAMBDA_NAME = "strands-mesh-estop-fanout"
 ESTOP_LAMBDA_ROLE = "strands-mesh-lambda-role"
+_LAMBDA_VERSION = 1  # Bump whenever _ESTOP_LAMBDA_SOURCE changes
 RULE_SAFETY_TO_DYNAMODB = "strands_safety_to_dynamodb"
 RULE_ESTOP_FANOUT = "strands_estop_fanout"
 PROVISIONING_TEMPLATE = "strands-mesh-fleet-provisioning"
@@ -261,12 +262,38 @@ def _ensure_lambda_role(iam: Any, account: BootstrappedAccount) -> str:
     return arn
 
 
-def _ensure_estop_lambda(lam: Any, role_arn: str, account: BootstrappedAccount) -> str:
-    """E-stop fan-out Lambda."""
+def _ensure_estop_lambda(lam: Any, role_arn: str, account: BootstrappedAccount, *, force_update: bool = False) -> str:
+    """E-stop fan-out Lambda with version tracking.
+
+    The Description field is stamped with ``[v<N>]`` so we can detect stale
+    deployments. On ``force_update=True``, an existing Lambda is updated
+    in-place with the current source and description.
+    """
+    version_tag = f"[v{_LAMBDA_VERSION}]"
+    description = f"strands-mesh: defence-in-depth E-stop fan-out {version_tag}"
+
     try:
         existing = lam.get_function(FunctionName=ESTOP_LAMBDA_NAME)
+        existing_desc = existing["Configuration"].get("Description", "")
+        existing_arn = existing["Configuration"]["FunctionArn"]
+
+        if version_tag not in existing_desc:
+            logger.warning(
+                "E-stop Lambda exists but has stale version (description=%r, "
+                "expected %s). Pass force_update=True to bootstrap_account() "
+                "to upgrade.",
+                existing_desc,
+                version_tag,
+            )
+            if force_update:
+                zip_bytes = _build_lambda_zip()
+                lam.update_function_code(FunctionName=ESTOP_LAMBDA_NAME, ZipFile=zip_bytes)
+                lam.update_function_configuration(FunctionName=ESTOP_LAMBDA_NAME, Description=description)
+                account.created.append(f"lambda:{ESTOP_LAMBDA_NAME} (updated)")
+                logger.info("E-stop Lambda updated to %s", version_tag)
+                return existing_arn
         account.skipped.append(f"lambda:{ESTOP_LAMBDA_NAME}")
-        return existing["Configuration"]["FunctionArn"]
+        return existing_arn
     except lam.exceptions.ResourceNotFoundException:
         pass
 
@@ -277,7 +304,7 @@ def _ensure_estop_lambda(lam: Any, role_arn: str, account: BootstrappedAccount) 
         Role=role_arn,
         Handler="lambda_function.lambda_handler",
         Code={"ZipFile": zip_bytes},
-        Description="strands-mesh: defence-in-depth E-stop fan-out",
+        Description=description,
         Timeout=30,
         MemorySize=256,
         Tags={"strands-mesh": "managed"},
@@ -568,6 +595,7 @@ def bootstrap_account(
     dry_run: bool = True,
     account_id_expected: str | None = None,
     profile: str | None = None,
+    force_update: bool = False,
 ) -> BootstrappedAccount:
     """Bring up every account-wide resource the strands-mesh fleet needs.
 
@@ -584,6 +612,9 @@ def bootstrap_account(
         account_id_expected: If provided, abort if the resolved account ID
             does not match — guards against wrong-account provisioning.
         profile: AWS profile name to use (passed to boto3.Session).
+        force_update: If True, update existing E-stop Lambda even when it
+            already exists (upgrades stale versions). Default False preserves
+            existing deployments.
 
     Returns:
         :class:`BootstrappedAccount` with every ARN and a record of what
@@ -647,7 +678,7 @@ def bootstrap_account(
 
     # Lambda + IAM
     role_arn = _ensure_lambda_role(iam, out)
-    out.estop_lambda_arn = _ensure_estop_lambda(lam, role_arn, out)
+    out.estop_lambda_arn = _ensure_estop_lambda(lam, role_arn, out, force_update=force_update)
 
     # IoT Rules
     out.rule_safety_arn = _ensure_safety_to_dynamodb_rule(iot, out.safety_table_arn, out)

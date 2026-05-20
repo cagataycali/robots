@@ -653,11 +653,11 @@ class MuJoCoSimEngine(
 
             # Derive a stable peer_id from the parent sim + robot name so
             # the same robot in two different sims still gets distinct ids.
-            # Format: ``<parent_peer_id>:<robot_name>`` e.g.
-            # ``so100_sim-a1b2c3d4:so100``. Keeps the parent's uuid suffix
+            # Format: ``<parent_peer_id>__<robot_name>`` e.g.
+            # ``so100_sim-a1b2c3d4__so100``. Keeps the parent's uuid suffix
             # so collisions across processes stay impossible.
             parent_id = self.peer_id or "sim"
-            child_peer_id = f"{parent_id}:{robot.name}"
+            child_peer_id = f"{parent_id}__{robot.name}"
 
             # We pass the SimRobot dataclass as the owner. Mesh is duck-
             # typed and only needs ``hasattr`` accesses, so the dataclass

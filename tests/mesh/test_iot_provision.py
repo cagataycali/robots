@@ -190,7 +190,7 @@ class TestProvisionRobot:
         )
 
         assert isinstance(result, ProvisionedThing)
-        assert result.thing_name == "test-robot-01"
+        assert result.thing_name == "strands-mesh-robot-test-robot-01"
         assert result.policy_name == ROBOT_POLICY_NAME
         assert result.endpoint == "fake-ats.iot.us-west-2.amazonaws.com"
         assert result.cert_path.exists()
@@ -225,7 +225,7 @@ class TestProvisionRobot:
 
         result = provision_robot("e2", cert_dir=tmp_cert_dir)
         env = result.env_vars()
-        assert env["STRANDS_IOT_THING_NAME"] == "e2"
+        assert env["STRANDS_IOT_THING_NAME"] == "strands-mesh-robot-e2"
         assert env["STRANDS_MESH_BACKEND"] == "iot"
         assert env["STRANDS_IOT_ENDPOINT"] == "fake-ats.iot.us-west-2.amazonaws.com"
         # export_lines is the eval-friendly form
@@ -314,7 +314,9 @@ class TestCleanupStaleCerts:
         provision_robot("test-thing", cert_dir=tmp_cert_dir)
 
         # The old cert must have been detached + deleted.
-        fake_iot_client.detach_thing_principal.assert_called_once_with(thingName="test-thing", principal=old_cert_arn)
+        fake_iot_client.detach_thing_principal.assert_called_once_with(
+            thingName="strands-mesh-robot-test-thing", principal=old_cert_arn
+        )
         fake_iot_client.detach_policy.assert_called_with(policyName="strands-robot", target=old_cert_arn)
         fake_iot_client.update_certificate.assert_called_once()
         fake_iot_client.delete_certificate.assert_called_once_with(certificateId="old-cert-id-aaaaa", forceDelete=True)
@@ -340,7 +342,7 @@ class TestCleanupStaleCerts:
 
         # Must NOT raise — proceeds to create the new cert.
         result = provision_robot("test-thing", cert_dir=tmp_cert_dir)
-        assert result.thing_name == "test-thing"
+        assert result.thing_name == "strands-mesh-robot-test-thing"
         fake_iot_client.create_keys_and_certificate.assert_called_once()
 
     def test_cleanup_handles_missing_thing(self):

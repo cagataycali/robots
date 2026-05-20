@@ -88,19 +88,19 @@ def test_attach_creates_child_peer_when_sim_is_on_mesh():
     sim = _StubSim(mesh=parent_mesh, peer_id="so100_sim-a1b2c3d4")
     robot = SimRobot(name="so100", urdf_path="/tmp/x.urdf")
 
-    fake_child = MagicMock(name="ChildMesh", peer_id="so100_sim-a1b2c3d4:so100")
+    fake_child = MagicMock(name="ChildMesh", peer_id="so100_sim-a1b2c3d4__so100")
     with patch("strands_robots.mesh.init_mesh", return_value=fake_child) as init:
         attach(sim, robot)
 
     init.assert_called_once()
     # The peer_id we pass into init_mesh must encode parent + robot name.
     kwargs = init.call_args.kwargs
-    assert kwargs["peer_id"] == "so100_sim-a1b2c3d4:so100"
+    assert kwargs["peer_id"] == "so100_sim-a1b2c3d4__so100"
     assert kwargs["peer_type"] == "robot"
     assert kwargs["mesh"] is True
     # Resulting child mesh recorded on the SimRobot for later detach.
     assert robot.mesh is fake_child
-    assert robot.peer_id == "so100_sim-a1b2c3d4:so100"
+    assert robot.peer_id == "so100_sim-a1b2c3d4__so100"
 
 
 def test_attach_swallows_init_mesh_exceptions():
@@ -138,11 +138,11 @@ def test_attach_uses_fallback_parent_id_when_sim_peer_id_empty():
     sim = _StubSim(mesh=MagicMock(), peer_id="")
     robot = SimRobot(name="armA", urdf_path="/tmp/x.urdf")
 
-    fake_child = MagicMock(peer_id="sim:armA")
+    fake_child = MagicMock(peer_id="sim__armA")
     with patch("strands_robots.mesh.init_mesh", return_value=fake_child) as init:
         attach(sim, robot)
 
-    assert init.call_args.kwargs["peer_id"] == "sim:armA"
+    assert init.call_args.kwargs["peer_id"] == "sim__armA"
 
 
 # ---------------------------------------------------------------------------

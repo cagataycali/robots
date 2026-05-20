@@ -264,6 +264,12 @@ def provision_robot(
     boto3 = _require_boto3()
     iot = boto3.client("iot", region_name=region)
     region = iot.meta.region_name
+
+    # Enforce naming prefix for ACL consistency — the OperatorShadow policy
+    # grants GetThingShadow/UpdateThingShadow only on thing/strands-mesh-robot-*.
+    _ROBOT_PREFIX = "strands-mesh-robot-"
+    if not thing_name.startswith(_ROBOT_PREFIX):
+        thing_name = f"{_ROBOT_PREFIX}{thing_name}"
     cert_dir = Path(cert_dir) if cert_dir else DEFAULT_CERT_DIR
     cert_dir.mkdir(parents=True, exist_ok=True)
     try:
@@ -331,6 +337,12 @@ def provision_operator(
     boto3 = _require_boto3()
     iot = boto3.client("iot", region_name=region)
     region = iot.meta.region_name
+
+    # Enforce naming prefix for ACL consistency — operators use a separate
+    # prefix so OperatorShadow policy (thing/strands-mesh-robot-*) excludes them.
+    _OPERATOR_PREFIX = "strands-mesh-operator-"
+    if not thing_name.startswith(_OPERATOR_PREFIX):
+        thing_name = f"{_OPERATOR_PREFIX}{thing_name}"
     cert_dir = Path(cert_dir) if cert_dir else DEFAULT_CERT_DIR
     cert_dir.mkdir(parents=True, exist_ok=True)
     try:
