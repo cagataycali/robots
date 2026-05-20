@@ -6,26 +6,26 @@ behind the strands-robots :class:`SimEngine` interface, so
 ``evaluate_benchmark`` works against the upstream LIBERO setup without
 the need for our auto-generated scene MJCF + custom OSC controller path.
 
-This engine exists because rounds 36-41 verified-correct fixes
-(action_horizon, max_steps, seeding, image V-flip, image dims, gripper
-RLDS→robosuite polarity) didn't move ``success_rate`` off 0 against
-``nvidia/GR00T-N1.7-LIBERO``, while NVIDIA's own reference eval
-(``run_gr00t_sim_policy``) gets ``success_rate = 1.0`` in 54s for 5 eps
-on the same checkpoint+task. #168 step-by-step instrumentation
-(``/tmp/opencode/eval-runs/instrument_*.py``) measured a 50× action
-divergence at near-identical state inputs, suggesting the residual gap
-is in our scene+controller path that the structural fixes couldn't
-close.
+Role
+----
+This engine serves as the **parity reference** for ``MuJoCoSimEngine`` on
+LIBERO tasks, and as a **fallback** if upstream LIBERO/robosuite changes
+ever break the reimplemented path. Integration tests (e.g.
+``test_state_observation_byte_equivalent_at_canonical_init``) use it as the
+ground-truth benchmark for physics correctness.
 
-#168 sidesteps the gap by routing through the upstream env directly.
+As of PR #175, ``MuJoCoSimEngine`` achieves comparable (or higher)
+``success_rate`` on LIBERO eval — so this engine is no longer the
+*recommended* path for evaluation. Use ``MuJoCoSimEngine`` (the default)
+for both general simulation and LIBERO eval.
 
 NOT FOR GENERAL USE: this engine ONLY supports LIBERO tasks. It rejects
 all the SimEngine methods that don't make sense for the upstream env
 (``add_object``, ``randomize``, etc.) by raising ``NotImplementedError``.
 For general MuJoCo simulation use ``MuJoCoSimEngine``.
 
-Lifecycle:
-
+Lifecycle
+---------
 1. ``create_world()`` — no-op (env created lazily on first task setup).
 2. ``setup_libero_task(bddl_file_name, init_state=None)`` —
    constructs the underlying ``OffScreenRenderEnv`` from BDDL.
@@ -43,8 +43,15 @@ Lifecycle:
    upstream LIBERO data see exactly the inputs they were trained on.
 6. ``destroy()`` — closes the underlying env.
 
-#168. See PR #168 commit message for the full
-bisect history that motivated this engine.
+History
+-------
+This engine was introduced in PR #168 as a workaround when rounds 36–41
+of verified-correct fixes (action_horizon, max_steps, seeding, image
+V-flip, image dims, gripper RLDS→robosuite polarity) could not move
+``success_rate`` off 0 against ``nvidia/GR00T-N1.7-LIBERO``. PRs
+#175 and #180 subsequently closed that gap via OSC torque parity,
+canonical-state writes, MJCF inertia parity, and eval determinism fixes.
+See PR #168 commit history for the full bisect that motivated this engine.
 """
 
 from __future__ import annotations
