@@ -953,7 +953,7 @@ class LiberoAdapter(BenchmarkProtocol):
             # effort - if controller setup fails (missing robosuite,
             # missing site, etc.), log + continue; the eval will run
             # but actions will be no-ops, which is the same behaviour
-            # as before.
+            # as before this fix.
             self._install_action_controller(sim)
         if self._init_jitter > 0:
             self._apply_init_jitter(sim, rng)
