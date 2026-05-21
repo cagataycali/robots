@@ -243,3 +243,82 @@ class TestIsGr00tProcess:
 
         assert _is_gr00t_process("container", "123", port=5555) is True
         assert _is_gr00t_process("container", "123", port=6666) is False
+
+
+class TestIsGr00tHostProcess:
+    """Test the _is_gr00t_host_process helper for host-system PID verification."""
+
+    def test_rejects_wrong_port(self, tmp_path, monkeypatch):
+        """_is_gr00t_host_process should reject a process on a different port."""
+        from strands_robots.tools.gr00t_inference import _is_gr00t_host_process
+
+        # Create a fake /proc/<pid>/cmdline
+        proc_dir = tmp_path / "proc" / "123"
+        proc_dir.mkdir(parents=True)
+        cmdline_file = proc_dir / "cmdline"
+        cmdline_file.write_text("python\x00inference_service.py\x00--port\x008000\x00")
+
+        # Monkeypatch Path to point at our fake proc
+        from pathlib import Path as RealPath
+
+        monkeypatch.setattr(
+            "strands_robots.tools.gr00t_inference.Path",
+            lambda p: RealPath(str(p).replace("/proc", str(tmp_path / "proc"))),
+        )
+
+        assert _is_gr00t_host_process("123", port=80) is False
+
+    def test_accepts_matching_port(self, tmp_path, monkeypatch):
+        """_is_gr00t_host_process should accept when port matches."""
+        from strands_robots.tools.gr00t_inference import _is_gr00t_host_process
+
+        proc_dir = tmp_path / "proc" / "456"
+        proc_dir.mkdir(parents=True)
+        cmdline_file = proc_dir / "cmdline"
+        cmdline_file.write_text("python\x00inference_service.py\x00--port\x008000\x00")
+
+        from pathlib import Path as RealPath
+
+        monkeypatch.setattr(
+            "strands_robots.tools.gr00t_inference.Path",
+            lambda p: RealPath(str(p).replace("/proc", str(tmp_path / "proc"))),
+        )
+
+        assert _is_gr00t_host_process("456", port=8000) is True
+
+    def test_rejects_non_gr00t_process(self, tmp_path, monkeypatch):
+        """_is_gr00t_host_process should reject non-GR00T processes."""
+        from strands_robots.tools.gr00t_inference import _is_gr00t_host_process
+
+        proc_dir = tmp_path / "proc" / "789"
+        proc_dir.mkdir(parents=True)
+        cmdline_file = proc_dir / "cmdline"
+        cmdline_file.write_text("python\x00some_other_service.py\x00--port\x008000\x00")
+
+        from pathlib import Path as RealPath
+
+        monkeypatch.setattr(
+            "strands_robots.tools.gr00t_inference.Path",
+            lambda p: RealPath(str(p).replace("/proc", str(tmp_path / "proc"))),
+        )
+
+        assert _is_gr00t_host_process("789", port=8000) is False
+
+    def test_no_port_check_when_none(self, tmp_path, monkeypatch):
+        """_is_gr00t_host_process without port checks only process identity."""
+        from strands_robots.tools.gr00t_inference import _is_gr00t_host_process
+
+        proc_dir = tmp_path / "proc" / "321"
+        proc_dir.mkdir(parents=True)
+        cmdline_file = proc_dir / "cmdline"
+        cmdline_file.write_text("python\x00inference_service.py\x00--port\x009999\x00")
+
+        from pathlib import Path as RealPath
+
+        monkeypatch.setattr(
+            "strands_robots.tools.gr00t_inference.Path",
+            lambda p: RealPath(str(p).replace("/proc", str(tmp_path / "proc"))),
+        )
+
+        # Without port kwarg, just checks identity
+        assert _is_gr00t_host_process("321") is True

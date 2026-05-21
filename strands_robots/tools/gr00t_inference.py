@@ -634,6 +634,29 @@ def _is_gr00t_process(container_name: str, pid: str, *, port: int | None = None)
     return False
 
 
+def _is_gr00t_host_process(pid: str, *, port: int | None = None) -> bool:
+    """Verify that a host PID belongs to a GR00T inference process.
+
+    Reads /proc/<pid>/cmdline directly (no Docker) to confirm the process
+    is a GR00T inference service, optionally bound to a specific port.
+
+    Args:
+        pid: Process ID to check.
+        port: If provided, also verify the process is bound to this port.
+    """
+    try:
+        cmdline_path = Path(f"/proc/{pid}/cmdline")
+        if cmdline_path.exists():
+            cmdline = cmdline_path.read_text().replace("\x00", " ")
+            is_gr00t = "inference_service" in cmdline or "gr00t" in cmdline.lower()
+            if is_gr00t and port is not None:
+                return bool(re.search(rf"--port[= ]{port}(?:\s|$)", cmdline))
+            return is_gr00t
+    except Exception:
+        pass
+    return False
+
+
 def _stop_service(port: int) -> dict[str, Any]:
     """Stop GR00T inference service running on specific port."""
     try:
@@ -691,7 +714,7 @@ def _stop_service(port: int) -> dict[str, Any]:
                 except subprocess.CalledProcessError:
                     continue
 
-        # Fallback: try host system — only kill processes that match inference_service
+        # Fallback: try host system — verify via /proc/<pid>/cmdline
         result = subprocess.run(
             ["pgrep", "-f", f"inference_service.py.*--port {port}"],
             capture_output=True,
@@ -702,7 +725,7 @@ def _stop_service(port: int) -> dict[str, Any]:
             pids = result.stdout.strip().split("\n")
             for pid in pids:
                 pid = pid.strip()
-                if pid:
+                if pid and _is_gr00t_host_process(pid, port=port):
                     subprocess.run(["kill", "-TERM", pid], check=True)
 
             time.sleep(2)
@@ -717,7 +740,7 @@ def _stop_service(port: int) -> dict[str, Any]:
                 pids = result.stdout.strip().split("\n")
                 for pid in pids:
                     pid = pid.strip()
-                    if pid:
+                    if pid and _is_gr00t_host_process(pid, port=port):
                         subprocess.run(["kill", "-KILL", pid], check=True)
 
             return {"status": "success", "port": port, "message": f"Service on port {port} stopped"}
