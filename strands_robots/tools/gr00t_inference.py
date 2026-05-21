@@ -668,7 +668,7 @@ def _stop_service(port: int) -> dict[str, Any]:
                 container_name = container["name"]
                 try:
                     result = subprocess.run(
-                        ["docker", "exec", container_name, "pgrep", "-f", f"inference_service.py.*--port {port}"],
+                        ["docker", "exec", container_name, "pgrep", "-f", f"inference_service.py.*--port {port}( |$)"],
                         capture_output=True,
                         text=True,
                         check=False,
@@ -690,7 +690,7 @@ def _stop_service(port: int) -> dict[str, Any]:
                                 container_name,
                                 "pgrep",
                                 "-f",
-                                f"inference_service.py.*--port {port}",
+                                f"inference_service.py.*--port {port}( |$)",
                             ],
                             capture_output=True,
                             text=True,
@@ -716,7 +716,7 @@ def _stop_service(port: int) -> dict[str, Any]:
 
         # Fallback: try host system — verify via /proc/<pid>/cmdline
         result = subprocess.run(
-            ["pgrep", "-f", f"inference_service.py.*--port {port}"],
+            ["pgrep", "-f", f"inference_service.py.*--port {port}( |$)"],
             capture_output=True,
             text=True,
         )
@@ -731,7 +731,7 @@ def _stop_service(port: int) -> dict[str, Any]:
             time.sleep(2)
 
             result = subprocess.run(
-                ["pgrep", "-f", f"inference_service.py.*--port {port}"],
+                ["pgrep", "-f", f"inference_service.py.*--port {port}( |$)"],
                 capture_output=True,
                 text=True,
             )
