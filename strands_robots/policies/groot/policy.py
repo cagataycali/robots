@@ -613,8 +613,7 @@ class Gr00tPolicy(Policy):
         # it (#169) - same rotation that ``_build_service_observation``
         # applies, kept consistent so LOCAL and SERVICE inference modes
         # see identical observations. Pre-#169 the rotation was service-
-        # only, which silently fed local-mode users (and the round-43
-        # ``LiberoOffScreenRenderEngine`` LOCAL path) upside-down or
+        # only, which silently fed local-mode users upside-down or
         # reversed-direction images relative to training. The helper
         # operates on the 5D ``(1, 1, H, W, C)`` tensor directly via
         # negative-axis flips so the rotation always lands on H/W.
@@ -802,11 +801,10 @@ def _apply_image_rotation_180_inplace(obs: dict[str, Any], video_keys: list[str]
     ``examples/Libero/eval/utils.py:get_libero_image()``. Without this
     rotation at eval time, every observation the policy sees is
     upside-down relative to its training distribution and the success
-    rate collapses to 0 (#168 round-7 bug H, re-broken in service mode
-    by #168 round 43, fixed by #169).
+    rate collapses to 0 (#168 bug H, re-broken in service mode
+    by #168, fixed by #169).
 
-    Producers (``LiberoAdapter.augment_observation``,
-    ``LiberoOffScreenRenderEngine.get_observation``) are expected to
+    Producers (``LiberoAdapter.augment_observation``) are expected to
     deliver images in OpenGL framebuffer convention (bottom-row-zero).
     This helper applies the second 180° to convert OpenGL → training
     convention, matching what NVIDIA's reference eval does.
@@ -825,10 +823,9 @@ def _apply_image_rotation_180_inplace(obs: dict[str, Any], video_keys: list[str]
     Called from BOTH service-mode (``_build_service_observation``) and
     local-mode (``_prepare_observation``) paths so the rotation is
     applied consistently regardless of inference transport. Pre-#169 it
-    was service-only, which made the LOCAL+adapter path silently OOD
-    and the SERVICE+``LiberoOffScreenRenderEngine`` path silently OOD
-    in the opposite direction (engine bakes 180°, policy applies 180° →
-    net identity = OpenGL).
+    was service-only, which made the LOCAL path silently OOD relative
+    to training (engine outputs OpenGL convention, policy applies no
+    rotation → upside-down input).
     """
     for vk in video_keys:
         v = obs.get(vk)

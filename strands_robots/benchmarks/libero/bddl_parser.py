@@ -185,7 +185,29 @@ def _parse_sexp(tokens: list[str]) -> Any:
 def _on_kwargs(args: list[str]) -> dict[str, Any]:
     if len(args) != 2:
         raise BDDLParseError(f"(on ...) expects 2 args, got {len(args)}: {args}")
-    return {"body_a": args[0], "body_b": args[1]}
+    # #170: tighten thresholds to match upstream LIBERO's
+    # ``ObjectState.check_ontop`` semantics. The default ``_body_on``
+    # uses ``z_offset=0.02 m`` and ``xy_tol=0.15 m`` (loose, intended for
+    # coarse "is A on B" checks); upstream LIBERO requires
+    # ``a.z >= b.z`` (no offset) AND ``|a.xy - b.xy| < 0.03 m`` AND
+    # contact between A and B. The empirical at-success state on
+    # ``libero-10/SCENE5`` has mug.z 4 mm above plate.z and mug.xy 1.2 cm
+    # off plate.xy — the loose defaults rejected this as ``False`` while
+    # ``env.check_success()`` returned ``True`` (#170 diagnostic).
+    #
+    # #171 sub-task 3e: also require physics contact via
+    # ``sim.get_contacts``. Without this, transient
+    # "mug-suspended-above-plate" placement states produce BDDL false
+    # positives (mug 5 cm above plate, xy-aligned, no contact yet).
+    # Graceful degradation: engines without ``get_contacts`` skip the
+    # check (preserves pre-#171 behaviour).
+    return {
+        "body_a": args[0],
+        "body_b": args[1],
+        "z_offset": 0.0,
+        "xy_tol": 0.03,
+        "require_contact": True,
+    }
 
 
 def _near_kwargs(args: list[str]) -> dict[str, Any]:

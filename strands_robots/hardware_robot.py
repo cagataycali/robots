@@ -115,6 +115,12 @@ class Robot(AgentTool):
         if data_config:
             logger.info("Data config: %s", data_config)
 
+        # Mesh attributes — populated by the Robot() factory after init.
+        # Plain attributes (not properties) so test code can swap a fake mesh
+        # in without going through the factory.
+        self.mesh: Any = None
+        self.peer_id: str | None = None
+
     def _initialize_robot(
         self, robot: LeRobotRobot | RobotConfig | str, cameras: dict[str, dict[str, Any]] | None, **kwargs: Any
     ) -> LeRobotRobot:
@@ -164,13 +170,16 @@ class Robot(AgentTool):
                 else:
                     raise ValueError(f"Unsupported camera type: {config.get('type')}")
 
-        # Map robot type to specific config class
+        # Map robot type to specific config class.
+        # lerobot >=0.5.0 unified SO-100/SO-101 into ``so_follower``.
         config_mapping = {
-            "so101_follower": ("lerobot.robots.so101_follower", "SO101FollowerConfig"),
-            "so100_follower": ("lerobot.robots.so100_follower", "SO100FollowerConfig"),
-            "bi_so100_follower": ("lerobot.robots.bi_so100_follower", "BiSO100FollowerConfig"),
-            "viperx": ("lerobot.robots.viperx", "ViperXConfig"),
+            "so101_follower": ("lerobot.robots.so_follower", "SOFollowerConfig"),
+            "so100_follower": ("lerobot.robots.so_follower", "SOFollowerConfig"),
+            "bi_so100_follower": ("lerobot.robots.bi_so_follower", "BiSOFollowerConfig"),
+            "bi_so101_follower": ("lerobot.robots.bi_so_follower", "BiSOFollowerConfig"),
             "koch_follower": ("lerobot.robots.koch_follower", "KochFollowerConfig"),
+            "openarm_follower": ("lerobot.robots.openarm_follower", "OpenArmFollowerConfig"),
+            "bi_openarm_follower": ("lerobot.robots.bi_openarm_follower", "BiOpenArmFollowerConfig"),
             # Add more as needed
         }
 
@@ -681,6 +690,21 @@ class Robot(AgentTool):
             # Shutdown executor
             self._executor.shutdown(wait=True)
 
+            # Tear down the Zenoh mesh component if one was attached.
+            # ``self.mesh`` is any object exposing ``.stop()``; falsy values
+            # (None — the construction-time default and what a hardware robot
+            # gets when ``mesh=False``) are skipped silently.
+            if self.mesh:
+                try:
+                    self.mesh.stop()
+                except Exception as mesh_exc:  # noqa: BLE001
+                    # Mesh teardown should never block hardware cleanup.
+                    logger.warning(
+                        "%s: mesh.stop() raised during cleanup: %s",
+                        self.tool_name_str,
+                        mesh_exc,
+                    )
+
             logger.info(f"{self.tool_name_str} cleanup completed")
 
         except Exception as e:
@@ -754,3 +778,203 @@ class Robot(AgentTool):
 
         except Exception as e:
             logger.error(f"Error stopping robot: {e}")
+
+    # ------------------------------------------------------------------
+    # Teleoperation over mesh — input publishing and receiving
+    # ------------------------------------------------------------------
+
+    def start_teleop_publish(
+        self,
+        teleoperator: Any,
+        device_name: str = "leader",
+        method: str = "arm",
+        hz: float = 50.0,
+    ) -> dict[str, Any]:
+        """Start publishing teleoperator actions to the mesh.
+
+        This makes the robot a *teleop source*: another peer on the mesh
+        can call ``start_teleop_receive(source_peer_id=self.peer_id)`` to
+        have its hardware follow along.
+
+        Args:
+            teleoperator: Any object with a ``get_action() -> dict`` method.
+                Typically a lerobot Teleoperator (SOLeader, GamepadTeleop,
+                KeyboardTeleop, Phone).
+            device_name: Name for this input stream (e.g. "leader", "gamepad").
+            method: Input method label ("arm", "gamepad", "keyboard", "phone").
+            hz: Publishing frequency in Hz.
+
+        Returns:
+            Status dict with topic and peer_id for the receiver to use.
+        """
+        if not self.mesh or not self.mesh.alive:
+            return {"status": "error", "content": [{"text": "Mesh not active. Cannot publish input."}]}
+
+        from strands_robots.mesh import InputPublisher
+
+        # Store publisher on the robot instance
+        if not hasattr(self, "_input_publishers"):
+            self._input_publishers: dict[str, InputPublisher] = {}
+
+        if device_name in self._input_publishers:
+            # Stop existing publisher for this device
+            self._input_publishers[device_name].stop()
+
+        publisher = InputPublisher(
+            mesh=self.mesh,
+            teleoperator=teleoperator,
+            device_name=device_name,
+            method=method,
+            hz=hz,
+        )
+        publisher.start()
+        self._input_publishers[device_name] = publisher
+
+        return {
+            "status": "success",
+            "content": [
+                {
+                    "text": f"Input publisher started: {device_name} ({method} @ {hz}Hz)\n"
+                    f"Topic: {publisher.topic}\n"
+                    f"Peer ID: {self.peer_id}\n"
+                    f"Remote peers can receive with: start_teleop_receive(source_peer_id='{self.peer_id}')"
+                }
+            ],
+        }
+
+    def start_teleop_receive(
+        self,
+        source_peer_id: str,
+        device_name: str = "leader",
+        apply_fn: Any | None = None,
+    ) -> dict[str, Any]:
+        """Start receiving teleoperator actions from a remote peer and applying to hardware.
+
+        This makes the robot a *teleop follower*: it listens for input frames
+        published by the source peer and applies them to its own hardware via
+        ``self.robot.send_action(action)``.
+
+        Args:
+            source_peer_id: The peer ID of the publishing robot.
+            device_name: Name of the input stream to subscribe to.
+            apply_fn: Optional custom function ``(robot, action_dict) -> None``.
+                Defaults to calling ``robot.send_action(action)``.
+
+        Returns:
+            Status dict.
+        """
+        if not self.mesh or not self.mesh.alive:
+            return {"status": "error", "content": [{"text": "Mesh not active. Cannot receive input."}]}
+
+        from strands_robots.mesh import InputReceiver
+
+        if not hasattr(self, "_input_receivers"):
+            self._input_receivers: dict[str, InputReceiver] = {}
+
+        key = f"{source_peer_id}/{device_name}"
+        if key in self._input_receivers:
+            self._input_receivers[key].stop()
+
+        receiver = InputReceiver(
+            mesh=self.mesh,
+            robot=self.robot,
+            source_peer_id=source_peer_id,
+            device_name=device_name,
+            apply_fn=apply_fn,
+        )
+        receiver.start()
+        self._input_receivers[key] = receiver
+
+        return {
+            "status": "success",
+            "content": [
+                {
+                    "text": f"Input receiver started: listening to {source_peer_id}/{device_name}\n"
+                    f"Topic: {receiver.topic}\n"
+                    f"Actions will be applied to: {self.tool_name_str}"
+                }
+            ],
+        }
+
+    def stop_teleop(self, device_name: str | None = None) -> dict[str, Any]:
+        """Stop all or a specific teleop publisher/receiver.
+
+        Args:
+            device_name: If provided, stop only the named publisher/receiver.
+                If None, stop all.
+
+        Returns:
+            Stats from stopped sessions.
+        """
+        results = []
+
+        # Stop publishers
+        if hasattr(self, "_input_publishers"):
+            if device_name:
+                pub = self._input_publishers.pop(device_name, None)
+                if pub:
+                    results.append(pub.stop())
+            else:
+                for name, pub in list(self._input_publishers.items()):
+                    results.append(pub.stop())
+                self._input_publishers.clear()
+
+        # Stop receivers
+        if hasattr(self, "_input_receivers"):
+            if device_name:
+                # Match by device name suffix
+                to_remove = [k for k in self._input_receivers if k.endswith(f"/{device_name}")]
+                for k in to_remove:
+                    results.append(self._input_receivers.pop(k).stop())
+            else:
+                for key, rcv in list(self._input_receivers.items()):
+                    results.append(rcv.stop())
+                self._input_receivers.clear()
+
+        if not results:
+            return {"status": "success", "content": [{"text": "No active teleop sessions."}]}
+
+        stats_text = "\n".join(
+            f"  {r.get('device', r.get('source', '?'))}: "
+            f"{r.get('frames', r.get('frames_received', 0))} frames, "
+            f"{r.get('hz_actual', 0):.1f} Hz"
+            for r in results
+        )
+        return {
+            "status": "success",
+            "content": [{"text": f"Teleop stopped:\n{stats_text}"}],
+        }
+
+    def get_teleop_status(self) -> dict[str, Any]:
+        """Get status of all active teleop sessions."""
+        publishers = {}
+        receivers = {}
+
+        if hasattr(self, "_input_publishers"):
+            for name, pub in self._input_publishers.items():
+                publishers[name] = pub.stats
+
+        if hasattr(self, "_input_receivers"):
+            for key, rcv in self._input_receivers.items():
+                receivers[key] = rcv.stats
+
+        return {
+            "status": "success",
+            "publishers": publishers,
+            "receivers": receivers,
+            "content": [
+                {
+                    "text": f"Teleop status:\n"
+                    f"  Publishers: {len(publishers)} active\n"
+                    f"  Receivers: {len(receivers)} active\n"
+                    + "".join(
+                        f"  [pub] {n}: {s.get('frames', 0)} frames @ {s.get('hz_actual', 0):.1f}Hz\n"
+                        for n, s in publishers.items()
+                    )
+                    + "".join(
+                        f"  [rcv] {k}: {s.get('frames_received', 0)} frames @ {s.get('hz_actual', 0):.1f}Hz\n"
+                        for k, s in receivers.items()
+                    )
+                }
+            ],
+        }

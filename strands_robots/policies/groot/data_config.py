@@ -48,7 +48,7 @@ class Gr00tDataConfig:
             top-to-bottom AND left-to-right (180 deg) at preprocessing
             time. Without the rotation the policy sees every observation
             upside-down relative to its training distribution and the
-            success rate collapses to 0 (#168 round-7 bug H). Default
+            success rate collapses to 0 (#168 bug H). Default
             ``False`` because most checkpoints (so100, oxe_droid, etc.)
             don't need it; enabled in ``data_configs.json`` only on the
             ``libero_panda`` entry.

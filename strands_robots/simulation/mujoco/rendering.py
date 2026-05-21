@@ -233,10 +233,10 @@ class RenderingMixin:
         specific ``robot_name`` so the same action dict routes to the right
         physical actuator when multiple same-config robots exist.
 
-        Action-controller hook (#168 round 23): when a benchmark adapter
+        Action-controller hook (#168): when a benchmark adapter
         has installed a custom action controller via
         ``world._backend_state["action_controller"]`` (mirroring the
-        ``viz_option`` pattern from #168 round 9), dispatch to it
+        ``viz_option`` pattern from #168), dispatch to it
         instead of the actuator/joint-name lookup loop. Used by
         :class:`LiberoAdapter` to convert GR00T's task-space delta-EEF
         actions (7-dim ``{x, y, z, roll, pitch, yaw, gripper}``) into
@@ -251,7 +251,7 @@ class RenderingMixin:
         actuator/joint-name lookup path verbatim. Non-LIBERO callers
         and existing tests see zero behaviour change.
 
-        Owns-stepping flag (#168 round 27): controllers may declare
+        Owns-stepping flag (#168): controllers may declare
         ``owns_stepping = True`` on the controller object to signal
         that ``apply()`` itself advances physics by the correct number
         of substeps for the policy step (LIBERO: 25 mj_step calls per
@@ -277,7 +277,7 @@ class RenderingMixin:
         if controller is not None:
             try:
                 controller.apply(action_dict, model, data, robot_name)
-                # Round 27 (#168): some controllers (e.g. LIBERO's
+                # #168: some controllers (e.g. LIBERO's
                 # OSC_POSE wrapper) need to advance physics themselves
                 # at a controller-defined rate (e.g. 25 substeps per
                 # policy step at 20 Hz LIBERO control / 500 Hz physics).
@@ -879,19 +879,19 @@ class RenderingMixin:
             #
             # History: rounds 11/12/13 added thread-side warmup; round
             # 14 reverted because the load-scene-without-mj_forward
-            # bug was bigger. Round 15 fixed mj_forward in load_scene,
+            # bug was bigger. #168 fixed mj_forward in load_scene,
             # which made warmup unnecessary IN THE SLOW PATH. Round
             # 17's prewarm-fresh-ep0 fast-path skips load_scene,
             # leaving no per-recorder-thread render before capture.
-            # Round 19 tried main-thread warmup (thread-isolation
-            # made it ineffective). Round 20 re-applied the round-13
-            # 2-pass thread-side warmup. Round-20 verification showed
+            # #168 tried main-thread warmup (thread-isolation
+            # made it ineffective). #168 re-applied the
+            # 2-pass thread-side warmup. #168 verification showed
             # 2 passes was insufficient: image channel stayed cold for
             # ~15 frames while wrist cleared at frame 3 - per-camera
             # warmup latency varies across cameras (likely GPU
             # command-buffer flush ordering).
             #
-            # Round 21 (this code): replace fixed-pass warmup with an
+            # #168 (this code): replace fixed-pass warmup with an
             # adaptive warmup loop. Render each camera until it
             # produces output with column-stddev above the cold-
             # gradient threshold. The cold gradient artifact is uniform

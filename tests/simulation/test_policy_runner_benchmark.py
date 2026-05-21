@@ -786,3 +786,128 @@ class TestEvalSeeding:
         assert payload_a["success_rate"] == payload_b["success_rate"]
         assert payload_a["n_episodes"] == payload_b["n_episodes"]
         assert spec_a.on_step_calls == spec_b.on_step_calls
+
+    def test_set_eval_seed_is_public(self):
+        """#179 — ``set_eval_seed`` is part of the public API surface
+        (no leading underscore, exported via ``__all__``).
+
+        Pre-#179 the function was named ``_set_eval_seed`` and only
+        invoked from ``_evaluate_with_spec``. Standalone integration
+        tests in ``tests_integ/.../test_libero_10_scene5_mujoco_engine_success_rate``
+        bypass ``evaluate_benchmark`` and need to call this directly to
+        get reproducible policy rollouts. Pin both the public name and
+        the backward-compat alias so neither rename breaks consumers
+        silently.
+        """
+        from strands_robots.simulation import policy_runner
+        from strands_robots.simulation.policy_runner import (
+            _set_eval_seed,
+            set_eval_seed,
+        )
+
+        # Public function exists.
+        assert callable(set_eval_seed)
+        # Backward-compat alias points at the same function.
+        assert _set_eval_seed is set_eval_seed
+        # Exposed in __all__.
+        assert "set_eval_seed" in policy_runner.__all__
+
+    def test_set_eval_seed_torch_reproducibility(self):
+        """#179 — ``set_eval_seed`` seeds torch's CPU + CUDA RNGs and
+        cuDNN flags so the GR00T diffusion sampler (and any other
+        ``torch.randn``-driven policy) draws identical sequences across
+        runs.
+
+        Pin the contract on torch CPU draws (CUDA path requires a GPU
+        and is exercised by the integration tests).
+        """
+        torch = pytest.importorskip("torch")
+        from strands_robots.simulation.policy_runner import set_eval_seed
+
+        set_eval_seed(42)
+        first = [float(x) for x in torch.randn(5)]
+        set_eval_seed(42)
+        second = [float(x) for x in torch.randn(5)]
+        assert first == second, (
+            f"set_eval_seed(42) should make torch.randn draws bit-identical; got first={first}, second={second}"
+        )
+        # cuDNN flags pinned to deterministic regardless of CUDA availability.
+        assert torch.backends.cudnn.deterministic is True
+        assert torch.backends.cudnn.benchmark is False
+
+    def test_evaluate_benchmark_reseeds_per_episode(self):
+        """#179 — ``_evaluate_with_spec`` calls ``set_eval_seed`` at the
+        start of EACH episode, not just once before the loop.
+
+        Without per-episode reseeding, every torch op draws from a
+        global RNG state that mutates across episodes — so a
+        diffusion-based policy produces different action chunks per
+        re-run even at the same ``seed=42`` because torch's RNG state
+        depends on the cumulative number of draws across all preceding
+        episodes.
+
+        Mechanism: capture every ``random.random()`` call inside the
+        spec's ``on_episode_start`` (which fires AFTER the per-episode
+        ``set_eval_seed`` call). On re-run with the same master seed,
+        episode N's draws must match episode N's draws from the first
+        run; AND consecutive episodes must NOT be identical (proves we
+        seed with episode_seed, not master seed).
+        """
+        # Closure-captured list that the spec writes to.
+        run_a_draws: list[list[float]] = []
+
+        class _RunACapture(_CountingBenchmark):
+            def on_episode_start(self, sim, episode_rng):  # noqa: ARG002
+                import random as _r
+
+                run_a_draws.append([_r.random() for _ in range(5)])
+
+        sim_a = FakeSim()
+        spec_a = _RunACapture()
+        register_benchmark("per-ep-reseed-a", spec_a)
+        sim_a.evaluate_benchmark(
+            benchmark_name="per-ep-reseed-a",
+            robot_name="fake_robot",
+            policy_provider="mock",
+            n_episodes=3,
+            seed=42,
+        )
+        assert len(run_a_draws) == 3
+
+        # Re-run with same master seed.
+        run_b_draws: list[list[float]] = []
+
+        class _RunBCapture(_CountingBenchmark):
+            def on_episode_start(self, sim, episode_rng):  # noqa: ARG002
+                import random as _r
+
+                run_b_draws.append([_r.random() for _ in range(5)])
+
+        sim_b = FakeSim()
+        spec_b = _RunBCapture()
+        register_benchmark("per-ep-reseed-b", spec_b)
+        sim_b.evaluate_benchmark(
+            benchmark_name="per-ep-reseed-b",
+            robot_name="fake_robot",
+            policy_provider="mock",
+            n_episodes=3,
+            seed=42,
+        )
+        assert len(run_b_draws) == 3
+
+        # Per-episode reproducibility: ep N in run A == ep N in run B.
+        for ep_idx in range(3):
+            assert run_b_draws[ep_idx] == run_a_draws[ep_idx], (
+                f"episode {ep_idx} drew different random values on re-run; "
+                f"per-episode reseed regressed. Run A: {run_a_draws[ep_idx]}, "
+                f"Run B: {run_b_draws[ep_idx]}"
+            )
+
+        # Cross-episode distinctness: episodes 0 and 1 should NOT have
+        # identical draws (they're seeded with different episode_seeds
+        # derived from the master seed via ``master_rng.randint``).
+        assert run_a_draws[0] != run_a_draws[1], (
+            "consecutive episodes drew identical random values — "
+            "per-episode seeding may have used a constant instead of "
+            "the per-episode-derived seed"
+        )

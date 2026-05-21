@@ -270,7 +270,11 @@ class TestIsSuccess:
             bodies={
                 "cube_1": {"position": [0, 0, 0.25]},
                 "plate_1": {"position": [0, 0, 0.1]},
-            }
+            },
+            # #171 sub-task 3e: ``_body_on`` now requires a contact via
+            # ``get_contacts``. Geom-prefix convention is
+            # ``<bddl_name>_g<idx>`` (matches what LIBERO scenes emit).
+            contacts=[{"geom1": "cube_1_g0", "geom2": "plate_1_g0"}],
         )
         assert adapter.is_success(sim) is True
 
@@ -302,6 +306,71 @@ class TestIsSuccess:
         sim_gripped = FakeSim(contacts=[{"geom1": "robot0_gripper_finger_l", "geom2": "cube_1"}])
         assert adapter.is_success(sim_empty) is True
         assert adapter.is_success(sim_gripped) is False
+
+
+class TestWalkPredicateTree:
+    """``_walk_predicate_tree`` reports each leaf's verdict with the
+    actual body positions so reviewers can see why a predicate returned
+    its verdict (e.g., body name didn't resolve = ``=NONE``; positions
+    present + verdict=False = threshold-rejection).
+
+    The walker was originally added for the #170 BDDL ↔ ``env.check_success``
+    diagnostic; that diagnostic was removed in #178 along with
+    ``LiberoOffScreenRenderEngine`` (no ``env.check_success`` to compare
+    against). The walker itself is still useful for any future
+    BDDL-evaluator debugging, so it stays.
+    """
+
+    def test_walk_predicate_tree_reports_leaf_positions(self):
+        """``_walk_predicate_tree`` reports each leaf's verdict with the
+        actual body positions so reviewers can see why a predicate
+        returned its verdict (e.g., body name didn't resolve = ``=NONE``;
+        positions present + verdict=False = threshold-rejection)."""
+        from strands_robots.benchmarks.libero.adapter import _walk_predicate_tree
+        from strands_robots.benchmarks.libero.bddl_parser import parse_bddl
+
+        text = "(define (problem p) (:goal (on cube_1 plate_1)))"
+        problem = parse_bddl(text)
+        sim = FakeSim(
+            bodies={
+                "cube_1": {"position": [0.001, -0.305, 0.443]},
+                "plate_1": {"position": [-0.004, -0.323, 0.439]},
+            },
+            # #171 sub-task 3e: ``on`` predicate also requires contact.
+            contacts=[{"geom1": "cube_1_g0", "geom2": "plate_1_g0"}],
+        )
+        leaves = _walk_predicate_tree(problem.goal, sim)
+        assert len(leaves) == 1
+        leaf_repr, verdict = leaves[0]
+        # Verdict reflects the new tighter thresholds (mug 4mm above
+        # plate, 1cm xy → True).
+        assert verdict is True
+        # Positions are rendered for human inspection.
+        assert "cube_1=[" in leaf_repr
+        assert "plate_1=[" in leaf_repr
+        # 3-decimal precision so reviewers can eyeball the diagnostic.
+        assert "0.443" in leaf_repr or "0.44" in leaf_repr
+
+    def test_walk_predicate_tree_reports_missing_body_as_none(self):
+        """When a body name doesn't resolve in the sim, the leaf
+        diagnostic shows ``=NONE`` so reviewers can immediately see
+        the look-up failure (the round-170 smoking gun)."""
+        from strands_robots.benchmarks.libero.adapter import _walk_predicate_tree
+        from strands_robots.benchmarks.libero.bddl_parser import parse_bddl
+
+        text = "(define (problem p) (:goal (on missing_body_1 plate_1)))"
+        problem = parse_bddl(text)
+        sim = FakeSim(
+            bodies={
+                # Only plate_1 is registered; missing_body_1 doesn't exist.
+                "plate_1": {"position": [0, 0, 0.10]},
+            }
+        )
+        leaves = _walk_predicate_tree(problem.goal, sim)
+        assert len(leaves) == 1
+        leaf_repr, verdict = leaves[0]
+        assert verdict is False
+        assert "missing_body_1=NONE" in leaf_repr
 
 
 class TestOnEpisodeStart:
@@ -1724,6 +1793,101 @@ class TestQuaternionToEuler:
         _roll, pitch, _yaw = _quat_wxyz_to_rpy_xyz(quat)
         assert pitch == pytest.approx(math.pi / 2, abs=1e-6)
 
+    def test_matches_robosuite_mat2euler_sxyz(self):
+        """Round 46 (#176 sub-task 3d) — pin byte-equivalence to
+        robosuite's ``mat2euler(R, axes='sxyz')``.
+
+        The pre-46 formula derived sin(pitch) = R[0,2] from
+        ``R = R_x · R_y · R_z`` (intrinsic XYZ), which produced
+        sign-flipped Euler angles for some quaternions vs robosuite.
+        E.g. q=(0, 0.7071, 0.7071, 0) → robosuite returns (π, 0, π/2)
+        but pre-46 returned (-π, 0, -π/2) — different yaw direction
+        (left vs right twist about z), genuinely different rotation.
+
+        This test pins the post-46 formula against pre-computed
+        expected values derived from robosuite's algorithm so a
+        future "simplification" can't silently re-introduce the sign
+        flip and put state.yaw out-of-distribution from the policy's
+        training data.
+
+        Expected values were obtained from
+        ``robosuite.utils.transform_utils.mat2euler(quat2mat(q), axes='sxyz')``
+        (see ``tools/recompute_robosuite_euler.py`` if regenerating).
+        """
+        import math
+
+        from strands_robots.benchmarks.libero.adapter import _quat_wxyz_to_rpy_xyz
+
+        # (q_wxyz, robosuite_sxyz_rpy) pairs. Each q is normalised
+        # to make the test data length-independent.
+        cases = [
+            # identity → (0, 0, 0)
+            ([1.0, 0.0, 0.0, 0.0], (0.0, 0.0, 0.0)),
+            # 90° about X → (π/2, 0, 0)
+            ([0.7071067811865476, 0.7071067811865475, 0.0, 0.0], (math.pi / 2, 0.0, 0.0)),
+            # 90° about Y → (0, π/2, 0); gimbal-lock branch may
+            # absorb roll into yaw, accept (0, π/2, 0) up to the
+            # gimbal-lock degeneracy.
+            ([0.7071067811865476, 0.0, 0.7071067811865475, 0.0], (0.0, math.pi / 2, 0.0)),
+            # 90° about Z → (0, 0, π/2)
+            ([0.7071067811865476, 0.0, 0.0, 0.7071067811865475], (0.0, 0.0, math.pi / 2)),
+            # 180° about (x+y)/sqrt(2) (the case that exposed the
+            # pre-46 sign-flip bug). robosuite returns (π, 0, π/2);
+            # pre-46 incorrectly returned (-π, 0, -π/2).
+            ([0.0, 0.7071067811865475, 0.7071067811865475, 0.0], (math.pi, 0.0, math.pi / 2)),
+            # equal-component quat (0.5, 0.5, 0.5, 0.5):
+            # robosuite returns (π/2, 0, π/2)
+            ([0.5, 0.5, 0.5, 0.5], (math.pi / 2, 0.0, math.pi / 2)),
+        ]
+        for q_wxyz, expected_rpy in cases:
+            ours = _quat_wxyz_to_rpy_xyz(list(q_wxyz))
+            for axis_idx, axis_name in enumerate(("roll", "pitch", "yaw")):
+                # Mod 2π for ±π wraparound; use a generous 1e-5 tol
+                # because asin/atan2 numerical precision dominates.
+                diff = ((ours[axis_idx] - expected_rpy[axis_idx] + math.pi) % (2 * math.pi)) - math.pi
+                # Gimbal-lock case (90° about Y): the (0, π/2, 0)
+                # decomposition isn't unique — roll and yaw both
+                # absorb into a single rotation. Skip the roll/yaw
+                # axis check at exactly pitch=π/2.
+                if abs(expected_rpy[1] - math.pi / 2) < 1e-9 and axis_name in ("roll", "yaw"):
+                    continue
+                assert abs(diff) < 1e-5, (
+                    f"q={q_wxyz}: ours.{axis_name}={ours[axis_idx]:.6f} "
+                    f"vs robosuite expected={expected_rpy[axis_idx]:.6f} "
+                    f"(diff_mod_2pi={diff:.6e}). "
+                    f"Round-46 ``mat2euler(sxyz)`` parity may have regressed."
+                )
+
+    def test_pre_46_sign_flip_regression(self):
+        """Round 46 (#176 sub-task 3d) — explicit pin against the
+        sign-flip bug that the pre-46 formula introduced.
+
+        For ``q = (0, sqrt(2)/2, sqrt(2)/2, 0)`` (180° about (1,1,0)
+        axis), the correct sxyz Euler is ``(π, 0, π/2)``. The pre-46
+        formula returned ``(-π, 0, -π/2)`` — same roll modulo 2π but
+        OPPOSITE yaw (which is genuinely a different rotation about
+        the world Z axis at this orientation).
+
+        Pin: ours_yaw must be CLOSE TO +π/2, not -π/2.
+        """
+        import math
+
+        from strands_robots.benchmarks.libero.adapter import _quat_wxyz_to_rpy_xyz
+
+        q = [0.0, 0.7071067811865475, 0.7071067811865475, 0.0]
+        roll, pitch, yaw = _quat_wxyz_to_rpy_xyz(q)
+        # roll: ±π are both correct (180° rotation is sign-ambiguous).
+        # ``abs(abs(roll) - π)`` is small for both +π and -π.
+        assert abs(abs(roll) - math.pi) < 1e-5, f"roll={roll:.6f}, expected ±π"
+        # pitch must be 0
+        assert abs(pitch) < 1e-5
+        # yaw must be +π/2, NOT -π/2
+        assert abs(yaw - math.pi / 2) < 1e-5, (
+            f"yaw={yaw:.6f}, expected +π/2 ≈ 1.5708. "
+            f"Sign-flip bug from pre-46 ``_quat_wxyz_to_rpy_xyz`` may have "
+            f"regressed — would break state.yaw OOD on the policy."
+        )
+
 
 # Scene auto-generation from BDDL (#164)
 
@@ -2104,15 +2268,17 @@ class TestCacheTransformVersion:
 
         assert key1 != key2
 
-    def test_current_transform_version_is_v3(self):
+    def test_current_transform_version_is_v4(self):
         """Pin the current version. Round 8 = ``v2`` (collision rgba +
         custom headlight, was wrong direction). Round 9 = ``v3``
-        (cache verbatim, render-time options). Bumping the version is
-        the contract that invalidates stale caches; the value MUST be
-        reviewed every time the transform pipeline changes."""
+        (cache verbatim, render-time options). #181 = ``v4`` (switch
+        ``_extract_compiled_mjcf`` to prefer pre-compile MJCF so
+        ``inertiagrouprange="0 0"`` is preserved). Bumping the version
+        is the contract that invalidates stale caches; the value MUST
+        be reviewed every time the transform pipeline changes."""
         from strands_robots.benchmarks.libero.adapter import _LIBERO_MJCF_TRANSFORM_VERSION
 
-        assert _LIBERO_MJCF_TRANSFORM_VERSION == "v3"
+        assert _LIBERO_MJCF_TRANSFORM_VERSION == "v4"
 
 
 class TestInstallRenderOptions:
@@ -2888,6 +3054,194 @@ class TestInstallActionController:
         assert len(ctrl.arm_actuator_ids) == 7
         assert len(ctrl.gripper_actuator_ids) >= 2
         assert ctrl.eef_site_name == "gripper0_grip_site"
+
+    def test_initial_joint_anchored_to_libero_home_pose_not_construction_state(self, libero_scene_xml):
+        """Round 45 (#176): the OSC controller's ``initial_joint`` —
+        the nullspace-bias target — must be the LIBERO-canonical Panda
+        "ready" pose, NOT the joint angles at the moment the controller
+        was constructed.
+
+        Why this matters: ``LiberoAdapter._install_action_controller``
+        runs from ``on_episode_start`` AFTER ``_apply_canonical_state``
+        has already loaded the per-episode ``init_state`` into
+        ``data.qpos``. Robosuite's ``BaseController.__init__`` captures
+        ``self.initial_joint = self.joint_pos`` (= live ``data.qpos``)
+        once at construction. Without the round-45 swap-and-restore
+        around ``controller_factory``, ``initial_joint`` captures the
+        perturbed canonical pose instead of the LIBERO
+        ``MountedPanda.init_qpos`` ready pose — the OSC's
+        ``nullspace_torques`` term ``(initial_joint - joint_pos)``
+        then collapses to ~0 instead of producing the ~5 N·m bias
+        upstream LIBERO produces (where upstream constructs the
+        controller AFTER ``Robot.reset(deterministic=True)`` writes
+        ``MountedPanda.init_qpos`` to ``data.qpos`` but BEFORE
+        ``set_init_state`` perturbs it to the per-episode canonical).
+
+        This was the root cause of the 50× torque divergence between
+        our OSC and upstream's, surfaced by ``probe_osc_internals.py``
+        in #176 sub-task 3b.
+
+        Pin: build a controller after perturbing ``data.qpos[arm]``
+        away from MJCF defaults. The controller's ``initial_joint``,
+        ``initial_ee_pos``, ``initial_ee_ori_mat``, ``goal_pos``, and
+        ``goal_ori`` must all match the values they would have if
+        ``data.qpos[arm]`` had been at ``MountedPanda.init_qpos``
+        when ``__init__`` ran.
+
+        Also verify ``data.qpos`` is restored to the perturbed
+        values after install — the swap is around the
+        ``controller_factory`` call, so the sim's actual state must
+        be the canonical state we passed in, not the home pose.
+        """
+        pytest.importorskip("mujoco")
+        pytest.importorskip("robosuite")
+        libero = pytest.importorskip("libero")
+        import mujoco
+
+        # Resolve the canonical LIBERO Panda home pose. Skip if libero
+        # version doesn't expose MountedPanda (e.g. future rename).
+        try:
+            from libero.libero.envs.robots.mounted_panda import MountedPanda
+        except ImportError:
+            pytest.skip(f"libero {libero.__version__} does not expose MountedPanda")
+        expected_home_qpos = np.asarray(MountedPanda().init_qpos, dtype=np.float64)
+        assert expected_home_qpos.shape == (7,), (
+            f"MountedPanda.init_qpos must be 7-DoF for Panda, got {expected_home_qpos.shape}"
+        )
+
+        adapter = LiberoAdapter.from_text(
+            PICK_CUBE_BDDL,
+            scene_path=libero_scene_xml,
+            install_cameras=False,
+            auto_generate_scene=False,
+        )
+        sim = FakeSim(data_config="panda")
+        sim._world._model = mujoco.MjModel.from_xml_path(libero_scene_xml)  # type: ignore[attr-defined]
+        sim._world._data = mujoco.MjData(sim._world._model)  # type: ignore[attr-defined]
+        mujoco.mj_forward(sim._world._model, sim._world._data)  # type: ignore[attr-defined]
+
+        # Perturb the arm joints by a non-trivial amount that would
+        # flow into ``initial_*`` / ``goal_*`` if we naively captured
+        # live qpos. If ``initial_joint`` is captured at construction
+        # time (without our fix), it would equal these perturbed
+        # values.
+        model = sim._world._model  # type: ignore[attr-defined]
+        data = sim._world._data  # type: ignore[attr-defined]
+        # Find arm joint qpos addresses (robot0_joint1..7).
+        arm_qpos_addrs: list[int] = []
+        for i in range(model.njnt):
+            jname = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, i)
+            if isinstance(jname, str) and jname.startswith("robot0_joint"):
+                arm_qpos_addrs.append(int(model.jnt_qposadr[i]))
+        assert len(arm_qpos_addrs) == 7, f"expected 7 arm joints, found {len(arm_qpos_addrs)}"
+
+        # Perturb each arm joint by 0.05 rad (~2.9 deg). Pre-fix,
+        # ``initial_joint`` would equal ``data.qpos[arm] + 0.05``
+        # after install.
+        perturbation = 0.05
+        for adr in arm_qpos_addrs:
+            data.qpos[adr] += perturbation
+        mujoco.mj_forward(model, data)
+
+        # Snapshot perturbed qpos so we can assert it's restored
+        # after install (the swap-and-restore must put data back
+        # exactly where it was).
+        perturbed_qpos = np.array([float(data.qpos[adr]) for adr in arm_qpos_addrs])
+
+        # Capture the EEF pose at the HOME joint configuration so we
+        # can assert the controller latched on to those values for
+        # ``initial_ee_pos`` / ``initial_ee_ori_mat`` / ``goal_pos`` /
+        # ``goal_ori``. Approach: write home qpos, mj_forward, read
+        # site_xpos/xmat, restore.
+        eef_site_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, "gripper0_grip_site")
+        for adr, v in zip(arm_qpos_addrs, expected_home_qpos, strict=True):
+            data.qpos[adr] = float(v)
+        mujoco.mj_forward(model, data)
+        expected_home_ee_pos = np.array(data.site_xpos[eef_site_id])
+        expected_home_ee_ori_mat = np.array(data.site_xmat[eef_site_id]).reshape(3, 3)
+        # Restore perturbed qpos.
+        for adr, v in zip(arm_qpos_addrs, perturbed_qpos, strict=True):
+            data.qpos[adr] = float(v)
+        mujoco.mj_forward(model, data)
+
+        adapter._install_action_controller(sim)
+        ctrl = sim._world._backend_state.get("action_controller")
+        if ctrl is None:
+            pytest.skip("action_controller install failed")
+
+        # 1. ``initial_joint`` matches the home pose.
+        captured_init_joint = np.array(ctrl.controller.initial_joint)
+        np.testing.assert_allclose(
+            captured_init_joint,
+            expected_home_qpos,
+            atol=1e-6,
+            err_msg=(
+                f"initial_joint was NOT re-anchored to LIBERO MountedPanda.init_qpos "
+                f"={expected_home_qpos.tolist()}. The OSC controller will compute wrong "
+                f"nullspace bias when constructed after _apply_canonical_state. See PR #176. "
+                f"captured={captured_init_joint.tolist()}, perturbed={perturbed_qpos.tolist()}"
+            ),
+        )
+
+        # 2. ``initial_ee_pos`` matches the EEF position at home pose
+        # (NOT the EEF position at perturbed qpos). Tolerance 1e-5 m
+        # because mj_forward involves ~10 floating-point ops per joint.
+        captured_initial_ee_pos = np.array(ctrl.controller.initial_ee_pos)
+        np.testing.assert_allclose(
+            captured_initial_ee_pos,
+            expected_home_ee_pos,
+            atol=1e-5,
+            err_msg=(
+                f"initial_ee_pos={captured_initial_ee_pos.tolist()} does not match "
+                f"expected home EEF pos={expected_home_ee_pos.tolist()}. The swap-and-"
+                f"restore around controller_factory may not have written home qpos "
+                f"to data before construction."
+            ),
+        )
+
+        # 3. ``initial_ee_ori_mat`` matches the EEF orientation at
+        # home pose. Same tolerance reasoning.
+        captured_initial_ee_ori = np.array(ctrl.controller.initial_ee_ori_mat)
+        np.testing.assert_allclose(
+            captured_initial_ee_ori,
+            expected_home_ee_ori_mat,
+            atol=1e-5,
+            err_msg=(
+                "initial_ee_ori_mat does not match expected home EEF orientation. "
+                "This causes goal_ori to latch on to the perturbed pose's orientation, "
+                "producing torques ~50× off from upstream. See PR #176."
+            ),
+        )
+
+        # 4. ``goal_pos`` and ``goal_ori`` are initialised in
+        # ``OSC_POSE.__init__`` to ``initial_ee_pos`` / ``initial_ee_ori_mat``.
+        # Verify they too track home pose, not perturbed.
+        np.testing.assert_allclose(np.array(ctrl.controller.goal_pos), expected_home_ee_pos, atol=1e-5)
+        np.testing.assert_allclose(np.array(ctrl.controller.goal_ori), expected_home_ee_ori_mat, atol=1e-5)
+
+        # 5. ``data.qpos[arm]`` restored to perturbed values (the
+        # swap-and-restore must not leak home pose into the sim's
+        # actual state).
+        restored_qpos = np.array([float(data.qpos[adr]) for adr in arm_qpos_addrs])
+        np.testing.assert_allclose(
+            restored_qpos,
+            perturbed_qpos,
+            atol=1e-9,
+            err_msg=(
+                f"data.qpos[arm] not restored after controller install — sim's "
+                f"actual state is now the home pose {restored_qpos.tolist()} instead "
+                f"of the canonical {perturbed_qpos.tolist()}. The swap-and-restore "
+                f"contract is broken."
+            ),
+        )
+
+        # 6. Sentinel: ``initial_joint`` must NOT equal the perturbed
+        # qpos at install time. If they're equal (within float
+        # tolerance), the round-45 fix didn't run.
+        assert not np.allclose(captured_init_joint, perturbed_qpos, atol=1e-3), (
+            f"initial_joint={captured_init_joint.tolist()} equals perturbed qpos "
+            f"{perturbed_qpos.tolist()} — round-45 swap-and-restore didn't run."
+        )
 
     def test_apply_writes_nonzero_torques_to_data_ctrl(self, libero_scene_xml):
         """Round-24 acceptance pin: after a non-trivial Cartesian delta,

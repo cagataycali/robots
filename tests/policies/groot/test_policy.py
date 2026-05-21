@@ -805,15 +805,10 @@ class TestLocalObsImageRotation180:
     - LOCAL + ``LiberoAdapter`` (V-flipped → OpenGL): policy got
       OpenGL convention images (no rotation), training expected
       training convention. Silent OOD.
-    - SERVICE + ``LiberoOffScreenRenderEngine`` (engine 180° baked in):
-      engine produced training convention, policy applied another
-      180° → net OpenGL → OOD. This was issue #169 (success_rate=0
-      against the docker GR00T server while in-process got 5/5).
 
     The fix moves the rotation into a shared helper called from BOTH
-    paths, and makes the engine match the adapter's contract by only
-    V-flipping (delivering OpenGL convention to the policy). Both
-    inference modes now consistently see training-convention images.
+    LOCAL and SERVICE paths so both inference modes consistently see
+    training-convention images regardless of transport.
     """
 
     def _libero_panda_local_policy(self):

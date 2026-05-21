@@ -31,6 +31,7 @@ the one that pulls in the upstream package to discover task files.
 from __future__ import annotations
 
 import hashlib
+import importlib
 import json
 import logging
 import os
@@ -85,8 +86,7 @@ class LiberoAdapter(BenchmarkProtocol):
             ``MultiStepConfig.max_episode_steps`` for LIBERO eval —
             see ``Isaac-GR00T/gr00t/eval/rollout_policy.py``). Override
             per-task by passing ``max_steps=`` to the constructor or
-            mutating the attribute after construction. Pre-#168
-            round-37 we used the LIBERO repository's lifelong-learning
+            mutating the attribute after construction. Pre-#168 we used the LIBERO repository's lifelong-learning
             convention of 300; that was too short for libero_10's
             longer-horizon manipulation tasks (e.g. multi-step pick-
             and-place chains) and was contributing to ``success_rate=0``
@@ -212,7 +212,7 @@ class LiberoAdapter(BenchmarkProtocol):
                 reads for ``robot0_eef_pos`` / ``robot0_eef_quat`` —
                 the site is at the gripper tip, ~9.7 cm BELOW the
                 wrist body and rotated 180° around X to point fingers
-                forward. Reading from the *body* (the round-5 default)
+                forward. Reading from the *body* (the #168 default)
                 feeds GR00T state observations from the wrong point in
                 the kinematic chain, which manifested as ``success_rate
                 = 0`` across rounds 23-30 of #168 because the policy
@@ -307,7 +307,7 @@ class LiberoAdapter(BenchmarkProtocol):
                 Ignored when the snapshot fallback fires.
             scene_robot_prefix: Body / joint / actuator name prefix that
                 identifies the scene-supplied Panda when the adapter
-                pre-registers it in ``world.robots`` (#166 round-4
+                pre-registers it in ``world.robots`` (#166
                 fix). Default ``"robot0_"`` matches RoboSuite / LIBERO's
                 canonical naming for the upstream MJCFs (both
                 hand-authored and procedurally-generated). Set to ``""``
@@ -346,8 +346,7 @@ class LiberoAdapter(BenchmarkProtocol):
                 explicitly. Without this kwarg the robot starts at
                 ``qpos=0`` (the joint-default "stretched flat" pose)
                 instead of the canonical "ready" pose GR00T-LIBERO
-                expects, which alone drives ``success_rate=0`` (#168
-                round-7 bug I).
+                expects, which alone drives ``success_rate=0`` (#168 bug I).
             bddl_source: Original BDDL text - stored on the adapter so
                 the scene generator can pass it back to ``libero`` (which
                 only accepts a *file* path). Set automatically by
@@ -380,12 +379,12 @@ class LiberoAdapter(BenchmarkProtocol):
         )
         self._eef_body_name: str = str(eef_body_name) if eef_body_name is not None else "hand"
         self._gripper_joint_name: str = str(gripper_joint_name) if gripper_joint_name is not None else "finger_joint1"
-        # EEF state site (round 31, #168). The state observations fed to
+        # EEF state site (#168). The state observations fed to
         # GR00T (state.x/y/z/roll/pitch/yaw) must come from the gripper
         # *tip* — the same site that RoboSuite's
         # ``OperationalSpaceController`` reads for its
         # ``robot0_eef_pos`` / ``robot0_eef_quat`` observables. Reading
-        # from the wrist *body* (the round-5 default) is ~9.7 cm above
+        # from the wrist *body* (the #168 default) is ~9.7 cm above
         # the tip and rotated 180° around X, which fed GR00T
         # out-of-distribution state across rounds 23-30 of #168.
         # Auto-default to ``"<scene_gripper_prefix>grip_site"`` (i.e.
@@ -404,14 +403,14 @@ class LiberoAdapter(BenchmarkProtocol):
         # touch", which preserves backwards-compat for custom scene users.
         self._user_eef_body_name: str | None = str(eef_body_name) if eef_body_name is not None else None
         self._user_gripper_joint_name: str | None = str(gripper_joint_name) if gripper_joint_name is not None else None
-        # State-side gripper joint names (round 33, #168). LIBERO trains
+        # State-side gripper joint names (#168). LIBERO trains
         # ``state.gripper`` on a 2-element vector ``[finger1.qpos, finger2.qpos]``
         # — the two fingers have OPPOSITE-sign qpos by physical
-        # convention (they move apart). Pre-round-33 we read ONE
+        # convention (they move apart). Pre-#168 we read ONE
         # finger from ``obs[gripper_joint_name]`` and packed it as
         # ``[v, v]`` (both positive), which is structurally
         # out-of-distribution for GR00T-LIBERO and produced the
-        # near-zero deltas observed across rounds 23-32. Round 33
+        # near-zero deltas observed across earlier iterations. The current implementation
         # reads both finger qpos directly from ``data.qpos[jnt_qposadr]``.
         # Default auto-derives ``["<gripper_prefix>finger_joint1",
         # "<gripper_prefix>finger_joint2"]`` (i.e.
@@ -445,7 +444,7 @@ class LiberoAdapter(BenchmarkProtocol):
         self._scene_keyframe_index = int(scene_keyframe_index)
         self._scene_robot_prefix = str(scene_robot_prefix)
         self._scene_gripper_prefix = str(scene_gripper_prefix)
-        # LIBERO's canonical training-distribution init states (#168 round 7,
+        # LIBERO's canonical training-distribution init states (#168,
         # bug I). When non-None this takes precedence over the keyframe and
         # snapshot-restore branches in _apply_canonical_state. Stored as a
         # 2D ``(N, 1+nq+nv)`` array; per-episode selection is RNG-seeded so
@@ -468,8 +467,7 @@ class LiberoAdapter(BenchmarkProtocol):
         # :meth:`prewarm`'s init-state apply (which always uses
         # idx 0) match the policy's actual starting state for
         # episode 0 - the recorder's t=0.00 frame and the policy's
-        # first observation are then visually identical (#168
-        # round 16 bug D-residual).
+        # first observation are then visually identical (#168 bug D-residual).
         self._episode_count: int = 0
         # Snapshot-and-restore fallback for procedurally-generated MJCFs that
         # don't ship a <keyframe> (the case the post-#168 verification
@@ -482,15 +480,15 @@ class LiberoAdapter(BenchmarkProtocol):
         self._bddl_path = bddl_path
         self._success_fn: Callable[[SimEngine], bool] = compile_goal(problem.goal)
 
-        # Round 30 (#168) — diagnostic logging gate for the STATE side
+        # #168 — diagnostic logging gate for the STATE side
         # of the policy interface. Set ``STRANDS_LIBERO_STATE_LOG=1`` to
         # emit one structured INFO log line per ``augment_observation``
         # call for the first ``STRANDS_LIBERO_STATE_LOG_MAX`` (default
         # 50) calls per episode. Pairs with ``STRANDS_LIBERO_ACTION_LOG``
-        # (round 29) so a single eval run captures both sides of the
+        # (#168) so a single eval run captures both sides of the
         # policy interface for offline bisection.
         #
-        # Round-29 verification showed ``arm_qpos`` advances and
+        # #168 verification showed ``arm_qpos`` advances and
         # ``eef_pos`` tracks deltas, but the policy is commanding tiny
         # deltas (~0.01 in [-1, +1] normalized space). The remaining
         # `success_rate=0` is on the state-input side — GR00T sees an
@@ -649,7 +647,7 @@ class LiberoAdapter(BenchmarkProtocol):
         ``data.site_xpos[eef_site_id]``); reading from the same site
         in :meth:`augment_observation` keeps the state observations
         we feed GR00T at the gripper TIP, matching the kinematic
-        location LIBERO-trained checkpoints expect. Round 31 (#168).
+        location LIBERO-trained checkpoints expect. #168.
         """
         if self._user_eef_state_site_name is not None:
             return self._user_eef_state_site_name
@@ -666,10 +664,10 @@ class LiberoAdapter(BenchmarkProtocol):
         (i.e. ``["gripper0_finger_joint1", "gripper0_finger_joint2"]``
         for LIBERO scenes).
 
-        Round 33 (#168): LIBERO trains ``state.gripper`` on a 2-element
+        #168: LIBERO trains ``state.gripper`` on a 2-element
         vector ``[finger1.qpos, finger2.qpos]`` whose elements have
         OPPOSITE signs by physical convention (the two fingers move
-        apart). Pre-round-33 we read ONE finger and packed it as
+        apart). Pre-#168 we read ONE finger and packed it as
         ``[v, v]`` (both positive), which fed GR00T structurally
         out-of-distribution state. The property returns the names in
         the order they appear in the trained state vector.
@@ -721,7 +719,7 @@ class LiberoAdapter(BenchmarkProtocol):
         6. ``_install_render_options`` - populate
            ``sim._world._backend_state["viz_option"]`` with an
            ``mjvOption`` matching upstream LIBERO's
-           ``OffScreenRenderEnv`` viewer config (#168 round 9 bug E).
+           ``OffScreenRenderEnv`` viewer config (#168 bug E).
            The render path in ``simulation/mujoco/rendering.py`` reads
            that option and threads it to ``Renderer.update_scene(..., scene_option=...)``,
            hiding collision geoms / site markers / joint /
@@ -730,26 +728,7 @@ class LiberoAdapter(BenchmarkProtocol):
            for the user's own MJCF).
         7. ``_apply_init_jitter`` - per-episode RNG-seeded ±jitter to
            init-subject bodies, layered on top of canonical state.
-
-        Round 43 (#168) — :class:`LiberoOffScreenRenderEngine`
-        fast-path. When the engine implements
-        :meth:`setup_libero_task` (duck-typed check), the entire
-        scene-generation + canonical-state-apply + camera-install +
-        action-controller-install pipeline above is bypassed in favour
-        of upstream ``OffScreenRenderEnv`` semantics. The engine does
-        all that work itself via robosuite. We just hand it the BDDL
-        path and (optional) init_state and let it run. This is the
-        path that matches NVIDIA's reference eval (``success_rate=1.0``
-        in 54s for 5 eps on libero_10/SCENE5) byte-for-byte.
         """
-        # Round 43 (#168) — fast-path for the OffScreenRenderEnv-backed
-        # engine. When the engine has ``setup_libero_task``, it owns
-        # the entire physics+render lifecycle (via upstream's robosuite
-        # path); skip our auto-generated-scene + OSC controller path.
-        if hasattr(sim, "setup_libero_task"):
-            self._on_episode_start_offscreen(sim, rng)
-            return
-
         if self.scene_path is None and self._auto_generate_scene:
             try:
                 generated = self._generate_scene_from_bddl()
@@ -771,14 +750,14 @@ class LiberoAdapter(BenchmarkProtocol):
         # would reset MjData to qpos0 and open a race window where
         # the recorder thread captures gradient or qpos0 frames
         # before _apply_canonical_state restores init_states[0]
-        # (#168 round 17 bug D-residual).
+        # (#168 bug D-residual).
         #
         # On ep0 with prewarm-fresh state, skip both load_scene and
         # _apply_canonical_state - prewarm has already done both.
         # Bump _episode_count manually so ep1+ follows the normal
         # per-episode reload + RNG-sample lifecycle.
         #
-        # Defensive sanity-check (#168 round 18): even when the
+        # Defensive sanity-check (#168): even when the
         # ``libero_prewarm_path`` flag is set and matches
         # ``self.scene_path``, verify that the current model size
         # still matches what prewarm worked on. If the model has
@@ -823,7 +802,7 @@ class LiberoAdapter(BenchmarkProtocol):
             # Fast-path: prewarm already loaded the scene. Trust that
             # state; skip load_scene + _register_default_robot.
             #
-            # IMPORTANT (#168 round 22 user-flagged fix): we
+            # IMPORTANT (#168 user-flagged fix): we
             # intentionally do NOT skip _apply_canonical_state here.
             # ``PolicyRunner._evaluate_with_spec`` calls ``sim.reset()``
             # between prewarm and on_episode_start, which resets
@@ -901,7 +880,7 @@ class LiberoAdapter(BenchmarkProtocol):
         # was the prior round's failure mode).
         #
         # Always runs - including on the prewarm-fresh-ep0 fast-path
-        # (#168 round 22 user-flagged fix). The fast-path used to skip
+        # (#168 user-flagged fix). The fast-path used to skip
         # this on the assumption that prewarm had already applied
         # init_states[0]; but PolicyRunner._evaluate_with_spec calls
         # sim.reset() between prewarm and on_episode_start, which
@@ -917,7 +896,7 @@ class LiberoAdapter(BenchmarkProtocol):
             self._install_libero_cameras(sim)
         if scene_was_loaded:
             # Install render-time visualization options matching upstream
-            # LIBERO's ``OffScreenRenderEnv`` viewer config (#168 round 9
+            # LIBERO's ``OffScreenRenderEnv`` viewer config (#168
             # bug E correction). Hides collision geoms, site / joint /
             # actuator / COM markers without modifying the cached MJCF.
             # See :meth:`_install_render_options` for the rationale.
@@ -927,25 +906,65 @@ class LiberoAdapter(BenchmarkProtocol):
             # converted into the LIBERO scene's torque-mode joint
             # actuators. Without this, _apply_sim_action silently
             # drops every action key (no name match) and the policy
-            # effectively sends 0 torque (#168 round 23 bug). Best-
+            # effectively sends 0 torque (#168 bug). Best-
             # effort - if controller setup fails (missing robosuite,
             # missing site, etc.), log + continue; the eval will run
             # but actions will be no-ops, which is the same behaviour
-            # as before round 23.
+            # as before this fix.
             self._install_action_controller(sim)
         if self._init_jitter > 0:
             self._apply_init_jitter(sim, rng)
 
-        # Round 30 (#168) — reset per-episode state-log counter so each
+        # #176 (sub-task 3d) — settle physics by one zero-action
+        # control step so the first observation handed to the policy is
+        # at "init_state + 1 OSC step", matching upstream LIBERO's
+        # ``OffScreenRenderEnv.reset`` which does
+        # ``set_init_state(...) + env.step(np.zeros(7))`` (see NVIDIA's
+        # ``libero_env.py:257``). Without this settle, the MuJoCoSimEngine
+        # path's first observation is at the raw ``init_state[i]`` while
+        # upstream's first observation is one control step ahead — the
+        # same training data was generated against the
+        # post-step state, so feeding the raw init_state to a policy
+        # trained on post-step inputs is OOD by a few mm / mrad.
+        #
+        # The downstream effect: the policy emits actions that are
+        # ~2x off from what the offscreen path emits on identical
+        # tasks, which (combined with the OSC torque divergence)
+        # is enough to keep success_rate at 0 on libero-10.
+        # After this fix, the first observation matches upstream within
+        # numerical noise (qpos diff < 1e-9 verified empirically).
+        #
+        # Best-effort: gated on having a working OSC controller (which
+        # owns_stepping). If the controller wasn't installed (warning
+        # already logged in ``_install_action_controller``), skip the
+        # settle to avoid raising — the eval will still run, just at
+        # the un-settled init pose.
+        if scene_was_loaded:
+            world = getattr(sim, "_world", None)
+            if world is not None:
+                backend_state = getattr(world, "_backend_state", None)
+                if isinstance(backend_state, dict) and "action_controller" in backend_state:
+                    send_action = getattr(sim, "send_action", None)
+                    if callable(send_action):
+                        try:
+                            send_action({})
+                        except Exception as e:  # noqa: BLE001 - never abort eval on settle failure
+                            logger.warning(
+                                "LiberoAdapter.on_episode_start: settle send_action({}) raised %s; "
+                                "first observation will be at raw init_state instead of init_state+1step",
+                                e,
+                            )
+
+        # #168 — reset per-episode state-log counter so each
         # episode emits its own first N STATE_LOG lines (matches the
-        # round-29 behaviour for ACTION_LOG via the controller's
+        # #168 behaviour for ACTION_LOG via the controller's
         # reset() call inside _install_action_controller above).
         self._state_log_step = 0
 
     def prewarm(self, sim: SimEngine) -> None:
         """Idempotent setup that should run BEFORE ``sim.start_cameras_recording``.
 
-        Why this exists (#168 round-10 / bug D'): the recorder thread
+        Why this exists (#168 / bug D'): the recorder thread
         spawned by :meth:`Simulation.start_cameras_recording` captures
         its first frame *immediately*, before
         :meth:`evaluate_benchmark` (and therefore
@@ -958,7 +977,7 @@ class LiberoAdapter(BenchmarkProtocol):
         because :meth:`_install_render_options` runs as part of
         ``on_episode_start``.
 
-        Round-13 verification (#168) revealed a second, more severe
+        Earlier verification (#168) revealed a second, more severe
         race: the renderer returns a skybox-only gradient for any
         ``render(camera=...)`` call when ``data.xpos`` / ``data.xmat``
         haven't been populated yet. ``mujoco.MjData`` allocates these
@@ -986,12 +1005,12 @@ class LiberoAdapter(BenchmarkProtocol):
                                               #   (depending on race timing)
 
         The first capture frame for whichever camera renders before
-        ``mj_forward`` returns gradient. Round 13's 2-pass warmup
+        ``mj_forward`` returns gradient. The 2-pass warmup (#168)
         loop in ``_loop`` didn't help because warmup-of-any-depth
         on any thread can't conjure populated body transforms - only
         ``mj_forward`` does that.
 
-        Round 14 fix: prewarm calls ``mj_forward`` itself. After
+        #168 fix: prewarm calls ``mj_forward`` itself. After
         prewarm, ``data.xpos`` / ``data.xmat`` are populated and the
         recorder's first render returns real geometry regardless of
         thread or camera order.
@@ -1030,7 +1049,7 @@ class LiberoAdapter(BenchmarkProtocol):
         a redundant Panda into the spec via spec recompile, bumping
         ``model.nq`` past what ``init_states[0]`` was sized for, and
         prewarm's init-state apply would silently no-op (logged at
-        WARNING). This is bug-D-residual #168 round 18; the
+        WARNING). This is bug-D-residual #168; the
         ``_register_default_robot`` step inside prewarm wraps the
         scene-supplied Panda automatically without needing a separate
         ``add_robot`` call.
@@ -1071,7 +1090,7 @@ class LiberoAdapter(BenchmarkProtocol):
             logger.warning("LiberoAdapter.prewarm: _install_render_options raised: %s", e)
 
         # Install the OSC_POSE action controller so GR00T's task-space
-        # delta-EEF actions translate to joint torques (#168 round 23
+        # delta-EEF actions translate to joint torques (#168
         # bug). Same idempotency / best-effort pattern as the other
         # prewarm steps.
         try:
@@ -1081,7 +1100,7 @@ class LiberoAdapter(BenchmarkProtocol):
 
         # Apply ``init_states[0]`` so the recorder's first frame
         # captures the canonical "ready" pose the policy will see at
-        # episode 0 (#168 round-16 bug D-residual). Without this,
+        # episode 0 (#168 bug D-residual). Without this,
         # ``data.qpos`` stays at the joint-default zeros that
         # ``load_scene`` left behind, and the t=0.00 recorded frame
         # shows the Panda stretched flat with mugs at MJCF defaults
@@ -1095,11 +1114,11 @@ class LiberoAdapter(BenchmarkProtocol):
             logger.warning("LiberoAdapter.prewarm: init-state apply failed: %s", e)
 
         # Forward the MjData so xpos/xmat are populated before the
-        # recorder thread's first render call (#168 round-14 bug D
+        # recorder thread's first render call (#168 bug D
         # fix). Without this, every render between prewarm() and
         # on_episode_start's _apply_canonical_state returns the
         # skybox-only gradient because Renderer.update_scene finds
-        # body transforms unset. Round 15 also moved this into
+        # body transforms unset. #168 also moved this into
         # Simulation.load_scene as the engine-level fix; the prewarm
         # call here is now defense-in-depth, AND ensures ``mj_forward``
         # runs after the init-state apply above so derived state
@@ -1110,13 +1129,13 @@ class LiberoAdapter(BenchmarkProtocol):
             logger.warning("LiberoAdapter.prewarm: mj_forward failed: %s", e)
 
         # Force one main-thread render to prime any process-wide
-        # GL state that the recorder thread inherits (#168 round 19
+        # GL state that the recorder thread inherits (#168
         # bug D defensive). The recorder thread spawned by
         # ``start_cameras_recording`` has its own
         # ``threading.local`` Renderer instance, but some driver-
         # level state (compiled shaders, texture caches, GLContext
         # bind state) is process-shared. The reviewer's variant-B
-        # verification (round 18) showed that without a main-thread
+        # verification (#168) showed that without a main-thread
         # render after prewarm, the recorder thread's first ~15
         # render calls return GL clear-colour gradient even when
         # ``mj_forward`` has populated ``data.xpos / xmat``. A single
@@ -1124,7 +1143,7 @@ class LiberoAdapter(BenchmarkProtocol):
         # state so the recorder thread's first call lands warm.
         #
         # Rounds 11-13 attempted thread-side warmup loops, which
-        # round-12 verification showed don't help (GL context is
+        # #168 verification showed don't help (GL context is
         # thread-bound and the per-thread Renderer is cold). The
         # main-thread approach here is different: it primes the
         # process-shared driver state, not the per-thread Renderer.
@@ -1241,7 +1260,7 @@ class LiberoAdapter(BenchmarkProtocol):
             # bumps ``nq`` past what the LIBERO ``init_states[0]`` was
             # sized for, and prewarm silently no-ops here. Visible at
             # WARNING level, users can spot the mistake without enabling
-            # debug logging (#168 round 18 verification).
+            # debug logging (#168 verification).
             logger.warning(
                 "LiberoAdapter.prewarm: init_state[0] width %d != 1+nq+nv=%d; skipping init-state apply. "
                 "This usually means sim.add_robot (or another spec-recompiling call) ran between "
@@ -1271,7 +1290,7 @@ class LiberoAdapter(BenchmarkProtocol):
         # for this scene_path. on_episode_start checks this flag on
         # episode 0 and skips its own load_scene + _apply_canonical_state
         # to avoid re-resetting qpos to qpos0 in the race window before
-        # the recorder thread captures its first frame (#168 round 17
+        # the recorder thread captures its first frame (#168
         # bug D-residual). The flag is one-shot for ep0; on_episode_start
         # consumes it (sets ``_episode_count`` to 1 directly) so ep1+
         # follows the normal per-episode reload + RNG-sample lifecycle.
@@ -1344,7 +1363,7 @@ class LiberoAdapter(BenchmarkProtocol):
         every request with ``Server error: State key 'state.x' must be
         in observation``.
 
-        **Round 31 fix (#168 — pose source).** Read EEF pose from the
+        **#168 fix (pose source).** Read EEF pose from the
         gripper *site* (``self.eef_state_site_name`` →
         ``"gripper0_grip_site"`` for LIBERO scenes) instead of the
         wrist *body* (``self._eef_body_name`` → ``"robot0_right_hand"``).
@@ -1365,7 +1384,7 @@ class LiberoAdapter(BenchmarkProtocol):
         2. Fall back to the BODY path via
            ``sim.get_body_state(self._eef_body_name)`` for non-RoboSuite
            scenes that don't ship the canonical site (e.g. bare
-           Menagerie Panda). The fallback path matches the pre-round-31
+           Menagerie Panda). The fallback path matches the pre-#168
            behaviour exactly.
         3. Convert the site/body's rotation matrix or quaternion to
            extrinsic XYZ Euler ``(roll, pitch, yaw)`` to match the
@@ -1390,7 +1409,7 @@ class LiberoAdapter(BenchmarkProtocol):
 
         merged = dict(obs)
 
-        # End-effector pose. Round 31 (#168): try site lookup first
+        # End-effector pose. #168: try site lookup first
         # (matches RoboSuite's eef_pos / eef_quat semantics), fall
         # back to body lookup if the site doesn't exist.
         position, quat = self._read_eef_pose(sim)
@@ -1406,13 +1425,13 @@ class LiberoAdapter(BenchmarkProtocol):
             merged.setdefault("pitch", pitch)
             merged.setdefault("yaw", yaw)
 
-        # Gripper — round 33 (#168). LIBERO trains ``state.gripper`` on
+        # Gripper — #168. LIBERO trains ``state.gripper`` on
         # ``robot0_gripper_qpos`` from LIBERO/RoboSuite, which is a
         # 2-element array
         # ``[gripper0_finger_joint1.qpos, gripper0_finger_joint2.qpos]``.
         # The two fingers have OPPOSITE-sign qpos by physical
         # convention (they move apart); typical at-rest values are
-        # ``[+0.0208, -0.0208]``. Pre-round-33 we read only one finger
+        # ``[+0.0208, -0.0208]``. Pre-#168 we read only one finger
         # via ``obs[self._gripper_joint_name]`` and packed it as
         # ``[v, v]`` (both positive), which fed GR00T structurally
         # out-of-distribution state — manifest as near-zero policy
@@ -1427,7 +1446,7 @@ class LiberoAdapter(BenchmarkProtocol):
             merged.setdefault("gripper", gripper_qpos)
         else:
             # Legacy fallback — read one joint from obs and duplicate
-            # (preserves pre-round-33 behaviour for non-RoboSuite
+            # (preserves pre-#168 behaviour for non-RoboSuite
             # scenes; the duplicate-packing is wrong for LIBERO but
             # there's no better default for unknown gripper layouts).
             gripper_value = obs.get(self._gripper_joint_name)
@@ -1447,7 +1466,7 @@ class LiberoAdapter(BenchmarkProtocol):
                     self._gripper_joint_name,
                 )
 
-        # Round 39 (#168) — flip rendered images vertically to match
+        # #168 — flip rendered images vertically to match
         # upstream LIBERO's ``OffScreenRenderEnv`` pixel convention.
         #
         # WHY: our ``sim.render()`` returns top-row-zero (image
@@ -1459,7 +1478,7 @@ class LiberoAdapter(BenchmarkProtocol):
         # (mirrored in the inference path via the policy's
         # ``image_rotation_180`` flag).
         #
-        # Round-39 ``tests_integ/.../diff_libero_obs.py`` measured the
+        # #168 ``tests_integ/.../diff_libero_obs.py`` measured the
         # delta: ``mean |Δ| = 56/255`` for raw vs raw, but
         # ``mean |Δ| = 5.40/255`` after applying ``[::-1, :]`` to ours
         # — a 10× reduction confirming the vertical-flip-only
@@ -1487,12 +1506,12 @@ class LiberoAdapter(BenchmarkProtocol):
             if isinstance(cam_value, np.ndarray) and cam_value.ndim >= 2:
                 merged[cam_key] = np.ascontiguousarray(cam_value[::-1, :])
 
-        # Round 30 (#168) — emit one structured STATE_LOG line per
+        # #168 — emit one structured STATE_LOG line per
         # ``augment_observation`` call when STRANDS_LIBERO_STATE_LOG=1.
         # Captures the EXACT state values fed to GR00T's policy server,
         # for offline comparison against LIBERO's
         # ``OffScreenRenderEnv.observation_spec()`` ground truth at the
-        # same canonical init pose. Round-29 ACTION_LOG showed the
+        # same canonical init pose. #168 ACTION_LOG showed the
         # OSC tracks tiny deltas correctly (95% of arm_ctrl is
         # gravity comp); the policy is *commanding* tiny deltas, which
         # points at state-input mismatch (units, frame, or magnitudes).
@@ -1516,7 +1535,7 @@ class LiberoAdapter(BenchmarkProtocol):
     def _read_eef_pose(self, sim: SimEngine) -> tuple[list[float] | None, list[float] | None]:
         """Read EEF position + (wxyz) quaternion for ``augment_observation``.
 
-        **Round 32 (#168) — split sources matching RoboSuite exactly.**
+        **#168 — split sources matching RoboSuite exactly.**
         RoboSuite's ``robosuite/robots/single_arm.py`` reads from TWO
         DIFFERENT POINTS in the kinematic chain::
 
@@ -1535,12 +1554,12 @@ class LiberoAdapter(BenchmarkProtocol):
         body's orientation deliberately because that's what the
         downstream observable + dataset expects.
 
-        Round 30 (#168) found we read both pos AND quat from the
+        #168 (initial diagnosis): we read both pos AND quat from the
         wrist body — pos was 71.8 mm off in z and orientation 180°
-        off in roll. Round 31 moved BOTH to the site, which fixed
-        position (within 5 mm) but introduced a 90° yaw offset
-        because site_xmat ≠ body xquat. Round 32 splits the reads
-        the way RoboSuite does.
+        off in roll. #168 (first attempt): moved BOTH to the site,
+        which fixed position (within 5 mm) but introduced a 90° yaw
+        offset because site_xmat ≠ body xquat. #168 (final fix):
+        splits the reads the way RoboSuite does.
 
         Returns ``(pos, quat_wxyz)``, either or both of which may be
         ``None`` on failure (logged at DEBUG; caller selectively injects
@@ -1644,7 +1663,7 @@ class LiberoAdapter(BenchmarkProtocol):
     def _read_gripper_qpos(self, sim: SimEngine) -> list[float] | None:
         """Read both finger qpos for the LIBERO ``state.gripper`` 2-vector.
 
-        Round 33 (#168). Returns
+        #168. Returns
         ``[finger1.qpos, finger2.qpos]`` read directly from
         ``data.qpos[jnt_qposadr]`` for the joint names returned by
         :attr:`state_gripper_joint_names` (default
@@ -1655,7 +1674,7 @@ class LiberoAdapter(BenchmarkProtocol):
         finger joints; their values have OPPOSITE signs by physical
         convention (the Panda gripper's two-finger MJCF puts each
         finger on its own joint with mirrored ranges, e.g.
-        ``[0, +0.04]`` and ``[-0.04, 0]``). Pre-round-33 the adapter
+        ``[0, +0.04]`` and ``[-0.04, 0]``). Pre-#168 the adapter
         read ONE finger's value and packed it as ``[v, v]`` (both
         positive), which is structurally OOD from training.
 
@@ -1715,48 +1734,14 @@ class LiberoAdapter(BenchmarkProtocol):
     def is_success(self, sim: SimEngine) -> bool:
         """Check whether the LIBERO task goal is satisfied.
 
-        Round 44 (#168) — when the sim wraps an upstream
-        ``OffScreenRenderEnv`` (i.e. ``LiberoOffScreenRenderEngine``,
-        identified via ``hasattr(sim, '_env')`` + the env's
-        ``check_success`` method), delegate to robosuite's native
-        success check rather than walking our BDDL predicate tree.
-
-        WHY: round-44 instrumentation found that our
-        :func:`compile_goal`-produced predicate tree disagrees with
-        the env's ``check_success`` for ``libero-10/SCENE5``: the
-        policy was actually solving the task (verified via
-        ``env.check_success() == True``) but our BDDL evaluator was
-        returning ``False``, so the rollout loop kept running until
-        ``max_steps`` truncation and the run ended with
-        ``success_rate = 0``. This was the FINAL bug after rounds
-        36-43 of structural fixes.
-
-        Switching to ``env.check_success`` boosted libero-10/SCENE5
-        from 0/5 to **5/5** (round-44 verified eval, in-process
-        Gr00tPolicy, ``r44_inprocess_eval.py``). The BDDL evaluator
-        path remains as a fallback for backends without an
-        ``OffScreenRenderEnv`` (e.g. our ``MuJoCoSimEngine``); the
-        residual bug in the BDDL predicate evaluator is a separate
-        investigation track.
-
-        Best-effort: if any introspection step fails (the env
-        doesn't have ``check_success``, or ``check_success`` raises),
-        falls back to the BDDL predicate tree. This keeps
-        ``LiberoAdapter`` working on engines that don't have an
-        upstream env.
+        Walks the BDDL predicate tree compiled at construction time
+        (:func:`compile_goal`) against the current sim state. The
+        evaluator was hardened in #170 / #173 / #175 to match
+        upstream LIBERO's ``check_ontop`` / ``check_contact``
+        semantics byte-for-byte at the moment of contact (#171
+        sub-task 3e contact check, #175 round 46d body-name
+        ``_main`` suffix fallback).
         """
-        env = getattr(sim, "_env", None)
-        if env is not None:
-            check = getattr(env, "check_success", None)
-            if callable(check):
-                try:
-                    return bool(check())
-                except Exception as e:  # noqa: BLE001
-                    logger.debug(
-                        "LiberoAdapter.is_success: env.check_success raised %s; "
-                        "falling back to BDDL predicate evaluator",
-                        e,
-                    )
         return bool(self._success_fn(sim))
 
     # Internals
@@ -1840,15 +1825,15 @@ class LiberoAdapter(BenchmarkProtocol):
         if self._scene_camera_aliases:
             xml = _rename_mjcf_cameras(xml, self._scene_camera_aliases)
 
-        # Round 8 used to apply ``_apply_libero_visual_fixes(xml)`` here -
+        # #168 used to apply ``_apply_libero_visual_fixes(xml)`` here -
         # rgba alpha=0 on collision geoms + a custom ``<visual>`` block
-        # with a stacked ``<headlight>``. Round-8 verification showed that
+        # with a stacked ``<headlight>``. #168 verification showed that
         # was the wrong direction:
         #
         # * Upstream LIBERO's ``OffScreenRenderEnv`` emits exactly
         #   ``<visual><map znear="0.001"/></visual>`` (verified
         #   empirically) and gets all its lighting from two ``<light>``
-        #   blocks already in the worldbody. Round 8 stacked a headlight
+        #   blocks already in the worldbody. #168 stacked a headlight
         #   on top, doubling the illumination - mean RGB jumped to
         #   (136, 117, 89) but the contrast that makes the white mug
         #   pop in upstream was washed out. The user-flagged "agentview
@@ -1860,7 +1845,7 @@ class LiberoAdapter(BenchmarkProtocol):
         #   ``gripper0_ft_frame`` / ``gripper0_grip_site_cylinder``
         #   sites in ``site_group=1``).
         #
-        # Round 9 reverts both transforms here (the cached XML now
+        # #168 reverts both transforms here (the cached XML now
         # exactly matches upstream's ``OffScreenRenderEnv.sim.model.get_xml()``)
         # and instead lets ``_install_render_options`` populate
         # ``world._backend_state["viz_option"]`` at episode start; the
@@ -1927,8 +1912,8 @@ class LiberoAdapter(BenchmarkProtocol):
 
         ``_LIBERO_MJCF_TRANSFORM_VERSION`` is bumped whenever the
         post-process logic in :meth:`_generate_scene_from_bddl`
-        changes (history at the constant's definition - round 8 added
-        collision-geom hiding + headlight boost; round 9 reverted both
+        changes (history at the constant's definition - #168 initially added
+        collision-geom hiding + headlight boost, then reverted both
         and moved visualisation hiding to render-time mjvOption).
         Bumping invalidates stale on-disk caches generated by prior
         versions so users picking up the upgrade automatically
@@ -1960,7 +1945,7 @@ class LiberoAdapter(BenchmarkProtocol):
         (scene-supplied + injected = two kinematic chains, ``nq``
         jumps ``44 → 53`` on LIBERO SCENE5) and leaves the redundant
         Panda's plastic shells right in front of the ``image`` camera
-        — that's #166 round-4's smoking gun: every "real-render" frame
+        — that's #166's smoking gun: every "real-render" frame
         is yellow-saturated by the second Panda's links 5/6.
 
         The fix has to register a wrapper for the **existing** Panda
@@ -2195,13 +2180,13 @@ class LiberoAdapter(BenchmarkProtocol):
         which renders within Δ=2.4 RGB units of upstream when the same
         flags are applied to our cache.
 
-        Round 8 used to do equivalent work via MJCF post-process
+        #168 used to do equivalent work via MJCF post-process
         (``_apply_libero_visual_fixes`` set rgba alpha=0 on collision
         geoms and stacked a ``<headlight>`` block in ``<visual>``).
         That worked for the agentview mean-RGB metric but the
         ``<headlight>`` *doubled* the lighting (upstream already has
         two ``<light>`` blocks in the worldbody) and washed out the
-        contrast that makes the white mug pop. Round 9 reverts the
+        contrast that makes the white mug pop. #168 reverts the
         MJCF rewrites entirely (cache now matches
         ``OffScreenRenderEnv.sim.model.get_xml()`` verbatim except for
         the camera-name aliases) and instead lets the render-time
@@ -2265,7 +2250,7 @@ class LiberoAdapter(BenchmarkProtocol):
         gripper). Without this controller, ``_apply_sim_action`` looks
         up GR00T's action keys by name in the model's actuator/joint
         tables, finds no match, and silently drops every action - the
-        policy effectively sends zero torque (#168 round 23 verification).
+        policy effectively sends zero torque (#168 verification).
 
         This installs a :class:`_LiberoOSCController` instance in
         ``world._backend_state["action_controller"]``. The rendering
@@ -2281,7 +2266,7 @@ class LiberoAdapter(BenchmarkProtocol):
 
         Best-effort: missing robosuite, missing site, missing actuator
         IDs - all log + skip without raising. The eval will run with
-        actions silently dropped (the round-22 status quo), which at
+        actions silently dropped (the #168 status quo), which at
         least doesn't crash.
 
         Lifecycle: tied to the loaded scene's compiled model. Since
@@ -2368,7 +2353,7 @@ class LiberoAdapter(BenchmarkProtocol):
         for cam_name, cam_kwargs in self._cameras.items():
             if cam_name in existing:
                 logger.debug("LiberoAdapter: camera %r already in sim; skipping install", cam_name)
-                # Round 40 (#168): even when we skip add_camera (because
+                # #168: even when we skip add_camera (because
                 # the model-compiled camera is already there from
                 # ``scene_camera_aliases`` rename), we still need to
                 # publish the configured render dimensions to
@@ -2378,7 +2363,7 @@ class LiberoAdapter(BenchmarkProtocol):
                 # 480×640 ``default_height``/``default_width`` of the
                 # renderer mixin — which is a different aspect ratio AND
                 # resolution from training (256×256), feeding GR00T
-                # out-of-distribution images even after the round-39
+                # out-of-distribution images even after the #168
                 # vertical-flip fix. Diagnostic
                 # ``/tmp/opencode/eval-runs/diff_libero_obs.py`` showed
                 # ``sim.get_observation()`` returned 480×640 while
@@ -2429,7 +2414,7 @@ class LiberoAdapter(BenchmarkProtocol):
         path; the pose / FOV fields are not used (the model-compiled
         camera's pose / FOV from the MJCF wins, which is what we want).
 
-        Round 40 (#168).
+        #168.
         """
         world = getattr(sim, "_world", None)
         if world is None:
@@ -2499,111 +2484,6 @@ class LiberoAdapter(BenchmarkProtocol):
             logger.debug("LiberoAdapter: model-side camera enumeration failed: %s", e)
         return names
 
-    def _on_episode_start_offscreen(self, sim: SimEngine, rng: random.Random) -> None:
-        """Round 43 (#168) — on_episode_start fast-path for
-        :class:`LiberoOffScreenRenderEngine`.
-
-        The OffScreenRenderEnv-backed engine owns scene loading,
-        physics, camera rendering, and action dispatch entirely via
-        upstream robosuite. We just need to:
-
-        1. Hand the engine the BDDL file path so it can construct the
-           ``OffScreenRenderEnv``.
-        2. Optionally pass ``init_states[i]`` for canonical-state apply.
-           When ``self._init_states`` is unset, the engine uses the
-           BDDL-default state (matching NVIDIA's
-           ``run_gr00t_sim_policy`` flow which gets ``success_rate=1.0``).
-        3. Reset the env so observation_spec produces a valid initial
-           observation for the policy's first ``get_action`` call.
-        4. Run super's compatibility check (Panda-only validation —
-           cheap on this engine since the Panda is implicit).
-
-        Skipped vs the MuJoCo-engine path: scene auto-generation,
-        ``_apply_canonical_state`` (engine handles via set_init_state),
-        ``_install_libero_cameras`` (cameras are MJCF-defined in
-        upstream), ``_install_render_options`` (upstream env owns its
-        viewer config), ``_install_action_controller`` (upstream env
-        wraps robosuite's controller internally), and
-        ``_apply_init_jitter`` (LIBERO eval doesn't use jitter when
-        ``init_jitter=0`` which is the default).
-        """
-        bddl_path = self._resolve_bddl_path()
-        if bddl_path is None:
-            raise RuntimeError(
-                "LiberoAdapter._on_episode_start_offscreen: cannot resolve BDDL "
-                "path. Construct the adapter via from_file() / from_text() so "
-                "bddl_path / bddl_source is set, or pass bddl_path= to the "
-                "constructor."
-            )
-
-        # Pick init_state per episode (RNG-seeded for determinism;
-        # episode 0 always uses idx 0). Falls through to None when
-        # init_states isn't provided, which matches NVIDIA's eval flow.
-        init_state = None
-        if self._init_states is not None and self._init_states.shape[0] > 0:
-            if self._episode_count == 0:
-                init_state = self._init_states[0]
-            else:
-                # rng-derived index (matches the legacy MuJoCo path's
-                # _apply_init_state_branch behaviour for ep ≥ 1).
-                idx = rng.randrange(self._init_states.shape[0])
-                init_state = self._init_states[idx]
-
-        setup_result = sim.setup_libero_task(bddl_path, init_state=init_state)  # type: ignore[attr-defined]
-        if isinstance(setup_result, dict) and setup_result.get("status") == "error":
-            msg = (setup_result.get("content") or [{}])[0].get("text", "")
-            raise RuntimeError(f"LiberoAdapter._on_episode_start_offscreen: setup_libero_task failed: {msg}")
-
-        # Reset the env so observation_spec returns a valid initial
-        # frame. The engine's reset() method re-applies init_state if
-        # one was provided to setup_libero_task.
-        reset_result = sim.reset()
-        if isinstance(reset_result, dict) and reset_result.get("status") == "error":
-            msg = (reset_result.get("content") or [{}])[0].get("text", "")
-            raise RuntimeError(f"LiberoAdapter._on_episode_start_offscreen: reset failed: {msg}")
-
-        # Compatibility check + register the default robot if needed.
-        # super().on_episode_start handles "no robots in sim" by
-        # auto-adding self.default_robot — that's a cheap no-op on the
-        # OffScreenRenderEnv engine since add_robot is a stub.
-        super().on_episode_start(sim, rng)
-
-        self._episode_count += 1
-
-    def _resolve_bddl_path(self) -> str | None:
-        """Return the BDDL file path used to construct this adapter.
-
-        Tries (in order):
-        1. ``self._bddl_path`` (set by ``from_file``).
-        2. Materialize ``self._bddl_source`` to a temp file (set by
-           ``from_text``). Cached for re-use across episodes.
-
-        Returns ``None`` when neither is available (e.g. caller
-        constructed via ``__init__`` directly without bddl plumbing).
-        """
-        if self._bddl_path is not None:
-            return self._bddl_path
-        if self._bddl_source is not None:
-            # Cache the materialized temp file across episodes.
-            cached = getattr(self, "_bddl_temp_path", None)
-            if cached is None or not os.path.exists(cached):
-                import tempfile
-
-                fd, tmp = tempfile.mkstemp(suffix=".bddl", prefix="libero_offscreen_", text=True)
-                try:
-                    with os.fdopen(fd, "w") as f:
-                        f.write(self._bddl_source)
-                except Exception:  # noqa: BLE001
-                    try:
-                        os.unlink(tmp)
-                    except OSError:
-                        pass
-                    raise
-                self._bddl_temp_path: str = tmp
-                cached = tmp
-            return cached
-        return None
-
     def _apply_canonical_state(self, sim: SimEngine, rng: random.Random | None = None) -> None:
         """Restore qpos / qvel to the scene's canonical home state.
 
@@ -2615,7 +2495,7 @@ class LiberoAdapter(BenchmarkProtocol):
            no rng is provided), validate the width matches
            ``1 + model.nq + model.nv``, then write
            ``data.time / data.qpos / data.qvel`` directly. This is the
-           branch that landed in #168 round 7 to fix bug I (success_rate=0
+           branch that landed in #168 to fix bug I (success_rate=0
            because the robot started at qpos=0 instead of LIBERO's
            canonical "ready" pose). Width mismatches are raised loudly
            rather than silently sliced - they indicate the procedurally-
@@ -2691,7 +2571,7 @@ class LiberoAdapter(BenchmarkProtocol):
         *,
         rng: random.Random | None,
     ) -> None:
-        """Init-state branch of :meth:`_apply_canonical_state` (#168 round 7).
+        """Init-state branch of :meth:`_apply_canonical_state` (#168).
 
         Picks one row from ``self._init_states`` (RNG-seeded), validates
         the width matches ``1 + model.nq + model.nv``, then writes
@@ -2722,7 +2602,7 @@ class LiberoAdapter(BenchmarkProtocol):
         policy's first observation are then visually identical -
         critical for the visual-acceptance regression suite where
         users compare "first recorded frame" against "expected
-        starting pose" (#168 round 16 bug D-residual).
+        starting pose" (#168 bug D-residual).
 
         Per-episode RNG-seeded selection (episodes 1+): ``rng.randint(0, n_states-1)``.
         Re-running the same seed produces the same init state for the
@@ -2763,7 +2643,7 @@ class LiberoAdapter(BenchmarkProtocol):
                 f"(1 + nq={nq} + nv={nv} = {expected_width}). The procedurally-generated MJCF "
                 f"likely diverges from the upstream LIBERO scene MJCF for this BDDL task "
                 f"(e.g. missing (:objects ...) declarations dropping free-joint bodies). "
-                f"#168 round 7 bug I: silent slicing forbidden - fix the scene generator instead."
+                f"#168 bug I: silent slicing forbidden - fix the scene generator instead."
             )
 
         def _apply() -> None:
@@ -2837,10 +2717,24 @@ class LiberoAdapter(BenchmarkProtocol):
     ) -> None:
         """Snapshot-and-restore branch of :meth:`_apply_canonical_state`.
 
-        First episode: capture ``data.qpos`` / ``data.qvel``. Subsequent
-        episodes: restore the cached snapshot via ``np.copyto`` and
-        ``mj_forward``. Procedurally-generated MJCFs (#165) hit this
-        branch because they don't ship a ``<keyframe>``.
+        First episode: write the LIBERO-canonical Panda home pose into
+        ``data.qpos[arm]`` (mirroring upstream ``Robot.reset(deterministic=True)``)
+        so the snapshot captures arm joints at home pose, then capture
+        ``data.qpos`` / ``data.qvel``. Subsequent episodes: restore the
+        cached snapshot via ``np.copyto`` and ``mj_forward``.
+
+        Procedurally-generated MJCFs (#165) hit this branch because they
+        don't ship a ``<keyframe>`` AND callers may not pass
+        ``init_states``. Without writing the home pose, ``data.qpos`` after
+        ``load_scene`` is at MuJoCo's default (all zeros for arm joints,
+        since the procedurally-generated MJCF doesn't set joint ``ref``
+        attributes). Upstream's ``OffScreenRenderEnv`` instead writes
+        ``MountedPanda.init_qpos`` (= ``[0, -0.161, 0, -2.444, 0, 2.227,
+        π/4]``) inside its ``Robot.reset`` so the env starts at the
+        ready pose. To match upstream's BDDL-default behaviour (#176
+        sub-task 3d), we replicate that write here.
+
+        #176 (sub-task 3d).
         """
         try:
             qpos = data.qpos
@@ -2849,9 +2743,11 @@ class LiberoAdapter(BenchmarkProtocol):
             logger.debug("LiberoAdapter: data has no qpos/qvel attrs: %s", e)
             return
 
-        # First episode (or model recompile changed nq) -> capture, don't
-        # restore. The snapshot is taken after super() + _install_libero_cameras
-        # so it reflects the post-setup canonical state.
+        # First episode (or model recompile changed nq) -> write home
+        # pose into arm joints, then capture; don't restore. The
+        # snapshot is taken after super() + _install_libero_cameras
+        # so it reflects the post-setup canonical state, with the arm
+        # at the LIBERO-canonical ready pose.
         needs_capture = (
             self._canonical_qpos is None
             or self._canonical_qpos.shape != qpos.shape
@@ -2859,6 +2755,14 @@ class LiberoAdapter(BenchmarkProtocol):
             or self._canonical_qvel.shape != qvel.shape
         )
         if needs_capture:
+            # #176 (sub-task 3d): write home pose to arm
+            # joints before snapshotting. Without this the captured
+            # snapshot is at MuJoCo's default qpos=0, which is
+            # significantly off from upstream's ``MountedPanda.init_qpos``
+            # post-``Robot.reset``. Best-effort: failures during home-
+            # pose discovery / write fall through silently — the
+            # snapshot captures whatever ``data.qpos`` happens to be.
+            self._write_libero_arm_home_qpos(model, data, mj, lock)
             try:
                 self._canonical_qpos = np.array(qpos, copy=True)
                 self._canonical_qvel = np.array(qvel, copy=True)
@@ -2895,6 +2799,91 @@ class LiberoAdapter(BenchmarkProtocol):
             logger.warning("LiberoAdapter: snapshot restore failed: %s", e)
             return
         logger.debug("LiberoAdapter: restored canonical qpos snapshot")
+
+    def _write_libero_arm_home_qpos(self, model: Any, data: Any, mj: Any, lock: Any) -> None:
+        """Write the LIBERO Panda + gripper ready pose into ``data.qpos``.
+
+        Mirrors upstream ``robosuite.robots.robot.Robot.reset(deterministic=True)``
+        which writes ``self.init_qpos`` (= ``MountedPanda.init_qpos`` for
+        LIBERO) to the arm joint qpos addresses BEFORE constructing the
+        OSC controller. Also mirrors ``SingleArm.reset`` which writes
+        ``self.gripper.init_qpos`` (= ``PandaGripper.init_qpos`` =
+        ``[0.020833, -0.020833]``) to the gripper finger joint qpos
+        addresses. Used by :meth:`_apply_snapshot_branch` to bring the
+        BDDL-default state into parity with upstream
+        ``OffScreenRenderEnv``.
+
+        Best-effort: any failure (no Panda joints, missing libero
+        package, model has no ``arm joint``s) is logged at DEBUG and
+        falls through silently, leaving ``data.qpos`` at whatever
+        MuJoCo's default was. Caller's snapshot branch then captures
+        the un-modified qpos.
+
+        #176 (sub-task 3d).
+        """
+        # Resolve arm joint qpos addresses (same scan as
+        # _LiberoOSCController.from_sim).
+        arm_qpos_addrs: list[int] = []
+        gripper_qpos_addrs: list[int] = []
+        njnt = int(getattr(model, "njnt", 0))
+        for i in range(njnt):
+            jname = mj.mj_id2name(model, mj.mjtObj.mjOBJ_JOINT, i)
+            if not isinstance(jname, str):
+                continue
+            if jname.startswith(self._scene_robot_prefix) and not jname.startswith(self._scene_gripper_prefix):
+                arm_qpos_addrs.append(int(model.jnt_qposadr[i]))
+            elif jname.startswith(self._scene_gripper_prefix):
+                # Filter to finger joints only — match #168 convention
+                # (gripper0_finger_joint1, gripper0_finger_joint2).
+                if "finger_joint" in jname:
+                    gripper_qpos_addrs.append(int(model.jnt_qposadr[i]))
+        if len(arm_qpos_addrs) != 7:
+            logger.debug(
+                "LiberoAdapter._write_libero_arm_home_qpos: expected 7 arm joints with prefix %r, "
+                "found %d; skipping home-pose write",
+                self._scene_robot_prefix,
+                len(arm_qpos_addrs),
+            )
+            return
+
+        home_qpos = _resolve_libero_arm_home_qpos(len(arm_qpos_addrs))
+        if home_qpos is None:
+            logger.debug(
+                "LiberoAdapter._write_libero_arm_home_qpos: no LIBERO/robosuite home pose available; "
+                "skipping home-pose write"
+            )
+            return
+
+        # Resolve gripper init_qpos (PandaGripper). Same caching pattern
+        # as arm home pose for cheap repeat lookup.
+        gripper_init = _resolve_panda_gripper_init_qpos(len(gripper_qpos_addrs))
+
+        def _do_write() -> None:
+            for adr, v in zip(arm_qpos_addrs, home_qpos, strict=True):
+                data.qpos[adr] = float(v)
+            if gripper_init is not None and len(gripper_qpos_addrs) == len(gripper_init):
+                for adr, v in zip(gripper_qpos_addrs, gripper_init, strict=True):
+                    data.qpos[adr] = float(v)
+            mj.mj_forward(model, data)
+
+        try:
+            if lock is not None:
+                with lock:
+                    _do_write()
+            else:
+                _do_write()
+        except Exception as e:  # noqa: BLE001 - best-effort, never fatal
+            logger.debug(
+                "LiberoAdapter._write_libero_arm_home_qpos: write failed (%s); snapshot will capture pre-write qpos",
+                e,
+            )
+            return
+        logger.debug(
+            "LiberoAdapter: wrote LIBERO Panda + gripper home pose into data.qpos (snapshot pre-capture); "
+            "arm=%d, gripper=%d",
+            len(arm_qpos_addrs),
+            len(gripper_qpos_addrs),
+        )
 
     def _apply_init_jitter(self, sim: SimEngine, rng: random.Random) -> None:
         """Apply ±jitter to xy of every body referenced by ``(:init (on A B))``.
@@ -2974,6 +2963,66 @@ def _extract_position(state: dict[str, Any]) -> list[float] | None:
     return None
 
 
+def _walk_predicate_tree(node: Any, sim: SimEngine) -> list[tuple[str, bool]]:
+    """Walk a BDDL goal tree and return ``(repr, verdict)`` for every leaf.
+
+    #170 diagnostic helper. Originally used by
+    :meth:`LiberoAdapter.is_success` to identify which sub-predicate
+    disagreed with the (now-removed, see #178) ``env.check_success``
+    delegation path. Kept for any future BDDL-evaluator debugging:
+    compiles each ``Pred`` leaf in isolation via the existing
+    ``compile_goal`` machinery and runs it against the live ``sim``.
+
+    Each reported leaf string includes the actual body positions
+    looked up via ``sim.get_body_state`` so we can see why a position-
+    based predicate (``on``, ``inside``, etc.) returned its verdict —
+    distinguishes between "name doesn't resolve" (None pos), "wrong
+    geometric threshold" (positions present but predicate still False),
+    and "true success" (positions present and predicate True).
+
+    Returns a list of ``(human-readable predicate, verdict)`` tuples,
+    one per leaf, in tree-traversal order. Combinators (``And`` / ``Or``
+    / ``Not``) are reported as nested-string prefixes.
+    """
+    from strands_robots.benchmarks.libero.bddl_parser import And, Not, Or, Pred, compile_goal
+    from strands_robots.simulation.predicates import _body_position
+
+    out: list[tuple[str, bool]] = []
+
+    def _arg_diag(arg: str) -> str:
+        """Render a body name + its position for diagnostic output."""
+        pos = _body_position(sim, arg)
+        if pos is None:
+            return f"{arg}=NONE"
+        return f"{arg}=[{pos[0]:.3f}, {pos[1]:.3f}, {pos[2]:.3f}]"
+
+    def visit(n: Any, prefix: str = "") -> None:
+        if isinstance(n, Pred):
+            try:
+                verdict = bool(compile_goal(n)(sim))
+            except Exception as e:  # noqa: BLE001
+                out.append((f"{prefix}({n.name} {' '.join(n.args)})", False))
+                logger.debug("predicate_log: leaf %r raised %s", n, e)
+                return
+            arg_diag = " ".join(_arg_diag(a) for a in n.args)
+            out.append((f"{prefix}({n.name} {arg_diag})", verdict))
+            return
+        if isinstance(n, And):
+            for c in n.clauses:
+                visit(c, prefix + "AND/")
+            return
+        if isinstance(n, Or):
+            for c in n.clauses:
+                visit(c, prefix + "OR/")
+            return
+        if isinstance(n, Not):
+            visit(n.clause, prefix + "NOT/")
+            return
+
+    visit(node)
+    return out
+
+
 def _extract_pose(state: dict[str, Any] | None) -> tuple[list[float] | None, list[float] | None]:
     """Pull ``(position, quaternion_wxyz)`` from a ``get_body_state`` payload.
 
@@ -3002,11 +3051,11 @@ def _extract_pose(state: dict[str, Any] | None) -> tuple[list[float] | None, lis
 
 
 def _fmt_state_value(value: Any) -> str:
-    """Format a state value for ``STATE_LOG`` output (round 30, #168).
+    """Format a state value for ``STATE_LOG`` output (#168).
 
     Returns ``"None"`` for missing keys, scalar floats rounded to 6dp,
     and list/tuple/ndarray values rounded element-wise. Matches the
-    ``np.round(..., 6).tolist()`` style of round-29's ACTION_LOG so
+    ``np.round(..., 6).tolist()`` style of #168's ACTION_LOG so
     a single grep yields parseable values across both diagnostic
     streams.
     """
@@ -3024,28 +3073,56 @@ def _fmt_state_value(value: Any) -> str:
 def _quat_wxyz_to_rpy_xyz(quat_wxyz: list[float]) -> tuple[float, float, float]:
     """MuJoCo ``(w, x, y, z)`` quaternion → extrinsic XYZ Euler ``(roll, pitch, yaw)``.
 
-    Matches RoboSuite/LIBERO's ``mat2euler(..., axes='sxyz')`` convention -
-    i.e. rotations applied about the *static* world frame in the order
-    X (roll), Y (pitch), Z (yaw). This is also what
-    ``scipy.spatial.transform.Rotation.from_quat([x, y, z, w]).as_euler('xyz')``
-    returns (lowercase ``'xyz'`` = extrinsic in scipy).
+    Matches RoboSuite/LIBERO's ``mat2euler(..., axes='sxyz')`` convention
+    byte-for-byte. RoboSuite implements ``sxyz`` as the extraction
+    ``(atan2(M[2,1], M[2,2]), asin(-M[2,0]), atan2(M[1,0], M[0,0]))``
+    where ``M`` is the rotation matrix in Hamilton convention.
 
-    Pure numpy / stdlib - **does not import scipy**, which is not a
-    declared dependency of strands_robots. Math reference:
+    For unit quat ``q = (w, x, y, z)``, the rotation-matrix entries
+    needed for the canonical extraction are (Hamilton convention,
+    standard active rotation):
 
-        R = R_x(roll) · R_y(pitch) · R_z(yaw)  (extrinsic XYZ)
+        M[0,0] = 1 - 2(y² + z²)
+        M[1,0] = 2(xy + wz)
+        M[2,0] = 2(xz - wy)
+        M[2,1] = 2(yz + wx)
+        M[2,2] = 1 - 2(x² + y²)
 
-    For unit quat ``q = (w, x, y, z)``, the rotation-matrix elements
-    needed for the canonical extraction are:
+    Hence:
 
-        R[0,2] =  2 (xz + wy)        →  sin(pitch)
-        R[0,0] =  1 - 2 (y² + z²)
-        R[0,1] = -2 (wz - xy)
-        R[1,2] = -2 (wx - yz)
-        R[2,2] =  1 - 2 (x² + y²)
+        roll  = atan2(M[2,1], M[2,2]) = atan2(2(wx + yz), 1 - 2(x² + y²))
+        pitch = asin(-M[2,0])         = asin(2(wy - xz))
+        yaw   = atan2(M[1,0], M[0,0]) = atan2(2(wz + xy), 1 - 2(y² + z²))
+
+    Pure numpy / stdlib — **does not import scipy**, which is not a
+    declared dependency of strands_robots. Equivalent to
+    ``robosuite.utils.transform_utils.mat2euler(R, axes='sxyz')``
+    on the rotation matrix derived from ``q``.
+
+    **#176 (sub-task 3d)** corrected three sign errors in the
+    pre-46 derivation. The pre-46 formula was based on
+    ``R = R_x · R_y · R_z`` (intrinsic XYZ, NOT extrinsic), giving:
+
+        roll  = atan2(2(wx - yz), ...)  [WRONG SIGN on yz]
+        pitch = asin(2(wy + xz))         [WRONG SIGN on xz]
+        yaw   = atan2(2(wz - xy), ...)  [WRONG SIGN on xy]
+
+    These produced sign-flipped Euler angles for the EEF wrist body
+    on the LIBERO ready pose (verified empirically against
+    robosuite's ``mat2euler``: a quat=(0, 0.707, 0.707, 0) returns
+    (π, 0, π/2) under sxyz but the pre-46 formula returned (-π, 0,
+    -π/2)). The sign flip in yaw is genuinely a different rotation
+    (left vs right twist about z). The state.yaw reported to the
+    policy was therefore systematically inverted relative to
+    training data, putting the policy out-of-distribution from the
+    very first observation. (The state-parity test passed at canonical
+    init because canonical-pose yaw is ~0.0005 rad and the test uses
+    ``_angle_diff_mod_2pi`` which masked the sign flip; the test
+    should also be made to forbid sign-flips for non-π rotations.)
 
     Gimbal lock (``|sin(pitch)| ≥ 1 - 1e-6``) collapses roll into yaw;
-    we use the ``atan2(R[1,0], R[1,1])`` resolution that matches scipy.
+    we use the ``atan2(-M[1,2], M[1,1])`` resolution that matches
+    scipy / robosuite.
 
     Returns:
         ``(roll, pitch, yaw)`` in **radians**, each in the principal
@@ -3055,16 +3132,20 @@ def _quat_wxyz_to_rpy_xyz(quat_wxyz: list[float]) -> tuple[float, float, float]:
     import math
 
     w, x, y, z = quat_wxyz
-    # Clamp argument to asin to handle minor numerical drift on unit quats.
-    sin_pitch = max(-1.0, min(1.0, 2.0 * (x * z + w * y)))
+    # Clamp asin argument to handle minor numerical drift on unit quats.
+    sin_pitch = max(-1.0, min(1.0, 2.0 * (w * y - x * z)))
     pitch = math.asin(sin_pitch)
     if abs(sin_pitch) >= 1.0 - 1e-6:
-        # Gimbal-lock branch: roll absorbed into yaw.
+        # Gimbal lock: roll absorbed into yaw. Use the same fallback
+        # robosuite's ``mat2euler`` does (atan2(-M[1,2], M[1,1])).
         roll = 0.0
-        yaw = math.atan2(2.0 * (x * y + w * z), 1.0 - 2.0 * (y * y + z * z))
+        # M[1,2] = 2(yz - wx); M[1,1] = 1 - 2(x² + z²).
+        yaw = math.atan2(-2.0 * (y * z - w * x), 1.0 - 2.0 * (x * x + z * z))
     else:
-        roll = math.atan2(-2.0 * (y * z - w * x), 1.0 - 2.0 * (x * x + y * y))
-        yaw = math.atan2(-2.0 * (x * y - w * z), 1.0 - 2.0 * (y * y + z * z))
+        # M[2,1] = 2(yz + wx); M[2,2] = 1 - 2(x² + y²).
+        roll = math.atan2(2.0 * (w * x + y * z), 1.0 - 2.0 * (x * x + y * y))
+        # M[1,0] = 2(xy + wz); M[0,0] = 1 - 2(y² + z²).
+        yaw = math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
     return (roll, pitch, yaw)
 
 
@@ -3084,23 +3165,43 @@ def _default_scene_cache_dir() -> Path:
 
 
 def _extract_compiled_mjcf(env: Any) -> str:
-    """Pull the compiled MJCF XML out of a ``libero`` ControlEnv.
+    """Pull the MJCF XML out of a ``libero`` ControlEnv.
 
-    ``ControlEnv.env`` is the underlying robosuite manipulation env;
-    its ``.sim.model.get_xml()`` returns the merged / compiled MJCF as
-    a string (with all ``<include>``s resolved and assets inlined).
-    Robosuite renamed this accessor over the years, so we try a small
-    set of fallbacks before giving up - and we never look at any
-    non-public attributes.
+    Prefers ``env.env.model.get_xml()`` (the **pre-compile** MJCF emitted by
+    robosuite's ``ManipulationTask`` — what gets handed to
+    ``MjModel.from_xml_string`` at construction time). Falls back to
+    ``env.env.sim.model.get_xml()`` (a **post-compile** re-serialization via
+    ``mj_saveLastXML``) if the pre-compile accessor isn't available.
+
+    **Why pre-compile is preferred (#181).** ``mj_saveLastXML`` is a lossy
+    round-trip — it doesn't preserve every ``<compiler>`` attribute. In
+    particular ``inertiagrouprange="0 0"`` is dropped, so re-loading the
+    saved XML re-computes body inertias from ALL geom groups (including
+    visual meshes) rather than just collision geoms (group 0). Effect on
+    ``libero-10/SCENE5``: re-loaded model has table_col mass 77.5 kg vs
+    upstream's 34.5 kg, mug masses 4× heavier, etc.
+
+    The pre-compile path preserves ``<compiler inertiagrouprange="0 0"/>``
+    verbatim, so re-loading byte-identically reproduces upstream's runtime
+    masses (table_col=34.54 kg, mug=0.0165 kg). Verified empirically by
+    diffing ``env.env.sim.model._model`` (upstream runtime) vs
+    ``mujoco.MjModel.from_xml_path(cached.xml)`` for both paths.
+
+    Robosuite renamed accessors over the years; we try a small set of
+    fallbacks before giving up. Never looks at any non-public attributes.
     """
     accessors = (
-        # Newer robosuite (>=1.4) - canonical path through the env's MjSim.
-        lambda: env.env.sim.model.get_xml(),
-        # Older robosuite (<1.4) - sometimes exposes the model directly.
+        # #181 — preferred: pre-compile MJCF from robosuite's
+        # ``ManipulationTask``. Preserves ``<compiler>`` attributes that
+        # ``mj_saveLastXML`` drops (notably ``inertiagrouprange``).
         lambda: env.env.model.get_xml(),
-        # Fallback: ManipulationEnv subclasses sometimes expose the
-        # compiled XML via an explicit ``model.get_model_xml`` helper.
+        # Older robosuite path: ``ManipulationEnv`` subclasses sometimes
+        # expose the compiled XML via an explicit helper.
         lambda: env.env.model.get_model_xml(),  # type: ignore[attr-defined]
+        # Last resort: post-compile re-serialization. Lossy on
+        # ``<compiler>`` attributes (see #181); used only if the
+        # pre-compile accessors aren't available (very old robosuite).
+        lambda: env.env.sim.model.get_xml(),
     )
     last_err: Exception | None = None
     for accessor in accessors:
@@ -3111,7 +3212,7 @@ def _extract_compiled_mjcf(env: Any) -> str:
             continue
         if isinstance(xml, str) and xml.strip():
             return xml
-    raise RuntimeError(f"could not extract compiled MJCF from libero env (last error: {last_err!r})")
+    raise RuntimeError(f"could not extract MJCF from libero env (last error: {last_err!r})")
 
 
 # Match a complete ``<camera ... name="OLD" ...>`` declaration so the
@@ -3150,15 +3251,27 @@ def _rename_mjcf_cameras(xml: str, aliases: dict[str, str]) -> str:
 #
 # History:
 # * ``v1``: implicit (pre-#168, alias map alone in cache key).
-# * ``v2``: round 8 - applied ``_apply_libero_visual_fixes`` (rgba alpha=0 on
+# * ``v2``: #168 (initial attempt) — applied ``_apply_libero_visual_fixes`` (rgba alpha=0 on
 #   collision geoms + custom ``<visual>`` block with stacked ``<headlight>``).
 #   Empirically wrong direction (washed out contrast); reverted in v3.
-# * ``v3``: round 9 - cached MJCF matches upstream ``OffScreenRenderEnv.sim.model.get_xml()``
+# * ``v3``: #168 (subsequent revert) — cached MJCF matches upstream ``OffScreenRenderEnv.sim.model.get_xml()``
 #   verbatim except for the camera-name aliases. Visual fidelity is
 #   handled at render time via ``world._backend_state["viz_option"]``
 #   (set by :meth:`LiberoAdapter._install_render_options`), not via
 #   MJCF rewrites.
-_LIBERO_MJCF_TRANSFORM_VERSION = "v3"
+# * ``v4``: #181 — switch ``_extract_compiled_mjcf`` to prefer
+#   ``env.env.model.get_xml()`` (pre-compile) over
+#   ``env.env.sim.model.get_xml()`` (post-compile via ``mj_saveLastXML``).
+#   The post-compile path is lossy on ``<compiler>`` attributes, dropping
+#   ``inertiagrouprange="0 0"`` which restricts inertia computation to
+#   collision geoms (group 0). Without it, MuJoCo computes body masses
+#   from ALL geom groups including visual meshes — table mass jumps from
+#   34.5 kg to 77.5 kg, mug masses go up 4×, and ``mj_step`` produces
+#   different ``qfrc_bias`` (Coriolis + gravity) than upstream's runtime
+#   model. Effect on libero-10/SCENE5: end-to-end ``success_rate`` mean
+#   over 5 master seeds × 5 episodes drops from ~0.72 (offscreen) to
+#   ~0.52 (mujoco) entirely from this single ``<compiler>`` attr drop.
+_LIBERO_MJCF_TRANSFORM_VERSION = "v4"
 
 
 def _build_scene_robot_wrapper(
@@ -3187,7 +3300,7 @@ def _build_scene_robot_wrapper(
     would silently get ``None``. That manifests as
     ``state.gripper`` being omitted from the GR00T request and the
     server rejecting with ``State key 'state.gripper' must be in
-    observation`` (#168 round-5 bug G).
+    observation`` (#168 bug G).
 
     Body discovery uses ``prefix`` only - in RoboSuite/LIBERO MJCFs the
     gripper is mounted as a child body of the arm's last link, not a
@@ -3299,7 +3412,7 @@ class _ControllerInstallError(RuntimeError):
 
 
 class _LiberoOSCController:
-    """OSC_POSE controller wrapper for GR00T-LIBERO action dispatch (#168 round 23).
+    """OSC_POSE controller wrapper for GR00T-LIBERO action dispatch (#168).
 
     Converts task-space delta-EEF actions
     (``{x, y, z, roll, pitch, yaw, gripper}``) into joint torques
@@ -3325,7 +3438,7 @@ class _LiberoOSCController:
     """
 
     # Tells the SimEngine that this controller drives ``mj_step`` itself
-    # (round 27): one ``apply()`` advances physics by
+    # (#168): one ``apply()`` advances physics by
     # ``physics_substeps_per_control`` steps, recomputing OSC torques each
     # step. Without this flag, ``_apply_sim_action`` would call ``mj_step``
     # again after ``apply()`` and double-step (or worse, leave a stale
@@ -3337,7 +3450,7 @@ class _LiberoOSCController:
     # ``current_action`` (2-vector in [-1, +1]) is incremented by
     # ``[-1, +1] * speed * sign(input)`` per substep, slowly ramping toward
     # full close (+1 → both fingers at clipped target) or full open (-1 →
-    # opposite). Round 28 (#168): replicate this ramp instead of writing
+    # opposite). #168: replicate this ramp instead of writing
     # the raw GR00T scalar to ``data.ctrl``, which previously caused one
     # finger to actuate in the wrong direction (finger1 has ctrlrange
     # [0, 0.04] where +1 clips to OPEN, but the format_action saturation
@@ -3370,7 +3483,7 @@ class _LiberoOSCController:
         # substeps per policy action. Mismatch ⇒ the OSC controller
         # under-/over-shoots its delta target every step, manifesting as
         # `success_rate=0` even though motion looks correct in cameras.
-        # See PR #168 round-26 verification + round-27 fix.
+        # See PR #168 (verification then fix in subsequent commits).
         self.physics_substeps_per_control = max(1, int(physics_substeps_per_control))
 
         # Stateful ``current_action`` for the gripper, mirroring
@@ -3398,13 +3511,13 @@ class _LiberoOSCController:
             dtype=np.float64,
         )
 
-        # Round 29 (#168) — diagnostic logging gate. Set
+        # #168 — diagnostic logging gate. Set
         # ``STRANDS_LIBERO_ACTION_LOG=1`` to emit one structured INFO
         # log line per ``apply()`` call for the first
         # ``STRANDS_LIBERO_ACTION_LOG_MAX`` (default 50) calls per
         # episode. Captures action keys, delta scale, gripper polarity,
         # EEF tracking, and qpos/ctrl deltas — answers the diagnostic
-        # questions in PR #168 round-28 verification.
+        # questions in PR #168 verification.
         self._action_log_enabled = os.environ.get("STRANDS_LIBERO_ACTION_LOG", "").strip().lower() in (
             "1",
             "true",
@@ -3424,7 +3537,7 @@ class _LiberoOSCController:
     def reset(self) -> None:
         """Reset stateful per-episode controller state.
 
-        Round 28 (#168): the gripper's ``current_action`` is a stateful
+        #168: the gripper's ``current_action`` is a stateful
         ramp accumulator (per ``PandaGripper.format_action``). Without a
         reset, the second episode starts with whatever finger position
         the first episode ended at — typically a partially-closed
@@ -3433,7 +3546,7 @@ class _LiberoOSCController:
         called from ``on_episode_start``) so each episode starts with a
         canonical ``current_action = [0, 0]``.
 
-        Round 29 (#168): also resets the per-episode action-log step
+        #168: also resets the per-episode action-log step
         counter so each episode logs its own first N steps when
         ``STRANDS_LIBERO_ACTION_LOG=1`` is set.
         """
@@ -3543,7 +3656,7 @@ class _LiberoOSCController:
         # ``mujoco.MjData(model)`` accessible at ``sim_shim.data._data``.
         # That fresh data buffer is DISCONNECTED from our sim's
         # actual ``data`` - the controller would compute torques from
-        # a stale, never-stepped buffer (#168 round 23 verification).
+        # a stale, never-stepped buffer (#168 verification).
         # Hot-patch ``sim_shim.data._data`` to point at our actual
         # data so ``controller.run_controller()`` reads/writes the
         # same buffer the eval is stepping.
@@ -3571,7 +3684,113 @@ class _LiberoOSCController:
             dtype=np.float32,
         )
         controller_config["actuator_range"] = (ctrl_low, ctrl_high)
+
+        # #176 — temporarily set ``data.qpos[arm]`` to the
+        # LIBERO-canonical Panda "ready" pose around the
+        # ``controller_factory`` call so the controller's
+        # construction-time state capture matches upstream LIBERO
+        # byte-for-byte.
+        #
+        # **Why this is needed.** Robosuite's ``BaseController.__init__``
+        # ends with ``self.update_initial_joints(initial_joints)``,
+        # which:
+        #
+        # 1. sets ``self.initial_joint = initial_joints``,
+        # 2. calls ``self.update(force=True)`` reading ``ee_pos`` /
+        #    ``ee_ori_mat`` / ``joint_pos`` from the *current*
+        #    ``data.qpos``,
+        # 3. stores those reads into ``self.initial_ee_pos`` and
+        #    ``self.initial_ee_ori_mat``.
+        #
+        # ``OSC_POSE.__init__`` then sets
+        # ``self.goal_pos = np.array(self.initial_ee_pos)`` and
+        # ``self.goal_ori = np.array(self.initial_ee_ori_mat)``. So the
+        # controller's *initial goal pose* is whatever ``data.qpos``
+        # happened to be at construction time.
+        #
+        # Upstream LIBERO's ``Robot.reset(deterministic=True)``
+        # (``robosuite/robots/robot.py``) writes ``self.init_qpos`` (=
+        # ``MountedPanda.init_qpos`` = ``[0, -0.161, 0, -2.4446, 0,
+        # 2.2268, π/4]``) into ``data.qpos[arm]`` BEFORE constructing
+        # the controller, so ``initial_ee_pos`` / ``initial_ee_ori_mat``
+        # / ``goal_pos`` / ``goal_ori`` all latch on to the ready-pose
+        # EEF location. Then ``env.set_init_state(init_states[i])``
+        # overwrites ``data.qpos`` with the per-episode canonical
+        # state, but the controller's initial-state attributes are
+        # frozen — leading to a non-trivial nullspace bias and a
+        # ``goal_ori`` that's ~54 mrad different from the perturbed
+        # canonical pose.
+        #
+        # Our ``LiberoAdapter._install_action_controller`` runs from
+        # ``on_episode_start`` AFTER ``_apply_canonical_state`` has
+        # already loaded the canonical ``init_states[i]`` into
+        # ``data.qpos``, AND we never write the Panda ready pose
+        # ourselves. The upstream-style ``Robot.reset`` step happens
+        # implicitly via the LIBERO env construction in upstream's
+        # path; we have no analog. So we replicate it here by
+        # snapshotting ``data.qpos[arm]`` (the current canonical
+        # values), writing the LIBERO Panda ready pose into those
+        # addresses, calling ``mj_forward`` so site_xpos / site_xmat
+        # reflect the home pose, building the controller (which
+        # captures everything from the home-pose state), then
+        # restoring ``data.qpos[arm]`` and calling ``mj_forward``
+        # again. ``data.qvel`` is left as-is — upstream's
+        # ``Robot.reset`` doesn't touch qvel, and our canonical
+        # ``init_state`` is at zero velocity anyway.
+        #
+        # This fixes the ~50× torque divergence in #176 root cause: not
+        # just the nullspace bias (``initial_joint``), but ALSO the
+        # ``goal_ori`` initialization that without the swap would
+        # latch on to the perturbed pose's EEF orientation.
+        #
+        # See ``probe_osc_internals_v3.py`` for the verification
+        # showing torques match within tolerance after this swap.
+        snapshot_qpos: np.ndarray | None = None
+        home_qpos = _resolve_libero_arm_home_qpos(len(arm_qpos_addrs))
+        if home_qpos is not None:
+            try:
+                # Snapshot current canonical arm qpos so we can restore.
+                snapshot_qpos = np.array(
+                    [float(data.qpos[adr]) for adr in arm_qpos_addrs],
+                    dtype=np.float64,
+                )
+                # Write home pose into arm joint addresses.
+                for adr, v in zip(arm_qpos_addrs, home_qpos, strict=True):
+                    data.qpos[adr] = float(v)
+                # Update derived state (site_xpos, site_xmat, jacobians)
+                # so the controller's __init__ ``update(force=True)``
+                # reads home-pose values.
+                _mj.mj_forward(model, data)
+            except (AttributeError, IndexError, TypeError, ValueError) as e:
+                # Defensive: if we can't snapshot, don't proceed with
+                # the swap (would leak home pose into the sim).
+                logger.debug(
+                    "_LiberoOSCController.from_sim: failed to swap qpos to home pose for "
+                    "controller construction (%s); falling back to construction-time state",
+                    e,
+                )
+                snapshot_qpos = None
+
         controller = controller_factory("OSC_POSE", controller_config)
+
+        # Restore the per-episode canonical qpos and re-forward so
+        # data is byte-identical to its pre-swap state. The
+        # controller has already captured ``initial_*`` and ``goal_*``
+        # at the home pose; subsequent ``update()`` calls will read
+        # the restored canonical state, which is exactly upstream's
+        # behavior post-``set_init_state``.
+        if snapshot_qpos is not None:
+            try:
+                for adr, v in zip(arm_qpos_addrs, snapshot_qpos, strict=True):
+                    data.qpos[adr] = float(v)
+                _mj.mj_forward(model, data)
+            except (AttributeError, IndexError, TypeError, ValueError) as e:
+                # If restore fails the sim is in an unknown state;
+                # raise loudly rather than silently leaving home pose.
+                raise _ControllerInstallError(
+                    f"failed to restore qpos after controller construction (snapshot was "
+                    f"{snapshot_qpos.tolist()}): {e}. Sim may be in inconsistent state."
+                ) from e
 
         # Compute physics-substeps-per-control from sim's actual timestep.
         # LIBERO trains at 20 Hz control rate. With dt=0.002 (default 500 Hz
@@ -3613,10 +3832,10 @@ class _LiberoOSCController:
         ``data.xpos / xmat / qpos / qvel`` - which means
         :meth:`LiberoAdapter._forward_mj_data` must have run before
         this is first called (otherwise xpos/xmat are uninitialized).
-        Round-15's ``mj_forward`` in ``Simulation.load_scene``
+        #168's ``mj_forward`` in ``Simulation.load_scene``
         guarantees this.
 
-        **Round-27 control-rate fix.** LIBERO trains at 20 Hz control
+        **#168 control-rate fix.** LIBERO trains at 20 Hz control
         with 500 Hz physics → 25 physics substeps per policy action.
         We mirror RoboSuite's standard step loop
         (``robosuite.environments.base.Base.step``):
@@ -3635,7 +3854,7 @@ class _LiberoOSCController:
         we ran OSC at 500 Hz (the physics rate) — the controller
         designed each torque profile for a 25-step horizon but only
         applied it for 1 step before the policy delivered a fresh
-        delta, leading to the round-26 "robot moves but never
+        delta, leading to the #168 "robot moves but never
         converges" symptom.
 
         ``owns_stepping = True`` tells the SimEngine not to call
@@ -3658,8 +3877,8 @@ class _LiberoOSCController:
         # LIBERO packs ALL action channels (x/y/z/roll/pitch/yaw/gripper)
         # to match the training-data shape, same convention PR #162
         # introduced for state.gripper. _to_scalar handles both forms
-        # (and defensive against unexpected shapes) - round 25 only
-        # fixed gripper; round 26 applies the same fix to every key.
+        # (and defensive against unexpected shapes) - #168 only
+        # fixed gripper; #168 applies the same fix to every key.
         delta = np.array(
             [
                 _to_scalar(action_dict.get("x", 0.0)),
@@ -3671,9 +3890,23 @@ class _LiberoOSCController:
             ],
             dtype=np.float64,
         )
-        gripper_value = _to_scalar(action_dict.get("gripper", 0.0))
+        # Default 0.5 (RLDS midway = no command) so an action dict
+        # WITHOUT a gripper key produces no gripper movement. #168
+        # added the RLDS→robosuite conversion ``-sign(2*v - 1)`` which
+        # maps a default of 0.0 (RLDS close) to +1 (LIBERO close),
+        # silently closing the gripper on every empty-dict
+        # ``send_action({})`` call. With default 0.5 the conversion
+        # gives 0 → no ramp → ``current_action`` stays at its previous
+        # value → ctrl = bias (mid-range, holds open). #171 sub-task 3c
+        # found this via the deep-rollout state parity test: gripper
+        # drifted -19.6 mm in 50 zero-action steps while upstream stayed
+        # at ~+20 mm.
+        #
+        # Production eval is unaffected — the policy always sends
+        # ``gripper`` in the action chunk so the default never fires.
+        gripper_value = _to_scalar(action_dict.get("gripper", 0.5))
 
-        # Round 41 (#168) — convert RLDS gripper convention → robosuite/LIBERO
+        # #168 — convert RLDS gripper convention → robosuite/LIBERO
         # convention. The GR00T-N1.7-LIBERO checkpoint emits ``action.gripper``
         # in the RLDS dataloader's convention (``0 = close``, ``1 = open``);
         # robosuite's ``PandaGripper.format_action`` expects the opposite
@@ -3694,16 +3927,16 @@ class _LiberoOSCController:
         #   gripper_in = 0.5             → -sign(0)  =  0 (no motion)
         #   gripper_in = 1.0 (RLDS open)  → -sign(+1) = -1 (LIBERO open)  ✓
         #
-        # Pre-round-41 we passed the raw model output to our OSC's
+        # Pre-#168 we passed the raw model output to our OSC's
         # ``np.sign(gripper_value)`` directly. Since the model's typical
         # outputs are in [0, 1], every "open" intent (model output ≈ 1)
         # collapsed to ``sign=+1``, which our OSC interprets as CLOSE — so
         # the gripper consistently went CLOSED for OPEN commands and
-        # vice-versa. This is the action-side counterpart to round 39's
+        # vice-versa. This is the action-side counterpart to #168's
         # observation-side V-flip bug; both rounds together close the
         # client-pipeline parity gap that left ``success_rate=0`` after
         # rounds 36-40 even though state pipeline was byte-equivalent
-        # (round 35) and image pipeline was within ``mean |Δ|=3-9/255``
+        # (#168) and image pipeline was within ``mean |Δ|=3-9/255``
         # (rounds 39+40).
         #
         # Diagnostic that surfaced this: NVIDIA's reference eval against
@@ -3738,7 +3971,7 @@ class _LiberoOSCController:
         import mujoco as mj
 
         n_arm = len(self.arm_actuator_ids)
-        # Constant per-substep ramp for the gripper (round 28 #168). See
+        # Constant per-substep ramp for the gripper (#168). See
         # ``_GRIPPER_SPEED`` docstring above. Pre-compute the ramp
         # direction so the inner loop is just an in-place add + clip.
         # Sign of input dictates ramp direction: +1 (close) → finger
@@ -3749,10 +3982,10 @@ class _LiberoOSCController:
         gripper_sign = float(np.sign(gripper_value))
         ramp_step = np.array([-1.0, 1.0]) * self._GRIPPER_SPEED * gripper_sign
 
-        # Round 29 (#168) — capture pre-step state for diagnostic log.
+        # #168 — capture pre-step state for diagnostic log.
         # Gated on ``STRANDS_LIBERO_ACTION_LOG=1`` so production eval
         # incurs zero cost (single bool check). The full diagnostic
-        # answers PR #168 round-28's "what scale, what frame, what key
+        # answers PR #168's "what scale, what frame, what key
         # naming, does motion track delta" questions in one log line
         # per step.
         log_now = self._action_log_enabled and self._action_log_step < self._action_log_max
@@ -3792,14 +4025,14 @@ class _LiberoOSCController:
                     for ai, tq in zip(self.arm_actuator_ids, torques_arr, strict=True):
                         data.ctrl[ai] = float(tq)
 
-            # Stateful gripper ramp + bias/weight rescale (round 28
+            # Stateful gripper ramp + bias/weight rescale (#168
             # #168). Replicates the exact pipeline RoboSuite's
             # ``Manipulator.grip_action`` performs every substep:
             #   current_action = clip(current_action + [-1,+1]·speed·sign(input), -1, 1)
             #   ctrl = bias + weight * current_action
             # Without this, +1 (close) writes 0.04 to finger1 (range
             # [0, 0.04]) which actually OPENS finger1, breaking every
-            # grasp. See PR #168 round-28 investigation.
+            # grasp. See PR #168 investigation.
             self._gripper_current_action = np.clip(
                 self._gripper_current_action + ramp_step,
                 -1.0,
@@ -3811,7 +4044,7 @@ class _LiberoOSCController:
 
             mj.mj_step(model, data)
 
-        # Round 29 (#168) — emit one structured log line per apply()
+        # #168 — emit one structured log line per apply()
         # while inside the captured-step window. Captures everything a
         # reviewer needs to bisect the residual bug: action key names,
         # delta scale, gripper polarity end-to-end, EEF tracking
@@ -3860,13 +4093,13 @@ class _LiberoOSCController:
     def _capture_eef_pose(self, data: Any) -> tuple[np.ndarray, np.ndarray]:
         """Read EEF position + quaternion from ``data``.
 
-        Round 29 (#168) helper for the diagnostic log path. Returns:
+        #168 helper for the diagnostic log path. Returns:
         - ``pos``: 3-vector ``data.site_xpos[eef_site_id]``
         - ``quat``: 4-vector unit quaternion (wxyz) computed from
           ``data.site_xmat[eef_site_id]`` via ``mju_mat2Quat``.
 
         Returns zero-filled arrays if ``eef_site_id < 0`` (e.g.
-        controller built before the round-29 changes; backwards
+        controller built before the #168 changes; backwards
         compat for any pickled/test-injected instances).
         """
         if self.eef_site_id < 0:
@@ -3881,6 +4114,191 @@ class _LiberoOSCController:
         return pos, quat
 
 
+# Module-level cache: resolving the LIBERO-canonical Panda home pose
+# imports the libero robot module, which transitively imports robosuite,
+# loads MJCF assets, and warns about missing macro files. The result is
+# immutable per-process — cache it after the first lookup so calls 50×
+# per second from ``_install_action_controller`` are free.
+_CACHED_LIBERO_HOME_QPOS: np.ndarray | None = None
+_CACHED_LIBERO_HOME_QPOS_RESOLVED: bool = False
+
+
+def _resolve_libero_arm_home_qpos(n_arm: int) -> np.ndarray | None:
+    """Return the LIBERO-canonical Panda 7-DoF home pose, or ``None``.
+
+    Resolution order:
+
+    1. ``libero.libero.envs.robots.mounted_panda.MountedPanda().init_qpos``
+       — stock LIBERO layout (``pip install libero``).
+    2. ``libero.envs.robots.mounted_panda.MountedPanda().init_qpos``
+       — LIBERO-PRO layout (the LIBERO-PRO fork uses a flatter package
+       structure). Same canonical ``init_qpos`` byte-for-byte.
+    3. ``robosuite.models.robots.Panda().init_qpos`` (stock
+       robosuite, slightly different — ``[0, π/16, 0, -π/2-π/3, 0,
+       π-0.2, π/4]`` vs ``[0, -0.161, 0, -2.4446, 0, 2.2268, π/4]``).
+       Only used when neither libero variant is importable.
+    4. ``None`` if nothing is available — caller falls back to the
+       controller's construction-time default.
+
+    Both LIBERO layouts produce the same ``MountedPanda.init_qpos``,
+    which is what upstream ``OffScreenRenderEnv``'s
+    ``Robot.reset(deterministic=True)`` writes to ``data.qpos`` BEFORE
+    constructing the OSC controller. That's the value upstream's
+    ``controller.initial_joint`` ends up holding, and the value the
+    #168 swap-and-restore in :meth:`_LiberoOSCController.from_sim`
+    needs to write into ``data.qpos`` around ``controller_factory``.
+
+    Refs #176.
+    """
+    global _CACHED_LIBERO_HOME_QPOS, _CACHED_LIBERO_HOME_QPOS_RESOLVED
+
+    if _CACHED_LIBERO_HOME_QPOS_RESOLVED:
+        if _CACHED_LIBERO_HOME_QPOS is None:
+            return None
+        if _CACHED_LIBERO_HOME_QPOS.shape != (n_arm,):
+            # Different robot than the cached one (e.g. a 6-DoF arm).
+            # Don't reuse the cached 7-DoF Panda value.
+            return None
+        return _CACHED_LIBERO_HOME_QPOS
+
+    home: np.ndarray | None = None
+    # Try both LIBERO package layouts. The class is identical between
+    # them (same numerical init_qpos); only the import path differs.
+    libero_module_paths = (
+        "libero.libero.envs.robots.mounted_panda",  # stock libero
+        "libero.envs.robots.mounted_panda",  # LIBERO-PRO
+    )
+    for module_path in libero_module_paths:
+        try:
+            module = importlib.import_module(module_path)
+        except ImportError:
+            continue
+        mounted_panda_cls = getattr(module, "MountedPanda", None)
+        if mounted_panda_cls is None:
+            logger.debug(
+                "%s exposes no MountedPanda; trying next libero layout",
+                module_path,
+            )
+            continue
+        try:
+            # ``MountedPanda.init_qpos`` is a property that returns a
+            # fresh ndarray on each access. Instantiating triggers
+            # MJCF asset load (``robots/panda/robot.xml``); the property
+            # itself reads from constants so the construction cost is
+            # paid once per process.
+            home = np.asarray(mounted_panda_cls().init_qpos, dtype=np.float64)
+        except Exception as e:  # noqa: BLE001 - any failure soft-fall-through
+            logger.debug(
+                "MountedPanda(%s).init_qpos raised %s; trying next libero layout",
+                module_path,
+                e,
+            )
+            continue
+        if home.shape != (n_arm,):
+            logger.debug(
+                "MountedPanda(%s).init_qpos shape %s does not match arm DoF %d; ignoring",
+                module_path,
+                home.shape,
+                n_arm,
+            )
+            home = None
+            continue
+        # Successfully resolved.
+        break
+
+    if home is None:
+        # Fall through to stock robosuite Panda. Its init_qpos differs
+        # slightly from MountedPanda's (~30 mrad on j2/j6) but it's
+        # closer to upstream than the perturbed canonical pose, so it's
+        # still a useful fallback when libero is unavailable.
+        try:
+            from robosuite.models.robots.manipulators.panda_robot import (  # type: ignore[import-not-found]
+                Panda,
+            )
+
+            home = np.asarray(Panda().init_qpos, dtype=np.float64)
+            if home.shape != (n_arm,):
+                logger.debug(
+                    "robosuite Panda.init_qpos shape %s does not match arm DoF %d; ignoring",
+                    home.shape,
+                    n_arm,
+                )
+                home = None
+        except ImportError:
+            pass
+        except Exception as e:  # noqa: BLE001
+            logger.debug("robosuite Panda init_qpos lookup raised %s; no fallback", e)
+
+    _CACHED_LIBERO_HOME_QPOS = home
+    _CACHED_LIBERO_HOME_QPOS_RESOLVED = True
+    return home
+
+
+# Module-level cache for the Panda gripper init_qpos (mirrors the arm
+# home pose cache above). Used by
+# ``LiberoAdapter._write_libero_arm_home_qpos`` to set finger joints to
+# upstream's open canonical position.
+_CACHED_PANDA_GRIPPER_INIT_QPOS: np.ndarray | None = None
+_CACHED_PANDA_GRIPPER_INIT_QPOS_RESOLVED: bool = False
+
+
+def _resolve_panda_gripper_init_qpos(n_finger: int) -> np.ndarray | None:
+    """Return the LIBERO-canonical Panda gripper finger init qpos, or ``None``.
+
+    Mirrors ``robosuite.models.grippers.panda_gripper.PandaGripper.init_qpos``,
+    which is ``[0.020833, -0.020833]`` (≈ 2 cm fingertip separation,
+    "open" position). Used by :meth:`LiberoAdapter._write_libero_arm_home_qpos`
+    to initialise gripper finger qpos to upstream's canonical open
+    pose, mirroring upstream ``SingleArm.reset`` which writes
+    ``self.gripper.init_qpos`` to the gripper joint qpos addresses
+    BEFORE constructing the OSC controller.
+
+    Resolution order:
+
+    1. ``robosuite.models.grippers.panda_gripper.PandaGripper().init_qpos``
+       (the library function used by both stock libero and LIBERO-PRO).
+    2. ``None`` — caller leaves gripper qpos at MuJoCo's default (zero,
+       which is "fingers touching" — significantly different from the
+       open canonical pose). The 14 mm divergence between
+       ``data.qpos[gripper] = 0`` (closed) and ``data.qpos[gripper] =
+       0.0208`` (open) is enough to put the policy out-of-distribution
+       on ``state.gripper`` from the very first observation.
+
+    Refs #176 sub-task 3d.
+    """
+    global _CACHED_PANDA_GRIPPER_INIT_QPOS, _CACHED_PANDA_GRIPPER_INIT_QPOS_RESOLVED
+
+    if _CACHED_PANDA_GRIPPER_INIT_QPOS_RESOLVED:
+        if _CACHED_PANDA_GRIPPER_INIT_QPOS is None:
+            return None
+        if _CACHED_PANDA_GRIPPER_INIT_QPOS.shape != (n_finger,):
+            return None
+        return _CACHED_PANDA_GRIPPER_INIT_QPOS
+
+    init_qpos: np.ndarray | None = None
+    try:
+        from robosuite.models.grippers.panda_gripper import (  # type: ignore[import-not-found]
+            PandaGripper,
+        )
+
+        init_qpos = np.asarray(PandaGripper().init_qpos, dtype=np.float64)
+        if init_qpos.shape != (n_finger,):
+            logger.debug(
+                "PandaGripper.init_qpos shape %s does not match finger count %d; ignoring",
+                init_qpos.shape,
+                n_finger,
+            )
+            init_qpos = None
+    except ImportError:
+        pass
+    except Exception as e:  # noqa: BLE001
+        logger.debug("PandaGripper.init_qpos lookup raised %s; no fallback", e)
+
+    _CACHED_PANDA_GRIPPER_INIT_QPOS = init_qpos
+    _CACHED_PANDA_GRIPPER_INIT_QPOS_RESOLVED = True
+    return init_qpos
+
+
 def _to_scalar(value: Any) -> float:
     """Coerce a GR00T-LIBERO action channel to a scalar float.
 
@@ -3890,7 +4308,7 @@ def _to_scalar(value: Any) -> float:
     PR #162 introduced for ``state.gripper``, applied to every
     action channel).
 
-    The first round-25 attempt fixed only ``gripper``; round-25
+    An earlier commit in #168 fixed only ``gripper``; subsequent
     verification showed the same ``float(list)`` bug raises on
     ``x/y/z/roll/pitch/yaw`` too - GR00T sends ALL keys list-shaped.
     This helper centralises the coercion so all 7 action channels go
