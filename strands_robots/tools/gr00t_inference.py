@@ -630,7 +630,7 @@ def _is_gr00t_process(container_name: str, pid: str, *, port: int | None = None)
                 return bool(re.search(rf"--port[= ]{port}(?:\s|$)", cmdline))
             return is_gr00t
     except Exception:
-        pass
+        pass  # Probe failure is non-fatal — return False to indicate unknown process
     return False
 
 
@@ -653,7 +653,7 @@ def _is_gr00t_host_process(pid: str, *, port: int | None = None) -> bool:
                 return bool(re.search(rf"--port[= ]{port}(?:\s|$)", cmdline))
             return is_gr00t
     except Exception:
-        pass
+        pass  # Probe failure is non-fatal — return False to indicate unknown process
     return False
 
 
