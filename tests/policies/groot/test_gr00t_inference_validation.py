@@ -258,15 +258,19 @@ class TestIsGr00tHostProcess:
         cmdline_file = proc_dir / "cmdline"
         cmdline_file.write_text("python\x00inference_service.py\x00--port\x008000\x00")
 
-        # Monkeypatch Path to point at our fake proc
+        # Monkeypatch Path to point at our fake proc, with reachability check
         from pathlib import Path as RealPath
 
-        monkeypatch.setattr(
-            "strands_robots.tools.gr00t_inference.Path",
-            lambda p: RealPath(str(p).replace("/proc", str(tmp_path / "proc"))),
-        )
+        called = {}
+
+        def _fake_path(p):
+            called["p"] = p
+            return RealPath(str(p).replace("/proc", str(tmp_path / "proc")))
+
+        monkeypatch.setattr("strands_robots.tools.gr00t_inference.Path", _fake_path)
 
         assert _is_gr00t_host_process("123", port=80) is False
+        assert called.get("p") == "/proc/123/cmdline"  # patch was reached
 
     def test_accepts_matching_port(self, tmp_path, monkeypatch):
         """_is_gr00t_host_process should accept when port matches."""
@@ -279,12 +283,16 @@ class TestIsGr00tHostProcess:
 
         from pathlib import Path as RealPath
 
-        monkeypatch.setattr(
-            "strands_robots.tools.gr00t_inference.Path",
-            lambda p: RealPath(str(p).replace("/proc", str(tmp_path / "proc"))),
-        )
+        called = {}
+
+        def _fake_path(p):
+            called["p"] = p
+            return RealPath(str(p).replace("/proc", str(tmp_path / "proc")))
+
+        monkeypatch.setattr("strands_robots.tools.gr00t_inference.Path", _fake_path)
 
         assert _is_gr00t_host_process("456", port=8000) is True
+        assert called.get("p") == "/proc/456/cmdline"  # patch was reached
 
     def test_rejects_non_gr00t_process(self, tmp_path, monkeypatch):
         """_is_gr00t_host_process should reject non-GR00T processes."""
@@ -297,12 +305,16 @@ class TestIsGr00tHostProcess:
 
         from pathlib import Path as RealPath
 
-        monkeypatch.setattr(
-            "strands_robots.tools.gr00t_inference.Path",
-            lambda p: RealPath(str(p).replace("/proc", str(tmp_path / "proc"))),
-        )
+        called = {}
+
+        def _fake_path(p):
+            called["p"] = p
+            return RealPath(str(p).replace("/proc", str(tmp_path / "proc")))
+
+        monkeypatch.setattr("strands_robots.tools.gr00t_inference.Path", _fake_path)
 
         assert _is_gr00t_host_process("789", port=8000) is False
+        assert called.get("p") == "/proc/789/cmdline"  # patch was reached
 
     def test_no_port_check_when_none(self, tmp_path, monkeypatch):
         """_is_gr00t_host_process without port checks only process identity."""
@@ -315,13 +327,17 @@ class TestIsGr00tHostProcess:
 
         from pathlib import Path as RealPath
 
-        monkeypatch.setattr(
-            "strands_robots.tools.gr00t_inference.Path",
-            lambda p: RealPath(str(p).replace("/proc", str(tmp_path / "proc"))),
-        )
+        called = {}
+
+        def _fake_path(p):
+            called["p"] = p
+            return RealPath(str(p).replace("/proc", str(tmp_path / "proc")))
+
+        monkeypatch.setattr("strands_robots.tools.gr00t_inference.Path", _fake_path)
 
         # Without port kwarg, just checks identity
         assert _is_gr00t_host_process("321") is True
+        assert called.get("p") == "/proc/321/cmdline"  # patch was reached
 
 
 class TestHostValidation:

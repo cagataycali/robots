@@ -47,8 +47,11 @@ def _checkpoints_dir() -> Path:
 # Input validation helpers
 # ─────────────────────────────────────────────────────────────────────
 
-# Characters that must never appear in values interpolated into commands.
-_SHELL_META = re.compile(r"[;&|`$(){}\[\]!<>\\'\"\n\r\x00]")
+# Characters that cause harm in subprocess argv or shell interpolation.
+# Narrowed per AGENTS.md review-learnings: quotes/bangs/parens/brackets
+# appear in legitimate filesystem paths and all subprocess calls here are
+# argv-style (no shell=True), so they pose no injection risk in path values.
+_SHELL_META = re.compile(r"[;&|`$<>\\\n\r\x00]")
 
 # Strict patterns for enumerable parameters.
 _DATA_CONFIG_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
@@ -127,7 +130,7 @@ def validate_inputs(
         raise ValueError(
             f"host must be a valid IPv4 or IPv6 address (got {host!r}). "
             f"Use '127.0.0.1' for loopback or '0.0.0.0' to bind all interfaces."
-        )
+        ) from None
 
 
 @tool
@@ -636,7 +639,9 @@ def _is_gr00t_process(container_name: str, pid: str, *, port: int | None = None)
         )
         if result.returncode == 0:
             cmdline = result.stdout.replace("\x00", " ")
-            is_gr00t = "inference_service" in cmdline or "gr00t" in cmdline.lower()
+            # Require both a Python interpreter AND inference_service.py in cmdline
+            # to avoid false-matching unrelated processes (e.g. vim editing a gr00t file)
+            is_gr00t = "inference_service.py" in cmdline and ("python" in cmdline.lower() or "gr00t" in cmdline.lower())
             if is_gr00t and port is not None:
                 # Verify the process is serving on the requested port
                 # Use word-boundary regex to avoid partial matches (e.g. port 80 vs 8000)
@@ -653,6 +658,8 @@ def _is_gr00t_host_process(pid: str, *, port: int | None = None) -> bool:
     Reads /proc/<pid>/cmdline directly (no Docker) to confirm the process
     is a GR00T inference service, optionally bound to a specific port.
 
+    Note: This function reads from /proc and is Linux-only.
+
     Args:
         pid: Process ID to check.
         port: If provided, also verify the process is bound to this port.
@@ -661,7 +668,9 @@ def _is_gr00t_host_process(pid: str, *, port: int | None = None) -> bool:
         cmdline_path = Path(f"/proc/{pid}/cmdline")
         if cmdline_path.exists():
             cmdline = cmdline_path.read_text().replace("\x00", " ")
-            is_gr00t = "inference_service" in cmdline or "gr00t" in cmdline.lower()
+            # Require both a Python interpreter AND inference_service.py in cmdline
+            # to avoid false-matching unrelated processes (e.g. vim editing a gr00t file)
+            is_gr00t = "inference_service.py" in cmdline and ("python" in cmdline.lower() or "gr00t" in cmdline.lower())
             if is_gr00t and port is not None:
                 return bool(re.search(rf"--port[= ]{port}(?:\s|$)", cmdline))
             return is_gr00t
@@ -729,6 +738,8 @@ def _stop_service(port: int) -> dict[str, Any]:
 
         # Fallback: try host system — verify via /proc/<pid>/cmdline
         result = subprocess.run(
+            # NOTE: ( |$) is ERE syntax; pgrep on Linux (procps-ng) defaults to ERE.
+            # This pattern is Linux-only; BSD pgrep may not match correctly.
             ["pgrep", "-f", f"inference_service.py.*--port {port}( |$)"],
             capture_output=True,
             text=True,
@@ -744,6 +755,8 @@ def _stop_service(port: int) -> dict[str, Any]:
             time.sleep(2)
 
             result = subprocess.run(
+                # NOTE: ( |$) is ERE syntax; pgrep on Linux (procps-ng) defaults to ERE.
+                # This pattern is Linux-only; BSD pgrep may not match correctly.
                 ["pgrep", "-f", f"inference_service.py.*--port {port}( |$)"],
                 capture_output=True,
                 text=True,
