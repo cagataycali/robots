@@ -20,6 +20,7 @@ import uuid
 from collections.abc import Callable
 from typing import Any
 
+from strands_robots.mesh import identity as _identity
 from strands_robots.mesh import security as _security
 from strands_robots.mesh.audit import log_safety_event
 from strands_robots.mesh.sensors import SensorLoopsMixin
@@ -104,6 +105,43 @@ class Mesh(SensorLoopsMixin):
         # which requires the operator-supplied override code.
         self._estop_lockout = threading.Event()
         self._last_estop_ts: float = 0.0
+
+        # Per-peer cryptographic identity (R9). Resolves the local
+        # signing key from STRANDS_MESH_PEER_KEY[_FILE] env vars or from
+        # ~/.strands_robots/mesh/<peer_id>.key, generating a fresh
+        # 32-byte key on first use. Returns None when the operator opted
+        # out via STRANDS_MESH_PEER_IDENTITY=false or when the key
+        # store is unreachable; PSK-only signing then continues
+        # unchanged (back-compat).
+        try:
+            self._peer_key: bytes | None = _identity.configure_local_peer(self.peer_id)
+        except _identity.IdentityError as exc:
+            # Hard config error (bad hex env var, wrong-length file).
+            # Refuse to silently fall back — operator wanted identity
+            # signing and got it wrong.
+            logger.error(
+                "[mesh] %s: per-peer identity misconfigured: %s",
+                self.peer_id,
+                exc,
+            )
+            raise
+        if self._peer_key is not None:
+            # Pin our own key in the local directory so the same Python
+            # process running multiple Mesh instances can verify each
+            # other's id_sigs without round-tripping through TOFU.
+            try:
+                _security.pin_peer_identity(self.peer_id, self._peer_key)
+            except _security.AuthenticationError:
+                # Already pinned with a different key — should not happen
+                # in practice (configure_local_peer is deterministic per
+                # peer_id) but if it does we keep the existing pin and
+                # disable identity signing for this Mesh.
+                logger.warning(
+                    "[mesh] %s: directory already bound to a different key; "
+                    "disabling per-peer identity for this instance",
+                    self.peer_id,
+                )
+                self._peer_key = None
 
     def __repr__(self) -> str:
         state = "alive" if self._running else "stopped"
@@ -248,6 +286,21 @@ class Mesh(SensorLoopsMixin):
             "timestamp": time.time(),
         }
 
+        # Advertise our per-peer key fingerprint so receivers can TOFU-
+        # pin us. We send the FULL key (hex) — this is a symmetric HMAC
+        # scheme, so the receiver needs the actual bytes to verify our
+        # id_sig. The presence broadcast is itself signed (PSK + our
+        # id_sig once pinned), so a passive observer who already has
+        # the PSK gets nothing they didn't have before. The threat we
+        # close here is "insider with PSK forges *another* peer's
+        # sender_id"; an insider learning peer keys via presence still
+        # cannot impersonate a peer they have not yet observed (they
+        # would have to win the TOFU race against the legitimate first
+        # presence, which is detectable in the audit log via the pin
+        # event).
+        if self._peer_key is not None:
+            payload["peer_key"] = self._peer_key.hex()
+
         try:
             if hasattr(r, "tool_name_str"):
                 payload["tool_name"] = r.tool_name_str
@@ -360,6 +413,76 @@ class Mesh(SensorLoopsMixin):
         peer_id = data.get("robot_id")
         if not isinstance(peer_id, str) or peer_id == self.peer_id:
             return
+        # ── Per-peer identity TOFU pin ──────────────────────────────
+        # First PSK-authenticated presence carrying a peer_key claim
+        # for this peer_id binds it in the directory. Subsequent
+        # envelopes from that peer_id MUST verify under the pinned key
+        # (verify_envelope enforces this above).
+        peer_key_hex = data.get("peer_key")
+        if isinstance(peer_key_hex, str) and peer_key_hex:
+            try:
+                peer_key_bytes = bytes.fromhex(peer_key_hex)
+            except ValueError:
+                logger.warning(
+                    "[mesh] %s: presence from %s has malformed peer_key (not hex); ignoring",
+                    self.peer_id,
+                    peer_id,
+                )
+                peer_key_bytes = None
+            if peer_key_bytes is not None and len(peer_key_bytes) == _identity.PEER_KEY_LEN:
+                try:
+                    pinned = _security.pin_peer_identity(peer_id, peer_key_bytes)
+                except _security.AuthenticationError as exc:
+                    # Mismatch on an already-pinned peer. This is an
+                    # adversarial signal — either a key rotation that
+                    # the operator did not announce, or an active
+                    # impersonation attempt.
+                    logger.warning(
+                        "[mesh] %s: REJECTED key rotation from peer %s: %s",
+                        self.peer_id,
+                        peer_id,
+                        exc,
+                    )
+                    try:
+                        log_safety_event(
+                            "identity_rotation_rejected",
+                            self.peer_id,
+                            {"peer": peer_id, "reason": str(exc)},
+                        )
+                    except Exception as audit_exc:
+                        logger.debug(
+                            "[mesh] %s: audit log unavailable: %s",
+                            self.peer_id,
+                            audit_exc,
+                        )
+                else:
+                    if pinned:
+                        logger.info(
+                            "[mesh] %s: pinned per-peer identity for %s (TOFU)",
+                            self.peer_id,
+                            peer_id,
+                        )
+                        try:
+                            log_safety_event(
+                                "identity_pinned",
+                                self.peer_id,
+                                {"peer": peer_id, "mode": "tofu"},
+                            )
+                        except Exception as audit_exc:
+                            logger.debug(
+                                "[mesh] %s: audit log unavailable: %s",
+                                self.peer_id,
+                                audit_exc,
+                            )
+            elif peer_key_bytes is not None:
+                logger.warning(
+                    "[mesh] %s: presence from %s has wrong-length peer_key (%d != %d)",
+                    self.peer_id,
+                    peer_id,
+                    len(peer_key_bytes),
+                    _identity.PEER_KEY_LEN,
+                )
+
         is_new = update_peer(
             peer_id=peer_id,
             peer_type=str(data.get("robot_type", "robot")),
@@ -1370,7 +1493,11 @@ class Mesh(SensorLoopsMixin):
         to downgrade in that case anyway.
         """
         try:
-            envelope = _security.sign_envelope(payload)
+            envelope = _security.sign_envelope(
+                payload,
+                peer_id=self.peer_id,
+                peer_key=self._peer_key,
+            )
         except Exception as exc:
             # If a PSK was configured we must NOT silently downgrade. A
             # caller that can trigger sign_envelope() to raise — corrupted

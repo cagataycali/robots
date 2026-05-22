@@ -506,6 +506,11 @@ agent.tool.gr00t_inference(action="stop", port=8000)
 | `STRANDS_MESH_BRIDGE_TOPICS_PREFIX` | Comma-separated list of bridge filter entries that match as path-prefix (entry matches `entry/<anything>`). Default: `response` (so `response/<turn-id>` bridges). All other entries in `STRANDS_MESH_BRIDGE_TOPICS` match exactly — Phase-4 / A2 hardening that closes the prefix-bypass attack. | `response` |
 | `STRANDS_MESH_PSK` | Pre-shared key for HMAC-signed envelopes on the wire. Unset = permissive mode (legacy unsigned messages still accepted). Set = signed mode. See **Mesh security** below. | unset |
 | `STRANDS_MESH_REQUIRE_AUTH` | Set to `true` to reject unsigned envelopes outright, even when no PSK is configured. Useful for tests and staging gates that must fail closed. | `false` |
+| `STRANDS_MESH_REQUIRE_PEER_IDENTITY` | Set to `true` to reject envelopes that lack a `kid` + `id_sig` (per-peer identity). Use after migrating every peer to per-peer keys. Strongest insider-impersonation defence. See **Trust model** below. | `false` |
+| `STRANDS_MESH_PEER_IDENTITY` | Set to `false` to opt out of per-peer identity entirely (PSK-only signing). Default behaviour generates a per-peer key on first use. | `true` |
+| `STRANDS_MESH_PEER_KEY` | Hex-encoded 32-byte per-peer HMAC key. Overrides the on-disk key file. Useful for ephemeral test peers and CI. | unset |
+| `STRANDS_MESH_PEER_KEY_FILE` | Absolute path to a 32-byte per-peer key file. Overrides the default `<key_dir>/<peer_id>.key` lookup. Mode 0o600 is enforced; permissive modes log a WARNING. | unset |
+| `STRANDS_MESH_PEER_KEY_DIR` | Directory where per-peer key files live. Each peer reads/writes `<peer_id>.key`. | `~/.strands_robots/mesh` |
 | `STRANDS_MESH_REPLAY_WINDOW` | Past-tolerance for envelope `ts` (seconds). Capped at 600. | `60` |
 | `STRANDS_MESH_POLICY_HOST_ALLOW` | Comma-separated host/CIDR list extending the default loopback-only `policy_host` allowlist for VLA inference targets (e.g. `vla.internal,10.0.0.0/24`). | unset |
 | `STRANDS_MESH_PEER_RATE` | Per-sender command rate as `<count>/<seconds>`. The `_on_cmd` handler consumes one token before spawning the exec thread; starvation drops the cmd. Burst capped at 1000. | `20/60` |
@@ -593,6 +598,109 @@ Bridge-transport deployments (Zenoh + AWS IoT MQTT) gain
 cross-transport deduplication via `mesh.transport.bridge_transport`;
 the same envelope nonce delivered on both transports is dispatched
 exactly once.
+
+#### Trust model — fleet membership AND peer identity
+
+The mesh authenticates messages at two layers:
+
+1. **`STRANDS_MESH_PSK` — fleet membership.** A single symmetric HMAC
+   key, distributed at provisioning time. Proves the sender has the
+   fleet secret. This is what blocks LAN outsiders.
+
+2. **Per-peer key — peer identity (R9).** Every peer additionally owns
+   a 32-byte HMAC key stored at
+   `~/.strands_robots/mesh/<peer_id>.key` (mode 0o600), generated on
+   first use. Each outgoing envelope carries a `kid` (= peer_id) and
+   an `id_sig` computed under that per-peer key. The receiver
+   maintains a directory mapping `peer_id -> verifier_key` and, once
+   a peer is pinned, requires `id_sig` to verify under the pinned key.
+   See [`strands_robots/mesh/identity.py`](strands_robots/mesh/identity.py)
+   for the full module docstring.
+
+   With both layers in place, the per-sender rate bucket, presence
+   identity, and audit-log `sender_id` attribution all bind to the
+   holder of the per-peer key — an insider with only the PSK cannot
+   forge another peer's `sender_id`.
+
+##### How peers learn each other's keys
+
+The directory is populated by one of three mechanisms (operator
+chooses based on threat model):
+
+* **TOFU via PSK-signed presence (default).** Each peer advertises
+  its key in its periodic presence broadcast; the first
+  PSK-authenticated presence carrying a key for a given `peer_id`
+  pins it. The pin event is written to the audit log
+  (`identity_pinned`). A subsequent attempt to bind a different key
+  to the same `peer_id` is rejected and audited as
+  `identity_rotation_rejected`. This gives correct identity for
+  every peer that joins after the receiver does; an attacker who
+  *races* the legitimate first presence wins TOFU but the rejection
+  appears in operator audit.
+
+* **Operator pre-distribution.** Operators ship per-peer keys via
+  secrets manager and load them with
+  `identity.load_peer_directory_from_dir(path)` at startup. No race
+  window — the pin happens before the first wire message.
+
+* **Strict mode** (`STRANDS_MESH_REQUIRE_PEER_IDENTITY=true`). Every
+  envelope MUST carry both a `kid` and an `id_sig`. PSK-only
+  envelopes are rejected. Use this once the fleet has been migrated
+  and every peer has a key in the directory.
+
+##### Threat-vector coverage matrix
+
+| Adversary tier | Coverage |
+|---|---|
+| LAN outsider (no PSK) | **Mitigated by PSK + strict-auth.** Unsigned envelopes are rejected in strict mode; permissive mode is dev-only. |
+| Authenticated insider with PSK only (e.g. compromised camera, A2 in threat matrix) | **Mitigated by per-peer identity.** Cannot forge another peer's `sender_id`: spoofed envelopes are rejected with `identity signature mismatch` (verified by `tests/mesh/test_peer_identity.py::TestSenderIdSpoof`). Cannot burn another peer's rate bucket (verified by `TestRateLimitAttribution`). |
+| Stolen IoT certificate (B1) | **Mitigated at transport.** The IoT mTLS layer rejects connections without a valid per-thing cert. A stolen cert without the PSK still cannot mint mesh-layer envelopes. A stolen cert WITH the PSK can join the fleet but cannot impersonate other peers (per-peer identity). |
+| Stolen cert + PSK + per-peer-key exfiltration | **Out of scope.** A peer whose private key is on disk has been fully compromised; the operator response is to drop the peer from the directory (`drop_peer_identity`), regenerate the key, and audit the gap. No symmetric scheme can defend a fully-pwned host from impersonating itself. |
+| Insider racing TOFU bootstrap | **Detected, not prevented.** First-pinned-wins. The conflict shows up in the audit log as `identity_rotation_rejected`; operators close it with pre-distribution. |
+
+##### Override code
+
+`STRANDS_MESH_OVERRIDE_CODE` remains a single fleet-wide operator
+secret used for emergency-resume RPC. After R8-5 it is required on the
+wire as `HMAC(override_code, proof_nonce)`. The receiver-side resume
+also runs through the same envelope verifier above, so a fleet-wide
+resume now requires:
+
+* PSK (fleet membership)
+* override-code proof (operator authorisation), AND
+* a valid `id_sig` from the issuing peer's per-peer key (binds the
+  resume to a specific operator-class peer).
+
+An insider with PSK + override code but lacking the operator peer's
+key cannot mint a valid resume RPC because the receiver's
+`verify_envelope` rejects the unsigned-or-mismatched `id_sig`. Treat
+the override code as an operator-tier secret distributed only to
+peers with `peer_type=operator`.
+
+##### Empirical (adversarial) test coverage
+
+Per the reviewer feedback, the verified-defended claims above are
+backed by concrete on-the-wire attack simulations rather than
+inspection alone. See `tests/mesh/test_peer_identity.py` for 30 tests
+that build hostile envelopes (forged kid, mismatched id_sig, kid/payload
+disagreement, rate-bucket forgery, TOFU-race) and assert the
+verifier rejects every one. The remaining surface — clock-drift bypass
+of replay protection, stale audit sidecars under restart — is covered
+by inspection only and called out as such in the threat matrix.
+
+#### Clock sync requirement
+
+Envelope freshness uses a 60-second past tolerance and a 5-second
+forward skew (configurable via `STRANDS_MESH_REPLAY_WINDOW`). If
+embedded robots drift more than 60 s behind wall-clock time (no NTP,
+RTC battery dead, etc.), legitimate messages will be dropped as
+`ts too old`. Conversely, if a robot's clock runs significantly fast,
+its outbound messages will be rejected by peers as `ts in future`.
+Operators MUST run NTP (or equivalent) on every mesh peer; widening
+the replay window past the default trades replay-protection strength
+for clock-drift tolerance. The same caveat applies to the audit
+sequence sidecar — restart-renumber detection assumes monotonic
+clocks within the seq-counter generation window.
 
 For a complete walkthrough of what each layer protects against, see
 `mesh/security.py`'s module docstring and the AGENTS.md threat-model

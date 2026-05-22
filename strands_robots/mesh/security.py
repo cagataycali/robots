@@ -35,6 +35,16 @@ peer that should be allowed to issue commands. It is intended to be loaded
 from secrets manager, IAM-protected SSM Parameter Store, or equivalent —
 never committed to source.
 
+**Layered identity (R9)**: ``STRANDS_MESH_PSK`` proves *fleet
+membership*. To bind ``sender_id`` to a specific peer (closing the
+insider-impersonation surface that the PSK alone cannot — vectors #9
+and #10 in the threat model) the verifier additionally checks a
+per-peer HMAC signature carried as ``id_sig`` and keyed by
+``kid`` (= peer id). See :mod:`strands_robots.mesh.identity` for the
+key-distribution model (TOFU, operator pre-distribution, or strict
+mode via ``STRANDS_MESH_REQUIRE_PEER_IDENTITY``). Adversarial
+test coverage lives in ``tests/mesh/test_peer_identity.py``.
+
 Configuration env vars
 ----------------------
 * ``STRANDS_MESH_PSK`` — pre-shared key. Enables HMAC signing.
@@ -79,6 +89,8 @@ import threading
 import time
 import uuid
 from typing import Any
+
+from strands_robots.mesh import identity as _identity
 
 logger = logging.getLogger(__name__)
 
@@ -272,6 +284,24 @@ def auth_required() -> bool:
     return os.getenv("STRANDS_MESH_REQUIRE_AUTH", "false").strip().lower() == "true"
 
 
+def identity_required() -> bool:
+    """Return True when ``STRANDS_MESH_REQUIRE_PEER_IDENTITY`` is enabled.
+
+    In this mode every envelope MUST carry a ``kid`` and a valid ``id_sig``.
+    PSK-only envelopes are rejected as they cannot prove peer identity —
+    only fleet membership. This closes the residual attribution-forgery
+    surface where an authenticated insider with the PSK could publish a
+    PSK-signed envelope without a kid and have ``payload.sender_id``
+    accepted at face value.
+
+    Operators turning this on MUST first ensure every peer has a per-peer
+    key and that the directory has been populated (either via TOFU
+    bootstrap or via :func:`load_peer_directory_from_dir`). Otherwise
+    legitimate envelopes will be rejected as "no kid".
+    """
+    return os.getenv("STRANDS_MESH_REQUIRE_PEER_IDENTITY", "false").strip().lower() == "true"
+
+
 def _replay_window_s() -> float:
     """Resolve the replay-window past-tolerance in seconds.
 
@@ -364,7 +394,12 @@ def _hmac_hex(key: bytes, body: bytes) -> str:
 # ─── Envelope sign / verify ──────────────────────────────────────────────
 
 
-def sign_envelope(payload: dict[str, Any]) -> dict[str, Any]:
+def sign_envelope(
+    payload: dict[str, Any],
+    *,
+    peer_id: str | None = None,
+    peer_key: bytes | None = None,
+) -> dict[str, Any]:
     """Wrap *payload* in an authenticated envelope.
 
     The envelope shape is::
@@ -373,14 +408,23 @@ def sign_envelope(payload: dict[str, Any]) -> dict[str, Any]:
             "v": 1,
             "ts": <unix seconds>,
             "nonce": <uuid4 hex, 32 chars>,
+            "kid": <peer_id, optional>,
             "payload": <original payload>,
-            "sig": <sha256 hex hmac, omitted in permissive mode>,
+            "sig": <fleet HMAC, omitted in permissive mode>,
+            "id_sig": <per-peer HMAC, optional>,
         }
 
     When no PSK is configured the envelope is still emitted (so the wire
     format stays stable across modes) but the ``sig`` field is absent.
     Verifiers running in strict mode reject such envelopes; in permissive
     mode they pass through after replay-window and nonce checks.
+
+    When *peer_id* and *peer_key* are both provided, the envelope is
+    additionally signed with the per-peer HMAC key. The receiver uses
+    that signature (and only that signature) to authoritatively bind
+    ``sender_id`` to the holder of the per-peer key — closing the
+    insider-impersonation surface that a shared PSK alone cannot. See
+    :mod:`strands_robots.mesh.identity` for the threat model.
     """
     if not isinstance(payload, dict):
         raise TypeError("sign_envelope requires a dict payload")
@@ -392,18 +436,35 @@ def sign_envelope(payload: dict[str, Any]) -> dict[str, Any]:
         "payload": payload,
     }
 
+    # Bind sender identity into the envelope when the caller offers a peer
+    # key. ``kid`` is part of the canonical body for both the fleet sig
+    # and the identity sig so swapping the kid on the wire breaks both.
+    if peer_id is not None:
+        if not _identity.is_valid_peer_id(peer_id):
+            raise _identity.IdentityError(f"sign_envelope: peer_id={peer_id!r} is not valid")
+        envelope["kid"] = peer_id
+
     psk = _get_psk()
     if psk is None:
         _warn_psk_unset_once()
+        # No fleet sig in permissive mode, but per-peer identity sig still
+        # applies so a receiver that has pinned this peer can detect a
+        # mismatched kid even without the PSK.
+        if peer_key is not None and peer_id is not None:
+            envelope["id_sig"] = _identity.compute_identity_sig(envelope, peer_key)
         return envelope
 
-    body = _canonical_bytes({k: envelope[k] for k in ("v", "ts", "nonce", "payload")})
+    body = _canonical_bytes({k: envelope[k] for k in ("v", "ts", "nonce", "kid", "payload") if k in envelope})
     envelope["sig"] = _hmac_hex(psk, body)
+
+    if peer_key is not None and peer_id is not None:
+        envelope["id_sig"] = _identity.compute_identity_sig(envelope, peer_key)
+
     return envelope
 
 
 def verify_envelope(envelope: dict[str, Any], scope: str = _DEFAULT_NONCE_SCOPE) -> dict[str, Any]:
-    """Validate signature, freshness, and replay window. Return the payload.
+    """Validate signature, freshness, replay window, and peer identity. Return the payload.
 
     *scope* identifies the verifier within the process. When several Mesh
     peers run in one Python process they pass their ``peer_id`` so each
@@ -417,16 +478,28 @@ def verify_envelope(envelope: dict[str, Any], scope: str = _DEFAULT_NONCE_SCOPE)
        _MAX_FORWARD_SKEW_S]``. Asymmetric tolerance prevents a peer from
        borrowing forward time to defer a replay until its nonce has aged
        out of the cache.
-    3. HMAC-SHA256 signature against ``STRANDS_MESH_PSK`` when configured.
-       Constant-time compared via :func:`hmac.compare_digest`.
-    4. Replay protection: the nonce is recorded; a repeat is rejected.
+    3. HMAC-SHA256 fleet signature against ``STRANDS_MESH_PSK`` when
+       configured. Constant-time compared via :func:`hmac.compare_digest`.
+    4. **Per-peer identity check (R9)**: when the envelope carries a
+       ``kid`` and the peer directory has a pinned key for it, the
+       ``id_sig`` MUST verify under that key. This is what stops an
+       attacker who holds the PSK from minting a message with someone
+       else's ``sender_id``. When the kid is unknown the envelope is
+       verified under the PSK only and the kid is recorded for TOFU
+       pinning by the caller (presence handler).
+    5. **Sender-id binding**: if both ``kid`` and ``payload.sender_id``
+       are present, they MUST match. This closes the audit-attribution
+       forgery surface — a peer cannot claim to be another peer in the
+       payload when the envelope kid disagrees.
+    6. Replay protection: the nonce is recorded; a repeat is rejected.
 
     Raises :class:`AuthenticationError` on any failure.
 
     Permissive mode: when no PSK is configured AND
     ``STRANDS_MESH_REQUIRE_AUTH`` is false, envelopes without ``sig`` are
-    accepted but still subject to freshness and replay checks. Bare legacy
-    dicts (no ``v``/``payload`` keys) pass through unchanged for back-compat.
+    accepted but still subject to freshness, replay, and (when a kid is
+    pinned) per-peer identity checks. Bare legacy dicts (no
+    ``v``/``payload`` keys) pass through unchanged for back-compat.
     """
     if not isinstance(envelope, dict):
         raise AuthenticationError("envelope must be a dict")
@@ -485,11 +558,77 @@ def verify_envelope(envelope: dict[str, Any], scope: str = _DEFAULT_NONCE_SCOPE)
     if (now - ts) > window:
         raise AuthenticationError(f"envelope ts {ts:.3f} too old (window_s={window}, now={now:.3f})")
 
+    # ── Per-peer identity check (kid + id_sig) ────────────────────────
+    # The kid binds the envelope to a specific peer; when the directory
+    # has a pinned key for that kid the per-peer signature is the
+    # authoritative identity proof. PSK-only signatures from any other
+    # source cannot mint a valid id_sig for a pinned peer.
+    kid = envelope.get("kid")
+    id_sig = envelope.get("id_sig")
+    if kid is not None and not isinstance(kid, str):
+        raise AuthenticationError("envelope kid must be a string")
+    if kid is not None and not _identity.is_valid_peer_id(kid):
+        raise AuthenticationError(f"envelope kid={kid!r} is not a valid peer_id")
+
+    # Strict identity mode: every envelope MUST carry a kid + id_sig.
+    if identity_required():
+        if kid is None:
+            raise AuthenticationError("envelope missing kid (STRANDS_MESH_REQUIRE_PEER_IDENTITY is set)")
+        if not isinstance(id_sig, str):
+            raise AuthenticationError(
+                f"envelope from kid={kid!r} missing id_sig (STRANDS_MESH_REQUIRE_PEER_IDENTITY is set)"
+            )
+
+    pinned_key: bytes | None = None
+    if kid is not None:
+        pinned_key = _identity.get_directory().lookup(kid)
+
+    if pinned_key is not None:
+        # The kid is in the directory. id_sig is REQUIRED and must verify
+        # under the pinned key. PSK alone is not sufficient for a pinned
+        # peer — this is what defeats insider impersonation.
+        if not isinstance(id_sig, str):
+            raise AuthenticationError(
+                f"envelope from pinned kid={kid!r} missing id_sig (per-peer identity required after directory pin)"
+            )
+        if not _identity.verify_identity_sig(envelope, pinned_key, id_sig):
+            raise AuthenticationError(
+                f"per-peer identity signature mismatch for kid={kid!r} (possible insider impersonation attempt)"
+            )
+
+    # ── Sender-id binding ─────────────────────────────────────────────
+    # When the payload carries a ``sender_id`` (commands, RPC responses,
+    # etc.) we require it to match a verified envelope ``kid``. Without
+    # this, an authenticated insider with only the PSK could mint a
+    # PSK-signed envelope without a kid and have ``payload.sender_id``
+    # accepted at face value — that is the residual attribution-forgery
+    # surface (Attack 2 in the regression suite). Closing it requires
+    # callers that set ``sender_id`` to ALSO set ``kid`` on the envelope
+    # (i.e. pass ``peer_id=`` to :func:`sign_envelope`).
+    payload_obj = envelope.get("payload")
+    if isinstance(payload_obj, dict):
+        claimed = payload_obj.get("sender_id")
+        if isinstance(claimed, str) and claimed:
+            if kid is None:
+                raise AuthenticationError(
+                    f"payload.sender_id={claimed!r} present but envelope kid is missing "
+                    "(unbound sender_id rejected — caller must pass peer_id to sign_envelope)"
+                )
+            if claimed != kid:
+                # Payload claims to be from a different peer than the envelope
+                # kid. Reject — this is the audit-attribution forgery surface
+                # (vector #10).
+                raise AuthenticationError(
+                    f"envelope kid={kid!r} disagrees with payload.sender_id={claimed!r} (sender-id forgery rejected)"
+                )
+
     psk = _get_psk()
     sig = envelope.get("sig")
 
     if psk is None:
-        # Permissive: no signature to check, but still enforce replay.
+        # Permissive: no fleet signature to check, but still enforce
+        # replay AND per-peer identity (already enforced above when
+        # the kid was pinned).
         if auth_required():
             raise AuthenticationError("PSK not configured but auth required")
         if not _record_nonce(nonce, now, scope=scope):
@@ -499,7 +638,7 @@ def verify_envelope(envelope: dict[str, Any], scope: str = _DEFAULT_NONCE_SCOPE)
     if not isinstance(sig, str):
         raise AuthenticationError("envelope sig missing")
 
-    body = _canonical_bytes({k: envelope[k] for k in ("v", "ts", "nonce", "payload")})
+    body = _canonical_bytes({k: envelope[k] for k in ("v", "ts", "nonce", "kid", "payload") if k in envelope})
     expected = _hmac_hex(psk, body)
     if not hmac.compare_digest(sig, expected):
         raise AuthenticationError("HMAC signature mismatch")
@@ -511,6 +650,46 @@ def verify_envelope(envelope: dict[str, Any], scope: str = _DEFAULT_NONCE_SCOPE)
     if not isinstance(payload, dict):
         raise AuthenticationError("envelope payload not a dict")
     return payload
+
+
+# ─── Per-peer identity bridge ────────────────────────────────────────────
+
+
+def pin_peer_identity(peer_id: str, key: bytes) -> bool:
+    """Pin *peer_id* to *key* in the process-wide directory.
+
+    Returns True iff this is a new pin (False on idempotent re-pin of the
+    same key). Raises :class:`AuthenticationError` if the peer is already
+    bound to a DIFFERENT key — operators rotating a peer key must call
+    :func:`drop_peer_identity` first, which is itself an audited event.
+
+    This is the public entry point used by :class:`Mesh` when it observes
+    a PSK-authenticated presence broadcast carrying a ``peer_key``
+    advertisement (TOFU). It is also the entry point used by operators
+    who pre-distribute keys without going through the directory loader.
+    """
+    try:
+        return _identity.get_directory().pin(peer_id, key)
+    except _identity.IdentityMismatchError as exc:
+        # Surface as AuthenticationError so caller dispatch (which already
+        # catches AuthenticationError) handles this uniformly with other
+        # signature failures. The original IdentityMismatchError is
+        # preserved on __cause__ for forensics.
+        raise AuthenticationError(str(exc)) from exc
+
+
+def drop_peer_identity(peer_id: str) -> bool:
+    """Remove *peer_id* from the directory. Returns True iff present.
+
+    The receiver must re-pin (TOFU again) on next presence; operators
+    use this to recover from a key rotation.
+    """
+    return _identity.get_directory().drop(peer_id)
+
+
+def known_peer_identities() -> list[str]:
+    """Return a sorted list of currently-pinned peer ids."""
+    return _identity.get_directory().known_peers()
 
 
 # ─── Policy-host allowlist ───────────────────────────────────────────────
@@ -978,13 +1157,17 @@ __all__ = [
     "ValidationError",
     "auth_required",
     "clear_replay_cache",
+    "identity_required",
     "consume_peer_token",
+    "drop_peer_identity",
     "enforce_peer_rate_limit",
     "is_safe_model_path",
     "is_safe_policy_host",
     "is_safe_policy_provider",
     "is_safe_policy_type",
     "is_safe_server_address",
+    "known_peer_identities",
+    "pin_peer_identity",
     "psk_configured",
     "reset_peer_rate_limits",
     "sign_envelope",

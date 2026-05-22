@@ -310,7 +310,13 @@ def test_multi_peer_broadcast_each_peer_accepts_independently(monkeypatch, tmp_p
     from strands_robots.mesh import security as sec
 
     sec.clear_replay_cache()
-    env = sec.sign_envelope({"sender_id": "alice", "command": {"action": "status"}})
+    # R9: callers that set ``sender_id`` MUST also pass ``peer_id`` so the
+    # envelope kid binds the claim. Verifies the test's intent (multi-peer
+    # broadcast accepted by every receiver) under the new identity contract.
+    env = sec.sign_envelope(
+        {"sender_id": "alice", "command": {"action": "status"}},
+        peer_id="alice",
+    )
 
     # peer-a accepts.
     peer_a = sec.verify_envelope(env, scope="peer-a")
