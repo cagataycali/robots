@@ -611,7 +611,7 @@ To change the cache location: `export STRANDS_ASSETS_DIR=/path/to/custom/dir`
 
 ## Simulation (MuJoCo)
 
-`strands-robots` ships a MuJoCo-backed simulation AgentTool - 58 actions
+`strands-robots` ships a MuJoCo-backed simulation AgentTool — 64 actions
 exposed to any Strands agent for world composition, physics, policy
 execution, and video/dataset recording.
 
@@ -640,7 +640,7 @@ sim.run_policy(robot_name="arm", policy_provider="mock", n_steps=200,
 frame = sim.render(camera_name="topdown")  # returns {status, content:[text, image]}
 ```
 
-### 58 actions grouped
+### 64 actions grouped
 
 - **World & objects**: `create_world`, `load_scene`, `add_robot`,
   `add_object`, `move_object`, `list_objects`, `list_robots`,

@@ -20,29 +20,31 @@ from strands_robots import Robot
 
 sim = Robot("so100")
 
-# Start recording - creates LeRobot v3 dataset structure
-sim.start_recording(
-    repo_id="local/so100_demo",
-    task="reach target",
-    fps=30,  # must match video fps to avoid playback speed drift
-    root="/tmp/so100_dataset",
-)
+try:
+    # Start recording - creates LeRobot v3 dataset structure
+    sim.start_recording(
+        repo_id="local/so100_demo",
+        task="reach target",
+        fps=30,
+        root="/tmp/so100_dataset",
+    )
 
-# Run a mock policy (random actions) for 2 seconds.
-# Video kwargs go inside the ``video`` dict, NOT as top-level args.
-result = sim.run_policy(
-    robot_name="so100",
-    policy_provider="mock",
-    instruction="reach target",
-    duration=2.0,
-    fast_mode=True,
-    video={"path": "/tmp/so100_rollout.mp4", "fps": 30},
-)
-print(result["content"][0]["text"])
+    # Run a mock policy (random actions) for 2 seconds.
+    # Video kwargs go inside the ``video`` dict, NOT as top-level args.
+    result = sim.run_policy(
+        robot_name="so100",
+        policy_provider="mock",
+        instruction="reach target",
+        duration=2.0,
+        fast_mode=True,
+        video={"path": "/tmp/so100_rollout.mp4", "fps": 30},
+    )
+    print(result["content"][0]["text"])
 
-# Finalize the episode
-stop = sim.stop_recording()
-print(stop["content"][0]["text"])
+    # Finalize the episode
+    stop = sim.stop_recording()
+    print(stop["content"][0]["text"])
+finally:
+    sim.destroy()
 
-sim.destroy()
 print("Dataset saved to /tmp/so100_dataset/")

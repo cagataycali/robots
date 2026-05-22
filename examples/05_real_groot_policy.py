@@ -19,52 +19,56 @@ from strands_robots import Robot, gr00t_inference, lerobot_camera, pose_tool
 
 # Initialize robot to None so finally block is safe if construction fails
 robot = None
+groot_started = False
 
-# Real robot with dual cameras
-robot = Robot(
-    "so101",
-    mode="real",
-    cameras={
-        "wrist": {
-            "type": "opencv",
-            "index_or_path": "/dev/video0",
-            "fps": 15,
-            "fourcc": "MJPG",
-        },
-        "front": {
-            "type": "opencv",
-            "index_or_path": "/dev/video2",
-            "fps": 15,
-            "fourcc": "MJPG",
-        },
-    },
-)
-
-# Build agent with robot + inference tools
-agent = Agent(
-    tools=[robot, gr00t_inference, lerobot_camera, pose_tool],
-)
-
-# Start GR00T inference server
-agent.tool.gr00t_inference(
-    action="start",
-    checkpoint_path="/data/checkpoints/gr00t-wave/checkpoint-300000",
-    port=5555,
-    data_config="so100_dualcam",
-    embodiment_tag="new_embodiment",
-)
-
-# Interactive control loop
-print("GR00T policy running. Type instructions or 'quit' to exit.")
 try:
+    # Real robot with dual cameras
+    robot = Robot(
+        "so101",
+        mode="real",
+        cameras={
+            "wrist": {
+                "type": "opencv",
+                "index_or_path": "/dev/video0",
+                "fps": 15,
+                "fourcc": "MJPG",
+            },
+            "front": {
+                "type": "opencv",
+                "index_or_path": "/dev/video2",
+                "fps": 15,
+                "fourcc": "MJPG",
+            },
+        },
+    )
+
+    # Build agent with robot + inference tools
+    agent = Agent(
+        tools=[robot, gr00t_inference, lerobot_camera, pose_tool],
+    )
+
+    # Start GR00T inference server
+    agent.tool.gr00t_inference(
+        action="start",
+        checkpoint_path="/data/checkpoints/gr00t-wave/checkpoint-300000",
+        port=5555,
+        data_config="so100_dualcam",
+        embodiment_tag="new_embodiment",
+    )
+    groot_started = True
+
+    # Interactive control loop
+    print("GR00T policy running. Type instructions or 'quit' to exit.")
     while True:
         query = input("\n# ")
         if query.lower() in ("quit", "exit", "q"):
             break
         agent(query)
+
 finally:
     # Always stop the inference server and release hardware, even on error.
-    stop_result = agent.tool.gr00t_inference(action="stop", port=5555)
-    print(f"GR00T stop: {stop_result}")
+    if groot_started:
+        stop_result = gr00t_inference(action="stop", port=5555)
+        print(f"GR00T stop: {stop_result}")
     if robot:
         robot.cleanup()

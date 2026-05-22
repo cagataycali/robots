@@ -24,8 +24,12 @@ for r in list_robots(mode="all"):
     real_flag = _flag(r.get("has_real", False), "real")
     print(f"  {sim_flag} {real_flag}  {r['name']:25s} {r.get('description', '')}")
 
-print(f"\n=== Sim-only ({len(list_robots(mode='sim'))} robots) ===")
-for r in list_robots(mode="sim")[:5]:
+# Sim-capable: all robots that have simulation assets (includes those with
+# hardware support too). For truly sim-only robots, filter out has_real.
+sim_capable = list_robots(mode="sim")
+sim_only = [r for r in sim_capable if not r.get("has_real", False)]
+print(f"\n=== Sim-capable ({len(sim_capable)} robots, {len(sim_only)} sim-only) ===")
+for r in sim_capable[:5]:
     print(f"  {r['name']}")
 
 print(f"\n=== Real hardware ({len(list_robots(mode='real'))} robots) ===")

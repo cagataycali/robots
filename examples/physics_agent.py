@@ -23,7 +23,7 @@ from strands_robots import Robot
 # Create a simulated SO-100 robot arm
 sim = Robot("so100")
 
-# Give the agent the simulation tool — all 50+ actions available via NL
+# Give the agent the simulation tool — all 64 actions available via NL
 agent = Agent(
     tools=[sim],
     system_prompt=(

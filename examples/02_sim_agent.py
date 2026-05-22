@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The 5-Line Promise: natural language robot control.
 
-Robot() returns an AgentTool with 35+ simulation actions. Hand it to a
+Robot() returns an AgentTool with 64 simulation actions. Hand it to a
 Strands Agent and control the robot through conversation.
 
 Requirements:
