@@ -64,7 +64,9 @@ _DOCKER_IMAGE_RE = re.compile(
 # Narrowed per AGENTS.md review-learnings: quotes/bangs/parens/brackets
 # appear in legitimate filesystem paths and all subprocess calls here are
 # argv-style (no shell=True), so they pose no injection risk in path values.
-_SHELL_META = re.compile(r"[;&|`$<>\\\n\r\x00]")
+# Backslash (\) is also legal on Linux (only / and NUL are forbidden by POSIX)
+# and carries no special meaning in argv-style subprocess calls.
+_SHELL_META = re.compile(r"[;&|`$<>\n\r\x00]")
 
 # Strict patterns for enumerable parameters.
 _DATA_CONFIG_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
@@ -87,7 +89,7 @@ _ALL_NUMERIC_RE = re.compile(r"^[0-9]+(?:\.[0-9]+)+$")
 # This is intentional: pgrep is constrained to ERE, and cmdlines are space-separated
 # in practice (procps-ng converts NUL → space when reading /proc/*/cmdline).
 # Matches both N1.5/N1.6 (inference_service.py) and N1.7 (gr00t.eval.run_gr00t_server)
-_PGREP_INFERENCE_PORT_FMT = "(inference_service\\.py|gr00t\\.eval\\.run_gr00t_server).*--port[= ]{port}( |$)"
+_PGREP_INFERENCE_PORT_FMT = r"(inference_service\.py|gr00t\.eval\.run_gr00t_server).*--port[= ]{port}( |$)"
 # Python-side equivalent for re.search — uses (?:\s|$) instead of ( |$)
 # because Python re is always ERE-ish and \s is more precise.
 _PYTHON_PORT_RE_FMT = r"--port[= ]{port}(?:\s|$)"
@@ -183,11 +185,15 @@ def validate_inputs(
     valid_protocols = ("n1.5", "n1.6", "n1.7")
     if protocol not in valid_protocols:
         raise ValueError(f"Unknown protocol {protocol!r}. Valid: {list(valid_protocols)}")
-    # Port range — always validated
+    # Port range — always validated. Type-check first so callers get ValueError, not TypeError.
+    if not isinstance(port, int):
+        raise ValueError(f"port must be an integer, got {type(port).__name__}: {port!r}")
     if not (1 <= port <= 65535):
         raise ValueError(f"port must be between 1 and 65535, got {port}")
 
     # Host address validation — always validated (accept IPs and RFC-952 hostnames)
+    if not isinstance(host, str):
+        raise ValueError(f"host must be a string, got {type(host).__name__}: {host!r}")
     # RFC 1035 §2.3.4: total hostname must not exceed 253 octets.
     if len(host) > 253:
         raise ValueError(f"host exceeds RFC 1035 maximum length of 253 chars (got {len(host)} chars)")
@@ -575,7 +581,7 @@ def gr00t_inference(
             repo_tag=repo_tag,
             policy_name=policy_name,
         )
-    except (ValueError, TypeError) as e:
+    except ValueError as e:
         return {"status": "error", "message": str(e)}
 
     if action == "find_containers":
@@ -706,10 +712,9 @@ def gr00t_inference(
             use_sim_policy_wrapper=use_sim_policy_wrapper,
             host_was_explicit=_host_was_explicit,
         )
-    # NOTE: The else branch is unreachable — validate_inputs() rejects unknown
-    # actions before dispatch. Kept as defensive assertion.
-    else:
-        return {"status": "error", "message": f"Unknown action: {action}"}
+
+    # Unreachable: validate_inputs() rejects unknown actions before dispatch.
+    return {"status": "error", "message": f"Unknown action: {action}"}  # pragma: no cover
 
 
 def _find_gr00t_containers() -> dict[str, Any]:
@@ -824,7 +829,7 @@ def _is_gr00t_process(container_name: str, pid: str, *, port: int | None = None)
 
         _logger = logging.getLogger(__name__)
         if isinstance(exc, PermissionError):
-            _logger.warning("Permission denied probing container process %s — treating as non-GR00T", pid)
+            _logger.warning("Permission denied probing container process %s -- treating as non-GR00T", pid)
         else:
             _logger.debug("Failed to probe container process %s: %s", pid, exc)
     return False
@@ -862,7 +867,7 @@ def _is_gr00t_host_process(pid: str, *, port: int | None = None) -> bool:
 
         _logger = logging.getLogger(__name__)
         if isinstance(exc, PermissionError):
-            _logger.warning("Permission denied reading /proc/%s/cmdline — treating as non-GR00T", pid)
+            _logger.warning("Permission denied reading /proc/%s/cmdline -- treating as non-GR00T", pid)
         else:
             _logger.debug("Failed to probe host process %s: %s", pid, exc)
     return False
@@ -1123,7 +1128,7 @@ def _start_service(
         if host == "127.0.0.1" and not host_was_explicit:
             import logging as _logging
 
-            _logging.getLogger(__name__).info(
+            _logging.getLogger(__name__).warning(
                 "Auto-flipping host from 127.0.0.1 to 0.0.0.0 for container "
                 "port-publish (-p). Pass host='127.0.0.1' explicitly to keep loopback."
             )
