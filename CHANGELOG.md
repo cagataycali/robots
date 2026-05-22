@@ -5,6 +5,62 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## Unreleased - #194 (mesh security hardening)
 
+### Round 5 - senior-principal pass (yinsong1986)
+
+* **R5-1 (HIGH)**: ``_exec_cmd`` receive-side ``turn_id`` fallback was
+  ``uuid.uuid4().hex[:8]`` (32-bit). Promoted to full 128-bit hex to
+  match the outbound D1 hardening. Pre-fix, an inbound command without
+  ``turn_id`` produced a birthday-colliding response topic that an
+  observer could predict.
+
+* **R5-2 (MED)**: promoted ``Mesh._put_signed`` to a public
+  ``Mesh.publish`` alias for cross-module callers (currently
+  ``camera_offload``). AGENTS.md > Public API Hygiene forbids
+  referencing ``_method`` names from other modules. ``_put_signed``
+  remains the canonical name for in-class and intra-module use;
+  ``publish`` delegates.
+
+* **R5-3 (HIGH)**: cross-process safety on the seq sidecar via
+  ``fcntl.flock``. Two processes that share an audit dir cannot roll
+  the counter back any more — ``_next_seq`` re-reads the sidecar
+  inside the inter-process flock, merges any peer-process increments
+  into the in-memory cache, increments, persists, releases. POSIX
+  only; Windows falls back to in-process locking with the limitation
+  documented in the module docstring.
+
+* **R5-4 (HIGH)**: ``_resume_lockout`` collapsed to a single generic
+  wire-response shape (``{"status": "ok"}`` on success,
+  ``{"status": "error", "error": "resume rejected"}`` on every
+  failure). Pre-fix the four distinct response shapes leaked oracles
+  for: lockout engaged or not, ``STRANDS_MESH_OVERRIDE_CODE``
+  configured or not, and the lockout duration. Structured detail is
+  preserved in the local ``publish_safety_event`` audit record where
+  forensics can use it.
+
+* **R5-5 (LOW)**: ``_peer_rate_config`` exception clause narrowed from
+  bare ``except Exception`` to ``except (ValueError, IndexError)``.
+  AGENTS.md > Exception Clauses Must Be Narrow. Real bugs in the
+  clamping logic now surface instead of being silently masked.
+
+### Structural cleanup pass
+
+* **No duplicate top-level imports** across the seven hardened modules.
+* **Consolidated** the two consecutive ``from strands_robots.mesh.session
+  import (...)`` blocks in ``core.py``.
+* **Hoisted** the four lazy ``from strands_robots.mesh.audit import
+  log_safety_event`` calls inside ``core.py`` (``_on_cmd``, ``_exec_cmd``,
+  ``_on_response``) to a single top-level import — ``audit.py`` has no
+  dependency on ``core.py`` so the lazy form was unnecessary.
+* **Hoisted** the ``import socket as _socket`` lazy import inside
+  ``_ensure_ca`` to the top of ``provision.py``.
+* **Verified zero emojis** in source code across the seven hardened
+  modules.
+* **Verified no superfluous one-line comments** that restate the
+  obvious — the section dividers in ``robot_mesh.py`` are intentional
+  navigation aids and were kept.
+
+### Round 1 / 2 / 3 / 4 - see existing entries below.
+
 ### Round 4 — additional review feedback (yinsong1986)
 
 * **R4-1 (HIGH)**: ``policy_provider`` now gated through

@@ -21,6 +21,7 @@ from collections.abc import Callable
 from typing import Any
 
 from strands_robots.mesh import security as _security
+from strands_robots.mesh.audit import log_safety_event
 from strands_robots.mesh.sensors import SensorLoopsMixin
 from strands_robots.mesh.session import (
     CAMERA_HZ,
@@ -574,8 +575,6 @@ class Mesh(SensorLoopsMixin):
                 sender_id or "<anon>",
             )
             try:
-                from strands_robots.mesh.audit import log_safety_event
-
                 log_safety_event(
                     "rate_limit_drop",
                     self.peer_id,
@@ -591,7 +590,12 @@ class Mesh(SensorLoopsMixin):
 
     def _exec_cmd(self, data: dict[str, Any]) -> None:
         sender = data.get("sender_id", "")
-        turn = data.get("turn_id") or uuid.uuid4().hex[:8]
+        # R5-1: full 128-bit fallback. Pre-fix, an inbound command without
+        # turn_id triggered a 32-bit hex which was birthday-colliding under
+        # heavy concurrent load and cheap to predict for an attacker who
+        # could observe the response topic. D1 closed the outbound side;
+        # this closes the symmetric receive-side surface.
+        turn = data.get("turn_id") or uuid.uuid4().hex
         cmd = data.get("command", data)
         if isinstance(cmd, str):
             cmd = {"action": "execute", "instruction": cmd}
@@ -615,8 +619,6 @@ class Mesh(SensorLoopsMixin):
                     },
                 )
             try:
-                from strands_robots.mesh.audit import log_safety_event
-
                 log_safety_event(
                     "command_rejected",
                     self.peer_id,
@@ -661,8 +663,6 @@ class Mesh(SensorLoopsMixin):
                     },
                 )
             try:
-                from strands_robots.mesh.audit import log_safety_event
-
                 log_safety_event(
                     "command_rejected_lockout",
                     self.peer_id,
@@ -824,8 +824,6 @@ class Mesh(SensorLoopsMixin):
                     expected,
                 )
                 try:
-                    from strands_robots.mesh.audit import log_safety_event
-
                     log_safety_event(
                         "response_hijack_rejected",
                         self.peer_id,
@@ -1155,21 +1153,40 @@ class Mesh(SensorLoopsMixin):
         """Clear the emergency-stop lockout if *override_code* matches.
 
         Compared in constant time against ``STRANDS_MESH_OVERRIDE_CODE``.
-        Mismatch returns an error and emits a ``resume_denied`` safety
-        event; success emits ``resume_ok`` and publishes
-        ``strands/safety/resume`` so peers can refresh their view.
 
-        Returns a status dict::
+        R5-4: the wire response is a single generic shape (``{"status":
+        "ok"}`` on success, ``{"status": "error", "error": "resume
+        rejected"}`` on every failure including "lockout not engaged" and
+        "override code unconfigured") so a remote prober cannot use
+        differential responses as oracles for:
 
-            {"status": "ok",    "lockout_elapsed_s": <seconds>}    # success
-            {"status": "noop",  "lockout": False}                  # not engaged
+        * whether the lockout is engaged at all (``noop`` vs ``error``),
+        * whether ``STRANDS_MESH_OVERRIDE_CODE`` is configured (``not
+          configured`` vs ``invalid code``),
+        * how long the lockout was held (``lockout_elapsed_s``).
+
+        Structured detail is preserved in the local
+        ``publish_safety_event`` audit record where forensics can use it.
+        Local callers (e.g. operator tooling that wants to show "already
+        unlocked" UI) can still distinguish via the local audit log.
             {"status": "error", "error": "<reason>"}               # rejected
 
         Every attempt — successful or not — is recorded in the audit log
         through :meth:`publish_safety_event`.
         """
+        # R5-4: every non-success path returns the same generic dict so
+        # a remote caller cannot use the response shape as an oracle.
+        # Structured rejection reasons are preserved in the local audit
+        # log via publish_safety_event.
+        _generic_error = {"status": "error", "error": "resume rejected"}
+
         if not self._estop_lockout.is_set():
-            return {"status": "noop", "lockout": False}
+            self.publish_safety_event(
+                event_type="resume_denied",
+                severity="info",
+                payload={"sender_id": self.peer_id, "reason": "lockout not engaged"},
+            )
+            return _generic_error
 
         expected = os.getenv("STRANDS_MESH_OVERRIDE_CODE", "").strip()
         provided = (override_code or "").strip()
@@ -1179,7 +1196,7 @@ class Mesh(SensorLoopsMixin):
                 severity="warning",
                 payload={"sender_id": self.peer_id, "reason": "STRANDS_MESH_OVERRIDE_CODE not configured"},
             )
-            return {"status": "error", "error": "override code not configured"}
+            return _generic_error
         # Constant-time compare so an attacker probing the override code
         # cannot use response-time variation to learn it byte-by-byte.
         if not hmac.compare_digest(expected.encode(), provided.encode()):
@@ -1188,7 +1205,7 @@ class Mesh(SensorLoopsMixin):
                 severity="warning",
                 payload={"sender_id": self.peer_id, "reason": "bad override code"},
             )
-            return {"status": "error", "error": "invalid override code"}
+            return _generic_error
 
         elapsed = time.time() - self._last_estop_ts
         self._estop_lockout.clear()
@@ -1202,7 +1219,22 @@ class Mesh(SensorLoopsMixin):
             {"peer_id": self.peer_id, "t": time.time(), "lockout_elapsed_s": elapsed},
         )
         logger.warning("[safety] %s: resume after %.1fs lockout", self.peer_id, elapsed)
-        return {"status": "ok", "lockout_elapsed_s": elapsed}
+        # R5-4: success is also generic on the wire; the local audit
+        # record (resume_ok above) carries the elapsed time for forensics.
+        return {"status": "ok"}
+
+    def publish(self, key: str, payload: dict[str, Any]) -> None:
+        """Public alias of :meth:`_put_signed` for cross-module callers.
+
+        R5-2: AGENTS.md > Public API Hygiene forbids referencing
+        ``_method`` names from other modules. Promoted alongside
+        ``_put_signed`` (which remains the canonical name for in-class
+        and intra-module use) so external consumers — currently
+        :mod:`strands_robots.mesh.iot.camera_offload` — couple to a
+        public name. Future refactors of the signing path can rename
+        ``_put_signed`` without breaking external callers.
+        """
+        self._put_signed(key, payload)
 
     def _put_signed(self, key: str, payload: dict[str, Any]) -> None:
         """Sign *payload* into an envelope and publish it on *key*.

@@ -56,6 +56,7 @@ audit log is forward-compatible with future fields).
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import hmac
 import json
@@ -63,8 +64,19 @@ import logging
 import os
 import threading
 import time
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
+
+# fcntl is POSIX-only. Windows deployments fall back to in-process
+# locking and lose the cross-process safety guarantee documented in
+# the module docstring.
+try:
+    import fcntl
+
+    _HAS_FCNTL = True
+except ImportError:
+    _HAS_FCNTL = False
 
 logger = logging.getLogger(__name__)
 
@@ -106,10 +118,17 @@ _WRITE_LOCK = threading.Lock()
 # sidecar, a compromised process could delete records, restart, and
 # yield a clean ``verify_audit_integrity()`` because every peer's seq
 # would start over at 1 — defeating the gap-detection half of the
-# threat model. The sidecar is loaded once on the first ``_next_seq``
-# call and rewritten under ``_SEQ_LOCK`` after each increment. Writes
-# are fail-soft: a write failure logs at WARNING but does not break the
-# safety code path.
+# threat model. The sidecar is reloaded inside the cross-process
+# lockfile (``mesh_audit.seq.lock``, R5-3) on every ``_next_seq`` call
+# and rewritten before the lock is released, so two processes sharing
+# the same ``STRANDS_MESH_AUDIT_DIR`` cannot roll the counter back.
+# Writes are fail-soft: a write failure logs at WARNING but does not
+# break the safety code path.
+#
+# Cross-process guarantee: POSIX (``fcntl.flock``) only. Windows
+# deployments fall back to in-process locking; running multiple
+# writer processes against the same audit dir on Windows is not
+# safe and not supported.
 #
 # R4-7 — audit-write amplification (accepted limitation): every event
 # triggers a synchronous double write (audit line + sidecar
@@ -274,6 +293,66 @@ def _seq_sidecar_path() -> Path:
     return audit_log_path().parent / "mesh_audit.seq.json"
 
 
+def _seq_lockfile_path() -> Path:
+    """Path to the cross-process lockfile guarding the seq sidecar.
+
+    R5-3: two processes that host the same peer_id (multi-Mesh test
+    harness, supervised restart racing the parent, fleet duplicate)
+    could otherwise both load the sidecar at seq=N, increment in
+    memory to N+1 and N+2 independently, persist whichever arrives
+    last, and roll the counter back. We use a separate lockfile
+    rather than ``flock``-ing the sidecar itself so the rename in
+    ``_persist_seq_counters`` (which atomically replaces the inode)
+    cannot strand the lock.
+    """
+    return audit_log_path().parent / "mesh_audit.seq.lock"
+
+
+@contextlib.contextmanager
+def _seq_flock() -> Iterator[None]:
+    """Hold an exclusive flock on the seq lockfile for the block.
+
+    Caller MUST already hold :data:`_SEQ_LOCK` (intra-process). Lock
+    ordering: intra-process first, inter-process second. The lock is
+    released on context exit even if the caller raises.
+
+    On Windows ``fcntl`` is unavailable; we fall back to in-process
+    locking only and document the cross-process limitation in the
+    module docstring. POSIX deployments (the supported surface) get
+    the full guarantee.
+    """
+    if not _HAS_FCNTL:
+        yield
+        return
+    lockfile = _seq_lockfile_path()
+    try:
+        lockfile.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        logger.debug("[audit] cannot create seq lockfile dir: %s", exc)
+        yield
+        return
+    try:
+        fd = os.open(str(lockfile), os.O_RDWR | os.O_CREAT, 0o600)
+    except OSError as exc:
+        logger.debug("[audit] cannot open seq lockfile: %s", exc)
+        yield
+        return
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        except OSError:
+            # Best-effort unlock; on close the kernel releases anyway.
+            pass
+        try:
+            os.close(fd)
+        except OSError:
+            # Already closed; no leak.
+            pass
+
+
 def _load_seq_counters() -> None:
     """Restore ``_SEQ_COUNTERS`` from the sidecar file. Idempotent.
 
@@ -404,21 +483,30 @@ def _persist_seq_counters() -> None:
 def _next_seq(peer_id: str) -> int:
     """Return the next monotonic sequence number for *peer_id*.
 
-    Each peer maintains its own counter under :data:`_SEQ_LOCK`, so two
-    peers writing concurrently from the same process produce
-    independently-numbered streams that gap-detection can verify.
+    R5-3: the load+increment+persist sequence runs under TWO locks:
 
-    Counters are loaded from a sidecar file on the first call per
-    process and rewritten after each increment, so a process restart
-    does not reset them. Persistence is fail-soft — a write failure is
-    logged but does not break the safety code path.
+    * :data:`_SEQ_LOCK` (intra-process) so multiple Mesh instances in
+      one process don't interleave increments.
+    * an ``fcntl.flock`` on the sidecar lockfile (inter-process) so
+      two processes that share the same audit dir cannot both load
+      seq=N and persist different increments — which would roll the
+      counter back. Inside the flock we **re-read** the sidecar so
+      our in-memory ``_SEQ_COUNTERS`` cache is reconciled with whatever
+      a peer process has written since our last increment.
+
+    Lock ordering: intra-process first, inter-process second. Always.
     """
     with _SEQ_LOCK:
-        _load_seq_counters()
-        next_value = _SEQ_COUNTERS.get(peer_id, 0) + 1
-        _SEQ_COUNTERS[peer_id] = next_value
-        _persist_seq_counters()
-        return next_value
+        with _seq_flock():
+            # Re-read the sidecar inside the flock so a peer process's
+            # increments are merged into our in-memory cache before
+            # we decide our next value.
+            _AUDIT_STATE.seq_loaded = False
+            _load_seq_counters()
+            next_value = _SEQ_COUNTERS.get(peer_id, 0) + 1
+            _SEQ_COUNTERS[peer_id] = next_value
+            _persist_seq_counters()
+            return next_value
 
 
 def _canonical_bytes(record: dict[str, Any]) -> bytes:

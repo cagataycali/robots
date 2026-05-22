@@ -1391,3 +1391,169 @@ def test_r4_8_authorization_error_wired_into_response_hijack_path():
     )
     # Also: the audit emit must include 'response_hijack_rejected'.
     assert "response_hijack_rejected" in src
+
+
+# ───────────────────────────────────────────────────────────────────────────
+# Round 5 — senior-principal pass on PR #194
+# ───────────────────────────────────────────────────────────────────────────
+
+
+def test_r5_1_exec_cmd_turn_id_fallback_is_full_uuid(monkeypatch):
+    """R5-1: receive-side turn_id fallback in _exec_cmd is full 128-bit
+    uuid4().hex, not truncated to 8 hex (32-bit). Pre-fix was a
+    birthday-collision / predictability surface mirroring the outbound
+    D1 attack from the receive side.
+    """
+    import inspect
+
+    from strands_robots.mesh.core import Mesh
+
+    src = inspect.getsource(Mesh._exec_cmd)
+    assert "uuid.uuid4().hex[:8]" not in src, (
+        "_exec_cmd still truncates the turn_id fallback to 32 bits — "
+        "R5-1 reopened. Use the full hex."
+    )
+    assert "uuid.uuid4().hex" in src
+
+
+def test_r5_2_mesh_publish_is_public_alias_of_put_signed(monkeypatch):
+    """R5-2: Mesh.publish is the public alias cross-module callers use.
+    AGENTS.md > Public API Hygiene forbids referencing _methods from
+    other modules. camera_offload now uses mesh.publish().
+    """
+    import inspect
+
+    from strands_robots.mesh.core import Mesh
+
+    assert hasattr(Mesh, "publish"), "Mesh.publish public alias missing — R5-2 reopened"
+    publish_src = inspect.getsource(Mesh.publish)
+    assert "_put_signed" in publish_src, "Mesh.publish must delegate to _put_signed"
+
+    # camera_offload must use the public name now.
+    from strands_robots.mesh.iot import camera_offload
+
+    co_src = inspect.getsource(camera_offload)
+    assert "mesh.publish(" in co_src, "camera_offload must call mesh.publish (R5-2)"
+    assert "mesh._put_signed(" not in co_src, (
+        "camera_offload still reaches into mesh._put_signed (private) — R5-2 reopened. "
+        "Use the public Mesh.publish alias."
+    )
+
+
+def test_r5_3_seq_sidecar_uses_flock(monkeypatch):
+    """R5-3: cross-process seq counter safety via fcntl.flock.
+
+    Source-inspection check: _next_seq must call _seq_flock (the
+    cross-process lock helper) and re-load the sidecar inside the
+    flock so a peer process's increments are merged before we decide
+    our next value.
+    """
+    import inspect
+
+    from strands_robots.mesh import audit
+
+    assert hasattr(audit, "_seq_flock"), "_seq_flock helper missing — R5-3 reopened"
+    src = inspect.getsource(audit._next_seq)
+    assert "_seq_flock" in src, "_next_seq must hold the cross-process flock"
+    # Must reset seq_loaded inside the flock so we re-read.
+    assert "seq_loaded = False" in src, (
+        "_next_seq must invalidate the in-memory cache inside the flock "
+        "and re-read the sidecar so peer-process increments are merged."
+    )
+
+
+def test_r5_3_concurrent_processes_do_not_roll_back_counter(tmp_path, monkeypatch):
+    """R5-3 functional: simulate two writers by clearing in-memory state
+    twice and verify the persistent sidecar's monotonicity holds.
+
+    Real cross-process testing requires multiprocessing; we approximate
+    by repeatedly clearing the in-memory cache (which is what a fresh
+    process would see on startup) and checking that the seq counter
+    never goes backwards.
+    """
+    monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
+    monkeypatch.setenv("STRANDS_MESH_AUDIT_PSK", "r5-3-psk")
+    from strands_robots.mesh import audit
+
+    audit._SEQ_COUNTERS.clear()
+    audit._AUDIT_STATE.seq_loaded = False
+    audit._AUDIT_STATE.psk_was_present = None
+
+    # Round 1: write 5 events (peer-a goes 1..5 in our process).
+    for i in range(5):
+        audit.log_safety_event("e", "peer-a", {"i": i})
+
+    # Simulate "another process started" by clearing in-memory state.
+    last_seen = audit._SEQ_COUNTERS.get("peer-a")
+    audit._SEQ_COUNTERS.clear()
+    audit._AUDIT_STATE.seq_loaded = False
+
+    # Next event MUST resume at 6 (sidecar reload inside flock).
+    audit.log_safety_event("e_after", "peer-a", {"i": "after"})
+    new_seq = audit._SEQ_COUNTERS.get("peer-a")
+    assert new_seq == last_seen + 1, (
+        f"Counter rolled back: was {last_seen}, now {new_seq}. "
+        "R5-3 reopened — the flock+reload must merge persisted state."
+    )
+
+
+def test_r5_4_resume_lockout_response_is_generic(monkeypatch, tmp_path):
+    """R5-4: every non-success branch of _resume_lockout returns the
+    same generic shape so a remote prober cannot use response shapes
+    as oracles for lockout state, override-code config, or duration.
+    """
+    monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
+    from strands_robots.mesh.core import Mesh
+
+    m = Mesh(MagicMock(), peer_id="me")
+    GENERIC_ERR = {"status": "error", "error": "resume rejected"}
+
+    # Branch 1: lockout NOT engaged — generic error.
+    assert m._resume_lockout("anything") == GENERIC_ERR
+
+    # Branch 2: lockout engaged, override code unconfigured — generic error.
+    m._estop_lockout.set()
+    monkeypatch.delenv("STRANDS_MESH_OVERRIDE_CODE", raising=False)
+    assert m._resume_lockout("any") == GENERIC_ERR
+
+    # Branch 3: lockout engaged, wrong code — generic error.
+    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "right-code")
+    assert m._resume_lockout("wrong-code") == GENERIC_ERR
+
+    # Branch 4: success — generic ok with NO duration leak.
+    m._estop_lockout.set()  # re-engage
+    m._last_estop_ts = 0.0  # would normally leak as lockout_elapsed_s
+    result = m._resume_lockout("right-code")
+    assert result == {"status": "ok"}
+    assert "lockout_elapsed_s" not in result, (
+        "Resume success leaks lockout duration on the wire — R5-4 reopened. "
+        "Operators can read elapsed time from the local audit log."
+    )
+
+
+def test_r5_5_peer_rate_config_narrow_exception(monkeypatch):
+    """R5-5: _peer_rate_config catches only (ValueError, IndexError),
+    NOT bare Exception. AttributeError / TypeError from a real bug must
+    surface."""
+    import inspect
+
+    from strands_robots.mesh import security as sec
+
+    src = inspect.getsource(sec._peer_rate_config)
+    # Forbid the bare except.
+    assert "except Exception:" not in src, (
+        "_peer_rate_config still catches bare Exception — R5-5 reopened. "
+        "AGENTS.md > Exception Clauses Must Be Narrow."
+    )
+    # Must catch the specific cases.
+    assert "ValueError" in src
+
+    # Functional: garbage env still falls back to default.
+    monkeypatch.setenv("STRANDS_MESH_PEER_RATE", "garbage")
+    burst, window = sec._peer_rate_config()
+    assert (burst, window) == (20, 60.0)
+
+    # Empty.
+    monkeypatch.setenv("STRANDS_MESH_PEER_RATE", "")
+    burst, window = sec._peer_rate_config()
+    assert (burst, window) == (20, 60.0)

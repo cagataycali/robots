@@ -245,11 +245,13 @@ def enable_for_mesh(mesh: Any, offloader: CameraOffloader | None = None) -> Came
                 if ref is None:
                     continue
                 ref["shape"] = list(shape)
-                # Route through mesh._put_signed so the /ref message carries an
-                # HMAC envelope when STRANDS_MESH_PSK is configured. transport.put
-                # is the unsigned legacy path; only the original frame upload to S3
-                # legitimately uses the unsigned route (S3 has its own auth).
-                mesh._put_signed(f"strands/{mesh.peer_id}/camera/{cam_name}/ref", ref)
+                # R5-2: cross-module callers go through Mesh.publish (public
+                # alias of _put_signed) per AGENTS.md > Public API Hygiene.
+                # The /ref topic is mirrored to the cloud audit table; an
+                # unsigned publish would let any LAN peer poison the table.
+                # transport.put is the unsigned legacy path used only for the
+                # original frame upload to S3 (S3 has its own auth).
+                mesh.publish(f"strands/{mesh.peer_id}/camera/{cam_name}/ref", ref)
             except Exception as exc:
                 logger.debug(
                     "[camera_offload] %s/%s offload failed: %s",

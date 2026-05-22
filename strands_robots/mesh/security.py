@@ -864,7 +864,14 @@ def _peer_rate_config() -> tuple[int, float]:
         cnt, win = raw.split("/", 1)
         burst = max(1, min(int(cnt), _MAX_PEER_RATE_BURST))
         window = max(0.1, float(win))
-    except Exception:
+    except (ValueError, IndexError):
+        # ValueError: int() / float() of a non-number; raw missing "/".
+        # IndexError: split returned <2 elements (impossible with split("/", 1)
+        # on a string but kept for safety in case the str.split contract changes).
+        # We deliberately do NOT catch broader exceptions here (R5-5):
+        # AttributeError or TypeError would indicate a real bug in the
+        # clamping logic that should surface, not get silently masked.
+        logger.warning("[security] STRANDS_MESH_PEER_RATE=%r invalid; using default 20/60", raw)
         return 20, 60.0
     return burst, window
 
