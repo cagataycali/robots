@@ -753,7 +753,13 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
         # spirit of the policy_host allowlist entirely. Threat-vector
         # #3 in pentest.md is only fully closed once these four fields
         # are gated.
-        if "pretrained_name_or_path" in cmd and cmd["pretrained_name_or_path"]:
+        # R7-4: handle explicit-None separately from key-absent. dict.get
+        # returns None when the key is present with a None value, and
+        # `if value` short-circuits — leaving the None in `out` to be
+        # forwarded into the executor. Pattern below: present-key MUST
+        # be a non-empty string in the allowlist; absent-key falls
+        # through to the default.
+        if "pretrained_name_or_path" in cmd:
             value = cmd["pretrained_name_or_path"]
             if not isinstance(value, str) or not is_safe_model_path(value, hf_only=True):
                 raise ValidationError(
@@ -763,18 +769,21 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
                 )
             out["pretrained_name_or_path"] = value
 
-        if "model_path" in cmd and cmd["model_path"]:
+        if "model_path" in cmd:
             value = cmd["model_path"]
             # model_path can be either a HF id OR a local filesystem path,
             # so we use hf_only=False — but the charset / traversal
             # checks still bite, blocking shell injection / .. attacks.
+            # R7-4: explicit-None is a present key and must fail the
+            # isinstance check below.
             if not isinstance(value, str) or not is_safe_model_path(value, hf_only=False):
                 raise ValidationError(
                     f"model_path={value!r} contains disallowed characters or path-traversal segments."
                 )
             out["model_path"] = value
 
-        if "policy_type" in cmd and cmd["policy_type"]:
+        if "policy_type" in cmd:
+            # R7-4: explicit-None must fail the isinstance check.
             value = cmd["policy_type"]
             if not isinstance(value, str) or not is_safe_policy_type(value):
                 raise ValidationError(
@@ -782,21 +791,26 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
                 )
             out["policy_type"] = value.strip().lower()
 
-        # R4-1: policy_provider is the registry key _dispatch passes to
-        # _execute_task_sync. At least as attacker-controllable as
-        # policy_type. Default "mock" matches _dispatch's default so
-        # back-compat callers keep working.
-        provider_value = cmd.get("policy_provider", "mock")
-        if provider_value and not is_safe_policy_provider(str(provider_value)):
-            raise ValidationError(
-                f"policy_provider={provider_value!r} not in allowlist. "
-                "Set STRANDS_MESH_POLICY_TYPE_ALLOW to extend "
-                "(provider and policy_type share one allowlist)."
-            )
-        if provider_value:
-            out["policy_provider"] = str(provider_value).strip().lower()
+        # R4-1 + R7-4: policy_provider is the registry key _dispatch
+        # passes to _execute_task_sync. Distinguish 'key absent'
+        # (apply default 'mock') from 'key present with any value'
+        # (must be a non-empty string in the allowlist). Pre-fix the
+        # explicit-None case slipped past every gate and survived
+        # in the validated cmd dict.
+        if "policy_provider" in cmd:
+            value = cmd["policy_provider"]
+            if not isinstance(value, str) or not is_safe_policy_provider(value):
+                raise ValidationError(
+                    f"policy_provider={value!r} not in allowlist. "
+                    "Set STRANDS_MESH_POLICY_TYPE_ALLOW to extend "
+                    "(provider and policy_type share one allowlist)."
+                )
+            out["policy_provider"] = value.strip().lower()
+        else:
+            out["policy_provider"] = "mock"
 
-        if "server_address" in cmd and cmd["server_address"]:
+        if "server_address" in cmd:
+            # R7-4: explicit-None must fail the isinstance check.
             value = cmd["server_address"]
             if not isinstance(value, str) or not is_safe_server_address(value):
                 raise ValidationError(

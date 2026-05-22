@@ -144,7 +144,17 @@ def _reset_rate_limits() -> None:
 
 
 def _audit_tool_action(action: str, target: str, success: bool, detail: str) -> None:
-    """Best-effort audit log of every safety-significant tool call."""
+    """Best-effort audit log of every safety-significant tool call.
+
+    R7-5: a swallowed exception with no log line means a broken audit
+    path silently disappears. Match the ``core.py:_on_cmd`` pattern —
+    log at DEBUG so operators investigating "why don't I see my LLM
+    tool actions in the audit log?" get a breadcrumb without flooding
+    production. Audit failures must NEVER propagate up into the safety
+    code path; the catch is intentionally wide for that reason and
+    documented here so AGENTS.md > "Exception Clauses Must Be Narrow"
+    is not violated implicitly.
+    """
     try:
         from strands_robots.mesh.audit import log_safety_event
 
@@ -158,8 +168,8 @@ def _audit_tool_action(action: str, target: str, success: bool, detail: str) -> 
                 "detail": detail[:500],
             },
         )
-    except Exception:  # pragma: no cover
-        pass
+    except Exception as audit_exc:  # noqa: BLE001 — see docstring
+        logger.debug("[robot_mesh] audit log unavailable: %s", audit_exc)
 
 
 def _err(text: str) -> dict[str, Any]:

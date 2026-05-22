@@ -593,29 +593,41 @@ def _ensure_paths(path: Path) -> None:
     except OSError as exc:  # pragma: no cover — best-effort on exotic FS
         logger.debug("[audit] could not chmod %s: %s", parent, exc)
 
-    # Symlink check on the audit log itself. We use lstat so we don't
-    # follow the link; any symlink — even one pointing to a legitimate
-    # location — is treated as tampering and rejected. Operators who
-    # legitimately want the log to live under a different path use
-    # STRANDS_MESH_AUDIT_DIR; symlinks are never the answer.
-    try:
-        if path.is_symlink():
-            raise OSError(
-                f"refusing to use audit log at {path}: it is a SYMLINK "
-                f"(target: {os.readlink(path)!r}). This may indicate "
-                f"tampering. Set STRANDS_MESH_AUDIT_DIR if you need to "
-                f"relocate the log."
-            )
-    except OSError:
-        # Re-raise the symlink check; an unrelated lstat failure
-        # (permission denied on parent, etc.) is handled by the
-        # subsequent open() call.
-        if path.is_symlink():
-            raise
+    # Symlink check on the audit log itself. ``Path.is_symlink`` returns
+    # False on a missing file and does NOT raise on permission errors,
+    # so the previous try/except OSError wrapper was dead code that
+    # could silently swallow a TOCTOU race. R7-1: rely on the static
+    # check for the eager-fail path AND on O_NOFOLLOW for the file
+    # creation below so a symlink swap between the two cannot redirect
+    # the create.
+    if path.is_symlink():
+        raise OSError(
+            f"refusing to use audit log at {path}: it is a SYMLINK "
+            f"(target: {os.readlink(path)!r}). This may indicate "
+            f"tampering. Set STRANDS_MESH_AUDIT_DIR if you need to "
+            f"relocate the log."
+        )
 
     if not path.exists():
-        # Create the file empty so we can chmod it before writing data.
-        path.touch()
+        # R7-1: create with O_NOFOLLOW so an attacker who races a
+        # symlink in between the is_symlink check above and this open
+        # cannot redirect the create. ``Path.touch`` follows symlinks
+        # (verified at runtime in tests/mesh/test_security_regressions.py
+        # ::test_r7_1_audit_log_create_refuses_symlink_target). On
+        # Windows where O_NOFOLLOW is 0 the static check above is the
+        # only line of defence; this matches the residual-risk note in
+        # the module docstring.
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        nofollow = getattr(os, "O_NOFOLLOW", 0)
+        try:
+            fd = os.open(path, flags | nofollow, 0o600)
+        except FileExistsError:
+            # Another writer created it concurrently; that's fine —
+            # they raced ahead of us and the next is_symlink check
+            # would catch a swap if one happened.
+            pass
+        else:
+            os.close(fd)
 
     try:
         os.chmod(path, 0o600)

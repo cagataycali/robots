@@ -105,25 +105,28 @@ class TestEnsureCA:
         assert ca_path.read_bytes() == _REAL_CA
 
     def test_download_rogue_cert_rejected(self, tmp_path):
+        # R7-2: the download path is _download_with_per_socket_timeout,
+        # which builds its own opener (no setdefaulttimeout). Patch the
+        # helper directly so the test stays focused on the pin-mismatch
+        # rejection rather than urllib internals.
         ca_path = tmp_path / "ca.pem"
-        mock_resp = MagicMock()
-        mock_resp.read.return_value = b"-----BEGIN ROGUE CERTIFICATE-----\n"
-        mock_resp.__enter__ = lambda self: self
-        mock_resp.__exit__ = lambda self, *a: None
-        with patch("strands_robots.mesh.iot.provision.urllib.request.urlopen", return_value=mock_resp):
+        with patch(
+            "strands_robots.mesh.iot.provision._download_with_per_socket_timeout",
+            return_value=b"-----BEGIN ROGUE CERTIFICATE-----\n",
+        ):
             with pytest.raises(RuntimeError, match="SHA-256 mismatch"):
                 provision._ensure_ca(ca_path)
         assert not ca_path.exists(), "rogue cert must NOT be written to disk"
 
     def test_download_oversized_rejected(self, tmp_path):
+        # R7-2: patch _download_with_per_socket_timeout directly. The
+        # body-size cap is enforced after the download returns.
         ca_path = tmp_path / "ca.pem"
-        # Return more bytes than the cap.
         big = b"X" * (provision._CA_FETCH_MAX_BYTES + 100)
-        mock_resp = MagicMock()
-        mock_resp.read.return_value = big
-        mock_resp.__enter__ = lambda self: self
-        mock_resp.__exit__ = lambda self, *a: None
-        with patch("strands_robots.mesh.iot.provision.urllib.request.urlopen", return_value=mock_resp):
+        with patch(
+            "strands_robots.mesh.iot.provision._download_with_per_socket_timeout",
+            return_value=big,
+        ):
             with pytest.raises(RuntimeError, match="exceeded"):
                 provision._ensure_ca(ca_path)
         assert not ca_path.exists()

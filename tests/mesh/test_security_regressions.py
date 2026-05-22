@@ -1303,24 +1303,49 @@ def test_r4_3_seq_sidecar_uses_fsync(tmp_path, monkeypatch):
 
 
 def test_r4_4_ca_download_has_per_recv_timeout():
-    """R4-4: ``_ensure_ca`` sets ``socket.setdefaulttimeout`` for the
-    duration of ``urlopen`` so a slow-loris responder cannot dribble
-    bytes for arbitrary wall-clock time. Source-inspection check —
-    actually testing slow-loris requires a live attacker socket.
+    """R4-4 + R7-2: ``_ensure_ca`` enforces a per-recv deadline on the
+    CA download so a slow-loris responder cannot dribble bytes
+    indefinitely.
+
+    The original R4-4 fix used ``socket.setdefaulttimeout``
+    (process-global mutation); R7-2 replaced that with a proper
+    per-socket timeout via ``urllib.request.build_opener`` +
+    ``HTTPSConnection(timeout=...)``, which is per-request only and
+    never mutates the process default.
     """
     import inspect
 
     from strands_robots.mesh.iot import provision
 
-    src = inspect.getsource(provision._ensure_ca)
-    assert "setdefaulttimeout" in src, (
-        "_ensure_ca must call socket.setdefaulttimeout for per-recv "
-        "deadline — R4-4 reopened. urlopen(timeout=) only covers "
-        "connect + handshake."
+    assert hasattr(provision, "_download_with_per_socket_timeout"), (
+        "Per-recv deadline helper missing — R4-4 / R7-2 reopened."
     )
-    # The per-recv timeout must be reset in finally so other code in
-    # the process isn't affected.
-    assert "finally:" in src and "_prev_default" in src
+    helper_src = inspect.getsource(provision._download_with_per_socket_timeout)
+    assert "build_opener" in helper_src, "Must use urllib.request.build_opener (R7-2)"
+    assert "HTTPSConnection" in helper_src, "Must build HTTPSConnection with explicit timeout"
+
+    # R7-2: the process-global mutation must NOT come back. We rely on a
+    # source-text check after stripping comments via tokenize so the
+    # docstring mentions of setdefaulttimeout (intentional, explaining
+    # what we don't do) don't trip the assertion.
+    import io
+    import tokenize
+
+    def _strip_to_code(text: str) -> str:
+        out = []
+        for tok in tokenize.generate_tokens(io.StringIO(text).readline):
+            if tok.type in (tokenize.COMMENT, tokenize.STRING):
+                continue
+            out.append(tok.string)
+        return " ".join(out)
+
+    helper_code = _strip_to_code(helper_src)
+    ensure_code = _strip_to_code(inspect.getsource(provision._ensure_ca))
+    for code, label in [(helper_code, "helper"), (ensure_code, "_ensure_ca")]:
+        assert "setdefaulttimeout" not in code, (
+            f"{label} mutates socket.setdefaulttimeout — R7-2 reopened. "
+            "Use a per-socket timeout via build_opener + HTTPSConnection."
+        )
 
 
 def test_r4_5_send_rejects_broadcast_responder_target(monkeypatch):
@@ -1555,3 +1580,265 @@ def test_r5_5_peer_rate_config_narrow_exception(monkeypatch):
     monkeypatch.setenv("STRANDS_MESH_PEER_RATE", "")
     burst, window = sec._peer_rate_config()
     assert (burst, window) == (20, 60.0)
+
+
+# ───────────────────────────────────────────────────────────────────────────
+# Round 7 — yinsong1986 review feedback
+# ───────────────────────────────────────────────────────────────────────────
+
+
+def test_r7_1_audit_log_create_refuses_symlink_target(tmp_path, monkeypatch):
+    """R7-1: ``_ensure_paths`` no longer relies on a convoluted
+    try/except OSError + re-check pattern, and the file-creation step
+    uses ``os.open(O_NOFOLLOW)`` instead of ``Path.touch`` so a TOCTOU
+    race that swaps a symlink between the static check and the create
+    cannot redirect the create.
+
+    Pre-fix: ``Path.touch`` follows symlinks, and the static check's
+    rejection could be silently swallowed by the except branch's
+    re-check returning False on a TOCTOU swap.
+    """
+    monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
+    from strands_robots.mesh import audit
+
+    # Plant a symlink at the canonical log path before _ensure_paths runs.
+    log_path = audit.audit_log_path()
+    attacker_sink = tmp_path / "attacker_sink.jsonl"
+    log_path.symlink_to(attacker_sink)
+
+    # _ensure_paths must reject up front, AND the attacker_sink must
+    # not exist after the call (proving touch() / O_NOFOLLOW didn't
+    # follow the symlink to create the target).
+    with pytest.raises(OSError, match="SYMLINK"):
+        audit._ensure_paths(log_path)
+    assert not attacker_sink.exists(), (
+        "Symlink target was created — R7-1 reopened. Path.touch() follows symlinks; use os.open(O_NOFOLLOW)."
+    )
+
+
+def test_r7_1_ensure_paths_uses_os_open_not_touch():
+    """R7-1: the file-creation step inside ``_ensure_paths`` uses
+    ``os.open(O_NOFOLLOW)``, not ``Path.touch``. ``Path.touch`` follows
+    symlinks; on Windows where O_NOFOLLOW is 0 the static check is the
+    only defence, so this check pins the structural fix."""
+    import inspect
+
+    from strands_robots.mesh import audit
+
+    src = inspect.getsource(audit._ensure_paths)
+    assert "path.touch()" not in src, (
+        "_ensure_paths still uses Path.touch — R7-1 reopened. "
+        "Path.touch follows symlinks; use os.open(O_NOFOLLOW) instead."
+    )
+    assert "O_NOFOLLOW" in src or 'getattr(os, "O_NOFOLLOW"' in src
+    assert "O_CREAT" in src
+    assert "O_EXCL" in src, "File creation must use O_EXCL so a parallel writer cannot win the race silently."
+
+
+def test_r7_2_ca_download_does_not_mutate_socket_default():
+    """R7-2: the CA download path uses a per-socket timeout via
+    ``urllib.request.build_opener`` + ``HTTPSConnection(timeout=...)``,
+    NOT ``socket.setdefaulttimeout`` (which is process-global).
+
+    Pre-fix, every other thread doing socket I/O during the CA window
+    observed the foreign 15s default — a real interaction surface for
+    boto3 / Zenoh / requests.
+    """
+    import inspect
+    import io
+    import tokenize
+
+    from strands_robots.mesh.iot import provision
+
+    def _strip(text):
+        out = []
+        for tok in tokenize.generate_tokens(io.StringIO(text).readline):
+            if tok.type in (tokenize.COMMENT, tokenize.STRING):
+                continue
+            out.append(tok.string)
+        return " ".join(out)
+
+    helper_code = _strip(inspect.getsource(provision._download_with_per_socket_timeout))
+    ensure_code = _strip(inspect.getsource(provision._ensure_ca))
+
+    for code, label in [(helper_code, "helper"), (ensure_code, "_ensure_ca")]:
+        assert "setdefaulttimeout" not in code, f"{label} still calls socket.setdefaulttimeout — R7-2 reopened."
+        assert "getdefaulttimeout" not in code, f"{label} still inspects socket.getdefaulttimeout — R7-2 reopened."
+
+    # Helper must use the urllib opener + HTTPSConnection path.
+    helper_src = inspect.getsource(provision._download_with_per_socket_timeout)
+    assert "build_opener" in helper_src
+    assert "HTTPSConnection" in helper_src
+
+
+def test_r7_3_multi_pin_support_and_env_var(monkeypatch):
+    """R7-3: ``_AMAZON_ROOT_CA1_PINS`` is a tuple and ``_resolve_ca_pins``
+    accepts additional pins via ``STRANDS_MESH_CA_PINS`` (comma-separated
+    64-char lowercase hex). Operators stage a future-rotation pin via
+    env var; the built-in tuple is always included.
+    """
+    from strands_robots.mesh.iot import provision
+
+    # Built-in tuple shape.
+    assert isinstance(provision._AMAZON_ROOT_CA1_PINS, tuple)
+    assert len(provision._AMAZON_ROOT_CA1_PINS) >= 1
+    assert all(len(p) == 64 and all(c in "0123456789abcdef" for c in p) for p in provision._AMAZON_ROOT_CA1_PINS)
+
+    # Backwards-compat: _AMAZON_ROOT_CA1_SHA256 still exists and is the first pin.
+    assert provision._AMAZON_ROOT_CA1_SHA256 == provision._AMAZON_ROOT_CA1_PINS[0]
+
+    # Default resolver returns at least the built-in tuple.
+    monkeypatch.delenv("STRANDS_MESH_CA_PINS", raising=False)
+    pins = provision._resolve_ca_pins()
+    assert provision._AMAZON_ROOT_CA1_PINS[0] in pins
+
+    # Env var augments the set.
+    extra = "0123456789" * 6 + "0123"  # 64 chars
+    monkeypatch.setenv("STRANDS_MESH_CA_PINS", extra)
+    pins = provision._resolve_ca_pins()
+    assert extra in pins
+    assert provision._AMAZON_ROOT_CA1_PINS[0] in pins, "built-in must remain"
+
+    # Multiple comma-separated.
+    extra2 = "deadbeef" * 8  # 64 chars
+    monkeypatch.setenv("STRANDS_MESH_CA_PINS", f"{extra},{extra2}")
+    pins = provision._resolve_ca_pins()
+    assert extra in pins and extra2 in pins
+
+    # Invalid entries are skipped with a WARNING, not silently accepted.
+    monkeypatch.setenv("STRANDS_MESH_CA_PINS", "not-hex," + extra)
+    pins = provision._resolve_ca_pins()
+    assert "not-hex" not in pins
+    assert extra in pins, "valid entries alongside invalid ones must still parse"
+
+    # Uppercase hex is normalised to lowercase before validation; SHA-256
+    # hexdigest() emits lowercase, so an uppercase env value would never
+    # match a real CA hash. Reject as malformed (pin regex is lowercase).
+    monkeypatch.setenv("STRANDS_MESH_CA_PINS", "DEADBEEF" * 8)
+    pins = provision._resolve_ca_pins()
+    # Resolver normalises to lowercase before regex check, so uppercase
+    # passes through as "deadbeef..." and is added.
+    assert "deadbeef" * 8 in pins, "uppercase hex must be normalised to lowercase"
+
+
+def test_r7_3_hash_matches_pin_consults_full_set(monkeypatch):
+    """R7-3: ``_hash_matches_pin`` returns True for any accepted pin,
+    not just the first."""
+    import hashlib
+
+    from strands_robots.mesh.iot import provision
+
+    # Plant a known body whose SHA-256 we control.
+    body = b"-----BEGIN ROTATED CA-----\nfuture\n"
+    digest = hashlib.sha256(body).hexdigest()
+
+    # Without env var: not a built-in pin → False.
+    monkeypatch.delenv("STRANDS_MESH_CA_PINS", raising=False)
+    assert not provision._hash_matches_pin(body)
+
+    # With the digest in the env var: True.
+    monkeypatch.setenv("STRANDS_MESH_CA_PINS", digest)
+    assert provision._hash_matches_pin(body), (
+        "Pin from STRANDS_MESH_CA_PINS not honoured by _hash_matches_pin — R7-3 reopened."
+    )
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["policy_provider", "policy_type", "model_path", "pretrained_name_or_path", "server_address"],
+)
+def test_r7_4_validate_command_rejects_explicit_none(field, monkeypatch):
+    """R7-4: every per-field gate in ``validate_command`` must reject
+    an explicit-None value. Pre-fix ``cmd.get(k, default)`` returned
+    None when the key was present with None value, ``if value`` short-
+    circuited every gate, and the explicit-None survived in
+    ``out = dict(cmd)`` to be forwarded into the executor.
+
+    Fix pattern: distinguish key-absent (apply default) from
+    key-present (must be a non-empty string in the allowlist).
+    """
+    monkeypatch.delenv("STRANDS_MESH_HF_REPO_ALLOW", raising=False)
+    monkeypatch.delenv("STRANDS_MESH_POLICY_HOST_ALLOW", raising=False)
+    monkeypatch.delenv("STRANDS_MESH_POLICY_TYPE_ALLOW", raising=False)
+    from strands_robots.mesh import security as sec
+
+    base = {"action": "execute", "instruction": "x", "policy_host": "localhost"}
+    attack = dict(base, **{field: None})
+    with pytest.raises(sec.ValidationError):
+        sec.validate_command(attack)
+
+
+def test_r7_4_validate_command_default_policy_provider_preserved():
+    """R7-4: when ``policy_provider`` is absent, ``validate_command``
+    still applies the default ``"mock"``. Fix must not break the
+    back-compat path.
+    """
+    from strands_robots.mesh import security as sec
+
+    out = sec.validate_command(
+        {
+            "action": "execute",
+            "instruction": "x",
+            "policy_host": "localhost",
+        }
+    )
+    assert out["policy_provider"] == "mock"
+    # Other optional fields stay absent when not provided.
+    for k in ("policy_type", "model_path", "pretrained_name_or_path", "server_address"):
+        assert k not in out, f"validate_command added {k!r} without it being in cmd"
+
+
+def test_r7_5_audit_tool_action_logs_at_debug_on_failure(caplog, monkeypatch):
+    """R7-5: ``_audit_tool_action`` no longer silently swallows
+    exceptions. A broken audit path must leave a DEBUG breadcrumb so
+    operators investigating "why don't I see my LLM tool actions in
+    the audit log?" find a trace.
+    """
+    import logging
+
+    import strands_robots.tools.robot_mesh as rmt
+
+    # Monkeypatch the audit import so the call inside _audit_tool_action raises.
+    def boom(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr("strands_robots.mesh.audit.log_safety_event", boom)
+
+    with caplog.at_level(logging.DEBUG, logger="strands_robots.tools.robot_mesh"):
+        rmt._audit_tool_action("emergency_stop", "*", False, "test")
+
+    # Expect a DEBUG-level message about the audit log being unavailable.
+    matched = [
+        rec
+        for rec in caplog.records
+        if rec.name == "strands_robots.tools.robot_mesh" and "audit log unavailable" in rec.getMessage()
+    ]
+    assert matched, (
+        "No DEBUG breadcrumb on audit failure — R7-5 reopened. Pattern: except Exception as exc: logger.debug(...)."
+    )
+
+
+def test_r7_5_audit_tool_action_no_bare_pass():
+    """R7-5: pin the structural fix — _audit_tool_action must not
+    contain `except Exception:` followed only by `pass`."""
+    import inspect
+
+    import strands_robots.tools.robot_mesh as rmt
+
+    src = inspect.getsource(rmt._audit_tool_action)
+    # Must reference the logger (debug call).
+    assert "logger.debug" in src, "_audit_tool_action no longer logs at DEBUG on failure — R7-5 reopened."
+    # Specifically: must NOT have a bare "except Exception:" followed by "pass".
+    lines = src.splitlines()
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("except") and "Exception" in stripped:
+            # Look at the next non-empty, non-comment lines.
+            for j in range(i + 1, min(i + 4, len(lines))):
+                nxt = lines[j].strip()
+                if not nxt or nxt.startswith("#"):
+                    continue
+                assert nxt != "pass", (
+                    f"_audit_tool_action has `except Exception: pass` at line {i + 1} — R7-5 reopened."
+                )
+                break

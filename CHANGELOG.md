@@ -5,6 +5,81 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## Unreleased - #194 (mesh security hardening)
 
+### Round 7 - additional review feedback (yinsong1986)
+
+* **R7-1 (HIGH)**: ``audit.py:_ensure_paths`` had two compounding bugs.
+  The convoluted ``try/except OSError`` + re-check pattern could
+  silently swallow the symlink rejection on a TOCTOU race, and
+  ``Path.touch()`` follows symlinks regardless. Fix: drop the
+  try/except wrapper (``Path.is_symlink()`` does not raise on missing
+  files), and replace ``Path.touch()`` with
+  ``os.open(path, O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW, 0o600)`` so the
+  create itself refuses to follow a symlink. On Windows where
+  ``O_NOFOLLOW`` is ``0`` the static check remains the only line of
+  defence (residual risk documented in the module docstring).
+
+* **R7-2 (MED)**: ``provision.py:_ensure_ca`` mutated
+  ``socket.setdefaulttimeout`` for the duration of the urlopen — a
+  process-global side effect that any concurrent boto3 / Zenoh /
+  requests thread observed during the CA window. Fix: new
+  ``_download_with_per_socket_timeout`` helper installs a one-shot
+  ``urllib.request.HTTPSHandler`` whose ``https_open`` builds
+  ``HTTPSConnection`` instances with the timeout baked in. Per-socket
+  only; no process-global mutation. The R4-4 invariant (per-recv
+  deadline) is preserved with a stricter implementation.
+
+* **R7-3 (operational HIGH)**: hardcoded ``_AMAZON_ROOT_CA1_SHA256``
+  was a flag-day time bomb. AWS root rotation would hard-fail every
+  deployment with no recovery path short of a code change. Fix:
+  promoted to ``_AMAZON_ROOT_CA1_PINS: tuple[str, ...]`` plus a new
+  ``STRANDS_MESH_CA_PINS`` env var (comma-separated 64-char lowercase
+  hex; invalid entries logged and skipped). Operators stage a future-
+  rotation pin via the env var ahead of a code-level rotation; the
+  built-in tuple is always included. New ``_resolve_ca_pins`` helper
+  centralises the pin-set composition; ``_hash_matches_pin`` /
+  ``_verify_ca_bytes`` / ``verify_ca_pin`` all consult it. Backwards-
+  compat: ``_AMAZON_ROOT_CA1_SHA256`` remains as the canonical
+  (first) pin so existing references keep working.
+
+* **R7-4 (HIGH)**: explicit-``None`` hole in five ``validate_command``
+  per-field gates. ``cmd.get(k, default)`` returns ``None`` when the
+  key is present with ``None`` value, ``if value`` short-circuited
+  every gate, and the explicit-None survived in ``out = dict(cmd)``
+  to be forwarded into the executor. Fix: distinguish key-absent
+  (apply default) from key-present (must be a non-empty string in
+  the allowlist). Pattern applied to ``policy_provider``,
+  ``policy_type``, ``model_path``, ``pretrained_name_or_path``, and
+  ``server_address``. ``policy_provider``'s back-compat default
+  ``"mock"`` is preserved on the absent-key path.
+
+* **R7-5 (LOW)**: ``robot_mesh.py:_audit_tool_action`` had bare
+  ``except Exception: pass`` with no log line. Fix: copy the
+  ``core.py:_on_cmd`` pattern -- catch with breadcrumb at DEBUG so
+  operators investigating "why don't I see my LLM tool actions in
+  the audit log?" find a trace. Wide catch is intentional (audit
+  failures must NEVER propagate up into the safety code path) and
+  documented inline so AGENTS.md > "Exception Clauses Must Be Narrow"
+  is not violated implicitly.
+
+New env var: ``STRANDS_MESH_CA_PINS`` (R7-3). Documented in README.
+
+Tests: 13 new R7 regression tests in test_security_regressions.py.
+The R4-4 test was updated to reflect R7-2's stricter implementation
+(no setdefaulttimeout call inside _ensure_ca).
+
+Stats: 680 mesh tests passing (+13 from R6 baseline of 667), ruff
+clean, mypy clean.
+
+### Round 6 - scope-creep cleanup (yinsong1986)
+
+* **Scope creep dropped**: ``.gitignore`` row for
+``system_prompt.prompt`` removed (local tooling artifact); the file
+remains untracked locally. ``PENTEST_FINDINGS.md`` removed entirely
+from this PR (-423 lines). Cycle-by-cycle pentest evidence is
+preserved in commit messages, CHANGELOG round-by-round entries, and
+inline docstrings on every test in
+``tests/mesh/test_pentest_findings.py``.
+
 ### Round 5 - senior-principal pass (yinsong1986)
 
 * **R5-1 (HIGH)**: ``_exec_cmd`` receive-side ``turn_id`` fallback was

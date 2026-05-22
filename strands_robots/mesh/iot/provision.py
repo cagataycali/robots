@@ -48,7 +48,6 @@ import json
 import logging
 import os
 import re
-import socket
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -59,7 +58,7 @@ logger = logging.getLogger(__name__)
 
 _AMAZON_ROOT_CA1_URL = "https://www.amazontrust.com/repository/AmazonRootCA1.pem"
 
-# Pinned SHA-256 fingerprint of the canonical Amazon Root CA1 PEM bytes.
+# Pinned SHA-256 fingerprints of the canonical Amazon Root CA1 PEM bytes.
 # Pinning prevents a network-level attacker (DNS hijack, captive portal,
 # BGP, malicious local proxy) from substituting a rogue CA at the URL.
 #
@@ -71,7 +70,22 @@ _AMAZON_ROOT_CA1_URL = "https://www.amazontrust.com/repository/AmazonRootCA1.pem
 #       ).read()).hexdigest())"
 #
 # Last verified 2026-05.
-_AMAZON_ROOT_CA1_SHA256 = "2c43952ee9e000ff2acc4e2ed0897c0a72ad5fa72c3d934e81741cbd54f05bd1"
+#
+# R7-3: this is now a TUPLE so a CA rotation can ship as a code change
+# that adds the new pin in advance and removes the old one in a follow-
+# up after rollout. Operators can also extend the accepted pins via
+# ``STRANDS_MESH_CA_PINS`` (comma-separated 64-char lowercase hex). The
+# env var augments the built-in tuple; it does not replace it.
+_AMAZON_ROOT_CA1_PINS: tuple[str, ...] = ("2c43952ee9e000ff2acc4e2ed0897c0a72ad5fa72c3d934e81741cbd54f05bd1",)
+
+# Backwards-compat alias. Some external callers / docs reference the
+# singular name; keep it pointing at the canonical (first) pin so
+# error messages stay readable.
+_AMAZON_ROOT_CA1_SHA256 = _AMAZON_ROOT_CA1_PINS[0]
+
+# Regex: 64 hex chars, lowercase. Matches what hashlib.sha256(...).hexdigest()
+# emits and rejects anything else (operator typos surface immediately).
+_PIN_RE = re.compile(r"^[0-9a-f]{64}$")
 
 # Cap the CA download response to a generous multiple of the real ~1.4 KiB
 # certificate. Defeats body-size DoS attacks (a captive portal returning a
@@ -667,36 +681,31 @@ def _ensure_ca(ca_path: Path) -> None:
                 "force re-download.",
                 ca_path,
             )
-            raise RuntimeError(
-                f"AmazonRootCA1 at {ca_path} failed pin check (expected SHA-256 {_AMAZON_ROOT_CA1_SHA256})"
-            )
+            accepted = ", ".join(sorted(_resolve_ca_pins()))
+            raise RuntimeError(f"AmazonRootCA1 at {ca_path} failed pin check; accepted pins: {accepted}")
         return
 
     logger.info("[provision] downloading Amazon Root CA1 → %s (pinned)", ca_path)
-    # R4-4: urlopen's timeout= covers only connect + handshake; a slow-
-    # loris responder can dribble bytes after that. socket.setdefaulttimeout
-    # propagates a per-recv deadline so each read() observes the same ceiling.
-    _prev_default = socket.getdefaulttimeout()
-    socket.setdefaulttimeout(15.0)
-    try:
-        with urllib.request.urlopen(_AMAZON_ROOT_CA1_URL, timeout=15) as resp:  # noqa: S310 — HTTPS + pinned
-            body = resp.read(_CA_FETCH_MAX_BYTES + 1)
-    except TimeoutError as exc:
-        raise RuntimeError(
-            "AmazonRootCA1 download timed out — possible slow-loris "
-            "responder or hostile proxy. Set "
-            "STRANDS_MESH_DISABLE_CA_PIN=true and retry only after "
-            "confirming the network path is trustworthy."
-        ) from exc
-    finally:
-        socket.setdefaulttimeout(_prev_default)
+    # R7-2: per-socket timeout via a custom HTTPSHandler.
+    #
+    # The previous implementation called ``socket.setdefaulttimeout(15.0)``
+    # for the duration of the urlopen and restored it in ``finally``.
+    # That is process-global — every other thread doing socket I/O
+    # during the CA download window observes the foreign 15s default
+    # (boto3, Zenoh keepalives, requests pools all assume None). The
+    # ``urllib.request.build_opener`` path here installs a one-shot
+    # ``HTTPSHandler`` whose ``https_open`` builds connections via
+    # ``socket.create_connection(timeout=...)`` so the per-recv deadline
+    # sticks to that one socket only. No process-global mutation.
+    body = _download_with_per_socket_timeout(_AMAZON_ROOT_CA1_URL, 15.0, _CA_FETCH_MAX_BYTES + 1)
     if len(body) > _CA_FETCH_MAX_BYTES:
         raise RuntimeError(f"AmazonRootCA1 download exceeded {_CA_FETCH_MAX_BYTES} bytes — refusing")
 
     if not _verify_ca_bytes(body):
+        accepted = ", ".join(sorted(_resolve_ca_pins()))
         raise RuntimeError(
             "AmazonRootCA1 SHA-256 mismatch — refusing to write rogue CA. "
-            f"Expected {_AMAZON_ROOT_CA1_SHA256}; got {hashlib.sha256(body).hexdigest()}"
+            f"Got {hashlib.sha256(body).hexdigest()}; accepted pins: {accepted}"
         )
 
     ca_path.write_bytes(body)
@@ -706,13 +715,97 @@ def _ensure_ca(ca_path: Path) -> None:
         pass
 
 
-def _hash_matches_pin(body: bytes) -> bool:
-    """Return True iff *body*'s SHA-256 matches the pinned fingerprint.
+def _resolve_ca_pins() -> frozenset[str]:
+    """Return the full set of accepted Amazon Root CA1 SHA-256 pins.
 
-    Pure check — no env vars, no logging. Suitable for forensic / ops
-    callers that need ground truth.
+    Combines the built-in :data:`_AMAZON_ROOT_CA1_PINS` tuple with any
+    operator-supplied pins from ``STRANDS_MESH_CA_PINS``
+    (comma-separated, 64-char lowercase hex; invalid entries are
+    rejected with a WARNING and skipped). The env-var path lets a
+    fleet operator stage a new pin ahead of a code-level rotation
+    (R7-3) without a flag-day deploy. The built-in tuple is always
+    included; the env var is additive only.
     """
-    return hashlib.sha256(body).hexdigest() == _AMAZON_ROOT_CA1_SHA256
+    pins = set(_AMAZON_ROOT_CA1_PINS)
+    raw = os.getenv("STRANDS_MESH_CA_PINS", "").strip()
+    if raw:
+        for entry in raw.split(","):
+            normalised = entry.strip().lower()
+            if not normalised:
+                continue
+            if not _PIN_RE.fullmatch(normalised):
+                logger.warning(
+                    "[provision] STRANDS_MESH_CA_PINS entry %r is not a valid 64-char lowercase hex SHA-256; skipping.",
+                    entry,
+                )
+                continue
+            pins.add(normalised)
+    return frozenset(pins)
+
+
+def _download_with_per_socket_timeout(url: str, timeout_s: float, max_bytes: int) -> bytes:
+    """Download *url* with a per-socket recv timeout — no process-global mutation.
+
+    R7-2: ``socket.setdefaulttimeout`` is a process-global. While its
+    try/finally restore is correct, every other thread doing socket I/O
+    during the urlopen observes the foreign default. We install a one-
+    shot ``HTTPSHandler`` whose ``https_open`` constructs HTTPSConnection
+    instances with the timeout baked in, so the deadline is per-socket
+    and never visible to other code paths.
+
+    Raises ``RuntimeError`` on socket timeout (slow-loris responder /
+    hostile proxy) with a message pointing at the break-glass env var.
+    """
+    import http.client
+    import urllib.error
+
+    class _TimedHTTPSHandler(urllib.request.HTTPSHandler):
+        """HTTPSHandler whose connection factory bakes in *timeout_s*.
+
+        urllib.request's default HTTPSHandler builds an HTTPSConnection
+        without an explicit timeout — only the urlopen(timeout=) value
+        is forwarded, and that argument only covers connect + TLS
+        handshake. A per-connection timeout on the HTTPSConnection
+        itself propagates to recv() / sendall() and bounds wall-clock
+        for the whole transaction.
+        """
+
+        def https_open(self, req: urllib.request.Request) -> Any:
+            return self.do_open(self._connection_factory, req)
+
+        @staticmethod
+        def _connection_factory(host: str, **kwargs: Any) -> http.client.HTTPSConnection:
+            kwargs["timeout"] = timeout_s
+            return http.client.HTTPSConnection(host, **kwargs)
+
+    opener = urllib.request.build_opener(_TimedHTTPSHandler())
+    try:
+        with opener.open(url, timeout=timeout_s) as resp:  # noqa: S310 — HTTPS + pinned
+            return resp.read(max_bytes)
+    except (TimeoutError, urllib.error.URLError) as exc:
+        # urllib wraps socket.timeout in URLError on some Python versions;
+        # both surface as a RuntimeError pointing at the break-glass.
+        if isinstance(exc, urllib.error.URLError) and not isinstance(exc.reason, TimeoutError):
+            raise
+        raise RuntimeError(
+            "AmazonRootCA1 download timed out — possible slow-loris "
+            "responder or hostile proxy. Set "
+            "STRANDS_MESH_DISABLE_CA_PIN=true and retry only after "
+            "confirming the network path is trustworthy."
+        ) from exc
+
+
+def _hash_matches_pin(body: bytes) -> bool:
+    """Return True iff *body*'s SHA-256 matches any accepted pin.
+
+    Consults the full pin set returned by :func:`_resolve_ca_pins`
+    (built-in :data:`_AMAZON_ROOT_CA1_PINS` plus any
+    ``STRANDS_MESH_CA_PINS`` entries). Pure check — does not honour
+    ``STRANDS_MESH_DISABLE_CA_PIN`` (that's the contract that makes
+    :func:`verify_ca_pin` safe for ops scripts).
+    """
+    digest = hashlib.sha256(body).hexdigest()
+    return digest in _resolve_ca_pins()
 
 
 def _verify_ca_bytes(body: bytes) -> bool:
