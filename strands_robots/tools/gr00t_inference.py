@@ -193,7 +193,7 @@ def validate_inputs(
         raise ValueError(f"host exceeds RFC 1035 maximum length of 253 chars (got {len(host)} chars)")
     try:
         ipaddress.ip_address(host)
-    except ValueError as exc:
+    except ValueError:
         # Reject all-numeric labels (e.g. "127.0.01") — these are clearly IP typos
         # not legitimate hostnames. Real hostnames must have at least one alpha label.
         # Rejects all-numeric multi-label strings including Linux IPv4 short-forms
@@ -203,7 +203,7 @@ def validate_inputs(
                 f"host must be a valid IP address or hostname (got {host!r}). "
                 f"Use '127.0.0.1' for loopback, '0.0.0.0' for all interfaces, "
                 f"or a valid hostname like 'localhost'."
-            ) from exc
+            ) from None
 
     # Port-only actions (find_containers, list, status, stop) only need
     # port/host/protocol validation — the other params are unused by dispatch.
