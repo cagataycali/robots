@@ -32,6 +32,21 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 - ``pgrep`` pattern factored into ``_PGREP_INFERENCE_PORT_FMT`` module-level
   constant — single source of truth across all 4 usage sites.
 
+### Changed
+
+- ``validate_inputs()`` parameters are now all required (no defaults).
+  ``gr00t_inference()`` is the single source of truth for default values;
+  the validator no longer duplicates them (prevents silent drift).
+- ``_DOCKER_IMAGE_RE`` extended to support private-registry references with
+  port numbers (e.g. ``localhost:5000/myorg/img:tag``).
+- ``_is_gr00t_process`` / ``_is_gr00t_host_process`` now require ``--port``
+  in the process cmdline to match — prevents false-killing editors or
+  log-tailers that happen to touch ``inference_service.py``.
+- ``PermissionError`` in process probes now logs at WARNING level instead
+  of being silently swallowed.
+- Host-system fallback (``pgrep``) is documented as Linux-only. Non-Linux
+  platforms will see "No service running" rather than silently succeeding.
+
 ### Fixed
 
 - Duplicate ``torch_mock.manual_seed`` assignment in ``tests/mocks/torch_mock.py``.
@@ -39,6 +54,18 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
   container's ``-p {port}:{port}`` publish requires the service to bind all
   interfaces inside the container; ``127.0.0.1`` inside a container is
   unreachable from the host.
+
+### Notes
+
+- Host validation is **broader** than before for hostnames (RFC-952 names like
+  ``localhost`` and ``host.docker.internal`` now pass) but **stricter** for
+  IP-like typos (all-numeric labels like ``127.0.01`` are rejected).
+- Validation scope covers ``port``, ``host``, ``protocol``, ``data_config``,
+  ``embodiment_tag``, ``container_name``, TRT dtypes, ``checkpoint_path``,
+  ``trt_engine_path``, ``image_name``, ``volumes``, and ``container_command``.
+  Parameters ``repo_url``, ``repo_tag``, ``hf_repo``, ``policy_name`` are
+  NOT validated here — they flow into argv-style subprocess calls which
+  are not shell-injection-vulnerable.
 
 
 ## Unreleased - #178 (LiberoOffScreenRenderEngine retired)

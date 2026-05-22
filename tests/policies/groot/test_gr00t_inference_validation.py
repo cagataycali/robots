@@ -8,180 +8,233 @@ import pytest
 
 from strands_robots.tools.gr00t_inference import validate_inputs
 
+# Standard valid kwargs for validate_inputs — tests override individual fields.
+# validate_inputs() no longer has defaults (gr00t_inference() is the single source
+# of truth for defaults), so tests must supply all required params.
+_VALID_KWARGS = {
+    "action": "start",
+    "data_config": "fourier_gr1_arms_only",
+    "embodiment_tag": "gr1",
+    "port": 5555,
+    "host": "0.0.0.0",
+    "vit_dtype": "fp8",
+    "llm_dtype": "nvfp4",
+    "dit_dtype": "fp8",
+    "checkpoint_path": None,
+    "trt_engine_path": "gr00t_engine",
+    "container_name": None,
+    "protocol": "n1.5",
+}
+
 
 class TestValidateInputs:
     """Tests for the validate_inputs() public function."""
 
     def test_valid_defaults(self):
         """Default values must pass validation."""
-        validate_inputs(
-            data_config="fourier_gr1_arms_only",
-            embodiment_tag="gr1",
-            port=5555,
-            vit_dtype="fp8",
-            llm_dtype="nvfp4",
-            dit_dtype="fp8",
-        )
+        validate_inputs(**_VALID_KWARGS)
 
     def test_valid_with_all_optional(self):
         validate_inputs(
-            data_config="so100_dualcam",
-            embodiment_tag="so100",
-            port=8000,
-            vit_dtype="fp16",
-            llm_dtype="fp8",
-            dit_dtype="fp16",
-            checkpoint_path="/data/checkpoints/model",
-            trt_engine_path="/engines/cache",
-            container_name="gr00t-n17",
+            **{
+                **_VALID_KWARGS,
+                "data_config": "so100_dualcam",
+                "embodiment_tag": "so100",
+                "port": 8000,
+                "vit_dtype": "fp16",
+                "llm_dtype": "fp8",
+                "dit_dtype": "fp16",
+                "checkpoint_path": "/data/checkpoints/model",
+                "trt_engine_path": "/engines/cache",
+                "container_name": "gr00t-n17",
+            }
         )
 
     def test_invalid_data_config_uppercase(self):
         with pytest.raises(ValueError, match="data_config"):
             validate_inputs(
-                data_config="FourierGR1",
-                embodiment_tag="gr1",
-                port=5555,
-                vit_dtype="fp8",
-                llm_dtype="nvfp4",
-                dit_dtype="fp8",
+                **{
+                    **_VALID_KWARGS,
+                    "data_config": "FourierGR1",
+                    "embodiment_tag": "gr1",
+                    "port": 5555,
+                    "vit_dtype": "fp8",
+                    "llm_dtype": "nvfp4",
+                    "dit_dtype": "fp8",
+                }
             )
 
     def test_invalid_data_config_shell_chars(self):
         with pytest.raises(ValueError, match="data_config"):
             validate_inputs(
-                data_config="foo;rm -rf /",
-                embodiment_tag="gr1",
-                port=5555,
-                vit_dtype="fp8",
-                llm_dtype="nvfp4",
-                dit_dtype="fp8",
+                **{
+                    **_VALID_KWARGS,
+                    "data_config": "foo;rm -rf /",
+                    "embodiment_tag": "gr1",
+                    "port": 5555,
+                    "vit_dtype": "fp8",
+                    "llm_dtype": "nvfp4",
+                    "dit_dtype": "fp8",
+                }
             )
 
     def test_invalid_embodiment_tag(self):
         with pytest.raises(ValueError, match="embodiment_tag"):
             validate_inputs(
-                data_config="so100",
-                embodiment_tag="GR1-Sonic!",
-                port=5555,
-                vit_dtype="fp8",
-                llm_dtype="nvfp4",
-                dit_dtype="fp8",
+                **{
+                    **_VALID_KWARGS,
+                    "data_config": "so100",
+                    "embodiment_tag": "GR1-Sonic!",
+                    "port": 5555,
+                    "vit_dtype": "fp8",
+                    "llm_dtype": "nvfp4",
+                    "dit_dtype": "fp8",
+                }
             )
 
     def test_port_zero(self):
         with pytest.raises(ValueError, match="port"):
             validate_inputs(
-                data_config="so100",
-                embodiment_tag="so100",
-                port=0,
-                vit_dtype="fp8",
-                llm_dtype="nvfp4",
-                dit_dtype="fp8",
+                **{
+                    **_VALID_KWARGS,
+                    "data_config": "so100",
+                    "embodiment_tag": "so100",
+                    "port": 0,
+                    "vit_dtype": "fp8",
+                    "llm_dtype": "nvfp4",
+                    "dit_dtype": "fp8",
+                }
             )
 
     def test_port_too_high(self):
         with pytest.raises(ValueError, match="port"):
             validate_inputs(
-                data_config="so100",
-                embodiment_tag="so100",
-                port=70000,
-                vit_dtype="fp8",
-                llm_dtype="nvfp4",
-                dit_dtype="fp8",
+                **{
+                    **_VALID_KWARGS,
+                    "data_config": "so100",
+                    "embodiment_tag": "so100",
+                    "port": 70000,
+                    "vit_dtype": "fp8",
+                    "llm_dtype": "nvfp4",
+                    "dit_dtype": "fp8",
+                }
             )
 
     def test_invalid_vit_dtype(self):
         with pytest.raises(ValueError, match="vit_dtype"):
             validate_inputs(
-                data_config="so100",
-                embodiment_tag="so100",
-                port=5555,
-                vit_dtype="bf16",
-                llm_dtype="nvfp4",
-                dit_dtype="fp8",
+                **{
+                    **_VALID_KWARGS,
+                    "data_config": "so100",
+                    "embodiment_tag": "so100",
+                    "port": 5555,
+                    "vit_dtype": "bf16",
+                    "llm_dtype": "nvfp4",
+                    "dit_dtype": "fp8",
+                }
             )
 
     def test_invalid_llm_dtype(self):
         with pytest.raises(ValueError, match="llm_dtype"):
             validate_inputs(
-                data_config="so100",
-                embodiment_tag="so100",
-                port=5555,
-                vit_dtype="fp8",
-                llm_dtype="int4",
-                dit_dtype="fp8",
+                **{
+                    **_VALID_KWARGS,
+                    "data_config": "so100",
+                    "embodiment_tag": "so100",
+                    "port": 5555,
+                    "vit_dtype": "fp8",
+                    "llm_dtype": "int4",
+                    "dit_dtype": "fp8",
+                }
             )
 
     def test_invalid_dit_dtype(self):
         with pytest.raises(ValueError, match="dit_dtype"):
             validate_inputs(
-                data_config="so100",
-                embodiment_tag="so100",
-                port=5555,
-                vit_dtype="fp8",
-                llm_dtype="nvfp4",
-                dit_dtype="bf16",
+                **{
+                    **_VALID_KWARGS,
+                    "data_config": "so100",
+                    "embodiment_tag": "so100",
+                    "port": 5555,
+                    "vit_dtype": "fp8",
+                    "llm_dtype": "nvfp4",
+                    "dit_dtype": "bf16",
+                }
             )
 
     def test_checkpoint_path_traversal(self):
         with pytest.raises(ValueError, match="checkpoint_path"):
             validate_inputs(
-                data_config="so100",
-                embodiment_tag="so100",
-                port=5555,
-                vit_dtype="fp8",
-                llm_dtype="nvfp4",
-                dit_dtype="fp8",
-                checkpoint_path="/data/../../../etc/passwd",
+                **{
+                    **_VALID_KWARGS,
+                    "data_config": "so100",
+                    "embodiment_tag": "so100",
+                    "port": 5555,
+                    "vit_dtype": "fp8",
+                    "llm_dtype": "nvfp4",
+                    "dit_dtype": "fp8",
+                    "checkpoint_path": "/data/../../../etc/passwd",
+                }
             )
 
     def test_checkpoint_path_null_byte(self):
         with pytest.raises(ValueError, match="checkpoint_path"):
             validate_inputs(
-                data_config="so100",
-                embodiment_tag="so100",
-                port=5555,
-                vit_dtype="fp8",
-                llm_dtype="nvfp4",
-                dit_dtype="fp8",
-                checkpoint_path="/data/model\x00.bin",
+                **{
+                    **_VALID_KWARGS,
+                    "data_config": "so100",
+                    "embodiment_tag": "so100",
+                    "port": 5555,
+                    "vit_dtype": "fp8",
+                    "llm_dtype": "nvfp4",
+                    "dit_dtype": "fp8",
+                    "checkpoint_path": "/data/model\x00.bin",
+                }
             )
 
     def test_trt_engine_path_shell_injection(self):
         with pytest.raises(ValueError, match="trt_engine_path"):
             validate_inputs(
-                data_config="so100",
-                embodiment_tag="so100",
-                port=5555,
-                vit_dtype="fp8",
-                llm_dtype="nvfp4",
-                dit_dtype="fp8",
-                trt_engine_path="engine;rm -rf /",
+                **{
+                    **_VALID_KWARGS,
+                    "data_config": "so100",
+                    "embodiment_tag": "so100",
+                    "port": 5555,
+                    "vit_dtype": "fp8",
+                    "llm_dtype": "nvfp4",
+                    "dit_dtype": "fp8",
+                    "trt_engine_path": "engine;rm -rf /",
+                }
             )
 
     def test_invalid_container_name(self):
         with pytest.raises(ValueError, match="container_name"):
             validate_inputs(
-                data_config="so100",
-                embodiment_tag="so100",
-                port=5555,
-                vit_dtype="fp8",
-                llm_dtype="nvfp4",
-                dit_dtype="fp8",
-                container_name="-invalid-start",
+                **{
+                    **_VALID_KWARGS,
+                    "data_config": "so100",
+                    "embodiment_tag": "so100",
+                    "port": 5555,
+                    "vit_dtype": "fp8",
+                    "llm_dtype": "nvfp4",
+                    "dit_dtype": "fp8",
+                    "container_name": "-invalid-start",
+                }
             )
 
     def test_container_name_none_is_ok(self):
         """container_name=None should not raise."""
         validate_inputs(
-            data_config="so100",
-            embodiment_tag="so100",
-            port=5555,
-            vit_dtype="fp8",
-            llm_dtype="nvfp4",
-            dit_dtype="fp8",
-            container_name=None,
+            **{
+                **_VALID_KWARGS,
+                "data_config": "so100",
+                "embodiment_tag": "so100",
+                "port": 5555,
+                "vit_dtype": "fp8",
+                "llm_dtype": "nvfp4",
+                "dit_dtype": "fp8",
+                "container_name": None,
+            }
         )
 
 
@@ -346,101 +399,125 @@ class TestHostValidation:
     def test_valid_loopback(self):
         """127.0.0.1 is valid."""
         validate_inputs(
-            data_config="fourier_gr1_arms_only",
-            embodiment_tag="gr1",
-            port=5555,
-            host="127.0.0.1",
-            vit_dtype="fp8",
-            llm_dtype="nvfp4",
-            dit_dtype="fp8",
+            **{
+                **_VALID_KWARGS,
+                "data_config": "fourier_gr1_arms_only",
+                "embodiment_tag": "gr1",
+                "port": 5555,
+                "host": "127.0.0.1",
+                "vit_dtype": "fp8",
+                "llm_dtype": "nvfp4",
+                "dit_dtype": "fp8",
+            }
         )
 
     def test_valid_all_interfaces(self):
         """0.0.0.0 is valid."""
         validate_inputs(
-            data_config="fourier_gr1_arms_only",
-            embodiment_tag="gr1",
-            port=5555,
-            host="0.0.0.0",
-            vit_dtype="fp8",
-            llm_dtype="nvfp4",
-            dit_dtype="fp8",
+            **{
+                **_VALID_KWARGS,
+                "data_config": "fourier_gr1_arms_only",
+                "embodiment_tag": "gr1",
+                "port": 5555,
+                "host": "0.0.0.0",
+                "vit_dtype": "fp8",
+                "llm_dtype": "nvfp4",
+                "dit_dtype": "fp8",
+            }
         )
 
     def test_valid_ipv6_loopback(self):
         """::1 is valid."""
         validate_inputs(
-            data_config="fourier_gr1_arms_only",
-            embodiment_tag="gr1",
-            port=5555,
-            host="::1",
-            vit_dtype="fp8",
-            llm_dtype="nvfp4",
-            dit_dtype="fp8",
+            **{
+                **_VALID_KWARGS,
+                "data_config": "fourier_gr1_arms_only",
+                "embodiment_tag": "gr1",
+                "port": 5555,
+                "host": "::1",
+                "vit_dtype": "fp8",
+                "llm_dtype": "nvfp4",
+                "dit_dtype": "fp8",
+            }
         )
 
     def test_invalid_host_with_spaces(self):
         """Host with spaces must be rejected."""
         with pytest.raises(ValueError, match="host must be a valid IP address or hostname"):
             validate_inputs(
-                data_config="fourier_gr1_arms_only",
-                embodiment_tag="gr1",
-                port=5555,
-                host="foo bar",
-                vit_dtype="fp8",
-                llm_dtype="nvfp4",
-                dit_dtype="fp8",
+                **{
+                    **_VALID_KWARGS,
+                    "data_config": "fourier_gr1_arms_only",
+                    "embodiment_tag": "gr1",
+                    "port": 5555,
+                    "host": "foo bar",
+                    "vit_dtype": "fp8",
+                    "llm_dtype": "nvfp4",
+                    "dit_dtype": "fp8",
+                }
             )
 
     def test_invalid_host_empty_labels(self):
         """Host with empty labels (double dot) must be rejected."""
         with pytest.raises(ValueError, match="host must be a valid IP address or hostname"):
             validate_inputs(
-                data_config="fourier_gr1_arms_only",
-                embodiment_tag="gr1",
-                port=5555,
-                host="a..b",
-                vit_dtype="fp8",
-                llm_dtype="nvfp4",
-                dit_dtype="fp8",
+                **{
+                    **_VALID_KWARGS,
+                    "data_config": "fourier_gr1_arms_only",
+                    "embodiment_tag": "gr1",
+                    "port": 5555,
+                    "host": "a..b",
+                    "vit_dtype": "fp8",
+                    "llm_dtype": "nvfp4",
+                    "dit_dtype": "fp8",
+                }
             )
 
     def test_valid_hostname_localhost(self):
         """Valid hostnames like localhost are now accepted."""
         # Should not raise — localhost is a valid RFC-952 hostname
         validate_inputs(
-            data_config="fourier_gr1_arms_only",
-            embodiment_tag="gr1",
-            port=5555,
-            host="localhost",
-            vit_dtype="fp8",
-            llm_dtype="nvfp4",
-            dit_dtype="fp8",
+            **{
+                **_VALID_KWARGS,
+                "data_config": "fourier_gr1_arms_only",
+                "embodiment_tag": "gr1",
+                "port": 5555,
+                "host": "localhost",
+                "vit_dtype": "fp8",
+                "llm_dtype": "nvfp4",
+                "dit_dtype": "fp8",
+            }
         )
 
     def test_valid_hostname_docker_internal(self):
         """Docker internal hostname is accepted."""
         validate_inputs(
-            data_config="fourier_gr1_arms_only",
-            embodiment_tag="gr1",
-            port=5555,
-            host="host.docker.internal",
-            vit_dtype="fp8",
-            llm_dtype="nvfp4",
-            dit_dtype="fp8",
+            **{
+                **_VALID_KWARGS,
+                "data_config": "fourier_gr1_arms_only",
+                "embodiment_tag": "gr1",
+                "port": 5555,
+                "host": "host.docker.internal",
+                "vit_dtype": "fp8",
+                "llm_dtype": "nvfp4",
+                "dit_dtype": "fp8",
+            }
         )
 
     def test_invalid_host_special_chars(self):
         """Hostnames with special characters are rejected."""
         with pytest.raises(ValueError, match="host must be a valid IP address or hostname"):
             validate_inputs(
-                data_config="fourier_gr1_arms_only",
-                embodiment_tag="gr1",
-                port=5555,
-                host="--invalid-host",
-                vit_dtype="fp8",
-                llm_dtype="nvfp4",
-                dit_dtype="fp8",
+                **{
+                    **_VALID_KWARGS,
+                    "data_config": "fourier_gr1_arms_only",
+                    "embodiment_tag": "gr1",
+                    "port": 5555,
+                    "host": "--invalid-host",
+                    "vit_dtype": "fp8",
+                    "llm_dtype": "nvfp4",
+                    "dit_dtype": "fp8",
+                }
             )
 
 
@@ -600,35 +677,35 @@ class TestActionScopedValidation:
         from strands_robots.tools.gr00t_inference import validate_inputs
 
         # This would fail for action="start" but should pass for "list"
-        validate_inputs(action="list", data_config="anything_goes_here")
+        validate_inputs(**{**_VALID_KWARGS, "action": "list", "data_config": "anything_goes_here"})
 
     def test_read_only_action_still_validates_port(self):
         """Read-only actions must still validate port."""
         from strands_robots.tools.gr00t_inference import validate_inputs
 
         with pytest.raises(ValueError, match="port must be between"):
-            validate_inputs(action="status", port=99999)
+            validate_inputs(**{**_VALID_KWARGS, "action": "status", "port": 99999})
 
     def test_read_only_action_still_validates_host(self):
         """Read-only actions must still validate host."""
         from strands_robots.tools.gr00t_inference import validate_inputs
 
         with pytest.raises(ValueError, match="host must be a valid"):
-            validate_inputs(action="stop", host="--invalid")
+            validate_inputs(**{**_VALID_KWARGS, "action": "stop", "host": "--invalid"})
 
     def test_read_only_action_still_validates_protocol(self):
         """Read-only actions must still validate protocol."""
         from strands_robots.tools.gr00t_inference import validate_inputs
 
         with pytest.raises(ValueError, match="Unknown protocol"):
-            validate_inputs(action="list", protocol="invalid")
+            validate_inputs(**{**_VALID_KWARGS, "action": "list", "protocol": "invalid"})
 
     def test_mutating_action_validates_data_config(self):
         """Mutating actions must validate data_config."""
         from strands_robots.tools.gr00t_inference import validate_inputs
 
         with pytest.raises(ValueError, match="data_config"):
-            validate_inputs(action="start", data_config="foo;bar")
+            validate_inputs(**{**_VALID_KWARGS, "action": "start", "data_config": "foo;bar"})
 
     def test_integration_read_only_action_skips_data_config_validation(self):
         """gr00t_inference(action='list', data_config='invalid') must not error on data_config."""
@@ -654,39 +731,48 @@ class TestHostNumericTypoRejection:
         """127.0.01 (typo for 127.0.0.1) must be rejected."""
         with pytest.raises(ValueError, match="host must be a valid IP address or hostname"):
             validate_inputs(
-                data_config="fourier_gr1_arms_only",
-                embodiment_tag="gr1",
-                port=5555,
-                host="127.0.01",
-                vit_dtype="fp8",
-                llm_dtype="nvfp4",
-                dit_dtype="fp8",
+                **{
+                    **_VALID_KWARGS,
+                    "data_config": "fourier_gr1_arms_only",
+                    "embodiment_tag": "gr1",
+                    "port": 5555,
+                    "host": "127.0.01",
+                    "vit_dtype": "fp8",
+                    "llm_dtype": "nvfp4",
+                    "dit_dtype": "fp8",
+                }
             )
 
     def test_invalid_host_999_octets(self):
         """999.999.999.999 (invalid IP, all-numeric) must be rejected."""
         with pytest.raises(ValueError, match="host must be a valid IP address or hostname"):
             validate_inputs(
-                data_config="fourier_gr1_arms_only",
-                embodiment_tag="gr1",
-                port=5555,
-                host="999.999.999.999",
-                vit_dtype="fp8",
-                llm_dtype="nvfp4",
-                dit_dtype="fp8",
+                **{
+                    **_VALID_KWARGS,
+                    "data_config": "fourier_gr1_arms_only",
+                    "embodiment_tag": "gr1",
+                    "port": 5555,
+                    "host": "999.999.999.999",
+                    "vit_dtype": "fp8",
+                    "llm_dtype": "nvfp4",
+                    "dit_dtype": "fp8",
+                }
             )
 
     def test_invalid_host_single_number(self):
         """A bare number like '8080' is not a valid host."""
         with pytest.raises(ValueError, match="host must be a valid IP address or hostname"):
             validate_inputs(
-                data_config="fourier_gr1_arms_only",
-                embodiment_tag="gr1",
-                port=5555,
-                host="8080",
-                vit_dtype="fp8",
-                llm_dtype="nvfp4",
-                dit_dtype="fp8",
+                **{
+                    **_VALID_KWARGS,
+                    "data_config": "fourier_gr1_arms_only",
+                    "embodiment_tag": "gr1",
+                    "port": 5555,
+                    "host": "8080",
+                    "vit_dtype": "fp8",
+                    "llm_dtype": "nvfp4",
+                    "dit_dtype": "fp8",
+                }
             )
 
 
@@ -701,7 +787,7 @@ class TestActionAllowlistValidation:
     def test_unknown_action_rejected(self):
         """Typo'd action gets a clear error listing valid actions."""
         with pytest.raises(ValueError, match="Unknown action.*Valid actions"):
-            validate_inputs(action="strat")  # typo for "start"
+            validate_inputs(**{**_VALID_KWARGS, "action": "strat"})  # typo for "start"
 
     def test_unknown_action_integration(self):
         """gr00t_inference(action='typo') returns error about unknown action."""
@@ -719,7 +805,7 @@ class TestActionAllowlistValidation:
             # Should not raise ValueError about unknown action
             # (may raise about other params, but that's fine)
             try:
-                validate_inputs(action=action)
+                validate_inputs(**{**_VALID_KWARGS, "action": action})
             except ValueError as e:
                 assert "Unknown action" not in str(e), f"Action {action!r} wrongly rejected"
 
@@ -731,50 +817,65 @@ class TestExpandedParamValidation:
         """Docker image with shell chars must be rejected."""
         with pytest.raises(ValueError, match="image_name must be a valid Docker"):
             validate_inputs(
-                action="start",
-                data_config="fourier_gr1_arms_only",
-                embodiment_tag="gr1",
-                image_name="gr00t:latest; rm -rf /",
+                **{
+                    **_VALID_KWARGS,
+                    "action": "start",
+                    "data_config": "fourier_gr1_arms_only",
+                    "embodiment_tag": "gr1",
+                    "image_name": "gr00t:latest; rm -rf /",
+                }
             )
 
     def test_valid_image_name_accepted(self):
         """Standard Docker image references must pass."""
         # Should not raise
         validate_inputs(
-            action="start",
-            data_config="fourier_gr1_arms_only",
-            embodiment_tag="gr1",
-            image_name="nvcr.io/nvidia/gr00t:n1.7",
+            **{
+                **_VALID_KWARGS,
+                "action": "start",
+                "data_config": "fourier_gr1_arms_only",
+                "embodiment_tag": "gr1",
+                "image_name": "nvcr.io/nvidia/gr00t:n1.7",
+            }
         )
 
     def test_volume_path_traversal_rejected(self):
         """Volumes with path traversal must be rejected."""
         with pytest.raises(ValueError, match="volumes key"):
             validate_inputs(
-                action="start",
-                data_config="fourier_gr1_arms_only",
-                embodiment_tag="gr1",
-                volumes={"/../etc/passwd": "/data"},
+                **{
+                    **_VALID_KWARGS,
+                    "action": "start",
+                    "data_config": "fourier_gr1_arms_only",
+                    "embodiment_tag": "gr1",
+                    "volumes": {"/../etc/passwd": "/data"},
+                }
             )
 
     def test_container_command_shell_meta_rejected(self):
         """Container command with shell metacharacters must be rejected."""
         with pytest.raises(ValueError, match="container_command contains disallowed"):
             validate_inputs(
-                action="start",
-                data_config="fourier_gr1_arms_only",
-                embodiment_tag="gr1",
-                container_command="tail -f /dev/null; rm -rf /",
+                **{
+                    **_VALID_KWARGS,
+                    "action": "start",
+                    "data_config": "fourier_gr1_arms_only",
+                    "embodiment_tag": "gr1",
+                    "container_command": "tail -f /dev/null; rm -rf /",
+                }
             )
 
     def test_valid_container_command_accepted(self):
         """Standard container commands must pass."""
         # Should not raise
         validate_inputs(
-            action="start",
-            data_config="fourier_gr1_arms_only",
-            embodiment_tag="gr1",
-            container_command="tail -f /dev/null",
+            **{
+                **_VALID_KWARGS,
+                "action": "start",
+                "data_config": "fourier_gr1_arms_only",
+                "embodiment_tag": "gr1",
+                "container_command": "tail -f /dev/null",
+            }
         )
 
 
@@ -809,3 +910,76 @@ class TestHappyPathIntegration:
             assert "Unknown action" not in msg
             assert "host must be" not in msg
             assert "port must be" not in msg
+
+
+class TestDockerImageRegistryPort:
+    """Tests that _DOCKER_IMAGE_RE supports private registries with port numbers."""
+
+    def test_registry_with_port_accepted(self):
+        """localhost:5000/myorg/img:tag must be accepted."""
+        validate_inputs(**{**_VALID_KWARGS, "image_name": "localhost:5000/myorg/img:tag"})
+
+    def test_registry_with_port_no_tag(self):
+        """registry.internal:5000/img must be accepted."""
+        validate_inputs(**{**_VALID_KWARGS, "image_name": "registry.internal:5000/img"})
+
+    def test_nvcr_standard_format(self):
+        """nvcr.io/nvidia/gr00t:n1.7 must be accepted."""
+        validate_inputs(**{**_VALID_KWARGS, "image_name": "nvcr.io/nvidia/gr00t:n1.7"})
+
+    def test_simple_image_tag(self):
+        """gr00t:latest must be accepted."""
+        validate_inputs(**{**_VALID_KWARGS, "image_name": "gr00t:latest"})
+
+
+class TestProcessIdentificationRequiresPort:
+    """Tests that _is_gr00t_process requires --port in cmdline.
+
+    Prevents false-matching unrelated processes like editors or log-tailers
+    that happen to have 'inference_service.py' and 'python' in their cmdline.
+    """
+
+    def test_process_without_port_flag_rejected(self, monkeypatch):
+        """A process with 'python inference_service.py' but no --port flag is not a match."""
+        from strands_robots.tools.gr00t_inference import _is_gr00t_process
+
+        # Mock docker exec to return a cmdline without --port
+        def fake_run(*args, **kwargs):
+            class Result:
+                returncode = 0
+                stdout = "python inference_service.py --config test\x00"
+
+            return Result()
+
+        monkeypatch.setattr("subprocess.run", fake_run)
+        # Without --port in cmdline, should return False
+        assert _is_gr00t_process("container", "123", port=5555) is False
+
+    def test_process_with_port_flag_accepted(self, monkeypatch):
+        """A process with --port 5555 in cmdline is a match."""
+        from strands_robots.tools.gr00t_inference import _is_gr00t_process
+
+        def fake_run(*args, **kwargs):
+            class Result:
+                returncode = 0
+                stdout = "python inference_service.py --port 5555\x00"
+
+            return Result()
+
+        monkeypatch.setattr("subprocess.run", fake_run)
+        assert _is_gr00t_process("container", "123", port=5555) is True
+
+    def test_editor_on_inference_service_rejected(self, monkeypatch):
+        """vim editing inference_service.py under a python venv is not a match."""
+        from strands_robots.tools.gr00t_inference import _is_gr00t_process
+
+        def fake_run(*args, **kwargs):
+            class Result:
+                returncode = 0
+                stdout = "/opt/conda/envs/gr00t/bin/python vim /opt/gr00t/inference_service.py\x00"
+
+            return Result()
+
+        monkeypatch.setattr("subprocess.run", fake_run)
+        # No --port flag → rejected
+        assert _is_gr00t_process("container", "123", port=5555) is False

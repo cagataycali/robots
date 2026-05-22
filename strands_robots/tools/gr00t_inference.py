@@ -47,8 +47,15 @@ def _checkpoints_dir() -> Path:
 # Input validation helpers
 # ─────────────────────────────────────────────────────────────────────
 
-# Docker image reference pattern (simplified).
-_DOCKER_IMAGE_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._\-/]*(?::[a-zA-Z0-9._\-]+)?$")
+# Docker image reference pattern — supports registry:port/path:tag format.
+# Examples: "gr00t:latest", "nvcr.io/nvidia/gr00t:n1.7", "localhost:5000/myorg/img:tag"
+_DOCKER_IMAGE_RE = re.compile(
+    r"^[a-zA-Z0-9]"  # must start with alnum
+    r"(?:[a-zA-Z0-9._\-]*[a-zA-Z0-9])?"  # optional middle chars (host/path prefix)
+    r"(?::[0-9]{1,5})?"  # optional registry port (:5000)
+    r"(?:/[a-zA-Z0-9][a-zA-Z0-9._\-]*)*"  # path components (/org/img)
+    r"(?::[a-zA-Z0-9][a-zA-Z0-9._\-]*)?$"  # optional :tag
+)
 
 # Characters that cause harm in subprocess argv or shell interpolation.
 # Narrowed per AGENTS.md review-learnings: quotes/bangs/parens/brackets
@@ -107,18 +114,18 @@ def _validate_path(value: str, label: str) -> None:
 
 def validate_inputs(
     *,
-    action: str = "start",
-    data_config: str = "fourier_gr1_arms_only",
-    embodiment_tag: str = "gr1",
-    port: int = 5555,
-    host: str = "0.0.0.0",
-    vit_dtype: str = "fp8",
-    llm_dtype: str = "nvfp4",
-    dit_dtype: str = "fp8",
-    checkpoint_path: str | None = None,
-    trt_engine_path: str = "gr00t_engine",
-    container_name: str | None = None,
-    protocol: str = "n1.5",
+    action: str,
+    data_config: str,
+    embodiment_tag: str,
+    port: int,
+    host: str,
+    vit_dtype: str,
+    llm_dtype: str,
+    dit_dtype: str,
+    checkpoint_path: str | None,
+    trt_engine_path: str,
+    container_name: str | None,
+    protocol: str,
     image_name: str | None = None,
     volumes: dict[str, str] | None = None,
     container_command: str | None = None,
@@ -713,14 +720,23 @@ def _is_gr00t_process(container_name: str, pid: str, *, port: int | None = None)
             cmdline = result.stdout.replace("\x00", " ")
             # Require both a Python interpreter AND inference_service.py in cmdline
             # to avoid false-matching unrelated processes (e.g. vim editing a gr00t file)
-            is_gr00t = "inference_service.py" in cmdline and ("python" in cmdline.lower() or "gr00t" in cmdline.lower())
+            is_gr00t = (
+                "inference_service.py" in cmdline
+                and ("python" in cmdline.lower() or "gr00t" in cmdline.lower())
+                and "--port" in cmdline  # Must have a --port flag to be a running service
+            )
             if is_gr00t and port is not None:
                 # Verify the process is serving on the requested port
                 # Use word-boundary regex to avoid partial matches (e.g. port 80 vs 8000)
                 return bool(re.search(rf"--port[= ]{port}(?:\s|$)", cmdline))
             return is_gr00t
-    except (OSError, subprocess.SubprocessError, UnicodeDecodeError):
-        pass  # Probe failure is non-fatal — return False to indicate unknown process
+    except (OSError, subprocess.SubprocessError, UnicodeDecodeError) as exc:
+        if isinstance(exc, PermissionError):
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "Permission denied probing container process %s — treating as non-GR00T", pid
+            )
     return False
 
 
@@ -742,12 +758,21 @@ def _is_gr00t_host_process(pid: str, *, port: int | None = None) -> bool:
             cmdline = cmdline_path.read_text().replace("\x00", " ")
             # Require both a Python interpreter AND inference_service.py in cmdline
             # to avoid false-matching unrelated processes (e.g. vim editing a gr00t file)
-            is_gr00t = "inference_service.py" in cmdline and ("python" in cmdline.lower() or "gr00t" in cmdline.lower())
+            is_gr00t = (
+                "inference_service.py" in cmdline
+                and ("python" in cmdline.lower() or "gr00t" in cmdline.lower())
+                and "--port" in cmdline  # Must have a --port flag to be a running service
+            )
             if is_gr00t and port is not None:
                 return bool(re.search(rf"--port[= ]{port}(?:\s|$)", cmdline))
             return is_gr00t
-    except (OSError, UnicodeDecodeError):
-        pass  # Probe failure is non-fatal — return False to indicate unknown process
+    except (OSError, UnicodeDecodeError) as exc:
+        if isinstance(exc, PermissionError):
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "Permission denied reading /proc/%s/cmdline — treating as non-GR00T", pid
+            )
     return False
 
 
