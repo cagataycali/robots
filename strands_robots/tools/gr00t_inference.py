@@ -761,7 +761,7 @@ def _list_running_services() -> dict[str, Any]:
 
         return {"status": "success", "services": services, "message": f"Found {len(services)} running services"}
 
-    except Exception as e:
+    except OSError as e:
         return {"status": "error", "message": f"Failed to list services: {e}"}
 
 
@@ -773,7 +773,7 @@ def _is_service_running(port: int) -> bool:
         result = sock.connect_ex(("localhost", port))
         sock.close()
         return result == 0
-    except Exception:
+    except OSError:
         return False
 
 
@@ -984,7 +984,7 @@ def _stop_service(port: int) -> dict[str, Any]:
         else:
             return {"status": "success", "port": port, "message": f"No service running on port {port}"}
 
-    except Exception as e:
+    except (OSError, subprocess.SubprocessError) as e:
         return {"status": "error", "message": f"Failed to stop service: {e}"}
 
 
@@ -1208,7 +1208,7 @@ def _start_service(
 
     except subprocess.CalledProcessError as e:
         return {"status": "error", "message": f"Failed to start service: {e.stderr or e}"}
-    except Exception as e:
+    except (OSError, RuntimeError) as e:
         return {"status": "error", "message": f"Unexpected error: {e}"}
 
 
@@ -1739,7 +1739,7 @@ def _lifecycle(
 
 
 if __name__ == "__main__":
-    print("🐳 GR00T Inference Service Manager (Isaac-GR00T Native)")
+    print("GR00T Inference Service Manager (Isaac-GR00T Native)")
     print("Supports ZMQ, HTTP, and TensorRT inference modes")
     print()
     print("Examples:")

@@ -23,8 +23,13 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
   that invalid inputs are caught (pins the ``try/except ValueError`` wiring).
 - End-to-end regression test for ``_stop_service`` cross-port-kill scenario:
   verifies that a process on port 8000 is NOT killed when stopping port 80.
-- Exception clauses in ``_is_gr00t_process`` / ``_is_gr00t_host_process``
-  narrowed from ``except Exception`` to specific exception types.
+- Exception clauses narrowed throughout: ``_is_gr00t_process`` / ``_is_gr00t_host_process``
+  use ``(OSError, subprocess.SubprocessError, UnicodeDecodeError)``;
+  ``_list_running_services``/``_is_service_running`` use ``OSError``;
+  ``_stop_service`` uses ``(OSError, subprocess.SubprocessError)``;
+  ``_start_service`` uses ``(OSError, RuntimeError)``.
+  Only ``_download_checkpoint`` retains ``except Exception`` (``# noqa: BLE001``)
+  because huggingface_hub raises varied, opaque exception types.
 - ``action`` parameter validated against a complete allowlist of 10 valid
   actions; unknown actions get a clear error with the valid set listed.
 - ``image_name``, ``volumes``, and ``container_command`` parameters are now
@@ -49,17 +54,18 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
   log-tailers that happen to touch ``inference_service.py``.
 - ``PermissionError`` in process probes now logs at WARNING level instead
   of being silently swallowed.
+- **BREAKING** Default ``host`` changed from ``0.0.0.0`` to ``127.0.0.1``
+  (loopback-only, per AGENTS.md). Container actions (``start``/``restart``/
+  ``lifecycle``) auto-flip to ``0.0.0.0`` internally since Docker's
+  ``-p {port}:{port}`` publish requires bind-all inside the container.
+  **Migration:** if your downstream connects from another host, pass
+  ``host="0.0.0.0"`` explicitly.
 - Host-system fallback (``pgrep``) is documented as Linux-only. Non-Linux
   platforms will see "No service running" rather than silently succeeding.
 
 ### Fixed
 
 - Duplicate ``torch_mock.manual_seed`` assignment in ``tests/mocks/torch_mock.py``.
-- Default ``host`` changed to ``127.0.0.1`` (loopback-only, per AGENTS.md).
-  Container actions (``start``/``restart``/``lifecycle``) auto-flip to
-  ``0.0.0.0`` internally since Docker's ``-p {port}:{port}`` publish requires
-  bind-all inside the container. Users on non-container paths now default to
-  safe loopback binding; pass ``host="0.0.0.0"`` explicitly to expose.
 - Option-injection guard: ``repo_url``, ``repo_tag``, ``policy_name`` starting
   with ``-`` are rejected (prevents git/docker flag injection via subprocess argv).
 - Host-system fallback (pgrep) now returns a clear error on non-Linux platforms

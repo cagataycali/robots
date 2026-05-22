@@ -1072,11 +1072,11 @@ class TestHostAutoFlipForContainer:
 
         import subprocess
 
-        monkeypatch.setattr(
-            subprocess,
-            "Popen",
-            lambda *a, **kw: type("P", (), {"poll": lambda s: 0, "stdout": None, "stderr": None})(),
-        )
+        def fake_run(*args, **kwargs):
+            return subprocess.CompletedProcess(args=args[0] if args else [], returncode=0, stdout="", stderr="")
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        monkeypatch.setattr("strands_robots.tools.gr00t_inference._is_service_running", lambda port: True)
 
         # Call with loopback default — should auto-flip
         _start_service(
