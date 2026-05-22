@@ -53,10 +53,13 @@ agent.tool.gr00t_inference(
 
 # Interactive control loop
 print("GR00T policy running. Type instructions or 'quit' to exit.")
-while True:
-    query = input("\n# ")
-    if query.lower() in ("quit", "exit", "q"):
-        break
-    agent(query)
-
-agent.tool.gr00t_inference(action="stop", port=5555)
+try:
+    while True:
+        query = input("\n# ")
+        if query.lower() in ("quit", "exit", "q"):
+            break
+        agent(query)
+finally:
+    # Always stop the inference server and release hardware, even on error.
+    agent.tool.gr00t_inference(action="stop", port=5555)
+    robot.cleanup()

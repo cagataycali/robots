@@ -92,9 +92,11 @@ pip install "strands-robots[all]"
 
 | Extra | What it adds | When you need it |
 |-------|-------------|------------------|
-| `sim` | `mujoco`, `robot_descriptions`, `opencv`, `Pillow` | Simulation |
+| `sim` | `robot_descriptions` | Robot model descriptors (URDF/meshes) |
+| `sim-mujoco` | `mujoco`, `imageio`, `imageio-ffmpeg` (includes `sim`) | MuJoCo simulation runtime |
 | `lerobot` | `lerobot>=0.5` | LeRobot policy inference + dataset recording |
 | `groot-service` | `pyzmq`, `msgpack` | NVIDIA GR00T inference |
+| `mesh` | `eclipse-zenoh` | Peer-to-peer mesh networking |
 | `all` | All of the above | Full development |
 
 ## Quick Start
@@ -119,7 +121,7 @@ sim.run_policy(
     policy_provider="mock",
     instruction="walk forward",
     duration=5.0,
-    record_video="/tmp/g1_walk.mp4",
+    video={"path": "/tmp/g1_walk.mp4", "fps": 30},
 )
 
 sim.destroy()
@@ -354,9 +356,13 @@ appends a tamper-evident record to `~/.strands_robots/mesh_audit.jsonl`
 | `STRANDS_MESH=false` | Process-wide kill switch |
 | `Robot("so100", mesh=False)` | Per-robot opt-out |
 
-`pip install strands-robots` is enough — Zenoh installs as part of the
-default `[mesh]` extra. Use `pip install strands-robots[mesh]` explicitly
-if you've pinned `strands-robots` without extras.
+Mesh networking requires the `[mesh]` extra (or `[all]`):
+
+```bash
+pip install "strands-robots[mesh]"
+```
+
+The base install (`pip install strands-robots`) does **not** include Zenoh.
 
 ## Simulation Features
 
