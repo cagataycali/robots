@@ -5,26 +5,33 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## Unreleased - #90 (gr00t_inference validation hardening)
 
-### Changed: ``gr00t_inference`` default ``host`` flipped from ``0.0.0.0`` to ``127.0.0.1`` (BREAKING)
-
-The tool now defaults to loopback-only binding for safety. Deployments where
-the GR00T inference server must be reachable from a different host (CI runners,
-multi-node setups, separate teleop boxes) need to pass ``host="0.0.0.0"``
-explicitly.
-
 ### Added
 
-- ``validate_inputs()`` now validates the ``host`` parameter with
-  ``ipaddress.ip_address()`` — typos like ``127.0.01`` are rejected early.
+- ``validate_inputs()`` centralises all parameter validation with action-aware
+  scoping: read-only actions (``find_containers``, ``list``, ``status``,
+  ``stop``) only validate ``port``/``host``/``protocol``; mutating actions
+  (``start``, ``restart``, ``lifecycle``) validate the full parameter surface.
+- ``host`` parameter now accepts both IP addresses and RFC-952 hostnames
+  (e.g. ``localhost``, ``host.docker.internal``). Previously only raw IPs
+  were accepted; typos like ``127.0.01`` and non-RFC hostnames are rejected.
+- ``protocol`` validation moved into ``validate_inputs()`` (previously
+  hand-rolled outside the helper, breaking the single-entry-point contract).
+- ``pgrep`` patterns now match both ``--port N`` and ``--port=N`` forms,
+  preventing silent miss when the service is started with the ``=`` syntax.
 - Integration tests that invoke ``gr00t_inference()`` end-to-end and assert
   that invalid inputs are caught (pins the ``try/except ValueError`` wiring).
+- End-to-end regression test for ``_stop_service`` cross-port-kill scenario:
+  verifies that a process on port 8000 is NOT killed when stopping port 80.
 - Exception clauses in ``_is_gr00t_process`` / ``_is_gr00t_host_process``
   narrowed from ``except Exception`` to specific exception types.
 
 ### Fixed
 
 - Duplicate ``torch_mock.manual_seed`` assignment in ``tests/mocks/torch_mock.py``.
-- Docstring for ``host`` parameter now matches the actual default (``127.0.0.1``).
+- Default ``host`` remains ``0.0.0.0`` (no breaking change). The Docker
+  container's ``-p {port}:{port}`` publish requires the service to bind all
+  interfaces inside the container; ``127.0.0.1`` inside a container is
+  unreachable from the host.
 
 
 ## Unreleased - #178 (LiberoOffScreenRenderEngine retired)

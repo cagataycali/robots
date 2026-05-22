@@ -76,23 +76,61 @@ def _validate_path(value: str, label: str) -> None:
 
 def validate_inputs(
     *,
-    data_config: str,
-    embodiment_tag: str,
-    port: int,
-    host: str = "127.0.0.1",
-    vit_dtype: str,
-    llm_dtype: str,
-    dit_dtype: str,
+    action: str = "start",
+    data_config: str = "fourier_gr1_arms_only",
+    embodiment_tag: str = "gr1",
+    port: int = 5555,
+    host: str = "0.0.0.0",
+    vit_dtype: str = "fp8",
+    llm_dtype: str = "nvfp4",
+    dit_dtype: str = "fp8",
     checkpoint_path: str | None = None,
     trt_engine_path: str = "gr00t_engine",
     container_name: str | None = None,
+    protocol: str = "n1.5",
 ) -> None:
     """Validate all user-supplied parameters in one place.
 
     Raises ValueError for any invalid input. This centralises validation so
     that the main tool function stays focused on orchestration and each
     check is independently testable via this single entry-point.
+
+    Validation is scoped to the action: read-only actions (find_containers,
+    list, status, stop) only validate port/host; mutating actions (start,
+    restart, lifecycle) validate the full parameter surface.
     """
+    # Protocol — always validated regardless of action
+    valid_protocols = ("n1.5", "n1.6", "n1.7")
+    if protocol not in valid_protocols:
+        raise ValueError(
+            f"Unknown protocol {protocol!r}. Valid: {list(valid_protocols)}"
+        )
+    # Port range — always validated
+    if not (1 <= port <= 65535):
+        raise ValueError(f"port must be between 1 and 65535, got {port}")
+
+    # Host address validation — always validated (accept IPs and RFC-952 hostnames)
+    _HOSTNAME_RE = re.compile(
+        r"^[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?"
+        r"(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$"
+    )
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        if not _HOSTNAME_RE.match(host):
+            raise ValueError(
+                f"host must be a valid IP address or hostname (got {host!r}). "
+                f"Use '127.0.0.1' for loopback, '0.0.0.0' for all interfaces, "
+                f"or a valid hostname like 'localhost'."
+            ) from None
+
+    # Read-only actions only need port/host validation
+    _read_only_actions = ("find_containers", "list", "status", "stop")
+    if action in _read_only_actions:
+        return
+
+    # ── Full validation for mutating actions (start, restart, lifecycle, etc.) ──
+
     # Enumerable string parameters
     if not _DATA_CONFIG_RE.match(data_config):
         raise ValueError(
@@ -119,18 +157,7 @@ def validate_inputs(
     if dit_dtype not in _VALID_DIT_DTYPES:
         raise ValueError(f"dit_dtype must be one of {_VALID_DIT_DTYPES}, got {dit_dtype!r}")
 
-    # Port range
-    if not (1 <= port <= 65535):
-        raise ValueError(f"port must be between 1 and 65535, got {port}")
 
-    # Host address validation
-    try:
-        ipaddress.ip_address(host)
-    except ValueError:
-        raise ValueError(
-            f"host must be a valid IPv4 or IPv6 address (got {host!r}). "
-            f"Use '127.0.0.1' for loopback or '0.0.0.0' to bind all interfaces."
-        ) from None
 
 
 @tool
@@ -142,7 +169,7 @@ def gr00t_inference(
     data_config: str = "fourier_gr1_arms_only",
     embodiment_tag: str = "gr1",
     denoising_steps: int = 4,
-    host: str = "127.0.0.1",
+    host: str = "0.0.0.0",
     container_name: str | None = None,
     timeout: int = 60,
     use_tensorrt: bool = False,
@@ -284,8 +311,8 @@ def gr00t_inference(
             ``libero_sim``).
         denoising_steps: Number of denoising steps for action generation (default: 4).
             N1.5/N1.6 only - the N1.7 server reads this from the checkpoint.
-        host: Host address to bind the service to (default: ``127.0.0.1``
-            loopback only; pass ``0.0.0.0`` to expose on all interfaces).
+        host: Host address to bind the service to (default: ``0.0.0.0``
+            all interfaces; required for Docker -p port-publish. Pass ``127.0.0.1`` for loopback only).
         container_name: Specific Docker container name. Auto-detected if omitted.
         timeout: Seconds to wait for service startup (default: 60).
         use_tensorrt: Enable TensorRT acceleration (default: False).
@@ -392,16 +419,10 @@ def gr00t_inference(
 
     # Validate protocol up-front so users get a friendly error rather than
     # an opaque docker-exec failure inside _start_service.
-    valid_protocols = ("n1.5", "n1.6", "n1.7")
-    if protocol not in valid_protocols:
-        return {
-            "status": "error",
-            "message": f"Unknown protocol {protocol!r}. Valid: {list(valid_protocols)}",
-        }
-
-    # ── Validate all inputs in one call ───────────────────────────────
+    # ── Validate all inputs in one call (scoped per action) ─────────
     try:
         validate_inputs(
+            action=action,
             data_config=data_config,
             embodiment_tag=embodiment_tag,
             port=port,
@@ -412,6 +433,7 @@ def gr00t_inference(
             checkpoint_path=checkpoint_path,
             trt_engine_path=trt_engine_path,
             container_name=container_name,
+            protocol=protocol,
         )
     except ValueError as e:
         return {"status": "error", "message": str(e)}
@@ -690,7 +712,7 @@ def _stop_service(port: int) -> dict[str, Any]:
                 container_name = container["name"]
                 try:
                     result = subprocess.run(
-                        ["docker", "exec", container_name, "pgrep", "-f", f"inference_service.py.*--port {port}( |$)"],
+                        ["docker", "exec", container_name, "pgrep", "-f", f"inference_service.py.*--port[= ]{port}( |$)"],
                         capture_output=True,
                         text=True,
                         check=False,
@@ -712,7 +734,7 @@ def _stop_service(port: int) -> dict[str, Any]:
                                 container_name,
                                 "pgrep",
                                 "-f",
-                                f"inference_service.py.*--port {port}( |$)",
+                                f"inference_service.py.*--port[= ]{port}( |$)",
                             ],
                             capture_output=True,
                             text=True,
@@ -740,7 +762,7 @@ def _stop_service(port: int) -> dict[str, Any]:
         result = subprocess.run(
             # NOTE: ( |$) is ERE syntax; pgrep on Linux (procps-ng) defaults to ERE.
             # This pattern is Linux-only; BSD pgrep may not match correctly.
-            ["pgrep", "-f", f"inference_service.py.*--port {port}( |$)"],
+            ["pgrep", "-f", f"inference_service.py.*--port[= ]{port}( |$)"],
             capture_output=True,
             text=True,
         )
@@ -757,7 +779,7 @@ def _stop_service(port: int) -> dict[str, Any]:
             result = subprocess.run(
                 # NOTE: ( |$) is ERE syntax; pgrep on Linux (procps-ng) defaults to ERE.
                 # This pattern is Linux-only; BSD pgrep may not match correctly.
-                ["pgrep", "-f", f"inference_service.py.*--port {port}( |$)"],
+                ["pgrep", "-f", f"inference_service.py.*--port[= ]{port}( |$)"],
                 capture_output=True,
                 text=True,
             )
