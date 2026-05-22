@@ -102,9 +102,7 @@ def validate_inputs(
     # Protocol — always validated regardless of action
     valid_protocols = ("n1.5", "n1.6", "n1.7")
     if protocol not in valid_protocols:
-        raise ValueError(
-            f"Unknown protocol {protocol!r}. Valid: {list(valid_protocols)}"
-        )
+        raise ValueError(f"Unknown protocol {protocol!r}. Valid: {list(valid_protocols)}")
     # Port range — always validated
     if not (1 <= port <= 65535):
         raise ValueError(f"port must be between 1 and 65535, got {port}")
@@ -156,8 +154,6 @@ def validate_inputs(
         raise ValueError(f"llm_dtype must be one of {_VALID_LLM_DTYPES}, got {llm_dtype!r}")
     if dit_dtype not in _VALID_DIT_DTYPES:
         raise ValueError(f"dit_dtype must be one of {_VALID_DIT_DTYPES}, got {dit_dtype!r}")
-
-
 
 
 @tool
@@ -712,7 +708,14 @@ def _stop_service(port: int) -> dict[str, Any]:
                 container_name = container["name"]
                 try:
                     result = subprocess.run(
-                        ["docker", "exec", container_name, "pgrep", "-f", f"inference_service.py.*--port[= ]{port}( |$)"],
+                        [
+                            "docker",
+                            "exec",
+                            container_name,
+                            "pgrep",
+                            "-f",
+                            f"inference_service.py.*--port[= ]{port}( |$)",
+                        ],
                         capture_output=True,
                         text=True,
                         check=False,

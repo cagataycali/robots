@@ -507,21 +507,25 @@ class TestStopServiceCrossPortKill:
             # Mock _find_gr00t_containers returning no containers (forces host fallback)
             if "docker" in cmd and "ps" in cmd:
                 import subprocess
+
                 result = subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
                 return result
 
             # Mock pgrep finding PID 999 on the host
             if cmd[0] == "pgrep":
                 import subprocess
+
                 return subprocess.CompletedProcess(cmd, 0, stdout="999\n", stderr="")
 
             # Mock kill — record it
             if cmd[0] == "kill":
                 killed_pids.append(cmd[-1])
                 import subprocess
+
                 return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
             import subprocess
+
             return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="")
 
         def _fake_host_process(pid, *, port=None):
@@ -580,9 +584,7 @@ class TestStopServiceCrossPortKill:
         _stop_service(port=8000)
 
         # Process should have been killed
-        assert "999" in killed_pids, (
-            f"_stop_service(port=8000) should have killed PID 999 but killed {killed_pids}"
-        )
+        assert "999" in killed_pids, f"_stop_service(port=8000) should have killed PID 999 but killed {killed_pids}"
 
 
 class TestActionScopedValidation:
