@@ -16,7 +16,7 @@ _VALID_KWARGS = {
     "data_config": "fourier_gr1_arms_only",
     "embodiment_tag": "gr1",
     "port": 5555,
-    "host": "0.0.0.0",
+    "host": "127.0.0.1",
     "vit_dtype": "fp8",
     "llm_dtype": "nvfp4",
     "dit_dtype": "fp8",
@@ -419,7 +419,7 @@ class TestHostValidation:
                 "data_config": "fourier_gr1_arms_only",
                 "embodiment_tag": "gr1",
                 "port": 5555,
-                "host": "0.0.0.0",
+                "host": "127.0.0.1",
                 "vit_dtype": "fp8",
                 "llm_dtype": "nvfp4",
                 "dit_dtype": "fp8",
@@ -759,21 +759,16 @@ class TestHostNumericTypoRejection:
                 }
             )
 
-    def test_invalid_host_single_number(self):
-        """A bare number like '8080' is not a valid host."""
-        with pytest.raises(ValueError, match="host must be a valid IP address or hostname"):
-            validate_inputs(
-                **{
-                    **_VALID_KWARGS,
-                    "data_config": "fourier_gr1_arms_only",
-                    "embodiment_tag": "gr1",
-                    "port": 5555,
-                    "host": "8080",
-                    "vit_dtype": "fp8",
-                    "llm_dtype": "nvfp4",
-                    "dit_dtype": "fp8",
-                }
-            )
+    def test_single_numeric_label_is_valid_hostname(self):
+        """A bare number like '8080' is a valid single-label hostname (RFC-1123)."""
+        # Single-label numerics are valid hostnames; only multi-label patterns
+        # like '127.0.01' (IP typos) are rejected.
+        validate_inputs(
+            **{
+                **_VALID_KWARGS,
+                "host": "8080",
+            }
+        )
 
 
 class TestActionAllowlistValidation:
@@ -983,3 +978,150 @@ class TestProcessIdentificationRequiresPort:
         monkeypatch.setattr("subprocess.run", fake_run)
         # No --port flag → rejected
         assert _is_gr00t_process("container", "123", port=5555) is False
+
+
+class TestOptionInjectionGuard:
+    """Test option-injection guard for argv-interpolated parameters."""
+
+    def test_repo_url_starting_with_dash_rejected(self):
+        """repo_url='--upload-pack=evil' must be rejected."""
+        from strands_robots.tools.gr00t_inference import gr00t_inference
+
+        result = gr00t_inference(
+            action="build_image",
+            repo_url="--upload-pack=touch /tmp/pwned",
+        )
+        assert result["status"] == "error"
+        assert "repo_url" in result["message"]
+        assert "must not start with '-'" in result["message"]
+
+    def test_repo_tag_starting_with_dash_rejected(self):
+        """repo_tag='--config=evil' must be rejected."""
+        from strands_robots.tools.gr00t_inference import gr00t_inference
+
+        result = gr00t_inference(
+            action="build_image",
+            repo_tag="--config=core.fsmonitor=evil-cmd",
+        )
+        assert result["status"] == "error"
+        assert "repo_tag" in result["message"]
+
+    def test_policy_name_starting_with_dash_rejected(self):
+        """policy_name='--flag' must be rejected."""
+        from strands_robots.tools.gr00t_inference import gr00t_inference
+
+        result = gr00t_inference(
+            action="start",
+            checkpoint_path="/data/model",
+            policy_name="--malicious",
+        )
+        assert result["status"] == "error"
+        assert "policy_name" in result["message"]
+
+    def test_valid_repo_url_accepted(self):
+        """Normal https:// URL must pass the guard."""
+        from strands_robots.tools.gr00t_inference import gr00t_inference
+
+        # Will fail on Docker/git availability but not on option-injection guard
+        result = gr00t_inference(
+            action="build_image",
+            repo_url="https://github.com/NVIDIA/Isaac-GR00T",
+            repo_tag="n1.7-release",
+        )
+        # Should not be an option-injection error
+        assert "must not start with '-'" not in result.get("message", "")
+
+
+class TestHostAutoFlipForContainer:
+    """Test that container actions auto-flip 127.0.0.1 to 0.0.0.0."""
+
+    def test_default_host_is_loopback(self):
+        """Signature default must be 127.0.0.1 (AGENTS.md compliance)."""
+        import inspect
+
+        from strands_robots.tools.gr00t_inference import gr00t_inference
+
+        sig = inspect.signature(gr00t_inference)
+        assert sig.parameters["host"].default == "127.0.0.1"
+
+    def test_start_service_auto_flips_loopback(self, monkeypatch):
+        """_start_service should auto-flip 127.0.0.1 to 0.0.0.0 for Docker."""
+        from strands_robots.tools.gr00t_inference import _start_service
+
+        captured_host = {}
+
+        def fake_find(*args, **kwargs):
+            return {
+                "status": "success",
+                "containers": [{"name": "gr00t-test", "status": "Up 2 hours"}],
+            }
+
+        def fake_build_cmd(**kwargs):
+            captured_host["host"] = kwargs.get("host")
+            return ["docker", "exec", "gr00t-test", "echo", "test"]
+
+        monkeypatch.setattr("strands_robots.tools.gr00t_inference._find_gr00t_containers", fake_find)
+        monkeypatch.setattr("strands_robots.tools.gr00t_inference._build_inference_command", fake_build_cmd)
+
+        import subprocess
+
+        monkeypatch.setattr(
+            subprocess,
+            "Popen",
+            lambda *a, **kw: type("P", (), {"poll": lambda s: 0, "stdout": None, "stderr": None})(),
+        )
+
+        # Call with loopback default — should auto-flip
+        _start_service(
+            checkpoint_path="/data/model",
+            port=5555,
+            data_config="fourier_gr1_arms_only",
+            embodiment_tag="gr1",
+            denoising_steps=4,
+            host="127.0.0.1",
+            container_name=None,
+            policy_name=None,
+            timeout=5,
+            use_tensorrt=False,
+            trt_engine_path="gr00t_engine",
+            vit_dtype="fp8",
+            llm_dtype="nvfp4",
+            dit_dtype="fp8",
+            http_server=False,
+            api_token=None,
+        )
+        assert captured_host.get("host") == "0.0.0.0"
+
+
+class TestSingleLabelNumericHostname:
+    """Verify single-label numeric hostnames (per RFC-1123) are accepted."""
+
+    def test_single_numeric_label_accepted(self):
+        """Single-label '123' is a valid hostname (RFC-1123)."""
+        validate_inputs(**{**_VALID_KWARGS, "host": "123"})
+
+    def test_multi_label_numeric_rejected(self):
+        """Multi-label '127.0.01' is rejected as an IP typo."""
+        with pytest.raises(ValueError, match="host must be a valid IP address or hostname"):
+            validate_inputs(**{**_VALID_KWARGS, "host": "127.0.01"})
+
+
+class TestPlatformGuardForHostFallback:
+    """Test that host-fallback stop returns error on non-Linux platforms."""
+
+    def test_non_linux_platform_returns_error(self, monkeypatch):
+        """On non-Linux, _stop_service should error when no containers found."""
+        import sys as _sys
+
+        from strands_robots.tools.gr00t_inference import _stop_service
+
+        # Mock no containers found
+        monkeypatch.setattr(
+            "strands_robots.tools.gr00t_inference._find_gr00t_containers",
+            lambda: {"status": "success", "containers": []},
+        )
+        monkeypatch.setattr(_sys, "platform", "darwin")
+
+        result = _stop_service(5555)
+        assert result["status"] == "error"
+        assert "Linux" in result["message"]

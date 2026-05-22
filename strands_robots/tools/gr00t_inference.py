@@ -16,6 +16,7 @@ import os
 import re
 import socket
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -72,9 +73,10 @@ _HOSTNAME_RE = re.compile(
     r"^[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?"
     r"(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$"
 )
-# Reject all-numeric labels — prevents false-matching typos like "127.0.01"
+# Reject multi-label all-numeric strings — prevents typos like "127.0.01"
 # which pass _HOSTNAME_RE but are clearly malformed IP attempts, not hostnames.
-_ALL_NUMERIC_RE = re.compile(r"^[0-9]+(?:\.[0-9]+)*$")
+# Single-label numerics (e.g. "123") are valid per RFC-1123.
+_ALL_NUMERIC_RE = re.compile(r"^[0-9]+(?:\.[0-9]+)+$")
 
 # Factored pgrep pattern — single source of truth for both docker-exec and
 # host-fallback discovery paths. ERE syntax (procps-ng on Linux).
@@ -228,7 +230,7 @@ def gr00t_inference(
     data_config: str = "fourier_gr1_arms_only",
     embodiment_tag: str = "gr1",
     denoising_steps: int = 4,
-    host: str = "0.0.0.0",
+    host: str = "127.0.0.1",
     container_name: str | None = None,
     timeout: int = 60,
     use_tensorrt: bool = False,
@@ -370,8 +372,9 @@ def gr00t_inference(
             ``libero_sim``).
         denoising_steps: Number of denoising steps for action generation (default: 4).
             N1.5/N1.6 only - the N1.7 server reads this from the checkpoint.
-        host: Host address to bind the service to (default: ``0.0.0.0``
-            all interfaces; required for Docker -p port-publish. Pass ``127.0.0.1`` for loopback only).
+        host: Host address to bind the service to (default: ``127.0.0.1``
+            loopback only). Container actions auto-flip to ``0.0.0.0`` internally
+            since Docker -p port-publish requires bind-all inside the container.
         container_name: Specific Docker container name. Auto-detected if omitted.
         timeout: Seconds to wait for service startup (default: 60).
         use_tensorrt: Enable TensorRT acceleration (default: False).
@@ -476,8 +479,6 @@ def gr00t_inference(
     if api_token is None:
         api_token = os.environ.get("GROOT_API_TOKEN")
 
-    # Validate protocol up-front so users get a friendly error rather than
-    # an opaque docker-exec failure inside _start_service.
     # ── Validate all inputs in one call (scoped per action) ─────────
     try:
         validate_inputs(
@@ -499,6 +500,19 @@ def gr00t_inference(
         )
     except ValueError as e:
         return {"status": "error", "message": str(e)}
+
+    # Option-injection guard: reject LLM-controlled values starting with '-'
+    # which could be parsed as flags by git/docker/pgrep in subprocess argv.
+    for param_name, param_value in [
+        ("repo_url", repo_url),
+        ("repo_tag", repo_tag),
+        ("policy_name", policy_name),
+    ]:
+        if param_value is not None and param_value.startswith("-"):
+            return {
+                "status": "error",
+                "message": f"{param_name} must not start with '-' (got {param_value!r})",
+            }
 
     if action == "find_containers":
         return _find_gr00t_containers()
@@ -846,6 +860,16 @@ def _stop_service(port: int) -> dict[str, Any]:
                     continue
 
         # Fallback: try host system — verify via /proc/<pid>/cmdline
+        # This path is Linux-only (ERE pgrep + /proc filesystem).
+        if sys.platform != "linux":
+            return {
+                "status": "error",
+                "message": (
+                    "No GR00T containers found. Host-fallback stop requires Linux "
+                    "(pgrep + /proc). Run inside a Docker container or use action='find_containers' first."
+                ),
+            }
+
         result = subprocess.run(
             # NOTE: ( |$) is ERE syntax; pgrep on Linux (procps-ng) defaults to ERE.
             # This pattern is Linux-only; BSD pgrep may not match correctly.
@@ -1018,6 +1042,12 @@ def _start_service(
 ) -> dict[str, Any]:
     """Start GR00T inference service using Isaac-GR00T's native inference service."""
     try:
+        # Auto-flip host to 0.0.0.0 for container actions — Docker's -p port-publish
+        # requires the service to bind all interfaces inside the container, otherwise
+        # the published port forwards to a socket nothing is listening on.
+        # AGENTS.md: default is 127.0.0.1 for safety; container path opts in to 0.0.0.0.
+        if host == "127.0.0.1":
+            host = "0.0.0.0"
         # Find container if not specified
         if container_name is None:
             containers = _find_gr00t_containers()

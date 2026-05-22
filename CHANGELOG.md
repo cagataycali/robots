@@ -50,10 +50,17 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 ### Fixed
 
 - Duplicate ``torch_mock.manual_seed`` assignment in ``tests/mocks/torch_mock.py``.
-- Default ``host`` remains ``0.0.0.0`` (no breaking change). The Docker
-  container's ``-p {port}:{port}`` publish requires the service to bind all
-  interfaces inside the container; ``127.0.0.1`` inside a container is
-  unreachable from the host.
+- Default ``host`` changed to ``127.0.0.1`` (loopback-only, per AGENTS.md).
+  Container actions (``start``/``restart``/``lifecycle``) auto-flip to
+  ``0.0.0.0`` internally since Docker's ``-p {port}:{port}`` publish requires
+  bind-all inside the container. Users on non-container paths now default to
+  safe loopback binding; pass ``host="0.0.0.0"`` explicitly to expose.
+- Option-injection guard: ``repo_url``, ``repo_tag``, ``policy_name`` starting
+  with ``-`` are rejected (prevents git/docker flag injection via subprocess argv).
+- Host-system fallback (pgrep) now returns a clear error on non-Linux platforms
+  instead of silently reporting success.
+- All-numeric hostname guard narrowed to multi-label patterns only — single-label
+  numerics (e.g. ``123``) are valid per RFC-1123.
 
 ### Notes
 
