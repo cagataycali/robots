@@ -11,6 +11,7 @@ steps so an LLM driving the AgentTool can fully orchestrate a GR00T eval
 from a single prompt - see #148 for the motivation.
 """
 
+import ipaddress
 import os
 import re
 import socket
@@ -75,6 +76,7 @@ def validate_inputs(
     data_config: str,
     embodiment_tag: str,
     port: int,
+    host: str = "127.0.0.1",
     vit_dtype: str,
     llm_dtype: str,
     dit_dtype: str,
@@ -117,6 +119,15 @@ def validate_inputs(
     # Port range
     if not (1 <= port <= 65535):
         raise ValueError(f"port must be between 1 and 65535, got {port}")
+
+    # Host address validation
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        raise ValueError(
+            f"host must be a valid IPv4 or IPv6 address (got {host!r}). "
+            f"Use '127.0.0.1' for loopback or '0.0.0.0' to bind all interfaces."
+        )
 
 
 @tool
@@ -270,7 +281,8 @@ def gr00t_inference(
             ``libero_sim``).
         denoising_steps: Number of denoising steps for action generation (default: 4).
             N1.5/N1.6 only - the N1.7 server reads this from the checkpoint.
-        host: Host address to bind the service to (default: ``0.0.0.0``).
+        host: Host address to bind the service to (default: ``127.0.0.1``
+            loopback only; pass ``0.0.0.0`` to expose on all interfaces).
         container_name: Specific Docker container name. Auto-detected if omitted.
         timeout: Seconds to wait for service startup (default: 60).
         use_tensorrt: Enable TensorRT acceleration (default: False).
@@ -390,6 +402,7 @@ def gr00t_inference(
             data_config=data_config,
             embodiment_tag=embodiment_tag,
             port=port,
+            host=host,
             vit_dtype=vit_dtype,
             llm_dtype=llm_dtype,
             dit_dtype=dit_dtype,
@@ -629,7 +642,7 @@ def _is_gr00t_process(container_name: str, pid: str, *, port: int | None = None)
                 # Use word-boundary regex to avoid partial matches (e.g. port 80 vs 8000)
                 return bool(re.search(rf"--port[= ]{port}(?:\s|$)", cmdline))
             return is_gr00t
-    except Exception:
+    except (OSError, subprocess.SubprocessError, UnicodeDecodeError):
         pass  # Probe failure is non-fatal — return False to indicate unknown process
     return False
 
@@ -652,7 +665,7 @@ def _is_gr00t_host_process(pid: str, *, port: int | None = None) -> bool:
             if is_gr00t and port is not None:
                 return bool(re.search(rf"--port[= ]{port}(?:\s|$)", cmdline))
             return is_gr00t
-    except Exception:
+    except (OSError, UnicodeDecodeError):
         pass  # Probe failure is non-fatal — return False to indicate unknown process
     return False
 

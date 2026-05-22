@@ -3,6 +3,30 @@
 All notable behavioural changes to `strands-robots` are logged here. Follows
 [Keep a Changelog](https://keepachangelog.com/) conventions.
 
+## Unreleased - #90 (gr00t_inference validation hardening)
+
+### Changed: ``gr00t_inference`` default ``host`` flipped from ``0.0.0.0`` to ``127.0.0.1`` (BREAKING)
+
+The tool now defaults to loopback-only binding for safety. Deployments where
+the GR00T inference server must be reachable from a different host (CI runners,
+multi-node setups, separate teleop boxes) need to pass ``host="0.0.0.0"``
+explicitly.
+
+### Added
+
+- ``validate_inputs()`` now validates the ``host`` parameter with
+  ``ipaddress.ip_address()`` — typos like ``127.0.01`` are rejected early.
+- Integration tests that invoke ``gr00t_inference()`` end-to-end and assert
+  that invalid inputs are caught (pins the ``try/except ValueError`` wiring).
+- Exception clauses in ``_is_gr00t_process`` / ``_is_gr00t_host_process``
+  narrowed from ``except Exception`` to specific exception types.
+
+### Fixed
+
+- Duplicate ``torch_mock.manual_seed`` assignment in ``tests/mocks/torch_mock.py``.
+- Docstring for ``host`` parameter now matches the actual default (``127.0.0.1``).
+
+
 ## Unreleased - #178 (LiberoOffScreenRenderEngine retired)
 
 ### Removed: ``LiberoOffScreenRenderEngine`` simulation backend (BREAKING)

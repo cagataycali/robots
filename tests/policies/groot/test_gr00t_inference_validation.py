@@ -322,3 +322,111 @@ class TestIsGr00tHostProcess:
 
         # Without port kwarg, just checks identity
         assert _is_gr00t_host_process("321") is True
+
+
+class TestHostValidation:
+    """Tests for host address validation in validate_inputs()."""
+
+    def test_valid_loopback(self):
+        """127.0.0.1 is valid."""
+        validate_inputs(
+            data_config="fourier_gr1_arms_only",
+            embodiment_tag="gr1",
+            port=5555,
+            host="127.0.0.1",
+            vit_dtype="fp8",
+            llm_dtype="nvfp4",
+            dit_dtype="fp8",
+        )
+
+    def test_valid_all_interfaces(self):
+        """0.0.0.0 is valid."""
+        validate_inputs(
+            data_config="fourier_gr1_arms_only",
+            embodiment_tag="gr1",
+            port=5555,
+            host="0.0.0.0",
+            vit_dtype="fp8",
+            llm_dtype="nvfp4",
+            dit_dtype="fp8",
+        )
+
+    def test_valid_ipv6_loopback(self):
+        """::1 is valid."""
+        validate_inputs(
+            data_config="fourier_gr1_arms_only",
+            embodiment_tag="gr1",
+            port=5555,
+            host="::1",
+            vit_dtype="fp8",
+            llm_dtype="nvfp4",
+            dit_dtype="fp8",
+        )
+
+    def test_invalid_host_typo(self):
+        """Typo'd IP address must be rejected."""
+        with pytest.raises(ValueError, match="host must be a valid IPv4 or IPv6 address"):
+            validate_inputs(
+                data_config="fourier_gr1_arms_only",
+                embodiment_tag="gr1",
+                port=5555,
+                host="127.0.01",
+                vit_dtype="fp8",
+                llm_dtype="nvfp4",
+                dit_dtype="fp8",
+            )
+
+    def test_invalid_host_hostname(self):
+        """Hostnames are rejected (only IPs allowed)."""
+        with pytest.raises(ValueError, match="host must be a valid IPv4 or IPv6 address"):
+            validate_inputs(
+                data_config="fourier_gr1_arms_only",
+                embodiment_tag="gr1",
+                port=5555,
+                host="localhost",
+                vit_dtype="fp8",
+                llm_dtype="nvfp4",
+                dit_dtype="fp8",
+            )
+
+
+class TestGr00tInferenceToolIntegration:
+    """Integration tests verifying validate_inputs is wired into the tool entry point.
+
+    These tests invoke gr00t_inference() directly and assert that invalid inputs
+    are caught and returned as error dicts, NOT silently passed through.
+    This pins the try/except ValueError wiring so a future refactor that drops
+    the validation call surfaces as a test failure.
+    """
+
+    def test_shell_injection_in_data_config_returns_error(self):
+        """Shell metacharacters in data_config must return error dict."""
+        from strands_robots.tools.gr00t_inference import gr00t_inference
+
+        result = gr00t_inference(action="start", data_config="foo;rm -rf /")
+        assert result["status"] == "error"
+        assert "data_config" in result["message"]
+
+    def test_path_traversal_in_checkpoint_returns_error(self):
+        """Path traversal in checkpoint_path must return error dict."""
+        from strands_robots.tools.gr00t_inference import gr00t_inference
+
+        result = gr00t_inference(action="start", checkpoint_path="/tmp/../../../etc/passwd")
+        assert result["status"] == "error"
+        assert "checkpoint_path" in result["message"]
+
+    def test_invalid_host_returns_error(self):
+        """Invalid host address must return error dict."""
+        from strands_robots.tools.gr00t_inference import gr00t_inference
+
+        result = gr00t_inference(action="start", host="not.an.ip.addr")
+        assert result["status"] == "error"
+        assert "host" in result["message"]
+
+    def test_invalid_port_returns_error(self):
+        """Out-of-range port must return error dict."""
+        from strands_robots.tools.gr00t_inference import gr00t_inference
+
+        result = gr00t_inference(action="start", port=99999)
+        assert result["status"] == "error"
+        assert "port" in result["message"]
