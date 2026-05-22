@@ -12,8 +12,9 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
   ``stop``) only validate ``port``/``host``/``protocol``; mutating actions
   (``start``, ``restart``, ``lifecycle``) validate the full parameter surface.
 - ``host`` parameter now accepts both IP addresses and RFC-952 hostnames
-  (e.g. ``localhost``, ``host.docker.internal``). Previously only raw IPs
-  were accepted; typos like ``127.0.01`` and non-RFC hostnames are rejected.
+  (e.g. ``localhost``, ``host.docker.internal``). All-numeric strings that
+  fail ``ipaddress.ip_address()`` (e.g. ``127.0.01``, ``999.999.999.999``)
+  are rejected as obvious IP typos.
 - ``protocol`` validation moved into ``validate_inputs()`` (previously
   hand-rolled outside the helper, breaking the single-entry-point contract).
 - ``pgrep`` patterns now match both ``--port N`` and ``--port=N`` forms,
@@ -24,6 +25,12 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
   verifies that a process on port 8000 is NOT killed when stopping port 80.
 - Exception clauses in ``_is_gr00t_process`` / ``_is_gr00t_host_process``
   narrowed from ``except Exception`` to specific exception types.
+- ``action`` parameter validated against a complete allowlist of 10 valid
+  actions; unknown actions get a clear error with the valid set listed.
+- ``image_name``, ``volumes``, and ``container_command`` parameters are now
+  validated (Docker image reference, path traversal, shell metacharacters).
+- ``pgrep`` pattern factored into ``_PGREP_INFERENCE_PORT_FMT`` module-level
+  constant — single source of truth across all 4 usage sites.
 
 ### Fixed
 

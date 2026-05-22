@@ -640,3 +640,172 @@ class TestActionScopedValidation:
         # Should NOT be a validation error about data_config
         if result.get("status") == "error":
             assert "data_config" not in result.get("message", "")
+
+
+class TestHostNumericTypoRejection:
+    """Regression tests for all-numeric hostname typos.
+
+    Verifies that "127.0.01" (typo for 127.0.0.1) and "999.999.999.999"
+    are rejected by validate_inputs. These strings pass _HOSTNAME_RE but
+    are caught by the _ALL_NUMERIC_RE guard introduced in review round-4.
+    """
+
+    def test_invalid_host_typo_dotted_numeric(self):
+        """127.0.01 (typo for 127.0.0.1) must be rejected."""
+        with pytest.raises(ValueError, match="host must be a valid IP address or hostname"):
+            validate_inputs(
+                data_config="fourier_gr1_arms_only",
+                embodiment_tag="gr1",
+                port=5555,
+                host="127.0.01",
+                vit_dtype="fp8",
+                llm_dtype="nvfp4",
+                dit_dtype="fp8",
+            )
+
+    def test_invalid_host_999_octets(self):
+        """999.999.999.999 (invalid IP, all-numeric) must be rejected."""
+        with pytest.raises(ValueError, match="host must be a valid IP address or hostname"):
+            validate_inputs(
+                data_config="fourier_gr1_arms_only",
+                embodiment_tag="gr1",
+                port=5555,
+                host="999.999.999.999",
+                vit_dtype="fp8",
+                llm_dtype="nvfp4",
+                dit_dtype="fp8",
+            )
+
+    def test_invalid_host_single_number(self):
+        """A bare number like '8080' is not a valid host."""
+        with pytest.raises(ValueError, match="host must be a valid IP address or hostname"):
+            validate_inputs(
+                data_config="fourier_gr1_arms_only",
+                embodiment_tag="gr1",
+                port=5555,
+                host="8080",
+                vit_dtype="fp8",
+                llm_dtype="nvfp4",
+                dit_dtype="fp8",
+            )
+
+
+class TestActionAllowlistValidation:
+    """Tests for the action allowlist in validate_inputs.
+
+    Verifies that unknown actions are rejected with a clear error that
+    lists the valid options, rather than falling through to validation
+    of unrelated parameters.
+    """
+
+    def test_unknown_action_rejected(self):
+        """Typo'd action gets a clear error listing valid actions."""
+        with pytest.raises(ValueError, match="Unknown action.*Valid actions"):
+            validate_inputs(action="strat")  # typo for "start"
+
+    def test_unknown_action_integration(self):
+        """gr00t_inference(action='typo') returns error about unknown action."""
+        from strands_robots.tools.gr00t_inference import gr00t_inference
+
+        result = gr00t_inference(action="typo")
+        assert result["status"] == "error"
+        assert "Unknown action" in result["message"]
+
+    def test_all_valid_actions_accepted(self):
+        """All 10 valid actions pass action validation (may fail later)."""
+        from strands_robots.tools.gr00t_inference import _VALID_ACTIONS
+
+        for action in _VALID_ACTIONS:
+            # Should not raise ValueError about unknown action
+            # (may raise about other params, but that's fine)
+            try:
+                validate_inputs(action=action)
+            except ValueError as e:
+                assert "Unknown action" not in str(e), f"Action {action!r} wrongly rejected"
+
+
+class TestExpandedParamValidation:
+    """Tests for image_name, volumes, and container_command validation."""
+
+    def test_invalid_image_name_rejected(self):
+        """Docker image with shell chars must be rejected."""
+        with pytest.raises(ValueError, match="image_name must be a valid Docker"):
+            validate_inputs(
+                action="start",
+                data_config="fourier_gr1_arms_only",
+                embodiment_tag="gr1",
+                image_name="gr00t:latest; rm -rf /",
+            )
+
+    def test_valid_image_name_accepted(self):
+        """Standard Docker image references must pass."""
+        # Should not raise
+        validate_inputs(
+            action="start",
+            data_config="fourier_gr1_arms_only",
+            embodiment_tag="gr1",
+            image_name="nvcr.io/nvidia/gr00t:n1.7",
+        )
+
+    def test_volume_path_traversal_rejected(self):
+        """Volumes with path traversal must be rejected."""
+        with pytest.raises(ValueError, match="volumes key"):
+            validate_inputs(
+                action="start",
+                data_config="fourier_gr1_arms_only",
+                embodiment_tag="gr1",
+                volumes={"/../etc/passwd": "/data"},
+            )
+
+    def test_container_command_shell_meta_rejected(self):
+        """Container command with shell metacharacters must be rejected."""
+        with pytest.raises(ValueError, match="container_command contains disallowed"):
+            validate_inputs(
+                action="start",
+                data_config="fourier_gr1_arms_only",
+                embodiment_tag="gr1",
+                container_command="tail -f /dev/null; rm -rf /",
+            )
+
+    def test_valid_container_command_accepted(self):
+        """Standard container commands must pass."""
+        # Should not raise
+        validate_inputs(
+            action="start",
+            data_config="fourier_gr1_arms_only",
+            embodiment_tag="gr1",
+            container_command="tail -f /dev/null",
+        )
+
+
+class TestHappyPathIntegration:
+    """Happy-path integration test for gr00t_inference.
+
+    Verifies that valid inputs pass validation and proceed to runtime
+    (which will fail due to missing Docker, but NOT on validation).
+    """
+
+    def test_valid_list_action_passes_validation(self):
+        """gr00t_inference(action='list') with valid params does not error on validation."""
+        from strands_robots.tools.gr00t_inference import gr00t_inference
+
+        result = gr00t_inference(action="list")
+        # The error should be about runtime (no docker), NOT validation
+        if result.get("status") == "error":
+            msg = result.get("message", "")
+            # Must not be a validation error
+            assert "must be" not in msg or "port" not in msg
+            assert "Unknown action" not in msg
+            assert "data_config" not in msg
+
+    def test_valid_status_action_passes_validation(self):
+        """gr00t_inference(action='status') with valid params proceeds past validation."""
+        from strands_robots.tools.gr00t_inference import gr00t_inference
+
+        result = gr00t_inference(action="status", port=5555, host="127.0.0.1")
+        # Should not be a validation error
+        if result.get("status") == "error":
+            msg = result.get("message", "")
+            assert "Unknown action" not in msg
+            assert "host must be" not in msg
+            assert "port must be" not in msg

@@ -47,6 +47,9 @@ def _checkpoints_dir() -> Path:
 # Input validation helpers
 # ─────────────────────────────────────────────────────────────────────
 
+# Docker image reference pattern (simplified).
+_DOCKER_IMAGE_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._\-/]*(?::[a-zA-Z0-9._\-]+)?$")
+
 # Characters that cause harm in subprocess argv or shell interpolation.
 # Narrowed per AGENTS.md review-learnings: quotes/bangs/parens/brackets
 # appear in legitimate filesystem paths and all subprocess calls here are
@@ -62,11 +65,34 @@ _HOSTNAME_RE = re.compile(
     r"^[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?"
     r"(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$"
 )
+# Reject all-numeric labels — prevents false-matching typos like "127.0.01"
+# which pass _HOSTNAME_RE but are clearly malformed IP attempts, not hostnames.
+_ALL_NUMERIC_RE = re.compile(r"^[0-9]+(?:\.[0-9]+)*$")
+
+# Factored pgrep pattern — single source of truth for both docker-exec and
+# host-fallback discovery paths. ERE syntax (procps-ng on Linux).
+_PGREP_INFERENCE_PORT_FMT = "inference_service.py.*--port[= ]{port}( |$)"
 
 # Allowlists for TensorRT dtype parameters.
 _VALID_VIT_DTYPES = {"fp16", "fp8"}
 _VALID_LLM_DTYPES = {"fp16", "nvfp4", "fp8"}
 _VALID_DIT_DTYPES = {"fp16", "fp8"}
+
+# Complete allowlist of valid actions for the tool.
+_VALID_ACTIONS = frozenset(
+    {
+        "find_containers",
+        "list",
+        "status",
+        "stop",
+        "start",
+        "restart",
+        "build_image",
+        "download_checkpoint",
+        "start_container",
+        "lifecycle",
+    }
+)
 
 
 def _validate_path(value: str, label: str) -> None:
@@ -93,6 +119,9 @@ def validate_inputs(
     trt_engine_path: str = "gr00t_engine",
     container_name: str | None = None,
     protocol: str = "n1.5",
+    image_name: str | None = None,
+    volumes: dict[str, str] | None = None,
+    container_command: str | None = None,
 ) -> None:
     """Validate all user-supplied parameters in one place.
 
@@ -101,9 +130,14 @@ def validate_inputs(
     check is independently testable via this single entry-point.
 
     Validation is scoped to the action: read-only actions (find_containers,
-    list, status, stop) only validate port/host; mutating actions (start,
-    restart, lifecycle) validate the full parameter surface.
+    list, status, stop) only validate port/host/protocol; mutating actions
+    (start, restart, lifecycle, build_image, download_checkpoint,
+    start_container) validate the full parameter surface.
     """
+    # Action allowlist — reject unknown actions early with a clear error
+    if action not in _VALID_ACTIONS:
+        raise ValueError(f"Unknown action {action!r}. Valid actions: {sorted(_VALID_ACTIONS)}")
+
     # Protocol — always validated regardless of action
     valid_protocols = ("n1.5", "n1.6", "n1.7")
     if protocol not in valid_protocols:
@@ -116,7 +150,9 @@ def validate_inputs(
     try:
         ipaddress.ip_address(host)
     except ValueError:
-        if not _HOSTNAME_RE.match(host):
+        # Reject all-numeric labels (e.g. "127.0.01") — these are clearly IP typos
+        # not legitimate hostnames. Real hostnames must have at least one alpha label.
+        if _ALL_NUMERIC_RE.match(host) or not _HOSTNAME_RE.match(host):
             raise ValueError(
                 f"host must be a valid IP address or hostname (got {host!r}). "
                 f"Use '127.0.0.1' for loopback, '0.0.0.0' for all interfaces, "
@@ -155,6 +191,20 @@ def validate_inputs(
         raise ValueError(f"llm_dtype must be one of {_VALID_LLM_DTYPES}, got {llm_dtype!r}")
     if dit_dtype not in _VALID_DIT_DTYPES:
         raise ValueError(f"dit_dtype must be one of {_VALID_DIT_DTYPES}, got {dit_dtype!r}")
+
+    # Docker image reference (if provided via kwargs)
+    if image_name is not None and not _DOCKER_IMAGE_RE.match(image_name):
+        raise ValueError(f"image_name must be a valid Docker image reference (got {image_name!r})")
+
+    # Volume paths validation
+    if volumes is not None:
+        for vol_host, vol_container in volumes.items():
+            _validate_path(vol_host, "volumes key (host path)")
+            _validate_path(vol_container, "volumes value (container path)")
+
+    # Container command — reject shell metacharacters
+    if container_command is not None and _SHELL_META.search(container_command):
+        raise ValueError(f"container_command contains disallowed characters: {container_command!r}")
 
 
 @tool
@@ -431,6 +481,9 @@ def gr00t_inference(
             trt_engine_path=trt_engine_path,
             container_name=container_name,
             protocol=protocol,
+            image_name=image_name,
+            volumes=volumes,
+            container_command=container_command,
         )
     except ValueError as e:
         return {"status": "error", "message": str(e)}
@@ -715,7 +768,7 @@ def _stop_service(port: int) -> dict[str, Any]:
                             container_name,
                             "pgrep",
                             "-f",
-                            f"inference_service.py.*--port[= ]{port}( |$)",
+                            _PGREP_INFERENCE_PORT_FMT.format(port=port),
                         ],
                         capture_output=True,
                         text=True,
@@ -738,7 +791,7 @@ def _stop_service(port: int) -> dict[str, Any]:
                                 container_name,
                                 "pgrep",
                                 "-f",
-                                f"inference_service.py.*--port[= ]{port}( |$)",
+                                _PGREP_INFERENCE_PORT_FMT.format(port=port),
                             ],
                             capture_output=True,
                             text=True,
@@ -766,7 +819,7 @@ def _stop_service(port: int) -> dict[str, Any]:
         result = subprocess.run(
             # NOTE: ( |$) is ERE syntax; pgrep on Linux (procps-ng) defaults to ERE.
             # This pattern is Linux-only; BSD pgrep may not match correctly.
-            ["pgrep", "-f", f"inference_service.py.*--port[= ]{port}( |$)"],
+            ["pgrep", "-f", _PGREP_INFERENCE_PORT_FMT.format(port=port)],
             capture_output=True,
             text=True,
         )
@@ -783,7 +836,7 @@ def _stop_service(port: int) -> dict[str, Any]:
             result = subprocess.run(
                 # NOTE: ( |$) is ERE syntax; pgrep on Linux (procps-ng) defaults to ERE.
                 # This pattern is Linux-only; BSD pgrep may not match correctly.
-                ["pgrep", "-f", f"inference_service.py.*--port[= ]{port}( |$)"],
+                ["pgrep", "-f", _PGREP_INFERENCE_PORT_FMT.format(port=port)],
                 capture_output=True,
                 text=True,
             )
