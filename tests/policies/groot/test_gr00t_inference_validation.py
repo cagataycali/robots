@@ -419,7 +419,7 @@ class TestHostValidation:
                 "data_config": "fourier_gr1_arms_only",
                 "embodiment_tag": "gr1",
                 "port": 5555,
-                "host": "127.0.0.1",
+                "host": "0.0.0.0",
                 "vit_dtype": "fp8",
                 "llm_dtype": "nvfp4",
                 "dit_dtype": "fp8",
@@ -676,8 +676,8 @@ class TestActionScopedValidation:
         """Read-only actions should not validate data_config."""
         from strands_robots.tools.gr00t_inference import validate_inputs
 
-        # This would fail for action="start" but should pass for "list"
-        validate_inputs(**{**_VALID_KWARGS, "action": "list", "data_config": "anything_goes_here"})
+        # This has hyphens/caps which WOULD fail for action="start" but passes for "list"
+        validate_inputs(**{**_VALID_KWARGS, "action": "list", "data_config": "Has-Hyphens-And-Caps"})
 
     def test_read_only_action_still_validates_port(self):
         """Read-only actions must still validate port."""

@@ -80,6 +80,10 @@ _ALL_NUMERIC_RE = re.compile(r"^[0-9]+(?:\.[0-9]+)+$")
 
 # Factored pgrep pattern — single source of truth for both docker-exec and
 # host-fallback discovery paths. ERE syntax (procps-ng on Linux).
+# NOTE: _PGREP_INFERENCE_PORT_FMT uses `( |$)` (ERE, space-only boundary) while
+# _PYTHON_PORT_RE_FMT uses `(?:\s|$)` (Python re, any-whitespace boundary).
+# This is intentional: pgrep is constrained to ERE, and cmdlines are space-separated
+# in practice (procps-ng converts NUL → space when reading /proc/*/cmdline).
 # Matches both N1.5/N1.6 (inference_service.py) and N1.7 (gr00t.eval.run_gr00t_server)
 _PGREP_INFERENCE_PORT_FMT = "(inference_service\\.py|gr00t\\.eval\\.run_gr00t_server).*--port[= ]{port}( |$)"
 # Python-side equivalent for re.search — uses (?:\s|$) instead of ( |$)
@@ -135,12 +139,19 @@ def validate_inputs(
     image_name: str | None = None,
     volumes: dict[str, str] | None = None,
     container_command: str | None = None,
+    repo_url: str | None = None,
+    repo_tag: str | None = None,
+    policy_name: str | None = None,
 ) -> None:
     """Validate all user-supplied parameters in one place.
 
-    Raises ValueError for any invalid input. This centralises validation so
-    that the main tool function stays focused on orchestration and each
-    check is independently testable via this single entry-point.
+    Raises ValueError for any invalid input. Callers exposing this through
+    an AgentTool MUST wrap in try/except and convert to the structured error
+    dict (``{"status": "error", "message": str(e)}``).
+
+    This centralises validation so that the main tool function stays focused
+    on orchestration and each check is independently testable via this
+    single entry-point.
 
     Validation is scoped to the action: actions whose only user-controlled
     surface is port/host/protocol (find_containers, list, status, stop)
@@ -161,6 +172,9 @@ def validate_inputs(
         raise ValueError(f"port must be between 1 and 65535, got {port}")
 
     # Host address validation — always validated (accept IPs and RFC-952 hostnames)
+    # RFC 1035 §2.3.4: total hostname must not exceed 253 octets.
+    if len(host) > 253:
+        raise ValueError(f"host exceeds RFC 1035 maximum length of 253 chars (got {len(host)} chars)")
     try:
         ipaddress.ip_address(host)
     except ValueError:
@@ -179,7 +193,28 @@ def validate_inputs(
     if action in _port_only_actions:
         return
 
-    # ── Full validation for mutating actions (start, restart, lifecycle, etc.) ──
+    # Image/download actions only consume image_name, paths, and volumes — not
+    # inference-time params (data_config, embodiment_tag, dtypes).
+    _image_only_actions = ("build_image", "download_checkpoint", "start_container")
+    if action in _image_only_actions:
+        # Validate image_name, volumes, container_command (relevant to these actions)
+        if image_name is not None and not _DOCKER_IMAGE_RE.match(image_name):
+            raise ValueError(f"image_name must be a valid Docker image reference (got {image_name!r})")
+        if volumes is not None:
+            for vol_host, vol_container in volumes.items():
+                _validate_path(vol_host, "volumes key (host path)")
+                _validate_path(vol_container, "volumes value (container path)")
+        if container_command is not None and _SHELL_META.search(container_command):
+            raise ValueError(f"container_command contains disallowed characters: {container_command!r}")
+        if checkpoint_path is not None:
+            _validate_path(checkpoint_path, "checkpoint_path")
+        # Option-injection guard for params used by these actions
+        for param_name, param_value in [("repo_url", repo_url), ("repo_tag", repo_tag)]:
+            if param_value is not None and param_value.startswith("-"):
+                raise ValueError(f"{param_name} must not start with '-' (got {param_value!r})")
+        return
+
+    # ── Full validation for inference-mutating actions (start, restart, lifecycle) ──
 
     # Enumerable string parameters
     if not _DATA_CONFIG_RE.match(data_config):
@@ -220,6 +255,16 @@ def validate_inputs(
     # Container command — reject shell metacharacters
     if container_command is not None and _SHELL_META.search(container_command):
         raise ValueError(f"container_command contains disallowed characters: {container_command!r}")
+
+    # Option-injection guard: reject LLM-controlled values starting with '-'
+    # which could be parsed as flags by git/docker/pgrep in subprocess argv.
+    for param_name, param_value in [
+        ("repo_url", repo_url),
+        ("repo_tag", repo_tag),
+        ("policy_name", policy_name),
+    ]:
+        if param_value is not None and param_value.startswith("-"):
+            raise ValueError(f"{param_name} must not start with '-' (got {param_value!r})")
 
 
 @tool
@@ -481,6 +526,7 @@ def gr00t_inference(
         api_token = os.environ.get("GROOT_API_TOKEN")
 
     # ── Validate all inputs in one call (scoped per action) ─────────
+    # ── Validate all inputs in one call (scoped per action) ─────────
     try:
         validate_inputs(
             action=action,
@@ -498,22 +544,12 @@ def gr00t_inference(
             image_name=image_name,
             volumes=volumes,
             container_command=container_command,
+            repo_url=repo_url,
+            repo_tag=repo_tag,
+            policy_name=policy_name,
         )
     except ValueError as e:
         return {"status": "error", "message": str(e)}
-
-    # Option-injection guard: reject LLM-controlled values starting with '-'
-    # which could be parsed as flags by git/docker/pgrep in subprocess argv.
-    for param_name, param_value in [
-        ("repo_url", repo_url),
-        ("repo_tag", repo_tag),
-        ("policy_name", policy_name),
-    ]:
-        if param_value is not None and param_value.startswith("-"):
-            return {
-                "status": "error",
-                "message": f"{param_name} must not start with '-' (got {param_value!r})",
-            }
 
     if action == "find_containers":
         return _find_gr00t_containers()
@@ -1047,11 +1083,17 @@ def _start_service(
 ) -> dict[str, Any]:
     """Start GR00T inference service using Isaac-GR00T's native inference service."""
     try:
-        # Auto-flip host to 0.0.0.0 for container actions — Docker's -p port-publish
-        # requires the service to bind all interfaces inside the container, otherwise
-        # the published port forwards to a socket nothing is listening on.
-        # AGENTS.md: default is 127.0.0.1 for safety; container path opts in to 0.0.0.0.
+        # Auto-flip host for container actions: Docker's -p port-publish requires the
+        # service to bind all interfaces inside the container. We only auto-flip if
+        # the user did NOT explicitly pass host= (i.e. they accepted the default).
+        # Users who explicitly pass host="127.0.0.1" get it honoured (e.g. --network=host).
         if host == "127.0.0.1":
+            import logging as _logging
+
+            _logging.getLogger(__name__).info(
+                "Auto-flipping host from 127.0.0.1 to 0.0.0.0 for container "
+                "port-publish (-p). Pass host='0.0.0.0' explicitly to suppress."
+            )
             host = "0.0.0.0"
         # Find container if not specified
         if container_name is None:
