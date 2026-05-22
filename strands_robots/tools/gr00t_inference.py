@@ -134,8 +134,7 @@ def _validate_path(value: str, label: str, *, reject_colon: bool = False) -> Non
         raise ValueError(f"{label} contains disallowed characters: {value!r}")
     if reject_colon and ":" in value:
         raise ValueError(
-            f"{label} must not contain ':' (docker -v interprets it as "
-            f"host:container:options separator; got {value!r})"
+            f"{label} must not contain ':' (docker -v interprets it as host:container:options separator; got {value!r})"
         )
 
 
