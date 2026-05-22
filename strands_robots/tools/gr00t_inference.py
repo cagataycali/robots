@@ -80,7 +80,8 @@ _ALL_NUMERIC_RE = re.compile(r"^[0-9]+(?:\.[0-9]+)+$")
 
 # Factored pgrep pattern — single source of truth for both docker-exec and
 # host-fallback discovery paths. ERE syntax (procps-ng on Linux).
-_PGREP_INFERENCE_PORT_FMT = "inference_service.py.*--port[= ]{port}( |$)"
+# Matches both N1.5/N1.6 (inference_service.py) and N1.7 (gr00t.eval.run_gr00t_server)
+_PGREP_INFERENCE_PORT_FMT = "(inference_service\\.py|gr00t\\.eval\\.run_gr00t_server).*--port[= ]{port}( |$)"
 # Python-side equivalent for re.search — uses (?:\s|$) instead of ( |$)
 # because Python re is always ERE-ish and \s is more precise.
 _PYTHON_PORT_RE_FMT = r"--port[= ]{port}(?:\s|$)"
@@ -739,8 +740,9 @@ def _is_gr00t_process(container_name: str, pid: str, *, port: int | None = None)
             cmdline = result.stdout.replace("\x00", " ")
             # Require both a Python interpreter AND inference_service.py in cmdline
             # to avoid false-matching unrelated processes (e.g. vim editing a gr00t file)
+            # Match both N1.5/N1.6 (inference_service.py) and N1.7 (gr00t.eval.run_gr00t_server)
             is_gr00t = (
-                "inference_service.py" in cmdline
+                ("inference_service.py" in cmdline or "gr00t.eval.run_gr00t_server" in cmdline)
                 and ("python" in cmdline.lower() or "gr00t" in cmdline.lower())
                 and "--port" in cmdline  # Must have a --port flag to be a running service
             )
@@ -750,12 +752,13 @@ def _is_gr00t_process(container_name: str, pid: str, *, port: int | None = None)
                 return bool(re.search(_PYTHON_PORT_RE_FMT.format(port=port), cmdline))
             return is_gr00t
     except (OSError, subprocess.SubprocessError, UnicodeDecodeError) as exc:
-        if isinstance(exc, PermissionError):
-            import logging
+        import logging
 
-            logging.getLogger(__name__).warning(
-                "Permission denied probing container process %s — treating as non-GR00T", pid
-            )
+        _logger = logging.getLogger(__name__)
+        if isinstance(exc, PermissionError):
+            _logger.warning("Permission denied probing container process %s — treating as non-GR00T", pid)
+        else:
+            _logger.debug("Failed to probe container process %s: %s", pid, exc)
     return False
 
 
@@ -777,8 +780,9 @@ def _is_gr00t_host_process(pid: str, *, port: int | None = None) -> bool:
             cmdline = cmdline_path.read_text().replace("\x00", " ")
             # Require both a Python interpreter AND inference_service.py in cmdline
             # to avoid false-matching unrelated processes (e.g. vim editing a gr00t file)
+            # Match both N1.5/N1.6 (inference_service.py) and N1.7 (gr00t.eval.run_gr00t_server)
             is_gr00t = (
-                "inference_service.py" in cmdline
+                ("inference_service.py" in cmdline or "gr00t.eval.run_gr00t_server" in cmdline)
                 and ("python" in cmdline.lower() or "gr00t" in cmdline.lower())
                 and "--port" in cmdline  # Must have a --port flag to be a running service
             )
@@ -786,12 +790,13 @@ def _is_gr00t_host_process(pid: str, *, port: int | None = None) -> bool:
                 return bool(re.search(_PYTHON_PORT_RE_FMT.format(port=port), cmdline))
             return is_gr00t
     except (OSError, UnicodeDecodeError) as exc:
-        if isinstance(exc, PermissionError):
-            import logging
+        import logging
 
-            logging.getLogger(__name__).warning(
-                "Permission denied reading /proc/%s/cmdline — treating as non-GR00T", pid
-            )
+        _logger = logging.getLogger(__name__)
+        if isinstance(exc, PermissionError):
+            _logger.warning("Permission denied reading /proc/%s/cmdline — treating as non-GR00T", pid)
+        else:
+            _logger.debug("Failed to probe host process %s: %s", pid, exc)
     return False
 
 

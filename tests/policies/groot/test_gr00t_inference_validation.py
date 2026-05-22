@@ -1125,3 +1125,204 @@ class TestPlatformGuardForHostFallback:
         result = _stop_service(5555)
         assert result["status"] == "error"
         assert "Linux" in result["message"]
+
+
+class TestN17ProcessIdentification:
+    """Regression tests for N1.7 process identification — GH review thread.
+
+    N1.7 services are started via `python -m gr00t.eval.run_gr00t_server` which
+    doesn't contain `inference_service.py` in cmdline. These tests ensure the
+    stop/status path can identify N1.7 services.
+    """
+
+    def test_n17_cmdline_detected_by_host_process_check(self, tmp_path, monkeypatch):
+        """_is_gr00t_host_process detects N1.7 server cmdline."""
+        from strands_robots.tools.gr00t_inference import _is_gr00t_host_process
+
+        # Simulate N1.7 cmdline: python -m gr00t.eval.run_gr00t_server --port 5555
+        proc_dir = tmp_path / "proc" / "999"
+        proc_dir.mkdir(parents=True)
+        cmdline_file = proc_dir / "cmdline"
+        cmdline_file.write_text("python\x00-m\x00gr00t.eval.run_gr00t_server\x00--port\x005555\x00")
+
+        called = {}
+        from pathlib import Path as RealPath
+
+        def _fake_path(p):
+            called["p"] = p
+            return RealPath(str(p).replace("/proc", str(tmp_path / "proc")))
+
+        monkeypatch.setattr("strands_robots.tools.gr00t_inference.Path", _fake_path)
+
+        assert _is_gr00t_host_process("999", port=5555) is True
+        assert called.get("p") == "/proc/999/cmdline"
+
+    def test_n17_cmdline_wrong_port_rejected(self, tmp_path, monkeypatch):
+        """N1.7 server on wrong port is not killed."""
+        from strands_robots.tools.gr00t_inference import _is_gr00t_host_process
+
+        proc_dir = tmp_path / "proc" / "999"
+        proc_dir.mkdir(parents=True)
+        cmdline_file = proc_dir / "cmdline"
+        cmdline_file.write_text("python\x00-m\x00gr00t.eval.run_gr00t_server\x00--port\x008000\x00")
+
+        called = {}
+        from pathlib import Path as RealPath
+
+        def _fake_path(p):
+            called["p"] = p
+            return RealPath(str(p).replace("/proc", str(tmp_path / "proc")))
+
+        monkeypatch.setattr("strands_robots.tools.gr00t_inference.Path", _fake_path)
+
+        # Request port 80 — should not match 8000
+        assert _is_gr00t_host_process("999", port=80) is False
+        assert called.get("p") == "/proc/999/cmdline"
+
+    def test_n15_cmdline_still_detected(self, tmp_path, monkeypatch):
+        """N1.5/N1.6 cmdline (inference_service.py) still works after N1.7 support."""
+        from strands_robots.tools.gr00t_inference import _is_gr00t_host_process
+
+        proc_dir = tmp_path / "proc" / "123"
+        proc_dir.mkdir(parents=True)
+        cmdline_file = proc_dir / "cmdline"
+        cmdline_file.write_text("python\x00inference_service.py\x00--port\x005555\x00")
+
+        from pathlib import Path as RealPath
+
+        def _fake_path(p):
+            return RealPath(str(p).replace("/proc", str(tmp_path / "proc")))
+
+        monkeypatch.setattr("strands_robots.tools.gr00t_inference.Path", _fake_path)
+
+        assert _is_gr00t_host_process("123", port=5555) is True
+
+
+class TestExpandedParamValidationExtended:
+    """Extended tests for image_name, volumes, and container_command — covers happy paths."""
+
+    def test_valid_image_name(self):
+        from strands_robots.tools.gr00t_inference import validate_inputs
+
+        # Should not raise
+        validate_inputs(
+            action="start",
+            data_config="fourier_gr1_arms_only",
+            embodiment_tag="gr1",
+            port=5555,
+            host="127.0.0.1",
+            vit_dtype="fp8",
+            llm_dtype="nvfp4",
+            dit_dtype="fp8",
+            checkpoint_path="/tmp/ckpt",
+            trt_engine_path="gr00t_engine",
+            container_name="gr00t",
+            protocol="n1.5",
+            image_name="localhost:5000/myorg/img:tag",
+        )
+
+    def test_invalid_image_name_shell_meta(self):
+        import pytest
+
+        from strands_robots.tools.gr00t_inference import validate_inputs
+
+        with pytest.raises(ValueError, match="image_name"):
+            validate_inputs(
+                action="start",
+                data_config="fourier_gr1_arms_only",
+                embodiment_tag="gr1",
+                port=5555,
+                host="127.0.0.1",
+                vit_dtype="fp8",
+                llm_dtype="nvfp4",
+                dit_dtype="fp8",
+                checkpoint_path="/tmp/ckpt",
+                trt_engine_path="gr00t_engine",
+                container_name="gr00t",
+                protocol="n1.5",
+                image_name="evil;rm -rf /",
+            )
+
+    def test_volumes_path_traversal_rejected(self):
+        import pytest
+
+        from strands_robots.tools.gr00t_inference import validate_inputs
+
+        with pytest.raises(ValueError, match="volumes"):
+            validate_inputs(
+                action="start",
+                data_config="fourier_gr1_arms_only",
+                embodiment_tag="gr1",
+                port=5555,
+                host="127.0.0.1",
+                vit_dtype="fp8",
+                llm_dtype="nvfp4",
+                dit_dtype="fp8",
+                checkpoint_path="/tmp/ckpt",
+                trt_engine_path="gr00t_engine",
+                container_name="gr00t",
+                protocol="n1.5",
+                volumes={"../../etc/passwd": "/data"},
+            )
+
+    def test_container_command_shell_meta_rejected(self):
+        import pytest
+
+        from strands_robots.tools.gr00t_inference import validate_inputs
+
+        with pytest.raises(ValueError, match="container_command"):
+            validate_inputs(
+                action="start",
+                data_config="fourier_gr1_arms_only",
+                embodiment_tag="gr1",
+                port=5555,
+                host="127.0.0.1",
+                vit_dtype="fp8",
+                llm_dtype="nvfp4",
+                dit_dtype="fp8",
+                checkpoint_path="/tmp/ckpt",
+                trt_engine_path="gr00t_engine",
+                container_name="gr00t",
+                protocol="n1.5",
+                container_command="tail -f /dev/null; rm -rf /",
+            )
+
+    def test_valid_container_command(self):
+        from strands_robots.tools.gr00t_inference import validate_inputs
+
+        # Should not raise - legitimate container commands without shell metas
+        validate_inputs(
+            action="start",
+            data_config="fourier_gr1_arms_only",
+            embodiment_tag="gr1",
+            port=5555,
+            host="127.0.0.1",
+            vit_dtype="fp8",
+            llm_dtype="nvfp4",
+            dit_dtype="fp8",
+            checkpoint_path="/tmp/ckpt",
+            trt_engine_path="gr00t_engine",
+            container_name="gr00t",
+            protocol="n1.5",
+            container_command="tail -f /dev/null",
+        )
+
+    def test_valid_volumes(self):
+        from strands_robots.tools.gr00t_inference import validate_inputs
+
+        # Should not raise
+        validate_inputs(
+            action="start",
+            data_config="fourier_gr1_arms_only",
+            embodiment_tag="gr1",
+            port=5555,
+            host="127.0.0.1",
+            vit_dtype="fp8",
+            llm_dtype="nvfp4",
+            dit_dtype="fp8",
+            checkpoint_path="/tmp/ckpt",
+            trt_engine_path="gr00t_engine",
+            container_name="gr00t",
+            protocol="n1.5",
+            volumes={"/home/user/checkpoints": "/data/checkpoints"},
+        )

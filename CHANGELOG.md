@@ -31,6 +31,11 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
   validated (Docker image reference, path traversal, shell metacharacters).
 - ``pgrep`` pattern factored into ``_PGREP_INFERENCE_PORT_FMT`` module-level
   constant — single source of truth across all 4 usage sites.
+- ``_PGREP_INFERENCE_PORT_FMT`` and ``_is_gr00t_*_process`` now match both
+  N1.5/N1.6 (``inference_service.py``) and N1.7 (``gr00t.eval.run_gr00t_server``)
+  entry-points. Closes the N1.7 stop/status identification gap.
+- All exception types in process-probe helpers now log (WARNING for
+  PermissionError, DEBUG for other OSError/SubprocessError/UnicodeDecodeError).
 
 ### Changed
 
