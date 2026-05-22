@@ -32,13 +32,102 @@ human-readable text payload so the calling agent can recover.
 
 from __future__ import annotations
 
+import collections
 import json
 import logging
+import threading
+import time
 from typing import Any
 
 from strands import tool
+from strands.types.tools import ToolContext
 
 logger = logging.getLogger(__name__)
+
+
+# Per-action sliding-window rate limiter for LLM-facing actions.
+_RATE_LIMITS: dict[str, tuple[int, float]] = {
+    "tell": (30, 60.0),
+    "send": (30, 60.0),
+    "broadcast": (10, 60.0),
+    "stop": (20, 60.0),
+    "emergency_stop": (3, 60.0),
+}
+_RATE_HISTORY: dict[str, collections.deque[float]] = {}
+_RATE_LOCK = threading.Lock()
+
+# Actions whose physical effect is fleet-wide. Each one routes through a
+# Strands SDK interrupt so the calling host can request explicit human
+# approval before the mesh issues the command. Unlike a boolean tool
+# parameter the interrupt response is delivered by the framework
+# out-of-band of the LLM's tool-argument flow, so an injected prompt
+# cannot smuggle approval.
+_INTERRUPT_REQUIRED: frozenset[str] = frozenset({"emergency_stop", "broadcast"})
+
+# Affirmative responses accepted from the interrupt prompt. Anything else
+# (empty string, "n", "no", "cancel", whitespace) is treated as decline.
+_AFFIRMATIVE_RESPONSES: frozenset[str] = frozenset({"y", "yes", "approve", "approved"})
+
+
+def _interrupt_approves(response: object) -> bool:
+    """True iff *response* is an explicit affirmative.
+
+    The interrupt mechanism returns whatever the operator submitted, which
+    is normally a string but the contract is "JSON-serialisable any". We
+    accept the canonical short forms only — defence in depth against
+    accidental approval from a typo.
+    """
+    if not isinstance(response, str):
+        return False
+    return response.strip().lower() in _AFFIRMATIVE_RESPONSES
+
+
+def _rate_limit_check(action: str) -> str | None:
+    """Return None if OK, error message if rate-limited."""
+    cfg = _RATE_LIMITS.get(action)
+    if cfg is None:
+        return None
+    max_calls, window = cfg
+    now = time.monotonic()
+    with _RATE_LOCK:
+        bucket = _RATE_HISTORY.setdefault(action, collections.deque())
+        cutoff = now - window
+        while bucket and bucket[0] < cutoff:
+            bucket.popleft()
+        if len(bucket) >= max_calls:
+            wait = window - (now - bucket[0])
+            return (
+                f"rate limit exceeded for action '{action}': "
+                f"max {max_calls} calls per {window:.0f}s window. "
+                f"Try again in {wait:.1f}s."
+            )
+        bucket.append(now)
+    return None
+
+
+def _reset_rate_limits() -> None:
+    """Test helper: clear sliding-window history."""
+    with _RATE_LOCK:
+        _RATE_HISTORY.clear()
+
+
+def _audit_tool_action(action: str, target: str, success: bool, detail: str) -> None:
+    """Best-effort audit log of every safety-significant tool call."""
+    try:
+        from strands_robots.mesh.audit import log_safety_event
+
+        log_safety_event(
+            "llm_tool_action",
+            "robot_mesh_tool",
+            {
+                "action": action,
+                "target": target,
+                "success": success,
+                "detail": detail[:500],
+            },
+        )
+    except Exception:  # pragma: no cover
+        pass
 
 
 def _err(text: str) -> dict[str, Any]:
@@ -80,9 +169,10 @@ def _resolve_mesh(target: str) -> Any | None:
     return next(iter(locals_.values()))
 
 
-@tool
+@tool(context=True)
 def robot_mesh(
     action: str,
+    tool_context: ToolContext,
     target: str = "",
     instruction: str = "",
     command: str = "",
@@ -120,10 +210,66 @@ def robot_mesh(
                    instruction="pick up the cube")
         robot_mesh(action="send", target="peer-b",
                    command='{"action": "status"}')
-        robot_mesh(action="emergency_stop")
+        robot_mesh(action="emergency_stop")    # raises a HITL interrupt;
+                                               # runs only on operator approval
+
+    Safety controls:
+        * **Human-in-the-loop interrupts** for ``emergency_stop`` and
+          ``broadcast``. The tool calls
+          ``tool_context.interrupt("robot_mesh-<action>-approval", reason=...)``
+          and only proceeds if the operator's response is an affirmative
+          ("y" / "yes" / "approve"). The Strands SDK delivers the response
+          out-of-band of the LLM's tool arguments, so prompt-injection that
+          flips a boolean cannot bypass this gate.
+        * Per-action sliding-window rate limit (e.g. emergency_stop is capped
+          at 3 calls/min). Reject reason includes wait-time estimate.
+        * ``send`` / ``broadcast`` payloads are validated through
+          :func:`strands_robots.mesh.security.validate_command` before
+          leaving the agent. The same validator runs on the receiver side,
+          so a malformed or out-of-policy payload is rejected client-side
+          before it hits the wire.
+        * Every ``tell`` / ``send`` / ``broadcast`` / ``stop`` /
+          ``emergency_stop`` is audited.
     """
+    # Apply the per-action rate limit before doing any work.
+    rl_err = _rate_limit_check(action)
+    if rl_err is not None:
+        _audit_tool_action(action, target, False, f"rate_limit: {rl_err}")
+        return _err(rl_err)
+
+    # Human-in-the-loop approval gate for fleet-wide actions. The Strands
+    # runtime pauses the agent loop on tool_context.interrupt(...) and
+    # returns control to the host process; the operator's response (e.g.
+    # "y" / "n") is delivered back outside the LLM's tool-argument flow,
+    # so an injected prompt cannot smuggle approval.
+    if action in _INTERRUPT_REQUIRED:
+        try:
+            response = tool_context.interrupt(
+                f"robot_mesh-{action}-approval",
+                reason={
+                    "action": action,
+                    "target": target if target else "*ALL_PEERS*",
+                    "command": command,
+                    "instruction": instruction,
+                    "warning": ("Fleet-wide physical effect. Reply 'y' to approve, anything else to deny."),
+                },
+            )
+        except Exception as exc:
+            # Interrupts are not supported in direct tool-call paths
+            # (agent.tool.robot_mesh(...)). Fail closed.
+            _audit_tool_action(action, target, False, f"interrupt unavailable: {exc}")
+            return _err(
+                f"action '{action}' requires a human-in-the-loop interrupt. Interrupts are not available here: {exc}"
+            )
+
+        if not _interrupt_approves(response):
+            _audit_tool_action(action, target, False, f"operator declined: {response!r}")
+            return _err(f"action '{action}' was declined by the operator interrupt (response={response!r}).")
+        _audit_tool_action(action, target, True, f"operator approved: {response!r}")
+
     try:
         from strands_robots.mesh import get_local_robots
+        from strands_robots.mesh import security as _security
         from strands_robots.mesh.session import get_peers
     except ImportError as exc:
         return _err(f"mesh module unavailable: {exc}")
@@ -167,6 +313,7 @@ def robot_mesh(
     # ── action: tell ──────────────────────────────────────────────────────
     if action == "tell":
         if not target or not instruction:
+            _audit_tool_action(action, target, False, "missing target/instruction")
             return _err("tell requires both target and instruction")
         kwargs: dict[str, Any] = {
             "policy_provider": policy_provider,
@@ -174,31 +321,62 @@ def robot_mesh(
         }
         if policy_port:
             kwargs["policy_port"] = policy_port
+        # Validate the synthesised command through mesh.security.
+        synthesised = {"action": "execute", "instruction": instruction, **kwargs}
+        try:
+            _security.validate_command(synthesised)
+        except _security.ValidationError as exc:
+            _audit_tool_action(action, target, False, f"validation: {exc}")
+            return _err(f"tell rejected: {exc}")
         result = mesh.tell(target, instruction, **kwargs)
+        _audit_tool_action(action, target, True, f"instruction={instruction[:200]}")
         return _ok(f"[tell -> {target}] {json.dumps(result, default=str)[:600]}")
 
     # ── action: send ──────────────────────────────────────────────────────
     if action == "send":
         if not target:
+            _audit_tool_action(action, target, False, "missing target")
             return _err("send requires target")
         if not command:
+            _audit_tool_action(action, target, False, "missing command")
             return _err("send requires command (JSON string)")
         try:
             cmd = json.loads(command)
         except json.JSONDecodeError as exc:
+            _audit_tool_action(action, target, False, f"bad json: {exc}")
             return _err(f"command is not valid JSON: {exc}")
+        if not isinstance(cmd, dict):
+            _audit_tool_action(action, target, False, "command not a dict")
+            return _err("command must decode to a JSON object (dict)")
+        try:
+            cmd = _security.validate_command(cmd)
+        except _security.ValidationError as exc:
+            _audit_tool_action(action, target, False, f"validation: {exc}")
+            return _err(f"send rejected: {exc}")
         result = mesh.send(target, cmd, timeout=timeout)
+        _audit_tool_action(action, target, True, f"action={cmd.get('action')}")
         return _ok(f"[send -> {target}] {json.dumps(result, default=str)[:600]}")
 
     # ── action: broadcast ─────────────────────────────────────────────────
     if action == "broadcast":
         if not command:
+            _audit_tool_action(action, "*", False, "missing command")
             return _err("broadcast requires command (JSON string)")
         try:
             cmd = json.loads(command)
         except json.JSONDecodeError as exc:
+            _audit_tool_action(action, "*", False, f"bad json: {exc}")
             return _err(f"command is not valid JSON: {exc}")
+        if not isinstance(cmd, dict):
+            _audit_tool_action(action, "*", False, "command not a dict")
+            return _err("command must decode to a JSON object (dict)")
+        try:
+            cmd = _security.validate_command(cmd)
+        except _security.ValidationError as exc:
+            _audit_tool_action(action, "*", False, f"validation: {exc}")
+            return _err(f"broadcast rejected: {exc}")
         results = mesh.broadcast(cmd, timeout=timeout)
+        _audit_tool_action(action, "*", True, f"action={cmd.get('action')} responses={len(results)}")
         text = f"[broadcast] {len(results)} responses\n"
         for r in results[:10]:
             text += f"  - {json.dumps(r, default=str)[:200]}\n"
@@ -209,23 +387,31 @@ def robot_mesh(
     # ── action: stop ──────────────────────────────────────────────────────
     if action == "stop":
         if not target:
+            _audit_tool_action(action, target, False, "missing target")
             return _err("stop requires target")
         result = mesh.send(target, {"action": "stop"}, timeout=min(timeout, 5.0))
+        _audit_tool_action(action, target, True, "")
         return _ok(f"[stop -> {target}] {json.dumps(result, default=str)[:600]}")
 
     # ── action: emergency_stop ────────────────────────────────────────────
     if action == "emergency_stop":
+        # Operator approval was already obtained above through the
+        # interrupt gate; this branch only runs on an affirmative response.
         results = mesh.emergency_stop()
+        _audit_tool_action(action, "*", True, f"responses={len(results)}")
         return _ok(f"[E-STOP] broadcast complete - {len(results)} responses (audit log written)")
 
     # ── action: subscribe ─────────────────────────────────────────────────
     if action == "subscribe":
         if not target:
+            _audit_tool_action(action, target, False, "missing target")
             return _err("subscribe requires target (Zenoh topic pattern)")
         sub_name = name or target
         out = mesh.subscribe(target, name=sub_name)
         if out is None:
+            _audit_tool_action(action, target, False, "subscribe returned None")
             return _err("subscribe failed (mesh not running?)")
+        _audit_tool_action(action, target, True, f"name={sub_name}")
         return _ok(
             f"[sub] subscribed to '{target}' as '{sub_name}'. "
             f"Use action='inbox' name='{sub_name}' to read buffered messages."
@@ -234,10 +420,13 @@ def robot_mesh(
     # ── action: watch ─────────────────────────────────────────────────────
     if action == "watch":
         if not target:
+            _audit_tool_action(action, target, False, "missing target")
             return _err("watch requires target (peer id)")
         out = mesh.on_stream(target)
         if out is None:
+            _audit_tool_action(action, target, False, "watch returned None")
             return _err("watch failed (mesh not running?)")
+        _audit_tool_action(action, target, True, f"stream_name={out}")
         return _ok(f"[watch] watching peer '{target}'. Use action='inbox' name='{out}' to read buffered steps.")
 
     # ── action: inbox ─────────────────────────────────────────────────────

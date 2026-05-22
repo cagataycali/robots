@@ -67,7 +67,11 @@ def test_log_safety_event_record_shape(audit_env):
         payload={"sender_id": "peer-x", "responses_received": 5},
     )
     record = json.loads((audit_env / "mesh_audit.jsonl").read_text().strip())
-    assert set(record.keys()) == {"ts", "event", "peer_id", "payload"}
+    # The record carries a process-monotonic "seq" plus an optional "sig"
+    # (HMAC) when STRANDS_MESH_AUDIT_PSK is configured.
+    expected = {"ts", "event", "peer_id", "payload", "seq"}
+    assert expected.issubset(set(record.keys()))
+    assert set(record.keys()) - expected <= {"sig"}
     assert isinstance(record["ts"], float)
     assert record["event"] == "emergency_stop"
     assert record["peer_id"] == "peer-x"

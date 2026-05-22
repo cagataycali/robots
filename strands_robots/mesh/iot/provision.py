@@ -43,9 +43,11 @@ The same logic is exposed as a CLI entry point (registered in
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
+import re
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -55,6 +57,25 @@ logger = logging.getLogger(__name__)
 
 
 _AMAZON_ROOT_CA1_URL = "https://www.amazontrust.com/repository/AmazonRootCA1.pem"
+
+# Pinned SHA-256 fingerprint of the canonical Amazon Root CA1 PEM bytes.
+# Pinning prevents a network-level attacker (DNS hijack, captive portal,
+# BGP, malicious local proxy) from substituting a rogue CA at the URL.
+#
+# Recompute when AWS rotates the root::
+#
+#   python -c "import hashlib, urllib.request as u; \
+#       print(hashlib.sha256(u.urlopen( \
+#           'https://www.amazontrust.com/repository/AmazonRootCA1.pem' \
+#       ).read()).hexdigest())"
+#
+# Last verified 2026-05.
+_AMAZON_ROOT_CA1_SHA256 = "2c43952ee9e000ff2acc4e2ed0897c0a72ad5fa72c3d934e81741cbd54f05bd1"
+
+# Cap the CA download response to a generous multiple of the real ~1.4 KiB
+# certificate. Defeats body-size DoS attacks (a captive portal returning a
+# multi-megabyte HTML "login page" instead of the expected PEM).
+_CA_FETCH_MAX_BYTES = 64 * 1024
 
 DEFAULT_CERT_DIR = Path.home() / ".strands_robots" / "iot"
 ROBOT_POLICY_NAME = "strands-robot"
@@ -154,11 +175,21 @@ _ROBOT_POLICY_DOC: dict[str, Any] = {
             ],
         },
         {
-            "Sid": "AllowReceiveOthers",
+            # Tightly scoped Receive: a robot only sees the messages
+            # delivered to topics it actually subscribes to (own /cmd, own
+            # /response/*, broadcast, safety/estop, +/presence). Previously
+            # this was a wildcard ``iot:Receive`` on ``strands/*``, which
+            # would have let any robot eavesdrop on the entire fleet's
+            # traffic — including other robots' commands and responses.
+            "Sid": "AllowReceiveScoped",
             "Effect": "Allow",
             "Action": "iot:Receive",
             "Resource": [
-                "arn:aws:iot:*:*:topic/strands/*",
+                "arn:aws:iot:*:*:topic/strands/${iot:Connection.Thing.ThingName}/cmd",
+                "arn:aws:iot:*:*:topic/strands/${iot:Connection.Thing.ThingName}/response/*",
+                "arn:aws:iot:*:*:topic/strands/broadcast",
+                "arn:aws:iot:*:*:topic/strands/safety/estop",
+                "arn:aws:iot:*:*:topic/strands/+/presence",
             ],
         },
         {
@@ -203,15 +234,24 @@ _OPERATOR_POLICY_DOC: dict[str, Any] = {
             ],
         },
         {
+            # Operator monitoring scope. Operators can subscribe to fleet
+            # state (presence/state/health) and safety events but NOT to
+            # other operators' command/response streams. The policy used to
+            # include a wildcard ``strands/*`` in Receive which exposed all
+            # fleet traffic to every operator credential.
             "Sid": "OperatorObserveFleet",
             "Effect": "Allow",
             "Action": ["iot:Subscribe", "iot:Receive"],
             "Resource": [
-                "arn:aws:iot:*:*:topic/strands/*",
+                "arn:aws:iot:*:*:topic/strands/+/presence",
                 "arn:aws:iot:*:*:topicfilter/strands/+/presence",
+                "arn:aws:iot:*:*:topic/strands/+/state",
                 "arn:aws:iot:*:*:topicfilter/strands/+/state",
+                "arn:aws:iot:*:*:topic/strands/+/health",
                 "arn:aws:iot:*:*:topicfilter/strands/+/health",
+                "arn:aws:iot:*:*:topic/strands/+/safety/event",
                 "arn:aws:iot:*:*:topicfilter/strands/+/safety/event",
+                "arn:aws:iot:*:*:topic/strands/safety/estop",
                 "arn:aws:iot:*:*:topicfilter/strands/safety/estop",
             ],
         },
@@ -233,6 +273,30 @@ _OPERATOR_POLICY_DOC: dict[str, Any] = {
 # Public API
 
 
+# Thing names flow into S3 keys, IoT ARNs, and on-disk cert filenames.
+# AWS IoT enforces a similar pattern server-side, but we duplicate the
+# check here so a slip in upstream validation can never produce a path
+# such as ``../../../etc/foo`` reaching ``cert_dir / f"{thing_name}.pem"``.
+_THING_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
+
+
+def _validate_thing_name(thing_name: str) -> None:
+    """Raise :class:`ValueError` when *thing_name* is unsafe for use as both
+    a filesystem component and an AWS IoT Thing name.
+
+    The accepted pattern is ``^[a-zA-Z0-9_-]{1,128}$``: alphanumerics, dash
+    and underscore, length 1–128. Anything else (slashes, dots, spaces,
+    NUL, non-ASCII, …) is rejected.
+    """
+    if not isinstance(thing_name, str) or not thing_name:
+        raise ValueError(f"thing_name must be a non-empty string, got {thing_name!r}")
+    if not _THING_NAME_RE.match(thing_name):
+        raise ValueError(
+            f"thing_name={thing_name!r} contains invalid characters. "
+            "Allowed: ^[a-zA-Z0-9_-]{1,128}$ (no /, ., or whitespace)."
+        )
+
+
 def provision_robot(
     thing_name: str,
     *,
@@ -241,6 +305,11 @@ def provision_robot(
     attributes: dict[str, str] | None = None,
 ) -> ProvisionedThing:
     """Provision a robot Thing and write its credentials to disk.
+
+    Validates *thing_name* against ``^[a-zA-Z0-9_-]{1,128}$`` before any
+    AWS call. The pattern matches both AWS IoT's accepted Thing-name
+    character set and our own filesystem-path safety rules (no ``/``, no
+    ``..``, no whitespace).
 
     Args:
         thing_name: The Thing name. MUST equal the intended Mesh peer_id —
@@ -264,6 +333,8 @@ def provision_robot(
           recoverable). Old certs from prior runs remain on the Thing —
           call :func:`teardown_thing` to clean them up.
     """
+
+    _validate_thing_name(thing_name)
     boto3 = _require_boto3()
     iot = boto3.client("iot", region_name=region)
     region = iot.meta.region_name
@@ -337,6 +408,8 @@ def provision_operator(
     (``strands-operator``) which can publish ``cmd`` / ``broadcast`` and
     observe the whole fleet.
     """
+
+    _validate_thing_name(thing_name)
     boto3 = _require_boto3()
     iot = boto3.client("iot", region_name=region)
     region = iot.meta.region_name
@@ -553,16 +626,77 @@ def _create_cert(iot: Any, cert_path: Path, key_path: Path) -> tuple[str, str]:
 
 
 def _ensure_ca(ca_path: Path) -> None:
-    """Download the Amazon Root CA1 to *ca_path* if not already present."""
+    """Ensure a verified copy of Amazon Root CA1 lives at *ca_path*.
+
+    Behaviour:
+
+    * If *ca_path* already exists, re-check its bytes against the pinned
+      SHA-256. A mismatch raises :class:`RuntimeError` and leaves the file
+      untouched — the caller decides whether to delete and retry.
+    * Otherwise download the CA over HTTPS, cap the body at
+      :data:`_CA_FETCH_MAX_BYTES`, verify the pin, and write the result
+      with mode ``0o644``.
+
+    Pinning defeats a network-level adversary (DNS hijack, captive portal,
+    BGP route attacks, malicious corporate proxy) that could substitute a
+    rogue CA at the canonical URL.
+
+    Break glass: setting ``STRANDS_MESH_DISABLE_CA_PIN=true`` skips the pin
+    check. A WARNING is logged on every disabled run. This exists for
+    proxy environments that legitimately re-encode the certificate; it
+    should never be set in production.
+    """
     if ca_path.exists() and ca_path.stat().st_size > 0:
+        # Re-verify pin against existing on-disk copy when pinning enabled.
+        if not verify_ca_pin(ca_path):
+            logger.warning(
+                "[provision] existing CA at %s does NOT match pinned SHA-256. "
+                "Refusing to use it. Delete the file to force re-download.",
+                ca_path,
+            )
+            raise RuntimeError(
+                f"AmazonRootCA1 at {ca_path} failed pin check (expected SHA-256 {_AMAZON_ROOT_CA1_SHA256})"
+            )
         return
-    logger.info("[provision] downloading Amazon Root CA1 → %s", ca_path)
-    with urllib.request.urlopen(_AMAZON_ROOT_CA1_URL) as resp:
-        ca_path.write_bytes(resp.read())
+
+    logger.info("[provision] downloading Amazon Root CA1 → %s (pinned)", ca_path)
+    with urllib.request.urlopen(_AMAZON_ROOT_CA1_URL) as resp:  # noqa: S310 — HTTPS + pinned
+        body = resp.read(_CA_FETCH_MAX_BYTES + 1)
+    if len(body) > _CA_FETCH_MAX_BYTES:
+        raise RuntimeError(f"AmazonRootCA1 download exceeded {_CA_FETCH_MAX_BYTES} bytes — refusing")
+
+    if not _verify_ca_bytes(body):
+        raise RuntimeError(
+            "AmazonRootCA1 SHA-256 mismatch — refusing to write rogue CA. "
+            f"Expected {_AMAZON_ROOT_CA1_SHA256}; got {hashlib.sha256(body).hexdigest()}"
+        )
+
+    ca_path.write_bytes(body)
     try:
         os.chmod(ca_path, 0o644)
     except OSError:
         pass
+
+
+def _verify_ca_bytes(body: bytes) -> bool:
+    """Return True iff *body* hashes to the pinned Amazon Root CA1 fingerprint.
+
+    Honours the ``STRANDS_MESH_DISABLE_CA_PIN`` break-glass env var. When
+    that is set the function unconditionally returns True after logging a
+    WARNING, so the override surfaces in routine audits.
+    """
+    if os.getenv("STRANDS_MESH_DISABLE_CA_PIN", "").strip().lower() == "true":
+        logger.warning("[provision] STRANDS_MESH_DISABLE_CA_PIN=true — CA pin check skipped")
+        return True
+    return hashlib.sha256(body).hexdigest() == _AMAZON_ROOT_CA1_SHA256
+
+
+def verify_ca_pin(ca_path: Path) -> bool:
+    """Public helper — does the CA file at *ca_path* match the pinned hash?"""
+    try:
+        return _verify_ca_bytes(ca_path.read_bytes())
+    except OSError:
+        return False
 
 
 def _discover_endpoint(iot: Any) -> str:

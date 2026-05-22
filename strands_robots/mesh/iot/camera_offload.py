@@ -50,7 +50,13 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-DEFAULT_PRESIGN_TTL_SECONDS = 3600
+# Lifetime of the presigned GET URL we hand out for each camera frame.
+# Kept deliberately short — anyone who briefly captures a /ref MQTT message
+# can use the URL inside this window. ``STRANDS_MESH_CAMERA_PRESIGN_TTL``
+# overrides for higher-latency consumers, clamped to MAX_PRESIGN_TTL_SECONDS
+# (1 hour) to prevent accidental day- or week-long URLs.
+DEFAULT_PRESIGN_TTL_SECONDS = 60
+MAX_PRESIGN_TTL_SECONDS = 3600
 
 
 class CameraOffloader:
@@ -70,9 +76,17 @@ class CameraOffloader:
     ) -> None:
         self.bucket = bucket or os.getenv("STRANDS_MESH_CAMERA_S3_BUCKET", "")
         self.prefix = (prefix or os.getenv("STRANDS_MESH_CAMERA_S3_PREFIX") or "").strip("/")
-        self.presign_ttl = presign_ttl or int(
-            os.getenv("STRANDS_MESH_CAMERA_PRESIGN_TTL", str(DEFAULT_PRESIGN_TTL_SECONDS))
-        )
+        ttl_raw = presign_ttl or int(os.getenv("STRANDS_MESH_CAMERA_PRESIGN_TTL", str(DEFAULT_PRESIGN_TTL_SECONDS)))
+        if ttl_raw > MAX_PRESIGN_TTL_SECONDS:
+            logger.warning(
+                "[camera_offload] STRANDS_MESH_CAMERA_PRESIGN_TTL=%d > %d cap; clamping",
+                ttl_raw,
+                MAX_PRESIGN_TTL_SECONDS,
+            )
+            ttl_raw = MAX_PRESIGN_TTL_SECONDS
+        if ttl_raw < 1:
+            ttl_raw = 1
+        self.presign_ttl = ttl_raw
         self.region = region or os.getenv("AWS_REGION", os.getenv("AWS_DEFAULT_REGION"))
         self._s3: Any | None = None
 

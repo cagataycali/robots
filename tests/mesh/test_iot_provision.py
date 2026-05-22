@@ -29,6 +29,20 @@ from strands_robots.mesh.iot.provision import (
 # Test fixtures
 
 
+@pytest.fixture(autouse=True)
+def _disable_ca_pin_for_tests(monkeypatch):
+    """Disable the Amazon Root CA pin check for every test in this module.
+
+    The provisioning tests pre-seed a placeholder ``fake-ca`` file instead
+    of mocking the urllib download, so the pin verifier would correctly
+    reject it. This fixture flips the documented break-glass env var so
+    those tests can focus on provisioning behaviour rather than the CA
+    fetch path (which has dedicated coverage in ``test_iot_ca_pin.py``).
+    """
+    monkeypatch.setenv("STRANDS_MESH_DISABLE_CA_PIN", "true")
+    yield
+
+
 @pytest.fixture
 def tmp_cert_dir(tmp_path):
     """Isolated cert dir so we don't write to ~/.strands_robots."""

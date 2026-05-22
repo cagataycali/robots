@@ -40,9 +40,12 @@ that :class:`Mesh` already follows for failed Zenoh sessions.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import os
 import threading
+import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
@@ -151,6 +154,126 @@ def _should_bridge(topic: str, allowed_suffixes: frozenset[str]) -> bool:
     return False
 
 
+# Cross-transport command deduplication.
+#
+# In bridge mode the same command can be delivered twice — once via Zenoh
+# and once via MQTT — because subscriptions fan out on both sides. Without
+# dedup the receiver would dispatch the action twice (move twice, broadcast
+# twice, etc.).
+#
+# The deduplicator below caches a per-message identity and refuses to
+# deliver a sample whose identity it has seen recently. The identity is:
+#
+# 1. The envelope nonce when present (set by ``mesh.security.sign_envelope``
+#    on every put; uniquely identifies the message itself).
+# 2. Otherwise a SHA-256 fingerprint of (sender_id, turn_id, command) — the
+#    classic identifiers for an RPC call. Used for legacy un-enveloped
+#    payloads.
+#
+# Tunable: ``STRANDS_MESH_DEDUP_TTL`` (seconds; default 120).
+_DEFAULT_DEDUP_TTL_S = 120.0
+_MAX_DEDUP_ENTRIES = 10_000
+
+
+def _resolve_dedup_ttl() -> float:
+    raw = os.getenv("STRANDS_MESH_DEDUP_TTL")
+    if raw is None:
+        return _DEFAULT_DEDUP_TTL_S
+    try:
+        v = float(raw)
+        return v if v > 0 else _DEFAULT_DEDUP_TTL_S
+    except ValueError:
+        logger.warning("[bridge] STRANDS_MESH_DEDUP_TTL=%r invalid — using default", raw)
+        return _DEFAULT_DEDUP_TTL_S
+
+
+class _CommandDeduplicator:
+    """TTL-bounded cache of (key, dedup-id) tuples seen in the recent past.
+
+    Thread-safe. Uses envelope nonce when available, else a content fingerprint.
+    The cache key is *(topic_key, dedup_id)* so two distinct topics with
+    coincidentally matching dedup_ids don't collide.
+    """
+
+    __slots__ = ("_seen", "_lock", "_ttl")
+
+    def __init__(self, ttl_s: float | None = None) -> None:
+        self._seen: dict[tuple[str, str], float] = {}
+        self._lock = threading.Lock()
+        self._ttl = ttl_s if ttl_s is not None else _resolve_dedup_ttl()
+
+    @property
+    def ttl(self) -> float:
+        return self._ttl
+
+    @staticmethod
+    def _dedup_id(payload: dict[str, Any]) -> str | None:
+        """Best dedup-id we can extract from a wire payload.
+
+        Order:
+        1. Envelope nonce (set by mesh.security.sign_envelope on every put).
+        2. Fingerprint over (sender_id, turn_id, command, action) — the
+           classic identifiers for an RPC call.
+        """
+        if not isinstance(payload, dict):
+            return None
+        nonce = payload.get("nonce")
+        if isinstance(nonce, str) and len(nonce) >= 8:
+            return f"n:{nonce}"
+
+        # Look inside payload.payload first (post-envelope shape).
+        inner = payload.get("payload") if isinstance(payload.get("payload"), dict) else payload
+        sender = inner.get("sender_id") if isinstance(inner, dict) else None
+        turn = inner.get("turn_id") if isinstance(inner, dict) else None
+        cmd = inner.get("command") if isinstance(inner, dict) else None
+
+        if sender is None and turn is None and cmd is None:
+            return None
+
+        canonical = json.dumps(
+            {"sender": sender, "turn": turn, "cmd": cmd},
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        ).encode("utf-8")
+        # Full 256-bit (64 hex chars) — no birthday-attack truncation.
+        return "f:" + hashlib.sha256(canonical).hexdigest()
+
+    def is_duplicate(self, key: str, payload: dict[str, Any]) -> bool:
+        """Return True if this (key, payload) was seen within the TTL.
+
+        Records the entry when not a duplicate so the next call returns True.
+        """
+        ident = self._dedup_id(payload)
+        if ident is None:
+            return False  # nothing to dedup against — pass through
+        cache_key = (key, ident)
+        now = time.time()
+        with self._lock:
+            # Cheap GC if oversized
+            if len(self._seen) > _MAX_DEDUP_ENTRIES:
+                cutoff = now - self._ttl
+                stale = [k for k, t in self._seen.items() if t < cutoff]
+                for k in stale:
+                    self._seen.pop(k, None)
+                if len(self._seen) > _MAX_DEDUP_ENTRIES:
+                    # drop oldest 20%
+                    ordered = sorted(self._seen.items(), key=lambda kv: kv[1])
+                    drop = max(1, len(ordered) // 5)
+                    for k, _ in ordered[:drop]:
+                        self._seen.pop(k, None)
+
+            seen_ts = self._seen.get(cache_key)
+            if seen_ts is not None and (now - seen_ts) <= self._ttl:
+                return True
+            self._seen[cache_key] = now
+            return False
+
+    def clear(self) -> None:
+        with self._lock:
+            self._seen.clear()
+
+
 class _BridgeSubHandle:
     """Subscription handle that calls ``undeclare`` on whichever side(s)
     actually subscribed.
@@ -205,6 +328,12 @@ class BridgeTransport:
         self._zenoh_alive = False
         self._iot_alive = False
         self._lock = threading.Lock()
+
+        # Cross-transport command deduplicator. One instance per
+        # BridgeTransport, shared between the Zenoh and IoT subscriber
+        # wrappers — whichever transport delivers a sample first wins,
+        # and the other side silently drops the duplicate.
+        self._dedup = _CommandDeduplicator()
 
     # Lifecycle
 
@@ -293,19 +422,55 @@ class BridgeTransport:
                 logger.debug("[bridge] iot.put error on %s: %s", key, exc)
 
     def declare_subscriber(self, key_expr: str, handler: Callable[[Any], None]) -> _BridgeSubHandle:
-        """Subscribe on both sides. Inbound deduplication is the Mesh layer's job."""
+        """Subscribe on both transports with cross-transport deduplication.
+
+        The bridge fans subscriptions out to both Zenoh and IoT, but each
+        delivered sample is funnelled through the shared
+        :class:`_CommandDeduplicator`. *handler* is therefore called at most
+        once per logical message even when the same payload arrives on both
+        sides.
+
+        Identity is the envelope nonce when present, otherwise a content
+        fingerprint over ``(sender_id, turn_id, command)``. Samples without
+        any extractable identity (heartbeats, raw blobs, etc.) bypass dedup
+        and are delivered as-is.
+        """
         zenoh_sub: Any | None = None
         iot_sub: Any | None = None
 
+        def make_dedup_handler(transport_label: str) -> Callable[[Any], None]:
+            def _filtered(sample: Any) -> None:
+                # Extract payload for dedup. We do NOT json-decode if the
+                # sample doesn't expose a payload — fall back to raw handler.
+                payload: dict[str, Any] | None = None
+                try:
+                    raw = sample.payload.to_bytes().decode()
+                    decoded = json.loads(raw)
+                    if isinstance(decoded, dict):
+                        payload = decoded
+                except Exception:
+                    payload = None
+
+                if payload is not None and self._dedup.is_duplicate(key_expr, payload):
+                    logger.debug(
+                        "[bridge] dropped duplicate from %s on %s",
+                        transport_label,
+                        key_expr,
+                    )
+                    return
+                handler(sample)
+
+            return _filtered
+
         if self._zenoh.is_alive():
             try:
-                zenoh_sub = self._zenoh.declare_subscriber(key_expr, handler)
+                zenoh_sub = self._zenoh.declare_subscriber(key_expr, make_dedup_handler("zenoh"))
             except Exception as exc:
                 logger.debug("[bridge] zenoh.declare_subscriber(%s) failed: %s", key_expr, exc)
 
         if self._iot.is_alive():
             try:
-                iot_sub = self._iot.declare_subscriber(key_expr, handler)
+                iot_sub = self._iot.declare_subscriber(key_expr, make_dedup_handler("iot"))
             except Exception as exc:
                 logger.debug("[bridge] iot.declare_subscriber(%s) failed: %s", key_expr, exc)
 

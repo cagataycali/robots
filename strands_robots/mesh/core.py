@@ -8,6 +8,7 @@ Extended sensor loops (pose, IMU, health, etc.) are provided by
 from __future__ import annotations
 
 import base64
+import hmac
 import json
 import logging
 import os
@@ -19,6 +20,7 @@ import uuid
 from collections.abc import Callable
 from typing import Any
 
+from strands_robots.mesh import security as _security
 from strands_robots.mesh.sensors import SensorLoopsMixin
 from strands_robots.mesh.session import (
     CAMERA_HZ,
@@ -80,6 +82,13 @@ class Mesh(SensorLoopsMixin):
         # User subscribe state
         self.inbox: dict[str, list[tuple[str, dict[str, Any]]]] = {}
         self._user_subs: dict[str, Any] = {}
+
+        # Emergency-stop lockout flag. While this Event is set, every
+        # action other than ``status`` and ``resume`` is refused (see
+        # :meth:`_dispatch`). The flag is cleared by :meth:`_resume_lockout`,
+        # which requires the operator-supplied override code.
+        self._estop_lockout = threading.Event()
+        self._last_estop_ts: float = 0.0
 
     def __repr__(self) -> str:
         state = "alive" if self._running else "stopped"
@@ -302,7 +311,7 @@ class Mesh(SensorLoopsMixin):
         period = 1.0 / HEARTBEAT_HZ
         while self._running:
             try:
-                put(f"strands/{self.peer_id}/presence", self._build_presence())
+                self._put_signed(f"strands/{self.peer_id}/presence", self._build_presence())
                 prune_peers()
             except Exception as exc:
                 logger.debug("[mesh] %s: heartbeat tick error: %s", self.peer_id, exc)
@@ -312,8 +321,18 @@ class Mesh(SensorLoopsMixin):
     def _on_presence(self, sample: Any) -> None:
         try:
             raw = sample.payload.to_bytes().decode()
-            data = json.loads(raw)
+            envelope = json.loads(raw)
         except Exception:
+            return
+        # Verify presence signature. In strict mode the verifier rejects
+        # unsigned presence; in permissive mode legacy un-enveloped messages
+        # pass through unchanged for back-compat with un-upgraded peers.
+        try:
+            data = _security.verify_envelope(envelope)
+        except _security.AuthenticationError as exc:
+            logger.debug("[mesh] %s: rejected unauthenticated presence: %s", self.peer_id, exc)
+            return
+        if not isinstance(data, dict):
             return
         peer_id = data.get("robot_id")
         if not isinstance(peer_id, str) or peer_id == self.peer_id:
@@ -416,6 +435,12 @@ class Mesh(SensorLoopsMixin):
                 break
 
     def _publish_cameras_once(self) -> None:
+        # Privacy kill switch. Operators on sensitive deployments set
+        # STRANDS_MESH_CAMERA_DISABLED=true to short-circuit the camera
+        # loop entirely — no frames built, no envelopes signed, nothing
+        # published.
+        if os.getenv("STRANDS_MESH_CAMERA_DISABLED", "").strip().lower() == "true":
+            return
         r = self.robot
         inner = getattr(r, "robot", None)
         if inner is None or not getattr(inner, "is_connected", False):
@@ -479,7 +504,7 @@ class Mesh(SensorLoopsMixin):
                     encoded = base64.b64encode(bytes(frame)).decode("ascii")
                     encoding = "raw"
 
-                put(
+                self._put_signed(
                     f"strands/{self.peer_id}/camera/{cam_name}",
                     {
                         "peer_id": self.peer_id,
@@ -498,10 +523,41 @@ class Mesh(SensorLoopsMixin):
     def _on_cmd(self, sample: Any) -> None:
         try:
             raw = sample.payload.to_bytes().decode()
-            data = json.loads(raw)
+            envelope = json.loads(raw)
         except Exception:
             return
-        if data.get("sender_id") == self.peer_id:
+        # Authenticate the envelope: HMAC signature + freshness window +
+        # replay nonce. Unauthenticated commands are dropped at the first
+        # step here — _exec_cmd never runs for them.
+        try:
+            data = _security.verify_envelope(envelope)
+        except _security.AuthenticationError as exc:
+            logger.warning("[mesh] %s: rejected unauthenticated cmd: %s", self.peer_id, exc)
+            return
+        if not isinstance(data, dict):
+            return
+        sender_id = data.get("sender_id", "")
+        if sender_id == self.peer_id:
+            return
+        # Per-sender token-bucket rate limit. Without this, a flood of
+        # commands from one peer could spawn arbitrarily many exec threads
+        # and exhaust the robot's resources.
+        if not _security.consume_peer_token(sender_id or self.peer_id):
+            logger.warning(
+                "[mesh] %s: per-sender rate limit exceeded for sender=%s",
+                self.peer_id,
+                sender_id or "<anon>",
+            )
+            try:
+                from strands_robots.mesh.audit import log_safety_event
+
+                log_safety_event(
+                    "rate_limit_drop",
+                    self.peer_id,
+                    {"sender": sender_id, "topic": "cmd"},
+                )
+            except Exception:
+                pass
             return
         threading.Thread(target=self._exec_cmd, args=(data,), name=f"mesh-exec-{self.peer_id}", daemon=True).start()
 
@@ -513,10 +569,43 @@ class Mesh(SensorLoopsMixin):
             cmd = {"action": "execute", "instruction": cmd}
         rkey = f"strands/{sender}/response/{turn}" if sender else None
 
+        # Validate the command shape against the action allowlist + per-action
+        # schema (instruction length, duration bounds, policy_host allowlist, ...).
+        try:
+            cmd = _security.validate_command(cmd)
+        except _security.ValidationError as exc:
+            logger.warning("[mesh] %s: rejected invalid cmd from %s: %s", self.peer_id, sender, exc)
+            if rkey is not None:
+                self._put_signed(
+                    rkey,
+                    {
+                        "type": "error",
+                        "responder_id": self.peer_id,
+                        "turn_id": turn,
+                        "error": f"validation: {exc}",
+                        "timestamp": time.time(),
+                    },
+                )
+            try:
+                from strands_robots.mesh.audit import log_safety_event
+
+                log_safety_event(
+                    "command_rejected",
+                    self.peer_id,
+                    {
+                        "sender": sender,
+                        "reason": str(exc),
+                        "action": cmd.get("action") if isinstance(cmd, dict) else None,
+                    },
+                )
+            except Exception:
+                pass
+            return
+
         try:
             result = self._dispatch(cmd)
             if rkey is not None:
-                put(
+                self._put_signed(
                     rkey,
                     {
                         "type": "response",
@@ -529,7 +618,7 @@ class Mesh(SensorLoopsMixin):
         except Exception as exc:
             logger.warning("[mesh] %s: dispatch error: %s", self.peer_id, exc)
             if rkey is not None:
-                put(
+                self._put_signed(
                     rkey,
                     {
                         "type": "error",
@@ -543,6 +632,17 @@ class Mesh(SensorLoopsMixin):
     def _dispatch(self, cmd: dict[str, Any]) -> dict[str, Any]:
         action = cmd.get("action", "status")
         r = self.robot
+
+        # While the emergency-stop lockout is engaged, only ``status`` and
+        # ``resume`` are permitted. The rejection is generic on purpose:
+        # leaking the lockout flag and duration to a remote caller would
+        # reveal an operationally sensitive window. Operators who need that
+        # state read it from the local audit log instead.
+        if self._estop_lockout.is_set() and action not in ("status", "resume"):
+            return {"error": "command rejected"}
+
+        if action == "resume":
+            return self._resume_lockout(cmd.get("override_code", ""))
 
         if action == "status":
             if hasattr(r, "get_task_status"):
@@ -602,8 +702,15 @@ class Mesh(SensorLoopsMixin):
     def _on_response(self, sample: Any) -> None:
         try:
             raw = sample.payload.to_bytes().decode()
-            data = json.loads(raw)
+            envelope = json.loads(raw)
         except Exception:
+            return
+        try:
+            data = _security.verify_envelope(envelope)
+        except _security.AuthenticationError as exc:
+            logger.debug("[mesh] %s: rejected unauthenticated response: %s", self.peer_id, exc)
+            return
+        if not isinstance(data, dict):
             return
         turn = data.get("turn_id")
         if not isinstance(turn, str):
@@ -627,7 +734,7 @@ class Mesh(SensorLoopsMixin):
             self._responses[turn] = []
         msg = {"sender_id": self.peer_id, "turn_id": turn, "command": cmd, "timestamp": time.time()}
         try:
-            put(f"strands/{target}/cmd", msg)
+            self._put_signed(f"strands/{target}/cmd", msg)
             event.wait(timeout=timeout)
         finally:
             with self._rpc_lock:
@@ -646,7 +753,7 @@ class Mesh(SensorLoopsMixin):
             self._responses[turn] = []
         msg = {"sender_id": self.peer_id, "turn_id": turn, "command": cmd, "timestamp": time.time()}
         try:
-            put("strands/broadcast", msg)
+            self._put_signed("strands/broadcast", msg)
             event.wait(timeout=timeout)
             time.sleep(0.3)
         finally:
@@ -766,15 +873,131 @@ class Mesh(SensorLoopsMixin):
 
     # Safety — emergency stop
     def emergency_stop(self) -> list[dict[str, Any]]:
-        """Broadcast stop to every peer and audit the event."""
+        """Broadcast a stop command to every peer and engage the local lockout.
+
+        After this call the local mesh refuses every non-status, non-resume
+        action until :meth:`_resume_lockout` is invoked with the operator
+        override code (``STRANDS_MESH_OVERRIDE_CODE``). The event is also
+        published on ``strands/safety/estop`` and recorded in the audit log
+        (see :func:`strands_robots.mesh.audit.log_safety_event`).
+
+        Returns the list of responses received from peers within the broadcast
+        timeout — useful for telemetry (which peers acknowledged before the
+        stop fanned out).
+        """
+        self._estop_lockout.set()
+        self._last_estop_ts = time.time()
         responses = self.broadcast({"action": "stop"}, timeout=3.0)
-        put("strands/safety/estop", {"peer_id": self.peer_id, "t": time.time(), "responses_received": len(responses)})
+        self._put_signed(
+            "strands/safety/estop",
+            {
+                "peer_id": self.peer_id,
+                "t": self._last_estop_ts,
+                "responses_received": len(responses),
+                "lockout_engaged": True,
+            },
+        )
         self.publish_safety_event(
             event_type="emergency_stop",
             severity="critical",
-            payload={"sender_id": self.peer_id, "responses_received": len(responses)},
+            payload={
+                "sender_id": self.peer_id,
+                "responses_received": len(responses),
+                "lockout_engaged": True,
+            },
         )
+        logger.critical("[safety] %s: EMERGENCY STOP engaged — lockout active", self.peer_id)
         return responses
+
+    def _resume_lockout(self, override_code: str) -> dict[str, Any]:
+        """Clear the emergency-stop lockout if *override_code* matches.
+
+        Compared in constant time against ``STRANDS_MESH_OVERRIDE_CODE``.
+        Mismatch returns an error and emits a ``resume_denied`` safety
+        event; success emits ``resume_ok`` and publishes
+        ``strands/safety/resume`` so peers can refresh their view.
+
+        Returns a status dict::
+
+            {"status": "ok",    "lockout_elapsed_s": <seconds>}    # success
+            {"status": "noop",  "lockout": False}                  # not engaged
+            {"status": "error", "error": "<reason>"}               # rejected
+
+        Every attempt — successful or not — is recorded in the audit log
+        through :meth:`publish_safety_event`.
+        """
+        if not self._estop_lockout.is_set():
+            return {"status": "noop", "lockout": False}
+
+        expected = os.getenv("STRANDS_MESH_OVERRIDE_CODE", "").strip()
+        provided = (override_code or "").strip()
+        if not expected:
+            self.publish_safety_event(
+                event_type="resume_denied",
+                severity="warning",
+                payload={"sender_id": self.peer_id, "reason": "STRANDS_MESH_OVERRIDE_CODE not configured"},
+            )
+            return {"status": "error", "error": "override code not configured"}
+        # Constant-time compare so an attacker probing the override code
+        # cannot use response-time variation to learn it byte-by-byte.
+        if not hmac.compare_digest(expected.encode(), provided.encode()):
+            self.publish_safety_event(
+                event_type="resume_denied",
+                severity="warning",
+                payload={"sender_id": self.peer_id, "reason": "bad override code"},
+            )
+            return {"status": "error", "error": "invalid override code"}
+
+        elapsed = time.time() - self._last_estop_ts
+        self._estop_lockout.clear()
+        self.publish_safety_event(
+            event_type="resume_ok",
+            severity="info",
+            payload={"sender_id": self.peer_id, "lockout_elapsed_s": elapsed},
+        )
+        self._put_signed(
+            "strands/safety/resume",
+            {"peer_id": self.peer_id, "t": time.time(), "lockout_elapsed_s": elapsed},
+        )
+        logger.warning("[safety] %s: resume after %.1fs lockout", self.peer_id, elapsed)
+        return {"status": "ok", "lockout_elapsed_s": elapsed}
+
+    def _put_signed(self, key: str, payload: dict[str, Any]) -> None:
+        """Sign *payload* into an envelope and publish it on *key*.
+
+        Centralises the signing call so every outgoing mesh message goes
+        through one code path.
+
+        Failure mode: when a PSK is configured (or strict-auth is set) and
+        :func:`sign_envelope` raises, the message is **dropped** rather than
+        sent unsigned. In permissive mode (no PSK and strict-auth off) the
+        helper falls back to publishing the raw payload — there is nothing
+        to downgrade in that case anyway.
+        """
+        try:
+            envelope = _security.sign_envelope(payload)
+        except Exception as exc:
+            # If a PSK was configured we must NOT silently downgrade. A
+            # caller that can trigger sign_envelope() to raise — corrupted
+            # key material, OS entropy exhaustion, etc. — would otherwise
+            # cause every subsequent message to leave unsigned, which
+            # defeats authentication entirely.
+            if _security.psk_configured() or _security.auth_required():
+                logger.error(
+                    "[mesh] %s: sign_envelope failed for %s under signed mode — DROPPING: %s",
+                    self.peer_id,
+                    key,
+                    exc,
+                )
+                return
+            logger.warning(
+                "[mesh] %s: sign_envelope failed for %s (permissive mode, sending unsigned): %s",
+                self.peer_id,
+                key,
+                exc,
+            )
+            envelope = payload
+        put(key, envelope)
 
 
 # init_mesh — the only public constructor

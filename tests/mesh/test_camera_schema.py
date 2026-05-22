@@ -83,15 +83,22 @@ def test_resolve_camera_hz_invalid_disables(fake_robot_with_camera, monkeypatch)
 
 
 def test_publish_cameras_once_calls_put(fake_robot_with_camera):
-    """One frame is read per camera and forwarded via mesh_session.put."""
+    """One frame is read per camera and forwarded via mesh_session.put.
+
+    Note: outgoing camera frames are wrapped in a signed envelope; we
+    unwrap them here so the rest of the assertions stay readable.
+    """
     from strands_robots.mesh import Mesh
+    from strands_robots.mesh import security as _sec
 
     m = Mesh(fake_robot_with_camera, peer_id="test-cam-6")
     with patch("strands_robots.mesh.core.put") as mock_put:
         m._publish_cameras_once()
 
     assert mock_put.called, "put() should have been called for the camera"
-    topic, payload = mock_put.call_args[0]
+    topic, envelope = mock_put.call_args[0]
+    payload = _sec.verify_envelope(envelope) if isinstance(envelope, dict) else envelope
+    _sec.clear_replay_cache()
     assert topic == "strands/test-cam-6/camera/wrist"
     assert payload["peer_id"] == "test-cam-6"
     assert payload["cam"] == "wrist"

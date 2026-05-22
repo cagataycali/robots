@@ -158,13 +158,25 @@ def mock_session(monkeypatch):
 
 @pytest.fixture
 def mock_put():
-    """Patch put at all locations where it's imported."""
+    """Patch put at all locations where it's imported.
+
+    Payloads pass through ``security.verify_envelope`` so tests that inspect
+    the inner dict (``data["peer_id"]`` etc.) keep working after the signing
+    is layered on outgoing messages.
+    """
+    from strands_robots.mesh import security as _sec
     from strands_robots.mesh import sensors as mesh_sensors
 
     calls = []
 
     def _spy(key, data):
-        calls.append((key, data))
+        try:
+            payload = _sec.verify_envelope(data) if isinstance(data, dict) else data
+        except _sec.AuthenticationError:
+            payload = data
+        finally:
+            _sec.clear_replay_cache()
+        calls.append((key, payload))
 
     with patch.object(mesh_session, "put", side_effect=_spy):
         with patch.object(mesh_core, "put", side_effect=_spy):
@@ -1063,9 +1075,11 @@ class TestRobotMeshTool:
 
     def test_peers_action_no_mesh(self):
         """peers action when no local mesh exists."""
+        from unittest.mock import MagicMock as _MM
+
         from strands_robots.tools.robot_mesh import robot_mesh
 
-        result = robot_mesh(action="peers")
+        result = robot_mesh(action="peers", tool_context=_MM())
         assert result["status"] == "success"
         assert "0 local" in result["content"][0]["text"]
 
@@ -1075,7 +1089,9 @@ class TestRobotMeshTool:
 
         m = Mesh(FakeRobot(), peer_id="tool-test")
         m.start()
-        result = robot_mesh(action="tell", instruction="go")
+        from unittest.mock import MagicMock as _MM
+
+        result = robot_mesh(action="tell", instruction="go", tool_context=_MM())
         assert result["status"] == "error"
         m.stop()
 
@@ -1085,7 +1101,9 @@ class TestRobotMeshTool:
 
         m = Mesh(FakeRobot(), peer_id="tool-json")
         m.start()
-        result = robot_mesh(action="send", target="peer-x", command="not{json")
+        from unittest.mock import MagicMock as _MM
+
+        result = robot_mesh(action="send", target="peer-x", command="not{json", tool_context=_MM())
         assert result["status"] == "error"
         assert "not valid JSON" in result["content"][0]["text"]
         m.stop()
@@ -1096,7 +1114,9 @@ class TestRobotMeshTool:
 
         m = Mesh(FakeRobot(), peer_id="tool-unk")
         m.start()
-        result = robot_mesh(action="foobar")
+        from unittest.mock import MagicMock as _MM
+
+        result = robot_mesh(action="foobar", tool_context=_MM())
         assert result["status"] == "error"
         assert "unknown action" in result["content"][0]["text"]
         m.stop()

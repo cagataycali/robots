@@ -89,11 +89,25 @@ def fake_session() -> Iterator[MagicMock]:
 
 @pytest.fixture
 def captured_puts() -> Iterator[list[tuple[str, dict[str, Any]]]]:
-    """Capture every mesh_mod.put() call as (key, data) tuples."""
+    """Capture every mesh.put() call as (key, payload) tuples.
+
+    Payloads are *unwrapped* through ``security.verify_envelope`` so tests
+    that inspect ``payload["type"]`` still work after the signing wrapper
+    is added.  Replay protection is bypassed for test isolation by clearing
+    the cache after each unwrap.
+    """
+    from strands_robots.mesh import security as _sec
+
     seen: list[tuple[str, dict[str, Any]]] = []
 
     def _spy(key: str, data: dict[str, Any]) -> None:
-        seen.append((key, data))
+        try:
+            payload = _sec.verify_envelope(data) if isinstance(data, dict) else data
+        except _sec.AuthenticationError:
+            payload = data
+        finally:
+            _sec.clear_replay_cache()  # don't pollute across spy calls
+        seen.append((key, payload))
 
     with patch.object(mesh_core, "put", side_effect=_spy):
         yield seen
@@ -229,11 +243,27 @@ def test_exec_cmd_publishes_error_on_dispatch_exception(
     captured_puts: list[tuple[str, dict[str, Any]]],
 ) -> None:
     m = Mesh(_FakeRobot(), peer_id="me")
+    # Use a valid action (status) so we get past command validation and exercise
+    # the original dispatch-exception path that this test was written for.
     with patch.object(m, "_dispatch", side_effect=RuntimeError("boom")):
-        m._exec_cmd({"sender_id": "alice", "turn_id": "t2", "command": {"action": "x"}})
+        m._exec_cmd({"sender_id": "alice", "turn_id": "t2", "command": {"action": "status"}})
     payload = next(d for k, d in captured_puts if k == "strands/alice/response/t2")
     assert payload["type"] == "error"
     assert "boom" in payload["error"]
+
+
+def test_exec_cmd_rejects_unknown_action_with_validation_error(
+    captured_puts: list[tuple[str, dict[str, Any]]],
+) -> None:
+    """An unknown action is rejected at the validation gate, well before any
+    robot side-effect runs. The reply is a structured error envelope that
+    includes the offending action name."""
+    m = Mesh(_FakeRobot(), peer_id="me")
+    m._exec_cmd({"sender_id": "alice", "turn_id": "t3", "command": {"action": "rm_rf"}})
+    payload = next(d for k, d in captured_puts if k == "strands/alice/response/t3")
+    assert payload["type"] == "error"
+    assert "validation" in payload["error"]
+    assert "rm_rf" in payload["error"]
 
 
 def test_exec_cmd_string_command_becomes_execute() -> None:

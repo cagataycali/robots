@@ -21,10 +21,31 @@ Each line is one JSON object with these keys:
 * ``event`` — short event type, e.g. ``"emergency_stop"``
 * ``peer_id`` — the mesh peer that owned the event
 * ``payload`` — free-form dict with event-specific fields
+* ``seq`` — process-monotonic sequence number. Useful for detecting
+  truncation: gaps within a single peer's stream indicate missing events.
+* ``sig`` — HMAC-SHA256 hex over the rest of the record. Present only when
+  ``STRANDS_MESH_AUDIT_PSK`` is configured. Verifies that the record
+  content has not been edited after write.
 
-The file is opened in append mode for every write so concurrent writers from
-multiple threads or processes never overwrite each other; ordering across
-processes is best-effort.
+Integrity verification
+----------------------
+The audit log is the forensic trail for emergency stops, command
+rejections, and resume attempts. To frustrate post-incident tampering by a
+compromised process the writer attaches a per-record HMAC signature when
+``STRANDS_MESH_AUDIT_PSK`` is set. :func:`verify_audit_integrity` walks the
+log and reports:
+
+* records with broken signatures (content was edited or partially
+  truncated mid-line),
+* sequence gaps (records were deleted),
+* records lacking a signature (mixed-mode log, expected during rollouts).
+
+The PSK lives in env / Secrets Manager, never in the file. A reader that
+does not have the PSK can still read events; it just cannot verify them.
+
+The file is opened in append mode for every write so concurrent writers
+from multiple threads or processes never overwrite each other; ordering
+across processes is best-effort.
 
 Reading
 -------
@@ -35,6 +56,8 @@ audit log is forward-compatible with future fields).
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import logging
 import os
@@ -53,7 +76,49 @@ _DEFAULT_DIR = Path.home() / ".strands_robots"
 # atomicity (one open(..., "a") write per event).
 _WRITE_LOCK = threading.Lock()
 
-__all__ = ["audit_log_path", "log_safety_event", "read_audit_log"]
+# Process-monotonic sequence counter. Distinct processes will each start at
+# 1, so cross-process uniqueness is best expressed by the (peer_id, seq)
+# tuple. Within one peer's stream a gap in seq indicates truncation.
+_SEQ_LOCK = threading.Lock()
+_SEQ_COUNTER = 0
+
+__all__ = [
+    "audit_log_path",
+    "log_safety_event",
+    "read_audit_log",
+    "verify_audit_integrity",
+]
+
+
+def _audit_psk() -> bytes | None:
+    """Return the audit-log PSK as bytes, or None when not configured."""
+    psk = os.getenv("STRANDS_MESH_AUDIT_PSK")
+    if not psk:
+        return None
+    return psk.encode("utf-8")
+
+
+def _next_seq() -> int:
+    global _SEQ_COUNTER  # noqa: PLW0603
+    with _SEQ_LOCK:
+        _SEQ_COUNTER += 1
+        return _SEQ_COUNTER
+
+
+def _canonical_bytes(record: dict[str, Any]) -> bytes:
+    """Stable byte encoding for HMAC. Excludes the ``sig`` field."""
+    return json.dumps(
+        {k: v for k, v in record.items() if k != "sig"},
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def _sign_record(record: dict[str, Any]) -> str | None:
+    psk = _audit_psk()
+    if psk is None:
+        return None
+    return hmac.new(psk, _canonical_bytes(record), hashlib.sha256).hexdigest()
 
 
 def audit_log_path() -> Path:
@@ -105,13 +170,18 @@ def log_safety_event(event_type: str, peer_id: str, payload: dict[str, Any]) -> 
         an audit-log failure must never propagate up into the safety code
         path that called this function.
     """
-    record = {
+    record: dict[str, Any] = {
         "ts": time.time(),
         "event": event_type,
         "peer_id": peer_id,
         "payload": payload,
+        "seq": _next_seq(),
     }
-    line = json.dumps(record, separators=(",", ":")) + "\n"
+    sig = _sign_record(record)
+    if sig is not None:
+        record["sig"] = sig
+
+    line = json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n"
     path = audit_log_path()
 
     with _WRITE_LOCK:
@@ -119,6 +189,11 @@ def log_safety_event(event_type: str, peer_id: str, payload: dict[str, Any]) -> 
             _ensure_paths(path)
             with open(path, "a", encoding="utf-8") as fh:
                 fh.write(line)
+                fh.flush()
+                try:
+                    os.fsync(fh.fileno())  # durable write before returning
+                except OSError:
+                    pass  # best-effort on filesystems that reject fsync
         except OSError as exc:
             logger.warning("[audit] failed to write %s: %s", path, exc)
 
@@ -161,3 +236,80 @@ def read_audit_log(since: float | None = None) -> list[dict[str, Any]]:
         logger.debug("[audit] failed to read %s: %s", path, exc)
 
     return out
+
+
+def verify_audit_integrity(records: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    """Walk the audit log and report tamper / truncation evidence.
+
+    Args:
+        records: Optional pre-loaded records list. When None, the current
+            audit file is read fresh.
+
+    Returns:
+        Dict with keys::
+
+            {
+                "total":        <int>,   # records examined
+                "signed":       <int>,   # records with a sig field
+                "verified":     <int>,   # records whose sig validated
+                "bad_signature":<int>,   # records whose sig failed
+                "missing_sig":  <int>,   # signed log expected but missing
+                "psk_present":  <bool>,  # whether STRANDS_MESH_AUDIT_PSK was set
+                "sequence_gaps":[(prev_seq, this_seq), ...],
+                "ok":           <bool>,  # True iff bad_signature == 0 and
+                                         # sequence_gaps == [].
+            }
+    """
+    if records is None:
+        records = read_audit_log()
+
+    psk = _audit_psk()
+    psk_present = psk is not None
+
+    total = len(records)
+    signed = 0
+    verified = 0
+    bad_signature = 0
+    missing_sig = 0
+    gaps: list[tuple[int, int]] = []
+
+    # Track sequence per peer_id — each process has its own counter so the
+    # only stream where consecutive seq values must be adjacent is a single
+    # peer's contributions.
+    last_seq_by_peer: dict[str, int] = {}
+
+    for record in records:
+        sig = record.get("sig")
+        seq = record.get("seq")
+        peer = record.get("peer_id", "")
+
+        if sig is not None:
+            signed += 1
+            if psk is None:
+                # Cannot verify without PSK; record as unverifiable.
+                continue
+            expected = hmac.new(psk, _canonical_bytes(record), hashlib.sha256).hexdigest()
+            if hmac.compare_digest(sig, expected):
+                verified += 1
+            else:
+                bad_signature += 1
+        else:
+            if psk_present:
+                missing_sig += 1
+
+        if isinstance(seq, int) and isinstance(peer, str):
+            prev = last_seq_by_peer.get(peer)
+            if prev is not None and seq != prev + 1:
+                gaps.append((prev, seq))
+            last_seq_by_peer[peer] = seq
+
+    return {
+        "total": total,
+        "signed": signed,
+        "verified": verified,
+        "bad_signature": bad_signature,
+        "missing_sig": missing_sig,
+        "psk_present": psk_present,
+        "sequence_gaps": gaps,
+        "ok": bad_signature == 0 and not gaps,
+    }
