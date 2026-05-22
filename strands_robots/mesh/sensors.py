@@ -79,8 +79,13 @@ class SensorLoopsMixin:
 
         At runtime ``Mesh._put_signed`` shadows this stub via MRO
         (``class Mesh(SensorLoopsMixin)``); this body is never executed.
+
+        Raises:
+            NotImplementedError: if the mixin is used standalone (no host
+                Mesh class). Replaces the bare ``...`` stub so static
+                analysers (CodeQL #226) don't flag a no-effect statement.
         """
-        ...
+        raise NotImplementedError("SensorLoopsMixin._put_signed must be provided by a host class")
 
     # Pose
 

@@ -810,6 +810,10 @@ class Mesh(SensorLoopsMixin):
             expected = self._expected_responders.get(turn)
             # Strict scoping for point-to-point sends. Broadcast accepts any.
             if expected is not None and expected != BROADCAST_RESPONDER and responder != expected:
+                # R4-8: structured rejection. AuthorizationError carries
+                # the responder/expected pair so audit emit (and any
+                # operator forensics that walks the safety log) sees a
+                # typed event rather than a free-text log line.
                 logger.warning(
                     "[mesh] %s: dropped response on turn %s — "
                     "responder_id=%r does not match expected target %r "
@@ -819,6 +823,32 @@ class Mesh(SensorLoopsMixin):
                     responder,
                     expected,
                 )
+                try:
+                    from strands_robots.mesh.audit import log_safety_event
+
+                    log_safety_event(
+                        "response_hijack_rejected",
+                        self.peer_id,
+                        {
+                            "turn_prefix": turn[:12],
+                            "responder_id": responder,
+                            "expected": expected,
+                        },
+                    )
+                except Exception as audit_exc:
+                    # Audit best-effort — never let a missing/broken
+                    # log path break the response handler.
+                    logger.debug("[mesh] %s: audit log unavailable: %s", self.peer_id, audit_exc)
+                # Raise into the local handler so a future refactor
+                # that adds a wider error pipeline can plug in. We catch
+                # at the function boundary so the Zenoh subscriber
+                # callback never sees the exception.
+                try:
+                    raise _security.AuthorizationError(
+                        f"response_hijack_rejected: responder={responder!r} expected={expected!r}"
+                    )
+                except _security.AuthorizationError as exc:
+                    logger.debug("[mesh] %s: %s", self.peer_id, exc)
                 return
             self._responses.setdefault(turn, []).append(data)
         event.set()
@@ -908,9 +938,23 @@ class Mesh(SensorLoopsMixin):
         truncation), and the expected responder is recorded so
         :meth:`_on_response` rejects forged responses from any peer
         other than *target*.
+
+        R4-5: explicit guard against passing the
+        :data:`BROADCAST_RESPONDER` sentinel (or any string containing a
+        NUL byte) as ``target``. ``init_mesh``'s peer_id regex already
+        rejects NUL on the receive side, so a real peer can't collide,
+        but a future refactor that loosens that rule must not reopen
+        the response-hijack surface that this method's contract closes.
         """
         if not self._running:
             return {"status": "error", "error": "mesh not running"}
+        if not isinstance(target, str) or not target:
+            return {"status": "error", "error": "send: target must be a non-empty string"}
+        if "\x00" in target or target == BROADCAST_RESPONDER:
+            return {
+                "status": "error",
+                "error": "send: target may not contain NUL or equal the BROADCAST_RESPONDER sentinel",
+            }
         # 128-bit turn id — at 32 bits the birthday-collision window
         # under heavy concurrent RPC load was practical (~65k turns
         # before 50% collision); 128 bits removes that surface entirely.

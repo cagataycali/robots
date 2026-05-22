@@ -5,6 +5,63 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## Unreleased - #194 (mesh security hardening)
 
+### Round 4 — additional review feedback (yinsong1986)
+
+* **R4-1 (HIGH)**: ``policy_provider`` now gated through
+  ``is_safe_policy_provider`` in ``validate_command``. Default ``"mock"``
+  matches the receive-side dispatcher's default so back-compat callers
+  keep working. Shares the allowlist with ``policy_type`` (extend via
+  ``STRANDS_MESH_POLICY_TYPE_ALLOW``). Threat-vector #3 was reachable
+  via ``policy_provider`` even after R3-5 added gates for the four
+  ``policy_type`` / ``model_path`` / ``pretrained_name_or_path`` /
+  ``server_address`` fields — Yin caught that ``policy_provider`` is
+  the actual registry key the executor uses.
+
+* **R4-2 (HIGH)**: ``_sign_record`` snapshots PSK presence on the first
+  call and refuses to write subsequent unsigned records with a new
+  ``AuditPSKDegradedError``. ``verify_audit_integrity`` now reports
+  ``ok=False`` when ``psk_present and missing_sig > 0``. An attacker
+  who briefly clears the env mid-run to write unsigned forgeries can
+  no longer hide them behind ``ok=True``.
+
+* **R4-3 (MED)**: ``_persist_seq_counters`` fsyncs the temp fd before
+  ``os.replace`` and the parent directory afterwards (POSIX). After a
+  power loss, the audit log can no longer have records ahead of the
+  sidecar — duplicate seq values on restart are eliminated.
+
+* **R4-4 (MED)**: ``_ensure_ca`` wraps ``urlopen`` with
+  ``socket.setdefaulttimeout(15.0)`` so each ``recv()`` observes the
+  timeout — previously only connect+handshake were bounded and a
+  slow-loris responder could dribble bytes for arbitrary wall-clock.
+
+* **R4-5 (LOW)**: ``Mesh.send`` rejects ``BROADCAST_RESPONDER`` and any
+  NUL-containing target up front. Defence-in-depth: a future refactor
+  that loosens the peer_id regex cannot reopen the response-hijack
+  surface that D1 closed.
+
+* **R4-8 (CLEANUP)**: ``RateLimitError`` and ``AuthorizationError`` are
+  no longer dead code. New ``enforce_peer_rate_limit(sender_id)`` is
+  the structured form of ``consume_peer_token`` (raises on starvation).
+  ``Mesh._on_response`` raises ``AuthorizationError`` on the response-
+  hijack reject path AND emits a typed
+  ``response_hijack_rejected`` audit event so forensic readers see the
+  rejection in a structured field instead of a free-text log line.
+
+* **R4-6 / R4-7**: residual-risk documentation. The permissive-mode
+  replay-cache fillability and the audit-write amplification under
+  the configured peer-rate ceiling are documented in the module
+  docstrings as accepted limitations with mitigation paths.
+
+* **R4-10**: ``PENTEST_FINDINGS.md`` placeholder ``<this-commit>``
+  replaced with the actual SHA (``5384599``).
+
+* **CodeQL #226 / #227 / #228**: explanatory comments added to the
+  three previously-bare except-pass blocks (``audit.py:316``,
+  ``audit.py:505``, the ``_put_signed`` ``...`` stub in
+  ``sensors.py:83`` is now a ``raise NotImplementedError(...)``).
+
+### Round 1 / 2 / 3 — see existing entries below.
+
 ### Round 3 — additional review feedback (yinsong1986)
 
 * **Sanitised dispatch-error wire output** (R3-1): the catch-all in

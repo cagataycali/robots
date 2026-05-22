@@ -672,9 +672,29 @@ def _ensure_ca(ca_path: Path) -> None:
         return
 
     logger.info("[provision] downloading Amazon Root CA1 → %s (pinned)", ca_path)
-    with urllib.request.urlopen(_AMAZON_ROOT_CA1_URL, timeout=15) as resp:  # noqa: S310 — HTTPS + pinned (15s timeout defends against
-        # captive portals / hostile proxies that hold the connection open).
-        body = resp.read(_CA_FETCH_MAX_BYTES + 1)
+    # R4-4: ``timeout=`` on urlopen only covers connect + handshake.
+    # A slow-loris responder that establishes TLS quickly then dribbles
+    # bytes can hold ``resp.read`` open for arbitrary wall-clock time.
+    # ``socket.setdefaulttimeout`` propagates a per-recv deadline to the
+    # underlying socket so each read() observes the same 15s ceiling.
+    # 30s wall-clock budget is plenty for a ~1.4 KiB cert; we keep the
+    # 15s setting for symmetry with the urlopen timeout argument.
+    import socket as _socket
+
+    _prev_default = _socket.getdefaulttimeout()
+    _socket.setdefaulttimeout(15.0)
+    try:
+        with urllib.request.urlopen(_AMAZON_ROOT_CA1_URL, timeout=15) as resp:  # noqa: S310 — HTTPS + pinned
+            body = resp.read(_CA_FETCH_MAX_BYTES + 1)
+    except TimeoutError as exc:
+        raise RuntimeError(
+            "AmazonRootCA1 download timed out — possible slow-loris "
+            "responder or hostile proxy. Set "
+            "STRANDS_MESH_DISABLE_CA_PIN=true and retry only after "
+            "confirming the network path is trustworthy."
+        ) from exc
+    finally:
+        _socket.setdefaulttimeout(_prev_default)
     if len(body) > _CA_FETCH_MAX_BYTES:
         raise RuntimeError(f"AmazonRootCA1 download exceeded {_CA_FETCH_MAX_BYTES} bytes — refusing")
 

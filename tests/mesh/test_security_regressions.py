@@ -1176,3 +1176,218 @@ def test_r3_8_sensors_loop_mixin_has_no_stray_docstring():
         f"expression(s) at lines {stray_strings} — CodeQL #224 will "
         "reopen. Move all class-level prose into the single first docstring."
     )
+
+
+# ───────────────────────────────────────────────────────────────────────────
+# Round 4 — additional review feedback from yinsong1986 (PR #194 round 4)
+# ───────────────────────────────────────────────────────────────────────────
+
+
+def test_r4_1_validate_command_blocks_unknown_policy_provider(monkeypatch):
+    """R4-1: ``policy_provider`` is the registry key the receive-side
+    ``_dispatch`` passes straight to ``_execute_task_sync``. Without
+    validation, an authenticated peer could steer a robot to any
+    registered provider — bypassing every other allowlist on this code
+    path.
+    """
+    monkeypatch.delenv("STRANDS_MESH_POLICY_TYPE_ALLOW", raising=False)
+    from strands_robots.mesh import security as sec
+
+    base = {"action": "execute", "instruction": "x", "policy_host": "localhost"}
+
+    # Default "mock" must work (back-compat).
+    ok = sec.validate_command(dict(base))
+    assert ok["policy_provider"] == "mock"
+
+    # Known providers from the default allowlist must work.
+    for provider in ("groot", "lerobot_local", "act"):
+        ok = sec.validate_command(dict(base, policy_provider=provider))
+        assert ok["policy_provider"] == provider
+
+    # Unknown provider must be rejected.
+    with pytest.raises(sec.ValidationError, match="policy_provider"):
+        sec.validate_command(dict(base, policy_provider="evil-corp/backdoor"))
+
+    # Path traversal / shell metacharacters must be rejected.
+    with pytest.raises(sec.ValidationError):
+        sec.validate_command(dict(base, policy_provider="mock; rm -rf /"))
+
+
+def test_r4_1_validate_command_policy_provider_canonicalises_case():
+    """R4-1: provider value is lower-cased on output (consistent with
+    policy_type)."""
+    from strands_robots.mesh import security as sec
+
+    base = {"action": "execute", "instruction": "x", "policy_host": "localhost"}
+    ok = sec.validate_command(dict(base, policy_provider="GROOT"))
+    assert ok["policy_provider"] == "groot"
+
+
+def test_r4_2_audit_psk_degrade_refused(monkeypatch, tmp_path):
+    """R4-2: if STRANDS_MESH_AUDIT_PSK was set when the audit log first
+    started signing this run, but is later unset, ``_sign_record`` must
+    raise ``AuditPSKDegradedError`` and the record is dropped (logged
+    at ERROR). An attacker who clears the env briefly to write
+    unsigned forgeries cannot degrade integrity unnoticed.
+    """
+    monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
+    monkeypatch.setenv("STRANDS_MESH_AUDIT_PSK", "r4-2-psk")
+    from strands_robots.mesh import audit
+
+    audit._SEQ_COUNTERS.clear()
+    audit._AUDIT_STATE.seq_loaded = False
+    audit._AUDIT_STATE.psk_was_present = None  # snapshot fresh
+
+    # First write — signed.
+    audit.log_safety_event("e1", "p", {"i": 1})
+    log_path = audit.audit_log_path()
+    raw1 = log_path.read_text()
+    assert '"sig"' in raw1, "first record must be signed"
+
+    # Attacker clears the PSK env mid-run.
+    monkeypatch.delenv("STRANDS_MESH_AUDIT_PSK", raising=False)
+
+    # Second write — must be REFUSED (record dropped).
+    audit.log_safety_event("e2_evil", "p", {"i": 2})
+    raw2 = log_path.read_text()
+    # Only the original record should be in the log.
+    assert raw1 == raw2, (
+        "Audit log accepted an unsigned record after PSK was cleared — "
+        "R4-2 reopened. The forgery would have appeared in the log."
+    )
+
+
+def test_r4_2_verify_audit_integrity_fails_closed_when_psk_present_but_records_unsigned(monkeypatch, tmp_path):
+    """R4-2: when a PSK is configured at verification time, an
+    unsigned record is treated as a failure (`ok=False`).
+    """
+    monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
+    from strands_robots.mesh import audit
+
+    audit._SEQ_COUNTERS.clear()
+    audit._AUDIT_STATE.seq_loaded = False
+    audit._AUDIT_STATE.psk_was_present = None
+
+    # Phase 1: write unsigned (no PSK).
+    monkeypatch.delenv("STRANDS_MESH_AUDIT_PSK", raising=False)
+    audit.log_safety_event("e1_unsigned", "p", {"i": 1})
+
+    # Phase 2: verify WITH PSK configured — must fail-closed.
+    monkeypatch.setenv("STRANDS_MESH_AUDIT_PSK", "r4-2-verify-psk")
+    result = audit.verify_audit_integrity()
+    assert result["psk_present"] is True
+    assert result["missing_sig"] == 1
+    assert result["ok"] is False, (
+        "verify_audit_integrity reported ok=True with a PSK configured but unsigned records present — R4-2 reopened."
+    )
+
+
+def test_r4_3_seq_sidecar_uses_fsync(tmp_path, monkeypatch):
+    """R4-3: ``_persist_seq_counters`` fsyncs the temp fd before
+    rename and the parent dir afterwards on POSIX, so a power loss
+    cannot leave the audit log ahead of the sidecar.
+
+    We verify by source inspection — actually testing fsync semantics
+    requires power-loss simulation, which is out of scope for unit
+    tests. The presence of the calls is what the R4-3 finding asked
+    for.
+    """
+    import inspect
+
+    from strands_robots.mesh import audit
+
+    src = inspect.getsource(audit._persist_seq_counters)
+    assert "os.fsync(fh.fileno())" in src, "temp fd must be fsync'd before rename"
+    assert "os.fsync(dir_fd)" in src, "parent dir must be fsync'd after rename"
+    assert "os.O_RDONLY" in src, "parent dir is opened read-only for fsync"
+
+
+def test_r4_4_ca_download_has_per_recv_timeout():
+    """R4-4: ``_ensure_ca`` sets ``socket.setdefaulttimeout`` for the
+    duration of ``urlopen`` so a slow-loris responder cannot dribble
+    bytes for arbitrary wall-clock time. Source-inspection check —
+    actually testing slow-loris requires a live attacker socket.
+    """
+    import inspect
+
+    from strands_robots.mesh.iot import provision
+
+    src = inspect.getsource(provision._ensure_ca)
+    assert "setdefaulttimeout" in src, (
+        "_ensure_ca must call socket.setdefaulttimeout for per-recv "
+        "deadline — R4-4 reopened. urlopen(timeout=) only covers "
+        "connect + handshake."
+    )
+    # The per-recv timeout must be reset in finally so other code in
+    # the process isn't affected.
+    assert "finally:" in src and "_prev_default" in src
+
+
+def test_r4_5_send_rejects_broadcast_responder_target(monkeypatch):
+    """R4-5: ``Mesh.send`` rejects ``BROADCAST_RESPONDER`` (and any
+    NUL-containing target) so a future refactor that loosens the
+    peer_id regex cannot reopen the response-hijack surface.
+    """
+    monkeypatch.setenv("STRANDS_MESH_PSK", "r4-5-psk")
+    import importlib
+
+    from strands_robots.mesh import security as sec
+
+    importlib.reload(sec)
+    from strands_robots.mesh.core import BROADCAST_RESPONDER, Mesh
+
+    sec.clear_replay_cache()
+
+    m = Mesh(MagicMock(), peer_id="me")
+    m._running = True
+
+    out = m.send(BROADCAST_RESPONDER, {"action": "status"}, timeout=0.1)
+    assert out["status"] == "error"
+    assert "BROADCAST_RESPONDER" in out["error"] or "NUL" in out["error"]
+
+    out = m.send("with\x00nul", {"action": "status"}, timeout=0.1)
+    assert out["status"] == "error"
+
+    # And empty / non-string targets rejected.
+    out = m.send("", {"action": "status"}, timeout=0.1)
+    assert out["status"] == "error"
+
+
+def test_r4_8_rate_limit_error_is_actually_raised(monkeypatch):
+    """R4-8: ``RateLimitError`` is now wired into the structured boundary
+    via ``enforce_peer_rate_limit``. AGENTS.md "no dead code" rule
+    satisfied.
+    """
+    from strands_robots.mesh import security as sec
+
+    # First call passes.
+    sec.reset_peer_rate_limits()
+    sec.enforce_peer_rate_limit("test-sender")
+
+    # Burn through the bucket (default burst = 20).
+    for _ in range(25):
+        try:
+            sec.enforce_peer_rate_limit("test-sender")
+        except sec.RateLimitError as exc:
+            # First raise tells us the wire actually exists.
+            assert "test-sender" in str(exc)
+            return
+    pytest.fail("RateLimitError was never raised after 25 calls — burst cap broken or wire dead")
+
+
+def test_r4_8_authorization_error_wired_into_response_hijack_path():
+    """R4-8: ``AuthorizationError`` is raised (and immediately caught
+    locally) when ``_on_response`` rejects a hijacked response. Source-
+    inspection check that the exception type is referenced on the
+    rejection branch.
+    """
+    import inspect
+
+    from strands_robots.mesh.core import Mesh
+
+    src = inspect.getsource(Mesh._on_response)
+    assert "AuthorizationError" in src, (
+        "AuthorizationError is not raised on the response-hijack reject path — R4-8 (dead-code wire-in) reopened."
+    )
+    # Also: the audit emit must include 'response_hijack_rejected'.
+    assert "response_hijack_rejected" in src

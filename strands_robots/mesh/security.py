@@ -47,6 +47,23 @@ Configuration env vars
 * ``STRANDS_MESH_PEER_RATE`` — ``"<count>/<seconds>"`` per-sender command
   rate (default ``"20/60"``). ``count`` clamped to
   :data:`_MAX_PEER_RATE_BURST`.
+
+Round-4 known limitations (see PENTEST_FINDINGS.md):
+
+* **Permissive-mode replay cache fillability (R4-6)** — when no PSK is
+  configured, ``verify_envelope`` still records nonces for any
+  well-shaped envelope from any peer. A LAN attacker can flood unique
+  nonces and force the GC to walk an O(n) hot path under
+  ``_NONCE_LOCK``. The cap (10 000 entries) bounds memory but the prune
+  walk briefly degrades replay protection. Strict mode (PSK +
+  ``STRANDS_MESH_REQUIRE_AUTH=true``) closes this surface entirely.
+  Operators running permissive mode in environments with untrusted LAN
+  peers should treat it as dev-only.
+
+* **Permissive-mode wire format is fundamentally lossy** — the replay
+  window only protects against literal-payload replay, not against
+  forged commands minted with fresh nonces. The README documents this
+  but operators should not over-trust the permissive path.
 """
 
 from __future__ import annotations
@@ -600,6 +617,21 @@ def is_safe_policy_type(policy_type: str) -> bool:
     return policy_type.strip().lower() in _policy_type_allowlist()
 
 
+def is_safe_policy_provider(provider: str) -> bool:
+    """Return True iff *provider* is in the allowlist.
+
+    Round-4 / R4-1: ``policy_provider`` is the registry key the receive-
+    side dispatcher passes straight to ``r._execute_task_sync(...)`` /
+    ``r.start_task(...)`` to choose the policy class. Without this gate
+    an authenticated peer (or a leaked PSK) could steer a robot to any
+    registered provider, bypassing the spirit of every other allowlist
+    on this code path. Shares the allowlist with ``policy_type``.
+    """
+    if not isinstance(provider, str) or not provider:
+        return False
+    return provider.strip().lower() in _policy_type_allowlist()
+
+
 def is_safe_server_address(addr: str) -> bool:
     """Validate a remote policy ``server_address`` (host[:port] or URL).
 
@@ -750,6 +782,20 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
                 )
             out["policy_type"] = value.strip().lower()
 
+        # R4-1: policy_provider is the registry key _dispatch passes to
+        # _execute_task_sync. At least as attacker-controllable as
+        # policy_type. Default "mock" matches _dispatch's default so
+        # back-compat callers keep working.
+        provider_value = cmd.get("policy_provider", "mock")
+        if provider_value and not is_safe_policy_provider(str(provider_value)):
+            raise ValidationError(
+                f"policy_provider={provider_value!r} not in allowlist. "
+                "Set STRANDS_MESH_POLICY_TYPE_ALLOW to extend "
+                "(provider and policy_type share one allowlist)."
+            )
+        if provider_value:
+            out["policy_provider"] = str(provider_value).strip().lower()
+
         if "server_address" in cmd and cmd["server_address"]:
             value = cmd["server_address"]
             if not isinstance(value, str) or not is_safe_server_address(value):
@@ -867,6 +913,19 @@ def reset_peer_rate_limits() -> None:
         _PEER_RATE_LIMITS.clear()
 
 
+def enforce_peer_rate_limit(sender_id: str) -> None:
+    """Consume one token from *sender_id*'s bucket; raise on starvation.
+
+    Round-4 / R4-8: this is the structured form of
+    :func:`consume_peer_token`. Callers that want a structured exception
+    (so the audit emit can include the rejection reason in a typed
+    field rather than a free-text log line) call this; legacy
+    ``bool`` callers continue to use ``consume_peer_token`` directly.
+    """
+    if not consume_peer_token(sender_id):
+        raise RateLimitError(f"per-sender rate limit exceeded for {sender_id!r}")
+
+
 __all__ = [
     "ALLOWED_ACTIONS",
     "AuthenticationError",
@@ -882,8 +941,10 @@ __all__ = [
     "auth_required",
     "clear_replay_cache",
     "consume_peer_token",
+    "enforce_peer_rate_limit",
     "is_safe_model_path",
     "is_safe_policy_host",
+    "is_safe_policy_provider",
     "is_safe_policy_type",
     "is_safe_server_address",
     "psk_configured",

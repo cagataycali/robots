@@ -110,6 +110,18 @@ _WRITE_LOCK = threading.Lock()
 # call and rewritten under ``_SEQ_LOCK`` after each increment. Writes
 # are fail-soft: a write failure logs at WARNING but does not break the
 # safety code path.
+#
+# R4-7 — audit-write amplification (accepted limitation): every event
+# triggers a synchronous double write (audit line + sidecar
+# tmp+os.replace+chmod+fsync). The token bucket caps inbound floods at
+# ``STRANDS_MESH_PEER_RATE`` (default 20/60s/sender, max 1000 burst), so
+# the worst-case write rate is bounded. If your deployment runs
+# pathologically high audit volumes, batch the sidecar persistence by
+# subclassing ``_persist_seq_counters`` to write at most once per N
+# events with an atexit flush — the on-disk counter can then lose at
+# most that many seconds of seq state on a hard kill, which
+# ``verify_audit_integrity`` already detects. The default is per-event
+# fsync because durability beats throughput for the safety log.
 _SEQ_LOCK = threading.Lock()
 _SEQ_COUNTERS: dict[str, int] = {}
 
@@ -122,17 +134,29 @@ class _ProcessAuditState:
     analysers see a normal attribute read+write rather than a
     ``global`` declaration on a module-level scalar (which CodeQL's
     "unused global variable" rule mis-classifies — alert #222).
+
+    R4-2: ``psk_was_present`` snapshots whether ``STRANDS_MESH_AUDIT_PSK``
+    was set at the time the first audit record was signed. Subsequent
+    records compare to this snapshot — if the PSK gets unset mid-run,
+    ``_sign_record`` logs an ERROR and the record is rejected. This
+    closes the "process clears its env briefly to write unsigned
+    forgeries, then re-sets the PSK" attack documented at
+    PENTEST_FINDINGS.md / R4-2.
     """
 
-    __slots__ = ("seq_loaded",)
+    __slots__ = ("seq_loaded", "psk_was_present")
 
     def __init__(self) -> None:
         self.seq_loaded: bool = False
+        # ``None`` = not yet observed; ``True``/``False`` = first-call
+        # snapshot.
+        self.psk_was_present: bool | None = None
 
 
 _AUDIT_STATE = _ProcessAuditState()
 
 __all__ = [
+    "AuditPSKDegradedError",
     "audit_log_path",
     "log_safety_event",
     "read_audit_log",
@@ -310,13 +334,59 @@ def _persist_seq_counters() -> None:
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
                 json.dump(_SEQ_COUNTERS, fh, sort_keys=True, separators=(",", ":"))
+                fh.flush()
+                # R4-3: fsync the temp fd before rename so a power-loss
+                # cannot leave the audit log ahead of the sidecar. After
+                # restart, ``_load_seq_counters`` would otherwise pick up
+                # stale counters and the next event would write a duplicate
+                # seq value, defeating per-peer adjacency in
+                # ``verify_audit_integrity``.
+                try:
+                    os.fsync(fh.fileno())
+                except OSError:
+                    # Best-effort on filesystems that reject fsync; the
+                    # data is in the kernel page cache and durability is
+                    # weaker than ideal but the safety code path stays
+                    # alive (audit persistence is fail-soft by contract).
+                    pass
         except Exception:
             try:
                 os.close(fd)
             except OSError:
+                # Already closed by fdopen's context manager exit (or
+                # never opened). The raise below propagates the original
+                # error; this cleanup branch only matters on the rare
+                # crash path where fdopen itself raised.
                 pass
             raise
         os.replace(tmp, sidecar)
+        # R4-3: fsync the parent directory so the rename is durable
+        # too. POSIX-only — Windows treats os.fsync on a directory fd
+        # as undefined behaviour. Skip the dir fsync there; the rename
+        # is atomic on NTFS so the visible-state ordering still holds.
+        if os.name == "posix":
+            try:
+                dir_fd = os.open(str(sidecar.parent), os.O_RDONLY)
+            except OSError:
+                # Best-effort; if the parent is unreadable the rename
+                # still happened and we just lose dir-level durability.
+                dir_fd = None
+            if dir_fd is not None:
+                try:
+                    os.fsync(dir_fd)
+                except OSError:
+                    # Some filesystems reject directory fsync; the
+                    # rename is still on disk in the page cache.
+                    pass
+                finally:
+                    try:
+                        os.close(dir_fd)
+                    except OSError:
+                        # Best-effort close of a read-only dir fd; if
+                        # the dir was unmounted between open and close
+                        # this can race but no leak occurs because the
+                        # process is exiting.
+                        pass
         try:
             os.chmod(sidecar, 0o600)
         except OSError:
@@ -360,8 +430,45 @@ def _canonical_bytes(record: dict[str, Any]) -> bytes:
     ).encode("utf-8")
 
 
+class AuditPSKDegradedError(RuntimeError):
+    """Raised when STRANDS_MESH_AUDIT_PSK was set at first write but is
+    no longer set at a subsequent write.
+
+    Round-4 / R4-2: a process that briefly clears its env to write a run
+    of unsigned forgeries — then re-sets the PSK — would otherwise yield
+    records that ``verify_audit_integrity`` reports as ``missing_sig``
+    while ``ok`` (the boolean reader-helpers check) stays True. We snap
+    PSK presence on the first signed record and refuse to write further
+    records under a downgraded configuration.
+    """
+
+
 def _sign_record(record: dict[str, Any]) -> str | None:
+    """Compute the per-record HMAC signature, or ``None`` when no PSK
+    is configured.
+
+    Round-4 / R4-2: snapshot the PSK presence on the first call. If a
+    subsequent call sees the PSK has gone missing (env unset mid-run),
+    raise ``AuditPSKDegradedError`` so the audit log cannot silently
+    degrade to unsigned. The caller is the safety code path; we let the
+    error propagate to ``log_safety_event`` which logs at ERROR and
+    swallows it (audit failures must not crash the safety path), but
+    we DO refuse the unsigned write.
+    """
     psk = _audit_psk()
+    snapshot = _AUDIT_STATE.psk_was_present
+    if snapshot is None:
+        # First record this process — record the observed state.
+        _AUDIT_STATE.psk_was_present = psk is not None
+    elif snapshot is True and psk is None:
+        # Was signed; now unsigned. Refuse.
+        raise AuditPSKDegradedError(
+            "STRANDS_MESH_AUDIT_PSK was set when the audit log first "
+            "started signing this run, but is now unset. Refusing to "
+            "write an unsigned record (would silently degrade audit "
+            "integrity). Restore the PSK or restart the process to "
+            "transition to unsigned mode deliberately."
+        )
     if psk is None:
         return None
     return hmac.new(psk, _canonical_bytes(record), hashlib.sha256).hexdigest()
@@ -449,7 +556,16 @@ def log_safety_event(event_type: str, peer_id: str, payload: dict[str, Any]) -> 
         "payload": payload,
         "seq": _next_seq(peer_id),
     }
-    sig = _sign_record(record)
+    try:
+        sig = _sign_record(record)
+    except AuditPSKDegradedError as exc:
+        # R4-2: STRANDS_MESH_AUDIT_PSK was set at start of run but is
+        # now unset. We refuse to write an unsigned record because the
+        # default reader-helper path (`verify_audit_integrity` → `ok`)
+        # would otherwise miss the downgrade. Log loud, swallow — audit
+        # failures must not crash the safety code path.
+        logger.error("[audit] %s — record dropped: %s", exc, record)
+        return
     if sig is not None:
         record["sig"] = sig
 
@@ -503,6 +619,9 @@ def log_safety_event(event_type: str, peer_id: str, payload: dict[str, Any]) -> 
                 try:
                     os.close(fd)
                 except OSError:
+                    # Already closed by fdopen context-manager exit.
+                    # Nothing to do; the original error propagates via
+                    # the raise below.
                     pass
                 raise
         except OSError as exc:
@@ -632,5 +751,10 @@ def verify_audit_integrity(records: list[dict[str, Any]] | None = None) -> dict[
         "missing_sig": missing_sig,
         "psk_present": psk_present,
         "sequence_gaps": gaps,
-        "ok": bad_signature == 0 and not gaps,
+        # R4-2: when a PSK is configured at verification time, an
+        # unsigned record (missing_sig > 0) is treated as a failure —
+        # otherwise an attacker who briefly cleared the env mid-run
+        # could write a stretch of unsigned forgeries and the
+        # ``ok=True`` reader path would not flag them.
+        "ok": bad_signature == 0 and not gaps and not (psk_present and missing_sig > 0),
     }
