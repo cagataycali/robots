@@ -54,6 +54,30 @@ class Policy(ABC):
         """Configure the policy with robot state keys."""
         pass
 
+    def reset(self, seed: int | None = None) -> None:
+        """Reset per-episode policy state.
+
+        Default implementation is a no-op. Policies that hold per-episode
+        state (e.g. diffusion sampler RNG, action chunk caches, KV-caches)
+        should override to apply the reset.
+
+        For SERVICE-mode policies (e.g. ``Gr00tPolicy(host=...)`` over
+        ZMQ), the override forwards the call to the server so its
+        per-episode RNG state can be re-initialised — without this,
+        ``set_eval_seed`` only seeds the client-side process, leaving
+        the server's diffusion sampler RNG drifting across calls and
+        breaking reproducibility (#187).
+
+        Args:
+            seed: Optional master seed forwarded to the policy's
+                random-number generators. When ``None``, implementations
+                may apply a default seed or leave RNG state untouched.
+        """
+        # Default no-op. Concrete policies override to apply per-episode
+        # state reset (RNG seeding, action-cache flush, server-side
+        # reset endpoint call, etc.).
+        return None
+
     @property
     def requires_images(self) -> bool:
         """Whether this policy needs camera frames in its observation.
