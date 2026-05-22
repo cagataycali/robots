@@ -276,7 +276,7 @@ def gr00t_inference(
     data_config: str = "fourier_gr1_arms_only",
     embodiment_tag: str = "gr1",
     denoising_steps: int = 4,
-    host: str = "127.0.0.1",
+    host: str | None = None,
     container_name: str | None = None,
     timeout: int = 60,
     use_tensorrt: bool = False,
@@ -525,6 +525,13 @@ def gr00t_inference(
     if api_token is None:
         api_token = os.environ.get("GROOT_API_TOKEN")
 
+    # Sentinel default: None means "user did not pass host=".
+    # Default to 127.0.0.1 (loopback, per AGENTS.md § LLM Input Safety).
+    # _start_service auto-flips to 0.0.0.0 ONLY when host was not explicitly set.
+    _host_was_explicit = host is not None
+    if host is None:
+        host = "127.0.0.1"
+
     # ── Validate all inputs in one call (scoped per action) ─────────
     try:
         validate_inputs(
@@ -622,6 +629,7 @@ def gr00t_inference(
             api_token=api_token,
             protocol=protocol,
             use_sim_policy_wrapper=use_sim_policy_wrapper,
+            host_was_explicit=_host_was_explicit,
         )
     elif action == "start":
         if checkpoint_path is None:
@@ -648,6 +656,7 @@ def gr00t_inference(
             api_token=api_token,
             protocol=protocol,
             use_sim_policy_wrapper=use_sim_policy_wrapper,
+            host_was_explicit=_host_was_explicit,
         )
     elif action == "restart":
         if checkpoint_path is None:
@@ -1079,19 +1088,20 @@ def _start_service(
     api_token: str | None,
     protocol: str = "n1.5",
     use_sim_policy_wrapper: bool = False,
+    host_was_explicit: bool = False,
 ) -> dict[str, Any]:
     """Start GR00T inference service using Isaac-GR00T's native inference service."""
     try:
         # Auto-flip host for container actions: Docker's -p port-publish requires the
-        # service to bind all interfaces inside the container. We only auto-flip if
-        # the user did NOT explicitly pass host= (i.e. they accepted the default).
+        # service to bind all interfaces inside the container. Only auto-flip if the
+        # user accepted the default (sentinel was None → resolved to 127.0.0.1).
         # Users who explicitly pass host="127.0.0.1" get it honoured (e.g. --network=host).
-        if host == "127.0.0.1":
+        if host == "127.0.0.1" and not host_was_explicit:
             import logging as _logging
 
             _logging.getLogger(__name__).info(
                 "Auto-flipping host from 127.0.0.1 to 0.0.0.0 for container "
-                "port-publish (-p). Pass host='0.0.0.0' explicitly to suppress."
+                "port-publish (-p). Pass host='127.0.0.1' explicitly to keep loopback."
             )
             host = "0.0.0.0"
         # Find container if not specified
@@ -1565,6 +1575,7 @@ def _lifecycle(
     api_token: str | None,
     protocol: str,
     use_sim_policy_wrapper: bool,
+    host_was_explicit: bool = False,
 ) -> dict[str, Any]:
     """Orchestrate the four-step setup or tear down a previously-started container.
 
@@ -1686,6 +1697,7 @@ def _lifecycle(
         api_token=api_token,
         protocol=protocol,
         use_sim_policy_wrapper=use_sim_policy_wrapper,
+        host_was_explicit=host_was_explicit,
     )
     steps.append({"step": "start", "result": start_result})
 

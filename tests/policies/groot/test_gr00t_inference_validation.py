@@ -1048,7 +1048,8 @@ class TestHostAutoFlipForContainer:
         from strands_robots.tools.gr00t_inference import gr00t_inference
 
         sig = inspect.signature(gr00t_inference)
-        assert sig.parameters["host"].default == "127.0.0.1"
+        # Sentinel default: None means "use 127.0.0.1" but distinguishes from explicit
+        assert sig.parameters["host"].default is None
 
     def test_start_service_auto_flips_loopback(self, monkeypatch):
         """_start_service should auto-flip 127.0.0.1 to 0.0.0.0 for Docker."""
@@ -1095,6 +1096,7 @@ class TestHostAutoFlipForContainer:
             dit_dtype="fp8",
             http_server=False,
             api_token=None,
+            host_was_explicit=False,
         )
         assert captured_host.get("host") == "0.0.0.0"
 
@@ -1332,3 +1334,71 @@ class TestExpandedParamValidationExtended:
             protocol="n1.5",
             volumes={"/tmp/checkpoints": "/data/checkpoints"},
         )
+
+
+class TestHostAutoFlipSentinel:
+    """Regression tests for the sentinel-based host auto-flip logic.
+
+    The auto-flip from 127.0.0.1 → 0.0.0.0 for Docker container actions
+    MUST only fire when the user accepted the default (i.e. did not pass
+    host= explicitly). Users who explicitly pass host="127.0.0.1" (e.g.
+    for --network=host deployments) must have their choice honoured.
+    """
+
+    def test_default_host_passes_not_explicit(self, monkeypatch):
+        """When host is NOT passed (None sentinel), host_was_explicit=False."""
+        from strands_robots.tools.gr00t_inference import gr00t_inference
+
+        captured = {}
+
+        def _mock_start_service(**kwargs):
+            captured.update(kwargs)
+            return {"status": "error", "message": "mocked"}
+
+        monkeypatch.setattr(
+            "strands_robots.tools.gr00t_inference._start_service",
+            _mock_start_service,
+        )
+        # Call without host= (uses default None → 127.0.0.1, not explicit)
+        gr00t_inference(action="start", checkpoint_path="/data/model")
+        assert captured.get("host") == "127.0.0.1"
+        assert captured.get("host_was_explicit") is False, (
+            "Default host (None sentinel) should pass host_was_explicit=False"
+        )
+
+    def test_explicit_loopback_passes_explicit_flag(self, monkeypatch):
+        """When user explicitly passes host='127.0.0.1', host_was_explicit=True."""
+        from strands_robots.tools.gr00t_inference import gr00t_inference
+
+        captured = {}
+
+        def _mock_start_service(**kwargs):
+            captured.update(kwargs)
+            return {"status": "error", "message": "mocked"}
+
+        monkeypatch.setattr(
+            "strands_robots.tools.gr00t_inference._start_service",
+            _mock_start_service,
+        )
+        # Call WITH explicit host="127.0.0.1" — must pass host_was_explicit=True
+        gr00t_inference(action="start", checkpoint_path="/data/model", host="127.0.0.1")
+        assert captured.get("host") == "127.0.0.1"
+        assert captured.get("host_was_explicit") is True, "Explicit host='127.0.0.1' must pass host_was_explicit=True"
+
+    def test_explicit_zero_passes_explicit_flag(self, monkeypatch):
+        """When user explicitly passes host='0.0.0.0', host_was_explicit=True."""
+        from strands_robots.tools.gr00t_inference import gr00t_inference
+
+        captured = {}
+
+        def _mock_start_service(**kwargs):
+            captured.update(kwargs)
+            return {"status": "error", "message": "mocked"}
+
+        monkeypatch.setattr(
+            "strands_robots.tools.gr00t_inference._start_service",
+            _mock_start_service,
+        )
+        gr00t_inference(action="start", checkpoint_path="/data/model", host="0.0.0.0")
+        assert captured.get("host") == "0.0.0.0"
+        assert captured.get("host_was_explicit") is True
