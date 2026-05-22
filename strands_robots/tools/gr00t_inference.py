@@ -526,7 +526,6 @@ def gr00t_inference(
         api_token = os.environ.get("GROOT_API_TOKEN")
 
     # ── Validate all inputs in one call (scoped per action) ─────────
-    # ── Validate all inputs in one call (scoped per action) ─────────
     try:
         validate_inputs(
             action=action,
