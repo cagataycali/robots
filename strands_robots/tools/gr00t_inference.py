@@ -79,6 +79,9 @@ _ALL_NUMERIC_RE = re.compile(r"^[0-9]+(?:\.[0-9]+)*$")
 # Factored pgrep pattern — single source of truth for both docker-exec and
 # host-fallback discovery paths. ERE syntax (procps-ng on Linux).
 _PGREP_INFERENCE_PORT_FMT = "inference_service.py.*--port[= ]{port}( |$)"
+# Python-side equivalent for re.search — uses (?:\s|$) instead of ( |$)
+# because Python re is always ERE-ish and \s is more precise.
+_PYTHON_PORT_RE_FMT = r"--port[= ]{port}(?:\s|$)"
 
 # Allowlists for TensorRT dtype parameters.
 _VALID_VIT_DTYPES = {"fp16", "fp8"}
@@ -136,10 +139,11 @@ def validate_inputs(
     that the main tool function stays focused on orchestration and each
     check is independently testable via this single entry-point.
 
-    Validation is scoped to the action: read-only actions (find_containers,
-    list, status, stop) only validate port/host/protocol; mutating actions
-    (start, restart, lifecycle, build_image, download_checkpoint,
-    start_container) validate the full parameter surface.
+    Validation is scoped to the action: actions whose only user-controlled
+    surface is port/host/protocol (find_containers, list, status, stop)
+    skip full parameter validation; mutating actions (start, restart,
+    lifecycle, build_image, download_checkpoint, start_container) validate
+    the full parameter surface.
     """
     # Action allowlist — reject unknown actions early with a clear error
     if action not in _VALID_ACTIONS:
@@ -166,9 +170,10 @@ def validate_inputs(
                 f"or a valid hostname like 'localhost'."
             ) from None
 
-    # Read-only actions only need port/host validation
-    _read_only_actions = ("find_containers", "list", "status", "stop")
-    if action in _read_only_actions:
+    # Port-only actions (find_containers, list, status, stop) only need
+    # port/host/protocol validation — the other params are unused by dispatch.
+    _port_only_actions = ("find_containers", "list", "status", "stop")
+    if action in _port_only_actions:
         return
 
     # ── Full validation for mutating actions (start, restart, lifecycle, etc.) ──
@@ -728,7 +733,7 @@ def _is_gr00t_process(container_name: str, pid: str, *, port: int | None = None)
             if is_gr00t and port is not None:
                 # Verify the process is serving on the requested port
                 # Use word-boundary regex to avoid partial matches (e.g. port 80 vs 8000)
-                return bool(re.search(rf"--port[= ]{port}(?:\s|$)", cmdline))
+                return bool(re.search(_PYTHON_PORT_RE_FMT.format(port=port), cmdline))
             return is_gr00t
     except (OSError, subprocess.SubprocessError, UnicodeDecodeError) as exc:
         if isinstance(exc, PermissionError):
@@ -764,7 +769,7 @@ def _is_gr00t_host_process(pid: str, *, port: int | None = None) -> bool:
                 and "--port" in cmdline  # Must have a --port flag to be a running service
             )
             if is_gr00t and port is not None:
-                return bool(re.search(rf"--port[= ]{port}(?:\s|$)", cmdline))
+                return bool(re.search(_PYTHON_PORT_RE_FMT.format(port=port), cmdline))
             return is_gr00t
     except (OSError, UnicodeDecodeError) as exc:
         if isinstance(exc, PermissionError):
