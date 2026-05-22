@@ -48,14 +48,16 @@ def _checkpoints_dir() -> Path:
 # Input validation helpers
 # ─────────────────────────────────────────────────────────────────────
 
-# Docker image reference pattern — supports registry:port/path:tag format.
+# Docker image reference pattern — supports registry:port/path:tag and @sha256:digest.
 # Examples: "gr00t:latest", "nvcr.io/nvidia/gr00t:n1.7", "localhost:5000/myorg/img:tag"
+#           "nvcr.io/nvidia/gr00t@sha256:abcdef..." (digest-pinned, supply-chain recommended)
 _DOCKER_IMAGE_RE = re.compile(
     r"^[a-zA-Z0-9]"  # must start with alnum
     r"(?:[a-zA-Z0-9._\-]*[a-zA-Z0-9])?"  # optional middle chars (host/path prefix)
     r"(?::[0-9]{1,5})?"  # optional registry port (:5000)
     r"(?:/[a-zA-Z0-9][a-zA-Z0-9._\-]*)*"  # path components (/org/img)
-    r"(?::[a-zA-Z0-9][a-zA-Z0-9._\-]*)?$"  # optional :tag
+    r"(?::[a-zA-Z0-9][a-zA-Z0-9._\-]*"  # option A: :tag
+    r"|@sha256:[a-f0-9]{64})?$"  # option B: @sha256:digest (mutually exclusive with tag)
 )
 
 # Characters that cause harm in subprocess argv or shell interpolation.
@@ -112,14 +114,29 @@ _VALID_ACTIONS = frozenset(
 )
 
 
-def _validate_path(value: str, label: str) -> None:
-    """Reject paths containing shell metacharacters, null bytes, or traversal sequences."""
+def _validate_path(value: str, label: str, *, reject_colon: bool = False) -> None:
+    """Reject paths containing shell metacharacters, null bytes, or traversal sequences.
+
+    Args:
+        value: The path string to validate.
+        label: Human-readable label for error messages.
+        reject_colon: When True, reject ':' in the value. Required for Docker
+            volume mount paths where ':' would be re-interpreted as
+            host:container:options separator by docker -v.
+    """
     if "\x00" in value:
         raise ValueError(f"{label} must not contain null bytes")
+    if value.startswith("-"):
+        raise ValueError(f"{label} must not start with '-' (got {value!r})")
     if any(part == ".." for part in re.split(r"[/\\]", value)):
         raise ValueError(f"{label} must not contain '..' path traversal components")
     if _SHELL_META.search(value):
         raise ValueError(f"{label} contains disallowed characters: {value!r}")
+    if reject_colon and ":" in value:
+        raise ValueError(
+            f"{label} must not contain ':' (docker -v interprets it as "
+            f"host:container:options separator; got {value!r})"
+        )
 
 
 def validate_inputs(
@@ -177,15 +194,17 @@ def validate_inputs(
         raise ValueError(f"host exceeds RFC 1035 maximum length of 253 chars (got {len(host)} chars)")
     try:
         ipaddress.ip_address(host)
-    except ValueError:
+    except ValueError as exc:
         # Reject all-numeric labels (e.g. "127.0.01") — these are clearly IP typos
         # not legitimate hostnames. Real hostnames must have at least one alpha label.
+        # Rejects all-numeric multi-label strings including Linux IPv4 short-forms
+        # like "127.1" — use canonical dotted-quad for clarity in agent-driven contexts.
         if _ALL_NUMERIC_RE.match(host) or not _HOSTNAME_RE.match(host):
             raise ValueError(
                 f"host must be a valid IP address or hostname (got {host!r}). "
                 f"Use '127.0.0.1' for loopback, '0.0.0.0' for all interfaces, "
                 f"or a valid hostname like 'localhost'."
-            ) from None
+            ) from exc
 
     # Port-only actions (find_containers, list, status, stop) only need
     # port/host/protocol validation — the other params are unused by dispatch.
@@ -202,8 +221,8 @@ def validate_inputs(
             raise ValueError(f"image_name must be a valid Docker image reference (got {image_name!r})")
         if volumes is not None:
             for vol_host, vol_container in volumes.items():
-                _validate_path(vol_host, "volumes key (host path)")
-                _validate_path(vol_container, "volumes value (container path)")
+                _validate_path(vol_host, "volumes key (host path)", reject_colon=True)
+                _validate_path(vol_container, "volumes value (container path)", reject_colon=True)
         if container_command is not None and _SHELL_META.search(container_command):
             raise ValueError(f"container_command contains disallowed characters: {container_command!r}")
         if checkpoint_path is not None:
@@ -249,8 +268,8 @@ def validate_inputs(
     # Volume paths validation
     if volumes is not None:
         for vol_host, vol_container in volumes.items():
-            _validate_path(vol_host, "volumes key (host path)")
-            _validate_path(vol_container, "volumes value (container path)")
+            _validate_path(vol_host, "volumes key (host path)", reject_colon=True)
+            _validate_path(vol_container, "volumes value (container path)", reject_colon=True)
 
     # Container command — reject shell metacharacters
     if container_command is not None and _SHELL_META.search(container_command):
@@ -554,7 +573,7 @@ def gr00t_inference(
             repo_tag=repo_tag,
             policy_name=policy_name,
         )
-    except ValueError as e:
+    except (ValueError, TypeError) as e:
         return {"status": "error", "message": str(e)}
 
     if action == "find_containers":
@@ -683,6 +702,7 @@ def gr00t_inference(
             api_token=api_token,
             protocol=protocol,
             use_sim_policy_wrapper=use_sim_policy_wrapper,
+            host_was_explicit=_host_was_explicit,
         )
     else:
         return {"status": "error", "message": f"Unknown action: {action}"}

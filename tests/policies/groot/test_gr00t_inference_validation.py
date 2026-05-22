@@ -1402,3 +1402,281 @@ class TestHostAutoFlipSentinel:
         gr00t_inference(action="start", checkpoint_path="/data/model", host="0.0.0.0")
         assert captured.get("host") == "0.0.0.0"
         assert captured.get("host_was_explicit") is True
+
+
+class TestReviewRound8Fixes:
+    """Regression tests for review round-8 fixes (2026-05-22 21:44 UTC).
+
+    Covers:
+    - restart path forwarding host_was_explicit
+    - colon rejection in volume paths (docker -v mount-redirect)
+    - digest-pinned image references
+    - TypeError handling in validation wrapper
+    - dash-prefix rejection in volume paths
+    """
+
+    def test_restart_forwards_host_was_explicit(self, monkeypatch):
+        """action='restart' must forward host_was_explicit to _start_service."""
+        from strands_robots.tools.gr00t_inference import gr00t_inference
+
+        captured = {}
+
+        def _mock_start_service(**kwargs):
+            captured.update(kwargs)
+            return {"status": "success", "message": "mocked"}
+
+        def _mock_stop_service(port):
+            pass
+
+        monkeypatch.setattr(
+            "strands_robots.tools.gr00t_inference._start_service",
+            _mock_start_service,
+        )
+        monkeypatch.setattr(
+            "strands_robots.tools.gr00t_inference._stop_service",
+            _mock_stop_service,
+        )
+        monkeypatch.setattr("time.sleep", lambda _: None)
+
+        # Explicit host='127.0.0.1' on restart must pass host_was_explicit=True
+        gr00t_inference(
+            action="restart",
+            checkpoint_path="/data/model",
+            host="127.0.0.1",
+        )
+        assert captured.get("host_was_explicit") is True, (
+            "restart path must forward host_was_explicit=True for explicit host"
+        )
+
+    def test_restart_default_host_not_explicit(self, monkeypatch):
+        """action='restart' with default host must pass host_was_explicit=False."""
+        from strands_robots.tools.gr00t_inference import gr00t_inference
+
+        captured = {}
+
+        def _mock_start_service(**kwargs):
+            captured.update(kwargs)
+            return {"status": "success", "message": "mocked"}
+
+        def _mock_stop_service(port):
+            pass
+
+        monkeypatch.setattr(
+            "strands_robots.tools.gr00t_inference._start_service",
+            _mock_start_service,
+        )
+        monkeypatch.setattr(
+            "strands_robots.tools.gr00t_inference._stop_service",
+            _mock_stop_service,
+        )
+        monkeypatch.setattr("time.sleep", lambda _: None)
+
+        # Default host (not passed) on restart → host_was_explicit=False
+        gr00t_inference(action="restart", checkpoint_path="/data/model")
+        assert captured.get("host_was_explicit") is False
+
+    def test_volume_path_colon_rejected(self):
+        """Volume paths containing ':' must be rejected (docker -v mount-redirect)."""
+        from strands_robots.tools.gr00t_inference import gr00t_inference
+
+        result = gr00t_inference(
+            action="start_container",
+            image_name="gr00t:latest",
+            volumes={"/legit/dir:rw,nosuid": "/container/path"},
+        )
+        assert result["status"] == "error"
+        assert ":" in result["message"] or "colon" in result["message"].lower()
+
+    def test_volume_value_colon_rejected(self):
+        """Container-side volume paths containing ':' must also be rejected."""
+        from strands_robots.tools.gr00t_inference import gr00t_inference
+
+        result = gr00t_inference(
+            action="start_container",
+            image_name="gr00t:latest",
+            volumes={"/host/path": "/container:path"},
+        )
+        assert result["status"] == "error"
+        assert ":" in result["message"]
+
+    def test_volume_path_dash_prefix_rejected(self):
+        """Volume paths starting with '-' must be rejected (option injection)."""
+        from strands_robots.tools.gr00t_inference import gr00t_inference
+
+        result = gr00t_inference(
+            action="start_container",
+            image_name="gr00t:latest",
+            volumes={"--privileged=foo": "/bar"},
+        )
+        assert result["status"] == "error"
+        assert "'-'" in result["message"] or "start with" in result["message"]
+
+    def test_digest_pinned_image_accepted(self):
+        """Digest-pinned image refs (registry/path@sha256:hex) must be accepted."""
+        from strands_robots.tools.gr00t_inference import gr00t_inference
+
+        # Should NOT fail validation on image_name (may fail later on docker ops)
+        result = gr00t_inference(
+            action="start_container",
+            image_name="nvcr.io/nvidia/gr00t@sha256:" + "a" * 64,
+        )
+        # If it fails, it should NOT be an image_name validation error
+        if result["status"] == "error":
+            assert "image_name" not in result["message"].lower() or "valid Docker image" not in result["message"]
+
+    def test_type_error_returns_structured_error(self):
+        """TypeError from bad parameter types must return structured error, not raise."""
+        from strands_robots.tools.gr00t_inference import gr00t_inference
+
+        # port="5555" (str instead of int) → TypeError on `1 <= port <= 65535`
+        result = gr00t_inference(action="start", checkpoint_path="/data/model", port="5555")
+        assert result["status"] == "error"
+        # Must not propagate as unhandled exception — returns dict
+
+    def test_end_to_end_bogus_action_returns_error_dict(self):
+        """Bogus action returns structured error dict (not raw exception)."""
+        from strands_robots.tools.gr00t_inference import gr00t_inference
+
+        result = gr00t_inference(action="bogus_action")
+        assert isinstance(result, dict)
+        assert result["status"] == "error"
+        assert "Unknown action" in result["message"] or "bogus_action" in result["message"]
+
+
+class TestReviewRound8Fixes:
+    """Regression tests for review round-8 fixes (2026-05-22 21:44 UTC).
+
+    Covers:
+    - restart path forwarding host_was_explicit
+    - colon rejection in volume paths (docker -v mount-redirect)
+    - digest-pinned image references
+    - TypeError handling in validation wrapper
+    - dash-prefix rejection in volume paths
+    """
+
+    def test_restart_forwards_host_was_explicit(self, monkeypatch):
+        """action='restart' must forward host_was_explicit to _start_service."""
+        from strands_robots.tools.gr00t_inference import gr00t_inference
+
+        captured = {}
+
+        def _mock_start_service(**kwargs):
+            captured.update(kwargs)
+            return {"status": "success", "message": "mocked"}
+
+        def _mock_stop_service(port):
+            pass
+
+        monkeypatch.setattr(
+            "strands_robots.tools.gr00t_inference._start_service",
+            _mock_start_service,
+        )
+        monkeypatch.setattr(
+            "strands_robots.tools.gr00t_inference._stop_service",
+            _mock_stop_service,
+        )
+        monkeypatch.setattr("time.sleep", lambda _: None)
+
+        # Explicit host='127.0.0.1' on restart must pass host_was_explicit=True
+        gr00t_inference(
+            action="restart",
+            checkpoint_path="/data/model",
+            host="127.0.0.1",
+        )
+        assert captured.get("host_was_explicit") is True, (
+            "restart path must forward host_was_explicit=True for explicit host"
+        )
+
+    def test_restart_default_host_not_explicit(self, monkeypatch):
+        """action='restart' with default host must pass host_was_explicit=False."""
+        from strands_robots.tools.gr00t_inference import gr00t_inference
+
+        captured = {}
+
+        def _mock_start_service(**kwargs):
+            captured.update(kwargs)
+            return {"status": "success", "message": "mocked"}
+
+        def _mock_stop_service(port):
+            pass
+
+        monkeypatch.setattr(
+            "strands_robots.tools.gr00t_inference._start_service",
+            _mock_start_service,
+        )
+        monkeypatch.setattr(
+            "strands_robots.tools.gr00t_inference._stop_service",
+            _mock_stop_service,
+        )
+        monkeypatch.setattr("time.sleep", lambda _: None)
+
+        # Default host (not passed) on restart -> host_was_explicit=False
+        gr00t_inference(action="restart", checkpoint_path="/data/model")
+        assert captured.get("host_was_explicit") is False
+
+    def test_volume_path_colon_rejected(self):
+        """Volume paths containing ':' must be rejected (docker -v mount-redirect)."""
+        from strands_robots.tools.gr00t_inference import gr00t_inference
+
+        result = gr00t_inference(
+            action="start_container",
+            image_name="gr00t:latest",
+            volumes={"/legit/dir:rw,nosuid": "/container/path"},
+        )
+        assert result["status"] == "error"
+        assert ":" in result["message"] or "colon" in result["message"].lower()
+
+    def test_volume_value_colon_rejected(self):
+        """Container-side volume paths containing ':' must also be rejected."""
+        from strands_robots.tools.gr00t_inference import gr00t_inference
+
+        result = gr00t_inference(
+            action="start_container",
+            image_name="gr00t:latest",
+            volumes={"/host/path": "/container:path"},
+        )
+        assert result["status"] == "error"
+        assert ":" in result["message"]
+
+    def test_volume_path_dash_prefix_rejected(self):
+        """Volume paths starting with '-' must be rejected (option injection)."""
+        from strands_robots.tools.gr00t_inference import gr00t_inference
+
+        result = gr00t_inference(
+            action="start_container",
+            image_name="gr00t:latest",
+            volumes={"--privileged=foo": "/bar"},
+        )
+        assert result["status"] == "error"
+        assert "'-'" in result["message"] or "start with" in result["message"]
+
+    def test_digest_pinned_image_accepted(self):
+        """Digest-pinned image refs (registry/path@sha256:hex) must be accepted."""
+        from strands_robots.tools.gr00t_inference import gr00t_inference
+
+        # Should NOT fail validation on image_name (may fail later on docker ops)
+        result = gr00t_inference(
+            action="start_container",
+            image_name="nvcr.io/nvidia/gr00t@sha256:" + "a" * 64,
+        )
+        # If it fails, it should NOT be an image_name validation error
+        if result["status"] == "error":
+            assert "valid Docker image" not in result["message"]
+
+    def test_type_error_returns_structured_error(self):
+        """TypeError from bad parameter types must return structured error, not raise."""
+        from strands_robots.tools.gr00t_inference import gr00t_inference
+
+        # port="5555" (str instead of int) -> TypeError on `1 <= port <= 65535`
+        result = gr00t_inference(action="start", checkpoint_path="/data/model", port="5555")
+        assert result["status"] == "error"
+        # Must not propagate as unhandled exception - returns dict
+
+    def test_end_to_end_bogus_action_returns_error_dict(self):
+        """Bogus action returns structured error dict (not raw exception)."""
+        from strands_robots.tools.gr00t_inference import gr00t_inference
+
+        result = gr00t_inference(action="bogus_action")
+        assert isinstance(result, dict)
+        assert result["status"] == "error"
+        assert "Unknown action" in result["message"] or "bogus_action" in result["message"]
