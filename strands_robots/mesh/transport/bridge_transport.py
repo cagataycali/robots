@@ -111,7 +111,7 @@ DEFAULT_BRIDGE_SUFFIXES: frozenset[str] = frozenset(
 #   cloud audit table / spam CloudWatch / inflate broker billing by
 #   appending arbitrary suffixes to allowed prefixes
 #   (``strands/x/safety/event/<10kb-blob>`` is the worst case — it ends
-#   up in the DDB audit table). See PENTEST_FINDINGS.md / Cycle 2.
+#   up in the DDB audit table).
 #
 # Operators who need a bare-prefix match for a custom suffix can opt in
 # explicitly via ``STRANDS_MESH_BRIDGE_TOPICS_PREFIX``.
@@ -194,7 +194,7 @@ def _should_bridge(
       matches ``response/<turn>``.
 
     The exact / prefix split closes the cloud-pollution attack
-    documented in PENTEST_FINDINGS.md / Cycle 2 — without the split, an
+    The pre-fix attack: without the split, an
     attacker could append arbitrary tails to any allowed prefix and
     have the bridge republish the message to MQTT (e.g. a 10 KiB blob
     on ``strands/<x>/safety/event/<blob>`` ends up in the DDB audit

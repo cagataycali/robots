@@ -785,7 +785,7 @@ class Mesh(SensorLoopsMixin):
         observes a turn_id (trivial on Zenoh LAN) can publish a
         correctly-HMAC-signed response and have the sender accept its
         forged ``result`` instead of the legitimate target's. See
-        PENTEST_FINDINGS.md / Cycle 5.
+        review feedback round 4 (D1 response-hijack defence).
         """
         try:
             raw = sample.payload.to_bytes().decode()

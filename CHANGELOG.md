@@ -108,8 +108,11 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
   the configured peer-rate ceiling are documented in the module
   docstrings as accepted limitations with mitigation paths.
 
-* **R4-10**: ``PENTEST_FINDINGS.md`` placeholder ``<this-commit>``
-  replaced with the actual SHA (``5384599``).
+* **R4-10** (superseded by R6): ``PENTEST_FINDINGS.md`` was removed
+  from this PR per scope-creep feedback (Yin, R6). The cycle-by-cycle
+  pentest evidence lives in commit messages and in this CHANGELOG; the
+  regression tests in ``tests/mesh/test_pentest_findings.py`` carry
+  the threat-model docstrings inline.
 
 * **CodeQL #226 / #227 / #228**: explanatory comments added to the
   three previously-bare except-pass blocks (``audit.py:316``,

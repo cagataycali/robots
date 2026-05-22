@@ -160,7 +160,7 @@ class _ProcessAuditState:
     ``_sign_record`` logs an ERROR and the record is rejected. This
     closes the "process clears its env briefly to write unsigned
     forgeries, then re-sets the PSK" attack documented at
-    PENTEST_FINDINGS.md / R4-2.
+    review feedback round 4 / R4-2.
     """
 
     __slots__ = ("seq_loaded", "psk_was_present")
@@ -584,7 +584,7 @@ def _ensure_paths(path: Path) -> None:
     to attacker-controlled territory like ``/dev/null`` or another
     process's file), refuse to operate. The audit log must always be
     a real regular file at the canonical location. See
-    PENTEST_FINDINGS.md / Cycle 4.
+    review feedback round 4 (symlink-swap defence).
     """
     parent = path.parent
     parent.mkdir(parents=True, exist_ok=True)

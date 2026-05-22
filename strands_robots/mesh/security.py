@@ -48,7 +48,7 @@ Configuration env vars
   rate (default ``"20/60"``). ``count`` clamped to
   :data:`_MAX_PEER_RATE_BURST`.
 
-Round-4 known limitations (see PENTEST_FINDINGS.md):
+Round-4 known limitations:
 
 * **Permissive-mode replay cache fillability (R4-6)** — when no PSK is
   configured, ``verify_envelope`` still records nonces for any

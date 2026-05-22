@@ -1410,8 +1410,7 @@ def test_r5_1_exec_cmd_turn_id_fallback_is_full_uuid(monkeypatch):
 
     src = inspect.getsource(Mesh._exec_cmd)
     assert "uuid.uuid4().hex[:8]" not in src, (
-        "_exec_cmd still truncates the turn_id fallback to 32 bits — "
-        "R5-1 reopened. Use the full hex."
+        "_exec_cmd still truncates the turn_id fallback to 32 bits — R5-1 reopened. Use the full hex."
     )
     assert "uuid.uuid4().hex" in src
 
@@ -1542,8 +1541,7 @@ def test_r5_5_peer_rate_config_narrow_exception(monkeypatch):
     src = inspect.getsource(sec._peer_rate_config)
     # Forbid the bare except.
     assert "except Exception:" not in src, (
-        "_peer_rate_config still catches bare Exception — R5-5 reopened. "
-        "AGENTS.md > Exception Clauses Must Be Narrow."
+        "_peer_rate_config still catches bare Exception — R5-5 reopened. AGENTS.md > Exception Clauses Must Be Narrow."
     )
     # Must catch the specific cases.
     assert "ValueError" in src
