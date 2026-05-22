@@ -57,6 +57,11 @@ _SHELL_META = re.compile(r"[;&|`$<>\\\n\r\x00]")
 _DATA_CONFIG_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _EMBODIMENT_TAG_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 _CONTAINER_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$")
+# RFC-952 hostname pattern for host validation.
+_HOSTNAME_RE = re.compile(
+    r"^[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?"
+    r"(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$"
+)
 
 # Allowlists for TensorRT dtype parameters.
 _VALID_VIT_DTYPES = {"fp16", "fp8"}
@@ -68,7 +73,7 @@ def _validate_path(value: str, label: str) -> None:
     """Reject paths containing shell metacharacters, null bytes, or traversal sequences."""
     if "\x00" in value:
         raise ValueError(f"{label} must not contain null bytes")
-    if ".." in value.split("/"):
+    if any(part == ".." for part in re.split(r"[/\\]", value)):
         raise ValueError(f"{label} must not contain '..' path traversal components")
     if _SHELL_META.search(value):
         raise ValueError(f"{label} contains disallowed characters: {value!r}")
@@ -108,10 +113,6 @@ def validate_inputs(
         raise ValueError(f"port must be between 1 and 65535, got {port}")
 
     # Host address validation — always validated (accept IPs and RFC-952 hostnames)
-    _HOSTNAME_RE = re.compile(
-        r"^[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?"
-        r"(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$"
-    )
     try:
         ipaddress.ip_address(host)
     except ValueError:
