@@ -1541,3 +1541,85 @@ class TestReviewRound8Fixes:
         assert isinstance(result, dict)
         assert result["status"] == "error"
         assert "Unknown action" in result["message"] or "bogus_action" in result["message"]
+
+
+class TestImageOnlyBranchValidation:
+    """Tests for validation on image-only actions (build_image, download_checkpoint, start_container)."""
+
+    def test_container_name_validated_on_start_container(self):
+        """container_name must be validated on start_container (image-only branch)."""
+        from strands_robots.tools.gr00t_inference import validate_inputs
+
+        with pytest.raises(ValueError, match="container_name"):
+            validate_inputs(
+                action="start_container",
+                data_config="so100",
+                embodiment_tag="so100",
+                port=5555,
+                host="127.0.0.1",
+                vit_dtype="fp8",
+                llm_dtype="nvfp4",
+                dit_dtype="fp8",
+                checkpoint_path=None,
+                trt_engine_path="/opt/engine",
+                container_name="--privileged",
+                protocol="n1.5",
+                image_name=None,
+                volumes=None,
+                container_command=None,
+                repo_url=None,
+                repo_tag=None,
+                policy_name=None,
+            )
+
+    def test_policy_name_dash_rejected_on_start_container(self):
+        """policy_name starting with '-' must be rejected on image-only actions."""
+        from strands_robots.tools.gr00t_inference import validate_inputs
+
+        with pytest.raises(ValueError, match="policy_name"):
+            validate_inputs(
+                action="start_container",
+                data_config="so100",
+                embodiment_tag="so100",
+                port=5555,
+                host="127.0.0.1",
+                vit_dtype="fp8",
+                llm_dtype="nvfp4",
+                dit_dtype="fp8",
+                checkpoint_path=None,
+                trt_engine_path="/opt/engine",
+                container_name=None,
+                protocol="n1.5",
+                image_name=None,
+                volumes=None,
+                container_command=None,
+                repo_url=None,
+                repo_tag=None,
+                policy_name="--malicious",
+            )
+
+    def test_valid_container_name_accepted_on_start_container(self):
+        """Valid container_name passes on start_container."""
+        from strands_robots.tools.gr00t_inference import validate_inputs
+
+        # Should not raise
+        validate_inputs(
+            action="start_container",
+            data_config="so100",
+            embodiment_tag="so100",
+            port=5555,
+            host="127.0.0.1",
+            vit_dtype="fp8",
+            llm_dtype="nvfp4",
+            dit_dtype="fp8",
+            checkpoint_path=None,
+            trt_engine_path="/opt/engine",
+            container_name="my-gr00t-container",
+            protocol="n1.5",
+            image_name=None,
+            volumes=None,
+            container_command=None,
+            repo_url=None,
+            repo_tag=None,
+            policy_name=None,
+        )

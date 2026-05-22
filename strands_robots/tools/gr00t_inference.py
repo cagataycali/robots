@@ -215,6 +215,9 @@ def validate_inputs(
     # inference-time params (data_config, embodiment_tag, dtypes).
     _image_only_actions = ("build_image", "download_checkpoint", "start_container")
     if action in _image_only_actions:
+        # Validate container_name (used by start_container, interpolated into docker run --name)
+        if container_name is not None and not _CONTAINER_NAME_RE.match(container_name):
+            raise ValueError(f"container_name must match Docker naming rules (got {container_name!r})")
         # Validate image_name, volumes, container_command (relevant to these actions)
         if image_name is not None and not _DOCKER_IMAGE_RE.match(image_name):
             raise ValueError(f"image_name must be a valid Docker image reference (got {image_name!r})")
@@ -227,7 +230,7 @@ def validate_inputs(
         if checkpoint_path is not None:
             _validate_path(checkpoint_path, "checkpoint_path")
         # Option-injection guard for params used by these actions
-        for param_name, param_value in [("repo_url", repo_url), ("repo_tag", repo_tag)]:
+        for param_name, param_value in [("repo_url", repo_url), ("repo_tag", repo_tag), ("policy_name", policy_name)]:
             if param_value is not None and param_value.startswith("-"):
                 raise ValueError(f"{param_name} must not start with '-' (got {param_value!r})")
         return
@@ -703,6 +706,8 @@ def gr00t_inference(
             use_sim_policy_wrapper=use_sim_policy_wrapper,
             host_was_explicit=_host_was_explicit,
         )
+    # NOTE: The else branch is unreachable — validate_inputs() rejects unknown
+    # actions before dispatch. Kept as defensive assertion.
     else:
         return {"status": "error", "message": f"Unknown action: {action}"}
 
