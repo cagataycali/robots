@@ -30,16 +30,26 @@ from strands_robots.mesh.iot.provision import (
 
 
 @pytest.fixture(autouse=True)
-def _disable_ca_pin_for_tests(monkeypatch):
-    """Disable the Amazon Root CA pin check for every test in this module.
+def _bypass_ca_for_tests(monkeypatch):
+    """Bypass the Amazon Root CA pin check for every test in this module.
 
-    The provisioning tests pre-seed a placeholder ``fake-ca`` file instead
-    of mocking the urllib download, so the pin verifier would correctly
-    reject it. This fixture flips the documented break-glass env var so
-    those tests can focus on provisioning behaviour rather than the CA
-    fetch path (which has dedicated coverage in ``test_iot_ca_pin.py``).
+    The provisioning tests focus on IoT API call orchestration, not CA
+    fetching. We monkey-patch ``_ensure_ca`` to a no-op so the tests do
+    not need to pre-seed a real pinned CA file or mock urllib. The CA
+    pinning behaviour itself has dedicated coverage in
+    ``test_iot_ca_pin.py`` — including a regression test that the
+    on-disk re-use path always raw-checks the pin even when the
+    ``STRANDS_MESH_DISABLE_CA_PIN`` break-glass is set (R3-4).
+
+    NB: we deliberately do NOT use ``STRANDS_MESH_DISABLE_CA_PIN=true``
+    here. The break-glass only applies to the *download* path; the
+    on-disk re-use path always raw-checks the pin, so a pre-seeded
+    ``fake-ca`` file would be (correctly) rejected.
     """
-    monkeypatch.setenv("STRANDS_MESH_DISABLE_CA_PIN", "true")
+    monkeypatch.setattr(
+        "strands_robots.mesh.iot.provision._ensure_ca",
+        lambda ca_path: None,
+    )
     yield
 
 
@@ -195,8 +205,6 @@ class TestProvisionRobot:
             "strands_robots.mesh.iot.provision._require_boto3",
             lambda: MagicMock(client=lambda *a, **kw: fake_iot_client),
         )
-        # Skip the urlopen call for the CA — write a fake one.
-        (tmp_cert_dir / "AmazonRootCA1.pem").write_text("fake-ca")
 
         result = provision_robot(
             "test-robot-01",
@@ -218,7 +226,6 @@ class TestProvisionRobot:
             "strands_robots.mesh.iot.provision._require_boto3",
             lambda: MagicMock(client=lambda *a, **kw: fake_iot_client),
         )
-        (tmp_cert_dir / "AmazonRootCA1.pem").write_text("fake-ca")
 
         provision_robot("r", cert_dir=tmp_cert_dir)
 
@@ -235,7 +242,6 @@ class TestProvisionRobot:
             "strands_robots.mesh.iot.provision._require_boto3",
             lambda: MagicMock(client=lambda *a, **kw: fake_iot_client),
         )
-        (tmp_cert_dir / "AmazonRootCA1.pem").write_text("fake-ca")
 
         result = provision_robot("e2", cert_dir=tmp_cert_dir)
         env = result.env_vars()
@@ -252,7 +258,6 @@ class TestProvisionRobot:
             "strands_robots.mesh.iot.provision._require_boto3",
             lambda: MagicMock(client=lambda *a, **kw: fake_iot_client),
         )
-        (tmp_cert_dir / "AmazonRootCA1.pem").write_text("fake-ca")
 
         provision_robot("my-robot", cert_dir=tmp_cert_dir)
 
@@ -266,7 +271,6 @@ class TestProvisionRobot:
             "strands_robots.mesh.iot.provision._require_boto3",
             lambda: MagicMock(client=lambda *a, **kw: fake_iot_client),
         )
-        (tmp_cert_dir / "AmazonRootCA1.pem").write_text("fake-ca")
 
         provision_robot("my-robot", cert_dir=tmp_cert_dir, attributes={"hw": "so100"})
 
@@ -281,7 +285,6 @@ class TestProvisionRobot:
             "strands_robots.mesh.iot.provision._require_boto3",
             lambda: MagicMock(client=lambda *a, **kw: fake_iot_client),
         )
-        (tmp_cert_dir / "AmazonRootCA1.pem").write_text("fake-ca")
 
         provision_robot("my-robot", cert_dir=tmp_cert_dir, attributes={"strands-mesh-role": "custom"})
 
@@ -298,7 +301,6 @@ class TestProvisionOperator:
             "strands_robots.mesh.iot.provision._require_boto3",
             lambda: MagicMock(client=lambda *a, **kw: fake_iot_client),
         )
-        (tmp_cert_dir / "AmazonRootCA1.pem").write_text("fake-ca")
 
         result = provision_operator("ops-1", cert_dir=tmp_cert_dir)
 
@@ -361,7 +363,6 @@ class TestCleanupStaleCerts:
             "strands_robots.mesh.iot.provision._require_boto3",
             lambda: MagicMock(client=lambda *a, **kw: fake_iot_client),
         )
-        (tmp_cert_dir / "AmazonRootCA1.pem").write_text("fake-ca")
 
         # Pretend the Thing already has an old cert attached.
         old_cert_arn = "arn:aws:iot:us-west-2:123:cert/old-cert-id-aaaaa"
@@ -387,7 +388,6 @@ class TestCleanupStaleCerts:
             "strands_robots.mesh.iot.provision._require_boto3",
             lambda: MagicMock(client=lambda *a, **kw: fake_iot_client),
         )
-        (tmp_cert_dir / "AmazonRootCA1.pem").write_text("fake-ca")
 
         fake_iot_client.list_thing_principals.return_value = {
             "principals": ["arn:aws:iot:us-west-2:123:cert/cant-delete"]

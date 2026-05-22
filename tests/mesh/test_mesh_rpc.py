@@ -245,11 +245,15 @@ def test_exec_cmd_publishes_error_on_dispatch_exception(
     m = Mesh(_FakeRobot(), peer_id="me")
     # Use a valid action (status) so we get past command validation and exercise
     # the original dispatch-exception path that this test was written for.
-    with patch.object(m, "_dispatch", side_effect=RuntimeError("boom")):
+    with patch.object(m, "_dispatch", side_effect=RuntimeError("boom-with-internal-detail")):
         m._exec_cmd({"sender_id": "alice", "turn_id": "t2", "command": {"action": "status"}})
     payload = next(d for k, d in captured_puts if k == "strands/alice/response/t2")
     assert payload["type"] == "error"
-    assert "boom" in payload["error"]
+    # R3-1: internal exception detail MUST NOT leak onto the wire. The
+    # error string is sanitised to a static "dispatch error" so a remote
+    # caller cannot pivot on path / attribute / library-trace fragments.
+    assert payload["error"] == "dispatch error"
+    assert "boom-with-internal-detail" not in payload["error"]
 
 
 def test_exec_cmd_rejects_unknown_action_with_validation_error(

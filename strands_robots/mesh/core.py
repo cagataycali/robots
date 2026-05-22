@@ -658,7 +658,23 @@ class Mesh(SensorLoopsMixin):
                 logger.debug("[mesh] %s: audit log unavailable: %s", self.peer_id, audit_exc)
             return
         except Exception as exc:
-            logger.warning("[mesh] %s: dispatch error: %s", self.peer_id, exc)
+            # Wide catch is INTENTIONAL on this inbound RPC path: any
+            # unhandled exception in a robot adapter would crash the
+            # dispatch thread and silently kill the mesh. We log full
+            # exc detail locally (operators need it for debugging) but
+            # emit ONLY a static "dispatch error" string on the wire so
+            # internal exception detail (paths, attribute names, third-
+            # party library traces) does not leak to a remote — possibly
+            # attacker-controlled — caller. The structured ValidationError
+            # / LockoutError paths above remain the preferred channel
+            # for the rejections clients actually need to distinguish.
+            logger.warning(
+                "[mesh] %s: dispatch error from %s: %s",
+                self.peer_id,
+                sender,
+                exc,
+                exc_info=True,
+            )
             if rkey is not None:
                 self._put_signed(
                     rkey,
@@ -666,7 +682,7 @@ class Mesh(SensorLoopsMixin):
                         "type": "error",
                         "responder_id": self.peer_id,
                         "turn_id": turn,
-                        "error": str(exc),
+                        "error": "dispatch error",
                         "timestamp": time.time(),
                     },
                 )

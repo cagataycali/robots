@@ -56,18 +56,6 @@ def _resolve_hz(env_name: str, default: float) -> float:
 
 
 class SensorLoopsMixin:
-    # Type hints for attrs/methods provided by host class (Mesh)
-    peer_id: str
-    robot: Any
-    _running: bool
-    _stop_event: threading.Event
-
-    def _put_signed(self, key: str, payload: dict[str, Any]) -> None:
-        """Provided by host Mesh class. Signs the payload (if PSK configured)
-        and publishes via the underlying transport. Declared here so static
-        type-checkers see the symbol on the mixin without duplicating logic."""
-        ...
-
     """Mixin providing all extended sensor publishing loops for Mesh.
 
     Requires the host class to have:
@@ -77,6 +65,22 @@ class SensorLoopsMixin:
     - self._stop_event: threading.Event
     - self._put_signed(key, payload) -> None
     """
+
+    # Type hints for attrs/methods provided by host class (Mesh).
+    peer_id: str
+    robot: Any
+    _running: bool
+    _stop_event: threading.Event
+
+    def _put_signed(self, key: str, payload: dict[str, Any]) -> None:
+        """Provided by host Mesh class. Signs the payload (if PSK configured)
+        and publishes via the underlying transport. Declared here so static
+        type-checkers see the symbol on the mixin without duplicating logic.
+
+        At runtime ``Mesh._put_signed`` shadows this stub via MRO
+        (``class Mesh(SensorLoopsMixin)``); this body is never executed.
+        """
+        ...
 
     # Pose
 

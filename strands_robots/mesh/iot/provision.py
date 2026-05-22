@@ -647,19 +647,23 @@ def _ensure_ca(ca_path: Path) -> None:
     should never be set in production.
     """
     if ca_path.exists() and ca_path.stat().st_size > 0:
-        # Re-verify pin against the existing on-disk copy when pinning is
-        # enabled. We use _verify_ca_bytes (the provisioning-side helper)
-        # so STRANDS_MESH_DISABLE_CA_PIN=true still works as a break-
-        # glass; verify_ca_pin would always do the raw hash compare and
-        # is only meant for forensic / ops callers.
+        # Existing-file branch: ALWAYS perform the raw hash compare,
+        # regardless of STRANDS_MESH_DISABLE_CA_PIN. The break-glass
+        # exists to allow re-encoding proxies on the *download* path
+        # (lines below) — it must NOT silently re-use a rogue CA from
+        # a prior compromised provisioning run. Operators who need
+        # to refresh a re-encoded cert can delete the file and let
+        # the download path run with the override set.
         try:
             existing = ca_path.read_bytes()
         except OSError as exc:
             raise RuntimeError(f"AmazonRootCA1 at {ca_path} unreadable: {exc}") from exc
-        if not _verify_ca_bytes(existing):
+        if not _hash_matches_pin(existing):
             logger.warning(
                 "[provision] existing CA at %s does NOT match pinned SHA-256. "
-                "Refusing to use it. Delete the file to force re-download.",
+                "Refusing to use it (STRANDS_MESH_DISABLE_CA_PIN does not "
+                "apply to the on-disk re-use path). Delete the file to "
+                "force re-download.",
                 ca_path,
             )
             raise RuntimeError(

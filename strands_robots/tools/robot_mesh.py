@@ -83,7 +83,20 @@ def _interrupt_approves(response: object) -> bool:
 
 
 def _rate_limit_check(action: str) -> str | None:
-    """Return None if OK, error message if rate-limited."""
+    """Return None if a slot is available, else the rejection message.
+
+    Inspects the sliding-window history but does NOT consume a slot.
+    Use :func:`_rate_limit_record` after a fleet-wide action's HITL
+    approval is positively granted (or unconditionally for actions
+    that do not require approval).
+
+    Splitting check from record means a *declined* HITL approval no
+    longer consumes a slot — without the split, three nuisance LLM
+    prompts that an operator declined within a minute would lock the
+    agent out of issuing a real ``emergency_stop``. That's the
+    opposite of the intended safety property: the rate limit exists
+    to bound LLM-driven nuisance, not to inhibit a genuine emergency.
+    """
     cfg = _RATE_LIMITS.get(action)
     if cfg is None:
         return None
@@ -101,8 +114,27 @@ def _rate_limit_check(action: str) -> str | None:
                 f"max {max_calls} calls per {window:.0f}s window. "
                 f"Try again in {wait:.1f}s."
             )
-        bucket.append(now)
     return None
+
+
+def _rate_limit_record(action: str) -> None:
+    """Append a slot to *action*'s sliding-window history.
+
+    Call this only after a HITL-required action's approval is granted,
+    or unconditionally for actions that do not require an interrupt.
+    Pairs with :func:`_rate_limit_check`.
+    """
+    cfg = _RATE_LIMITS.get(action)
+    if cfg is None:
+        return
+    _, window = cfg
+    now = time.monotonic()
+    with _RATE_LOCK:
+        bucket = _RATE_HISTORY.setdefault(action, collections.deque())
+        cutoff = now - window
+        while bucket and bucket[0] < cutoff:
+            bucket.popleft()
+        bucket.append(now)
 
 
 def _reset_rate_limits() -> None:
@@ -231,7 +263,9 @@ def robot_mesh(
         * Every ``tell`` / ``send`` / ``broadcast`` / ``stop`` /
           ``emergency_stop`` is audited.
     """
-    # Apply the per-action rate limit before doing any work.
+    # Check the per-action rate limit before doing any work — but
+    # do NOT consume a slot until we know the action is going to run.
+    # See _rate_limit_check / _rate_limit_record for rationale.
     rl_err = _rate_limit_check(action)
     if rl_err is not None:
         _audit_tool_action(action, target, False, f"rate_limit: {rl_err}")
@@ -273,9 +307,20 @@ def robot_mesh(
             )
 
         if not _interrupt_approves(response):
+            # Declined approval does NOT consume a rate-limit slot —
+            # see _rate_limit_check docstring for the safety rationale.
             _audit_tool_action(action, target, False, f"operator declined: {response!r}")
             return _err(f"action '{action}' was declined by the operator interrupt (response={response!r}).")
+        # Approval granted — consume the slot now. A concurrent caller
+        # that raced past the check above will see the slot once
+        # _rate_limit_record has written it.
+        _rate_limit_record(action)
         _audit_tool_action(action, target, True, f"operator approved: {response!r}")
+    else:
+        # No interrupt required for this action — consume the slot
+        # unconditionally (matches the pre-split behaviour for
+        # non-fleet-wide actions like ``tell``, ``send``, ``stop``).
+        _rate_limit_record(action)
 
     try:
         from strands_robots.mesh import get_local_robots

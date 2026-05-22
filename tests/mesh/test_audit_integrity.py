@@ -27,10 +27,10 @@ def _isolated_audit(monkeypatch, tmp_path):
     monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
     monkeypatch.delenv("STRANDS_MESH_AUDIT_PSK", raising=False)
     audit._SEQ_COUNTERS.clear()
-    audit._SEQ_LOADED = False  # reset so tests are deterministic
+    audit._AUDIT_STATE.seq_loaded = False  # reset so tests are deterministic
     yield
     audit._SEQ_COUNTERS.clear()
-    audit._SEQ_LOADED = False
+    audit._AUDIT_STATE.seq_loaded = False
 
 
 def _read_lines(p: Path) -> list[dict]:

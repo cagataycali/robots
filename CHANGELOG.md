@@ -5,6 +5,78 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## Unreleased - #194 (mesh security hardening)
 
+### Round 3 — additional review feedback (yinsong1986)
+
+* **Sanitised dispatch-error wire output** (R3-1): the catch-all in
+  `Mesh._exec_cmd` no longer leaks `str(exc)` onto the response topic.
+  Internal exception detail (filesystem paths, attribute names,
+  third-party traces) is logged locally with `exc_info=True` for
+  operator debugging; the wire emits only the static string
+  `"dispatch error"`. Structured `ValidationError` / `LockoutError`
+  paths remain the preferred channel for the rejections clients need
+  to distinguish.
+
+* **Released `_PEER_RATE_LOCK` before `bucket.consume()`** (R3-2): the
+  per-sender registry lock no longer covers the `bucket.consume()`
+  call. TokenBucket has its own internal lock so per-sender
+  consumption no longer single-threads through the global registry —
+  high command volume across many peers can now actually scale.
+
+* **Declined HITL approvals do NOT consume rate-limit slots** (R3-3):
+  `_rate_limit_check` was split into check-and-record. A declined
+  operator approval skips the record. Without this, three nuisance
+  LLM prompts an operator declines within a minute would lock the
+  agent out of issuing a real `emergency_stop` (capped at 3/min).
+  Approved actions and non-interrupt actions still consume slots
+  unconditionally.
+
+* **CA pin always raw-checked on the on-disk re-use path** (R3-4):
+  `STRANDS_MESH_DISABLE_CA_PIN` no longer applies to existing files.
+  The break-glass exists for the *download* path (re-encoding
+  proxies); silently re-using a rogue CA from a prior compromised
+  provisioning run is strictly worse than re-fetching every time.
+  Operators who need to refresh a re-encoded cert must delete the
+  file to force a fresh download. Documented inline.
+
+* **Extended `validate_command` to gate `model_path`,
+  `pretrained_name_or_path`, `policy_type`, and `server_address`**
+  (R3-5): the receiver-side `_dispatch` was forwarding these fields
+  to `_execute_task_sync`/`start_task` with no validation, so an
+  authenticated peer (or a leaked PSK) could pin robots at attacker-
+  controlled HF repos, filesystem paths, or remote inference servers
+  — bypassing the spirit of the `policy_host` allowlist. New helpers:
+  `is_safe_model_path` (charset + traversal check, optional HF org
+  allowlist), `is_safe_policy_type` (enum allowlist), and
+  `is_safe_server_address` (host portion routed through the existing
+  policy-host allowlist).
+
+* **Refactored `_PSK_WARNED` and `_SEQ_LOADED` onto module-level state
+  classes** (R3-6, CodeQL #219, #222, #223): the bare module-level
+  scalars repeatedly tripped CodeQL's "unused global variable" rule
+  even after the helper-hoist refactor. Both flags now live on
+  `_PROCESS_STATE.psk_warned` and `_AUDIT_STATE.seq_loaded`
+  respectively. Static analysers see a normal attribute read+write
+  on a single object instead of a `global` declaration on a scalar.
+
+* **Documented the chmod best-effort `except OSError: pass`** in
+  `_persist_seq_counters` (R3-7, CodeQL #225). chmod failure on
+  filesystems that don't honour POSIX permissions (FAT32, NFS without
+  uid map, restricted-mount volumes) is silently ignored — having a
+  working audit log without `0o600` is preferable to crashing safety
+  persistence over a chmod failure.
+
+* **Removed the duplicate docstring in `SensorLoopsMixin`** (R3-8,
+  CodeQL #224). The class had two consecutive docstrings; the second
+  was parsed as a no-effect string-statement. The single canonical
+  docstring now sits at the top of the class body, with the
+  `_put_signed` stub explicitly noted as runtime-shadowed by the
+  `Mesh` host class.
+
+* **New env vars documented** in README.md:
+  `STRANDS_MESH_HF_REPO_ALLOW`, `STRANDS_MESH_POLICY_TYPE_ALLOW`.
+
+### Round 1 + 2 — see existing entries below.
+
 ### Added: HMAC-signed envelopes for the mesh wire format
 
 Every mesh publish now goes through `Mesh._put_signed`, which wraps the

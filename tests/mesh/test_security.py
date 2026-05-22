@@ -23,7 +23,7 @@ def _isolate_security(monkeypatch):
     monkeypatch.delenv("STRANDS_MESH_REQUIRE_AUTH", raising=False)
     monkeypatch.delenv("STRANDS_MESH_REPLAY_WINDOW", raising=False)
     monkeypatch.delenv("STRANDS_MESH_POLICY_HOST_ALLOW", raising=False)
-    sec._PSK_WARNED = False  # reset one-shot warning so tests are deterministic
+    sec._PROCESS_STATE.psk_warned = False  # reset one-shot warning so tests are deterministic
     sec.clear_replay_cache()
     yield
     sec.clear_replay_cache()

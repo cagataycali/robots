@@ -57,6 +57,7 @@ import ipaddress
 import json
 import logging
 import os
+import re
 import threading
 import time
 import uuid
@@ -75,6 +76,40 @@ MAX_TIMEOUT_S: float = 300.0
 
 #: Maximum length (characters) of a natural-language ``instruction`` payload.
 MAX_INSTRUCTION_LEN: int = 2000
+
+#: Maximum length of a HuggingFace repo id / local model path. Real-world
+#: HF ids are well under 200 chars; 512 leaves headroom for nested local
+#: paths without becoming a DoS vector.
+MAX_MODEL_PATH_LEN: int = 512
+
+#: Allowed characters for HF repo ids and local model paths. HF format is
+#: ``<org>/<repo>`` with letters, digits, underscore, hyphen, dot, slash.
+#: Local paths must additionally allow the platform separator. We reject
+#: ``..`` traversal, shell metacharacters, NUL bytes, whitespace, and any
+#: byte outside the printable ASCII subset above.
+_MODEL_PATH_RE = re.compile(r"^[A-Za-z0-9_./\-]+$")
+
+#: Built-in policy_type allowlist. We match the LeRobot policy registry
+#: families plus the generic providers DevDuck ships with. Operators
+#: extend via ``STRANDS_MESH_POLICY_TYPE_ALLOW`` (comma-separated).
+_DEFAULT_POLICY_TYPES: frozenset[str] = frozenset(
+    {
+        # generic providers
+        "mock",
+        "groot",
+        "lerobot",
+        "lerobot_local",
+        # LeRobot policy classes that resolve_policy_class_by_name accepts
+        "act",
+        "diffusion",
+        "tdmpc",
+        "vqbet",
+        "pi0",
+        "pi0fast",
+        "smolvla",
+        "sac",
+    }
+)
 
 # Maximum forward clock skew accepted on signed envelopes. NTP drift on a
 # healthy fleet is sub-second; 5s is a generous safety margin while still
@@ -159,27 +194,50 @@ class LockoutError(SecurityError):
 
 # ─── PSK / configuration helpers ─────────────────────────────────────────
 
-# One-shot flag so the "PSK not set" warning only fires once per process,
-# regardless of how many envelopes are signed. Module-private state.
-_PSK_WARNED: bool = False
+
+class _ProcessSecurityState:
+    """Container for module-level mutable state.
+
+    Wrapping the one-shot flag(s) in a class instance lets static
+    analysers see a normal attribute read+write on a single object
+    instead of a ``global`` declaration on a module-level scalar — the
+    latter is what triggers CodeQL's "unused global variable" rule even
+    when the flag is genuinely consulted (CodeQL alerts #219, #223). The
+    helper below is the only mutator; sign_envelope reads `warned` via
+    the helper and never touches the attribute directly.
+    """
+
+    __slots__ = ("psk_warned",)
+
+    def __init__(self) -> None:
+        self.psk_warned: bool = False
+
+
+_PROCESS_STATE = _ProcessSecurityState()
 
 
 def _warn_psk_unset_once() -> None:
     """Emit the one-time "STRANDS_MESH_PSK not set" warning.
 
-    Subsequent calls are no-ops. Centralised here so :func:`sign_envelope`
-    stays focused on envelope construction and so static analysers see a
-    self-contained read + write of the module-level flag.
+    Subsequent calls are no-ops. The flag lives on
+    :data:`_PROCESS_STATE` so static analysers see a normal attribute
+    read+write on the same object — no module-level ``global`` keyword
+    is needed. This satisfies CodeQL's dataflow rule that previously
+    flagged the legacy ``_PSK_WARNED`` scalar as "unused".
     """
-    global _PSK_WARNED
-    if _PSK_WARNED:
+    if _PROCESS_STATE.psk_warned:
         return
-    _PSK_WARNED = True
+    _PROCESS_STATE.psk_warned = True
     logger.warning(
         "[security] STRANDS_MESH_PSK not set — mesh messages are "
         "unsigned. Set STRANDS_MESH_PSK to enable HMAC authentication "
         "(strict mode: STRANDS_MESH_REQUIRE_AUTH=true)."
     )
+
+
+def _reset_process_security_state() -> None:
+    """Test-only: reset one-shot flags on :data:`_PROCESS_STATE`."""
+    _PROCESS_STATE.psk_warned = False
 
 
 def _get_psk() -> bytes | None:
@@ -465,6 +523,112 @@ def is_safe_policy_host(host: str) -> bool:
     return False
 
 
+# ─── HuggingFace repo / local model path / policy_type allowlists ───────
+
+
+def _hf_repo_allowlist() -> list[str]:
+    """Operator-extensible allowlist of HF repo prefixes (org names).
+
+    Defaults to ``["nvidia", "huggingface", "lerobot"]`` which covers the
+    GR00T and LeRobot model families shipped with strands-robots.
+    Operators extend via ``STRANDS_MESH_HF_REPO_ALLOW`` (comma-separated
+    list of ``<org>`` or ``<org>/<repo>`` prefixes).
+    """
+    raw = os.getenv("STRANDS_MESH_HF_REPO_ALLOW", "")
+    extra = [pfx.strip().strip("/").lower() for pfx in raw.split(",") if pfx.strip()]
+    builtin = ["nvidia", "huggingface", "lerobot"]
+    return builtin + extra
+
+
+def is_safe_model_path(path: str, *, hf_only: bool = False) -> bool:
+    """Return True when *path* is a permitted HF repo id or local path.
+
+    Checks performed:
+
+    * Type and length: ``str``, non-empty, ``<= MAX_MODEL_PATH_LEN``.
+    * Charset: ``[A-Za-z0-9_./-]+`` only (rejects shell metacharacters,
+      whitespace, NUL bytes, non-ASCII, ``..`` traversal sequences).
+    * No path traversal: rejects any segment equal to ``..``.
+    * If *hf_only* is True (recommended for cross-mesh kwargs): the path
+      MUST resemble ``<org>/<repo>`` and the org prefix MUST be in
+      :func:`_hf_repo_allowlist`. This prevents an authenticated peer
+      from steering a robot at an attacker-controlled HF repo.
+    """
+    if not isinstance(path, str) or not path:
+        return False
+    if len(path) > MAX_MODEL_PATH_LEN:
+        return False
+    if not _MODEL_PATH_RE.fullmatch(path):
+        return False
+    # Reject .. traversal in any segment (handles ``a/../b`` and trailing
+    # ``a/..`` alike).
+    parts = path.replace("\\", "/").split("/")
+    if any(seg == ".." for seg in parts):
+        return False
+
+    if hf_only:
+        # Must look like <org>/<repo> — at least one slash, no leading
+        # slash (which would make it a local absolute path).
+        if path.startswith("/") or "/" not in path:
+            return False
+        org = parts[0].lower()
+        allow = _hf_repo_allowlist()
+        # Match by org prefix OR by full <org>/<repo> prefix.
+        for entry in allow:
+            entry_low = entry.lower()
+            if "/" in entry_low:
+                if path.lower().startswith(entry_low + "/") or path.lower() == entry_low:
+                    return True
+            elif org == entry_low:
+                return True
+        return False
+
+    return True
+
+
+def _policy_type_allowlist() -> frozenset[str]:
+    """Operator-extensible allowlist of policy_type values."""
+    raw = os.getenv("STRANDS_MESH_POLICY_TYPE_ALLOW", "")
+    extra = {pt.strip().lower() for pt in raw.split(",") if pt.strip()}
+    return frozenset(_DEFAULT_POLICY_TYPES | extra)
+
+
+def is_safe_policy_type(policy_type: str) -> bool:
+    """Return True iff *policy_type* is in the allowlist."""
+    if not isinstance(policy_type, str) or not policy_type:
+        return False
+    return policy_type.strip().lower() in _policy_type_allowlist()
+
+
+def is_safe_server_address(addr: str) -> bool:
+    """Validate a remote policy ``server_address`` (host[:port] or URL).
+
+    Splits off any scheme + port; the host portion is then checked
+    against :func:`is_safe_policy_host`. This reuses the existing
+    operator-controlled allowlist (``STRANDS_MESH_POLICY_HOST_ALLOW``)
+    rather than introducing a parallel one.
+    """
+    if not isinstance(addr, str) or not addr:
+        return False
+    if len(addr) > MAX_MODEL_PATH_LEN:
+        return False
+    s = addr.strip()
+    # Strip a scheme like "tcp://" or "zmq://" or "http://" if present.
+    if "://" in s:
+        s = s.split("://", 1)[1]
+    # Strip any trailing path / query.
+    s = s.split("/", 1)[0]
+    # Strip a port suffix (host:port — only the rightmost colon for IPv4
+    # / hostnames; IPv6 literals would need brackets, which we reject
+    # here for simplicity since our default allowlist is loopback-only).
+    if s.startswith("["):
+        # Bracketed IPv6 literal — reject for now. Operators can use a
+        # hostname + STRANDS_MESH_POLICY_HOST_ALLOW.
+        return False
+    host = s.rsplit(":", 1)[0] if ":" in s else s
+    return is_safe_policy_host(host)
+
+
 # ─── Command schema and bounds ───────────────────────────────────────────
 
 
@@ -547,6 +711,53 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
         if "policy_port" in cmd and cmd["policy_port"] is not None:
             out["policy_port"] = _coerce_int("policy_port", cmd["policy_port"], lo=1, hi=65535, default=None)
 
+        # ── New in round-3 ───────────────────────────────────────
+        # The receive-side dispatcher (mesh/core.py::_dispatch) forwards
+        # `model_path`, `pretrained_name_or_path`, `server_address`, and
+        # `policy_type` straight into _execute_task_sync / start_task.
+        # Without validation, any authenticated peer (or a leaked PSK)
+        # could pin the robot to an attacker-controlled HF repo,
+        # filesystem path, or remote inference server — bypassing the
+        # spirit of the policy_host allowlist entirely. Threat-vector
+        # #3 in pentest.md is only fully closed once these four fields
+        # are gated.
+        if "pretrained_name_or_path" in cmd and cmd["pretrained_name_or_path"]:
+            value = cmd["pretrained_name_or_path"]
+            if not isinstance(value, str) or not is_safe_model_path(value, hf_only=True):
+                raise ValidationError(
+                    f"pretrained_name_or_path={value!r} not in allowlist. Set "
+                    "STRANDS_MESH_HF_REPO_ALLOW to add an org/repo prefix "
+                    "(e.g. 'my-org')."
+                )
+            out["pretrained_name_or_path"] = value
+
+        if "model_path" in cmd and cmd["model_path"]:
+            value = cmd["model_path"]
+            # model_path can be either a HF id OR a local filesystem path,
+            # so we use hf_only=False — but the charset / traversal
+            # checks still bite, blocking shell injection / .. attacks.
+            if not isinstance(value, str) or not is_safe_model_path(value, hf_only=False):
+                raise ValidationError(
+                    f"model_path={value!r} contains disallowed characters or path-traversal segments."
+                )
+            out["model_path"] = value
+
+        if "policy_type" in cmd and cmd["policy_type"]:
+            value = cmd["policy_type"]
+            if not isinstance(value, str) or not is_safe_policy_type(value):
+                raise ValidationError(
+                    f"policy_type={value!r} not in allowlist. Set STRANDS_MESH_POLICY_TYPE_ALLOW to extend."
+                )
+            out["policy_type"] = value.strip().lower()
+
+        if "server_address" in cmd and cmd["server_address"]:
+            value = cmd["server_address"]
+            if not isinstance(value, str) or not is_safe_server_address(value):
+                raise ValidationError(
+                    f"server_address={value!r} host not in allowlist. Set STRANDS_MESH_POLICY_HOST_ALLOW to extend."
+                )
+            out["server_address"] = value
+
     elif action == "step":
         out["steps"] = _coerce_int("steps", cmd.get("steps", 1), lo=1, hi=10_000, default=1)
 
@@ -619,8 +830,13 @@ def consume_peer_token(sender_id: str) -> bool:
     self-prunes when it grows past 1000 buckets (any peer untouched for
     more than 10 windows is evicted).
 
-    The actual ``consume()`` call happens inside the registry lock so the
-    GC pass cannot pop the bucket between lookup and use.
+    Concurrency contract: the registry lock (``_PEER_RATE_LOCK``)
+    protects the bucket dict (lookup, insert, GC). The actual
+    ``bucket.consume()`` call is released back to the bucket's own
+    internal lock — TokenBucket is thread-safe by construction. Holding
+    the registry lock across ``consume`` would serialise every per-
+    sender check across the entire process and defeat the point of
+    per-bucket locks under high command volume across many peers.
     """
     if not sender_id:
         sender_id = "<anonymous>"
@@ -639,7 +855,10 @@ def consume_peer_token(sender_id: str) -> bool:
                 if stale != sender_id:
                     _PEER_RATE_LIMITS.pop(stale, None)
 
-        return bucket.consume(1.0)
+    # Released the registry lock — TokenBucket has its own internal
+    # lock, so per-sender consumption no longer single-threads through
+    # the global registry.
+    return bucket.consume(1.0)
 
 
 def reset_peer_rate_limits() -> None:
@@ -654,6 +873,7 @@ __all__ = [
     "AuthorizationError",
     "LockoutError",
     "MAX_DURATION_S",
+    "MAX_MODEL_PATH_LEN",
     "MAX_TIMEOUT_S",
     "RateLimitError",
     "SecurityError",
@@ -662,7 +882,10 @@ __all__ = [
     "auth_required",
     "clear_replay_cache",
     "consume_peer_token",
+    "is_safe_model_path",
     "is_safe_policy_host",
+    "is_safe_policy_type",
+    "is_safe_server_address",
     "psk_configured",
     "reset_peer_rate_limits",
     "sign_envelope",

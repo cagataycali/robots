@@ -93,7 +93,25 @@ _WRITE_LOCK = threading.Lock()
 # safety code path.
 _SEQ_LOCK = threading.Lock()
 _SEQ_COUNTERS: dict[str, int] = {}
-_SEQ_LOADED: bool = False
+
+
+class _ProcessAuditState:
+    """Container for module-level mutable flags.
+
+    Same rationale as ``mesh/security.py::_ProcessSecurityState``: we
+    keep the one-shot ``loaded`` flag on an instance attribute so static
+    analysers see a normal attribute read+write rather than a
+    ``global`` declaration on a module-level scalar (which CodeQL's
+    "unused global variable" rule mis-classifies — alert #222).
+    """
+
+    __slots__ = ("seq_loaded",)
+
+    def __init__(self) -> None:
+        self.seq_loaded: bool = False
+
+
+_AUDIT_STATE = _ProcessAuditState()
 
 __all__ = [
     "audit_log_path",
@@ -119,10 +137,11 @@ def _seq_sidecar_path() -> Path:
 def _load_seq_counters() -> None:
     """Restore ``_SEQ_COUNTERS`` from the sidecar file. Idempotent.
 
-    Caller MUST hold :data:`_SEQ_LOCK`.
+    Caller MUST hold :data:`_SEQ_LOCK`. Stores the one-shot "loaded"
+    flag on :data:`_AUDIT_STATE` so static analysers don't trip on a
+    bare ``global`` for a module-level scalar.
     """
-    global _SEQ_LOADED
-    if _SEQ_LOADED:
+    if _AUDIT_STATE.seq_loaded:
         return
     sidecar = _seq_sidecar_path()
     try:
@@ -139,7 +158,7 @@ def _load_seq_counters() -> None:
                             _SEQ_COUNTERS[key] = value
     except (OSError, json.JSONDecodeError) as exc:
         logger.warning("[audit] could not load seq sidecar %s: %s", sidecar, exc)
-    _SEQ_LOADED = True
+    _AUDIT_STATE.seq_loaded = True
 
 
 def _persist_seq_counters() -> None:
@@ -159,6 +178,12 @@ def _persist_seq_counters() -> None:
         try:
             os.chmod(sidecar, 0o600)
         except OSError:
+            # chmod is best-effort: filesystems that don't honour POSIX
+            # permissions (FAT32, NFS without uid map, mounted volumes
+            # under restricted mount options) silently fail this call,
+            # but the sidecar itself is still written and readable. We
+            # would rather have a working audit log without 0o600 than
+            # crash safety persistence over a chmod failure.
             pass
     except OSError as exc:
         logger.warning("[audit] could not persist seq sidecar %s: %s", sidecar, exc)
