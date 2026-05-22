@@ -81,8 +81,19 @@ _WRITE_LOCK = threading.Lock()
 # values within a single peer's stream are guaranteed to be adjacent. This
 # makes :func:`verify_audit_integrity` gap detection meaningful even in
 # processes that host multiple Mesh peers (test harnesses, ``Simulation``).
+#
+# Counters persist to a sidecar file (``mesh_audit.seq.json`` next to the
+# audit log) so a process restart does NOT reset them. Without the
+# sidecar, a compromised process could delete records, restart, and
+# yield a clean ``verify_audit_integrity()`` because every peer's seq
+# would start over at 1 — defeating the gap-detection half of the
+# threat model. The sidecar is loaded once on the first ``_next_seq``
+# call and rewritten under ``_SEQ_LOCK`` after each increment. Writes
+# are fail-soft: a write failure logs at WARNING but does not break the
+# safety code path.
 _SEQ_LOCK = threading.Lock()
 _SEQ_COUNTERS: dict[str, int] = {}
+_SEQ_LOADED: bool = False
 
 __all__ = [
     "audit_log_path",
@@ -100,16 +111,76 @@ def _audit_psk() -> bytes | None:
     return psk.encode("utf-8")
 
 
+def _seq_sidecar_path() -> Path:
+    """Return the location of the sequence-counter sidecar file."""
+    return audit_log_path().parent / "mesh_audit.seq.json"
+
+
+def _load_seq_counters() -> None:
+    """Restore ``_SEQ_COUNTERS`` from the sidecar file. Idempotent.
+
+    Caller MUST hold :data:`_SEQ_LOCK`.
+    """
+    global _SEQ_LOADED
+    if _SEQ_LOADED:
+        return
+    sidecar = _seq_sidecar_path()
+    try:
+        if sidecar.exists():
+            with open(sidecar, encoding="utf-8") as fh:
+                payload = json.load(fh)
+            if isinstance(payload, dict):
+                for key, value in payload.items():
+                    if isinstance(key, str) and isinstance(value, int) and value >= 0:
+                        # Only restore if our in-memory value is lower —
+                        # never roll a counter backwards even if the file
+                        # somehow has a stale value.
+                        if value > _SEQ_COUNTERS.get(key, 0):
+                            _SEQ_COUNTERS[key] = value
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning("[audit] could not load seq sidecar %s: %s", sidecar, exc)
+    _SEQ_LOADED = True
+
+
+def _persist_seq_counters() -> None:
+    """Write ``_SEQ_COUNTERS`` to the sidecar file. Fail-soft.
+
+    Caller MUST hold :data:`_SEQ_LOCK`.
+    """
+    sidecar = _seq_sidecar_path()
+    try:
+        sidecar.parent.mkdir(parents=True, exist_ok=True)
+        # Write to a temp file then rename so a crash mid-write cannot
+        # leave a half-formed sidecar that fails to parse on next load.
+        tmp = sidecar.with_suffix(sidecar.suffix + ".tmp")
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(_SEQ_COUNTERS, fh, sort_keys=True, separators=(",", ":"))
+        os.replace(tmp, sidecar)
+        try:
+            os.chmod(sidecar, 0o600)
+        except OSError:
+            pass
+    except OSError as exc:
+        logger.warning("[audit] could not persist seq sidecar %s: %s", sidecar, exc)
+
+
 def _next_seq(peer_id: str) -> int:
     """Return the next monotonic sequence number for *peer_id*.
 
     Each peer maintains its own counter under :data:`_SEQ_LOCK`, so two
     peers writing concurrently from the same process produce
     independently-numbered streams that gap-detection can verify.
+
+    Counters are loaded from a sidecar file on the first call per
+    process and rewritten after each increment, so a process restart
+    does not reset them. Persistence is fail-soft — a write failure is
+    logged but does not break the safety code path.
     """
     with _SEQ_LOCK:
+        _load_seq_counters()
         next_value = _SEQ_COUNTERS.get(peer_id, 0) + 1
         _SEQ_COUNTERS[peer_id] = next_value
+        _persist_seq_counters()
         return next_value
 
 
@@ -291,6 +362,7 @@ def verify_audit_integrity(records: list[dict[str, Any]] | None = None) -> dict[
         seq = record.get("seq")
         peer = record.get("peer_id", "")
 
+        record_is_bad = False
         if sig is not None:
             signed += 1
             if psk is None:
@@ -301,9 +373,18 @@ def verify_audit_integrity(records: list[dict[str, Any]] | None = None) -> dict[
                 verified += 1
             else:
                 bad_signature += 1
+                record_is_bad = True
         else:
             if psk_present:
                 missing_sig += 1
+
+        # Only advance the per-peer cursor on records we actually trust.
+        # If we let a tampered record update last_seq_by_peer, an attacker
+        # who edits a record's claimed seq value could hide a real gap
+        # caused by deleting subsequent records — the cursor would jump
+        # to the forged value and the next legit record would look adjacent.
+        if record_is_bad:
+            continue
 
         if isinstance(seq, int) and isinstance(peer, str):
             prev = last_seq_by_peer.get(peer)

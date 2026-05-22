@@ -647,8 +647,16 @@ def _ensure_ca(ca_path: Path) -> None:
     should never be set in production.
     """
     if ca_path.exists() and ca_path.stat().st_size > 0:
-        # Re-verify pin against existing on-disk copy when pinning enabled.
-        if not verify_ca_pin(ca_path):
+        # Re-verify pin against the existing on-disk copy when pinning is
+        # enabled. We use _verify_ca_bytes (the provisioning-side helper)
+        # so STRANDS_MESH_DISABLE_CA_PIN=true still works as a break-
+        # glass; verify_ca_pin would always do the raw hash compare and
+        # is only meant for forensic / ops callers.
+        try:
+            existing = ca_path.read_bytes()
+        except OSError as exc:
+            raise RuntimeError(f"AmazonRootCA1 at {ca_path} unreadable: {exc}") from exc
+        if not _verify_ca_bytes(existing):
             logger.warning(
                 "[provision] existing CA at %s does NOT match pinned SHA-256. "
                 "Refusing to use it. Delete the file to force re-download.",
@@ -679,23 +687,50 @@ def _ensure_ca(ca_path: Path) -> None:
         pass
 
 
-def _verify_ca_bytes(body: bytes) -> bool:
-    """Return True iff *body* hashes to the pinned Amazon Root CA1 fingerprint.
+def _hash_matches_pin(body: bytes) -> bool:
+    """Return True iff *body*'s SHA-256 matches the pinned fingerprint.
 
-    Honours the ``STRANDS_MESH_DISABLE_CA_PIN`` break-glass env var. When
-    that is set the function unconditionally returns True after logging a
-    WARNING, so the override surfaces in routine audits.
+    Pure check — no env vars, no logging. Suitable for forensic / ops
+    callers that need ground truth.
+    """
+    return hashlib.sha256(body).hexdigest() == _AMAZON_ROOT_CA1_SHA256
+
+
+def _verify_ca_bytes(body: bytes) -> bool:
+    """Return True if *body* may be used as the Amazon Root CA1.
+
+    This is the **provisioning-side** check used by :func:`_ensure_ca`.
+    It honours the ``STRANDS_MESH_DISABLE_CA_PIN`` break-glass env var:
+    when set, the function returns True for any input and logs a WARNING
+    so the override surfaces in routine audits. Operators set the
+    override only for proxy environments that legitimately re-encode the
+    cert; production deployments must leave it unset.
+
+    Forensic / ops scripts that want ground truth should call
+    :func:`verify_ca_pin` instead — that function never honours the
+    break-glass.
     """
     if os.getenv("STRANDS_MESH_DISABLE_CA_PIN", "").strip().lower() == "true":
         logger.warning("[provision] STRANDS_MESH_DISABLE_CA_PIN=true — CA pin check skipped")
         return True
-    return hashlib.sha256(body).hexdigest() == _AMAZON_ROOT_CA1_SHA256
+    return _hash_matches_pin(body)
 
 
 def verify_ca_pin(ca_path: Path) -> bool:
-    """Public helper — does the CA file at *ca_path* match the pinned hash?"""
+    """Public helper: does the CA file at *ca_path* match the pinned hash?
+
+    This function NEVER honours the ``STRANDS_MESH_DISABLE_CA_PIN``
+    break-glass — its job is to tell the caller the truth about whether
+    the file on disk is the canonical Amazon Root CA1. If it returned
+    True under the break-glass an attacker who set the env var on a
+    compromised host would defeat exactly the forensic check operators
+    rely on.
+
+    Returns False on any I/O error (missing file, permission denied,
+    etc.). The caller should treat False as "do not trust this CA".
+    """
     try:
-        return _verify_ca_bytes(ca_path.read_bytes())
+        return _hash_matches_pin(ca_path.read_bytes())
     except OSError:
         return False
 

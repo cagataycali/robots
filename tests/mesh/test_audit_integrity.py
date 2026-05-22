@@ -26,9 +26,11 @@ def _isolated_audit(monkeypatch, tmp_path):
     """Each test gets a fresh audit dir and reset sequence counter."""
     monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
     monkeypatch.delenv("STRANDS_MESH_AUDIT_PSK", raising=False)
-    audit._SEQ_COUNTERS.clear()  # reset so tests are deterministic
+    audit._SEQ_COUNTERS.clear()
+    audit._SEQ_LOADED = False  # reset so tests are deterministic
     yield
     audit._SEQ_COUNTERS.clear()
+    audit._SEQ_LOADED = False
 
 
 def _read_lines(p: Path) -> list[dict]:

@@ -500,7 +500,18 @@ agent.tool.gr00t_inference(action="stop", port=8000)
 | `STRANDS_MESH_PORT` | TCP port for the local Zenoh router | `7447` |
 | `ZENOH_CONNECT` | Comma-separated list of remote Zenoh endpoints to connect to | - |
 | `ZENOH_LISTEN` | Comma-separated list of endpoints for the local Zenoh listener | - |
-| `STRANDS_MESH_AUDIT_DIR` | Directory for the safety audit log (`mesh_audit.jsonl`) | `~/.strands_robots/` |
+| `STRANDS_MESH_AUDIT_DIR` | Directory for the safety audit log (`mesh_audit.jsonl`) and sequence-counter sidecar (`mesh_audit.seq.json`) | `~/.strands_robots/` |
+| `STRANDS_MESH_PSK` | Pre-shared key for HMAC-signed envelopes on the wire. Unset = permissive mode (legacy unsigned messages still accepted). Set = signed mode. See **Mesh security** below. | unset |
+| `STRANDS_MESH_REQUIRE_AUTH` | Set to `true` to reject unsigned envelopes outright, even when no PSK is configured. Useful for tests and staging gates that must fail closed. | `false` |
+| `STRANDS_MESH_REPLAY_WINDOW` | Past-tolerance for envelope `ts` (seconds). Capped at 600. | `60` |
+| `STRANDS_MESH_POLICY_HOST_ALLOW` | Comma-separated host/CIDR list extending the default loopback-only `policy_host` allowlist for VLA inference targets (e.g. `vla.internal,10.0.0.0/24`). | unset |
+| `STRANDS_MESH_PEER_RATE` | Per-sender command rate as `<count>/<seconds>`. The `_on_cmd` handler consumes one token before spawning the exec thread; starvation drops the cmd. Burst capped at 1000. | `20/60` |
+| `STRANDS_MESH_AUDIT_PSK` | Separate PSK for HMAC-signing audit-log records. Independent of the wire PSK so audit signing can rotate on its own schedule. Unset = audit records carry no signature (`verify_audit_integrity` reports them as unverifiable). | unset |
+| `STRANDS_MESH_OVERRIDE_CODE` | Operator code that clears the local emergency-stop lockout via `Mesh._resume_lockout(code)`. Compared in constant time. Unset = lockout cannot be cleared remotely. | unset |
+| `STRANDS_MESH_DEDUP_TTL` | Bridge-transport deduplication window (seconds). Caps how long the same envelope nonce is remembered across the Zenoh + IoT subscriber wrappers. | `120` |
+| `STRANDS_MESH_CAMERA_PRESIGN_TTL` | Lifetime (seconds) of presigned S3 GET URLs published in `/camera/.../ref` messages. Capped at 3600. | `60` |
+| `STRANDS_MESH_CAMERA_DISABLED` | Set to `true` to disable camera publishing entirely (privacy kill switch). `Mesh._publish_cameras_once` short-circuits before any frame is built. | `false` |
+| `STRANDS_MESH_DISABLE_CA_PIN` | Break-glass: skip the SHA-256 pin check when downloading or re-using `AmazonRootCA1.pem` during IoT provisioning. A WARNING is logged on every disabled run. Should never be set in production. | `false` |
 | `GROOT_API_TOKEN` | API token for GR00T inference service | - |
 | `STRANDS_ROBOT_MODE` | Override `Robot()` factory mode detection (`sim`, `real`, `auto`) | `auto` |
 | `STRANDS_TRUST_REMOTE_CODE` | Set to `1` to opt into HuggingFace `trust_remote_code` for `lerobot_local` policies | unset |
@@ -532,6 +543,54 @@ sim_a.mesh.emergency_stop()     # broadcast E-STOP, audited to disk
 Disable globally with `STRANDS_MESH=false` or per-robot with
 `Robot("so100", mesh=False)`.  Install the optional dependency with
 `pip install strands-robots[mesh]`.
+
+### Mesh security
+
+The mesh layer ships with two operating modes:
+
+**Permissive mode (default)** — `STRANDS_MESH_PSK` unset. Outgoing
+messages are wrapped in a versioned envelope but carry no signature,
+and verifiers accept un-enveloped legacy payloads. This preserves
+zero-config Zenoh-LAN setups for development and demos. A one-time
+WARNING is logged on the first signed publish so operators know they
+are not getting authentication.
+
+**Strict mode** — set `STRANDS_MESH_PSK=<secret>` (and optionally
+`STRANDS_MESH_REQUIRE_AUTH=true`). Every published mesh message is
+HMAC-SHA256-signed over a canonical JSON encoding; receivers reject
+unsigned, tampered, future-timestamped, or replayed envelopes via
+`mesh.security.verify_envelope`. The PSK is the symmetric secret
+distributed at robot-bootstrap time to every peer that should be able
+to issue commands. Load it from secrets manager / SSM Parameter Store —
+never commit it to source.
+
+The emergency-stop fleet-wide lockout is **only secure in strict
+mode**. In permissive mode `Mesh._on_safety_estop` and
+`_on_safety_resume` refuse to act on remote events because any LAN peer
+could otherwise publish unsigned `strands/safety/estop` (DoS) or
+`strands/safety/resume` (clear other peers' lockouts) payloads. Local
+calls to `Mesh.emergency_stop()` and `Mesh._resume_lockout(code)` still
+work in permissive mode — they just don't fan out to receivers without
+authentication. Set `STRANDS_MESH_PSK` plus
+`STRANDS_MESH_OVERRIDE_CODE` (the constant-time-compared operator code)
+to enable fleet-wide e-stop with safe resume.
+
+Per-action and per-sender rate limits, command validation
+(`mesh.security.validate_command`), the audit log
+(`Mesh.audit.log_safety_event`, signed when `STRANDS_MESH_AUDIT_PSK` is
+configured), and the `robot_mesh` LLM-tool's human-in-the-loop
+interrupt for `emergency_stop` / `broadcast` apply in both modes — they
+are independent layers of defence that bound damage even when
+authentication is off.
+
+Bridge-transport deployments (Zenoh + AWS IoT MQTT) gain
+cross-transport deduplication via `mesh.transport.bridge_transport`;
+the same envelope nonce delivered on both transports is dispatched
+exactly once.
+
+For a complete walkthrough of what each layer protects against, see
+`mesh/security.py`'s module docstring and the AGENTS.md threat-model
+section.
 
 ### Cache Directory
 

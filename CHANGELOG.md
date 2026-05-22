@@ -3,6 +3,146 @@
 All notable behavioural changes to `strands-robots` are logged here. Follows
 [Keep a Changelog](https://keepachangelog.com/) conventions.
 
+## Unreleased - #194 (mesh security hardening)
+
+### Added: HMAC-signed envelopes for the mesh wire format
+
+Every mesh publish now goes through `Mesh._put_signed`, which wraps the
+payload in a versioned envelope: `{v, ts, nonce, payload, sig}`. The
+signature is HMAC-SHA256 over a canonical (sort_keys=True) JSON encoding
+of the rest of the envelope, keyed by `STRANDS_MESH_PSK`. Receivers call
+`mesh.security.verify_envelope` (with a per-peer scope so multiple Mesh
+peers in the same process maintain independent replay caches). The
+verifier enforces an asymmetric freshness window (60 s past, 5 s
+forward), constant-time signature compare, and per-message replay
+protection via uuid4 nonces.
+
+Permissive mode (`STRANDS_MESH_PSK` unset) emits envelopes without a
+signature and accepts un-enveloped legacy payloads, so existing
+zero-config Zenoh-LAN setups keep working. Strict mode is opt-in via
+`STRANDS_MESH_PSK` plus optionally `STRANDS_MESH_REQUIRE_AUTH=true`.
+
+### Added: command validation, action allowlist, `policy_host` allowlist
+
+`mesh.security.validate_command` runs both at the receiver
+(`Mesh._exec_cmd`) and client-side (in `tools.robot_mesh`'s `tell`,
+`send`, `broadcast`). It enforces an action allowlist, instruction
+length cap (2 KiB), `duration` ≤ 1 h, `policy_port` in `[1, 65535]`,
+`steps` ≤ 10 000, and a `policy_host` allowlist (loopback-only by
+default; extend via `STRANDS_MESH_POLICY_HOST_ALLOW` with
+hostname or CIDR entries).
+
+### Added: per-sender token-bucket rate limit on `_on_cmd`
+
+`mesh.security.consume_peer_token(sender_id)` is called before
+`Mesh._on_cmd` spawns the exec thread. Default 20 cmds/60 s per sender,
+configurable via `STRANDS_MESH_PEER_RATE="<count>/<seconds>"` (burst
+capped at 1000). Idle senders are GC'd from the registry. Rate-limit
+drops are recorded in the audit log.
+
+### Added: emergency-stop persistent lockout (strict mode)
+
+`Mesh.emergency_stop()` engages a thread Event; `_dispatch` raises
+`mesh.security.LockoutError` for every action other than `status` or
+`resume` until the lockout is cleared. `Mesh.start()` subscribes to
+`strands/safety/estop` and `/safety/resume`, so the lockout is fleet-wide
+in strict mode. `_resume_lockout` requires `STRANDS_MESH_OVERRIDE_CODE`
+(constant-time compared). The lockout is **soft in permissive mode**:
+the safety handlers refuse to act on remote events when neither PSK nor
+strict-auth is configured, so a LAN attacker cannot weaponise the
+lockout for DoS. Documented in README's *Mesh security* section.
+
+### Added: signed audit log + integrity verifier
+
+`mesh.audit.log_safety_event` now writes per-record HMAC signatures
+(when `STRANDS_MESH_AUDIT_PSK` is configured) plus per-peer monotonic
+sequence numbers. Counters persist to a sidecar file (`mesh_audit.seq.json`
+next to the audit log) so a process restart does NOT reset them — a
+compromised process cannot delete records and renumber from 1 to evade
+gap detection. New `mesh.audit.verify_audit_integrity()` walks the log
+and reports `{ok, total, signed, verified, bad_signature, missing_sig,
+psk_present, sequence_gaps}`. Bad-signature records do not advance the
+per-peer cursor so a tampered seq value cannot mask a real gap on the
+next legit record.
+
+### Added: cross-transport deduplication for bridge mode
+
+`mesh.transport.bridge_transport._CommandDeduplicator` collapses the
+same command delivered via both Zenoh and AWS IoT MQTT into a single
+dispatch. Identity is the envelope nonce when present, otherwise a full
+256-bit SHA-256 fingerprint of `(sender_id, turn_id, command)`. TTL via
+`STRANDS_MESH_DEDUP_TTL` (default 120 s).
+
+### Added: AWS IoT policy scope tightening
+
+`_ROBOT_POLICY_DOC` and `_OPERATOR_POLICY_DOC` no longer grant
+`iot:Receive` on `strands/*`. Each role is restricted to the topics it
+actually subscribes to — robots get own `/cmd`, own `/response/*`,
+`broadcast`, `safety/estop`, `+/presence`; operators get the monitoring
+topics (`+/presence`, `+/state`, `+/health`, `+/safety/event`,
+`safety/estop`).
+
+### Added: Amazon Root CA1 SHA-256 pinning + fetch hardening
+
+`_ensure_ca` verifies the pinned SHA-256 fingerprint on every load
+(both download and re-use of an existing on-disk copy), caps the
+download body at 64 KiB, and times out after 15 s. The public
+`verify_ca_pin(path)` helper for ops scripts always does the raw hash
+compare and never honours `STRANDS_MESH_DISABLE_CA_PIN` — only the
+provisioning-side `_verify_ca_bytes` honours the break-glass.
+
+### Added: `robot_mesh` LLM-tool safety controls
+
+The agent-facing tool now uses `@tool(context=True)` to receive a
+Strands SDK `ToolContext`. `emergency_stop` and `broadcast` raise a
+proper human-in-the-loop interrupt
+(`tool_context.interrupt("robot_mesh-<action>-approval", reason=...)`)
+that pauses the agent loop and returns control to the host. Only
+canonical affirmatives (`y`/`yes`/`approve`/`approved`,
+case-insensitive, whitespace-trimmed) approve. Per-action sliding-
+window rate limits (e.g. `emergency_stop` capped at 3/min). Every
+safety-significant call is audited via `mesh.audit.log_safety_event`.
+Replaces the previous `confirm: bool` parameter.
+
+### Added: 11 new configuration env vars
+
+`STRANDS_MESH_PSK`, `STRANDS_MESH_REQUIRE_AUTH`,
+`STRANDS_MESH_REPLAY_WINDOW`, `STRANDS_MESH_POLICY_HOST_ALLOW`,
+`STRANDS_MESH_PEER_RATE`, `STRANDS_MESH_AUDIT_PSK`,
+`STRANDS_MESH_OVERRIDE_CODE`, `STRANDS_MESH_DEDUP_TTL`,
+`STRANDS_MESH_CAMERA_PRESIGN_TTL`, `STRANDS_MESH_CAMERA_DISABLED`,
+`STRANDS_MESH_DISABLE_CA_PIN`. All documented in README and in the
+`mesh/security.py` module docstring.
+
+### Tests
+
++143 new tests across:
+- `tests/mesh/test_security.py` (58)
+- `tests/mesh/test_security_regressions.py` (40)
+- `tests/mesh/test_robot_mesh_security.py` (19)
+- `tests/mesh/test_audit_integrity.py` (14)
+- `tests/mesh/test_bridge_dedup.py` (14)
+- `tests/mesh/test_iot_ca_pin.py` (11)
+- `tests/mesh/test_iot_policy_scope.py` (7)
+- `tests/mesh/test_camera_acl.py` (7)
+
+Total mesh tests: 609 passing (was 440 baseline before #194). No
+regressions; permissive-mode back-compat preserves existing zero-config
+flows.
+
+### Backwards compatibility
+
+* No PSK configured → permissive mode. Outgoing messages are wrapped
+  in an envelope but carry no `sig`; verifiers accept them with a
+  one-time WARNING. Bare legacy dicts are still accepted (`v` and
+  `payload` keys absent → passthrough).
+* Existing API signatures are unchanged except `tools.robot_mesh.robot_mesh`
+  lost the `confirm: bool` parameter (replaced by the SDK interrupt).
+  Callers that previously passed `confirm=True` now omit it; the
+  framework delivers the operator response.
+* The fleet-wide e-stop lockout is intentionally soft in permissive
+  mode (see README's *Mesh security* section for the rationale).
+
 ## Unreleased - #178 (LiberoOffScreenRenderEngine retired)
 
 ### Removed: ``LiberoOffScreenRenderEngine`` simulation backend (BREAKING)

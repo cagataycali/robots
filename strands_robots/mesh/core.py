@@ -770,11 +770,21 @@ class Mesh(SensorLoopsMixin):
         """Engage the local emergency-stop lockout in response to a fleet-
         wide ``strands/safety/estop`` broadcast.
 
-        The verifier rejects unsigned envelopes in strict mode, so an
-        attacker without the PSK cannot trigger a fleet lockout. The
-        sender is still allowed to be ourselves — engaging the flag
-        twice is a no-op.
+        Authentication policy: this handler refuses to act when neither
+        ``STRANDS_MESH_PSK`` nor ``STRANDS_MESH_REQUIRE_AUTH`` is
+        configured. The fleet-wide lockout is a safety control and any
+        peer that can engage it must prove the wire is authenticated;
+        otherwise an attacker on the LAN could weaponise it as a fleet-
+        wide DoS by spamming ``safety/estop`` with bare dicts. Issuers
+        who legitimately want the lockout to fan out must run with PSK.
         """
+        if not _security.psk_configured() and not _security.auth_required():
+            logger.warning(
+                "[safety] %s: ignoring remote estop in permissive mode "
+                "(set STRANDS_MESH_PSK or STRANDS_MESH_REQUIRE_AUTH=true to enable fleet-wide lockout)",
+                self.peer_id,
+            )
+            return
         try:
             raw = sample.payload.to_bytes().decode()
             envelope = json.loads(raw)
@@ -799,7 +809,22 @@ class Mesh(SensorLoopsMixin):
         The publisher of the resume event already validated the operator
         override code locally (see :meth:`_resume_lockout`); we trust the
         signed envelope and follow.
+
+        Authentication policy: same as :meth:`_on_safety_estop`. In
+        permissive mode (no PSK, no strict-auth) the handler refuses to
+        clear the lockout — otherwise any LAN peer could publish an
+        unsigned ``strands/safety/resume`` and silently undo every
+        peer's e-stop. Operators clearing a lockout in permissive mode
+        must do it locally via :meth:`_resume_lockout` or by restarting
+        the process.
         """
+        if not _security.psk_configured() and not _security.auth_required():
+            logger.warning(
+                "[safety] %s: ignoring remote resume in permissive mode "
+                "(set STRANDS_MESH_PSK or STRANDS_MESH_REQUIRE_AUTH=true to enable fleet-wide resume)",
+                self.peer_id,
+            )
+            return
         try:
             raw = sample.payload.to_bytes().decode()
             envelope = json.loads(raw)

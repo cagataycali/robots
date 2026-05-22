@@ -254,9 +254,19 @@ def robot_mesh(
                     "warning": ("Fleet-wide physical effect. Reply 'y' to approve, anything else to deny."),
                 },
             )
-        except Exception as exc:
-            # Interrupts are not supported in direct tool-call paths
-            # (agent.tool.robot_mesh(...)). Fail closed.
+        except RuntimeError as exc:
+            # ToolContext.interrupt raises RuntimeError when no agent
+            # instance is attached — i.e. the tool is being invoked
+            # outside a Strands agent loop (a direct
+            # ``agent.tool.robot_mesh(...)`` call, a unit test that did
+            # not wire up the SDK, etc.). In those contexts there is no
+            # operator to ask, so fail-closed.
+            #
+            # NB: the SDK's ``InterruptException`` MUST propagate up to
+            # pause the agent loop, so we deliberately do NOT catch
+            # ``Exception`` here — that would swallow the normal
+            # interrupt-pause flow and turn every approval into an
+            # immediate "interrupt unavailable" error.
             _audit_tool_action(action, target, False, f"interrupt unavailable: {exc}")
             return _err(
                 f"action '{action}' requires a human-in-the-loop interrupt. Interrupts are not available here: {exc}"

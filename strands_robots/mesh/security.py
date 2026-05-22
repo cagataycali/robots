@@ -159,8 +159,27 @@ class LockoutError(SecurityError):
 
 # ─── PSK / configuration helpers ─────────────────────────────────────────
 
-# One-shot flag so we only log the "PSK not set" warning once per process.
-_PSK_WARNED = False
+# One-shot flag so the "PSK not set" warning only fires once per process,
+# regardless of how many envelopes are signed. Module-private state.
+_PSK_WARNED: bool = False
+
+
+def _warn_psk_unset_once() -> None:
+    """Emit the one-time "STRANDS_MESH_PSK not set" warning.
+
+    Subsequent calls are no-ops. Centralised here so :func:`sign_envelope`
+    stays focused on envelope construction and so static analysers see a
+    self-contained read + write of the module-level flag.
+    """
+    global _PSK_WARNED
+    if _PSK_WARNED:
+        return
+    _PSK_WARNED = True
+    logger.warning(
+        "[security] STRANDS_MESH_PSK not set — mesh messages are "
+        "unsigned. Set STRANDS_MESH_PSK to enable HMAC authentication "
+        "(strict mode: STRANDS_MESH_REQUIRE_AUTH=true)."
+    )
 
 
 def _get_psk() -> bytes | None:
@@ -302,17 +321,9 @@ def sign_envelope(payload: dict[str, Any]) -> dict[str, Any]:
         "payload": payload,
     }
 
-    global _PSK_WARNED  # warning-state flag; declared up front so static
-    # analyzers see the name before its first use.
     psk = _get_psk()
     if psk is None:
-        if not _PSK_WARNED:
-            logger.warning(
-                "[security] STRANDS_MESH_PSK not set — mesh messages are "
-                "unsigned. Set STRANDS_MESH_PSK to enable HMAC authentication "
-                "(strict mode: STRANDS_MESH_REQUIRE_AUTH=true)."
-            )
-            _PSK_WARNED = True
+        _warn_psk_unset_once()
         return envelope
 
     body = _canonical_bytes({k: envelope[k] for k in ("v", "ts", "nonce", "payload")})

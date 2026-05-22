@@ -236,6 +236,7 @@ def test_audit_disk_format_canonical(monkeypatch, tmp_path):
     from strands_robots.mesh import audit
 
     audit._SEQ_COUNTERS.clear()
+    audit._SEQ_LOADED = False
     audit.log_safety_event("estop", "x", {"z": 1, "a": 2, "m": 3})
     line = audit.audit_log_path().read_text().strip()
     # Keys in record + payload should be alphabetically sorted.
@@ -338,6 +339,7 @@ def test_audit_seq_per_peer_no_phantom_gaps(monkeypatch, tmp_path):
     from strands_robots.mesh import audit
 
     audit._SEQ_COUNTERS.clear()
+    audit._SEQ_LOADED = False
     # Interleaved writes from two peers.
     for i in range(5):
         audit.log_safety_event("e", "peer-a", {"i": i})
@@ -396,6 +398,7 @@ def test_lockout_raises_lockouterror_and_audits(monkeypatch, tmp_path):
     from strands_robots.mesh.core import Mesh
 
     audit._SEQ_COUNTERS.clear()
+    audit._SEQ_LOADED = False
     mock_robot = MagicMock()
     m = Mesh(mock_robot, peer_id="r1")
     m._estop_lockout.set()
@@ -473,3 +476,257 @@ def test_unsigned_estop_rejected_in_strict_mode(monkeypatch, tmp_path):
 
     receiver._on_safety_estop(sample)
     assert not receiver._estop_lockout.is_set(), "unsigned estop must be ignored"
+
+
+# ─── Round-2 review regressions (PR #194 — 2026-05-22) ──────────────────
+
+
+def test_publish_safety_event_goes_through_signed_envelope(monkeypatch, tmp_path):
+    """publish_safety_event MUST route through _put_signed so an attacker
+    cannot inject unsigned fake safety events into the cloud audit table.
+
+    Round-2 finding #1 (yinsong1986): the topic is mirrored to
+    DynamoDB via the IoT bootstrap rule, and was previously emitted via
+    raw transport.put().
+    """
+    monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
+    from unittest.mock import MagicMock
+
+    from strands_robots.mesh.core import Mesh
+
+    m = Mesh(MagicMock(), peer_id="r1")
+    m._running = True  # publish_safety_event short-circuits when not running
+    captured: list[tuple[str, dict]] = []
+    m._put_signed = lambda topic, payload: captured.append((topic, payload))  # type: ignore[method-assign]
+
+    m.publish_safety_event("estop", payload={"reason": "test"})
+
+    assert len(captured) == 1
+    topic, event = captured[0]
+    assert topic == "strands/r1/safety/event"
+    assert event["type"] == "estop"
+    assert event["peer_id"] == "r1"
+
+
+def test_sensor_publishes_go_through_signed_envelope(monkeypatch, tmp_path):
+    """All seven sensor topics (pose/health/imu/odom/lidar/hand/map) must
+    route through _put_signed. Round-2 finding #1.
+
+    We don't drive the sensor loops (they're long-running threads); we
+    grep the source for `transport.put(` calls inside SensorLoopsMixin to
+    fail loudly if any future refactor reintroduces the unsigned path.
+    """
+    from pathlib import Path
+
+    src = Path("strands_robots/mesh/sensors.py").read_text()
+    # The only legitimate `put(` calls in sensors.py belong to imports
+    # (the `from .transport import put` line) and the `_put_signed`
+    # method itself. Anything that publishes via raw `put(f"strands/...` or
+    # `transport.put(...)` is a bug.
+    bad_lines = [line for line in src.splitlines() if 'put(f"strands/' in line and "_put_signed" not in line]
+    assert bad_lines == [], (
+        "sensors.py must not publish via raw put(); use self._put_signed() "
+        "instead. Offending lines:\n  " + "\n  ".join(bad_lines)
+    )
+
+
+def test_permissive_mode_safety_estop_refused(monkeypatch, tmp_path):
+    """In permissive mode (no PSK, no STRICT_AUTH) the receiver MUST refuse
+    to engage its lockout in response to a remote safety/estop. Otherwise
+    any LAN peer can DoS the fleet.
+
+    Round-2 finding #2.
+    """
+    monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
+    monkeypatch.delenv("STRANDS_MESH_PSK", raising=False)
+    monkeypatch.delenv("STRANDS_MESH_REQUIRE_AUTH", raising=False)
+    from unittest.mock import MagicMock
+
+    from strands_robots.mesh.core import Mesh
+
+    receiver = Mesh(MagicMock(), peer_id="r-receiver")
+    assert not receiver._estop_lockout.is_set()
+
+    sample = MagicMock()
+    sample.payload.to_bytes.return_value = b'{"peer_id": "anyone", "t": 0}'
+
+    receiver._on_safety_estop(sample)
+    assert not receiver._estop_lockout.is_set(), "permissive-mode receivers must NOT engage lockout from remote estop"
+
+
+def test_permissive_mode_safety_resume_refused(monkeypatch, tmp_path):
+    """In permissive mode an attacker on the LAN can publish
+    strands/safety/resume to silently undo every peer's e-stop. The
+    handler MUST refuse to clear the lockout.
+
+    Round-2 finding #2 (the more dangerous half — clearing a real e-stop).
+    """
+    monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
+    monkeypatch.delenv("STRANDS_MESH_PSK", raising=False)
+    monkeypatch.delenv("STRANDS_MESH_REQUIRE_AUTH", raising=False)
+    from unittest.mock import MagicMock
+
+    from strands_robots.mesh.core import Mesh
+
+    receiver = Mesh(MagicMock(), peer_id="r-receiver")
+    receiver._estop_lockout.set()  # simulate a real, locally-engaged e-stop
+    assert receiver._estop_lockout.is_set()
+
+    sample = MagicMock()
+    sample.payload.to_bytes.return_value = b'{"peer_id": "anyone", "t": 0}'
+
+    receiver._on_safety_resume(sample)
+    assert receiver._estop_lockout.is_set(), (
+        "permissive-mode receivers MUST NOT clear lockout from a remote resume "
+        "— that's the LAN-attacker silent-undo path"
+    )
+
+
+def test_audit_seq_persists_across_process_restart(monkeypatch, tmp_path):
+    """_SEQ_COUNTERS is reloaded from the sidecar file so a process restart
+    does NOT reset every peer's seq back to 1. A compromised process that
+    deletes records and restarts must NOT yield a clean
+    verify_audit_integrity() result.
+
+    Round-2 finding #4.
+    """
+    monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
+    from strands_robots.mesh import audit
+
+    # Process 1: write three events.
+    audit._SEQ_COUNTERS.clear()
+    audit._SEQ_LOADED = False
+    for i in range(3):
+        audit.log_safety_event("e", "peer-a", {"i": i})
+    assert audit._SEQ_COUNTERS["peer-a"] == 3
+
+    # Sidecar must exist and reflect the counter.
+    sidecar = audit._seq_sidecar_path()
+    assert sidecar.exists(), "seq sidecar must be persisted"
+    import json as _json
+
+    on_disk = _json.loads(sidecar.read_text())
+    assert on_disk == {"peer-a": 3}
+
+    # Process 2: simulate restart by clearing in-memory state.
+    audit._SEQ_COUNTERS.clear()
+    audit._SEQ_LOADED = False
+
+    # Next event must continue from 4, not restart at 1.
+    audit.log_safety_event("e", "peer-a", {"i": "after-restart"})
+    assert audit._SEQ_COUNTERS["peer-a"] == 4, "seq counter MUST resume from sidecar after restart, not reset to 1"
+
+
+def test_audit_bad_signature_does_not_advance_per_peer_cursor(monkeypatch, tmp_path):
+    """A tampered record's seq value MUST NOT update last_seq_by_peer in
+    verify_audit_integrity. Otherwise an attacker can edit a record's
+    claimed seq to mask a real gap caused by deleting subsequent records.
+
+    Round-2 finding #7.
+    """
+    monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
+    monkeypatch.setenv("STRANDS_MESH_AUDIT_PSK", "test-psk")
+    from strands_robots.mesh import audit
+
+    audit._SEQ_COUNTERS.clear()
+    audit._SEQ_LOADED = False
+    # Write three legit signed records.
+    for i in range(3):
+        audit.log_safety_event("e", "peer-a", {"i": i})
+
+    # Tamper with record #2: forge its seq to 99 so the next legit record
+    # at seq=3 would look like it has a huge gap if the cursor advanced.
+    log_path = audit.audit_log_path()
+    import json as _json
+
+    lines = log_path.read_text().splitlines()
+    rec = _json.loads(lines[1])
+    rec["seq"] = 99
+    # Don't re-sign; signature verification will fail and the record
+    # should be flagged as bad_signature and NOT advance the cursor.
+    lines[1] = _json.dumps(rec, sort_keys=True, separators=(",", ":"))
+    log_path.write_text("\n".join(lines) + "\n")
+
+    result = audit.verify_audit_integrity()
+    assert result["bad_signature"] >= 1, "tampered record must be flagged"
+    # Cursor must NOT have jumped to 99 — record 3 should still be
+    # adjacent to record 1, so we expect a gap from (1, 3) reported.
+    gaps = result["sequence_gaps"]
+    if gaps:
+        for prev, curr in gaps:
+            assert curr <= 3, (
+                f"bad_signature record advanced cursor: gap ({prev}, {curr}) "
+                f"contains the forged seq=99 — cursor was poisoned"
+            )
+
+
+def test_verify_ca_pin_ignores_break_glass_env(monkeypatch, tmp_path):
+    """verify_ca_pin (the public forensic helper) MUST always do the raw
+    hash compare even when STRANDS_MESH_DISABLE_CA_PIN=true. Otherwise an
+    attacker on a compromised host can defeat the very check ops use to
+    detect tampering.
+
+    Round-2 finding #6.
+    """
+    monkeypatch.setenv("STRANDS_MESH_DISABLE_CA_PIN", "true")
+    from strands_robots.mesh.iot.provision import verify_ca_pin
+
+    bogus_ca = tmp_path / "fake.pem"
+    bogus_ca.write_bytes(b"-----BEGIN CERTIFICATE-----\nNOT A REAL CA\n-----END CERTIFICATE-----\n")
+
+    assert verify_ca_pin(bogus_ca) is False, (
+        "verify_ca_pin must NEVER honour STRANDS_MESH_DISABLE_CA_PIN — "
+        "that env var is for provisioning re-encoding proxies only, "
+        "not the forensic / ops verification path"
+    )
+
+
+def test_robot_mesh_interrupt_does_not_swallow_arbitrary_exceptions(monkeypatch, tmp_path):
+    """The interrupt-unavailable fallback in robot_mesh must catch only
+    RuntimeError (the no-agent-context signal). Other exceptions like
+    AttributeError or TypeError are programming errors and MUST propagate
+    so they are visible in tests / dev, not silently masked as
+    "interrupt unavailable".
+
+    Round-2 finding #5.
+    """
+    import inspect
+
+    from strands_robots.tools import robot_mesh as rm
+
+    src = inspect.getsource(rm.robot_mesh)
+    # The narrow exception clause must be present and we MUST NOT regress
+    # to bare `except Exception` in the interrupt path.
+    assert "except RuntimeError" in src, "interrupt fallback must catch RuntimeError"
+    # Find the interrupt try-block; the line immediately before
+    # "_audit_tool_action(action, target, False, f\"interrupt unavailable" should
+    # be `except RuntimeError as exc:`, not `except Exception`.
+    lines = src.splitlines()
+    for i, line in enumerate(lines):
+        if "interrupt unavailable" in line and "_audit_tool_action" in line:
+            # Walk back to find the matching except: clause
+            for j in range(i, max(0, i - 10), -1):
+                if "except " in lines[j]:
+                    assert "except Exception" not in lines[j], (
+                        f"robot_mesh interrupt fallback uses `except Exception` "
+                        f"at line {j}; AGENTS.md forbids bare Exception in "
+                        f"non-recovery paths. Use `except RuntimeError`."
+                    )
+                    break
+            break
+
+
+def test_psk_warned_global_is_used_by_helper(monkeypatch):
+    """The _PSK_WARNED hoist (CodeQL #219) refactored the conditional
+    global into _warn_psk_unset_once(). Pin that the helper exists, sets
+    the flag, and is idempotent.
+    """
+    from strands_robots.mesh import security as sec
+
+    sec._PSK_WARNED = False
+    assert hasattr(sec, "_warn_psk_unset_once"), "the _PSK_WARNED refactor must expose _warn_psk_unset_once"
+    sec._warn_psk_unset_once()
+    assert sec._PSK_WARNED is True
+    # Idempotent — second call must not flip anything weird.
+    sec._warn_psk_unset_once()
+    assert sec._PSK_WARNED is True
