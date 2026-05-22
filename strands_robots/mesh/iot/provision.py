@@ -77,11 +77,12 @@ _AMAZON_ROOT_CA1_URL = "https://www.amazontrust.com/repository/AmazonRootCA1.pem
 # ``STRANDS_MESH_CA_PINS`` (comma-separated 64-char lowercase hex). The
 # env var augments the built-in tuple; it does not replace it.
 _AMAZON_ROOT_CA1_PINS: tuple[str, ...] = ("2c43952ee9e000ff2acc4e2ed0897c0a72ad5fa72c3d934e81741cbd54f05bd1",)
-
-# Backwards-compat alias. Some external callers / docs reference the
-# singular name; keep it pointing at the canonical (first) pin so
-# error messages stay readable.
-_AMAZON_ROOT_CA1_SHA256 = _AMAZON_ROOT_CA1_PINS[0]
+# R8-10: the legacy ``_AMAZON_ROOT_CA1_SHA256`` alias was deleted.
+# CodeQL #229 flagged it as unused after R7-3 wired every reader
+# through ``_resolve_ca_pins`` / ``_AMAZON_ROOT_CA1_PINS``. Internal
+# code references the tuple directly; error messages now format the
+# full pin set via ``_resolve_ca_pins`` so operators see every
+# accepted pin (not just the canonical first one).
 
 # Regex: 64 hex chars, lowercase. Matches what hashlib.sha256(...).hexdigest()
 # emits and rejects anything else (operator typos surface immediately).

@@ -21,7 +21,7 @@ import pytest
 from strands_robots.mesh.iot import provision
 
 # Known-good copy of AmazonRootCA1.pem. If Amazon rotates this root the value
-# below + provision._AMAZON_ROOT_CA1_SHA256 must both update together.
+# below + provision._AMAZON_ROOT_CA1_PINS must both update together.
 _REAL_CA = b"""-----BEGIN CERTIFICATE-----
 MIIDQTCCAimgAwIBAgITBmyfz5m/jAo54vB4ikPmljZbyjANBgkqhkiG9w0BAQsF
 ADA5MQswCQYDVQQGEwJVUzEPMA0GA1UEChMGQW1hem9uMRkwFwYDVQQDExBBbWF6

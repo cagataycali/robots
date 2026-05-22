@@ -186,10 +186,6 @@ class AuthenticationError(SecurityError):
     """Envelope signature is missing, malformed, or invalid."""
 
 
-class AuthorizationError(SecurityError):
-    """Sender is authenticated but not allowed to perform the action."""
-
-
 class ValidationError(SecurityError):
     """Command payload failed schema or bounds checks."""
 
@@ -438,9 +434,31 @@ def verify_envelope(envelope: dict[str, Any], scope: str = _DEFAULT_NONCE_SCOPE)
     # Legacy shape: a bare payload dict with no envelope wrapper. Strict
     # mode rejects this; permissive mode passes it through unchanged so
     # existing un-upgraded peers still interop.
+    #
+    # R8-2: legacy bare dicts previously bypassed BOTH the freshness
+    # check (no ts) AND the nonce-cache replay check (no nonce). An
+    # attacker who captured any legacy cmd on a permissive LAN could
+    # replay it indefinitely. We close the replay surface by
+    # synthesizing a content-fingerprint nonce here: sha256 over the
+    # canonical bytes of the dict. Identical content within the
+    # replay window is rejected by the in-memory _NONCE_CACHE.
+    #
+    # The freshness check still doesn't apply (no ts to compare against)
+    # so a captured legacy dict is replayable AFTER the cache window
+    # rolls. That's a residual risk operators must accept: legacy
+    # un-enveloped peers cannot be fully replay-protected without an
+    # envelope. Strict-mode + PSK closes this surface entirely.
     if "v" not in envelope or "payload" not in envelope:
         if auth_required():
             raise AuthenticationError("missing envelope (strict mode requires signed messages)")
+        # Content-fingerprint nonce. Prefix "L:" so it cannot collide
+        # with a real uuid4 nonce (which is 32 hex chars; our hash is
+        # 64 with a "L:" prefix).
+        legacy_nonce = "L:" + hashlib.sha256(_canonical_bytes(envelope)).hexdigest()
+        if not _record_nonce(legacy_nonce, time.time(), scope=scope):
+            raise AuthenticationError(
+                f"replay detected for legacy bare dict (content fingerprint {legacy_nonce[:18]}...)"
+            )
         return envelope
 
     if envelope.get("v") != 1:
@@ -950,7 +968,6 @@ def enforce_peer_rate_limit(sender_id: str) -> None:
 __all__ = [
     "ALLOWED_ACTIONS",
     "AuthenticationError",
-    "AuthorizationError",
     "LockoutError",
     "MAX_DURATION_S",
     "MAX_MODEL_PATH_LEN",

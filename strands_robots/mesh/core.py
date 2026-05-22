@@ -810,10 +810,12 @@ class Mesh(SensorLoopsMixin):
             expected = self._expected_responders.get(turn)
             # Strict scoping for point-to-point sends. Broadcast accepts any.
             if expected is not None and expected != BROADCAST_RESPONDER and responder != expected:
-                # R4-8: structured rejection. AuthorizationError carries
-                # the responder/expected pair so audit emit (and any
-                # operator forensics that walks the safety log) sees a
-                # typed event rather than a free-text log line.
+                # R8-3: structured forensic event via the audit log
+                # (``response_hijack_rejected``) plus a WARNING line is
+                # the operator-and-forensic channel; an earlier draft
+                # also raised-and-caught a typed exception around the
+                # same code, but with no real consumer it was YAGNI
+                # scaffolding and got removed.
                 logger.warning(
                     "[mesh] %s: dropped response on turn %s — "
                     "responder_id=%r does not match expected target %r "
@@ -837,16 +839,6 @@ class Mesh(SensorLoopsMixin):
                     # Audit best-effort — never let a missing/broken
                     # log path break the response handler.
                     logger.debug("[mesh] %s: audit log unavailable: %s", self.peer_id, audit_exc)
-                # Raise into the local handler so a future refactor
-                # that adds a wider error pipeline can plug in. We catch
-                # at the function boundary so the Zenoh subscriber
-                # callback never sees the exception.
-                try:
-                    raise _security.AuthorizationError(
-                        f"response_hijack_rejected: responder={responder!r} expected={expected!r}"
-                    )
-                except _security.AuthorizationError as exc:
-                    logger.debug("[mesh] %s: %s", self.peer_id, exc)
                 return
             self._responses.setdefault(turn, []).append(data)
         event.set()
@@ -888,6 +880,23 @@ class Mesh(SensorLoopsMixin):
             self._last_estop_ts = time.time()
             sender = data.get("peer_id", "<remote>")
             logger.critical("[safety] %s: lockout engaged via remote estop from %s", self.peer_id, sender)
+            # R8-1: audit the receiver-side lockout transition. The
+            # local-issuer path (Mesh.emergency_stop) already records
+            # event_type="emergency_stop"; this handler covers the
+            # receiver side so verify_audit_integrity sees both ends
+            # of the lockout window. Without this, a forensic walker
+            # examining a fleet's logs sees the issuer's "emergency_stop"
+            # but no record of which peers actually engaged their
+            # lockout in response.
+            self.publish_safety_event(
+                event_type="remote_estop_engaged",
+                severity="critical",
+                payload={
+                    "trigger": "remote",
+                    "issuer": sender,
+                    "issuer_t": data.get("t"),
+                },
+            )
 
     def _on_safety_resume(self, sample: Any) -> None:
         """Clear the local lockout in response to ``strands/safety/resume``.
@@ -923,10 +932,65 @@ class Mesh(SensorLoopsMixin):
             return
         if not isinstance(data, dict):
             return
+
+        # R8-5: re-verify the override-code proof. Without this, any peer
+        # holding the PSK can fan-out a resume — the override code only
+        # gates the local issuer's RPC entry. With the proof, the issuer
+        # demonstrates knowledge of the same override code that this
+        # receiver has configured, by computing HMAC(code, proof_nonce).
+        # Receivers that don't have STRANDS_MESH_OVERRIDE_CODE configured
+        # FAIL CLOSED and refuse the remote resume — operators must
+        # distribute the override code to every peer for fleet-wide
+        # remote resume to work. That asymmetry is intentional and
+        # documented in the README's Mesh-security section.
+        local_code = os.getenv("STRANDS_MESH_OVERRIDE_CODE", "").strip()
+        if not local_code:
+            logger.warning(
+                "[safety] %s: refusing remote resume — STRANDS_MESH_OVERRIDE_CODE "
+                "not configured locally (R8-5 fail-closed)",
+                self.peer_id,
+            )
+            return
+
+        proof_nonce = data.get("proof_nonce")
+        provided_proof = data.get("override_proof")
+        if not isinstance(proof_nonce, str) or not isinstance(provided_proof, str):
+            logger.warning(
+                "[safety] %s: refusing remote resume — envelope missing override_proof / proof_nonce",
+                self.peer_id,
+            )
+            return
+
+        expected_proof = hmac.new(
+            local_code.encode(),
+            proof_nonce.encode(),
+            "sha256",
+        ).hexdigest()
+        if not hmac.compare_digest(expected_proof, provided_proof):
+            logger.warning(
+                "[safety] %s: refusing remote resume — override_proof mismatch "
+                "(issuer's STRANDS_MESH_OVERRIDE_CODE differs from local; constant-time compared)",
+                self.peer_id,
+            )
+            return
+
         if self._estop_lockout.is_set():
             self._estop_lockout.clear()
             sender = data.get("peer_id", "<remote>")
             logger.warning("[safety] %s: lockout cleared via remote resume from %s", self.peer_id, sender)
+            # R8-1: audit the receiver-side resume transition. Mirrors
+            # _on_safety_estop above so verify_audit_integrity walkers
+            # see the close of the lockout window for every peer that
+            # entered one.
+            self.publish_safety_event(
+                event_type="remote_resume_applied",
+                severity="info",
+                payload={
+                    "trigger": "remote",
+                    "issuer": sender,
+                    "issuer_t": data.get("t"),
+                },
+            )
 
     # RPC — outgoing
     def send(self, target: str, cmd: dict[str, Any], timeout: float = 30.0) -> dict[str, Any]:
@@ -953,6 +1017,18 @@ class Mesh(SensorLoopsMixin):
                 "status": "error",
                 "error": "send: target may not contain NUL or equal the BROADCAST_RESPONDER sentinel",
             }
+        # R8-6: client-side validate before publishing. Prior to this fix,
+        # programmatic callers (tests, third-party integrations, anything
+        # that imports Mesh directly) skipped validate_command — only the
+        # robot_mesh tool path validated client-side. Receiver-side
+        # _exec_cmd still validates, so this is defence-in-depth, but the
+        # PR description and README claimed client-side AND server-side
+        # validation; this closes the gap.
+        try:
+            cmd = _security.validate_command(cmd)
+        except _security.ValidationError as exc:
+            logger.warning("[mesh] %s: send to %s rejected client-side: %s", self.peer_id, target, exc)
+            return {"status": "error", "error": f"validation: {exc}"}
         # 128-bit turn id — at 32 bits the birthday-collision window
         # under heavy concurrent RPC load was practical (~65k turns
         # before 50% collision); 128 bits removes that surface entirely.
@@ -961,6 +1037,17 @@ class Mesh(SensorLoopsMixin):
         with self._rpc_lock:
             self._pending[turn] = event
             self._responses[turn] = []
+            # R5-defensive: belt-and-suspenders. The public guard above
+            # already rejects target == BROADCAST_RESPONDER and target
+            # containing NUL, but a future refactor that adds another
+            # path into this method (e.g. an internal helper that bypasses
+            # the public guard) must not reopen the response-hijack
+            # surface. Re-checking here makes the invariant explicit at
+            # the assignment site.
+            if target == BROADCAST_RESPONDER or "\x00" in target:
+                self._pending.pop(turn, None)
+                self._responses.pop(turn, None)
+                raise ValueError("send: target may not equal BROADCAST_RESPONDER or contain NUL")
             self._expected_responders[turn] = target
         msg = {"sender_id": self.peer_id, "turn_id": turn, "command": cmd, "timestamp": time.time()}
         try:
@@ -982,6 +1069,15 @@ class Mesh(SensorLoopsMixin):
         ``BROADCAST_RESPONDER``).
         """
         if not self._running:
+            return []
+        # R8-6: client-side validate before publishing. broadcast()'s
+        # return type is list[dict] (responses), so a validation failure
+        # has no structured slot — log the rejection and return [] so
+        # callers see "no responses" rather than a partial broadcast.
+        try:
+            cmd = _security.validate_command(cmd)
+        except _security.ValidationError as exc:
+            logger.warning("[mesh] %s: broadcast rejected client-side: %s", self.peer_id, exc)
             return []
         turn = uuid.uuid4().hex
         event = threading.Event()
@@ -1214,9 +1310,34 @@ class Mesh(SensorLoopsMixin):
             severity="info",
             payload={"sender_id": self.peer_id, "lockout_elapsed_s": elapsed},
         )
+
+        # R8-5: bind a proof-of-override-code into the resume envelope so
+        # receivers can re-verify on _on_safety_resume. Without this, any
+        # peer with the PSK could fan-out a resume — the override code
+        # only protected the local issuer's gate. With the proof, every
+        # receiver re-verifies that the issuer knew the same override
+        # code by recomputing HMAC(local_code, proof_nonce).
+        #
+        # The proof_nonce is per-resume (uuid4.hex) AND is also the
+        # envelope nonce input for sign_envelope's replay cache, so a
+        # captured resume cannot be replayed across the freshness window.
+        # We deliberately do NOT include the override code in the
+        # envelope or the audit log — only the HMAC of (code, nonce).
+        proof_nonce = uuid.uuid4().hex
+        override_proof = hmac.new(
+            expected.encode(),
+            proof_nonce.encode(),
+            "sha256",
+        ).hexdigest()
         self._put_signed(
             "strands/safety/resume",
-            {"peer_id": self.peer_id, "t": time.time(), "lockout_elapsed_s": elapsed},
+            {
+                "peer_id": self.peer_id,
+                "t": time.time(),
+                "lockout_elapsed_s": elapsed,
+                "proof_nonce": proof_nonce,
+                "override_proof": override_proof,
+            },
         )
         logger.warning("[safety] %s: resume after %.1fs lockout", self.peer_id, elapsed)
         # R5-4: success is also generic on the wire; the local audit

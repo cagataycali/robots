@@ -5,6 +5,118 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## Unreleased - #194 (mesh security hardening)
 
+### Round 8 - final-pass review feedback (yinsong1986)
+
+* **R8-1 (HIGH)**: receiver-side ``_on_safety_estop`` and
+  ``_on_safety_resume`` now write audit records via
+  ``publish_safety_event``. Pre-fix the receivers only logged at
+  CRITICAL/WARNING - ``verify_audit_integrity`` walkers couldn't see
+  which peers actually engaged their lockout in response to a fleet-
+  wide estop, breaking the per-record HMAC + seq forensic story for
+  the most operationally important event. Now both ends of the lockout
+  window write ``remote_estop_engaged`` / ``remote_resume_applied``
+  audit entries with the issuer peer_id and timestamp.
+
+* **R8-2 (HIGH)**: legacy bare-dict payloads (no ``v`` / ``payload``
+  envelope keys) previously bypassed BOTH the freshness window and
+  the nonce-cache replay check in permissive mode. An attacker who
+  captured any legacy cmd could replay it indefinitely. Fixed by
+  synthesizing a content-fingerprint nonce
+  (``"L:" + sha256(canonical_bytes)``) BEFORE the early-return so
+  identical content within the replay window is rejected by
+  ``_NONCE_CACHE``. Distinct legacy contents still pass; freshness
+  is still skipped (no ts to compare) - that's residual risk for
+  permissive-mode operators, documented inline.
+
+* **R8-3 (LOW cleanup)**: removed the raise-then-immediately-catch
+  ``AuthorizationError`` pattern from ``_on_response``. The R4-8
+  scaffolding never gained a real consumer; ``logger.debug`` plus the
+  structured ``response_hijack_rejected`` audit event are the channels
+  forensic readers actually consume. ``AuthorizationError`` class
+  deleted entirely from ``mesh/security.py`` per AGENTS.md > Key
+  Conventions #10 ("No dead code"). The R4-8 regression test now
+  pins the deletion (``test_r4_8_supersedes_authorization_error_deleted_per_r8_3``).
+
+* **R8-4 (BUG)**: audit-log rotation cascade off-by-one. With
+  ``max_files=N`` the loop iterated ``[N-1 .. 1]`` and the predicate
+  ``n + 1 > max_files - 1`` always discarded the file at ``.{N-1}``
+  instead of rolling it to ``.{N}`` - rotated suffixes only ever
+  reached ``.{N-1}``. Operators setting ``MAX_FILES=5`` got 4 rotated
+  copies, not 5. Fix: walk ``[N .. 1]``, predicate ``n + 1 > max_files``.
+  Pinned by ``test_r8_4_rotation_reaches_max_files`` which floods
+  enough events to force ``.5`` to exist on disk.
+
+* **R8-5 (HIGH - description vs implementation drift)**:
+  ``STRANDS_MESH_OVERRIDE_CODE`` now genuinely protects the fleet-wide
+  resume, not just the local issuer's gate. Pre-fix any peer holding
+  the PSK could broadcast a ``safety/resume`` and clear every other
+  peer's lockout - the override code only ran in
+  ``Mesh._resume_lockout`` on the issuing peer, never on the wire.
+  Now the issuer binds ``HMAC(override_code, proof_nonce)`` into the
+  resume envelope; ``_on_safety_resume`` re-verifies with its OWN
+  ``STRANDS_MESH_OVERRIDE_CODE`` (constant-time-compared). Receivers
+  without an override code configured FAIL CLOSED and refuse remote
+  resumes - operators must distribute the override code to every peer
+  for fleet-wide remote resume to work. That asymmetry is intentional
+  and documented in ``_on_safety_resume``'s docstring.
+
+* **R8-6 (MED - defence-in-depth)**: ``Mesh.send`` and ``Mesh.broadcast``
+  now run client-side ``validate_command`` before publishing.
+  Programmatic callers (third-party integrations, tests, scripts that
+  import ``Mesh`` directly) previously skipped this gate; only the
+  ``robot_mesh`` LLM tool path validated client-side. The receiver
+  still validates server-side, so this is defence-in-depth, but the
+  PR description and README claimed both sides - now they do.
+  ``Mesh.send`` returns the structured ``{"status": "error", "error":
+  "validation: ..."}`` shape; ``Mesh.broadcast`` returns ``[]`` on
+  rejection (preserves the list-of-responses contract). Crucially,
+  the bad cmd never reaches ``_put_signed`` so it never hits the wire.
+
+* **R8-7 (MED - safety ordering)**: for ``broadcast``, the
+  ``robot_mesh`` tool now parses + validates the command JSON BEFORE
+  raising the HITL interrupt. Pre-fix the operator could approve a
+  command that the validator then rejected, burning an audit
+  ``operator approved`` record AND a rate-limit slot for an action
+  that never ran. The interrupt's ``reason`` dict now surfaces the
+  validated command (post-strip-and-lower) so operators approve the
+  post-validation form, not raw LLM output. ``emergency_stop`` has
+  no command body so its ordering is unchanged.
+
+* **R8-10 (CodeQL #229)**: deleted the legacy ``_AMAZON_ROOT_CA1_SHA256``
+  alias. After R7-3 it was only assigned (``= _AMAZON_ROOT_CA1_PINS[0]``)
+  and CodeQL's dataflow analyser flagged it as unused. Internal code
+  references the tuple directly; error messages format the full pin
+  set via ``_resolve_ca_pins`` so operators see every accepted pin
+  (not just the canonical first one).
+
+* **R8-polish (LOW)**: three small unresolved findings from R4/R5/R7
+  pinned with regression tests:
+    - R5-defensive: belt-and-suspenders BROADCAST_RESPONDER guard at
+      the ``_expected_responders[turn] = target`` assignment site, in
+      addition to the public ``Mesh.send`` entry-point guard. Future
+      refactors that bypass the public guard (e.g. an internal helper)
+      cannot reopen the response-hijack surface.
+    - R7-policy-lc: locked the ``policy_provider`` lowercase contract
+      with a regression test (``test_r7_policy_provider_lowercase_contract``).
+      ``validate_command`` strips + lowercases; dispatch can rely on
+      the canonical key.
+    - R5-flood: pinned the permissive-mode nonce-cache flood eviction
+      behaviour. A flood of ~1.5x cap unique nonces stays bounded at
+      the cap (10 000); GC drops the oldest 20%. Documents the
+      acknowledged O(n) GC cost as a residual permissive-mode risk.
+
+Tests: 14 + 3 polish R8 regression tests in test_security_regressions.py.
+The R4-8 test was rewritten (``test_r4_8_supersedes_authorization_error_deleted_per_r8_3``)
+to pin the deletion. The pre-existing
+``test_safety_estop_topic_engages_remote_lockout`` was updated to
+include ``override_proof`` (R8-5) and a configured
+``STRANDS_MESH_OVERRIDE_CODE`` on the receiver. Two
+``test_iot_ca_pin`` tests stayed valid - they patch
+``_download_with_per_socket_timeout`` directly.
+
+Stats: 697 mesh tests passing (+17 from R7 baseline of 680, includes 3 R8 polish tests), ruff
+clean, mypy clean.
+
 ### Round 7 - additional review feedback (yinsong1986)
 
 * **R7-1 (HIGH)**: ``audit.py:_ensure_paths`` had two compounding bugs.

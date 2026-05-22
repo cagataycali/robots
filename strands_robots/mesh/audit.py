@@ -261,14 +261,20 @@ def _rotate_log_if_needed(path: Path, current_size: int) -> None:
         return
 
     max_files = _resolve_log_max_files()
-    # Cascade .{n} -> .{n+1}, dropping the oldest.
-    for n in range(max_files - 1, 0, -1):
+    # R8-4: cascade .{n} -> .{n+1} for n in [max_files, max_files-1, ..., 1].
+    # The previous range(max_files - 1, 0, -1) walked [max_files-1 .. 1] and
+    # the predicate `n + 1 > max_files - 1` discarded n=max_files-1 instead
+    # of rolling it to .{max_files}, so rotated suffixes only ever reached
+    # .{max_files-1}. Walk from max_files now: file at .{max_files} (if
+    # any leftover from a misconfig) is unlinked, then .{max_files-1}
+    # through .1 cascade up by one.
+    for n in range(max_files, 0, -1):
         src_p = path.with_suffix(path.suffix + f".{n}")
         dst_p = path.with_suffix(path.suffix + f".{n + 1}")
         if src_p.exists():
             try:
-                if n + 1 > max_files - 1:
-                    # Discard files past the max. Use os.unlink so a
+                if n + 1 > max_files:
+                    # Discard files past the cap. Use os.unlink so a
                     # symlink at this position cannot redirect a delete.
                     if src_p.is_symlink():
                         logger.warning("[audit] discarding symlinked rotated log %s", src_p)

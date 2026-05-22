@@ -42,6 +42,8 @@ from typing import Any
 from strands import tool
 from strands.types.tools import ToolContext
 
+from strands_robots.mesh import security as _security
+
 logger = logging.getLogger(__name__)
 
 
@@ -281,6 +283,31 @@ def robot_mesh(
         _audit_tool_action(action, target, False, f"rate_limit: {rl_err}")
         return _err(rl_err)
 
+    # R8-7: for broadcast, parse + validate the command BEFORE the HITL
+    # interrupt so the operator does not approve an action that the
+    # validator then rejects (which would burn an audit "operator
+    # approved" record and a rate-limit slot for an action that never
+    # ran). emergency_stop has no command body so the existing order
+    # is fine for that path.
+    validated_broadcast_cmd: dict[str, Any] | None = None
+    if action == "broadcast":
+        if not command:
+            _audit_tool_action(action, "*", False, "missing command")
+            return _err("broadcast requires command (JSON string)")
+        try:
+            parsed = json.loads(command)
+        except json.JSONDecodeError as exc:
+            _audit_tool_action(action, "*", False, f"bad json: {exc}")
+            return _err(f"command is not valid JSON: {exc}")
+        if not isinstance(parsed, dict):
+            _audit_tool_action(action, "*", False, "command not a dict")
+            return _err("command must decode to a JSON object (dict)")
+        try:
+            validated_broadcast_cmd = _security.validate_command(parsed)
+        except _security.ValidationError as exc:
+            _audit_tool_action(action, "*", False, f"validation: {exc}")
+            return _err(f"broadcast rejected: {exc}")
+
     # Human-in-the-loop approval gate for fleet-wide actions. The Strands
     # runtime pauses the agent loop on tool_context.interrupt(...) and
     # returns control to the host process; the operator's response (e.g.
@@ -293,7 +320,11 @@ def robot_mesh(
                 reason={
                     "action": action,
                     "target": target if target else "*ALL_PEERS*",
-                    "command": command,
+                    # R8-7: surface the validated command so the operator
+                    # approves the post-validation form, not the raw LLM
+                    # string. emergency_stop has no command body so we
+                    # fall back to the raw value.
+                    "command": (validated_broadcast_cmd if validated_broadcast_cmd is not None else command),
                     "instruction": instruction,
                     "warning": ("Fleet-wide physical effect. Reply 'y' to approve, anything else to deny."),
                 },
@@ -334,7 +365,6 @@ def robot_mesh(
 
     try:
         from strands_robots.mesh import get_local_robots
-        from strands_robots.mesh import security as _security
         from strands_robots.mesh.session import get_peers
     except ImportError as exc:
         return _err(f"mesh module unavailable: {exc}")
@@ -424,22 +454,14 @@ def robot_mesh(
 
     # ── action: broadcast ─────────────────────────────────────────────────
     if action == "broadcast":
-        if not command:
-            _audit_tool_action(action, "*", False, "missing command")
-            return _err("broadcast requires command (JSON string)")
-        try:
-            cmd = json.loads(command)
-        except json.JSONDecodeError as exc:
-            _audit_tool_action(action, "*", False, f"bad json: {exc}")
-            return _err(f"command is not valid JSON: {exc}")
-        if not isinstance(cmd, dict):
-            _audit_tool_action(action, "*", False, "command not a dict")
-            return _err("command must decode to a JSON object (dict)")
-        try:
-            cmd = _security.validate_command(cmd)
-        except _security.ValidationError as exc:
-            _audit_tool_action(action, "*", False, f"validation: {exc}")
-            return _err(f"broadcast rejected: {exc}")
+        # R8-7: pre-validated above before the HITL interrupt fired, so
+        # the cmd here is already a clean validated dict. Defensive
+        # assert: validated_broadcast_cmd is None only on a programmer
+        # error (someone added "broadcast" without the pre-validate).
+        assert validated_broadcast_cmd is not None, (
+            "broadcast reached its handler without pre-validation — R8-7 contract broken"
+        )
+        cmd = validated_broadcast_cmd
         results = mesh.broadcast(cmd, timeout=timeout)
         _audit_tool_action(action, "*", True, f"action={cmd.get('action')} responses={len(results)}")
         text = f"[broadcast] {len(results)} responses\n"

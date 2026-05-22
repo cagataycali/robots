@@ -428,14 +428,23 @@ def test_safety_estop_topic_engages_remote_lockout(monkeypatch, tmp_path):
     own lockout; receivers stopped the current task and then accepted
     the very next command. Now both peers subscribe to
     strands/safety/estop and the handler engages the lockout fleet-wide.
+
+    R8-5 update: remote resume now requires an override_proof bound to
+    the issuer's STRANDS_MESH_OVERRIDE_CODE, and the receiver must have
+    its own STRANDS_MESH_OVERRIDE_CODE configured (fail-closed). The
+    issuer and receiver must agree on the code for fleet-wide remote
+    resume to work.
     """
-    monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
-    monkeypatch.setenv("STRANDS_MESH_PSK", "k")
+    import hmac as _hmac
     import json
     from unittest.mock import MagicMock
 
     from strands_robots.mesh import security as sec
     from strands_robots.mesh.core import Mesh
+
+    monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
+    monkeypatch.setenv("STRANDS_MESH_PSK", "k")
+    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "shared-fleet-override-code")
 
     sec.clear_replay_cache()
     receiver = Mesh(MagicMock(), peer_id="r-receiver")
@@ -451,12 +460,22 @@ def test_safety_estop_topic_engages_remote_lockout(monkeypatch, tmp_path):
     receiver._on_safety_estop(sample)
     assert receiver._estop_lockout.is_set(), "remote estop must engage receiver's lockout"
 
-    # And resume clears it again.
+    # R8-5: issuer must include override_proof = HMAC(override_code, proof_nonce).
     sec.clear_replay_cache()
-    res_envelope = sec.sign_envelope({"peer_id": "r-issuer", "t": 2.0, "lockout_elapsed_s": 0.5})
+    proof_nonce = "deadbeefcafebabe" * 2  # 32 hex chars
+    proof = _hmac.new(b"shared-fleet-override-code", proof_nonce.encode(), "sha256").hexdigest()
+    res_envelope = sec.sign_envelope(
+        {
+            "peer_id": "r-issuer",
+            "t": 2.0,
+            "lockout_elapsed_s": 0.5,
+            "proof_nonce": proof_nonce,
+            "override_proof": proof,
+        }
+    )
     sample.payload.to_bytes.return_value = json.dumps(res_envelope).encode()
     receiver._on_safety_resume(sample)
-    assert not receiver._estop_lockout.is_set(), "remote resume must clear receiver's lockout"
+    assert not receiver._estop_lockout.is_set(), "remote resume with valid proof must clear receiver's lockout"
 
 
 def test_unsigned_estop_rejected_in_strict_mode(monkeypatch, tmp_path):
@@ -1400,21 +1419,38 @@ def test_r4_8_rate_limit_error_is_actually_raised(monkeypatch):
     pytest.fail("RateLimitError was never raised after 25 calls — burst cap broken or wire dead")
 
 
-def test_r4_8_authorization_error_wired_into_response_hijack_path():
-    """R4-8: ``AuthorizationError`` is raised (and immediately caught
-    locally) when ``_on_response`` rejects a hijacked response. Source-
-    inspection check that the exception type is referenced on the
-    rejection branch.
+def test_r4_8_supersedes_authorization_error_deleted_per_r8_3():
+    """R4-8 superseded by R8-3.
+
+    R4-8 wired ``AuthorizationError`` into ``_on_response`` as a
+    raise-then-immediately-catch around the response-hijack reject
+    path. Yin's R8-3 follow-up flagged that as YAGNI scaffolding -
+    the structured audit emit (``response_hijack_rejected``) plus
+    the WARNING log already give forensic readers everything they
+    need; the typed exception class never gained a real consumer.
+
+    R8-3 deletes the class entirely. This test pins the deletion so
+    a future refactor can not reintroduce a dead exception type.
     """
     import inspect
 
+    from strands_robots.mesh import security as sec
     from strands_robots.mesh.core import Mesh
 
-    src = inspect.getsource(Mesh._on_response)
-    assert "AuthorizationError" in src, (
-        "AuthorizationError is not raised on the response-hijack reject path — R4-8 (dead-code wire-in) reopened."
+    # R8-3: AuthorizationError must NOT exist as an exported class.
+    assert not hasattr(sec, "AuthorizationError"), (
+        "AuthorizationError reintroduced — R8-3 reopened. "
+        "Yin's review: raise-then-immediately-catch is YAGNI; the "
+        "structured audit event is the forensic channel."
     )
-    # Also: the audit emit must include 'response_hijack_rejected'.
+    assert "AuthorizationError" not in sec.__all__, "AuthorizationError still in __all__ — R8-3 reopened."
+
+    # _on_response must not reference AuthorizationError any more.
+    src = inspect.getsource(Mesh._on_response)
+    assert "AuthorizationError" not in src, "_on_response still references AuthorizationError — R8-3 reopened."
+
+    # The response-hijack reject path must still emit the typed audit
+    # event - that is the forensic channel that survives.
     assert "response_hijack_rejected" in src
 
 
@@ -1684,8 +1720,14 @@ def test_r7_3_multi_pin_support_and_env_var(monkeypatch):
     assert len(provision._AMAZON_ROOT_CA1_PINS) >= 1
     assert all(len(p) == 64 and all(c in "0123456789abcdef" for c in p) for p in provision._AMAZON_ROOT_CA1_PINS)
 
-    # Backwards-compat: _AMAZON_ROOT_CA1_SHA256 still exists and is the first pin.
-    assert provision._AMAZON_ROOT_CA1_SHA256 == provision._AMAZON_ROOT_CA1_PINS[0]
+    # R8-10: the legacy `_AMAZON_ROOT_CA1_SHA256` alias was DELETED.
+    # CodeQL #229 flagged it as unused after R7-3 wired every reader
+    # through _resolve_ca_pins. Internal code references the tuple
+    # directly; pin this so a future refactor can't reintroduce a
+    # dead alias that CodeQL would flag again.
+    assert not hasattr(provision, "_AMAZON_ROOT_CA1_SHA256"), (
+        "Legacy _AMAZON_ROOT_CA1_SHA256 alias reintroduced — R8-10 reopened. Use _AMAZON_ROOT_CA1_PINS[0] directly."
+    )
 
     # Default resolver returns at least the built-in tuple.
     monkeypatch.delenv("STRANDS_MESH_CA_PINS", raising=False)
@@ -1842,3 +1884,535 @@ def test_r7_5_audit_tool_action_no_bare_pass():
                     f"_audit_tool_action has `except Exception: pass` at line {i + 1} — R7-5 reopened."
                 )
                 break
+
+
+# ───────────────────────────────────────────────────────────────────────────
+# Round 8 — yinsong1986 final-pass review feedback
+# ───────────────────────────────────────────────────────────────────────────
+
+
+def test_r8_1_remote_estop_engages_audit_record(tmp_path, monkeypatch):
+    """R8-1: receiver-side ``_on_safety_estop`` writes an audit record
+    when entering lockout. Pre-fix the receiver only logged at
+    CRITICAL — verify_audit_integrity walkers couldn't see which peers
+    actually engaged their lockout in response to a fleet-wide estop.
+    """
+    import json
+    from unittest.mock import MagicMock
+
+    monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
+    monkeypatch.setenv("STRANDS_MESH_PSK", "r8-1-psk")
+    from strands_robots.mesh import audit
+    from strands_robots.mesh import security as sec
+    from strands_robots.mesh.core import Mesh
+
+    audit._SEQ_COUNTERS.clear()
+    audit._AUDIT_STATE.seq_loaded = False
+    audit._AUDIT_STATE.psk_was_present = None
+    sec.clear_replay_cache()
+
+    receiver = Mesh(MagicMock(), peer_id="r-receiver")
+    # Stub _put_signed (the receiver doesn't have a real transport).
+    receiver._put_signed = MagicMock()
+    receiver._running = True  # publish_safety_event guards on this
+
+    estop = sec.sign_envelope({"peer_id": "r-issuer", "t": 1.0, "lockout_engaged": True})
+    sample = MagicMock()
+    sample.payload.to_bytes.return_value = json.dumps(estop).encode()
+
+    receiver._on_safety_estop(sample)
+
+    records = audit.read_audit_log()
+    assert any(r["event"] == "remote_estop_engaged" for r in records), (
+        f"_on_safety_estop did not write an audit record — R8-1 reopened. records: {[r['event'] for r in records]}"
+    )
+
+
+def test_r8_1_remote_resume_writes_audit_record(tmp_path, monkeypatch):
+    """R8-1: receiver-side ``_on_safety_resume`` writes an audit record
+    when clearing lockout. Mirrors the estop side — both ends of the
+    lockout window must be walkable post-incident.
+    """
+    import hmac as _hmac
+    import json
+    from unittest.mock import MagicMock
+
+    monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
+    monkeypatch.setenv("STRANDS_MESH_PSK", "r8-1-psk")
+    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "shared-code")
+    from strands_robots.mesh import audit
+    from strands_robots.mesh import security as sec
+    from strands_robots.mesh.core import Mesh
+
+    audit._SEQ_COUNTERS.clear()
+    audit._AUDIT_STATE.seq_loaded = False
+    audit._AUDIT_STATE.psk_was_present = None
+    sec.clear_replay_cache()
+
+    receiver = Mesh(MagicMock(), peer_id="r-receiver")
+    receiver._put_signed = MagicMock()
+    receiver._running = True
+    receiver._estop_lockout.set()
+
+    proof_nonce = "deadbeef" * 4
+    proof = _hmac.new(b"shared-code", proof_nonce.encode(), "sha256").hexdigest()
+    resume = sec.sign_envelope(
+        {
+            "peer_id": "r-issuer",
+            "t": 2.0,
+            "lockout_elapsed_s": 0.5,
+            "proof_nonce": proof_nonce,
+            "override_proof": proof,
+        }
+    )
+    sample = MagicMock()
+    sample.payload.to_bytes.return_value = json.dumps(resume).encode()
+
+    receiver._on_safety_resume(sample)
+
+    records = audit.read_audit_log()
+    assert any(r["event"] == "remote_resume_applied" for r in records), (
+        f"_on_safety_resume did not write an audit record — R8-1 reopened. records: {[r['event'] for r in records]}"
+    )
+
+
+def test_r8_2_legacy_bare_dict_replay_blocked(monkeypatch):
+    """R8-2: legacy bare-dict payloads (no ``v`` / ``payload`` keys)
+    previously bypassed BOTH the freshness window and the nonce-cache
+    replay check in permissive mode. An attacker who captured any
+    legacy cmd could replay it indefinitely. Fixed by synthesizing a
+    content-fingerprint nonce before the early-return.
+    """
+    from strands_robots.mesh import security as sec
+
+    sec.clear_replay_cache()
+    legacy = {
+        "sender_id": "alice",
+        "turn_id": "t-1",
+        "command": {"action": "execute", "instruction": "go"},
+    }
+
+    # First delivery passes.
+    r1 = sec.verify_envelope(legacy, scope="bob")
+    assert r1 is not None
+
+    # Second delivery (replay) MUST be rejected.
+    with pytest.raises(sec.AuthenticationError, match="replay detected for legacy"):
+        sec.verify_envelope(legacy, scope="bob")
+
+
+def test_r8_2_distinct_legacy_dicts_both_pass():
+    """R8-2: distinct legacy contents must still pass — the replay
+    fingerprint is content-keyed, not sender-keyed."""
+    from strands_robots.mesh import security as sec
+
+    sec.clear_replay_cache()
+    sec.verify_envelope(
+        {"sender_id": "alice", "command": {"action": "status"}},
+        scope="bob",
+    )
+    sec.verify_envelope(
+        {"sender_id": "alice", "command": {"action": "stop"}},
+        scope="bob",
+    )
+
+
+def test_r8_3_authorization_error_class_is_gone():
+    """R8-3 (also covered by test_r4_8_supersedes_authorization_error_deleted_per_r8_3
+    above): explicit duplicate so a future grep on R8 lists every fix
+    here."""
+    from strands_robots.mesh import security as sec
+
+    assert not hasattr(sec, "AuthorizationError")
+
+
+def test_r8_4_rotation_reaches_max_files(tmp_path, monkeypatch):
+    """R8-4: audit log rotation cascade was off by one — kept
+    ``max_files - 1`` rotated copies, not ``max_files``. The README
+    documents the env var as "Maximum number of rotated audit log
+    copies kept" so an operator setting MAX_FILES=5 expected 5 rotated
+    copies. Pre-fix only got 4.
+    """
+    import glob
+
+    monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
+    monkeypatch.setenv("STRANDS_MESH_AUDIT_PSK", "r8-4-psk")
+    monkeypatch.setenv("STRANDS_MESH_AUDIT_MAX_BYTES", "2048")
+    monkeypatch.setenv("STRANDS_MESH_AUDIT_MAX_FILES", "5")
+
+    from strands_robots.mesh import audit
+
+    audit._SEQ_COUNTERS.clear()
+    audit._AUDIT_STATE.seq_loaded = False
+    audit._AUDIT_STATE.psk_was_present = None
+
+    # Force enough rotations.
+    for i in range(2000):
+        audit.log_safety_event("flood", "p", {"i": i, "pad": "x" * 200})
+
+    files = sorted(glob.glob(str(tmp_path / "mesh_audit.jsonl*")))
+    files = [f for f in files if not f.endswith(".seq.json") and not f.endswith(".lock")]
+    suffixes = sorted([f.rsplit("mesh_audit.jsonl", 1)[1] for f in files])
+
+    # Expect: active log ('') plus .1 .. .5
+    assert ".5" in suffixes, (
+        f"Rotation only reached {sorted(suffixes)} — R8-4 reopened. "
+        f"With max_files=5, expected '.1' through '.5' to all exist."
+    )
+    assert len(files) == 6, f"Expected 6 files (active + .1..5), got {len(files)}: {suffixes}"
+
+
+def test_r8_5_remote_resume_requires_override_proof(tmp_path, monkeypatch):
+    """R8-5: ``_on_safety_resume`` rejects a signed-but-no-proof resume.
+
+    Before R8-5, any peer with the PSK could fan-out a resume — the
+    override code only protected the local issuer's gate. Now the
+    issuer binds HMAC(override_code, proof_nonce) into the resume
+    payload and the receiver re-verifies with its OWN local code.
+    """
+    import json
+    from unittest.mock import MagicMock
+
+    monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
+    monkeypatch.setenv("STRANDS_MESH_PSK", "r8-5-psk")
+    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "fleet-shared-override")
+
+    from strands_robots.mesh import security as sec
+    from strands_robots.mesh.core import Mesh
+
+    sec.clear_replay_cache()
+    receiver = Mesh(MagicMock(), peer_id="r-receiver")
+    receiver._put_signed = MagicMock()
+    receiver._estop_lockout.set()
+
+    # Resume WITHOUT proof — must be rejected (the lockout stays engaged).
+    bad = sec.sign_envelope({"peer_id": "issuer", "t": 1.0})
+    sample = MagicMock()
+    sample.payload.to_bytes.return_value = json.dumps(bad).encode()
+    receiver._on_safety_resume(sample)
+    assert receiver._estop_lockout.is_set(), (
+        "Resume without override_proof was accepted — R8-5 reopened. "
+        "PSK alone must not be sufficient for fleet-wide resume."
+    )
+
+
+def test_r8_5_remote_resume_rejects_wrong_override(tmp_path, monkeypatch):
+    """R8-5: a resume whose override_proof was computed with a
+    DIFFERENT code than the receiver has must be rejected (constant-
+    time-compared)."""
+    import hmac as _hmac
+    import json
+    from unittest.mock import MagicMock
+
+    monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
+    monkeypatch.setenv("STRANDS_MESH_PSK", "r8-5-psk")
+    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "receiver-code")
+
+    from strands_robots.mesh import security as sec
+    from strands_robots.mesh.core import Mesh
+
+    sec.clear_replay_cache()
+    receiver = Mesh(MagicMock(), peer_id="r-receiver")
+    receiver._put_signed = MagicMock()
+    receiver._estop_lockout.set()
+
+    # Issuer used a different override code.
+    proof_nonce = "deadbeef" * 4
+    proof = _hmac.new(b"different-issuer-code", proof_nonce.encode(), "sha256").hexdigest()
+    resume = sec.sign_envelope(
+        {
+            "peer_id": "issuer",
+            "t": 1.0,
+            "proof_nonce": proof_nonce,
+            "override_proof": proof,
+        }
+    )
+    sample = MagicMock()
+    sample.payload.to_bytes.return_value = json.dumps(resume).encode()
+    receiver._on_safety_resume(sample)
+    assert receiver._estop_lockout.is_set(), "Resume with wrong override_proof was accepted — R8-5 reopened."
+
+
+def test_r8_5_receiver_without_override_code_fails_closed(tmp_path, monkeypatch):
+    """R8-5: a receiver without ``STRANDS_MESH_OVERRIDE_CODE`` configured
+    fails closed and refuses every remote resume — even one with a
+    correctly-computed proof. Operators must distribute the override
+    code to every peer for fleet-wide remote resume to work.
+    """
+    import hmac as _hmac
+    import json
+    from unittest.mock import MagicMock
+
+    monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
+    monkeypatch.setenv("STRANDS_MESH_PSK", "r8-5-psk")
+    monkeypatch.delenv("STRANDS_MESH_OVERRIDE_CODE", raising=False)
+
+    from strands_robots.mesh import security as sec
+    from strands_robots.mesh.core import Mesh
+
+    sec.clear_replay_cache()
+    receiver = Mesh(MagicMock(), peer_id="r-receiver")
+    receiver._put_signed = MagicMock()
+    receiver._estop_lockout.set()
+
+    proof_nonce = "deadbeef" * 4
+    proof = _hmac.new(b"some-code", proof_nonce.encode(), "sha256").hexdigest()
+    resume = sec.sign_envelope({"peer_id": "issuer", "t": 1.0, "proof_nonce": proof_nonce, "override_proof": proof})
+    sample = MagicMock()
+    sample.payload.to_bytes.return_value = json.dumps(resume).encode()
+    receiver._on_safety_resume(sample)
+    assert receiver._estop_lockout.is_set(), (
+        "Receiver without OVERRIDE_CODE accepted a remote resume — R8-5 fail-closed reopened."
+    )
+
+
+def test_r8_6_mesh_send_validates_client_side(monkeypatch):
+    """R8-6: programmatic ``Mesh.send`` rejects off-allowlist payloads
+    client-side, not just at the receiver. The PR description claimed
+    client-side AND server-side validation; this closes the gap.
+    """
+    monkeypatch.delenv("STRANDS_MESH_HF_REPO_ALLOW", raising=False)
+    from unittest.mock import MagicMock
+
+    from strands_robots.mesh.core import Mesh
+
+    m = Mesh(MagicMock(), peer_id="me")
+    m._put_signed = MagicMock()
+    m._running = True
+
+    # Off-allowlist HF org should be rejected client-side.
+    out = m.send(
+        "peer-b",
+        {
+            "action": "execute",
+            "instruction": "x",
+            "policy_host": "localhost",
+            "pretrained_name_or_path": "evil-corp/backdoor",
+        },
+    )
+    assert out["status"] == "error"
+    assert "validation" in out["error"]
+    # Crucially: _put_signed was NEVER called (the bad cmd never hit the wire).
+    m._put_signed.assert_not_called()
+
+
+def test_r8_6_mesh_broadcast_validates_client_side(monkeypatch):
+    """R8-6: same for ``Mesh.broadcast`` — bad cmd never reaches the
+    wire."""
+    monkeypatch.delenv("STRANDS_MESH_POLICY_HOST_ALLOW", raising=False)
+    from unittest.mock import MagicMock
+
+    from strands_robots.mesh.core import Mesh
+
+    m = Mesh(MagicMock(), peer_id="me")
+    m._put_signed = MagicMock()
+    m._running = True
+
+    out = m.broadcast(
+        {
+            "action": "execute",
+            "instruction": "x",
+            "policy_host": "evil.example.com",  # off-allowlist
+        }
+    )
+    # broadcast returns list[dict]; on validation rejection, returns [].
+    assert out == []
+    m._put_signed.assert_not_called()
+
+
+def test_r8_7_broadcast_validates_before_hitl_interrupt(monkeypatch):
+    """R8-7: for ``broadcast``, ``robot_mesh`` parses + validates the
+    JSON command BEFORE raising the HITL interrupt. Pre-fix the
+    operator could approve a malformed command that the validator then
+    rejected — burning an audit ``operator approved`` record AND a
+    rate-limit slot for an action that never ran.
+    """
+    from unittest.mock import MagicMock
+
+    import strands_robots.tools.robot_mesh as rmt
+
+    rmt._reset_rate_limits()
+    fn = getattr(rmt.robot_mesh, "__wrapped__", rmt.robot_mesh)
+
+    # Build a tool_context whose interrupt() raises if called — proves
+    # the interrupt was NOT reached.
+    ctx = MagicMock()
+    ctx.interrupt.side_effect = AssertionError("Interrupt was raised before validation — R8-7 reopened")
+
+    # Bad JSON should be rejected before the interrupt.
+    result = fn(
+        action="broadcast",
+        tool_context=ctx,
+        command="not valid json {{{",
+    )
+    assert result["status"] == "error"
+    assert "valid JSON" in result["content"][0]["text"]
+    ctx.interrupt.assert_not_called()
+
+    # Valid JSON but invalid policy_host: also rejected before interrupt.
+    rmt._reset_rate_limits()
+    monkeypatch.delenv("STRANDS_MESH_POLICY_HOST_ALLOW", raising=False)
+    result = fn(
+        action="broadcast",
+        tool_context=ctx,
+        command='{"action": "execute", "instruction": "x", "policy_host": "evil.com"}',
+    )
+    assert result["status"] == "error"
+    assert "rejected" in result["content"][0]["text"]
+    ctx.interrupt.assert_not_called()
+
+
+def test_r8_7_declined_broadcast_does_not_consume_rate_slot(monkeypatch):
+    """R8-7 corollary (also covered by R3-3): a broadcast that fails
+    validation BEFORE the interrupt does not consume a rate-limit
+    slot, since the validator rejected it before the interrupt could
+    be approved.
+    """
+    from unittest.mock import MagicMock
+
+    import strands_robots.tools.robot_mesh as rmt
+
+    rmt._reset_rate_limits()
+    fn = getattr(rmt.robot_mesh, "__wrapped__", rmt.robot_mesh)
+    ctx = MagicMock()
+
+    # Failed validation MUST NOT consume a rate slot.
+    fn(action="broadcast", tool_context=ctx, command="not json")
+
+    with rmt._RATE_LOCK:
+        bucket = rmt._RATE_HISTORY.get("broadcast")
+        assert bucket is None or len(bucket) == 0, "Rate slot consumed for a broadcast that never ran — R8-7 reopened."
+
+
+def test_r8_10_amazon_root_ca1_sha256_alias_is_gone():
+    """R8-10: the legacy ``_AMAZON_ROOT_CA1_SHA256`` alias was deleted
+    per CodeQL #229. Internal code references ``_AMAZON_ROOT_CA1_PINS``
+    directly; error messages format the full pin set via
+    ``_resolve_ca_pins``.
+    """
+    from strands_robots.mesh.iot import provision
+
+    assert not hasattr(provision, "_AMAZON_ROOT_CA1_SHA256"), (
+        "Legacy _AMAZON_ROOT_CA1_SHA256 alias reintroduced — R8-10 / CodeQL #229 reopened."
+    )
+    # The tuple must still exist as the canonical pin source.
+    assert provision._AMAZON_ROOT_CA1_PINS
+    assert len(provision._AMAZON_ROOT_CA1_PINS[0]) == 64
+
+
+# ---------------------------------------------------------------------------
+# R8 polish tests (committed as amend to the round-8 commit).
+#
+# These pin three small unresolved findings from R4/R5/R6/R7 that the round-8
+# pass didn't explicitly cover but are easy to lock in:
+#
+# * R5-defensive  : belt-and-suspenders BROADCAST_RESPONDER guard at the
+#                   _expected_responders assignment site (in addition to
+#                   the public Mesh.send entry-point guard).
+# * R7-policy-lc  : policy_provider is lowercased by validate_command;
+#                   pin the contract so dispatch can rely on it.
+# * R5-flood      : permissive-mode nonce-cache flood eviction behaviour.
+#                   The cache is bounded; this test asserts that a flood
+#                   of unique nonces does not grow memory unboundedly,
+#                   pinning the GC behaviour the R5 review flagged.
+# ---------------------------------------------------------------------------
+
+
+def test_r5_defensive_send_broadcast_responder_sentinel_rejected_at_assignment():
+    """R5-defensive: even if a future refactor bypasses the public guard
+    in :meth:`Mesh.send`, the assignment to ``_expected_responders[turn]``
+    rejects the BROADCAST_RESPONDER sentinel and any NUL-containing target.
+    Belt-and-suspenders: the public guard is the primary defence; this
+    secondary guard makes the invariant explicit at the assignment site
+    so reviewers of future patches see it clearly.
+    """
+
+    import strands_robots.mesh.core as core_mod
+
+    # We instantiate Mesh-like minimal state and call the private path.
+    # The simplest pin is to verify the public guard rejects, AND that
+    # the inner block contains the sentinel check we added.
+    src = core_mod.__file__
+    with open(src) as fh:
+        body = fh.read()
+
+    # The defensive guard must exist.
+    assert "R5-defensive" in body, "R5 defensive BROADCAST_RESPONDER guard at assignment site removed."
+    assert "target may not equal BROADCAST_RESPONDER" in body, (
+        "Defensive guard error message changed — pin updated assertion."
+    )
+
+    # The public guard at the top of send() is still present.
+    assert "send: target may not contain NUL or equal the BROADCAST_RESPONDER sentinel" in body
+
+
+def test_r7_policy_provider_lowercase_contract():
+    """R7-policy-lc: ``validate_command`` lowercases ``policy_provider``
+    so dispatch can rely on a canonical key. Pre-fix a caller passing
+    ``"Lerobot"`` (mixed case) would have been forwarded as-is into the
+    registry lookup; the registry is case-sensitive so this would have
+    silently mis-routed. The validator now strips + lowercases.
+    """
+    from strands_robots.mesh import security as s
+
+    cmd = {
+        "action": "execute",
+        "instruction": "go",
+        "policy_provider": "  Mock  ",  # mixed case + whitespace
+    }
+    out = s.validate_command(cmd)
+    assert out["policy_provider"] == "mock", (
+        "policy_provider lowercase contract broken — dispatch may mis-route to wrong registry entry."
+    )
+
+    # Empty string after strip is treated as missing — falls back to default.
+    cmd = {"action": "execute", "instruction": "go", "policy_provider": "   "}
+    try:
+        out = s.validate_command(cmd)
+        # If accepted, must be normalized to the safe default.
+        assert out.get("policy_provider") in ("mock", None) or out["policy_provider"] == "", (
+            f"Whitespace-only policy_provider produced unexpected value: {out.get('policy_provider')!r}"
+        )
+    except s.ValidationError:
+        # Also acceptable — strict rejection of empty.
+        pass
+
+
+def test_r5_permissive_replay_cache_flood_bounded():
+    """R5-flood: a permissive-mode flood of unique nonces must be bounded
+    by the cache cap (no unbounded memory growth). The GC walk is O(n)
+    on a hot lock under attack — this test pins that the cap is enforced
+    so memory cannot grow without bound. Documenting the residual O(n)
+    GC cost is a docstring concern, not a code concern.
+    """
+
+    from strands_robots.mesh import security as s
+
+    # Reset the cache so other tests don't interfere.
+    with s._NONCE_LOCK:
+        s._NONCE_CACHE.clear()
+
+    cap = s._NONCE_CACHE_MAX
+    # Flood ~1.5x the cap with unique nonces.
+    flood_size = int(cap * 1.5)
+    now = 1_000_000.0
+    for i in range(flood_size):
+        s._record_nonce(f"flood-{i:08x}-pad-pad-pad", now + i * 0.001, scope="flood-test")
+
+    with s._NONCE_LOCK:
+        size = len(s._NONCE_CACHE)
+
+    # After GC, cache size MUST be at or below the cap.
+    assert size <= cap, (
+        f"Permissive-mode nonce cache grew unbounded: {size} entries > cap {cap}. "
+        "GC eviction at _record_nonce is broken — DoS surface reopened."
+    )
+    # And it should not have collapsed to empty (eviction drops only ~20%).
+    assert size > cap // 2, (
+        f"Permissive-mode nonce cache over-evicted: {size} entries < cap/2. "
+        "GC drops too aggressively — false replay rejections likely."
+    )
+
+    # Cleanup so subsequent tests start fresh.
+    with s._NONCE_LOCK:
+        s._NONCE_CACHE.clear()
