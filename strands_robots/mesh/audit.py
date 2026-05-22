@@ -71,6 +71,25 @@ logger = logging.getLogger(__name__)
 _LOG_FILE_NAME = "mesh_audit.jsonl"
 _DEFAULT_DIR = Path.home() / ".strands_robots"
 
+# Audit-log rotation (Phase-4 / Cycle 6 / E1).
+#
+# Without a size cap, an attacker who can publish to a peer's
+# safety/event topic (or, in permissive mode, anyone on the LAN) can
+# fill the robot's disk by spamming events at line-rate. We cap the
+# active log at ``_DEFAULT_LOG_MAX_BYTES`` and rotate to a numbered
+# suffix on overflow. ``_DEFAULT_LOG_MAX_FILES`` rotated copies are
+# kept; the oldest is discarded. Operators tune via
+# ``STRANDS_MESH_AUDIT_MAX_BYTES`` and ``STRANDS_MESH_AUDIT_MAX_FILES``.
+#
+# We deliberately don't use logging.handlers.RotatingFileHandler — that
+# class doesn't honour O_NOFOLLOW and would re-open the file via the
+# default open() on rollover, defeating the F2 symlink guard. The
+# rotation here uses os.rename + os.open(O_NOFOLLOW) consistently.
+_DEFAULT_LOG_MAX_BYTES: int = 100 * 1024 * 1024  # 100 MiB
+_DEFAULT_LOG_MAX_FILES: int = 5
+_LOG_MAX_BYTES_CAP: int = 10 * 1024 * 1024 * 1024  # 10 GiB hard upper bound
+_LOG_MAX_FILES_CAP: int = 100
+
 # Serialise writes inside a single process so two threads can't interleave
 # bytes inside one append. Different processes still need filesystem-level
 # atomicity (one open(..., "a") write per event).
@@ -127,6 +146,103 @@ def _audit_psk() -> bytes | None:
     if not psk:
         return None
     return psk.encode("utf-8")
+
+
+def _resolve_log_max_bytes() -> int:
+    """Read STRANDS_MESH_AUDIT_MAX_BYTES with a hard upper cap.
+
+    Reject obviously-broken values (negative, zero, larger than 10 GiB)
+    and fall back to the default. The hard cap exists so a typo or
+    misguided "disable rotation" attempt cannot turn the audit log
+    back into an unbounded growth surface.
+    """
+    raw = os.getenv("STRANDS_MESH_AUDIT_MAX_BYTES")
+    if not raw:
+        return _DEFAULT_LOG_MAX_BYTES
+    try:
+        v = int(raw)
+    except ValueError:
+        logger.warning("[audit] STRANDS_MESH_AUDIT_MAX_BYTES=%r invalid — using default", raw)
+        return _DEFAULT_LOG_MAX_BYTES
+    if v <= 0:
+        return _DEFAULT_LOG_MAX_BYTES
+    if v > _LOG_MAX_BYTES_CAP:
+        logger.warning(
+            "[audit] STRANDS_MESH_AUDIT_MAX_BYTES=%d exceeds hard cap %d — clamping",
+            v,
+            _LOG_MAX_BYTES_CAP,
+        )
+        return _LOG_MAX_BYTES_CAP
+    return v
+
+
+def _resolve_log_max_files() -> int:
+    """Read STRANDS_MESH_AUDIT_MAX_FILES with a hard upper cap."""
+    raw = os.getenv("STRANDS_MESH_AUDIT_MAX_FILES")
+    if not raw:
+        return _DEFAULT_LOG_MAX_FILES
+    try:
+        v = int(raw)
+    except ValueError:
+        return _DEFAULT_LOG_MAX_FILES
+    if v < 1:
+        return 1
+    if v > _LOG_MAX_FILES_CAP:
+        return _LOG_MAX_FILES_CAP
+    return v
+
+
+def _rotate_log_if_needed(path: Path, current_size: int) -> None:
+    """Rotate the audit log when it exceeds the configured size cap.
+
+    Caller MUST hold :data:`_WRITE_LOCK` so two threads don't both
+    rotate. We rename ``mesh_audit.jsonl`` -> ``mesh_audit.jsonl.1``,
+    cascading older rotations up the chain, and discarding any
+    rotation past ``max_files``.
+
+    Rotation keeps the audit history within bounded disk usage
+    (default: 100 MiB x 5 files = 500 MiB). Older records are
+    discarded — operators who need long-term retention should ship
+    rotated files to durable storage out-of-band.
+
+    Defence: also reject rotation if ``path`` is a symlink (paranoid
+    repeat of the F2 check; an attacker who races us between the
+    write check and rotation could otherwise redirect the rotated
+    name).
+    """
+    max_bytes = _resolve_log_max_bytes()
+    if current_size < max_bytes:
+        return
+    if path.is_symlink():
+        logger.warning("[audit] refusing to rotate symlinked audit log %s", path)
+        return
+
+    max_files = _resolve_log_max_files()
+    # Cascade .{n} -> .{n+1}, dropping the oldest.
+    for n in range(max_files - 1, 0, -1):
+        src_p = path.with_suffix(path.suffix + f".{n}")
+        dst_p = path.with_suffix(path.suffix + f".{n + 1}")
+        if src_p.exists():
+            try:
+                if n + 1 > max_files - 1:
+                    # Discard files past the max. Use os.unlink so a
+                    # symlink at this position cannot redirect a delete.
+                    if src_p.is_symlink():
+                        logger.warning("[audit] discarding symlinked rotated log %s", src_p)
+                        src_p.unlink(missing_ok=True)
+                        continue
+                    src_p.unlink(missing_ok=True)
+                else:
+                    os.replace(src_p, dst_p)
+            except OSError as exc:
+                logger.warning("[audit] rotation cascade failed at %s: %s", src_p, exc)
+    # Finally, rename the active log to .1 and let the next write
+    # create a fresh empty file via O_CREAT.
+    try:
+        os.replace(path, path.with_suffix(path.suffix + ".1"))
+        logger.info("[audit] rotated %s (size=%d bytes)", path, current_size)
+    except OSError as exc:
+        logger.warning("[audit] could not rotate %s: %s", path, exc)
 
 
 def _seq_sidecar_path() -> Path:
@@ -343,6 +459,16 @@ def log_safety_event(event_type: str, peer_id: str, payload: dict[str, Any]) -> 
     with _WRITE_LOCK:
         try:
             _ensure_paths(path)
+            # Phase-4 / E1: rotate BEFORE writing if the active log
+            # has grown past the size cap. Rotation is bounded so an
+            # attacker flooding events cannot exhaust disk; only the
+            # last (max_files * max_bytes) of audit history is kept.
+            try:
+                cur_size = path.stat().st_size if path.exists() else 0
+            except OSError:
+                cur_size = 0
+            if cur_size > 0:
+                _rotate_log_if_needed(path, cur_size)
             # Open with O_NOFOLLOW (POSIX) to defeat a symlink-swap
             # race between _ensure_paths and this open(). On a
             # symlink target the open() raises ELOOP and we reject the

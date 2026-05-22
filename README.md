@@ -501,6 +501,9 @@ agent.tool.gr00t_inference(action="stop", port=8000)
 | `ZENOH_CONNECT` | Comma-separated list of remote Zenoh endpoints to connect to | - |
 | `ZENOH_LISTEN` | Comma-separated list of endpoints for the local Zenoh listener | - |
 | `STRANDS_MESH_AUDIT_DIR` | Directory for the safety audit log (`mesh_audit.jsonl`) and sequence-counter sidecar (`mesh_audit.seq.json`) | `~/.strands_robots/` |
+| `STRANDS_MESH_AUDIT_MAX_BYTES` | Maximum size (bytes) of the active audit log before rotation. Hard-capped at 10 GiB. Phase-4 / E1: prevents an attacker who can publish safety events from filling the disk. | `104857600` (100 MiB) |
+| `STRANDS_MESH_AUDIT_MAX_FILES` | Maximum number of rotated audit log copies kept (`mesh_audit.jsonl.1` … `.N`). Hard-capped at 100. Older rotations are discarded. | `5` |
+| `STRANDS_MESH_BRIDGE_TOPICS_PREFIX` | Comma-separated list of bridge filter entries that match as path-prefix (entry matches `entry/<anything>`). Default: `response` (so `response/<turn-id>` bridges). All other entries in `STRANDS_MESH_BRIDGE_TOPICS` match exactly — Phase-4 / A2 hardening that closes the prefix-bypass attack. | `response` |
 | `STRANDS_MESH_PSK` | Pre-shared key for HMAC-signed envelopes on the wire. Unset = permissive mode (legacy unsigned messages still accepted). Set = signed mode. See **Mesh security** below. | unset |
 | `STRANDS_MESH_REQUIRE_AUTH` | Set to `true` to reject unsigned envelopes outright, even when no PSK is configured. Useful for tests and staging gates that must fail closed. | `false` |
 | `STRANDS_MESH_REPLAY_WINDOW` | Past-tolerance for envelope `ts` (seconds). Capped at 600. | `60` |
