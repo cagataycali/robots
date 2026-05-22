@@ -165,15 +165,41 @@ def _persist_seq_counters() -> None:
     """Write ``_SEQ_COUNTERS`` to the sidecar file. Fail-soft.
 
     Caller MUST hold :data:`_SEQ_LOCK`.
+
+    Defence (Phase-4 / Cycle 4 / F3): if the sidecar is a symlink,
+    refuse to write. Same threat model as the audit log itself —
+    attacker swaps the file with a symlink to redirect counter state
+    or null-route it. The atomic ``tmp + os.replace`` already prevents
+    half-written sidecars; this adds protection against tamper.
     """
     sidecar = _seq_sidecar_path()
+    if sidecar.is_symlink():
+        logger.warning(
+            "[audit] refusing to persist seq sidecar at %s: it is a SYMLINK "
+            "(target: %r). Counter persistence will fail-soft.",
+            sidecar,
+            os.readlink(sidecar),
+        )
+        return
     try:
         sidecar.parent.mkdir(parents=True, exist_ok=True)
         # Write to a temp file then rename so a crash mid-write cannot
         # leave a half-formed sidecar that fails to parse on next load.
         tmp = sidecar.with_suffix(sidecar.suffix + ".tmp")
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(_SEQ_COUNTERS, fh, sort_keys=True, separators=(",", ":"))
+        # Open the tmp file with O_NOFOLLOW too, so a TOCTOU between
+        # the is_symlink check above and this open is foiled.
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+        nofollow = getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(tmp, flags | nofollow, 0o600)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump(_SEQ_COUNTERS, fh, sort_keys=True, separators=(",", ":"))
+        except Exception:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            raise
         os.replace(tmp, sidecar)
         try:
             os.chmod(sidecar, 0o600)
@@ -242,6 +268,12 @@ def _ensure_paths(path: Path) -> None:
 
     Re-applies permissions on every call so a fresh deploy or a manual
     ``touch`` cannot leave the file world-readable by accident.
+
+    Defence: if the audit log path is a SYMLINK (potentially pointing
+    to attacker-controlled territory like ``/dev/null`` or another
+    process's file), refuse to operate. The audit log must always be
+    a real regular file at the canonical location. See
+    PENTEST_FINDINGS.md / Cycle 4.
     """
     parent = path.parent
     parent.mkdir(parents=True, exist_ok=True)
@@ -249,6 +281,26 @@ def _ensure_paths(path: Path) -> None:
         os.chmod(parent, 0o700)
     except OSError as exc:  # pragma: no cover — best-effort on exotic FS
         logger.debug("[audit] could not chmod %s: %s", parent, exc)
+
+    # Symlink check on the audit log itself. We use lstat so we don't
+    # follow the link; any symlink — even one pointing to a legitimate
+    # location — is treated as tampering and rejected. Operators who
+    # legitimately want the log to live under a different path use
+    # STRANDS_MESH_AUDIT_DIR; symlinks are never the answer.
+    try:
+        if path.is_symlink():
+            raise OSError(
+                f"refusing to use audit log at {path}: it is a SYMLINK "
+                f"(target: {os.readlink(path)!r}). This may indicate "
+                f"tampering. Set STRANDS_MESH_AUDIT_DIR if you need to "
+                f"relocate the log."
+            )
+    except OSError:
+        # Re-raise the symlink check; an unrelated lstat failure
+        # (permission denied on parent, etc.) is handled by the
+        # subsequent open() call.
+        if path.is_symlink():
+            raise
 
     if not path.exists():
         # Create the file empty so we can chmod it before writing data.
@@ -291,13 +343,42 @@ def log_safety_event(event_type: str, peer_id: str, payload: dict[str, Any]) -> 
     with _WRITE_LOCK:
         try:
             _ensure_paths(path)
-            with open(path, "a", encoding="utf-8") as fh:
-                fh.write(line)
-                fh.flush()
+            # Open with O_NOFOLLOW (POSIX) to defeat a symlink-swap
+            # race between _ensure_paths and this open(). On a
+            # symlink target the open() raises ELOOP and we reject the
+            # write — matching the static check in _ensure_paths.
+            #
+            # Fall back to plain open() if O_NOFOLLOW is unavailable
+            # (Windows). On those platforms the static is_symlink
+            # check in _ensure_paths is the only defence; we accept
+            # that as residual risk because the supported deployment
+            # surface is POSIX (Linux + macOS).
+            flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT
+            nofollow = getattr(os, "O_NOFOLLOW", 0)
+            try:
+                fd = os.open(path, flags | nofollow, 0o600)
+            except OSError as oe:
+                # ELOOP under O_NOFOLLOW = symlink → retry without it
+                # is NOT what we want; just re-raise.
+                raise oe
+            try:
+                with os.fdopen(fd, "a", encoding="utf-8") as fh:
+                    fh.write(line)
+                    fh.flush()
+                    try:
+                        os.fsync(fh.fileno())  # durable write before returning
+                    except OSError:
+                        # best-effort on filesystems that reject fsync;
+                        # the data is in the kernel page cache and
+                        # we'd rather lose durability than crash safety.
+                        pass
+            except Exception:
+                # Make sure fd is closed if fdopen raises.
                 try:
-                    os.fsync(fh.fileno())  # durable write before returning
+                    os.close(fd)
                 except OSError:
-                    pass  # best-effort on filesystems that reject fsync
+                    pass
+                raise
         except OSError as exc:
             logger.warning("[audit] failed to write %s: %s", path, exc)
 

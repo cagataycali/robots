@@ -296,7 +296,11 @@ def test_send_returns_first_response(started_mesh: Mesh, captured_puts) -> None:
             time.sleep(0.01)
         else:  # pragma: no cover — defensive
             return
-        sample = _make_sample({"turn_id": turn, "result": {"ok": 1}})
+        # Phase-4 / D1: _on_response now requires responder_id to match the
+        # target the sender originally addressed (otherwise an
+        # authenticated peer that observes the turn_id can hijack the
+        # response). Include responder_id="peer-b" to match send target.
+        sample = _make_sample({"turn_id": turn, "responder_id": "peer-b", "result": {"ok": 1}})
         started_mesh._on_response(sample)
 
     threading.Thread(target=fake_responder, daemon=True).start()

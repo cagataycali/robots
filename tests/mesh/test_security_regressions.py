@@ -1109,6 +1109,11 @@ def test_r3_6_audit_seq_loaded_lives_on_state_object():
 def test_r3_7_persist_seq_chmod_failure_documented():
     """R3-7: the chmod best-effort except-pass in ``_persist_seq_counters``
     has an explanatory comment so CodeQL #225 stays closed.
+
+    Updated for Phase-4 / F3 — _persist_seq_counters now contains
+    multiple except blocks (the new symlink-defence path + the original
+    chmod best-effort block). We specifically pin the *chmod* block by
+    searching downward FROM the chmod call.
     """
     import inspect
 
@@ -1116,17 +1121,27 @@ def test_r3_7_persist_seq_chmod_failure_documented():
 
     src = inspect.getsource(audit._persist_seq_counters)
     # Find the chmod block.
-    assert "os.chmod(sidecar, 0o600)" in src
-    # The except OSError: must be followed by a non-empty comment line
-    # before `pass` — CodeQL specifically flags `except: pass` with no
-    # comment.
-    idx = src.index("except OSError:\n")
-    tail = src[idx:]
-    # The next 5 lines should include at least one #-comment line before
-    # ``pass``.
-    next_lines = tail.splitlines()[1:6]
-    has_comment = any(line.strip().startswith("#") for line in next_lines)
-    assert has_comment, (
+    chmod_idx = src.index("os.chmod(sidecar, 0o600)")
+    tail = src[chmod_idx:]
+    # The except clause that wraps chmod must be followed by a
+    # comment before `pass`. Look for "except OSError:" and the
+    # immediate-next-non-blank line.
+    except_pos = tail.index("except OSError:")
+    after = tail[except_pos:].splitlines()
+    # after[0] is `except OSError:`; after[1..] should include at least
+    # one comment line before any `pass` statement.
+    has_comment_before_pass = False
+    for line in after[1:8]:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("#"):
+            has_comment_before_pass = True
+            break
+        if stripped == "pass":
+            break
+
+    assert has_comment_before_pass, (
         "_persist_seq_counters chmod block has empty `except OSError: pass` "
         "with no explanatory comment — CodeQL #225 will reopen."
     )

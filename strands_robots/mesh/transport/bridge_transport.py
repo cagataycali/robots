@@ -94,21 +94,61 @@ DEFAULT_BRIDGE_SUFFIXES: frozenset[str] = frozenset(
         "health",
         "safety/event",
         "safety/estop",
+        "safety/resume",
         "cmd",
         "response",
         "broadcast",
     }
 )
 
+# Of the bridge filter entries, only ``response`` legitimately carries a
+# trailing ``/<turn-id>`` segment that the bridge must accept. Every other
+# entry is matched exactly. This is the post-Phase-4 hardening:
+#
+#   Pre-fix: a sloppy prefix-walk in _should_bridge meant that
+#   ``strands/<x>/cmd/anything-attacker-tacks-on`` matched the ``cmd``
+#   filter entry and was bridged to MQTT. An attacker could pollute the
+#   cloud audit table / spam CloudWatch / inflate broker billing by
+#   appending arbitrary suffixes to allowed prefixes
+#   (``strands/x/safety/event/<10kb-blob>`` is the worst case — it ends
+#   up in the DDB audit table). See PENTEST_FINDINGS.md / Cycle 2.
+#
+# Operators who need a bare-prefix match for a custom suffix can opt in
+# explicitly via ``STRANDS_MESH_BRIDGE_TOPICS_PREFIX``.
+_DEFAULT_BRIDGE_PREFIX_SUFFIXES: frozenset[str] = frozenset({"response"})
+
 
 def _resolve_bridge_filter() -> frozenset[str]:
-    """Read ``STRANDS_MESH_BRIDGE_TOPICS`` or fall back to the default."""
+    """Read ``STRANDS_MESH_BRIDGE_TOPICS`` or fall back to the default.
+
+    Returns the EXACT-match suffix set. Prefix-match suffixes (i.e.
+    those whose tail is part of the topic, like ``response/<turn>``)
+    are returned by :func:`_resolve_bridge_prefix_filter`.
+    """
     env = os.getenv("STRANDS_MESH_BRIDGE_TOPICS")
     if not env:
         return DEFAULT_BRIDGE_SUFFIXES
     parts = [p.strip() for p in env.split(",") if p.strip()]
     if not parts:
         return DEFAULT_BRIDGE_SUFFIXES
+    return frozenset(parts)
+
+
+def _resolve_bridge_prefix_filter() -> frozenset[str]:
+    """Read ``STRANDS_MESH_BRIDGE_TOPICS_PREFIX`` or fall back to default.
+
+    Entries here are matched as a path prefix (``response`` matches
+    ``response/abc-123``). The default is just ``response`` because that
+    is the only RPC-shape topic with a per-turn tail. Operators who add
+    a new RPC-shape topic must extend this list explicitly — extending
+    only ``STRANDS_MESH_BRIDGE_TOPICS`` will NOT bridge tails.
+    """
+    env = os.getenv("STRANDS_MESH_BRIDGE_TOPICS_PREFIX")
+    if not env:
+        return _DEFAULT_BRIDGE_PREFIX_SUFFIXES
+    parts = [p.strip() for p in env.split(",") if p.strip()]
+    if not parts:
+        return _DEFAULT_BRIDGE_PREFIX_SUFFIXES
     return frozenset(parts)
 
 
@@ -135,22 +175,53 @@ def _topic_suffix(topic: str) -> str:
     return tail
 
 
-def _should_bridge(topic: str, allowed_suffixes: frozenset[str]) -> bool:
+def _should_bridge(
+    topic: str,
+    allowed_suffixes: frozenset[str],
+    allowed_prefixes: frozenset[str] | None = None,
+) -> bool:
     """True if *topic* should be republished to MQTT.
 
-    Match policy: a topic suffix matches an allowed entry if either is a
-    prefix of the other up to a ``/`` boundary. So ``response/abc123``
-    matches the allowed suffix ``response``, and ``safety/event`` matches
-    itself exactly.
+    Match policy (Phase-4 tightening):
+
+    * **Exact match**: ``allowed_suffixes`` entries match the topic
+      suffix character-for-character. ``cmd`` matches
+      ``strands/<peer>/cmd`` only — NOT
+      ``strands/<peer>/cmd/<attacker-supplied-tail>``.
+    * **Prefix match**: only entries listed in ``allowed_prefixes``
+      (default: ``{"response"}`` — the only RPC-shape topic with a
+      per-turn tail) accept a trailing path component. ``response``
+      matches ``response/<turn>``.
+
+    The exact / prefix split closes the cloud-pollution attack
+    documented in PENTEST_FINDINGS.md / Cycle 2 — without the split, an
+    attacker could append arbitrary tails to any allowed prefix and
+    have the bridge republish the message to MQTT (e.g. a 10 KiB blob
+    on ``strands/<x>/safety/event/<blob>`` ends up in the DDB audit
+    table).
     """
+    if allowed_prefixes is None:
+        allowed_prefixes = _resolve_bridge_prefix_filter()
+
     suffix = _topic_suffix(topic)
     if not suffix:
         return False
-    suffix_parts = suffix.split("/")
-    for n in range(len(suffix_parts), 0, -1):
-        candidate = "/".join(suffix_parts[:n])
-        if candidate in allowed_suffixes:
-            return True
+
+    # Exact match — fast path.
+    if suffix in allowed_suffixes:
+        return True
+
+    # Prefix match — only legitimate for entries explicitly opted-in to
+    # tail-acceptance.
+    head = suffix.split("/", 1)[0]
+    if head in allowed_prefixes:
+        # Defence-in-depth: reject any tail containing path-traversal
+        # segments. Zenoh keys never legitimately contain ``..``.
+        rest = suffix[len(head) + 1 :] if "/" in suffix else ""
+        if rest and any(seg == ".." for seg in rest.split("/")):
+            return False
+        return True
+
     return False
 
 

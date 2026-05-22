@@ -51,6 +51,12 @@ def get_local_robots() -> dict[str, Mesh]:
         return dict(_LOCAL_ROBOTS)
 
 
+#: Sentinel stored in :attr:`Mesh._expected_responders` for
+#: broadcast turn_ids. Distinct from any real peer_id (no peer_id
+#: contains a NUL byte).
+BROADCAST_RESPONDER: str = "<broadcast>\x00"
+
+
 class Mesh(SensorLoopsMixin):
     """Peer-to-peer mesh component embedded in a single Robot or Simulation.
 
@@ -74,10 +80,18 @@ class Mesh(SensorLoopsMixin):
         self._inbox_lock = threading.Lock()
         self._stop_event = threading.Event()
 
-        # RPC correlation state
+        # RPC correlation state.
+        #
+        # _expected_responders maps turn_id -> the peer_id we expect to
+        # answer (set by send() at point-to-point), or the sentinel
+        # ``BROADCAST_RESPONDER`` if the turn_id was created by
+        # broadcast() and we accept responses from any peer. Phase-4 /
+        # D1: this is what _on_response uses to reject a forged
+        # response from a peer that wasn't the original target.
         self._rpc_lock = threading.Lock()
         self._pending: dict[str, threading.Event] = {}
         self._responses: dict[str, list[dict[str, Any]]] = {}
+        self._expected_responders: dict[str, str] = {}
 
         # User subscribe state
         self.inbox: dict[str, list[tuple[str, dict[str, Any]]]] = {}
@@ -759,6 +773,20 @@ class Mesh(SensorLoopsMixin):
         return {"error": f"unknown action: {action}"}
 
     def _on_response(self, sample: Any) -> None:
+        """Inbound response handler.
+
+        Phase-4 / D1 hardening: a response is accepted only if its
+        ``responder_id`` matches the expected target recorded in
+        :attr:`_expected_responders` (set by :meth:`send`). Broadcast
+        turns use the ``BROADCAST_RESPONDER`` sentinel and accept any
+        responder_id — that is the broadcast contract.
+
+        Without this check, an authenticated-but-malicious peer that
+        observes a turn_id (trivial on Zenoh LAN) can publish a
+        correctly-HMAC-signed response and have the sender accept its
+        forged ``result`` instead of the legitimate target's. See
+        PENTEST_FINDINGS.md / Cycle 5.
+        """
         try:
             raw = sample.payload.to_bytes().decode()
             envelope = json.loads(raw)
@@ -774,9 +802,23 @@ class Mesh(SensorLoopsMixin):
         turn = data.get("turn_id")
         if not isinstance(turn, str):
             return
+        responder = data.get("responder_id")
         with self._rpc_lock:
             event = self._pending.get(turn)
             if event is None:
+                return
+            expected = self._expected_responders.get(turn)
+            # Strict scoping for point-to-point sends. Broadcast accepts any.
+            if expected is not None and expected != BROADCAST_RESPONDER and responder != expected:
+                logger.warning(
+                    "[mesh] %s: dropped response on turn %s — "
+                    "responder_id=%r does not match expected target %r "
+                    "(possible response hijack)",
+                    self.peer_id,
+                    turn[:12],
+                    responder,
+                    expected,
+                )
                 return
             self._responses.setdefault(turn, []).append(data)
         event.set()
@@ -860,14 +902,24 @@ class Mesh(SensorLoopsMixin):
 
     # RPC — outgoing
     def send(self, target: str, cmd: dict[str, Any], timeout: float = 30.0) -> dict[str, Any]:
-        """Send a command to a single peer and return the first response."""
+        """Send a command to a single peer and return the first response.
+
+        Phase-4 / D1 hardening: turn_id is a full 128-bit uuid4 (no
+        truncation), and the expected responder is recorded so
+        :meth:`_on_response` rejects forged responses from any peer
+        other than *target*.
+        """
         if not self._running:
             return {"status": "error", "error": "mesh not running"}
-        turn = uuid.uuid4().hex[:8]
+        # 128-bit turn id — at 32 bits the birthday-collision window
+        # under heavy concurrent RPC load was practical (~65k turns
+        # before 50% collision); 128 bits removes that surface entirely.
+        turn = uuid.uuid4().hex
         event = threading.Event()
         with self._rpc_lock:
             self._pending[turn] = event
             self._responses[turn] = []
+            self._expected_responders[turn] = target
         msg = {"sender_id": self.peer_id, "turn_id": turn, "command": cmd, "timestamp": time.time()}
         try:
             self._put_signed(f"strands/{target}/cmd", msg)
@@ -876,17 +928,26 @@ class Mesh(SensorLoopsMixin):
             with self._rpc_lock:
                 resps = self._responses.pop(turn, [])
                 self._pending.pop(turn, None)
+                self._expected_responders.pop(turn, None)
         return resps[0] if resps else {"status": "timeout"}
 
     def broadcast(self, cmd: dict[str, Any], timeout: float = 5.0) -> list[dict[str, Any]]:
-        """Broadcast a command to every peer and return all responses."""
+        """Broadcast a command to every peer and return all responses.
+
+        Phase-4 / D1: turn_id is a full 128-bit uuid4 (no truncation).
+        Broadcast turns accept responses from any responder by design,
+        so the responder_id check is bypassed (sentinel
+        ``BROADCAST_RESPONDER``).
+        """
         if not self._running:
             return []
-        turn = uuid.uuid4().hex[:8]
+        turn = uuid.uuid4().hex
         event = threading.Event()
         with self._rpc_lock:
             self._pending[turn] = event
             self._responses[turn] = []
+            # Sentinel — broadcast accepts responses from any peer.
+            self._expected_responders[turn] = BROADCAST_RESPONDER
         msg = {"sender_id": self.peer_id, "turn_id": turn, "command": cmd, "timestamp": time.time()}
         try:
             self._put_signed("strands/broadcast", msg)
@@ -896,6 +957,7 @@ class Mesh(SensorLoopsMixin):
             with self._rpc_lock:
                 resps = self._responses.pop(turn, [])
                 self._pending.pop(turn, None)
+                self._expected_responders.pop(turn, None)
         return resps
 
     def tell(self, target: str, instruction: str, **kw: Any) -> dict[str, Any]:
