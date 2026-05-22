@@ -1018,12 +1018,18 @@ class TestOptionInjectionGuard:
         assert result["status"] == "error"
         assert "policy_name" in result["message"]
 
-    def test_valid_repo_url_accepted(self):
+    def test_valid_repo_url_accepted(self, monkeypatch):
         """Normal https:// URL must pass the guard."""
-        from strands_robots.tools.gr00t_inference import gr00t_inference
+        from strands_robots.tools import gr00t_inference as gi_mod
 
-        # Will fail on Docker/git availability but not on option-injection guard
-        result = gr00t_inference(
+        # Mock _build_image to avoid actual git/docker operations
+        monkeypatch.setattr(
+            gi_mod,
+            "_build_image",
+            lambda **kwargs: {"status": "success", "message": "mocked"},
+        )
+
+        result = gi_mod.gr00t_inference(
             action="build_image",
             repo_url="https://github.com/NVIDIA/Isaac-GR00T",
             repo_tag="n1.7-release",
@@ -1324,5 +1330,5 @@ class TestExpandedParamValidationExtended:
             trt_engine_path="gr00t_engine",
             container_name="gr00t",
             protocol="n1.5",
-            volumes={"/home/user/checkpoints": "/data/checkpoints"},
+            volumes={"/tmp/checkpoints": "/data/checkpoints"},
         )
