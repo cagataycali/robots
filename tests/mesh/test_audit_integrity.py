@@ -26,9 +26,9 @@ def _isolated_audit(monkeypatch, tmp_path):
     """Each test gets a fresh audit dir and reset sequence counter."""
     monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
     monkeypatch.delenv("STRANDS_MESH_AUDIT_PSK", raising=False)
-    audit._SEQ_COUNTER = 0  # reset so tests are deterministic
+    audit._SEQ_COUNTERS.clear()  # reset so tests are deterministic
     yield
-    audit._SEQ_COUNTER = 0
+    audit._SEQ_COUNTERS.clear()
 
 
 def _read_lines(p: Path) -> list[dict]:
@@ -45,14 +45,23 @@ class TestSequence:
         records = audit.read_audit_log()
         assert [r["seq"] for r in records] == [1, 2]
 
-    def test_sequence_per_process_not_per_peer(self):
-        """seq is process-monotonic across all peers (per-process counter)."""
+    def test_sequence_per_peer(self):
+        """seq is per-peer monotonic. Two peers writing concurrently each
+        produce their own 1, 2, 3, ... sequence. The overall log can
+        interleave them but per-peer adjacency is preserved — which is
+        what verify_audit_integrity's gap-detection relies on."""
         audit.log_safety_event("e", "peer-a", {})
         audit.log_safety_event("e", "peer-b", {})
         audit.log_safety_event("e", "peer-a", {})
+        audit.log_safety_event("e", "peer-b", {})
         records = audit.read_audit_log()
-        seqs = [r["seq"] for r in records]
-        assert seqs == [1, 2, 3]
+        seq_by_peer: dict[str, list[int]] = {}
+        for r in records:
+            seq_by_peer.setdefault(r["peer_id"], []).append(r["seq"])
+        assert seq_by_peer["peer-a"] == [1, 2]
+        assert seq_by_peer["peer-b"] == [1, 2]
+        # And verify no phantom gaps in the multi-peer case.
+        assert audit.verify_audit_integrity()["sequence_gaps"] == []
 
 
 # ─── HMAC signing ────────────────────────────────────────────────────────

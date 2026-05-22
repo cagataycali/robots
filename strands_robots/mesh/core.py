@@ -114,6 +114,14 @@ class Mesh(SensorLoopsMixin):
                 declared.append(session.declare_subscriber(f"strands/{self.peer_id}/cmd", self._on_cmd))
                 declared.append(session.declare_subscriber("strands/broadcast", self._on_cmd))
                 declared.append(session.declare_subscriber(f"strands/{self.peer_id}/response/**", self._on_response))
+                # Fleet-wide e-stop: any peer broadcasting on safety/estop or
+                # safety/resume engages / clears the lockout on every other
+                # peer too. Without these subscribers the lockout would only
+                # protect the issuing process, leaving receivers willing to
+                # accept the next command after they've stopped the current
+                # task.
+                declared.append(session.declare_subscriber("strands/safety/estop", self._on_safety_estop))
+                declared.append(session.declare_subscriber("strands/safety/resume", self._on_safety_resume))
             except Exception as exc:
                 for sub in declared:
                     try:
@@ -328,7 +336,7 @@ class Mesh(SensorLoopsMixin):
         # unsigned presence; in permissive mode legacy un-enveloped messages
         # pass through unchanged for back-compat with un-upgraded peers.
         try:
-            data = _security.verify_envelope(envelope)
+            data = _security.verify_envelope(envelope, scope=self.peer_id)
         except _security.AuthenticationError as exc:
             logger.debug("[mesh] %s: rejected unauthenticated presence: %s", self.peer_id, exc)
             return
@@ -353,7 +361,7 @@ class Mesh(SensorLoopsMixin):
             try:
                 state = self._read_state()
                 if state:
-                    put(f"strands/{self.peer_id}/state", state)
+                    self._put_signed(f"strands/{self.peer_id}/state", state)
             except Exception as exc:
                 logger.debug("[mesh] %s: state tick error: %s", self.peer_id, exc)
             if self._stop_event.wait(period):
@@ -528,9 +536,12 @@ class Mesh(SensorLoopsMixin):
             return
         # Authenticate the envelope: HMAC signature + freshness window +
         # replay nonce. Unauthenticated commands are dropped at the first
-        # step here — _exec_cmd never runs for them.
+        # step here — _exec_cmd never runs for them. Scope = self.peer_id
+        # so other Mesh peers in the same process maintain independent
+        # nonce caches and a broadcast does not trip "replay" on the
+        # second receiver.
         try:
-            data = _security.verify_envelope(envelope)
+            data = _security.verify_envelope(envelope, scope=self.peer_id)
         except _security.AuthenticationError as exc:
             logger.warning("[mesh] %s: rejected unauthenticated cmd: %s", self.peer_id, exc)
             return
@@ -556,8 +567,11 @@ class Mesh(SensorLoopsMixin):
                     self.peer_id,
                     {"sender": sender_id, "topic": "cmd"},
                 )
-            except Exception:
-                pass
+            except Exception as audit_exc:
+                # Audit is best-effort — never let a missing/broken log
+                # path break the cmd handler. Logged at DEBUG so it shows
+                # up under verbose logging without spamming production.
+                logger.debug("[mesh] %s: audit log unavailable: %s", self.peer_id, audit_exc)
             return
         threading.Thread(target=self._exec_cmd, args=(data,), name=f"mesh-exec-{self.peer_id}", daemon=True).start()
 
@@ -598,8 +612,10 @@ class Mesh(SensorLoopsMixin):
                         "action": cmd.get("action") if isinstance(cmd, dict) else None,
                     },
                 )
-            except Exception:
-                pass
+            except Exception as audit_exc:
+                # Audit is best-effort — never let a missing/broken log
+                # path swallow the validation rejection itself.
+                logger.debug("[mesh] %s: audit log unavailable: %s", self.peer_id, audit_exc)
             return
 
         try:
@@ -615,6 +631,32 @@ class Mesh(SensorLoopsMixin):
                         "timestamp": time.time(),
                     },
                 )
+        except _security.LockoutError as exc:
+            # Lockout is the most operationally interesting rejection — emit
+            # a structured error on the response topic and audit it.
+            logger.warning("[mesh] %s: rejected during lockout from %s", self.peer_id, sender)
+            if rkey is not None:
+                self._put_signed(
+                    rkey,
+                    {
+                        "type": "error",
+                        "responder_id": self.peer_id,
+                        "turn_id": turn,
+                        "error": str(exc),
+                        "timestamp": time.time(),
+                    },
+                )
+            try:
+                from strands_robots.mesh.audit import log_safety_event
+
+                log_safety_event(
+                    "command_rejected_lockout",
+                    self.peer_id,
+                    {"sender": sender, "action": cmd.get("action") if isinstance(cmd, dict) else None},
+                )
+            except Exception as audit_exc:
+                logger.debug("[mesh] %s: audit log unavailable: %s", self.peer_id, audit_exc)
+            return
         except Exception as exc:
             logger.warning("[mesh] %s: dispatch error: %s", self.peer_id, exc)
             if rkey is not None:
@@ -634,12 +676,13 @@ class Mesh(SensorLoopsMixin):
         r = self.robot
 
         # While the emergency-stop lockout is engaged, only ``status`` and
-        # ``resume`` are permitted. The rejection is generic on purpose:
-        # leaking the lockout flag and duration to a remote caller would
-        # reveal an operationally sensitive window. Operators who need that
-        # state read it from the local audit log instead.
+        # ``resume`` are permitted. Raise so _exec_cmd handles the rejection
+        # symmetrically with ValidationError — emitting type="error" on the
+        # response topic and recording an audit entry. The wire response is
+        # intentionally generic so a remote caller cannot use it to map the
+        # lockout window.
         if self._estop_lockout.is_set() and action not in ("status", "resume"):
-            return {"error": "command rejected"}
+            raise _security.LockoutError("command rejected")
 
         if action == "resume":
             return self._resume_lockout(cmd.get("override_code", ""))
@@ -706,7 +749,7 @@ class Mesh(SensorLoopsMixin):
         except Exception:
             return
         try:
-            data = _security.verify_envelope(envelope)
+            data = _security.verify_envelope(envelope, scope=self.peer_id)
         except _security.AuthenticationError as exc:
             logger.debug("[mesh] %s: rejected unauthenticated response: %s", self.peer_id, exc)
             return
@@ -721,6 +764,58 @@ class Mesh(SensorLoopsMixin):
                 return
             self._responses.setdefault(turn, []).append(data)
         event.set()
+
+    # Safety — inbound estop / resume
+    def _on_safety_estop(self, sample: Any) -> None:
+        """Engage the local emergency-stop lockout in response to a fleet-
+        wide ``strands/safety/estop`` broadcast.
+
+        The verifier rejects unsigned envelopes in strict mode, so an
+        attacker without the PSK cannot trigger a fleet lockout. The
+        sender is still allowed to be ourselves — engaging the flag
+        twice is a no-op.
+        """
+        try:
+            raw = sample.payload.to_bytes().decode()
+            envelope = json.loads(raw)
+        except Exception:
+            return
+        try:
+            data = _security.verify_envelope(envelope, scope=self.peer_id)
+        except _security.AuthenticationError as exc:
+            logger.warning("[mesh] %s: rejected unauthenticated estop: %s", self.peer_id, exc)
+            return
+        if not isinstance(data, dict):
+            return
+        if not self._estop_lockout.is_set():
+            self._estop_lockout.set()
+            self._last_estop_ts = time.time()
+            sender = data.get("peer_id", "<remote>")
+            logger.critical("[safety] %s: lockout engaged via remote estop from %s", self.peer_id, sender)
+
+    def _on_safety_resume(self, sample: Any) -> None:
+        """Clear the local lockout in response to ``strands/safety/resume``.
+
+        The publisher of the resume event already validated the operator
+        override code locally (see :meth:`_resume_lockout`); we trust the
+        signed envelope and follow.
+        """
+        try:
+            raw = sample.payload.to_bytes().decode()
+            envelope = json.loads(raw)
+        except Exception:
+            return
+        try:
+            data = _security.verify_envelope(envelope, scope=self.peer_id)
+        except _security.AuthenticationError as exc:
+            logger.warning("[mesh] %s: rejected unauthenticated resume: %s", self.peer_id, exc)
+            return
+        if not isinstance(data, dict):
+            return
+        if self._estop_lockout.is_set():
+            self._estop_lockout.clear()
+            sender = data.get("peer_id", "<remote>")
+            logger.warning("[safety] %s: lockout cleared via remote resume from %s", self.peer_id, sender)
 
     # RPC — outgoing
     def send(self, target: str, cmd: dict[str, Any], timeout: float = 30.0) -> dict[str, Any]:
@@ -854,7 +949,7 @@ class Mesh(SensorLoopsMixin):
             elif isinstance(value, (int, float, bool, str, list, tuple)):
                 act_numeric[key] = value if not isinstance(value, tuple) else list(value)
 
-        put(
+        self._put_signed(
             f"strands/{self.peer_id}/stream",
             {
                 "peer_id": self.peer_id,

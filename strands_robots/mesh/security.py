@@ -146,6 +146,17 @@ class RateLimitError(SecurityError):
     """Sender exceeded a configured rate limit."""
 
 
+class LockoutError(SecurityError):
+    """Command rejected because the local mesh is in emergency-stop lockout.
+
+    Raised from :meth:`Mesh._dispatch` when an action other than ``status``
+    or ``resume`` arrives while ``_estop_lockout`` is engaged. The wire
+    response is intentionally generic — the exception type carries the real
+    semantics so the dispatch wrapper can audit the rejection symmetrically
+    with :class:`ValidationError`.
+    """
+
+
 # ─── PSK / configuration helpers ─────────────────────────────────────────
 
 # One-shot flag so we only log the "PSK not set" warning once per process.
@@ -187,20 +198,38 @@ def _replay_window_s() -> float:
 # ─── Replay-protection nonce cache ───────────────────────────────────────
 
 _NONCE_LOCK = threading.Lock()
-_NONCE_CACHE: dict[str, float] = {}
+# Cache key is a (scope, nonce) tuple so multiple verifiers running in the
+# same process — for example several Mesh peers under tests or in a single
+# Simulation host — each maintain an independent replay window. Without the
+# scope, every broadcast envelope verified by the second peer would be
+# rejected as a replay even though it was the FIRST arrival at THAT peer.
+_NONCE_CACHE: dict[tuple[str, str], float] = {}
+
+# Sentinel scope used when the caller does not supply one (back-compat for
+# tests and any process where there is provably one verifier).
+_DEFAULT_NONCE_SCOPE = ""
 
 
-def clear_replay_cache() -> None:
-    """Drop every cached nonce. Test-only helper."""
+def clear_replay_cache(scope: str | None = None) -> None:
+    """Drop cached nonces.
+
+    With no argument or ``scope=None``, drop every cached nonce. With an
+    explicit scope, drop only that scope's entries. Test-only helper.
+    """
     with _NONCE_LOCK:
-        _NONCE_CACHE.clear()
+        if scope is None:
+            _NONCE_CACHE.clear()
+        else:
+            for key in [k for k in _NONCE_CACHE if k[0] == scope]:
+                _NONCE_CACHE.pop(key, None)
 
 
-def _record_nonce(nonce: str, now: float) -> bool:
-    """Record *nonce* as seen at *now*.
+def _record_nonce(nonce: str, now: float, scope: str = _DEFAULT_NONCE_SCOPE) -> bool:
+    """Record *nonce* as seen at *now* in the given *scope*.
 
-    Returns True if the nonce was novel (and is now recorded), False if it
-    was already in the cache within the replay window — i.e. a replay.
+    Returns True if the (scope, nonce) tuple was novel (and is now
+    recorded), False if it was already in the cache within the replay
+    window — i.e. a replay.
     """
     window = _replay_window_s()
     with _NONCE_LOCK:
@@ -217,9 +246,10 @@ def _record_nonce(nonce: str, now: float) -> bool:
                 for key, _ in ordered[:drop]:
                     _NONCE_CACHE.pop(key, None)
 
-        if nonce in _NONCE_CACHE:
+        cache_key = (scope, nonce)
+        if cache_key in _NONCE_CACHE:
             return False
-        _NONCE_CACHE[nonce] = now
+        _NONCE_CACHE[cache_key] = now
         return True
 
 
@@ -272,9 +302,10 @@ def sign_envelope(payload: dict[str, Any]) -> dict[str, Any]:
         "payload": payload,
     }
 
+    global _PSK_WARNED  # warning-state flag; declared up front so static
+    # analyzers see the name before its first use.
     psk = _get_psk()
     if psk is None:
-        global _PSK_WARNED
         if not _PSK_WARNED:
             logger.warning(
                 "[security] STRANDS_MESH_PSK not set — mesh messages are "
@@ -289,8 +320,13 @@ def sign_envelope(payload: dict[str, Any]) -> dict[str, Any]:
     return envelope
 
 
-def verify_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
+def verify_envelope(envelope: dict[str, Any], scope: str = _DEFAULT_NONCE_SCOPE) -> dict[str, Any]:
     """Validate signature, freshness, and replay window. Return the payload.
+
+    *scope* identifies the verifier within the process. When several Mesh
+    peers run in one Python process they pass their ``peer_id`` so each
+    maintains an independent nonce cache; otherwise the first peer to
+    receive a broadcast would block every other peer from accepting it.
 
     The verifier enforces, in order:
 
@@ -352,7 +388,7 @@ def verify_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
         # Permissive: no signature to check, but still enforce replay.
         if auth_required():
             raise AuthenticationError("PSK not configured but auth required")
-        if not _record_nonce(nonce, now):
+        if not _record_nonce(nonce, now, scope=scope):
             raise AuthenticationError(f"replay detected for nonce {nonce}")
         return envelope.get("payload") or {}
 
@@ -364,7 +400,7 @@ def verify_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     if not hmac.compare_digest(sig, expected):
         raise AuthenticationError("HMAC signature mismatch")
 
-    if not _record_nonce(nonce, now):
+    if not _record_nonce(nonce, now, scope=scope):
         raise AuthenticationError(f"replay detected for nonce {nonce}")
 
     payload = envelope.get("payload")
@@ -605,6 +641,7 @@ __all__ = [
     "ALLOWED_ACTIONS",
     "AuthenticationError",
     "AuthorizationError",
+    "LockoutError",
     "MAX_DURATION_S",
     "MAX_TIMEOUT_S",
     "RateLimitError",

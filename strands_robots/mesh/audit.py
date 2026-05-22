@@ -76,11 +76,13 @@ _DEFAULT_DIR = Path.home() / ".strands_robots"
 # atomicity (one open(..., "a") write per event).
 _WRITE_LOCK = threading.Lock()
 
-# Process-monotonic sequence counter. Distinct processes will each start at
-# 1, so cross-process uniqueness is best expressed by the (peer_id, seq)
-# tuple. Within one peer's stream a gap in seq indicates truncation.
+# Per-peer monotonic sequence counters. Each peer_id has its own counter so
+# the (peer_id, seq) pair is unique within one process AND consecutive
+# values within a single peer's stream are guaranteed to be adjacent. This
+# makes :func:`verify_audit_integrity` gap detection meaningful even in
+# processes that host multiple Mesh peers (test harnesses, ``Simulation``).
 _SEQ_LOCK = threading.Lock()
-_SEQ_COUNTER = 0
+_SEQ_COUNTERS: dict[str, int] = {}
 
 __all__ = [
     "audit_log_path",
@@ -98,11 +100,17 @@ def _audit_psk() -> bytes | None:
     return psk.encode("utf-8")
 
 
-def _next_seq() -> int:
-    global _SEQ_COUNTER  # noqa: PLW0603
+def _next_seq(peer_id: str) -> int:
+    """Return the next monotonic sequence number for *peer_id*.
+
+    Each peer maintains its own counter under :data:`_SEQ_LOCK`, so two
+    peers writing concurrently from the same process produce
+    independently-numbered streams that gap-detection can verify.
+    """
     with _SEQ_LOCK:
-        _SEQ_COUNTER += 1
-        return _SEQ_COUNTER
+        next_value = _SEQ_COUNTERS.get(peer_id, 0) + 1
+        _SEQ_COUNTERS[peer_id] = next_value
+        return next_value
 
 
 def _canonical_bytes(record: dict[str, Any]) -> bytes:
@@ -175,7 +183,7 @@ def log_safety_event(event_type: str, peer_id: str, payload: dict[str, Any]) -> 
         "event": event_type,
         "peer_id": peer_id,
         "payload": payload,
-        "seq": _next_seq(),
+        "seq": _next_seq(peer_id),
     }
     sig = _sign_record(record)
     if sig is not None:

@@ -660,7 +660,8 @@ def _ensure_ca(ca_path: Path) -> None:
         return
 
     logger.info("[provision] downloading Amazon Root CA1 → %s (pinned)", ca_path)
-    with urllib.request.urlopen(_AMAZON_ROOT_CA1_URL) as resp:  # noqa: S310 — HTTPS + pinned
+    with urllib.request.urlopen(_AMAZON_ROOT_CA1_URL, timeout=15) as resp:  # noqa: S310 — HTTPS + pinned (15s timeout defends against
+        # captive portals / hostile proxies that hold the connection open).
         body = resp.read(_CA_FETCH_MAX_BYTES + 1)
     if len(body) > _CA_FETCH_MAX_BYTES:
         raise RuntimeError(f"AmazonRootCA1 download exceeded {_CA_FETCH_MAX_BYTES} bytes — refusing")

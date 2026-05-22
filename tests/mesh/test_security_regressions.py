@@ -67,20 +67,28 @@ def test_put_signed_falls_back_when_no_psk(monkeypatch, tmp_path):
 
 def test_lockout_response_does_not_leak_state():
     """A remote attacker probing during lockout must not learn:
-    * that the lockout is engaged (no `lockout: True` flag)
-    * how long it's been engaged (no `elapsed`/`since` fields)
-    The response is a generic 'command rejected'."""
+    * that the lockout is engaged (no ``lockout: True`` flag)
+    * how long it's been engaged (no ``elapsed``/``since`` fields)
+
+    The dispatcher raises :class:`LockoutError` whose ``str()`` is the
+    static "command rejected" — _exec_cmd publishes that as the response
+    payload. No structured fields, no timing oracle.
+    """
+    from strands_robots.mesh import security as sec
     from strands_robots.mesh.core import Mesh
 
     m = Mesh(MagicMock(), peer_id="x")
     m._estop_lockout.set()
     m._last_estop_ts = 0  # imply long lockout
-    result = m._dispatch({"action": "execute", "instruction": "go"})
-    assert result == {"error": "command rejected"}
-    # No leakage:
-    assert "lockout" not in result
-    assert "elapsed" not in result
-    assert "since" not in result
+    try:
+        m._dispatch({"action": "execute", "instruction": "go"})
+    except sec.LockoutError as exc:
+        # The string is generic; nothing else leaks.
+        assert str(exc) == "command rejected"
+        for forbidden in ("lockout", "elapsed", "since", "ts"):
+            assert forbidden not in str(exc).lower()
+    else:
+        raise AssertionError("LockoutError not raised")
 
 
 # ─── robot_mesh.py: interrupt-based gate (replaces former confirm=bool) ──
@@ -227,7 +235,7 @@ def test_audit_disk_format_canonical(monkeypatch, tmp_path):
     monkeypatch.delenv("STRANDS_MESH_AUDIT_PSK", raising=False)
     from strands_robots.mesh import audit
 
-    audit._SEQ_COUNTER = 0
+    audit._SEQ_COUNTERS.clear()
     audit.log_safety_event("estop", "x", {"z": 1, "a": 2, "m": 3})
     line = audit.audit_log_path().read_text().strip()
     # Keys in record + payload should be alphabetically sorted.
@@ -282,3 +290,186 @@ def test_provision_robot_accepts_valid_thing_names():
 
     for n in ["robot-1", "so100_a1b2", "fleet-prod-42", "X" * 128]:
         _validate_thing_name(n)  # no exception
+
+
+# ─── Review feedback regressions (PR #194) ──────────────────────────────
+
+
+def test_multi_peer_broadcast_each_peer_accepts_independently(monkeypatch, tmp_path):
+    """Reviewer finding: process-global nonce cache rejected the second
+    peer's verify of a broadcast as a 'replay' even though it was the
+    first arrival at THAT peer.
+
+    Two peers in one process must each accept the same broadcast envelope
+    once. The cache key is now `(scope, nonce)` so each peer has its own
+    replay window.
+    """
+    monkeypatch.setenv("STRANDS_MESH_PSK", "k")
+    monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
+    from strands_robots.mesh import security as sec
+
+    sec.clear_replay_cache()
+    env = sec.sign_envelope({"sender_id": "alice", "command": {"action": "status"}})
+
+    # peer-a accepts.
+    peer_a = sec.verify_envelope(env, scope="peer-a")
+    assert peer_a["sender_id"] == "alice"
+
+    # peer-b sees the same envelope on its broadcast subscription. Must accept.
+    peer_b = sec.verify_envelope(env, scope="peer-b")
+    assert peer_b["sender_id"] == "alice"
+
+    # Same peer-a verifying the same envelope twice IS a replay.
+    import pytest as _pytest
+
+    with _pytest.raises(sec.AuthenticationError, match="replay"):
+        sec.verify_envelope(env, scope="peer-a")
+
+
+def test_audit_seq_per_peer_no_phantom_gaps(monkeypatch, tmp_path):
+    """Reviewer finding: process-global seq counter caused
+    verify_audit_integrity to report phantom gaps when several peers
+    interleaved writes in the same process.
+
+    With per-peer counters the gap-detection sees adjacent values
+    within each peer's own stream and reports 'ok'.
+    """
+    monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
+    from strands_robots.mesh import audit
+
+    audit._SEQ_COUNTERS.clear()
+    # Interleaved writes from two peers.
+    for i in range(5):
+        audit.log_safety_event("e", "peer-a", {"i": i})
+        audit.log_safety_event("e", "peer-b", {"i": i})
+
+    result = audit.verify_audit_integrity()
+    assert result["ok"] is True, result
+    assert result["sequence_gaps"] == []
+
+
+def test_state_loop_publish_goes_through_signed_envelope(monkeypatch, tmp_path):
+    """Reviewer finding: _state_loop and publish_step bypassed
+    _put_signed and emitted raw payloads on `state` and `stream`.
+
+    Both paths must now wrap through the envelope so strict-mode
+    receivers accept them.
+    """
+    monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
+    from unittest.mock import MagicMock, patch
+
+    from strands_robots.mesh import core as core_mod
+    from strands_robots.mesh import security as sec
+    from strands_robots.mesh.core import Mesh
+
+    mock_robot = MagicMock()
+    mock_robot.robot = None  # no inner robot — state loop will short-circuit
+    m = Mesh(mock_robot, peer_id="x")
+
+    # Force _state_loop's read_state to return a non-empty snapshot.
+    with patch.object(m, "_read_state", return_value={"peer_id": "x", "t": 1.0, "x": 1}):
+        with patch.object(core_mod, "put") as mock_put:
+            # Manually invoke one iteration's body via _put_signed indirection.
+            m._put_signed(f"strands/{m.peer_id}/state", m._read_state())
+            assert mock_put.called
+            (key, payload), _ = mock_put.call_args
+            # In permissive mode the envelope is still emitted with v/ts/nonce
+            # even without a sig.
+            assert payload.get("v") == 1
+            assert "nonce" in payload
+            inner = sec.verify_envelope(payload, scope="test")
+            sec.clear_replay_cache()
+            assert inner["x"] == 1
+
+
+def test_lockout_raises_lockouterror_and_audits(monkeypatch, tmp_path):
+    """Reviewer finding: the lockout previously returned a dict that
+    _exec_cmd then wrapped as type='response', and the rejection wasn't
+    audited. Now _dispatch raises LockoutError, _exec_cmd handles it
+    symmetrically with ValidationError, and the audit log records it.
+    """
+    monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
+    from unittest.mock import MagicMock, patch
+
+    from strands_robots.mesh import audit
+    from strands_robots.mesh import core as core_mod
+    from strands_robots.mesh.core import Mesh
+
+    audit._SEQ_COUNTERS.clear()
+    mock_robot = MagicMock()
+    m = Mesh(mock_robot, peer_id="r1")
+    m._estop_lockout.set()
+    m._last_estop_ts = 0
+
+    captured: list[tuple[str, dict]] = []
+    with patch.object(core_mod, "put", side_effect=lambda k, p: captured.append((k, p))):
+        m._exec_cmd({"sender_id": "alice", "turn_id": "t1", "command": {"action": "execute", "instruction": "go"}})
+
+    # Response is type='error', not type='response'.
+    from strands_robots.mesh import security as sec
+
+    response_envelopes = [(k, p) for k, p in captured if "response" in k]
+    assert len(response_envelopes) == 1
+    payload = sec.verify_envelope(response_envelopes[0][1], scope="x")
+    sec.clear_replay_cache()
+    assert payload["type"] == "error"
+    assert payload["error"] == "command rejected"
+
+    # Audit log gained a `command_rejected_lockout` entry.
+    records = audit.read_audit_log()
+    assert any(r["event"] == "command_rejected_lockout" for r in records), records
+
+
+def test_safety_estop_topic_engages_remote_lockout(monkeypatch, tmp_path):
+    """Reviewer finding: only the issuer of emergency_stop engaged its
+    own lockout; receivers stopped the current task and then accepted
+    the very next command. Now both peers subscribe to
+    strands/safety/estop and the handler engages the lockout fleet-wide.
+    """
+    monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
+    monkeypatch.setenv("STRANDS_MESH_PSK", "k")
+    import json
+    from unittest.mock import MagicMock
+
+    from strands_robots.mesh import security as sec
+    from strands_robots.mesh.core import Mesh
+
+    sec.clear_replay_cache()
+    receiver = Mesh(MagicMock(), peer_id="r-receiver")
+    assert not receiver._estop_lockout.is_set()
+
+    # Build an estop event the way emergency_stop would on the issuer.
+    est_envelope = sec.sign_envelope(
+        {"peer_id": "r-issuer", "t": 1.0, "responses_received": 0, "lockout_engaged": True}
+    )
+    sample = MagicMock()
+    sample.payload.to_bytes.return_value = json.dumps(est_envelope).encode()
+
+    receiver._on_safety_estop(sample)
+    assert receiver._estop_lockout.is_set(), "remote estop must engage receiver's lockout"
+
+    # And resume clears it again.
+    sec.clear_replay_cache()
+    res_envelope = sec.sign_envelope({"peer_id": "r-issuer", "t": 2.0, "lockout_elapsed_s": 0.5})
+    sample.payload.to_bytes.return_value = json.dumps(res_envelope).encode()
+    receiver._on_safety_resume(sample)
+    assert not receiver._estop_lockout.is_set(), "remote resume must clear receiver's lockout"
+
+
+def test_unsigned_estop_rejected_in_strict_mode(monkeypatch, tmp_path):
+    """An attacker without the PSK must not be able to engage a fleet-wide
+    lockout by spamming strands/safety/estop with unsigned payloads."""
+    monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
+    monkeypatch.setenv("STRANDS_MESH_REQUIRE_AUTH", "true")
+    from unittest.mock import MagicMock
+
+    from strands_robots.mesh.core import Mesh
+
+    receiver = Mesh(MagicMock(), peer_id="r-receiver")
+    assert not receiver._estop_lockout.is_set()
+
+    sample = MagicMock()
+    sample.payload.to_bytes.return_value = b'{"peer_id": "attacker", "t": 0}'  # bare dict
+
+    receiver._on_safety_estop(sample)
+    assert not receiver._estop_lockout.is_set(), "unsigned estop must be ignored"
