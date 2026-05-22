@@ -17,6 +17,9 @@ from strands import Agent
 
 from strands_robots import Robot, gr00t_inference, lerobot_camera, pose_tool
 
+# Initialize robot to None so finally block is safe if construction fails
+robot = None
+
 # Real robot with dual cameras
 robot = Robot(
     "so101",
@@ -61,5 +64,7 @@ try:
         agent(query)
 finally:
     # Always stop the inference server and release hardware, even on error.
-    agent.tool.gr00t_inference(action="stop", port=5555)
-    robot.cleanup()
+    stop_result = agent.tool.gr00t_inference(action="stop", port=5555)
+    print(f"GR00T stop: {stop_result}")
+    if robot:
+        robot.cleanup()

@@ -40,11 +40,11 @@ from strands_robots import Robot
 from strands import Agent
 
 robot = Robot("so100")            # MuJoCo sim, auto-downloads assets
-agent = Agent(tools=[robot])      # 35 simulation actions as AgentTool
+agent = Agent(tools=[robot])      # 64 simulation actions as AgentTool
 agent("Pick up the red cube")     # Agent orchestrates sim via natural language
 ```
 
-That's it. `Robot("so100")` auto-detects simulation mode, downloads the MJCF model from [MuJoCo Menagerie](https://github.com/google-deepmind/mujoco_menagerie), builds a physics scene with ground plane and lighting, and exposes 35 actions (step, render, run_policy, record, randomize, ...) as a Strands AgentTool.
+That's it. `Robot("so100")` auto-detects simulation mode, downloads the MJCF model from [MuJoCo Menagerie](https://github.com/google-deepmind/mujoco_menagerie), builds a physics scene with ground plane and lighting, and exposes **64 actions** (step, render, run_policy, record, randomize, ...) as a Strands AgentTool.
 
 ## How It Works
 
@@ -53,7 +53,7 @@ graph LR
     A[Natural Language<br/>'Pick up the red block'] --> B[Strands Agent]
     B --> C[Robot Tool]
     C --> D{Mode?}
-    D -->|Simulation| E[MuJoCo Backend<br/>35 actions]
+    D -->|Simulation| E[MuJoCo Backend<br/>64 actions]
     D -->|Hardware| F[LeRobot<br/>Real Robot]
     E --> G[Policy Provider<br/>Mock / GR00T / LeRobot]
     F --> G
@@ -113,7 +113,7 @@ sim = Robot("unitree_g1")
 sim.step(n_steps=100)
 
 # Render a frame
-sim.render(width=640, height=480, save_path="/tmp/frame.png")
+frame = sim.render(width=640, height=480)  # returns dict with PNG bytes
 
 # Run a policy
 sim.run_policy(
@@ -185,15 +185,14 @@ sim.destroy()
 from strands import Agent
 from strands_robots import Robot, gr00t_inference
 
-# Create robot with cameras
+# Create robot with cameras (new-style factory API)
 robot = Robot(
-    tool_name="my_arm",
-    robot="so101_follower",
+    "so101",
+    mode="real",
     cameras={
         "front": {"type": "opencv", "index_or_path": "/dev/video0", "fps": 30},
         "wrist": {"type": "opencv", "index_or_path": "/dev/video2", "fps": 30},
     },
-    port="/dev/ttyACM0",
     data_config="so100_dualcam",
 )
 
@@ -227,7 +226,7 @@ agent("Use my_arm to pick up the red block using GR00T policy on port 8000")
               ┌────────────▼──┐  ┌────▼────────────┐
               │  Simulation   │  │  HardwareRobot   │
               │  (MuJoCo)     │  │  (LeRobot)       │
-              │  35 actions   │  │  real servos      │
+              │  64 actions   │  │  real servos      │
               └──────┬────────┘  └────┬─────────────┘
                      │                │
               ┌──────▼────────────────▼────────┐
@@ -366,7 +365,7 @@ The base install (`pip install strands-robots`) does **not** include Zenoh.
 
 ## Simulation Features
 
-The MuJoCo simulation backend exposes **35 actions** as a Strands AgentTool:
+The MuJoCo simulation backend exposes **64 actions** as a Strands AgentTool:
 
 | Category | Actions |
 |----------|---------|
@@ -442,7 +441,7 @@ policy = create_policy(provider="lerobot_local", policy_path="lerobot/act_so100_
 
 ### Robot Tool (Simulation Mode)
 
-When `Robot("name")` detects simulation mode, it creates a MuJoCo `Simulation` with 35 actions accessible via natural language or direct calls.
+When `Robot("name")` detects simulation mode, it creates a MuJoCo `Simulation` with 64 actions accessible via natural language or direct calls.
 
 ### Robot Tool (Hardware Mode)
 

@@ -24,7 +24,7 @@ sim = Robot("so100")
 sim.start_recording(
     repo_id="local/so100_demo",
     task="reach target",
-    fps=50,
+    fps=30,  # must match video fps to avoid playback speed drift
     root="/tmp/so100_dataset",
 )
 
