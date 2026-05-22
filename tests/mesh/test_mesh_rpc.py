@@ -91,23 +91,14 @@ def fake_session() -> Iterator[MagicMock]:
 def captured_puts() -> Iterator[list[tuple[str, dict[str, Any]]]]:
     """Capture every mesh.put() call as (key, payload) tuples.
 
-    Payloads are *unwrapped* through ``security.verify_envelope`` so tests
-    that inspect ``payload["type"]`` still work after the signing wrapper
-    is added.  Replay protection is bypassed for test isolation by clearing
-    the cache after each unwrap.
+    Wire-level authentication is owned by the Zenoh transport in
+    production; ``put()`` itself just hands plain JSON to the
+    transport. The fixture records the payload as-is.
     """
-    from strands_robots.mesh import security as _sec
-
     seen: list[tuple[str, dict[str, Any]]] = []
 
     def _spy(key: str, data: dict[str, Any]) -> None:
-        try:
-            payload = _sec.verify_envelope(data) if isinstance(data, dict) else data
-        except _sec.AuthenticationError:
-            payload = data
-        finally:
-            _sec.clear_replay_cache()  # don't pollute across spy calls
-        seen.append((key, payload))
+        seen.append((key, data))
 
     with patch.object(mesh_core, "put", side_effect=_spy):
         yield seen

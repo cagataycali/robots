@@ -3,7 +3,134 @@
 All notable behavioural changes to `strands-robots` are logged here. Follows
 [Keep a Changelog](https://keepachangelog.com/) conventions.
 
-## Unreleased - #194 (mesh security hardening)
+## Unreleased - #194 (mesh security hardening, Zenoh-native rewrite)
+
+### Final refactor — drop the application-layer envelope, lean on Zenoh built-ins
+
+Earlier rounds of this PR hand-rolled an HMAC + nonce + per-peer-key
+envelope on top of Zenoh. The final round replaces that entire stack
+with Zenoh's built-in primitives, which provide stronger guarantees
+with less code:
+
+* **Authentication** — Zenoh ``transport/link/tls`` (mutual TLS) binds
+  peer identity at the link layer. Cert Common Name encodes role
+  (``robot-*``, ``op-*``, ``audit-*``). No application crypto.
+* **Authorisation** — Zenoh ``access_control`` enforces per-key-
+  expression ACLs on cert CN. Default-deny.
+* **Discovery** — multicast scouting off by default; gossip-only with
+  explicit endpoints. Closes the LAN-attacker-enrollment surface
+  the old PSK envelope did not.
+* **Fleet isolation** — Zenoh ``namespace`` prepends a fleet prefix
+  at the routing layer so two fleets cannot collide.
+* **Rate / size caps** — Zenoh ``downsampling`` (per-key freq) and
+  ``low_pass_filter`` (per-message bytes) at the transport,
+  pre-deserialise. Floods cost the receiver nothing.
+
+What survives the rewrite (payload semantics, not wire auth):
+
+* ``mesh.security.validate_command`` and ``is_safe_*`` allowlists.
+* ``mesh.audit`` HMAC-signed audit log.
+* ``Mesh._on_response`` ``responder_id`` binding (point-to-point
+  scope check between authorised peers).
+* ``STRANDS_MESH_OVERRIDE_CODE`` second factor for fleet-wide resume.
+* ``mesh.transport.bridge_transport`` cross-transport dedup.
+
+Lines deleted (net):
+
+* ``strands_robots/mesh/identity.py`` — entire 505-line module.
+* ``strands_robots/mesh/security.py`` — shrank from 1176 to 467
+  lines. Dropped: ``sign_envelope`` / ``verify_envelope``,
+  ``_NONCE_CACHE``, ``TokenBucket``, ``pin_peer_identity`` /
+  ``drop_peer_identity`` / ``known_peer_identities``,
+  ``_PROCESS_STATE``, ``_canonical_bytes``, ``_hmac_hex``,
+  ``RateLimitError``, ``AuthenticationError``,
+  ``psk_configured`` / ``auth_required`` / ``identity_required``.
+* ``strands_robots/mesh/core.py`` — envelope sign / verify gone from
+  every ``_on_*`` handler, ``_put_signed`` is now a thin
+  ``put(key, payload)`` wrapper, ``_on_safety_estop`` /
+  ``_on_safety_resume`` no longer gate on PSK.
+* Tests — ``tests/mesh/test_peer_identity.py`` and the envelope-only
+  parts of ``test_security.py`` / ``test_security_regressions.py``
+  deleted; replaced by ``test_validate_command.py`` (44 tests),
+  ``test_zenoh_config.py`` (28 tests), ``test_acl_config.py`` (13
+  tests), and ``test_session_config.py`` (18 integration tests).
+  ``test_pentest_findings.py`` rewritten to keep the D1 / A2 / E1 /
+  F1-3 / G1-2 regressions that survive the wire-layer change.
+
+Lines added:
+
+* ``strands_robots/mesh/_zenoh_config.py`` (~360 lines, pure config builders).
+* ``strands_robots/mesh/_acl_config.py`` (~310 lines, ACL builder + JSON5-lite loader).
+* ``examples/mesh_acl_example.json5`` (canonical reference ACL).
+
+Net: roughly 1700 lines deleted, 670 lines added; 1030-line reduction
+in the mesh tree, all defensive guarantees preserved or tightened.
+
+### Removed env vars (breaking)
+
+| Removed | Replacement |
+|---|---|
+| ``STRANDS_MESH_PSK`` | ``STRANDS_MESH_TLS_*`` (mTLS cert paths) |
+| ``STRANDS_MESH_REQUIRE_AUTH`` | ``STRANDS_MESH_AUTH_MODE=mtls`` (default) |
+| ``STRANDS_MESH_REQUIRE_PEER_IDENTITY`` | mTLS handshake is identity proof |
+| ``STRANDS_MESH_PEER_IDENTITY`` | n/a (no per-peer HMAC scheme) |
+| ``STRANDS_MESH_PEER_KEY`` | mTLS private key |
+| ``STRANDS_MESH_PEER_KEY_FILE`` | ``STRANDS_MESH_TLS_KEY`` |
+| ``STRANDS_MESH_PEER_KEY_DIR`` | n/a |
+| ``STRANDS_MESH_REPLAY_WINDOW`` | TLS per-link sequence numbers |
+| ``STRANDS_MESH_PEER_RATE`` | ``STRANDS_MESH_CMD_RATE_HZ`` (transport-layer ``downsampling``) |
+
+### New env vars
+
+| Var | Default | Purpose |
+|---|---|---|
+| ``STRANDS_MESH_AUTH_MODE`` | ``mtls`` | ``mtls`` (prod) or ``none`` (dev only) |
+| ``STRANDS_MESH_TLS_CA`` | unset | CA bundle for peer-cert verification |
+| ``STRANDS_MESH_TLS_CERT`` | unset | this peer's cert (PEM) |
+| ``STRANDS_MESH_TLS_KEY`` | unset | this peer's private key (PEM, 0o600) |
+| ``STRANDS_MESH_ACL_FILE`` | unset | JSON5 ACL override; defaults to built-in |
+| ``STRANDS_MESH_NAMESPACE`` | ``strands_robots`` | fleet prefix |
+| ``STRANDS_MESH_MULTICAST`` | ``false`` | gossip-only by default |
+| ``STRANDS_MESH_MAX_SESSIONS`` | ``256`` | DoS bound |
+| ``STRANDS_MESH_MAX_CMD_BYTES`` | ``16384`` | jumbo-frame DoS bound |
+| ``STRANDS_MESH_MAX_CAMERA_BYTES`` | ``1048576`` | camera frame cap |
+| ``STRANDS_MESH_CMD_RATE_HZ`` | ``20.0`` | per-key cmd rate cap |
+
+### Kept env vars
+
+``STRANDS_MESH_AUDIT_PSK`` (audit log signing — independent of wire
+auth), ``STRANDS_MESH_AUDIT_DIR``, ``STRANDS_MESH_AUDIT_MAX_BYTES``,
+``STRANDS_MESH_AUDIT_MAX_FILES``, ``STRANDS_MESH_OVERRIDE_CODE``
+(operator second factor for fleet resume), ``STRANDS_MESH_DEDUP_TTL``,
+``STRANDS_MESH_BRIDGE_TOPICS``, ``STRANDS_MESH_BRIDGE_TOPICS_PREFIX``,
+``STRANDS_MESH_HF_REPO_ALLOW``, ``STRANDS_MESH_POLICY_HOST_ALLOW``,
+``STRANDS_MESH_POLICY_TYPE_ALLOW``, ``STRANDS_MESH_CAMERA_*``,
+``STRANDS_MESH_CA_PINS``, ``STRANDS_MESH_DISABLE_CA_PIN``.
+
+### Migration
+
+For an existing deployment running under the old PSK envelope:
+
+1. Generate a CA + per-thing cert chain (or reuse the AWS IoT certs
+   already in ``~/.strands_robots/iot/`` — they meet the same shape).
+2. Set ``STRANDS_MESH_TLS_CA`` / ``CERT`` / ``KEY`` on every peer.
+3. Update peer-id naming so it matches a CN glob in the ACL: robots
+   become ``robot-<id>``, operators ``op-<id>``.
+4. Drop all ``STRANDS_MESH_PSK`` / ``STRANDS_MESH_PEER_KEY*`` vars.
+5. Drop ``~/.strands_robots/mesh/`` (legacy per-peer key store).
+
+A dev / lab environment without PKI can run ``STRANDS_MESH_AUTH_MODE=none``
+to keep the old plain-TCP behaviour. The mesh logs a WARNING.
+
+### Earlier rounds (historical, archived below)
+
+The pre-rewrite rounds are kept for forensic context. Code references
+in those entries (``_NONCE_CACHE``, ``identity.py``, ``sign_envelope``,
+``STRANDS_MESH_PSK``, etc.) point at code that no longer exists.
+
+## Earlier round entries — pre-rewrite (kept for context)
+
+### Round 8 - final-pass review feedback (yinsong1986)
 
 ### Round 8 - final-pass review feedback (yinsong1986)
 

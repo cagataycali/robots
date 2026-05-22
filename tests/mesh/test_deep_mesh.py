@@ -160,23 +160,15 @@ def mock_session(monkeypatch):
 def mock_put():
     """Patch put at all locations where it's imported.
 
-    Payloads pass through ``security.verify_envelope`` so tests that inspect
-    the inner dict (``data["peer_id"]`` etc.) keep working after the signing
-    is layered on outgoing messages.
+    Wire authentication is owned by the Zenoh transport in production;
+    in-process tests just record (key, payload) tuples as-is.
     """
-    from strands_robots.mesh import security as _sec
     from strands_robots.mesh import sensors as mesh_sensors
 
     calls = []
 
     def _spy(key, data):
-        try:
-            payload = _sec.verify_envelope(data) if isinstance(data, dict) else data
-        except _sec.AuthenticationError:
-            payload = data
-        finally:
-            _sec.clear_replay_cache()
-        calls.append((key, payload))
+        calls.append((key, data))
 
     with patch.object(mesh_session, "put", side_effect=_spy):
         with patch.object(mesh_core, "put", side_effect=_spy):

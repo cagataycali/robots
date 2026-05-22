@@ -1,0 +1,89 @@
+// strands-robots mesh ACL — canonical reference.
+//
+// Drop this at $STRANDS_MESH_ACL_FILE to override the built-in default.
+// The format is JSON5 (comments + trailing commas allowed). The Zenoh
+// access_control field validates the schema at session-open time; a
+// typo crashes the mesh with a clear error rather than silently
+// downgrading.
+//
+// Three roles, mapped from cert Common Names:
+//
+//   robot-*    -> may publish own telemetry, receive cmds.
+//   op-*       -> full operator: publish cmds, observe everything.
+//   audit-*    -> read-only observer (audit / monitoring tooling).
+//
+// Default-deny: any cert CN that does not match a subject is rejected
+// at the transport — no message ever reaches a Python handler.
+{
+  default_permission: "deny",
+
+  rules: [
+    {
+      id: "robot_publish_telemetry",
+      messages: ["put"],
+      flows: ["egress"],
+      permission: "allow",
+      key_exprs: [
+        "strands_robots/*/presence",
+        "strands_robots/*/state/**",
+        "strands_robots/*/health",
+        "strands_robots/*/pose",
+        "strands_robots/*/imu",
+        "strands_robots/*/odom",
+        "strands_robots/*/lidar/**",
+        "strands_robots/*/hand/**",
+        "strands_robots/*/camera/**",
+        "strands_robots/*/response/**",
+        "strands_robots/*/safety/**",
+      ],
+    },
+    {
+      id: "robot_subscribe_cmds",
+      messages: ["declare_subscriber", "put"],
+      flows: ["ingress"],
+      permission: "allow",
+      key_exprs: [
+        "strands_robots/*/cmd",
+        "strands_robots/broadcast",
+        "strands_robots/*/safety/**",
+      ],
+    },
+    {
+      id: "operator_publish_cmds",
+      messages: ["put"],
+      flows: ["egress"],
+      permission: "allow",
+      key_exprs: [
+        "strands_robots/*/cmd",
+        "strands_robots/broadcast",
+        "strands_robots/*/safety/**",
+      ],
+    },
+    {
+      id: "operator_observe",
+      messages: ["declare_subscriber"],
+      flows: ["ingress"],
+      permission: "allow",
+      key_exprs: ["strands_robots/**"],
+    },
+    {
+      id: "audit_observe",
+      messages: ["declare_subscriber"],
+      flows: ["ingress"],
+      permission: "allow",
+      key_exprs: ["strands_robots/**"],
+    },
+  ],
+
+  subjects: [
+    { id: "robot_peer",    cert_common_names: ["robot-*"] },
+    { id: "operator_peer", cert_common_names: ["op-*"] },
+    { id: "audit_peer",    cert_common_names: ["audit-*"] },
+  ],
+
+  policies: [
+    { rules: ["robot_publish_telemetry", "robot_subscribe_cmds"], subjects: ["robot_peer"] },
+    { rules: ["operator_publish_cmds", "operator_observe"],       subjects: ["operator_peer"] },
+    { rules: ["audit_observe"],                                    subjects: ["audit_peer"] },
+  ],
+}

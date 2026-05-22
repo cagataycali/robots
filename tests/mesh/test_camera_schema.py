@@ -89,16 +89,13 @@ def test_publish_cameras_once_calls_put(fake_robot_with_camera):
     unwrap them here so the rest of the assertions stay readable.
     """
     from strands_robots.mesh import Mesh
-    from strands_robots.mesh import security as _sec
 
     m = Mesh(fake_robot_with_camera, peer_id="test-cam-6")
     with patch("strands_robots.mesh.core.put") as mock_put:
         m._publish_cameras_once()
 
     assert mock_put.called, "put() should have been called for the camera"
-    topic, envelope = mock_put.call_args[0]
-    payload = _sec.verify_envelope(envelope) if isinstance(envelope, dict) else envelope
-    _sec.clear_replay_cache()
+    topic, payload = mock_put.call_args[0]
     assert topic == "strands/test-cam-6/camera/wrist"
     assert payload["peer_id"] == "test-cam-6"
     assert payload["cam"] == "wrist"

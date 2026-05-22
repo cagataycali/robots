@@ -20,7 +20,6 @@ import uuid
 from collections.abc import Callable
 from typing import Any
 
-from strands_robots.mesh import identity as _identity
 from strands_robots.mesh import security as _security
 from strands_robots.mesh.audit import log_safety_event
 from strands_robots.mesh.sensors import SensorLoopsMixin
@@ -105,43 +104,6 @@ class Mesh(SensorLoopsMixin):
         # which requires the operator-supplied override code.
         self._estop_lockout = threading.Event()
         self._last_estop_ts: float = 0.0
-
-        # Per-peer cryptographic identity (R9). Resolves the local
-        # signing key from STRANDS_MESH_PEER_KEY[_FILE] env vars or from
-        # ~/.strands_robots/mesh/<peer_id>.key, generating a fresh
-        # 32-byte key on first use. Returns None when the operator opted
-        # out via STRANDS_MESH_PEER_IDENTITY=false or when the key
-        # store is unreachable; PSK-only signing then continues
-        # unchanged (back-compat).
-        try:
-            self._peer_key: bytes | None = _identity.configure_local_peer(self.peer_id)
-        except _identity.IdentityError as exc:
-            # Hard config error (bad hex env var, wrong-length file).
-            # Refuse to silently fall back — operator wanted identity
-            # signing and got it wrong.
-            logger.error(
-                "[mesh] %s: per-peer identity misconfigured: %s",
-                self.peer_id,
-                exc,
-            )
-            raise
-        if self._peer_key is not None:
-            # Pin our own key in the local directory so the same Python
-            # process running multiple Mesh instances can verify each
-            # other's id_sigs without round-tripping through TOFU.
-            try:
-                _security.pin_peer_identity(self.peer_id, self._peer_key)
-            except _security.AuthenticationError:
-                # Already pinned with a different key — should not happen
-                # in practice (configure_local_peer is deterministic per
-                # peer_id) but if it does we keep the existing pin and
-                # disable identity signing for this Mesh.
-                logger.warning(
-                    "[mesh] %s: directory already bound to a different key; "
-                    "disabling per-peer identity for this instance",
-                    self.peer_id,
-                )
-                self._peer_key = None
 
     def __repr__(self) -> str:
         state = "alive" if self._running else "stopped"
@@ -286,21 +248,6 @@ class Mesh(SensorLoopsMixin):
             "timestamp": time.time(),
         }
 
-        # Advertise our per-peer key fingerprint so receivers can TOFU-
-        # pin us. We send the FULL key (hex) — this is a symmetric HMAC
-        # scheme, so the receiver needs the actual bytes to verify our
-        # id_sig. The presence broadcast is itself signed (PSK + our
-        # id_sig once pinned), so a passive observer who already has
-        # the PSK gets nothing they didn't have before. The threat we
-        # close here is "insider with PSK forges *another* peer's
-        # sender_id"; an insider learning peer keys via presence still
-        # cannot impersonate a peer they have not yet observed (they
-        # would have to win the TOFU race against the legitimate first
-        # presence, which is detectable in the audit log via the pin
-        # event).
-        if self._peer_key is not None:
-            payload["peer_key"] = self._peer_key.hex()
-
         try:
             if hasattr(r, "tool_name_str"):
                 payload["tool_name"] = r.tool_name_str
@@ -395,93 +342,25 @@ class Mesh(SensorLoopsMixin):
                 break
 
     def _on_presence(self, sample: Any) -> None:
+        """Handle a peer's presence broadcast.
+
+        Identity, fleet membership, and replay protection are enforced
+        at the Zenoh transport: a sample reaching this callback has
+        already cleared mTLS handshake + ACL, so its peer-id is
+        cryptographically bound to the cert CN. We only parse the
+        payload, update our peer registry, and log a debug line for
+        first-sighting.
+        """
         try:
             raw = sample.payload.to_bytes().decode()
-            envelope = json.loads(raw)
+            data = json.loads(raw)
         except Exception:
-            return
-        # Verify presence signature. In strict mode the verifier rejects
-        # unsigned presence; in permissive mode legacy un-enveloped messages
-        # pass through unchanged for back-compat with un-upgraded peers.
-        try:
-            data = _security.verify_envelope(envelope, scope=self.peer_id)
-        except _security.AuthenticationError as exc:
-            logger.debug("[mesh] %s: rejected unauthenticated presence: %s", self.peer_id, exc)
             return
         if not isinstance(data, dict):
             return
         peer_id = data.get("robot_id")
         if not isinstance(peer_id, str) or peer_id == self.peer_id:
             return
-        # ── Per-peer identity TOFU pin ──────────────────────────────
-        # First PSK-authenticated presence carrying a peer_key claim
-        # for this peer_id binds it in the directory. Subsequent
-        # envelopes from that peer_id MUST verify under the pinned key
-        # (verify_envelope enforces this above).
-        peer_key_hex = data.get("peer_key")
-        if isinstance(peer_key_hex, str) and peer_key_hex:
-            try:
-                peer_key_bytes = bytes.fromhex(peer_key_hex)
-            except ValueError:
-                logger.warning(
-                    "[mesh] %s: presence from %s has malformed peer_key (not hex); ignoring",
-                    self.peer_id,
-                    peer_id,
-                )
-                peer_key_bytes = None
-            if peer_key_bytes is not None and len(peer_key_bytes) == _identity.PEER_KEY_LEN:
-                try:
-                    pinned = _security.pin_peer_identity(peer_id, peer_key_bytes)
-                except _security.AuthenticationError as exc:
-                    # Mismatch on an already-pinned peer. This is an
-                    # adversarial signal — either a key rotation that
-                    # the operator did not announce, or an active
-                    # impersonation attempt.
-                    logger.warning(
-                        "[mesh] %s: REJECTED key rotation from peer %s: %s",
-                        self.peer_id,
-                        peer_id,
-                        exc,
-                    )
-                    try:
-                        log_safety_event(
-                            "identity_rotation_rejected",
-                            self.peer_id,
-                            {"peer": peer_id, "reason": str(exc)},
-                        )
-                    except Exception as audit_exc:
-                        logger.debug(
-                            "[mesh] %s: audit log unavailable: %s",
-                            self.peer_id,
-                            audit_exc,
-                        )
-                else:
-                    if pinned:
-                        logger.info(
-                            "[mesh] %s: pinned per-peer identity for %s (TOFU)",
-                            self.peer_id,
-                            peer_id,
-                        )
-                        try:
-                            log_safety_event(
-                                "identity_pinned",
-                                self.peer_id,
-                                {"peer": peer_id, "mode": "tofu"},
-                            )
-                        except Exception as audit_exc:
-                            logger.debug(
-                                "[mesh] %s: audit log unavailable: %s",
-                                self.peer_id,
-                                audit_exc,
-                            )
-            elif peer_key_bytes is not None:
-                logger.warning(
-                    "[mesh] %s: presence from %s has wrong-length peer_key (%d != %d)",
-                    self.peer_id,
-                    peer_id,
-                    len(peer_key_bytes),
-                    _identity.PEER_KEY_LEN,
-                )
 
         is_new = update_peer(
             peer_id=peer_id,
@@ -667,49 +546,36 @@ class Mesh(SensorLoopsMixin):
 
     # RPC — incoming
     def _on_cmd(self, sample: Any) -> None:
+        """Handle an inbound command sample.
+
+        The Zenoh transport has already enforced:
+
+        * mTLS peer identity (the sender's cert CN is bound to the link).
+        * ACL — only peers in the ``operator_peer`` subject can publish
+          on ``cmd`` / ``broadcast`` topics.
+        * Per-key-expression frequency cap (``downsampling`` block) —
+          floods are dropped pre-deserialise.
+        * Per-message size cap (``low_pass_filter`` block) — jumbo
+          frames are dropped pre-deserialise.
+
+        We only have to parse the payload and dispatch.
+        """
         try:
             raw = sample.payload.to_bytes().decode()
-            envelope = json.loads(raw)
+            data = json.loads(raw)
         except Exception:
-            return
-        # Authenticate the envelope: HMAC signature + freshness window +
-        # replay nonce. Unauthenticated commands are dropped at the first
-        # step here — _exec_cmd never runs for them. Scope = self.peer_id
-        # so other Mesh peers in the same process maintain independent
-        # nonce caches and a broadcast does not trip "replay" on the
-        # second receiver.
-        try:
-            data = _security.verify_envelope(envelope, scope=self.peer_id)
-        except _security.AuthenticationError as exc:
-            logger.warning("[mesh] %s: rejected unauthenticated cmd: %s", self.peer_id, exc)
             return
         if not isinstance(data, dict):
             return
         sender_id = data.get("sender_id", "")
         if sender_id == self.peer_id:
             return
-        # Per-sender token-bucket rate limit. Without this, a flood of
-        # commands from one peer could spawn arbitrarily many exec threads
-        # and exhaust the robot's resources.
-        if not _security.consume_peer_token(sender_id or self.peer_id):
-            logger.warning(
-                "[mesh] %s: per-sender rate limit exceeded for sender=%s",
-                self.peer_id,
-                sender_id or "<anon>",
-            )
-            try:
-                log_safety_event(
-                    "rate_limit_drop",
-                    self.peer_id,
-                    {"sender": sender_id, "topic": "cmd"},
-                )
-            except Exception as audit_exc:
-                # Audit is best-effort — never let a missing/broken log
-                # path break the cmd handler. Logged at DEBUG so it shows
-                # up under verbose logging without spamming production.
-                logger.debug("[mesh] %s: audit log unavailable: %s", self.peer_id, audit_exc)
-            return
-        threading.Thread(target=self._exec_cmd, args=(data,), name=f"mesh-exec-{self.peer_id}", daemon=True).start()
+        threading.Thread(
+            target=self._exec_cmd,
+            args=(data,),
+            name=f"mesh-exec-{self.peer_id}",
+            daemon=True,
+        ).start()
 
     def _exec_cmd(self, data: dict[str, Any]) -> None:
         sender = data.get("sender_id", "")
@@ -898,27 +764,25 @@ class Mesh(SensorLoopsMixin):
     def _on_response(self, sample: Any) -> None:
         """Inbound response handler.
 
-        Phase-4 / D1 hardening: a response is accepted only if its
+        Identity, fleet membership, and topic ACL have already been
+        enforced at the Zenoh transport. We additionally apply a
+        point-to-point scope check: a response is accepted only if its
         ``responder_id`` matches the expected target recorded in
-        :attr:`_expected_responders` (set by :meth:`send`). Broadcast
-        turns use the ``BROADCAST_RESPONDER`` sentinel and accept any
+        :attr:`_expected_responders` by :meth:`send`. Broadcast turns
+        use the ``BROADCAST_RESPONDER`` sentinel and accept any
         responder_id — that is the broadcast contract.
 
-        Without this check, an authenticated-but-malicious peer that
-        observes a turn_id (trivial on Zenoh LAN) can publish a
-        correctly-HMAC-signed response and have the sender accept its
-        forged ``result`` instead of the legitimate target's. See
-        review feedback round 4 (D1 response-hijack defence).
+        Without the responder-id check, an ACL-authorised peer that
+        observes a turn_id (a fellow operator) could publish a response
+        on someone else's pending turn and have the sender accept its
+        ``result`` instead of the legitimate target's. The transport
+        ACL prevents an attacker from joining at all; this check
+        prevents lateral mischief between authorised peers.
         """
         try:
             raw = sample.payload.to_bytes().decode()
-            envelope = json.loads(raw)
+            data = json.loads(raw)
         except Exception:
-            return
-        try:
-            data = _security.verify_envelope(envelope, scope=self.peer_id)
-        except _security.AuthenticationError as exc:
-            logger.debug("[mesh] %s: rejected unauthenticated response: %s", self.peer_id, exc)
             return
         if not isinstance(data, dict):
             return
@@ -971,30 +835,17 @@ class Mesh(SensorLoopsMixin):
         """Engage the local emergency-stop lockout in response to a fleet-
         wide ``strands/safety/estop`` broadcast.
 
-        Authentication policy: this handler refuses to act when neither
-        ``STRANDS_MESH_PSK`` nor ``STRANDS_MESH_REQUIRE_AUTH`` is
-        configured. The fleet-wide lockout is a safety control and any
-        peer that can engage it must prove the wire is authenticated;
-        otherwise an attacker on the LAN could weaponise it as a fleet-
-        wide DoS by spamming ``safety/estop`` with bare dicts. Issuers
-        who legitimately want the lockout to fan out must run with PSK.
+        Authorisation lives at the Zenoh ACL: only peers in the
+        ``operator_peer`` subject can publish on ``safety/**`` keys, so
+        an unauthorised peer cannot reach this handler at all. We just
+        parse, set the local lockout flag, and record the receiver-side
+        transition in the audit log so a forensic walker sees both ends
+        of the lockout window for every peer.
         """
-        if not _security.psk_configured() and not _security.auth_required():
-            logger.warning(
-                "[safety] %s: ignoring remote estop in permissive mode "
-                "(set STRANDS_MESH_PSK or STRANDS_MESH_REQUIRE_AUTH=true to enable fleet-wide lockout)",
-                self.peer_id,
-            )
-            return
         try:
             raw = sample.payload.to_bytes().decode()
-            envelope = json.loads(raw)
+            data = json.loads(raw)
         except Exception:
-            return
-        try:
-            data = _security.verify_envelope(envelope, scope=self.peer_id)
-        except _security.AuthenticationError as exc:
-            logger.warning("[mesh] %s: rejected unauthenticated estop: %s", self.peer_id, exc)
             return
         if not isinstance(data, dict):
             return
@@ -1002,15 +853,11 @@ class Mesh(SensorLoopsMixin):
             self._estop_lockout.set()
             self._last_estop_ts = time.time()
             sender = data.get("peer_id", "<remote>")
-            logger.critical("[safety] %s: lockout engaged via remote estop from %s", self.peer_id, sender)
-            # R8-1: audit the receiver-side lockout transition. The
-            # local-issuer path (Mesh.emergency_stop) already records
-            # event_type="emergency_stop"; this handler covers the
-            # receiver side so verify_audit_integrity sees both ends
-            # of the lockout window. Without this, a forensic walker
-            # examining a fleet's logs sees the issuer's "emergency_stop"
-            # but no record of which peers actually engaged their
-            # lockout in response.
+            logger.critical(
+                "[safety] %s: lockout engaged via remote estop from %s",
+                self.peer_id,
+                sender,
+            )
             self.publish_safety_event(
                 event_type="remote_estop_engaged",
                 severity="critical",
@@ -1024,53 +871,32 @@ class Mesh(SensorLoopsMixin):
     def _on_safety_resume(self, sample: Any) -> None:
         """Clear the local lockout in response to ``strands/safety/resume``.
 
-        The publisher of the resume event already validated the operator
-        override code locally (see :meth:`_resume_lockout`); we trust the
-        signed envelope and follow.
+        Wire authentication (mTLS + ACL) ensures only an
+        ``operator_peer`` peer can reach this handler. Resume itself is
+        further gated by the operator override code: the issuer signed
+        ``HMAC(STRANDS_MESH_OVERRIDE_CODE, proof_nonce)`` and we
+        recompute it locally; a mismatch means the issuer's override
+        code differs from ours and we refuse. This is what stops one
+        operator from clearing another operator's e-stop without
+        explicit shared authorisation.
 
-        Authentication policy: same as :meth:`_on_safety_estop`. In
-        permissive mode (no PSK, no strict-auth) the handler refuses to
-        clear the lockout — otherwise any LAN peer could publish an
-        unsigned ``strands/safety/resume`` and silently undo every
-        peer's e-stop. Operators clearing a lockout in permissive mode
-        must do it locally via :meth:`_resume_lockout` or by restarting
-        the process.
+        Receivers without ``STRANDS_MESH_OVERRIDE_CODE`` configured
+        FAIL CLOSED — operators must distribute the code to every peer
+        for fleet-wide remote resume to work.
         """
-        if not _security.psk_configured() and not _security.auth_required():
-            logger.warning(
-                "[safety] %s: ignoring remote resume in permissive mode "
-                "(set STRANDS_MESH_PSK or STRANDS_MESH_REQUIRE_AUTH=true to enable fleet-wide resume)",
-                self.peer_id,
-            )
-            return
         try:
             raw = sample.payload.to_bytes().decode()
-            envelope = json.loads(raw)
+            data = json.loads(raw)
         except Exception:
-            return
-        try:
-            data = _security.verify_envelope(envelope, scope=self.peer_id)
-        except _security.AuthenticationError as exc:
-            logger.warning("[mesh] %s: rejected unauthenticated resume: %s", self.peer_id, exc)
             return
         if not isinstance(data, dict):
             return
 
-        # R8-5: re-verify the override-code proof. Without this, any peer
-        # holding the PSK can fan-out a resume — the override code only
-        # gates the local issuer's RPC entry. With the proof, the issuer
-        # demonstrates knowledge of the same override code that this
-        # receiver has configured, by computing HMAC(code, proof_nonce).
-        # Receivers that don't have STRANDS_MESH_OVERRIDE_CODE configured
-        # FAIL CLOSED and refuse the remote resume — operators must
-        # distribute the override code to every peer for fleet-wide
-        # remote resume to work. That asymmetry is intentional and
-        # documented in the README's Mesh-security section.
         local_code = os.getenv("STRANDS_MESH_OVERRIDE_CODE", "").strip()
         if not local_code:
             logger.warning(
                 "[safety] %s: refusing remote resume — STRANDS_MESH_OVERRIDE_CODE "
-                "not configured locally (R8-5 fail-closed)",
+                "not configured locally (operator code missing)",
                 self.peer_id,
             )
             return
@@ -1435,17 +1261,15 @@ class Mesh(SensorLoopsMixin):
         )
 
         # R8-5: bind a proof-of-override-code into the resume envelope so
-        # receivers can re-verify on _on_safety_resume. Without this, any
-        # peer with the PSK could fan-out a resume — the override code
-        # only protected the local issuer's gate. With the proof, every
-        # receiver re-verifies that the issuer knew the same override
-        # code by recomputing HMAC(local_code, proof_nonce).
+        # receivers can re-verify on _on_safety_resume. Without this,
+        # any operator-class peer could fan-out a resume just by virtue
+        # of being on the ACL; the override code adds a second factor
+        # that every receiver re-verifies by recomputing
+        # HMAC(local_code, proof_nonce).
         #
-        # The proof_nonce is per-resume (uuid4.hex) AND is also the
-        # envelope nonce input for sign_envelope's replay cache, so a
-        # captured resume cannot be replayed across the freshness window.
-        # We deliberately do NOT include the override code in the
-        # envelope or the audit log — only the HMAC of (code, nonce).
+        # The proof_nonce is per-resume (uuid4.hex). We deliberately do
+        # NOT include the override code itself in the published payload
+        # or the audit log — only the HMAC of (code, nonce).
         proof_nonce = uuid.uuid4().hex
         override_proof = hmac.new(
             expected.encode(),
@@ -1481,45 +1305,19 @@ class Mesh(SensorLoopsMixin):
         self._put_signed(key, payload)
 
     def _put_signed(self, key: str, payload: dict[str, Any]) -> None:
-        """Sign *payload* into an envelope and publish it on *key*.
+        """Publish *payload* on *key* via the mesh transport.
 
-        Centralises the signing call so every outgoing mesh message goes
-        through one code path.
+        Wire authentication is owned by the Zenoh transport: outbound
+        bytes ride a TLS link whose cert binds the peer identity, and
+        the ACL gates which key-expressions this peer can publish on.
+        This method simply forwards to ``put()`` — it stays as a
+        single chokepoint so a future hook (audit, telemetry,
+        compression) can land in one place.
 
-        Failure mode: when a PSK is configured (or strict-auth is set) and
-        :func:`sign_envelope` raises, the message is **dropped** rather than
-        sent unsigned. In permissive mode (no PSK and strict-auth off) the
-        helper falls back to publishing the raw payload — there is nothing
-        to downgrade in that case anyway.
+        The name ``_put_signed`` is preserved for callsite stability; a
+        future refactor may rename it to ``_publish``.
         """
-        try:
-            envelope = _security.sign_envelope(
-                payload,
-                peer_id=self.peer_id,
-                peer_key=self._peer_key,
-            )
-        except Exception as exc:
-            # If a PSK was configured we must NOT silently downgrade. A
-            # caller that can trigger sign_envelope() to raise — corrupted
-            # key material, OS entropy exhaustion, etc. — would otherwise
-            # cause every subsequent message to leave unsigned, which
-            # defeats authentication entirely.
-            if _security.psk_configured() or _security.auth_required():
-                logger.error(
-                    "[mesh] %s: sign_envelope failed for %s under signed mode — DROPPING: %s",
-                    self.peer_id,
-                    key,
-                    exc,
-                )
-                return
-            logger.warning(
-                "[mesh] %s: sign_envelope failed for %s (permissive mode, sending unsigned): %s",
-                self.peer_id,
-                key,
-                exc,
-            )
-            envelope = payload
-        put(key, envelope)
+        put(key, payload)
 
 
 # init_mesh — the only public constructor

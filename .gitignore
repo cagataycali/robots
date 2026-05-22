@@ -10,3 +10,7 @@ dist
 MUJOCO_LOG.TXT
 .coverage.*
 AGENTS.local.md
+-e 
+# Working docs (local only — not for upstream)
+RETIRE.md
+.autonomous/

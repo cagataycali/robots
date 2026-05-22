@@ -504,16 +504,18 @@ agent.tool.gr00t_inference(action="stop", port=8000)
 | `STRANDS_MESH_AUDIT_MAX_BYTES` | Maximum size (bytes) of the active audit log before rotation. Hard-capped at 10 GiB. Phase-4 / E1: prevents an attacker who can publish safety events from filling the disk. | `104857600` (100 MiB) |
 | `STRANDS_MESH_AUDIT_MAX_FILES` | Maximum number of rotated audit log copies kept (`mesh_audit.jsonl.1` … `.N`). Hard-capped at 100. Older rotations are discarded. | `5` |
 | `STRANDS_MESH_BRIDGE_TOPICS_PREFIX` | Comma-separated list of bridge filter entries that match as path-prefix (entry matches `entry/<anything>`). Default: `response` (so `response/<turn-id>` bridges). All other entries in `STRANDS_MESH_BRIDGE_TOPICS` match exactly — Phase-4 / A2 hardening that closes the prefix-bypass attack. | `response` |
-| `STRANDS_MESH_PSK` | Pre-shared key for HMAC-signed envelopes on the wire. Unset = permissive mode (legacy unsigned messages still accepted). Set = signed mode. See **Mesh security** below. | unset |
-| `STRANDS_MESH_REQUIRE_AUTH` | Set to `true` to reject unsigned envelopes outright, even when no PSK is configured. Useful for tests and staging gates that must fail closed. | `false` |
-| `STRANDS_MESH_REQUIRE_PEER_IDENTITY` | Set to `true` to reject envelopes that lack a `kid` + `id_sig` (per-peer identity). Use after migrating every peer to per-peer keys. Strongest insider-impersonation defence. See **Trust model** below. | `false` |
-| `STRANDS_MESH_PEER_IDENTITY` | Set to `false` to opt out of per-peer identity entirely (PSK-only signing). Default behaviour generates a per-peer key on first use. | `true` |
-| `STRANDS_MESH_PEER_KEY` | Hex-encoded 32-byte per-peer HMAC key. Overrides the on-disk key file. Useful for ephemeral test peers and CI. | unset |
-| `STRANDS_MESH_PEER_KEY_FILE` | Absolute path to a 32-byte per-peer key file. Overrides the default `<key_dir>/<peer_id>.key` lookup. Mode 0o600 is enforced; permissive modes log a WARNING. | unset |
-| `STRANDS_MESH_PEER_KEY_DIR` | Directory where per-peer key files live. Each peer reads/writes `<peer_id>.key`. | `~/.strands_robots/mesh` |
-| `STRANDS_MESH_REPLAY_WINDOW` | Past-tolerance for envelope `ts` (seconds). Capped at 600. | `60` |
+| `STRANDS_MESH_AUTH_MODE` | Wire authentication mode. `mtls` (default) enables Zenoh's TLS terminator + ACL; `none` is a dev-only mode that disables both. | `mtls` |
+| `STRANDS_MESH_NAMESPACE` | Fleet namespace prefix prepended to every key-expression. Two fleets with different namespaces cannot collide on the same network. | `strands_robots` |
+| `STRANDS_MESH_MULTICAST` | `true` enables multicast scouting. Default is gossip-only, which closes the LAN-attacker-enrollment surface. | `false` |
+| `STRANDS_MESH_TLS_CA` | Filesystem path to the CA bundle used to verify peer certificates. Required when `STRANDS_MESH_AUTH_MODE=mtls`. | unset |
+| `STRANDS_MESH_TLS_CERT` | Filesystem path to this peer's certificate (PEM). Required when `STRANDS_MESH_AUTH_MODE=mtls`. | unset |
+| `STRANDS_MESH_TLS_KEY` | Filesystem path to this peer's private key (PEM, mode 0o600). Required when `STRANDS_MESH_AUTH_MODE=mtls`. | unset |
+| `STRANDS_MESH_ACL_FILE` | Filesystem path to a JSON5 ACL file. Empty = use the built-in default-deny ACL with `robot-*` and `op-*` cert-CN globs. See `examples/mesh_acl_example.json5`. | unset |
+| `STRANDS_MESH_MAX_SESSIONS` | Hard cap on simultaneous Zenoh unicast sessions. DoS bound. | `256` |
+| `STRANDS_MESH_MAX_CMD_BYTES` | Per-message byte cap on `cmd` / `broadcast` topics enforced via `low_pass_filter`. | `16384` |
+| `STRANDS_MESH_MAX_CAMERA_BYTES` | Per-message byte cap on camera topics. | `1048576` |
+| `STRANDS_MESH_CMD_RATE_HZ` | Per-key-expression frequency cap for `cmd` topics enforced via `downsampling`. Floods are dropped at the transport before reaching the deserialiser. | `20.0` |
 | `STRANDS_MESH_POLICY_HOST_ALLOW` | Comma-separated host/CIDR list extending the default loopback-only `policy_host` allowlist for VLA inference targets (e.g. `vla.internal,10.0.0.0/24`). | unset |
-| `STRANDS_MESH_PEER_RATE` | Per-sender command rate as `<count>/<seconds>`. The `_on_cmd` handler consumes one token before spawning the exec thread; starvation drops the cmd. Burst capped at 1000. | `20/60` |
 | `STRANDS_MESH_AUDIT_PSK` | Separate PSK for HMAC-signing audit-log records. Independent of the wire PSK so audit signing can rotate on its own schedule. Unset = audit records carry no signature (`verify_audit_integrity` reports them as unverifiable). | unset |
 | `STRANDS_MESH_OVERRIDE_CODE` | Operator code that clears the local emergency-stop lockout via `Mesh._resume_lockout(code)`. Compared in constant time. Unset = lockout cannot be cleared remotely. | unset |
 | `STRANDS_MESH_DEDUP_TTL` | Bridge-transport deduplication window (seconds). Caps how long the same envelope nonce is remembered across the Zenoh + IoT subscriber wrappers. | `120` |
@@ -557,154 +559,130 @@ Disable globally with `STRANDS_MESH=false` or per-robot with
 
 ### Mesh security
 
-The mesh layer ships with two operating modes:
+The mesh layer relies on **Zenoh built-in security primitives** —
+mTLS at the transport, key-expression ACLs above it, and per-key
+rate / size caps for DoS bounds. There is no application-layer
+crypto envelope: identity, fleet membership, replay protection,
+and authorisation all happen *before* the deserialiser runs.
 
-**Permissive mode (default)** — `STRANDS_MESH_PSK` unset. Outgoing
-messages are wrapped in a versioned envelope but carry no signature,
-and verifiers accept un-enveloped legacy payloads. This preserves
-zero-config Zenoh-LAN setups for development and demos. A one-time
-WARNING is logged on the first signed publish so operators know they
-are not getting authentication.
+#### Authentication: mTLS (default)
 
-**Strict mode** — set `STRANDS_MESH_PSK=<secret>` (and optionally
-`STRANDS_MESH_REQUIRE_AUTH=true`). Every published mesh message is
-HMAC-SHA256-signed over a canonical JSON encoding; receivers reject
-unsigned, tampered, future-timestamped, or replayed envelopes via
-`mesh.security.verify_envelope`. The PSK is the symmetric secret
-distributed at robot-bootstrap time to every peer that should be able
-to issue commands. Load it from secrets manager / SSM Parameter Store —
-never commit it to source.
+`STRANDS_MESH_AUTH_MODE=mtls` (the default) wires Zenoh's
+`transport/link/tls` block:
 
-The emergency-stop fleet-wide lockout is **only secure in strict
-mode**. In permissive mode `Mesh._on_safety_estop` and
-`_on_safety_resume` refuse to act on remote events because any LAN peer
-could otherwise publish unsigned `strands/safety/estop` (DoS) or
-`strands/safety/resume` (clear other peers' lockouts) payloads. Local
-calls to `Mesh.emergency_stop()` and `Mesh._resume_lockout(code)` still
-work in permissive mode — they just don't fan out to receivers without
-authentication. Set `STRANDS_MESH_PSK` plus
-`STRANDS_MESH_OVERRIDE_CODE` (the constant-time-compared operator code)
-to enable fleet-wide e-stop with safe resume.
+* `STRANDS_MESH_TLS_CA` — path to the CA bundle that signs every
+  legitimate peer cert.
+* `STRANDS_MESH_TLS_CERT` — this peer's PEM cert. Cert Common Name
+  encodes the role: `robot-<id>` for robots, `op-<id>` for operators,
+  `audit-<id>` for read-only observers.
+* `STRANDS_MESH_TLS_KEY` — this peer's private key (mode 0o600).
 
-Per-action and per-sender rate limits, command validation
-(`mesh.security.validate_command`), the audit log
-(`Mesh.audit.log_safety_event`, signed when `STRANDS_MESH_AUDIT_PSK` is
-configured), and the `robot_mesh` LLM-tool's human-in-the-loop
-interrupt for `emergency_stop` / `broadcast` apply in both modes — they
-are independent layers of defence that bound damage even when
-authentication is off.
+Mutual TLS is mandatory; `verify_name_on_connect` is on. A peer
+without a CA-signed cert fails the TLS handshake — its bytes never
+reach the JSON deserialiser. `transport/link/protocols` is locked
+to `["tls"]` so an attacker cannot downgrade to plain TCP.
 
-Bridge-transport deployments (Zenoh + AWS IoT MQTT) gain
-cross-transport deduplication via `mesh.transport.bridge_transport`;
-the same envelope nonce delivered on both transports is dispatched
-exactly once.
+For development on a trusted network, set `STRANDS_MESH_AUTH_MODE=none`
+to skip TLS + ACL. The mesh logs a WARNING at session-open time.
 
-#### Trust model — fleet membership AND peer identity
+#### Authorisation: ACL on cert Common Name
 
-The mesh authenticates messages at two layers:
+The Zenoh `access_control` block enforces per-key-expression rules
+keyed on cert CN:
 
-1. **`STRANDS_MESH_PSK` — fleet membership.** A single symmetric HMAC
-   key, distributed at provisioning time. Proves the sender has the
-   fleet secret. This is what blocks LAN outsiders.
+* `robot-*` (subject `robot_peer`): may publish own telemetry on
+  `<ns>/*/{presence,state/**,health,response/**,...}` and subscribe
+  to `<ns>/*/cmd` plus `<ns>/broadcast`. Cannot publish on the cmd
+  topic.
+* `op-*` (subject `operator_peer`): may publish on `<ns>/*/cmd` and
+  `<ns>/broadcast`, may subscribe to `<ns>/**` for monitoring.
+* Any other CN: silently dropped at the transport (default-deny).
 
-2. **Per-peer key — peer identity (R9).** Every peer additionally owns
-   a 32-byte HMAC key stored at
-   `~/.strands_robots/mesh/<peer_id>.key` (mode 0o600), generated on
-   first use. Each outgoing envelope carries a `kid` (= peer_id) and
-   an `id_sig` computed under that per-peer key. The receiver
-   maintains a directory mapping `peer_id -> verifier_key` and, once
-   a peer is pinned, requires `id_sig` to verify under the pinned key.
-   See [`strands_robots/mesh/identity.py`](strands_robots/mesh/identity.py)
-   for the full module docstring.
+The default ACL is built into `mesh._acl_config.default_acl()`. To
+override, drop a JSON5 file at `STRANDS_MESH_ACL_FILE` — see
+`examples/mesh_acl_example.json5` for a canonical reference with an
+extra `audit-*` read-only role.
 
-   With both layers in place, the per-sender rate bucket, presence
-   identity, and audit-log `sender_id` attribution all bind to the
-   holder of the per-peer key — an insider with only the PSK cannot
-   forge another peer's `sender_id`.
+#### Discovery: gossip-only by default
 
-##### How peers learn each other's keys
+`STRANDS_MESH_MULTICAST=false` (the default) disables Zenoh's
+multicast scouting. Peers find each other through gossip seeded by
+explicit `ZENOH_CONNECT` endpoints. Multicast on a hostile LAN is a
+discovery surface — any host that joins `224.0.0.224:7446` sees every
+peer's presence broadcast. Operators on a controlled LAN can opt back
+in with `STRANDS_MESH_MULTICAST=true`; we do not recommend it.
 
-The directory is populated by one of three mechanisms (operator
-chooses based on threat model):
+#### Fleet isolation: namespace
 
-* **TOFU via PSK-signed presence (default).** Each peer advertises
-  its key in its periodic presence broadcast; the first
-  PSK-authenticated presence carrying a key for a given `peer_id`
-  pins it. The pin event is written to the audit log
-  (`identity_pinned`). A subsequent attempt to bind a different key
-  to the same `peer_id` is rejected and audited as
-  `identity_rotation_rejected`. This gives correct identity for
-  every peer that joins after the receiver does; an attacker who
-  *races* the legitimate first presence wins TOFU but the rejection
-  appears in operator audit.
+`STRANDS_MESH_NAMESPACE` (default `strands_robots`) prepends an
+immutable prefix to every key-expression at the routing layer. Two
+fleets with different namespaces cannot route messages between each
+other, even when peer-ids collide.
 
-* **Operator pre-distribution.** Operators ship per-peer keys via
-  secrets manager and load them with
-  `identity.load_peer_directory_from_dir(path)` at startup. No race
-  window — the pin happens before the first wire message.
+#### DoS bounds: downsampling + low_pass_filter
 
-* **Strict mode** (`STRANDS_MESH_REQUIRE_PEER_IDENTITY=true`). Every
-  envelope MUST carry both a `kid` and an `id_sig`. PSK-only
-  envelopes are rejected. Use this once the fleet has been migrated
-  and every peer has a key in the directory.
+Two transport-layer caps are emitted unconditionally:
 
-##### Threat-vector coverage matrix
+* `downsampling` enforces a per-key-expression frequency cap on
+  `<ns>/*/cmd` and `<ns>/broadcast` (`STRANDS_MESH_CMD_RATE_HZ`,
+  default 20 Hz). A peer publishing faster has the extra messages
+  dropped at the transport — flood attacks cost nothing on the
+  receiver side.
+* `low_pass_filter` enforces per-message byte caps:
+  `STRANDS_MESH_MAX_CMD_BYTES` (default 16 KiB) on cmd / broadcast
+  topics, `STRANDS_MESH_MAX_CAMERA_BYTES` (default 1 MiB) on camera
+  topics. Jumbo frames are dropped pre-deserialise.
+
+Plus `transport/unicast/max_sessions` (`STRANDS_MESH_MAX_SESSIONS`,
+default 256) caps simultaneous peer count.
+
+#### Emergency-stop authorisation
+
+`Mesh.emergency_stop()` and `Mesh._resume_lockout(code)` use the
+operator override code (`STRANDS_MESH_OVERRIDE_CODE`) as a *second
+factor* on top of the mTLS-bound operator role. Resume RPC carries
+`HMAC(override_code, proof_nonce)`; receivers recompute it locally
+and reject mismatches. Receivers without the override code configured
+**fail closed** — operators must distribute the code to every peer
+that should accept fleet-wide remote resume.
+
+#### Threat-vector coverage
 
 | Adversary tier | Coverage |
 |---|---|
-| LAN outsider (no PSK) | **Mitigated by PSK + strict-auth.** Unsigned envelopes are rejected in strict mode; permissive mode is dev-only. |
-| Authenticated insider with PSK only (e.g. compromised camera, A2 in threat matrix) | **Mitigated by per-peer identity.** Cannot forge another peer's `sender_id`: spoofed envelopes are rejected with `identity signature mismatch` (verified by `tests/mesh/test_peer_identity.py::TestSenderIdSpoof`). Cannot burn another peer's rate bucket (verified by `TestRateLimitAttribution`). |
-| Stolen IoT certificate (B1) | **Mitigated at transport.** The IoT mTLS layer rejects connections without a valid per-thing cert. A stolen cert without the PSK still cannot mint mesh-layer envelopes. A stolen cert WITH the PSK can join the fleet but cannot impersonate other peers (per-peer identity). |
-| Stolen cert + PSK + per-peer-key exfiltration | **Out of scope.** A peer whose private key is on disk has been fully compromised; the operator response is to drop the peer from the directory (`drop_peer_identity`), regenerate the key, and audit the gap. No symmetric scheme can defend a fully-pwned host from impersonating itself. |
-| Insider racing TOFU bootstrap | **Detected, not prevented.** First-pinned-wins. The conflict shows up in the audit log as `identity_rotation_rejected`; operators close it with pre-distribution. |
+| LAN outsider, no cert | **Mitigated.** TLS handshake rejects the connection. |
+| Cert from a different CA | **Mitigated.** Our CA bundle does not verify it; handshake fails. |
+| Valid cert, CN does not match any ACL rule | **Mitigated.** ACL drops every message at the transport (default-deny). |
+| Valid `robot-*` cert tries to publish on `*/cmd` | **Mitigated.** ACL `robot_publish_telemetry` rule only allows egress on telemetry topics; cmd publish is denied. |
+| Valid `op-*` cert floods `cmd` topic at 1 kHz | **Mitigated.** `downsampling` caps ingress at 20 Hz; the rest is dropped. |
+| Valid `op-*` cert sends 100 MiB camera frame | **Mitigated.** `low_pass_filter` caps camera bytes at 1 MiB; the rest is dropped. |
+| Valid `op-*` cert tries to hijack another operator's RPC turn_id | **Mitigated.** `Mesh._on_response` requires `responder_id` to match the original target for point-to-point sends. |
+| Two fleets share a network | **Mitigated.** `STRANDS_MESH_NAMESPACE` isolates routing. |
+| Stolen cert + key (host fully compromised) | **Out of scope.** The peer is the attacker. Operator response: revoke the cert at the CA, restart the fleet. |
 
-##### Override code
+#### Payload semantics: `validate_command`
 
-`STRANDS_MESH_OVERRIDE_CODE` remains a single fleet-wide operator
-secret used for emergency-resume RPC. After R8-5 it is required on the
-wire as `HMAC(override_code, proof_nonce)`. The receiver-side resume
-also runs through the same envelope verifier above, so a fleet-wide
-resume now requires:
+After the wire layer authenticates and authorises a command, the
+payload still goes through `mesh.security.validate_command` to bound
+its contents — instruction length, duration, step counts, the
+`policy_host` allowlist (loopback only by default), the HuggingFace
+repo prefix gate (`STRANDS_MESH_HF_REPO_ALLOW`), and the policy
+type / provider allowlist (`STRANDS_MESH_POLICY_TYPE_ALLOW`). These
+guard against an authorised peer requesting a 24-hour `execute` action
+or steering the robot at an attacker-controlled inference server.
 
-* PSK (fleet membership)
-* override-code proof (operator authorisation), AND
-* a valid `id_sig` from the issuing peer's per-peer key (binds the
-  resume to a specific operator-class peer).
+#### Bridge transport (Zenoh + AWS IoT)
 
-An insider with PSK + override code but lacking the operator peer's
-key cannot mint a valid resume RPC because the receiver's
-`verify_envelope` rejects the unsigned-or-mismatched `id_sig`. Treat
-the override code as an operator-tier secret distributed only to
-peers with `peer_type=operator`.
-
-##### Empirical (adversarial) test coverage
-
-Per the reviewer feedback, the verified-defended claims above are
-backed by concrete on-the-wire attack simulations rather than
-inspection alone. See `tests/mesh/test_peer_identity.py` for 30 tests
-that build hostile envelopes (forged kid, mismatched id_sig, kid/payload
-disagreement, rate-bucket forgery, TOFU-race) and assert the
-verifier rejects every one. The remaining surface — clock-drift bypass
-of replay protection, stale audit sidecars under restart — is covered
-by inspection only and called out as such in the threat matrix.
-
-#### Clock sync requirement
-
-Envelope freshness uses a 60-second past tolerance and a 5-second
-forward skew (configurable via `STRANDS_MESH_REPLAY_WINDOW`). If
-embedded robots drift more than 60 s behind wall-clock time (no NTP,
-RTC battery dead, etc.), legitimate messages will be dropped as
-`ts too old`. Conversely, if a robot's clock runs significantly fast,
-its outbound messages will be rejected by peers as `ts in future`.
-Operators MUST run NTP (or equivalent) on every mesh peer; widening
-the replay window past the default trades replay-protection strength
-for clock-drift tolerance. The same caveat applies to the audit
-sequence sidecar — restart-renumber detection assumes monotonic
-clocks within the seq-counter generation window.
+Bridge-transport deployments still need cross-transport deduplication
+because the same Zenoh + IoT MQTT topic can deliver the same payload
+twice. `mesh.transport.bridge_transport._CommandDeduplicator`
+fingerprints incoming samples and dispatches each unique
+(`sender_id`, `turn_id`, `command`) once.
 
 For a complete walkthrough of what each layer protects against, see
-`mesh/security.py`'s module docstring and the AGENTS.md threat-model
-section.
+`mesh/security.py`'s module docstring,
+`mesh/_zenoh_config.py` for the transport-side config, and
+`mesh/_acl_config.py` for the ACL builder.
 
 ### Cache Directory
 
