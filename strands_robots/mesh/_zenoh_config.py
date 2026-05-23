@@ -390,7 +390,7 @@ def low_pass_filter_block(namespace: str) -> tuple[str, str]:
                     "id": "strands_camera_size_cap",
                     "interfaces": interfaces,
                     "messages": ["put"],
-                    "flows": ["ingress", "egress"],
+                    "flows": ["ingress"],  # R22-C: ingress-only, publisher trusts own frames
                     "key_exprs": ["**/camera/**"],
                     "size_limit": cam_bytes,
                 },
