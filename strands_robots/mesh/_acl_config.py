@@ -169,9 +169,81 @@ def _quote_unquoted_keys(raw: str) -> str:
     return "".join(out)
 
 
+def _convert_single_quoted_strings(raw: str) -> str:
+    """Convert JSON5 single-quoted strings to double-quoted JSON strings.
+
+    json.loads rejects single-quoted strings, but JSON5 accepts them. The
+    other preprocessor scanners (_strip_json5_comments, _strip_trailing_commas,
+    _quote_unquoted_keys) correctly skip over single-quoted strings to avoid
+    stripping ``//`` inside e.g. ``'http://x'``, but they emit them unchanged
+    and json.loads then errors at the first ``'``.
+
+    This pass walks the input character by character (mirroring the other
+    scanners), preserves double-quoted strings verbatim, and rewrites
+    single-quoted string literals to double-quoted, escaping any embedded
+    ``"`` and unescaping any ``\\'`` sequences.
+    """
+    out: list[str] = []
+    i = 0
+    n = len(raw)
+    while i < n:
+        ch = raw[i]
+        # Pass-through double-quoted strings unchanged
+        if ch == '"':
+            out.append(ch)
+            i += 1
+            while i < n:
+                c = raw[i]
+                out.append(c)
+                if c == "\\" and i + 1 < n:
+                    out.append(raw[i + 1])
+                    i += 2
+                    continue
+                if c == '"':
+                    i += 1
+                    break
+                i += 1
+            continue
+        # Convert single-quoted strings
+        if ch == "'":
+            out.append('"')  # opening "
+            i += 1
+            while i < n:
+                c = raw[i]
+                if c == "\\" and i + 1 < n:
+                    nxt = raw[i + 1]
+                    if nxt == "'":
+                        # \' inside JSON5 single-quoted = literal apostrophe.
+                        # Inside our new double-quoted JSON it can be a bare ' (no escape needed).
+                        out.append("'")
+                        i += 2
+                        continue
+                    # Preserve other escapes verbatim
+                    out.append(c)
+                    out.append(nxt)
+                    i += 2
+                    continue
+                if c == '"':
+                    # Bare " inside what was single-quoted; must escape now that we're double-quoted.
+                    out.append('\\"')
+                    i += 1
+                    continue
+                if c == "'":
+                    # End of the original single-quoted string
+                    out.append('"')  # closing "
+                    i += 1
+                    break
+                out.append(c)
+                i += 1
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
 def _json5_to_json(raw: str) -> str:
     """Apply our JSON5-lite preprocessor to *raw*."""
-    return _strip_trailing_commas(_quote_unquoted_keys(_strip_json5_comments(raw)))
+    return _strip_trailing_commas(_quote_unquoted_keys(_convert_single_quoted_strings(_strip_json5_comments(raw))))
 
 
 # --- ACL file loader ---------------------------------------------------

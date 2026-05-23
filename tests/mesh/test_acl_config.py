@@ -472,3 +472,62 @@ class TestIsDefaultACLInUse:
         from strands_robots.mesh import _acl_config as ac
 
         assert ac.is_default_acl_in_use() is False
+
+
+class TestJSON5SingleQuotedStringsR14:
+    """R14 pin tests — single-quoted JSON5 strings convert to JSON correctly.
+
+    Pre-R14: the preprocessor recognised single-quoted strings as in_string
+    state (so it would not strip a // inside 'http://x') but emitted them
+    unchanged to json.loads, which rejects single-quoted JSON. Any operator
+    using JSON5's single-quoted-string feature in their ACL file got
+    a confusing JSON parse error.
+
+    Post-R14: a _convert_single_quoted_strings() pass converts 'foo' to
+    "foo" while preserving escapes and double-quoted strings.
+    """
+
+    def test_simple_single_quoted_value_converts(self):
+        from strands_robots.mesh._acl_config import _json5_to_json
+
+        out = _json5_to_json("{'foo': 'bar'}")
+        assert json.loads(out) == {"foo": "bar"}
+
+    def test_double_quoted_strings_pass_through(self):
+        from strands_robots.mesh._acl_config import _json5_to_json
+
+        out = _json5_to_json('{"foo": "bar"}')
+        assert json.loads(out) == {"foo": "bar"}
+
+    def test_mixed_quotes(self):
+        from strands_robots.mesh._acl_config import _json5_to_json
+
+        out = _json5_to_json("""{"k": 'v', 'k2': "v2"}""")
+        assert json.loads(out) == {"k": "v", "k2": "v2"}
+
+    def test_embedded_double_quote_in_single_quoted_escapes(self):
+        from strands_robots.mesh._acl_config import _json5_to_json
+
+        # JSON5: 'has "quote"' — the embedded " must get escaped on conversion.
+        out = _json5_to_json('{"msg": \'has "quote"\'}')
+        assert json.loads(out) == {"msg": 'has "quote"'}
+
+    def test_array_of_single_quoted(self):
+        from strands_robots.mesh._acl_config import _json5_to_json
+
+        out = _json5_to_json("['a', 'b', 'c']")
+        assert json.loads(out) == ["a", "b", "c"]
+
+    def test_single_quoted_with_url_inside(self):
+        """Regression: // inside single-quoted string must NOT be stripped as a comment."""
+        from strands_robots.mesh._acl_config import _json5_to_json
+
+        out = _json5_to_json("{'url': 'http://example.com/path'}")
+        assert json.loads(out) == {"url": "http://example.com/path"}
+
+    def test_pre_existing_double_quoted_with_apostrophe(self):
+        """Double-quoted strings carrying a single quote inside must not be touched."""
+        from strands_robots.mesh._acl_config import _json5_to_json
+
+        out = _json5_to_json('{"msg": "it\'s fine"}')
+        assert json.loads(out) == {"msg": "it's fine"}
