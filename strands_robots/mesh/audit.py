@@ -715,12 +715,12 @@ def log_safety_event(event_type: str, peer_id: str, payload: dict[str, Any]) -> 
             # surface is POSIX (Linux + macOS).
             flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT
             nofollow = getattr(os, "O_NOFOLLOW", 0)
-            try:
-                fd = os.open(path, flags | nofollow, 0o600)
-            except OSError as oe:
-                # ELOOP under O_NOFOLLOW = symlink -> retry without it
-                # is NOT what we want; just re-raise.
-                raise oe
+            # NOTE: O_NOFOLLOW raises ELOOP on a symlink, which is the
+            # intended behaviour -- a symlinked audit log is the threat
+            # documented at the top of this module. Do not retry without
+            # O_NOFOLLOW; let the OSError propagate so the audit-log path
+            # is rejected loudly rather than redirected.
+            fd = os.open(path, flags | nofollow, 0o600)
             try:
                 with os.fdopen(fd, "a", encoding="utf-8") as fh:
                     fh.write(line)
