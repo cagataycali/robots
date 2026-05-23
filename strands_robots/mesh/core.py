@@ -57,21 +57,84 @@ def get_local_robots() -> dict[str, Mesh]:
 #: contains a NUL byte).
 BROADCAST_RESPONDER: str = "<broadcast>\x00"
 
+
+def _parse_positive_float_env(name: str, default: str, *, minimum: float = 0.0) -> float:
+    """Parse a positive-float env var, falling back to default on bad input.
+
+    Catches the case where an operator sets ``STRANDS_MESH_RESUME_FRESHNESS_S=abc``
+    or a negative value. The module would otherwise fail to import with an opaque
+    ``ValueError`` (found by running the module under bad env locally; see
+    ``test_resume_env_validation.py``).
+    """
+    raw = os.getenv(name, default)
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "Invalid %s=%r (not a float); falling back to default %r.",
+            name,
+            raw,
+            default,
+        )
+        return float(default)
+    if value < minimum:
+        logger.warning(
+            "Invalid %s=%r (must be >= %s); falling back to default %r.",
+            name,
+            value,
+            minimum,
+            default,
+        )
+        return float(default)
+    return value
+
+
+def _parse_positive_int_env(name: str, default: str, *, minimum: int = 1) -> int:
+    """Parse a positive-int env var, falling back to default on bad input.
+
+    Companion to :func:`_parse_positive_float_env` for cache-size knobs.
+    Rejects zero / negative because ``deque(maxlen=0)`` would silently disable
+    the replay cache and ``maxlen=-1`` would raise at runtime.
+    """
+    raw = os.getenv(name, default)
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "Invalid %s=%r (not an int); falling back to default %r.",
+            name,
+            raw,
+            default,
+        )
+        return int(default)
+    if value < minimum:
+        logger.warning(
+            "Invalid %s=%r (must be >= %s); falling back to default %r.",
+            name,
+            value,
+            minimum,
+            default,
+        )
+        return int(default)
+    return value
+
+
 #: Resume-envelope freshness window. Envelopes whose t field is
 #: older than this are rejected as potential replays. Operators on
 #: drifty NTP can extend via STRANDS_MESH_RESUME_FRESHNESS_S
-#: (sane bound: keep < 600).
-RESUME_FRESHNESS_WINDOW_S: float = float(os.getenv("STRANDS_MESH_RESUME_FRESHNESS_S", "60"))
+#: (sane bound: keep < 600). Bad input falls back to 60.
+RESUME_FRESHNESS_WINDOW_S: float = _parse_positive_float_env("STRANDS_MESH_RESUME_FRESHNESS_S", "60")
 
 #: Forward-skew tolerance on the envelope t field. Bounds
 #: clock-ahead issuers from minting envelopes that pass freshness
-#: indefinitely.
-RESUME_FORWARD_SKEW_S: float = float(os.getenv("STRANDS_MESH_RESUME_FORWARD_SKEW_S", "5"))
+#: indefinitely. Bad input falls back to 5.
+RESUME_FORWARD_SKEW_S: float = _parse_positive_float_env("STRANDS_MESH_RESUME_FORWARD_SKEW_S", "5")
 
 #: Maximum entries in the per-receiver resume replay cache. Bounded
 #: to prevent attacker-controlled memory growth; eviction is by
 #: oldest 20 percent when the cap is hit (see :meth:).
-RESUME_REPLAY_CACHE_MAX: int = int(os.getenv("STRANDS_MESH_RESUME_REPLAY_CACHE_MAX", "4096"))
+#: Bad input falls back to 4096; minimum 1.
+RESUME_REPLAY_CACHE_MAX: int = _parse_positive_int_env("STRANDS_MESH_RESUME_REPLAY_CACHE_MAX", "4096")
 
 
 class Mesh(SensorLoopsMixin):
