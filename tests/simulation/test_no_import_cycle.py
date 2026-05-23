@@ -1,14 +1,21 @@
 """Regression: no RUNTIME import cycles inside strands_robots.
 
-Before: /tmp/ast-analysis/DEEPER_FINDINGS.md hazard A flagged
-`simulation.base ↔ simulation.policy_runner` - papered over by three
-inline lazy imports inside SimEngine methods. These were removed in
-the concurrency-audit pass and the imports hoisted to module level,
-exploiting the fact that policy_runner only imports SimEngine under
-TYPE_CHECKING (so the cycle is a compile-time artifact, not runtime).
+A previous iteration hoisted three inline lazy imports inside
+``SimEngine`` methods to module level, exploiting the fact that
+``policy_runner`` only imports ``SimEngine`` under ``TYPE_CHECKING``
+(so the runtime cycle was a compile-time artifact, not a runtime one).
 
-This test guards against regression - if someone reintroduces a
-real runtime cycle inside strands_robots, the suite goes red.
+CodeQL's ``py/unsafe-cyclic-import`` rule walks ``TYPE_CHECKING``
+blocks too, so even that arrangement was flagged (alerts #83, #84,
+#85, #86, #87). The fix re-introduces method-scoped lazy imports —
+they are safe by construction (executed at call time, never at
+module import time) and break the static cycle CodeQL warns about.
+
+This test guards against regression — if someone reintroduces a
+real runtime cycle inside ``strands_robots``, the suite goes red.
+The companion test ``test_no_cyclic_imports.py`` exercises the
+fresh-interpreter import in a subprocess for the simulation
+sub-package, complementing the static graph analysis below.
 """
 
 from __future__ import annotations
@@ -95,17 +102,3 @@ def test_no_runtime_import_cycles():
     G = _build_import_graph(PKG)
     cycles = list(nx.simple_cycles(G))
     assert cycles == [], "runtime cycles detected:\n" + "\n".join("  " + " -> ".join(c) + " -> " + c[0] for c in cycles)
-
-
-def test_base_does_not_lazy_import_policy_runner():
-    """The three inline lazy imports were the symptom of the prior cycle.
-    They've been hoisted to module level; don't let them sneak back in."""
-    base_src = (PKG / "simulation/base.py").read_text()
-    # Count occurrences of the lazy pattern
-    lazy_pattern = "from strands_robots.simulation.policy_runner import"
-    # Module-level import: 1 occurrence. Any >1 would be a lazy reintroduction.
-    n = base_src.count(lazy_pattern)
-    assert n == 1, (
-        f"expected exactly 1 module-level import of policy_runner in base.py, got {n}. "
-        "Did someone reintroduce an inline lazy import?"
-    )
