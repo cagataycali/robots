@@ -141,10 +141,44 @@ class LockoutError(SecurityError):
 # --- Policy-host allowlist -----------------------------------------------
 
 
+#: Charset for valid hostname / CIDR / IP-literal entries in
+#: ``STRANDS_MESH_POLICY_HOST_ALLOW``. Rejects shell metacharacters,
+#: whitespace, NUL bytes, and any byte outside the printable ASCII
+#: subset typical of DNS labels and CIDR ranges.
+_POLICY_HOST_ENTRY_RE = re.compile(r"^[A-Za-z0-9.:/_\-\[\]]+$")
+
+
 def _policy_host_allowlist() -> list[str]:
-    """Return the configured policy-host allowlist (defaults + env extras)."""
+    """Return the configured policy-host allowlist (defaults + env extras).
+
+    F3 (PR #195 review): operator-supplied entries are validated against
+    a charset allowlist; malformed entries are dropped with a WARNING
+    rather than silently accepted. This matches the posture of
+    ``_resolve_ca_pins`` for SHA-256 pins. A typo like
+    ``STRANDS_MESH_POLICY_HOST_ALLOW=10.0.0.0/24,;rm -rf /`` produces a
+    visible signal that the operator's allowlist is not what they think
+    it is. (The malformed entry is not exploitable downstream because
+    ``is_safe_policy_host`` does literal-equality and CIDR comparisons,
+    not subprocess interpolation; this is a fail-loud-on-misconfig
+    posture, not an injection defence.)
+    """
     raw = os.getenv("STRANDS_MESH_POLICY_HOST_ALLOW", "")
-    extra = [host.strip() for host in raw.split(",") if host.strip()]
+    extra: list[str] = []
+    for raw_entry in raw.split(","):
+        host = raw_entry.strip()
+        if not host:
+            continue
+        if not _POLICY_HOST_ENTRY_RE.fullmatch(host):
+            import logging as _logging
+
+            _logging.getLogger(__name__).warning(
+                "[security] STRANDS_MESH_POLICY_HOST_ALLOW: dropping "
+                "malformed entry %r (charset must match [A-Za-z0-9.:/_-[\\]]+); "
+                "fix the env var to include this host",
+                host,
+            )
+            continue
+        extra.append(host)
     return list(_DEFAULT_POLICY_HOSTS) + extra
 
 

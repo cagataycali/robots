@@ -858,11 +858,47 @@ def verify_ca_pin(ca_path: Path) -> bool:
     compromised host would defeat exactly the forensic check operators
     rely on.
 
+    F3 (PR #195 review): mirrors the ``O_NOFOLLOW`` discipline that
+    ``_ensure_ca`` (R22-D) uses on the on-disk re-use path. Without it,
+    an attacker who can race a symlink between the operator-supplied
+    ``ca_path`` and this read can redirect ``read_bytes()`` to a hash-
+    matching decoy, defeating exactly this verifier. The asymmetric
+    posture (``_ensure_ca`` defends, ``verify_ca_pin`` does not) was
+    the actual gap; this closes it.
+
     Returns False on any I/O error (missing file, permission denied,
-    etc.). The caller should treat False as "do not trust this CA".
+    symlinked path, etc.). The caller should treat False as "do not
+    trust this CA".
     """
+    import os
+
     try:
-        return _hash_matches_pin(ca_path.read_bytes())
+        if ca_path.is_symlink():
+            logger.warning(
+                "[provision] verify_ca_pin: refusing %s -- it is a SYMLINK "
+                "(target=%r). CA files must be regular files at the canonical path.",
+                ca_path,
+                os.readlink(ca_path),
+            )
+            return False
+        flags = os.O_RDONLY
+        nofollow = getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(str(ca_path), flags | nofollow)
+        try:
+            # Bound the read at 1 MiB -- the AWS Root CA1 PEM is < 2 KiB;
+            # anything larger is a suspicious file we should not pin against.
+            chunks: list[bytes] = []
+            remaining = 1 * 1024 * 1024
+            while remaining > 0:
+                buf = os.read(fd, min(65536, remaining))
+                if not buf:
+                    break
+                chunks.append(buf)
+                remaining -= len(buf)
+            content = b"".join(chunks)
+        finally:
+            os.close(fd)
+        return _hash_matches_pin(content)
     except OSError:
         return False
 
