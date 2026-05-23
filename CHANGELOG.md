@@ -59,10 +59,18 @@ Removed entirely:
 Empirical red-team testing against the live Zenoh 1.9 wheel
 uncovered four bugs in our own first-pass config that this PR fixes:
 
-1. **`low_pass_filter` was a silent no-op.** The block requires a
-   non-empty `interfaces` allowlist; an empty/missing field disables
-   the cap. The builder now enumerates every local NIC via psutil
-   (override with `STRANDS_MESH_FILTER_INTERFACES`).
+1. **`low_pass_filter` `interfaces` semantics.** Earlier revisions
+   of this PR enumerated every local NIC via psutil (with a hardcoded
+   fallback list `["lo", "lo0", "eth0", "en0", "en1", "wlan0"]`).
+   Cross-checking against `zenoh/src/net/routing/interceptor/low_pass.rs:84-91`
+   showed that an absent `interfaces` field maps to
+   `SubjectProperty::Wildcard` (matches every link), so the
+   enumeration was both unnecessary AND a silent-bypass footgun on
+   hosts with non-canonical NIC names (`enp0s3`, `wlp2s0`, `cni0`,
+   `wg0`). The builder now omits `interfaces` by default so the cap
+   applies fleet-wide; operators with a specific need to scope to a
+   subset of NICs supply `STRANDS_MESH_FILTER_INTERFACES`. The
+   transitive `psutil` import is gone.
 2. **`<namespace>/*/cmd` patterns never matched.** Zenoh strips the
    namespace before checking key_exprs against the user-side key.
    All filter / ACL globs now use `**/cmd` style patterns.
@@ -141,7 +149,7 @@ Hardened independently of the Zenoh refactor:
 | `STRANDS_MESH_MAX_CAMERA_BYTES` | `1048576` | `low_pass_filter` cap on `**/camera/**` |
 | `STRANDS_MESH_MAX_SAFETY_BYTES` | `4096` | `low_pass_filter` cap on `**/safety/**` (R21 -- jumbo-frame DoS bound) |
 | `STRANDS_MESH_CAMERA_DISABLED` | `false` | Privacy kill switch -- when `true`, `Mesh._publish_cameras_once` short-circuits before any frame is built |
-| `STRANDS_MESH_FILTER_INTERFACES` | autodetect | Override iface allowlist for the filter / ACL |
+| `STRANDS_MESH_FILTER_INTERFACES` | unset (wildcard) | Optional comma-separated NIC allowlist for the `low_pass_filter` rules. Unset means "every link" (Zenoh's `SubjectProperty::Wildcard`). |
 | `STRANDS_MESH_RESUME_FRESHNESS_S` | `60` | Maximum age (seconds) of a resume envelope before rejection as stale |
 | `STRANDS_MESH_RESUME_FORWARD_SKEW_S` | `5` | Maximum forward clock skew (seconds) tolerated in resume envelope timestamps |
 | `STRANDS_MESH_RESUME_REPLAY_CACHE_MAX` | `4096` | Maximum entries in the per-receiver resume proof_nonce replay cache (LRU eviction) |

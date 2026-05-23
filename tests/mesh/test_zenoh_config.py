@@ -186,6 +186,46 @@ class TestLowPassFilter:
         assert cam["size_limit"] == zc.DEFAULT_MAX_CAMERA_BYTES
         assert "**/camera/**" in cam["key_exprs"]
 
+    def test_default_omits_interfaces_for_wildcard_binding(self):
+        """F1: by default, ``interfaces`` MUST be absent so Zenoh applies
+        the cap to every link via ``SubjectProperty::Wildcard`` (see
+        zenoh/src/net/routing/interceptor/low_pass.rs:84-91 in 1.x).
+
+        Pre-fix code enumerated NICs via psutil with a hardcoded
+        fallback list (``lo, eth0, en0, ...``); on hosts using
+        ``enp0s3`` / ``wlp2s0`` / ``cni0`` / ``wg0`` without psutil,
+        the cap silently bypassed because no listed NIC matched.
+        """
+        _, value = zc.low_pass_filter_block("ns")
+        decoded = json.loads(value)
+        for rule in decoded:
+            assert "interfaces" not in rule, (
+                f"rule {rule['id']!r} carries `interfaces` by default; "
+                "this re-introduces the F1 silent-bypass footgun on hosts "
+                "with non-canonical NIC names."
+            )
+
+    def test_explicit_filter_interfaces_honoured(self, monkeypatch):
+        """F1: when STRANDS_MESH_FILTER_INTERFACES is set, the
+        operator-supplied list is attached to every rule verbatim.
+        """
+        monkeypatch.setenv("STRANDS_MESH_FILTER_INTERFACES", "wlan0, br-mesh ,wg0")
+        _, value = zc.low_pass_filter_block("ns")
+        decoded = json.loads(value)
+        for rule in decoded:
+            assert rule["interfaces"] == ["wlan0", "br-mesh", "wg0"]
+
+    def test_empty_filter_interfaces_treated_as_unset(self, monkeypatch):
+        """Whitespace / empty STRANDS_MESH_FILTER_INTERFACES falls through
+        to the wildcard binding rather than emitting ``[]`` (which Zenoh
+        rejects with ``Found empty interface value``).
+        """
+        monkeypatch.setenv("STRANDS_MESH_FILTER_INTERFACES", "   ,, ,")
+        _, value = zc.low_pass_filter_block("ns")
+        decoded = json.loads(value)
+        for rule in decoded:
+            assert "interfaces" not in rule
+
     def test_override_cmd_bytes(self, monkeypatch):
         monkeypatch.setenv("STRANDS_MESH_MAX_CMD_BYTES", "8192")
         _, value = zc.low_pass_filter_block("ns")

@@ -303,49 +303,59 @@ def downsampling_block(namespace: str) -> tuple[str, str]:
     )
 
 
-def _local_interfaces() -> list[str]:
-    """Enumerate every local network interface name.
+def _filter_interfaces() -> list[str] | None:
+    """Return the operator-supplied interface allowlist, or ``None``.
 
-    Zenoh's ``low_pass_filter`` and ``downsampling`` blocks require an
-    explicit ``interfaces`` allowlist; an empty list silently disables
-    the filter, and ``["*"]`` does NOT mean "all interfaces" (it is
-    matched literally and almost always misses). We enumerate every
-    interface visible to the OS and pass them all so the cap applies
-    fleet-wide regardless of which NIC a peer connects through.
+    Zenoh's ``low_pass_filter`` block treats an absent ``interfaces``
+    field as ``SubjectProperty::Wildcard`` (matches every link). See
+    ``zenoh/src/net/routing/interceptor/low_pass.rs`` (1.x):
 
-    Operators can override the list with
-    ``STRANDS_MESH_FILTER_INTERFACES`` (comma-separated). This is
-    useful when an environment has dozens of virtual interfaces and
-    the operator wants to bind the filter to a specific subset.
+        let interfaces = lpf_config.interfaces
+            .map(...)
+            .unwrap_or(vec![SubjectProperty::Wildcard]);
+
+    A wildcard binding is the correct posture for a fleet-wide cap:
+    the cap applies regardless of which NIC a peer's link rides on,
+    and there is no NIC enumeration that needs to stay in sync with
+    the actual deployment topology.
+
+    Operators with a *specific* need to bind the cap to a subset of
+    NICs (e.g. excluding a high-volume telemetry NIC from the cmd
+    cap) can set ``STRANDS_MESH_FILTER_INTERFACES`` (comma-separated)
+    and we honour it literally. Empty / unset returns ``None`` so the
+    builder omits the field entirely -- not the empty list, which
+    Zenoh's ``Option<NEVec<String>>`` parser rejects with
+    ``Found empty interface value`` (deny_unknown_fields + non-empty
+    vec).
     """
     raw = os.getenv("STRANDS_MESH_FILTER_INTERFACES", "").strip()
-    if raw:
-        return [iface.strip() for iface in raw.split(",") if iface.strip()]
-    try:
-        import psutil  # type: ignore[import-not-found]
-
-        return sorted(psutil.net_if_addrs().keys())
-    except ImportError:
-        # psutil is a transitive dep of strands-agents; this branch is
-        # for dev environments where it is genuinely missing. Fall back
-        # to the canonical list of interfaces a container or laptop is
-        # likely to expose. The filter still functions if any of these
-        # match the actual link the traffic rides; missing entries just
-        # mean traffic on those interfaces bypasses the cap.
-        return ["lo", "lo0", "eth0", "en0", "en1", "wlan0"]
+    if not raw:
+        return None
+    parts = [iface.strip() for iface in raw.split(",") if iface.strip()]
+    return parts or None
 
 
 def low_pass_filter_block(namespace: str) -> tuple[str, str]:
     """Return ``("low_pass_filter", <json5>)`` capping per-message bytes.
 
-    Two filters: cmd / broadcast topics get a 16 KiB cap; camera
-    topics get a 1 MiB cap. Anything larger is dropped at the
-    transport.
+    Three filters:
 
-    The ``interfaces`` field is REQUIRED -- without it Zenoh treats the
-    block as a no-op. We enumerate every local interface (or use the
-    operator-supplied ``STRANDS_MESH_FILTER_INTERFACES`` allowlist) so
-    the cap applies regardless of which NIC a peer's link rides on.
+    * cmd / broadcast topics: 16 KiB default cap, both flows.
+    * camera topics: 1 MiB default cap, ingress-only.
+    * safety topics: 4 KiB default cap, both flows.
+
+    Anything over the cap is dropped at the transport before the
+    JSON parser runs.
+
+    Interface binding: ``interfaces`` is OMITTED so Zenoh applies the
+    cap to every link (``SubjectProperty::Wildcard``). Operators with a
+    specific need to scope the cap to a subset of NICs supply
+    ``STRANDS_MESH_FILTER_INTERFACES`` (comma-separated); see
+    :func:`_filter_interfaces`. Earlier revisions enumerated every
+    local NIC via psutil with a hardcoded fallback; that pattern
+    silently bypassed the cap on hosts with non-canonical interface
+    names (``enp0s3``, ``wlp2s0``, ``cni0``, ``wg0``, ...) when psutil
+    was absent. Wildcard-by-default removes that footgun.
     """
     cmd_bytes = _int_env(
         "STRANDS_MESH_MAX_CMD_BYTES",
@@ -365,48 +375,59 @@ def low_pass_filter_block(namespace: str) -> tuple[str, str]:
         lo=128,
         hi=1 * 1024 * 1024,
     )
-    interfaces = _local_interfaces()
+    interfaces = _filter_interfaces()
+
+    def _rule(rule: dict) -> dict:
+        # Only attach `interfaces` when the operator explicitly opted into a
+        # subset; otherwise leave it unset so Zenoh treats the rule as
+        # SubjectProperty::Wildcard (applies to every link).
+        if interfaces is not None:
+            rule["interfaces"] = interfaces
+        return rule
+
     return (
         "low_pass_filter",
         json.dumps(
             [
                 # NOTE on key_expr globs: the Zenoh ``namespace`` config
-                # prefixes keys on the wire but ``low_pass_filter`` matches
-                # against the user-side (un-prefixed) key, so a filter
-                # written as ``f"{namespace}/*/cmd"`` never fires. ``**/cmd``
-                # matches any prefix (including the empty / namespace one)
-                # and is the robust choice. The namespace is therefore not
-                # used in these key_exprs -- fleet isolation is provided by
-                # the namespace itself, not by these globs.
-                {
-                    "id": "strands_cmd_size_cap",
-                    "interfaces": interfaces,
-                    "messages": ["put"],
-                    "flows": ["ingress", "egress"],
-                    "key_exprs": ["**/cmd", "**/broadcast"],
-                    "size_limit": cmd_bytes,
-                },
-                {
-                    "id": "strands_camera_size_cap",
-                    "interfaces": interfaces,
-                    "messages": ["put"],
-                    "flows": ["ingress"],  # R22-C: ingress-only, publisher trusts own frames
-                    "key_exprs": ["**/camera/**"],
-                    "size_limit": cam_bytes,
-                },
-                {
-                    # R21: safety topics need their own (smaller)
-                    # byte cap. A 100 KiB safety envelope is jumbo-
-                    # frame DoS targeting the receiver-side HMAC and
-                    # freshness math; legitimate safety envelopes are
-                    # well under 1 KiB.
-                    "id": "strands_safety_size_cap",
-                    "interfaces": interfaces,
-                    "messages": ["put"],
-                    "flows": ["ingress", "egress"],
-                    "key_exprs": ["**/safety/**"],
-                    "size_limit": safety_bytes,
-                },
+                # field prefixes keys on the wire (see
+                # zenoh/src/net/routing/namespace.rs). The interceptor
+                # matches against the wire key (post-prefix), but ``**``
+                # matches any prefix including the namespace one, so
+                # ``**/cmd`` is robust regardless of the configured
+                # namespace.
+                _rule(
+                    {
+                        "id": "strands_cmd_size_cap",
+                        "messages": ["put"],
+                        "flows": ["ingress", "egress"],
+                        "key_exprs": ["**/cmd", "**/broadcast"],
+                        "size_limit": cmd_bytes,
+                    }
+                ),
+                _rule(
+                    {
+                        "id": "strands_camera_size_cap",
+                        "messages": ["put"],
+                        "flows": ["ingress"],  # R22-C: ingress-only, publisher trusts own frames
+                        "key_exprs": ["**/camera/**"],
+                        "size_limit": cam_bytes,
+                    }
+                ),
+                _rule(
+                    {
+                        # R21: safety topics need their own (smaller)
+                        # byte cap. A 100 KiB safety envelope is jumbo-
+                        # frame DoS targeting the receiver-side HMAC and
+                        # freshness math; legitimate safety envelopes are
+                        # well under 1 KiB.
+                        "id": "strands_safety_size_cap",
+                        "messages": ["put"],
+                        "flows": ["ingress", "egress"],
+                        "key_exprs": ["**/safety/**"],
+                        "size_limit": safety_bytes,
+                    }
+                ),
             ]
         ),
     )
