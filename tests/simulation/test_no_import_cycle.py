@@ -7,11 +7,11 @@ A previous iteration hoisted three inline lazy imports inside
 
 CodeQL's ``py/unsafe-cyclic-import`` rule walks ``TYPE_CHECKING``
 blocks too, so even that arrangement was flagged (alerts #83, #84,
-#85, #86, #87). The fix re-introduces method-scoped lazy imports —
+#85, #86, #87). The fix re-introduces method-scoped lazy imports -
 they are safe by construction (executed at call time, never at
 module import time) and break the static cycle CodeQL warns about.
 
-This test guards against regression — if someone reintroduces a
+This test guards against regression - if someone reintroduces a
 real runtime cycle inside ``strands_robots``, the suite goes red.
 The companion test ``test_no_cyclic_imports.py`` exercises the
 fresh-interpreter import in a subprocess for the simulation
@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     import networkx as nx  # type: ignore[import-untyped]
 
 PKG = Path(__file__).resolve().parents[2] / "strands_robots"
+_TARGET_MODULE = "strands_robots.simulation.policy_runner"
 
 
 def _is_in_type_checking(tree: ast.AST, target: ast.AST) -> bool:
@@ -49,7 +50,7 @@ def _is_in_type_checking(tree: ast.AST, target: ast.AST) -> bool:
 def _is_inside_function(tree: ast.Module, target: ast.AST) -> bool:
     """True if target_node is inside a function or method body (lazy import).
 
-    Imports inside function/method bodies are deferred — they execute only
+    Imports inside function/method bodies are deferred - they execute only
     when the function is called, not at module import time. These cannot
     cause import-time cycles and should not be flagged.
     """
@@ -105,26 +106,101 @@ def test_no_runtime_import_cycles():
 
 
 def test_base_has_no_module_level_policy_runner_import():
-    """Pin: base.py must NOT import from policy_runner at module level.
+    """Pin: base.py must NOT import policy_runner at module level (any form).
 
-    This test fails on pre-fix code where base.py had:
-        from strands_robots.simulation.policy_runner import PolicyRunner, VideoConfig
-    at module scope (line 43). The fix defers these to method scope.
+    Catches BOTH AST shapes that would re-introduce the CodeQL cycle:
 
-    Guards against the inverse regression: a future refactor hoisting
-    the lazy imports back to module level would re-introduce the CodeQL
-    py/unsafe-cyclic-import cycle (alerts #83, #84).
+    * ``from strands_robots.simulation.policy_runner import PolicyRunner``
+      (``ast.ImportFrom``) - the original pre-fix shape.
+    * ``import strands_robots.simulation.policy_runner`` (``ast.Import``) -
+      the alternate shape a future refactor might choose.
+
+    Both close the same static edge in CodeQL's import graph (alerts #83-#87),
+    so both must fail the pin. Guards against the inverse regression: a
+    future refactor hoisting the lazy imports back to module level would
+    re-introduce ``py/unsafe-cyclic-import``.
+
+    The lazy ``_lazy_policy_runner()`` helper at base.py module level is
+    intentionally NOT flagged - its inner ``from`` lives inside a
+    ``FunctionDef`` body and only executes at call time (validated by
+    ``test_lazy_policy_runner_helper_exists`` below).
     """
     base_src = (PKG / "simulation" / "base.py").read_text()
     tree = ast.parse(base_src)
 
     for node in tree.body:  # module-level statements only
         if isinstance(node, ast.ImportFrom):
-            if node.module == "strands_robots.simulation.policy_runner":
+            if node.module == _TARGET_MODULE:
                 imported_names = [alias.name for alias in node.names]
                 pytest.fail(
-                    f"base.py has a module-level import from "
-                    f"strands_robots.simulation.policy_runner: {imported_names}. "
-                    f"These must remain as lazy imports inside methods to avoid "
-                    f"the CodeQL py/unsafe-cyclic-import cycle (alerts #83, #84)."
+                    f"base.py has a module-level `from {_TARGET_MODULE} import "
+                    f"{imported_names}`. These must live inside the lazy helper "
+                    f"`_lazy_policy_runner()` to avoid CodeQL alerts #83-#87."
                 )
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == _TARGET_MODULE:
+                    pytest.fail(
+                        f"base.py has a module-level `import {alias.name}`. This "
+                        f"closes the same CodeQL cycle as the `from`-form. The "
+                        f"lazy helper `_lazy_policy_runner()` is the only "
+                        f"sanctioned site."
+                    )
+
+
+def test_lazy_policy_runner_helper_exists():
+    """Pin: ``base.py`` defines ``_lazy_policy_runner()`` at module level.
+
+    The four ``SimEngine`` methods that need ``PolicyRunner``/``VideoConfig``
+    delegate to this single helper instead of duplicating the lazy-import
+    block four times. Centralisation means a future re-hoist regression is
+    a one-line edit, and review feedback that recurred across rounds about
+    DRY duplication is closed.
+
+    Fails if the helper is removed or renamed without updating call sites.
+    """
+    base_src = (PKG / "simulation" / "base.py").read_text()
+    tree = ast.parse(base_src)
+    helpers = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "_lazy_policy_runner"]
+    assert len(helpers) == 1, (
+        f"expected exactly one module-level `_lazy_policy_runner` definition in base.py, found {len(helpers)}"
+    )
+    # Verify the helper's body actually imports the target module
+    target_imports = [n for n in ast.walk(helpers[0]) if isinstance(n, ast.ImportFrom) and n.module == _TARGET_MODULE]
+    assert target_imports, (
+        "_lazy_policy_runner must contain `from strands_robots.simulation.policy_runner "
+        "import ...` inside its body (otherwise the four call sites can't resolve)"
+    )
+
+
+def test_simengine_methods_use_lazy_helper():
+    """Pin: every ``SimEngine`` method that needs ``PolicyRunner`` calls
+    ``_lazy_policy_runner()``, never the bare ``from ... import`` form.
+
+    Fails if a future contributor adds a fifth call site and forgets to
+    route through the helper - re-introducing the duplicated-comment-block
+    pattern this PR's R4 cleanup eliminated.
+    """
+    base_src = (PKG / "simulation" / "base.py").read_text()
+    tree = ast.parse(base_src)
+
+    # Find SimEngine class
+    sim_classes = [node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "SimEngine"]
+    assert sim_classes, "SimEngine class not found in base.py"
+    sim_engine = sim_classes[0]
+
+    # No method body should contain a direct `from policy_runner import ...`.
+    offenders: list[str] = []
+    for method in sim_engine.body:
+        if not isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for n in ast.walk(method):
+            if isinstance(n, ast.ImportFrom) and n.module == _TARGET_MODULE:
+                offenders.append(method.name)
+                break
+
+    assert not offenders, (
+        f"SimEngine method(s) {offenders} contain a direct "
+        f"`from {_TARGET_MODULE} import ...` - route through "
+        f"`_lazy_policy_runner()` instead (defined at module scope in base.py)."
+    )

@@ -30,11 +30,41 @@ if TYPE_CHECKING:
 # replay / eval_policy / evaluate_benchmark methods that use them. A
 # module-level runtime import would close a cycle with
 # strands_robots.simulation.policy_runner, which imports SimEngine from
-# this module under TYPE_CHECKING — CodeQL's py/unsafe-cyclic-import rule
+# this module under TYPE_CHECKING - CodeQL's py/unsafe-cyclic-import rule
 # walks TYPE_CHECKING blocks and flagged that loop (CodeQL alerts #83, #84).
 # The lazy approach is safe because ``from __future__ import annotations``
 # (already in effect) makes all type hints string-form at runtime, so no
 # name resolution is needed at import time.
+#
+# Note: ``OnFrame`` from policy_runner is similarly omitted; ``evaluate_benchmark``
+# uses the structural ``Callable[[int, dict, dict], None]`` type directly so no
+# name import is needed at all.
+#
+# The four call sites previously duplicated the same two-line lazy-import block.
+# They are now centralised through ``_lazy_policy_runner()`` below: a single
+# definition + single rationale comment, so a future re-hoist regression is a
+# one-line edit (and is also pinned by ``tests/simulation/test_no_import_cycle.py``).
+
+
+def _lazy_policy_runner() -> tuple[type, type]:
+    """Lazy import shim for ``PolicyRunner`` and ``VideoConfig``.
+
+    Defined at module level for discoverability, but the inner
+    ``from`` statement runs only when this helper is called (Python
+    function bodies are not executed at module-import time). This
+    keeps the static import graph acyclic per CodeQL alerts #83, #84.
+
+    Returns:
+        ``(PolicyRunner, VideoConfig)`` - the two symbols every
+        cycle-affected ``SimEngine`` method needs.
+    """
+    from strands_robots.simulation.policy_runner import (  # noqa: PLC0415
+        PolicyRunner,
+        VideoConfig,
+    )
+
+    return PolicyRunner, VideoConfig
+
 
 logger = logging.getLogger(__name__)
 
@@ -331,8 +361,7 @@ class SimEngine(ABC):
 
         on_frame = self._make_run_policy_hook(robot_name, instruction)
 
-        # Lazy import to break the strands_robots.simulation.policy_runner cycle.
-        from strands_robots.simulation.policy_runner import PolicyRunner, VideoConfig
+        PolicyRunner, VideoConfig = _lazy_policy_runner()
 
         return PolicyRunner(self).run(
             robot_name,
@@ -401,8 +430,7 @@ class SimEngine(ABC):
         writes) only when measured necessary.
         """
 
-        # Lazy import to break the strands_robots.simulation.policy_runner cycle.
-        from strands_robots.simulation.policy_runner import PolicyRunner
+        PolicyRunner, _ = _lazy_policy_runner()
 
         return PolicyRunner(self).replay(
             repo_id,
@@ -450,8 +478,7 @@ class SimEngine(ABC):
         policy = create_policy(policy_provider, **(policy_config or {}))
         policy.set_robot_state_keys(self.robot_joint_names(resolved_robot))
 
-        # Lazy import to break the strands_robots.simulation.policy_runner cycle.
-        from strands_robots.simulation.policy_runner import PolicyRunner
+        PolicyRunner, _ = _lazy_policy_runner()
 
         return PolicyRunner(self).evaluate(
             resolved_robot,
@@ -587,8 +614,7 @@ class SimEngine(ABC):
         policy = create_policy(policy_provider, **(policy_config or {}))
         policy.set_robot_state_keys(self.robot_joint_names(resolved_robot))
 
-        # Lazy import to break the strands_robots.simulation.policy_runner cycle.
-        from strands_robots.simulation.policy_runner import PolicyRunner
+        PolicyRunner, _ = _lazy_policy_runner()
 
         return PolicyRunner(self).evaluate(
             resolved_robot,
