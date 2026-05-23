@@ -137,6 +137,42 @@ RESUME_FORWARD_SKEW_S: float = _parse_positive_float_env("STRANDS_MESH_RESUME_FO
 RESUME_REPLAY_CACHE_MAX: int = _parse_positive_int_env("STRANDS_MESH_RESUME_REPLAY_CACHE_MAX", "4096")
 
 
+def _evict_replay_cache[K](
+    cache: dict[K, float],
+    *,
+    max_size: int,
+    ttl_s: float,
+    now_mono: float,
+) -> None:
+    """Bound *cache* to ``max_size`` entries in-place.
+
+    Eviction strategy (single-pass, no-op when the cache is below the cap):
+
+    1. Drop entries whose stored monotonic timestamp is older than
+       ``now_mono - ttl_s`` (TTL purge -- aligned with the safety-replay
+       freshness window so an entry that no longer protects against any
+       in-window replay is free to evict).
+    2. If the cache is still over budget after the TTL purge (cap is full
+       of in-window entries -- active flood), drop the oldest 20 percent
+       by stored timestamp.
+
+    Single source of truth for both ``_estop_replay_cache`` and
+    ``_resume_replay_cache`` eviction. Callers own insertion and the
+    per-cache lock; this helper is pure bookkeeping.
+    """
+    if len(cache) < max_size:
+        return
+    cutoff = now_mono - ttl_s
+    stale = [k for k, ts in cache.items() if ts < cutoff]
+    for k in stale:
+        cache.pop(k, None)
+    if len(cache) >= max_size:
+        ordered = sorted(cache.items(), key=lambda kv: kv[1])
+        drop = max(1, len(ordered) // 5)
+        for k, _ in ordered[:drop]:
+            cache.pop(k, None)
+
+
 class Mesh(SensorLoopsMixin):
     """Peer-to-peer mesh component embedded in a single Robot or Simulation.
 
@@ -1080,17 +1116,12 @@ class Mesh(SensorLoopsMixin):
                         audit_exc,
                     )
                 return
-            # Bound the cache (mirrors _on_safety_resume eviction strategy).
-            if len(self._estop_replay_cache) >= RESUME_REPLAY_CACHE_MAX:
-                cutoff = now_mono - RESUME_FRESHNESS_WINDOW_S
-                stale = [k for k, ts in self._estop_replay_cache.items() if ts < cutoff]
-                for k in stale:
-                    self._estop_replay_cache.pop(k, None)
-                if len(self._estop_replay_cache) >= RESUME_REPLAY_CACHE_MAX:
-                    ordered = sorted(self._estop_replay_cache.items(), key=lambda kv: kv[1])
-                    drop = max(1, len(ordered) // 5)
-                    for k, _ in ordered[:drop]:
-                        self._estop_replay_cache.pop(k, None)
+            _evict_replay_cache(
+                self._estop_replay_cache,
+                max_size=RESUME_REPLAY_CACHE_MAX,
+                ttl_s=RESUME_FRESHNESS_WINDOW_S,
+                now_mono=now_mono,
+            )
             self._estop_replay_cache[cache_key] = now_mono
 
         if not self._estop_lockout.is_set():
@@ -1245,22 +1276,17 @@ class Mesh(SensorLoopsMixin):
                         audit_exc,
                     )
                 return
-            # Bound the cache. R19: TTL math uses time.monotonic() (see B5
-            # in PR #195 audit) -- envelope freshness above stays on
-            # time.time() because it compares against the issuer wall
-            # clock; cache eviction is local-only bookkeeping.
+            # R19: TTL math uses time.monotonic() (see PR #195 B5) --
+            # envelope freshness above stays on time.time() because it
+            # compares against the issuer wall clock; cache eviction is
+            # local-only bookkeeping.
             now_mono = time.monotonic()
-            if len(self._resume_replay_cache) >= RESUME_REPLAY_CACHE_MAX:
-                cutoff = now_mono - RESUME_FRESHNESS_WINDOW_S
-                stale = [k for k, ts in self._resume_replay_cache.items() if ts < cutoff]
-                for k in stale:
-                    self._resume_replay_cache.pop(k, None)
-                if len(self._resume_replay_cache) >= RESUME_REPLAY_CACHE_MAX:
-                    # Cache full of fresh entries -- drop oldest 20%.
-                    ordered = sorted(self._resume_replay_cache.items(), key=lambda kv: kv[1])
-                    drop = max(1, len(ordered) // 5)
-                    for k, _ in ordered[:drop]:
-                        self._resume_replay_cache.pop(k, None)
+            _evict_replay_cache(
+                self._resume_replay_cache,
+                max_size=RESUME_REPLAY_CACHE_MAX,
+                ttl_s=RESUME_FRESHNESS_WINDOW_S,
+                now_mono=now_mono,
+            )
             self._resume_replay_cache[cache_key] = now_mono
 
         if self._estop_lockout.is_set():
