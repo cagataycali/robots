@@ -718,7 +718,7 @@ class Mesh(SensorLoopsMixin):
         try:
             raw = sample.payload.to_bytes().decode()
             data = json.loads(raw)
-        except Exception:
+        except (AttributeError, UnicodeDecodeError, json.JSONDecodeError):
             return
         if not isinstance(data, dict):
             return
@@ -937,7 +937,7 @@ class Mesh(SensorLoopsMixin):
         try:
             raw = sample.payload.to_bytes().decode()
             data = json.loads(raw)
-        except Exception:
+        except (AttributeError, UnicodeDecodeError, json.JSONDecodeError):
             return
         if not isinstance(data, dict):
             return
