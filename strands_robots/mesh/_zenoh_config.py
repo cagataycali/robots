@@ -43,6 +43,18 @@ Configuration env vars
     Per-key-expression frequency cap for ``cmd`` topics enforced via
     ``downsampling``. Default ``20.0`` Hz.
 
+``STRANDS_MESH_SAFETY_RATE_HZ``
+    Per-key-expression frequency cap on ``safety/**`` topics. Default
+    ``2.0`` Hz. Caps novel-``t`` estop/resume floods that bypass the
+    receiver-side replay cache. Operators with a legitimate need for
+    higher safety throughput (sensor-driven safety event streams) can
+    raise this; the floor is the receiver-side HMAC + freshness cost.
+
+``STRANDS_MESH_MAX_SAFETY_BYTES``
+    Per-message byte cap on ``safety/**`` topics. Default ``4096``.
+    Safety envelopes are small JSON dicts; jumbo-frame envelopes on
+    this topic are DoS targeting the receiver HMAC + freshness math.
+
 ``STRANDS_MESH_AUTH_MODE``
     ``mtls`` (default) or ``none``. ``none`` is a development-only mode
     that skips the TLS terminator and ACL -- never run it on a network
@@ -102,6 +114,20 @@ DEFAULT_MAX_CAMERA_BYTES: int = 1 * 1024 * 1024
 
 #: Per-key-expression frequency cap on cmd topics (Hz).
 DEFAULT_CMD_RATE_HZ: float = 20.0
+
+#: Per-key-expression frequency cap on safety topics (Hz).
+#:
+#: R21: legitimate operator estop / resume traffic is far below
+#: 1 Hz steady-state. A peer publishing on ``safety/**`` faster
+#: than this rate is throttled at the transport, capping the
+#: novel-`t` flood surface that bypasses the receiver-side R9
+#: replay cache.
+DEFAULT_SAFETY_RATE_HZ: float = 2.0
+
+#: Per-message byte cap on safety topics. Safety envelopes are
+#: small JSON dicts; a 100 KiB envelope on this topic is jumbo-
+#: frame DoS targeting the receiver-side HMAC + freshness math.
+DEFAULT_MAX_SAFETY_BYTES: int = 4 * 1024
 
 
 def resolve_namespace() -> str:
@@ -243,12 +269,24 @@ def downsampling_block(namespace: str) -> tuple[str, str]:
         lo=0.001,
         hi=10000.0,
     )
+    # R21: safety topics need their own (lower) rate cap. Without it
+    # a peer with any CA-signed cert can flood ``safety/estop`` at
+    # line rate with novel ``t`` on each envelope -- bypassing the
+    # receiver-side replay cache (key=(issuer_id, t)) and consuming
+    # CPU on freshness arithmetic + per-receiver replay-cache pressure.
+    safety_freq = _float_env(
+        "STRANDS_MESH_SAFETY_RATE_HZ",
+        DEFAULT_SAFETY_RATE_HZ,
+        lo=0.001,
+        hi=1000.0,
+    )
     # See ``low_pass_filter_block`` for the namespace-vs-key_expr note:
     # ``**/cmd`` matches any prefix including the namespace one;
     # ``f"{namespace}/*/cmd"`` would not.
     rules = [
         {"key_expr": "**/cmd", "freq": freq},
         {"key_expr": "**/broadcast", "freq": freq},
+        {"key_expr": "**/safety/**", "freq": safety_freq},
     ]
     return (
         "downsampling",
@@ -321,6 +359,12 @@ def low_pass_filter_block(namespace: str) -> tuple[str, str]:
         lo=1024,
         hi=128 * 1024 * 1024,
     )
+    safety_bytes = _int_env(
+        "STRANDS_MESH_MAX_SAFETY_BYTES",
+        DEFAULT_MAX_SAFETY_BYTES,
+        lo=128,
+        hi=1 * 1024 * 1024,
+    )
     interfaces = _local_interfaces()
     return (
         "low_pass_filter",
@@ -349,6 +393,19 @@ def low_pass_filter_block(namespace: str) -> tuple[str, str]:
                     "flows": ["ingress", "egress"],
                     "key_exprs": ["**/camera/**"],
                     "size_limit": cam_bytes,
+                },
+                {
+                    # R21: safety topics need their own (smaller)
+                    # byte cap. A 100 KiB safety envelope is jumbo-
+                    # frame DoS targeting the receiver-side HMAC and
+                    # freshness math; legitimate safety envelopes are
+                    # well under 1 KiB.
+                    "id": "strands_safety_size_cap",
+                    "interfaces": interfaces,
+                    "messages": ["put"],
+                    "flows": ["ingress", "egress"],
+                    "key_exprs": ["**/safety/**"],
+                    "size_limit": safety_bytes,
                 },
             ]
         ),

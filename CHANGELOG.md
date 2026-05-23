@@ -136,8 +136,10 @@ Hardened independently of the Zenoh refactor:
 | `STRANDS_MESH_MULTICAST` | `false` | Gossip-only by default |
 | `STRANDS_MESH_MAX_SESSIONS` | `256` | Unicast session DoS bound |
 | `STRANDS_MESH_CMD_RATE_HZ` | `20.0` | `downsampling` cap on `**/cmd` |
+| `STRANDS_MESH_SAFETY_RATE_HZ` | `2.0` | `downsampling` cap on `**/safety/**` (R21 -- bounds novel-`t` flood vector) |
 | `STRANDS_MESH_MAX_CMD_BYTES` | `16384` | `low_pass_filter` cap on `**/cmd` |
 | `STRANDS_MESH_MAX_CAMERA_BYTES` | `1048576` | `low_pass_filter` cap on `**/camera/**` |
+| `STRANDS_MESH_MAX_SAFETY_BYTES` | `4096` | `low_pass_filter` cap on `**/safety/**` (R21 -- jumbo-frame DoS bound) |
 | `STRANDS_MESH_CAMERA_DISABLED` | `false` | Privacy kill switch -- when `true`, `Mesh._publish_cameras_once` short-circuits before any frame is built |
 | `STRANDS_MESH_FILTER_INTERFACES` | autodetect | Override iface allowlist for the filter / ACL |
 | `STRANDS_MESH_RESUME_FRESHNESS_S` | `60` | Maximum age (seconds) of a resume envelope before rejection as stale |
