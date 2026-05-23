@@ -889,6 +889,7 @@ def verify_audit_integrity(records: list[dict[str, Any]] | None = None) -> dict[
                 "verified":     <int>,   # records whose sig validated
                 "bad_signature":<int>,   # records whose sig failed
                 "missing_sig":  <int>,   # signed log expected but missing
+                "unverifiable_signed":<int>, # signed records, verifier lacks PSK
                 "psk_present":  <bool>,  # whether STRANDS_MESH_AUDIT_PSK was set
                 "sequence_gaps":[(prev_seq, this_seq), ...],
                 "ok":           <bool>,  # True iff bad_signature == 0 and
@@ -906,6 +907,7 @@ def verify_audit_integrity(records: list[dict[str, Any]] | None = None) -> dict[
     verified = 0
     bad_signature = 0
     missing_sig = 0
+    unverifiable_signed = 0
     gaps: list[tuple[int, int]] = []
 
     # Track sequence per peer_id -- each process has its own counter so the
@@ -922,7 +924,11 @@ def verify_audit_integrity(records: list[dict[str, Any]] | None = None) -> dict[
         if sig is not None:
             signed += 1
             if psk is None:
-                # Cannot verify without PSK; record as unverifiable.
+                # R21: verifier lacks PSK while the log carries signed
+                # records. Count so ``ok`` fails closed -- a forensic
+                # walker missing the PSK MUST NOT see a green light on
+                # a signed log it cannot actually verify.
+                unverifiable_signed += 1
                 continue
             expected = hmac.new(psk, _canonical_bytes(record), hashlib.sha256).hexdigest()
             if hmac.compare_digest(sig, expected):
@@ -967,6 +973,7 @@ def verify_audit_integrity(records: list[dict[str, Any]] | None = None) -> dict[
         "verified": verified,
         "bad_signature": bad_signature,
         "missing_sig": missing_sig,
+        "unverifiable_signed": unverifiable_signed,
         "psk_present": psk_present,
         "sequence_gaps": gaps,
         # R4-2: when a PSK is configured at verification time, an
@@ -974,5 +981,8 @@ def verify_audit_integrity(records: list[dict[str, Any]] | None = None) -> dict[
         # otherwise an attacker who briefly cleared the env mid-run
         # could write a stretch of unsigned forgeries and the
         # ``ok=True`` reader path would not flag them.
-        "ok": bad_signature == 0 and not gaps and not (psk_present and missing_sig > 0),
+        # R21: when the verifier lacks a PSK but the log carries
+        # signed records, fail closed. A forensic walker missing
+        # the PSK MUST NOT report ok=True on an unverifiable log.
+        "ok": (bad_signature == 0 and not gaps and not (psk_present and missing_sig > 0) and unverifiable_signed == 0),
     }
