@@ -24,7 +24,6 @@ both the runtime/dev block and the hatch env block.
 from __future__ import annotations
 
 import re
-import sys
 import tomllib
 from pathlib import Path
 
@@ -82,8 +81,6 @@ def _version_tuple(v: str) -> tuple[int, ...]:
 
 @pytest.fixture(scope="module")
 def pyproject() -> dict:
-    if sys.version_info < (3, 11):  # pragma: no cover - CI runs 3.12+
-        pytest.skip("tomllib requires Python 3.11+")
     with PYPROJECT.open("rb") as fh:
         return tomllib.load(fh)
 
@@ -113,12 +110,7 @@ def constraint_index(pyproject: dict) -> dict[str, dict[str, str]]:
         absorb(f"project.optional-dependencies.{extra}", entries or [])
 
     hatch_default = (
-        pyproject.get("tool", {})
-        .get("hatch", {})
-        .get("envs", {})
-        .get("default", {})
-        .get("dependencies", [])
-        or []
+        pyproject.get("tool", {}).get("hatch", {}).get("envs", {}).get("default", {}).get("dependencies", []) or []
     )
     absorb("tool.hatch.envs.default.dependencies", hatch_default)
 
@@ -161,8 +153,7 @@ def test_security_floor_not_lowered(
     for site, spec in sites.items():
         floor = _floor_of(spec)
         assert floor is not None, (
-            f"{name} in {site} has no >= floor (spec={spec!r}); "
-            f"cannot enforce CVE floor. {rationale}"
+            f"{name} in {site} has no >= floor (spec={spec!r}); cannot enforce CVE floor. {rationale}"
         )
         assert _version_tuple(floor) >= _version_tuple(min_floor), (
             f"{name} floor regression in {site}: spec={spec!r} "
@@ -181,9 +172,7 @@ _DUAL_SITE_DEPS = ("pillow", "pytest", "pytest-cov")
 
 
 @pytest.mark.parametrize("name", _DUAL_SITE_DEPS)
-def test_pin_site_consistency(
-    constraint_index: dict[str, dict[str, str]], name: str
-) -> None:
+def test_pin_site_consistency(constraint_index: dict[str, dict[str, str]], name: str) -> None:
     """Same dep in multiple pin sites must carry identical specs.
 
     Catches the foot-gun where a Dependabot PR updates
@@ -199,6 +188,5 @@ def test_pin_site_consistency(
     )
     distinct = set(sites.values())
     assert len(distinct) == 1, (
-        f"{name} pin sites disagree: {sites}. "
-        f"Update every site to the same constraint when bumping."
+        f"{name} pin sites disagree: {sites}. Update every site to the same constraint when bumping."
     )
