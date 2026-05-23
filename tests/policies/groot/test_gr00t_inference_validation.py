@@ -1038,24 +1038,38 @@ class TestOptionInjectionGuard:
         assert "must not start with '-'" not in result.get("message", "")
 
 
-class TestHostAutoFlipForContainer:
-    """Test that container actions auto-flip 127.0.0.1 to 0.0.0.0."""
+class TestHostBindingHonoursUserChoice:
+    """R1 pin tests — host kwarg controls docker -p binding; NO auto-flip.
 
-    def test_default_host_is_loopback(self):
-        """Signature default must be 127.0.0.1 (AGENTS.md compliance)."""
+    Pre-R1: ``_start_service`` rewrote ``host="127.0.0.1"`` to ``"0.0.0.0"``
+    when ``host_was_explicit=False``, silently widening the bind to all
+    interfaces. R1 drops the rewrite. The host kwarg now flows verbatim into
+    ``docker -p HOST:port:port``, so:
+        - host="127.0.0.1" (default)  → docker binds loopback only
+        - host="0.0.0.0" (explicit)   → docker binds all interfaces
+    """
+
+    def test_default_host_is_loopback_sentinel(self):
+        """Signature default must be None (resolves to 127.0.0.1) — AGENTS.md compliance."""
         import inspect
 
         from strands_robots.tools.gr00t_inference import gr00t_inference
 
         sig = inspect.signature(gr00t_inference)
-        # Sentinel default: None means "use 127.0.0.1" but distinguishes from explicit
-        assert sig.parameters["host"].default is None
+        assert sig.parameters["host"].default is None, (
+            "host signature default must remain None sentinel (resolves to 127.0.0.1)"
+        )
 
-    def test_start_service_auto_flips_loopback(self, monkeypatch):
-        """_start_service should auto-flip 127.0.0.1 to 0.0.0.0 for Docker."""
+    def test_start_service_does_not_flip_default_loopback(self, monkeypatch):
+        """R1 pin: _start_service must NOT rewrite host=127.0.0.1 to 0.0.0.0.
+
+        Pre-R1 this test would have failed because the loopback default got
+        silently flipped to all-interfaces. Post-R1 the host stays loopback.
+        """
         from strands_robots.tools.gr00t_inference import _start_service
 
-        captured_host = {}
+        # Capture the exact docker argv that _build_inference_command would see.
+        captured = {}
 
         def fake_find(*args, **kwargs):
             return {
@@ -1064,7 +1078,7 @@ class TestHostAutoFlipForContainer:
             }
 
         def fake_build_cmd(**kwargs):
-            captured_host["host"] = kwargs.get("host")
+            captured["host"] = kwargs.get("host")
             return ["docker", "exec", "gr00t-test", "echo", "test"]
 
         monkeypatch.setattr("strands_robots.tools.gr00t_inference._find_gr00t_containers", fake_find)
@@ -1078,7 +1092,6 @@ class TestHostAutoFlipForContainer:
         monkeypatch.setattr(subprocess, "run", fake_run)
         monkeypatch.setattr("strands_robots.tools.gr00t_inference._is_service_running", lambda port: True)
 
-        # Call with loopback default — should auto-flip
         _start_service(
             checkpoint_path="/data/model",
             port=5555,
@@ -1098,7 +1111,60 @@ class TestHostAutoFlipForContainer:
             api_token=None,
             host_was_explicit=False,
         )
-        assert captured_host.get("host") == "0.0.0.0"
+        # The CRITICAL assertion: host stays 127.0.0.1, NOT auto-flipped.
+        assert captured.get("host") == "127.0.0.1", (
+            "R1 regression: _start_service must NOT rewrite host=127.0.0.1 to 0.0.0.0. "
+            f"Got host={captured.get('host')!r} — auto-flip has reappeared."
+        )
+
+    def test_explicit_zero_zero_zero_zero_passes_through(self, monkeypatch):
+        """R1 pin: host='0.0.0.0' must reach docker -p verbatim (network exposure is opt-in)."""
+        from strands_robots.tools.gr00t_inference import _start_service
+
+        captured = {}
+
+        def fake_find(*args, **kwargs):
+            return {
+                "status": "success",
+                "containers": [{"name": "gr00t-test", "status": "Up 2 hours"}],
+            }
+
+        def fake_build_cmd(**kwargs):
+            captured["host"] = kwargs.get("host")
+            return ["docker", "exec", "gr00t-test", "echo", "test"]
+
+        monkeypatch.setattr("strands_robots.tools.gr00t_inference._find_gr00t_containers", fake_find)
+        monkeypatch.setattr("strands_robots.tools.gr00t_inference._build_inference_command", fake_build_cmd)
+
+        import subprocess
+
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            lambda *a, **kw: subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr=""),
+        )
+        monkeypatch.setattr("strands_robots.tools.gr00t_inference._is_service_running", lambda port: True)
+
+        _start_service(
+            checkpoint_path="/data/model",
+            port=5555,
+            data_config="fourier_gr1_arms_only",
+            embodiment_tag="gr1",
+            denoising_steps=4,
+            host="0.0.0.0",
+            container_name=None,
+            policy_name=None,
+            timeout=5,
+            use_tensorrt=False,
+            trt_engine_path="gr00t_engine",
+            vit_dtype="fp8",
+            llm_dtype="nvfp4",
+            dit_dtype="fp8",
+            http_server=False,
+            api_token=None,
+            host_was_explicit=True,
+        )
+        assert captured.get("host") == "0.0.0.0"
 
 
 class TestSingleLabelNumericHostname:
@@ -1336,13 +1402,14 @@ class TestExpandedParamValidationExtended:
         )
 
 
-class TestHostAutoFlipSentinel:
-    """Regression tests for the sentinel-based host auto-flip logic.
+class TestHostExplicitFlagDispatch:
+    """Verify the host_was_explicit dispatch flag is set correctly.
 
-    The auto-flip from 127.0.0.1 → 0.0.0.0 for Docker container actions
-    MUST only fire when the user accepted the default (i.e. did not pass
-    host= explicitly). Users who explicitly pass host="127.0.0.1" (e.g.
-    for --network=host deployments) must have their choice honoured.
+    Post-R1, _start_service does not act on this flag (the auto-flip was
+    removed), but the flag is retained for ABI compatibility and to allow
+    operators / future code to introspect whether the user explicitly chose
+    a binding host. These tests pin the dispatch-layer behaviour so we don't
+    silently lose the distinction between "default" and "explicit" host args.
     """
 
     def test_default_host_passes_not_explicit(self, monkeypatch):

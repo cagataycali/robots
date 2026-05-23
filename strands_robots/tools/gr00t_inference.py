@@ -620,6 +620,7 @@ def gr00t_inference(
             container_command=container_command,
             hf_local_dir=hf_local_dir,
             force=force,
+            host=host,
         )
     elif action == "lifecycle":
         return _lifecycle(
@@ -1117,22 +1118,15 @@ def _start_service(
     api_token: str | None,
     protocol: str = "n1.5",
     use_sim_policy_wrapper: bool = False,
-    host_was_explicit: bool = False,
+    host_was_explicit: bool = False,  # noqa: ARG001 — retained for ABI compat; auto-flip dropped in R1
 ) -> dict[str, Any]:
-    """Start GR00T inference service using Isaac-GR00T's native inference service."""
-    try:
-        # Auto-flip host for container actions: Docker's -p port-publish requires the
-        # service to bind all interfaces inside the container. Only auto-flip if the
-        # user accepted the default (sentinel was None → resolved to 127.0.0.1).
-        # Users who explicitly pass host="127.0.0.1" get it honoured (e.g. --network=host).
-        if host == "127.0.0.1" and not host_was_explicit:
-            import logging as _logging
+    """Start GR00T inference service using Isaac-GR00T's native inference service.
 
-            _logging.getLogger(__name__).warning(
-                "Auto-flipping host from 127.0.0.1 to 0.0.0.0 for container "
-                "port-publish (-p). Pass host='127.0.0.1' explicitly to keep loopback."
-            )
-            host = "0.0.0.0"
+    The ``host`` kwarg controls the docker host-side port binding via
+    ``-p {host}:{port}:{port}``. Default ``127.0.0.1`` keeps the service on
+    loopback; pass ``host="0.0.0.0"`` to expose to the network.
+    """
+    try:
         # Find container if not specified
         if container_name is None:
             containers = _find_gr00t_containers()
@@ -1446,9 +1440,14 @@ def _start_container(
     container_command: str,
     hf_local_dir: str | None,
     force: bool,
+    host: str = "127.0.0.1",
 ) -> dict[str, Any]:
     """``docker run -d`` the GR00T container so subsequent ``start`` actions can
     ``docker exec`` into it.
+
+    The ``host`` kwarg controls the docker host-side port binding via
+    ``-p {host}:{port}:{port}``. Default ``127.0.0.1`` keeps the published
+    port on loopback only; pass ``host="0.0.0.0"`` to expose to the network.
 
     Idempotent: when a container with ``container_name`` is already
     running, returns success without touching docker. When it exists but
@@ -1486,7 +1485,11 @@ def _start_container(
         "--name",
         name,
         "-p",
-        f"{port}:{port}",
+        # Bind docker port-publish to user-requested host (loopback by default).
+        # Service inside container binds 0.0.0.0 (must, for docker -p to work),
+        # but the *host* binding honours user intent. Users pass host="0.0.0.0"
+        # explicitly to expose to the network.
+        f"{host}:{port}:{port}",
     ]
 
     # Default volume layout: mount the checkpoint dir into /data/checkpoints
@@ -1679,6 +1682,7 @@ def _lifecycle(
         container_command=container_command,
         hf_local_dir=resolved_local_dir,
         force=force,
+        host=host,
     )
     steps.append({"step": "start_container", "result": container_result})
     if container_result["status"] != "success":
