@@ -1,14 +1,15 @@
-"""Regression test for unsafe cyclic imports in strands_robots.simulation.
+"""Import smoke test for strands_robots.simulation modules.
 
-Pinned by review feedback addressing CodeQL alerts #83, #84, #85, #86, #87
-(``py/unsafe-cyclic-import`` errors). Each module in the simulation package
-must import cleanly in any order, regardless of which module is imported
-first by a fresh interpreter. Prior to the fix, importing
-``strands_robots.simulation.policy_runner`` before
-``strands_robots.simulation.base`` could leave ``SimEngine`` undefined at
-``base.py``'s top level because of a cycle through a runtime
-``from strands_robots.simulation.policy_runner import PolicyRunner,
-VideoConfig`` statement at module scope.
+Each module in the simulation package must import cleanly in a fresh
+interpreter, regardless of which module is imported first. This is a
+smoke test that catches gross import failures (missing deps, syntax
+errors, runtime exceptions at import time) but does NOT pin the
+cyclic-import fix itself.
+
+The actual regression pin for the CodeQL alerts #83-#87 cycle fix lives
+in ``test_no_import_cycle.py::test_base_has_no_module_level_policy_runner_import``
+which statically asserts that ``base.py`` never imports from
+``strands_robots.simulation.policy_runner`` at module level.
 
 Each subprocess run starts a fresh interpreter so the import order under
 test is the *primary* cause of failure rather than benefiting from
@@ -35,13 +36,9 @@ def test_module_imports_in_fresh_interpreter(module: str) -> None:
     """Each simulation module must import cleanly when it is the first
     module pulled in by a fresh interpreter.
 
-    Regression for CodeQL alerts #83, #84, #85, #86, #87
-    (``py/unsafe-cyclic-import``). The cycle was
-    ``simulation.base`` -> ``simulation.policy_runner`` ->
-    ``simulation.base`` (via TYPE_CHECKING + module-level runtime imports).
-    A static analyser cannot prove the runtime path is safe in all import
-    orderings, so the safe fix is to defer the cycle-closing import to
-    method scope.
+    This is a smoke test — it catches gross import failures but does not
+    pin the cyclic-import fix. The pin test lives in
+    ``test_no_import_cycle.py::test_base_has_no_module_level_policy_runner_import``.
     """
 
     code = f"import {module}; print('OK')"

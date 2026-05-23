@@ -28,8 +28,6 @@ import pytest
 
 if TYPE_CHECKING:
     import networkx as nx  # type: ignore[import-untyped]
-else:
-    nx = pytest.importorskip("networkx")  # dev-only dep; skip cleanly when absent
 
 PKG = Path(__file__).resolve().parents[2] / "strands_robots"
 
@@ -64,6 +62,7 @@ def _is_inside_function(tree: ast.Module, target: ast.AST) -> bool:
 
 
 def _build_import_graph(root: Path) -> nx.DiGraph:
+    nx = pytest.importorskip("networkx")  # dev-only dep; skip cleanly when absent
     G: nx.DiGraph = nx.DiGraph()
     for p in root.rglob("*.py"):
         if "__pycache__" in p.parts:
@@ -99,6 +98,33 @@ def test_no_runtime_import_cycles():
     bodies (lazy imports) and TYPE_CHECKING blocks are excluded since they
     cannot cause import-time circular dependency failures.
     """
+    pytest.importorskip("networkx")
     G = _build_import_graph(PKG)
     cycles = list(nx.simple_cycles(G))
     assert cycles == [], "runtime cycles detected:\n" + "\n".join("  " + " -> ".join(c) + " -> " + c[0] for c in cycles)
+
+
+def test_base_has_no_module_level_policy_runner_import():
+    """Pin: base.py must NOT import from policy_runner at module level.
+
+    This test fails on pre-fix code where base.py had:
+        from strands_robots.simulation.policy_runner import PolicyRunner, VideoConfig
+    at module scope (line 43). The fix defers these to method scope.
+
+    Guards against the inverse regression: a future refactor hoisting
+    the lazy imports back to module level would re-introduce the CodeQL
+    py/unsafe-cyclic-import cycle (alerts #83, #84).
+    """
+    base_src = (PKG / "simulation" / "base.py").read_text()
+    tree = ast.parse(base_src)
+
+    for node in tree.body:  # module-level statements only
+        if isinstance(node, ast.ImportFrom):
+            if node.module and "strands_robots.simulation.policy_runner" in node.module:
+                imported_names = [alias.name for alias in node.names]
+                pytest.fail(
+                    f"base.py has a module-level import from "
+                    f"strands_robots.simulation.policy_runner: {imported_names}. "
+                    f"These must remain as lazy imports inside methods to avoid "
+                    f"the CodeQL py/unsafe-cyclic-import cycle (alerts #83, #84)."
+                )

@@ -27,14 +27,14 @@ if TYPE_CHECKING:
     from strands_robots.policies import Policy
 
 # PolicyRunner and VideoConfig are imported lazily inside the run_policy /
-# replay / eval_policy methods that use them. A module-level runtime import
-# would close a cycle with strands_robots.simulation.policy_runner, which
-# imports SimEngine from this module under TYPE_CHECKING — CodeQL's
-# py/unsafe-cyclic-import rule walks TYPE_CHECKING blocks and flagged that
-# loop (CodeQL alerts #83, #84). The lazy approach preserves the same
-# rationale for OnFrame (#191): it is referenced as a string annotation
-# in the evaluate_benchmark signature, with ``from __future__ import
-# annotations`` (already in effect) making that a no-op at runtime.
+# replay / eval_policy / evaluate_benchmark methods that use them. A
+# module-level runtime import would close a cycle with
+# strands_robots.simulation.policy_runner, which imports SimEngine from
+# this module under TYPE_CHECKING — CodeQL's py/unsafe-cyclic-import rule
+# walks TYPE_CHECKING blocks and flagged that loop (CodeQL alerts #83, #84).
+# The lazy approach is safe because ``from __future__ import annotations``
+# (already in effect) makes all type hints string-form at runtime, so no
+# name resolution is needed at import time.
 
 logger = logging.getLogger(__name__)
 
