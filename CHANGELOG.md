@@ -59,6 +59,10 @@ Applies to ``strands_robots.mesh.iot.provision`` and
   ``provision_operator``, and ``teardown_thing``. Rejects path
   separators, dots, spaces, NUL, non-ASCII, and trailing
   ``\n``/``\r``/``\t``. Pre-existing AWS IoT Things containing ``:``
+
+  ``
+``/``
+``/``	``. Pre-existing AWS IoT Things containing ``:``
   must be renamed (we deliberately reject ``:`` due to NTFS / classic
   Mac filesystem semantics).
 - **IoT policy scope** — robot/operator policies use explicit
@@ -79,7 +83,28 @@ Known follow-ups: #249 (camera privacy kill-switch + S3 ACL),
 #251 (chunked-read parity in ``_ensure_ca``), #259 (kwarg negative-TTL
 WARNING symmetry), #260 (warn on re-use of break-glass-written CA).
 
-## Unreleased - #178 (LiberoOffScreenRenderEngine retired)
+
+## Unreleased - #153 (Security dependency bumps)
+
+### Changed
+
+- **Pillow** floor raised from `>=8.0.0` to `>=10.3.0` (carries CVE-2024-28219
+  buffer-overflow fix for downstream consumers who do not use this repo's lockfile).
+- **Pillow** ceiling raised from `<12.0.0` to `<13.0.0` (allows 12.2.0+).
+- **pytest** ceiling raised from `<9.0.0` to `<10.0.0` (allows 9.0.3). Note:
+  pytest 9.x removed nose-style `setup`/`teardown` and changed `--strict`
+  aliasing; no impact on this repo's test suite.
+- **pytest-cov** ceiling raised from `<6.0.0` to `<8.0.0` (allows 7.1.0).
+- **Transitive lockfile** (`uv.lock`) regenerated with full extras matrix,
+  resolving cryptography 48.0.0, python-multipart 0.0.28, gitpython 3.1.50,
+  urllib3 2.7.0, and 42 previously-unresolved transitive packages (mujoco,
+  transformers 5.8.1, libero, robomimic, robosuite, numba, hydra-core, etc.).
+  The previous lockfile was generated against a partial extras set.
+
+### Security
+
+- Closes 19 of 20 open Dependabot alerts. Remaining: diffusers
+  GHSA-98h9-4798-4q5v (blocked by lerobot 0.5.1 cap `diffusers<0.36`).## Unreleased - #178 (LiberoOffScreenRenderEngine retired)
 
 ### Removed: ``LiberoOffScreenRenderEngine`` simulation backend (BREAKING)
 
