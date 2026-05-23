@@ -368,13 +368,36 @@ def _load_seq_counters() -> None:
     Caller MUST hold :data:`_SEQ_LOCK`. Stores the one-shot "loaded"
     flag on :data:`_AUDIT_STATE` so static analysers don't trip on a
     bare ``global`` for a module-level scalar.
+
+    R20: opens the sidecar with ``O_NOFOLLOW`` and refuses ``is_symlink``
+    paths -- mirrors :func:`_persist_seq_counters` so an attacker who
+    swaps the sidecar with a symlink between two process invocations
+    cannot redirect the counter restore. Without this guard, the inter-
+    process flock at :func:`_seq_flock` would still serialise writers
+    but the reader would happily follow a symlink to attacker-chosen
+    state (e.g. a sidecar from a different audit dir, or ``/dev/null``
+    returning zero counters and rolling the cursor back). Asymmetric
+    defence flagged in PR #195 R20.
     """
     if _AUDIT_STATE.seq_loaded:
         return
     sidecar = _seq_sidecar_path()
     try:
-        if sidecar.exists():
-            with open(sidecar, encoding="utf-8") as fh:
+        if sidecar.is_symlink():
+            logger.warning(
+                "[audit] refusing to load seq sidecar at %s: it is a SYMLINK "
+                "(target: %r). Counter restore will fail-soft.",
+                sidecar,
+                os.readlink(sidecar),
+            )
+        elif sidecar.exists():
+            # R20: O_NOFOLLOW on POSIX defeats a symlink-swap between
+            # the is_symlink() check above and the open() below. On
+            # Windows ``O_NOFOLLOW`` is 0 and the static check is the
+            # only defence; this matches the audit-log open at L730+.
+            nofollow = getattr(os, "O_NOFOLLOW", 0)
+            fd = os.open(str(sidecar), os.O_RDONLY | nofollow)
+            with os.fdopen(fd, encoding="utf-8") as fh:
                 payload = json.load(fh)
             if isinstance(payload, dict):
                 for key, value in payload.items():
