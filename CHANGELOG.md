@@ -3,7 +3,7 @@
 All notable behavioural changes to `strands-robots` are logged here. Follows
 [Keep a Changelog](https://keepachangelog.com/) conventions.
 
-## Unreleased - #90 (gr00t_inference validation hardening)
+## Unreleased - #196 (gr00t_inference validation hardening, supersedes #90)
 
 ### Added
 

@@ -54,7 +54,10 @@ def _checkpoints_dir() -> Path:
 _DOCKER_IMAGE_RE = re.compile(
     r"^[a-zA-Z0-9]"  # must start with alnum
     r"(?:[a-zA-Z0-9._\-]*[a-zA-Z0-9])?"  # optional middle chars (host/path prefix)
-    r"(?::([0-9]{1,5}))?"  # optional registry port (:5000) — capture for range check
+    r"(?::([0-9]{1,5})(?=/))?"
+    # registry port (:5000) - captured for range check ONLY when followed by /path.
+    # Without the lookahead, name:digits is ambiguous between host:port and name:tag;
+    # e.g. "myimage:99999" would be falsely rejected as an invalid port.
     r"(?:/[a-zA-Z0-9][a-zA-Z0-9._\-]*)*"  # path components (/org/img)
     r"(?::[a-zA-Z0-9][a-zA-Z0-9._\-]*"  # option A: :tag
     r"|@sha256:[a-f0-9]{64})?$"  # option B: @sha256:digest (mutually exclusive with tag)

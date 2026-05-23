@@ -1827,3 +1827,68 @@ class TestRegexBugFixesR4:
             raise AssertionError("Expected ValueError for '127.0.01' IP typo")
         except ValueError as e:
             assert "host" in str(e).lower()
+
+
+class TestDockerImageNumericTagRegression:
+    """Pin: numeric-only Docker tags must not be falsely rejected.
+
+    Pre-fix, the port-capture group in _DOCKER_IMAGE_RE greedily matched
+    :digits even without a following / path component, causing the port-range
+    check to reject valid name:tag refs where the tag was purely numeric.
+
+    Reproducer (pre-fix):
+        >>> _is_valid_docker_image_ref('myimage:0')       # False (should be True)
+        >>> _is_valid_docker_image_ref('myimage:65536')   # False (should be True)
+        >>> _is_valid_docker_image_ref('myimage:99999')   # False (should be True)
+
+    Fix: lookahead (?=/) on the port group so :digits is only interpreted as a
+    registry port when followed by a path component.
+    """
+
+    def test_numeric_tag_zero_accepted(self):
+        """Tag ':0' is valid -- common in dev builds."""
+        from strands_robots.tools.gr00t_inference import _is_valid_docker_image_ref
+
+        assert _is_valid_docker_image_ref("myimage:0"), (
+            "Regression: numeric tag ':0' must not be rejected as an invalid port"
+        )
+
+    def test_numeric_tag_above_port_range_accepted(self):
+        """Tag ':65536' is valid -- it is a tag, not a port."""
+        from strands_robots.tools.gr00t_inference import _is_valid_docker_image_ref
+
+        assert _is_valid_docker_image_ref("myimage:65536"), (
+            "Regression: numeric tag ':65536' must not be rejected as an invalid port"
+        )
+
+    def test_numeric_tag_99999_accepted(self):
+        """Tag ':99999' is valid -- common date-style build IDs."""
+        from strands_robots.tools.gr00t_inference import _is_valid_docker_image_ref
+
+        assert _is_valid_docker_image_ref("myimage:99999"), (
+            "Regression: numeric tag ':99999' must not be rejected as an invalid port"
+        )
+
+    def test_numeric_tag_five_digit_accepted(self):
+        """Tag ':23456' is valid -- common sequential build numbers."""
+        from strands_robots.tools.gr00t_inference import _is_valid_docker_image_ref
+
+        assert _is_valid_docker_image_ref("gr00t:23456"), (
+            "Regression: numeric tag ':23456' must not be rejected as an invalid port"
+        )
+
+    def test_registry_port_with_path_still_range_checked(self):
+        """Port in host:port/path form must still be range-checked."""
+        from strands_robots.tools.gr00t_inference import _is_valid_docker_image_ref
+
+        # Valid port with path -- accepted
+        assert _is_valid_docker_image_ref("localhost:5000/myorg/img:tag")
+        assert _is_valid_docker_image_ref("localhost:65535/myorg/img:tag")
+
+        # Invalid port (>65535) with path -- rejected
+        assert not _is_valid_docker_image_ref("localhost:99999/myorg/img:tag"), (
+            "Registry port 99999 with /path must still be rejected (TCP max is 65535)"
+        )
+        assert not _is_valid_docker_image_ref("localhost:100000/img:tag"), (
+            "Registry port 100000 with /path must still be rejected"
+        )
