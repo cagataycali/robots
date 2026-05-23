@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import time
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -222,7 +223,7 @@ class TestMonotonicClockR12:
         """is_duplicate() must use time.monotonic, not time.time."""
         from strands_robots.mesh.transport import bridge_transport
 
-        src = open(bridge_transport.__file__).read()
+        src = Path(bridge_transport.__file__).read_text()
         # The is_duplicate() implementation must read monotonic.
         assert "time.monotonic()" in src, (
             "R12 regression: bridge_transport must use time.monotonic() for TTL math. "
@@ -233,7 +234,7 @@ class TestMonotonicClockR12:
         """R12 regression pin: no time.time() in the is_duplicate body."""
         from strands_robots.mesh.transport import bridge_transport
 
-        src = open(bridge_transport.__file__).read()
+        src = Path(bridge_transport.__file__).read_text()
         # Locate the is_duplicate function body via string search (no regex).
         marker = "def is_duplicate("
         start = src.find(marker)
