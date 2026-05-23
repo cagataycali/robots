@@ -11,14 +11,21 @@ Pinned floors (raise, never lower without an explicit security review):
 - Pillow >= 10.3.0 -- carries CVE-2024-28219 buffer-overflow fix.
   Raised in PR #153 R1 from the previous >=8.0.0 floor.
 
+  Why only Pillow here? Floors are only added when a CVE recurs in a *direct*
+  dep that downstream `pip install` consumers can resolve below the fixed
+  version. Transitive bumps (cryptography, urllib3, gitpython,
+  python-multipart, etc.) are mitigated by `uv.lock` regeneration -- they
+  have no direct constraint to pin.
+
 Cross-site consistency: every dep that appears in more than one pin block must
 have identical floor + ceiling everywhere it appears, otherwise a future
 Dependabot PR can update one site and forget the other -- the exact pattern
-that motivated the floor sweep in PR #153.
+that motivated the floor sweep in PR #153. The check is property-style
+(scans every dep that appears in >=2 sites), so adding a new dual-site dep
+does not require updating an allowlist.
 
 Add an entry to ``_SECURITY_FLOORS`` whenever a floor is raised for a CVE
-fix. Add an entry to ``_DUAL_SITE_DEPS`` whenever a new dep is declared in
-both the runtime/dev block and the hatch env block.
+fix.
 """
 
 from __future__ import annotations
@@ -56,13 +63,27 @@ def _parse_constraint(entry: str) -> tuple[str, str]:
 
 
 def _floor_of(spec: str) -> str | None:
-    """Extract the ``>=`` lower bound from a spec like ``>=10.3.0,<13.0.0``."""
+    """Extract the ``>=`` lower bound from a spec like ``>=10.3.0,<13.0.0``.
+
+    Only ``>=`` is recognised. ``~=`` and ``==`` floors are intentionally not
+    accepted: ``_SECURITY_FLOORS`` entries must use ``>=`` so the pin clearly
+    states the minimum-acceptable version. If a future dep needs a different
+    operator, broaden this helper at the same time as the floor is added.
+    """
     m = re.search(r">=\s*([A-Za-z0-9._*+-]+)", spec)
     return m.group(1) if m else None
 
 
-def _version_tuple(v: str) -> tuple[int, ...]:
-    """Best-effort numeric tuple for floor comparison."""
+def _version_tuple(v: str) -> tuple[int, int, int]:
+    """Best-effort numeric tuple for floor comparison.
+
+    Returns a ``(major, minor, patch)`` triple, padding with zeros so
+    ``"10.3"`` and ``"10.3.0"`` compare equal. Strips trailing pre-release /
+    local-version suffixes (``"10.3.0rc1"`` -> ``(10, 3, 0)``); a pre-release
+    floor is treated as equal to its release version, which is conservative
+    for the security-floor check (a pre-release with a CVE fix is rare and
+    should be promoted to the released version before being pinned anyway).
+    """
     parts = re.split(r"[.\-+]", v)
     out: list[int] = []
     for p in parts:
@@ -71,7 +92,11 @@ def _version_tuple(v: str) -> tuple[int, ...]:
             out.append(int(m.group(1)))
         else:
             break
-    return tuple(out) or (0,)
+    # Pad to (major, minor, patch) so "10.3" >= "10.3.0" instead of
+    # tuple-shorter-is-less surprising the security-floor check.
+    while len(out) < 3:
+        out.append(0)
+    return (out[0], out[1], out[2])
 
 
 # --------------------------------------------------------------------------- #
@@ -93,6 +118,11 @@ def constraint_index(pyproject: dict) -> dict[str, dict[str, str]]:
       - ``project.dependencies``
       - ``project.optional-dependencies.<extra>`` for every declared extra
       - ``tool.hatch.envs.default.dependencies``
+
+    Self-references with extras (``"strands-robots[mesh]"``) have no spec and
+    are intentionally skipped by ``_parse_constraint`` raising ``ValueError``;
+    a real parse failure on a typo'd spec re-raises so the test surfaces the
+    bug instead of silently dropping the entry.
     """
     index: dict[str, dict[str, str]] = {}
 
@@ -101,7 +131,12 @@ def constraint_index(pyproject: dict) -> dict[str, dict[str, str]]:
             try:
                 name, spec = _parse_constraint(raw)
             except ValueError:
-                continue
+                # Self-reference like "strands-robots[mesh]" has no spec;
+                # let any other parse failure propagate so a typo doesn't
+                # silently disappear.
+                if raw.lstrip().startswith("strands-robots["):
+                    continue
+                raise
             index.setdefault(name, {})[site] = spec
 
     project = pyproject.get("project", {})
@@ -163,30 +198,25 @@ def test_security_floor_not_lowered(
 
 
 # --------------------------------------------------------------------------- #
-# Two-site consistency -- pinned in multiple blocks must match exactly
+# Multi-site consistency -- pinned in multiple blocks must match exactly
 # --------------------------------------------------------------------------- #
 
-# Deps that are intentionally pinned in BOTH the runtime/dev block AND the
-# ``[tool.hatch.envs.default]`` block. Any drift between sites is a bug.
-_DUAL_SITE_DEPS = ("pillow", "pytest", "pytest-cov")
 
-
-@pytest.mark.parametrize("name", _DUAL_SITE_DEPS)
-def test_pin_site_consistency(constraint_index: dict[str, dict[str, str]], name: str) -> None:
-    """Same dep in multiple pin sites must carry identical specs.
+def test_multi_site_pins_consistent(constraint_index: dict[str, dict[str, str]]) -> None:
+    """Every dep declared in 2+ pin sites must carry an identical spec.
 
     Catches the foot-gun where a Dependabot PR updates
     ``[project.optional-dependencies].dev`` but forgets
     ``[tool.hatch.envs.default]`` (or vice versa), letting the hatch env
     silently resolve a different version than the wheel install.
+
+    Property-style: scans every dep automatically. Adding a new dual-site
+    dep does not require updating an allowlist; the test catches drift on
+    every dep that lives in 2+ sites today and any added tomorrow.
     """
-    sites = constraint_index.get(name, {})
-    assert len(sites) >= 2, (
-        f"{name} expected in >= 2 pin sites, found {len(sites)}: "
-        f"{sorted(sites)}. Either add the missing site or remove "
-        f"{name!r} from _DUAL_SITE_DEPS."
-    )
-    distinct = set(sites.values())
-    assert len(distinct) == 1, (
-        f"{name} pin sites disagree: {sites}. Update every site to the same constraint when bumping."
+    drifted = {
+        name: sites for name, sites in constraint_index.items() if len(sites) >= 2 and len(set(sites.values())) > 1
+    }
+    assert not drifted, (
+        f"Multi-site pins disagree -- update every site to the same constraint when bumping. Drift: {drifted}"
     )
