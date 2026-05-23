@@ -190,6 +190,10 @@ def validate_inputs(
     repo_url: str | None = None,
     repo_tag: str | None = None,
     policy_name: str | None = None,
+    hf_repo: str | None = None,
+    hf_subfolder: str | None = None,
+    hf_local_dir: str | None = None,
+    lifecycle: str | None = None,
 ) -> None:
     """Validate all user-supplied parameters in one place.
 
@@ -322,6 +326,22 @@ def validate_inputs(
     ]:
         if param_value is not None and param_value.startswith("-"):
             raise ValueError(f"{param_name} must not start with '-' (got {param_value!r})")
+
+    # HuggingFace parameters - validate paths to prevent traversal via lifecycle/download
+    # These flow into filesystem paths and docker --model-path argv.
+    if hf_repo is not None:
+        if not re.match(r"^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$", hf_repo):
+            raise ValueError(f"hf_repo must be a valid HuggingFace repo id (org/name), got {hf_repo!r}")
+    if hf_subfolder is not None:
+        _validate_path(hf_subfolder, "hf_subfolder")
+    if hf_local_dir is not None:
+        _validate_path(hf_local_dir, "hf_local_dir")
+
+    # Lifecycle phase validation (centralised here per single-entry-point contract)
+    if lifecycle is not None:
+        valid_phases = ("full", "teardown")
+        if lifecycle not in valid_phases:
+            raise ValueError(f"lifecycle must be one of {valid_phases}, got {lifecycle!r}")
 
 
 @tool
@@ -475,12 +495,13 @@ def gr00t_inference(
             ``libero_sim``).
         denoising_steps: Number of denoising steps for action generation (default: 4).
             N1.5/N1.6 only - the N1.7 server reads this from the checkpoint.
-        host: Host-side bind address used as the docker host of
-            ``-p {host}:{port}:{port}`` (default: ``127.0.0.1``, loopback only).
-            Pass ``host="0.0.0.0"`` explicitly to expose the published port on
-            every host interface. The service inside the container always binds
-            ``0.0.0.0`` (required by docker port-publish); this kwarg controls
-            only the host-side leg.
+        host: Network bind address (default: ``127.0.0.1``, loopback only).
+            For ``start_container`` / ``lifecycle``: controls the docker
+            host-side bind via ``-p {host}:{port}:{port}``. Pass
+            ``host="0.0.0.0"`` to expose the published port on all interfaces.
+            For ``start`` / ``restart`` on a running container: forwarded as
+            the inference server's ``--host`` flag (does not change the
+            already-set docker port mapping).
         container_name: Specific Docker container name. Auto-detected if omitted.
         timeout: Seconds to wait for service startup (default: 60).
         use_tensorrt: Enable TensorRT acceleration (default: False).
@@ -613,6 +634,10 @@ def gr00t_inference(
             repo_url=repo_url,
             repo_tag=repo_tag,
             policy_name=policy_name,
+            hf_repo=hf_repo,
+            hf_subfolder=hf_subfolder,
+            hf_local_dir=hf_local_dir,
+            lifecycle=lifecycle if action == "lifecycle" else None,
         )
     except ValueError as e:
         return {"status": "error", "message": str(e)}

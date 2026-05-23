@@ -86,9 +86,11 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 - Validation scope covers ``port``, ``host``, ``protocol``, ``data_config``,
   ``embodiment_tag``, ``container_name``, TRT dtypes, ``checkpoint_path``,
   ``trt_engine_path``, ``image_name``, ``volumes``, and ``container_command``.
-  Parameters ``repo_url``, ``repo_tag``, ``hf_repo``, ``policy_name`` are
-  NOT validated here — they flow into argv-style subprocess calls which
-  are not shell-injection-vulnerable.
+  Parameters ``repo_url``, ``repo_tag``, and ``policy_name`` are
+  option-injection-guarded (reject leading ``-``). ``hf_repo``,
+  ``hf_subfolder``, and ``hf_local_dir`` are path-validated (reject
+  traversal, shell metacharacters, and malformed repo IDs). The
+  ``lifecycle`` phase is enum-checked.
 
 
 ## Unreleased - #178 (LiberoOffScreenRenderEngine retired)

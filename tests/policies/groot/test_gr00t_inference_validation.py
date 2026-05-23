@@ -1880,3 +1880,149 @@ class TestPathTraversalPosixBackslash:
         """Filename with embedded \\..\\ as literal bytes (no '/' separator) accepted."""
         # "a\..\b" as a single-component filename -- legal on POSIX.
         validate_inputs(**{**_VALID_KWARGS, "trt_engine_path": "a\\..\\b"})
+
+
+class TestHfPathTraversalValidation:
+    """Pin tests for hf_repo/hf_subfolder/hf_local_dir validation (R3).
+
+    These fail on pre-fix code where hf_subfolder flows unvalidated into
+    docker --model-path argv via _lifecycle(). See AGENTS.md > Review
+    Learnings (#92) > 'LLM Input Safety > Validate before subprocess
+    interpolation'.
+    """
+
+    def test_hf_subfolder_traversal_rejected(self):
+        """hf_subfolder='../../etc' must be rejected by validate_inputs."""
+        from strands_robots.tools.gr00t_inference import validate_inputs
+
+        with pytest.raises(ValueError, match="hf_subfolder"):
+            validate_inputs(
+                action="lifecycle",
+                data_config="fourier_gr1_arms_only",
+                embodiment_tag="gr1",
+                port=5555,
+                host="127.0.0.1",
+                vit_dtype="fp8",
+                llm_dtype="nvfp4",
+                dit_dtype="fp8",
+                checkpoint_path=None,
+                trt_engine_path="gr00t_engine",
+                container_name=None,
+                protocol="n1.5",
+                hf_repo="nvidia/GR00T-N1.7-LIBERO",
+                hf_subfolder="../../etc/passwd",
+                lifecycle="full",
+            )
+
+    def test_hf_subfolder_shell_meta_rejected(self):
+        """hf_subfolder with shell metacharacters must be rejected."""
+        from strands_robots.tools.gr00t_inference import validate_inputs
+
+        with pytest.raises(ValueError, match="hf_subfolder"):
+            validate_inputs(
+                action="lifecycle",
+                data_config="fourier_gr1_arms_only",
+                embodiment_tag="gr1",
+                port=5555,
+                host="127.0.0.1",
+                vit_dtype="fp8",
+                llm_dtype="nvfp4",
+                dit_dtype="fp8",
+                checkpoint_path=None,
+                trt_engine_path="gr00t_engine",
+                container_name=None,
+                protocol="n1.5",
+                hf_repo="nvidia/GR00T-N1.7-LIBERO",
+                hf_subfolder="libero;rm -rf /",
+                lifecycle="full",
+            )
+
+    def test_hf_repo_malformed_rejected(self):
+        """hf_repo must be org/name format."""
+        from strands_robots.tools.gr00t_inference import validate_inputs
+
+        with pytest.raises(ValueError, match="hf_repo"):
+            validate_inputs(
+                action="lifecycle",
+                data_config="fourier_gr1_arms_only",
+                embodiment_tag="gr1",
+                port=5555,
+                host="127.0.0.1",
+                vit_dtype="fp8",
+                llm_dtype="nvfp4",
+                dit_dtype="fp8",
+                checkpoint_path=None,
+                trt_engine_path="gr00t_engine",
+                container_name=None,
+                protocol="n1.5",
+                hf_repo="../../etc/shadow",
+                lifecycle="full",
+            )
+
+    def test_hf_local_dir_traversal_rejected(self):
+        """hf_local_dir with traversal must be rejected."""
+        from strands_robots.tools.gr00t_inference import validate_inputs
+
+        with pytest.raises(ValueError, match="hf_local_dir"):
+            validate_inputs(
+                action="lifecycle",
+                data_config="fourier_gr1_arms_only",
+                embodiment_tag="gr1",
+                port=5555,
+                host="127.0.0.1",
+                vit_dtype="fp8",
+                llm_dtype="nvfp4",
+                dit_dtype="fp8",
+                checkpoint_path=None,
+                trt_engine_path="gr00t_engine",
+                container_name=None,
+                protocol="n1.5",
+                hf_repo="nvidia/GR00T-N1.7-LIBERO",
+                hf_local_dir="/data/../../../etc",
+                lifecycle="full",
+            )
+
+    def test_lifecycle_invalid_phase_rejected(self):
+        """lifecycle phase must be 'full' or 'teardown'."""
+        from strands_robots.tools.gr00t_inference import validate_inputs
+
+        with pytest.raises(ValueError, match="lifecycle"):
+            validate_inputs(
+                action="lifecycle",
+                data_config="fourier_gr1_arms_only",
+                embodiment_tag="gr1",
+                port=5555,
+                host="127.0.0.1",
+                vit_dtype="fp8",
+                llm_dtype="nvfp4",
+                dit_dtype="fp8",
+                checkpoint_path=None,
+                trt_engine_path="gr00t_engine",
+                container_name=None,
+                protocol="n1.5",
+                lifecycle="exec_shell",
+            )
+
+    def test_valid_hf_params_pass(self):
+        """Valid hf_repo/hf_subfolder/lifecycle should not raise."""
+        from strands_robots.tools.gr00t_inference import validate_inputs
+
+        # Should not raise
+        validate_inputs(
+            action="lifecycle",
+            data_config="fourier_gr1_arms_only",
+            embodiment_tag="gr1",
+            port=5555,
+            host="127.0.0.1",
+            vit_dtype="fp8",
+            llm_dtype="nvfp4",
+            dit_dtype="fp8",
+            checkpoint_path=None,
+            trt_engine_path="gr00t_engine",
+            container_name=None,
+            protocol="n1.5",
+            hf_repo="nvidia/GR00T-N1.7-LIBERO",
+            hf_subfolder="libero_spatial",
+            hf_local_dir="/data/checkpoints/libero",
+            lifecycle="full",
+        )
