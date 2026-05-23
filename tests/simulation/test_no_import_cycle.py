@@ -63,7 +63,7 @@ def _is_inside_function(tree: ast.Module, target: ast.AST) -> bool:
 
 def _build_import_graph(root: Path) -> nx.DiGraph:
     nx = pytest.importorskip("networkx")  # dev-only dep; skip cleanly when absent
-    G: nx.DiGraph = nx.DiGraph()
+    G = nx.DiGraph()
     for p in root.rglob("*.py"):
         if "__pycache__" in p.parts:
             continue
