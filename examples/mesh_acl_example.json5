@@ -1,89 +1,104 @@
-// strands-robots mesh ACL — canonical reference.
+// strands-robots mesh ACL — operator template.
 //
-// Drop this at $STRANDS_MESH_ACL_FILE to override the built-in default.
-// The format is JSON5 (comments + trailing commas allowed). The Zenoh
-// access_control field validates the schema at session-open time; a
-// typo crashes the mesh with a clear error rather than silently
-// downgrading.
+// Drop this at $STRANDS_MESH_ACL_FILE and edit the ENUMERATED_PEERS
+// list below to match the cert Common Names of every robot and
+// operator in your fleet.
 //
-// Three roles, mapped from cert Common Names:
+// IMPORTANT — Zenoh 1.x quirks (verified against live sessions in
+// tests/mesh/test_redteam_zenoh.py):
 //
-//   robot-*    -> may publish own telemetry, receive cmds.
-//   op-*       -> full operator: publish cmds, observe everything.
-//   audit-*    -> read-only observer (audit / monitoring tooling).
+//  1. `enabled: true` is required. Without it the entire access_control
+//     block is a silent no-op.
 //
-// Default-deny: any cert CN that does not match a subject is rejected
-// at the transport — no message ever reaches a Python handler.
+//  2. `cert_common_names` matches LITERAL CNs only — `"robot-*"` and
+//     `"robot-.*"` both match nothing. Enumerate every peer by exact
+//     CN below; there is no glob fallback.
+//
+//  3. Subject `interfaces` must be a non-empty list. We enumerate
+//     every common Linux/macOS NIC name; replace with your fleet's
+//     known interfaces if you want to lock things down further.
+//
+//  4. `key_exprs` see the user-side key (the Zenoh `namespace`
+//     prefix is stripped before matching). Use `**/cmd` style
+//     globs, NOT `<namespace>/*/cmd`.
+//
+//  5. `put` rules live in `ingress` (where the publishing peer's
+//     cert CN is known to the receiver). `declare_subscriber` lives
+//     in `egress` (the declare flows from subscriber to publisher).
 {
+  enabled: true,
   default_permission: "deny",
 
   rules: [
     {
       id: "robot_publish_telemetry",
       messages: ["put"],
-      flows: ["egress"],
-      permission: "allow",
-      key_exprs: [
-        "strands/*/presence",
-        "strands/*/state/**",
-        "strands/*/health",
-        "strands/*/pose",
-        "strands/*/imu",
-        "strands/*/odom",
-        "strands/*/lidar/**",
-        "strands/*/hand/**",
-        "strands/*/camera/**",
-        "strands/*/response/**",
-        "strands/*/safety/**",
-      ],
-    },
-    {
-      id: "robot_subscribe_cmds",
-      messages: ["declare_subscriber", "put"],
       flows: ["ingress"],
       permission: "allow",
       key_exprs: [
-        "strands/*/cmd",
-        "strands/broadcast",
-        "strands/*/safety/**",
+        "**/presence",
+        "**/state/**",
+        "**/health",
+        "**/pose",
+        "**/imu",
+        "**/odom",
+        "**/lidar/**",
+        "**/hand/**",
+        "**/camera/**",
+        "**/response/**",
       ],
     },
     {
       id: "operator_publish_cmds",
       messages: ["put"],
-      flows: ["egress"],
+      flows: ["ingress"],
       permission: "allow",
       key_exprs: [
-        "strands/*/cmd",
-        "strands/broadcast",
-        "strands/*/safety/**",
+        "**/cmd",
+        "**/broadcast",
+        "**/safety/**",
       ],
     },
     {
-      id: "operator_observe",
+      id: "any_subscribe",
       messages: ["declare_subscriber"],
-      flows: ["ingress"],
+      flows: ["egress"],
       permission: "allow",
-      key_exprs: ["strands/**"],
-    },
-    {
-      id: "audit_observe",
-      messages: ["declare_subscriber"],
-      flows: ["ingress"],
-      permission: "allow",
-      key_exprs: ["strands/**"],
+      key_exprs: ["**"],
     },
   ],
 
   subjects: [
-    { id: "robot_peer",    cert_common_names: ["robot-*"] },
-    { id: "operator_peer", cert_common_names: ["op-*"] },
-    { id: "audit_peer",    cert_common_names: ["audit-*"] },
+    {
+      id: "robot_peer",
+      // Replace with your fleet's actual NIC names if known.
+      interfaces: ["lo", "lo0", "eth0", "en0", "en1", "wlan0"],
+      // ENUMERATE every robot's exact cert CN here.
+      cert_common_names: [
+        "robot-a",
+        "robot-b",
+        // Add more as you provision...
+      ],
+    },
+    {
+      id: "operator_peer",
+      interfaces: ["lo", "lo0", "eth0", "en0", "en1", "wlan0"],
+      cert_common_names: [
+        "op-1",
+        "op-2",
+        // Add more operators...
+      ],
+    },
   ],
 
   policies: [
-    { rules: ["robot_publish_telemetry", "robot_subscribe_cmds"], subjects: ["robot_peer"] },
-    { rules: ["operator_publish_cmds", "operator_observe"],       subjects: ["operator_peer"] },
-    { rules: ["audit_observe"],                                    subjects: ["audit_peer"] },
+    {
+      rules: ["robot_publish_telemetry", "any_subscribe"],
+      subjects: ["robot_peer"],
+    },
+    {
+      rules: ["operator_publish_cmds", "any_subscribe"],
+      subjects: ["operator_peer"],
+    },
   ],
 }

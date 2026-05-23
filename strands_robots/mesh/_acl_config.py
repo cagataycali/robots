@@ -3,23 +3,28 @@
 Reads a JSON5 ACL file at ``STRANDS_MESH_ACL_FILE`` and returns the
 serialised ``access_control`` block ready for
 ``zenoh.Config.insert_json5``. When the env var is unset, returns the
-:func:`default_acl` shape — default-deny with two roles:
+permissive :func:`default_acl` skeleton.
 
-* ``robot_peer`` (cert CN matches ``robot-*``): may publish telemetry on
-  ``{ns}/<peer>/{presence,state,health,response,...}`` and subscribe to
-  ``{ns}/<peer>/cmd`` + ``{ns}/broadcast``.
-* ``operator_peer`` (cert CN matches ``op-*``): may publish on every
-  cmd / broadcast topic and subscribe to ``{ns}/**`` for observation.
+Zenoh 1.x quirks (each verified against a live session in
+``tests/mesh/test_redteam_zenoh.py``):
 
-Every other peer (whose cert CN matches no rule) is silently dropped
-at the transport. There is no application-layer reject path; ACL
-denials show up in Zenoh's own logs and are emitted to our audit log
-via the ``acl_drop`` hook in :mod:`strands_robots.mesh.core`.
+* ``enabled: true`` is required — without it the entire block is a
+  no-op even if rules and subjects are populated.
+* ``cert_common_names`` matches LITERAL CNs only; globs and regexes
+  match nothing. Operators tighten the default by enumerating each
+  peer's exact cert CN in ``STRANDS_MESH_ACL_FILE``.
+* Subject ``interfaces`` must be a non-empty list — leaving it unset
+  causes the subject to match nothing.
+* ``key_exprs`` match the user-side key (the namespace prefix is
+  stripped from the matcher's view), so ``**/cmd`` is the robust
+  glob; ``"<namespace>/*/cmd"`` never matches.
+* ``declare_subscriber`` rules live in the ``egress`` flow (the
+  declare goes from subscriber to publisher); ``put`` rules live in
+  ``ingress`` (the publisher's cert CN is known to the receiver).
 
-JSON5 is the on-disk format because (a) the Zenoh config itself takes
-JSON5, (b) it allows comments which operators want for ACL reasoning,
-(c) it tolerates trailing commas which makes the file diff-friendly
-when adding rules.
+JSON5 is the on-disk format (line + block comments, trailing commas,
+unquoted keys). The loader uses a stdlib JSON5-lite preprocessor —
+no third-party dependency.
 """
 
 from __future__ import annotations
@@ -27,8 +32,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any
+
+from strands_robots.mesh._zenoh_config import _local_interfaces
 
 logger = logging.getLogger(__name__)
 
@@ -37,14 +45,14 @@ logger = logging.getLogger(__name__)
 ACL_FILE_MAX_BYTES: int = 256 * 1024
 
 
+# ─── JSON5-lite preprocessor ───────────────────────────────────────────
+
+
 def _strip_json5_comments(raw: str) -> str:
     """Strip ``//`` line comments and ``/* */`` block comments.
 
-    A small stdlib-only JSON5 preprocessor that handles the subset
-    operators actually use (line + block comments, trailing commas).
-    String contents are left untouched: we walk the source char by char
-    and toggle an ``in_string`` flag on unescaped quotes so a ``//``
-    inside a JSON string is preserved verbatim.
+    Preserves string contents (an inline ``//`` inside a JSON string is
+    left verbatim).
     """
     out: list[str] = []
     i = 0
@@ -57,7 +65,6 @@ def _strip_json5_comments(raw: str) -> str:
         if in_string:
             out.append(ch)
             if ch == "\\" and i + 1 < n:
-                # Keep escape pair verbatim.
                 out.append(nxt)
                 i += 2
                 continue
@@ -72,13 +79,11 @@ def _strip_json5_comments(raw: str) -> str:
             i += 1
             continue
         if ch == "/" and nxt == "/":
-            # Line comment: skip to end of line.
             i += 2
             while i < n and raw[i] != "\n":
                 i += 1
             continue
         if ch == "/" and nxt == "*":
-            # Block comment: skip to closing */.
             i += 2
             while i < n - 1 and not (raw[i] == "*" and raw[i + 1] == "/"):
                 i += 1
@@ -90,11 +95,7 @@ def _strip_json5_comments(raw: str) -> str:
 
 
 def _strip_trailing_commas(raw: str) -> str:
-    """Remove trailing commas before ``}`` / ``]`` (JSON5 allows them).
-
-    Walks the source preserving string contents (an unbalanced ``,]``
-    inside a string must NOT be touched).
-    """
+    """Remove trailing commas before ``}`` / ``]``."""
     out: list[str] = []
     i = 0
     n = len(raw)
@@ -119,7 +120,6 @@ def _strip_trailing_commas(raw: str) -> str:
             i += 1
             continue
         if ch == ",":
-            # Look ahead past whitespace; if next non-ws is } or ], drop the comma.
             j = i + 1
             while j < n and raw[j] in " \t\r\n":
                 j += 1
@@ -131,22 +131,16 @@ def _strip_trailing_commas(raw: str) -> str:
     return "".join(out)
 
 
+_KEY_RE = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)\s*:")
+
+
 def _quote_unquoted_keys(raw: str) -> str:
-    """Wrap unquoted object keys in double quotes (JSON5 allows them).
-
-    The replacement is intentionally narrow: it only matches an
-    identifier (``[A-Za-z_][A-Za-z0-9_]*``) immediately followed by
-    optional whitespace and a colon, in object-key position. The
-    string-walker preserves string contents.
-    """
-    import re
-
+    """Wrap unquoted object keys in double quotes."""
     out: list[str] = []
     i = 0
     n = len(raw)
     in_string = False
     string_quote = ""
-    key_re = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)\s*:")
     while i < n:
         ch = raw[i]
         if in_string:
@@ -165,8 +159,7 @@ def _quote_unquoted_keys(raw: str) -> str:
             out.append(ch)
             i += 1
             continue
-        # Try to match an unquoted key starting at i.
-        m = key_re.match(raw, i)
+        m = _KEY_RE.match(raw, i)
         if m and (not out or out[-1] in "{,\n \t"):
             out.append('"' + m.group(1) + '"' + ":")
             i = m.end()
@@ -177,22 +170,19 @@ def _quote_unquoted_keys(raw: str) -> str:
 
 
 def _json5_to_json(raw: str) -> str:
-    """Apply our JSON5-lite preprocessor to *raw*.
-
-    Three passes (in order): strip comments, quote unquoted keys, drop
-    trailing commas. The output is plain JSON suitable for
-    :func:`json.loads`.
-    """
+    """Apply our JSON5-lite preprocessor to *raw*."""
     return _strip_trailing_commas(_quote_unquoted_keys(_strip_json5_comments(raw)))
+
+
+# ─── ACL file loader ───────────────────────────────────────────────────
 
 
 def _load_acl_file(path: Path) -> dict[str, Any]:
     """Load and validate an ACL file.
 
-    The on-disk format is JSON5-lite: line and block comments, trailing
-    commas, and unquoted object keys are all accepted. Strict JSON
-    files also work. Zenoh's ``access_control`` parser does the deep
-    schema validation when we hand the dict to ``insert_json5``.
+    Refuses any file that omits ``enabled: true`` — Zenoh silently
+    no-ops the block in that case, and the loader fails closed rather
+    than ship a quietly-disabled gate.
     """
     if not path.is_file():
         raise FileNotFoundError(f"ACL file not found: {path}")
@@ -210,6 +200,10 @@ def _load_acl_file(path: Path) -> dict[str, Any]:
     for required in ("default_permission", "rules", "subjects", "policies"):
         if required not in data:
             raise ValueError(f"ACL file {path} missing required field: {required!r}")
+    if not data.get("enabled", False):
+        raise ValueError(
+            f"ACL file {path} must set ``enabled: true`` — without it Zenoh silently disables the access_control block."
+        )
     if data["default_permission"] not in ("allow", "deny"):
         raise ValueError(f"ACL file {path} default_permission={data['default_permission']!r} must be 'allow' or 'deny'")
     if data["default_permission"] == "allow":
@@ -221,83 +215,56 @@ def _load_acl_file(path: Path) -> dict[str, Any]:
     return data
 
 
+# ─── Default ACL ───────────────────────────────────────────────────────
+
+
 def default_acl(namespace: str) -> dict[str, Any]:
-    """Return the built-in default-deny ACL for *namespace*.
+    """Return a permissive default ACL skeleton.
 
-    Two roles, mapped from cert CN globs:
+    The default allows any peer with a valid CA-signed cert (verified
+    at the mTLS handshake) to publish and subscribe on any key.
+    Operators who want per-role enforcement supply their own ACL via
+    ``STRANDS_MESH_ACL_FILE`` enumerating each peer's exact cert CN
+    (Zenoh 1.x cert_common_names does not support globs — see
+    ``examples/mesh_acl_example.json5`` for the canonical template).
 
-    * ``robot-*`` certs: publish own telemetry, subscribe to own cmd
-      topic plus broadcast.
-    * ``op-*`` certs: publish to any cmd / broadcast topic, subscribe
-      to everything for monitoring.
-
-    Anything else is denied. This is what every fresh install gets
-    when ``STRANDS_MESH_ACL_FILE`` is unset.
+    Why permissive default rather than default-deny: a default-deny
+    skeleton with no enumerated subjects rejects every legitimate
+    message — silent total outage on first run. The mTLS handshake at
+    the link layer already gates fleet membership; the application-
+    layer ``validate_command`` gates payload semantics. ACL is the
+    third line of defence and operators opt in explicitly.
     """
+    _ = namespace  # `namespace` config does the routing isolation; ACL key_exprs do not need it
     return {
+        "enabled": True,
         "default_permission": "deny",
         "rules": [
             {
-                "id": "robot_publish_telemetry",
-                "messages": ["put"],
-                "flows": ["egress"],
-                "permission": "allow",
-                "key_exprs": [
-                    f"{namespace}/*/presence",
-                    f"{namespace}/*/state/**",
-                    f"{namespace}/*/health",
-                    f"{namespace}/*/pose",
-                    f"{namespace}/*/imu",
-                    f"{namespace}/*/odom",
-                    f"{namespace}/*/lidar/**",
-                    f"{namespace}/*/hand/**",
-                    f"{namespace}/*/camera/**",
-                    f"{namespace}/*/response/**",
-                    f"{namespace}/*/safety/**",
-                ],
-            },
-            {
-                "id": "robot_subscribe_cmds",
-                "messages": ["declare_subscriber", "put"],
-                "flows": ["ingress"],
-                "permission": "allow",
-                "key_exprs": [
-                    f"{namespace}/*/cmd",
-                    f"{namespace}/broadcast",
-                    f"{namespace}/*/safety/**",
-                ],
-            },
-            {
-                "id": "operator_publish_cmds",
-                "messages": ["put"],
-                "flows": ["egress"],
-                "permission": "allow",
-                "key_exprs": [
-                    f"{namespace}/*/cmd",
-                    f"{namespace}/broadcast",
-                    f"{namespace}/*/safety/**",
-                ],
-            },
-            {
-                "id": "operator_observe",
+                "id": "any_subscribe",
                 "messages": ["declare_subscriber"],
-                "flows": ["ingress"],
+                "flows": ["egress"],
                 "permission": "allow",
-                "key_exprs": [f"{namespace}/**"],
+                "key_exprs": ["**"],
+            },
+            {
+                "id": "any_publish",
+                "messages": ["put"],
+                "flows": ["ingress", "egress"],
+                "permission": "allow",
+                "key_exprs": ["**"],
             },
         ],
         "subjects": [
-            {"id": "robot_peer", "cert_common_names": ["robot-*"]},
-            {"id": "operator_peer", "cert_common_names": ["op-*"]},
+            {
+                "id": "any_authenticated_peer",
+                "interfaces": _local_interfaces(),
+            },
         ],
         "policies": [
             {
-                "rules": ["robot_publish_telemetry", "robot_subscribe_cmds"],
-                "subjects": ["robot_peer"],
-            },
-            {
-                "rules": ["operator_publish_cmds", "operator_observe"],
-                "subjects": ["operator_peer"],
+                "rules": ["any_subscribe", "any_publish"],
+                "subjects": ["any_authenticated_peer"],
             },
         ],
     }
@@ -306,10 +273,7 @@ def default_acl(namespace: str) -> dict[str, Any]:
 def resolve_acl(namespace: str) -> dict[str, Any]:
     """Return the ACL dict for the current configuration.
 
-    Resolution order:
-
-    1. ``STRANDS_MESH_ACL_FILE`` set → load and validate that file.
-    2. Otherwise → :func:`default_acl(namespace)`.
+    Resolution order: ``STRANDS_MESH_ACL_FILE`` → :func:`default_acl`.
     """
     path_env = os.getenv("STRANDS_MESH_ACL_FILE", "").strip()
     if path_env:

@@ -144,7 +144,7 @@ class TestMTLSBuild:
         cfg = _build_mtls(tmp_path, monkeypatch)
         acl = json.loads(cfg.get_json("access_control"))
         assert acl["default_permission"] == "deny"
-        assert {s["id"] for s in acl["subjects"]} == {"robot_peer", "operator_peer"}
+        assert {s["id"] for s in acl["subjects"]} == {"any_authenticated_peer"}
 
     def test_mtls_missing_cert_files_raises(self, monkeypatch):
         monkeypatch.setenv("STRANDS_MESH_AUTH_MODE", "mtls")
