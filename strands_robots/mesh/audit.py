@@ -147,6 +147,18 @@ _WRITE_LOCK = threading.Lock()
 _SEQ_LOCK = threading.Lock()
 _SEQ_COUNTERS: dict[str, int] = {}
 
+# F3 (PR #195 review): the PSK fingerprint snapshot at
+# ``_AUDIT_STATE.psk_fingerprint`` is read+modified+compared on every
+# call to :func:`_sign_record`. Without a dedicated lock, two threads
+# racing on the very first record could both observe ``snapshot is None``
+# and both perform the assignment -- benign on the first record, but
+# the same read-modify-compare path is exercised on every subsequent
+# write where one thread can land between ``_audit_psk()`` and the
+# ``snapshot != current_fp`` comparison and observe a stale view that
+# defeats the PSK-degrade defence (R4-2 + R21). Hold this lock around
+# the entire fingerprint check so the compare-and-set is atomic.
+_PSK_STATE_LOCK = threading.Lock()
+
 
 class _ProcessAuditState:
     """Container for module-level mutable flags.
@@ -443,7 +455,14 @@ def _load_seq_counters() -> None:
                     "[audit] seeded %d peer counters from audit log after sidecar load failed",
                     len(_SEQ_COUNTERS),
                 )
-        except Exception as log_exc:
+        except (OSError, json.JSONDecodeError, ValueError, TypeError) as log_exc:
+            # Narrow per AGENTS.md > "Exception Clauses Must Be Narrow":
+            # OSError covers disk failures, JSONDecodeError covers
+            # malformed records, ValueError covers _validate_acl_shape-
+            # style schema violations, TypeError covers record-shape
+            # mismatches. An unexpected exception type is a programmer
+            # bug we want to see in tests, not silently degrade the
+            # R22-A counter-reset defence.
             logger.warning(
                 "[audit] could not seed from audit log after sidecar failure: %s",
                 log_exc,
@@ -639,11 +658,17 @@ def _sign_record(record: dict[str, Any]) -> str | None:
     """
     psk = _audit_psk()
     current_fp = _psk_fingerprint(psk)
-    snapshot = _AUDIT_STATE.psk_fingerprint
-    if snapshot is None:
-        # First record this process -- snap the observed state.
-        _AUDIT_STATE.psk_fingerprint = current_fp
-    elif snapshot != current_fp:
+    # F3 (PR #195 review): atomic compare-and-set on the PSK fingerprint
+    # snapshot so multi-threaded writers cannot land a partial view
+    # inside the read-modify-compare window.
+    with _PSK_STATE_LOCK:
+        snapshot = _AUDIT_STATE.psk_fingerprint
+        if snapshot is None:
+            # First record this process -- snap the observed state and
+            # treat the current call as matching itself (no transition).
+            _AUDIT_STATE.psk_fingerprint = current_fp
+            snapshot = current_fp
+    if snapshot != current_fp:
         # PSK transition: set->unset, unset->set, OR rotated value.
         # All three break verifiability symmetrically; refuse.
         if snapshot != b"" and current_fp == b"":
@@ -786,6 +811,7 @@ def log_safety_event(event_type: str, peer_id: str, payload: dict[str, Any]) -> 
         "payload": payload,
         "seq": seq,
     }
+    sig: str | None = None
     try:
         sig = _sign_record(record)
     except AuditPSKDegradedError as exc:
@@ -797,13 +823,25 @@ def log_safety_event(event_type: str, peer_id: str, payload: dict[str, Any]) -> 
         # (verify_audit_integrity with PSK present) reports it as
         # ``missing_sig`` (sig is not a valid HMAC), which forces
         # ``ok=False`` and surfaces the transition to forensics.
-        # Without the poison record an operator skimming a clean log
-        # cannot distinguish "everything fine" from "PSK rolled
-        # mid-run and several events vanished".
         # See PR #195 review thread PRRT_kwDORUMiZs6ER6_2.
         logger.error("[audit] %s -- writing poison record (sig=PSK_DEGRADED): %s", exc, record)
         record["sig"] = "PSK_DEGRADED"
         record["psk_degraded"] = str(exc)
+    except Exception as sign_exc:  # noqa: BLE001 -- audit must be soft per contract (lines 768-771)
+        # F3 (PR #195 review): widen the fail-soft contract beyond
+        # AuditPSKDegradedError. A malformed ``STRANDS_MESH_AUDIT_PSK``
+        # value, future stricter hmac input validation, or an
+        # ``_AUDIT_STATE`` race could otherwise raise here and crash
+        # the safety code path -- the very outcome the docstring
+        # contracts against. Log the failure at ERROR (operator-
+        # observable) and continue with an unsigned write so the audit
+        # event itself is still preserved.
+        logger.error(
+            "[audit] _sign_record raised %s: %s -- writing record unsigned",
+            type(sign_exc).__name__,
+            sign_exc,
+        )
+        sig = None
     else:
         if sig is not None:
             record["sig"] = sig
