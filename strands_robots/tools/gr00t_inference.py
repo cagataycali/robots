@@ -587,8 +587,8 @@ def gr00t_inference(
 
     # Sentinel default: None means "user did not pass host=".
     # Default to 127.0.0.1 (loopback, per AGENTS.md § LLM Input Safety).
-    # _start_service auto-flips to 0.0.0.0 ONLY when host was not explicitly set.
-    _host_was_explicit = host is not None
+    # The host kwarg now flows verbatim into `docker -p HOST:port:port`
+    # (no auto-flip; see commit ecf5f0f).
     if host is None:
         host = "127.0.0.1"
 
@@ -690,7 +690,6 @@ def gr00t_inference(
             api_token=api_token,
             protocol=protocol,
             use_sim_policy_wrapper=use_sim_policy_wrapper,
-            host_was_explicit=_host_was_explicit,
         )
     elif action == "start":
         if checkpoint_path is None:
@@ -717,7 +716,6 @@ def gr00t_inference(
             api_token=api_token,
             protocol=protocol,
             use_sim_policy_wrapper=use_sim_policy_wrapper,
-            host_was_explicit=_host_was_explicit,
         )
     elif action == "restart":
         if checkpoint_path is None:
@@ -744,7 +742,6 @@ def gr00t_inference(
             api_token=api_token,
             protocol=protocol,
             use_sim_policy_wrapper=use_sim_policy_wrapper,
-            host_was_explicit=_host_was_explicit,
         )
 
     # Unreachable: validate_inputs() rejects unknown actions before dispatch.
@@ -1151,7 +1148,6 @@ def _start_service(
     api_token: str | None,
     protocol: str = "n1.5",
     use_sim_policy_wrapper: bool = False,
-    host_was_explicit: bool = False,  # noqa: ARG001 — retained for ABI compat; auto-flip dropped in R1
 ) -> dict[str, Any]:
     """Start GR00T inference service using Isaac-GR00T's native inference service.
 
@@ -1640,7 +1636,6 @@ def _lifecycle(
     api_token: str | None,
     protocol: str,
     use_sim_policy_wrapper: bool,
-    host_was_explicit: bool = False,
 ) -> dict[str, Any]:
     """Orchestrate the four-step setup or tear down a previously-started container.
 
@@ -1763,7 +1758,6 @@ def _lifecycle(
         api_token=api_token,
         protocol=protocol,
         use_sim_policy_wrapper=use_sim_policy_wrapper,
-        host_was_explicit=host_was_explicit,
     )
     steps.append({"step": "start", "result": start_result})
 

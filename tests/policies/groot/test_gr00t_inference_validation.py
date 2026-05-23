@@ -1109,7 +1109,6 @@ class TestHostBindingHonoursUserChoice:
             dit_dtype="fp8",
             http_server=False,
             api_token=None,
-            host_was_explicit=False,
         )
         # The CRITICAL assertion: host stays 127.0.0.1, NOT auto-flipped.
         assert captured.get("host") == "127.0.0.1", (
@@ -1162,7 +1161,6 @@ class TestHostBindingHonoursUserChoice:
             dit_dtype="fp8",
             http_server=False,
             api_token=None,
-            host_was_explicit=True,
         )
         assert captured.get("host") == "0.0.0.0"
 
@@ -1402,18 +1400,44 @@ class TestExpandedParamValidationExtended:
         )
 
 
-class TestHostExplicitFlagDispatch:
-    """Verify the host_was_explicit dispatch flag is set correctly.
+class TestHostKwargNotPlumbed:
+    """R2 pin tests -- ``host_was_explicit`` kwarg is no longer plumbed.
 
-    Post-R1, _start_service does not act on this flag (the auto-flip was
-    removed), but the flag is retained for ABI compatibility and to allow
-    operators / future code to introspect whether the user explicitly chose
-    a binding host. These tests pin the dispatch-layer behaviour so we don't
-    silently lose the distinction between "default" and "explicit" host args.
+    Pre-R2: ``gr00t_inference()`` set ``_host_was_explicit = host is not None``
+    and threaded it through ``_lifecycle`` and the ``start`` / ``restart``
+    dispatch into ``_start_service``, where it was unused (``# noqa: ARG001``).
+    The auto-flip the flag once gated was removed in R1 (commit ecf5f0f), so
+    the kwarg became dead plumbing.
+
+    R2: removed per AGENTS.md > Key Conventions #10 ('No dead code'). These
+    pins assert the removal so a future refactor that re-introduces the flag
+    re-introduces a meaningless plumbing chain.
     """
 
-    def test_default_host_passes_not_explicit(self, monkeypatch):
-        """When host is NOT passed (None sentinel), host_was_explicit=False."""
+    def test_start_service_signature_has_no_host_was_explicit(self):
+        """``_start_service`` signature must not contain ``host_was_explicit``."""
+        import inspect
+
+        from strands_robots.tools.gr00t_inference import _start_service
+
+        params = inspect.signature(_start_service).parameters
+        assert "host_was_explicit" not in params, (
+            "Dead kwarg `host_was_explicit` reintroduced into _start_service signature"
+        )
+
+    def test_lifecycle_signature_has_no_host_was_explicit(self):
+        """``_lifecycle`` signature must not contain ``host_was_explicit``."""
+        import inspect
+
+        from strands_robots.tools.gr00t_inference import _lifecycle
+
+        params = inspect.signature(_lifecycle).parameters
+        assert "host_was_explicit" not in params, (
+            "Dead kwarg `host_was_explicit` reintroduced into _lifecycle signature"
+        )
+
+    def test_start_dispatch_does_not_pass_host_was_explicit(self, monkeypatch):
+        """``gr00t_inference(action='start')`` must not forward ``host_was_explicit``."""
         from strands_robots.tools.gr00t_inference import gr00t_inference
 
         captured = {}
@@ -1426,49 +1450,35 @@ class TestHostExplicitFlagDispatch:
             "strands_robots.tools.gr00t_inference._start_service",
             _mock_start_service,
         )
-        # Call without host= (uses default None → 127.0.0.1, not explicit)
-        gr00t_inference(action="start", checkpoint_path="/data/model")
-        assert captured.get("host") == "127.0.0.1"
-        assert captured.get("host_was_explicit") is False, (
-            "Default host (None sentinel) should pass host_was_explicit=False"
-        )
-
-    def test_explicit_loopback_passes_explicit_flag(self, monkeypatch):
-        """When user explicitly passes host='127.0.0.1', host_was_explicit=True."""
-        from strands_robots.tools.gr00t_inference import gr00t_inference
-
-        captured = {}
-
-        def _mock_start_service(**kwargs):
-            captured.update(kwargs)
-            return {"status": "error", "message": "mocked"}
-
-        monkeypatch.setattr(
-            "strands_robots.tools.gr00t_inference._start_service",
-            _mock_start_service,
-        )
-        # Call WITH explicit host="127.0.0.1" — must pass host_was_explicit=True
         gr00t_inference(action="start", checkpoint_path="/data/model", host="127.0.0.1")
-        assert captured.get("host") == "127.0.0.1"
-        assert captured.get("host_was_explicit") is True, "Explicit host='127.0.0.1' must pass host_was_explicit=True"
+        assert "host_was_explicit" not in captured, (
+            "`start` dispatch passed dead `host_was_explicit` kwarg to _start_service"
+        )
 
-    def test_explicit_zero_passes_explicit_flag(self, monkeypatch):
-        """When user explicitly passes host='0.0.0.0', host_was_explicit=True."""
+    def test_restart_dispatch_does_not_pass_host_was_explicit(self, monkeypatch):
+        """``gr00t_inference(action='restart')`` must not forward ``host_was_explicit``."""
         from strands_robots.tools.gr00t_inference import gr00t_inference
 
         captured = {}
 
         def _mock_start_service(**kwargs):
             captured.update(kwargs)
-            return {"status": "error", "message": "mocked"}
+            return {"status": "success", "message": "mocked"}
 
         monkeypatch.setattr(
             "strands_robots.tools.gr00t_inference._start_service",
             _mock_start_service,
         )
-        gr00t_inference(action="start", checkpoint_path="/data/model", host="0.0.0.0")
-        assert captured.get("host") == "0.0.0.0"
-        assert captured.get("host_was_explicit") is True
+        monkeypatch.setattr(
+            "strands_robots.tools.gr00t_inference._stop_service",
+            lambda port: None,
+        )
+        monkeypatch.setattr("time.sleep", lambda _: None)
+
+        gr00t_inference(action="restart", checkpoint_path="/data/model")
+        assert "host_was_explicit" not in captured, (
+            "`restart` dispatch passed dead `host_was_explicit` kwarg to _start_service"
+        )
 
 
 class TestReviewRound8Fixes:
@@ -1481,66 +1491,6 @@ class TestReviewRound8Fixes:
     - TypeError handling in validation wrapper
     - dash-prefix rejection in volume paths
     """
-
-    def test_restart_forwards_host_was_explicit(self, monkeypatch):
-        """action='restart' must forward host_was_explicit to _start_service."""
-        from strands_robots.tools.gr00t_inference import gr00t_inference
-
-        captured = {}
-
-        def _mock_start_service(**kwargs):
-            captured.update(kwargs)
-            return {"status": "success", "message": "mocked"}
-
-        def _mock_stop_service(port):
-            pass
-
-        monkeypatch.setattr(
-            "strands_robots.tools.gr00t_inference._start_service",
-            _mock_start_service,
-        )
-        monkeypatch.setattr(
-            "strands_robots.tools.gr00t_inference._stop_service",
-            _mock_stop_service,
-        )
-        monkeypatch.setattr("time.sleep", lambda _: None)
-
-        # Explicit host='127.0.0.1' on restart must pass host_was_explicit=True
-        gr00t_inference(
-            action="restart",
-            checkpoint_path="/data/model",
-            host="127.0.0.1",
-        )
-        assert captured.get("host_was_explicit") is True, (
-            "restart path must forward host_was_explicit=True for explicit host"
-        )
-
-    def test_restart_default_host_not_explicit(self, monkeypatch):
-        """action='restart' with default host must pass host_was_explicit=False."""
-        from strands_robots.tools.gr00t_inference import gr00t_inference
-
-        captured = {}
-
-        def _mock_start_service(**kwargs):
-            captured.update(kwargs)
-            return {"status": "success", "message": "mocked"}
-
-        def _mock_stop_service(port):
-            pass
-
-        monkeypatch.setattr(
-            "strands_robots.tools.gr00t_inference._start_service",
-            _mock_start_service,
-        )
-        monkeypatch.setattr(
-            "strands_robots.tools.gr00t_inference._stop_service",
-            _mock_stop_service,
-        )
-        monkeypatch.setattr("time.sleep", lambda _: None)
-
-        # Default host (not passed) on restart -> host_was_explicit=False
-        gr00t_inference(action="restart", checkpoint_path="/data/model")
-        assert captured.get("host_was_explicit") is False
 
     def test_volume_path_colon_rejected(self):
         """Volume paths containing ':' must be rejected (docker -v mount-redirect)."""
