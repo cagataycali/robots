@@ -79,6 +79,7 @@ def _is_valid_docker_image_ref(value: str) -> bool:
             return False
     return True
 
+
 # Characters that cause harm in subprocess argv or shell interpolation.
 # Narrowed per AGENTS.md review-learnings: quotes/bangs/parens/brackets
 # appear in legitimate filesystem paths and all subprocess calls here are

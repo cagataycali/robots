@@ -1827,4 +1827,3 @@ class TestRegexBugFixesR4:
             raise AssertionError("Expected ValueError for '127.0.01' IP typo")
         except ValueError as e:
             assert "host" in str(e).lower()
-
