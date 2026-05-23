@@ -96,18 +96,24 @@ WARNING symmetry), #260 (warn on re-use of break-glass-written CA).
   aliasing; no impact on this repo's test suite.
 - **pytest-cov** ceiling raised from `<6.0.0` to `<8.0.0` (allows 7.1.0).
 - **Transitive lockfile** (`uv.lock`) regenerated with full extras matrix,
-  resolving cryptography 48.0.0 (crosses 3 major versions from prior lock; no deprecated API usage found in this repo), python-multipart 0.0.28, gitpython 3.1.50,
-  urllib3 2.7.0, and 42 previously-unresolved transitive packages (mujoco,
-  transformers 5.8.1 (explicit compat code at `strands_robots/policies/lerobot_local/policy.py:309-313`), libero, robomimic, robosuite, numba, hydra-core, etc.).
-  The previous lockfile was generated against a partial extras set.
-  Note: the Pillow `>=10.3.0` floor is the minimum security guarantee;
-  the lockfile-pinned 12.2.0 is the recommended install path.
+  resolving cryptography 48.0.0 (crosses 2 major versions from prior lock at
+  46.0.6: 46->47->48; no deprecated API usage found in this repo),
+  python-multipart 0.0.28, gitpython 3.1.50, urllib3 2.7.0, and 42
+  previously-unresolved transitive packages (mujoco, transformers 5.8.1,
+  libero, robomimic, robosuite, numba, hydra-core, etc.).
+  - transformers 5.x: explicit compat code at
+    `strands_robots/policies/lerobot_local/policy.py:308-321`.
+  - The previous lockfile was generated against a partial extras set.
+  - The Pillow `>=10.3.0` floor is the minimum security guarantee;
+    the lockfile-pinned 12.2.0 is the recommended install path.
 
 ### Security
 
 - Closes 19 of 20 open Dependabot alerts. Remaining: diffusers
   GHSA-98h9-4798-4q5v (tracked in #210, blocked by lerobot 0.5.1
-  cap `diffusers<0.36`).
+  cap `diffusers<0.36`). Lockfile users remain exposed until #210 lands;
+  mitigation requires either floating diffusers above 0.38.0 or upgrading
+  lerobot once an upstream release relaxes the cap.
 
 ## Unreleased - #178 (LiberoOffScreenRenderEngine retired)
 
