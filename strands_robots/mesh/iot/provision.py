@@ -683,10 +683,16 @@ def _ensure_ca(ca_path: Path) -> None:
         # a prior compromised provisioning run. Operators who need
         # to refresh a re-encoded cert can delete the file and let
         # the download path run with the override set.
+        # R22-D: O_NOFOLLOW to prevent TOCTOU symlink-swap
         try:
-            existing = ca_path.read_bytes()
+            nofollow = getattr(os, "O_NOFOLLOW", 0)
+            fd = os.open(ca_path, os.O_RDONLY | nofollow)
+            try:
+                existing = os.read(fd, 10 * 1024 * 1024)  # 10 MiB bound
+            finally:
+                os.close(fd)
         except OSError as exc:
-            raise RuntimeError(f"AmazonRootCA1 at {ca_path} unreadable: {exc}") from exc
+            raise RuntimeError(f"AmazonRootCA1 at {ca_path} unreadable or symlink: {exc}") from exc
         if not _hash_matches_pin(existing):
             logger.warning(
                 "[provision] existing CA at %s does NOT match pinned SHA-256. "
