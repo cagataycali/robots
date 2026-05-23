@@ -140,11 +140,14 @@ class TestMTLSBuild:
         protos = json.loads(cfg.get_json("transport/link/protocols"))
         assert protos == ["tls"]
 
-    def test_acl_block_present_with_default_deny(self, tmp_path, monkeypatch):
+    def test_acl_block_present_with_default_allow(self, tmp_path, monkeypatch):
+        # Post-R18: default ACL is permissive-by-design (default_permission='allow'
+        # + empty rules), matching the documented behaviour without code-vs-doc drift.
         cfg = _build_mtls(tmp_path, monkeypatch)
         acl = json.loads(cfg.get_json("access_control"))
-        assert acl["default_permission"] == "deny"
-        assert {s["id"] for s in acl["subjects"]} == {"any_authenticated_peer"}
+        assert acl["enabled"] is True
+        assert acl["default_permission"] == "allow"
+        assert acl["subjects"] == []
 
     def test_mtls_missing_cert_files_raises(self, monkeypatch):
         monkeypatch.setenv("STRANDS_MESH_AUTH_MODE", "mtls")

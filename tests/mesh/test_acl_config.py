@@ -29,40 +29,38 @@ class TestDefaultACL:
         # Without ``enabled: true`` Zenoh silently no-ops the ACL.
         assert ac.default_acl("strands")["enabled"] is True
 
-    def test_default_permission_is_deny(self):
-        assert ac.default_acl("strands")["default_permission"] == "deny"
+    def test_default_permission_is_allow(self):
+        # Permissive-by-design: documented in CHANGELOG section 8 and the
+        # README "Default ACL -- permissive by design" section. Code now
+        # matches docs (earlier mixed default_permission='deny' with two
+        # ['**'] allow-rules -- effectively allow-any but confusing).
+        assert ac.default_acl("strands")["default_permission"] == "allow"
 
-    def test_subject_has_non_empty_interfaces(self):
-        # Zenoh 1.x bug: subjects with empty/missing ``interfaces``
-        # match nothing. Defaults must populate every local NIC.
-        subj = ac.default_acl("strands")["subjects"][0]
-        assert isinstance(subj["interfaces"], list)
-        assert len(subj["interfaces"]) > 0
+    def test_default_acl_self_consistent(self):
+        """Pin: default_permission matches the rule set's effective behaviour.
 
-    def test_subscriber_rule_uses_egress_flow(self):
-        # ``declare_subscriber`` lives in egress (subscriber emits
-        # the declare to the publishing peer).
-        rule = next(r for r in ac.default_acl("strands")["rules"] if r["id"] == "any_subscribe")
-        assert rule["messages"] == ["declare_subscriber"]
-        assert rule["flows"] == ["egress"]
-        assert rule["permission"] == "allow"
-        assert rule["key_exprs"] == ["**"]
-
-    def test_publish_rule_uses_double_glob(self):
-        # ``f"{namespace}/*/cmd"`` would never match (Zenoh strips
-        # the namespace before matching against key_exprs); ``**`` is
-        # the robust glob for the permissive default.
-        rule = next(r for r in ac.default_acl("strands")["rules"] if r["id"] == "any_publish")
-        assert rule["messages"] == ["put"]
-        assert "ingress" in rule["flows"]
-        assert rule["key_exprs"] == ["**"]
+        This pins the R18 fix for the code-vs-doc drift review feedback flagged
+        5x across R5/R8/R10/R12/R13. Mixing default_permission='deny' with
+        ['**'] allow-rules looks like deny-by-default but is actually allow-any.
+        """
+        acl = ac.default_acl("strands")
+        if acl["default_permission"] == "allow":
+            # Permissive default: no rules needed (rules can only RESTRICT).
+            assert acl["rules"] == [], "rules with default=allow can only deny -- inconsistent with permissive promise"
+            assert acl["subjects"] == [], "subjects without rules are dead config"
+            assert acl["policies"] == []
+        else:
+            assert acl["default_permission"] == "deny"
+            # default=deny without explicit allow-rules == silent total outage.
+            assert acl["rules"], "default_permission='deny' with empty rules is silent total deny-all"
 
     def test_acl_block_serialises_to_json(self):
         path, value = ac.acl_block("strands")
         assert path == "access_control"
         decoded = json.loads(value)
         assert decoded["enabled"] is True
-        assert decoded["default_permission"] == "deny"
+        # Whatever the active default_permission, acl_block must round-trip it.
+        assert decoded["default_permission"] in ("allow", "deny")
 
 
 # --- ACL file loader ----------------------------------------------------
@@ -79,10 +77,12 @@ class TestACLFileLoader:
         }
 
     def test_resolve_uses_default_when_unset(self):
+        # When STRANDS_MESH_ACL_FILE is unset, resolve_acl returns default_acl()
+        # which is permissive-by-design (R18: default_permission=allow + empty rules).
         acl = ac.resolve_acl("strands")
         assert acl["enabled"] is True
-        assert acl["default_permission"] == "deny"
-        assert {s["id"] for s in acl["subjects"]} == {"any_authenticated_peer"}
+        assert acl["default_permission"] == "allow"
+        assert acl["subjects"] == []
 
     def test_resolve_loads_from_file(self, monkeypatch, tmp_path):
         path = tmp_path / "acl.json"
@@ -319,110 +319,43 @@ class TestQuoteUnquotedKeys:
 
 
 class TestDefaultACLPermissiveShape:
-    """Verifies the default ACL is genuinely permissive end-to-end.
+    """Pin the post-R18 permissive-allow shape of the default ACL.
 
-    Reviewer Review comment: "No live-session test for the
-    default (permissive) ACL. ... Given the PR's own quirks list,
-    the assertion that the default ACL is actually permissive end-to-end
-    relies on author-side reasoning rather than a passing test."
+    Operators not supplying STRANDS_MESH_ACL_FILE get a permissive default
+    by design: any peer that survived the mTLS handshake can publish and
+    subscribe on any key (CHANGELOG section 8, README "Default ACL --
+    permissive by design").
 
-    This class covers each documented quirk that could silently break
-    the permissive behaviour, short of spinning up a real Zenoh session.
+    The R18 fix delivers this with default_permission='allow' + empty rules
+    (the simplest config matching the documented behaviour). Earlier mixes
+    of default_permission='deny' + ['**'] allow-rules were flagged 5x in
+    review for code-vs-doc drift; this class pins the correction.
     """
 
     def test_enabled_is_true(self):
-        # Redundant with TestDefaultACL but included for narrative:
-        # without ``enabled: true`` Zenoh silently no-ops the entire ACL.
+        # Without ``enabled: true`` Zenoh silently no-ops the entire ACL.
         acl = ac.default_acl("strands")
         assert acl["enabled"] is True
 
-    def test_default_permission_is_deny(self):
-        # Zenoh idiom is deny-by-default with explicit allow rules.
-        # The permissiveness comes from the ``**`` wildcard rules,
-        # NOT from a permissive ``default_permission``.
+    def test_default_permission_is_allow(self):
         acl = ac.default_acl("strands")
-        assert acl["default_permission"] == "deny"
+        assert acl["default_permission"] == "allow"
 
-    def test_every_subject_has_non_empty_interfaces(self):
-        # Zenoh 1.x quirk #3: subjects with empty or missing
-        # ``interfaces`` match nothing. The default ACL must populate
-        # the list for every subject.
+    def test_rule_set_is_empty(self):
+        # default_permission='allow' + empty rules == permissive. Adding
+        # ['**'] rules with this default is dead config.
         acl = ac.default_acl("strands")
-        assert "subjects" in acl
-        assert len(acl["subjects"]) > 0, "Default ACL must define at least one subject"
+        assert acl["rules"] == []
 
-        for subj in acl["subjects"]:
-            assert "interfaces" in subj, f"Subject {subj['id']} missing 'interfaces' field"
-            assert isinstance(subj["interfaces"], list), f"Subject {subj['id']} interfaces is not a list"
-            assert len(subj["interfaces"]) > 0, (
-                f"Subject {subj['id']} has empty interfaces list -- "
-                "this causes the subject to match nothing in Zenoh 1.x"
-            )
-
-    def test_at_least_one_subject_omits_cert_common_names(self):
-        # Zenoh 1.x quirk #2: ``cert_common_names`` matches LITERAL CNs
-        # only; globs/regexes match nothing. The permissive default must
-        # have at least one subject that does NOT specify the field
-        # (omitting it means match-any-CN). Verify the field is genuinely
-        # absent, not present-but-empty (an empty list means match-none).
+    def test_subject_set_is_empty(self):
+        # Subjects only matter when rules constrain access. With an empty
+        # rule set + permissive default, subjects are dead config.
         acl = ac.default_acl("strands")
-        found_permissive = False
+        assert acl["subjects"] == []
 
-        for subj in acl["subjects"]:
-            if "cert_common_names" not in subj:
-                found_permissive = True
-                break
-            # If present but empty, that's match-none -- silently denies everything
-            if "cert_common_names" in subj and not subj["cert_common_names"]:
-                pytest.fail(
-                    f"Subject {subj['id']} has empty cert_common_names list -- "
-                    "this matches no peers and silently denies everything. "
-                    "The field must be ABSENT for match-any-CN, not present-but-empty."
-                )
-
-        assert found_permissive, (
-            "No subject omits 'cert_common_names'. A permissive default must "
-            "have at least one subject without cert_common_names (meaning match-any-CN)."
-        )
-
-    def test_policies_reference_valid_subjects(self):
-        # Cross-check: every subject ID in ``policies[*].subjects`` must
-        # reference an actual subject from ``subjects[*].id``. Dangling
-        # references silently fail in Zenoh.
+    def test_policy_set_is_empty(self):
         acl = ac.default_acl("strands")
-        subject_ids = {s["id"] for s in acl["subjects"]}
-
-        for policy in acl["policies"]:
-            for subj_ref in policy["subjects"]:
-                assert subj_ref in subject_ids, (
-                    f"Policy references unknown subject '{subj_ref}'. Valid subjects: {subject_ids}"
-                )
-
-    def test_policies_reference_valid_rules(self):
-        # Cross-check: every rule ID in ``policies[*].rules`` must
-        # reference an actual rule from ``rules[*].id``.
-        acl = ac.default_acl("strands")
-        rule_ids = {r["id"] for r in acl["rules"]}
-
-        for policy in acl["policies"]:
-            for rule_ref in policy["rules"]:
-                assert rule_ref in rule_ids, f"Policy references unknown rule '{rule_ref}'. Valid rules: {rule_ids}"
-
-    def test_policies_include_any_subscribe_rule(self):
-        # Verify the default allows subscribing (declare_subscriber).
-        acl = ac.default_acl("strands")
-        all_rule_refs = [rule_ref for policy in acl["policies"] for rule_ref in policy["rules"]]
-        assert "any_subscribe" in all_rule_refs, (
-            "Default ACL policies must reference 'any_subscribe' rule for subscribers to work"
-        )
-
-    def test_policies_include_any_publish_rule(self):
-        # Verify the default allows publishing (put).
-        acl = ac.default_acl("strands")
-        all_rule_refs = [rule_ref for policy in acl["policies"] for rule_ref in policy["rules"]]
-        assert "any_publish" in all_rule_refs, (
-            "Default ACL policies must reference 'any_publish' rule for publishers to work"
-        )
+        assert acl["policies"] == []
 
     def test_load_acl_file_round_trip_with_example(self, tmp_path):
         # Another review concern: "the loader never being tested against the

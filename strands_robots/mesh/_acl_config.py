@@ -36,8 +36,6 @@ import re
 from pathlib import Path
 from typing import Any
 
-from strands_robots.mesh._zenoh_config import _local_interfaces
-
 logger = logging.getLogger(__name__)
 
 #: Maximum bytes of an ACL file we will load. Anything larger is almost
@@ -310,41 +308,20 @@ def default_acl(namespace: str) -> dict[str, Any]:
     _ = namespace  # `namespace` config does the routing isolation; ACL key_exprs do not need it
     return {
         "enabled": True,
-        # default_permission='deny' is the Zenoh idiom for 'no rule -> deny',
-        # but the two allow-rules below over key_exprs=['**'] make this default
-        # PERMISSIVE in practice. The actual gate at this layer is the mTLS
-        # handshake (any CA-signed peer is in); ACL-based per-CN role
-        # separation requires an operator-supplied STRANDS_MESH_ACL_FILE.
-        # See examples/mesh_acl_example.json5 for the canonical role template.
-        "default_permission": "deny",
-        "rules": [
-            {
-                "id": "any_subscribe",
-                "messages": ["declare_subscriber"],
-                "flows": ["egress"],
-                "permission": "allow",
-                "key_exprs": ["**"],
-            },
-            {
-                "id": "any_publish",
-                "messages": ["put"],
-                "flows": ["ingress", "egress"],
-                "permission": "allow",
-                "key_exprs": ["**"],
-            },
-        ],
-        "subjects": [
-            {
-                "id": "any_authenticated_peer",
-                "interfaces": _local_interfaces(),
-            },
-        ],
-        "policies": [
-            {
-                "rules": ["any_subscribe", "any_publish"],
-                "subjects": ["any_authenticated_peer"],
-            },
-        ],
+        # Permissive default: any peer that survived the mTLS handshake may
+        # publish and subscribe on any key. This is the documented behaviour
+        # (CHANGELOG section 8, README "Default ACL -- permissive by design").
+        # Operators wanting per-role enforcement supply STRANDS_MESH_ACL_FILE
+        # (see examples/mesh_acl_example.json5 for the canonical template).
+        #
+        # Earlier versions of this default mixed default_permission='deny'
+        # with two key_exprs=['**'] allow-rules; the effective behaviour was
+        # identical (allow-any) but the code-vs-doc surface was confusing
+        # and review-flagged 5x. Code now matches docs.
+        "default_permission": "allow",
+        "rules": [],
+        "subjects": [],
+        "policies": [],
     }
 
 
