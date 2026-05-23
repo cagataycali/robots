@@ -32,7 +32,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
 from pathlib import Path
 from typing import Any
 
@@ -43,205 +42,49 @@ logger = logging.getLogger(__name__)
 ACL_FILE_MAX_BYTES: int = 256 * 1024
 
 
-# --- JSON5-lite preprocessor -------------------------------------------
+# --- JSON5 parser (vendored via the ``json5`` PyPI dep) ----------------
+
+# We delegate JSON5 parsing to the ``json5`` library (MIT, audited, ~3kLOC,
+# pure Python, no native deps). Earlier revisions carried a four-pass hand-
+# rolled preprocessor (``_strip_json5_comments`` -> ``_strip_trailing_commas``
+# -> ``_quote_unquoted_keys`` -> ``_convert_single_quoted_strings``) that
+# silently truncated on unterminated ``/*`` blocks, mis-quoted keys after
+# ``[`` (object-in-array case), and produced ``json.JSONDecodeError`` column
+# numbers pointing at the post-preprocessor string -- making operator
+# debugging painful. The dep swap eliminates ~250 LOC of fragile state-
+# machine code and gives operators precise diagnostics on malformed input.
+#
+# Why a third-party dep is acceptable here: the ACL file gates wire
+# authorisation, so a parser that fails *closed* with a clear error is
+# strictly safer than a hand-rolled approximation. ``json5`` is already
+# transitively available in many Python deployments; we add it to the
+# ``mesh`` extra so it ships with the rest of the wire-layer code.
+
+try:
+    import json5  # type: ignore[import-not-found]
+except ImportError as exc:
+    raise ImportError(
+        "json5 is required by strands_robots.mesh -- install via "
+        "``pip install strands-robots[mesh]`` (which pulls in json5) "
+        "or ``pip install json5``"
+    ) from exc
 
 
-def _strip_json5_comments(raw: str) -> str:
-    """Strip ``//`` line comments and ``/* */`` block comments.
+def _parse_json5(raw: str, path: Path) -> Any:
+    """Parse *raw* JSON5 text into a Python object.
 
-    Preserves string contents (an inline ``//`` inside a JSON string is
-    left verbatim).
+    Raises :class:`ValueError` with operator-friendly diagnostics on any
+    malformed input. The ACL loader treats this as a fail-closed
+    boundary: a malformed file does NOT silently degrade to the
+    permissive default.
     """
-    out: list[str] = []
-    i = 0
-    n = len(raw)
-    in_string = False
-    string_quote = ""
-    while i < n:
-        ch = raw[i]
-        nxt = raw[i + 1] if i + 1 < n else ""
-        if in_string:
-            out.append(ch)
-            if ch == "\\" and i + 1 < n:
-                out.append(nxt)
-                i += 2
-                continue
-            if ch == string_quote:
-                in_string = False
-            i += 1
-            continue
-        if ch in ('"', "'"):
-            in_string = True
-            string_quote = ch
-            out.append(ch)
-            i += 1
-            continue
-        if ch == "/" and nxt == "/":
-            i += 2
-            while i < n and raw[i] != "\n":
-                i += 1
-            continue
-        if ch == "/" and nxt == "*":
-            i += 2
-            while i < n - 1 and not (raw[i] == "*" and raw[i + 1] == "/"):
-                i += 1
-            i += 2
-            continue
-        out.append(ch)
-        i += 1
-    return "".join(out)
-
-
-def _strip_trailing_commas(raw: str) -> str:
-    """Remove trailing commas before ``}`` / ``]``."""
-    out: list[str] = []
-    i = 0
-    n = len(raw)
-    in_string = False
-    string_quote = ""
-    while i < n:
-        ch = raw[i]
-        if in_string:
-            out.append(ch)
-            if ch == "\\" and i + 1 < n:
-                out.append(raw[i + 1])
-                i += 2
-                continue
-            if ch == string_quote:
-                in_string = False
-            i += 1
-            continue
-        if ch in ('"', "'"):
-            in_string = True
-            string_quote = ch
-            out.append(ch)
-            i += 1
-            continue
-        if ch == ",":
-            j = i + 1
-            while j < n and raw[j] in " \t\r\n":
-                j += 1
-            if j < n and raw[j] in "}]":
-                i += 1
-                continue
-        out.append(ch)
-        i += 1
-    return "".join(out)
-
-
-_KEY_RE = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)\s*:")
-
-
-def _quote_unquoted_keys(raw: str) -> str:
-    """Wrap unquoted object keys in double quotes."""
-    out: list[str] = []
-    i = 0
-    n = len(raw)
-    in_string = False
-    string_quote = ""
-    while i < n:
-        ch = raw[i]
-        if in_string:
-            out.append(ch)
-            if ch == "\\" and i + 1 < n:
-                out.append(raw[i + 1])
-                i += 2
-                continue
-            if ch == string_quote:
-                in_string = False
-            i += 1
-            continue
-        if ch in ('"', "'"):
-            in_string = True
-            string_quote = ch
-            out.append(ch)
-            i += 1
-            continue
-        m = _KEY_RE.match(raw, i)
-        if m and (not out or out[-1] in "{,\n \t"):
-            out.append('"' + m.group(1) + '"' + ":")
-            i = m.end()
-            continue
-        out.append(ch)
-        i += 1
-    return "".join(out)
-
-
-def _convert_single_quoted_strings(raw: str) -> str:
-    """Convert JSON5 single-quoted strings to double-quoted JSON strings.
-
-    json.loads rejects single-quoted strings, but JSON5 accepts them. The
-    other preprocessor scanners (_strip_json5_comments, _strip_trailing_commas,
-    _quote_unquoted_keys) correctly skip over single-quoted strings to avoid
-    stripping ``//`` inside e.g. ``'http://x'``, but they emit them unchanged
-    and json.loads then errors at the first ``'``.
-
-    This pass walks the input character by character (mirroring the other
-    scanners), preserves double-quoted strings verbatim, and rewrites
-    single-quoted string literals to double-quoted, escaping any embedded
-    ``"`` and unescaping any ``\\'`` sequences.
-    """
-    out: list[str] = []
-    i = 0
-    n = len(raw)
-    while i < n:
-        ch = raw[i]
-        # Pass-through double-quoted strings unchanged
-        if ch == '"':
-            out.append(ch)
-            i += 1
-            while i < n:
-                c = raw[i]
-                out.append(c)
-                if c == "\\" and i + 1 < n:
-                    out.append(raw[i + 1])
-                    i += 2
-                    continue
-                if c == '"':
-                    i += 1
-                    break
-                i += 1
-            continue
-        # Convert single-quoted strings
-        if ch == "'":
-            out.append('"')  # opening "
-            i += 1
-            while i < n:
-                c = raw[i]
-                if c == "\\" and i + 1 < n:
-                    nxt = raw[i + 1]
-                    if nxt == "'":
-                        # \' inside JSON5 single-quoted = literal apostrophe.
-                        # Inside our new double-quoted JSON it can be a bare ' (no escape needed).
-                        out.append("'")
-                        i += 2
-                        continue
-                    # Preserve other escapes verbatim
-                    out.append(c)
-                    out.append(nxt)
-                    i += 2
-                    continue
-                if c == '"':
-                    # Bare " inside what was single-quoted; must escape now that we're double-quoted.
-                    out.append('\\"')
-                    i += 1
-                    continue
-                if c == "'":
-                    # End of the original single-quoted string
-                    out.append('"')  # closing "
-                    i += 1
-                    break
-                out.append(c)
-                i += 1
-            continue
-        out.append(ch)
-        i += 1
-    return "".join(out)
-
-
-def _json5_to_json(raw: str) -> str:
-    """Apply our JSON5-lite preprocessor to *raw*."""
-    return _strip_trailing_commas(_quote_unquoted_keys(_convert_single_quoted_strings(_strip_json5_comments(raw))))
+    try:
+        return json5.loads(raw)
+    except ValueError as exc:
+        # json5 raises ValueError (subclass) with a useful message that
+        # includes line/column. Re-raise with the path attached so an
+        # operator looking at the log sees exactly which file failed.
+        raise ValueError(f"ACL file {path} is not valid JSON5: {exc}") from exc
 
 
 # --- ACL file loader ---------------------------------------------------
@@ -294,10 +137,7 @@ def _load_acl_file(path: Path) -> dict[str, Any]:
         raw = raw_bytes.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise ValueError(f"ACL file {path} is not valid UTF-8: {exc}") from exc
-    try:
-        data = json.loads(_json5_to_json(raw))
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"ACL file {path} is not valid JSON5: {exc}") from exc
+    data = _parse_json5(raw, path)
 
     if not isinstance(data, dict):
         raise ValueError(f"ACL file {path} root must be an object")

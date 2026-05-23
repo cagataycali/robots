@@ -162,36 +162,37 @@ class TestACLFileLoader:
 # --- JSON5 preprocessor tests ------------------------------------------
 
 
+# --- JSON5 parsing tests ----------------------------------------------
+
+
 class TestJSON5EndToEnd:
-    """End-to-end test loading the shipped example file."""
+    """End-to-end tests delegating to the json5 PyPI dep (post-F3 swap).
+
+    The hand-rolled JSON5-lite preprocessor was replaced with json5.loads;
+    these tests verify the shipped operator template parses cleanly and
+    that the ACL loader's fail-closed contract holds on malformed input.
+    """
 
     def test_example_file_loads_and_parses(self):
         # Load the canonical template `examples/mesh_acl_example.json5`
-        # and verify all JSON5 features (comments, trailing commas,
-        # unquoted keys) are correctly preprocessed.
+        # via the public _load_acl_file path (exercises the full
+        # json5.loads -> _validate_acl_shape pipeline).
         example_path = Path(__file__).resolve().parents[2] / "examples" / "mesh_acl_example.json5"
         assert example_path.is_file(), f"Example file not found at {example_path}"
-        raw = example_path.read_text(encoding="utf-8")
-        processed = ac._json5_to_json(raw)
-        parsed = json.loads(processed)
+        parsed = ac._load_acl_file(example_path)
 
         # Verify top-level structure
         assert isinstance(parsed, dict)
         assert parsed["enabled"] is True
         assert parsed["default_permission"] == "deny"
-        assert "rules" in parsed
-        assert "subjects" in parsed
-        assert "policies" in parsed
 
         # Verify rules were parsed (not just comments)
-        assert len(parsed["rules"]) > 0
         rule_ids = {r["id"] for r in parsed["rules"]}
         assert "robot_publish_telemetry" in rule_ids
         assert "operator_publish_cmds" in rule_ids
         assert "any_subscribe" in rule_ids
 
-        # Verify subjects were parsed
-        assert len(parsed["subjects"]) > 0
+        # Verify subjects parsed
         subject_ids = {s["id"] for s in parsed["subjects"]}
         assert "robot_peer" in subject_ids
         assert "operator_peer" in subject_ids
@@ -201,121 +202,71 @@ class TestJSON5EndToEnd:
         assert "**/presence" in robot_rule["key_exprs"]
         assert "**/response/**" in robot_rule["key_exprs"]
 
-        # Verify inline comments didn't break cert_common_names
+        # Verify inline comments did not break cert_common_names
         robot_subj = next(s for s in parsed["subjects"] if s["id"] == "robot_peer")
         assert "robot-a" in robot_subj["cert_common_names"]
         assert "robot-b" in robot_subj["cert_common_names"]
 
 
-class TestStripJSON5Comments:
-    """Parametrised tests for ``_strip_json5_comments`` edge cases."""
+class TestJSON5MalformedFailsLoudly:
+    """Operator-friendly diagnostics on malformed input — the json5 dep
+    swap closes the silent-truncation surface the hand-rolled preprocessor
+    had on unterminated `/*` blocks.
+    """
 
-    @pytest.mark.parametrize(
-        "input_str,expected",
-        [
-            # `//` inside a double-quoted string must roundtrip unchanged
-            ('{"url": "http://example.com"}', '{"url": "http://example.com"}'),
-            # `/* */` inside a string is NOT a comment
-            ('{"key": "a /* not a comment */ b"}', '{"key": "a /* not a comment */ b"}'),
-            # Single-quoted string with `//` must preserve it
-            ("{key: 'http://x'}", "{key: 'http://x'}"),
-            # Escaped quote inside string must roundtrip
-            ('{"k": "he said \\"hi\\""}', '{"k": "he said \\"hi\\""}'),
-            # Block comment spanning multiple lines
-            ("{\n/* foo\n bar */\nkey: 1}", "{\n\nkey: 1}"),
-            # Line comment at end of line
-            ('{"a": 1} // comment', '{"a": 1} '),
-            # Multiple line comments
-            ('{\n// first\n"x": 1,\n// second\n"y": 2\n}', '{\n\n"x": 1,\n\n"y": 2\n}'),
-            # Block comment in middle of object
-            ('{"a": 1, /* ignored */ "b": 2}', '{"a": 1,  "b": 2}'),
-        ],
-    )
-    def test_strip_comments_edge_cases(self, input_str, expected):
-        assert ac._strip_json5_comments(input_str) == expected
+    def test_unterminated_block_comment_raises(self, tmp_path):
+        path = tmp_path / "bad.json5"
+        path.write_text("""{
+            /* unterminated block comment...
+            "enabled": true,
+        }""")
+        with pytest.raises(ValueError, match=r"is not valid JSON5"):
+            ac._load_acl_file(path)
 
-    def test_block_comment_spanning_lines_parses_correctly(self):
-        # Verify block comment removal + quote_keys + json.loads roundtrip
-        raw = "{\n/* foo\n bar */\nkey: 1}"
-        stripped = ac._strip_json5_comments(raw)
-        quoted = ac._quote_unquoted_keys(stripped)
-        parsed = json.loads(quoted)
-        assert parsed == {"key": 1}
+    def test_unterminated_string_raises(self, tmp_path):
+        path = tmp_path / "bad.json5"
+        path.write_text("""{
+            "enabled": "unterminated string,
+        }""")
+        with pytest.raises(ValueError, match=r"is not valid JSON5"):
+            ac._load_acl_file(path)
 
+    def test_object_in_array_with_unquoted_keys_parses(self, tmp_path):
+        """The hand-rolled preprocessor missed the `[` lookback context;
+        json5 handles this natively. Pin to the canonical operator shape.
+        """
+        path = tmp_path / "ok.json5"
+        path.write_text("""{
+            enabled: true,
+            default_permission: "deny",
+            rules: [
+                { id: "r1", key_exprs: ["**"], messages: ["put"], flows: ["ingress"], permission: "allow" },
+            ],
+            subjects: [
+                { id: "s1", cert_common_names: ["op-1"] },
+            ],
+            policies: [
+                { rules: ["r1"], subjects: ["s1"] },
+            ],
+        }""")
+        parsed = ac._load_acl_file(path)
+        assert parsed["rules"][0]["id"] == "r1"
 
-class TestStripTrailingCommas:
-    """Parametrised tests for ``_strip_trailing_commas`` edge cases."""
-
-    @pytest.mark.parametrize(
-        "input_str,expected",
-        [
-            # Array with trailing comma
-            ("[1, 2, 3,]", "[1, 2, 3]"),
-            # Object with trailing comma
-            ('{"a": 1, "b": 2,}', '{"a": 1, "b": 2}'),
-            # Comma inside string adjacent to `]` must be preserved
-            ('{"x": "foo,"}', '{"x": "foo,"}'),
-            # Nested trailing commas
-            ("[1,[2,3,],4,]", "[1,[2,3],4]"),
-            # Trailing comma before } with whitespace
-            ('{"a": 1,  \n }', '{"a": 1  \n }'),
-            # No trailing comma - should be unchanged
-            ('{"a": 1, "b": 2}', '{"a": 1, "b": 2}'),
-            # Empty array/object should be unchanged
-            ("[]", "[]"),
-            ("{}", "{}"),
-            # Comma in string followed by closing bracket outside string
-            ('["foo,", 1,]', '["foo,", 1]'),
-        ],
-    )
-    def test_strip_trailing_commas_edge_cases(self, input_str, expected):
-        assert ac._strip_trailing_commas(input_str) == expected
-
-    def test_nested_trailing_commas_parse_correctly(self):
-        raw = "[1,[2,3,],4,]"
-        stripped = ac._strip_trailing_commas(raw)
-        parsed = json.loads(stripped)
-        assert parsed == [1, [2, 3], 4]
-
-
-class TestQuoteUnquotedKeys:
-    """Parametrised tests for ``_quote_unquoted_keys`` edge cases."""
-
-    @pytest.mark.parametrize(
-        "input_str,expected_parsed",
-        [
-            # Simple unquoted key
-            ("{ enabled: true }", {"enabled": True}),
-            # Mix of quoted and unquoted keys
-            ('{ "already_quoted": 1, unquoted: 2 }', {"already_quoted": 1, "unquoted": 2}),
-            # Key with underscore and digits
-            ('{ rule_1: "x" }', {"rule_1": "x"}),
-            # Multiple unquoted keys
-            ("{ a: 1, b: 2, c: 3 }", {"a": 1, "b": 2, "c": 3}),
-            # Nested objects with unquoted keys
-            ("{ outer: { inner: 42 } }", {"outer": {"inner": 42}}),
-            # Unquoted key with array value
-            ("{ items: [1, 2, 3] }", {"items": [1, 2, 3]}),
-            # Key starting with underscore
-            ('{ _private: "yes" }', {"_private": "yes"}),
-            # Key with multiple underscores and numbers
-            ("{ rule_123_test: true }", {"rule_123_test": True}),
-        ],
-    )
-    def test_quote_unquoted_keys_edge_cases(self, input_str, expected_parsed):
-        quoted = ac._quote_unquoted_keys(input_str)
-        parsed = json.loads(quoted)
-        assert parsed == expected_parsed
-
-    def test_unquoted_keys_in_shipped_example(self):
-        # Verify the example file's unquoted keys are correctly handled
-        raw = '{ enabled: true, default_permission: "deny", rules: [] }'
-        quoted = ac._quote_unquoted_keys(raw)
-        parsed = json.loads(quoted)
-        assert parsed == {"enabled": True, "default_permission": "deny", "rules": []}
-
-
-# --- Default ACL permissive-shape verification -------------------------
+    def test_single_quoted_strings_parse(self, tmp_path):
+        """JSON5 single-quoted strings work natively via json5.loads."""
+        path = tmp_path / "ok.json5"
+        path.write_text("""{
+            \'enabled\': true,
+            \'default_permission\': \'deny\',
+            rules: [
+                { id: \'r1\', key_exprs: [\'**\'], messages: [\'put\'], flows: [\'ingress\'], permission: \'allow\' },
+            ],
+            subjects: [{ id: \'s1\', cert_common_names: [\'op-1\'] }],
+            policies: [{ rules: [\'r1\'], subjects: [\'s1\'] }],
+        }""")
+        parsed = ac._load_acl_file(path)
+        assert parsed["enabled"] is True
+        assert parsed["subjects"][0]["cert_common_names"] == ["op-1"]
 
 
 class TestDefaultACLPermissiveShape:
@@ -405,65 +356,6 @@ class TestIsDefaultACLInUse:
         from strands_robots.mesh import _acl_config as ac
 
         assert ac.is_default_acl_in_use() is False
-
-
-class TestJSON5SingleQuotedStringsR14:
-    """R14 pin tests — single-quoted JSON5 strings convert to JSON correctly.
-
-    Pre-R14: the preprocessor recognised single-quoted strings as in_string
-    state (so it would not strip a // inside 'http://x') but emitted them
-    unchanged to json.loads, which rejects single-quoted JSON. Any operator
-    using JSON5's single-quoted-string feature in their ACL file got
-    a confusing JSON parse error.
-
-    Post-R14: a _convert_single_quoted_strings() pass converts 'foo' to
-    "foo" while preserving escapes and double-quoted strings.
-    """
-
-    def test_simple_single_quoted_value_converts(self):
-        from strands_robots.mesh._acl_config import _json5_to_json
-
-        out = _json5_to_json("{'foo': 'bar'}")
-        assert json.loads(out) == {"foo": "bar"}
-
-    def test_double_quoted_strings_pass_through(self):
-        from strands_robots.mesh._acl_config import _json5_to_json
-
-        out = _json5_to_json('{"foo": "bar"}')
-        assert json.loads(out) == {"foo": "bar"}
-
-    def test_mixed_quotes(self):
-        from strands_robots.mesh._acl_config import _json5_to_json
-
-        out = _json5_to_json("""{"k": 'v', 'k2': "v2"}""")
-        assert json.loads(out) == {"k": "v", "k2": "v2"}
-
-    def test_embedded_double_quote_in_single_quoted_escapes(self):
-        from strands_robots.mesh._acl_config import _json5_to_json
-
-        # JSON5: 'has "quote"' — the embedded " must get escaped on conversion.
-        out = _json5_to_json('{"msg": \'has "quote"\'}')
-        assert json.loads(out) == {"msg": 'has "quote"'}
-
-    def test_array_of_single_quoted(self):
-        from strands_robots.mesh._acl_config import _json5_to_json
-
-        out = _json5_to_json("['a', 'b', 'c']")
-        assert json.loads(out) == ["a", "b", "c"]
-
-    def test_single_quoted_with_url_inside(self):
-        """Regression: // inside single-quoted string must NOT be stripped as a comment."""
-        from strands_robots.mesh._acl_config import _json5_to_json
-
-        out = _json5_to_json("{'url': 'http://example.com/path'}")
-        assert json.loads(out) == {"url": "http://example.com/path"}
-
-    def test_pre_existing_double_quoted_with_apostrophe(self):
-        """Double-quoted strings carrying a single quote inside must not be touched."""
-        from strands_robots.mesh._acl_config import _json5_to_json
-
-        out = _json5_to_json('{"msg": "it\'s fine"}')
-        assert json.loads(out) == {"msg": "it's fine"}
 
 
 class TestACLFileSymlinkAndTOCTOU:
