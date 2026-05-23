@@ -841,7 +841,9 @@ def log_safety_event(event_type: str, peer_id: str, payload: dict[str, Any]) -> 
             type(sign_exc).__name__,
             sign_exc,
         )
-        sig = None
+        # ``sig`` was already initialised to None at the top of this block;
+        # leaving it as-is and skipping the ``record["sig"] = sig`` assignment
+        # below produces the unsigned record we want here.
     else:
         if sig is not None:
             record["sig"] = sig

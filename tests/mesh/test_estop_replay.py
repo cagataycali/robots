@@ -11,6 +11,7 @@ import threading
 import time
 from types import SimpleNamespace
 
+from strands_robots.mesh import audit as audit_mod
 from strands_robots.mesh import core
 
 
@@ -65,3 +66,50 @@ def test_distinct_issuers_same_t_audited_as_corroborated():
     )
     assert audit_calls[0]["severity"] == "info"
     assert audit_calls[0]["payload"]["issuer"] == "operator-B"
+
+
+class TestEstopRedundantAudit:
+    """When a second-operator estop arrives while lockout is already
+    engaged, an audit event must be emitted (forensic preservation).
+    """
+
+    def test_redundant_estop_emits_audit_event(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
+        # Reset audit state for isolated test
+        audit_mod._AUDIT_STATE.psk_fingerprint = None
+        audit_mod._AUDIT_STATE.seq_loaded = False
+        audit_mod._SEQ_COUNTERS.clear()
+
+        class StubRobot:
+            pass
+
+        m = core.Mesh(robot=StubRobot(), peer_id="robot-r")
+        # publish_safety_event is gated on self._running; flip it on
+        # without calling start() (which does network I/O). Stub publish()
+        # since we only care about the audit-log side-effect.
+        m._running = True
+        m.publish = lambda key, data: None
+        # First estop engages
+        e1 = {"peer_id": "op-1", "t": time.time(), "type": "estop"}
+
+        class S:
+            def __init__(self, e):
+                self.payload = type("P", (), {"to_bytes": lambda self: json.dumps(e).encode()})()
+
+        m._on_safety_estop(S(e1))
+        assert m._estop_lockout.is_set()
+
+        # Second-operator estop, fresh `t`, lockout already engaged
+        e2 = {"peer_id": "op-2", "t": time.time() + 0.5, "type": "estop"}
+        m._on_safety_estop(S(e2))
+
+        # Walk the audit log
+        records = audit_mod.read_audit_log()
+        events = [r["event"] for r in records]
+        assert "remote_estop_engaged" in events, f"first engagement missing: {events}"
+        assert "remote_estop_redundant" in events, f"second-operator audit missing: {events}"
+
+
+# ---------------------------------------------------------------------
+# F3-C-1: _PSK_STATE_LOCK exists and protects fingerprint snapshot
+# ---------------------------------------------------------------------

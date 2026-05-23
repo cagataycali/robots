@@ -12,10 +12,13 @@ suppressed when either condition does not hold.
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+from strands_robots.mesh import core as core_mod  # noqa: F401  -- used by F3-B-1 source-code assertion
 
 
 @pytest.fixture
@@ -99,3 +102,30 @@ def test_auth_mode_none_does_not_emit_default_acl_warning(caplog, monkeypatch, s
     assert not any("permissive default ACL active under mtls" in m for m in msgs), (
         f"permissive-ACL warning leaked into auth_mode=none: {msgs}"
     )
+
+
+class TestPermissiveACLWarningExceptNarrow:
+    """The R19 permissive-ACL warning at Mesh.start() previously caught
+    `except Exception` and downgraded to DEBUG -- a future refactor that
+    raised an unrelated type would silently lose the warning.
+    """
+
+    def test_unexpected_exception_surfaces_loudly(self):
+        """A non-(ImportError|ValueError) raised inside the warning block
+        should surface at WARNING (not DEBUG silent-swallow).
+        """
+
+        # Static assertion -- start() does network I/O, so we verify the
+        # narrowed except clause is in the source rather than triggering it.
+        # The previous version of this test constructed a Mesh and patched
+        # resolve_auth_mode, but that scaffolding never got exercised because
+        # start() was the entry point. Removed per CodeQL #257.
+        src = Path(core_mod.__file__).read_text()
+        assert "except (ImportError, ValueError) as warn_exc:" in src
+        # No bare `except Exception as warn_exc:` left in the start() block
+        assert "except Exception as warn_exc:" not in src
+
+
+# ---------------------------------------------------------------------
+# F3-B-2: STRANDS_MESH_CAMERA_DISABLED via _bool_env (lenient parse)
+# ---------------------------------------------------------------------

@@ -15,6 +15,7 @@ The fix in core.py adds:
 
 import hmac
 import json
+import logging
 import time
 import uuid
 from unittest.mock import MagicMock
@@ -241,3 +242,40 @@ def test_replay_emits_audit_event(monkeypatch):
     replay_payload = replay_calls[0][1]["payload"]
     assert replay_payload["issuer"] == "op-attacker"
     assert "proof_nonce_prefix" in replay_payload
+
+
+class TestResumeStrictPeerId:
+    """The estop handler (R20) rejects envelopes with empty/missing
+    peer_id outright. Resume must mirror that posture.
+    """
+
+    def test_resume_with_empty_peer_id_rejected(self, caplog):
+        class StubRobot:
+            pass
+
+        m = Mesh(robot=StubRobot(), peer_id="robot-test")
+        m._estop_lockout.set()  # lockout is engaged so resume would normally clear it
+
+        # Forge a resume envelope that's otherwise well-formed but has empty peer_id
+        envelope = {
+            "peer_id": "",
+            "t": time.time(),
+            "proof_nonce": "n" * 32,
+            "override_proof": "x" * 64,
+        }
+
+        class FakeSample:
+            payload = type("P", (), {"to_bytes": lambda self: json.dumps(envelope).encode()})()
+
+        with caplog.at_level(logging.WARNING, logger="strands_robots.mesh.core"):
+            m._on_safety_resume(FakeSample())
+
+        # Lockout MUST still be engaged (resume rejected)
+        assert m._estop_lockout.is_set(), "resume with empty peer_id should NOT clear lockout"
+        # Cache should NOT have a polluting entry
+        assert len(m._resume_replay_cache) == 0, "no cache entry should be created for invalid peer_id"
+
+
+# ---------------------------------------------------------------------
+# F3-B-4: remote_estop_redundant audit on second-operator estop
+# ---------------------------------------------------------------------

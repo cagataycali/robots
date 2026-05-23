@@ -130,3 +130,25 @@ class TestEnsureCA:
             with pytest.raises(RuntimeError, match="exceeded"):
                 provision._ensure_ca(ca_path)
         assert not ca_path.exists()
+
+
+class TestVerifyCaPinSymlink:
+    """The public verify_ca_pin must not follow symlinks (asymmetric
+    with _ensure_ca's R22-D defence was the actual gap).
+    """
+
+    def test_symlinked_ca_path_returns_false(self, tmp_path):
+        from strands_robots.mesh.iot.provision import verify_ca_pin
+
+        target = tmp_path / "real_ca.pem"
+        target.write_bytes(b"-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----\n")
+        symlink = tmp_path / "ca_link.pem"
+        symlink.symlink_to(target)
+
+        # verify_ca_pin must refuse to read through the symlink
+        assert verify_ca_pin(symlink) is False
+
+
+# ---------------------------------------------------------------------
+# F3-D-2: STRANDS_MESH_POLICY_HOST_ALLOW operator validation
+# ---------------------------------------------------------------------

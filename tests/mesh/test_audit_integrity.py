@@ -14,6 +14,8 @@ These tests cover the on-disk forensic guarantees of
 from __future__ import annotations
 
 import json
+import logging
+import threading
 from pathlib import Path
 
 import pytest
@@ -511,3 +513,92 @@ def test_cursor_does_not_roll_backward_on_forged_low_seq(monkeypatch, tmp_path):
         f"cursor rolled back to forged seq -- gap reports prev={legit_gap[0]} "
         f"instead of expected prev=2 (highest legit seq before the forgery)"
     )
+
+
+class TestPSKStateLock:
+    """The PSK fingerprint snapshot is read-modify-compared on every
+    log_safety_event call. The dedicated lock makes that atomic.
+    """
+
+    def test_lock_module_attr_exists(self):
+        assert hasattr(audit, "_PSK_STATE_LOCK")
+        assert isinstance(audit._PSK_STATE_LOCK, type(threading.Lock()))
+
+    def test_concurrent_writers_first_record_no_race(self, tmp_path, monkeypatch):
+        """Spawn 16 threads that each call log_safety_event on a fresh
+        process state. The PSK fingerprint must end up consistent and
+        no thread should observe a partial mid-write view.
+        """
+        monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
+        monkeypatch.setenv("STRANDS_MESH_AUDIT_PSK", "test-psk-concurrent")
+        # Reset state
+        audit._AUDIT_STATE.psk_fingerprint = None
+        audit._AUDIT_STATE.seq_loaded = False
+        audit._SEQ_COUNTERS.clear()
+
+        errors: list[Exception] = []
+
+        def writer(i: int):
+            try:
+                audit.log_safety_event("test", f"peer-{i}", {"i": i})
+            except Exception as e:
+                errors.append(e)
+
+        threads = [threading.Thread(target=writer, args=(i,)) for i in range(16)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert errors == [], f"concurrent writers raised: {errors}"
+        # All records should have been signed under the same fingerprint
+        records = audit.read_audit_log()
+        sigs = [r.get("sig") for r in records]
+        # Every record (16) must have a real HMAC, not a poison marker
+        assert len(sigs) == 16
+        assert all(s and s != "PSK_DEGRADED" and len(s) == 64 for s in sigs), (
+            f"some records were poisoned/unsigned under concurrency: {sigs}"
+        )
+
+
+# ---------------------------------------------------------------------
+# F3-C-2: log_safety_event widened fail-soft contract
+# ---------------------------------------------------------------------
+
+
+class TestAuditFailSoft:
+    """The fail-soft contract (audit must never crash safety path)
+    previously caught only AuditPSKDegradedError. F3 widens it.
+    """
+
+    def test_sign_record_runtime_error_does_not_crash(self, tmp_path, monkeypatch, caplog):
+        monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
+        audit._AUDIT_STATE.psk_fingerprint = None
+        audit._AUDIT_STATE.seq_loaded = False
+        audit._SEQ_COUNTERS.clear()
+
+        # Patch _sign_record to raise an unexpected RuntimeError
+
+        def boom(record):
+            raise RuntimeError("synthetic failure inside _sign_record")
+
+        monkeypatch.setattr(audit, "_sign_record", boom)
+
+        with caplog.at_level(logging.ERROR, logger="strands_robots.mesh.audit"):
+            # Must NOT raise -- safety-path contract
+            audit.log_safety_event("test", "peer-1", {"data": "ok"})
+
+        # The record was still written (unsigned)
+        records = audit.read_audit_log()
+        assert len(records) == 1
+        assert "sig" not in records[0]  # unsigned per the widened fail-soft path
+
+        # And we logged the failure at ERROR
+        assert any("_sign_record raised" in m for m in caplog.messages), (
+            f"expected ERROR log about _sign_record failure; got {caplog.messages}"
+        )
+
+
+# ---------------------------------------------------------------------
+# F3-D-1: verify_ca_pin O_NOFOLLOW symlink defence
+# ---------------------------------------------------------------------

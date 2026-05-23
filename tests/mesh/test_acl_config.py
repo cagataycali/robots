@@ -412,3 +412,38 @@ class TestACLFileSymlinkAndTOCTOU:
             assert "bytes" in str(exc) or "refusing" in str(exc).lower(), exc
         else:
             raise AssertionError("loader accepted oversized ACL file -- size cap not enforced")
+
+
+class TestJSON5DepSwap:
+    """The hand-rolled preprocessor was replaced with json5.loads. These
+    pins ensure the new parser surfaces operator-friendly diagnostics on
+    malformed input rather than silently truncating (the old behaviour).
+    """
+
+    def test_unterminated_block_comment_raises_clear_error(self, tmp_path):
+        path = tmp_path / "acl.json5"
+        path.write_text("{\n  /* unterminated block ...\n  enabled: true,\n}\n")
+        with pytest.raises(ValueError, match=r"is not valid JSON5"):
+            ac._load_acl_file(path)
+
+    def test_no_legacy_preprocessor_symbols_exist(self):
+        """The four hand-rolled preprocessor functions must be gone --
+        catches a future revert that re-introduces the fragile parser.
+        """
+        for name in (
+            "_strip_json5_comments",
+            "_strip_trailing_commas",
+            "_quote_unquoted_keys",
+            "_convert_single_quoted_strings",
+            "_json5_to_json",
+        ):
+            assert not hasattr(ac, name), f"{name} should have been removed in F3-A"
+
+    def test_json5_pep_dependency_imported(self):
+        """json5 must be importable from _acl_config (mesh extra)."""
+        assert ac.json5 is not None
+
+
+# ---------------------------------------------------------------------
+# F3-B-1: bare except on permissive-ACL warning narrowed
+# ---------------------------------------------------------------------
