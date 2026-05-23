@@ -220,7 +220,10 @@ def validate_inputs(
     if protocol not in valid_protocols:
         raise ValueError(f"Unknown protocol {protocol!r}. Valid: {list(valid_protocols)}")
     # Port range — always validated. Type-check first so callers get ValueError, not TypeError.
-    if not isinstance(port, int):
+    # Reject bool explicitly: isinstance(True, int) is True in Python (bool subclasses int),
+    # and 1 <= True <= 65535 evaluates True. Without this guard, port=True reaches
+    # --port argv as the string "True" — a subtle failure mode an LLM caller could trip on.
+    if isinstance(port, bool) or not isinstance(port, int):
         raise ValueError(f"port must be an integer, got {type(port).__name__}: {port!r}")
     if not (1 <= port <= 65535):
         raise ValueError(f"port must be between 1 and 65535, got {port}")
@@ -258,7 +261,11 @@ def validate_inputs(
         for _seg in hf_repo.split("/"):
             if _seg.startswith("-"):
                 raise ValueError(f"hf_repo must be a valid HuggingFace repo id (org/name), got {hf_repo!r}")
-            if _seg in (".", ".."):
+            # Reject any segment that starts with '.' — catches '.', '..', '.org', 'org/.git',
+            # '...../x', etc. HuggingFace's API rejects leading-dot segments; the validator's
+            # job is to fail closed locally rather than rely on a downstream service
+            # (per AGENTS.md > LLM Input Safety). Pinned by TestHfRepoSegmentRejection.
+            if _seg.startswith("."):
                 raise ValueError(f"hf_repo must be a valid HuggingFace repo id (org/name), got {hf_repo!r}")
     if hf_subfolder is not None:
         _validate_path(hf_subfolder, "hf_subfolder")

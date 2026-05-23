@@ -89,6 +89,18 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
   instead of silently reporting success.
 - All-numeric hostname guard narrowed to multi-label patterns only — single-label
   numerics (e.g. ``123``) are valid per RFC-1123.
+- ``port`` validator rejects ``bool`` explicitly. ``isinstance(True, int) is True``
+  in Python (bool subclasses int) and ``1 <= True <= 65535`` evaluates ``True`` --
+  pre-fix, ``port=True`` passed validation and reached ``--port`` argv as the
+  string ``"True"`` (R6 review thread, ``gr00t_inference.py:223``). Pinned by
+  ``TestPortBoolRejected``.
+- ``hf_repo`` segment validation rejects any segment starting with ``.``
+  (catches ``.org/name``, ``org/.git``, ``...../name``, ``org/.name``). The
+  base regex ``[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+`` plus the existing segment
+  loop only rejected bare ``.`` / ``..`` segments and leading ``-`` -- the
+  validator now fails closed locally rather than relying on HuggingFace's
+  API to reject (R6 review thread, ``gr00t_inference.py:253``). Pinned by
+  ``TestHfRepoLeadingDotSegments``.
 
 ### Notes
 

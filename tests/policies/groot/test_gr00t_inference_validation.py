@@ -2235,3 +2235,136 @@ class TestInferenceServerBindsAllInterfaces:
             "(inside-container --host is hardcoded to 0.0.0.0). "
             f"Found host in signature: {sig.parameters}"
         )
+
+
+class TestPortBoolRejected:
+    """Pin: port=True / port=False is rejected by the type-check.
+
+    Regression: ``isinstance(True, int) is True`` in Python (bool subclasses int)
+    and the range check ``1 <= True <= 65535`` evaluates True (True == 1).
+    Pre-fix, ``port=True`` passed validation and reached ``--port`` argv as the
+    string ``"True"`` -- a subtle failure mode an LLM caller could trip on.
+
+    Pinned per the R5 review thread on ``gr00t_inference.py:223``.
+    """
+
+    _COMMON_KWARGS = dict(
+        data_config="fourier_gr1_arms_only",
+        embodiment_tag="gr1",
+        host="127.0.0.1",
+        vit_dtype="fp8",
+        llm_dtype="nvfp4",
+        dit_dtype="fp8",
+        checkpoint_path=None,
+        trt_engine_path="gr00t_engine",
+        container_name=None,
+        protocol="n1.5",
+    )
+
+    def test_port_true_rejected(self):
+        """port=True must be rejected (bool is not a valid port type)."""
+        from strands_robots.tools.gr00t_inference import validate_inputs
+
+        with pytest.raises(ValueError, match=r"port must be an integer.*bool"):
+            validate_inputs(action="start", port=True, **self._COMMON_KWARGS)
+
+    def test_port_false_rejected(self):
+        """port=False must be rejected (bool is not a valid port type, even though False==0)."""
+        from strands_robots.tools.gr00t_inference import validate_inputs
+
+        with pytest.raises(ValueError, match=r"port must be an integer.*bool"):
+            validate_inputs(action="start", port=False, **self._COMMON_KWARGS)
+
+    def test_port_int_still_accepted(self):
+        """Inverse pin: a real int port still passes after the bool guard."""
+        from strands_robots.tools.gr00t_inference import validate_inputs
+
+        # Should not raise
+        validate_inputs(action="start", port=5555, **self._COMMON_KWARGS)
+
+
+class TestHfRepoLeadingDotSegments:
+    """Pin: hf_repo segments starting with '.' are rejected.
+
+    Regression: R5 closed bare ``.`` / ``..`` segments and leading-``-``, but
+    the regex ``^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$`` plus the segment loop
+    still accepted ``.org/name``, ``org/.git``, ``...../name``, etc.
+    HuggingFace's API rejects these so practical exploit surface is narrow,
+    but the validator's job per AGENTS.md > LLM Input Safety is to fail
+    closed locally rather than rely on a downstream service.
+
+    Pinned per the R5 review thread on ``gr00t_inference.py:253``.
+    """
+
+    _COMMON_KWARGS = dict(
+        data_config="fourier_gr1_arms_only",
+        embodiment_tag="gr1",
+        port=5555,
+        host="127.0.0.1",
+        vit_dtype="fp8",
+        llm_dtype="nvfp4",
+        dit_dtype="fp8",
+        checkpoint_path=None,
+        trt_engine_path="gr00t_engine",
+        container_name=None,
+        protocol="n1.5",
+    )
+
+    def test_leading_dot_first_segment_rejected(self):
+        """hf_repo='.org/name' is regex-valid but segment-rejected."""
+        from strands_robots.tools.gr00t_inference import validate_inputs
+
+        with pytest.raises(ValueError, match=r"hf_repo.*org/name"):
+            validate_inputs(
+                action="download_checkpoint",
+                hf_repo=".org/name",
+                **self._COMMON_KWARGS,
+            )
+
+    def test_leading_dot_second_segment_rejected(self):
+        """hf_repo='org/.git' (hidden-style name) must be rejected."""
+        from strands_robots.tools.gr00t_inference import validate_inputs
+
+        with pytest.raises(ValueError, match=r"hf_repo.*org/name"):
+            validate_inputs(
+                action="download_checkpoint",
+                hf_repo="org/.git",
+                **self._COMMON_KWARGS,
+            )
+
+    def test_multi_dot_prefix_rejected(self):
+        """hf_repo='...../name' is regex-valid (chars in class) but rejected."""
+        from strands_robots.tools.gr00t_inference import validate_inputs
+
+        with pytest.raises(ValueError, match=r"hf_repo.*org/name"):
+            validate_inputs(
+                action="download_checkpoint",
+                hf_repo="...../name",
+                **self._COMMON_KWARGS,
+            )
+
+    def test_leading_dot_hidden_name_rejected(self):
+        """hf_repo='org/.name' (hidden file convention) must be rejected."""
+        from strands_robots.tools.gr00t_inference import validate_inputs
+
+        with pytest.raises(ValueError, match=r"hf_repo.*org/name"):
+            validate_inputs(
+                action="download_checkpoint",
+                hf_repo="org/.name",
+                **self._COMMON_KWARGS,
+            )
+
+    def test_legitimate_dotted_repos_still_accepted(self):
+        """Inverse pin: internal dots in segments are still accepted."""
+        from strands_robots.tools.gr00t_inference import validate_inputs
+
+        for valid in (
+            "nvidia/GR00T-N1.7-LIBERO",  # internal dot in name segment
+            "a-b/c.d",  # internal dot allowed
+            "org_x/repo.name-v2",  # multiple internal dots
+        ):
+            validate_inputs(
+                action="download_checkpoint",
+                hf_repo=valid,
+                **self._COMMON_KWARGS,
+            )
