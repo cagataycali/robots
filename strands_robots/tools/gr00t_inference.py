@@ -1508,13 +1508,13 @@ def _start_container(
     container_command: str,
     hf_local_dir: str | None,
     force: bool,
-    host: str = "127.0.0.1",
+    host: str,
 ) -> dict[str, Any]:
     """``docker run -d`` the GR00T container so subsequent ``start`` actions can
     ``docker exec`` into it.
 
     The ``host`` kwarg controls the docker host-side port binding via
-    ``-p {host}:{port}:{port}``. Default ``127.0.0.1`` keeps the published
+    ``-p {host}:{port}:{port}``. Required. ``127.0.0.1`` keeps the published
     port on loopback only; pass ``host="0.0.0.0"`` to expose to the network.
 
     Idempotent: when a container with ``container_name`` is already

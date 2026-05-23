@@ -2368,3 +2368,59 @@ class TestHfRepoLeadingDotSegments:
                 hf_repo=valid,
                 **self._COMMON_KWARGS,
             )
+
+
+class TestStartContainerHostNoDefault:
+    """Pin: _start_container requires host without default.
+
+    Regression: R5 identified two sources of truth for the loopback default.
+    gr00t_inference() resolves host=None -> "127.0.0.1", AND _start_container
+    declares host: str = "127.0.0.1" independently. If gr00t_inference() ever
+    passes host=None through, _start_container's default masks the bug.
+
+    Fix: change _start_container signature to require host: str (drop default)
+    so gr00t_inference() is the single source of truth. Pinned per the R6
+    review threads on gr00t_inference.py:1511 and :629.
+    """
+
+    def test_start_container_host_has_no_default(self):
+        """_start_container signature must require host without default."""
+        import inspect
+
+        from strands_robots.tools.gr00t_inference import _start_container
+
+        sig = inspect.signature(_start_container)
+        host_param = sig.parameters.get("host")
+
+        assert host_param is not None, "_start_container signature missing host parameter"
+        assert host_param.default is inspect.Parameter.empty, (
+            f"_start_container host parameter has default {host_param.default!r}. "
+            f"Expected no default (gr00t_inference() is the single source of truth)."
+        )
+
+    def test_gr00t_inference_resolves_host_none_to_loopback(self):
+        """Inverse pin: gr00t_inference(host=None) still resolves to 127.0.0.1."""
+        from unittest.mock import patch
+
+        from strands_robots.tools.gr00t_inference import gr00t_inference
+
+        with patch("strands_robots.tools.gr00t_inference._start_container") as mock_start:
+            mock_start.return_value = {
+                "status": "success",
+                "container_name": "gr00t",
+                "message": "mocked",
+            }
+
+            # Call with host=None (user did not specify)
+            gr00t_inference(
+                action="start_container",
+                image_name="mock:latest",
+            )
+
+            # Verify _start_container was called with host="127.0.0.1"
+            assert mock_start.called, "_start_container not called"
+            call_kwargs = mock_start.call_args.kwargs
+            assert call_kwargs.get("host") == "127.0.0.1", (
+                f"Expected gr00t_inference to resolve host=None to '127.0.0.1', "
+                f"got {call_kwargs.get('host')!r}"
+            )
