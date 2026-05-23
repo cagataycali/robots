@@ -245,6 +245,22 @@ def validate_inputs(
                 f"or a valid hostname like 'localhost'."
             ) from None
 
+    # HuggingFace parameters & lifecycle phase — action-independent format/path
+    # validation. Validated BEFORE action-specific early-returns so that
+    # download_checkpoint (which consumes hf_repo/hf_subfolder/hf_local_dir)
+    # cannot bypass the path-traversal check.
+    if hf_repo is not None:
+        if not re.match(r"^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$", hf_repo):
+            raise ValueError(f"hf_repo must be a valid HuggingFace repo id (org/name), got {hf_repo!r}")
+    if hf_subfolder is not None:
+        _validate_path(hf_subfolder, "hf_subfolder")
+    if hf_local_dir is not None:
+        _validate_path(hf_local_dir, "hf_local_dir")
+    if lifecycle is not None:
+        valid_phases = ("full", "teardown")
+        if lifecycle not in valid_phases:
+            raise ValueError(f"lifecycle must be one of {valid_phases}, got {lifecycle!r}")
+
     # Port-only actions (find_containers, list, status, stop) only need
     # port/host/protocol validation — the other params are unused by dispatch.
     _port_only_actions = ("find_containers", "list", "status", "stop")
@@ -326,22 +342,6 @@ def validate_inputs(
     ]:
         if param_value is not None and param_value.startswith("-"):
             raise ValueError(f"{param_name} must not start with '-' (got {param_value!r})")
-
-    # HuggingFace parameters - validate paths to prevent traversal via lifecycle/download
-    # These flow into filesystem paths and docker --model-path argv.
-    if hf_repo is not None:
-        if not re.match(r"^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$", hf_repo):
-            raise ValueError(f"hf_repo must be a valid HuggingFace repo id (org/name), got {hf_repo!r}")
-    if hf_subfolder is not None:
-        _validate_path(hf_subfolder, "hf_subfolder")
-    if hf_local_dir is not None:
-        _validate_path(hf_local_dir, "hf_local_dir")
-
-    # Lifecycle phase validation (centralised here per single-entry-point contract)
-    if lifecycle is not None:
-        valid_phases = ("full", "teardown")
-        if lifecycle not in valid_phases:
-            raise ValueError(f"lifecycle must be one of {valid_phases}, got {lifecycle!r}")
 
 
 @tool
@@ -495,13 +495,14 @@ def gr00t_inference(
             ``libero_sim``).
         denoising_steps: Number of denoising steps for action generation (default: 4).
             N1.5/N1.6 only - the N1.7 server reads this from the checkpoint.
-        host: Network bind address (default: ``127.0.0.1``, loopback only).
-            For ``start_container`` / ``lifecycle``: controls the docker
-            host-side bind via ``-p {host}:{port}:{port}``. Pass
-            ``host="0.0.0.0"`` to expose the published port on all interfaces.
-            For ``start`` / ``restart`` on a running container: forwarded as
-            the inference server's ``--host`` flag (does not change the
-            already-set docker port mapping).
+        host: Docker host-side bind address used in ``-p {host}:{port}:{port}``
+            on ``start_container`` / ``lifecycle`` (default: ``127.0.0.1``,
+            loopback only). Pass ``host="0.0.0.0"`` to expose the published
+            port on all host interfaces. The inference server inside the
+            container always binds ``0.0.0.0`` (required by docker port
+            forwarding); this kwarg has no effect on ``start`` / ``restart``
+            against an already-running container, where the host-side bind
+            was fixed when the container was originally launched.
         container_name: Specific Docker container name. Auto-detected if omitted.
         timeout: Seconds to wait for service startup (default: 60).
         use_tensorrt: Enable TensorRT acceleration (default: False).
@@ -1049,7 +1050,6 @@ def _build_inference_command(
     container_name: str,
     checkpoint_path: str,
     port: int,
-    host: str,
     data_config: str,
     embodiment_tag: str,
     denoising_steps: int,
@@ -1100,7 +1100,7 @@ def _build_inference_command(
             "--port",
             str(port),
             "--host",
-            host,
+            "0.0.0.0",  # always bind all-interfaces inside container; docker -p isolates host
             "--embodiment-tag",
             embodiment_tag,
         ]
@@ -1120,7 +1120,7 @@ def _build_inference_command(
             "--port",
             str(port),
             "--host",
-            host,
+            "0.0.0.0",  # always bind all-interfaces inside container; docker -p isolates host
             "--data-config",
             data_config,
             "--embodiment-tag",
@@ -1197,7 +1197,6 @@ def _start_service(
             container_name=container_name,
             checkpoint_path=checkpoint_path,
             port=port,
-            host=host,
             data_config=data_config,
             embodiment_tag=embodiment_tag,
             denoising_steps=denoising_steps,

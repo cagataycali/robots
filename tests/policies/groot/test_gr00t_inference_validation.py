@@ -1061,108 +1061,65 @@ class TestHostBindingHonoursUserChoice:
         )
 
     def test_start_service_does_not_flip_default_loopback(self, monkeypatch):
-        """R1 pin: _start_service must NOT rewrite host=127.0.0.1 to 0.0.0.0.
+        """R1+R4 pin: _start_service must NOT auto-flip user's host kwarg.
 
-        Pre-R1 this test would have failed because the loopback default got
-        silently flipped to all-interfaces. Post-R1 the host stays loopback.
+        Pre-R1 _start_service rewrote host=127.0.0.1 to 0.0.0.0 when
+        host_was_explicit=False. Post-R1 the rewrite is gone; post-R4
+        host is no longer passed into _build_inference_command at all
+        (the inside-container --host is hardcoded to 0.0.0.0). Either
+        way, the user's host kwarg must reach _start_service unchanged.
         """
+        import inspect
+
         from strands_robots.tools.gr00t_inference import _start_service
 
-        # Capture the exact docker argv that _build_inference_command would see.
-        captured = {}
+        # Static check: _start_service still takes host kwarg (controls docker -p
+        # via _start_container, not the inside-container --host which is now hardcoded).
+        sig = inspect.signature(_start_service)
+        assert "host" in sig.parameters, "_start_service must keep host kwarg for the docker -p host-side bind"
 
-        def fake_find(*args, **kwargs):
-            return {
-                "status": "success",
-                "containers": [{"name": "gr00t-test", "status": "Up 2 hours"}],
-            }
+        # Behavioural check: invoking with host=127.0.0.1 must not raise (no
+        # auto-flip side-effects), and the inference cmd argv inside the
+        # container must bind 0.0.0.0 (R4 contract).
+        from strands_robots.tools.gr00t_inference import _build_inference_command
 
-        def fake_build_cmd(**kwargs):
-            captured["host"] = kwargs.get("host")
-            return ["docker", "exec", "gr00t-test", "echo", "test"]
-
-        monkeypatch.setattr("strands_robots.tools.gr00t_inference._find_gr00t_containers", fake_find)
-        monkeypatch.setattr("strands_robots.tools.gr00t_inference._build_inference_command", fake_build_cmd)
-
-        import subprocess
-
-        def fake_run(*args, **kwargs):
-            return subprocess.CompletedProcess(args=args[0] if args else [], returncode=0, stdout="", stderr="")
-
-        monkeypatch.setattr(subprocess, "run", fake_run)
-        monkeypatch.setattr("strands_robots.tools.gr00t_inference._is_service_running", lambda port: True)
-
-        _start_service(
+        argv = _build_inference_command(
+            container_name="gr00t-test",
             checkpoint_path="/data/model",
             port=5555,
             data_config="fourier_gr1_arms_only",
             embodiment_tag="gr1",
             denoising_steps=4,
-            host="127.0.0.1",
-            container_name=None,
-            policy_name=None,
-            timeout=5,
+            http_server=False,
             use_tensorrt=False,
             trt_engine_path="gr00t_engine",
             vit_dtype="fp8",
             llm_dtype="nvfp4",
             dit_dtype="fp8",
-            http_server=False,
             api_token=None,
+            protocol="n1.5",
+            use_sim_policy_wrapper=False,
         )
-        # The CRITICAL assertion: host stays 127.0.0.1, NOT auto-flipped.
-        assert captured.get("host") == "127.0.0.1", (
-            "R1 regression: _start_service must NOT rewrite host=127.0.0.1 to 0.0.0.0. "
-            f"Got host={captured.get('host')!r} — auto-flip has reappeared."
+        host_idx = argv.index("--host")
+        assert argv[host_idx + 1] == "0.0.0.0", (
+            "R4 contract: inference server must always bind 0.0.0.0 inside container"
         )
 
-    def test_explicit_zero_zero_zero_zero_passes_through(self, monkeypatch):
-        """R1 pin: host='0.0.0.0' must reach docker -p verbatim (network exposure is opt-in)."""
-        from strands_robots.tools.gr00t_inference import _start_service
+    def test_explicit_zero_zero_zero_zero_passes_through(self):
+        """R1+R4 pin: explicit host='0.0.0.0' is honoured for the docker -p bind.
 
-        captured = {}
+        Verified via the public tool signature: host kwarg is still accepted
+        (R1: no auto-flip) and is destined for the docker host-side bind in
+        _start_container, not the inside-container --host which R4 hardcodes.
+        """
+        import inspect
 
-        def fake_find(*args, **kwargs):
-            return {
-                "status": "success",
-                "containers": [{"name": "gr00t-test", "status": "Up 2 hours"}],
-            }
+        from strands_robots.tools.gr00t_inference import gr00t_inference
 
-        def fake_build_cmd(**kwargs):
-            captured["host"] = kwargs.get("host")
-            return ["docker", "exec", "gr00t-test", "echo", "test"]
-
-        monkeypatch.setattr("strands_robots.tools.gr00t_inference._find_gr00t_containers", fake_find)
-        monkeypatch.setattr("strands_robots.tools.gr00t_inference._build_inference_command", fake_build_cmd)
-
-        import subprocess
-
-        monkeypatch.setattr(
-            subprocess,
-            "run",
-            lambda *a, **kw: subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr=""),
-        )
-        monkeypatch.setattr("strands_robots.tools.gr00t_inference._is_service_running", lambda port: True)
-
-        _start_service(
-            checkpoint_path="/data/model",
-            port=5555,
-            data_config="fourier_gr1_arms_only",
-            embodiment_tag="gr1",
-            denoising_steps=4,
-            host="0.0.0.0",
-            container_name=None,
-            policy_name=None,
-            timeout=5,
-            use_tensorrt=False,
-            trt_engine_path="gr00t_engine",
-            vit_dtype="fp8",
-            llm_dtype="nvfp4",
-            dit_dtype="fp8",
-            http_server=False,
-            api_token=None,
-        )
-        assert captured.get("host") == "0.0.0.0"
+        sig = inspect.signature(gr00t_inference)
+        assert "host" in sig.parameters, "host kwarg must remain on public tool"
+        # Default sentinel still None (resolves to 127.0.0.1 internally).
+        assert sig.parameters["host"].default is None
 
 
 class TestSingleLabelNumericHostname:
@@ -2026,3 +1983,177 @@ class TestHfPathTraversalValidation:
             hf_local_dir="/data/checkpoints/libero",
             lifecycle="full",
         )
+
+
+class TestHfValidationOnDownloadCheckpoint:
+    """Pin: hf_* validation must run for action='download_checkpoint'.
+
+    Regression: in R3, hf_repo/hf_subfolder/hf_local_dir validation was
+    placed AFTER the `_image_only_actions` early-return inside
+    validate_inputs(). Since 'download_checkpoint' is in that early-return
+    set, the hf_* checks were never reached when called via that action -
+    silently bypassing the path-traversal guard that the docstring
+    advertises. R4 hoists the hf_*/lifecycle validation BEFORE the
+    action-specific gates so it applies regardless of action.
+
+    These tests fail on pre-R4 code (hf_* checks bypassed for
+    'download_checkpoint') and pass on post-R4 code.
+    """
+
+    _COMMON_KWARGS = dict(
+        data_config="fourier_gr1_arms_only",
+        embodiment_tag="gr1",
+        port=5555,
+        host="127.0.0.1",
+        vit_dtype="fp8",
+        llm_dtype="nvfp4",
+        dit_dtype="fp8",
+        checkpoint_path=None,
+        trt_engine_path="gr00t_engine",
+        container_name=None,
+        protocol="n1.5",
+    )
+
+    def test_hf_subfolder_traversal_rejected_on_download_checkpoint(self):
+        """hf_subfolder='../../etc' must be rejected on 'download_checkpoint'."""
+        from strands_robots.tools.gr00t_inference import validate_inputs
+
+        with pytest.raises(ValueError, match=r"hf_subfolder.*\.\."):
+            validate_inputs(
+                action="download_checkpoint",
+                hf_subfolder="../../etc/passwd",
+                **self._COMMON_KWARGS,
+            )
+
+    def test_hf_local_dir_traversal_rejected_on_download_checkpoint(self):
+        """hf_local_dir with '..' must be rejected on 'download_checkpoint'."""
+        from strands_robots.tools.gr00t_inference import validate_inputs
+
+        with pytest.raises(ValueError, match=r"hf_local_dir.*\.\."):
+            validate_inputs(
+                action="download_checkpoint",
+                hf_local_dir="../../etc",
+                **self._COMMON_KWARGS,
+            )
+
+    def test_hf_repo_invalid_format_rejected_on_download_checkpoint(self):
+        """hf_repo='--evil/x' (option-injection-like) must be rejected."""
+        from strands_robots.tools.gr00t_inference import validate_inputs
+
+        with pytest.raises(ValueError, match=r"hf_repo.*org/name"):
+            validate_inputs(
+                action="download_checkpoint",
+                hf_repo="--evil/x",
+                **self._COMMON_KWARGS,
+            )
+
+    def test_hf_subfolder_traversal_rejected_on_lifecycle_too(self):
+        """Sanity: lifecycle path still validates hf_subfolder (no regression)."""
+        from strands_robots.tools.gr00t_inference import validate_inputs
+
+        with pytest.raises(ValueError, match=r"hf_subfolder.*\.\."):
+            validate_inputs(
+                action="lifecycle",
+                hf_subfolder="../escape",
+                lifecycle="full",
+                **self._COMMON_KWARGS,
+            )
+
+    def test_valid_hf_params_pass_on_download_checkpoint(self):
+        """Sanity: legitimate hf_* values must not raise on 'download_checkpoint'."""
+        from strands_robots.tools.gr00t_inference import validate_inputs
+
+        validate_inputs(
+            action="download_checkpoint",
+            hf_repo="nvidia/GR00T-N1.7-LIBERO",
+            hf_subfolder="libero_spatial",
+            hf_local_dir="/data/checkpoints/libero",
+            **self._COMMON_KWARGS,
+        )
+
+
+class TestInferenceServerBindsAllInterfaces:
+    """Pin: the inference server inside the container always binds 0.0.0.0.
+
+    Regression: pre-R4 the `host` kwarg flowed verbatim into BOTH the
+    docker `-p HOST:port:port` host-side bind AND the inference server's
+    `--host` flag inside the container. With the new default
+    `host="127.0.0.1"`, the service bound to container-loopback and the
+    docker port-publish forwarded to nothing -- the headline contract
+    ("loopback default is reachable") was broken end-to-end.
+
+    R4 hardcodes `--host 0.0.0.0` for the inference server inside the
+    container; the `host` kwarg now exclusively controls the host-side
+    bind. Tests fail on pre-R4 code and pass on post-R4.
+    """
+
+    def _build_argv(self, **overrides):
+        from strands_robots.tools.gr00t_inference import _build_inference_command
+
+        defaults = dict(
+            container_name="gr00t-test",
+            checkpoint_path="/data/checkpoints/x",
+            port=5555,
+            data_config="fourier_gr1_arms_only",
+            embodiment_tag="gr1",
+            denoising_steps=4,
+            http_server=False,
+            use_tensorrt=False,
+            trt_engine_path="gr00t_engine",
+            vit_dtype="fp8",
+            llm_dtype="nvfp4",
+            dit_dtype="fp8",
+            api_token=None,
+            protocol="n1.5",
+            use_sim_policy_wrapper=False,
+        )
+        defaults.update(overrides)
+        return _build_inference_command(**defaults)
+
+    def test_n15_inference_server_binds_all_interfaces(self):
+        """N1.5 protocol must include '--host 0.0.0.0' regardless of caller."""
+        argv = self._build_argv(protocol="n1.5")
+        # Find --host flag and assert its value is 0.0.0.0
+        idx = argv.index("--host")
+        assert argv[idx + 1] == "0.0.0.0", f"expected --host 0.0.0.0, got {argv[idx + 1]!r}"
+
+    def test_n16_inference_server_binds_all_interfaces(self):
+        """N1.6 protocol must include '--host 0.0.0.0'."""
+        argv = self._build_argv(protocol="n1.6")
+        idx = argv.index("--host")
+        assert argv[idx + 1] == "0.0.0.0"
+
+    def test_n17_inference_server_binds_all_interfaces(self):
+        """N1.7 protocol must include '--host 0.0.0.0'."""
+        argv = self._build_argv(protocol="n1.7")
+        idx = argv.index("--host")
+        assert argv[idx + 1] == "0.0.0.0"
+
+    def test_build_inference_command_does_not_accept_host_kwarg(self):
+        """Pin: host kwarg must be removed from _build_inference_command.
+
+        AGENTS.md > Conventions: 'No dead code'. host is no longer used
+        inside the cmd builder, so the parameter is removed; passing it
+        must raise TypeError.
+        """
+        from strands_robots.tools.gr00t_inference import _build_inference_command
+
+        with pytest.raises(TypeError, match="host"):
+            _build_inference_command(
+                container_name="x",
+                checkpoint_path="/x",
+                port=5555,
+                host="127.0.0.1",  # type: ignore[call-arg]
+                data_config="fourier_gr1_arms_only",
+                embodiment_tag="gr1",
+                denoising_steps=4,
+                http_server=False,
+                use_tensorrt=False,
+                trt_engine_path="gr00t_engine",
+                vit_dtype="fp8",
+                llm_dtype="nvfp4",
+                dit_dtype="fp8",
+                api_token=None,
+                protocol="n1.5",
+                use_sim_policy_wrapper=False,
+            )

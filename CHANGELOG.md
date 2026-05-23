@@ -56,10 +56,12 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
   of being silently swallowed.
 - **BREAKING** Default ``host`` changed from ``0.0.0.0`` to ``127.0.0.1``
   (loopback-only, per AGENTS.md > Review Learnings #86 > "Safety Defaults").
-  The ``host`` kwarg now flows verbatim into the docker host-side port
-  binding via ``-p {host}:{port}:{port}`` — no silent rewrite. The service
-  inside the container always binds ``0.0.0.0`` (required by docker
-  port-publish), but the *host* binding honours user intent:
+  The ``host`` kwarg now exclusively controls the docker host-side bind via
+  ``-p {host}:{port}:{port}`` — no silent rewrite. The inference server
+  inside the container is **always** invoked with ``--host 0.0.0.0``
+  (required by docker port forwarding; binding to container-loopback would
+  make the published port unreachable). User intent is honoured at the
+  docker layer:
     - ``host="127.0.0.1"`` (default) → published port reachable on loopback only
     - ``host="0.0.0.0"`` (explicit)  → published port reachable on every host iface
   **Migration:** if your downstream connects from a different host on the
@@ -70,6 +72,16 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ### Fixed
 
+- ``hf_repo``, ``hf_subfolder``, ``hf_local_dir`` validation now runs for
+  ``action='download_checkpoint'`` (R3 introduced these checks but placed
+  them after the ``_image_only_actions`` early-return, silently bypassing
+  the path-traversal guard for the action that actually consumes those
+  parameters; R4 hoists them above all action-specific gates).
+- Inference server inside the container is now hardcoded to ``--host 0.0.0.0``
+  (R3 forwarded the user's ``host`` kwarg verbatim, so ``host="127.0.0.1"``
+  bound the service to container-loopback and the docker port-publish
+  forwarded to nothing — the headline loopback-default contract was
+  unreachable end-to-end).
 - Duplicate ``torch_mock.manual_seed`` assignment in ``tests/mocks/torch_mock.py``.
 - Option-injection guard: ``repo_url``, ``repo_tag``, ``policy_name`` starting
   with ``-`` are rejected (prevents git/docker flag injection via subprocess argv).

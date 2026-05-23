@@ -42,7 +42,6 @@ def _common_kwargs(**overrides: Any) -> dict[str, Any]:
         "container_name": "gr00t",
         "checkpoint_path": "/data/checkpoints/model",
         "port": 5555,
-        "host": "0.0.0.0",
         "data_config": "libero_panda",
         "embodiment_tag": "libero_sim",
         "denoising_steps": 4,
