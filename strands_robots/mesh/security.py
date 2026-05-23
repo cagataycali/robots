@@ -447,8 +447,24 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
     if action not in ALLOWED_ACTIONS:
         raise ValidationError(f"unknown action: {action!r} (allowed: {sorted(ALLOWED_ACTIONS)})")
 
-    out = dict(cmd)
-    out["action"] = action
+    # F7-C (PR #195 review): strict per-action key allowlist.
+    #
+    # Pre-F7 the validator did ``out = dict(cmd)`` and overlaid the
+    # validated fields, preserving every unknown key the caller sent.
+    # Today's ``Mesh._dispatch`` only reads a known whitelist of keys,
+    # so this was not exploitable -- but the contract was fragile: any
+    # future action handler that did ``**cmd`` or pulled a not-yet-
+    # validated key would silently pick up an attacker-controlled
+    # value. Defence-in-depth: build ``out`` from the *validated*
+    # subset only.
+    out: dict[str, Any] = {"action": action}
+    # turn_id and sender_id are wire-routing fields that pass through
+    # unchanged (they identify the RPC turn, not the action payload);
+    # whitelisting them keeps the existing _on_cmd/_on_response
+    # correlation working. Anything else gets dropped silently.
+    for passthrough in ("turn_id", "sender_id"):
+        if passthrough in cmd:
+            out[passthrough] = cmd[passthrough]
 
     if action in ("execute", "start"):
         instruction = cmd.get("instruction", "")
@@ -456,6 +472,7 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
             raise ValidationError("execute/start requires non-empty `instruction`")
         if len(instruction) > MAX_INSTRUCTION_LEN:
             raise ValidationError(f"instruction exceeds {MAX_INSTRUCTION_LEN} chars (got {len(instruction)})")
+        out["instruction"] = instruction
 
         policy_host = cmd.get("policy_host", "localhost")
         if not is_safe_policy_host(str(policy_host)):
@@ -531,6 +548,21 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
         source = cmd.get("source_peer_id", "")
         if not isinstance(source, str) or not source:
             raise ValidationError("teleop_receive requires non-empty source_peer_id")
+        out["source_peer_id"] = source
+        # device_name is optional and defaults to "leader" in _dispatch.
+        if "device_name" in cmd:
+            device = cmd["device_name"]
+            if not isinstance(device, str):
+                raise ValidationError("teleop_receive.device_name must be a string")
+            out["device_name"] = device
+
+    elif action == "teleop_stop":
+        # device_name optional; if present, must be a string.
+        if "device_name" in cmd:
+            device = cmd["device_name"]
+            if device is not None and not isinstance(device, str):
+                raise ValidationError("teleop_stop.device_name must be a string or null")
+            out["device_name"] = device
 
     elif action == "resume":
         # override_code is the operator-supplied second factor for

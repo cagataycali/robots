@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -602,3 +603,88 @@ class TestAuditFailSoft:
 # ---------------------------------------------------------------------
 # F3-D-1: verify_ca_pin O_NOFOLLOW symlink defence
 # ---------------------------------------------------------------------
+
+
+# === F7-D: circular-trust defence on R22-A audit-log seed ===
+
+
+class TestR22ASeedRequiresHmacWithPSK:
+    """When the sidecar fails to load AND a PSK is configured, only
+    HMAC-verified records seed the seq counter restore. This breaks
+    the previous circular-trust surface: an attacker who could write
+    forged records to the audit log could otherwise poison the seq
+    floor for legitimate writers.
+    """
+
+    def test_unsigned_records_skipped_with_psk(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
+        monkeypatch.setenv("STRANDS_MESH_AUDIT_PSK", "real-psk")
+        # Reset module state
+        audit._AUDIT_STATE.psk_fingerprint = None
+        audit._AUDIT_STATE.seq_loaded = False
+        audit._SEQ_COUNTERS.clear()
+
+        # Write a legitimate record (signed)
+        audit.log_safety_event("legit", "operator-1", {"i": 1})
+        # And a forged unsigned record claiming a high seq for the same peer
+        log_path = audit.audit_log_path()
+        forged = {
+            "ts": time.time(),
+            "event": "forged",
+            "peer_id": "operator-1",
+            "payload": {"injected": "yes"},
+            "seq": 10**6,
+            # No sig field -- attacker doesn't have the PSK
+        }
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(forged) + "\n")
+
+        # Simulate sidecar corruption -> reset module state and trigger
+        # the seed-from-log path.
+        audit._SEQ_COUNTERS.clear()
+        audit._AUDIT_STATE.seq_loaded = False
+        sidecar = audit._seq_sidecar_path()
+        sidecar.write_text("garbage")  # corrupt sidecar
+
+        with audit._SEQ_LOCK:
+            audit._load_seq_counters()
+
+        # The forged seq=10**6 must NOT have been adopted (no HMAC).
+        # Only the legitimate signed record (seq=1) should seed.
+        assert audit._SEQ_COUNTERS.get("operator-1", 0) == 1, (
+            f"Expected legitimate seq=1, got {audit._SEQ_COUNTERS}; unsigned forgery should have been refused"
+        )
+
+    def test_unsigned_records_accepted_without_psk(self, tmp_path, monkeypatch):
+        """When no PSK is configured (dev posture), seed accepts every
+        record -- the threat model accepts writers in the audit dir."""
+        monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
+        monkeypatch.delenv("STRANDS_MESH_AUDIT_PSK", raising=False)
+        audit._AUDIT_STATE.psk_fingerprint = None
+        audit._AUDIT_STATE.seq_loaded = False
+        audit._SEQ_COUNTERS.clear()
+
+        # Write an unsigned record (legitimate dev-mode write)
+        log_path = audit.audit_log_path()
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        rec = {
+            "ts": time.time(),
+            "event": "test",
+            "peer_id": "operator-2",
+            "payload": {"i": 1},
+            "seq": 5,
+        }
+        log_path.write_text(json.dumps(rec) + "\n")
+
+        # Trigger the seed path (no sidecar)
+        sidecar = audit._seq_sidecar_path()
+        if sidecar.exists():
+            sidecar.unlink()
+        audit._SEQ_COUNTERS.clear()
+        audit._AUDIT_STATE.seq_loaded = False
+
+        with audit._SEQ_LOCK:
+            audit._load_seq_counters()
+
+        # Without a PSK, every record is trusted as the seed source.
+        assert audit._SEQ_COUNTERS.get("operator-2", 0) == 5

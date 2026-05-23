@@ -453,7 +453,18 @@ def _resolve_tls_paths() -> tuple[Path, Path, Path]:
             "and STRANDS_MESH_TLS_KEY to be set"
         )
     paths = (Path(ca), Path(cert), Path(key))
+    # F7-A (PR #195 review): the existence + symlink check must come
+    # before any other inspection. ``is_file`` follows symlinks; we
+    # do an explicit ``is_symlink`` reject first so the path used for
+    # mode + load is always the real file, never an attacker-redirected
+    # link target.
     for label, p in zip(("CA", "cert", "key"), paths, strict=True):
+        if p.is_symlink():
+            raise ValueError(
+                f"mTLS {label} file {p} is a SYMLINK "
+                f"(target: {os.readlink(p)!r}). Refusing -- mTLS files "
+                "must be real regular files at the operator-supplied path."
+            )
         if not p.is_file():
             raise FileNotFoundError(f"mTLS {label} file does not exist: {p}")
     # R24-C: enforce the mode 0o600 contract that the docstring (line 73)
@@ -461,10 +472,33 @@ def _resolve_tls_paths() -> tuple[Path, Path, Path]:
     # file on a shared host is a real exfiltration surface; the operator
     # who set STRANDS_MESH_TLS_KEY thinks they get the documented protection.
     # Skipped on non-POSIX (Windows file modes do not map cleanly).
-    # See PR #195 thread PRRT_kwDORUMiZs6EUu8N.
+    #
+    # F7-A (PR #195 review): use ``lstat()`` + ``is_symlink()`` reject
+    # so a symlink to an attacker-writable file does not silently pass
+    # the mode check. Without this, ``STRANDS_MESH_TLS_KEY=/safe/key.pem``
+    # pointing at a co-tenant-controlled ``/tmp/evil.pem`` (which the
+    # attacker has chmod'd 0o600) would pass while the actual TLS load
+    # later opens the symlink target. Symmetric with the
+    # ``O_NOFOLLOW`` + lstat-reject discipline applied across
+    # ``audit.py:_ensure_paths``, ``_load_seq_counters``, and
+    # ``_acl_config.py:_load_acl_file``.
+    # See PR #195 threads PRRT_kwDORUMiZs6EUu8N + post-F3 follow-up.
     if os.name == "posix":
         key_path = paths[2]
-        key_mode = key_path.stat().st_mode & 0o777
+        if key_path.is_symlink():
+            raise ValueError(
+                f"mTLS private key {key_path} is a SYMLINK "
+                f"(target: {os.readlink(key_path)!r}). Refusing -- "
+                "the mode check would otherwise stat() the target and "
+                "an attacker-writable target with a 0o600 mode would "
+                "silently pass while the TLS load follows the symlink. "
+                "Set STRANDS_MESH_TLS_KEY to the real key file path."
+            )
+        # ``lstat`` returns the link's own metadata; since we just
+        # rejected symlinks, this is equivalent to ``stat`` here, but
+        # using lstat keeps the semantic explicit and matches the
+        # rest of the codebase.
+        key_mode = key_path.lstat().st_mode & 0o777
         if key_mode & 0o077:
             raise ValueError(
                 f"mTLS private key {key_path} has mode 0o{key_mode:03o}; "

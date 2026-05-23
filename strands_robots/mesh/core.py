@@ -237,6 +237,18 @@ class Mesh(SensorLoopsMixin):
         # symmetric in shape; sharing the bounds keeps env-var surface
         # minimal).
         self._estop_replay_cache: dict[float, float] = {}
+        # F7-E (PR #195 review): per-issuer slot accounting for the
+        # estop replay cache. The R20 float-only key closes the
+        # peer_id-permutation replay vector (an attacker cannot mint
+        # novel keys by varying the untrusted JSON peer_id), but a
+        # global float dict can be flooded by one attacker pre-
+        # publishing at ``t = now + RESUME_FORWARD_SKEW_S - eps``
+        # to occupy slots that any legitimate same-float-tick estop
+        # would collide on. Bounding the cache *per issuer* means a
+        # single attacker can use at most ``RESUME_REPLAY_CACHE_MAX
+        # / N_distinct_peers`` slots before their oldest entries
+        # are evicted, leaving room for legitimate operators.
+        self._estop_replay_per_issuer: dict[str, int] = {}
         self._estop_replay_lock = threading.Lock()
 
     def __repr__(self) -> str:
@@ -802,9 +814,13 @@ class Mesh(SensorLoopsMixin):
                         "action": cmd.get("action") if isinstance(cmd, dict) else None,
                     },
                 )
-            except Exception as audit_exc:
-                # Audit is best-effort -- never let a missing/broken log
-                # path swallow the validation rejection itself.
+            except (TypeError, ValueError, OSError) as audit_exc:
+                # F7-F (PR #195 review): narrow per AGENTS.md > Review
+                # Learnings (#86). ``log_safety_event`` raises TypeError
+                # / ValueError on payload shape, OSError on disk failure;
+                # the audit best-effort contract means we drop those, but
+                # an unexpected RuntimeError from a future audit-module
+                # refactor should NOT be silently swallowed.
                 logger.debug("[mesh] %s: audit log unavailable: %s", self.peer_id, audit_exc)
             return
 
@@ -842,7 +858,10 @@ class Mesh(SensorLoopsMixin):
                     self.peer_id,
                     {"sender": sender, "action": cmd.get("action") if isinstance(cmd, dict) else None},
                 )
-            except Exception as audit_exc:
+            except (TypeError, ValueError, OSError) as audit_exc:
+                # F7-F (PR #195 review): narrow per AGENTS.md > "Exception
+                # Clauses Must Be Narrow". Same tuple as the symmetric
+                # narrowing at the ValidationError audit path above.
                 logger.debug("[mesh] %s: audit log unavailable: %s", self.peer_id, audit_exc)
             return
         except Exception as exc:
@@ -1111,14 +1130,18 @@ class Mesh(SensorLoopsMixin):
         # CN). Keying on the wall-clock ``t`` alone closes that
         # peer_id-permutation surface; the only way to mint a new key
         # is to advance the timestamp, which is bounded by the
-        # freshness window above. Trade-off: two genuine simultaneous
-        # estops from different operators that happen to share the
-        # exact same float-precision ``t`` collapse to one accepted
-        # record (the second is logged as a replay) -- acceptable
-        # because the lockout is idempotent and the audit log still
-        # carries both as separate critical-level events upstream.
-        # See PR #195 R20 thread on core.py:1026.
+        # freshness window above. F7-E adds a per-issuer slot cap
+        # below to bound the denial-of-estop surface where one
+        # attacker pre-publishes ``t = now + skew - eps`` to occupy
+        # cache slots that legitimate same-float-tick estops would
+        # collide on. See PR #195 R20 thread on core.py:1026 + F7-E
+        # thread on the post-R20 denial-of-estop surface.
         cache_key = float(envelope_t)
+        # F7-E per-issuer fairness bound: one issuer may occupy at
+        # most ``per_issuer_cap`` slots so a single attacker cannot
+        # fill the global cache. Default cap is RESUME_REPLAY_CACHE_MAX
+        # / 4 -- four legitimate operators always have working slots.
+        per_issuer_cap = max(1, RESUME_REPLAY_CACHE_MAX // 4)
         # R19: cache TTL bookkeeping uses time.monotonic() so an NTP step
         # backward cannot leave entries un-evictable and a step forward
         # cannot age fresh entries out early. Envelope freshness still
@@ -1177,7 +1200,71 @@ class Mesh(SensorLoopsMixin):
                 ttl_s=RESUME_FRESHNESS_WINDOW_S,
                 now_mono=now_mono,
             )
-            self._estop_replay_cache[cache_key] = now_mono
+            # F7-E per-issuer fairness check. We track per-issuer slot
+            # counts on the receiver side; if this issuer is over their
+            # cap, refuse to add a new entry (the lockout still engages
+            # on the first one and the second is dropped at this point).
+            # A legitimate operator's first estop within the freshness
+            # window passes through; an attacker pre-publishing
+            # ``t = now + skew - eps`` repeatedly cannot occupy more
+            # than ``per_issuer_cap`` slots.
+            # Defensive: tests sometimes build a Mesh via ``__new__`` to
+            # bypass ``__init__`` (the in-tree _stub_mesh helpers); use
+            # getattr with default to support that pattern.
+            per_issuer_dict = getattr(self, "_estop_replay_per_issuer", None)
+            if per_issuer_dict is None:
+                self._estop_replay_per_issuer = {}
+                per_issuer_dict = self._estop_replay_per_issuer
+            issuer_slots = per_issuer_dict.get(issuer_id, 0)
+            if issuer_slots >= per_issuer_cap:
+                logger.warning(
+                    "[safety] %s: REFUSED estop cache slot -- issuer %r already at cap %d "
+                    "(F7-E per-issuer fairness bound; flood suspected)",
+                    self.peer_id,
+                    issuer_id,
+                    per_issuer_cap,
+                )
+                # Audit the over-cap rejection so an operator dashboard
+                # can alert on this. The replay-cache slot is NOT added,
+                # but the lockout below still engages -- a legitimate
+                # safety event is preserved even if the cache itself
+                # cannot hold it.
+                try:
+                    self.publish_safety_event(
+                        event_type="estop_per_issuer_cap_exceeded",
+                        severity="warning",
+                        payload={
+                            "issuer": issuer_id,
+                            "issuer_t": envelope_t,
+                            "cap": per_issuer_cap,
+                        },
+                    )
+                except (TypeError, ValueError, OSError) as audit_exc:
+                    logger.debug(
+                        "[mesh] %s: estop_per_issuer_cap_exceeded audit publish failed: %s",
+                        self.peer_id,
+                        audit_exc,
+                    )
+            else:
+                self._estop_replay_cache[cache_key] = now_mono
+                per_issuer_dict[issuer_id] = issuer_slots + 1
+
+            # F7-E: re-derive per-issuer counts after eviction so the
+            # bookkeeping matches reality. Eviction may have purged
+            # entries for THIS issuer too; recount from the cache.
+            # We cheap-recount only when our running count diverges
+            # from cache size by more than 2x, which means substantial
+            # eviction has happened.
+            if len(per_issuer_dict) and sum(per_issuer_dict.values()) > 2 * len(self._estop_replay_cache):
+                # Note: the eviction helper drops entries by mono_ts
+                # without knowing about issuer attribution; we have no
+                # way to re-derive per-issuer counts cheaply since the
+                # cache key is float(t) without issuer. We reset the
+                # per-issuer dict to zero -- this lets evicted issuers
+                # immediately reclaim slots, which is the correct
+                # bound (eviction should already have purged the
+                # over-cap issuer's stale entries).
+                per_issuer_dict.clear()
 
         if not self._estop_lockout.is_set():
             self._estop_lockout.set()

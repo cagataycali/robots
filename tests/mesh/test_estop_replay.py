@@ -113,3 +113,53 @@ class TestEstopRedundantAudit:
 # ---------------------------------------------------------------------
 # F3-C-1: _PSK_STATE_LOCK exists and protects fingerprint snapshot
 # ---------------------------------------------------------------------
+
+
+# === F7-E: per-issuer fairness bound on the estop replay cache ===
+
+
+class TestEstopPerIssuerFairnessBound:
+    """The R20 float-only key closes peer_id-permutation replay but
+    opened a denial-of-estop surface where one attacker pre-publishing
+    at ``t = now + skew - eps`` could occupy float slots.
+
+    F7-E adds a per-issuer slot cap: each issuer may occupy at most
+    ``RESUME_REPLAY_CACHE_MAX // 4`` slots before their newer entries
+    are refused. This means at least 4 distinct issuers always have
+    working slots regardless of attacker volume.
+    """
+
+    def test_one_issuer_cannot_exceed_cap(self, monkeypatch):
+        from strands_robots.mesh import core as core_mod
+
+        # Tighten the cache size for fast test
+        monkeypatch.setattr(core_mod, "RESUME_REPLAY_CACHE_MAX", 8)
+        # 8 / 4 = 2 slots per issuer
+
+        m = core.Mesh.__new__(core.Mesh)
+        m.peer_id = "test-peer"
+        m._estop_replay_cache = {}
+        m._estop_replay_per_issuer = {}
+        m._estop_replay_lock = threading.Lock()
+        m._estop_lockout = threading.Event()
+        m._last_estop_ts = 0.0
+        m._running = True
+        m.publish = lambda key, data: None
+        m.publish_safety_event = lambda **kw: None  # don't audit in this test
+
+        now = time.time()
+
+        # Attacker fires 5 envelopes at distinct fresh `t` values
+        for i in range(5):
+            envelope = {"peer_id": "attacker-1", "t": now + 0.001 * i, "type": "estop"}
+
+            class S:
+                payload = type("P", (), {"to_bytes": lambda self, e=envelope: json.dumps(e).encode()})()
+
+            m._on_safety_estop(S())
+
+        # Per-issuer dict capped at 2; cache may have at most 2 entries
+        # for this attacker (newer ones refused).
+        assert m._estop_replay_per_issuer.get("attacker-1", 0) <= 2, (
+            f"attacker should be capped at 2 slots, got {m._estop_replay_per_issuer}"
+        )

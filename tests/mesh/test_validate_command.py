@@ -386,3 +386,58 @@ class TestValidateCommandResume:
         cmd = {"action": "resume", "override_code": "x" * 256}
         out = sec.validate_command(cmd)
         assert out["override_code"] == "x" * 256
+
+
+# === F7-C: validate_command strips unknown top-level keys ===
+
+
+class TestValidateCommandKeyAllowlist:
+    """Defence-in-depth: the validator returns only validated fields.
+    Pre-F7-C the validator did `out = dict(cmd)` and preserved every
+    unknown key. Today's _dispatch only consumes a known whitelist so
+    the gap was not exploitable, but a future handler that did `**cmd`
+    would silently pick up attacker-controlled values.
+    """
+
+    def test_unknown_keys_are_stripped(self):
+        out = sec.validate_command(
+            {
+                "action": "execute",
+                "instruction": "do thing",
+                "policy_provider": "mock",
+                # Attacker-controlled extras:
+                "trust_remote_code": True,
+                "policy_url": "http://evil.example.com/payload.bin",
+                "extra_kwargs": {"shell": "rm -rf /"},
+            }
+        )
+        for forbidden in ("trust_remote_code", "policy_url", "extra_kwargs"):
+            assert forbidden not in out, f"{forbidden!r} leaked through validator"
+
+    def test_validated_fields_pass_through(self):
+        out = sec.validate_command(
+            {
+                "action": "execute",
+                "instruction": "go pick up the block",
+                "policy_provider": "mock",
+                "policy_host": "127.0.0.1",
+                "duration": 30,
+            }
+        )
+        assert out["action"] == "execute"
+        assert out["instruction"] == "go pick up the block"
+        assert out["policy_provider"] == "mock"
+        assert out["policy_host"] == "127.0.0.1"
+        assert out["duration"] == 30.0
+
+    def test_turn_id_and_sender_id_pass_through(self):
+        # Wire-routing fields used by _on_cmd / _on_response correlation
+        out = sec.validate_command(
+            {
+                "action": "status",
+                "turn_id": "abc-123",
+                "sender_id": "operator-1",
+            }
+        )
+        assert out["turn_id"] == "abc-123"
+        assert out["sender_id"] == "operator-1"

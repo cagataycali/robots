@@ -65,3 +65,24 @@ def test_all_four_wire_handlers_use_same_tuple() -> None:
             f"{handler.__qualname__} must use the canonical narrow tuple; "
             f"see _on_safety_estop for the reference pattern"
         )
+
+
+# === F7-B: bridge_transport dedup decode path uses the same narrow tuple ===
+
+
+def test_bridge_transport_dedup_decode_uses_narrow_tuple() -> None:
+    """The bridge dedup decode path was a fifth wire-shaped exception
+    site. F7-B narrowed it to the same ``(AttributeError,
+    UnicodeDecodeError, json.JSONDecodeError)`` tuple used by the four
+    safety/cmd/response handlers.
+    """
+    from strands_robots.mesh.transport import bridge_transport as bt
+
+    src = inspect.getsource(bt)
+    # Look for the specific pattern AROUND the dedup decode block
+    # (the comment in the source mentions the exact tuple).
+    assert "except (AttributeError, UnicodeDecodeError, json.JSONDecodeError):" in src, (
+        "bridge_transport.py dedup decode path must use the same narrow "
+        "tuple as the four wire handlers in core.py "
+        "(AGENTS.md > Review Learnings #86)"
+    )

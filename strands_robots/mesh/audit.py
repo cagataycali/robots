@@ -441,19 +441,60 @@ def _load_seq_counters() -> None:
 
     # R22-A: If sidecar failed to load (corrupt/symlink/missing), seed
     # from the audit log to prevent fail-open sequence reset.
+    #
+    # F7-D (PR #195 review): when STRANDS_MESH_AUDIT_PSK is configured,
+    # ONLY seed from records whose HMAC ``sig`` we can verify. Without
+    # this, the previous version trusted every record in the log
+    # (signed or not) -- an attacker who could write to the audit log
+    # path (no PSK in dev posture, or PSK exfiltrated long enough to
+    # forge one record then cleared) could append a forged record
+    # with seq=10**9 and on the next process restart with a corrupt
+    # sidecar that value would become the new floor for that peer,
+    # silently denying the legitimate writer a working seq counter.
+    # The fix: trust only HMAC-verified records when a PSK is present.
+    # When no PSK is configured, everything is trusted (the dev
+    # posture has no integrity gate and the threat model accepts
+    # writers in the audit dir).
     if not sidecar_loaded:
         try:
             records = read_audit_log()
+            psk = _audit_psk()
+            verified = 0
+            unverified_skipped = 0
             for record in records:
                 peer_id = record.get("peer_id")
                 seq = record.get("seq")
-                if isinstance(peer_id, str) and isinstance(seq, int) and seq > 0:
-                    if seq > _SEQ_COUNTERS.get(peer_id, 0):
-                        _SEQ_COUNTERS[peer_id] = seq
+                if not (isinstance(peer_id, str) and isinstance(seq, int) and seq > 0):
+                    continue
+                # F7-D: when a PSK is configured, only trust signed records
+                # whose HMAC we can verify. This breaks the circular trust
+                # surface where an attacker who can write the audit log
+                # could poison the seq counter restore.
+                if psk is not None:
+                    sig = record.get("sig")
+                    if not isinstance(sig, str) or sig == "PSK_DEGRADED":
+                        unverified_skipped += 1
+                        continue
+                    expected = hmac.new(psk, _canonical_bytes(record), hashlib.sha256).hexdigest()
+                    if not hmac.compare_digest(sig, expected):
+                        unverified_skipped += 1
+                        continue
+                if seq > _SEQ_COUNTERS.get(peer_id, 0):
+                    _SEQ_COUNTERS[peer_id] = seq
+                    verified += 1
             if _SEQ_COUNTERS:
                 logger.info(
-                    "[audit] seeded %d peer counters from audit log after sidecar load failed",
+                    "[audit] seeded %d peer counters from audit log after sidecar load failed (verified=%d, skipped_unverified=%d)",
                     len(_SEQ_COUNTERS),
+                    verified,
+                    unverified_skipped,
+                )
+            elif unverified_skipped:
+                logger.warning(
+                    "[audit] sidecar load failed and %d audit records were unverified -- counters NOT seeded "
+                    "(this is the F7-D circular-trust defence; an attacker who wrote unsigned forgeries "
+                    "to the audit log cannot poison the seq restore when STRANDS_MESH_AUDIT_PSK is set)",
+                    unverified_skipped,
                 )
         except (OSError, json.JSONDecodeError, ValueError, TypeError) as log_exc:
             # Narrow per AGENTS.md > "Exception Clauses Must Be Narrow":

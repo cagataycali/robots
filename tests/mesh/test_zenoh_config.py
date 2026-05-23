@@ -9,6 +9,7 @@ parses cleanly through Zenoh's Rust ``Config`` validator lives in
 from __future__ import annotations
 
 import json
+import os
 
 import pytest
 
@@ -349,3 +350,62 @@ def test_link_protocols_block_restricts_to_tls():
     path, value = zc.link_protocols_block()
     assert path == "transport/link/protocols"
     assert json.loads(value) == ["tls"]
+
+
+# === F7-A: TLS key/cert/CA symlink rejection ===
+
+
+class TestTlsBlockSymlinkReject:
+    """The mTLS file resolver must refuse symlinks for the key/cert/CA
+    paths (F7-A pin). Without it, an operator setting
+    ``STRANDS_MESH_TLS_KEY=/safe/key.pem`` pointing at an attacker-
+    writable target whose mode is 0o600 silently passes.
+    """
+
+    @pytest.fixture
+    def _tls_files(self, tmp_path):
+        ca = tmp_path / "ca.pem"
+        cert = tmp_path / "cert.pem"
+        key = tmp_path / "key.pem"
+        for p in (ca, cert, key):
+            p.write_text("placeholder")
+        os.chmod(key, 0o600)
+        return ca, cert, key
+
+    def test_symlinked_key_rejected(self, _tls_files, tmp_path, monkeypatch):
+        ca, cert, key = _tls_files
+        symlink = tmp_path / "key_link.pem"
+        symlink.symlink_to(key)
+        monkeypatch.setenv("STRANDS_MESH_TLS_CA", str(ca))
+        monkeypatch.setenv("STRANDS_MESH_TLS_CERT", str(cert))
+        monkeypatch.setenv("STRANDS_MESH_TLS_KEY", str(symlink))
+        with pytest.raises(ValueError, match=r"is a SYMLINK"):
+            zc.tls_block()
+
+    def test_symlinked_cert_rejected(self, _tls_files, tmp_path, monkeypatch):
+        ca, cert, key = _tls_files
+        symlink = tmp_path / "cert_link.pem"
+        symlink.symlink_to(cert)
+        monkeypatch.setenv("STRANDS_MESH_TLS_CA", str(ca))
+        monkeypatch.setenv("STRANDS_MESH_TLS_CERT", str(symlink))
+        monkeypatch.setenv("STRANDS_MESH_TLS_KEY", str(key))
+        with pytest.raises(ValueError, match=r"is a SYMLINK"):
+            zc.tls_block()
+
+    def test_symlinked_ca_rejected(self, _tls_files, tmp_path, monkeypatch):
+        ca, cert, key = _tls_files
+        symlink = tmp_path / "ca_link.pem"
+        symlink.symlink_to(ca)
+        monkeypatch.setenv("STRANDS_MESH_TLS_CA", str(symlink))
+        monkeypatch.setenv("STRANDS_MESH_TLS_CERT", str(cert))
+        monkeypatch.setenv("STRANDS_MESH_TLS_KEY", str(key))
+        with pytest.raises(ValueError, match=r"is a SYMLINK"):
+            zc.tls_block()
+
+    def test_real_files_pass(self, _tls_files, monkeypatch):
+        ca, cert, key = _tls_files
+        monkeypatch.setenv("STRANDS_MESH_TLS_CA", str(ca))
+        monkeypatch.setenv("STRANDS_MESH_TLS_CERT", str(cert))
+        monkeypatch.setenv("STRANDS_MESH_TLS_KEY", str(key))
+        path, value = zc.tls_block()
+        assert path == "transport/link/tls"

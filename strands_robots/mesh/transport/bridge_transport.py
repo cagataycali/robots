@@ -519,7 +519,13 @@ class BridgeTransport:
                     decoded = json.loads(raw)
                     if isinstance(decoded, dict):
                         payload = decoded
-                except Exception:
+                except (AttributeError, UnicodeDecodeError, json.JSONDecodeError):
+                    # F7-B (PR #195 review): narrow per AGENTS.md > Review
+                    # Learnings (#86) > "Exception Clauses Must Be Narrow".
+                    # Same tuple as the four wire handlers in core.py
+                    # (_on_cmd, _on_response, _on_safety_estop,
+                    # _on_safety_resume). Pinned by
+                    # ``test_wire_handler_narrow_except.py``.
                     payload = None
 
                 if payload is not None and self._dedup.is_duplicate(key_expr, payload):
