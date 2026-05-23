@@ -598,6 +598,120 @@ class TestGetActions:
         assert len(acts) == 16
 
 
+class TestPolicyReset:
+    """#187: ``Gr00tPolicy.reset(seed=...)`` forwards a per-episode seed
+    to the GR00T inference server (via the standard ``reset`` endpoint
+    that ``server_client.PolicyServer`` registers by default).
+
+    Without this, ``set_eval_seed`` only seeds the client-side process,
+    leaving the server's diffusion sampler RNG drifting across calls and
+    breaking reproducibility — same input gives different actions on
+    successive calls. Pin the surface so future refactors can't silently
+    drop the per-episode reset that the bisection plan in #187 confirmed
+    is required.
+    """
+
+    def test_service_reset_calls_endpoint_with_seed(self):
+        """``policy.reset(seed=42)`` in SERVICE mode must call the server's
+        ``reset`` endpoint with ``options={"seed": 42}`` so the server-side
+        wrapper can apply the seed before subsequent ``get_action`` calls.
+        """
+        from unittest.mock import MagicMock
+
+        p = Gr00tPolicy(data_config="libero_panda", host="localhost", port=19999)
+        p._client.call_endpoint = MagicMock(return_value={})
+
+        p.reset(seed=42)
+
+        p._client.call_endpoint.assert_called_once()
+        endpoint, payload = p._client.call_endpoint.call_args.args
+        assert endpoint == "reset"
+        assert payload == {"options": {"seed": 42}}
+
+    def test_service_reset_without_seed_omits_options(self):
+        """``policy.reset()`` (no seed) calls the endpoint with ``data=None``,
+        so the server-side wrapper falls back to its default seed."""
+        from unittest.mock import MagicMock
+
+        p = Gr00tPolicy(data_config="libero_panda", host="localhost", port=19999)
+        p._client.call_endpoint = MagicMock(return_value={})
+
+        p.reset()
+
+        p._client.call_endpoint.assert_called_once()
+        endpoint, payload = p._client.call_endpoint.call_args.args
+        assert endpoint == "reset"
+        # When no seed is provided we forward None — lets server use its
+        # initial seed (matches "no-op" semantics for servers that don't
+        # implement seed-aware reset).
+        assert payload is None
+
+    def test_service_reset_swallows_server_errors(self, caplog):
+        """A server that rejects ``reset`` (older NVIDIA images, wrappers
+        without the patch) must not crash the eval. Reset is best-effort —
+        log INFO and continue.
+        """
+        import logging as _logging
+        from unittest.mock import MagicMock
+
+        p = Gr00tPolicy(data_config="libero_panda", host="localhost", port=19999)
+        p._client.call_endpoint = MagicMock(side_effect=RuntimeError("Server error: Unknown endpoint: reset"))
+
+        with caplog.at_level(_logging.INFO, logger="strands_robots.policies.groot.policy"):
+            p.reset(seed=42)  # must not raise
+
+        # We logged the failure but continued. The test passes as long as
+        # reset returns without an exception.
+        assert any("did not accept reset" in r.getMessage() or "Server error" in r.getMessage() for r in caplog.records)
+
+    def test_local_reset_reseeds_torch(self):
+        """``policy.reset(seed=42)`` in LOCAL mode reseeds Python/NumPy/torch
+        the same way ``set_eval_seed`` does, so the in-process diffusion
+        sampler is deterministic across reset boundaries.
+        """
+        torch = pytest.importorskip("torch", reason="torch not installed")
+
+        # Construct a LOCAL-mode Gr00tPolicy via the test's __new__-bypass
+        # fixture to skip model loading. The reset path doesn't depend on
+        # _local_policy being a real model.
+        from strands_robots.policies.groot.policy import Gr00tPolicy
+
+        p = Gr00tPolicy.__new__(Gr00tPolicy)
+        p._mode = "local"
+        p._client = None
+        p._groot_version = "n1.7"
+        p.data_config_name = "libero_panda"
+
+        # Reseeded twice with the same seed → same torch.randn draw.
+        p.reset(seed=42)
+        first = torch.randn(3).tolist()
+        p.reset(seed=42)
+        second = torch.randn(3).tolist()
+        assert first == second, f"local reset(seed=42) must be reproducible; got {first} vs {second}"
+
+    def test_local_reset_without_seed_is_noop(self):
+        """``policy.reset()`` in LOCAL mode without a seed leaves torch RNG
+        state untouched. Reset is a hint, not a hard reset; without an
+        explicit seed there's nothing to apply.
+        """
+        torch = pytest.importorskip("torch", reason="torch not installed")
+        from strands_robots.policies.groot.policy import Gr00tPolicy
+
+        p = Gr00tPolicy.__new__(Gr00tPolicy)
+        p._mode = "local"
+        p._client = None
+        p._groot_version = "n1.7"
+        p.data_config_name = "libero_panda"
+
+        # Take a draw, then reset(no seed), then take another draw. They
+        # should differ because the RNG advanced naturally.
+        torch.manual_seed(42)
+        first = torch.randn(3).tolist()
+        p.reset()  # no seed → no-op
+        second = torch.randn(3).tolist()
+        assert first != second, f"reset() with no seed must NOT reseed; first={first}, second={second}"
+
+
 # (section)
 # Service observation + action unpack
 # (section)
