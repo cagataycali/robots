@@ -252,6 +252,14 @@ def validate_inputs(
     if hf_repo is not None:
         if not re.match(r"^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$", hf_repo):
             raise ValueError(f"hf_repo must be a valid HuggingFace repo id (org/name), got {hf_repo!r}")
+        # Segment-level checks: leading '-' (option-injection-like) and bare
+        # './..' segments are syntactically allowed by the regex above but
+        # are not legal HF repo ids and must be rejected at the validator.
+        for _seg in hf_repo.split("/"):
+            if _seg.startswith("-"):
+                raise ValueError(f"hf_repo must be a valid HuggingFace repo id (org/name), got {hf_repo!r}")
+            if _seg in (".", ".."):
+                raise ValueError(f"hf_repo must be a valid HuggingFace repo id (org/name), got {hf_repo!r}")
     if hf_subfolder is not None:
         _validate_path(hf_subfolder, "hf_subfolder")
     if hf_local_dir is not None:

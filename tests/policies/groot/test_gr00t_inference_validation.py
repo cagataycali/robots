@@ -2072,6 +2072,94 @@ class TestHfValidationOnDownloadCheckpoint:
         )
 
 
+class TestHfRepoSegmentRejection:
+    """Pin: hf_repo segment-level checks reject leading '-' and bare '.' / '..' segments.
+
+    The base regex ``^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$`` accepts ``--evil/x``,
+    ``org/..`` and ``./org`` because '-' and '.' are members of the character
+    class. Such values are not legal HF repo ids and an option-injection-like
+    leading '-' must not reach downstream argv. Pinned per the R5 review thread
+    on `gr00t_inference.py:253` ("looser than the path validators next to it").
+
+    Pre-fix these inputs slip through the regex; post-fix the segment loop
+    rejects them with the same `org/name` error message.
+    """
+
+    _COMMON_KWARGS = dict(
+        data_config="fourier_gr1_arms_only",
+        embodiment_tag="gr1",
+        port=5555,
+        host="127.0.0.1",
+        vit_dtype="fp8",
+        llm_dtype="nvfp4",
+        dit_dtype="fp8",
+        checkpoint_path=None,
+        trt_engine_path="gr00t_engine",
+        container_name=None,
+        protocol="n1.5",
+    )
+
+    def test_hf_repo_dotdot_segment_rejected(self):
+        """hf_repo='org/..' is regex-valid but rejected by segment check."""
+        from strands_robots.tools.gr00t_inference import validate_inputs
+
+        with pytest.raises(ValueError, match=r"hf_repo.*org/name"):
+            validate_inputs(
+                action="download_checkpoint",
+                hf_repo="org/..",
+                **self._COMMON_KWARGS,
+            )
+
+    def test_hf_repo_leading_dot_segment_rejected(self):
+        """hf_repo='./org' is regex-valid but rejected by segment check."""
+        from strands_robots.tools.gr00t_inference import validate_inputs
+
+        with pytest.raises(ValueError, match=r"hf_repo.*org/name"):
+            validate_inputs(
+                action="download_checkpoint",
+                hf_repo="./org",
+                **self._COMMON_KWARGS,
+            )
+
+    def test_hf_repo_dotdot_first_segment_rejected(self):
+        """hf_repo='../org' is regex-valid (single '/') but rejected."""
+        from strands_robots.tools.gr00t_inference import validate_inputs
+
+        with pytest.raises(ValueError, match=r"hf_repo.*org/name"):
+            validate_inputs(
+                action="download_checkpoint",
+                hf_repo="../org",
+                **self._COMMON_KWARGS,
+            )
+
+    def test_hf_repo_second_segment_dash_rejected(self):
+        """hf_repo='org/--evil' (option-injection in name) must be rejected."""
+        from strands_robots.tools.gr00t_inference import validate_inputs
+
+        with pytest.raises(ValueError, match=r"hf_repo.*org/name"):
+            validate_inputs(
+                action="download_checkpoint",
+                hf_repo="org/--evil",
+                **self._COMMON_KWARGS,
+            )
+
+    def test_legitimate_hf_repos_with_dashes_still_accepted(self):
+        """Legitimate repo ids with internal dashes / dots must still pass."""
+        from strands_robots.tools.gr00t_inference import validate_inputs
+
+        for valid in (
+            "nvidia/GR00T-N1.7-LIBERO",
+            "a-b/c-d",
+            "org_x/repo.name-v2",
+            "_x/_y",
+        ):
+            validate_inputs(
+                action="download_checkpoint",
+                hf_repo=valid,
+                **self._COMMON_KWARGS,
+            )
+
+
 class TestInferenceServerBindsAllInterfaces:
     """Pin: the inference server inside the container always binds 0.0.0.0.
 
