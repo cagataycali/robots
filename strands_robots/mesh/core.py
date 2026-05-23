@@ -741,8 +741,21 @@ class Mesh(SensorLoopsMixin):
         # this closes the symmetric receive-side surface.
         turn = data.get("turn_id") or uuid.uuid4().hex
         cmd = data.get("command", data)
-        if isinstance(cmd, str):
-            cmd = {"action": "execute", "instruction": cmd, "policy_provider": "mock"}
+        # R24-B: Reject non-dict commands at the wire boundary. A bare-string
+        # coercion here would bypass validate_command's dict-shape contract --
+        # any peer that survives mTLS+ACL could drive the robot at the mock
+        # policy with arbitrary text simply by publishing "hello" instead of
+        # {"action":"execute",...}. Outgoing send/broadcast/tell still accept
+        # the ergonomic dict-or-string forms because tell() wraps internally.
+        # See PR #195 thread PRRT_kwDORUMiZs6EUu8S.
+        if not isinstance(cmd, dict):
+            logger.warning(
+                "[mesh] %s: rejected non-dict cmd from %s (type=%s)",
+                self.peer_id,
+                sender,
+                type(cmd).__name__,
+            )
+            return
         rkey = f"strands/{sender}/response/{turn}" if sender else None
 
         # Validate the command shape against the action allowlist + per-action

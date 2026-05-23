@@ -261,12 +261,22 @@ def test_exec_cmd_rejects_unknown_action_with_validation_error(
     assert "rm_rf" in payload["error"]
 
 
-def test_exec_cmd_string_command_becomes_execute() -> None:
+def test_exec_cmd_string_command_rejected() -> None:
+    """R24-B: bare-string commands on the wire bypass validate_command's dict-shape
+    contract. _exec_cmd must reject them, not silently coerce to {action:execute}.
+
+    Pre-R24-B contract was auto-wrap (a peer publishing "hello" got a mock-policy
+    execute), which let any mTLS+ACL-authorised peer drive the robot at the mock
+    provider with arbitrary text. See PR #195 thread PRRT_kwDORUMiZs6EUu8S.
+    """
     r = _FakeRobot()
     m = Mesh(r, peer_id="me")
     with patch.object(mesh_mod, "put"):
         m._exec_cmd({"sender_id": "alice", "turn_id": "t", "command": "do thing"})
-    assert any(name == "execute" and args["instruction"] == "do thing" for name, args in r.calls)
+    # No execute call; bare string was rejected at the wire boundary.
+    assert not any(name == "execute" for name, _ in r.calls), (
+        "_exec_cmd must NOT coerce bare-string commands into mock-policy executes"
+    )
 
 
 # ---------------------------------------------------------------------------
