@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from strands_robots.policies import Policy
+    from strands_robots.simulation.policy_runner import PolicyRunner, VideoConfig
 
 # PolicyRunner and VideoConfig are imported lazily inside the run_policy /
 # replay / eval_policy / evaluate_benchmark methods that use them. A
@@ -46,7 +47,7 @@ if TYPE_CHECKING:
 # one-line edit (and is also pinned by ``tests/simulation/test_no_import_cycle.py``).
 
 
-def _lazy_policy_runner() -> tuple[type, type]:
+def _lazy_policy_runner() -> tuple[type[PolicyRunner], type[VideoConfig]]:
     """Lazy import shim for ``PolicyRunner`` and ``VideoConfig``.
 
     Defined at module level for discoverability, but the inner
