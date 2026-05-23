@@ -5,7 +5,7 @@
 // operator in your fleet.
 //
 // IMPORTANT — Zenoh 1.x quirks (verified against live sessions in
-// tests/mesh/test_redteam_zenoh.py):
+// tests/mesh/test_zenoh_transport_security.py):
 //
 //  1. `enabled: true` is required. Without it the entire access_control
 //     block is a silent no-op.
