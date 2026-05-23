@@ -1013,7 +1013,13 @@ class Mesh(SensorLoopsMixin):
         try:
             raw = sample.payload.to_bytes().decode()
             data = json.loads(raw)
-        except Exception:
+        except (AttributeError, UnicodeDecodeError, json.JSONDecodeError):
+            # Match _on_safety_estop's narrow exception tuple.
+            # AttributeError: sample.payload is None or not bytes-like
+            # UnicodeDecodeError: payload not valid UTF-8
+            # json.JSONDecodeError: payload is not valid JSON
+            # Wider exceptions (e.g. RuntimeError) bubble up and surface in logs
+            # rather than silently locking the fleet into a half-state.
             return
         if not isinstance(data, dict):
             return
