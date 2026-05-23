@@ -205,3 +205,46 @@ class TestBridgeDedupIntegration:
         zh_b(sample)
         assert len(delivered_a) == 1
         assert len(delivered_b) == 1
+
+
+class TestMonotonicClockR12:
+    """R12 pin test - bridge dedup TTL math uses time.monotonic, not time.time.
+
+    Pre-R12: time.time() was used for the now/cutoff math in
+    is_duplicate(). When the wall clock moves backwards (NTP step, manual
+    'date -s', VM resume from snapshot) the TTL window math is wrong and
+    cached entries either survive forever or all get evicted at once.
+
+    Post-R12: time.monotonic() is used; the cache survives wall-clock jumps.
+    """
+
+    def test_dedup_uses_monotonic_clock(self):
+        """is_duplicate() must use time.monotonic, not time.time."""
+        from strands_robots.mesh.transport import bridge_transport
+
+        src = open(bridge_transport.__file__).read()
+        # The is_duplicate() implementation must read monotonic.
+        assert "time.monotonic()" in src, (
+            "R12 regression: bridge_transport must use time.monotonic() for TTL math. "
+            "time.time() can move backwards (NTP step, snapshot resume) and break TTL semantics."
+        )
+
+    def test_no_time_dot_time_in_dedup_path(self):
+        """R12 regression pin: no time.time() in the is_duplicate body."""
+        from strands_robots.mesh.transport import bridge_transport
+
+        src = open(bridge_transport.__file__).read()
+        # Locate the is_duplicate function body via string search (no regex).
+        marker = "def is_duplicate("
+        start = src.find(marker)
+        assert start >= 0, "is_duplicate not found in bridge_transport source"
+        # Body ends at the next 'def ' at the same indentation OR end of class
+        end_marker = "\n    def "
+        body = src[start:]
+        next_def = body.find(end_marker, len(marker))
+        if next_def > 0:
+            body = body[:next_def]
+        assert "time.time()" not in body, (
+            "R12 regression: time.time() found inside is_duplicate body. "
+            "Use time.monotonic() for TTL math (NTP-safe, snapshot-resume-safe)."
+        )

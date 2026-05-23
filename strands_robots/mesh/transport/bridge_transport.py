@@ -308,7 +308,7 @@ class _CommandDeduplicator:
         if ident is None:
             return False  # nothing to dedup against -- pass through
         cache_key = (key, ident)
-        now = time.time()
+        now = time.monotonic()  # NTP-safe, snapshot-resume-safe
         with self._lock:
             # Cheap GC if oversized
             if len(self._seen) > _MAX_DEDUP_ENTRIES:
