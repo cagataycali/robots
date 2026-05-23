@@ -173,13 +173,20 @@ def test_lazy_policy_runner_helper_exists():
     )
 
 
-def test_simengine_methods_use_lazy_helper():
-    """Pin: every ``SimEngine`` method that needs ``PolicyRunner`` calls
-    ``_lazy_policy_runner()``, never the bare ``from ... import`` form.
+def test_simengine_methods_call_lazy_helper():
+    """Pin: the four SimEngine methods that use PolicyRunner/VideoConfig
+    obtain them via ``_lazy_policy_runner()`` -- not from module scope.
 
-    Fails if a future contributor adds a fifth call site and forgets to
-    route through the helper - re-introducing the duplicated-comment-block
-    pattern this PR's R4 cleanup eliminated.
+    On pre-fix code (module-level import), these methods reference
+    ``PolicyRunner`` / ``VideoConfig`` as bare names resolved at module
+    scope. The fix centralises access through ``_lazy_policy_runner()``
+    so the runtime import is deferred to call time, breaking the CodeQL
+    cycle.
+
+    This test fails on pre-fix base.py because the methods do not contain
+    any call to ``_lazy_policy_runner``. Verified via git-stash round-trip:
+    pre-fix yields 4 offending methods (run_policy, replay_episode,
+    eval_policy, evaluate_benchmark); post-fix yields 0.
     """
     base_src = (PKG / "simulation" / "base.py").read_text()
     tree = ast.parse(base_src)
@@ -189,18 +196,30 @@ def test_simengine_methods_use_lazy_helper():
     assert sim_classes, "SimEngine class not found in base.py"
     sim_engine = sim_classes[0]
 
-    # No method body should contain a direct `from policy_runner import ...`.
-    offenders: list[str] = []
+    # These four methods must call _lazy_policy_runner() in their body.
+    _EXPECTED_CALLERS = {"run_policy", "replay_episode", "eval_policy", "evaluate_benchmark"}
+
+    methods_missing_call: list[str] = []
     for method in sim_engine.body:
         if not isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
-        for n in ast.walk(method):
-            if isinstance(n, ast.ImportFrom) and n.module == _TARGET_MODULE:
-                offenders.append(method.name)
-                break
+        if method.name not in _EXPECTED_CALLERS:
+            continue
+        # Walk the method body looking for a Call to _lazy_policy_runner
+        has_call = False
+        for node in ast.walk(method):
+            if isinstance(node, ast.Call):
+                func = node.func
+                if isinstance(func, ast.Name) and func.id == "_lazy_policy_runner":
+                    has_call = True
+                    break
+        if not has_call:
+            methods_missing_call.append(method.name)
 
-    assert not offenders, (
-        f"SimEngine method(s) {offenders} contain a direct "
-        f"`from {_TARGET_MODULE} import ...` - route through "
-        f"`_lazy_policy_runner()` instead (defined at module scope in base.py)."
+    assert not methods_missing_call, (
+        f"SimEngine method(s) {methods_missing_call} do not call "
+        f"`_lazy_policy_runner()`. On pre-fix code these methods resolve "
+        f"PolicyRunner/VideoConfig from module scope, which closes the "
+        f"CodeQL cycle (alerts #83-#87). Each must obtain them via the "
+        f"lazy helper to keep the import deferred to call time."
     )
