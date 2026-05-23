@@ -1011,7 +1011,7 @@ class Mesh(SensorLoopsMixin):
                             "proof_nonce_prefix": proof_nonce[:16],
                         },
                     )
-                except Exception:
+                except Exception:  # Audit publish is best-effort; must never block safety path
                     pass
                 return
             # Bound the cache.

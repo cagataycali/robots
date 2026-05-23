@@ -151,7 +151,7 @@ def test_replay_cache_bounded(monkeypatch):
     monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret")
 
     # Lower the cap for testing
-    import strands_robots.mesh.core as core_module
+    import strands_robots.mesh.core as core_module  # noqa: E402 — local import for monkeypatch access to module-level constant
 
     original_max = core_module.RESUME_REPLAY_CACHE_MAX
     monkeypatch.setattr(core_module, "RESUME_REPLAY_CACHE_MAX", 8)
