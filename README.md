@@ -518,6 +518,9 @@ agent.tool.gr00t_inference(action="stop", port=8000)
 | `STRANDS_MESH_POLICY_HOST_ALLOW` | Comma-separated host/CIDR list extending the default loopback-only `policy_host` allowlist for VLA inference targets (e.g. `vla.internal,10.0.0.0/24`). | unset |
 | `STRANDS_MESH_AUDIT_PSK` | Separate PSK for HMAC-signing audit-log records. Independent of the wire PSK so audit signing can rotate on its own schedule. Unset = audit records carry no signature (`verify_audit_integrity` reports them as unverifiable). | unset |
 | `STRANDS_MESH_OVERRIDE_CODE` | Operator code that clears the local emergency-stop lockout via `Mesh._resume_lockout(code)`. Compared in constant time. Unset = lockout cannot be cleared remotely. | unset |
+| `STRANDS_MESH_RESUME_FRESHNESS_S` | Maximum age (seconds) of a resume envelope before it is rejected as stale. Prevents replay of captured resume proofs outside this window. | `60` |
+| `STRANDS_MESH_RESUME_FORWARD_SKEW_S` | Maximum forward clock skew (seconds) tolerated in a resume envelope timestamp. Rejects envelopes timestamped in the future beyond this tolerance. | `5` |
+| `STRANDS_MESH_RESUME_REPLAY_CACHE_MAX` | Maximum number of `proof_nonce` values remembered in the per-receiver replay cache. Bounded LRU eviction prevents memory exhaustion from high-volume resume attempts. | `4096` |
 | `STRANDS_MESH_DEDUP_TTL` | Bridge-transport deduplication window (seconds). Caps how long the same envelope nonce is remembered across the Zenoh + IoT subscriber wrappers. | `120` |
 | `STRANDS_MESH_CAMERA_PRESIGN_TTL` | Lifetime (seconds) of presigned S3 GET URLs published in `/camera/.../ref` messages. Capped at 3600. | `60` |
 | `STRANDS_MESH_CAMERA_DISABLED` | Set to `true` to disable camera publishing entirely (privacy kill switch). `Mesh._publish_cameras_once` short-circuits before any frame is built. | `false` |

@@ -135,6 +135,9 @@ Hardened independently of the Zenoh refactor:
 | `STRANDS_MESH_MAX_CAMERA_BYTES` | `1048576` | `low_pass_filter` cap on `**/camera/**` |
 | `STRANDS_MESH_CAMERA_DISABLED` | `false` | Privacy kill switch -- when `true`, `Mesh._publish_cameras_once` short-circuits before any frame is built |
 | `STRANDS_MESH_FILTER_INTERFACES` | autodetect | Override iface allowlist for the filter / ACL |
+| `STRANDS_MESH_RESUME_FRESHNESS_S` | `60` | Maximum age (seconds) of a resume envelope before rejection as stale |
+| `STRANDS_MESH_RESUME_FORWARD_SKEW_S` | `5` | Maximum forward clock skew (seconds) tolerated in resume envelope timestamps |
+| `STRANDS_MESH_RESUME_REPLAY_CACHE_MAX` | `4096` | Maximum entries in the per-receiver resume proof_nonce replay cache (LRU eviction) |
 
 ### Tests
 
