@@ -517,7 +517,7 @@ agent.tool.gr00t_inference(action="stop", port=8000)
 | `STRANDS_MESH_CMD_RATE_HZ` | Per-key-expression frequency cap for `cmd` topics enforced via `downsampling`. Floods are dropped at the transport before reaching the deserialiser. | `20.0` |
 | `STRANDS_MESH_POLICY_HOST_ALLOW` | Comma-separated host/CIDR list extending the default loopback-only `policy_host` allowlist for VLA inference targets (e.g. `vla.internal,10.0.0.0/24`). | unset |
 | `STRANDS_MESH_AUDIT_PSK` | Separate PSK for HMAC-signing audit-log records. Independent of the wire PSK so audit signing can rotate on its own schedule. Unset = audit records carry no signature (`verify_audit_integrity` reports them as unverifiable). | unset |
-| `STRANDS_MESH_OVERRIDE_CODE` | Operator code that clears the local emergency-stop lockout via `Mesh._resume_lockout(code)`. Compared in constant time. Unset = lockout cannot be cleared remotely. | unset |
+| `STRANDS_MESH_OVERRIDE_CODE` | Operator code that clears the local emergency-stop lockout. Receivers verify the code in constant time against this env var. Unset = the local peer cannot be resumed remotely. | unset |
 | `STRANDS_MESH_RESUME_FRESHNESS_S` | Maximum age (seconds) of a resume envelope before it is rejected as stale. Prevents replay of captured resume proofs outside this window. | `60` |
 | `STRANDS_MESH_RESUME_FORWARD_SKEW_S` | Maximum forward clock skew (seconds) tolerated in a resume envelope timestamp. Rejects envelopes timestamped in the future beyond this tolerance. | `5` |
 | `STRANDS_MESH_RESUME_REPLAY_CACHE_MAX` | Maximum number of `proof_nonce` values remembered in the per-receiver replay cache. Bounded LRU eviction prevents memory exhaustion from high-volume resume attempts. | `4096` |
@@ -667,7 +667,7 @@ default 256) caps simultaneous peer count.
 
 #### Emergency-stop authorisation
 
-`Mesh.emergency_stop()` and `Mesh._resume_lockout(code)` use the
+`Mesh.emergency_stop()` and the receiver-side resume handler use the
 operator override code (`STRANDS_MESH_OVERRIDE_CODE`) as a *second
 factor* on top of the mTLS-bound operator role. Resume RPC carries
 `HMAC(override_code, proof_nonce)`; receivers recompute it locally
@@ -681,7 +681,7 @@ that should accept fleet-wide remote resume.
 |---|---|
 | LAN outsider, no cert | **Mitigated.** TLS handshake rejects the connection. |
 | Cert from a different CA | **Mitigated.** Our CA bundle does not verify it; handshake fails. |
-| Valid cert, CN does not match any ACL rule | **Mitigated.** ACL drops every message at the transport (default-deny). |
+| Valid cert, CN does not match any ACL rule | **Mitigated** when `STRANDS_MESH_ACL_FILE` is set with literal CN allowlists. With the built-in default ACL (`any_authenticated_peer`, intentionally permissive to avoid silent fleet outage on first run), any CA-signed peer is admitted to all key-expressions. Operators are expected to ship a literal-CN ACL file in production. |
 | Valid `robot-*` cert tries to publish on `*/cmd` (with `STRANDS_MESH_ACL_FILE` set) | **Mitigated.** The role-separated ACL template only allows `robot-*` peers ingress on telemetry topics; cmd publish is denied. **Without** `STRANDS_MESH_ACL_FILE`, the permissive default allows it — operators must opt in to per-role enforcement. |
 | Valid `op-*` cert floods `cmd` topic at 1 kHz | **Mitigated.** `downsampling` caps ingress at the configured frequency (default 20 Hz); the rest is dropped pre-deserialise. Verified live in `test_redteam_zenoh.py::TestDownsamplingRateCap`. |
 | Valid `op-*` cert sends 100 MiB camera frame | **Mitigated.** `low_pass_filter` caps camera bytes at the configured limit (default 1 MiB) before the receiver allocates buffers. Verified live in `TestLowPassFilterByteCap`. |
