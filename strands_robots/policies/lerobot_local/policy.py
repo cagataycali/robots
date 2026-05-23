@@ -109,7 +109,7 @@ class LerobotLocalPolicy(Policy):
     def provider_name(self) -> str:
         return "lerobot_local"
 
-    def reset(self) -> None:
+    def reset(self, seed: int | None = None) -> None:
         """Reset policy state between episodes.
 
         **MUST** be called whenever the environment or task episode resets.
@@ -119,7 +119,16 @@ class LerobotLocalPolicy(Policy):
 
         Also clears RTC state (previous chunk leftover, action queue, latency
         history) to prevent cross-episode contamination.
+
+        Args:
+            seed: Per-episode master seed (added in #187 for the
+                ``Policy.reset(seed=...)`` contract). Currently
+                unused — LeRobot policies don't expose RNG state via a
+                seed kwarg, and reproducibility is handled by
+                ``set_eval_seed`` upstream of the call. Reserved for
+                future per-policy RNG plumbing.
         """
+        del seed  # explicit no-op, not silently ignored
         if self._policy is not None and hasattr(self._policy, "reset"):
             self._policy.reset()
             logger.debug("Policy internal state reset")

@@ -54,7 +54,7 @@ from strands_robots.simulation.models import TrajectoryStep
 logger = logging.getLogger(__name__)
 
 
-def _set_eval_seed(seed: int) -> None:
+def set_eval_seed(seed: int) -> None:
     """Seed Python / NumPy / torch RNGs for reproducible eval rollouts.
 
     Mirrors NVIDIA's ``set_seed`` from
@@ -87,9 +87,12 @@ def _set_eval_seed(seed: int) -> None:
       are scoped to torch (not the broader environment) so the side
       effect surface is acceptable.
 
-    Per-episode reproducibility additionally depends on the spec's
-    ``episode_rng`` derived from this master seed inside
-    :meth:`_evaluate_with_spec`.
+    Public since #179: standalone integration tests
+    (``tests_integ/.../test_libero_10_scene5_mujoco_engine_success_rate``)
+    bypass :meth:`evaluate_benchmark` and need to call this directly to
+    get reproducible policy rollouts. The leading ``_`` was an oversight
+    from #168 round 38; the function is the supported way to seed an
+    eval and is part of the public API.
 
     NumPy / torch are imported lazily so this helper works on minimal
     installs that don't have torch (e.g. ``policy_provider="mock"``
@@ -112,6 +115,12 @@ def _set_eval_seed(seed: int) -> None:
         _torch.backends.cudnn.benchmark = False
     except ImportError:
         pass
+
+
+# Backward-compatibility alias for the pre-#179 private name. Internal
+# callers (this module's :class:`PolicyRunner`) still use it; the public
+# :func:`set_eval_seed` is the supported entry point.
+_set_eval_seed = set_eval_seed
 
 
 # Hook signature: called every control step after send_action.
@@ -577,6 +586,7 @@ class PolicyRunner:
         spec: BenchmarkProtocol | None = None,
         seed: int | None = None,
         action_horizon: int = 8,
+        on_frame: OnFrame | None = None,
     ) -> dict[str, Any]:
         """Evaluate ``policy`` for ``n_episodes`` episodes.
 
@@ -607,6 +617,15 @@ class PolicyRunner:
             seed: Master RNG seed. Each episode derives a child RNG from it,
                 so evaluations are reproducible within a process. Only used
                 when ``spec`` is provided.
+            on_frame: Optional ``(step, observation, action) -> None`` hook
+                fired per applied control step on the eval thread, after
+                ``sim.send_action``. Currently only forwarded on the
+                ``spec=`` path (the legacy ``success_fn`` path doesn't
+                expose telemetry hooks). Use this for synchronous
+                recording when the eval runs on a thread distinct from
+                the script main (e.g. Strands ``Agent`` tool dispatch
+                under asyncio) — see #191 and
+                :meth:`~strands_robots.simulation.mujoco.simulation.Simulation.start_cameras_recording_synchronous`.
 
         Returns:
             Standard status dict. When ``spec`` is used, the JSON payload
@@ -635,6 +654,7 @@ class PolicyRunner:
                 n_episodes=n_episodes,
                 seed=seed,
                 action_horizon=action_horizon,
+                on_frame=on_frame,
             )
 
         try:
@@ -708,6 +728,7 @@ class PolicyRunner:
         n_episodes: int,
         seed: int | None,
         action_horizon: int = 8,
+        on_frame: OnFrame | None = None,
     ) -> dict[str, Any]:
         """Drive a :class:`BenchmarkProtocol` for ``n_episodes`` episodes.
 
@@ -720,6 +741,17 @@ class PolicyRunner:
         ``spec.supported_robots`` (non-empty), we return a structured error
         with the allowed list instead of silently running a mismatched
         evaluation.
+
+        ``on_frame`` (#191) fires per applied control step on the eval
+        thread, after ``sim.send_action`` and after the spec's per-step
+        bookkeeping (``on_step`` / success / failure checks). Use this
+        for synchronous recording or telemetry that needs to read sim
+        state on the eval thread to avoid the cross-thread ``mjData``
+        race the daemon-thread recorder hits under multi-threaded
+        eval (Strands ``Agent`` tool dispatch under asyncio). Failures
+        are logged WARNING; the rollout continues. The hook receives a
+        global step counter (across episodes), so callers that need
+        per-episode buckets should track episode boundaries themselves.
         """
         # Lazy import to avoid circular reference (benchmark module imports
         # `SimEngine` from base which imports this module under TYPE_CHECKING).
@@ -727,7 +759,7 @@ class PolicyRunner:
 
         # T26: skip camera rendering when the policy does not need images.
         _skip_images = not getattr(policy, "requires_images", True)
-        # Round 38 (#168): seed Python / NumPy / torch / cuDNN once before
+        # #168: seed Python / NumPy / torch / cuDNN once before
         # the episode loop so policy stochastic ops (e.g. attention
         # dropout, sampling temperature) are reproducible across re-runs
         # at the same ``seed``. Mirrors NVIDIA's upstream ``set_seed`` in
@@ -741,12 +773,74 @@ class PolicyRunner:
         max_steps = spec.max_steps
         results: list[dict[str, Any]] = []
 
+        # #191 — global step counter passed to ``on_frame``. Crosses
+        # episode boundaries so consumers that don't track ep ↔ step
+        # mappings still get a monotonic index. Callers that need
+        # per-episode buckets can read ``info["steps"]`` from the
+        # returned per-episode results.
+        global_step = 0
+
+        # #187 — fall back to ``spec.instruction`` (default ``""``) when
+        # the user didn't pass an explicit instruction. Language-
+        # conditioned policies (GR00T, OpenVLA) need the task description
+        # or they produce off-task actions; LIBERO/Meta-World/etc. ship
+        # the per-task language with the benchmark, so the spec is the
+        # right source of truth. User-provided ``instruction`` still
+        # wins when non-empty, preserving back-compat.
+        spec_instruction = ""
+        try:
+            spec_instruction = spec.instruction or ""
+        except Exception as e:  # noqa: BLE001 - back-compat for specs without the property
+            logger.debug("spec.instruction lookup raised %s; defaulting to empty", e)
+        effective_instruction = instruction or spec_instruction
+        if not effective_instruction:
+            logger.warning(
+                "evaluate_benchmark: instruction is empty (user passed %r, spec.instruction=%r). "
+                "Language-conditioned policies (GR00T, OpenVLA, etc.) will receive an empty "
+                "string and may produce off-task actions. Pass instruction=... explicitly or "
+                "override BenchmarkProtocol.instruction on your spec.",
+                instruction,
+                spec_instruction,
+            )
+
         for ep in range(n_episodes):
             self.sim.reset()
             # Per-episode seeded RNG - deterministic given the master seed
             # and the episode index.
             episode_seed = master_rng.randint(0, 2**31 - 1)
             episode_rng = random.Random(episode_seed)
+
+            # #179 — re-seed Python / NumPy / torch / cuDNN at the start
+            # of EACH episode (not just once before the loop). Without
+            # the per-episode reseed, every torch op draws from a global
+            # RNG state that mutates across episodes, so the diffusion
+            # sampler in policies like ``nvidia/GR00T-N1.7-LIBERO`` produces
+            # different action chunks per re-run even at the same
+            # ``seed=42``. With the per-episode reseed, episode N always
+            # starts from the same RNG state regardless of what happened
+            # in episodes 0..N-1.
+            #
+            # Validated on libero-10/SCENE5: pre-#179 5-ep eval ranged
+            # 0.40-1.00 across runs; post-#179 the same eval is bit-stable
+            # (same successes list every run).
+            set_eval_seed(episode_seed)
+
+            # #187 — for SERVICE-mode policies (e.g. Gr00tPolicy over
+            # ZMQ), set_eval_seed only seeds the client process. The
+            # remote inference server has its own torch/CUDA RNG that
+            # drifts across calls. Forward the per-episode seed via
+            # policy.reset(seed=...) so server-side state can be
+            # re-initialised. Default Policy.reset is a no-op; concrete
+            # policies override (Gr00tPolicy forwards to the server's
+            # `reset` endpoint).
+            try:
+                policy.reset(seed=episode_seed)
+            except Exception as e:  # noqa: BLE001 - reset is best-effort
+                logger.warning(
+                    "policy.reset(seed=%d) raised %s; continuing without per-episode reset",
+                    episode_seed,
+                    e,
+                )
 
             try:
                 spec.on_episode_start(self.sim, episode_rng)
@@ -795,15 +889,15 @@ class PolicyRunner:
                         "status": "error",
                         "content": [{"text": f"augment_observation failed in {spec_name}: {e}"}],
                     }
-                coro_or_result = policy.get_actions(observation, instruction)
+                coro_or_result = policy.get_actions(observation, effective_instruction)
                 actions = _resolve_coroutine(coro_or_result)
 
-                # Round 36 (#168): consume up to ``action_horizon`` actions
+                # #168: consume up to ``action_horizon`` actions
                 # per inference. Default ``action_horizon=8`` matches NVIDIA's
                 # upstream GR00T LIBERO eval (``MultiStepWrapper`` with
                 # ``n_action_steps=8``) — the GR00T-N1.7-LIBERO checkpoints
                 # were trained against an 8-step open-loop chunk replay.
-                # Round 34's earlier ``=1`` default (closed-loop OpenVLA
+                # The earlier ``=1`` default (closed-loop OpenVLA
                 # convention) put eval out-of-distribution from training
                 # and was a contributing factor to ``success_rate=0``.
                 # Set to ``1`` for closed-loop receding-horizon control.
@@ -821,7 +915,31 @@ class PolicyRunner:
                             break
                         action_applied = dict(action_in_chunk)
                         self.sim.send_action(action_applied, robot_name=robot_name)
+                        # #191 — synchronous on_frame hook fires on the
+                        # eval thread, after send_action + before
+                        # on_step's reward bookkeeping. Use this for
+                        # synchronous frame recording when the eval is
+                        # dispatched from a thread distinct from the
+                        # script main (e.g. Strands Agent worker thread
+                        # under asyncio); the daemon-thread recorder
+                        # races mjData mutations on the eval thread and
+                        # produces 2-3% frame-capture rates with greenish
+                        # GL clear-colour artifacts. See
+                        # ``Simulation.start_cameras_recording_synchronous``
+                        # for the recorder side of this contract.
+                        if on_frame is not None:
+                            try:
+                                on_frame(global_step, observation, action_applied)
+                            except Exception as e:  # noqa: BLE001 - hook is best-effort
+                                logger.warning(
+                                    "on_frame hook failed at global_step=%d (ep=%d, ep_step=%d): %s",
+                                    global_step,
+                                    ep,
+                                    steps,
+                                    e,
+                                )
                         steps += 1
+                        global_step += 1
                         try:
                             info = spec.on_step(self.sim, observation, action_applied)
                         except Exception as e:  # noqa: BLE001
@@ -850,6 +968,7 @@ class PolicyRunner:
                     # sim.step(n_steps=1); count it like an applied step
                     # so the outer loop terminates.
                     steps += 1
+                    global_step += 1
                     try:
                         info = spec.on_step(self.sim, observation, action_applied)
                     except Exception as e:  # noqa: BLE001
@@ -988,4 +1107,4 @@ class PolicyRunner:
         raise ValueError(f"Unknown success_fn string: {success_fn!r}")
 
 
-__all__ = ["PolicyRunner", "OnFrame", "SuccessFn", "CooperativeStop", "TrajectoryStep"]
+__all__ = ["PolicyRunner", "OnFrame", "SuccessFn", "CooperativeStop", "TrajectoryStep", "set_eval_seed"]

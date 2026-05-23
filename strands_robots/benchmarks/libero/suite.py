@@ -37,7 +37,7 @@ forwards as ``init_states=`` into :meth:`LiberoAdapter.from_file`. Without
 this the robot starts at ``qpos=0`` (joint-default "stretched flat"
 pose), the policy issues actions calibrated for the canonical "ready"
 pose against a totally different body configuration, and the success
-rate collapses to 0 (#168 round-7 bug I). When ``libero`` isn't
+rate collapses to 0 (#168 bug I). When ``libero`` isn't
 importable (e.g. minimal CI), init_states loading no-ops and the
 adapter falls back to its snapshot-and-restore branch.
 
@@ -111,6 +111,17 @@ def _resolve_libero_root() -> Path:
 
     Lazily imports ``libero`` via :func:`require_optional` with a helpful
     install hint pointing at ``strands-robots[benchmark-libero]``.
+
+    Handles two install layouts:
+
+    1. Regular package — ``libero.__file__`` points at
+       ``.../site-packages/libero/__init__.py``; the parent directory is
+       the package root.
+    2. Namespace package (PEP 420) — ``libero.__file__`` is ``None``;
+       ``libero.__path__`` carries one or more directory entries (e.g.
+       NVIDIA's ``setup_libero.sh`` installs LIBERO this way: a
+       symlinked checkout where ``libero`` has no ``__init__.py``).
+       Fall back to the first path entry's parent.
     """
     libero = require_optional(
         "libero",
@@ -118,11 +129,23 @@ def _resolve_libero_root() -> Path:
         extra="benchmark-libero",
         purpose="LIBERO benchmark suite discovery",
     )
-    # __file__ lives inside the package; its parent is the package root.
     libero_file = getattr(libero, "__file__", None)
-    if not libero_file:
-        raise RuntimeError("libero package has no __file__ attribute; cannot locate BDDL tasks")
-    return Path(libero_file).resolve().parent.parent
+    if libero_file:
+        # Regular package: __file__ lives inside the package; its parent is the package root.
+        return Path(libero_file).resolve().parent.parent
+
+    # Namespace package: pull from __path__ (the canonical PEP 420 attribute).
+    libero_path = getattr(libero, "__path__", None)
+    if libero_path:
+        # __path__ is a (namespace) iterable of directory strings; first entry is enough.
+        first = next(iter(libero_path), None)
+        if first:
+            return Path(first).resolve().parent
+
+    raise RuntimeError(
+        "libero package has neither __file__ nor a non-empty __path__; cannot locate BDDL tasks. "
+        "Reinstall with `pip install strands-robots[benchmark-libero]` or check your install layout."
+    )
 
 
 def _load_init_states_by_bddl(suite: str) -> dict[str, np.ndarray]:
@@ -259,7 +282,7 @@ def load_libero_suite(
             task. Required for ``success_rate > 0`` against
             ``nvidia/GR00T-N1.7-LIBERO`` - without it the robot starts
             at ``qpos=0`` instead of LIBERO's canonical "ready" pose
-            (#168 round-7 bug I). Set to ``False`` to disable for unit
+            (#168 bug I). Set to ``False`` to disable for unit
             tests / minimal CI / when ``libero`` isn't installed (the
             loader silently no-ops in those cases anyway, but the flag
             documents intent). When ``True`` and libero loading fails,

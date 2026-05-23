@@ -493,6 +493,14 @@ agent.tool.gr00t_inference(action="stop", port=8000)
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `STRANDS_ASSETS_DIR` | Custom directory for robot model assets (MJCF, meshes) | `~/.strands_robots/assets/` |
+| `STRANDS_ROBOT_MODE` | Default mode for `Robot()` factory: `sim` / `real` / `auto` | `sim` |
+| `STRANDS_TRUST_REMOTE_CODE` | Allow downloading + executing model code | `false` |
+| `MUJOCO_GL` | GL backend for the MuJoCo renderer | auto |
+| `STRANDS_MESH` | Set to `false` to disable Zenoh mesh networking globally | `true` |
+| `STRANDS_MESH_PORT` | TCP port for the local Zenoh router | `7447` |
+| `ZENOH_CONNECT` | Comma-separated list of remote Zenoh endpoints to connect to | - |
+| `ZENOH_LISTEN` | Comma-separated list of endpoints for the local Zenoh listener | - |
+| `STRANDS_MESH_AUDIT_DIR` | Directory for the safety audit log (`mesh_audit.jsonl`) | `~/.strands_robots/` |
 | `GROOT_API_TOKEN` | API token for GR00T inference service | - |
 | `STRANDS_ROBOT_MODE` | Override `Robot()` factory mode detection (`sim`, `real`, `auto`) | `auto` |
 | `STRANDS_TRUST_REMOTE_CODE` | Set to `1` to opt into HuggingFace `trust_remote_code` for `lerobot_local` policies | unset |
@@ -501,8 +509,29 @@ agent.tool.gr00t_inference(action="stop", port=8000)
 | `STRANDS_LIBERO_ACTION_LOG_MAX` | Max number of `apply()` calls to log per episode when `STRANDS_LIBERO_ACTION_LOG=1`. | `50` |
 | `STRANDS_LIBERO_STATE_LOG` | Set to `1` to emit per-step diagnostic logs of the state values (`state.x/y/z/roll/pitch/yaw/gripper`) the LIBERO adapter feeds to the GR00T policy. Pairs with `STRANDS_LIBERO_ACTION_LOG` for end-to-end interface bisection. | unset |
 | `STRANDS_LIBERO_STATE_LOG_MAX` | Max number of `augment_observation()` calls to log per episode when `STRANDS_LIBERO_STATE_LOG=1`. | `50` |
-| `STRANDS_LIBERO_PREDICATE_LOG` | Set to `1` to emit per-step diagnostic logs from `LiberoAdapter.is_success` showing both the BDDL evaluator's verdict and the upstream `env.check_success()` verdict (when available), with per-leaf predicate breakdowns. Used to bisect BDDL predicate evaluator vs robosuite `check_success` disagreements (see #170). | unset |
-| `STRANDS_LIBERO_PREDICATE_LOG_MAX` | Max number of `is_success` calls to log per episode when `STRANDS_LIBERO_PREDICATE_LOG=1`. | `10` |
+| `STRANDS_GROOT_WIRE_LOG` | Path to a directory where `Gr00tPolicy` will dump pre-inference observations + post-inference action chunks as pickle files (one per `get_actions` call, named `{local,service}_call{N:04d}.pkl`). Used by the #187 bisection plan to verify whether LOCAL and SERVICE inference paths send byte-identical observations to the model. Run an eval once with each mode into the same dir, then `np.allclose` matching files. | unset |
+| `STRANDS_GROOT_WIRE_LOG_MAX_CALLS` | Cap on number of wire-payload dumps per process when `STRANDS_GROOT_WIRE_LOG` is set. Prevents multi-GB pickle archives on long evals. The first few calls are enough to bisect a divergence. | `10` |
+
+### Mesh Networking
+
+Every `Robot()` and `Simulation()` constructed in a process is automatically a
+peer on the local Zenoh mesh — no manual setup required.  Peers on the same
+LAN discover each other via Zenoh multicast scouting, and a single
+process-wide `zenoh.Session` is shared (ref-counted) across every robot or
+simulation in the same Python process.
+
+```python
+from strands_robots import Robot
+sim_a = Robot("so100")          # auto-joins the mesh as a peer
+sim_b = Robot("so100")          # second peer in another process
+print(sim_a.mesh.peers)         # discovers sim_b
+sim_a.mesh.tell(sim_b.mesh.peer_id, "pick up the cube")
+sim_a.mesh.emergency_stop()     # broadcast E-STOP, audited to disk
+```
+
+Disable globally with `STRANDS_MESH=false` or per-robot with
+`Robot("so100", mesh=False)`.  Install the optional dependency with
+`pip install strands-robots[mesh]`.
 
 ### Cache Directory
 

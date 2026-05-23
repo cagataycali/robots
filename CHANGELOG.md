@@ -3,6 +3,63 @@
 All notable behavioural changes to `strands-robots` are logged here. Follows
 [Keep a Changelog](https://keepachangelog.com/) conventions.
 
+## Unreleased - #178 (LiberoOffScreenRenderEngine retired)
+
+### Removed: ``LiberoOffScreenRenderEngine`` simulation backend (BREAKING)
+
+After PR #184 made ``MuJoCoSimEngine`` byte-equivalent to upstream LIBERO
+(model-level inertias, ``mj_step`` divergence 0 over 200+ substeps, mean
+``success_rate=0.92`` vs offscreen ``0.72`` on libero-10/SCENE5),
+``LiberoOffScreenRenderEngine`` has no functional reason to exist. It is
+deleted entirely.
+
+What is gone:
+- **Deleted**: ``strands_robots/simulation/libero_offscreen_render/``
+  (entire package, ~700 LoC).
+- **Deleted**: ``"libero_offscreen_render"`` registry entry in
+  ``strands_robots.simulation.factory`` and its aliases
+  ``"libero_offscreen"`` and ``"libero_osr"``.
+- **Deleted**: ``LiberoAdapter._on_episode_start_offscreen`` and the
+  ``hasattr(sim, "setup_libero_task")`` dispatch branch in
+  ``LiberoAdapter.on_episode_start``. The unified ``MuJoCoSimEngine``
+  path is the only path now.
+- **Deleted**: ``LiberoAdapter.is_success`` no longer delegates to
+  ``env.check_success`` on ``OffScreenRenderEnv``-backed engines (no
+  such engines exist anymore). It now always evaluates the BDDL
+  predicate tree, hardened in #170 / #173 / #175 to match upstream's
+  ``check_ontop`` / ``check_contact`` semantics.
+- **Deleted**: ``STRANDS_LIBERO_PREDICATE_LOG`` and
+  ``STRANDS_LIBERO_PREDICATE_LOG_MAX`` env vars (the BDDL ↔
+  ``env.check_success`` disagreement diagnostic; no offscreen env
+  to compare against). The ``_walk_predicate_tree`` helper is kept
+  for any future BDDL-evaluator debugging.
+- **Deleted**: ``tests/simulation/libero_offscreen_render/`` (3 unit
+  test files).
+- **Rewrote**: ``tests_integ/benchmarks/libero/test_upstream_state_parity.py``'s
+  ``test_state_observation_byte_equivalent_at_canonical_init`` to
+  compare ``MuJoCoSimEngine`` directly against upstream's raw
+  ``OffScreenRenderEnv`` (skipping the intermediate engine wrapper).
+  Same coverage, less indirection.
+
+Migration: rename the backend in any ``create_simulation()`` call.
+
+```python
+# Before
+sim = create_simulation("libero_offscreen_render", ...)
+# (also "libero_offscreen", "libero_osr")
+
+# After
+sim = create_simulation("mujoco", ...)
+```
+
+The ``mujoco`` backend now reaches ``success_rate >= 0.92`` on
+libero-10/SCENE5 (vs ``0.72`` for the offscreen engine), so this is
+strictly an upgrade for benchmark eval consumers.
+
+Out of scope: ``examples/libero_mujoco.py`` in
+``strands-labs/robots-sim`` still has an ``--engine={mujoco,libero_offscreen_render}``
+switch. A follow-up issue tracks updating it once this PR lands.
+
 ## Unreleased - PR #85 (MuJoCo backend remediation)
 
 ### MJCF builder refactor: string-concat -> MjSpec AST (closes #121, #122-#126)

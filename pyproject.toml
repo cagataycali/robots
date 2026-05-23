@@ -60,10 +60,28 @@ sim-mujoco = [
 benchmark-libero = [
     "libero>=0.1.0,<1.0.0",
 ]
+mesh = [
+    "eclipse-zenoh>=1.0.0,<2.0.0",
+]
+# AWS IoT Core integration for the mesh — MQTT5/mTLS transport, Device
+# Shadow mirror, S3 camera offload, account-wide bootstrap (Rules /
+# Lambda / DynamoDB / Fleet Provisioning template). Requires:
+#   * awsiotsdk (high-level MQTT5 + mTLS client builder)
+#   * awscrt    (low-level CRT runtime; pulled in by awsiotsdk but pinned
+#                here for transitive predictability)
+#   * boto3     (used for IoT control-plane provisioning + S3 frame upload)
+mesh-iot = [
+    "strands-robots[mesh]",
+    "awsiotsdk>=1.21.0,<2.0.0",
+    "awscrt>=0.20.0,<1.0.0",
+    "boto3>=1.34.0,<2.0.0",
+]
 all = [
     "strands-robots[groot-service]",
     "strands-robots[lerobot]",
     "strands-robots[sim-mujoco]",
+    "strands-robots[mesh]",
+    "strands-robots[mesh-iot]",
 ]
 dev = [
     "pytest>=6.0,<9.0.0",
@@ -138,7 +156,7 @@ ignore_missing_imports = false
 
 # Third-party libs without type stubs
 [[tool.mypy.overrides]]
-module = ["lerobot.*", "gr00t.*", "draccus.*", "msgpack.*", "zmq.*", "huggingface_hub.*", "serial.*", "psutil.*", "torch.*", "torchvision.*", "transformers.*", "einops.*", "robot_descriptions.*", "mujoco.*", "imageio.*", "libero.*"]
+module = ["lerobot.*", "gr00t.*", "draccus.*", "msgpack.*", "zmq.*", "huggingface_hub.*", "serial.*", "psutil.*", "torch.*", "torchvision.*", "transformers.*", "einops.*", "robot_descriptions.*", "mujoco.*", "imageio.*", "libero.*", "zenoh.*", "boto3", "boto3.*", "awscrt", "awscrt.*", "awsiot", "awsiot.*", "botocore.*"]
 ignore_missing_imports = true
 
 # @tool decorator injects runtime signatures mypy cannot check
@@ -164,6 +182,13 @@ warn_return_any = false
 [[tool.mypy.overrides]]
 module = ["strands_robots.__init__"]
 disallow_untyped_defs = false
+
+# AWS IoT bootstrap modules — boto3 always returns Any from API calls.
+# We type the public surface explicitly (ProvisionedThing, BootstrappedAccount)
+# but the internal helpers naturally bubble Any from boto3.
+[[tool.mypy.overrides]]
+module = ["strands_robots.mesh.iot.*", "strands_robots.mesh.transport.iot_transport"]
+warn_return_any = false
 
 # Registry modules — dynamic JSON loading returns Any
 [[tool.mypy.overrides]]

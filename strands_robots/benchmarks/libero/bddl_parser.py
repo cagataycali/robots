@@ -195,12 +195,19 @@ def _on_kwargs(args: list[str]) -> dict[str, Any]:
     # off plate.xy — the loose defaults rejected this as ``False`` while
     # ``env.check_success()`` returned ``True`` (#170 diagnostic).
     #
-    # We don't add the contact check here yet (would require
-    # :meth:`get_contacts` on ``LiberoOffScreenRenderEngine``); the
-    # tighter geometric thresholds alone close the libero-10/SCENE5
-    # divergence. False positives in transient "suspended above plate"
-    # states are rare and self-correct as the rollout continues.
-    return {"body_a": args[0], "body_b": args[1], "z_offset": 0.0, "xy_tol": 0.03}
+    # #171 sub-task 3e: also require physics contact via
+    # ``sim.get_contacts``. Without this, transient
+    # "mug-suspended-above-plate" placement states produce BDDL false
+    # positives (mug 5 cm above plate, xy-aligned, no contact yet).
+    # Graceful degradation: engines without ``get_contacts`` skip the
+    # check (preserves pre-#171 behaviour).
+    return {
+        "body_a": args[0],
+        "body_b": args[1],
+        "z_offset": 0.0,
+        "xy_tol": 0.03,
+        "require_contact": True,
+    }
 
 
 def _near_kwargs(args: list[str]) -> dict[str, Any]:

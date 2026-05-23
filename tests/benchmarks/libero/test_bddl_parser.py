@@ -317,8 +317,9 @@ class TestCompileGoal:
         problem = parse_bddl(text)
         fn = compile_goal(problem.goal)  # type: ignore[arg-type]
 
-        # Real positions captured from STRANDS_LIBERO_PREDICATE_LOG=1 at
-        # the env-success step on libero-10/SCENE5 seed=42 ep 0.
+        # Real positions captured at the env-success step on
+        # libero-10/SCENE5 seed=42 ep 0 (via the #170 BDDL ↔
+        # ``env.check_success`` diagnostic, since removed in #178).
         success_state = _BodyStateSim(
             {
                 "porcelain_mug_1": {"position": [-0.003, -0.311, 0.443]},
@@ -401,6 +402,98 @@ class TestCompileGoal:
         # change that "fixes" this asymmetry doesn't silently shift
         # near-success cases.
         assert fn(same_z) is False
+
+    def test_on_libero_requires_contact_when_get_contacts_available(self):
+        """#171 sub-task 3e: ``on(A, B)`` now requires physics contact
+        between A and B when ``sim.get_contacts`` is available. Matches
+        upstream LIBERO's ``ObjectState.check_ontop`` which combines
+        geometric thresholds with ``check_contact``.
+
+        Pre-#171 the geometric check alone fired True at "mug suspended
+        5cm above plate, xy-aligned" transient states; this is now
+        rejected because there's no contact.
+
+        Sentinel for the false-positive elimination: a sim with the
+        right geometry but NO contact must reject the predicate.
+        """
+        text = "(define (problem p) (:goal (on cube_1 plate_1)))"
+        problem = parse_bddl(text)
+        fn = compile_goal(problem.goal)  # type: ignore[arg-type]
+
+        # Geometry passes (cube above plate, xy aligned within 3cm).
+        # But contacts list is EMPTY — engine reports no contact.
+        no_contact = _CombinedSim(
+            bodies={
+                "cube_1": {"position": [0.0, 0.0, 0.443]},
+                "plate_1": {"position": [0.0, 0.0, 0.439]},
+            },
+            contacts=[],  # ← no contact = no "on"
+        )
+        assert fn(no_contact) is False, (
+            "Without contact, on() should return False even when geometry passes. "
+            "If True, the contact check (require_contact=True from _on_kwargs) "
+            "may have regressed."
+        )
+
+        # Same geometry + a contact between cube_g0 and plate_g0 → True.
+        with_contact = _CombinedSim(
+            bodies={
+                "cube_1": {"position": [0.0, 0.0, 0.443]},
+                "plate_1": {"position": [0.0, 0.0, 0.439]},
+            },
+            contacts=[{"geom1": "cube_1_g0", "geom2": "plate_1_g0"}],
+        )
+        assert fn(with_contact) is True
+
+    def test_on_libero_contact_check_matches_either_direction(self):
+        """#171 sub-task 3e: contact records may list (cube_geom,
+        plate_geom) or (plate_geom, cube_geom) — both must match the
+        same predicate. Pin the order-insensitivity so a robosuite
+        contact-record convention change doesn't silently break us.
+        """
+        text = "(define (problem p) (:goal (on cube_1 plate_1)))"
+        problem = parse_bddl(text)
+        fn = compile_goal(problem.goal)  # type: ignore[arg-type]
+
+        bodies = {
+            "cube_1": {"position": [0.0, 0.0, 0.443]},
+            "plate_1": {"position": [0.0, 0.0, 0.439]},
+        }
+        # Direction 1: cube first.
+        forward = _CombinedSim(
+            bodies=bodies,
+            contacts=[{"geom1": "cube_1_g3", "geom2": "plate_1_g7"}],
+        )
+        assert fn(forward) is True
+        # Direction 2: plate first.
+        reverse = _CombinedSim(
+            bodies=bodies,
+            contacts=[{"geom1": "plate_1_g7", "geom2": "cube_1_g3"}],
+        )
+        assert fn(reverse) is True
+
+    def test_on_libero_contact_check_gracefully_degrades_without_get_contacts(self):
+        """#171 sub-task 3e: when the sim engine doesn't expose
+        ``get_contacts`` (e.g. a custom backend, test stub), the
+        contact check is SKIPPED rather than failing. The geometric
+        check alone determines the verdict — preserves pre-#171
+        behaviour for engines without contact support.
+
+        Without this graceful degradation, every non-mujoco backend
+        would suddenly fail every ``on`` predicate."""
+        text = "(define (problem p) (:goal (on cube_1 plate_1)))"
+        problem = parse_bddl(text)
+        fn = compile_goal(problem.goal)  # type: ignore[arg-type]
+
+        # _BodyStateSim has NO get_contacts → graceful degradation.
+        no_contacts_method = _BodyStateSim(
+            {
+                "cube_1": {"position": [0.0, 0.0, 0.443]},
+                "plate_1": {"position": [0.0, 0.0, 0.439]},
+            }
+        )
+        # Geometric check passes, contact check skipped → True.
+        assert fn(no_contacts_method) is True
 
 
 # Representative LIBERO-style round-trip

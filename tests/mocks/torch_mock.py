@@ -323,6 +323,7 @@ def install_torch_mock():
 
     torch_mock.no_grad = _NoGrad
     torch_mock.inference_mode = _NoGrad
+    torch_mock.manual_seed = lambda seed: None
 
     # torch.nn
     nn_mock = types.ModuleType("torch.nn")
@@ -337,6 +338,7 @@ def install_torch_mock():
     cuda_mock = types.ModuleType("torch.cuda")
     cuda_mock.is_available = lambda: False
     cuda_mock.device_count = lambda: 0
+    cuda_mock.manual_seed_all = lambda seed: None
     torch_mock.cuda = cuda_mock
 
     # torch.backends
