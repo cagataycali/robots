@@ -164,20 +164,39 @@ def test_distinct_t_from_same_issuer_accepted() -> None:
     assert m._estop_lockout.is_set()
 
 
-def test_same_t_distinct_issuers_both_accepted() -> None:
-    """Two issuers minting envelopes at the same instant both succeed --
-    keying is per-(issuer, t), not just t."""
+def test_same_t_distinct_issuers_collapse_to_single_accept() -> None:
+    """R20 trade-off: two issuers minting envelopes at the same instant
+    collapse to one accepted record because the cache key is keyed on
+    ``float(t)`` alone (not ``(issuer, t)``).
+
+    The prior keying let an attacker who captured one envelope replay
+    it indefinitely by varying the payload ``peer_id`` field. Keying on
+    ``t`` alone closes that surface; the cost is that two genuine
+    operators issuing estops at the exact same float-precision instant
+    cannot both populate distinct cache slots. The lockout is
+    idempotent so the safety property is preserved -- the second
+    receipt is logged as a replay and audited as such, but the lockout
+    state is the same either way.
+    """
     m = _make_mesh()
     t = time.time()
 
     env1 = _envelope(peer_id="op-1", t=t)
     m._on_safety_estop(_sample(env1))
     assert m._estop_lockout.is_set()
+    assert len(m._estop_replay_cache) == 1
     m._estop_lockout.clear()
 
+    # Same t, different peer_id -- the second envelope is treated as a
+    # replay because the cache key is t-only. Lockout does NOT re-engage
+    # (the "remote_estop_engaged" branch only fires on first acceptance).
     env2 = _envelope(peer_id="op-2", t=t)
     m._on_safety_estop(_sample(env2))
-    assert m._estop_lockout.is_set()
+    assert not m._estop_lockout.is_set(), (
+        "same-t envelope from a different issuer must collapse to a "
+        "replay-rejection rather than re-engaging the lockout"
+    )
+    assert len(m._estop_replay_cache) == 1, "cache size must not grow on same-t collision"
 
 
 # --------------------------------------------------------------------------

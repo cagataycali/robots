@@ -200,7 +200,7 @@ class Mesh(SensorLoopsMixin):
         # RESUME_REPLAY_CACHE_MAX (the safety-replay defenses are
         # symmetric in shape; sharing the bounds keeps env-var surface
         # minimal).
-        self._estop_replay_cache: dict[tuple[str, float], float] = {}
+        self._estop_replay_cache: dict[float, float] = {}
         self._estop_replay_lock = threading.Lock()
 
     def __repr__(self) -> str:
@@ -973,13 +973,16 @@ class Mesh(SensorLoopsMixin):
         2. Forward-skew bound (``RESUME_FORWARD_SKEW_S``) -- envelopes
            timestamped beyond the tolerance in the future are rejected
            (defeats clock-rollback attacks against the freshness check).
-        3. Per-receiver replay cache keyed on ``(issuer_peer_id, t)`` --
-           bounded LRU at ``RESUME_REPLAY_CACHE_MAX`` entries; a captured
-           envelope replayed within the freshness window from the same
-           issuer is dropped.
+        3. Per-receiver replay cache keyed on ``float(envelope_t)``
+           (R20) -- bounded LRU at ``RESUME_REPLAY_CACHE_MAX`` entries.
+           Keyed on ``t`` alone (NOT ``(issuer_id, t)``) so an attacker
+           who captures one envelope cannot replay it by varying the
+           payload ``peer_id`` field, which is untrusted (comes from the
+           JSON body, not the TLS cert CN).
 
-        E-stop without an envelope ``t`` is rejected as malformed (the
-        canonical :meth:`emergency_stop` issuer always includes ``t``).
+        E-stop without an envelope ``t`` OR without a valid string
+        ``peer_id`` is rejected as malformed (the canonical
+        :meth:`emergency_stop` issuer always sets both).
         """
         try:
             raw = sample.payload.to_bytes().decode()
@@ -1020,10 +1023,36 @@ class Mesh(SensorLoopsMixin):
             )
             return
 
+        # R20: reject envelopes with missing/empty ``peer_id`` outright
+        # rather than coalescing to ``<unknown>``. The canonical
+        # :meth:`emergency_stop` issuer always sets ``peer_id``; a
+        # malformed envelope is either a programming bug or an attacker
+        # probing the cache. Coalescing to a shared bucket let one
+        # attacker poison the slot for legitimate operators.
         issuer_id = data.get("peer_id")
         if not isinstance(issuer_id, str) or not issuer_id:
-            issuer_id = "<unknown>"
-        cache_key = (issuer_id, float(envelope_t))
+            logger.warning(
+                "[safety] %s: refusing remote estop -- envelope missing/invalid ``peer_id``",
+                self.peer_id,
+            )
+            return
+
+        # R20: cache key is keyed on ``float(envelope_t)`` ALONE -- not
+        # ``(issuer_id, t)``. The previous (issuer, t) key let an
+        # attacker who captured one valid envelope replay it
+        # indefinitely by varying the payload ``peer_id`` (which is
+        # untrusted -- it comes from the JSON body, not the TLS cert
+        # CN). Keying on the wall-clock ``t`` alone closes that
+        # peer_id-permutation surface; the only way to mint a new key
+        # is to advance the timestamp, which is bounded by the
+        # freshness window above. Trade-off: two genuine simultaneous
+        # estops from different operators that happen to share the
+        # exact same float-precision ``t`` collapse to one accepted
+        # record (the second is logged as a replay) -- acceptable
+        # because the lockout is idempotent and the audit log still
+        # carries both as separate critical-level events upstream.
+        # See PR #195 R20 thread on core.py:1026.
+        cache_key = float(envelope_t)
         # R19: cache TTL bookkeeping uses time.monotonic() so an NTP step
         # backward cannot leave entries un-evictable and a step forward
         # cannot age fresh entries out early. Envelope freshness still
