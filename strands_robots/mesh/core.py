@@ -129,6 +129,16 @@ class Mesh(SensorLoopsMixin):
         # an attacker has live ACL access on safety/**.
         self._resume_replay_cache: dict[tuple[str, str], float] = {}
         self._resume_replay_lock = threading.Lock()
+        # R9: estop replay defense -- mirror of resume cache, keyed on
+        # (issuer_peer_id, envelope_t). Closes the captured-estop-replay DoS
+        # surface that previously let any peer with live ACL access to
+        # safety/** replay a captured envelope indefinitely. Reuses
+        # RESUME_FRESHNESS_WINDOW_S / RESUME_FORWARD_SKEW_S /
+        # RESUME_REPLAY_CACHE_MAX (the safety-replay defenses are
+        # symmetric in shape; sharing the bounds keeps env-var surface
+        # minimal).
+        self._estop_replay_cache: dict[tuple[str, float], float] = {}
+        self._estop_replay_lock = threading.Lock()
 
     def __repr__(self) -> str:
         state = "alive" if self._running else "stopped"
@@ -576,8 +586,11 @@ class Mesh(SensorLoopsMixin):
         The Zenoh transport has already enforced:
 
         * mTLS peer identity (the sender's cert CN is bound to the link).
-        * ACL -- only peers in the ``operator_peer`` subject can publish
-          on ``cmd`` / ``broadcast`` topics.
+        * ACL -- **when the operator supplies ``STRANDS_MESH_ACL_FILE``
+          with role separation, only peers in the ``operator_peer``
+          subject can publish on ``cmd`` / ``broadcast`` topics**. The
+          default ``default_acl()`` is permissive (any CA-signed peer
+          may publish/subscribe on any key) -- see CHANGELOG.md Section 8.
         * Per-key-expression frequency cap (``downsampling`` block) --
           floods are dropped pre-deserialise.
         * Per-message size cap (``low_pass_filter`` block) -- jumbo
@@ -860,20 +873,106 @@ class Mesh(SensorLoopsMixin):
         """Engage the local emergency-stop lockout in response to a fleet-
         wide ``strands/safety/estop`` broadcast.
 
-        Authorisation lives at the Zenoh ACL: only peers in the
-        ``operator_peer`` subject can publish on ``safety/**`` keys, so
-        an unauthorised peer cannot reach this handler at all. We just
-        parse, set the local lockout flag, and record the receiver-side
-        transition in the audit log so a forensic walker sees both ends
-        of the lockout window for every peer.
+        Wire authentication (mTLS + ACL) admits this handler. **When the
+        operator supplies an ``STRANDS_MESH_ACL_FILE`` with role
+        separation (template at ``examples/mesh_acl_example.json5``),
+        only peers in the ``operator_peer`` subject can publish on
+        ``safety/**``.** The default ACL shipped by ``default_acl()`` is
+        permissive (CHANGELOG.md Section 8 -- "any CA-signed peer may
+        publish/subscribe on any key"), so any cert-holding peer can
+        originate an estop on out-of-the-box deployments.
+
+        R9 defense-in-depth -- captured-envelope replay protection
+        (PR #195 review feedback): even with an unrestricted ACL, a
+        replay of a captured ``safety/estop`` envelope cannot keep the
+        fleet locked indefinitely.  Mirrors :meth:`_on_safety_resume`:
+
+        1. Freshness window (``RESUME_FRESHNESS_WINDOW_S``) -- envelopes
+           older than the window are rejected.
+        2. Forward-skew bound (``RESUME_FORWARD_SKEW_S``) -- envelopes
+           timestamped beyond the tolerance in the future are rejected
+           (defeats clock-rollback attacks against the freshness check).
+        3. Per-receiver replay cache keyed on ``(issuer_peer_id, t)`` --
+           bounded LRU at ``RESUME_REPLAY_CACHE_MAX`` entries; a captured
+           envelope replayed within the freshness window from the same
+           issuer is dropped.
+
+        E-stop without an envelope ``t`` is rejected as malformed (the
+        canonical :meth:`emergency_stop` issuer always includes ``t``).
         """
         try:
             raw = sample.payload.to_bytes().decode()
             data = json.loads(raw)
-        except Exception:
+        except (AttributeError, UnicodeDecodeError, json.JSONDecodeError):
             return
         if not isinstance(data, dict):
             return
+
+        # R9: freshness + replay defenses. An estop envelope without
+        # ``t`` is not from a canonical issuer -- reject (also closes
+        # the trivial replay surface where an attacker strips ``t`` to
+        # bypass the freshness check).
+        envelope_t = data.get("t")
+        now = time.time()
+        if not isinstance(envelope_t, (int, float)):
+            logger.warning(
+                "[safety] %s: refusing remote estop -- envelope missing/invalid ``t``",
+                self.peer_id,
+            )
+            return
+        if envelope_t > now + RESUME_FORWARD_SKEW_S:
+            logger.warning(
+                "[safety] %s: refusing remote estop -- ``t``=%s in future (forward_skew_s=%s, now=%s)",
+                self.peer_id,
+                envelope_t,
+                RESUME_FORWARD_SKEW_S,
+                now,
+            )
+            return
+        if (now - envelope_t) > RESUME_FRESHNESS_WINDOW_S:
+            logger.warning(
+                "[safety] %s: refusing remote estop -- ``t``=%s too old (freshness_window_s=%s, now=%s)",
+                self.peer_id,
+                envelope_t,
+                RESUME_FRESHNESS_WINDOW_S,
+                now,
+            )
+            return
+
+        issuer_id = data.get("peer_id")
+        if not isinstance(issuer_id, str) or not issuer_id:
+            issuer_id = "<unknown>"
+        cache_key = (issuer_id, float(envelope_t))
+        with self._estop_replay_lock:
+            if cache_key in self._estop_replay_cache:
+                logger.warning(
+                    "[safety] %s: REJECTED remote estop -- replay of (issuer=%s, t=%s) already accepted",
+                    self.peer_id,
+                    issuer_id,
+                    envelope_t,
+                )
+                try:
+                    self.publish_safety_event(
+                        event_type="estop_replay_rejected",
+                        severity="warning",
+                        payload={"issuer": issuer_id, "issuer_t": envelope_t},
+                    )
+                except Exception:  # Audit publish is best-effort; must never block safety path
+                    pass
+                return
+            # Bound the cache (mirrors _on_safety_resume eviction strategy).
+            if len(self._estop_replay_cache) >= RESUME_REPLAY_CACHE_MAX:
+                cutoff = now - RESUME_FRESHNESS_WINDOW_S
+                stale = [k for k, ts in self._estop_replay_cache.items() if ts < cutoff]
+                for k in stale:
+                    self._estop_replay_cache.pop(k, None)
+                if len(self._estop_replay_cache) >= RESUME_REPLAY_CACHE_MAX:
+                    ordered = sorted(self._estop_replay_cache.items(), key=lambda kv: kv[1])
+                    drop = max(1, len(ordered) // 5)
+                    for k, _ in ordered[:drop]:
+                        self._estop_replay_cache.pop(k, None)
+            self._estop_replay_cache[cache_key] = now
+
         if not self._estop_lockout.is_set():
             self._estop_lockout.set()
             self._last_estop_ts = time.time()
@@ -896,8 +995,10 @@ class Mesh(SensorLoopsMixin):
     def _on_safety_resume(self, sample: Any) -> None:
         """Clear the local lockout in response to ``strands/safety/resume``.
 
-        Wire authentication (mTLS + ACL) ensures only an
-        ``operator_peer`` peer can reach this handler. Resume itself is
+        Wire authentication (mTLS + ACL) admits this handler. **When the
+        operator supplies an ``STRANDS_MESH_ACL_FILE`` with role
+        separation only ``operator_peer`` peers can publish here**; the
+        default permissive ACL admits any cert-holding peer. Resume is
         further gated by the operator override code: the issuer signed
         ``HMAC(STRANDS_MESH_OVERRIDE_CODE, proof_nonce)`` and we
         recompute it locally; a mismatch means the issuer's override

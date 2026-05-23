@@ -20,7 +20,7 @@ Configuration env vars
 ----------------------
 ``STRANDS_MESH_NAMESPACE``
     Fleet prefix prepended to every key-expression. Default
-    ``strands_robots``. Two fleets with different namespaces cannot
+    ``strands``. Two fleets with different namespaces cannot
     collide on the same network.
 
 ``STRANDS_MESH_MULTICAST``
@@ -62,8 +62,12 @@ Configuration env vars
 
 ``STRANDS_MESH_ACL_FILE``
     Filesystem path to a JSON5 ACL file. When unset, the built-in
-    default-deny ACL from :func:`default_acl_block` is used (robots
-    publish telemetry + receive cmds; operators publish cmds + observe).
+    permissive ACL from :func:`~strands_robots.mesh._acl_config.default_acl`
+    is used: any CA-signed peer may publish/subscribe on any key. Operators
+    who require role separation between robots and operators must supply
+    a custom ACL file (template at ``examples/mesh_acl_example.json5``).
+    See CHANGELOG.md Section 8 for the rationale (Zenoh 1.x ACL CN-glob
+    quirks made a true default-deny silently total-deny on first run).
 """
 
 from __future__ import annotations
