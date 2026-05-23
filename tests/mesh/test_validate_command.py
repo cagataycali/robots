@@ -332,3 +332,57 @@ class TestSafeHostAndModel:
 
     def test_safe_server_address_rejects_unallowed_ipv6(self):
         assert sec.is_safe_server_address("[2001:db8::1]") is False
+
+
+class TestValidateCommandResume:
+    """Pin R10 review fix: validate_command must bound resume.override_code.
+
+    Before R10, ``validate_command`` had no ``resume`` clause -- a peer
+    sending ``{"action": "resume", "override_code": <non-string>}`` would
+    pass validation and reach ``Mesh._resume_lockout`` where ``.strip()``
+    raises ``AttributeError`` on a list/dict, surfacing as a generic
+    dispatch error rather than a clean ValidationError.
+    """
+
+    def test_resume_string_override_passes(self):
+        cmd = {"action": "resume", "override_code": "valid-secret"}
+        out = sec.validate_command(cmd)
+        assert out["override_code"] == "valid-secret"
+
+    def test_resume_empty_override_passes(self):
+        # An empty string is the sentinel for "no override supplied" --
+        # validation must let it through; ``_resume_lockout`` then rejects.
+        cmd = {"action": "resume", "override_code": ""}
+        out = sec.validate_command(cmd)
+        assert out["override_code"] == ""
+
+    def test_resume_missing_override_passes_with_default(self):
+        # Missing key is also the no-code sentinel.
+        cmd = {"action": "resume"}
+        out = sec.validate_command(cmd)
+        assert out["override_code"] == ""
+
+    def test_resume_list_override_rejected(self):
+        cmd = {"action": "resume", "override_code": ["x"]}
+        with pytest.raises(sec.ValidationError, match="must be a string"):
+            sec.validate_command(cmd)
+
+    def test_resume_dict_override_rejected(self):
+        cmd = {"action": "resume", "override_code": {"k": "v"}}
+        with pytest.raises(sec.ValidationError, match="must be a string"):
+            sec.validate_command(cmd)
+
+    def test_resume_int_override_rejected(self):
+        cmd = {"action": "resume", "override_code": 12345}
+        with pytest.raises(sec.ValidationError, match="must be a string"):
+            sec.validate_command(cmd)
+
+    def test_resume_oversized_override_rejected(self):
+        cmd = {"action": "resume", "override_code": "x" * 257}
+        with pytest.raises(sec.ValidationError, match="too long"):
+            sec.validate_command(cmd)
+
+    def test_resume_at_limit_override_passes(self):
+        cmd = {"action": "resume", "override_code": "x" * 256}
+        out = sec.validate_command(cmd)
+        assert out["override_code"] == "x" * 256

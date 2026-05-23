@@ -498,6 +498,20 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(source, str) or not source:
             raise ValidationError("teleop_receive requires non-empty source_peer_id")
 
+    elif action == "resume":
+        # override_code is the operator-supplied second factor for
+        # clearing an estop lockout. Bound the type and length defensively
+        # so a non-string or oversized value cannot reach
+        # Mesh._resume_lockout (which calls .strip() and would
+        # raise AttributeError on a list/dict, surfacing as a generic
+        # dispatch error rather than a clean ValidationError).
+        override_code = cmd.get("override_code", "")
+        if not isinstance(override_code, str):
+            raise ValidationError("resume.override_code must be a string")
+        if len(override_code) > 256:
+            raise ValidationError("resume.override_code too long (>256 chars)")
+        out["override_code"] = override_code
+
     return out
 
 
