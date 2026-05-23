@@ -2129,31 +2129,21 @@ class TestInferenceServerBindsAllInterfaces:
         idx = argv.index("--host")
         assert argv[idx + 1] == "0.0.0.0"
 
-    def test_build_inference_command_does_not_accept_host_kwarg(self):
+    def test_build_inference_command_signature_excludes_host(self):
         """Pin: host kwarg must be removed from _build_inference_command.
 
         AGENTS.md > Conventions: 'No dead code'. host is no longer used
-        inside the cmd builder, so the parameter is removed; passing it
-        must raise TypeError.
+        inside the cmd builder (the inside-container --host is hardcoded
+        to 0.0.0.0 in R4), so the parameter is removed from the signature.
+        Verified via inspect.signature to keep the assertion static-tool-friendly.
         """
+        import inspect
+
         from strands_robots.tools.gr00t_inference import _build_inference_command
 
-        with pytest.raises(TypeError, match="host"):
-            _build_inference_command(
-                container_name="x",
-                checkpoint_path="/x",
-                port=5555,
-                host="127.0.0.1",  # type: ignore[call-arg]
-                data_config="fourier_gr1_arms_only",
-                embodiment_tag="gr1",
-                denoising_steps=4,
-                http_server=False,
-                use_tensorrt=False,
-                trt_engine_path="gr00t_engine",
-                vit_dtype="fp8",
-                llm_dtype="nvfp4",
-                dit_dtype="fp8",
-                api_token=None,
-                protocol="n1.5",
-                use_sim_policy_wrapper=False,
-            )
+        sig = inspect.signature(_build_inference_command)
+        assert "host" not in sig.parameters, (
+            "R4 contract: _build_inference_command must NOT accept a host kwarg "
+            "(inside-container --host is hardcoded to 0.0.0.0). "
+            f"Found host in signature: {sig.parameters}"
+        )
