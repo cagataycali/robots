@@ -1024,6 +1024,12 @@ class Mesh(SensorLoopsMixin):
         if not isinstance(issuer_id, str) or not issuer_id:
             issuer_id = "<unknown>"
         cache_key = (issuer_id, float(envelope_t))
+        # R19: cache TTL bookkeeping uses time.monotonic() so an NTP step
+        # backward cannot leave entries un-evictable and a step forward
+        # cannot age fresh entries out early. Envelope freshness still
+        # uses time.time() above (it must compare against the issuer's
+        # wall-clock). See PR #195 audit B5.
+        now_mono = time.monotonic()
         with self._estop_replay_lock:
             if cache_key in self._estop_replay_cache:
                 logger.warning(
@@ -1047,7 +1053,7 @@ class Mesh(SensorLoopsMixin):
                 return
             # Bound the cache (mirrors _on_safety_resume eviction strategy).
             if len(self._estop_replay_cache) >= RESUME_REPLAY_CACHE_MAX:
-                cutoff = now - RESUME_FRESHNESS_WINDOW_S
+                cutoff = now_mono - RESUME_FRESHNESS_WINDOW_S
                 stale = [k for k, ts in self._estop_replay_cache.items() if ts < cutoff]
                 for k in stale:
                     self._estop_replay_cache.pop(k, None)
@@ -1056,7 +1062,7 @@ class Mesh(SensorLoopsMixin):
                     drop = max(1, len(ordered) // 5)
                     for k, _ in ordered[:drop]:
                         self._estop_replay_cache.pop(k, None)
-            self._estop_replay_cache[cache_key] = now
+            self._estop_replay_cache[cache_key] = now_mono
 
         if not self._estop_lockout.is_set():
             self._estop_lockout.set()
@@ -1210,9 +1216,13 @@ class Mesh(SensorLoopsMixin):
                         audit_exc,
                     )
                 return
-            # Bound the cache.
+            # Bound the cache. R19: TTL math uses time.monotonic() (see B5
+            # in PR #195 audit) -- envelope freshness above stays on
+            # time.time() because it compares against the issuer wall
+            # clock; cache eviction is local-only bookkeeping.
+            now_mono = time.monotonic()
             if len(self._resume_replay_cache) >= RESUME_REPLAY_CACHE_MAX:
-                cutoff = now - RESUME_FRESHNESS_WINDOW_S
+                cutoff = now_mono - RESUME_FRESHNESS_WINDOW_S
                 stale = [k for k, ts in self._resume_replay_cache.items() if ts < cutoff]
                 for k in stale:
                     self._resume_replay_cache.pop(k, None)
@@ -1222,7 +1232,7 @@ class Mesh(SensorLoopsMixin):
                     drop = max(1, len(ordered) // 5)
                     for k, _ in ordered[:drop]:
                         self._resume_replay_cache.pop(k, None)
-            self._resume_replay_cache[cache_key] = now
+            self._resume_replay_cache[cache_key] = now_mono
 
         if self._estop_lockout.is_set():
             self._estop_lockout.clear()
