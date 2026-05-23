@@ -134,7 +134,7 @@ class CameraOffloader:
                 Body=jpeg_bytes,
                 ContentType="image/jpeg",
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- boto3 raises ClientError, EndpointConnectionError, NoCredentialsError, etc.; offload is best-effort
             logger.debug("[camera_offload] put_object %s failed: %s", key, exc)
             return None
 
@@ -144,7 +144,7 @@ class CameraOffloader:
                 Params={"Bucket": self.bucket, "Key": key},
                 ExpiresIn=self.presign_ttl,
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- boto3 ClientError / NoCredentialsError; presign is best-effort
             logger.debug("[camera_offload] presign %s failed: %s", key, exc)
             url = None
 
@@ -195,7 +195,7 @@ def enable_for_mesh(mesh: Any, offloader: CameraOffloader | None = None) -> Came
         # call it to preserve any user customisation that might have been added).
         try:
             original()
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- original is user-customised; offload must not block on user code
             logger.debug("[camera_offload] original _publish_cameras_once raised: %s", exc)
 
         # Now do the S3 offload + ref publish per camera.
@@ -209,13 +209,14 @@ def enable_for_mesh(mesh: Any, offloader: CameraOffloader | None = None) -> Came
 
         try:
             obs = inner.get_observation()
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 -- LeRobot get_observation() may raise hardware-specific errors
+            logger.debug("[camera_offload] get_observation failed: %s", exc)
             return
 
         try:
             import cv2
-        except Exception:
-            logger.debug("[camera_offload] cv2 unavailable — skipping S3 upload")
+        except ImportError:
+            logger.debug("[camera_offload] cv2 unavailable -- skipping S3 upload")
             return
 
         transport = current_transport()
@@ -254,7 +255,7 @@ def enable_for_mesh(mesh: Any, offloader: CameraOffloader | None = None) -> Came
                 # transport.put is the legacy unsigned path used only for
                 # the original frame upload to S3 (S3 has its own auth).
                 mesh.publish(f"strands/{mesh.peer_id}/camera/{cam_name}/ref", ref)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 -- numpy / cv2 / mesh.publish can raise diverse errors per frame; offload is best-effort
                 logger.debug(
                     "[camera_offload] %s/%s offload failed: %s",
                     mesh.peer_id,
