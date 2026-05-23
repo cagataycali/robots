@@ -2421,6 +2421,5 @@ class TestStartContainerHostNoDefault:
             assert mock_start.called, "_start_container not called"
             call_kwargs = mock_start.call_args.kwargs
             assert call_kwargs.get("host") == "127.0.0.1", (
-                f"Expected gr00t_inference to resolve host=None to '127.0.0.1', "
-                f"got {call_kwargs.get('host')!r}"
+                f"Expected gr00t_inference to resolve host=None to '127.0.0.1', got {call_kwargs.get('host')!r}"
             )
