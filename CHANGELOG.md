@@ -55,11 +55,16 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 - ``PermissionError`` in process probes now logs at WARNING level instead
   of being silently swallowed.
 - **BREAKING** Default ``host`` changed from ``0.0.0.0`` to ``127.0.0.1``
-  (loopback-only, per AGENTS.md). Container actions (``start``/``restart``/
-  ``lifecycle``) auto-flip to ``0.0.0.0`` internally since Docker's
-  ``-p {port}:{port}`` publish requires bind-all inside the container.
-  **Migration:** if your downstream connects from another host, pass
-  ``host="0.0.0.0"`` explicitly.
+  (loopback-only, per AGENTS.md > Review Learnings #86 > "Safety Defaults").
+  The ``host`` kwarg now flows verbatim into the docker host-side port
+  binding via ``-p {host}:{port}:{port}`` — no silent rewrite. The service
+  inside the container always binds ``0.0.0.0`` (required by docker
+  port-publish), but the *host* binding honours user intent:
+    - ``host="127.0.0.1"`` (default) → published port reachable on loopback only
+    - ``host="0.0.0.0"`` (explicit)  → published port reachable on every host iface
+  **Migration:** if your downstream connects from a different host on the
+  same machine or across the network, pass ``host="0.0.0.0"`` explicitly
+  on the ``start`` / ``restart`` / ``start_container`` / ``lifecycle`` calls.
 - Host-system fallback (``pgrep``) is documented as Linux-only. Non-Linux
   platforms will see "No service running" rather than silently succeeding.
 
