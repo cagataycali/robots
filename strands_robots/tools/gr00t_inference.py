@@ -54,11 +54,30 @@ def _checkpoints_dir() -> Path:
 _DOCKER_IMAGE_RE = re.compile(
     r"^[a-zA-Z0-9]"  # must start with alnum
     r"(?:[a-zA-Z0-9._\-]*[a-zA-Z0-9])?"  # optional middle chars (host/path prefix)
-    r"(?::[0-9]{1,5})?"  # optional registry port (:5000)
+    r"(?::([0-9]{1,5}))?"  # optional registry port (:5000) — capture for range check
     r"(?:/[a-zA-Z0-9][a-zA-Z0-9._\-]*)*"  # path components (/org/img)
     r"(?::[a-zA-Z0-9][a-zA-Z0-9._\-]*"  # option A: :tag
     r"|@sha256:[a-f0-9]{64})?$"  # option B: @sha256:digest (mutually exclusive with tag)
 )
+
+
+def _is_valid_docker_image_ref(value: str) -> bool:
+    """Validate a docker image reference for shape AND range correctness.
+
+    The regex captures the (optional) registry port so we can verify it is
+    a valid TCP port (1-65535). The regex alone permits digit counts up to 5,
+    which would otherwise accept refs like ``localhost:99999/img:tag`` even
+    though no such port can exist.
+    """
+    m = _DOCKER_IMAGE_RE.match(value)
+    if not m:
+        return False
+    port_str = m.group(1)
+    if port_str is not None:
+        port_int = int(port_str)
+        if port_int < 1 or port_int > 65535:
+            return False
+    return True
 
 # Characters that cause harm in subprocess argv or shell interpolation.
 # Narrowed per AGENTS.md review-learnings: quotes/bangs/parens/brackets
@@ -72,10 +91,13 @@ _SHELL_META = re.compile(r"[;&|`$<>\n\r\x00]")
 _DATA_CONFIG_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _EMBODIMENT_TAG_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 _CONTAINER_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$")
-# RFC-952 hostname pattern for host validation.
+# RFC-952/1123 hostname pattern for host validation.
+# Trailing dot is accepted per RFC 1034 §3.1 (FQDNs may end with a dot to
+# disambiguate from search-list completion).
 _HOSTNAME_RE = re.compile(
     r"^[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?"
-    r"(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$"
+    r"(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*"
+    r"\.?$"  # optional trailing dot (FQDN root indicator)
 )
 # Reject multi-label all-numeric strings — prevents typos like "127.0.01"
 # which pass _HOSTNAME_RE but are clearly malformed IP attempts, not hostnames.
@@ -225,7 +247,7 @@ def validate_inputs(
         if container_name is not None and not _CONTAINER_NAME_RE.match(container_name):
             raise ValueError(f"container_name must match Docker naming rules (got {container_name!r})")
         # Validate image_name, volumes, container_command (relevant to these actions)
-        if image_name is not None and not _DOCKER_IMAGE_RE.match(image_name):
+        if image_name is not None and not _is_valid_docker_image_ref(image_name):
             raise ValueError(f"image_name must be a valid Docker image reference (got {image_name!r})")
         if volumes is not None:
             for vol_host, vol_container in volumes.items():
@@ -270,7 +292,7 @@ def validate_inputs(
         raise ValueError(f"dit_dtype must be one of {_VALID_DIT_DTYPES}, got {dit_dtype!r}")
 
     # Docker image reference (if provided via kwargs)
-    if image_name is not None and not _DOCKER_IMAGE_RE.match(image_name):
+    if image_name is not None and not _is_valid_docker_image_ref(image_name):
         raise ValueError(f"image_name must be a valid Docker image reference (got {image_name!r})")
 
     # Volume paths validation

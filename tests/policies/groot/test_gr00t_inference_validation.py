@@ -1690,3 +1690,141 @@ class TestImageOnlyBranchValidation:
             repo_tag=None,
             policy_name=None,
         )
+
+
+class TestRegexBugFixesR4:
+    """R4 pin tests for the 4 regex bugs raised in PR #90 review.
+
+    Each test fails on pre-R4 code and passes after R4 lands.
+    """
+
+    # === Bug 1: _DOCKER_IMAGE_RE registry port range ===
+
+    def test_registry_port_99999_rejected(self):
+        """Pre-R4 the regex accepted :99999 (>65535). Post-R4 we range-check."""
+        from strands_robots.tools.gr00t_inference import _is_valid_docker_image_ref
+
+        assert not _is_valid_docker_image_ref("localhost:99999/myorg/img:tag"), (
+            "R4 regression: registry port 99999 must be rejected (TCP max is 65535)"
+        )
+
+    def test_registry_port_65535_accepted(self):
+        """65535 is the max valid TCP port — must be accepted."""
+        from strands_robots.tools.gr00t_inference import _is_valid_docker_image_ref
+
+        assert _is_valid_docker_image_ref("localhost:65535/myorg/img:tag")
+
+    def test_registry_port_5000_accepted(self):
+        """Common private-registry port — sanity check."""
+        from strands_robots.tools.gr00t_inference import _is_valid_docker_image_ref
+
+        assert _is_valid_docker_image_ref("localhost:5000/myorg/img:tag")
+
+    def test_registry_port_zero_rejected(self):
+        """Port 0 is not a valid bind target."""
+        from strands_robots.tools.gr00t_inference import _is_valid_docker_image_ref
+
+        assert not _is_valid_docker_image_ref("localhost:0/myorg/img:tag")
+
+    def test_no_port_still_accepted(self):
+        """Image refs without a registry port must still match."""
+        from strands_robots.tools.gr00t_inference import _is_valid_docker_image_ref
+
+        assert _is_valid_docker_image_ref("nvcr.io/nvidia/gr00t:n1.7")
+        assert _is_valid_docker_image_ref("gr00t:latest")
+
+    def test_digest_pinned_image_accepted(self):
+        """Digest-pinned refs (@sha256:...) must continue to match."""
+        from strands_robots.tools.gr00t_inference import _is_valid_docker_image_ref
+
+        digest = "a" * 64
+        assert _is_valid_docker_image_ref(f"nvcr.io/nvidia/gr00t@sha256:{digest}")
+
+    # === Bug 3: _HOSTNAME_RE trailing-dot FQDN ===
+
+    def test_trailing_dot_fqdn_accepted(self):
+        """RFC 1034 §3.1: FQDNs may end with a dot to disambiguate.
+
+        Pre-R4 the regex required the last label to end with [a-zA-Z0-9],
+        which rejected legitimate FQDNs like 'host.example.com.'.
+        """
+        from strands_robots.tools.gr00t_inference import _HOSTNAME_RE
+
+        assert _HOSTNAME_RE.match("host.example.com."), (
+            "R4 regression: trailing-dot FQDN must be accepted per RFC 1034 §3.1"
+        )
+        # Without trailing dot still accepted
+        assert _HOSTNAME_RE.match("host.example.com")
+
+    def test_single_dot_alone_rejected(self):
+        """A bare '.' is not a valid hostname."""
+        from strands_robots.tools.gr00t_inference import _HOSTNAME_RE
+
+        assert not _HOSTNAME_RE.match(".")
+
+    # === Bug 4: hostname total length cap (already implemented; pin it) ===
+
+    def test_host_validation_rejects_oversize(self):
+        """RFC 1035 §2.3.4: hostname must not exceed 253 octets total."""
+        from strands_robots.tools.gr00t_inference import validate_inputs
+
+        oversize = ".".join(["a" * 60] * 5)  # 60*5 + 4 dots = 304 > 253
+        assert len(oversize) > 253
+        try:
+            validate_inputs(
+                action="start",
+                port=5555,
+                host=oversize,
+                protocol="n1.5",
+                data_config="fourier_gr1_arms_only",
+                embodiment_tag="gr1",
+                container_name=None,
+                vit_dtype="fp8",
+                llm_dtype="nvfp4",
+                dit_dtype="fp8",
+                checkpoint_path=None,
+                trt_engine_path="gr00t_engine",
+                image_name=None,
+                volumes=None,
+                container_command="tail -f /dev/null",
+                policy_name=None,
+            )
+            raise AssertionError("Expected ValueError for hostname > 253 octets")
+        except ValueError as e:
+            assert "253" in str(e), f"Error should mention RFC 1035 limit; got: {e}"
+
+    # === Bug 2 / IPv4 typo regression — explicit '127.0.01' typo case ===
+
+    def test_host_typo_127_0_01_rejected(self):
+        """The typo called out in the PR description must be rejected.
+
+        '127.0.01' looks like an IPv4 attempt to a human but is not a valid
+        IPv4 string under ipaddress.ip_address. Without the _ALL_NUMERIC_RE
+        guard it would be accepted as a hostname (it matches RFC-952), which
+        would then fail at runtime with a confusing connection error.
+        """
+        from strands_robots.tools.gr00t_inference import validate_inputs
+
+        try:
+            validate_inputs(
+                action="start",
+                port=5555,
+                host="127.0.01",
+                protocol="n1.5",
+                data_config="fourier_gr1_arms_only",
+                embodiment_tag="gr1",
+                container_name=None,
+                vit_dtype="fp8",
+                llm_dtype="nvfp4",
+                dit_dtype="fp8",
+                checkpoint_path=None,
+                trt_engine_path="gr00t_engine",
+                image_name=None,
+                volumes=None,
+                container_command="tail -f /dev/null",
+                policy_name=None,
+            )
+            raise AssertionError("Expected ValueError for '127.0.01' IP typo")
+        except ValueError as e:
+            assert "host" in str(e).lower()
+
