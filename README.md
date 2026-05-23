@@ -505,7 +505,7 @@ agent.tool.gr00t_inference(action="stop", port=8000)
 | `STRANDS_MESH_AUDIT_MAX_FILES` | Maximum number of rotated audit log copies kept (`mesh_audit.jsonl.1` … `.N`). Hard-capped at 100. Older rotations are discarded. | `5` |
 | `STRANDS_MESH_BRIDGE_TOPICS_PREFIX` | Comma-separated list of bridge filter entries that match as path-prefix (entry matches `entry/<anything>`). Default: `response` (so `response/<turn-id>` bridges). All other entries in `STRANDS_MESH_BRIDGE_TOPICS` match exactly — Phase-4 / A2 hardening that closes the prefix-bypass attack. | `response` |
 | `STRANDS_MESH_AUTH_MODE` | Wire authentication mode. `mtls` (default) enables Zenoh's TLS terminator + ACL; `none` is a dev-only mode that disables both. | `mtls` |
-| `STRANDS_MESH_NAMESPACE` | Fleet namespace prefix prepended to every key-expression. Two fleets with different namespaces cannot collide on the same network. | `strands_robots` |
+| `STRANDS_MESH_NAMESPACE` | Fleet namespace prefix prepended to every key-expression. Two fleets with different namespaces cannot collide on the same network. | `strands` |
 | `STRANDS_MESH_MULTICAST` | `true` enables multicast scouting. Default is gossip-only, which closes the LAN-attacker-enrollment surface. | `false` |
 | `STRANDS_MESH_TLS_CA` | Filesystem path to the CA bundle used to verify peer certificates. Required when `STRANDS_MESH_AUTH_MODE=mtls`. | unset |
 | `STRANDS_MESH_TLS_CERT` | Filesystem path to this peer's certificate (PEM). Required when `STRANDS_MESH_AUTH_MODE=mtls`. | unset |
@@ -614,7 +614,7 @@ in with `STRANDS_MESH_MULTICAST=true`; we do not recommend it.
 
 #### Fleet isolation: namespace
 
-`STRANDS_MESH_NAMESPACE` (default `strands_robots`) prepends an
+`STRANDS_MESH_NAMESPACE` (default `strands`) prepends an
 immutable prefix to every key-expression at the routing layer. Two
 fleets with different namespaces cannot route messages between each
 other, even when peer-ids collide.

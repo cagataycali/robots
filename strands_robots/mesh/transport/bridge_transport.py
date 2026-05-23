@@ -232,16 +232,10 @@ def _should_bridge(
 # dedup the receiver would dispatch the action twice (move twice, broadcast
 # twice, etc.).
 #
-# The deduplicator below caches a per-message identity and refuses to
-# deliver a sample whose identity it has seen recently. The identity is:
-#
-# 1. The envelope nonce when present (set by ``mesh.security.sign_envelope``
-#    on every put; uniquely identifies the message itself).
-# 2. Otherwise a SHA-256 fingerprint of (sender_id, turn_id, command) — the
-#    classic identifiers for an RPC call. Used for legacy un-enveloped
-#    payloads.
-#
-# Tunable: ``STRANDS_MESH_DEDUP_TTL`` (seconds; default 120).
+# The deduplicator below caches a SHA-256 fingerprint of
+# (sender_id, turn_id, command) per topic and refuses to deliver a sample
+# whose identity it has seen recently. Tunable via
+# ``STRANDS_MESH_DEDUP_TTL`` (seconds; default 120).
 _DEFAULT_DEDUP_TTL_S = 120.0
 _MAX_DEDUP_ENTRIES = 10_000
 
@@ -279,24 +273,19 @@ class _CommandDeduplicator:
 
     @staticmethod
     def _dedup_id(payload: dict[str, Any]) -> str | None:
-        """Best dedup-id we can extract from a wire payload.
+        """Return a content fingerprint identifying this message.
 
-        Order:
-        1. Envelope nonce (set by mesh.security.sign_envelope on every put).
-        2. Fingerprint over (sender_id, turn_id, command, action) — the
-           classic identifiers for an RPC call.
+        SHA-256 over ``(sender_id, turn_id, command)`` — the three
+        identifiers that make a mesh command unique. Returns ``None``
+        when none of those fields are present (no signal to dedup
+        against; pass through).
         """
         if not isinstance(payload, dict):
             return None
-        nonce = payload.get("nonce")
-        if isinstance(nonce, str) and len(nonce) >= 8:
-            return f"n:{nonce}"
 
-        # Look inside payload.payload first (post-envelope shape).
-        inner = payload.get("payload") if isinstance(payload.get("payload"), dict) else payload
-        sender = inner.get("sender_id") if isinstance(inner, dict) else None
-        turn = inner.get("turn_id") if isinstance(inner, dict) else None
-        cmd = inner.get("command") if isinstance(inner, dict) else None
+        sender = payload.get("sender_id")
+        turn = payload.get("turn_id")
+        cmd = payload.get("command")
 
         if sender is None and turn is None and cmd is None:
             return None

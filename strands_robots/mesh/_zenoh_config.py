@@ -77,7 +77,15 @@ logger = logging.getLogger(__name__)
 
 
 #: Fleet namespace fallback when ``STRANDS_MESH_NAMESPACE`` is unset.
-DEFAULT_NAMESPACE: str = "strands_robots"
+#:
+#: This must match the literal topic prefix every mesh component emits
+#: (`mesh/core.py`, `mesh/sensors.py`, `mesh/input.py`, the IoT path).
+#: The `namespace` Zenoh config field provides routing isolation —
+#: two fleets with different namespaces cannot exchange messages even
+#: when their key-expressions collide. The default below tracks the
+#: hardcoded `strands/...` topic prefix so the built-in ACL key_exprs
+#: match the wire keys exactly.
+DEFAULT_NAMESPACE: str = "strands"
 
 #: Hard cap on simultaneous Zenoh unicast sessions.
 DEFAULT_MAX_SESSIONS: int = 256
@@ -209,9 +217,12 @@ def downsampling_block(namespace: str) -> tuple[str, str]:
         lo=0.001,
         hi=10000.0,
     )
+    # See ``low_pass_filter_block`` for the namespace-vs-key_expr note:
+    # ``**/cmd`` matches any prefix including the namespace one;
+    # ``f"{namespace}/*/cmd"`` would not.
     rules = [
-        {"key_expr": f"{namespace}/*/cmd", "freq": freq},
-        {"key_expr": f"{namespace}/broadcast", "freq": freq},
+        {"key_expr": "**/cmd", "freq": freq},
+        {"key_expr": "**/broadcast", "freq": freq},
     ]
     return (
         "downsampling",
@@ -228,12 +239,49 @@ def downsampling_block(namespace: str) -> tuple[str, str]:
     )
 
 
+def _local_interfaces() -> list[str]:
+    """Enumerate every local network interface name.
+
+    Zenoh's ``low_pass_filter`` and ``downsampling`` blocks require an
+    explicit ``interfaces`` allowlist; an empty list silently disables
+    the filter, and ``["*"]`` does NOT mean "all interfaces" (it is
+    matched literally and almost always misses). We enumerate every
+    interface visible to the OS and pass them all so the cap applies
+    fleet-wide regardless of which NIC a peer connects through.
+
+    Operators can override the list with
+    ``STRANDS_MESH_FILTER_INTERFACES`` (comma-separated). This is
+    useful when an environment has dozens of virtual interfaces and
+    the operator wants to bind the filter to a specific subset.
+    """
+    raw = os.getenv("STRANDS_MESH_FILTER_INTERFACES", "").strip()
+    if raw:
+        return [iface.strip() for iface in raw.split(",") if iface.strip()]
+    try:
+        import psutil  # type: ignore[import-not-found]
+
+        return sorted(psutil.net_if_addrs().keys())
+    except ImportError:
+        # psutil is a transitive dep of strands-agents; this branch is
+        # for dev environments where it is genuinely missing. Fall back
+        # to the canonical list of interfaces a container or laptop is
+        # likely to expose. The filter still functions if any of these
+        # match the actual link the traffic rides; missing entries just
+        # mean traffic on those interfaces bypasses the cap.
+        return ["lo", "lo0", "eth0", "en0", "en1", "wlan0"]
+
+
 def low_pass_filter_block(namespace: str) -> tuple[str, str]:
     """Return ``("low_pass_filter", <json5>)`` capping per-message bytes.
 
     Two filters: cmd / broadcast topics get a 16 KiB cap; camera
     topics get a 1 MiB cap. Anything larger is dropped at the
     transport.
+
+    The ``interfaces`` field is REQUIRED — without it Zenoh treats the
+    block as a no-op. We enumerate every local interface (or use the
+    operator-supplied ``STRANDS_MESH_FILTER_INTERFACES`` allowlist) so
+    the cap applies regardless of which NIC a peer's link rides on.
     """
     cmd_bytes = _int_env(
         "STRANDS_MESH_MAX_CMD_BYTES",
@@ -247,25 +295,33 @@ def low_pass_filter_block(namespace: str) -> tuple[str, str]:
         lo=1024,
         hi=128 * 1024 * 1024,
     )
+    interfaces = _local_interfaces()
     return (
         "low_pass_filter",
         json.dumps(
             [
+                # NOTE on key_expr globs: the Zenoh ``namespace`` config
+                # prefixes keys on the wire but ``low_pass_filter`` matches
+                # against the user-side (un-prefixed) key, so a filter
+                # written as ``f"{namespace}/*/cmd"`` never fires. ``**/cmd``
+                # matches any prefix (including the empty / namespace one)
+                # and is the robust choice. The namespace is therefore not
+                # used in these key_exprs — fleet isolation is provided by
+                # the namespace itself, not by these globs.
                 {
                     "id": "strands_cmd_size_cap",
+                    "interfaces": interfaces,
                     "messages": ["put"],
-                    "flows": ["ingress"],
-                    "key_exprs": [
-                        f"{namespace}/*/cmd",
-                        f"{namespace}/broadcast",
-                    ],
+                    "flows": ["ingress", "egress"],
+                    "key_exprs": ["**/cmd", "**/broadcast"],
                     "size_limit": cmd_bytes,
                 },
                 {
                     "id": "strands_camera_size_cap",
+                    "interfaces": interfaces,
                     "messages": ["put"],
                     "flows": ["ingress", "egress"],
-                    "key_exprs": [f"{namespace}/*/camera/**"],
+                    "key_exprs": ["**/camera/**"],
                     "size_limit": cam_bytes,
                 },
             ]

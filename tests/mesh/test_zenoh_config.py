@@ -38,7 +38,7 @@ def _clean_env(monkeypatch):
 
 class TestNamespace:
     def test_default(self):
-        assert zc.resolve_namespace() == "strands_robots"
+        assert zc.resolve_namespace() == "strands"
 
     def test_override(self, monkeypatch):
         monkeypatch.setenv("STRANDS_MESH_NAMESPACE", "fleet_42")
@@ -46,12 +46,12 @@ class TestNamespace:
 
     def test_empty_falls_through_to_default(self, monkeypatch):
         monkeypatch.setenv("STRANDS_MESH_NAMESPACE", "   ")
-        assert zc.resolve_namespace() == "strands_robots"
+        assert zc.resolve_namespace() == "strands"
 
     def test_namespace_block_returns_json5_string(self):
         path, value = zc.namespace_block()
         assert path == "namespace"
-        assert json.loads(value) == "strands_robots"
+        assert json.loads(value) == "strands"
 
 
 # ─── auth mode ──────────────────────────────────────────────────────────
@@ -127,15 +127,15 @@ class TestDownsampling:
         assert decoded[0]["messages"] == ["put"]
         assert decoded[0]["flows"] == ["ingress"]
         rules = {r["key_expr"]: r["freq"] for r in decoded[0]["rules"]}
-        assert rules["ns/*/cmd"] == zc.DEFAULT_CMD_RATE_HZ
-        assert rules["ns/broadcast"] == zc.DEFAULT_CMD_RATE_HZ
+        assert rules["**/cmd"] == zc.DEFAULT_CMD_RATE_HZ
+        assert rules["**/broadcast"] == zc.DEFAULT_CMD_RATE_HZ
 
     def test_freq_override(self, monkeypatch):
         monkeypatch.setenv("STRANDS_MESH_CMD_RATE_HZ", "5.0")
         _, value = zc.downsampling_block("ns")
         decoded = json.loads(value)
         rules = {r["key_expr"]: r["freq"] for r in decoded[0]["rules"]}
-        assert rules["ns/*/cmd"] == 5.0
+        assert rules["**/cmd"] == 5.0
 
     def test_freq_oob_rejected(self, monkeypatch):
         monkeypatch.setenv("STRANDS_MESH_CMD_RATE_HZ", "9999999")
@@ -154,11 +154,11 @@ class TestLowPassFilter:
         cmd, cam = decoded[0], decoded[1]
         assert cmd["id"] == "strands_cmd_size_cap"
         assert cmd["size_limit"] == zc.DEFAULT_MAX_CMD_BYTES
-        assert "ns/*/cmd" in cmd["key_exprs"]
-        assert "ns/broadcast" in cmd["key_exprs"]
+        assert "**/cmd" in cmd["key_exprs"]
+        assert "**/broadcast" in cmd["key_exprs"]
         assert cam["id"] == "strands_camera_size_cap"
         assert cam["size_limit"] == zc.DEFAULT_MAX_CAMERA_BYTES
-        assert "ns/*/camera/**" in cam["key_exprs"]
+        assert "**/camera/**" in cam["key_exprs"]
 
     def test_override_cmd_bytes(self, monkeypatch):
         monkeypatch.setenv("STRANDS_MESH_MAX_CMD_BYTES", "8192")

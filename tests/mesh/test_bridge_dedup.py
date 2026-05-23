@@ -44,24 +44,24 @@ class TestCommandDeduplicator:
         payload = {"nonce": "abcdef0123456789", "payload": {"sender_id": "a"}}
         assert d.is_duplicate("k", payload) is False
 
-    def test_repeat_nonce_is_duplicate(self):
+    def test_repeat_payload_is_duplicate(self):
         d = _CommandDeduplicator(ttl_s=10.0)
-        payload = {"nonce": "abcdef0123456789", "payload": {"sender_id": "a"}}
+        payload = {"sender_id": "alice", "turn_id": "t1", "command": {"action": "status"}}
         d.is_duplicate("k", payload)
         assert d.is_duplicate("k", payload) is True
 
-    def test_different_nonces_not_duplicates(self):
+    def test_different_payloads_not_duplicates(self):
         d = _CommandDeduplicator(ttl_s=10.0)
-        a = {"nonce": "aaaaaaaaaaaaaaaa"}
-        b = {"nonce": "bbbbbbbbbbbbbbbb"}
+        a = {"sender_id": "alice", "turn_id": "t1", "command": {"action": "status"}}
+        b = {"sender_id": "alice", "turn_id": "t2", "command": {"action": "status"}}
         assert d.is_duplicate("k", a) is False
         assert d.is_duplicate("k", b) is False
 
-    def test_different_keys_isolate_nonces(self):
+    def test_different_keys_isolate_payloads(self):
         d = _CommandDeduplicator(ttl_s=10.0)
-        payload = {"nonce": "abcdef0123456789"}
+        payload = {"sender_id": "alice", "turn_id": "t1", "command": {"action": "status"}}
         assert d.is_duplicate("k1", payload) is False
-        # Same nonce but different topic key → not a duplicate.
+        # Same fingerprint on a different topic is NOT a dup -- distinct delivery.
         assert d.is_duplicate("k2", payload) is False
 
     def test_unsigned_fingerprint_dedup(self):
@@ -136,17 +136,12 @@ class TestBridgeDedupIntegration:
         zenoh_handler = zenoh.declare_subscriber.call_args.args[1]
         iot_handler = iot.declare_subscriber.call_args.args[1]
 
-        # Same envelope arrives via both paths
+        # Same payload arrives via both paths.
         sample = _FakeSample(
             {
-                "v": 1,
-                "ts": time.time(),
-                "nonce": "deadbeefdeadbeef",
-                "payload": {
-                    "sender_id": "alice",
-                    "turn_id": "t1",
-                    "command": {"action": "status"},
-                },
+                "sender_id": "alice",
+                "turn_id": "t1",
+                "command": {"action": "status"},
             }
         )
         zenoh_handler(sample)
@@ -161,8 +156,8 @@ class TestBridgeDedupIntegration:
 
         zh = zenoh.declare_subscriber.call_args.args[1]
 
-        zh(_FakeSample({"nonce": "1111111111111111", "payload": {"sender_id": "a"}}))
-        zh(_FakeSample({"nonce": "2222222222222222", "payload": {"sender_id": "a"}}))
+        zh(_FakeSample({"sender_id": "a", "turn_id": "t1", "command": {"action": "status"}}))
+        zh(_FakeSample({"sender_id": "a", "turn_id": "t2", "command": {"action": "status"}}))
         assert len(delivered) == 2
 
     def test_legacy_unsigned_dedup_via_fingerprint(self):

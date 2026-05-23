@@ -67,7 +67,7 @@ def _build_mtls(tmp_path, monkeypatch):
 class TestDefaultBuild:
     def test_namespace_default_applied(self):
         cfg = _build()
-        assert json.loads(cfg.get_json("namespace")) == "strands_robots"
+        assert json.loads(cfg.get_json("namespace")) == "strands"
 
     def test_multicast_disabled_by_default(self):
         cfg = _build()
@@ -106,10 +106,13 @@ class TestEnvOverrides:
         monkeypatch.setenv("STRANDS_MESH_NAMESPACE", "fleet_42")
         cfg = _build()
         assert json.loads(cfg.get_json("namespace")) == "fleet_42"
-        # Downsampling key_exprs must use the overridden namespace.
+        # Downsampling rules use ``**/cmd`` style globs (see comment in
+        # `_zenoh_config.downsampling_block` for why). Namespace is the
+        # routing-isolation primitive; the filter globs do not need to
+        # mention it.
         ds = json.loads(cfg.get_json("downsampling"))
         rules = ds[0]["rules"]
-        assert any(r["key_expr"].startswith("fleet_42/") for r in rules)
+        assert any(r["key_expr"].endswith("/cmd") for r in rules)
 
     def test_multicast_can_be_enabled(self, monkeypatch):
         monkeypatch.setenv("STRANDS_MESH_MULTICAST", "true")
