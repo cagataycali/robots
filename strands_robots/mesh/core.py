@@ -301,8 +301,18 @@ class Mesh(SensorLoopsMixin):
                         "Set STRANDS_MESH_ACL_FILE to enumerate role separation in production.",
                         self.peer_id,
                     )
-            except Exception as warn_exc:  # advisory only; never block start
-                logger.debug("[mesh] %s: ACL posture check failed: %s", self.peer_id, warn_exc)
+            except (ImportError, ValueError) as warn_exc:
+                # Narrowed per AGENTS.md > "Exception Clauses Must Be Narrow":
+                # ImportError covers the lazy ``from . import _acl_config``;
+                # ValueError covers ``resolve_auth_mode`` raising on bad env.
+                # An unexpected exception type is a programmer bug we want
+                # to see in logs, not a silently-swallowed warning loss.
+                logger.warning(
+                    "[mesh] %s: ACL posture check raised %s: %s -- permissive-ACL warning may be missing; investigate",
+                    self.peer_id,
+                    type(warn_exc).__name__,
+                    warn_exc,
+                )
 
             with _LOCAL_ROBOTS_LOCK:
                 _LOCAL_ROBOTS[self.peer_id] = self
@@ -616,7 +626,14 @@ class Mesh(SensorLoopsMixin):
         # STRANDS_MESH_CAMERA_DISABLED=true to short-circuit the camera
         # loop entirely -- no frames built, no envelopes signed, nothing
         # published.
-        if os.getenv("STRANDS_MESH_CAMERA_DISABLED", "").strip().lower() == "true":
+        # Lenient bool parsing matches the rest of the env-var surface
+        # (STRANDS_MESH_MULTICAST, STRANDS_MESH_I_KNOW_THIS_IS_INSECURE).
+        # Operators using ``=1`` / ``=yes`` / ``=on`` get the same
+        # behaviour as ``=true``; bad values fail-loud rather than
+        # silently re-enabling camera publishing on a privacy flag.
+        from strands_robots.mesh._zenoh_config import _bool_env as _zc_bool_env
+
+        if _zc_bool_env("STRANDS_MESH_CAMERA_DISABLED", default=False):
             return
         r = self.robot
         inner = getattr(r, "robot", None)
@@ -1119,7 +1136,11 @@ class Mesh(SensorLoopsMixin):
                             severity="info",
                             payload={"issuer": issuer_id, "issuer_t": envelope_t},
                         )
-                    except Exception as audit_exc:
+                    except (TypeError, ValueError, OSError) as audit_exc:
+                        # Narrow per AGENTS.md > "Exception Clauses Must Be Narrow".
+                        # publish_safety_event raises only TypeError/ValueError
+                        # on payload shape and OSError on disk failure; everything
+                        # else is a programmer bug worth seeing.
                         logger.debug(
                             "[mesh] %s: estop_corroborated audit publish failed: %s",
                             self.peer_id,
@@ -1139,7 +1160,11 @@ class Mesh(SensorLoopsMixin):
                         severity="warning",
                         payload={"issuer": issuer_id, "issuer_t": envelope_t},
                     )
-                except Exception as audit_exc:  # Audit publish is best-effort; must never block safety path
+                except (TypeError, ValueError, OSError) as audit_exc:
+                    # Audit publish is best-effort and must never block the
+                    # safety path; narrow the catch tuple so a future
+                    # programmer error surfaces in tests rather than
+                    # being swallowed at DEBUG.
                     logger.debug(
                         "[mesh] %s: estop_replay_rejected audit publish failed: %s",
                         self.peer_id,
@@ -1172,6 +1197,29 @@ class Mesh(SensorLoopsMixin):
                     "issuer_t": data.get("t"),
                 },
             )
+        else:
+            # F3: a second legitimate estop (different issuer, fresh ``t``)
+            # arriving while the lockout is already engaged would otherwise
+            # be silently dropped from the audit trail -- forensics lose
+            # the signal that another operator also tried to engage.
+            # Mirror the corroboration audit shape so every issuer of an
+            # estop is preserved on the forensic record.
+            try:
+                self.publish_safety_event(
+                    event_type="remote_estop_redundant",
+                    severity="info",
+                    payload={
+                        "issuer": data.get("peer_id"),
+                        "issuer_t": envelope_t,
+                        "lockout_engaged_since": self._last_estop_ts,
+                    },
+                )
+            except (TypeError, ValueError, OSError) as audit_exc:
+                logger.debug(
+                    "[mesh] %s: remote_estop_redundant audit publish failed: %s",
+                    self.peer_id,
+                    audit_exc,
+                )
 
     def _on_safety_resume(self, sample: Any) -> None:
         """Clear the local lockout in response to ``strands/safety/resume``.
@@ -1275,9 +1323,21 @@ class Mesh(SensorLoopsMixin):
             )
             return
 
+        # Mirror the R20 estop strict-reject: an envelope without a
+        # valid issuer peer_id would coalesce every "<unknown>"-issued
+        # resume into a shared cache slot, polluting the bounded
+        # ``RESUME_REPLAY_CACHE_MAX`` allowance and giving any peer
+        # who omits ``peer_id`` a free way to evict legitimate entries.
+        # The canonical ``Mesh.emergency_stop`` issuer always sets
+        # ``peer_id``; a malformed envelope is either a programming
+        # bug or an attacker probing the cache.
         issuer_id = data.get("peer_id")
         if not isinstance(issuer_id, str) or not issuer_id:
-            issuer_id = "<unknown>"
+            logger.warning(
+                "[safety] %s: refusing remote resume -- envelope missing/invalid ``peer_id``",
+                self.peer_id,
+            )
+            return
         cache_key = (issuer_id, proof_nonce)
         with self._resume_replay_lock:
             if cache_key in self._resume_replay_cache:
@@ -1299,7 +1359,9 @@ class Mesh(SensorLoopsMixin):
                             "proof_nonce_prefix": proof_nonce[:16],
                         },
                     )
-                except Exception as audit_exc:  # Audit publish is best-effort; must never block safety path
+                except (TypeError, ValueError, OSError) as audit_exc:
+                    # Audit publish is best-effort and must never block the
+                    # safety path; narrow the catch tuple per AGENTS.md.
                     logger.debug(
                         "[mesh] %s: resume_replay_rejected audit publish failed: %s",
                         self.peer_id,
