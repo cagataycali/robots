@@ -374,13 +374,20 @@ def test_psk_degrade_drops_record(monkeypatch, tmp_path, caplog):
     monkeypatch.delenv("STRANDS_MESH_AUDIT_PSK")
 
     with caplog.at_level(logging.ERROR, logger="strands_robots.mesh.audit"):
-        # Must NOT raise (audit failures must not crash the safety path)
-        # but MUST drop the record.
+        # Must NOT raise (audit failures must not crash the safety path).
+        # R19: writes a poison record with sig=PSK_DEGRADED instead of
+        # silent drop, preserving the forensic trail.
         audit.log_safety_event("unsigned_attempt", "peer-a", {"phase": "two"})
 
-    # The second record must NOT have been written.
+    # R19: poison record IS written (was previously dropped). The poison
+    # record has sig="PSK_DEGRADED" which verify_audit_integrity reports
+    # as bad_signature, surfacing the transition to forensics.
     records_after = list(audit.read_audit_log())
-    assert len(records_after) == 1, f"expected 1 record (second should be dropped), got {len(records_after)}"
+    assert len(records_after) == 2, f"expected 2 records (signed + poison), got {len(records_after)}"
+    poison = [r for r in records_after if r.get("event") == "unsigned_attempt"]
+    assert len(poison) == 1
+    assert poison[0].get("sig") == "PSK_DEGRADED"
+    assert "psk_degraded" in poison[0]
 
     # Error must have been logged mentioning PSK degradation.
     error_messages = [r.message for r in caplog.records if r.levelno >= logging.ERROR]
@@ -425,11 +432,16 @@ def test_psk_degrade_unsigned_to_signed_drops_record(monkeypatch, tmp_path, capl
     with caplog.at_level(logging.ERROR, logger="strands_robots.mesh.audit"):
         audit.log_safety_event("signed_attempt", "peer-a", {"phase": "two"})
 
-    # The second record must NOT have been written.
+    # R19: poison record IS written (was previously dropped). Symmetric
+    # with the signed->unsigned direction.
     records_after = list(audit.read_audit_log())
-    assert len(records_after) == 1, (
-        f"expected 1 record (second should be dropped on PSK install mid-run), got {len(records_after)}"
+    assert len(records_after) == 2, (
+        f"expected 2 records (unsigned + poison) on PSK install mid-run, got {len(records_after)}"
     )
+    poison = [r for r in records_after if r.get("event") == "signed_attempt"]
+    assert len(poison) == 1
+    assert poison[0].get("sig") == "PSK_DEGRADED"
+    assert "psk_degraded" in poison[0]
 
     # Error must have been logged mentioning PSK degradation.
     error_messages = [r.message for r in caplog.records if r.levelno >= logging.ERROR]

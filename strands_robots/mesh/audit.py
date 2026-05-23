@@ -692,15 +692,24 @@ def log_safety_event(event_type: str, peer_id: str, payload: dict[str, Any]) -> 
     try:
         sig = _sign_record(record)
     except AuditPSKDegradedError as exc:
-        # R4-2: STRANDS_MESH_AUDIT_PSK was set at start of run but is
-        # now unset. We refuse to write an unsigned record because the
-        # default reader-helper path (`verify_audit_integrity` -> `ok`)
-        # would otherwise miss the downgrade. Log loud, swallow -- audit
-        # failures must not crash the safety code path.
-        logger.error("[audit] %s -- record dropped: %s", exc, record)
-        return
-    if sig is not None:
-        record["sig"] = sig
+        # R4-2 + R19: STRANDS_MESH_AUDIT_PSK transitioned mid-run
+        # (signed->unsigned or unsigned->signed). We refuse to forge a
+        # signature, but instead of silently dropping the record we
+        # write a "poison" record with sig="PSK_DEGRADED" and a
+        # ``psk_degraded`` reason field. A signed-record verifier
+        # (verify_audit_integrity with PSK present) reports it as
+        # ``missing_sig`` (sig is not a valid HMAC), which forces
+        # ``ok=False`` and surfaces the transition to forensics.
+        # Without the poison record an operator skimming a clean log
+        # cannot distinguish "everything fine" from "PSK rolled
+        # mid-run and several events vanished".
+        # See PR #195 review thread PRRT_kwDORUMiZs6ER6_2.
+        logger.error("[audit] %s -- writing poison record (sig=PSK_DEGRADED): %s", exc, record)
+        record["sig"] = "PSK_DEGRADED"
+        record["psk_degraded"] = str(exc)
+    else:
+        if sig is not None:
+            record["sig"] = sig
 
     line = json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n"
     path = audit_log_path()
