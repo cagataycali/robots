@@ -388,10 +388,16 @@ def _load_seq_counters() -> None:
     state (e.g. a sidecar from a different audit dir, or ``/dev/null``
     returning zero counters and rolling the cursor back). Asymmetric
     defence flagged in PR #195 R20.
+
+    R22-A: when sidecar load fails OR is rejected as symlink, seed
+    from the audit log by walking all records and taking max(seq) per
+    peer_id. This prevents an attacker writing garbage to the sidecar
+    from resetting all sequence counters to 0 on next boot.
     """
     if _AUDIT_STATE.seq_loaded:
         return
     sidecar = _seq_sidecar_path()
+    sidecar_loaded = False
     try:
         if sidecar.is_symlink():
             logger.warning(
@@ -417,8 +423,32 @@ def _load_seq_counters() -> None:
                         # somehow has a stale value.
                         if value > _SEQ_COUNTERS.get(key, 0):
                             _SEQ_COUNTERS[key] = value
+            sidecar_loaded = True
     except (OSError, json.JSONDecodeError) as exc:
         logger.warning("[audit] could not load seq sidecar %s: %s", sidecar, exc)
+
+    # R22-A: If sidecar failed to load (corrupt/symlink/missing), seed
+    # from the audit log to prevent fail-open sequence reset.
+    if not sidecar_loaded:
+        try:
+            records = read_audit_log()
+            for record in records:
+                peer_id = record.get("peer_id")
+                seq = record.get("seq")
+                if isinstance(peer_id, str) and isinstance(seq, int) and seq > 0:
+                    if seq > _SEQ_COUNTERS.get(peer_id, 0):
+                        _SEQ_COUNTERS[peer_id] = seq
+            if _SEQ_COUNTERS:
+                logger.info(
+                    "[audit] seeded %d peer counters from audit log after sidecar load failed",
+                    len(_SEQ_COUNTERS),
+                )
+        except Exception as log_exc:
+            logger.warning(
+                "[audit] could not seed from audit log after sidecar failure: %s",
+                log_exc,
+            )
+
     _AUDIT_STATE.seq_loaded = True
 
 
