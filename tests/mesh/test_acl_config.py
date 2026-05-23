@@ -464,3 +464,59 @@ class TestJSON5SingleQuotedStringsR14:
 
         out = _json5_to_json('{"msg": "it\'s fine"}')
         assert json.loads(out) == {"msg": "it's fine"}
+
+
+class TestACLFileSymlinkAndTOCTOU:
+    """Pin regressions for review feedback: ACL load must defeat symlink
+    swap and TOCTOU on the size check.
+
+    Mirrors the audit-log discipline (O_NOFOLLOW + bounded read).
+    """
+
+    def test_acl_load_refuses_symlink(self, tmp_path):
+        """A symlink at STRANDS_MESH_ACL_FILE must be rejected, not followed."""
+        import os as _os
+
+        from strands_robots.mesh._acl_config import _load_acl_file
+
+        target = tmp_path / "real.json5"
+        target.write_text(
+            json.dumps(
+                {
+                    "enabled": True,
+                    "default_permission": "deny",
+                    "rules": [],
+                    "subjects": [],
+                    "policies": [],
+                }
+            )
+        )
+        link = tmp_path / "link.json5"
+        _os.symlink(str(target), str(link))
+
+        try:
+            _load_acl_file(link)
+        except ValueError as exc:
+            assert "SYMLINK" in str(exc) or "symlink" in str(exc).lower(), exc
+        else:
+            raise AssertionError(
+                "loader followed symlink instead of refusing -- ACL file gate must "
+                "refuse symlinks the way audit.py does (O_NOFOLLOW + lstat reject)"
+            )
+
+    def test_acl_load_rejects_oversized_file(self, tmp_path):
+        """Reading must be bounded at ACL_FILE_MAX_BYTES + 1 so an attacker
+        who races content between stat() and read() cannot bypass the cap.
+        """
+        from strands_robots.mesh._acl_config import ACL_FILE_MAX_BYTES, _load_acl_file
+
+        big = tmp_path / "big.json5"
+        # Write more than the cap.
+        big.write_text("x" * (ACL_FILE_MAX_BYTES + 1024))
+
+        try:
+            _load_acl_file(big)
+        except ValueError as exc:
+            assert "bytes" in str(exc) or "refusing" in str(exc).lower(), exc
+        else:
+            raise AssertionError("loader accepted oversized ACL file -- size cap not enforced")

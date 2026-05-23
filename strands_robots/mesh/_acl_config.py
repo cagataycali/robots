@@ -254,12 +254,46 @@ def _load_acl_file(path: Path) -> dict[str, Any]:
     no-ops the block in that case, and the loader fails closed rather
     than ship a quietly-disabled gate.
     """
+    # Defence: refuse to follow symlinks AND bound the read at
+    # ACL_FILE_MAX_BYTES + 1 so an attacker who races content between
+    # stat() and read() cannot bypass the size cap. Mirrors the
+    # O_NOFOLLOW + bounded-read discipline used for the audit log
+    # (audit.py:_ensure_paths). The ACL file gates wire authorisation,
+    # so the same TOCTOU + symlink-swap defences apply.
+    if path.is_symlink():
+        raise ValueError(
+            f"refusing to load ACL file {path}: it is a SYMLINK "
+            f"(target: {os.readlink(path)!r}). ACL files must be regular files."
+        )
     if not path.is_file():
         raise FileNotFoundError(f"ACL file not found: {path}")
-    size = path.stat().st_size
-    if size > ACL_FILE_MAX_BYTES:
-        raise ValueError(f"ACL file {path} is {size} bytes; refusing to load >{ACL_FILE_MAX_BYTES}")
-    raw = path.read_text(encoding="utf-8")
+    flags = os.O_RDONLY
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(str(path), flags | nofollow)
+    except OSError as exc:
+        # ELOOP under O_NOFOLLOW = symlink raced ahead of the static check.
+        raise ValueError(f"refusing to load ACL file {path}: {exc}") from exc
+    try:
+        # Read at most MAX+1 bytes so we can detect overflow without
+        # an unbounded read.
+        chunks = []
+        remaining = ACL_FILE_MAX_BYTES + 1
+        while remaining > 0:
+            buf = os.read(fd, remaining)
+            if not buf:
+                break
+            chunks.append(buf)
+            remaining -= len(buf)
+    finally:
+        os.close(fd)
+    raw_bytes = b"".join(chunks)
+    if len(raw_bytes) > ACL_FILE_MAX_BYTES:
+        raise ValueError(f"ACL file {path} is >{ACL_FILE_MAX_BYTES} bytes; refusing to load.")
+    try:
+        raw = raw_bytes.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"ACL file {path} is not valid UTF-8: {exc}") from exc
     try:
         data = json.loads(_json5_to_json(raw))
     except json.JSONDecodeError as exc:
