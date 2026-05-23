@@ -132,9 +132,12 @@ _WRITE_LOCK = threading.Lock()
 #
 # R4-7 -- audit-write amplification (accepted limitation): every event
 # triggers a synchronous double write (audit line + sidecar
-# tmp+os.replace+chmod+fsync). The token bucket caps inbound floods at
-# ``STRANDS_MESH_PEER_RATE`` (default 20/60s/sender, max 1000 burst), so
-# the worst-case write rate is bounded. If your deployment runs
+# tmp+os.replace+chmod+fsync). The Zenoh transport-layer
+# ``downsampling`` cap (``STRANDS_MESH_CMD_RATE_HZ``, default 20 Hz
+# per-key-expression on ``**/cmd`` and ``**/broadcast``) drops flood
+# traffic before it reaches the audit path, so the worst-case write
+# rate is bounded by that cap times the number of distinct key
+# expressions a peer can publish on. If your deployment runs
 # pathologically high audit volumes, batch the sidecar persistence by
 # subclassing ``_persist_seq_counters`` to write at most once per N
 # events with an atexit flush -- the on-disk counter can then lose at
