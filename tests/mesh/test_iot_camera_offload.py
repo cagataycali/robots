@@ -37,9 +37,11 @@ class TestCameraOffloaderConfig:
         assert c.prefix == "foo/bar"
 
     def test_default_presign_ttl(self, monkeypatch):
+        # Default presigned-URL TTL is 60 s, deliberately short to limit
+        # the window during which a leaked /ref message can be replayed.
         monkeypatch.delenv("STRANDS_MESH_CAMERA_PRESIGN_TTL", raising=False)
         c = CameraOffloader(bucket="b")
-        assert c.presign_ttl == 3600
+        assert c.presign_ttl == 60
 
     def test_env_presign_ttl(self, monkeypatch):
         monkeypatch.setenv("STRANDS_MESH_CAMERA_PRESIGN_TTL", "60")
@@ -77,7 +79,7 @@ class TestCameraOffloaderUpload:
         assert ref["t"] == 12345.6
         assert ref["s3_uri"].startswith("s3://frames/so100-01/wrist/")
         assert ref["presigned_url"] == "https://signed.example/"
-        assert ref["expires_at"] == 12345.6 + 3600
+        assert ref["expires_at"] == 12345.6 + 60  # default TTL = 60 s
 
         # Verify the put_object call shape.
         s3.put_object.assert_called_once()

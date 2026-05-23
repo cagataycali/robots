@@ -232,25 +232,84 @@ def clear_peers() -> None:
 def _build_config() -> Any:
     """Create a ``zenoh.Config`` from environment variables.
 
+    The returned config layers (in order):
+
+    1. Explicit endpoints from ``ZENOH_CONNECT`` / ``ZENOH_LISTEN``.
+    2. Fleet namespace (:func:`_zenoh_config.namespace_block`).
+    3. Scouting policy (gossip on, multicast off by default).
+    4. Transport DoS bounds (max sessions, adminspace lockdown).
+    5. Per-key-expression rate caps (``downsampling`` block).
+    6. Per-message size caps (``low_pass_filter`` block).
+    7. mTLS terminator + ACL when ``STRANDS_MESH_AUTH_MODE=mtls``
+       (the default); skipped when explicitly set to ``none``.
+
     Returns:
         A ``zenoh.Config`` instance.
 
     Raises:
         ImportError: If ``eclipse-zenoh`` is not installed.
+        ValueError: If env-var clamps are violated or
+            ``STRANDS_MESH_AUTH_MODE`` is set to an unknown value.
+        FileNotFoundError: If ``STRANDS_MESH_AUTH_MODE=mtls`` and any
+            of the referenced cert/key/CA files do not exist.
     """
     import zenoh
 
+    from strands_robots.mesh import _acl_config, _zenoh_config
+
     config = zenoh.Config()
 
+    # Explicit endpoints from env vars (legacy ZENOH_CONNECT / ZENOH_LISTEN).
     connect = os.getenv("ZENOH_CONNECT")
     listen = os.getenv("ZENOH_LISTEN")
-
     if connect:
         endpoints = [e.strip() for e in connect.split(",")]
         config.insert_json5("connect/endpoints", json.dumps(endpoints))
     if listen:
         endpoints = [e.strip() for e in listen.split(",")]
         config.insert_json5("listen/endpoints", json.dumps(endpoints))
+
+    # Fleet hardening, applied unconditionally.
+    namespace = _zenoh_config.resolve_namespace()
+    blocks: list[tuple[str, str]] = [
+        _zenoh_config.namespace_block(),
+        *_zenoh_config.scouting_block(),
+        *_zenoh_config.transport_caps_block(),
+        _zenoh_config.adminspace_block(),
+        _zenoh_config.downsampling_block(namespace),
+        _zenoh_config.low_pass_filter_block(namespace),
+    ]
+
+    # mTLS + ACL when auth_mode=mtls. The "none" mode emits everything
+    # above except the auth + ACL blocks; it is dev-only.
+    auth_mode = _zenoh_config.resolve_auth_mode()
+    if auth_mode == "mtls":
+        blocks.append(_zenoh_config.link_protocols_block())
+        blocks.append(_zenoh_config.tls_block())
+        blocks.append(_acl_config.acl_block(namespace))
+        # Review feedback: in mtls mode the ACL is the third line of
+        # defence after the handshake. When the operator did not supply
+        # STRANDS_MESH_ACL_FILE, the built-in default is permissive
+        # (any CA-signed peer publishes/subscribes anywhere). Surface a
+        # WARNING on every session open so operators who forgot the env
+        # var hear about it -- parallel to the auth_mode=none warning
+        # below.
+        if _acl_config.is_default_acl_in_use():
+            logger.warning(
+                "STRANDS_MESH_ACL_FILE unset -- using PERMISSIVE built-in "
+                "default ACL. Any CA-signed peer can publish/subscribe "
+                "on any key. For production fleets supply an operator "
+                "ACL enumerating each peer's cert CN; see "
+                "examples/mesh_acl_example.json5."
+            )
+    else:
+        logger.warning(
+            "STRANDS_MESH_AUTH_MODE=none -- wire authentication is OFF. "
+            "This mode is for development on trusted networks only."
+        )
+
+    for path, value in blocks:
+        config.insert_json5(path, value)
 
     return config
 

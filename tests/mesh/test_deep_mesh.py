@@ -158,7 +158,11 @@ def mock_session(monkeypatch):
 
 @pytest.fixture
 def mock_put():
-    """Patch put at all locations where it's imported."""
+    """Patch put at all locations where it's imported.
+
+    Wire authentication is owned by the Zenoh transport in production;
+    in-process tests just record (key, payload) tuples as-is.
+    """
     from strands_robots.mesh import sensors as mesh_sensors
 
     calls = []
@@ -1063,9 +1067,11 @@ class TestRobotMeshTool:
 
     def test_peers_action_no_mesh(self):
         """peers action when no local mesh exists."""
+        from unittest.mock import MagicMock as _MM
+
         from strands_robots.tools.robot_mesh import robot_mesh
 
-        result = robot_mesh(action="peers")
+        result = robot_mesh(action="peers", tool_context=_MM())
         assert result["status"] == "success"
         assert "0 local" in result["content"][0]["text"]
 
@@ -1075,7 +1081,9 @@ class TestRobotMeshTool:
 
         m = Mesh(FakeRobot(), peer_id="tool-test")
         m.start()
-        result = robot_mesh(action="tell", instruction="go")
+        from unittest.mock import MagicMock as _MM
+
+        result = robot_mesh(action="tell", instruction="go", tool_context=_MM())
         assert result["status"] == "error"
         m.stop()
 
@@ -1085,7 +1093,9 @@ class TestRobotMeshTool:
 
         m = Mesh(FakeRobot(), peer_id="tool-json")
         m.start()
-        result = robot_mesh(action="send", target="peer-x", command="not{json")
+        from unittest.mock import MagicMock as _MM
+
+        result = robot_mesh(action="send", target="peer-x", command="not{json", tool_context=_MM())
         assert result["status"] == "error"
         assert "not valid JSON" in result["content"][0]["text"]
         m.stop()
@@ -1096,7 +1106,9 @@ class TestRobotMeshTool:
 
         m = Mesh(FakeRobot(), peer_id="tool-unk")
         m.start()
-        result = robot_mesh(action="foobar")
+        from unittest.mock import MagicMock as _MM
+
+        result = robot_mesh(action="foobar", tool_context=_MM())
         assert result["status"] == "error"
         assert "unknown action" in result["content"][0]["text"]
         m.stop()

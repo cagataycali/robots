@@ -8,6 +8,7 @@ Extended sensor loops (pose, IMU, health, etc.) are provided by
 from __future__ import annotations
 
 import base64
+import hmac
 import json
 import logging
 import os
@@ -19,6 +20,8 @@ import uuid
 from collections.abc import Callable
 from typing import Any
 
+from strands_robots.mesh import security as _security
+from strands_robots.mesh.audit import log_safety_event
 from strands_robots.mesh.sensors import SensorLoopsMixin
 from strands_robots.mesh.session import (
     CAMERA_HZ,
@@ -49,6 +52,28 @@ def get_local_robots() -> dict[str, Mesh]:
         return dict(_LOCAL_ROBOTS)
 
 
+#: Sentinel stored in :attr:`Mesh._expected_responders` for
+#: broadcast turn_ids. Distinct from any real peer_id (no peer_id
+#: contains a NUL byte).
+BROADCAST_RESPONDER: str = "<broadcast>\x00"
+
+#: Resume-envelope freshness window. Envelopes whose t field is
+#: older than this are rejected as potential replays. Operators on
+#: drifty NTP can extend via STRANDS_MESH_RESUME_FRESHNESS_S
+#: (sane bound: keep < 600).
+RESUME_FRESHNESS_WINDOW_S: float = float(os.getenv("STRANDS_MESH_RESUME_FRESHNESS_S", "60"))
+
+#: Forward-skew tolerance on the envelope t field. Bounds
+#: clock-ahead issuers from minting envelopes that pass freshness
+#: indefinitely.
+RESUME_FORWARD_SKEW_S: float = float(os.getenv("STRANDS_MESH_RESUME_FORWARD_SKEW_S", "5"))
+
+#: Maximum entries in the per-receiver resume replay cache. Bounded
+#: to prevent attacker-controlled memory growth; eviction is by
+#: oldest 20 percent when the cap is hit (see :meth:).
+RESUME_REPLAY_CACHE_MAX: int = int(os.getenv("STRANDS_MESH_RESUME_REPLAY_CACHE_MAX", "4096"))
+
+
 class Mesh(SensorLoopsMixin):
     """Peer-to-peer mesh component embedded in a single Robot or Simulation.
 
@@ -72,14 +97,38 @@ class Mesh(SensorLoopsMixin):
         self._inbox_lock = threading.Lock()
         self._stop_event = threading.Event()
 
-        # RPC correlation state
+        # RPC correlation state.
+        #
+        # _expected_responders maps turn_id -> the peer_id we expect to
+        # answer (set by send() at point-to-point), or the sentinel
+        # ``BROADCAST_RESPONDER`` if the turn_id was created by
+        # broadcast() and we accept responses from any peer. Phase-4 /
+        # D1: this is what _on_response uses to reject a forged
+        # response from a peer that wasn't the original target.
         self._rpc_lock = threading.Lock()
         self._pending: dict[str, threading.Event] = {}
         self._responses: dict[str, list[dict[str, Any]]] = {}
+        self._expected_responders: dict[str, str] = {}
 
         # User subscribe state
         self.inbox: dict[str, list[tuple[str, dict[str, Any]]]] = {}
         self._user_subs: dict[str, Any] = {}
+
+        # Emergency-stop lockout flag. While this Event is set, every
+        # action other than ``status`` and ``resume`` is refused (see
+        # :meth:`_dispatch`). The flag is cleared by :meth:`_resume_lockout`,
+        # which requires the operator-supplied override code.
+        self._estop_lockout = threading.Event()
+        self._last_estop_ts: float = 0.0
+        # _on_safety_resume must defend
+        # against replay of a previously-observed override-proof envelope.
+        # The receiver caches (proof_nonce, issuer_peer_id) tuples it has
+        # already accepted and refuses duplicates within a bounded window.
+        # Combined with the freshness check on the envelope ``t`` field
+        # this closes the recorded-and-replayed-resume surface even when
+        # an attacker has live ACL access on safety/**.
+        self._resume_replay_cache: dict[tuple[str, str], float] = {}
+        self._resume_replay_lock = threading.Lock()
 
     def __repr__(self) -> str:
         state = "alive" if self._running else "stopped"
@@ -105,6 +154,14 @@ class Mesh(SensorLoopsMixin):
                 declared.append(session.declare_subscriber(f"strands/{self.peer_id}/cmd", self._on_cmd))
                 declared.append(session.declare_subscriber("strands/broadcast", self._on_cmd))
                 declared.append(session.declare_subscriber(f"strands/{self.peer_id}/response/**", self._on_response))
+                # Fleet-wide e-stop: any peer broadcasting on safety/estop or
+                # safety/resume engages / clears the lockout on every other
+                # peer too. Without these subscribers the lockout would only
+                # protect the issuing process, leaving receivers willing to
+                # accept the next command after they've stopped the current
+                # task.
+                declared.append(session.declare_subscriber("strands/safety/estop", self._on_safety_estop))
+                declared.append(session.declare_subscriber("strands/safety/resume", self._on_safety_resume))
             except Exception as exc:
                 for sub in declared:
                     try:
@@ -302,7 +359,7 @@ class Mesh(SensorLoopsMixin):
         period = 1.0 / HEARTBEAT_HZ
         while self._running:
             try:
-                put(f"strands/{self.peer_id}/presence", self._build_presence())
+                self.publish(f"strands/{self.peer_id}/presence", self._build_presence())
                 prune_peers()
             except Exception as exc:
                 logger.debug("[mesh] %s: heartbeat tick error: %s", self.peer_id, exc)
@@ -310,14 +367,26 @@ class Mesh(SensorLoopsMixin):
                 break
 
     def _on_presence(self, sample: Any) -> None:
+        """Handle a peer's presence broadcast.
+
+        Identity, fleet membership, and replay protection are enforced
+        at the Zenoh transport: a sample reaching this callback has
+        already cleared mTLS handshake + ACL, so its peer-id is
+        cryptographically bound to the cert CN. We only parse the
+        payload, update our peer registry, and log a debug line for
+        first-sighting.
+        """
         try:
             raw = sample.payload.to_bytes().decode()
             data = json.loads(raw)
         except Exception:
             return
+        if not isinstance(data, dict):
+            return
         peer_id = data.get("robot_id")
         if not isinstance(peer_id, str) or peer_id == self.peer_id:
             return
+
         is_new = update_peer(
             peer_id=peer_id,
             peer_type=str(data.get("robot_type", "robot")),
@@ -334,7 +403,7 @@ class Mesh(SensorLoopsMixin):
             try:
                 state = self._read_state()
                 if state:
-                    put(f"strands/{self.peer_id}/state", state)
+                    self.publish(f"strands/{self.peer_id}/state", state)
             except Exception as exc:
                 logger.debug("[mesh] %s: state tick error: %s", self.peer_id, exc)
             if self._stop_event.wait(period):
@@ -416,6 +485,12 @@ class Mesh(SensorLoopsMixin):
                 break
 
     def _publish_cameras_once(self) -> None:
+        # Privacy kill switch. Operators on sensitive deployments set
+        # STRANDS_MESH_CAMERA_DISABLED=true to short-circuit the camera
+        # loop entirely -- no frames built, no envelopes signed, nothing
+        # published.
+        if os.getenv("STRANDS_MESH_CAMERA_DISABLED", "").strip().lower() == "true":
+            return
         r = self.robot
         inner = getattr(r, "robot", None)
         if inner is None or not getattr(inner, "is_connected", False):
@@ -479,7 +554,7 @@ class Mesh(SensorLoopsMixin):
                     encoded = base64.b64encode(bytes(frame)).decode("ascii")
                     encoding = "raw"
 
-                put(
+                self.publish(
                     f"strands/{self.peer_id}/camera/{cam_name}",
                     {
                         "peer_id": self.peer_id,
@@ -496,27 +571,87 @@ class Mesh(SensorLoopsMixin):
 
     # RPC — incoming
     def _on_cmd(self, sample: Any) -> None:
+        """Handle an inbound command sample.
+
+        The Zenoh transport has already enforced:
+
+        * mTLS peer identity (the sender's cert CN is bound to the link).
+        * ACL -- only peers in the ``operator_peer`` subject can publish
+          on ``cmd`` / ``broadcast`` topics.
+        * Per-key-expression frequency cap (``downsampling`` block) --
+          floods are dropped pre-deserialise.
+        * Per-message size cap (``low_pass_filter`` block) -- jumbo
+          frames are dropped pre-deserialise.
+
+        We only have to parse the payload and dispatch.
+        """
         try:
             raw = sample.payload.to_bytes().decode()
             data = json.loads(raw)
         except Exception:
             return
-        if data.get("sender_id") == self.peer_id:
+        if not isinstance(data, dict):
             return
-        threading.Thread(target=self._exec_cmd, args=(data,), name=f"mesh-exec-{self.peer_id}", daemon=True).start()
+        sender_id = data.get("sender_id", "")
+        if sender_id == self.peer_id:
+            return
+        threading.Thread(
+            target=self._exec_cmd,
+            args=(data,),
+            name=f"mesh-exec-{self.peer_id}",
+            daemon=True,
+        ).start()
 
     def _exec_cmd(self, data: dict[str, Any]) -> None:
         sender = data.get("sender_id", "")
-        turn = data.get("turn_id") or uuid.uuid4().hex[:8]
+        # R5-1: full 128-bit fallback. Pre-fix, an inbound command without
+        # turn_id triggered a 32-bit hex which was birthday-colliding under
+        # heavy concurrent load and cheap to predict for an attacker who
+        # could observe the response topic. D1 closed the outbound side;
+        # this closes the symmetric receive-side surface.
+        turn = data.get("turn_id") or uuid.uuid4().hex
         cmd = data.get("command", data)
         if isinstance(cmd, str):
-            cmd = {"action": "execute", "instruction": cmd}
+            cmd = {"action": "execute", "instruction": cmd, "policy_provider": "mock"}
         rkey = f"strands/{sender}/response/{turn}" if sender else None
+
+        # Validate the command shape against the action allowlist + per-action
+        # schema (instruction length, duration bounds, policy_host allowlist, ...).
+        try:
+            cmd = _security.validate_command(cmd)
+        except _security.ValidationError as exc:
+            logger.warning("[mesh] %s: rejected invalid cmd from %s: %s", self.peer_id, sender, exc)
+            if rkey is not None:
+                self.publish(
+                    rkey,
+                    {
+                        "type": "error",
+                        "responder_id": self.peer_id,
+                        "turn_id": turn,
+                        "error": f"validation: {exc}",
+                        "timestamp": time.time(),
+                    },
+                )
+            try:
+                log_safety_event(
+                    "command_rejected",
+                    self.peer_id,
+                    {
+                        "sender": sender,
+                        "reason": str(exc),
+                        "action": cmd.get("action") if isinstance(cmd, dict) else None,
+                    },
+                )
+            except Exception as audit_exc:
+                # Audit is best-effort -- never let a missing/broken log
+                # path swallow the validation rejection itself.
+                logger.debug("[mesh] %s: audit log unavailable: %s", self.peer_id, audit_exc)
+            return
 
         try:
             result = self._dispatch(cmd)
             if rkey is not None:
-                put(
+                self.publish(
                     rkey,
                     {
                         "type": "response",
@@ -526,10 +661,12 @@ class Mesh(SensorLoopsMixin):
                         "timestamp": time.time(),
                     },
                 )
-        except Exception as exc:
-            logger.warning("[mesh] %s: dispatch error: %s", self.peer_id, exc)
+        except _security.LockoutError as exc:
+            # Lockout is the most operationally interesting rejection -- emit
+            # a structured error on the response topic and audit it.
+            logger.warning("[mesh] %s: rejected during lockout from %s", self.peer_id, sender)
             if rkey is not None:
-                put(
+                self.publish(
                     rkey,
                     {
                         "type": "error",
@@ -539,10 +676,60 @@ class Mesh(SensorLoopsMixin):
                         "timestamp": time.time(),
                     },
                 )
+            try:
+                log_safety_event(
+                    "command_rejected_lockout",
+                    self.peer_id,
+                    {"sender": sender, "action": cmd.get("action") if isinstance(cmd, dict) else None},
+                )
+            except Exception as audit_exc:
+                logger.debug("[mesh] %s: audit log unavailable: %s", self.peer_id, audit_exc)
+            return
+        except Exception as exc:
+            # Wide catch is INTENTIONAL on this inbound RPC path: any
+            # unhandled exception in a robot adapter would crash the
+            # dispatch thread and silently kill the mesh. We log full
+            # exc detail locally (operators need it for debugging) but
+            # emit ONLY a static "dispatch error" string on the wire so
+            # internal exception detail (paths, attribute names, third-
+            # party library traces) does not leak to a remote -- possibly
+            # attacker-controlled -- caller. The structured ValidationError
+            # / LockoutError paths above remain the preferred channel
+            # for the rejections clients actually need to distinguish.
+            logger.warning(
+                "[mesh] %s: dispatch error from %s: %s",
+                self.peer_id,
+                sender,
+                exc,
+                exc_info=True,
+            )
+            if rkey is not None:
+                self.publish(
+                    rkey,
+                    {
+                        "type": "error",
+                        "responder_id": self.peer_id,
+                        "turn_id": turn,
+                        "error": "dispatch error",
+                        "timestamp": time.time(),
+                    },
+                )
 
     def _dispatch(self, cmd: dict[str, Any]) -> dict[str, Any]:
         action = cmd.get("action", "status")
         r = self.robot
+
+        # While the emergency-stop lockout is engaged, only ``status`` and
+        # ``resume`` are permitted. Raise so _exec_cmd handles the rejection
+        # symmetrically with ValidationError -- emitting type="error" on the
+        # response topic and recording an audit entry. The wire response is
+        # intentionally generic so a remote caller cannot use it to map the
+        # lockout window.
+        if self._estop_lockout.is_set() and action not in ("status", "resume"):
+            raise _security.LockoutError("command rejected")
+
+        if action == "resume":
+            return self._resume_lockout(cmd.get("override_code", ""))
 
         if action == "status":
             if hasattr(r, "get_task_status"):
@@ -600,59 +787,369 @@ class Mesh(SensorLoopsMixin):
         return {"error": f"unknown action: {action}"}
 
     def _on_response(self, sample: Any) -> None:
+        """Inbound response handler.
+
+        Identity, fleet membership, and topic ACL have already been
+        enforced at the Zenoh transport. We additionally apply a
+        point-to-point scope check: a response is accepted only if its
+        ``responder_id`` matches the expected target recorded in
+        :attr:`_expected_responders` by :meth:`send`. Broadcast turns
+        use the ``BROADCAST_RESPONDER`` sentinel and accept any
+        responder_id -- that is the broadcast contract.
+
+        Without the responder-id check, an ACL-authorised peer that
+        observes a turn_id (a fellow operator) could publish a response
+        on someone else's pending turn and have the sender accept its
+        ``result`` instead of the legitimate target's. The transport
+        ACL prevents an attacker from joining at all; this check
+        prevents lateral mischief between authorised peers.
+        """
         try:
             raw = sample.payload.to_bytes().decode()
             data = json.loads(raw)
         except Exception:
             return
+        if not isinstance(data, dict):
+            return
         turn = data.get("turn_id")
         if not isinstance(turn, str):
             return
+        responder = data.get("responder_id")
         with self._rpc_lock:
             event = self._pending.get(turn)
             if event is None:
                 return
+            expected = self._expected_responders.get(turn)
+            # Strict scoping for point-to-point sends. Broadcast accepts any.
+            if expected is not None and expected != BROADCAST_RESPONDER and responder != expected:
+                # R8-3: structured forensic event via the audit log
+                # (``response_hijack_rejected``) plus a WARNING line is
+                # the operator-and-forensic channel; an earlier draft
+                # also raised-and-caught a typed exception around the
+                # same code, but with no real consumer it was YAGNI
+                # scaffolding and got removed.
+                logger.warning(
+                    "[mesh] %s: dropped response on turn %s -- "
+                    "responder_id=%r does not match expected target %r "
+                    "(possible response hijack)",
+                    self.peer_id,
+                    turn[:12],
+                    responder,
+                    expected,
+                )
+                try:
+                    log_safety_event(
+                        "response_hijack_rejected",
+                        self.peer_id,
+                        {
+                            "turn_prefix": turn[:12],
+                            "responder_id": responder,
+                            "expected": expected,
+                        },
+                    )
+                except Exception as audit_exc:
+                    # Audit best-effort -- never let a missing/broken
+                    # log path break the response handler.
+                    logger.debug("[mesh] %s: audit log unavailable: %s", self.peer_id, audit_exc)
+                return
             self._responses.setdefault(turn, []).append(data)
         event.set()
 
-    # RPC — outgoing
+    # Safety -- inbound estop / resume
+    def _on_safety_estop(self, sample: Any) -> None:
+        """Engage the local emergency-stop lockout in response to a fleet-
+        wide ``strands/safety/estop`` broadcast.
+
+        Authorisation lives at the Zenoh ACL: only peers in the
+        ``operator_peer`` subject can publish on ``safety/**`` keys, so
+        an unauthorised peer cannot reach this handler at all. We just
+        parse, set the local lockout flag, and record the receiver-side
+        transition in the audit log so a forensic walker sees both ends
+        of the lockout window for every peer.
+        """
+        try:
+            raw = sample.payload.to_bytes().decode()
+            data = json.loads(raw)
+        except Exception:
+            return
+        if not isinstance(data, dict):
+            return
+        if not self._estop_lockout.is_set():
+            self._estop_lockout.set()
+            self._last_estop_ts = time.time()
+            sender = data.get("peer_id", "<remote>")
+            logger.critical(
+                "[safety] %s: lockout engaged via remote estop from %s",
+                self.peer_id,
+                sender,
+            )
+            self.publish_safety_event(
+                event_type="remote_estop_engaged",
+                severity="critical",
+                payload={
+                    "trigger": "remote",
+                    "issuer": sender,
+                    "issuer_t": data.get("t"),
+                },
+            )
+
+    def _on_safety_resume(self, sample: Any) -> None:
+        """Clear the local lockout in response to ``strands/safety/resume``.
+
+        Wire authentication (mTLS + ACL) ensures only an
+        ``operator_peer`` peer can reach this handler. Resume itself is
+        further gated by the operator override code: the issuer signed
+        ``HMAC(STRANDS_MESH_OVERRIDE_CODE, proof_nonce)`` and we
+        recompute it locally; a mismatch means the issuer's override
+        code differs from ours and we refuse. This is what stops one
+        operator from clearing another operator's e-stop without
+        explicit shared authorisation.
+
+        Receivers without ``STRANDS_MESH_OVERRIDE_CODE`` configured
+        FAIL CLOSED -- operators must distribute the code to every peer
+        for fleet-wide remote resume to work.
+        """
+        try:
+            raw = sample.payload.to_bytes().decode()
+            data = json.loads(raw)
+        except Exception:
+            return
+        if not isinstance(data, dict):
+            return
+
+        local_code = os.getenv("STRANDS_MESH_OVERRIDE_CODE", "").strip()
+        if not local_code:
+            logger.warning(
+                "[safety] %s: refusing remote resume -- STRANDS_MESH_OVERRIDE_CODE "
+                "not configured locally (operator code missing)",
+                self.peer_id,
+            )
+            return
+
+        proof_nonce = data.get("proof_nonce")
+        provided_proof = data.get("override_proof")
+        if not isinstance(proof_nonce, str) or not isinstance(provided_proof, str):
+            logger.warning(
+                "[safety] %s: refusing remote resume -- envelope missing override_proof / proof_nonce",
+                self.peer_id,
+            )
+            return
+
+        expected_proof = hmac.new(
+            local_code.encode(),
+            proof_nonce.encode(),
+            "sha256",
+        ).hexdigest()
+        if not hmac.compare_digest(expected_proof, provided_proof):
+            logger.warning(
+                "[safety] %s: refusing remote resume -- override_proof mismatch "
+                "(issuer's STRANDS_MESH_OVERRIDE_CODE differs from local; constant-time compared)",
+                self.peer_id,
+            )
+            return
+
+        # Review feedback: freshness + replay cache.
+        # The HMAC by itself authenticates the override code but says
+        # nothing about when the envelope was minted -- a replay of a
+        # captured envelope would still verify. Two cheap defences:
+        #
+        # 1. Freshness: reject envelopes whose ``t`` field is older
+        #    than RESUME_FRESHNESS_WINDOW_S or more than the forward
+        #    skew in the future. This matches the operator NTP
+        #    requirement documented in CHANGELOG.
+        # 2. Per-receiver replay cache: refuse a (issuer, proof_nonce)
+        #    tuple we have already accepted within the freshness
+        #    window. Bounded at RESUME_REPLAY_CACHE_MAX entries.
+        envelope_t = data.get("t")
+        now = time.time()
+        if not isinstance(envelope_t, (int, float)):
+            logger.warning(
+                "[safety] %s: refusing remote resume -- envelope missing/invalid ``t``",
+                self.peer_id,
+            )
+            return
+        if envelope_t > now + RESUME_FORWARD_SKEW_S:
+            logger.warning(
+                "[safety] %s: refusing remote resume -- ``t``=%s in future (forward_skew_s=%s, now=%s)",
+                self.peer_id,
+                envelope_t,
+                RESUME_FORWARD_SKEW_S,
+                now,
+            )
+            return
+        if (now - envelope_t) > RESUME_FRESHNESS_WINDOW_S:
+            logger.warning(
+                "[safety] %s: refusing remote resume -- ``t``=%s too old (freshness_window_s=%s, now=%s)",
+                self.peer_id,
+                envelope_t,
+                RESUME_FRESHNESS_WINDOW_S,
+                now,
+            )
+            return
+
+        issuer_id = data.get("peer_id")
+        if not isinstance(issuer_id, str) or not issuer_id:
+            issuer_id = "<unknown>"
+        cache_key = (issuer_id, proof_nonce)
+        with self._resume_replay_lock:
+            if cache_key in self._resume_replay_cache:
+                logger.warning(
+                    "[safety] %s: REJECTED remote resume -- replay of (issuer=%s, proof_nonce=%s) already accepted",
+                    self.peer_id,
+                    issuer_id,
+                    proof_nonce[:16] + "...",
+                )
+                # Audit the replay attempt -- this is exactly the
+                # forensic signal an operator wants on a compromised
+                # peer trying captured-and-replayed envelopes.
+                try:
+                    self.publish_safety_event(
+                        event_type="resume_replay_rejected",
+                        severity="warning",
+                        payload={
+                            "issuer": issuer_id,
+                            "proof_nonce_prefix": proof_nonce[:16],
+                        },
+                    )
+                except Exception:
+                    pass
+                return
+            # Bound the cache.
+            if len(self._resume_replay_cache) >= RESUME_REPLAY_CACHE_MAX:
+                cutoff = now - RESUME_FRESHNESS_WINDOW_S
+                stale = [k for k, ts in self._resume_replay_cache.items() if ts < cutoff]
+                for k in stale:
+                    self._resume_replay_cache.pop(k, None)
+                if len(self._resume_replay_cache) >= RESUME_REPLAY_CACHE_MAX:
+                    # Cache full of fresh entries -- drop oldest 20%.
+                    ordered = sorted(self._resume_replay_cache.items(), key=lambda kv: kv[1])
+                    drop = max(1, len(ordered) // 5)
+                    for k, _ in ordered[:drop]:
+                        self._resume_replay_cache.pop(k, None)
+            self._resume_replay_cache[cache_key] = now
+
+        if self._estop_lockout.is_set():
+            self._estop_lockout.clear()
+            sender = data.get("peer_id", "<remote>")
+            logger.warning("[safety] %s: lockout cleared via remote resume from %s", self.peer_id, sender)
+            # R8-1: audit the receiver-side resume transition. Mirrors
+            # _on_safety_estop above so verify_audit_integrity walkers
+            # see the close of the lockout window for every peer that
+            # entered one.
+            self.publish_safety_event(
+                event_type="remote_resume_applied",
+                severity="info",
+                payload={
+                    "trigger": "remote",
+                    "issuer": sender,
+                    "issuer_t": data.get("t"),
+                },
+            )
+
+    # RPC -- outgoing
     def send(self, target: str, cmd: dict[str, Any], timeout: float = 30.0) -> dict[str, Any]:
-        """Send a command to a single peer and return the first response."""
+        """Send a command to a single peer and return the first response.
+
+        Phase-4 / D1 hardening: turn_id is a full 128-bit uuid4 (no
+        truncation), and the expected responder is recorded so
+        :meth:`_on_response` rejects forged responses from any peer
+        other than *target*.
+
+        R4-5: explicit guard against passing the
+        :data:`BROADCAST_RESPONDER` sentinel (or any string containing a
+        NUL byte) as ``target``. ``init_mesh``'s peer_id regex already
+        rejects NUL on the receive side, so a real peer can't collide,
+        but a future refactor that loosens that rule must not reopen
+        the response-hijack surface that this method's contract closes.
+        """
         if not self._running:
             return {"status": "error", "error": "mesh not running"}
-        turn = uuid.uuid4().hex[:8]
+        if not isinstance(target, str) or not target:
+            return {"status": "error", "error": "send: target must be a non-empty string"}
+        if "\x00" in target or target == BROADCAST_RESPONDER:
+            return {
+                "status": "error",
+                "error": "send: target may not contain NUL or equal the BROADCAST_RESPONDER sentinel",
+            }
+        # R8-6: client-side validate before publishing. Prior to this fix,
+        # programmatic callers (tests, third-party integrations, anything
+        # that imports Mesh directly) skipped validate_command -- only the
+        # robot_mesh tool path validated client-side. Receiver-side
+        # _exec_cmd still validates, so this is defence-in-depth, but the
+        # PR description and README claimed client-side AND server-side
+        # validation; this closes the gap.
+        try:
+            cmd = _security.validate_command(cmd)
+        except _security.ValidationError as exc:
+            logger.warning("[mesh] %s: send to %s rejected client-side: %s", self.peer_id, target, exc)
+            return {"status": "error", "error": f"validation: {exc}"}
+        # 128-bit turn id -- at 32 bits the birthday-collision window
+        # under heavy concurrent RPC load was practical (~65k turns
+        # before 50% collision); 128 bits removes that surface entirely.
+        turn = uuid.uuid4().hex
         event = threading.Event()
         with self._rpc_lock:
             self._pending[turn] = event
             self._responses[turn] = []
+            # R5-defensive: belt-and-suspenders. The public guard above
+            # already rejects target == BROADCAST_RESPONDER and target
+            # containing NUL, but a future refactor that adds another
+            # path into this method (e.g. an internal helper that bypasses
+            # the public guard) must not reopen the response-hijack
+            # surface. Re-checking here makes the invariant explicit at
+            # the assignment site.
+            if target == BROADCAST_RESPONDER or "\x00" in target:
+                self._pending.pop(turn, None)
+                self._responses.pop(turn, None)
+                raise ValueError("send: target may not equal BROADCAST_RESPONDER or contain NUL")
+            self._expected_responders[turn] = target
         msg = {"sender_id": self.peer_id, "turn_id": turn, "command": cmd, "timestamp": time.time()}
         try:
-            put(f"strands/{target}/cmd", msg)
+            self.publish(f"strands/{target}/cmd", msg)
             event.wait(timeout=timeout)
         finally:
             with self._rpc_lock:
                 resps = self._responses.pop(turn, [])
                 self._pending.pop(turn, None)
+                self._expected_responders.pop(turn, None)
         return resps[0] if resps else {"status": "timeout"}
 
     def broadcast(self, cmd: dict[str, Any], timeout: float = 5.0) -> list[dict[str, Any]]:
-        """Broadcast a command to every peer and return all responses."""
+        """Broadcast a command to every peer and return all responses.
+
+        Phase-4 / D1: turn_id is a full 128-bit uuid4 (no truncation).
+        Broadcast turns accept responses from any responder by design,
+        so the responder_id check is bypassed (sentinel
+        ``BROADCAST_RESPONDER``).
+        """
         if not self._running:
             return []
-        turn = uuid.uuid4().hex[:8]
+        # R8-6: client-side validate before publishing. broadcast()'s
+        # return type is list[dict] (responses), so a validation failure
+        # has no structured slot -- log the rejection and return [] so
+        # callers see "no responses" rather than a partial broadcast.
+        try:
+            cmd = _security.validate_command(cmd)
+        except _security.ValidationError as exc:
+            logger.warning("[mesh] %s: broadcast rejected client-side: %s", self.peer_id, exc)
+            return []
+        turn = uuid.uuid4().hex
         event = threading.Event()
         with self._rpc_lock:
             self._pending[turn] = event
             self._responses[turn] = []
+            # Sentinel -- broadcast accepts responses from any peer.
+            self._expected_responders[turn] = BROADCAST_RESPONDER
         msg = {"sender_id": self.peer_id, "turn_id": turn, "command": cmd, "timestamp": time.time()}
         try:
-            put("strands/broadcast", msg)
+            self.publish("strands/broadcast", msg)
             event.wait(timeout=timeout)
             time.sleep(0.3)
         finally:
             with self._rpc_lock:
                 resps = self._responses.pop(turn, [])
                 self._pending.pop(turn, None)
+                self._expected_responders.pop(turn, None)
         return resps
 
     def tell(self, target: str, instruction: str, **kw: Any) -> dict[str, Any]:
@@ -747,7 +1244,7 @@ class Mesh(SensorLoopsMixin):
             elif isinstance(value, (int, float, bool, str, list, tuple)):
                 act_numeric[key] = value if not isinstance(value, tuple) else list(value)
 
-        put(
+        self.publish(
             f"strands/{self.peer_id}/stream",
             {
                 "peer_id": self.peer_id,
@@ -766,18 +1263,158 @@ class Mesh(SensorLoopsMixin):
 
     # Safety — emergency stop
     def emergency_stop(self) -> list[dict[str, Any]]:
-        """Broadcast stop to every peer and audit the event."""
+        """Broadcast a stop command to every peer and engage the local lockout.
+
+        After this call the local mesh refuses every non-status, non-resume
+        action until :meth:`_resume_lockout` is invoked with the operator
+        override code (``STRANDS_MESH_OVERRIDE_CODE``). The event is also
+        published on ``strands/safety/estop`` and recorded in the audit log
+        (see :func:`strands_robots.mesh.audit.log_safety_event`).
+
+        Returns the list of responses received from peers within the broadcast
+        timeout -- useful for telemetry (which peers acknowledged before the
+        stop fanned out).
+        """
+        self._estop_lockout.set()
+        self._last_estop_ts = time.time()
         responses = self.broadcast({"action": "stop"}, timeout=3.0)
-        put("strands/safety/estop", {"peer_id": self.peer_id, "t": time.time(), "responses_received": len(responses)})
+        self.publish(
+            "strands/safety/estop",
+            {
+                "peer_id": self.peer_id,
+                "t": self._last_estop_ts,
+                "responses_received": len(responses),
+                "lockout_engaged": True,
+            },
+        )
         self.publish_safety_event(
             event_type="emergency_stop",
             severity="critical",
-            payload={"sender_id": self.peer_id, "responses_received": len(responses)},
+            payload={
+                "sender_id": self.peer_id,
+                "responses_received": len(responses),
+                "lockout_engaged": True,
+            },
         )
+        logger.critical("[safety] %s: EMERGENCY STOP engaged -- lockout active", self.peer_id)
         return responses
 
+    def _resume_lockout(self, override_code: str) -> dict[str, Any]:
+        """Clear the emergency-stop lockout if *override_code* matches.
 
-# init_mesh — the only public constructor
+        Compared in constant time against ``STRANDS_MESH_OVERRIDE_CODE``.
+
+        R5-4: the wire response is a single generic shape (``{"status":
+        "ok"}`` on success, ``{"status": "error", "error": "resume
+        rejected"}`` on every failure including "lockout not engaged" and
+        "override code unconfigured") so a remote prober cannot use
+        differential responses as oracles for:
+
+        * whether the lockout is engaged at all (``noop`` vs ``error``),
+        * whether ``STRANDS_MESH_OVERRIDE_CODE`` is configured (``not
+          configured`` vs ``invalid code``),
+        * how long the lockout was held (``lockout_elapsed_s``).
+
+        Structured detail is preserved in the local
+        ``publish_safety_event`` audit record where forensics can use it.
+        Local callers (e.g. operator tooling that wants to show "already
+        unlocked" UI) can still distinguish via the local audit log.
+            {"status": "error", "error": "<reason>"}               # rejected
+
+        Every attempt -- successful or not -- is recorded in the audit log
+        through :meth:`publish_safety_event`.
+        """
+        # R5-4: every non-success path returns the same generic dict so
+        # a remote caller cannot use the response shape as an oracle.
+        # Structured rejection reasons are preserved in the local audit
+        # log via publish_safety_event.
+        _generic_error = {"status": "error", "error": "resume rejected"}
+
+        if not self._estop_lockout.is_set():
+            self.publish_safety_event(
+                event_type="resume_denied",
+                severity="info",
+                payload={"sender_id": self.peer_id, "reason": "lockout not engaged"},
+            )
+            return _generic_error
+
+        expected = os.getenv("STRANDS_MESH_OVERRIDE_CODE", "").strip()
+        provided = (override_code or "").strip()
+        if not expected:
+            self.publish_safety_event(
+                event_type="resume_denied",
+                severity="warning",
+                payload={"sender_id": self.peer_id, "reason": "STRANDS_MESH_OVERRIDE_CODE not configured"},
+            )
+            return _generic_error
+        # Constant-time compare so an attacker probing the override code
+        # cannot use response-time variation to learn it byte-by-byte.
+        if not hmac.compare_digest(expected.encode(), provided.encode()):
+            self.publish_safety_event(
+                event_type="resume_denied",
+                severity="warning",
+                payload={"sender_id": self.peer_id, "reason": "bad override code"},
+            )
+            return _generic_error
+
+        elapsed = time.time() - self._last_estop_ts
+        self._estop_lockout.clear()
+        self.publish_safety_event(
+            event_type="resume_ok",
+            severity="info",
+            payload={"sender_id": self.peer_id, "lockout_elapsed_s": elapsed},
+        )
+
+        # R8-5: bind a proof-of-override-code into the resume envelope so
+        # receivers can re-verify on _on_safety_resume. Without this,
+        # any operator-class peer could fan-out a resume just by virtue
+        # of being on the ACL; the override code adds a second factor
+        # that every receiver re-verifies by recomputing
+        # HMAC(local_code, proof_nonce).
+        #
+        # The proof_nonce is per-resume (uuid4.hex). We deliberately do
+        # NOT include the override code itself in the published payload
+        # or the audit log -- only the HMAC of (code, nonce).
+        proof_nonce = uuid.uuid4().hex
+        override_proof = hmac.new(
+            expected.encode(),
+            proof_nonce.encode(),
+            "sha256",
+        ).hexdigest()
+        self.publish(
+            "strands/safety/resume",
+            {
+                "peer_id": self.peer_id,
+                "t": time.time(),
+                "lockout_elapsed_s": elapsed,
+                "proof_nonce": proof_nonce,
+                "override_proof": override_proof,
+            },
+        )
+        logger.warning("[safety] %s: resume after %.1fs lockout", self.peer_id, elapsed)
+        # R5-4: success is also generic on the wire; the local audit
+        # record (resume_ok above) carries the elapsed time for forensics.
+        return {"status": "ok"}
+
+    def publish(self, key: str, payload: dict[str, Any]) -> None:
+        """Publish *payload* on *key* via the mesh transport.
+
+        Wire authentication is owned by the Zenoh transport: outbound
+        bytes ride a TLS link whose cert binds the peer identity, and
+        the ACL gates which key-expressions this peer can publish on.
+        This method simply forwards to ``put()`` -- it stays as a
+        single chokepoint so a future hook (audit, telemetry,
+        compression) can land in one place.
+
+        Renamed from ``_put_signed`` after the application-layer signing
+        envelope was dropped (commit 7113742). The old name was a
+        historical artefact: nothing in the body ever signed anything
+        once Zenoh's mTLS + ACL took over identity and authorization.
+        """
+        put(key, payload)
+
+
+# init_mesh -- the only public constructor
 def init_mesh(
     robot: Any,
     peer_id: str | None = None,

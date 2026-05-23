@@ -3,6 +3,171 @@
 All notable behavioural changes to `strands-robots` are logged here. Follows
 [Keep a Changelog](https://keepachangelog.com/) conventions.
 
+## Unreleased - mesh security hardening (Zenoh-native)
+
+### Mesh wire authentication and authorisation now ride on Zenoh built-ins
+
+Replaces the hand-rolled application-layer crypto (HMAC envelope,
+nonce cache, per-peer identity, token bucket — ~1700 lines) with the
+Zenoh primitives that ship out of the box: mTLS, per-key-expression
+ACLs, multicast-off discovery, namespace routing isolation, and
+per-key rate / size caps. Net effect: stronger guarantees, smaller
+mesh tree, every claim verified against a live two-peer Zenoh
+session in `tests/mesh/test_redteam_zenoh.py`.
+
+### Wire layer (Zenoh built-ins)
+
+| Concern | Built-in | Configuration |
+|---|---|---|
+| Peer identity | `transport/link/tls` (mutual TLS) | `STRANDS_MESH_TLS_{CA,CERT,KEY}` |
+| Authorisation | `access_control` keyed on cert CN | `STRANDS_MESH_ACL_FILE` (operator-supplied) or permissive built-in default |
+| Replay protection | TLS per-link sequence numbers | n/a (transport-level) |
+| Fleet isolation | `namespace` prefix at routing layer | `STRANDS_MESH_NAMESPACE` (default `strands`) |
+| Discovery | gossip-only by default | `STRANDS_MESH_MULTICAST=true` to opt in |
+| Per-key rate cap | `downsampling` block | `STRANDS_MESH_CMD_RATE_HZ` (default 20) |
+| Per-message size cap | `low_pass_filter` block | `STRANDS_MESH_MAX_CMD_BYTES`, `STRANDS_MESH_MAX_CAMERA_BYTES` |
+| Session-count DoS bound | `transport/unicast/max_sessions` | `STRANDS_MESH_MAX_SESSIONS` (default 256) |
+
+### Payload-semantic layer (`mesh/security.py`)
+
+What survives at the application layer (467 lines, was 1176):
+
+* `validate_command()` — action allowlist + per-action bounds
+  (instruction length, duration, step counts).
+* `is_safe_policy_host`, `is_safe_model_path`, `is_safe_policy_type`,
+  `is_safe_policy_provider`, `is_safe_server_address` — payload
+  allowlists that ACL cannot see (it gates topics, not contents).
+* `LockoutError` / `ValidationError` — typed exceptions for the
+  command dispatcher.
+
+Removed entirely:
+
+* `mesh/identity.py` (505 lines) — replaced by mTLS cert chain.
+* `sign_envelope` / `verify_envelope` / `_NONCE_CACHE` /
+  `_record_nonce` / `clear_replay_cache` — replaced by TLS link auth.
+* `TokenBucket` / `consume_peer_token` / `enforce_peer_rate_limit` /
+  `_PEER_RATE_LIMITS` — replaced by `downsampling`.
+* `pin_peer_identity` / `drop_peer_identity` /
+  `known_peer_identities` — replaced by cert provisioning + ACL.
+* `STRANDS_MESH_PSK`, `STRANDS_MESH_REQUIRE_AUTH`,
+  `STRANDS_MESH_REPLAY_WINDOW`, `STRANDS_MESH_PEER_RATE`,
+  `STRANDS_MESH_REQUIRE_PEER_IDENTITY`, `STRANDS_MESH_PEER_IDENTITY`,
+  `STRANDS_MESH_PEER_KEY*` env vars.
+
+### Zenoh 1.x quirks discovered and fixed
+
+Empirical red-team testing against the live Zenoh 1.9 wheel
+uncovered four bugs in our own first-pass config that this PR fixes:
+
+1. **`low_pass_filter` was a silent no-op.** The block requires a
+   non-empty `interfaces` allowlist; an empty/missing field disables
+   the cap. The builder now enumerates every local NIC via psutil
+   (override with `STRANDS_MESH_FILTER_INTERFACES`).
+2. **`<namespace>/*/cmd` patterns never matched.** Zenoh strips the
+   namespace before checking key_exprs against the user-side key.
+   All filter / ACL globs now use `**/cmd` style patterns.
+3. **`access_control` requires `enabled: true`.** Without it the
+   block parses but silently disables the gate. The ACL loader now
+   hard-rejects any file that omits it.
+4. **`cert_common_names` matches LITERAL CNs only** — globs do not
+   work in Zenoh 1.x. The default ACL is therefore permissive (any
+   CA-signed peer); operators wanting per-role enforcement supply
+   `STRANDS_MESH_ACL_FILE` enumerating each peer's exact CN.
+   `examples/mesh_acl_example.json5` is the canonical template.
+
+### Surviving payload-semantic protections
+
+* HITL interrupt for `emergency_stop` / `broadcast` in
+  `tools/robot_mesh.py` — declined approvals do not consume a rate-
+  limit slot.
+* Per-action sliding-window rate limit on the LLM tool.
+* Client-side `validate_command` on `Mesh.send` / `Mesh.broadcast`
+  (so programmatic callers go through the same gate).
+* `Mesh._on_response` `responder_id` binding for point-to-point RPC
+  scope.
+* `STRANDS_MESH_OVERRIDE_CODE` second factor on
+  `_resume_lockout` (constant-time compare).
+
+### Audit log (`mesh/audit.py`)
+
+Independent of wire auth; kept as the forensic line of evidence:
+
+* Per-record HMAC-SHA256 under `STRANDS_MESH_AUDIT_PSK`.
+* Per-peer monotonic seq counters with sidecar persistence
+  (`mesh_audit.seq.json`) and cross-process `fcntl.flock`.
+* `O_NOFOLLOW` create + symlink reject on the audit file and seq
+  sidecar.
+* Bounded rotation (`STRANDS_MESH_AUDIT_MAX_BYTES`,
+  `STRANDS_MESH_AUDIT_MAX_FILES`).
+* `verify_audit_integrity` reads rotated logs in addition to the
+  active one and walks every peer's seq cursor independently;
+  records that fail signature verification do NOT advance the
+  cursor (so a forged record cannot mask a real gap).
+* `AuditPSKDegradedError` raised when the PSK is unset mid-run so
+  audit signing cannot silently downgrade.
+
+### IoT path (`mesh/iot/provision.py`)
+
+Hardened independently of the Zenoh refactor:
+
+* AWS Root CA1 SHA-256 pin, accepting a tuple of pins so a future
+  CA rotation can ship one PR ahead of the AWS rollout.
+* `STRANDS_MESH_DISABLE_CA_PIN` break-glass NEVER applies to the
+  on-disk re-use path — a rogue CA from a prior compromised run
+  cannot be silently re-used.
+* Per-receive timeout via custom `HTTPSHandler` (no global
+  `socket.setdefaulttimeout` foot-gun).
+* Thing-name regex tightened to `^[a-zA-Z0-9_-]{1,128}$` (alphanumerics, dash, underscore; length 1-128). Rejects path-traversal (`..`, `/`), NUL, whitespace, and non-ASCII.
+* `iot/camera_offload.py` routes through public `Mesh.publish`.
+
+### New env vars
+
+| Var | Default | Purpose |
+|---|---|---|
+| `STRANDS_MESH_AUTH_MODE` | `mtls` | `mtls` (prod) or `none` (dev only — logs WARNING at session open) |
+| `STRANDS_MESH_TLS_CA` / `_CERT` / `_KEY` | unset | mTLS material; required when auth_mode=mtls |
+| `STRANDS_MESH_ACL_FILE` | unset | Operator-supplied JSON5 ACL with literal-CN enumeration |
+| `STRANDS_MESH_NAMESPACE` | `strands` | Fleet routing prefix |
+| `STRANDS_MESH_MULTICAST` | `false` | Gossip-only by default |
+| `STRANDS_MESH_MAX_SESSIONS` | `256` | Unicast session DoS bound |
+| `STRANDS_MESH_CMD_RATE_HZ` | `20.0` | `downsampling` cap on `**/cmd` |
+| `STRANDS_MESH_MAX_CMD_BYTES` | `16384` | `low_pass_filter` cap on `**/cmd` |
+| `STRANDS_MESH_MAX_CAMERA_BYTES` | `1048576` | `low_pass_filter` cap on `**/camera/**` |
+| `STRANDS_MESH_CAMERA_DISABLED` | `false` | Privacy kill switch -- when `true`, `Mesh._publish_cameras_once` short-circuits before any frame is built |
+| `STRANDS_MESH_FILTER_INTERFACES` | autodetect | Override iface allowlist for the filter / ACL |
+
+### Tests
+
+* **643 mesh tests pass** (2 skipped with documented reasons).
+* New: `tests/mesh/_pki.py` — ephemeral CA + leaf cert helper.
+* New: `tests/mesh/test_redteam_zenoh.py` — 11 tests, 9 active, run
+  against real two-peer `zenoh.open()` sessions covering namespace
+  isolation, downsampling / low_pass_filter enforcement, mTLS
+  handshake rejection of rogue CA, ACL drop of unknown CN.
+* New: `tests/mesh/test_validate_command.py`, `test_zenoh_config.py`,
+  `test_acl_config.py`, `test_session_config.py`,
+  `test_audit_integrity.py`, `test_iot_ca_pin.py`,
+  `test_iot_policy_scope.py`, `test_camera_acl.py`,
+  `test_robot_mesh_security.py`, `test_pentest_findings.py`,
+  `test_bridge_dedup.py`.
+
+### Migration
+
+Existing deployments under `STRANDS_MESH_PSK`:
+
+1. Provision a CA + per-peer leaf certs (or reuse the AWS IoT certs
+   already in `~/.strands_robots/iot/`).
+2. Set `STRANDS_MESH_TLS_{CA,CERT,KEY}` on every peer.
+3. (Optional) Drop `examples/mesh_acl_example.json5` at
+   `STRANDS_MESH_ACL_FILE` and edit the `cert_common_names` lists
+   with your fleet's exact CNs.
+4. Drop all `STRANDS_MESH_PSK` / `STRANDS_MESH_PEER_KEY*` /
+   `STRANDS_MESH_REPLAY_WINDOW` / `STRANDS_MESH_PEER_RATE` env vars.
+
+Dev / lab environments without PKI run `STRANDS_MESH_AUTH_MODE=none`
+to keep plain-TCP behaviour; the mesh logs a WARNING at session
+open.
+
 ## Unreleased - #178 (LiberoOffScreenRenderEngine retired)
 
 ### Removed: ``LiberoOffScreenRenderEngine`` simulation backend (BREAKING)
