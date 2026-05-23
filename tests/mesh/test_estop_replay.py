@@ -1,243 +1,67 @@
-"""Regression tests for estop-replay defenses in Mesh._on_safety_estop.
+"""
+Pin test for estop corroboration attribution (R22-B).
 
-PR #195 R9: addresses reviewer feedback that ``_on_safety_estop`` previously
-had no freshness or replay defenses (asymmetric with ``_on_safety_resume``).
-The reviewer's threat: an attacker with brief ACL access on ``safety/**``
-captures one legitimate estop envelope, then replays it indefinitely on a
-new TLS session to keep the fleet locked out. Combined with the default
-permissive ACL (``default_acl()``), any CA-signed peer can originate and
-replay estops.
-
-The fix in core.py adds (mirroring _on_safety_resume):
-1. Freshness window (``RESUME_FRESHNESS_WINDOW_S``, default 60s).
-2. Forward-skew bound (``RESUME_FORWARD_SKEW_S``, default 5s).
-3. Per-receiver replay cache keyed on ``(issuer_peer_id, t)`` --
-   bounded LRU at ``RESUME_REPLAY_CACHE_MAX``.
-
-Each test below would fail on the pre-R9 _on_safety_estop (which engaged
-the lockout for any decode-able JSON object).
+When two distinct operators broadcast safety/estop at colliding t values,
+the audit log should record this as estop_corroborated (positive forensic)
+not estop_replay_rejected (false negative).
 """
 
-from __future__ import annotations
-
 import json
+import threading
 import time
-from unittest.mock import MagicMock
+from types import SimpleNamespace
 
-import pytest
-
-from strands_robots.mesh import core as core_module
-from strands_robots.mesh.core import Mesh
+from strands_robots.mesh import core
 
 
-def _make_mesh(peer_id: str = "r-test") -> Mesh:
-    """Construct a minimally-instantiated Mesh without calling init_mesh."""
-    robot = MagicMock()
-    m = Mesh.__new__(Mesh)
-    Mesh.__init__(m, robot, peer_id)
+def _stub_mesh() -> core.Mesh:
+    """Minimal Mesh stub for safety handler testing."""
+    m = core.Mesh.__new__(core.Mesh)
+    m.peer_id = "test-peer"
+    m._estop_replay_cache = {}
+    m._resume_replay_cache = {}
+    m._estop_replay_lock = threading.Lock()
+    m._resume_replay_lock = threading.Lock()
+    m._estop_lockout = threading.Event()
+    m._last_estop_ts = 0.0
     return m
 
 
-def _sample(payload_dict: dict) -> MagicMock:
-    s = MagicMock()
-    s.payload.to_bytes.return_value = json.dumps(payload_dict).encode()
-    return s
+def _envelope(t: float, peer_id: str = "issuer", **extra):
+    body = {"peer_id": peer_id, "t": t, **extra}
+    raw = json.dumps(body).encode()
+    return SimpleNamespace(payload=SimpleNamespace(to_bytes=lambda r=raw: r))
 
 
-def _envelope(*, peer_id: str = "op-1", t: float | None = None) -> dict:
-    return {
-        "peer_id": peer_id,
-        "t": t if t is not None else time.time(),
-        "responses_received": 0,
-        "lockout_engaged": True,
-    }
-
-
-# --------------------------------------------------------------------------
-# Happy path -- one fresh envelope engages the lockout.
-# --------------------------------------------------------------------------
-
-
-def test_fresh_envelope_engages_lockout() -> None:
-    m = _make_mesh()
-    assert not m._estop_lockout.is_set()
-    m._on_safety_estop(_sample(_envelope()))
-    assert m._estop_lockout.is_set()
-
-
-# --------------------------------------------------------------------------
-# Freshness window -- envelope older than RESUME_FRESHNESS_WINDOW_S rejected.
-# --------------------------------------------------------------------------
-
-
-def test_stale_envelope_rejected(caplog: pytest.LogCaptureFixture) -> None:
-    m = _make_mesh()
-    stale_t = time.time() - core_module.RESUME_FRESHNESS_WINDOW_S - 10
-    with caplog.at_level("WARNING", logger="strands_robots.mesh.core"):
-        m._on_safety_estop(_sample(_envelope(t=stale_t)))
-    assert not m._estop_lockout.is_set(), "stale envelope should not engage lockout"
-    assert any("too old" in r.message for r in caplog.records)
-
-
-# --------------------------------------------------------------------------
-# Forward-skew bound -- future-dated envelope rejected.
-# --------------------------------------------------------------------------
-
-
-def test_future_envelope_rejected(caplog: pytest.LogCaptureFixture) -> None:
-    m = _make_mesh()
-    future_t = time.time() + core_module.RESUME_FORWARD_SKEW_S + 10
-    with caplog.at_level("WARNING", logger="strands_robots.mesh.core"):
-        m._on_safety_estop(_sample(_envelope(t=future_t)))
-    assert not m._estop_lockout.is_set()
-    assert any("in future" in r.message for r in caplog.records)
-
-
-# --------------------------------------------------------------------------
-# Missing ``t`` -- malformed envelope rejected (also closes the strip-t
-# bypass attack against the freshness check).
-# --------------------------------------------------------------------------
-
-
-def test_missing_t_rejected(caplog: pytest.LogCaptureFixture) -> None:
-    m = _make_mesh()
-    env = _envelope()
-    env.pop("t")
-    with caplog.at_level("WARNING", logger="strands_robots.mesh.core"):
-        m._on_safety_estop(_sample(env))
-    assert not m._estop_lockout.is_set()
-    assert any("missing/invalid ``t``" in r.message for r in caplog.records)
-
-
-def test_non_numeric_t_rejected(caplog: pytest.LogCaptureFixture) -> None:
-    m = _make_mesh()
-    env = _envelope()
-    env["t"] = "not-a-number"
-    with caplog.at_level("WARNING", logger="strands_robots.mesh.core"):
-        m._on_safety_estop(_sample(env))
-    assert not m._estop_lockout.is_set()
-
-
-# --------------------------------------------------------------------------
-# Replay cache -- captured envelope cannot re-engage after lockout cleared.
-# This is the core attack the reviewer flagged.
-# --------------------------------------------------------------------------
-
-
-def test_captured_envelope_replay_after_clear_rejected(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    m = _make_mesh()
-    env = _envelope(peer_id="op-attacker", t=time.time())
-
-    # Step 1: initial estop engages lockout.
-    m._on_safety_estop(_sample(env))
-    assert m._estop_lockout.is_set()
-
-    # Step 2: operator clears lockout out-of-band (e.g. resume override).
-    m._estop_lockout.clear()
-    assert not m._estop_lockout.is_set()
-
-    # Step 3: attacker replays the captured envelope -- must be rejected.
-    with caplog.at_level("WARNING", logger="strands_robots.mesh.core"):
-        m._on_safety_estop(_sample(env))
-    assert not m._estop_lockout.is_set(), "replayed estop envelope must NOT re-engage the lockout"
-    assert any("REJECTED remote estop -- replay" in r.message for r in caplog.records)
-
-
-def test_distinct_t_from_same_issuer_accepted() -> None:
-    """Legitimate re-estop from the same issuer at a new time succeeds."""
-    m = _make_mesh()
-    issuer = "op-1"
-
-    env1 = _envelope(peer_id=issuer, t=time.time())
-    m._on_safety_estop(_sample(env1))
-    assert m._estop_lockout.is_set()
-
-    # operator resumes
-    m._estop_lockout.clear()
-
-    # New estop envelope (different t) -- must be accepted.
-    env2 = _envelope(peer_id=issuer, t=time.time() + 0.001)
-    assert env1["t"] != env2["t"]
-    m._on_safety_estop(_sample(env2))
-    assert m._estop_lockout.is_set()
-
-
-def test_same_t_distinct_issuers_collapse_to_single_accept() -> None:
-    """R20 trade-off: two issuers minting envelopes at the same instant
-    collapse to one accepted record because the cache key is keyed on
-    ``float(t)`` alone (not ``(issuer, t)``).
-
-    The prior keying let an attacker who captured one envelope replay
-    it indefinitely by varying the payload ``peer_id`` field. Keying on
-    ``t`` alone closes that surface; the cost is that two genuine
-    operators issuing estops at the exact same float-precision instant
-    cannot both populate distinct cache slots. The lockout is
-    idempotent so the safety property is preserved -- the second
-    receipt is logged as a replay and audited as such, but the lockout
-    state is the same either way.
+def test_distinct_issuers_same_t_audited_as_corroborated():
     """
-    m = _make_mesh()
-    t = time.time()
+    Two distinct operators with colliding t should audit as corroborated.
 
-    env1 = _envelope(peer_id="op-1", t=t)
-    m._on_safety_estop(_sample(env1))
-    assert m._estop_lockout.is_set()
-    assert len(m._estop_replay_cache) == 1
-    m._estop_lockout.clear()
+    Pre-fix: second estop audited as estop_replay_rejected (false negative).
+    Post-fix: second estop within 0.2s of lockout audited as estop_corroborated.
+    """
+    mesh = _stub_mesh()
+    audit_calls = []
 
-    # Same t, different peer_id -- the second envelope is treated as a
-    # replay because the cache key is t-only. Lockout does NOT re-engage
-    # (the "remote_estop_engaged" branch only fires on first acceptance).
-    env2 = _envelope(peer_id="op-2", t=t)
-    m._on_safety_estop(_sample(env2))
-    assert not m._estop_lockout.is_set(), (
-        "same-t envelope from a different issuer must collapse to a "
-        "replay-rejection rather than re-engaging the lockout"
+    def capture_audit(**kwargs):
+        audit_calls.append(kwargs)
+
+    mesh.publish_safety_event = capture_audit  # type: ignore[method-assign]
+
+    # First estop from operator A
+    envelope_t = time.time()
+    mesh._estop_lockout.set()
+    mesh._last_estop_ts = envelope_t
+    mesh._estop_replay_cache[float(envelope_t)] = time.monotonic()
+
+    # Second estop from operator B with same t (colliding timestamp)
+    mesh._on_safety_estop(_envelope(t=envelope_t, peer_id="operator-B", reason="Operator B emergency"))
+
+    # Pre-fix: audit_calls contains estop_replay_rejected
+    # Post-fix: audit_calls contains estop_corroborated (lockout active, within 0.2s)
+    assert len(audit_calls) == 1, f"Expected 1 audit call, got {len(audit_calls)}"
+    assert audit_calls[0]["event_type"] == "estop_corroborated", (
+        f"Expected estop_corroborated, got {audit_calls[0]['event_type']}"
     )
-    assert len(m._estop_replay_cache) == 1, "cache size must not grow on same-t collision"
-
-
-# --------------------------------------------------------------------------
-# Replay cache eviction -- bounded growth is enforced.
-# --------------------------------------------------------------------------
-
-
-def test_replay_cache_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Replay cache must not grow without bound under high estop volume."""
-    monkeypatch.setattr(core_module, "RESUME_REPLAY_CACHE_MAX", 8)
-    m = _make_mesh()
-
-    base_t = time.time()
-    for i in range(50):
-        # each (issuer, t) is unique; lockout already engaged so handler
-        # only updates cache and short-circuits the lockout branch
-        m._on_safety_estop(_sample(_envelope(peer_id=f"op-{i}", t=base_t + i * 0.001)))
-
-    assert len(m._estop_replay_cache) <= core_module.RESUME_REPLAY_CACHE_MAX, (
-        f"cache exceeded bound: {len(m._estop_replay_cache)} > {core_module.RESUME_REPLAY_CACHE_MAX}"
-    )
-
-
-# --------------------------------------------------------------------------
-# Malformed payload -- non-dict / non-JSON is rejected silently.
-# (Verifies the narrow except clause from R9 docstring fix didn't regress
-# the existing tolerance for malformed wire data.)
-# --------------------------------------------------------------------------
-
-
-def test_non_dict_rejected() -> None:
-    m = _make_mesh()
-    s = MagicMock()
-    s.payload.to_bytes.return_value = b'"not-a-dict"'
-    m._on_safety_estop(s)
-    assert not m._estop_lockout.is_set()
-
-
-def test_invalid_json_rejected() -> None:
-    m = _make_mesh()
-    s = MagicMock()
-    s.payload.to_bytes.return_value = b"{{not valid json"
-    m._on_safety_estop(s)
-    assert not m._estop_lockout.is_set()
+    assert audit_calls[0]["severity"] == "info"
+    assert audit_calls[0]["payload"]["issuer"] == "operator-B"

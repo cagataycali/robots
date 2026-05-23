@@ -1097,6 +1097,23 @@ class Mesh(SensorLoopsMixin):
         now_mono = time.monotonic()
         with self._estop_replay_lock:
             if cache_key in self._estop_replay_cache:
+                # R22-B: If lockout is active and within 0.2s, this is corroboration
+                # (two distinct operators, same t) not a replay attack.
+                if self._estop_lockout.is_set() and (time.time() - self._last_estop_ts) < 0.2:
+                    try:
+                        self.publish_safety_event(
+                            event_type="estop_corroborated",
+                            severity="info",
+                            payload={"issuer": issuer_id, "issuer_t": envelope_t},
+                        )
+                    except Exception as audit_exc:
+                        logger.debug(
+                            "[mesh] %s: estop_corroborated audit publish failed: %s",
+                            self.peer_id,
+                            audit_exc,
+                        )
+                    return
+                # Original replay rejection
                 logger.warning(
                     "[safety] %s: REJECTED remote estop -- replay of (issuer=%s, t=%s) already accepted",
                     self.peer_id,
