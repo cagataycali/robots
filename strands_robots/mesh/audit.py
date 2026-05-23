@@ -922,7 +922,12 @@ def verify_audit_integrity(records: list[dict[str, Any]] | None = None) -> dict[
             prev = last_seq_by_peer.get(peer)
             if prev is not None and seq != prev + 1:
                 gaps.append((prev, seq))
-            last_seq_by_peer[peer] = seq
+            # Refuse to roll the cursor backward. A forged record carrying
+            # a seq <= prev would let a (forged-low-seq + delete-newer)
+            # tamper sequence look adjacent on the next legit record.
+            # Keep the highest seq seen for this peer.
+            if prev is None or seq > prev:
+                last_seq_by_peer[peer] = seq
 
     return {
         "total": total,

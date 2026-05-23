@@ -436,3 +436,66 @@ def test_psk_degrade_unsigned_to_signed_drops_record(monkeypatch, tmp_path, capl
     assert any("PSK" in msg or "AuditPSKDegradedError" in msg or "degrade" in msg.lower() for msg in error_messages), (
         f"expected PSK degradation ERROR in logs, got: {error_messages}"
     )
+
+
+def test_cursor_does_not_roll_backward_on_forged_low_seq(monkeypatch, tmp_path):
+    """Pin regression: per-peer cursor refuses backward rolls.
+
+    Threat model (no PSK case): an attacker who can write to a rotated
+    .jsonl.N file inserts a record with a seq value LOWER than the
+    current cursor. Without a guard, ``last_seq_by_peer[peer] = seq``
+    rolls the cursor backward; the next legit record then looks adjacent
+    to the forged low-seq record (no gap reported) and any real records
+    deleted between the forged seq and the legit record are silently
+    masked.
+
+    Pin: after a forged record with seq < prev, the cursor must NOT roll
+    back. The next legit record is then evaluated against the highest
+    seq seen, surfacing the gap.
+    """
+    monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
+    monkeypatch.delenv("STRANDS_MESH_AUDIT_PSK", raising=False)
+    import importlib
+
+    from strands_robots.mesh import audit
+
+    importlib.reload(audit)
+
+    log_path = audit.audit_log_path()
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Hand-craft an unsigned log (no PSK). Three records from peer-x:
+    # seq=1 (legit), seq=2 (legit), then a forged record claiming seq=1
+    # again (cursor rollback attempt), then a legit seq=3.
+    records = [
+        {"event": "e1", "peer_id": "peer-x", "seq": 1, "ts": 1.0, "payload": {}},
+        {"event": "e2", "peer_id": "peer-x", "seq": 2, "ts": 2.0, "payload": {}},
+        # FORGED: seq=1 again (rollback attempt). Real records seq=3..7
+        # would have been here; attacker deleted them.
+        {"event": "forged", "peer_id": "peer-x", "seq": 1, "ts": 3.0, "payload": {}},
+        # Legit seq=8 -- if cursor rolled back to 1, this looks like a
+        # gap of (1, 8); if the cursor held at 2 (correct behavior),
+        # this is also reported as a gap (2, 8) -- either way a gap is
+        # surfaced. The bug is that a backward-rolled cursor would
+        # report the smaller, misleading gap.
+        {"event": "e8", "peer_id": "peer-x", "seq": 8, "ts": 4.0, "payload": {}},
+    ]
+    with open(log_path, "w", encoding="utf-8") as fh:
+        for r in records:
+            fh.write(json.dumps(r) + "\n")
+
+    report = audit.verify_audit_integrity()
+
+    # The cursor must NOT have rolled back to 1. The final gap must be
+    # reported against the highest legit seq seen (2), not the forged
+    # seq (1). With the bug, the gap would be (1, 8); with the fix it
+    # is (2, 8) AND (2, 1) (the forged-low jump itself).
+    gaps = report["sequence_gaps"]
+    assert gaps, f"no gaps reported despite forged low-seq + missing records: {report}"
+    # The legit-record gap (2 -> 8) must be present with the correct prev.
+    legit_gap = next((g for g in gaps if g[1] == 8), None)
+    assert legit_gap is not None, f"gap to seq=8 not surfaced: {gaps}"
+    assert legit_gap[0] == 2, (
+        f"cursor rolled back to forged seq -- gap reports prev={legit_gap[0]} "
+        f"instead of expected prev=2 (highest legit seq before the forgery)"
+    )
