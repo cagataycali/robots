@@ -44,7 +44,7 @@ def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(var, raising=False)
 
 
-def _start_with_stub_session(stub_robot, caplog):
+def _start_with_stub_session(stub_robot, caplog, level: int = logging.WARNING):
     """Construct a Mesh and run start() against a stub session."""
     from strands_robots.mesh import Mesh
     from strands_robots.mesh import core as mesh_core
@@ -62,24 +62,48 @@ def _start_with_stub_session(stub_robot, caplog):
     with patch.object(mesh_core, "get_session", return_value=_StubSession()):
         with patch.object(mesh_core, "release_session"):
             with patch.object(mesh, "_heartbeat_loop"), patch.object(mesh, "_state_loop"):
-                with caplog.at_level(logging.WARNING, logger="strands_robots.mesh.core"):
+                with caplog.at_level(level, logger="strands_robots.mesh.core"):
                     mesh.start()
                 mesh.stop()
     return caplog.records
 
 
-def test_mtls_plus_default_acl_warns(caplog, monkeypatch, stub_robot):
-    """Default config (mtls + no ACL file) MUST log a permissive-ACL warning."""
+def test_mtls_plus_default_acl_errors(caplog, monkeypatch, stub_robot):
+    """Default config (mtls + no ACL file) MUST log a permissive-ACL ERROR.
+
+    F8-D escalated this from WARNING to ERROR (matching the auth_mode=none
+    posture in session.py) because a once-per-session WARNING is easy to
+    miss. Operators who deliberately want this posture opt in via
+    ``STRANDS_MESH_ACCEPT_PERMISSIVE_ACL=1``.
+    """
     monkeypatch.setenv("STRANDS_MESH_AUTH_MODE", "mtls")
+    monkeypatch.delenv("STRANDS_MESH_ACCEPT_PERMISSIVE_ACL", raising=False)
     records = _start_with_stub_session(stub_robot, caplog)
-    msgs = [r.getMessage() for r in records]
-    assert any("permissive default ACL active under mtls" in m for m in msgs), (
-        f"expected permissive-ACL warning; saw: {msgs}"
+    error_msgs = [r.getMessage() for r in records if r.levelname == "ERROR"]
+    assert any("PERMISSIVE DEFAULT ACL ACTIVE UNDER MTLS" in m for m in error_msgs), (
+        f"expected permissive-ACL ERROR; saw error_msgs={error_msgs}"
+    )
+
+
+def test_mtls_plus_default_acl_with_optin_logs_at_info(caplog, monkeypatch, stub_robot):
+    """When the operator opts in via STRANDS_MESH_ACCEPT_PERMISSIVE_ACL=1,
+    the ERROR is downgraded to INFO -- they've explicitly acknowledged.
+    """
+    monkeypatch.setenv("STRANDS_MESH_AUTH_MODE", "mtls")
+    monkeypatch.setenv("STRANDS_MESH_ACCEPT_PERMISSIVE_ACL", "1")
+    records = _start_with_stub_session(stub_robot, caplog, level=logging.INFO)
+    error_msgs = [r.getMessage() for r in records if r.levelname == "ERROR"]
+    assert not any("PERMISSIVE DEFAULT ACL ACTIVE" in m for m in error_msgs), (
+        f"opt-in should NOT log ERROR; saw {error_msgs}"
+    )
+    info_msgs = [r.getMessage() for r in records if r.levelname == "INFO"]
+    assert any("permissive default ACL active" in m for m in info_msgs), (
+        f"expected INFO-level ack on opt-in; saw {info_msgs}"
     )
 
 
 def test_mtls_with_acl_file_does_not_warn(caplog, monkeypatch, tmp_path, stub_robot):
-    """Operator-supplied ACL file MUST suppress the warning."""
+    """Operator-supplied ACL file MUST suppress the warning AND error."""
     acl = tmp_path / "ops.json5"
     acl.write_text('{"rules": [], "subjects": [], "policies": [], "enabled": true, "default_permission": "deny"}\n')
     monkeypatch.setenv("STRANDS_MESH_AUTH_MODE", "mtls")
@@ -87,8 +111,8 @@ def test_mtls_with_acl_file_does_not_warn(caplog, monkeypatch, tmp_path, stub_ro
 
     records = _start_with_stub_session(stub_robot, caplog)
     msgs = [r.getMessage() for r in records]
-    assert not any("permissive default ACL active under mtls" in m for m in msgs), (
-        f"unexpected permissive-ACL warning when ACL file set: {msgs}"
+    assert not any("PERMISSIVE DEFAULT ACL" in m or "permissive default ACL active" in m for m in msgs), (
+        f"unexpected permissive-ACL log when ACL file set: {msgs}"
     )
 
 

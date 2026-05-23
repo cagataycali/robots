@@ -28,6 +28,7 @@ def _stub_mesh() -> core.Mesh:
     m = core.Mesh.__new__(core.Mesh)
     m.peer_id = "test-peer"
     m._estop_replay_cache = {}
+    m._estop_replay_per_issuer = {}
     m._resume_replay_cache = {}
     import threading
 

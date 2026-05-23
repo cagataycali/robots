@@ -1003,27 +1003,54 @@ def read_audit_log(since: float | None = None) -> list[dict[str, Any]]:
         List of event dicts in chronological order. Returns an empty
         list if no audit file exists.
     """
+    # F8-B (PR #195 review): every other open in this module
+    # carefully refuses symlinks via static is_symlink() + O_NOFOLLOW
+    # (see _ensure_paths, _persist_seq_counters, _load_seq_counters).
+    # ``read_audit_log`` is the forensic walker AND the seed source
+    # for ``_load_seq_counters`` on a corrupt sidecar; opening with
+    # the bare stdlib ``open()`` would let an attacker who swapped a
+    # rotated ``.1`` log file to a symlink redirect the read to
+    # attacker-controlled bytes (``/dev/null`` for fail-open seq
+    # reset, or attacker-forged content). Mirror the discipline
+    # applied across the rest of the module.
     out: list[dict[str, Any]] = []
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
     for path in _audit_log_files_in_order():
         try:
-            with open(path, encoding="utf-8") as fh:
-                for raw in fh:
-                    raw = raw.strip()
-                    if not raw:
-                        continue
-                    try:
-                        record = json.loads(raw)
-                    except json.JSONDecodeError:
-                        # Forward-compatible: skip malformed lines silently
-                        # so a newer writer's extension can't break a
-                        # reader on this version.
-                        continue
-                    if since is not None:
-                        ts = record.get("ts")
-                        if not isinstance(ts, (int, float)) or ts < since:
+            if path.is_symlink():
+                logger.warning(
+                    "[audit] refusing to read %s: it is a SYMLINK (target: %r). Audit log files must be regular files.",
+                    path,
+                    os.readlink(path),
+                )
+                continue
+            fd = os.open(str(path), os.O_RDONLY | nofollow)
+            try:
+                with os.fdopen(fd, encoding="utf-8") as fh:
+                    for raw in fh:
+                        raw = raw.strip()
+                        if not raw:
                             continue
-                    out.append(record)
+                        try:
+                            record = json.loads(raw)
+                        except json.JSONDecodeError:
+                            # Forward-compatible: skip malformed lines silently
+                            # so a newer writer's extension can't break a
+                            # reader on this version.
+                            continue
+                        if since is not None:
+                            ts = record.get("ts")
+                            if not isinstance(ts, (int, float)) or ts < since:
+                                continue
+                        out.append(record)
+            except (OSError, UnicodeDecodeError):
+                # ``os.fdopen`` owns the fd; the with-block above closes
+                # it. If iter raises, we already closed the fd via
+                # context manager exit -- nothing else to do here.
+                raise
         except OSError as exc:  # pragma: no cover -- best-effort read
+            # ELOOP under O_NOFOLLOW is the symlink-raced-after-static-
+            # check path; treated as silent skip same as a missing file.
             logger.debug("[audit] failed to read %s: %s", path, exc)
     return out
 

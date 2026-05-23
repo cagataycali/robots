@@ -41,6 +41,7 @@ def receiver():
     m.peer_id = "receiver-1"
     m._estop_lockout = core_module.threading.Event()
     m._estop_replay_cache = {}
+    m._estop_replay_per_issuer = {}
     m._estop_replay_lock = core_module.threading.Lock()
     m._last_estop_ts = 0.0
     # Stub publish_safety_event so we don't need a live transport.

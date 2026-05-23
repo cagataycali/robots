@@ -138,6 +138,7 @@ Hardened independently of the Zenoh refactor:
 |---|---|---|
 | `STRANDS_MESH_AUTH_MODE` | `mtls` | `mtls` (prod) or `none` (dev only). `none` ALSO requires `STRANDS_MESH_I_KNOW_THIS_IS_INSECURE=1` -- ERROR-level log at every session open. |
 | `STRANDS_MESH_I_KNOW_THIS_IS_INSECURE` | unset | Second-factor opt-in for `auth_mode=none`. Accepts `1`/`true`/`yes`. Refused otherwise -- prevents silent wire-auth disable from typos / forgotten env / leaked CI fixtures. |
+| `STRANDS_MESH_ACCEPT_PERMISSIVE_ACL` | unset | Acknowledge the dev/lab posture of `mtls + permissive default ACL`. When unset, this combination logs at ERROR on every session open (F8-D). When set to `1`/`true`/`yes`, the log downgrades to INFO. Production deployments should ship a literal-CN `STRANDS_MESH_ACL_FILE` instead. |
 | `STRANDS_MESH_TLS_CA` / `_CERT` / `_KEY` | unset | mTLS material; required when auth_mode=mtls |
 | `STRANDS_MESH_ACL_FILE` | unset | Operator-supplied JSON5 ACL with literal-CN enumeration |
 | `STRANDS_MESH_NAMESPACE` | `strands` | Fleet routing prefix |

@@ -307,12 +307,36 @@ class Mesh(SensorLoopsMixin):
                 from strands_robots.mesh._zenoh_config import resolve_auth_mode
 
                 if resolve_auth_mode() == "mtls" and is_default_acl_in_use():
-                    logger.warning(
-                        "[mesh] %s: permissive default ACL active under mtls; "
-                        "any CA-signed peer can publish on **/cmd and **/safety/**. "
-                        "Set STRANDS_MESH_ACL_FILE to enumerate role separation in production.",
-                        self.peer_id,
-                    )
+                    # F8-D (PR #195 review): escalate to ERROR (matching
+                    # the auth_mode=none escalation in session.py:306-311).
+                    # The previous WARNING fired once per session-open and
+                    # was easy to miss in a noisy log; this is the
+                    # dangerous-but-easy-to-miss combination (mtls + no
+                    # role separation) and operator visibility matters.
+                    # Operators who DELIBERATELY want this posture (lab /
+                    # dev fleet, single-tenant) opt in via
+                    # ``STRANDS_MESH_ACCEPT_PERMISSIVE_ACL=1`` to silence
+                    # the ERROR -- a documented escape hatch parallel to
+                    # ``STRANDS_MESH_I_KNOW_THIS_IS_INSECURE``. Without
+                    # the opt-in, the noise IS the feature: permissive
+                    # ACL under mtls is squarely the kind of footgun
+                    # AGENTS.md > Safety Defaults flags.
+                    accept = os.getenv("STRANDS_MESH_ACCEPT_PERMISSIVE_ACL", "").strip().lower()
+                    if accept in ("1", "true", "yes"):
+                        logger.info(
+                            "[mesh] %s: permissive default ACL active under mtls "
+                            "(operator opted in via STRANDS_MESH_ACCEPT_PERMISSIVE_ACL).",
+                            self.peer_id,
+                        )
+                    else:
+                        logger.error(
+                            "[mesh] %s: PERMISSIVE DEFAULT ACL ACTIVE UNDER MTLS -- "
+                            "any CA-signed peer can publish on **/cmd and **/safety/**. "
+                            "Set STRANDS_MESH_ACL_FILE to enumerate role separation, "
+                            "or STRANDS_MESH_ACCEPT_PERMISSIVE_ACL=1 to acknowledge "
+                            "the dev/lab posture explicitly.",
+                            self.peer_id,
+                        )
             except (ImportError, ValueError) as warn_exc:
                 # Narrowed per AGENTS.md > "Exception Clauses Must Be Narrow":
                 # ImportError covers the lazy ``from . import _acl_config``;
@@ -864,17 +888,32 @@ class Mesh(SensorLoopsMixin):
                 # narrowing at the ValidationError audit path above.
                 logger.debug("[mesh] %s: audit log unavailable: %s", self.peer_id, audit_exc)
             return
-        except Exception as exc:
-            # Wide catch is INTENTIONAL on this inbound RPC path: any
-            # unhandled exception in a robot adapter would crash the
-            # dispatch thread and silently kill the mesh. We log full
-            # exc detail locally (operators need it for debugging) but
-            # emit ONLY a static "dispatch error" string on the wire so
-            # internal exception detail (paths, attribute names, third-
-            # party library traces) does not leak to a remote -- possibly
-            # attacker-controlled -- caller. The structured ValidationError
-            # / LockoutError paths above remain the preferred channel
-            # for the rejections clients actually need to distinguish.
+        except (
+            ValueError,
+            KeyError,
+            AttributeError,
+            RuntimeError,
+            OSError,
+            TypeError,
+        ) as exc:
+            # F8-C (PR #195 review): narrowed from bare ``except Exception``
+            # per AGENTS.md > Review Learnings (#86). The original goal
+            # ("any unhandled exception in a robot adapter would crash
+            # the dispatch thread and silently kill the mesh") is
+            # achievable with a narrow tuple: this catches every
+            # realistic adapter failure (LeRobot raising RuntimeError,
+            # GR00T raising ValueError on bad inputs, type mismatches,
+            # missing keys, OSError from device I/O) but lets
+            # ``MemoryError``, ``SystemExit``, ``KeyboardInterrupt``,
+            # and any future programmer-error type that doesn't fit
+            # this list propagate to the test harness / supervisor.
+            #
+            # The "static dispatch error string on the wire" rationale
+            # below stays the same -- regardless of catch width, we
+            # never leak internal exception detail to a remote caller.
+            # The structured ValidationError / LockoutError paths above
+            # remain the preferred channel for client-distinguishable
+            # rejections.
             logger.warning(
                 "[mesh] %s: dispatch error from %s: %s",
                 self.peer_id,
@@ -1208,13 +1247,11 @@ class Mesh(SensorLoopsMixin):
             # window passes through; an attacker pre-publishing
             # ``t = now + skew - eps`` repeatedly cannot occupy more
             # than ``per_issuer_cap`` slots.
-            # Defensive: tests sometimes build a Mesh via ``__new__`` to
-            # bypass ``__init__`` (the in-tree _stub_mesh helpers); use
-            # getattr with default to support that pattern.
-            per_issuer_dict = getattr(self, "_estop_replay_per_issuer", None)
-            if per_issuer_dict is None:
-                self._estop_replay_per_issuer = {}
-                per_issuer_dict = self._estop_replay_per_issuer
+            # F8-A (PR #195 review): init lives in ``__init__`` exclusively.
+            # Test stubs that build via ``Mesh.__new__`` set the attribute
+            # explicitly -- AGENTS.md > Review Learnings (#85) > 'Test
+            # behavior, not implementation' calls this out.
+            per_issuer_dict = self._estop_replay_per_issuer
             issuer_slots = per_issuer_dict.get(issuer_id, 0)
             if issuer_slots >= per_issuer_cap:
                 logger.warning(
