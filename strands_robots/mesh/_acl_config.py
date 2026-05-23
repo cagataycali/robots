@@ -316,7 +316,110 @@ def _load_acl_file(path: Path) -> dict[str, Any]:
             "policy and any rule gap exposes the mesh. Prefer 'deny'.",
             path,
         )
+    _validate_acl_shape(data, path)
     return data
+
+
+def _validate_acl_shape(data: dict[str, Any], path: Path) -> None:
+    """Validate the shape of subjects/rules/policies after JSON parse.
+
+    R19 (PR #195 design-thread review): a typo like ``interface:``
+    (singular) or a missing ``cert_common_names`` field silently
+    degrades a role-separated ACL to "match nothing" at the Zenoh
+    layer, which manifests as a silent total outage operators must
+    debug from Zenoh logs. We refuse these shapes loudly at parse
+    time -- the same posture the ``enabled: true`` check (added
+    earlier in this function) is built around.
+
+    Validates:
+
+    1. ``subjects``, ``rules``, ``policies`` are lists.
+    2. Every subject has ``id``, ``interfaces`` (non-empty list of
+       strings), and ``cert_common_names`` (list -- may be empty
+       only if the operator wants every CA-signed peer in the
+       named-interface set).
+    3. Every rule has ``id``, ``key_exprs`` (non-empty list of
+       strings), ``messages`` (non-empty list), ``flows`` (non-empty
+       list), and ``permission`` (``allow`` or ``deny``).
+    4. Every policy has ``rules`` and ``subjects`` referencing
+       existing rule / subject ids.
+
+    Raises ``ValueError`` with a path-prefixed message on the first
+    failure. Callers should treat any failure here as a deployment
+    blocker -- a malformed ACL is worse than no ACL because the
+    operator believes role separation is enforced when it is not.
+    """
+    # 1. Top-level lists.
+    for field in ("subjects", "rules", "policies"):
+        if not isinstance(data[field], list):
+            raise ValueError(f"ACL file {path}: {field!r} must be a list, got {type(data[field]).__name__}")
+
+    # 2. Subjects.
+    subject_ids: set[str] = set()
+    for i, subj in enumerate(data["subjects"]):
+        if not isinstance(subj, dict):
+            raise ValueError(f"ACL file {path}: subjects[{i}] must be an object")
+        sid = subj.get("id")
+        if not isinstance(sid, str) or not sid:
+            raise ValueError(f"ACL file {path}: subjects[{i}].id must be a non-empty string")
+        subject_ids.add(sid)
+        ifaces = subj.get("interfaces")
+        if not isinstance(ifaces, list) or not ifaces:
+            raise ValueError(
+                f"ACL file {path}: subjects[{i}={sid!r}].interfaces must be a non-empty "
+                f"list. An empty interfaces list silently matches no peer in Zenoh 1.x; "
+                f'use ["lo", "eth0", ...] or omit role separation. '
+                f"Common typo: ``interface:`` (singular)."
+            )
+        if not all(isinstance(x, str) and x for x in ifaces):
+            raise ValueError(f"ACL file {path}: subjects[{i}={sid!r}].interfaces must contain only non-empty strings")
+        cns = subj.get("cert_common_names")
+        if cns is not None and not isinstance(cns, list):
+            raise ValueError(
+                f"ACL file {path}: subjects[{i}={sid!r}].cert_common_names must be a list "
+                f"(or omitted), got {type(cns).__name__}. Common typo: cert_common_name (singular)."
+            )
+
+    # 3. Rules.
+    rule_ids: set[str] = set()
+    for i, rule in enumerate(data["rules"]):
+        if not isinstance(rule, dict):
+            raise ValueError(f"ACL file {path}: rules[{i}] must be an object")
+        rid = rule.get("id")
+        if not isinstance(rid, str) or not rid:
+            raise ValueError(f"ACL file {path}: rules[{i}].id must be a non-empty string")
+        rule_ids.add(rid)
+        for field in ("key_exprs", "messages", "flows"):
+            val = rule.get(field)
+            if not isinstance(val, list) or not val:
+                raise ValueError(f"ACL file {path}: rules[{i}={rid!r}].{field} must be a non-empty list")
+            if not all(isinstance(x, str) for x in val):
+                raise ValueError(f"ACL file {path}: rules[{i}={rid!r}].{field} must contain only strings")
+        perm = rule.get("permission")
+        if perm not in ("allow", "deny"):
+            raise ValueError(f"ACL file {path}: rules[{i}={rid!r}].permission must be 'allow' or 'deny', got {perm!r}")
+
+    # 4. Policies.
+    for i, pol in enumerate(data["policies"]):
+        if not isinstance(pol, dict):
+            raise ValueError(f"ACL file {path}: policies[{i}] must be an object")
+        pol_rules = pol.get("rules")
+        pol_subjects = pol.get("subjects")
+        if not isinstance(pol_rules, list) or not pol_rules:
+            raise ValueError(f"ACL file {path}: policies[{i}].rules must be a non-empty list of rule ids")
+        if not isinstance(pol_subjects, list) or not pol_subjects:
+            raise ValueError(f"ACL file {path}: policies[{i}].subjects must be a non-empty list of subject ids")
+        for r in pol_rules:
+            if r not in rule_ids:
+                raise ValueError(
+                    f"ACL file {path}: policies[{i}].rules references unknown rule id {r!r} (known: {sorted(rule_ids)})"
+                )
+        for sid_ref in pol_subjects:
+            if sid_ref not in subject_ids:
+                raise ValueError(
+                    f"ACL file {path}: policies[{i}].subjects references unknown subject id "
+                    f"{sid_ref!r} (known: {sorted(subject_ids)})"
+                )
 
 
 # --- Default ACL -------------------------------------------------------

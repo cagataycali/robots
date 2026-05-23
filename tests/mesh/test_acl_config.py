@@ -72,7 +72,7 @@ class TestACLFileLoader:
             "enabled": True,
             "default_permission": "deny",
             "rules": [],
-            "subjects": [{"id": "x", "cert_common_names": ["foo-*"]}],
+            "subjects": [{"id": "x", "interfaces": ["lo"], "cert_common_names": ["foo-*"]}],
             "policies": [],
         }
 
