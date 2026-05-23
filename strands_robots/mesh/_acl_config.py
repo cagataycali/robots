@@ -334,10 +334,15 @@ def _validate_acl_shape(data: dict[str, Any], path: Path) -> None:
     Validates:
 
     1. ``subjects``, ``rules``, ``policies`` are lists.
-    2. Every subject has ``id``, ``interfaces`` (non-empty list of
-       strings), and ``cert_common_names`` (list -- may be empty
-       only if the operator wants every CA-signed peer in the
-       named-interface set).
+    2. Every subject has ``id``. ``interfaces`` is OPTIONAL -- when
+       omitted, Zenoh treats the interface dimension as
+       ``SubjectProperty::Wildcard`` (matches every link); when present,
+       it must be a non-empty list of non-empty strings (Zenoh rejects
+       ``[]`` with ``Found empty interface value``). ``cert_common_names``
+       is OPTIONAL -- when present must be a list. Subjects with
+       neither ``interfaces`` nor ``cert_common_names`` match every
+       peer (effectively wildcard) and operators should use them only
+       when a permissive ``default_permission: "allow"`` is desired.
     3. Every rule has ``id``, ``key_exprs`` (non-empty list of
        strings), ``messages`` (non-empty list), ``flows`` (non-empty
        list), and ``permission`` (``allow`` or ``deny``).
@@ -363,16 +368,38 @@ def _validate_acl_shape(data: dict[str, Any], path: Path) -> None:
         if not isinstance(sid, str) or not sid:
             raise ValueError(f"ACL file {path}: subjects[{i}].id must be a non-empty string")
         subject_ids.add(sid)
-        ifaces = subj.get("interfaces")
-        if not isinstance(ifaces, list) or not ifaces:
-            raise ValueError(
-                f"ACL file {path}: subjects[{i}={sid!r}].interfaces must be a non-empty "
-                f"list. An empty interfaces list silently matches no peer in Zenoh 1.x; "
-                f'use ["lo", "eth0", ...] or omit role separation. '
-                f"Common typo: ``interface:`` (singular)."
-            )
-        if not all(isinstance(x, str) and x for x in ifaces):
-            raise ValueError(f"ACL file {path}: subjects[{i}={sid!r}].interfaces must contain only non-empty strings")
+        # F2: ``interfaces`` is OPTIONAL per Zenoh's AclConfigSubjects
+        # schema (``Option<NEVec<...>>``). When omitted, Zenoh treats
+        # the subject's interface dimension as ``SubjectProperty::Wildcard``
+        # (matches every link); see authorization.rs:446-454. The
+        # cleanest CN-only ACL pattern is therefore:
+        #
+        #   subjects: [{ id: "ops", cert_common_names: ["op-1", "op-2"] }]
+        #
+        # which is exactly what Zenoh's own ``tests/authentication.rs``
+        # uses. We still REJECT an empty list outright -- Zenoh's parser
+        # raises ``Found empty interface value`` and the silent total-
+        # outage failure mode is real (R19 footgun). And we still treat
+        # an unknown-key like ``interface:`` (singular typo) as an error
+        # because the rest of the validator catches it via
+        # ``deny_unknown_fields`` semantics in the Rust deserializer.
+        if "interfaces" in subj:
+            ifaces = subj["interfaces"]
+            if not isinstance(ifaces, list):
+                raise ValueError(
+                    f"ACL file {path}: subjects[{i}={sid!r}].interfaces must be a list "
+                    f"(or omitted), got {type(ifaces).__name__}."
+                )
+            if not ifaces:
+                raise ValueError(
+                    f"ACL file {path}: subjects[{i}={sid!r}].interfaces is an empty list. "
+                    f"Zenoh rejects ``[]`` with ``Found empty interface value``; either "
+                    f"omit the field (for a wildcard binding) or enumerate the NICs."
+                )
+            if not all(isinstance(x, str) and x for x in ifaces):
+                raise ValueError(
+                    f"ACL file {path}: subjects[{i}={sid!r}].interfaces must contain only non-empty strings"
+                )
         cns = subj.get("cert_common_names")
         if cns is not None and not isinstance(cns, list):
             raise ValueError(

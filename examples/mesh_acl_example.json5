@@ -14,9 +14,13 @@
 //     `"robot-.*"` both match nothing. Enumerate every peer by exact
 //     CN below; there is no glob fallback.
 //
-//  3. Subject `interfaces` must be a non-empty list. We enumerate
-//     every common Linux/macOS NIC name; replace with your fleet's
-//     known interfaces if you want to lock things down further.
+//  3. Subject `interfaces` is OPTIONAL per Zenoh's schema
+//     (Option<NEVec<...>>; an absent field maps to
+//     SubjectProperty::Wildcard, i.e. matches every link). We omit
+//     it below so this template works on any host regardless of NIC
+//     name (`eth0` / `enp0s3` / `cni0` / `wg0` / ...). Add an
+//     `interfaces: ["lo", "eth0", ...]` line under a subject if you
+//     want to additionally scope it to a NIC subset.
 //
 //  4. `key_exprs` see the user-side key (the Zenoh `namespace`
 //     prefix is stripped before matching). Use `**/cmd` style
@@ -71,8 +75,6 @@
   subjects: [
     {
       id: "robot_peer",
-      // Replace with your fleet's actual NIC names if known.
-      interfaces: ["lo", "lo0", "eth0", "en0", "en1", "wlan0"],
       // ENUMERATE every robot's exact cert CN here.
       cert_common_names: [
         "robot-a",
@@ -82,7 +84,6 @@
     },
     {
       id: "operator_peer",
-      interfaces: ["lo", "lo0", "eth0", "en0", "en1", "wlan0"],
       cert_common_names: [
         "op-1",
         "op-2",

@@ -65,25 +65,52 @@ def test_valid_skeleton_loads_clean(tmp_path: Path) -> None:
     assert len(parsed["subjects"]) == 1
 
 
-def test_subject_missing_interfaces_rejected(tmp_path: Path) -> None:
-    """The exact silent-outage typo: ``interface:`` instead of ``interfaces:``.
+def test_subject_omitted_interfaces_accepted(tmp_path: Path) -> None:
+    """F2: ``interfaces`` is OPTIONAL per Zenoh schema.
 
-    Without a non-empty interfaces list, a Zenoh 1.x subject silently
-    matches no peer. Pre-fix HEAD accepts; post-fix raises ValueError.
+    Per ``zenoh-config/src/lib.rs`` AclConfigSubjects.interfaces is
+    ``Option<NEVec<...>>``; ``authorization.rs:446-454`` maps
+    ``None`` to ``SubjectProperty::Wildcard`` (matches every link).
+    The CN-only ACL pattern (used by Zenoh's own
+    ``tests/authentication.rs``) requires this; older revisions of
+    ``_validate_acl_shape`` rejected it, blocking the cleanest
+    deployment shape.
     """
     doc = _valid_skeleton()
     doc["subjects"][0].pop("interfaces")
-    doc["subjects"][0]["interface"] = ["lo"]  # typo
     p = _write(tmp_path, doc)
-    with pytest.raises(ValueError, match=r"interfaces.*non-empty"):
-        _acl_config._load_acl_file(p)
+    parsed = _acl_config._load_acl_file(p)
+    assert "interfaces" not in parsed["subjects"][0]
+    assert parsed["subjects"][0]["cert_common_names"] == ["robot-1"]
 
 
 def test_subject_empty_interfaces_rejected(tmp_path: Path) -> None:
+    """Empty list is still rejected -- Zenoh raises ``Found empty
+    interface value`` server-side, and the silent-total-deny failure
+    mode is real (R19 footgun). Either omit the field or enumerate.
+    """
     doc = _valid_skeleton()
     doc["subjects"][0]["interfaces"] = []
     p = _write(tmp_path, doc)
-    with pytest.raises(ValueError, match=r"interfaces.*non-empty"):
+    with pytest.raises(ValueError, match=r"interfaces is an empty list"):
+        _acl_config._load_acl_file(p)
+
+
+def test_subject_interfaces_non_list_rejected(tmp_path: Path) -> None:
+    """Catches the scalar-string typo ``interfaces: "lo"`` (Rust deny_unknown_fields-style)."""
+    doc = _valid_skeleton()
+    doc["subjects"][0]["interfaces"] = "lo"  # should be a list
+    p = _write(tmp_path, doc)
+    with pytest.raises(ValueError, match=r"interfaces must be a list"):
+        _acl_config._load_acl_file(p)
+
+
+def test_subject_interfaces_with_empty_string_rejected(tmp_path: Path) -> None:
+    """Empty-string entries inside the list are still rejected."""
+    doc = _valid_skeleton()
+    doc["subjects"][0]["interfaces"] = ["lo", ""]
+    p = _write(tmp_path, doc)
+    with pytest.raises(ValueError, match=r"non-empty strings"):
         _acl_config._load_acl_file(p)
 
 
