@@ -303,8 +303,10 @@ def _build_config() -> Any:
                 "examples/mesh_acl_example.json5."
             )
     else:
-        logger.warning(
-            "STRANDS_MESH_AUTH_MODE=none -- wire authentication is OFF. "
+        logger.error(
+            "[mesh] WIRE SECURITY DISABLED -- STRANDS_MESH_AUTH_MODE=none. "
+            "Both the mTLS terminator AND the ACL block are off. "
+            "Operator opted in via STRANDS_MESH_I_KNOW_THIS_IS_INSECURE=1. "
             "This mode is for development on trusted networks only."
         )
 

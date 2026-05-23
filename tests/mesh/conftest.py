@@ -23,3 +23,5 @@ def _default_mesh_auth_mode_none(monkeypatch):
     """
     if "STRANDS_MESH_AUTH_MODE" not in os.environ:
         monkeypatch.setenv("STRANDS_MESH_AUTH_MODE", "none")
+        # B2 (R18): auth_mode=none requires explicit second-factor opt-in.
+        monkeypatch.setenv("STRANDS_MESH_I_KNOW_THIS_IS_INSECURE", "1")

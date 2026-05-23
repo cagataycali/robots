@@ -128,7 +128,8 @@ Hardened independently of the Zenoh refactor:
 
 | Var | Default | Purpose |
 |---|---|---|
-| `STRANDS_MESH_AUTH_MODE` | `mtls` | `mtls` (prod) or `none` (dev only — logs WARNING at session open) |
+| `STRANDS_MESH_AUTH_MODE` | `mtls` | `mtls` (prod) or `none` (dev only). `none` ALSO requires `STRANDS_MESH_I_KNOW_THIS_IS_INSECURE=1` -- ERROR-level log at every session open. |
+| `STRANDS_MESH_I_KNOW_THIS_IS_INSECURE` | unset | Second-factor opt-in for `auth_mode=none`. Accepts `1`/`true`/`yes`. Refused otherwise -- prevents silent wire-auth disable from typos / forgotten env / leaked CI fixtures. |
 | `STRANDS_MESH_TLS_CA` / `_CERT` / `_KEY` | unset | mTLS material; required when auth_mode=mtls |
 | `STRANDS_MESH_ACL_FILE` | unset | Operator-supplied JSON5 ACL with literal-CN enumeration |
 | `STRANDS_MESH_NAMESPACE` | `strands` | Fleet routing prefix |
@@ -178,7 +179,7 @@ Existing deployments under `STRANDS_MESH_PSK`:
 4. Drop all `STRANDS_MESH_PSK` / `STRANDS_MESH_PEER_KEY*` /
    `STRANDS_MESH_REPLAY_WINDOW` / `STRANDS_MESH_PEER_RATE` env vars.
 
-Dev / lab environments without PKI run `STRANDS_MESH_AUTH_MODE=none`
+Dev / lab environments without PKI run `STRANDS_MESH_AUTH_MODE=none` AND `STRANDS_MESH_I_KNOW_THIS_IS_INSECURE=1`
 to keep plain-TCP behaviour; the mesh logs a WARNING at session
 open.
 

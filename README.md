@@ -504,7 +504,8 @@ agent.tool.gr00t_inference(action="stop", port=8000)
 | `STRANDS_MESH_AUDIT_MAX_BYTES` | Maximum size (bytes) of the active audit log before rotation. Hard-capped at 10 GiB. Phase-4 / E1: prevents an attacker who can publish safety events from filling the disk. | `104857600` (100 MiB) |
 | `STRANDS_MESH_AUDIT_MAX_FILES` | Maximum number of rotated audit log copies kept (`mesh_audit.jsonl.1` … `.N`). Hard-capped at 100. Older rotations are discarded. | `5` |
 | `STRANDS_MESH_BRIDGE_TOPICS_PREFIX` | Comma-separated list of bridge filter entries that match as path-prefix (entry matches `entry/<anything>`). Default: `response` (so `response/<turn-id>` bridges). All other entries in `STRANDS_MESH_BRIDGE_TOPICS` match exactly — Phase-4 / A2 hardening that closes the prefix-bypass attack. | `response` |
-| `STRANDS_MESH_AUTH_MODE` | Wire authentication mode. `mtls` (default) enables Zenoh's TLS terminator + ACL; `none` is a dev-only mode that disables both. | `mtls` |
+| `STRANDS_MESH_AUTH_MODE` | Wire authentication mode. `mtls` (default) enables Zenoh's TLS terminator + ACL; `none` is a dev-only mode that disables both. `none` ALSO requires `STRANDS_MESH_I_KNOW_THIS_IS_INSECURE=1` -- without that explicit second factor `none` raises `ValueError` at config build. | `mtls` |
+| `STRANDS_MESH_I_KNOW_THIS_IS_INSECURE` | Second-factor opt-in for `STRANDS_MESH_AUTH_MODE=none`. Accepts `1` / `true` / `yes` (case-insensitive). Without it, `auth_mode=none` is refused so a typo / forgotten env / leaked CI fixture cannot silently disable wire auth. Logs ERROR (not WARNING) on every session open when active. | unset |
 | `STRANDS_MESH_NAMESPACE` | Fleet namespace prefix prepended to every key-expression. Two fleets with different namespaces cannot collide on the same network. | `strands` |
 | `STRANDS_MESH_MULTICAST` | `true` enables multicast scouting. Default is gossip-only, which closes the LAN-attacker-enrollment surface. | `false` |
 | `STRANDS_MESH_TLS_CA` | Filesystem path to the CA bundle used to verify peer certificates. Required when `STRANDS_MESH_AUTH_MODE=mtls`. | unset |
@@ -586,7 +587,12 @@ reach the JSON deserialiser. `transport/link/protocols` is locked
 to `["tls"]` so an attacker cannot downgrade to plain TCP.
 
 For development on a trusted network, set `STRANDS_MESH_AUTH_MODE=none`
-to skip TLS + ACL. The mesh logs a WARNING at session-open time.
+AND `STRANDS_MESH_I_KNOW_THIS_IS_INSECURE=1` to skip TLS + ACL. The
+second-factor env var is required because `auth_mode=none` disables
+BOTH the mTLS terminator AND the ACL block in a single env var; without
+the explicit opt-in a typo / forgotten env / leaked CI fixture would
+silently disable wire auth in production. The mesh logs an ERROR at
+session-open time when this mode is active.
 
 #### Authorisation: ACL on cert Common Name
 

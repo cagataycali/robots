@@ -61,9 +61,35 @@ class TestAuthMode:
     def test_default_is_mtls(self):
         assert zc.resolve_auth_mode() == "mtls"
 
-    def test_explicit_none(self, monkeypatch):
+    def test_explicit_none_with_optin(self, monkeypatch):
+        # B2 (R18): "none" requires the second-factor env var.
         monkeypatch.setenv("STRANDS_MESH_AUTH_MODE", "none")
+        monkeypatch.setenv("STRANDS_MESH_I_KNOW_THIS_IS_INSECURE", "1")
         assert zc.resolve_auth_mode() == "none"
+
+    def test_explicit_none_without_optin_raises(self, monkeypatch):
+        # B2 (R18) pin: auth_mode=none without the second-factor env var
+        # must raise. This is what prevents a typo / forgotten env / leaked
+        # CI fixture from silently disabling wire auth.
+        monkeypatch.setenv("STRANDS_MESH_AUTH_MODE", "none")
+        monkeypatch.delenv("STRANDS_MESH_I_KNOW_THIS_IS_INSECURE", raising=False)
+        with pytest.raises(ValueError, match="STRANDS_MESH_I_KNOW_THIS_IS_INSECURE"):
+            zc.resolve_auth_mode()
+
+    def test_explicit_none_optin_accepts_truthy_strings(self, monkeypatch):
+        # The opt-in is case-insensitive: 1, true, yes all work.
+        monkeypatch.setenv("STRANDS_MESH_AUTH_MODE", "none")
+        for val in ("1", "true", "TRUE", "yes", "Yes"):
+            monkeypatch.setenv("STRANDS_MESH_I_KNOW_THIS_IS_INSECURE", val)
+            assert zc.resolve_auth_mode() == "none"
+
+    def test_explicit_none_optin_rejects_garbage(self, monkeypatch):
+        # Non-truthy values do NOT count as opt-in.
+        monkeypatch.setenv("STRANDS_MESH_AUTH_MODE", "none")
+        for val in ("0", "false", "no", "maybe", ""):
+            monkeypatch.setenv("STRANDS_MESH_I_KNOW_THIS_IS_INSECURE", val)
+            with pytest.raises(ValueError, match="STRANDS_MESH_I_KNOW_THIS_IS_INSECURE"):
+                zc.resolve_auth_mode()
 
     def test_typo_rejected(self, monkeypatch):
         monkeypatch.setenv("STRANDS_MESH_AUTH_MODE", "mtsl")

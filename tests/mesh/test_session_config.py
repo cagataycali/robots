@@ -40,6 +40,7 @@ def _build():
     import os
 
     os.environ["STRANDS_MESH_AUTH_MODE"] = "none"
+    os.environ["STRANDS_MESH_I_KNOW_THIS_IS_INSECURE"] = "1"
     from strands_robots.mesh.session import _build_config
 
     return _build_config()
@@ -187,15 +188,38 @@ class TestEndpointEnvVars:
 # --- Auth-mode=none warning ---------------------------------------------
 
 
-def test_auth_mode_none_logs_warning(caplog):
+def test_auth_mode_none_logs_error_on_open(caplog):
+    """B2 (R18): auth_mode=none now logs at ERROR level (was WARNING)
+    so production log volumes do not bury wire-auth-OFF events. Must
+    fire at every session open (not once-and-forget)."""
+    import logging
     import os
 
     os.environ["STRANDS_MESH_AUTH_MODE"] = "none"
+    os.environ["STRANDS_MESH_I_KNOW_THIS_IS_INSECURE"] = "1"
     from strands_robots.mesh.session import _build_config
 
-    with caplog.at_level("WARNING"):
+    with caplog.at_level(logging.ERROR):
         _build_config()
-    assert any("authentication is OFF" in rec.message for rec in caplog.records)
+    error_messages = [r.message for r in caplog.records if r.levelno >= logging.ERROR]
+    assert any("WIRE SECURITY DISABLED" in m for m in error_messages), (
+        f"expected ERROR log on auth_mode=none session open, got: {error_messages}"
+    )
+
+
+def test_auth_mode_none_requires_explicit_optin(monkeypatch):
+    """B2 (R18) pin: auth_mode=none without the second-factor env var
+    raises ValueError at config build. This prevents a typo / forgotten
+    env / leaked CI fixture from silently disabling wire auth.
+    """
+    import pytest
+
+    monkeypatch.setenv("STRANDS_MESH_AUTH_MODE", "none")
+    monkeypatch.delenv("STRANDS_MESH_I_KNOW_THIS_IS_INSECURE", raising=False)
+    from strands_robots.mesh.session import _build_config
+
+    with pytest.raises(ValueError, match="STRANDS_MESH_I_KNOW_THIS_IS_INSECURE"):
+        _build_config()
 
 
 # --- Default ACL warning in mtls mode -----------------------------------

@@ -122,10 +122,32 @@ def resolve_auth_mode() -> str:
     One of ``"mtls"`` (default) or ``"none"``. Any other value is
     rejected with a ``ValueError`` so a typo does not silently disable
     auth.
+
+    ``"none"`` disables both the mTLS terminator and the ACL block --
+    a single env var that turns the entire wire-layer security model
+    off. To prevent a typo / forgotten env-var / leaked CI fixture
+    from silently disabling wire auth in production, ``"none"`` is
+    additionally gated on ``STRANDS_MESH_I_KNOW_THIS_IS_INSECURE=1``
+    (case-insensitive: ``1``, ``true``, ``yes``). Without that explicit
+    second factor, ``"none"`` raises ``ValueError`` at config-build
+    time -- the burden of proof lives with the operator who is turning
+    auth off.
     """
     raw = os.getenv("STRANDS_MESH_AUTH_MODE", "mtls").strip().lower()
     if raw not in ("mtls", "none"):
         raise ValueError(f"STRANDS_MESH_AUTH_MODE={raw!r} not supported (expected 'mtls' or 'none')")
+    if raw == "none":
+        ack = os.getenv("STRANDS_MESH_I_KNOW_THIS_IS_INSECURE", "").strip().lower()
+        if ack not in ("1", "true", "yes"):
+            raise ValueError(
+                "STRANDS_MESH_AUTH_MODE=none disables BOTH the mTLS "
+                "terminator AND the ACL block -- the entire wire-layer "
+                "security model. Refusing without an explicit second "
+                "factor: set STRANDS_MESH_I_KNOW_THIS_IS_INSECURE=1 to "
+                "confirm. This guard prevents a typo / forgotten env-var "
+                "/ leaked CI fixture from silently disabling wire auth "
+                "in production."
+            )
     return raw
 
 
