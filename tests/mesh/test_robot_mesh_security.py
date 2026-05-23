@@ -272,45 +272,31 @@ class TestRateLimitTOCTOU:
 
     def test_concurrent_approvals_capped_at_configured_limit(self, monkeypatch):
         # Lower the limit to make the race deterministic.
-        from strands_robots.tools import robot_mesh
-        from strands_robots.tools.robot_mesh import (
-            _rate_limit_check,
-            _rate_limit_check_and_record,
-            _reset_rate_limits,
-        )
-
-        _reset_rate_limits()
+        rmt._reset_rate_limits()
 
         # Pretend the limit is 2 per 60s.
-        monkeypatch.setitem(robot_mesh._RATE_LIMITS, "emergency_stop", (2, 60.0))
+        monkeypatch.setitem(rmt._RATE_LIMITS, "emergency_stop", (2, 60.0))
 
         # Two pre-interrupt checks pass (no slots consumed).
-        assert _rate_limit_check("emergency_stop") is None
-        assert _rate_limit_check("emergency_stop") is None
+        assert rmt._rate_limit_check("emergency_stop") is None
+        assert rmt._rate_limit_check("emergency_stop") is None
 
         # First post-approval atomic check+record: succeeds (slot 1).
-        assert _rate_limit_check_and_record("emergency_stop") is None
+        assert rmt._rate_limit_check_and_record("emergency_stop") is None
         # Second: succeeds (slot 2).
-        assert _rate_limit_check_and_record("emergency_stop") is None
+        assert rmt._rate_limit_check_and_record("emergency_stop") is None
         # Third: must FAIL even though _rate_limit_check would have
         # passed pre-interrupt. This is the race the fix closes.
-        race_err = _rate_limit_check_and_record("emergency_stop")
+        race_err = rmt._rate_limit_check_and_record("emergency_stop")
         assert race_err is not None
         assert "rate limit exceeded" in race_err
         assert "raced past" in race_err
 
     def test_atomic_helper_does_not_consume_on_full_bucket(self, monkeypatch):
-        from strands_robots.tools import robot_mesh
-        from strands_robots.tools.robot_mesh import (
-            _RATE_HISTORY,
-            _rate_limit_check_and_record,
-            _reset_rate_limits,
-        )
-
-        _reset_rate_limits()
-        monkeypatch.setitem(robot_mesh._RATE_LIMITS, "broadcast", (1, 60.0))
-        assert _rate_limit_check_and_record("broadcast") is None
+        rmt._reset_rate_limits()
+        monkeypatch.setitem(rmt._RATE_LIMITS, "broadcast", (1, 60.0))
+        assert rmt._rate_limit_check_and_record("broadcast") is None
         # Full -- second call rejects.
-        assert _rate_limit_check_and_record("broadcast") is not None
+        assert rmt._rate_limit_check_and_record("broadcast") is not None
         # Verify no spurious extra slot was added.
-        assert len(_RATE_HISTORY["broadcast"]) == 1
+        assert len(rmt._RATE_HISTORY["broadcast"]) == 1
