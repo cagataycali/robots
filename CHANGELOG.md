@@ -13,7 +13,7 @@ Zenoh primitives that ship out of the box: mTLS, per-key-expression
 ACLs, multicast-off discovery, namespace routing isolation, and
 per-key rate / size caps. Net effect: stronger guarantees, smaller
 mesh tree, every claim verified against a live two-peer Zenoh
-session in `tests/mesh/test_redteam_zenoh.py`.
+session in `tests/mesh/test_zenoh_transport_security.py`.
 
 ### Wire layer (Zenoh built-ins)
 
@@ -143,7 +143,7 @@ Hardened independently of the Zenoh refactor:
 
 * **643 mesh tests pass** (2 skipped with documented reasons).
 * New: `tests/mesh/_pki.py` — ephemeral CA + leaf cert helper.
-* New: `tests/mesh/test_redteam_zenoh.py` — 11 tests, 9 active, run
+* New: `tests/mesh/test_zenoh_transport_security.py` — 11 tests, 9 active, run
   against real two-peer `zenoh.open()` sessions covering namespace
   isolation, downsampling / low_pass_filter enforcement, mTLS
   handshake rejection of rogue CA, ACL drop of unknown CN.
@@ -151,7 +151,7 @@ Hardened independently of the Zenoh refactor:
   `test_acl_config.py`, `test_session_config.py`,
   `test_audit_integrity.py`, `test_iot_ca_pin.py`,
   `test_iot_policy_scope.py`, `test_camera_acl.py`,
-  `test_robot_mesh_security.py`, `test_pentest_findings.py`,
+  `test_robot_mesh_security.py`, `test_application_security.py`,
   `test_bridge_dedup.py`.
 
 ### Migration

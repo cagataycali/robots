@@ -1,6 +1,6 @@
 """Test-only PKI helpers: build a CA + leaf certs in-process for mTLS tests.
 
-Used by ``tests/mesh/test_redteam_zenoh.py`` to spin up a Zenoh fleet
+Used by ``tests/mesh/test_zenoh_transport_security.py`` to spin up a Zenoh fleet
 with real mTLS + ACL gating in a single Python process. The certs are
 written to ``tmp_path`` so each test gets its own ephemeral CA.
 

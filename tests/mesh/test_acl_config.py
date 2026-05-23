@@ -1,7 +1,7 @@
 """Tests for :mod:`strands_robots.mesh._acl_config`.
 
 The ACL semantics validated here against a live Zenoh session live in
-``test_redteam_zenoh.py::TestACLEnforcement``. This file covers only
+``test_zenoh_transport_security.py::TestACLEnforcement``. This file covers only
 the static shape of the dict the builder emits and the JSON5-lite
 loader.
 """

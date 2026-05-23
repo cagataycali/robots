@@ -595,7 +595,7 @@ gates which peers may publish/subscribe on which key-expressions
 based on the cert Common Name presented during the handshake.
 
 **Important Zenoh 1.x constraints (verified against live sessions in
-`tests/mesh/test_redteam_zenoh.py`):**
+`tests/mesh/test_zenoh_transport_security.py`):**
 
 1. `enabled: true` is required — without it the entire ACL block is
    silently disabled, which is why the loader hard-rejects any file
@@ -683,9 +683,9 @@ that should accept fleet-wide remote resume.
 | Cert from a different CA | **Mitigated.** Our CA bundle does not verify it; handshake fails. |
 | Valid cert, CN does not match any ACL rule | **Mitigated** when `STRANDS_MESH_ACL_FILE` is set with literal CN allowlists. With the built-in default ACL (`any_authenticated_peer`, intentionally permissive to avoid silent fleet outage on first run), any CA-signed peer is admitted to all key-expressions. Operators are expected to ship a literal-CN ACL file in production. |
 | Valid `robot-*` cert tries to publish on `*/cmd` (with `STRANDS_MESH_ACL_FILE` set) | **Mitigated.** The role-separated ACL template only allows `robot-*` peers ingress on telemetry topics; cmd publish is denied. **Without** `STRANDS_MESH_ACL_FILE`, the permissive default allows it — operators must opt in to per-role enforcement. |
-| Valid `op-*` cert floods `cmd` topic at 1 kHz | **Mitigated.** `downsampling` caps ingress at the configured frequency (default 20 Hz); the rest is dropped pre-deserialise. Verified live in `test_redteam_zenoh.py::TestDownsamplingRateCap`. |
+| Valid `op-*` cert floods `cmd` topic at 1 kHz | **Mitigated.** `downsampling` caps ingress at the configured frequency (default 20 Hz); the rest is dropped pre-deserialise. Verified live in `test_zenoh_transport_security.py::TestDownsamplingRateCap`. |
 | Valid `op-*` cert sends 100 MiB camera frame | **Mitigated.** `low_pass_filter` caps camera bytes at the configured limit (default 1 MiB) before the receiver allocates buffers. Verified live in `TestLowPassFilterByteCap`. |
-| Valid `op-*` cert tries to hijack another operator's RPC turn_id | **Mitigated.** `Mesh._on_response` requires `responder_id` to match the original target for point-to-point sends. Verified in `test_pentest_findings.py::test_p4_d1_response_hijack_rejected_for_point_to_point`. |
+| Valid `op-*` cert tries to hijack another operator's RPC turn_id | **Mitigated.** `Mesh._on_response` requires `responder_id` to match the original target for point-to-point sends. Verified in `test_application_security.py::test_p4_d1_response_hijack_rejected_for_point_to_point`. |
 | Peer with valid CA cert but CN not in operator's ACL list | **Mitigated** when `STRANDS_MESH_ACL_FILE` is set. The default-deny rule drops every put + declare_subscriber from a CN that does not appear in any subject. Verified live in `TestACLEnforcement::test_unknown_cn_dropped_by_default_deny`. |
 | Two fleets share a network | **Mitigated.** `STRANDS_MESH_NAMESPACE` isolates routing. |
 | Stolen cert + key (host fully compromised) | **Out of scope.** The peer is the attacker. Operator response: revoke the cert at the CA, restart the fleet. |
