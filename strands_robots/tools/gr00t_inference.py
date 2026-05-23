@@ -475,9 +475,12 @@ def gr00t_inference(
             ``libero_sim``).
         denoising_steps: Number of denoising steps for action generation (default: 4).
             N1.5/N1.6 only - the N1.7 server reads this from the checkpoint.
-        host: Host address to bind the service to (default: ``127.0.0.1``
-            loopback only). Container actions auto-flip to ``0.0.0.0`` internally
-            since Docker -p port-publish requires bind-all inside the container.
+        host: Host-side bind address used as the docker host of
+            ``-p {host}:{port}:{port}`` (default: ``127.0.0.1``, loopback only).
+            Pass ``host="0.0.0.0"`` explicitly to expose the published port on
+            every host interface. The service inside the container always binds
+            ``0.0.0.0`` (required by docker port-publish); this kwarg controls
+            only the host-side leg.
         container_name: Specific Docker container name. Auto-detected if omitted.
         timeout: Seconds to wait for service startup (default: 60).
         use_tensorrt: Enable TensorRT acceleration (default: False).
