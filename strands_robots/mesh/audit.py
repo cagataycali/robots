@@ -566,6 +566,21 @@ def _sign_record(record: dict[str, Any]) -> str | None:
             "integrity). Restore the PSK or restart the process to "
             "transition to unsigned mode deliberately."
         )
+    elif snapshot is False and psk is not None:
+        # Was unsigned; now signed. Refuse symmetrically: the unsigned
+        # prefix this process wrote is unverifiable, and a verifier
+        # would not be able to distinguish "PSK rolled out mid-run"
+        # from "attacker briefly cleared PSK to forge unsigned records,
+        # then restored the PSK to evade detection". Restart the
+        # process to transition to signed mode deliberately.
+        raise AuditPSKDegradedError(
+            "STRANDS_MESH_AUDIT_PSK was unset when the audit log first "
+            "started this run, but is now set. Refusing to start signing "
+            "mid-run (would create an unverifiable unsigned prefix that "
+            "a forensic walker cannot distinguish from an attacker-forged "
+            "forgery window). Restart the process to transition to "
+            "signed mode deliberately."
+        )
     if psk is None:
         return None
     return hmac.new(psk, _canonical_bytes(record), hashlib.sha256).hexdigest()

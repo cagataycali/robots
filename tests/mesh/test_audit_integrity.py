@@ -138,11 +138,24 @@ class TestVerifyIntegrity:
         assert result["ok"] is False
         assert result["sequence_gaps"] == [(1, 3)]
 
-    def test_mixed_signed_and_unsigned(self, monkeypatch):
-        # First record: no PSK. Second: with PSK (rollout scenario).
-        audit.log_safety_event("e", "p1", {})
+    def test_mixed_signed_and_unsigned_via_separate_processes(self, monkeypatch, tmp_path):
+        # Post-R18: a single process cannot transition unsigned -> signed
+        # mid-run (raises AuditPSKDegradedError). The "mixed" log shape
+        # only arises when separate processes write to the same audit
+        # directory at different times. Simulate by crafting the file
+        # contents directly so verify_audit_integrity is still exercised
+        # against a mixed log shape.
+        import json as _json
+
+        log_path = audit.audit_log_path()
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        # Unsigned record (process A, no PSK).
+        rec1 = {"ts": 1.0, "event": "e", "peer_id": "p1", "payload": {}, "seq": 1}
+        # Signed record (process B, with PSK). Compute the real signature.
         monkeypatch.setenv("STRANDS_MESH_AUDIT_PSK", "topsecret")
-        audit.log_safety_event("e", "p1", {})
+        rec2 = {"ts": 2.0, "event": "e", "peer_id": "p1", "payload": {}, "seq": 2}
+        rec2["sig"] = audit._sign_record(rec2)
+        log_path.write_text(_json.dumps(rec1) + "\n" + _json.dumps(rec2) + "\n")
 
         result = audit.verify_audit_integrity()
         assert result["psk_present"] is True
@@ -368,6 +381,55 @@ def test_psk_degrade_drops_record(monkeypatch, tmp_path, caplog):
     # The second record must NOT have been written.
     records_after = list(audit.read_audit_log())
     assert len(records_after) == 1, f"expected 1 record (second should be dropped), got {len(records_after)}"
+
+    # Error must have been logged mentioning PSK degradation.
+    error_messages = [r.message for r in caplog.records if r.levelno >= logging.ERROR]
+    assert any("PSK" in msg or "AuditPSKDegradedError" in msg or "degrade" in msg.lower() for msg in error_messages), (
+        f"expected PSK degradation ERROR in logs, got: {error_messages}"
+    )
+
+
+def test_psk_degrade_unsigned_to_signed_drops_record(monkeypatch, tmp_path, caplog):
+    """Pin regression: PSK upward-transition is also refused (B3 from R18 audit).
+
+    Scenario: process boots with PSK unset (writes unsigned records),
+    then the PSK is installed mid-run. The next record MUST be dropped --
+    a verifier cannot distinguish "PSK rolled out mid-run" from
+    "attacker briefly cleared the PSK to forge unsigned records, then
+    restored it to evade detection". Same forensic posture as the
+    signed-then-unsigned direction (test_psk_degrade_drops_record).
+
+    Without this pin a future refactor that drops the symmetric branch
+    silently re-opens the forgery window between PSK rotations.
+    """
+    import logging
+
+    monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
+    # Reset audit state.
+    audit._AUDIT_STATE.psk_was_present = None
+    audit._AUDIT_STATE.seq_loaded = False
+    audit._SEQ_COUNTERS.clear()
+
+    # Phase 1: PSK is unset, first record is unsigned.
+    monkeypatch.delenv("STRANDS_MESH_AUDIT_PSK", raising=False)
+    audit.log_safety_event("unsigned_event", "peer-a", {"phase": "one"})
+
+    records = list(audit.read_audit_log())
+    assert len(records) == 1, f"expected 1 record, got {len(records)}"
+    assert records[0].get("sig") is None, "first record must be unsigned"
+    assert records[0]["event"] == "unsigned_event"
+
+    # Phase 2: PSK installed mid-run (rollout OR attacker restoring it).
+    monkeypatch.setenv("STRANDS_MESH_AUDIT_PSK", "test-psk-secret")
+
+    with caplog.at_level(logging.ERROR, logger="strands_robots.mesh.audit"):
+        audit.log_safety_event("signed_attempt", "peer-a", {"phase": "two"})
+
+    # The second record must NOT have been written.
+    records_after = list(audit.read_audit_log())
+    assert len(records_after) == 1, (
+        f"expected 1 record (second should be dropped on PSK install mid-run), got {len(records_after)}"
+    )
 
     # Error must have been logged mentioning PSK degradation.
     error_messages = [r.message for r in caplog.records if r.levelno >= logging.ERROR]

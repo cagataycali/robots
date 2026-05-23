@@ -103,8 +103,12 @@ Independent of wire auth; kept as the forensic line of evidence:
   active one and walks every peer's seq cursor independently;
   records that fail signature verification do NOT advance the
   cursor (so a forged record cannot mask a real gap).
-* `AuditPSKDegradedError` raised when the PSK is unset mid-run so
-  audit signing cannot silently downgrade.
+* `AuditPSKDegradedError` raised on EITHER PSK transition mid-run
+  (signed -> unsigned OR unsigned -> signed). The unsigned->signed
+  direction is refused symmetrically because a verifier cannot
+  distinguish a legitimate PSK rollout mid-run from an attacker
+  briefly clearing the PSK to forge unsigned records and then
+  restoring it. Restart the process to transition deliberately.
 
 ### IoT path (`mesh/iot/provision.py`)
 
