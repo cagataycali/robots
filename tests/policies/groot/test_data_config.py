@@ -183,21 +183,34 @@ class TestDataConfigMap:
         assert config.action_indices == list(range(40))
 
     def test_unitree_g1_sonic_schema(self):
-        """UNITREE_G1_SONIC — whole-body controller with SONIC latent action space.
+        """UNITREE_G1_SONIC -- whole-body controller with SONIC latent action space.
 
         Uses motion_token + hand joints as action keys with 40-step horizon.
         State includes projected_gravity for proprioception.
         """
         config = DATA_CONFIG_MAP["unitree_g1_sonic"]
-        assert "video.ego_view" in config.video_keys
-        # Full body state with projected gravity
-        assert "state.left_leg" in config.state_keys
-        assert "state.right_leg" in config.state_keys
-        assert "state.projected_gravity" in config.state_keys
-        # SONIC latent action space
-        assert "action.motion_token" in config.action_keys
-        assert "action.left_hand_joints" in config.action_keys
-        assert "action.right_hand_joints" in config.action_keys
+        # Video: single ego view
+        assert config.video_keys == ["video.ego_view"]
+        # Full body state (8 keys) with projected gravity
+        assert config.state_keys == [
+            "state.left_leg",
+            "state.right_leg",
+            "state.waist",
+            "state.left_arm",
+            "state.right_arm",
+            "state.left_hand",
+            "state.right_hand",
+            "state.projected_gravity",
+        ]
+        assert len(config.state_keys) == 8
+        # SONIC latent action space (motion tokens + hand joints)
+        assert config.action_keys == [
+            "action.motion_token",
+            "action.left_hand_joints",
+            "action.right_hand_joints",
+        ]
+        # Language key for task description
+        assert config.language_keys == ["annotation.human.task_description"]
         # Single observation frame, 40-step action horizon
         assert config.observation_indices == [0]
         assert config.action_indices == list(range(40))

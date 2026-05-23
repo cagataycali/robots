@@ -1043,7 +1043,6 @@
   "aliases": {
     "agibot_dual_arm": "agibot_dual_arm_gripper",
     "real_g1_relative_eef_relative_joints": "unitree_g1_real",
-    "oxe_droid_rel": "oxe_droid_relative_eef_relative_joint",
-    "unitree_g1_sonic": "unitree_g1_sonic"
+    "oxe_droid_rel": "oxe_droid_relative_eef_relative_joint"
   }
 }

@@ -319,7 +319,6 @@ def install_torch_mock():
     torch_mock.randint = _randint
     torch_mock.rand = _rand
     torch_mock.randn = _randn
-    torch_mock.manual_seed = lambda seed: None
 
     torch_mock.no_grad = _NoGrad
     torch_mock.inference_mode = _NoGrad
