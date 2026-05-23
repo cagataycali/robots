@@ -215,6 +215,20 @@ class TestDataConfigMap:
         assert config.observation_indices == [0]
         assert config.action_indices == list(range(40))
 
+    def test_gr00t_inference_docstring_flags_sonic_as_posttrain(self):
+        """Pin: docstring must warn that unitree_g1_sonic requires a finetuned checkpoint.
+
+        Without this note, users trying the base nvidia/GR00T-N1.7-3B model
+        with embodiment_tag="unitree_g1_sonic" get silent garbage actions.
+        """
+        from strands_robots.tools.gr00t_inference import gr00t_inference
+
+        doc = gr00t_inference.__doc__ or ""
+        assert "unitree_g1_sonic" in doc
+        assert "finetuned checkpoint" in doc, (
+            "Posttrain disclaimer must remain to prevent silent garbage actions on stock N1.7-3B"
+        )
+
     def test_unitree_g1_real_alias(self):
         """The REAL_G1 embodiment tag value resolves to unitree_g1_real."""
         alias = DATA_CONFIG_MAP["real_g1_relative_eef_relative_joints"]
