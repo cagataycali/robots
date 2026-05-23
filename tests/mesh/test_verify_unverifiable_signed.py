@@ -23,17 +23,17 @@ def _reset_audit_state(monkeypatch, tmp_path):
     """Isolate each test from process-global PSK and audit dir state."""
     monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
     monkeypatch.delenv("STRANDS_MESH_AUDIT_PSK", raising=False)
-    audit._AUDIT_STATE.psk_was_present = None
+    audit._AUDIT_STATE.psk_fingerprint = None
     audit._AUDIT_STATE.seq_loaded = False
     yield
-    audit._AUDIT_STATE.psk_was_present = None
+    audit._AUDIT_STATE.psk_fingerprint = None
     audit._AUDIT_STATE.seq_loaded = False
 
 
 def _signed_record_under_psk(monkeypatch, psk_value: str) -> dict:
     """Write one signed record under ``psk_value`` and return the dict."""
     monkeypatch.setenv("STRANDS_MESH_AUDIT_PSK", psk_value)
-    audit._AUDIT_STATE.psk_was_present = None
+    audit._AUDIT_STATE.psk_fingerprint = None
     audit.log_safety_event(
         event_type="estop",
         peer_id="op-1",
@@ -68,7 +68,7 @@ def test_verify_unverifiable_signed_count_matches_signed_record_count(monkeypatc
     """When the verifier lacks the PSK, every signed record contributes one
     to ``unverifiable_signed`` -- the inverse of ``verified``."""
     monkeypatch.setenv("STRANDS_MESH_AUDIT_PSK", "k")
-    audit._AUDIT_STATE.psk_was_present = None
+    audit._AUDIT_STATE.psk_fingerprint = None
     for i in range(5):
         audit.log_safety_event(
             event_type="estop",
@@ -132,7 +132,7 @@ def test_verify_returns_not_ok_when_mixed_signed_unsigned_with_verifier_lacking_
     it cannot verify."""
     # First write some signed records.
     monkeypatch.setenv("STRANDS_MESH_AUDIT_PSK", "k")
-    audit._AUDIT_STATE.psk_was_present = None
+    audit._AUDIT_STATE.psk_fingerprint = None
     audit.log_safety_event(event_type="estop", peer_id="op-1", payload={})
     audit.log_safety_event(event_type="estop", peer_id="op-1", payload={})
     signed_records = audit.read_audit_log()

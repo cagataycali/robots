@@ -157,22 +157,32 @@ class _ProcessAuditState:
     ``global`` declaration on a module-level scalar (which CodeQL's
     "unused global variable" rule mis-classifies -- alert #222).
 
-    R4-2: ``psk_was_present`` snapshots whether ``STRANDS_MESH_AUDIT_PSK``
-    was set at the time the first audit record was signed. Subsequent
-    records compare to this snapshot -- if the PSK gets unset mid-run,
-    ``_sign_record`` logs an ERROR and the record is rejected. This
-    closes the "process clears its env briefly to write unsigned
-    forgeries, then re-sets the PSK" attack documented at
-    review feedback round 4 / R4-2.
+    R4-2: ``psk_fingerprint`` snapshots a fingerprint of the
+    ``STRANDS_MESH_AUDIT_PSK`` value seen on the first record this
+    process writes. Subsequent records compare to this snapshot --
+    if the PSK gets unset, set, or rotated to a different value
+    mid-run, ``_sign_record`` raises :class:`AuditPSKDegradedError`
+    and the record is rejected. This closes:
+
+    * R4-2 (writer cleared PSK to forge unsigned records);
+    * R21 (writer rotated PSK value mid-run -- a verifier holding
+      either key would fail signature on the other segment with
+      no record-internal signal of which PSK was active when).
+
+    The fingerprint is the first 16 bytes of ``sha256(psk)`` -- the
+    same length used to attribute traces to runs in observability
+    backends. Storing the fingerprint never leaks the PSK itself.
     """
 
-    __slots__ = ("seq_loaded", "psk_was_present")
+    __slots__ = ("seq_loaded", "psk_fingerprint")
 
     def __init__(self) -> None:
         self.seq_loaded: bool = False
-        # ``None`` = not yet observed; ``True``/``False`` = first-call
-        # snapshot.
-        self.psk_was_present: bool | None = None
+        # ``None`` (unset sentinel)        = not yet observed.
+        # ``b""`` (empty bytes sentinel)   = first call observed NO PSK.
+        # any other ``bytes``              = first call observed a PSK,
+        #                                    fingerprint = sha256(psk)[:16].
+        self.psk_fingerprint: bytes | None = None
 
 
 _AUDIT_STATE = _ProcessAuditState()
@@ -563,47 +573,81 @@ class AuditPSKDegradedError(RuntimeError):
     """
 
 
+def _psk_fingerprint(psk: bytes | None) -> bytes:
+    """Return ``b""`` if PSK is unset, else the first 16 bytes of
+    sha256(psk). Used by :data:`_AUDIT_STATE` to detect mid-run PSK
+    transitions (set, unset, OR rotation to a different value).
+
+    The fingerprint is one-way -- storing it never leaks the PSK
+    itself. 16 bytes (128 bits) is enough to make accidental
+    fingerprint collisions vanishingly unlikely while keeping the
+    snapshot small.
+    """
+    if psk is None:
+        return b""
+    return hashlib.sha256(psk).digest()[:16]
+
+
 def _sign_record(record: dict[str, Any]) -> str | None:
     """Compute the per-record HMAC signature, or ``None`` when no PSK
     is configured.
 
-    Round-4 / R4-2: snapshot the PSK presence on the first call. If a
-    subsequent call sees the PSK has gone missing (env unset mid-run),
-    raise ``AuditPSKDegradedError`` so the audit log cannot silently
-    degrade to unsigned. The caller is the safety code path; we let the
-    error propagate to ``log_safety_event`` which logs at ERROR and
-    swallows it (audit failures must not crash the safety path), but
-    we DO refuse the unsigned write.
+    Round-4 / R4-2: snapshot a fingerprint of the PSK observed on
+    the first call. If a subsequent call sees a different fingerprint
+    (PSK unset, set, or rotated to a different value), raise
+    ``AuditPSKDegradedError`` so the audit log cannot silently
+    degrade to unsigned, silently start signing on top of an
+    unverifiable unsigned prefix, OR silently switch keys mid-run
+    (which would make every record post-rotation unverifiable
+    against the pre-rotation key and vice versa).
+
+    The caller is the safety code path; we let the error propagate
+    to ``log_safety_event`` which writes a poison record
+    (``sig="PSK_DEGRADED"``) and logs at ERROR. Audit failures must
+    not crash the safety path, but we DO refuse the unsigned /
+    rotated write.
     """
     psk = _audit_psk()
-    snapshot = _AUDIT_STATE.psk_was_present
+    current_fp = _psk_fingerprint(psk)
+    snapshot = _AUDIT_STATE.psk_fingerprint
     if snapshot is None:
-        # First record this process -- record the observed state.
-        _AUDIT_STATE.psk_was_present = psk is not None
-    elif snapshot is True and psk is None:
-        # Was signed; now unsigned. Refuse.
-        raise AuditPSKDegradedError(
-            "STRANDS_MESH_AUDIT_PSK was set when the audit log first "
-            "started signing this run, but is now unset. Refusing to "
-            "write an unsigned record (would silently degrade audit "
-            "integrity). Restore the PSK or restart the process to "
-            "transition to unsigned mode deliberately."
-        )
-    elif snapshot is False and psk is not None:
-        # Was unsigned; now signed. Refuse symmetrically: the unsigned
-        # prefix this process wrote is unverifiable, and a verifier
-        # would not be able to distinguish "PSK rolled out mid-run"
-        # from "attacker briefly cleared PSK to forge unsigned records,
-        # then restored the PSK to evade detection". Restart the
-        # process to transition to signed mode deliberately.
-        raise AuditPSKDegradedError(
-            "STRANDS_MESH_AUDIT_PSK was unset when the audit log first "
-            "started this run, but is now set. Refusing to start signing "
-            "mid-run (would create an unverifiable unsigned prefix that "
-            "a forensic walker cannot distinguish from an attacker-forged "
-            "forgery window). Restart the process to transition to "
-            "signed mode deliberately."
-        )
+        # First record this process -- snap the observed state.
+        _AUDIT_STATE.psk_fingerprint = current_fp
+    elif snapshot != current_fp:
+        # PSK transition: set->unset, unset->set, OR rotated value.
+        # All three break verifiability symmetrically; refuse.
+        if snapshot != b"" and current_fp == b"":
+            reason = (
+                "STRANDS_MESH_AUDIT_PSK was set when the audit log first "
+                "started signing this run, but is now unset. Refusing to "
+                "write an unsigned record (would silently degrade audit "
+                "integrity). Restore the PSK or restart the process to "
+                "transition to unsigned mode deliberately."
+            )
+        elif snapshot == b"" and current_fp != b"":
+            reason = (
+                "STRANDS_MESH_AUDIT_PSK was unset when the audit log first "
+                "started this run, but is now set. Refusing to start signing "
+                "mid-run (would create an unverifiable unsigned prefix that "
+                "a forensic walker cannot distinguish from an attacker-forged "
+                "forgery window). Restart the process to transition to "
+                "signed mode deliberately."
+            )
+        else:
+            # Both non-empty but different: rotated value.
+            # R21: the post-rotation segment would be unverifiable
+            # against the pre-rotation key and vice versa, with NO
+            # record-internal signal of which key was active for
+            # which records. Restart to rotate deliberately.
+            reason = (
+                "STRANDS_MESH_AUDIT_PSK changed value mid-run "
+                "(rotation detected via fingerprint). Refusing to "
+                "sign records under the new key: a verifier holding "
+                "either key would fail signature on the other "
+                "segment with no way to attribute records to keys. "
+                "Restart the process to rotate the PSK deliberately."
+            )
+        raise AuditPSKDegradedError(reason)
     if psk is None:
         return None
     return hmac.new(psk, _canonical_bytes(record), hashlib.sha256).hexdigest()

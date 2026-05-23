@@ -28,11 +28,11 @@ def _isolated_audit(monkeypatch, tmp_path):
     monkeypatch.delenv("STRANDS_MESH_AUDIT_PSK", raising=False)
     audit._SEQ_COUNTERS.clear()
     audit._AUDIT_STATE.seq_loaded = False  # reset so tests are deterministic
-    audit._AUDIT_STATE.psk_was_present = None  # reset PSK snapshot too
+    audit._AUDIT_STATE.psk_fingerprint = None  # reset PSK snapshot too
     yield
     audit._SEQ_COUNTERS.clear()
     audit._AUDIT_STATE.seq_loaded = False
-    audit._AUDIT_STATE.psk_was_present = None
+    audit._AUDIT_STATE.psk_fingerprint = None
 
 
 def _read_lines(p: Path) -> list[dict]:
@@ -356,7 +356,7 @@ def test_psk_degrade_drops_record(monkeypatch, tmp_path, caplog):
 
     monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
     # Reset audit state for this test.
-    audit._AUDIT_STATE.psk_was_present = None
+    audit._AUDIT_STATE.psk_fingerprint = None
     audit._AUDIT_STATE.seq_loaded = False
     audit._SEQ_COUNTERS.clear()
 
@@ -413,7 +413,7 @@ def test_psk_degrade_unsigned_to_signed_drops_record(monkeypatch, tmp_path, capl
 
     monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
     # Reset audit state.
-    audit._AUDIT_STATE.psk_was_present = None
+    audit._AUDIT_STATE.psk_fingerprint = None
     audit._AUDIT_STATE.seq_loaded = False
     audit._SEQ_COUNTERS.clear()
 
