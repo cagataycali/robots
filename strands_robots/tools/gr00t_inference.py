@@ -156,7 +156,11 @@ def _validate_path(value: str, label: str, *, reject_colon: bool = False) -> Non
         raise ValueError(f"{label} must not contain null bytes")
     if value.startswith("-"):
         raise ValueError(f"{label} must not start with '-' (got {value!r})")
-    if any(part == ".." for part in re.split(r"[/\\]", value)):
+    # Split on '/' only. POSIX permits '\\' as a literal filename byte; including it
+    # in the split would falsely reject paths like 'a\\..\\b' where '..' is not a
+    # separated component. docker -v interprets only '/' as a separator on Linux,
+    # which is the only platform this tool supports.
+    if any(part == ".." for part in value.split("/")):
         raise ValueError(f"{label} must not contain '..' path traversal components")
     if _SHELL_META.search(value):
         raise ValueError(f"{label} contains disallowed characters: {value!r}")

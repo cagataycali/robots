@@ -1892,3 +1892,41 @@ class TestDockerImageNumericTagRegression:
         assert not _is_valid_docker_image_ref("localhost:100000/img:tag"), (
             "Registry port 100000 with /path must still be rejected"
         )
+
+
+class TestPathTraversalPosixBackslash:
+    """R2 pin tests -- _validate_path must not over-reject POSIX paths containing
+    literal backslashes.
+
+    Pre-R2: ``_validate_path`` split on both ``/`` and ``\\`` via
+    ``re.split(r"[/\\\\]", value)``. On POSIX, ``\\`` is a legal filename byte
+    (only ``/`` and NUL are forbidden), so a path like ``a\\..\\b`` -- a single
+    legitimate filename containing literal backslashes -- was wrongly flagged
+    as ``..`` traversal because the splitter isolated ``..`` between the
+    backslash bytes.
+
+    R2: ``_validate_path`` splits on ``/`` only. docker -v interprets just ``/``
+    as a separator on Linux (the only platform this tool supports), so this
+    matches the executor's contract. Real ``..`` traversal between ``/``
+    separators (e.g. ``/foo/../etc``) remains rejected.
+    """
+
+    def test_posix_backslash_in_filename_accepted(self):
+        """POSIX path with literal backslash bytes is not traversal."""
+        # checkpoint_path is one of the validated path kwargs.
+        validate_inputs(**{**_VALID_KWARGS, "checkpoint_path": "/data/odd\\..\\name"})
+
+    def test_real_traversal_still_rejected(self):
+        """Genuine '..' between '/' separators must still be rejected."""
+        with pytest.raises(ValueError, match="path traversal"):
+            validate_inputs(**{**_VALID_KWARGS, "checkpoint_path": "/data/../etc/passwd"})
+
+    def test_real_traversal_relative_still_rejected(self):
+        """Genuine relative '..' traversal must still be rejected."""
+        with pytest.raises(ValueError, match="path traversal"):
+            validate_inputs(**{**_VALID_KWARGS, "checkpoint_path": "../etc/passwd"})
+
+    def test_backslash_dotdot_backslash_filename_accepted(self):
+        """Filename with embedded \\..\\ as literal bytes (no '/' separator) accepted."""
+        # "a\..\b" as a single-component filename -- legal on POSIX.
+        validate_inputs(**{**_VALID_KWARGS, "trt_engine_path": "a\\..\\b"})
