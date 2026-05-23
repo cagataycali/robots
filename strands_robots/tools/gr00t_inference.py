@@ -11,9 +11,12 @@ steps so an LLM driving the AgentTool can fully orchestrate a GR00T eval
 from a single prompt - see #148 for the motivation.
 """
 
+import ipaddress
 import os
+import re
 import socket
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -41,6 +44,256 @@ def _checkpoints_dir() -> Path:
     return get_base_dir() / "checkpoints"
 
 
+# ─────────────────────────────────────────────────────────────────────
+# Input validation helpers
+# ─────────────────────────────────────────────────────────────────────
+
+# Docker image reference pattern — supports registry:port/path:tag and @sha256:digest.
+# Examples: "gr00t:latest", "nvcr.io/nvidia/gr00t:n1.7", "localhost:5000/myorg/img:tag"
+#           "nvcr.io/nvidia/gr00t@sha256:abcdef..." (digest-pinned, supply-chain recommended)
+_DOCKER_IMAGE_RE = re.compile(
+    r"^[a-zA-Z0-9]"  # must start with alnum
+    r"(?:[a-zA-Z0-9._\-]*[a-zA-Z0-9])?"  # optional middle chars (host/path prefix)
+    r"(?::[0-9]{1,5})?"  # optional registry port (:5000)
+    r"(?:/[a-zA-Z0-9][a-zA-Z0-9._\-]*)*"  # path components (/org/img)
+    r"(?::[a-zA-Z0-9][a-zA-Z0-9._\-]*"  # option A: :tag
+    r"|@sha256:[a-f0-9]{64})?$"  # option B: @sha256:digest (mutually exclusive with tag)
+)
+
+# Characters that cause harm in subprocess argv or shell interpolation.
+# Narrowed per AGENTS.md review-learnings: quotes/bangs/parens/brackets
+# appear in legitimate filesystem paths and all subprocess calls here are
+# argv-style (no shell=True), so they pose no injection risk in path values.
+# Backslash (\) is also legal on Linux (only / and NUL are forbidden by POSIX)
+# and carries no special meaning in argv-style subprocess calls.
+_SHELL_META = re.compile(r"[;&|`$<>\n\r\x00]")
+
+# Strict patterns for enumerable parameters.
+_DATA_CONFIG_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+_EMBODIMENT_TAG_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
+_CONTAINER_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$")
+# RFC-952 hostname pattern for host validation.
+_HOSTNAME_RE = re.compile(
+    r"^[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?"
+    r"(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$"
+)
+# Reject multi-label all-numeric strings — prevents typos like "127.0.01"
+# which pass _HOSTNAME_RE but are clearly malformed IP attempts, not hostnames.
+# Single-label numerics (e.g. "123") are valid per RFC-1123.
+_ALL_NUMERIC_RE = re.compile(r"^[0-9]+(?:\.[0-9]+)+$")
+
+# Factored pgrep pattern — single source of truth for both docker-exec and
+# host-fallback discovery paths. ERE syntax (procps-ng on Linux).
+# NOTE: _PGREP_INFERENCE_PORT_FMT uses `( |$)` (ERE, space-only boundary) while
+# _PYTHON_PORT_RE_FMT uses `(?:\s|$)` (Python re, any-whitespace boundary).
+# This is intentional: pgrep is constrained to ERE, and cmdlines are space-separated
+# in practice (procps-ng converts NUL → space when reading /proc/*/cmdline).
+# Matches both N1.5/N1.6 (inference_service.py) and N1.7 (gr00t.eval.run_gr00t_server)
+_PGREP_INFERENCE_PORT_FMT = r"(inference_service\.py|gr00t\.eval\.run_gr00t_server).*--port[= ]{port}( |$)"
+# Python-side equivalent for re.search — uses (?:\s|$) instead of ( |$)
+# because Python re is always ERE-ish and \s is more precise.
+_PYTHON_PORT_RE_FMT = r"--port[= ]{port}(?:\s|$)"
+
+# Allowlists for TensorRT dtype parameters.
+_VALID_VIT_DTYPES = {"fp16", "fp8"}
+_VALID_LLM_DTYPES = {"fp16", "nvfp4", "fp8"}
+_VALID_DIT_DTYPES = {"fp16", "fp8"}
+
+# Complete allowlist of valid actions for the tool.
+_VALID_ACTIONS = frozenset(
+    {
+        "find_containers",
+        "list",
+        "status",
+        "stop",
+        "start",
+        "restart",
+        "build_image",
+        "download_checkpoint",
+        "start_container",
+        "lifecycle",
+    }
+)
+
+
+def _validate_path(value: str, label: str, *, reject_colon: bool = False) -> None:
+    """Reject paths containing shell metacharacters, null bytes, or traversal sequences.
+
+    Args:
+        value: The path string to validate.
+        label: Human-readable label for error messages.
+        reject_colon: When True, reject ':' in the value. Required for Docker
+            volume mount paths where ':' would be re-interpreted as
+            host:container:options separator by docker -v.
+    """
+    if "\x00" in value:
+        raise ValueError(f"{label} must not contain null bytes")
+    if value.startswith("-"):
+        raise ValueError(f"{label} must not start with '-' (got {value!r})")
+    if any(part == ".." for part in re.split(r"[/\\]", value)):
+        raise ValueError(f"{label} must not contain '..' path traversal components")
+    if _SHELL_META.search(value):
+        raise ValueError(f"{label} contains disallowed characters: {value!r}")
+    if reject_colon and ":" in value:
+        raise ValueError(
+            f"{label} must not contain ':' (docker -v interprets it as host:container:options separator; got {value!r})"
+        )
+
+
+def validate_inputs(
+    *,
+    action: str,
+    data_config: str,
+    embodiment_tag: str,
+    port: int,
+    host: str,
+    vit_dtype: str,
+    llm_dtype: str,
+    dit_dtype: str,
+    checkpoint_path: str | None,
+    trt_engine_path: str,
+    container_name: str | None,
+    protocol: str,
+    image_name: str | None = None,
+    volumes: dict[str, str] | None = None,
+    container_command: str | None = None,
+    repo_url: str | None = None,
+    repo_tag: str | None = None,
+    policy_name: str | None = None,
+) -> None:
+    """Validate all user-supplied parameters in one place.
+
+    Raises ValueError for any invalid input. Callers exposing this through
+    an AgentTool MUST wrap in try/except and convert to the structured error
+    dict (``{"status": "error", "message": str(e)}``).
+
+    This centralises validation so that the main tool function stays focused
+    on orchestration and each check is independently testable via this
+    single entry-point.
+
+    Validation is scoped to the action: actions whose only user-controlled
+    surface is port/host/protocol (find_containers, list, status, stop)
+    skip full parameter validation; mutating actions (start, restart,
+    lifecycle, build_image, download_checkpoint, start_container) validate
+    the full parameter surface.
+    """
+    # Action allowlist — reject unknown actions early with a clear error
+    if action not in _VALID_ACTIONS:
+        raise ValueError(f"Unknown action {action!r}. Valid actions: {sorted(_VALID_ACTIONS)}")
+
+    # Protocol — always validated regardless of action
+    valid_protocols = ("n1.5", "n1.6", "n1.7")
+    if protocol not in valid_protocols:
+        raise ValueError(f"Unknown protocol {protocol!r}. Valid: {list(valid_protocols)}")
+    # Port range — always validated. Type-check first so callers get ValueError, not TypeError.
+    if not isinstance(port, int):
+        raise ValueError(f"port must be an integer, got {type(port).__name__}: {port!r}")
+    if not (1 <= port <= 65535):
+        raise ValueError(f"port must be between 1 and 65535, got {port}")
+
+    # Host address validation — always validated (accept IPs and RFC-952 hostnames)
+    if not isinstance(host, str):
+        raise ValueError(f"host must be a string, got {type(host).__name__}: {host!r}")
+    # RFC 1035 §2.3.4: total hostname must not exceed 253 octets.
+    if len(host) > 253:
+        raise ValueError(f"host exceeds RFC 1035 maximum length of 253 chars (got {len(host)} chars)")
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        # Reject all-numeric labels (e.g. "127.0.01") — these are clearly IP typos
+        # not legitimate hostnames. Real hostnames must have at least one alpha label.
+        # Rejects all-numeric multi-label strings including Linux IPv4 short-forms
+        # like "127.1" — use canonical dotted-quad for clarity in agent-driven contexts.
+        if _ALL_NUMERIC_RE.match(host) or not _HOSTNAME_RE.match(host):
+            raise ValueError(
+                f"host must be a valid IP address or hostname (got {host!r}). "
+                f"Use '127.0.0.1' for loopback, '0.0.0.0' for all interfaces, "
+                f"or a valid hostname like 'localhost'."
+            ) from None
+
+    # Port-only actions (find_containers, list, status, stop) only need
+    # port/host/protocol validation — the other params are unused by dispatch.
+    _port_only_actions = ("find_containers", "list", "status", "stop")
+    if action in _port_only_actions:
+        return
+
+    # Image/download actions only consume image_name, paths, and volumes — not
+    # inference-time params (data_config, embodiment_tag, dtypes).
+    _image_only_actions = ("build_image", "download_checkpoint", "start_container")
+    if action in _image_only_actions:
+        # Validate container_name (used by start_container, interpolated into docker run --name)
+        if container_name is not None and not _CONTAINER_NAME_RE.match(container_name):
+            raise ValueError(f"container_name must match Docker naming rules (got {container_name!r})")
+        # Validate image_name, volumes, container_command (relevant to these actions)
+        if image_name is not None and not _DOCKER_IMAGE_RE.match(image_name):
+            raise ValueError(f"image_name must be a valid Docker image reference (got {image_name!r})")
+        if volumes is not None:
+            for vol_host, vol_container in volumes.items():
+                _validate_path(vol_host, "volumes key (host path)", reject_colon=True)
+                _validate_path(vol_container, "volumes value (container path)", reject_colon=True)
+        if container_command is not None and _SHELL_META.search(container_command):
+            raise ValueError(f"container_command contains disallowed characters: {container_command!r}")
+        if checkpoint_path is not None:
+            _validate_path(checkpoint_path, "checkpoint_path")
+        # Option-injection guard for params used by these actions
+        for param_name, param_value in [("repo_url", repo_url), ("repo_tag", repo_tag), ("policy_name", policy_name)]:
+            if param_value is not None and param_value.startswith("-"):
+                raise ValueError(f"{param_name} must not start with '-' (got {param_value!r})")
+        return
+
+    # ── Full validation for inference-mutating actions (start, restart, lifecycle) ──
+
+    # Enumerable string parameters
+    if not _DATA_CONFIG_RE.match(data_config):
+        raise ValueError(
+            f"data_config must be lowercase alphanumeric/underscore (got {data_config!r}). "
+            f"See the tool docstring for the full list of accepted configs."
+        )
+    if not _EMBODIMENT_TAG_RE.match(embodiment_tag):
+        raise ValueError(f"embodiment_tag must be lowercase alphanumeric/underscore (got {embodiment_tag!r})")
+
+    # Docker container name
+    if container_name is not None and not _CONTAINER_NAME_RE.match(container_name):
+        raise ValueError(f"container_name must match Docker naming rules (got {container_name!r})")
+
+    # Filesystem paths — reject shell metacharacters and traversal
+    if checkpoint_path is not None:
+        _validate_path(checkpoint_path, "checkpoint_path")
+    _validate_path(trt_engine_path, "trt_engine_path")
+
+    # TensorRT dtype allowlists
+    if vit_dtype not in _VALID_VIT_DTYPES:
+        raise ValueError(f"vit_dtype must be one of {_VALID_VIT_DTYPES}, got {vit_dtype!r}")
+    if llm_dtype not in _VALID_LLM_DTYPES:
+        raise ValueError(f"llm_dtype must be one of {_VALID_LLM_DTYPES}, got {llm_dtype!r}")
+    if dit_dtype not in _VALID_DIT_DTYPES:
+        raise ValueError(f"dit_dtype must be one of {_VALID_DIT_DTYPES}, got {dit_dtype!r}")
+
+    # Docker image reference (if provided via kwargs)
+    if image_name is not None and not _DOCKER_IMAGE_RE.match(image_name):
+        raise ValueError(f"image_name must be a valid Docker image reference (got {image_name!r})")
+
+    # Volume paths validation
+    if volumes is not None:
+        for vol_host, vol_container in volumes.items():
+            _validate_path(vol_host, "volumes key (host path)", reject_colon=True)
+            _validate_path(vol_container, "volumes value (container path)", reject_colon=True)
+
+    # Container command — reject shell metacharacters
+    if container_command is not None and _SHELL_META.search(container_command):
+        raise ValueError(f"container_command contains disallowed characters: {container_command!r}")
+
+    # Option-injection guard: reject LLM-controlled values starting with '-'
+    # which could be parsed as flags by git/docker/pgrep in subprocess argv.
+    for param_name, param_value in [
+        ("repo_url", repo_url),
+        ("repo_tag", repo_tag),
+        ("policy_name", policy_name),
+    ]:
+        if param_value is not None and param_value.startswith("-"):
+            raise ValueError(f"{param_name} must not start with '-' (got {param_value!r})")
+
+
 @tool
 def gr00t_inference(
     action: str,
@@ -50,7 +303,7 @@ def gr00t_inference(
     data_config: str = "fourier_gr1_arms_only",
     embodiment_tag: str = "gr1",
     denoising_steps: int = 4,
-    host: str = "0.0.0.0",
+    host: str | None = None,
     container_name: str | None = None,
     timeout: int = 60,
     use_tensorrt: bool = False,
@@ -192,7 +445,9 @@ def gr00t_inference(
             ``libero_sim``).
         denoising_steps: Number of denoising steps for action generation (default: 4).
             N1.5/N1.6 only - the N1.7 server reads this from the checkpoint.
-        host: Host address to bind the service to (default: ``0.0.0.0``).
+        host: Host address to bind the service to (default: ``127.0.0.1``
+            loopback only). Container actions auto-flip to ``0.0.0.0`` internally
+            since Docker -p port-publish requires bind-all inside the container.
         container_name: Specific Docker container name. Auto-detected if omitted.
         timeout: Seconds to wait for service startup (default: 60).
         use_tensorrt: Enable TensorRT acceleration (default: False).
@@ -297,14 +552,37 @@ def gr00t_inference(
     if api_token is None:
         api_token = os.environ.get("GROOT_API_TOKEN")
 
-    # Validate protocol up-front so users get a friendly error rather than
-    # an opaque docker-exec failure inside _start_service.
-    valid_protocols = ("n1.5", "n1.6", "n1.7")
-    if protocol not in valid_protocols:
-        return {
-            "status": "error",
-            "message": f"Unknown protocol {protocol!r}. Valid: {list(valid_protocols)}",
-        }
+    # Sentinel default: None means "user did not pass host=".
+    # Default to 127.0.0.1 (loopback, per AGENTS.md § LLM Input Safety).
+    # _start_service auto-flips to 0.0.0.0 ONLY when host was not explicitly set.
+    _host_was_explicit = host is not None
+    if host is None:
+        host = "127.0.0.1"
+
+    # ── Validate all inputs in one call (scoped per action) ─────────
+    try:
+        validate_inputs(
+            action=action,
+            data_config=data_config,
+            embodiment_tag=embodiment_tag,
+            port=port,
+            host=host,
+            vit_dtype=vit_dtype,
+            llm_dtype=llm_dtype,
+            dit_dtype=dit_dtype,
+            checkpoint_path=checkpoint_path,
+            trt_engine_path=trt_engine_path,
+            container_name=container_name,
+            protocol=protocol,
+            image_name=image_name,
+            volumes=volumes,
+            container_command=container_command,
+            repo_url=repo_url,
+            repo_tag=repo_tag,
+            policy_name=policy_name,
+        )
+    except ValueError as e:
+        return {"status": "error", "message": str(e)}
 
     if action == "find_containers":
         return _find_gr00t_containers()
@@ -378,6 +656,7 @@ def gr00t_inference(
             api_token=api_token,
             protocol=protocol,
             use_sim_policy_wrapper=use_sim_policy_wrapper,
+            host_was_explicit=_host_was_explicit,
         )
     elif action == "start":
         if checkpoint_path is None:
@@ -404,6 +683,7 @@ def gr00t_inference(
             api_token=api_token,
             protocol=protocol,
             use_sim_policy_wrapper=use_sim_policy_wrapper,
+            host_was_explicit=_host_was_explicit,
         )
     elif action == "restart":
         if checkpoint_path is None:
@@ -430,9 +710,11 @@ def gr00t_inference(
             api_token=api_token,
             protocol=protocol,
             use_sim_policy_wrapper=use_sim_policy_wrapper,
+            host_was_explicit=_host_was_explicit,
         )
-    else:
-        return {"status": "error", "message": f"Unknown action: {action}"}
+
+    # Unreachable: validate_inputs() rejects unknown actions before dispatch.
+    return {"status": "error", "message": f"Unknown action: {action}"}  # pragma: no cover
 
 
 def _find_gr00t_containers() -> dict[str, Any]:
@@ -479,7 +761,7 @@ def _list_running_services() -> dict[str, Any]:
 
         return {"status": "success", "services": services, "message": f"Found {len(services)} running services"}
 
-    except Exception as e:
+    except OSError as e:
         return {"status": "error", "message": f"Failed to list services: {e}"}
 
 
@@ -491,7 +773,7 @@ def _is_service_running(port: int) -> bool:
         result = sock.connect_ex(("localhost", port))
         sock.close()
         return result == 0
-    except Exception:
+    except OSError:
         return False
 
 
@@ -509,6 +791,88 @@ def _check_service_status(port: int) -> dict[str, Any]:
         }
 
 
+def _is_gr00t_process(container_name: str, pid: str, *, port: int | None = None) -> bool:
+    """Verify that a PID inside a container belongs to a GR00T inference process.
+
+    This prevents accidentally killing unrelated processes that happen to
+    be listening on the same port.
+
+    Args:
+        container_name: Docker container name to inspect.
+        pid: Process ID to check.
+        port: If provided, also verify the process is bound to this port.
+    """
+    try:
+        result = subprocess.run(
+            ["docker", "exec", container_name, "cat", f"/proc/{pid}/cmdline"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode == 0:
+            cmdline = result.stdout.replace("\x00", " ")
+            # Require both a Python interpreter AND inference_service.py in cmdline
+            # to avoid false-matching unrelated processes (e.g. vim editing a gr00t file)
+            # Match both N1.5/N1.6 (inference_service.py) and N1.7 (gr00t.eval.run_gr00t_server)
+            is_gr00t = (
+                ("inference_service.py" in cmdline or "gr00t.eval.run_gr00t_server" in cmdline)
+                and ("python" in cmdline.lower() or "gr00t" in cmdline.lower())
+                and "--port" in cmdline  # Must have a --port flag to be a running service
+            )
+            if is_gr00t and port is not None:
+                # Verify the process is serving on the requested port
+                # Use word-boundary regex to avoid partial matches (e.g. port 80 vs 8000)
+                return bool(re.search(_PYTHON_PORT_RE_FMT.format(port=port), cmdline))
+            return is_gr00t
+    except (OSError, subprocess.SubprocessError, UnicodeDecodeError) as exc:
+        import logging
+
+        _logger = logging.getLogger(__name__)
+        if isinstance(exc, PermissionError):
+            _logger.warning("Permission denied probing container process %s -- treating as non-GR00T", pid)
+        else:
+            _logger.debug("Failed to probe container process %s: %s", pid, exc)
+    return False
+
+
+def _is_gr00t_host_process(pid: str, *, port: int | None = None) -> bool:
+    """Verify that a host PID belongs to a GR00T inference process.
+
+    Reads /proc/<pid>/cmdline directly (no Docker) to confirm the process
+    is a GR00T inference service, optionally bound to a specific port.
+
+    Note: This function reads from /proc and is Linux-only.
+
+    Args:
+        pid: Process ID to check.
+        port: If provided, also verify the process is bound to this port.
+    """
+    try:
+        cmdline_path = Path(f"/proc/{pid}/cmdline")
+        if cmdline_path.exists():
+            cmdline = cmdline_path.read_text().replace("\x00", " ")
+            # Require both a Python interpreter AND inference_service.py in cmdline
+            # to avoid false-matching unrelated processes (e.g. vim editing a gr00t file)
+            # Match both N1.5/N1.6 (inference_service.py) and N1.7 (gr00t.eval.run_gr00t_server)
+            is_gr00t = (
+                ("inference_service.py" in cmdline or "gr00t.eval.run_gr00t_server" in cmdline)
+                and ("python" in cmdline.lower() or "gr00t" in cmdline.lower())
+                and "--port" in cmdline  # Must have a --port flag to be a running service
+            )
+            if is_gr00t and port is not None:
+                return bool(re.search(_PYTHON_PORT_RE_FMT.format(port=port), cmdline))
+            return is_gr00t
+    except (OSError, UnicodeDecodeError) as exc:
+        import logging
+
+        _logger = logging.getLogger(__name__)
+        if isinstance(exc, PermissionError):
+            _logger.warning("Permission denied reading /proc/%s/cmdline -- treating as non-GR00T", pid)
+        else:
+            _logger.debug("Failed to probe host process %s: %s", pid, exc)
+    return False
+
+
 def _stop_service(port: int) -> dict[str, Any]:
     """Stop GR00T inference service running on specific port."""
     try:
@@ -520,7 +884,14 @@ def _stop_service(port: int) -> dict[str, Any]:
                 container_name = container["name"]
                 try:
                     result = subprocess.run(
-                        ["docker", "exec", container_name, "pgrep", "-f", f"inference_service.py.*--port {port}"],
+                        [
+                            "docker",
+                            "exec",
+                            container_name,
+                            "pgrep",
+                            "-f",
+                            _PGREP_INFERENCE_PORT_FMT.format(port=port),
+                        ],
                         capture_output=True,
                         text=True,
                         check=False,
@@ -529,13 +900,21 @@ def _stop_service(port: int) -> dict[str, Any]:
                     if result.returncode == 0 and result.stdout.strip():
                         pids = result.stdout.strip().split("\n")
                         for pid in pids:
-                            if pid:
+                            pid = pid.strip()
+                            if pid and _is_gr00t_process(container_name, pid, port=port):
                                 subprocess.run(["docker", "exec", container_name, "kill", "-TERM", pid], check=True)
 
                         time.sleep(2)
 
                         result = subprocess.run(
-                            ["docker", "exec", container_name, "pgrep", "-f", f"inference_service.py.*--port {port}"],
+                            [
+                                "docker",
+                                "exec",
+                                container_name,
+                                "pgrep",
+                                "-f",
+                                _PGREP_INFERENCE_PORT_FMT.format(port=port),
+                            ],
                             capture_output=True,
                             text=True,
                             check=False,
@@ -544,7 +923,8 @@ def _stop_service(port: int) -> dict[str, Any]:
                         if result.returncode == 0 and result.stdout.strip():
                             pids = result.stdout.strip().split("\n")
                             for pid in pids:
-                                if pid:
+                                pid = pid.strip()
+                                if pid and _is_gr00t_process(container_name, pid, port=port):
                                     subprocess.run(["docker", "exec", container_name, "kill", "-KILL", pid], check=True)
 
                         return {
@@ -557,30 +937,54 @@ def _stop_service(port: int) -> dict[str, Any]:
                 except subprocess.CalledProcessError:
                     continue
 
-        # Fallback: try host system
-        result = subprocess.run(["lsof", "-t", f"-i:{port}"], capture_output=True, text=True)
+        # Fallback: try host system — verify via /proc/<pid>/cmdline
+        # This path is Linux-only (ERE pgrep + /proc filesystem).
+        if sys.platform != "linux":
+            return {
+                "status": "error",
+                "message": (
+                    "No GR00T containers found. Host-fallback stop requires Linux "
+                    "(pgrep + /proc). Run inside a Docker container or use action='find_containers' first."
+                ),
+            }
+
+        result = subprocess.run(
+            # NOTE: ( |$) is ERE syntax; pgrep on Linux (procps-ng) defaults to ERE.
+            # This pattern is Linux-only; BSD pgrep may not match correctly.
+            ["pgrep", "-f", _PGREP_INFERENCE_PORT_FMT.format(port=port)],
+            capture_output=True,
+            text=True,
+        )
 
         if result.returncode == 0:
             pids = result.stdout.strip().split("\n")
             for pid in pids:
-                if pid:
+                pid = pid.strip()
+                if pid and _is_gr00t_host_process(pid, port=port):
                     subprocess.run(["kill", "-TERM", pid], check=True)
 
             time.sleep(2)
 
-            result = subprocess.run(["lsof", "-t", f"-i:{port}"], capture_output=True, text=True)
+            result = subprocess.run(
+                # NOTE: ( |$) is ERE syntax; pgrep on Linux (procps-ng) defaults to ERE.
+                # This pattern is Linux-only; BSD pgrep may not match correctly.
+                ["pgrep", "-f", _PGREP_INFERENCE_PORT_FMT.format(port=port)],
+                capture_output=True,
+                text=True,
+            )
 
             if result.returncode == 0:
                 pids = result.stdout.strip().split("\n")
                 for pid in pids:
-                    if pid:
+                    pid = pid.strip()
+                    if pid and _is_gr00t_host_process(pid, port=port):
                         subprocess.run(["kill", "-KILL", pid], check=True)
 
             return {"status": "success", "port": port, "message": f"Service on port {port} stopped"}
         else:
             return {"status": "success", "port": port, "message": f"No service running on port {port}"}
 
-    except Exception as e:
+    except (OSError, subprocess.SubprocessError) as e:
         return {"status": "error", "message": f"Failed to stop service: {e}"}
 
 
@@ -713,9 +1117,22 @@ def _start_service(
     api_token: str | None,
     protocol: str = "n1.5",
     use_sim_policy_wrapper: bool = False,
+    host_was_explicit: bool = False,
 ) -> dict[str, Any]:
     """Start GR00T inference service using Isaac-GR00T's native inference service."""
     try:
+        # Auto-flip host for container actions: Docker's -p port-publish requires the
+        # service to bind all interfaces inside the container. Only auto-flip if the
+        # user accepted the default (sentinel was None → resolved to 127.0.0.1).
+        # Users who explicitly pass host="127.0.0.1" get it honoured (e.g. --network=host).
+        if host == "127.0.0.1" and not host_was_explicit:
+            import logging as _logging
+
+            _logging.getLogger(__name__).warning(
+                "Auto-flipping host from 127.0.0.1 to 0.0.0.0 for container "
+                "port-publish (-p). Pass host='127.0.0.1' explicitly to keep loopback."
+            )
+            host = "0.0.0.0"
         # Find container if not specified
         if container_name is None:
             containers = _find_gr00t_containers()
@@ -791,7 +1208,7 @@ def _start_service(
 
     except subprocess.CalledProcessError as e:
         return {"status": "error", "message": f"Failed to start service: {e.stderr or e}"}
-    except Exception as e:
+    except (OSError, RuntimeError) as e:
         return {"status": "error", "message": f"Unexpected error: {e}"}
 
 
@@ -1187,6 +1604,7 @@ def _lifecycle(
     api_token: str | None,
     protocol: str,
     use_sim_policy_wrapper: bool,
+    host_was_explicit: bool = False,
 ) -> dict[str, Any]:
     """Orchestrate the four-step setup or tear down a previously-started container.
 
@@ -1308,6 +1726,7 @@ def _lifecycle(
         api_token=api_token,
         protocol=protocol,
         use_sim_policy_wrapper=use_sim_policy_wrapper,
+        host_was_explicit=host_was_explicit,
     )
     steps.append({"step": "start", "result": start_result})
 
@@ -1320,7 +1739,7 @@ def _lifecycle(
 
 
 if __name__ == "__main__":
-    print("🐳 GR00T Inference Service Manager (Isaac-GR00T Native)")
+    print("GR00T Inference Service Manager (Isaac-GR00T Native)")
     print("Supports ZMQ, HTTP, and TensorRT inference modes")
     print()
     print("Examples:")

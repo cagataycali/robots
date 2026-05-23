@@ -3,6 +3,89 @@
 All notable behavioural changes to `strands-robots` are logged here. Follows
 [Keep a Changelog](https://keepachangelog.com/) conventions.
 
+## Unreleased - #90 (gr00t_inference validation hardening)
+
+### Added
+
+- ``validate_inputs()`` centralises all parameter validation with action-aware
+  scoping: read-only actions (``find_containers``, ``list``, ``status``,
+  ``stop``) only validate ``port``/``host``/``protocol``; mutating actions
+  (``start``, ``restart``, ``lifecycle``) validate the full parameter surface.
+- ``host`` parameter now accepts both IP addresses and RFC-952 hostnames
+  (e.g. ``localhost``, ``host.docker.internal``). All-numeric strings that
+  fail ``ipaddress.ip_address()`` (e.g. ``127.0.01``, ``999.999.999.999``)
+  are rejected as obvious IP typos.
+- ``protocol`` validation moved into ``validate_inputs()`` (previously
+  hand-rolled outside the helper, breaking the single-entry-point contract).
+- ``pgrep`` patterns now match both ``--port N`` and ``--port=N`` forms,
+  preventing silent miss when the service is started with the ``=`` syntax.
+- Integration tests that invoke ``gr00t_inference()`` end-to-end and assert
+  that invalid inputs are caught (pins the ``try/except ValueError`` wiring).
+- End-to-end regression test for ``_stop_service`` cross-port-kill scenario:
+  verifies that a process on port 8000 is NOT killed when stopping port 80.
+- Exception clauses narrowed throughout: ``_is_gr00t_process`` / ``_is_gr00t_host_process``
+  use ``(OSError, subprocess.SubprocessError, UnicodeDecodeError)``;
+  ``_list_running_services``/``_is_service_running`` use ``OSError``;
+  ``_stop_service`` uses ``(OSError, subprocess.SubprocessError)``;
+  ``_start_service`` uses ``(OSError, RuntimeError)``.
+  Only ``_download_checkpoint`` retains ``except Exception`` (``# noqa: BLE001``)
+  because huggingface_hub raises varied, opaque exception types.
+- ``action`` parameter validated against a complete allowlist of 10 valid
+  actions; unknown actions get a clear error with the valid set listed.
+- ``image_name``, ``volumes``, and ``container_command`` parameters are now
+  validated (Docker image reference, path traversal, shell metacharacters).
+- ``pgrep`` pattern factored into ``_PGREP_INFERENCE_PORT_FMT`` module-level
+  constant — single source of truth across all 4 usage sites.
+- ``_PGREP_INFERENCE_PORT_FMT`` and ``_is_gr00t_*_process`` now match both
+  N1.5/N1.6 (``inference_service.py``) and N1.7 (``gr00t.eval.run_gr00t_server``)
+  entry-points. Closes the N1.7 stop/status identification gap.
+- All exception types in process-probe helpers now log (WARNING for
+  PermissionError, DEBUG for other OSError/SubprocessError/UnicodeDecodeError).
+
+### Changed
+
+- ``validate_inputs()`` parameters are now all required (no defaults).
+  ``gr00t_inference()`` is the single source of truth for default values;
+  the validator no longer duplicates them (prevents silent drift).
+- ``_DOCKER_IMAGE_RE`` extended to support private-registry references with
+  port numbers (e.g. ``localhost:5000/myorg/img:tag``).
+- ``_is_gr00t_process`` / ``_is_gr00t_host_process`` now require ``--port``
+  in the process cmdline to match — prevents false-killing editors or
+  log-tailers that happen to touch ``inference_service.py``.
+- ``PermissionError`` in process probes now logs at WARNING level instead
+  of being silently swallowed.
+- **BREAKING** Default ``host`` changed from ``0.0.0.0`` to ``127.0.0.1``
+  (loopback-only, per AGENTS.md). Container actions (``start``/``restart``/
+  ``lifecycle``) auto-flip to ``0.0.0.0`` internally since Docker's
+  ``-p {port}:{port}`` publish requires bind-all inside the container.
+  **Migration:** if your downstream connects from another host, pass
+  ``host="0.0.0.0"`` explicitly.
+- Host-system fallback (``pgrep``) is documented as Linux-only. Non-Linux
+  platforms will see "No service running" rather than silently succeeding.
+
+### Fixed
+
+- Duplicate ``torch_mock.manual_seed`` assignment in ``tests/mocks/torch_mock.py``.
+- Option-injection guard: ``repo_url``, ``repo_tag``, ``policy_name`` starting
+  with ``-`` are rejected (prevents git/docker flag injection via subprocess argv).
+- Host-system fallback (pgrep) now returns a clear error on non-Linux platforms
+  instead of silently reporting success.
+- All-numeric hostname guard narrowed to multi-label patterns only — single-label
+  numerics (e.g. ``123``) are valid per RFC-1123.
+
+### Notes
+
+- Host validation is **broader** than before for hostnames (RFC-952 names like
+  ``localhost`` and ``host.docker.internal`` now pass) but **stricter** for
+  IP-like typos (all-numeric labels like ``127.0.01`` are rejected).
+- Validation scope covers ``port``, ``host``, ``protocol``, ``data_config``,
+  ``embodiment_tag``, ``container_name``, TRT dtypes, ``checkpoint_path``,
+  ``trt_engine_path``, ``image_name``, ``volumes``, and ``container_command``.
+  Parameters ``repo_url``, ``repo_tag``, ``hf_repo``, ``policy_name`` are
+  NOT validated here — they flow into argv-style subprocess calls which
+  are not shell-injection-vulnerable.
+
+
 ## Unreleased - #178 (LiberoOffScreenRenderEngine retired)
 
 ### Removed: ``LiberoOffScreenRenderEngine`` simulation backend (BREAKING)
