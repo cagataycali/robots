@@ -28,7 +28,6 @@ logger = logging.getLogger(__name__)
 # Default action dimension (7-DoF: x, y, z, roll, pitch, yaw, gripper)
 _ACTION_DIM = 7
 # Standard image size for Cosmos policy models
-_IMAGE_SIZE = 224
 
 
 class CosmosPredictPolicy(Policy):
@@ -574,6 +573,6 @@ class CosmosPredictPolicy(Policy):
 
         return action_dict
 
-    def reset(self) -> None:
+    def reset(self, seed: int | None = None) -> None:
         """Reset internal step counter."""
         self._step = 0
