@@ -260,19 +260,22 @@ class _CommandDeduplicator:
     coincidentally matching dedup_ids don't collide.
     """
 
-    __slots__ = ("_seen", "_lock", "_ttl")
+    __slots__ = ("_seen", "_lock", "_ttl", "_strict")
 
-    def __init__(self, ttl_s: float | None = None) -> None:
+    def __init__(self, ttl_s: float | None = None, *, strict: bool = False) -> None:
         self._seen: dict[tuple[str, str], float] = {}
         self._lock = threading.Lock()
         self._ttl = ttl_s if ttl_s is not None else _resolve_dedup_ttl()
+        # R15 strict mode: when True, _dedup_id falls back to full-payload hash
+        # for payloads with no canonical (sender_id, turn_id, command) tuple.
+        # Used by bridge cross-transport path to dedup heartbeats etc.
+        self._strict = strict
 
     @property
     def ttl(self) -> float:
         return self._ttl
 
-    @staticmethod
-    def _dedup_id(payload: dict[str, Any]) -> str | None:
+    def _dedup_id(self, payload: dict[str, Any]) -> str | None:
         """Return a content fingerprint identifying this message.
 
         SHA-256 over ``(sender_id, turn_id, command)`` -- the three
@@ -288,7 +291,15 @@ class _CommandDeduplicator:
         cmd = payload.get("command")
 
         if sender is None and turn is None and cmd is None:
-            return None
+            if not self._strict:
+                # Default: pass through (preserves heartbeat semantics).
+                return None
+            # R15 strict mode: full-payload hash fallback.
+            try:
+                full = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+            except (TypeError, ValueError):
+                return None
+            return "p:" + hashlib.sha256(full).hexdigest()
 
         canonical = json.dumps(
             {"sender": sender, "turn": turn, "cmd": cmd},

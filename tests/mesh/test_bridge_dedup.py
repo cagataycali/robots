@@ -248,3 +248,54 @@ class TestMonotonicClockR12:
             "R12 regression: time.time() found inside is_duplicate body. "
             "Use time.monotonic() for TTL math (NTP-safe, snapshot-resume-safe)."
         )
+
+
+class TestStrictDedupModeR15:
+    """R15 pin tests — opt-in strict mode dedups payloads with no canonical fields.
+
+    Default mode (strict=False): payloads without (sender_id, turn_id, command)
+    pass through (preserves heartbeat-style semantics where the same payload
+    legitimately recurs).
+
+    Strict mode (strict=True): falls back to a full-payload SHA-256 hash so
+    bridge cross-transport path can dedup ANY payload, not just canonical ones.
+    """
+
+    def test_default_mode_passes_through_no_canonical_payload(self):
+        """Pre-R15 default behaviour preserved."""
+        from strands_robots.mesh.transport.bridge_transport import _CommandDeduplicator
+
+        d = _CommandDeduplicator(ttl_s=10.0)
+        payload = {"random": "data"}
+        assert d.is_duplicate("k", payload) is False
+        assert d.is_duplicate("k", payload) is False  # still passes through
+
+    def test_strict_mode_dedups_no_canonical_payload(self):
+        """R15: strict mode must dedup payloads with no canonical triple."""
+        from strands_robots.mesh.transport.bridge_transport import _CommandDeduplicator
+
+        d = _CommandDeduplicator(ttl_s=10.0, strict=True)
+        payload = {"heartbeat": "ping"}
+        assert d.is_duplicate("k", payload) is False
+        assert d.is_duplicate("k", payload) is True  # second copy = duplicate
+
+    def test_strict_mode_distinguishes_different_payloads(self):
+        """Different non-canonical payloads must NOT alias under strict mode."""
+        from strands_robots.mesh.transport.bridge_transport import _CommandDeduplicator
+
+        d = _CommandDeduplicator(ttl_s=10.0, strict=True)
+        a = {"value": 1}
+        b = {"value": 2}
+        assert d.is_duplicate("k", a) is False
+        assert d.is_duplicate("k", b) is False  # different payload, not a duplicate
+
+    def test_strict_mode_canonical_payloads_unchanged(self):
+        """Canonical payloads still use the canonical dedup id under strict mode."""
+        from strands_robots.mesh.transport.bridge_transport import _CommandDeduplicator
+
+        d = _CommandDeduplicator(ttl_s=10.0, strict=True)
+        a = {"sender_id": "x", "turn_id": "1", "command": "stop", "extra": "noise"}
+        b = {"sender_id": "x", "turn_id": "1", "command": "stop", "extra": "different_noise"}
+        assert d.is_duplicate("k", a) is False
+        # b has same canonical triple as a -> still a duplicate even though "extra" differs.
+        assert d.is_duplicate("k", b) is True
