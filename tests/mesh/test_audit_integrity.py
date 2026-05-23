@@ -254,7 +254,6 @@ def test_missing_sig_does_not_advance_cursor_when_psk_present(tmp_path, monkeypa
     monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
     monkeypatch.setenv("STRANDS_MESH_AUDIT_PSK", "yin-replay-test")
     import importlib
-    import json
 
     from strands_robots.mesh import audit
 
@@ -326,3 +325,52 @@ def test_log_safety_event_does_not_propagate_seq_errors(monkeypatch, tmp_path, c
     log_path = audit.audit_log_path()
     if log_path.exists():
         assert log_path.read_text().strip() == "", "record was written despite _next_seq failure"
+
+
+def test_psk_degrade_drops_record(monkeypatch, tmp_path, caplog):
+    """Pin regression: AuditPSKDegradedError blocks silent unsigned downgrade.
+
+    Scenario: PSK is set at first write (audit log starts signed), then
+    PSK is unset mid-run. The second write MUST be dropped (not written
+    unsigned) and an ERROR must be logged. This pins the AuditPSKDegradedError
+    code path in _sign_record.
+
+    Without this test, a refactor that moves the PSK snapshot logic or
+    accidentally inverts the comparison silently reintroduces the
+    unsigned-downgrade path and the test suite stays green.
+    """
+    import logging
+
+    monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
+    # Reset audit state for this test.
+    audit._AUDIT_STATE.psk_was_present = None
+    audit._AUDIT_STATE.seq_loaded = False
+    audit._SEQ_COUNTERS.clear()
+
+    # Phase 1: PSK is set, first record is signed.
+    monkeypatch.setenv("STRANDS_MESH_AUDIT_PSK", "test-psk-secret")
+    audit.log_safety_event("signed_event", "peer-a", {"phase": "one"})
+
+    # Verify first record was written and is signed.
+    records = list(audit.read_audit_log())
+    assert len(records) == 1, f"expected 1 record, got {len(records)}"
+    assert records[0].get("sig") is not None, "first record must be signed"
+    assert records[0]["event"] == "signed_event"
+
+    # Phase 2: PSK is unset mid-run (simulates attacker or accident).
+    monkeypatch.delenv("STRANDS_MESH_AUDIT_PSK")
+
+    with caplog.at_level(logging.ERROR, logger="strands_robots.mesh.audit"):
+        # Must NOT raise (audit failures must not crash the safety path)
+        # but MUST drop the record.
+        audit.log_safety_event("unsigned_attempt", "peer-a", {"phase": "two"})
+
+    # The second record must NOT have been written.
+    records_after = list(audit.read_audit_log())
+    assert len(records_after) == 1, f"expected 1 record (second should be dropped), got {len(records_after)}"
+
+    # Error must have been logged mentioning PSK degradation.
+    error_messages = [r.message for r in caplog.records if r.levelno >= logging.ERROR]
+    assert any("PSK" in msg or "AuditPSKDegradedError" in msg or "degrade" in msg.lower() for msg in error_messages), (
+        f"expected PSK degradation ERROR in logs, got: {error_messages}"
+    )
