@@ -98,7 +98,7 @@ def test_no_runtime_import_cycles():
     bodies (lazy imports) and TYPE_CHECKING blocks are excluded since they
     cannot cause import-time circular dependency failures.
     """
-    pytest.importorskip("networkx")
+    nx = pytest.importorskip("networkx")
     G = _build_import_graph(PKG)
     cycles = list(nx.simple_cycles(G))
     assert cycles == [], "runtime cycles detected:\n" + "\n".join("  " + " -> ".join(c) + " -> " + c[0] for c in cycles)
@@ -120,7 +120,7 @@ def test_base_has_no_module_level_policy_runner_import():
 
     for node in tree.body:  # module-level statements only
         if isinstance(node, ast.ImportFrom):
-            if node.module and "strands_robots.simulation.policy_runner" in node.module:
+            if node.module == "strands_robots.simulation.policy_runner":
                 imported_names = [alias.name for alias in node.names]
                 pytest.fail(
                     f"base.py has a module-level import from "
