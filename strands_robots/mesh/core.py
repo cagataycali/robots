@@ -250,6 +250,24 @@ class Mesh(SensorLoopsMixin):
                 self._subs.extend(declared)
 
             self._running = True
+            # Warn when running with permissive default ACL under mtls --
+            # any cert-holder can publish on **/cmd and **/safety/**. This is
+            # documented but easy to miss; log loudly at session-open so it
+            # surfaces during incident review (reviewer ask, R19).
+            try:
+                from strands_robots.mesh._acl_config import is_default_acl_in_use
+                from strands_robots.mesh._zenoh_config import resolve_auth_mode
+
+                if resolve_auth_mode() == "mtls" and is_default_acl_in_use():
+                    logger.warning(
+                        "[mesh] %s: permissive default ACL active under mtls; "
+                        "any CA-signed peer can publish on **/cmd and **/safety/**. "
+                        "Set STRANDS_MESH_ACL_FILE to enumerate role separation in production.",
+                        self.peer_id,
+                    )
+            except Exception as warn_exc:  # advisory only; never block start
+                logger.debug("[mesh] %s: ACL posture check failed: %s", self.peer_id, warn_exc)
+
             with _LOCAL_ROBOTS_LOCK:
                 _LOCAL_ROBOTS[self.peer_id] = self
 
@@ -1020,8 +1038,12 @@ class Mesh(SensorLoopsMixin):
                         severity="warning",
                         payload={"issuer": issuer_id, "issuer_t": envelope_t},
                     )
-                except Exception:  # Audit publish is best-effort; must never block safety path
-                    pass
+                except Exception as audit_exc:  # Audit publish is best-effort; must never block safety path
+                    logger.debug(
+                        "[mesh] %s: estop_replay_rejected audit publish failed: %s",
+                        self.peer_id,
+                        audit_exc,
+                    )
                 return
             # Bound the cache (mirrors _on_safety_resume eviction strategy).
             if len(self._estop_replay_cache) >= RESUME_REPLAY_CACHE_MAX:
@@ -1181,8 +1203,12 @@ class Mesh(SensorLoopsMixin):
                             "proof_nonce_prefix": proof_nonce[:16],
                         },
                     )
-                except Exception:  # Audit publish is best-effort; must never block safety path
-                    pass
+                except Exception as audit_exc:  # Audit publish is best-effort; must never block safety path
+                    logger.debug(
+                        "[mesh] %s: resume_replay_rejected audit publish failed: %s",
+                        self.peer_id,
+                        audit_exc,
+                    )
                 return
             # Bound the cache.
             if len(self._resume_replay_cache) >= RESUME_REPLAY_CACHE_MAX:
