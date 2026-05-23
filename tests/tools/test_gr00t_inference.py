@@ -611,7 +611,14 @@ class TestStartContainer:
         assert "--gpus" in run_cmd and "all" in run_cmd
         assert "--ipc=host" in run_cmd
         assert "--name" in run_cmd and "gr00t" in run_cmd
-        assert "8000:8000" in run_cmd
+        # Post-R1 (PR #196): docker -p includes the host prefix; default host
+        # is 127.0.0.1 (loopback-only). The 0.0.0.0 silent rewrite was removed.
+        assert "127.0.0.1:8000:8000" in run_cmd, (
+            f"R1 regression: _start_container must bind docker -p to loopback by default. Got argv: {run_cmd}"
+        )
+        assert "0.0.0.0:8000:8000" not in run_cmd, (
+            "R1 regression: default _start_container call must NOT bind all interfaces."
+        )
 
     def test_volumes_default_includes_checkpoints_and_hf_cache(self):
         runs: list[list[str]] = []
