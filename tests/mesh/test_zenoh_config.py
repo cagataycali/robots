@@ -231,6 +231,8 @@ class TestTLSBlock:
         key = tmp_path / "peer.key"
         for f in (ca, cert, key):
             f.write_text("dummy\n")
+        # R24-C: _resolve_tls_paths enforces mode 0o600 on the private key.
+        key.chmod(0o600)
 
         monkeypatch.setenv("STRANDS_MESH_TLS_CA", str(ca))
         monkeypatch.setenv("STRANDS_MESH_TLS_CERT", str(cert))
@@ -247,6 +249,60 @@ class TestTLSBlock:
         assert decoded["connect_certificate"] == str(cert)
         assert decoded["listen_private_key"] == str(key)
         assert decoded["connect_private_key"] == str(key)
+
+
+class TestTLSKeyMode:
+    """R24-C: the mode 0o600 contract from docstring + README must be enforced."""
+
+    def _make_tls_files(self, tmp_path, key_mode):
+        ca = tmp_path / "ca.crt"
+        cert = tmp_path / "peer.crt"
+        key = tmp_path / "peer.key"
+        for f in (ca, cert, key):
+            f.write_text("dummy\n")
+        key.chmod(key_mode)
+        return ca, cert, key
+
+    @pytest.mark.skipif(__import__("os").name != "posix", reason="POSIX file modes only")
+    def test_world_readable_key_rejected(self, monkeypatch, tmp_path):
+        """A 0o644 key (world-readable) raises ValueError naming the failure mode."""
+        ca, cert, key = self._make_tls_files(tmp_path, 0o644)
+        monkeypatch.setenv("STRANDS_MESH_TLS_CA", str(ca))
+        monkeypatch.setenv("STRANDS_MESH_TLS_CERT", str(cert))
+        monkeypatch.setenv("STRANDS_MESH_TLS_KEY", str(key))
+        with pytest.raises(ValueError, match="refusing world/group readable"):
+            zc.tls_block()
+
+    @pytest.mark.skipif(__import__("os").name != "posix", reason="POSIX file modes only")
+    def test_group_readable_key_rejected(self, monkeypatch, tmp_path):
+        """A 0o640 key (group-readable) is also rejected -- shared-host exfiltration surface."""
+        ca, cert, key = self._make_tls_files(tmp_path, 0o640)
+        monkeypatch.setenv("STRANDS_MESH_TLS_CA", str(ca))
+        monkeypatch.setenv("STRANDS_MESH_TLS_CERT", str(cert))
+        monkeypatch.setenv("STRANDS_MESH_TLS_KEY", str(key))
+        with pytest.raises(ValueError, match="0o640"):
+            zc.tls_block()
+
+    @pytest.mark.skipif(__import__("os").name != "posix", reason="POSIX file modes only")
+    def test_owner_only_key_accepted(self, monkeypatch, tmp_path):
+        """0o600 (the documented contract) is the only mode that passes."""
+        ca, cert, key = self._make_tls_files(tmp_path, 0o600)
+        monkeypatch.setenv("STRANDS_MESH_TLS_CA", str(ca))
+        monkeypatch.setenv("STRANDS_MESH_TLS_CERT", str(cert))
+        monkeypatch.setenv("STRANDS_MESH_TLS_KEY", str(key))
+        # No raise.
+        path, _value = zc.tls_block()
+        assert path == "transport/link/tls"
+
+    @pytest.mark.skipif(__import__("os").name != "posix", reason="POSIX file modes only")
+    def test_owner_rwx_only_accepted(self, monkeypatch, tmp_path):
+        """0o700 also passes (no group/world bits set); the gate is on group+world, not owner."""
+        ca, cert, key = self._make_tls_files(tmp_path, 0o700)
+        monkeypatch.setenv("STRANDS_MESH_TLS_CA", str(ca))
+        monkeypatch.setenv("STRANDS_MESH_TLS_CERT", str(cert))
+        monkeypatch.setenv("STRANDS_MESH_TLS_KEY", str(key))
+        path, _value = zc.tls_block()
+        assert path == "transport/link/tls"
 
 
 def test_link_protocols_block_restricts_to_tls():

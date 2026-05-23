@@ -53,6 +53,8 @@ def _build_mtls(tmp_path, monkeypatch):
     key = tmp_path / "peer.key"
     for f in (ca, cert, key):
         f.write_text("dummy\n")
+    # R24-C: _resolve_tls_paths enforces mode 0o600 on the private key.
+    key.chmod(0o600)
     monkeypatch.setenv("STRANDS_MESH_AUTH_MODE", "mtls")
     monkeypatch.setenv("STRANDS_MESH_TLS_CA", str(ca))
     monkeypatch.setenv("STRANDS_MESH_TLS_CERT", str(cert))
@@ -233,6 +235,8 @@ def test_mtls_default_acl_logs_warning(tmp_path, monkeypatch, caplog):
     key = tmp_path / "peer.key"
     for f in (ca, cert, key):
         f.write_text("dummy\n")
+    # R24-C: _resolve_tls_paths enforces mode 0o600 on the private key.
+    key.chmod(0o600)
     monkeypatch.setenv("STRANDS_MESH_AUTH_MODE", "mtls")
     monkeypatch.setenv("STRANDS_MESH_TLS_CA", str(ca))
     monkeypatch.setenv("STRANDS_MESH_TLS_CERT", str(cert))

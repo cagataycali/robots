@@ -435,6 +435,21 @@ def _resolve_tls_paths() -> tuple[Path, Path, Path]:
     for label, p in zip(("CA", "cert", "key"), paths, strict=True):
         if not p.is_file():
             raise FileNotFoundError(f"mTLS {label} file does not exist: {p}")
+    # R24-C: enforce the mode 0o600 contract that the docstring (line 73)
+    # and README env-var matrix promise for the private key. A 0o644 key
+    # file on a shared host is a real exfiltration surface; the operator
+    # who set STRANDS_MESH_TLS_KEY thinks they get the documented protection.
+    # Skipped on non-POSIX (Windows file modes do not map cleanly).
+    # See PR #195 thread PRRT_kwDORUMiZs6EUu8N.
+    if os.name == "posix":
+        key_path = paths[2]
+        key_mode = key_path.stat().st_mode & 0o777
+        if key_mode & 0o077:
+            raise ValueError(
+                f"mTLS private key {key_path} has mode 0o{key_mode:03o}; "
+                "refusing world/group readable key. "
+                "Run: chmod 600 " + str(key_path)
+            )
     return paths
 
 
