@@ -223,9 +223,13 @@ class TestDataConfigMap:
         """
         from strands_robots.tools.gr00t_inference import gr00t_inference
 
-        doc = gr00t_inference.__doc__ or ""
-        assert any("unitree_g1_sonic" in line and "finetuned checkpoint" in line for line in doc.splitlines()), (
-            "Posttrain disclaimer must stay on the same line as unitree_g1_sonic"
+        doc = (gr00t_inference.__doc__ or "").replace("\n", " ")
+        idx = doc.find("unitree_g1_sonic")
+        assert idx != -1, "unitree_g1_sonic must be listed in the gr00t_inference docstring"
+        # Disclaimer must be within ~300 chars of the tag mention so it survives
+        # docstring reflow (line-wrap, formatter changes) but still pins co-location.
+        assert "finetuned checkpoint" in doc[idx : idx + 300], (
+            "unitree_g1_sonic must be documented as requiring a finetuned checkpoint nearby"
         )
 
     def test_unitree_g1_real_alias(self):
