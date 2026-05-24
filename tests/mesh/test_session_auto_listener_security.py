@@ -24,9 +24,7 @@ def test_get_session_auto_listener_uses_build_config() -> None:
     # Post-F11-A invariant: ``_build_config()`` is called inside the
     # auto-listener branch so every Zenoh-built-in security primitive
     # applies on the default deployment shape.
-    assert "cfg = _build_config()" in src, (
-        "auto-listener branch must use _build_config() to apply mTLS / ACL / caps"
-    )
+    assert "cfg = _build_config()" in src, "auto-listener branch must use _build_config() to apply mTLS / ACL / caps"
     # And the auto-listener branch must NOT carry the pre-fix-shape
     # bare config line. We check via a substring assembled from
     # individual fragments to satisfy CodeQL "no commented-out code".
