@@ -68,26 +68,33 @@ def _start_with_stub_session(stub_robot, caplog, level: int = logging.WARNING):
     return caplog.records
 
 
-def test_mtls_plus_default_acl_refuses_to_start(caplog, monkeypatch, stub_robot):
-    """F9-E (PR #195 review): mesh REFUSES to start under
-    ``mtls + permissive default ACL`` unless the operator has set
-    ``STRANDS_MESH_ACL_FILE`` (production) or
-    ``STRANDS_MESH_ACCEPT_PERMISSIVE_ACL=1`` (dev/lab opt-in).
+def test_mtls_plus_default_acl_does_not_start(caplog, monkeypatch, stub_robot):
+    """F11-B (PR #195 review): mesh REFUSES to start under
+    ``mtls + permissive default ACL`` -- but does so by returning
+    early without raising. The first-run ``Robot()`` /
+    ``Simulation()`` constructor experience must not crash; the
+    safety property ("no permissive ACL on the wire") is preserved
+    by the early return, since no Zenoh session is acquired.
 
-    Promoted from F8-D's "ERROR + still starts" because this combination
-    turns a single CA-signed compromise into a fleet-wide command-
-    issuance pivot per the threat-vector table; AGENTS.md > Safety
-    Defaults calls for refusal-to-start, not just a log line.
+    The operator sees a loud ERROR with three actionable paths
+    (set ACL file / accept opt-in / disable mesh). Construction
+    succeeds; ``mesh.alive`` returns False until the operator opts
+    in.
     """
     monkeypatch.setenv("STRANDS_MESH_AUTH_MODE", "mtls")
     monkeypatch.delenv("STRANDS_MESH_ACCEPT_PERMISSIVE_ACL", raising=False)
-    with pytest.raises(RuntimeError, match=r"PERMISSIVE DEFAULT ACL ACTIVE"):
-        _start_with_stub_session(stub_robot, caplog)
-    # And the operator-facing ERROR is logged before the refusal.
-    error_msgs = [r.getMessage() for r in caplog.records if r.levelname == "ERROR"]
+
+    # Must NOT raise -- F11-B made this refuse-and-return rather than refuse-and-raise.
+    records = _start_with_stub_session(stub_robot, caplog)
+
+    # The operator-facing ERROR IS logged.
+    error_msgs = [r.getMessage() for r in records if r.levelname == "ERROR"]
     assert any("PERMISSIVE DEFAULT ACL ACTIVE UNDER MTLS" in m for m in error_msgs), (
         f"expected ERROR breadcrumb; saw {error_msgs}"
     )
+    # And the actionable paths are spelled out.
+    assert any("Mesh NOT STARTED" in m for m in error_msgs)
+    assert any("STRANDS_MESH_ACCEPT_PERMISSIVE_ACL=1" in m for m in error_msgs)
 
 
 def test_mtls_plus_default_acl_with_optin_logs_at_info(caplog, monkeypatch, stub_robot):

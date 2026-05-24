@@ -151,11 +151,22 @@ def _load_acl_file(path: Path) -> dict[str, Any]:
     if data["default_permission"] not in ("allow", "deny"):
         raise ValueError(f"ACL file {path} default_permission={data['default_permission']!r} must be 'allow' or 'deny'")
     if data["default_permission"] == "allow":
-        logger.warning(
-            "[acl] %s uses default_permission='allow' -- this is a blacklist "
-            "policy and any rule gap exposes the mesh. Prefer 'deny'.",
-            path,
-        )
+        # F11-C (PR #195 review): only warn when the operator actually
+        # has rules/subjects/policies that *combine* with allow-by-default
+        # in a blacklist shape. The built-in ``default_acl()`` (used when
+        # STRANDS_MESH_ACL_FILE is unset) ships ``allow + empty rules/
+        # subjects/policies`` -- the documented permissive-by-design
+        # posture. Warning operators who copy that shape into a file is
+        # asymmetric scolding; reserve the warning for the actual
+        # blacklist anti-pattern (allow + non-empty rules).
+        is_truly_permissive_default = not data.get("rules") and not data.get("subjects") and not data.get("policies")
+        if not is_truly_permissive_default:
+            logger.warning(
+                "[acl] %s uses default_permission='allow' with rules -- "
+                "this is a blacklist policy and any rule gap exposes "
+                "the mesh. Prefer 'deny' with explicit allow rules.",
+                path,
+            )
     _validate_acl_shape(data, path)
     return data
 

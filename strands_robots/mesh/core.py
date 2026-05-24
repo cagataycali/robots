@@ -360,22 +360,42 @@ class Mesh(SensorLoopsMixin):
                             self.peer_id,
                         )
                     else:
+                        # F11-B (PR #195 review): refuse-and-return,
+                        # not refuse-and-raise. Pre-F11 raised a
+                        # RuntimeError from Mesh.start which is called
+                        # transitively from Robot()/Simulation()
+                        # constructors via init_mesh -- that crashed
+                        # the first-run UX of `pip install
+                        # strands-robots[mesh]`. The safety property
+                        # we actually want is "no permissive ACL is
+                        # on the wire" -- preserved by returning
+                        # early before session acquisition.
+                        # Construction succeeds; mesh.alive stays
+                        # False; operator sees the loud ERROR.
                         msg = (
                             "PERMISSIVE DEFAULT ACL ACTIVE UNDER MTLS -- any "
-                            "CA-signed peer can publish on **/cmd and "
-                            "**/safety/**. This combination turns a single "
-                            "compromised cert into a fleet-wide command "
-                            "pivot. Refusing to start. Either:\n"
+                            "CA-signed peer would be able to publish on "
+                            "**/cmd and **/safety/**. This combination "
+                            "turns a single compromised cert into a "
+                            "fleet-wide command pivot. Mesh NOT STARTED. "
+                            "Either:\n"
                             "  1. Set STRANDS_MESH_ACL_FILE to a literal-CN "
                             "     ACL file enumerating role separation "
                             "     (production posture; see "
                             "     examples/mesh_acl_example.json5).\n"
                             "  2. Set STRANDS_MESH_ACCEPT_PERMISSIVE_ACL=1 "
                             "     to acknowledge the dev/lab posture "
-                            "     explicitly (single-tenant only)."
+                            "     explicitly (single-tenant only).\n"
+                            "  3. Set STRANDS_MESH=false to disable the "
+                            "     mesh entirely."
                         )
                         logger.error("[mesh] %s: %s", self.peer_id, msg)
-                        raise RuntimeError(msg)
+                        # Return early WITHOUT acquiring a session.
+                        # ``self._running`` stays False; ``self.alive``
+                        # returns False; no wire activity occurs.
+                        # Pin: tests/mesh/test_default_acl_warning.py
+                        # ::test_mtls_plus_default_acl_does_not_start
+                        return
             except (ImportError, ValueError) as warn_exc:
                 # Narrowed per AGENTS.md > "Exception Clauses Must Be Narrow":
                 # ImportError covers the lazy ``from . import _acl_config``;

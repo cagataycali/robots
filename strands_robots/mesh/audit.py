@@ -1033,10 +1033,26 @@ def read_audit_log(since: float | None = None) -> list[dict[str, Any]]:
                             continue
                         try:
                             record = json.loads(raw)
-                        except json.JSONDecodeError:
-                            # Forward-compatible: skip malformed lines silently
-                            # so a newer writer's extension can't break a
-                            # reader on this version.
+                        except json.JSONDecodeError as parse_exc:
+                            # F11-D (PR #195 review): forward-compatibility
+                            # justifies skipping malformed lines, but
+                            # silent skip interacts badly with the R22-A
+                            # seq-seed walk in ``_load_seq_counters``: a
+                            # malformed line for peer X with seq=N is
+                            # invisible to the walk's max(seq), so on
+                            # next process restart the seq starts below
+                            # the highest seq actually written and the
+                            # next legit write produces a duplicate.
+                            # Emit a DEBUG breadcrumb so operators have
+                            # a forensic signal that the seq seed may
+                            # be incomplete; the line is still skipped
+                            # for forward-compatibility, but the
+                            # invisibility is no longer total.
+                            logger.debug(
+                                "[audit] skipping malformed line in %s: %s",
+                                path,
+                                parse_exc,
+                            )
                             continue
                         if since is not None:
                             ts = record.get("ts")

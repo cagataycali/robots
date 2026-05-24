@@ -394,9 +394,31 @@ def get_session() -> Any | None:
         listen_env = os.getenv("ZENOH_LISTEN")
 
         # When no explicit endpoints are set, try to become the local router.
+        # F11-A (PR #195 review): both the auto-listener AND the client
+        # fallback below MUST go through ``_build_config()`` -- the
+        # threat-coverage table claims namespace + mTLS + ACL +
+        # downsampling + low_pass_filter + max_sessions + adminspace
+        # lockdown apply on every Zenoh path, and pre-F11 the auto-
+        # listener path used a bare ``zenoh.Config()`` and silently
+        # bypassed all of them. The default deployment shape (no
+        # ZENOH_CONNECT / ZENOH_LISTEN, first peer in the process) is
+        # exactly what most operators hit on first run; the security
+        # claim was therefore false on the most common code path.
+        # Compose mTLS-aware endpoints (``tls/...`` when auth_mode=mtls,
+        # plain ``tcp/...`` otherwise) so ``transport/link/protocols``
+        # restriction does not produce an unusable session.
         if not connect_env and not listen_env:
+            from strands_robots.mesh._zenoh_config import resolve_auth_mode
+
             try:
-                cfg = zenoh.Config()
+                _auth_mode = resolve_auth_mode()
+            except ValueError:
+                _auth_mode = "mtls"
+            scheme = "tls" if _auth_mode == "mtls" else "tcp"
+            local_ep = f"{scheme}/127.0.0.1:{mesh_port}"
+
+            try:
+                cfg = _build_config()
                 cfg.insert_json5("listen/endpoints", json.dumps([local_ep]))
                 cfg.insert_json5("connect/endpoints", json.dumps([local_ep]))
                 _SESSION = zenoh.open(cfg)
@@ -482,8 +504,18 @@ def _get_zenoh_session_directly() -> Any | None:
         listen_env = os.getenv("ZENOH_LISTEN")
 
         if not connect_env and not listen_env:
+            # F11-A (see get_session above for full rationale).
+            from strands_robots.mesh._zenoh_config import resolve_auth_mode
+
             try:
-                cfg = zenoh.Config()
+                _auth_mode = resolve_auth_mode()
+            except ValueError:
+                _auth_mode = "mtls"
+            scheme = "tls" if _auth_mode == "mtls" else "tcp"
+            local_ep = f"{scheme}/127.0.0.1:{mesh_port}"
+
+            try:
+                cfg = _build_config()
                 cfg.insert_json5("listen/endpoints", json.dumps([local_ep]))
                 cfg.insert_json5("connect/endpoints", json.dumps([local_ep]))
                 _SESSION = zenoh.open(cfg)
