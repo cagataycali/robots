@@ -20,7 +20,6 @@ def _stub_mesh() -> core.Mesh:
     m = core.Mesh.__new__(core.Mesh)
     m.peer_id = "test-peer"
     m._estop_replay_cache = {}
-    m._estop_replay_per_issuer = {}
     m._resume_replay_cache = {}
     m._estop_replay_lock = threading.Lock()
     m._resume_replay_lock = threading.Lock()
@@ -131,16 +130,13 @@ class TestEstopPerIssuerFairnessBound:
     """
 
     def test_one_issuer_cannot_exceed_cap(self, monkeypatch):
-        from strands_robots.mesh import core as core_mod
-
-        # Tighten the cache size for fast test
-        monkeypatch.setattr(core_mod, "RESUME_REPLAY_CACHE_MAX", 8)
+        # Tighten the cache size via env (F9-B made this lazy-resolved)
+        monkeypatch.setenv("STRANDS_MESH_RESUME_REPLAY_CACHE_MAX", "8")
         # 8 / 4 = 2 slots per issuer
 
         m = core.Mesh.__new__(core.Mesh)
         m.peer_id = "test-peer"
         m._estop_replay_cache = {}
-        m._estop_replay_per_issuer = {}
         m._estop_replay_lock = threading.Lock()
         m._estop_lockout = threading.Event()
         m._last_estop_ts = 0.0
@@ -159,10 +155,12 @@ class TestEstopPerIssuerFairnessBound:
 
             m._on_safety_estop(S())
 
-        # Per-issuer dict capped at 2; cache may have at most 2 entries
-        # for this attacker (newer ones refused).
-        assert m._estop_replay_per_issuer.get("attacker-1", 0) <= 2, (
-            f"attacker should be capped at 2 slots, got {m._estop_replay_per_issuer}"
+        # F9-A: per-issuer count is derived from cache contents, not a
+        # separate dict. Count entries owned by attacker-1; the
+        # attacker is capped at per_issuer_cap = MAX // 4 = 2 slots.
+        attacker_slots = sum(1 for issuer, _mono in m._estop_replay_cache.values() if issuer == "attacker-1")
+        assert attacker_slots <= 2, (
+            f"attacker should be capped at 2 slots, got {attacker_slots} (cache: {m._estop_replay_cache})"
         )
 
 
@@ -182,7 +180,6 @@ class TestPerIssuerCountFromCache:
         m = core.Mesh.__new__(core.Mesh)
         m.peer_id = "test-peer"
         m._estop_replay_cache = {}
-        m._estop_replay_per_issuer = {}
         m._estop_replay_lock = threading.Lock()
         m._estop_lockout = threading.Event()
         m._last_estop_ts = 0.0
