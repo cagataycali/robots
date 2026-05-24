@@ -114,6 +114,11 @@ WARNING symmetry), #260 (warn on re-use of break-glass-written CA).
   cap `diffusers<0.36`). Lockfile users remain exposed until #210 lands;
   mitigation requires either floating diffusers above 0.38.0 or upgrading
   lerobot once an upstream release relaxes the cap.
+- **Wheel-install exposure note**: `pip install strands-robots` consumers
+  (without `uv.lock`) are protected only for the Pillow CVE (floor raised
+  to `>=10.3.0`). Transitive CVE fixes (cryptography, urllib3, gitpython,
+  python-multipart) have no direct-dep floor and are mitigated only by
+  lockfile regeneration.
 
 ## Unreleased - #178 (LiberoOffScreenRenderEngine retired)
 

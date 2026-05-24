@@ -35,6 +35,7 @@ import tomllib
 from pathlib import Path
 
 import pytest
+from packaging.version import Version
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PYPROJECT = REPO_ROOT / "pyproject.toml"
@@ -74,29 +75,15 @@ def _floor_of(spec: str) -> str | None:
     return m.group(1) if m else None
 
 
-def _version_tuple(v: str) -> tuple[int, int, int]:
-    """Best-effort numeric tuple for floor comparison.
+def _parse_version(v: str) -> Version:
+    """Parse a version string using PEP 440 semantics.
 
-    Returns a ``(major, minor, patch)`` triple, padding with zeros so
-    ``"10.3"`` and ``"10.3.0"`` compare equal. Strips trailing pre-release /
-    local-version suffixes (``"10.3.0rc1"`` -> ``(10, 3, 0)``); a pre-release
-    floor is treated as equal to its release version, which is conservative
-    for the security-floor check (a pre-release with a CVE fix is rare and
-    should be promoted to the released version before being pinned anyway).
+    Uses ``packaging.version.Version`` for correct handling of pre-releases,
+    post-releases, dev-releases, and local versions. This ensures that a
+    floor like ``>=10.3.0`` correctly rejects ``10.3.0rc1`` (which is
+    *before* the release and may not contain the CVE fix).
     """
-    parts = re.split(r"[.\-+]", v)
-    out: list[int] = []
-    for p in parts:
-        m = re.match(r"^(\d+)", p)
-        if m:
-            out.append(int(m.group(1)))
-        else:
-            break
-    # Pad to (major, minor, patch) so "10.3" >= "10.3.0" instead of
-    # tuple-shorter-is-less surprising the security-floor check.
-    while len(out) < 3:
-        out.append(0)
-    return (out[0], out[1], out[2])
+    return Version(v)
 
 
 # --------------------------------------------------------------------------- #
@@ -190,7 +177,7 @@ def test_security_floor_not_lowered(
         assert floor is not None, (
             f"{name} in {site} has no >= floor (spec={spec!r}); cannot enforce CVE floor. {rationale}"
         )
-        assert _version_tuple(floor) >= _version_tuple(min_floor), (
+        assert _parse_version(floor) >= _parse_version(min_floor), (
             f"{name} floor regression in {site}: spec={spec!r} "
             f"declares >={floor} but security minimum is >={min_floor}. "
             f"{rationale}"
@@ -220,3 +207,24 @@ def test_multi_site_pins_consistent(constraint_index: dict[str, dict[str, str]])
     assert not drifted, (
         f"Multi-site pins disagree -- update every site to the same constraint when bumping. Drift: {drifted}"
     )
+
+
+# --------------------------------------------------------------------------- #
+# PEP 440 pre-release correctness (regression pin for R5 fix)
+# --------------------------------------------------------------------------- #
+
+
+def test_parse_version_rejects_prerelease_below_release() -> None:
+    """Verify that _parse_version correctly identifies pre-releases as below their release.
+
+    Regression pin: before R5, ``_version_tuple("10.3.0rc1")`` returned ``(10, 3, 0)``
+    which compared equal to ``_version_tuple("10.3.0")``, silently accepting a
+    pre-release floor that might not carry the CVE fix. With ``packaging.version.Version``,
+    ``10.3.0rc1 < 10.3.0`` is correctly enforced.
+    """
+    assert _parse_version("10.3.0rc1") < _parse_version("10.3.0")
+    assert _parse_version("10.3.0") >= _parse_version("10.3.0")
+    assert _parse_version("10.3") == _parse_version("10.3.0")
+    assert _parse_version("10.4.0") > _parse_version("10.3.0")
+    assert _parse_version("10.3.0.post1") > _parse_version("10.3.0")
+    assert _parse_version("10.3.0.dev1") < _parse_version("10.3.0")
