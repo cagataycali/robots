@@ -1354,6 +1354,18 @@ class Mesh(SensorLoopsMixin):
             else:
                 self._estop_replay_cache[cache_key] = (issuer_id, now_mono)
 
+            # F14-B (PR #195 review): when the issuer is over their
+            # cap, refuse to engage the lockout AS WELL as refuse the
+            # cache slot. Without this, a sustained attacker at-cap
+            # could still drive the lockout to engage on every novel
+            # `t` they emit -- defeating the F9-A fairness bound's
+            # whole point (limiting one attacker's wall-clock impact).
+            # An at-cap issuer's estops are dropped at the cache layer
+            # AND the lockout layer; they remain audited as
+            # `estop_per_issuer_cap_exceeded`.
+            if issuer_slots >= per_issuer_cap:
+                return
+
         if not self._estop_lockout.is_set():
             self._estop_lockout.set()
             self._last_estop_ts = time.time()

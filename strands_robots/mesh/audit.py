@@ -870,21 +870,29 @@ def log_safety_event(event_type: str, peer_id: str, payload: dict[str, Any]) -> 
         record["psk_degraded"] = str(exc)
     except Exception as sign_exc:  # noqa: BLE001 -- audit must be soft per contract (lines 768-771)
         # F3 (PR #195 review): widen the fail-soft contract beyond
-        # AuditPSKDegradedError. A malformed ``STRANDS_MESH_AUDIT_PSK``
-        # value, future stricter hmac input validation, or an
-        # ``_AUDIT_STATE`` race could otherwise raise here and crash
-        # the safety code path -- the very outcome the docstring
-        # contracts against. Log the failure at ERROR (operator-
-        # observable) and continue with an unsigned write so the audit
-        # event itself is still preserved.
+        # AuditPSKDegradedError so the safety code path never crashes
+        # on a sign-time error.
+        #
+        # F14-A (PR #195 review): if a PSK was configured at this
+        # moment, write a poison record (``sig="SIGN_FAILED"``) so a
+        # forensic walker holding the same PSK sees the gap as a bad
+        # signature and forces ``ok=False``. Without this, an
+        # unsigned record would be invisible to a verifier running
+        # without the PSK (psk_present=False -> missing_sig branch
+        # not exercised) and silently weaken the documented
+        # PSK-degrade contract.
         logger.error(
-            "[audit] _sign_record raised %s: %s -- writing record unsigned",
+            "[audit] _sign_record raised %s: %s",
             type(sign_exc).__name__,
             sign_exc,
         )
-        # ``sig`` was already initialised to None at the top of this block;
-        # leaving it as-is and skipping the ``record["sig"] = sig`` assignment
-        # below produces the unsigned record we want here.
+        if _audit_psk() is not None:
+            # PSK is configured, but signing failed transiently. Write
+            # a poison record so verify_audit_integrity flags the gap.
+            record["sig"] = "SIGN_FAILED"
+            record["sign_error"] = f"{type(sign_exc).__name__}: {sign_exc}"
+        # else: no PSK configured -- the unsigned write is the
+        # documented dev-mode posture.
     else:
         if sig is not None:
             record["sig"] = sig

@@ -201,3 +201,54 @@ class TestPerIssuerCountFromCache:
         issuer, mono_ts = value
         assert issuer == "alice"
         assert isinstance(mono_ts, float)
+
+
+class TestF14OverCapBlocksLockout:
+    """F14-B (PR #195 review): when an issuer exceeds per_issuer_cap,
+    the lockout MUST NOT engage on their over-cap envelopes. Pre-F14
+    the over-cap branch dropped only the cache slot but still let the
+    fall-through ``self._estop_lockout.set()`` run, defeating the
+    fairness bound's whole point (a sustained attacker at-cap still
+    triggered fleet-wide lockouts on every novel ``t`` they emitted).
+    """
+
+    def test_at_cap_envelope_does_not_engage_lockout(self, monkeypatch):
+        # Tighten cap for fast test
+        monkeypatch.setenv("STRANDS_MESH_RESUME_REPLAY_CACHE_MAX", "8")
+        # 8 / 4 = 2 slots per issuer
+
+        m = core.Mesh.__new__(core.Mesh)
+        m.peer_id = "test-peer"
+        m._estop_replay_cache = {}
+        m._estop_replay_lock = threading.Lock()
+        m._estop_lockout = threading.Event()
+        m._last_estop_ts = 0.0
+        m._running = True
+        m.publish = lambda key, data: None
+        m.publish_safety_event = lambda **kw: None
+
+        now = time.time()
+
+        # First two envelopes from attacker fill the cap and engage lockout
+        for i in range(2):
+            envelope = {"peer_id": "attacker", "t": now + 0.001 * i, "type": "estop"}
+
+            class S:
+                payload = type("P", (), {"to_bytes": lambda self, e=envelope: json.dumps(e).encode()})()
+
+            m._on_safety_estop(S())
+
+        assert m._estop_lockout.is_set(), "first 2 should engage lockout"
+
+        # Clear lockout and try a 3rd envelope (over cap) -- it must NOT re-engage
+        m._estop_lockout.clear()
+        envelope = {"peer_id": "attacker", "t": now + 0.005, "type": "estop"}
+
+        class S2:
+            payload = type("P", (), {"to_bytes": lambda self: json.dumps(envelope).encode()})()
+
+        m._on_safety_estop(S2())
+
+        assert not m._estop_lockout.is_set(), (
+            f"F14-B: over-cap envelope must NOT engage lockout. Cache: {m._estop_replay_cache}"
+        )

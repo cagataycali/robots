@@ -190,6 +190,34 @@ Existing deployments under `STRANDS_MESH_PSK`:
 4. Drop all `STRANDS_MESH_PSK` / `STRANDS_MESH_PEER_KEY*` /
    `STRANDS_MESH_REPLAY_WINDOW` / `STRANDS_MESH_PEER_RATE` env vars.
 
+### Breaking: `policy_provider` is required on `execute` / `start`
+
+Pre-PR, `policy_provider` defaulted to `"mock"` inside the dispatcher.
+`validate_command` (`mesh/security.py`) now REJECTS any `execute` /
+`start` command without an explicit `policy_provider`. This is a
+defence-in-depth gate: silent default-to-mock would let an
+authenticated peer steer the robot at the no-op policy and get arbitrary
+text echoed back without the operator noticing.
+
+Migration for programmatic callers using `Mesh.send` / `Mesh.broadcast`:
+
+```python
+# Pre-PR (silently defaulted to mock):
+mesh.send(target, {"action": "execute", "instruction": "do thing"})
+
+# Post-PR (must specify):
+mesh.send(target, {
+    "action": "execute",
+    "instruction": "do thing",
+    "policy_provider": "mock",     # or "lerobot_local", "groot", etc.
+})
+```
+
+Operators using the LLM tool surface (`tools/robot_mesh.py`) are unaffected --
+the tool already supplies `policy_provider` from its own arg.
+
+---
+
 Dev / lab environments without PKI run `STRANDS_MESH_AUTH_MODE=none` AND `STRANDS_MESH_I_KNOW_THIS_IS_INSECURE=1`
 to keep plain-TCP behaviour; the mesh logs a WARNING at session
 open.

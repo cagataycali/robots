@@ -688,3 +688,62 @@ class TestR22ASeedRequiresHmacWithPSK:
 
         # Without a PSK, every record is trusted as the seed source.
         assert audit._SEQ_COUNTERS.get("operator-2", 0) == 5
+
+
+# === F14-A: poison record on _sign_record transient failure under PSK ===
+
+
+class TestF14SignFailedPoisonRecord:
+    """When ``_sign_record`` raises an unexpected exception (transient
+    error, not the documented PSK-degrade path) AND a PSK is
+    configured, we MUST write a poison record so a forensic walker
+    holding the same PSK sees the gap. Pre-F14 the fail-soft path
+    wrote an unsigned record, which a verifier without the PSK could
+    not distinguish from any other dev-mode write.
+    """
+
+    def test_psk_configured_sign_failure_writes_poison(self, tmp_path, monkeypatch, caplog):
+        monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
+        monkeypatch.setenv("STRANDS_MESH_AUDIT_PSK", "real-psk")
+        audit._AUDIT_STATE.psk_fingerprint = None
+        audit._AUDIT_STATE.seq_loaded = False
+        audit._SEQ_COUNTERS.clear()
+
+        # Patch _sign_record to raise an unexpected RuntimeError
+        def boom(record):
+            raise RuntimeError("synthetic transient sign error")
+
+        monkeypatch.setattr(audit, "_sign_record", boom)
+
+        with caplog.at_level(logging.ERROR, logger="strands_robots.mesh.audit"):
+            audit.log_safety_event("test", "operator-1", {"i": 1})
+
+        # The record should be present with sig=SIGN_FAILED (poison),
+        # NOT unsigned.
+        records = audit.read_audit_log()
+        assert len(records) == 1
+        assert records[0].get("sig") == "SIGN_FAILED", (
+            f"expected poison record under PSK + sign failure; got {records[0]}"
+        )
+        assert "synthetic transient" in records[0].get("sign_error", "")
+
+    def test_no_psk_sign_failure_writes_unsigned(self, tmp_path, monkeypatch):
+        """Without a PSK configured, the dev-mode posture is unsigned
+        records -- the sign-failure path leaves the record unsigned
+        (no poison) since there's no integrity gate to preserve."""
+        monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
+        monkeypatch.delenv("STRANDS_MESH_AUDIT_PSK", raising=False)
+        audit._AUDIT_STATE.psk_fingerprint = None
+        audit._AUDIT_STATE.seq_loaded = False
+        audit._SEQ_COUNTERS.clear()
+
+        def boom(record):
+            raise RuntimeError("dev-mode failure")
+
+        monkeypatch.setattr(audit, "_sign_record", boom)
+        audit.log_safety_event("test", "operator-2", {"i": 2})
+
+        records = audit.read_audit_log()
+        assert len(records) == 1
+        # Unsigned: no `sig` field (dev posture)
+        assert "sig" not in records[0]
