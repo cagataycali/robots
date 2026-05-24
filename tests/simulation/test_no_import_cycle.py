@@ -108,17 +108,24 @@ def test_no_runtime_import_cycles():
 def test_base_has_no_module_level_policy_runner_import():
     """Pin: base.py must NOT import policy_runner at module level (any form).
 
-    Catches BOTH AST shapes that would re-introduce the CodeQL cycle:
+    Catches THREE AST shapes that would re-introduce the CodeQL cycle:
 
     * ``from strands_robots.simulation.policy_runner import PolicyRunner``
-      (``ast.ImportFrom``) - the original pre-fix shape.
-    * ``import strands_robots.simulation.policy_runner`` (``ast.Import``) -
-      the alternate shape a future refactor might choose.
+      at module body (``ast.ImportFrom``) - the original pre-fix shape.
+    * ``import strands_robots.simulation.policy_runner`` at module body
+      (``ast.Import``) - the alternate shape a future refactor might choose.
+    * Either of the above shapes inside a top-level ``if TYPE_CHECKING:``
+      block. CodeQL's ``py/unsafe-cyclic-import`` walks TYPE_CHECKING blocks
+      too, so a TYPE_CHECKING-guarded re-import re-fires the alert just like
+      a runtime import would. (This shape silently slipped past an earlier
+      version of the pin; verified empirically when CodeQL flagged the
+      reintroduced TYPE_CHECKING import on a prior commit on this branch.)
 
-    Both close the same static edge in CodeQL's import graph (alerts #83-#87),
-    so both must fail the pin. Guards against the inverse regression: a
-    future refactor hoisting the lazy imports back to module level would
-    re-introduce ``py/unsafe-cyclic-import``.
+    All three close the same static edge in CodeQL's import graph
+    (alerts #83-#87) and must fail the pin. Guards against the inverse
+    regression: a future refactor hoisting the lazy imports back to module
+    level - whether unguarded or behind TYPE_CHECKING - would re-introduce
+    ``py/unsafe-cyclic-import``.
 
     The lazy ``_lazy_policy_runner()`` helper at base.py module level is
     intentionally NOT flagged - its inner ``from`` lives inside a
@@ -128,24 +135,43 @@ def test_base_has_no_module_level_policy_runner_import():
     base_src = (PKG / "simulation" / "base.py").read_text()
     tree = ast.parse(base_src)
 
-    for node in tree.body:  # module-level statements only
-        if isinstance(node, ast.ImportFrom):
-            if node.module == _TARGET_MODULE:
-                imported_names = [alias.name for alias in node.names]
-                pytest.fail(
-                    f"base.py has a module-level `from {_TARGET_MODULE} import "
-                    f"{imported_names}`. These must live inside the lazy helper "
-                    f"`_lazy_policy_runner()` to avoid CodeQL alerts #83-#87."
-                )
+    def _check_import(node: ast.AST, location: str) -> None:
+        """Fail the pin if `node` imports the target module."""
+        if isinstance(node, ast.ImportFrom) and node.module == _TARGET_MODULE:
+            imported_names = [alias.name for alias in node.names]
+            pytest.fail(
+                f"base.py has a {location} `from {_TARGET_MODULE} import "
+                f"{imported_names}`. These must live inside the lazy helper "
+                f"`_lazy_policy_runner()` to avoid CodeQL alerts #83-#87."
+            )
         elif isinstance(node, ast.Import):
             for alias in node.names:
                 if alias.name == _TARGET_MODULE:
                     pytest.fail(
-                        f"base.py has a module-level `import {alias.name}`. This "
+                        f"base.py has a {location} `import {alias.name}`. This "
                         f"closes the same CodeQL cycle as the `from`-form. The "
                         f"lazy helper `_lazy_policy_runner()` is the only "
                         f"sanctioned site."
                     )
+
+    for node in tree.body:
+        # Direct module-level import statement.
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            _check_import(node, "module-level")
+            continue
+        # Top-level `if TYPE_CHECKING:` block. CodeQL walks these and any
+        # import of policy_runner here re-fires the cycle alert just as a
+        # runtime module-level import would.
+        if isinstance(node, ast.If):
+            test = node.test
+            is_type_checking = (
+                (isinstance(test, ast.Name) and test.id == "TYPE_CHECKING")
+                or (isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING")
+            )
+            if is_type_checking:
+                for child in node.body:
+                    if isinstance(child, (ast.Import, ast.ImportFrom)):
+                        _check_import(child, "TYPE_CHECKING-block")
 
 
 def test_lazy_policy_runner_helper_exists():
