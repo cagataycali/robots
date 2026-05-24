@@ -579,7 +579,7 @@ def _persist_seq_counters() -> None:
                     # weaker than ideal but the safety code path stays
                     # alive (audit persistence is fail-soft by contract).
                     pass
-        except Exception:
+        except Exception:  # noqa: BLE001 -- F16-E (PR #195 review): cleanup path that re-raises; we MUST close the fd on any failure of `fh.flush() / fsync / chmod / replace`, regardless of exception type. The unconditional ``raise`` below preserves the original exception so this is not silently swallowing.
             try:
                 os.close(fd)
             except OSError:

@@ -1883,7 +1883,34 @@ class Mesh(SensorLoopsMixin):
         # log via publish_safety_event.
         _generic_error = {"status": "error", "error": "resume rejected"}
 
-        if not self._estop_lockout.is_set():
+        # F16-C (PR #195 review): close the timing oracle by ALWAYS
+        # running ``hmac.compare_digest`` on every code path, regardless
+        # of whether the lockout is engaged or the override code is
+        # configured. Without this, a remote prober can distinguish
+        # "compare ran" from "compare didn't run" by response time and
+        # learn:
+        #   - whether the lockout is engaged (lockout-not-engaged path
+        #     skipped the compare)
+        #   - whether STRANDS_MESH_OVERRIDE_CODE is configured (unset
+        #     path skipped the compare)
+        # The pre-F16 R5-4 response-shape parity (single generic error
+        # dict) closed the message-shape oracle but not the timing
+        # oracle.
+        #
+        # Strategy: capture lockout state and configured-code presence
+        # FIRST, then unconditionally run the compare. Regardless of
+        # outcome, the rejection branch fires in O(constant) time
+        # relative to whether each pre-condition was met.
+        expected = os.getenv("STRANDS_MESH_OVERRIDE_CODE", "").strip()
+        provided = (override_code or "").strip()
+        lockout_engaged = self._estop_lockout.is_set()
+        # Always perform the compare. If `expected` is empty, compare
+        # against a placeholder of the same byte length as the provided
+        # value so the compare runs to completion either way.
+        compare_target = expected.encode() if expected else b"\x00" * max(1, len(provided))
+        compare_ok = hmac.compare_digest(compare_target, provided.encode())
+
+        if not lockout_engaged:
             self.publish_safety_event(
                 event_type="resume_denied",
                 severity="info",
@@ -1891,8 +1918,6 @@ class Mesh(SensorLoopsMixin):
             )
             return _generic_error
 
-        expected = os.getenv("STRANDS_MESH_OVERRIDE_CODE", "").strip()
-        provided = (override_code or "").strip()
         if not expected:
             self.publish_safety_event(
                 event_type="resume_denied",
@@ -1900,9 +1925,8 @@ class Mesh(SensorLoopsMixin):
                 payload={"sender_id": self.peer_id, "reason": "STRANDS_MESH_OVERRIDE_CODE not configured"},
             )
             return _generic_error
-        # Constant-time compare so an attacker probing the override code
-        # cannot use response-time variation to learn it byte-by-byte.
-        if not hmac.compare_digest(expected.encode(), provided.encode()):
+
+        if not compare_ok:
             self.publish_safety_event(
                 event_type="resume_denied",
                 severity="warning",

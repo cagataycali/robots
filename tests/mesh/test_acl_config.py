@@ -457,3 +457,45 @@ class TestJSON5DepSwap:
 # ---------------------------------------------------------------------
 # F3-B-1: bare except on permissive-ACL warning narrowed
 # ---------------------------------------------------------------------
+
+
+# === F16-D: default_acl() shape regression test ===
+
+
+class TestF16DefaultACLShapeIsLoadBearing:
+    """F16-D (PR #195 review): the ``default_acl()`` shape is now load-
+    bearing for the F11-B start-time gate -- if a future refactor
+    accidentally bypasses the ``mtls + permissive default ACL``
+    refusal, this regression test catches a default that becomes
+    accidentally less permissive (which would silently break the
+    first-run UX) OR more permissive in a non-obvious way (e.g. allow
+    + non-empty rules) which would pass the F11-C is_truly_permissive_default
+    check while shipping a different posture.
+    """
+
+    def test_default_acl_is_truly_permissive_shape(self):
+        from strands_robots.mesh._acl_config import default_acl
+
+        d = default_acl("strands")
+        # Required fields present
+        assert d["enabled"] is True
+        assert d["default_permission"] == "allow"
+        # Empty rules/subjects/policies -- the documented permissive-by-
+        # design shape that F11-C's loader logic special-cases.
+        assert d["rules"] == []
+        assert d["subjects"] == []
+        assert d["policies"] == []
+
+    def test_is_default_acl_in_use_picks_up_default(self, monkeypatch):
+        """When STRANDS_MESH_ACL_FILE is unset, is_default_acl_in_use()
+        returns True so Mesh.start() can fire the F11-B gate."""
+        from strands_robots.mesh._acl_config import is_default_acl_in_use
+
+        monkeypatch.delenv("STRANDS_MESH_ACL_FILE", raising=False)
+        assert is_default_acl_in_use() is True
+
+    def test_is_default_acl_in_use_returns_false_with_file(self, monkeypatch):
+        from strands_robots.mesh._acl_config import is_default_acl_in_use
+
+        monkeypatch.setenv("STRANDS_MESH_ACL_FILE", "/some/path/acl.json5")
+        assert is_default_acl_in_use() is False

@@ -294,7 +294,18 @@ def _build_config() -> Any:
         # WARNING on every session open so operators who forgot the env
         # var hear about it -- parallel to the auth_mode=none warning
         # below.
-        if _acl_config.is_default_acl_in_use():
+        # F16-B (PR #195 review): only emit this WARNING when the
+        # operator has NOT explicitly opted into the dev/lab posture.
+        # Mesh.start emits a more-specific INFO/ERROR breadcrumb with
+        # the opt-in context; emitting both fires two log lines about
+        # the same thing on every session open AND has the WARNING
+        # contradict the operator's explicit acknowledgement.
+        accept_permissive = os.getenv("STRANDS_MESH_ACCEPT_PERMISSIVE_ACL", "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        if _acl_config.is_default_acl_in_use() and not accept_permissive:
             logger.warning(
                 "STRANDS_MESH_ACL_FILE unset -- using PERMISSIVE built-in "
                 "default ACL. Any CA-signed peer can publish/subscribe "
