@@ -25,22 +25,17 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from strands_robots.policies import Policy
+    from strands_robots.simulation.policy_runner import PolicyRunner, VideoConfig
 
-# PolicyRunner and VideoConfig are imported lazily inside ``_lazy_policy_runner``
-# (function body, executes at call time only). The four ``SimEngine`` methods
-# that need them - ``run_policy`` / ``replay_episode`` / ``eval_policy`` /
-# ``evaluate_benchmark`` - obtain them via that helper.
-#
-# A module-level import (whether direct or behind ``if TYPE_CHECKING``) would
-# close a cycle with ``strands_robots.simulation.policy_runner``, which imports
-# ``SimEngine`` from this module under TYPE_CHECKING. CodeQL's
-# ``py/unsafe-cyclic-import`` rule walks TYPE_CHECKING blocks and treats both
-# edges as load-bearing, so even a TYPE_CHECKING-only re-import here re-fires
-# alerts #83-#87. The helper's return annotation therefore uses string
-# forward-references (``type["PolicyRunner"]`` / ``type["VideoConfig"]``):
-# under ``from __future__ import annotations`` (already in effect) all type
-# hints are string-form at runtime, so no module-level name resolution is
-# needed. mypy resolves the strings via the lazy import inside the helper body.
+# PolicyRunner and VideoConfig are imported lazily inside the run_policy /
+# replay / eval_policy / evaluate_benchmark methods that use them. A
+# module-level runtime import would close a cycle with
+# strands_robots.simulation.policy_runner, which imports SimEngine from
+# this module under TYPE_CHECKING - CodeQL's py/unsafe-cyclic-import rule
+# walks TYPE_CHECKING blocks and flagged that loop (CodeQL alerts #83, #84).
+# The lazy approach is safe because ``from __future__ import annotations``
+# (already in effect) makes all type hints string-form at runtime, so no
+# name resolution is needed at import time.
 #
 # Note: ``OnFrame`` from policy_runner is similarly omitted; ``evaluate_benchmark``
 # uses the structural ``Callable[[int, dict, dict], None]`` type directly so no
@@ -52,7 +47,7 @@ if TYPE_CHECKING:
 # one-line edit (and is also pinned by ``tests/simulation/test_no_import_cycle.py``).
 
 
-def _lazy_policy_runner() -> tuple[type["PolicyRunner"], type["VideoConfig"]]:
+def _lazy_policy_runner() -> tuple[type[PolicyRunner], type[VideoConfig]]:
     """Lazy import shim for ``PolicyRunner`` and ``VideoConfig``.
 
     Defined at module level for discoverability, but the inner
