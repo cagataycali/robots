@@ -472,13 +472,32 @@ def _load_seq_counters() -> None:
                 # could poison the seq counter restore.
                 if psk is not None:
                     sig = record.get("sig")
-                    if not isinstance(sig, str) or sig == "PSK_DEGRADED":
+                    if not isinstance(sig, str) or sig in ("PSK_DEGRADED", "SIGN_FAILED"):
                         unverified_skipped += 1
                         continue
                     expected = hmac.new(psk, _canonical_bytes(record), hashlib.sha256).hexdigest()
                     if not hmac.compare_digest(sig, expected):
                         unverified_skipped += 1
                         continue
+                # F15-A (PR #195 review): even without a PSK we cap the
+                # seq seed at a sane upper bound so a single forged log
+                # line cannot poison the counter to 10**9 and silently
+                # deny the legitimate writer the next ~billion seq
+                # values. Real per-peer audit volumes are tens of
+                # millions per year; a seq seed > 100M is almost
+                # certainly forged. Reject and audit the rejection at
+                # WARNING so the operator sees it.
+                _MAX_SEED_SEQ = 100_000_000
+                if seq > _MAX_SEED_SEQ:
+                    logger.warning(
+                        "[audit] refusing to seed seq counter for %r from "
+                        "audit-log seq=%d (cap=%d, possibly forged record)",
+                        peer_id,
+                        seq,
+                        _MAX_SEED_SEQ,
+                    )
+                    unverified_skipped += 1
+                    continue
                 if seq > _SEQ_COUNTERS.get(peer_id, 0):
                     _SEQ_COUNTERS[peer_id] = seq
                     verified += 1
@@ -699,9 +718,16 @@ def _sign_record(record: dict[str, Any]) -> str | None:
     """
     psk = _audit_psk()
     current_fp = _psk_fingerprint(psk)
-    # F3 (PR #195 review): atomic compare-and-set on the PSK fingerprint
-    # snapshot so multi-threaded writers cannot land a partial view
-    # inside the read-modify-compare window.
+    # F3 + F15-B (PR #195 review): atomic compare-and-set AND comparison
+    # under one lock. Pre-F15 the lock only held the snapshot fetch +
+    # first-time set; the elif compare ran outside the lock. The
+    # docstring at lines 150-158 promised "the entire fingerprint
+    # check" was atomic; that claim now actually holds. Concretely:
+    # without F15-B, two threads racing on a PSK rotation could each
+    # read the same pre-rotation snapshot, then both pass the
+    # ``snapshot == current_fp`` check (both seeing post-rotation
+    # current_fp), and both write under the new key without one
+    # raising AuditPSKDegradedError.
     with _PSK_STATE_LOCK:
         snapshot = _AUDIT_STATE.psk_fingerprint
         if snapshot is None:
@@ -709,7 +735,12 @@ def _sign_record(record: dict[str, Any]) -> str | None:
             # treat the current call as matching itself (no transition).
             _AUDIT_STATE.psk_fingerprint = current_fp
             snapshot = current_fp
-    if snapshot != current_fp:
+
+        if snapshot != current_fp:
+            transition_detected = True
+        else:
+            transition_detected = False
+    if transition_detected:
         # PSK transition: set->unset, unset->set, OR rotated value.
         # All three break verifiability symmetrically; refuse.
         if snapshot != b"" and current_fp == b"":

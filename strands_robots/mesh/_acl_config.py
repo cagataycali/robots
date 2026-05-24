@@ -59,15 +59,17 @@ ACL_FILE_MAX_BYTES: int = 256 * 1024
 # strictly safer than a hand-rolled approximation. ``json5`` is already
 # transitively available in many Python deployments; we add it to the
 # ``mesh`` extra so it ships with the rest of the wire-layer code.
+# F15-E: imported lazily inside ``_parse_json5`` -- only paid by
+# operators who actually load an ACL file.
 
-try:
-    import json5  # type: ignore[import-not-found]
-except ImportError as exc:
-    raise ImportError(
-        "json5 is required by strands_robots.mesh -- install via "
-        "``pip install strands-robots[mesh]`` (which pulls in json5) "
-        "or ``pip install json5``"
-    ) from exc
+# F15-E (PR #195 review): json5 is imported lazily inside
+# ``_parse_json5`` rather than at module top-level. Pre-F15 every
+# import of ``strands_robots.mesh`` (including ``session.py`` for
+# ``auth_mode=none`` dev paths) triggered the json5 import even when
+# no ACL file is loaded. Operators running with no ACL file (the
+# permissive default) and no ``mesh`` extra installed got an
+# ``ImportError`` at import time when they didn't need the dep.
+# The loader is the only consumer; lazy-import there.
 
 
 def _parse_json5(raw: str, path: Path) -> Any:
@@ -78,6 +80,14 @@ def _parse_json5(raw: str, path: Path) -> Any:
     boundary: a malformed file does NOT silently degrade to the
     permissive default.
     """
+    try:
+        import json5  # type: ignore[import-not-found]
+    except ImportError as exc:
+        raise ImportError(
+            "json5 is required to parse STRANDS_MESH_ACL_FILE -- install "
+            "via ``pip install strands-robots[mesh]`` (which pulls in "
+            "json5) or ``pip install json5``"
+        ) from exc
     try:
         return json5.loads(raw)
     except ValueError as exc:

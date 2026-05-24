@@ -611,7 +611,12 @@ class Mesh(SensorLoopsMixin):
         try:
             raw = sample.payload.to_bytes().decode()
             data = json.loads(raw)
-        except Exception:
+        except (AttributeError, UnicodeDecodeError, json.JSONDecodeError):
+            # F15-D (PR #195 review): narrow per AGENTS.md > "Exception
+            # Clauses Must Be Narrow". Same tuple as the four other
+            # wire-input handlers (_on_cmd, _on_response,
+            # _on_safety_estop, _on_safety_resume).
+            # Pin: tests/mesh/test_wire_handler_narrow_except.py
             return
         if not isinstance(data, dict):
             return
@@ -852,7 +857,15 @@ class Mesh(SensorLoopsMixin):
         # could observe the response topic. D1 closed the outbound side;
         # this closes the symmetric receive-side surface.
         turn = data.get("turn_id") or uuid.uuid4().hex
-        cmd = data.get("command", data)
+        # F15-C (PR #195 review): require an explicit ``command`` key.
+        # Pre-F15 the fallback ``data.get("command", data)`` allowed a
+        # peer to publish a flat-shape envelope (sender_id, turn_id,
+        # action, instruction, policy_provider all at top level) and
+        # have ``data`` itself treated as the command. R24-B rejected
+        # bare-string non-dict commands; this closes the symmetric
+        # flat-dict-envelope shape -- the wire contract REQUIRES a
+        # ``command`` field whose value is a dict.
+        cmd = data.get("command")
         # R24-B: Reject non-dict commands at the wire boundary. A bare-string
         # coercion here would bypass validate_command's dict-shape contract --
         # any peer that survives mTLS+ACL could drive the robot at the mock
@@ -860,7 +873,7 @@ class Mesh(SensorLoopsMixin):
         # {"action":"execute",...}. Outgoing send/broadcast/tell still accept
         # the ergonomic dict-or-string forms because tell() wraps internally.
         # See PR #195 thread PRRT_kwDORUMiZs6EUu8S.
-        if not isinstance(cmd, dict):
+        if cmd is None or not isinstance(cmd, dict):
             logger.warning(
                 "[mesh] %s: rejected non-dict cmd from %s (type=%s)",
                 self.peer_id,

@@ -439,9 +439,19 @@ class TestJSON5DepSwap:
         ):
             assert not hasattr(ac, name), f"{name} should have been removed in F3-A"
 
-    def test_json5_pep_dependency_imported(self):
-        """json5 must be importable from _acl_config (mesh extra)."""
-        assert ac.json5 is not None
+    def test_json5_pep_dependency_lazy_import(self):
+        """json5 is imported lazily inside ``_parse_json5`` (F15-E).
+        Pre-F15 the import was at module top, which forced the dep
+        on dev users running auth_mode=none who don't load an ACL
+        file. Lazy-import means the dep is only paid when an ACL
+        file actually needs to be parsed."""
+        # Module no longer carries a top-level json5 attribute
+        assert not hasattr(ac, "json5"), (
+            "F15-E regression: json5 should be lazy-imported inside _parse_json5, not at module top-level"
+        )
+        # And calling _parse_json5 still works (proves the lazy import path)
+        result = ac._parse_json5('{"foo": "bar"}', Path("/dev/null"))
+        assert result == {"foo": "bar"}
 
 
 # ---------------------------------------------------------------------

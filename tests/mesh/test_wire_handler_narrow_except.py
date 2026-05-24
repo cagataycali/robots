@@ -86,3 +86,20 @@ def test_bridge_transport_dedup_decode_uses_narrow_tuple() -> None:
         "tuple as the four wire handlers in core.py "
         "(AGENTS.md > Review Learnings #86)"
     )
+
+
+# === F15-D: _on_presence is the fifth wire-input handler ===
+
+
+def test_on_presence_uses_narrow_exception_tuple() -> None:
+    """F15-D (PR #195 review): ``_on_presence`` is the fifth wire-input
+    handler in core.py. Pre-F15 it was the only one with a bare
+    ``except Exception`` on the parse path -- AGENTS.md > Review
+    Learnings (#86) calls that out as forbidden, and the same threat
+    model applies to presence (a Zenoh sample.payload parse).
+
+    Same tuple as the other four wire handlers."""
+    src = _source_of(mesh_core.Mesh._on_presence)
+    assert "except (AttributeError, UnicodeDecodeError, json.JSONDecodeError):" in src, (
+        "_on_presence must use the same narrow tuple as the four other wire handlers"
+    )
