@@ -224,9 +224,8 @@ class TestDataConfigMap:
         from strands_robots.tools.gr00t_inference import gr00t_inference
 
         doc = gr00t_inference.__doc__ or ""
-        assert "unitree_g1_sonic" in doc
-        assert "finetuned checkpoint" in doc, (
-            "Posttrain disclaimer must remain to prevent silent garbage actions on stock N1.7-3B"
+        assert any("unitree_g1_sonic" in line and "finetuned checkpoint" in line for line in doc.splitlines()), (
+            "Posttrain disclaimer must stay on the same line as unitree_g1_sonic"
         )
 
     def test_unitree_g1_real_alias(self):
