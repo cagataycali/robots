@@ -350,16 +350,69 @@ def default_acl(namespace: str) -> dict[str, Any]:
     }
 
 
-def is_default_acl_in_use() -> bool:
-    """Return True when the permissive built-in default ACL is active.
+def _is_permissive_acl_shape(data: dict[str, Any]) -> bool:
+    """F18-B (PR #195 review): inspect the resolved ACL *shape* for
+    the permissive pattern, regardless of where the dict came from
+    (built-in default or operator-supplied file).
 
-    A True return means *no* operator-supplied ACL is in effect: any peer
-    that survives the mTLS handshake can publish and subscribe on any key.
-    Callers (Mesh.start) emit a WARNING when this is combined with
-    ``STRANDS_MESH_AUTH_MODE=mtls`` so production deployments that forgot
-    to enumerate cert CNs hear about it on every session open.
+    The dangerous shape is ``default_permission == "allow"`` AND every
+    explicit rule/subject/policy collection empty. This collapses the
+    F11-C / F9-E "operator file with permissive shape silently
+    bypasses the gate" surface into one truth source -- the gate now
+    triggers on the wire-effective posture, not on the env-var
+    presence.
     """
-    return not os.getenv("STRANDS_MESH_ACL_FILE", "").strip()
+    if not isinstance(data, dict):
+        return False
+    if data.get("default_permission") != "allow":
+        return False
+    return not data.get("rules") and not data.get("subjects") and not data.get("policies")
+
+
+def is_default_acl_in_use(namespace: str = "strands") -> bool:
+    """Return True when the wire-effective ACL is permissive-by-shape.
+
+    A True return means *the resolved ACL* (whether built-in default
+    or operator-supplied) grants any CA-signed peer publish/subscribe
+    on any key. The check is shape-based (see
+    :func:`_is_permissive_acl_shape`) so an operator file with the
+    same permissive pattern as :func:`default_acl` triggers the same
+    refuse-to-start gate at :class:`Mesh` start.
+
+    Callers (Mesh.start) emit ERROR + refuse-to-start when this is
+    combined with ``STRANDS_MESH_AUTH_MODE=mtls`` and the operator has
+    not opted in via ``STRANDS_MESH_ACCEPT_PERMISSIVE_ACL=1``.
+
+    F18-B (PR #195 review): pre-F18 this returned ``not env_var_set``
+    -- an operator who supplied a permissive file silenced the gate
+    while running with the same posture the gate was supposed to
+    refuse. Now we resolve the file (or fall back to default) and
+    inspect its shape.
+
+    Failure mode: if the operator-supplied file fails to load
+    (parse error, bad shape, IO error), the gate fails CLOSED -- we
+    return ``True`` so :class:`Mesh.start` refuses to bring up the
+    wire. A broken ACL file is a configuration emergency, not a
+    "fall back to permissive" situation.
+    """
+    path_env = os.getenv("STRANDS_MESH_ACL_FILE", "").strip()
+    if not path_env:
+        # Built-in default: known to be permissive-by-shape.
+        return True
+    try:
+        resolved = _load_acl_file(Path(path_env))
+    except (OSError, ValueError, FileNotFoundError) as exc:
+        # F18-B: fail closed. A broken ACL file is treated as the
+        # most-dangerous-known posture so the operator hears about it
+        # at start-up rather than silently degrading to permissive.
+        logger.warning(
+            "[mesh] ACL file %s could not be loaded for shape check (%s); "
+            "treating as permissive-by-default for the start-time gate",
+            path_env,
+            exc,
+        )
+        return True
+    return _is_permissive_acl_shape(resolved)
 
 
 def resolve_acl(namespace: str) -> dict[str, Any]:

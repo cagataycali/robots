@@ -351,11 +351,34 @@ class TestIsDefaultACLInUse:
 
         assert ac.is_default_acl_in_use() is True
 
-    def test_set_to_path_returns_false(self, monkeypatch):
-        monkeypatch.setenv("STRANDS_MESH_ACL_FILE", "/etc/mesh-acl.json5")
+    def test_set_to_strict_path_returns_false(self, monkeypatch, tmp_path):
+        """F18-B: env-var pointing to a STRICT (non-permissive-shape)
+        ACL file returns False -- the gate only fires on the
+        permissive shape, regardless of source.
+        """
+        strict_file = tmp_path / "strict.json5"
+        strict_file.write_text(
+            '{"enabled": true, "default_permission": "deny", '
+            '"rules": [{"id": "r", "permission": "allow", '
+            '"flows": ["egress"], "messages": ["put"], '
+            '"key_exprs": ["strands/op/cmd"]}], '
+            '"subjects": [{"id": "r", "cert_common_names": ["op"]}], '
+            '"policies": [{"rules": ["r"], "subjects": ["r"]}]}'
+        )
+        monkeypatch.setenv("STRANDS_MESH_ACL_FILE", str(strict_file))
         from strands_robots.mesh import _acl_config as ac
 
         assert ac.is_default_acl_in_use() is False
+
+    def test_set_to_unloadable_path_fails_closed(self, monkeypatch):
+        """F18-B: env-var pointing to a NONEXISTENT path fails closed
+        (returns True) so a typo does not silently lift the gate."""
+        monkeypatch.setenv("STRANDS_MESH_ACL_FILE", "/etc/mesh-acl.json5")
+        from strands_robots.mesh import _acl_config as ac
+
+        # Pre-F18 returned False; post-F18 the unloadable file fails
+        # closed and triggers the gate.
+        assert ac.is_default_acl_in_use() is True
 
 
 class TestACLFileSymlinkAndTOCTOU:
@@ -494,8 +517,20 @@ class TestF16DefaultACLShapeIsLoadBearing:
         monkeypatch.delenv("STRANDS_MESH_ACL_FILE", raising=False)
         assert is_default_acl_in_use() is True
 
-    def test_is_default_acl_in_use_returns_false_with_file(self, monkeypatch):
+    def test_is_default_acl_in_use_with_strict_file_returns_false(self, monkeypatch, tmp_path):
+        """F18-B: shape-based check. A strict file returns False;
+        previous semantics (env-var-presence -> False) replaced.
+        """
         from strands_robots.mesh._acl_config import is_default_acl_in_use
 
-        monkeypatch.setenv("STRANDS_MESH_ACL_FILE", "/some/path/acl.json5")
+        strict = tmp_path / "strict.json5"
+        strict.write_text(
+            '{"enabled": true, "default_permission": "deny", '
+            '"rules": [{"id": "r", "permission": "allow", '
+            '"flows": ["egress"], "messages": ["put"], '
+            '"key_exprs": ["strands/op/cmd"]}], '
+            '"subjects": [{"id": "r", "cert_common_names": ["op"]}], '
+            '"policies": [{"rules": ["r"], "subjects": ["r"]}]}'
+        )
+        monkeypatch.setenv("STRANDS_MESH_ACL_FILE", str(strict))
         assert is_default_acl_in_use() is False

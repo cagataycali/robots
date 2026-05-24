@@ -38,14 +38,32 @@ def _sample(payload_dict):
     return s
 
 
-def _make_envelope(override_code, *, t=None, peer_id="op-1", proof_nonce=None):
-    """Mint a valid resume envelope keyed off a specific override code."""
+def _make_envelope(override_code, *, t=None, peer_id="op-1", proof_nonce=None, lockout_elapsed_s=1.0):
+    """Mint a valid resume envelope keyed off a specific override code.
+
+    F18-A: the HMAC binds (peer_id, t, lockout_elapsed_s, proof_nonce)
+    via a deterministic JSON encoding -- we mirror that on the issuing
+    fixture side so the receiver-side compare passes.
+    """
+    import json as _json
+
     proof_nonce = proof_nonce or uuid.uuid4().hex
-    proof = hmac.new(override_code.encode(), proof_nonce.encode(), "sha256").hexdigest()
+    envelope_t = t if t is not None else time.time()
+    mac_input = _json.dumps(
+        {
+            "peer_id": peer_id,
+            "t": envelope_t,
+            "lockout_elapsed_s": lockout_elapsed_s,
+            "proof_nonce": proof_nonce,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    proof = hmac.new(override_code.encode(), mac_input, "sha256").hexdigest()
     return {
         "peer_id": peer_id,
-        "t": t if t is not None else time.time(),
-        "lockout_elapsed_s": 1.0,
+        "t": envelope_t,
+        "lockout_elapsed_s": lockout_elapsed_s,
         "proof_nonce": proof_nonce,
         "override_proof": proof,
     }
@@ -277,3 +295,86 @@ class TestResumeStrictPeerId:
 # ---------------------------------------------------------------------
 # F3-B-4: remote_estop_redundant audit on second-operator estop
 # ---------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------
+# F18-A: HMAC binds envelope routing fields (peer_id, t,
+# lockout_elapsed_s, proof_nonce). A captured envelope mutated on ANY
+# of those four fields by an attacker is rejected at the MAC layer
+# regardless of the cache state.
+# ---------------------------------------------------------------------
+
+
+def test_f18a_captured_envelope_with_mutated_peer_id_rejected(monkeypatch):
+    """Captured legitimate envelope, attacker rewrites peer_id only:
+    pre-F18 the MAC compare passed (covered nonce only), and the
+    cache key (issuer_id, proof_nonce) became (NEW_id, proof_nonce)
+    -- a cache miss -- so the lockout cleared on every replay.
+    Post-F18 the MAC compare fails because peer_id is now bound."""
+    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret")
+    m = _make_mesh()
+
+    # 1. Legitimate envelope minted by the canonical issuer.
+    env = _make_envelope("secret", peer_id="op-legit")
+
+    # 2. Attacker captures the envelope and mutates peer_id only.
+    env["peer_id"] = "op-attacker-impersonating"
+
+    # 3. Lockout is engaged; receiver sees the mutated envelope.
+    m._estop_lockout.set()
+    m._on_safety_resume(_sample(env))
+
+    # The lockout MUST stay engaged -- F18 rejects mutated envelopes
+    # at the MAC layer.
+    assert m._estop_lockout.is_set() is True
+
+
+def test_f18a_captured_envelope_with_mutated_t_rejected(monkeypatch):
+    """Captured legitimate envelope, attacker rewrites t to bypass
+    the freshness check (push it forward) -- post-F18 the MAC compare
+    fails because t is now bound to the signature."""
+    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret")
+    m = _make_mesh()
+
+    # Mint at t=now.
+    original_t = time.time()
+    env = _make_envelope("secret", t=original_t, peer_id="op-legit")
+
+    # Attacker forwards t by 1 second.
+    env["t"] = original_t + 1.0
+
+    m._estop_lockout.set()
+    m._on_safety_resume(_sample(env))
+
+    assert m._estop_lockout.is_set() is True
+
+
+def test_f18a_captured_envelope_with_mutated_lockout_elapsed_rejected(monkeypatch):
+    """Mutating lockout_elapsed_s (forensic noise field) also breaks
+    the MAC -- the field is bound, so the receiver cannot trust any
+    of these wire fields without the issuer's cooperation."""
+    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret")
+    m = _make_mesh()
+
+    env = _make_envelope("secret", peer_id="op-legit", lockout_elapsed_s=2.5)
+    env["lockout_elapsed_s"] = 9999.0  # attacker rewrites
+
+    m._estop_lockout.set()
+    m._on_safety_resume(_sample(env))
+
+    assert m._estop_lockout.is_set() is True
+
+
+def test_f18a_envelope_without_lockout_elapsed_s_rejected(monkeypatch):
+    """A malformed envelope missing lockout_elapsed_s is rejected
+    outright before MAC compare (F18-A shape gate)."""
+    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret")
+    m = _make_mesh()
+
+    env = _make_envelope("secret", peer_id="op-legit")
+    del env["lockout_elapsed_s"]
+
+    m._estop_lockout.set()
+    m._on_safety_resume(_sample(env))
+
+    assert m._estop_lockout.is_set() is True

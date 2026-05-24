@@ -1489,18 +1489,11 @@ class Mesh(SensorLoopsMixin):
             )
             return
 
-        expected_proof = hmac.new(
-            local_code.encode(),
-            proof_nonce.encode(),
-            "sha256",
-        ).hexdigest()
-        if not hmac.compare_digest(expected_proof, provided_proof):
-            logger.warning(
-                "[safety] %s: refusing remote resume -- override_proof mismatch "
-                "(issuer's STRANDS_MESH_OVERRIDE_CODE differs from local; constant-time compared)",
-                self.peer_id,
-            )
-            return
+        # F18-A (PR #195 review): the HMAC compare moved BELOW the
+        # envelope_t + issuer_id + lockout_elapsed_s shape validation
+        # because the MAC input now binds those fields. The
+        # ``override_proof`` is only meaningful once we've confirmed
+        # the wire envelope shape that was signed.
 
         # Review feedback: freshness + replay cache.
         # The HMAC by itself authenticates the override code but says
@@ -1553,6 +1546,48 @@ class Mesh(SensorLoopsMixin):
         if not isinstance(issuer_id, str) or not issuer_id:
             logger.warning(
                 "[safety] %s: refusing remote resume -- envelope missing/invalid ``peer_id``",
+                self.peer_id,
+            )
+            return
+
+        # F18-A (PR #195 review): the envelope ``lockout_elapsed_s``
+        # must be an int/float to participate in the bound MAC input.
+        # A missing/invalid value indicates a malformed envelope and
+        # is rejected outright -- the canonical issuer at line 1986
+        # always sets a real elapsed seconds value.
+        envelope_elapsed = data.get("lockout_elapsed_s")
+        if not isinstance(envelope_elapsed, (int, float)):
+            logger.warning(
+                "[safety] %s: refusing remote resume -- envelope missing/invalid ``lockout_elapsed_s``",
+                self.peer_id,
+            )
+            return
+
+        # F18-A (PR #195 review): the HMAC now binds every routing
+        # field (peer_id, t, lockout_elapsed_s, proof_nonce). A captured
+        # envelope mutated by the attacker on ANY of those fields will
+        # fail this compare, closing the replay-mutation surface where
+        # the cache key (issuer_id, proof_nonce) was unsigned.
+        mac_input = json.dumps(
+            {
+                "peer_id": issuer_id,
+                "t": envelope_t,
+                "lockout_elapsed_s": envelope_elapsed,
+                "proof_nonce": proof_nonce,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+        expected_proof = hmac.new(
+            local_code.encode(),
+            mac_input,
+            "sha256",
+        ).hexdigest()
+        if not hmac.compare_digest(expected_proof, provided_proof):
+            logger.warning(
+                "[safety] %s: refusing remote resume -- override_proof mismatch "
+                "(MAC binds peer_id+t+lockout_elapsed_s+proof_nonce; "
+                "captured-and-mutated replay rejected, constant-time compared)",
                 self.peer_id,
             )
             return
@@ -1972,16 +2007,38 @@ class Mesh(SensorLoopsMixin):
         # NOT include the override code itself in the published payload
         # or the audit log -- only the HMAC of (code, nonce).
         proof_nonce = uuid.uuid4().hex
+        envelope_t = time.time()
+        # F18-A (PR #195 review): the HMAC input must bind every
+        # envelope-routing field, not just ``proof_nonce``. Pre-F18 the
+        # MAC covered ``proof_nonce`` alone, so a captured envelope
+        # could be re-emitted with attacker-mutated ``peer_id`` / ``t``
+        # / ``lockout_elapsed_s`` and the receiver-side compare still
+        # passed -- defeating freshness and replay-cache defences whose
+        # cache key includes the unsigned ``peer_id``.
+        #
+        # Bind the canonical wire fields into a deterministic JSON blob
+        # (sort_keys, no whitespace) so issuer + receiver compute the
+        # same digest byte-for-byte.
+        mac_input = json.dumps(
+            {
+                "peer_id": self.peer_id,
+                "t": envelope_t,
+                "lockout_elapsed_s": elapsed,
+                "proof_nonce": proof_nonce,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
         override_proof = hmac.new(
             expected.encode(),
-            proof_nonce.encode(),
+            mac_input,
             "sha256",
         ).hexdigest()
         self.publish(
             "strands/safety/resume",
             {
                 "peer_id": self.peer_id,
-                "t": time.time(),
+                "t": envelope_t,
                 "lockout_elapsed_s": elapsed,
                 "proof_nonce": proof_nonce,
                 "override_proof": override_proof,

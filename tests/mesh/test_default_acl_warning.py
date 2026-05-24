@@ -231,3 +231,79 @@ class TestF17PreSessionGate:
 
         m = mesh_core.Mesh(stub_robot, peer_id="test-r17c", peer_type="robot")
         assert m._refuse_under_permissive_default_acl() is False
+
+
+# === F18-B: shape-based is_default_acl_in_use ===
+
+
+class TestF18ShapeBasedACL:
+    """F18-B (PR #195 review): pre-F18 ``is_default_acl_in_use``
+    returned False whenever ``STRANDS_MESH_ACL_FILE`` was set,
+    regardless of file content. An operator who shipped a permissive
+    file (``default_permission: "allow"`` + empty rules/subjects/
+    policies) silenced the F9-E session-open gate while running with
+    the same posture the gate was supposed to refuse.
+
+    Post-F18 the check is shape-based: it inspects the resolved ACL
+    dict and returns True for any permissive-by-shape resolution.
+    """
+
+    def test_operator_permissive_file_still_triggers_gate(self, monkeypatch, tmp_path):
+        """An operator file with the same permissive shape as
+        ``default_acl()`` is detected and triggers the gate."""
+        from strands_robots.mesh._acl_config import is_default_acl_in_use
+
+        # Operator-supplied file with permissive shape.
+        permissive_file = tmp_path / "permissive.json5"
+        permissive_file.write_text(
+            '{"enabled": true, "default_permission": "allow", "rules": [], "subjects": [], "policies": []}'
+        )
+        monkeypatch.setenv("STRANDS_MESH_ACL_FILE", str(permissive_file))
+
+        assert is_default_acl_in_use() is True, (
+            "F18-B regression: operator-supplied permissive file silenced the gate; "
+            "shape-based check must detect default_permission=allow + empty collections "
+            "regardless of file source."
+        )
+
+    def test_operator_strict_file_does_not_trigger_gate(self, monkeypatch, tmp_path):
+        """An operator file with explicit rules/subjects does NOT
+        trigger the gate -- the gate only fires on the dangerous
+        permissive shape."""
+        from strands_robots.mesh._acl_config import is_default_acl_in_use
+
+        strict_file = tmp_path / "strict.json5"
+        strict_file.write_text(
+            '{"enabled": true, "default_permission": "deny", '
+            '"rules": [{"id": "operator", "permission": "allow", '
+            '"flows": ["egress"], "messages": ["put"], '
+            '"key_exprs": ["strands/op-1/cmd"]}], '
+            '"subjects": [{"id": "operator", "cert_common_names": ["op-1"]}], '
+            '"policies": [{"rules": ["operator"], "subjects": ["operator"]}]}'
+        )
+        monkeypatch.setenv("STRANDS_MESH_ACL_FILE", str(strict_file))
+
+        assert is_default_acl_in_use() is False
+
+    def test_unloadable_acl_file_fails_closed(self, monkeypatch, tmp_path):
+        """A broken/unparseable ACL file fails CLOSED -- treated as
+        permissive so the operator hears about the misconfig at
+        start-up rather than silently degrading to insecure."""
+        from strands_robots.mesh._acl_config import is_default_acl_in_use
+
+        broken_file = tmp_path / "broken.json5"
+        broken_file.write_text("this is not valid JSON5 {[}")
+        monkeypatch.setenv("STRANDS_MESH_ACL_FILE", str(broken_file))
+
+        assert is_default_acl_in_use() is True, (
+            "F18-B fail-closed regression: broken ACL file must be treated "
+            "as permissive at the gate so a typo does not silently lift "
+            "the wire posture."
+        )
+
+    def test_no_env_var_returns_true_default(self, monkeypatch):
+        """No env var = built-in default which IS permissive."""
+        from strands_robots.mesh._acl_config import is_default_acl_in_use
+
+        monkeypatch.delenv("STRANDS_MESH_ACL_FILE", raising=False)
+        assert is_default_acl_in_use() is True

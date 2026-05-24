@@ -83,16 +83,31 @@ def test_resume_cache_value_is_monotonic_not_wall_clock() -> None:
 
     m = _stub_mesh()
     # Resume needs a configured override code on the receiver.
+    # F18-A: HMAC binds (peer_id, t, lockout_elapsed_s, proof_nonce).
+    import json as _json
+
     code = "test-override"
     proof_nonce = "n1"
-    proof = hmac_mod.new(code.encode(), proof_nonce.encode(), hashlib.sha256).hexdigest()
     wall_now = time.time()
+    lockout_elapsed = 1.0
+    mac_input = _json.dumps(
+        {
+            "peer_id": "alice",
+            "t": wall_now,
+            "lockout_elapsed_s": lockout_elapsed,
+            "proof_nonce": proof_nonce,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    proof = hmac_mod.new(code.encode(), mac_input, hashlib.sha256).hexdigest()
 
     with mock.patch.dict(os.environ, {"STRANDS_MESH_OVERRIDE_CODE": code}):
         m._on_safety_resume(
             _envelope(
                 t=wall_now,
                 peer_id="alice",
+                lockout_elapsed_s=lockout_elapsed,
                 proof_nonce=proof_nonce,
                 override_proof=proof,
             )
