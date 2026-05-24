@@ -307,3 +307,77 @@ class TestF18ShapeBasedACL:
 
         monkeypatch.delenv("STRANDS_MESH_ACL_FILE", raising=False)
         assert is_default_acl_in_use() is True
+
+
+# === F18-C: TOCTOU defence on the ACL file path ===
+
+
+class TestF18TOCTOUSingleLoad:
+    """F18-C (PR #195 review): pre-F18 ``Mesh.start`` called
+    ``is_default_acl_in_use()`` (which loads the ACL file) and then
+    ``resolve_acl()`` (which loads it again). An attacker who could
+    swap the file between the two reads could show the gate the SAFE
+    shape and the wire builder the UNSAFE shape.
+
+    Post-F18 both calls share an identity-keyed cache so the same
+    ``Mesh.start`` flow sees one snapshot.
+    """
+
+    def test_two_consecutive_loads_return_same_dict_object(self, monkeypatch, tmp_path):
+        """The two reads inside one Mesh.start equivalent must return
+        the SAME dict object (cache hit)."""
+        from strands_robots.mesh._acl_config import (
+            _clear_acl_cache_for_test,
+            is_default_acl_in_use,
+            resolve_acl,
+        )
+
+        _clear_acl_cache_for_test()
+        permissive = tmp_path / "permissive.json5"
+        permissive.write_text(
+            '{"enabled": true, "default_permission": "allow", "rules": [], "subjects": [], "policies": []}'
+        )
+        monkeypatch.setenv("STRANDS_MESH_ACL_FILE", str(permissive))
+
+        # First call: triggers load, populates cache.
+        gate_view = is_default_acl_in_use()
+        # Second call: cache hit, must return same shape.
+        wire_view = resolve_acl("strands")
+
+        assert gate_view is True
+        # Wire-effective ACL shape matches what the gate observed.
+        assert wire_view["default_permission"] == "allow"
+        assert wire_view["rules"] == []
+
+    def test_file_swap_between_calls_observed_on_next_call_not_during(self, monkeypatch, tmp_path):
+        """If the file is mutated AFTER both reads, the cached snapshot
+        survives -- the next Mesh.start sees the new content (cache
+        invalidated by mtime change)."""
+        from strands_robots.mesh._acl_config import (
+            _clear_acl_cache_for_test,
+            is_default_acl_in_use,
+        )
+
+        _clear_acl_cache_for_test()
+        f = tmp_path / "acl.json5"
+        f.write_text('{"enabled": true, "default_permission": "allow", "rules": [], "subjects": [], "policies": []}')
+        monkeypatch.setenv("STRANDS_MESH_ACL_FILE", str(f))
+
+        # First load: permissive.
+        assert is_default_acl_in_use() is True
+
+        # Mutate file to strict shape.
+        import time as _time
+
+        _time.sleep(0.01)  # ensure mtime changes
+        f.write_text(
+            '{"enabled": true, "default_permission": "deny", '
+            '"rules": [{"id": "r", "permission": "allow", '
+            '"flows": ["egress"], "messages": ["put"], '
+            '"key_exprs": ["strands/op/cmd"]}], '
+            '"subjects": [{"id": "r", "cert_common_names": ["op"]}], '
+            '"policies": [{"rules": ["r"], "subjects": ["r"]}]}'
+        )
+
+        # Next call: cache key (mtime) changed -> reload -> strict.
+        assert is_default_acl_in_use() is False

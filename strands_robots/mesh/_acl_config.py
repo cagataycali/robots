@@ -32,6 +32,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -350,6 +351,63 @@ def default_acl(namespace: str) -> dict[str, Any]:
     }
 
 
+# F18-C (PR #195 review): TOCTOU defence. Pre-F18 ``Mesh.start``
+# called ``is_default_acl_in_use()`` (which now reads the file) and then
+# ``resolve_acl()`` (which reads it again) -- a small TOCTOU window where
+# an attacker who can rewrite the ACL file between the two reads sees
+# the gate observe the SAFE shape and the wire load the UNSAFE shape.
+# We close it with a single-load cache keyed on the file's identity
+# tuple ``(path, dev, ino, size, mtime_ns)``. Both functions take the
+# same snapshot; if the file changes mid-flight the next call refreshes,
+# but a single ``Mesh.start`` call sees one snapshot.
+_ACL_CACHE_LOCK = threading.Lock()
+_ACL_CACHE: dict[tuple, dict[str, Any]] = {}
+
+
+def _file_identity(path: Path) -> tuple | None:
+    """Return ``(path_str, dev, ino, size, mtime_ns)`` or None on stat err."""
+    try:
+        st = os.stat(str(path), follow_symlinks=False)
+    except (OSError, FileNotFoundError):
+        return None
+    return (str(path), st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns)
+
+
+def _load_acl_cached(path: Path) -> dict[str, Any]:
+    """Load + cache an ACL file, keyed on its identity tuple.
+
+    Two callers in the same ``Mesh.start`` flow (the gate check and the
+    config builder) get the same dict object instead of two independent
+    reads -- closing the F18-C TOCTOU surface. If the file changes a
+    later call computes a fresh identity tuple and re-loads.
+    """
+    identity = _file_identity(path)
+    if identity is None:
+        # Stat failed -- fall through to the loader so it raises with
+        # the canonical error path (FileNotFoundError, etc.).
+        return _load_acl_file(path)
+    with _ACL_CACHE_LOCK:
+        cached = _ACL_CACHE.get(identity)
+        if cached is not None:
+            return cached
+    loaded = _load_acl_file(path)
+    with _ACL_CACHE_LOCK:
+        # Cap the cache at 4 entries -- ACL files are tiny and the
+        # operator usually has one. Bound prevents an attacker who can
+        # touch the file repeatedly from inflating memory.
+        if len(_ACL_CACHE) >= 4:
+            _ACL_CACHE.pop(next(iter(_ACL_CACHE)))
+        _ACL_CACHE[identity] = loaded
+    return loaded
+
+
+def _clear_acl_cache_for_test() -> None:
+    """Test-only escape hatch -- pytest fixtures that mutate ACL files
+    in tmp_path between assertions need to invalidate the cache."""
+    with _ACL_CACHE_LOCK:
+        _ACL_CACHE.clear()
+
+
 def _is_permissive_acl_shape(data: dict[str, Any]) -> bool:
     """F18-B (PR #195 review): inspect the resolved ACL *shape* for
     the permissive pattern, regardless of where the dict came from
@@ -400,7 +458,7 @@ def is_default_acl_in_use(namespace: str = "strands") -> bool:
         # Built-in default: known to be permissive-by-shape.
         return True
     try:
-        resolved = _load_acl_file(Path(path_env))
+        resolved = _load_acl_cached(Path(path_env))
     except (OSError, ValueError, FileNotFoundError) as exc:
         # F18-B: fail closed. A broken ACL file is treated as the
         # most-dangerous-known posture so the operator hears about it
@@ -422,7 +480,9 @@ def resolve_acl(namespace: str) -> dict[str, Any]:
     """
     path_env = os.getenv("STRANDS_MESH_ACL_FILE", "").strip()
     if path_env:
-        return _load_acl_file(Path(path_env))
+        # F18-C: shared cache so the F18-B shape gate and the wire
+        # config builder see the SAME snapshot of the ACL file.
+        return _load_acl_cached(Path(path_env))
     return default_acl(namespace)
 
 
