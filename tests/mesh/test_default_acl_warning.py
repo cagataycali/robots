@@ -165,3 +165,69 @@ class TestPermissiveACLWarningExceptNarrow:
 # ---------------------------------------------------------------------
 # F3-B-2: STRANDS_MESH_CAMERA_DISABLED via _bool_env (lenient parse)
 # ---------------------------------------------------------------------
+
+
+# === F17-A: pre-session ACL gate (no wire activity on refusal) ===
+
+
+class TestF17PreSessionGate:
+    """F17-A (PR #195 review): the F11-B refuse-and-return gate
+    previously fired AFTER session acquisition + 6 subscriber
+    declarations, leaving the wire LIVE with the permissive ACL
+    applied -- the very surface the gate was supposed to prevent.
+
+    F17-A moves the gate to the TOP of ``Mesh.start()``, before
+    ``get_session()``. A refusal returns BEFORE any wire activity.
+    """
+
+    def test_refusal_does_not_call_get_session(self, monkeypatch, stub_robot, caplog):
+        """The blocking property: when the gate refuses, get_session()
+        is never called. No subscribers are declared. No wire activity."""
+        from strands_robots.mesh import core as mesh_core
+
+        monkeypatch.setenv("STRANDS_MESH_AUTH_MODE", "mtls")
+        monkeypatch.delenv("STRANDS_MESH_ACCEPT_PERMISSIVE_ACL", raising=False)
+
+        get_session_calls = []
+
+        def fake_get_session():
+            get_session_calls.append(True)
+            return None
+
+        monkeypatch.setattr(mesh_core, "get_session", fake_get_session)
+
+        m = mesh_core.Mesh(stub_robot, peer_id="test-r17", peer_type="robot")
+        with caplog.at_level(logging.ERROR, logger="strands_robots.mesh.core"):
+            m.start()
+
+        # The gate refused; get_session was NEVER called.
+        assert get_session_calls == [], (
+            f"F17-A regression: get_session was called {len(get_session_calls)} time(s); "
+            "the pre-session gate must short-circuit before any wire activity."
+        )
+        # And the mesh did not become alive.
+        assert m._running is False
+        # The operator-facing ERROR was logged.
+        error_msgs = [r.getMessage() for r in caplog.records if r.levelname == "ERROR"]
+        assert any("PERMISSIVE DEFAULT ACL ACTIVE UNDER MTLS" in msg for msg in error_msgs)
+
+    def test_helper_returns_true_under_dangerous_combo(self, monkeypatch, stub_robot):
+        """The helper itself returns True under mtls + permissive default
+        ACL without opt-in (the dangerous combination)."""
+        from strands_robots.mesh import core as mesh_core
+
+        monkeypatch.setenv("STRANDS_MESH_AUTH_MODE", "mtls")
+        monkeypatch.delenv("STRANDS_MESH_ACCEPT_PERMISSIVE_ACL", raising=False)
+
+        m = mesh_core.Mesh(stub_robot, peer_id="test-r17b", peer_type="robot")
+        assert m._refuse_under_permissive_default_acl() is True
+
+    def test_helper_returns_false_under_optin(self, monkeypatch, stub_robot):
+        """The helper returns False when the operator has opted in."""
+        from strands_robots.mesh import core as mesh_core
+
+        monkeypatch.setenv("STRANDS_MESH_AUTH_MODE", "mtls")
+        monkeypatch.setenv("STRANDS_MESH_ACCEPT_PERMISSIVE_ACL", "1")
+
+        m = mesh_core.Mesh(stub_robot, peer_id="test-r17c", peer_type="robot")
+        assert m._refuse_under_permissive_default_acl() is False

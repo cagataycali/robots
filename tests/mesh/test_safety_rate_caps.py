@@ -23,13 +23,13 @@ from strands_robots.mesh import _zenoh_config as zc
 
 def _downsampling_rules() -> list[dict]:
     """Parse the JSON5 downsampling block back into a rules list."""
-    _, body = zc.downsampling_block("strands")
+    _, body = zc.downsampling_block()
     parsed = json.loads(body)
     return parsed[0]["rules"]
 
 
 def _low_pass_filter_blocks() -> list[dict]:
-    _, body = zc.low_pass_filter_block("strands")
+    _, body = zc.low_pass_filter_block()
     return json.loads(body)
 
 

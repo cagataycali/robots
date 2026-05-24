@@ -276,8 +276,8 @@ def _build_config() -> Any:
         *_zenoh_config.scouting_block(),
         *_zenoh_config.transport_caps_block(),
         _zenoh_config.adminspace_block(),
-        _zenoh_config.downsampling_block(namespace),
-        _zenoh_config.low_pass_filter_block(namespace),
+        _zenoh_config.downsampling_block(),
+        _zenoh_config.low_pass_filter_block(),
     ]
 
     # mTLS + ACL when auth_mode=mtls. The "none" mode emits everything

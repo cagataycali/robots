@@ -255,7 +255,7 @@ def transport_caps_block() -> list[tuple[str, str]]:
     return [("transport/unicast/max_sessions", str(max_sessions))]
 
 
-def downsampling_block(namespace: str) -> tuple[str, str]:
+def downsampling_block() -> tuple[str, str]:
     """Return ``("downsampling", <json5>)`` capping the cmd-publish rate.
 
     A peer publishing to ``{namespace}/*/cmd`` faster than the
@@ -335,7 +335,7 @@ def _filter_interfaces() -> list[str] | None:
     return parts or None
 
 
-def low_pass_filter_block(namespace: str) -> tuple[str, str]:
+def low_pass_filter_block() -> tuple[str, str]:
     """Return ``("low_pass_filter", <json5>)`` capping per-message bytes.
 
     Three filters:

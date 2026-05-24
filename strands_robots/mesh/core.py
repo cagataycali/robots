@@ -177,12 +177,18 @@ def _evict_replay_cache[K](
     Eviction strategy (single-pass, no-op when the cache is below the cap):
 
     1. Drop entries whose stored monotonic timestamp is older than
-       ``now_mono - ttl_s`` (TTL purge -- aligned with the safety-replay
-       freshness window so an entry that no longer protects against any
-       in-window replay is free to evict).
+       ``now_mono - ttl_s`` (TTL purge).
     2. If the cache is still over budget after the TTL purge (cap is full
        of in-window entries -- active flood), drop the oldest 20 percent
        by stored timestamp.
+
+    Caller is responsible for passing the right ``ttl_s``. F17-D
+    (PR #195 review): the safety-replay caches now pass
+    ``RESUME_FRESHNESS_WINDOW_S + RESUME_FORWARD_SKEW_S`` so an
+    accepted forward-skewed envelope (``t = now + skew``) stays in the
+    cache for the full ``freshness + skew`` interval -- preventing a
+    captured forward-skewed envelope from being replayed seconds after
+    its original acceptance window closed.
 
     Single source of truth for both ``_estop_replay_cache`` and
     ``_resume_replay_cache`` eviction. Callers own insertion and the
@@ -279,11 +285,75 @@ class Mesh(SensorLoopsMixin):
         state = "alive" if self._running else "stopped"
         return f"Mesh(peer_id={self.peer_id!r}, type={self.peer_type!r}, {state})"
 
+    def _refuse_under_permissive_default_acl(self) -> bool:
+        """F17-A (PR #195 review): pre-session ACL posture gate.
+
+        Returns True if ``Mesh.start()`` MUST refuse to acquire a session
+        because the operator is running ``mtls + permissive default ACL``
+        without the ``STRANDS_MESH_ACCEPT_PERMISSIVE_ACL`` opt-in.
+
+        F11-B's original placement was AFTER session acquisition + 6
+        subscriber declarations, which left the wire live with the
+        permissive ACL applied. This helper runs at the TOP of ``start()``
+        so a refusal returns BEFORE any wire activity.
+        """
+        try:
+            from strands_robots.mesh._acl_config import is_default_acl_in_use
+            from strands_robots.mesh._zenoh_config import resolve_auth_mode
+
+            if not (resolve_auth_mode() == "mtls" and is_default_acl_in_use()):
+                return False
+        except (ImportError, ValueError) as warn_exc:
+            logger.warning(
+                "[mesh] %s: ACL posture check raised %s: %s -- permissive-ACL gate may be missing; investigate",
+                self.peer_id,
+                type(warn_exc).__name__,
+                warn_exc,
+            )
+            return False
+
+        accept = os.getenv("STRANDS_MESH_ACCEPT_PERMISSIVE_ACL", "").strip().lower()
+        if accept in ("1", "true", "yes"):
+            logger.info(
+                "[mesh] %s: permissive default ACL active under mtls "
+                "(operator opted in via STRANDS_MESH_ACCEPT_PERMISSIVE_ACL).",
+                self.peer_id,
+            )
+            return False
+
+        msg = (
+            "PERMISSIVE DEFAULT ACL ACTIVE UNDER MTLS -- any "
+            "CA-signed peer would be able to publish on **/cmd and "
+            "**/safety/**. This combination turns a single compromised "
+            "cert into a fleet-wide command pivot. Mesh NOT STARTED. "
+            "Either:\n"
+            "  1. Set STRANDS_MESH_ACL_FILE to a literal-CN ACL file "
+            "     enumerating role separation (production posture; see "
+            "     examples/mesh_acl_example.json5).\n"
+            "  2. Set STRANDS_MESH_ACCEPT_PERMISSIVE_ACL=1 to acknowledge "
+            "     the dev/lab posture explicitly (single-tenant only).\n"
+            "  3. Set STRANDS_MESH=false to disable the mesh entirely."
+        )
+        logger.error("[mesh] %s: %s", self.peer_id, msg)
+        return True
+
     # Lifecycle
     def start(self) -> None:
-        """Acquire a Zenoh session and start all publishing loops."""
+        """Acquire a Zenoh session and start all publishing loops.
+
+        F17-A (PR #195 review): the permissive-ACL refuse gate runs
+        BEFORE ``get_session()`` so a refusal short-circuits without
+        touching the wire (F11-B regression where the gate fired
+        post-session-acquisition is now closed).
+        """
         with self._lifecycle_lock:
             if self._running:
+                return
+
+            # F17-A: pre-session ACL posture gate. If this returns True,
+            # the operator has not opted in to the dangerous combination
+            # and we MUST NOT acquire a session.
+            if self._refuse_under_permissive_default_acl():
                 return
 
             session = get_session()
@@ -321,93 +391,9 @@ class Mesh(SensorLoopsMixin):
             with self._subs_lock:
                 self._subs.extend(declared)
 
+            # F17-A: ACL gate moved to ``_refuse_under_permissive_default_acl``,
+            # called at the TOP of start() before session acquisition.
             self._running = True
-            # Warn when running with permissive default ACL under mtls --
-            # any cert-holder can publish on **/cmd and **/safety/**. This is
-            # documented but easy to miss; log loudly at session-open so it
-            # surfaces during incident review (reviewer ask, R19).
-            try:
-                from strands_robots.mesh._acl_config import is_default_acl_in_use
-                from strands_robots.mesh._zenoh_config import resolve_auth_mode
-
-                if resolve_auth_mode() == "mtls" and is_default_acl_in_use():
-                    # F9-E (PR #195 review): promote the
-                    # ``STRANDS_MESH_ACCEPT_PERMISSIVE_ACL`` opt-in from
-                    # "silences the ERROR" to "required to start at all"
-                    # under ``mtls + permissive default ACL``. Per the
-                    # threat-vector table, this combination turns a
-                    # single CA-signed compromise into a fleet-wide
-                    # command-issuance pivot -- the worst tier in the
-                    # document. AGENTS.md > Safety Defaults > "Sim-by-
-                    # default" calls for the inverse: refuse to start
-                    # under the dangerous combination unless the
-                    # operator has explicitly opted in.
-                    #
-                    # Three deployment shapes:
-                    #
-                    # * Production: ``STRANDS_MESH_ACL_FILE`` set ->
-                    #   no warning, no opt-in needed.
-                    # * Dev/lab opt-in: ``STRANDS_MESH_ACCEPT_PERMISSIVE_ACL=1``
-                    #   -> INFO log, mesh starts.
-                    # * Default (no opt-in, no ACL file): mesh REFUSES
-                    #   to start with a clear error explaining the two
-                    #   ways forward.
-                    accept = os.getenv("STRANDS_MESH_ACCEPT_PERMISSIVE_ACL", "").strip().lower()
-                    if accept in ("1", "true", "yes"):
-                        logger.info(
-                            "[mesh] %s: permissive default ACL active under mtls "
-                            "(operator opted in via STRANDS_MESH_ACCEPT_PERMISSIVE_ACL).",
-                            self.peer_id,
-                        )
-                    else:
-                        # F11-B (PR #195 review): refuse-and-return,
-                        # not refuse-and-raise. Pre-F11 raised a
-                        # RuntimeError from Mesh.start which is called
-                        # transitively from Robot()/Simulation()
-                        # constructors via init_mesh -- that crashed
-                        # the first-run UX of `pip install
-                        # strands-robots[mesh]`. The safety property
-                        # we actually want is "no permissive ACL is
-                        # on the wire" -- preserved by returning
-                        # early before session acquisition.
-                        # Construction succeeds; mesh.alive stays
-                        # False; operator sees the loud ERROR.
-                        msg = (
-                            "PERMISSIVE DEFAULT ACL ACTIVE UNDER MTLS -- any "
-                            "CA-signed peer would be able to publish on "
-                            "**/cmd and **/safety/**. This combination "
-                            "turns a single compromised cert into a "
-                            "fleet-wide command pivot. Mesh NOT STARTED. "
-                            "Either:\n"
-                            "  1. Set STRANDS_MESH_ACL_FILE to a literal-CN "
-                            "     ACL file enumerating role separation "
-                            "     (production posture; see "
-                            "     examples/mesh_acl_example.json5).\n"
-                            "  2. Set STRANDS_MESH_ACCEPT_PERMISSIVE_ACL=1 "
-                            "     to acknowledge the dev/lab posture "
-                            "     explicitly (single-tenant only).\n"
-                            "  3. Set STRANDS_MESH=false to disable the "
-                            "     mesh entirely."
-                        )
-                        logger.error("[mesh] %s: %s", self.peer_id, msg)
-                        # Return early WITHOUT acquiring a session.
-                        # ``self._running`` stays False; ``self.alive``
-                        # returns False; no wire activity occurs.
-                        # Pin: tests/mesh/test_default_acl_warning.py
-                        # ::test_mtls_plus_default_acl_does_not_start
-                        return
-            except (ImportError, ValueError) as warn_exc:
-                # Narrowed per AGENTS.md > "Exception Clauses Must Be Narrow":
-                # ImportError covers the lazy ``from . import _acl_config``;
-                # ValueError covers ``resolve_auth_mode`` raising on bad env.
-                # An unexpected exception type is a programmer bug we want
-                # to see in logs, not a silently-swallowed warning loss.
-                logger.warning(
-                    "[mesh] %s: ACL posture check raised %s: %s -- permissive-ACL warning may be missing; investigate",
-                    self.peer_id,
-                    type(warn_exc).__name__,
-                    warn_exc,
-                )
 
             with _LOCAL_ROBOTS_LOCK:
                 _LOCAL_ROBOTS[self.peer_id] = self
@@ -873,15 +859,44 @@ class Mesh(SensorLoopsMixin):
         # {"action":"execute",...}. Outgoing send/broadcast/tell still accept
         # the ergonomic dict-or-string forms because tell() wraps internally.
         # See PR #195 thread PRRT_kwDORUMiZs6EUu8S.
+        rkey = f"strands/{sender}/response/{turn}" if sender else None
         if cmd is None or not isinstance(cmd, dict):
+            # F17-C (PR #195 review): route non-dict envelope rejection
+            # through the same audit + wire-response path as
+            # ValidationError. Pre-F17 this branch was silent on the
+            # wire and in the audit log -- asymmetric with how every
+            # other validation rejection produces a structured error
+            # response and a forensic record.
             logger.warning(
                 "[mesh] %s: rejected non-dict cmd from %s (type=%s)",
                 self.peer_id,
                 sender,
                 type(cmd).__name__,
             )
+            if rkey is not None:
+                self.publish(
+                    rkey,
+                    {
+                        "type": "error",
+                        "responder_id": self.peer_id,
+                        "turn_id": turn,
+                        "error": "validation: command must be a dict with explicit `command` key",
+                        "timestamp": time.time(),
+                    },
+                )
+            try:
+                log_safety_event(
+                    "command_rejected",
+                    self.peer_id,
+                    {
+                        "sender": sender,
+                        "reason": "non-dict envelope or missing command key",
+                        "type": type(cmd).__name__,
+                    },
+                )
+            except (TypeError, ValueError, OSError) as audit_exc:
+                logger.debug("[mesh] %s: audit log unavailable: %s", self.peer_id, audit_exc)
             return
-        rkey = f"strands/{sender}/response/{turn}" if sender else None
 
         # Validate the command shape against the action allowlist + per-action
         # schema (instruction length, duration bounds, policy_host allowlist, ...).
@@ -1316,7 +1331,10 @@ class Mesh(SensorLoopsMixin):
             _evict_replay_cache(
                 ts_view,
                 max_size=_resume_replay_cache_max(),
-                ttl_s=_resume_freshness_window_s(),
+                # F17-D: include forward_skew so a forward-skewed envelope
+                # at t=now+skew stays cached for the full freshness window
+                # rather than the lesser ``freshness`` only.
+                ttl_s=_resume_freshness_window_s() + _resume_forward_skew_s(),
                 now_mono=now_mono,
             )
             # Apply the eviction back to the real cache.
@@ -1576,7 +1594,8 @@ class Mesh(SensorLoopsMixin):
             _evict_replay_cache(
                 self._resume_replay_cache,
                 max_size=_resume_replay_cache_max(),
-                ttl_s=_resume_freshness_window_s(),
+                # F17-D: see _evict_replay_cache docstring.
+                ttl_s=_resume_freshness_window_s() + _resume_forward_skew_s(),
                 now_mono=now_mono,
             )
             self._resume_replay_cache[cache_key] = now_mono

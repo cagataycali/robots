@@ -147,7 +147,7 @@ class TestTransportCaps:
 
 class TestDownsampling:
     def test_default_freq(self):
-        path, value = zc.downsampling_block("ns")
+        path, value = zc.downsampling_block()
         assert path == "downsampling"
         decoded = json.loads(value)
         assert decoded[0]["id"] == "strands_cmd_rate_cap"
@@ -159,7 +159,7 @@ class TestDownsampling:
 
     def test_freq_override(self, monkeypatch):
         monkeypatch.setenv("STRANDS_MESH_CMD_RATE_HZ", "5.0")
-        _, value = zc.downsampling_block("ns")
+        _, value = zc.downsampling_block()
         decoded = json.loads(value)
         rules = {r["key_expr"]: r["freq"] for r in decoded[0]["rules"]}
         assert rules["**/cmd"] == 5.0
@@ -167,7 +167,7 @@ class TestDownsampling:
     def test_freq_oob_rejected(self, monkeypatch):
         monkeypatch.setenv("STRANDS_MESH_CMD_RATE_HZ", "9999999")
         with pytest.raises(ValueError):
-            zc.downsampling_block("ns")
+            zc.downsampling_block()
 
 
 # --- low_pass_filter ----------------------------------------------------
@@ -175,7 +175,7 @@ class TestDownsampling:
 
 class TestLowPassFilter:
     def test_default_caps(self):
-        path, value = zc.low_pass_filter_block("ns")
+        path, value = zc.low_pass_filter_block()
         assert path == "low_pass_filter"
         decoded = json.loads(value)
         cmd, cam = decoded[0], decoded[1]
@@ -197,7 +197,7 @@ class TestLowPassFilter:
         ``enp0s3`` / ``wlp2s0`` / ``cni0`` / ``wg0`` without psutil,
         the cap silently bypassed because no listed NIC matched.
         """
-        _, value = zc.low_pass_filter_block("ns")
+        _, value = zc.low_pass_filter_block()
         decoded = json.loads(value)
         for rule in decoded:
             assert "interfaces" not in rule, (
@@ -211,7 +211,7 @@ class TestLowPassFilter:
         operator-supplied list is attached to every rule verbatim.
         """
         monkeypatch.setenv("STRANDS_MESH_FILTER_INTERFACES", "wlan0, br-mesh ,wg0")
-        _, value = zc.low_pass_filter_block("ns")
+        _, value = zc.low_pass_filter_block()
         decoded = json.loads(value)
         for rule in decoded:
             assert rule["interfaces"] == ["wlan0", "br-mesh", "wg0"]
@@ -222,21 +222,21 @@ class TestLowPassFilter:
         rejects with ``Found empty interface value``).
         """
         monkeypatch.setenv("STRANDS_MESH_FILTER_INTERFACES", "   ,, ,")
-        _, value = zc.low_pass_filter_block("ns")
+        _, value = zc.low_pass_filter_block()
         decoded = json.loads(value)
         for rule in decoded:
             assert "interfaces" not in rule
 
     def test_override_cmd_bytes(self, monkeypatch):
         monkeypatch.setenv("STRANDS_MESH_MAX_CMD_BYTES", "8192")
-        _, value = zc.low_pass_filter_block("ns")
+        _, value = zc.low_pass_filter_block()
         decoded = json.loads(value)
         assert decoded[0]["size_limit"] == 8192
 
     def test_oversize_cap_rejected(self, monkeypatch):
         monkeypatch.setenv("STRANDS_MESH_MAX_CMD_BYTES", "999999999999")
         with pytest.raises(ValueError):
-            zc.low_pass_filter_block("ns")
+            zc.low_pass_filter_block()
 
 
 # --- adminspace ---------------------------------------------------------

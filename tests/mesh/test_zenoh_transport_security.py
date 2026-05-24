@@ -236,7 +236,7 @@ class TestZenohConfigRoundtrip:
         If any builder emits an invalid block, ``zenoh.open()`` raises
         and we catch the regression here.
         """
-        ns = zc.resolve_namespace()
+        zc.resolve_namespace()  # smoke check; namespace plumbed via env
         cfg = zenoh.Config()
         cfg.insert_json5("mode", '"peer"')
         cfg.insert_json5("listen/endpoints", json.dumps(["tcp/127.0.0.1:27030"]))
@@ -245,8 +245,8 @@ class TestZenohConfigRoundtrip:
             *zc.scouting_block(),
             *zc.transport_caps_block(),
             zc.adminspace_block(),
-            zc.downsampling_block(ns),
-            zc.low_pass_filter_block(ns),
+            zc.downsampling_block(),
+            zc.low_pass_filter_block(),
         ):
             cfg.insert_json5(path, value)
         s = zenoh.open(cfg)
@@ -270,7 +270,7 @@ class TestZenohConfigRoundtrip:
         old_cap = os.environ.get("STRANDS_MESH_MAX_CMD_BYTES")
         os.environ["STRANDS_MESH_MAX_CMD_BYTES"] = "256"
         try:
-            lpf = zc.low_pass_filter_block(ns)
+            lpf = zc.low_pass_filter_block()
             cfg_l = _new_config(namespace=ns, listen_port=27031, extra_blocks=[lpf])
             cfg_p = _new_config(namespace=ns, connect=["tcp/127.0.0.1:27031"], extra_blocks=[lpf])
 
