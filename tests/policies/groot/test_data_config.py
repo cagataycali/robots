@@ -221,15 +221,21 @@ class TestDataConfigMap:
         Without this note, users trying the base nvidia/GR00T-N1.7-3B model
         with embodiment_tag="unitree_g1_sonic" get silent garbage actions.
         """
+        import re as _re
+
         from strands_robots.tools.gr00t_inference import gr00t_inference
 
         doc = (gr00t_inference.__doc__ or "").replace("\n", " ")
-        idx = doc.find("unitree_g1_sonic")
-        assert idx != -1, "unitree_g1_sonic must be listed in the gr00t_inference docstring"
-        # Disclaimer must be within ~300 chars of the tag mention so it survives
-        # docstring reflow (line-wrap, formatter changes) but still pins co-location.
-        assert "finetuned checkpoint" in doc[idx : idx + 300], (
-            "unitree_g1_sonic must be documented as requiring a finetuned checkpoint nearby"
+        assert "unitree_g1_sonic" in doc, "unitree_g1_sonic must be listed in the gr00t_inference docstring"
+        # Use regex to assert the disclaimer follows the tag mention without
+        # another ``<tag>`` entry in between -- position-independent, survives
+        # TOC additions or docstring reflow that would defeat doc.find() anchoring.
+        # Negative lookahead rejects matches that cross a ``tag_name`` boundary.
+        pattern = r"unitree_g1_sonic(?:(?!``[a-z_]+``).)*?finetuned checkpoint"
+        matches = _re.findall(pattern, doc)
+        assert matches, (
+            "unitree_g1_sonic must be followed by 'finetuned checkpoint' disclaimer "
+            "before the next double-backtick-quoted tag entry"
         )
 
     def test_unitree_g1_real_alias(self):
