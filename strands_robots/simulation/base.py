@@ -26,6 +26,13 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from strands_robots.policies import Policy
 
+# CodeQL: the AST cycle base <-> policy_runner is a documented false-positive
+# suppressed via .github/codeql/config.yml (py/unsafe-cyclic-import). The
+# runtime is provably safe under `from __future__ import annotations`
+# (PEP 563); pin tests in tests/simulation/test_no_cyclic_imports.py and
+# tests/simulation/test_no_import_cycle.py guard the runtime invariants.
+# See .github/codeql/README.md for the full rationale.
+#
 # PolicyRunner and VideoConfig are used by run_policy / replay / eval_policy.
 # We could defer these with inline lazy imports (and historically did), but
 # policy_runner.py only imports `SimEngine` from base under TYPE_CHECKING so

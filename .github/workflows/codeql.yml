@@ -33,6 +33,9 @@ jobs:
           # surfaced in PR #85 (MJCF interpolation) and PR #90 (subprocess
           # injection / path traversal).
           queries: security-and-quality
+          # Repo-level filters layered on top of the selected suite. See
+          # .github/codeql/README.md for per-rule rationale.
+          config-file: ./.github/codeql/config.yml
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@4e828ff8d448a8a6e532957b1811f387a63867e8  # v3.29.4

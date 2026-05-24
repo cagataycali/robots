@@ -1,0 +1,45 @@
+# CodeQL configuration for strands-robots.
+#
+# Wired into both .github/workflows/codeql.yml (CodeQL) and
+# .github/workflows/codeql-advanced.yml (CodeQL Advanced) via the
+# `config-file:` key on the `github/codeql-action/init` step.
+#
+# See .github/codeql/README.md for the full rationale per query exclusion.
+
+name: "strands-robots CodeQL config"
+
+# Inherit the default query suite selected per workflow (security-and-quality
+# in codeql.yml; default in codeql-advanced.yml). We layer query-filters on
+# top to suppress documented false-positives.
+query-filters:
+  # py/unsafe-cyclic-import:
+  #
+  # Globally suppressed. The rule walks `if TYPE_CHECKING:` blocks for cycle
+  # detection, which makes it fire on the deliberate static-only cycle in
+  # strands_robots/simulation/{base,policy_runner,benchmark}.py. The runtime
+  # is provably safe under `from __future__ import annotations` (PEP 563):
+  # all type hints are string-form at runtime and never resolved at
+  # module-import time. The cycle is structurally required so policy_runner
+  # can call into the SimEngine ABC defined in base while base can advertise
+  # PolicyRunner-typed return values for static checkers.
+  #
+  # This is the only file shape in the repository where the rule fires
+  # today; a global suppression keeps the config small and avoids per-path
+  # filter syntax (CodeQL `query-filters` only filters by id/tags, not by
+  # path). If the rule ever fires on an unrelated file, the matching CodeQL
+  # alert will still appear in the Security tab as long as the underlying
+  # query is available -- this filter only suppresses the alert surfacing,
+  # not the analysis itself.
+  #
+  # Regression contract: tests/simulation/test_no_cyclic_imports.py and
+  # tests/simulation/test_no_import_cycle.py pin the runtime-safety
+  # invariants (modules import cleanly in fresh interpreters; the static
+  # graph between base and policy_runner is acyclic at runtime). Those
+  # pins fail loudly if the runtime cycle is ever introduced, independent
+  # of CodeQL's view.
+  #
+  # Refs: PR #209 (paused, full constraint analysis in S13/R6); issue #215
+  # (this suppression); CodeQL alerts #83-#87, #253-#255 (the recurrent
+  # alerts the suppression closes).
+  - exclude:
+      id: py/unsafe-cyclic-import

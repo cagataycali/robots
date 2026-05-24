@@ -38,6 +38,10 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+# CodeQL: the AST cycle benchmark <-> base is suppressed via
+# .github/codeql/config.yml (py/unsafe-cyclic-import). The edge
+# exists only under TYPE_CHECKING; runtime is safe under PEP 563.
+# See .github/codeql/README.md.
 if TYPE_CHECKING:
     from strands_robots.simulation.base import SimEngine
 

@@ -44,6 +44,10 @@ import numpy as np
 from strands_robots._async_utils import _resolve_coroutine
 from strands_robots.utils import require_optional
 
+# CodeQL: the AST cycle policy_runner <-> base / benchmark is suppressed
+# via .github/codeql/config.yml (py/unsafe-cyclic-import). These edges
+# exist only under TYPE_CHECKING; runtime is safe under PEP 563.
+# See .github/codeql/README.md.
 if TYPE_CHECKING:
     from strands_robots.policies.base import Policy
     from strands_robots.simulation.base import SimEngine
