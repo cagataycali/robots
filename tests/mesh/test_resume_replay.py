@@ -20,7 +20,6 @@ import time
 import uuid
 from unittest.mock import MagicMock
 
-from strands_robots.mesh import core as core_module
 from strands_robots.mesh.core import Mesh
 
 
@@ -149,12 +148,14 @@ def test_envelope_within_forward_skew_accepted(monkeypatch):
 
 
 def test_replay_cache_bounded(monkeypatch):
-    """Replay cache is bounded at RESUME_REPLAY_CACHE_MAX."""
-    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret")
+    """Replay cache is bounded at RESUME_REPLAY_CACHE_MAX.
 
-    # Lower the cap for testing
-    original_max = core_module.RESUME_REPLAY_CACHE_MAX
-    monkeypatch.setattr(core_module, "RESUME_REPLAY_CACHE_MAX", 8)
+    F9-B: hot paths now re-read the env var via lazy resolver, so the
+    test sets the env var directly rather than monkeypatching the
+    module-level constant (which is now only the import-time default).
+    """
+    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret")
+    monkeypatch.setenv("STRANDS_MESH_RESUME_REPLAY_CACHE_MAX", "8")
 
     m = _make_mesh()
     m.publish_safety_event = MagicMock()
@@ -167,9 +168,6 @@ def test_replay_cache_bounded(monkeypatch):
 
     # Cache should be bounded
     assert len(m._resume_replay_cache) <= 8
-
-    # Restore original
-    monkeypatch.setattr(core_module, "RESUME_REPLAY_CACHE_MAX", original_max)
 
 
 def test_envelope_missing_t_field_rejected(monkeypatch):

@@ -68,20 +68,25 @@ def _start_with_stub_session(stub_robot, caplog, level: int = logging.WARNING):
     return caplog.records
 
 
-def test_mtls_plus_default_acl_errors(caplog, monkeypatch, stub_robot):
-    """Default config (mtls + no ACL file) MUST log a permissive-ACL ERROR.
+def test_mtls_plus_default_acl_refuses_to_start(caplog, monkeypatch, stub_robot):
+    """F9-E (PR #195 review): mesh REFUSES to start under
+    ``mtls + permissive default ACL`` unless the operator has set
+    ``STRANDS_MESH_ACL_FILE`` (production) or
+    ``STRANDS_MESH_ACCEPT_PERMISSIVE_ACL=1`` (dev/lab opt-in).
 
-    F8-D escalated this from WARNING to ERROR (matching the auth_mode=none
-    posture in session.py) because a once-per-session WARNING is easy to
-    miss. Operators who deliberately want this posture opt in via
-    ``STRANDS_MESH_ACCEPT_PERMISSIVE_ACL=1``.
+    Promoted from F8-D's "ERROR + still starts" because this combination
+    turns a single CA-signed compromise into a fleet-wide command-
+    issuance pivot per the threat-vector table; AGENTS.md > Safety
+    Defaults calls for refusal-to-start, not just a log line.
     """
     monkeypatch.setenv("STRANDS_MESH_AUTH_MODE", "mtls")
     monkeypatch.delenv("STRANDS_MESH_ACCEPT_PERMISSIVE_ACL", raising=False)
-    records = _start_with_stub_session(stub_robot, caplog)
-    error_msgs = [r.getMessage() for r in records if r.levelname == "ERROR"]
+    with pytest.raises(RuntimeError, match=r"PERMISSIVE DEFAULT ACL ACTIVE"):
+        _start_with_stub_session(stub_robot, caplog)
+    # And the operator-facing ERROR is logged before the refusal.
+    error_msgs = [r.getMessage() for r in caplog.records if r.levelname == "ERROR"]
     assert any("PERMISSIVE DEFAULT ACL ACTIVE UNDER MTLS" in m for m in error_msgs), (
-        f"expected permissive-ACL ERROR; saw error_msgs={error_msgs}"
+        f"expected ERROR breadcrumb; saw {error_msgs}"
     )
 
 

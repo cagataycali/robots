@@ -115,3 +115,60 @@ def test_module_imports_with_no_env_vars(monkeypatch, reload_core):
     assert core.RESUME_FRESHNESS_WINDOW_S == 60.0
     assert core.RESUME_FORWARD_SKEW_S == 5.0
     assert core.RESUME_REPLAY_CACHE_MAX == 4096
+
+
+# === F9-B: lazy resolution of RESUME_* env vars ===
+
+
+class TestResumeEnvLazyResolution:
+    """F9-B (PR #195 review): RESUME_* env vars are now re-read on every
+    safety-handler call, not snapshotted at module import time. This
+    means an operator setting STRANDS_MESH_RESUME_FRESHNESS_S AFTER
+    importing strands_robots.mesh.core sees the new value without a
+    process restart -- removing the import-order coupling reviewer
+    yinsong1986 flagged in the 21:34 batch.
+    """
+
+    def test_freshness_window_resolves_at_call_time(self, monkeypatch):
+        from strands_robots.mesh import core as core_mod
+
+        monkeypatch.setenv("STRANDS_MESH_RESUME_FRESHNESS_S", "120")
+        # Lazy resolver picks up the new value
+        assert core_mod._resume_freshness_window_s() == 120.0
+
+        monkeypatch.setenv("STRANDS_MESH_RESUME_FRESHNESS_S", "30")
+        assert core_mod._resume_freshness_window_s() == 30.0
+
+    def test_forward_skew_resolves_at_call_time(self, monkeypatch):
+        from strands_robots.mesh import core as core_mod
+
+        monkeypatch.setenv("STRANDS_MESH_RESUME_FORWARD_SKEW_S", "10")
+        assert core_mod._resume_forward_skew_s() == 10.0
+
+    def test_replay_cache_max_resolves_at_call_time(self, monkeypatch):
+        from strands_robots.mesh import core as core_mod
+
+        monkeypatch.setenv("STRANDS_MESH_RESUME_REPLAY_CACHE_MAX", "256")
+        assert core_mod._resume_replay_cache_max() == 256
+
+    def test_module_constants_remain_for_back_compat(self):
+        """The module-level RESUME_* constants are still defined (some
+        downstream code may read them); they are the import-time defaults.
+        Hot paths use the lazy resolvers."""
+        from strands_robots.mesh import core as core_mod
+
+        assert hasattr(core_mod, "RESUME_FRESHNESS_WINDOW_S")
+        assert hasattr(core_mod, "RESUME_FORWARD_SKEW_S")
+        assert hasattr(core_mod, "RESUME_REPLAY_CACHE_MAX")
+        assert isinstance(core_mod.RESUME_FRESHNESS_WINDOW_S, float)
+        assert isinstance(core_mod.RESUME_FORWARD_SKEW_S, float)
+        assert isinstance(core_mod.RESUME_REPLAY_CACHE_MAX, int)
+
+    def test_bad_env_falls_back_to_default_at_call_time(self, monkeypatch):
+        """Bad env values fall back to the documented defaults (matching
+        the existing _parse_positive_*_env contracts)."""
+        from strands_robots.mesh import core as core_mod
+
+        monkeypatch.setenv("STRANDS_MESH_RESUME_FRESHNESS_S", "abc")
+        # Falls back to default 60
+        assert core_mod._resume_freshness_window_s() == 60.0

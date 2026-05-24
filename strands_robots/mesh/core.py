@@ -119,22 +119,50 @@ def _parse_positive_int_env(name: str, default: str, *, minimum: int = 1) -> int
     return value
 
 
-#: Resume-envelope freshness window. Envelopes whose t field is
-#: older than this are rejected as potential replays. Operators on
-#: drifty NTP can extend via STRANDS_MESH_RESUME_FRESHNESS_S
+#: Default resume-envelope freshness window. Envelopes whose t field
+#: is older than this are rejected as potential replays. Operators
+#: on drifty NTP can extend via STRANDS_MESH_RESUME_FRESHNESS_S
 #: (sane bound: keep < 600). Bad input falls back to 60.
+#:
+#: F9-B (PR #195 review): the module-level value below is captured
+#: once at import time for backward compatibility with code/tests
+#: that read these as constants. The runtime hot paths
+#: (:meth:`Mesh._on_safety_estop`, :meth:`Mesh._on_safety_resume`)
+#: now call :func:`_resume_freshness_window_s` etc. on every call so
+#: an operator setting STRANDS_MESH_RESUME_* AFTER importing the
+#: module sees the new value without a process restart. The README
+#: contract ("operator-tunable env vars") now actually holds.
 RESUME_FRESHNESS_WINDOW_S: float = _parse_positive_float_env("STRANDS_MESH_RESUME_FRESHNESS_S", "60")
 
-#: Forward-skew tolerance on the envelope t field. Bounds
-#: clock-ahead issuers from minting envelopes that pass freshness
-#: indefinitely. Bad input falls back to 5.
+#: Forward-skew tolerance on the envelope t field. See
+#: :data:`RESUME_FRESHNESS_WINDOW_S` for the lazy-resolution note.
 RESUME_FORWARD_SKEW_S: float = _parse_positive_float_env("STRANDS_MESH_RESUME_FORWARD_SKEW_S", "5")
 
-#: Maximum entries in the per-receiver resume replay cache. Bounded
-#: to prevent attacker-controlled memory growth; eviction is by
-#: oldest 20 percent when the cap is hit (see :meth:).
-#: Bad input falls back to 4096; minimum 1.
+#: Maximum entries in the per-receiver resume replay cache.
+#: See :data:`RESUME_FRESHNESS_WINDOW_S` for lazy-resolution note.
 RESUME_REPLAY_CACHE_MAX: int = _parse_positive_int_env("STRANDS_MESH_RESUME_REPLAY_CACHE_MAX", "4096")
+
+
+def _resume_freshness_window_s() -> float:
+    """Lazy resolver for ``STRANDS_MESH_RESUME_FRESHNESS_S``.
+
+    F9-B: re-reads the env var on every call so operator-set values
+    take effect without a process restart. Cheap (one ``os.getenv``
+    + a regex parse via ``_parse_positive_float_env``) and called
+    only on safety-handler entry, which is bounded by the transport
+    rate cap.
+    """
+    return _parse_positive_float_env("STRANDS_MESH_RESUME_FRESHNESS_S", "60")
+
+
+def _resume_forward_skew_s() -> float:
+    """Lazy resolver for ``STRANDS_MESH_RESUME_FORWARD_SKEW_S``."""
+    return _parse_positive_float_env("STRANDS_MESH_RESUME_FORWARD_SKEW_S", "5")
+
+
+def _resume_replay_cache_max() -> int:
+    """Lazy resolver for ``STRANDS_MESH_RESUME_REPLAY_CACHE_MAX``."""
+    return _parse_positive_int_env("STRANDS_MESH_RESUME_REPLAY_CACHE_MAX", "4096")
 
 
 def _evict_replay_cache[K](
@@ -232,23 +260,19 @@ class Mesh(SensorLoopsMixin):
         # (issuer_peer_id, envelope_t). Closes the captured-estop-replay DoS
         # surface that previously let any peer with live ACL access to
         # safety/** replay a captured envelope indefinitely. Reuses
-        # RESUME_FRESHNESS_WINDOW_S / RESUME_FORWARD_SKEW_S /
-        # RESUME_REPLAY_CACHE_MAX (the safety-replay defenses are
+        # _resume_freshness_window_s() / _resume_forward_skew_s() /
+        # _resume_replay_cache_max() (the safety-replay defenses are
         # symmetric in shape; sharing the bounds keeps env-var surface
         # minimal).
-        self._estop_replay_cache: dict[float, float] = {}
-        # F7-E (PR #195 review): per-issuer slot accounting for the
-        # estop replay cache. The R20 float-only key closes the
-        # peer_id-permutation replay vector (an attacker cannot mint
-        # novel keys by varying the untrusted JSON peer_id), but a
-        # global float dict can be flooded by one attacker pre-
-        # publishing at ``t = now + RESUME_FORWARD_SKEW_S - eps``
-        # to occupy slots that any legitimate same-float-tick estop
-        # would collide on. Bounding the cache *per issuer* means a
-        # single attacker can use at most ``RESUME_REPLAY_CACHE_MAX
-        # / N_distinct_peers`` slots before their oldest entries
-        # are evicted, leaving room for legitimate operators.
-        self._estop_replay_per_issuer: dict[str, int] = {}
+        # F9-A (PR #195 review): cache shape is
+        # ``dict[float_t, (issuer_id, mono_ts)]``. The float key
+        # preserves the R20 peer_id-permutation defence (attacker
+        # cannot mint novel keys by varying untrusted JSON peer_id);
+        # the value carries issuer attribution AND the eviction
+        # timestamp. Per-issuer counts are derived from cache
+        # contents on demand -- no separate dict that can drift
+        # after eviction (the F7-E flaw).
+        self._estop_replay_cache: dict[float, tuple[str, float]] = {}
         self._estop_replay_lock = threading.Lock()
 
     def __repr__(self) -> str:
@@ -307,20 +331,27 @@ class Mesh(SensorLoopsMixin):
                 from strands_robots.mesh._zenoh_config import resolve_auth_mode
 
                 if resolve_auth_mode() == "mtls" and is_default_acl_in_use():
-                    # F8-D (PR #195 review): escalate to ERROR (matching
-                    # the auth_mode=none escalation in session.py:306-311).
-                    # The previous WARNING fired once per session-open and
-                    # was easy to miss in a noisy log; this is the
-                    # dangerous-but-easy-to-miss combination (mtls + no
-                    # role separation) and operator visibility matters.
-                    # Operators who DELIBERATELY want this posture (lab /
-                    # dev fleet, single-tenant) opt in via
-                    # ``STRANDS_MESH_ACCEPT_PERMISSIVE_ACL=1`` to silence
-                    # the ERROR -- a documented escape hatch parallel to
-                    # ``STRANDS_MESH_I_KNOW_THIS_IS_INSECURE``. Without
-                    # the opt-in, the noise IS the feature: permissive
-                    # ACL under mtls is squarely the kind of footgun
-                    # AGENTS.md > Safety Defaults flags.
+                    # F9-E (PR #195 review): promote the
+                    # ``STRANDS_MESH_ACCEPT_PERMISSIVE_ACL`` opt-in from
+                    # "silences the ERROR" to "required to start at all"
+                    # under ``mtls + permissive default ACL``. Per the
+                    # threat-vector table, this combination turns a
+                    # single CA-signed compromise into a fleet-wide
+                    # command-issuance pivot -- the worst tier in the
+                    # document. AGENTS.md > Safety Defaults > "Sim-by-
+                    # default" calls for the inverse: refuse to start
+                    # under the dangerous combination unless the
+                    # operator has explicitly opted in.
+                    #
+                    # Three deployment shapes:
+                    #
+                    # * Production: ``STRANDS_MESH_ACL_FILE`` set ->
+                    #   no warning, no opt-in needed.
+                    # * Dev/lab opt-in: ``STRANDS_MESH_ACCEPT_PERMISSIVE_ACL=1``
+                    #   -> INFO log, mesh starts.
+                    # * Default (no opt-in, no ACL file): mesh REFUSES
+                    #   to start with a clear error explaining the two
+                    #   ways forward.
                     accept = os.getenv("STRANDS_MESH_ACCEPT_PERMISSIVE_ACL", "").strip().lower()
                     if accept in ("1", "true", "yes"):
                         logger.info(
@@ -329,14 +360,22 @@ class Mesh(SensorLoopsMixin):
                             self.peer_id,
                         )
                     else:
-                        logger.error(
-                            "[mesh] %s: PERMISSIVE DEFAULT ACL ACTIVE UNDER MTLS -- "
-                            "any CA-signed peer can publish on **/cmd and **/safety/**. "
-                            "Set STRANDS_MESH_ACL_FILE to enumerate role separation, "
-                            "or STRANDS_MESH_ACCEPT_PERMISSIVE_ACL=1 to acknowledge "
-                            "the dev/lab posture explicitly.",
-                            self.peer_id,
+                        msg = (
+                            "PERMISSIVE DEFAULT ACL ACTIVE UNDER MTLS -- any "
+                            "CA-signed peer can publish on **/cmd and "
+                            "**/safety/**. This combination turns a single "
+                            "compromised cert into a fleet-wide command "
+                            "pivot. Refusing to start. Either:\n"
+                            "  1. Set STRANDS_MESH_ACL_FILE to a literal-CN "
+                            "     ACL file enumerating role separation "
+                            "     (production posture; see "
+                            "     examples/mesh_acl_example.json5).\n"
+                            "  2. Set STRANDS_MESH_ACCEPT_PERMISSIVE_ACL=1 "
+                            "     to acknowledge the dev/lab posture "
+                            "     explicitly (single-tenant only)."
                         )
+                        logger.error("[mesh] %s: %s", self.peer_id, msg)
+                        raise RuntimeError(msg)
             except (ImportError, ValueError) as warn_exc:
                 # Narrowed per AGENTS.md > "Exception Clauses Must Be Narrow":
                 # ImportError covers the lazy ``from . import _acl_config``;
@@ -1065,9 +1104,13 @@ class Mesh(SensorLoopsMixin):
                             "expected": expected,
                         },
                     )
-                except Exception as audit_exc:
-                    # Audit best-effort -- never let a missing/broken
-                    # log path break the response handler.
+                except (TypeError, ValueError, OSError) as audit_exc:
+                    # F9-C (PR #195 review): narrow per AGENTS.md > Review
+                    # Learnings (#86). Same tuple as the other audit-publish
+                    # wrappers in this file. Audit best-effort still holds;
+                    # MemoryError / RuntimeError / future programmer errors
+                    # propagate to the test harness instead of being
+                    # silently swallowed at DEBUG.
                     logger.debug("[mesh] %s: audit log unavailable: %s", self.peer_id, audit_exc)
                 return
             self._responses.setdefault(turn, []).append(data)
@@ -1092,13 +1135,13 @@ class Mesh(SensorLoopsMixin):
         replay of a captured ``safety/estop`` envelope cannot keep the
         fleet locked indefinitely.  Mirrors :meth:`_on_safety_resume`:
 
-        1. Freshness window (``RESUME_FRESHNESS_WINDOW_S``) -- envelopes
+        1. Freshness window (``_resume_freshness_window_s()``) -- envelopes
            older than the window are rejected.
-        2. Forward-skew bound (``RESUME_FORWARD_SKEW_S``) -- envelopes
+        2. Forward-skew bound (``_resume_forward_skew_s()``) -- envelopes
            timestamped beyond the tolerance in the future are rejected
            (defeats clock-rollback attacks against the freshness check).
         3. Per-receiver replay cache keyed on ``float(envelope_t)``
-           (R20) -- bounded LRU at ``RESUME_REPLAY_CACHE_MAX`` entries.
+           (R20) -- bounded LRU at ``_resume_replay_cache_max()`` entries.
            Keyed on ``t`` alone (NOT ``(issuer_id, t)``) so an attacker
            who captures one envelope cannot replay it by varying the
            payload ``peer_id`` field, which is untrusted (comes from the
@@ -1128,21 +1171,21 @@ class Mesh(SensorLoopsMixin):
                 self.peer_id,
             )
             return
-        if envelope_t > now + RESUME_FORWARD_SKEW_S:
+        if envelope_t > now + _resume_forward_skew_s():
             logger.warning(
                 "[safety] %s: refusing remote estop -- ``t``=%s in future (forward_skew_s=%s, now=%s)",
                 self.peer_id,
                 envelope_t,
-                RESUME_FORWARD_SKEW_S,
+                _resume_forward_skew_s(),
                 now,
             )
             return
-        if (now - envelope_t) > RESUME_FRESHNESS_WINDOW_S:
+        if (now - envelope_t) > _resume_freshness_window_s():
             logger.warning(
                 "[safety] %s: refusing remote estop -- ``t``=%s too old (freshness_window_s=%s, now=%s)",
                 self.peer_id,
                 envelope_t,
-                RESUME_FRESHNESS_WINDOW_S,
+                _resume_freshness_window_s(),
                 now,
             )
             return
@@ -1178,9 +1221,9 @@ class Mesh(SensorLoopsMixin):
         cache_key = float(envelope_t)
         # F7-E per-issuer fairness bound: one issuer may occupy at
         # most ``per_issuer_cap`` slots so a single attacker cannot
-        # fill the global cache. Default cap is RESUME_REPLAY_CACHE_MAX
+        # fill the global cache. Default cap is _resume_replay_cache_max()
         # / 4 -- four legitimate operators always have working slots.
-        per_issuer_cap = max(1, RESUME_REPLAY_CACHE_MAX // 4)
+        per_issuer_cap = max(1, _resume_replay_cache_max() // 4)
         # R19: cache TTL bookkeeping uses time.monotonic() so an NTP step
         # backward cannot leave entries un-evictable and a step forward
         # cannot age fresh entries out early. Envelope freshness still
@@ -1233,30 +1276,36 @@ class Mesh(SensorLoopsMixin):
                         audit_exc,
                     )
                 return
+            # F9-A: evict using the tuple-valued cache. We extract a
+            # mono_ts view, run the standard eviction, then re-key
+            # the surviving entries from the original cache.
+            ts_view: dict[float, float] = {k: v[1] for k, v in self._estop_replay_cache.items()}
             _evict_replay_cache(
-                self._estop_replay_cache,
-                max_size=RESUME_REPLAY_CACHE_MAX,
-                ttl_s=RESUME_FRESHNESS_WINDOW_S,
+                ts_view,
+                max_size=_resume_replay_cache_max(),
+                ttl_s=_resume_freshness_window_s(),
                 now_mono=now_mono,
             )
-            # F7-E per-issuer fairness check. We track per-issuer slot
-            # counts on the receiver side; if this issuer is over their
-            # cap, refuse to add a new entry (the lockout still engages
-            # on the first one and the second is dropped at this point).
-            # A legitimate operator's first estop within the freshness
-            # window passes through; an attacker pre-publishing
-            # ``t = now + skew - eps`` repeatedly cannot occupy more
-            # than ``per_issuer_cap`` slots.
-            # F8-A (PR #195 review): init lives in ``__init__`` exclusively.
-            # Test stubs that build via ``Mesh.__new__`` set the attribute
-            # explicitly -- AGENTS.md > Review Learnings (#85) > 'Test
-            # behavior, not implementation' calls this out.
-            per_issuer_dict = self._estop_replay_per_issuer
-            issuer_slots = per_issuer_dict.get(issuer_id, 0)
+            # Apply the eviction back to the real cache.
+            for evicted in set(self._estop_replay_cache.keys()) - set(ts_view.keys()):
+                self._estop_replay_cache.pop(evicted, None)
+
+            # F9-A per-issuer fairness check derived from cache contents.
+            # No separate dict that drifts -- count entries owned by
+            # ``issuer_id`` directly. After eviction this is naturally
+            # correct: an attacker who flooded their cap and waited for
+            # eviction now has fewer entries (eviction dropped them) and
+            # can reclaim slots, which is the intended dynamic-attacker
+            # rate-limit. A sustained attacker who paces floods to land
+            # just after each eviction is bounded by ``per_issuer_cap``
+            # at every instant -- they never hold more than that fraction
+            # of the global cache, so legitimate operators always have
+            # ``_resume_replay_cache_max() - per_issuer_cap`` slots available.
+            issuer_slots = sum(1 for issuer, _mono in self._estop_replay_cache.values() if issuer == issuer_id)
             if issuer_slots >= per_issuer_cap:
                 logger.warning(
                     "[safety] %s: REFUSED estop cache slot -- issuer %r already at cap %d "
-                    "(F7-E per-issuer fairness bound; flood suspected)",
+                    "(F9-A per-issuer fairness bound; flood suspected)",
                     self.peer_id,
                     issuer_id,
                     per_issuer_cap,
@@ -1283,25 +1332,7 @@ class Mesh(SensorLoopsMixin):
                         audit_exc,
                     )
             else:
-                self._estop_replay_cache[cache_key] = now_mono
-                per_issuer_dict[issuer_id] = issuer_slots + 1
-
-            # F7-E: re-derive per-issuer counts after eviction so the
-            # bookkeeping matches reality. Eviction may have purged
-            # entries for THIS issuer too; recount from the cache.
-            # We cheap-recount only when our running count diverges
-            # from cache size by more than 2x, which means substantial
-            # eviction has happened.
-            if len(per_issuer_dict) and sum(per_issuer_dict.values()) > 2 * len(self._estop_replay_cache):
-                # Note: the eviction helper drops entries by mono_ts
-                # without knowing about issuer attribution; we have no
-                # way to re-derive per-issuer counts cheaply since the
-                # cache key is float(t) without issuer. We reset the
-                # per-issuer dict to zero -- this lets evicted issuers
-                # immediately reclaim slots, which is the correct
-                # bound (eviction should already have purged the
-                # over-cap issuer's stale entries).
-                per_issuer_dict.clear()
+                self._estop_replay_cache[cache_key] = (issuer_id, now_mono)
 
         if not self._estop_lockout.is_set():
             self._estop_lockout.set()
@@ -1414,12 +1445,12 @@ class Mesh(SensorLoopsMixin):
         # captured envelope would still verify. Two cheap defences:
         #
         # 1. Freshness: reject envelopes whose ``t`` field is older
-        #    than RESUME_FRESHNESS_WINDOW_S or more than the forward
+        #    than _resume_freshness_window_s() or more than the forward
         #    skew in the future. This matches the operator NTP
         #    requirement documented in CHANGELOG.
         # 2. Per-receiver replay cache: refuse a (issuer, proof_nonce)
         #    tuple we have already accepted within the freshness
-        #    window. Bounded at RESUME_REPLAY_CACHE_MAX entries.
+        #    window. Bounded at _resume_replay_cache_max() entries.
         envelope_t = data.get("t")
         now = time.time()
         if not isinstance(envelope_t, (int, float)):
@@ -1428,21 +1459,21 @@ class Mesh(SensorLoopsMixin):
                 self.peer_id,
             )
             return
-        if envelope_t > now + RESUME_FORWARD_SKEW_S:
+        if envelope_t > now + _resume_forward_skew_s():
             logger.warning(
                 "[safety] %s: refusing remote resume -- ``t``=%s in future (forward_skew_s=%s, now=%s)",
                 self.peer_id,
                 envelope_t,
-                RESUME_FORWARD_SKEW_S,
+                _resume_forward_skew_s(),
                 now,
             )
             return
-        if (now - envelope_t) > RESUME_FRESHNESS_WINDOW_S:
+        if (now - envelope_t) > _resume_freshness_window_s():
             logger.warning(
                 "[safety] %s: refusing remote resume -- ``t``=%s too old (freshness_window_s=%s, now=%s)",
                 self.peer_id,
                 envelope_t,
-                RESUME_FRESHNESS_WINDOW_S,
+                _resume_freshness_window_s(),
                 now,
             )
             return
@@ -1450,7 +1481,7 @@ class Mesh(SensorLoopsMixin):
         # Mirror the R20 estop strict-reject: an envelope without a
         # valid issuer peer_id would coalesce every "<unknown>"-issued
         # resume into a shared cache slot, polluting the bounded
-        # ``RESUME_REPLAY_CACHE_MAX`` allowance and giving any peer
+        # ``_resume_replay_cache_max()`` allowance and giving any peer
         # who omits ``peer_id`` a free way to evict legitimate entries.
         # The canonical ``Mesh.emergency_stop`` issuer always sets
         # ``peer_id``; a malformed envelope is either a programming
@@ -1499,8 +1530,8 @@ class Mesh(SensorLoopsMixin):
             now_mono = time.monotonic()
             _evict_replay_cache(
                 self._resume_replay_cache,
-                max_size=RESUME_REPLAY_CACHE_MAX,
-                ttl_s=RESUME_FRESHNESS_WINDOW_S,
+                max_size=_resume_replay_cache_max(),
+                ttl_s=_resume_freshness_window_s(),
                 now_mono=now_mono,
             )
             self._resume_replay_cache[cache_key] = now_mono

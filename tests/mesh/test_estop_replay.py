@@ -164,3 +164,43 @@ class TestEstopPerIssuerFairnessBound:
         assert m._estop_replay_per_issuer.get("attacker-1", 0) <= 2, (
             f"attacker should be capped at 2 slots, got {m._estop_replay_per_issuer}"
         )
+
+
+# === F9-A: per-issuer count derived from cache contents ===
+
+
+class TestPerIssuerCountFromCache:
+    """F9-A (PR #195 review): the per-issuer fairness bound counts entries
+    by issuer from cache contents, not a separate dict that drifts after
+    eviction. After eviction, an attacker who flooded their cap legitimately
+    has fewer entries and can reclaim slots -- the dynamic-attacker rate
+    limit. A sustained attacker is bounded by ``per_issuer_cap`` AT EVERY
+    INSTANT, not just between eviction windows.
+    """
+
+    def test_cache_carries_issuer_attribution_in_value(self):
+        m = core.Mesh.__new__(core.Mesh)
+        m.peer_id = "test-peer"
+        m._estop_replay_cache = {}
+        m._estop_replay_per_issuer = {}
+        m._estop_replay_lock = threading.Lock()
+        m._estop_lockout = threading.Event()
+        m._last_estop_ts = 0.0
+        m._running = True
+        m.publish = lambda key, data: None
+        m.publish_safety_event = lambda **kw: None
+
+        envelope = {"peer_id": "alice", "t": time.time(), "type": "estop"}
+
+        class S:
+            payload = type("P", (), {"to_bytes": lambda self: json.dumps(envelope).encode()})()
+
+        m._on_safety_estop(S())
+
+        assert len(m._estop_replay_cache) == 1
+        # Value is now (issuer_id, mono_ts) tuple
+        value = next(iter(m._estop_replay_cache.values()))
+        assert isinstance(value, tuple), "cache value must be (issuer_id, mono_ts) tuple"
+        issuer, mono_ts = value
+        assert issuer == "alice"
+        assert isinstance(mono_ts, float)

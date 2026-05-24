@@ -57,7 +57,12 @@ def test_estop_cache_value_is_monotonic_not_wall_clock() -> None:
     m._on_safety_estop(_envelope(t=wall_now, peer_id="alice"))
 
     assert len(m._estop_replay_cache) == 1
-    stored_ts = next(iter(m._estop_replay_cache.values()))
+    # F9-A: cache value is now (issuer_id, mono_ts) tuple
+    stored_value = next(iter(m._estop_replay_cache.values()))
+    if isinstance(stored_value, tuple):
+        stored_ts = stored_value[1]  # F9-A tuple shape
+    else:
+        stored_ts = stored_value  # legacy shape (resume cache, etc.)
 
     # Post-fix invariant: stored value is monotonic-derived.
     # On pre-fix HEAD this fails because time.time() (~1.7e9) is many

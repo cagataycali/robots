@@ -164,7 +164,7 @@ cache. Pinned by ``tests/mesh/test_resume_env_validation.py``.
 
 ### Tests
 
-* **643 mesh tests pass** (2 skipped with documented reasons).
+* **839 mesh tests pass** (4 skipped with documented reasons -- 2 ACL fanout cases tracked in #200, plus 2 mTLS-handshake tests gated on the cryptography PyPI dep).
 * New: `tests/mesh/_pki.py` — ephemeral CA + leaf cert helper.
 * New: `tests/mesh/test_zenoh_transport_security.py` — 11 tests, 9 active, run
   against real two-peer `zenoh.open()` sessions covering namespace
