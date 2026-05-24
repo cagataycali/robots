@@ -1,0 +1,7 @@
+{
+  "av_id": "AV-IOT-CA-PIN",
+  "title": "IoT bootstrap rogue-CA pin attack -- existing-file rogue, env-var bypass",
+  "needs_victim": false,
+  "victim_env": {},
+  "rogue_env": {}
+}

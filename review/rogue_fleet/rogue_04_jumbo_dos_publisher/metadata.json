@@ -1,0 +1,7 @@
+{
+  "av_id": "AV-04",
+  "title": "Jumbo-frame cmd payload dropped at low_pass_filter",
+  "needs_victim": true,
+  "victim_env": {"STRANDS_MESH_MAX_CMD_BYTES": "512"},
+  "rogue_env": {"STRANDS_MESH_MAX_CMD_BYTES": "10485760"}
+}

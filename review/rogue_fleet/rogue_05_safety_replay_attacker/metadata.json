@@ -1,0 +1,7 @@
+{
+  "av_id": "AV-26+27",
+  "title": "Safety estop replay attacker -- captured envelope replayed with peer_id permutation",
+  "needs_victim": false,
+  "victim_env": {},
+  "rogue_env": {}
+}

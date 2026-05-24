@@ -1,0 +1,7 @@
+{
+  "av_id": "AV-10+33",
+  "title": "Policy host allowlist + IPv6 server_address parsing",
+  "needs_victim": false,
+  "victim_env": {},
+  "rogue_env": {}
+}

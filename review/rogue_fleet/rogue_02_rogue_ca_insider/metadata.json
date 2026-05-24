@@ -1,0 +1,7 @@
+{
+  "av_id": "AV-02",
+  "title": "Rogue-CA insider with self-signed cert chain refused by mTLS",
+  "needs_victim": true,
+  "victim_env": {},
+  "rogue_env": {}
+}

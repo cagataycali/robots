@@ -1,0 +1,7 @@
+{
+  "av_id": "AV-SAFETY-RATE",
+  "title": "Safety topic rate cap + per-issuer fairness for novel-t floods",
+  "needs_victim": false,
+  "victim_env": {},
+  "rogue_env": {}
+}

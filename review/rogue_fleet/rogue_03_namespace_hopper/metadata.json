@@ -1,0 +1,7 @@
+{
+  "av_id": "AV-03",
+  "title": "Cross-fleet namespace hopper -- different namespace blocks routing",
+  "needs_victim": true,
+  "victim_env": {},
+  "rogue_env": {}
+}

@@ -1,0 +1,7 @@
+{
+  "av_id": "AV-RESUME-HMAC",
+  "title": "Resume token attacks -- missing override code, bad HMAC, missing fields",
+  "needs_victim": false,
+  "victim_env": {},
+  "rogue_env": {}
+}

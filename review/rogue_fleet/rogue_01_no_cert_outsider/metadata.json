@@ -1,0 +1,7 @@
+{
+  "av_id": "AV-01",
+  "title": "No-cert outsider cannot establish a link to a tls-only victim",
+  "needs_victim": true,
+  "victim_env": {},
+  "rogue_env": {}
+}

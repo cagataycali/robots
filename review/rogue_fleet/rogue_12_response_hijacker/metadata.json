@@ -1,0 +1,7 @@
+{
+  "av_id": "AV-32",
+  "title": "RPC response hijack -- D1 responder_id scope check",
+  "needs_victim": false,
+  "victim_env": {},
+  "rogue_env": {}
+}

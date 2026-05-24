@@ -1,0 +1,7 @@
+{
+  "av_id": "AV-09+10+11+12+13+14+15",
+  "title": "Command payload validator -- 7 forgery variants on validate_command",
+  "needs_victim": false,
+  "victim_env": {},
+  "rogue_env": {}
+}

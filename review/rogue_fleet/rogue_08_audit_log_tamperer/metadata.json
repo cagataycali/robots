@@ -1,0 +1,7 @@
+{
+  "av_id": "AV-21+22+23+24+25",
+  "title": "Audit-log tamper detection -- symlink/HMAC/seq-rollback/PSK rotation",
+  "needs_victim": false,
+  "victim_env": {},
+  "rogue_env": {}
+}

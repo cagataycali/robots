@@ -1,0 +1,7 @@
+{
+  "av_id": "AV-06+07+08",
+  "title": "ACL shape gate -- enabled:false / interfaces:[] / CN-only acceptance",
+  "needs_victim": false,
+  "victim_env": {},
+  "rogue_env": {}
+}
