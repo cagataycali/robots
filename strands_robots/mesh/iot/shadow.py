@@ -19,7 +19,7 @@ Hooking in
 :class:`ShadowMirror` exposes :meth:`update` (call from anywhere) and a
 ready-to-wire convenience :func:`enable_for_mesh` that binds it to the
 heartbeat path automatically. Today the heartbeat path is
-:meth:`Mesh._heartbeat_loop` which calls ``put(strands/{peer}/presence, ...)``
+:meth:`Mesh._heartbeat_loop` which calls ``put(strands/{peer}/presence,...)``
 — we hook in by registering a publish-side observer that mirrors any
 presence write to the shadow update topic.
 
@@ -63,7 +63,7 @@ class ShadowMirror:
         mirror.update(current_transport(), {"connected": True, "robot_type": "so100"})
 
     The ``update`` call wraps your dict in the canonical
-    ``{"state": {"reported": ...}}`` envelope and publishes via the active
+    ``{"state": {"reported":...}}`` envelope and publishes via the active
     transport's ``put()``. No retain — shadows are stored server-side.
     """
 

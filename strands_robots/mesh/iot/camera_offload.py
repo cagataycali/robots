@@ -50,7 +50,13 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-DEFAULT_PRESIGN_TTL_SECONDS = 3600
+# Lifetime of the presigned GET URL we hand out for each camera frame.
+# Kept deliberately short -- anyone who briefly captures a /ref MQTT message
+# can use the URL inside this window. ``STRANDS_MESH_CAMERA_PRESIGN_TTL``
+# overrides for higher-latency consumers, clamped to MAX_PRESIGN_TTL_SECONDS
+# (1 hour) to prevent accidental day- or week-long URLs.
+DEFAULT_PRESIGN_TTL_SECONDS = 60
+MAX_PRESIGN_TTL_SECONDS = 3600
 
 
 class CameraOffloader:
@@ -70,9 +76,17 @@ class CameraOffloader:
     ) -> None:
         self.bucket = bucket or os.getenv("STRANDS_MESH_CAMERA_S3_BUCKET", "")
         self.prefix = (prefix or os.getenv("STRANDS_MESH_CAMERA_S3_PREFIX") or "").strip("/")
-        self.presign_ttl = presign_ttl or int(
-            os.getenv("STRANDS_MESH_CAMERA_PRESIGN_TTL", str(DEFAULT_PRESIGN_TTL_SECONDS))
-        )
+        ttl_raw = presign_ttl or int(os.getenv("STRANDS_MESH_CAMERA_PRESIGN_TTL", str(DEFAULT_PRESIGN_TTL_SECONDS)))
+        if ttl_raw > MAX_PRESIGN_TTL_SECONDS:
+            logger.warning(
+                "[camera_offload] STRANDS_MESH_CAMERA_PRESIGN_TTL=%d > %d cap; clamping",
+                ttl_raw,
+                MAX_PRESIGN_TTL_SECONDS,
+            )
+            ttl_raw = MAX_PRESIGN_TTL_SECONDS
+        if ttl_raw < 1:
+            ttl_raw = 1
+        self.presign_ttl = ttl_raw
         self.region = region or os.getenv("AWS_REGION", os.getenv("AWS_DEFAULT_REGION"))
         self._s3: Any | None = None
 
@@ -120,7 +134,7 @@ class CameraOffloader:
                 Body=jpeg_bytes,
                 ContentType="image/jpeg",
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- boto3 raises ClientError, EndpointConnectionError, NoCredentialsError, etc.; offload is best-effort
             logger.debug("[camera_offload] put_object %s failed: %s", key, exc)
             return None
 
@@ -130,7 +144,7 @@ class CameraOffloader:
                 Params={"Bucket": self.bucket, "Key": key},
                 ExpiresIn=self.presign_ttl,
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- boto3 ClientError / NoCredentialsError; presign is best-effort
             logger.debug("[camera_offload] presign %s failed: %s", key, exc)
             url = None
 
@@ -181,7 +195,7 @@ def enable_for_mesh(mesh: Any, offloader: CameraOffloader | None = None) -> Came
         # call it to preserve any user customisation that might have been added).
         try:
             original()
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- original is user-customised; offload must not block on user code
             logger.debug("[camera_offload] original _publish_cameras_once raised: %s", exc)
 
         # Now do the S3 offload + ref publish per camera.
@@ -195,13 +209,14 @@ def enable_for_mesh(mesh: Any, offloader: CameraOffloader | None = None) -> Came
 
         try:
             obs = inner.get_observation()
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 -- LeRobot get_observation() may raise hardware-specific errors
+            logger.debug("[camera_offload] get_observation failed: %s", exc)
             return
 
         try:
             import cv2
-        except Exception:
-            logger.debug("[camera_offload] cv2 unavailable — skipping S3 upload")
+        except ImportError:
+            logger.debug("[camera_offload] cv2 unavailable -- skipping S3 upload")
             return
 
         transport = current_transport()
@@ -231,8 +246,16 @@ def enable_for_mesh(mesh: Any, offloader: CameraOffloader | None = None) -> Came
                 if ref is None:
                     continue
                 ref["shape"] = list(shape)
-                transport.put(f"strands/{mesh.peer_id}/camera/{cam_name}/ref", ref)
-            except Exception as exc:
+                # cross-module callers go through Mesh.publish per
+                # AGENTS.md > Public API Hygiene (no `_method` references
+                # across modules). The /ref topic is mirrored to the cloud
+                # audit table; the publish path is gated by the Zenoh ACL
+                # so a LAN peer cannot poison the table without a cert that
+                # the ACL grants ``camera/*/ref`` write rights to.
+                # transport.put is the legacy unsigned path used only for
+                # the original frame upload to S3 (S3 has its own auth).
+                mesh.publish(f"strands/{mesh.peer_id}/camera/{cam_name}/ref", ref)
+            except Exception as exc:  # noqa: BLE001 -- numpy / cv2 / mesh.publish can raise diverse errors per frame; offload is best-effort
                 logger.debug(
                     "[camera_offload] %s/%s offload failed: %s",
                     mesh.peer_id,
