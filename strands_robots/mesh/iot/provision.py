@@ -336,9 +336,12 @@ def provision_robot(
     """Provision a robot Thing and write its credentials to disk.
 
     Validates *thing_name* against ``^[a-zA-Z0-9_-]{1,128}$`` before any
-    AWS call. The pattern matches both AWS IoT's accepted Thing-name
-    character set and our own filesystem-path safety rules (no ``/``, no
-    ``..``, no whitespace).
+    AWS call. The pattern is a **strict subset** of AWS IoT's accepted
+    Thing-name charset (AWS server-side accepts ``:`` as well; we reject
+    it for filesystem-path safety on NTFS / classic Mac where ``:`` is a
+    stream / directory separator). Operators with pre-existing AWS IoT
+    Things containing ``:`` must rename or maintain a mapping; the
+    error message will direct them here.
 
     Args:
         thing_name: The Thing name. MUST equal the intended Mesh peer_id —
