@@ -4,14 +4,15 @@ Used by ``tests/mesh/test_zenoh_transport_security.py`` to spin up a Zenoh fleet
 with real mTLS + ACL gating in a single Python process. The certs are
 written to ``tmp_path`` so each test gets its own ephemeral CA.
 
-This is NOT production code -- `cryptography` is in the test extras
+This is NOT production code -- ``cryptography`` is in the test extras
 only. Production cert provisioning happens through AWS IoT
-``mesh/iot/provision.py`` or an operator's existing PKI.
+``strands_robots.mesh.iot.provision`` or an operator's existing PKI.
 """
 
 from __future__ import annotations
 
 import datetime as _dt
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -20,10 +21,33 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 
+# Anchored allowlist for test-cert common names. Same shape rule used by
+# the mesh's source-id / peer-id validators (alphanumerics, dot, underscore,
+# hyphen, must start with alphanumeric). Rejects path traversal (``..``,
+# ``/``) and shell-meta characters that could land in interpolated paths,
+# DNSName extensions, or audit log lines downstream.
+_CN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+def _validate_cn(common_name: str) -> None:
+    """Reject CNs that aren't a strict subset of [A-Za-z0-9._-].
+
+    Raises:
+        ValueError: if *common_name* is empty, leading non-alphanumeric,
+            or contains any character outside the allowlist.
+    """
+    if not _CN_RE.fullmatch(common_name):
+        raise ValueError(f"invalid CN for test cert: {common_name!r}")
+
 
 @dataclass(frozen=True)
-class TestCA:
-    """A test CA with helper to mint leaf certs."""
+class EphemeralCA:
+    """A test CA with a helper to mint leaf certs.
+
+    Renamed from ``TestCA`` to avoid pytest's ``Test*`` collection rule
+    (a frozen dataclass with a generated ``__init__`` would otherwise
+    trigger ``PytestCollectionWarning`` on every run).
+    """
 
     cert: x509.Certificate
     key: rsa.RSAPrivateKey
@@ -34,8 +58,11 @@ class TestCA:
 
         Returns ``(cert_path, key_path)``. Both files are written with
         the encoded PEM bytes; permissions on the key file are tightened
-        to 0o600.
+        to ``0o600``. Validates *common_name* against the test-CN
+        allowlist before interpolating it into the filesystem path or
+        ``x509.DNSName(...)``.
         """
+        _validate_cn(common_name)
         out_dir.mkdir(parents=True, exist_ok=True)
         leaf_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         subject = x509.Name(
@@ -76,9 +103,12 @@ class TestCA:
         return cert_path, key_path
 
 
-def make_test_ca(out_dir: Path) -> TestCA:
-    """Build a self-signed CA in *out_dir*. Returns the loaded CA."""
+def make_test_ca(out_dir: Path) -> EphemeralCA:
+    """Build a self-signed CA in *out_dir*. Returns the generated CA."""
     out_dir.mkdir(parents=True, exist_ok=True)
+    # Hard-coded CA CN: validated as a free assertion that the format is
+    # what we think it is.
+    _validate_cn("strands-robots-test-ca")
     ca_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     subject = issuer = x509.Name(
         [
@@ -125,4 +155,4 @@ def make_test_ca(out_dir: Path) -> TestCA:
         )
     )
     key_path.chmod(0o600)
-    return TestCA(cert=ca_cert, key=ca_key, cert_path=cert_path)
+    return EphemeralCA(cert=ca_cert, key=ca_key, cert_path=cert_path)
