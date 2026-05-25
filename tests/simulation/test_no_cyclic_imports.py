@@ -92,12 +92,10 @@ def test_module_imports_in_fresh_interpreter(module: str) -> None:
     # An import that "succeeds" (exit 0) but emits a RecursionError on
     # stderr from a swallowed inner frame is still a regression.
     assert "RecursionError" not in result.stderr, (
-        f"RecursionError surfaced during fresh-interpreter import of {module}:\n"
-        f"{result.stderr}"
+        f"RecursionError surfaced during fresh-interpreter import of {module}:\n{result.stderr}"
     )
     assert "ImportError" not in result.stderr, (
-        f"ImportError surfaced during fresh-interpreter import of {module}:\n"
-        f"{result.stderr}"
+        f"ImportError surfaced during fresh-interpreter import of {module}:\n{result.stderr}"
     )
 
 
