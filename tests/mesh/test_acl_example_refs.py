@@ -18,7 +18,6 @@ from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _EXAMPLE = _REPO_ROOT / "examples" / "mesh_acl_example.json5"
-_TESTS = _REPO_ROOT / "tests"
 
 
 def _extract_test_path_refs(text: str) -> list[str]:

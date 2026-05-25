@@ -377,7 +377,7 @@ def _file_identity(path: Path) -> tuple | None:
     """Return ``(path_str, dev, ino, size, mtime_ns)`` or None on stat err."""
     try:
         st = os.stat(str(path), follow_symlinks=False)
-    except (OSError, FileNotFoundError):
+    except OSError:
         return None
     return (str(path), st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns)
 
@@ -468,7 +468,7 @@ def is_default_acl_in_use(namespace: str = "strands") -> bool:
         return True
     try:
         resolved = _load_acl_cached(Path(path_env))
-    except (OSError, ValueError, FileNotFoundError) as exc:
+    except (OSError, ValueError) as exc:
         # fail closed. A broken ACL file is treated as the
         # most-dangerous-known posture so the operator hears about it
         # at start-up rather than silently degrading to permissive.

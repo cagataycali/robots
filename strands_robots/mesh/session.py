@@ -305,7 +305,7 @@ def _build_config() -> Any:
             "true",
             "yes",
         )
-        if _acl_config.is_default_acl_in_use() and not accept_permissive:
+        if _acl_config.is_default_acl_in_use(namespace) and not accept_permissive:
             logger.warning(
                 "STRANDS_MESH_ACL_FILE unset -- using PERMISSIVE built-in "
                 "default ACL. Any CA-signed peer can publish/subscribe "
@@ -421,10 +421,16 @@ def get_session() -> Any | None:
         if not connect_env and not listen_env:
             from strands_robots.mesh._zenoh_config import resolve_auth_mode
 
-            try:
-                _auth_mode = resolve_auth_mode()
-            except ValueError:
-                _auth_mode = "mtls"
+            # Loud-on-misconfig: if STRANDS_MESH_AUTH_MODE is set to
+            # anything other than "mtls"/"none", let resolve_auth_mode()
+            # raise ValueError here. Mesh.start crashes with a clear
+            # stacktrace instead of silently falling back to "mtls"
+            # and emitting three confusing fallback warnings later
+            # (the prior try/except was dead -- _build_config() below
+            # invokes resolve_auth_mode() again unconditionally).
+            # Aligns with the loud-on-misconfig posture of _float_env
+            # and _load_acl_file. Addressed in PR-224 R1.
+            _auth_mode = resolve_auth_mode()
             scheme = "tls" if _auth_mode == "mtls" else "tcp"
             local_ep = f"{scheme}/127.0.0.1:{mesh_port}"
 
@@ -518,10 +524,16 @@ def _get_zenoh_session_directly() -> Any | None:
             # (See get_session above for full rationale.)
             from strands_robots.mesh._zenoh_config import resolve_auth_mode
 
-            try:
-                _auth_mode = resolve_auth_mode()
-            except ValueError:
-                _auth_mode = "mtls"
+            # Loud-on-misconfig: if STRANDS_MESH_AUTH_MODE is set to
+            # anything other than "mtls"/"none", let resolve_auth_mode()
+            # raise ValueError here. Mesh.start crashes with a clear
+            # stacktrace instead of silently falling back to "mtls"
+            # and emitting three confusing fallback warnings later
+            # (the prior try/except was dead -- _build_config() below
+            # invokes resolve_auth_mode() again unconditionally).
+            # Aligns with the loud-on-misconfig posture of _float_env
+            # and _load_acl_file. Addressed in PR-224 R1.
+            _auth_mode = resolve_auth_mode()
             scheme = "tls" if _auth_mode == "mtls" else "tcp"
             local_ep = f"{scheme}/127.0.0.1:{mesh_port}"
 

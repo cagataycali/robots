@@ -544,19 +544,21 @@ def _resolve_tls_paths() -> tuple[Path, Path, Path]:
             _NON_POSIX_TLS_WARNED["v"] = True
     else:
         key_path = paths[2]
-        if key_path.is_symlink():
-            raise ValueError(
-                f"mTLS private key {key_path} is a SYMLINK "
-                f"(target: {os.readlink(key_path)!r}). Refusing -- "
-                "the mode check would otherwise stat() the target and "
-                "an attacker-writable target with a 0o600 mode would "
-                "silently pass while the TLS load follows the symlink. "
-                "Set STRANDS_MESH_TLS_KEY to the real key file path."
-            )
-        # ``lstat`` returns the link's own metadata; since we just
-        # rejected symlinks, this is equivalent to ``stat`` here, but
-        # using lstat keeps the semantic explicit and matches the
-        # rest of the codebase.
+        # Symlink reject already applied to all three TLS paths in the
+        # CA/cert/key loop above; not re-checked here. ``lstat()``
+        # returns the link's own metadata -- since the loop already
+        # rejected symlinks, ``lstat`` is equivalent to ``stat`` for
+        # the path we are looking at, but we keep ``lstat`` explicit to
+        # match the discipline of audit.py:_ensure_paths,
+        # _load_seq_counters, and _acl_config.py:_load_acl_file.
+        #
+        # Residual TOCTOU window: between this lstat() and Zenoh's
+        # eventual open() of the same path, an attacker who controls
+        # the parent directory can swap the file. Python cannot pass
+        # ``O_NOFOLLOW`` into the C-level Zenoh wheel, so the residual
+        # window is upstream-bound. Operators must keep the parent
+        # directory non-attacker-writable (chmod 700). Tracked in
+        # Zenoh upstream and the strands-robots threat model docs.
         key_mode = key_path.lstat().st_mode & 0o777
         if key_mode & 0o077:
             raise ValueError(
