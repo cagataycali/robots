@@ -155,9 +155,18 @@ def _load_acl_file(path: Path) -> dict[str, Any]:
     for required in ("default_permission", "rules", "subjects", "policies"):
         if required not in data:
             raise ValueError(f"ACL file {path} missing required field: {required!r}")
-    if not data.get("enabled", False):
+    # Require literal boolean ``True`` (identity check) rather than truthy
+    # non-bool. ``enabled: 1`` (JSON5 int), ``enabled: "true"`` (string
+    # typo), ``enabled: [false]`` (non-empty list) all pass ``not False``
+    # but the downstream Zenoh deserializer expects a strict ``bool`` and
+    # fails with an opaque "expected boolean" several frames deeper. The
+    # whole point of this gate is to fail closed before Zenoh sees the
+    # config, so accept only the literal type.
+    if data.get("enabled") is not True:
         raise ValueError(
-            f"ACL file {path} must set ``enabled: true`` -- without it Zenoh silently disables the access_control block."
+            f"ACL file {path} must set ``enabled: true`` (literal boolean) -- "
+            f"got {data.get('enabled')!r}. Without it Zenoh silently "
+            f"disables the access_control block."
         )
     if data["default_permission"] not in ("allow", "deny"):
         raise ValueError(f"ACL file {path} default_permission={data['default_permission']!r} must be 'allow' or 'deny'")

@@ -91,8 +91,29 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 from pathlib import Path
+
+# One-shot flag for the non-POSIX TLS-mode warning. ``_resolve_tls_paths``
+# is called once per session open, so without this flag a long-running
+# Windows process would emit the same WARNING per peer connection. The
+# module-level dict (rather than a plain bool) keeps mutation explicit at
+# the call site without needing a ``global`` declaration.
+_NON_POSIX_TLS_WARNED: dict[str, bool] = {"v": False}
+
+
+def _is_posix() -> bool:
+    """Indirection over ``os.name == "posix"`` for testability.
+
+    ``monkeypatch.setattr`` on this module-level function lets a test
+    exercise the non-POSIX TLS-mode-warning branch without setting
+    ``os.name`` itself, which would corrupt ``pathlib.Path``
+    instantiation on POSIX hosts (``Path`` chooses ``PosixPath`` vs
+    ``WindowsPath`` based on ``os.name`` at construction time).
+    """
+    return os.name == "posix"
+
 
 logger = logging.getLogger(__name__)
 
@@ -209,7 +230,19 @@ def _int_env(name: str, default: int, *, lo: int = 1, hi: int = 1 << 30) -> int:
 
 
 def _float_env(name: str, default: float, *, lo: float = 0.0, hi: float = 1e6) -> float:
-    """Parse a float env var clamped to ``[lo, hi]``."""
+    """Parse a float env var clamped to ``[lo, hi]``.
+
+    Rejects NaN and +/-inf explicitly. IEEE-754 ``NaN`` compares False
+    against any bound (both ``nan < lo`` and ``nan > hi`` evaluate to
+    False), so a naive ``value < lo or value > hi`` clamp silently
+    accepts ``STRANDS_MESH_CMD_RATE_HZ=nan``; the downstream Zenoh
+    ``downsampling`` rule's ``freq`` field then becomes NaN and the
+    rate cap is effectively disabled with no operator-visible signal.
+    Raising on non-finite input keeps the misconfig surface clean: the
+    ``ValueError`` fires at module-load time with the env-var name and
+    the offending value, instead of bubbling out of ``zenoh.open()``
+    several frames deeper as an opaque "config invalid".
+    """
     raw = os.getenv(name, "").strip()
     if raw == "":
         return default
@@ -217,6 +250,8 @@ def _float_env(name: str, default: float, *, lo: float = 0.0, hi: float = 1e6) -
         value = float(raw)
     except ValueError as exc:
         raise ValueError(f"{name}={raw!r} is not a float") from exc
+    if not math.isfinite(value):
+        raise ValueError(f"{name}={raw!r} must be finite (got {value})")
     if value < lo or value > hi:
         raise ValueError(f"{name}={value} out of bounds [{lo}, {hi}]")
     return value
@@ -476,9 +511,16 @@ def _resolve_tls_paths() -> tuple[Path, Path, Path]:
     # and README env-var matrix promise for the private key. A 0o644 key
     # file on a shared host is a real exfiltration surface; the operator
     # who set STRANDS_MESH_TLS_KEY thinks they get the documented protection.
-    # Skipped on non-POSIX (Windows file modes do not map cleanly).
+    # On non-POSIX (Windows) the mode 0o600 contract documented at line 73
+    # and in the README env-var matrix cannot be enforced via ``stat()``.
+    # Emit a one-shot WARNING so an operator running mTLS on Windows is
+    # not silently led to believe the loader is verifying key-file mode
+    # -- they must rely on filesystem ACLs (NTFS DACL) instead. This
+    # matches the loud-on-misconfig posture of the rest of this module
+    # (``_float_env`` raises on NaN, ``_int_env`` raises on out-of-bounds,
+    # ``_load_acl_file`` raises on bad ``enabled``).
     #
-    # F7-A (PR #195 review): use ``lstat()`` + ``is_symlink()`` reject
+    # On POSIX, the symlink-reject + ``lstat()`` + mode check below uses
     # so a symlink to an attacker-writable file does not silently pass
     # the mode check. Without this, ``STRANDS_MESH_TLS_KEY=/safe/key.pem``
     # pointing at a co-tenant-controlled ``/tmp/evil.pem`` (which the
@@ -488,7 +530,19 @@ def _resolve_tls_paths() -> tuple[Path, Path, Path]:
     # ``audit.py:_ensure_paths``, ``_load_seq_counters``, and
     # ``_acl_config.py:_load_acl_file``.
     # See PR #195 threads PRRT_kwDORUMiZs6EUu8N + post-F3 follow-up.
-    if os.name == "posix":
+    if not _is_posix():
+        if not _NON_POSIX_TLS_WARNED["v"]:
+            logger.warning(
+                "[mesh] mTLS key mode (0o600) check is SKIPPED on non-POSIX "
+                "platform (%s). The README env-var matrix promises mode "
+                "0o600 enforcement; on this platform that guarantee is "
+                "not enforced -- rely on filesystem ACLs (e.g. NTFS DACL) "
+                "to restrict %s.",
+                os.name,
+                paths[2],
+            )
+            _NON_POSIX_TLS_WARNED["v"] = True
+    else:
         key_path = paths[2]
         if key_path.is_symlink():
             raise ValueError(
