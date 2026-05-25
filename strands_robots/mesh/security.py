@@ -44,10 +44,15 @@ Configuration env vars
 
 from __future__ import annotations
 
+import functools
 import ipaddress
+import logging
+import math
 import os
 import re
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 # --- Constants -----------------------------------------------------------
 
@@ -84,6 +89,19 @@ MAX_PEER_ID_LEN: int = 128
 #: but additionally forbids ``/`` because peer_ids are not paths and any
 #: ``/`` in one is a wire-side red flag.
 _PEER_ID_RE = re.compile(r"^[A-Za-z0-9_.\-]+$")
+
+#: Charset for entries in ``STRANDS_MESH_HF_REPO_ALLOW``. Operator-supplied
+#: HuggingFace org / ``<org>/<repo>`` prefixes; rejects shell metacharacters,
+#: whitespace, NUL bytes, and any byte outside the printable ASCII subset.
+#: Symmetric with :data:`_POLICY_HOST_ENTRY_RE` so a reviewer reading this
+#: module sees a uniform fail-loud-on-misconfig posture across every
+#: operator-extensible env-var allowlist.
+_HF_REPO_ENTRY_RE = re.compile(r"^[A-Za-z0-9_./\-]+$")
+
+#: Charset for entries in ``STRANDS_MESH_POLICY_TYPE_ALLOW``. Lowercase
+#: identifier shape -- matches the spirit of the built-in
+#: :data:`_DEFAULT_POLICY_TYPES` set.
+_POLICY_TYPE_ENTRY_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
 #: Built-in policy_type allowlist. Mirrors the LeRobot policy registry
 #: families plus the generic providers DevDuck ships with. Operators
@@ -163,38 +181,67 @@ class LockoutError(SecurityError):
 _POLICY_HOST_ENTRY_RE = re.compile(r"^[A-Za-z0-9.:/_\-\[\]]+$")
 
 
-def _policy_host_allowlist() -> list[str]:
-    """Return the configured policy-host allowlist (defaults + env extras).
+def _validate_env_allowlist_entries(env_var: str, raw: str, regex: re.Pattern[str]) -> list[str]:
+    """Split *raw* on comma, strip, lowercase-strip, and reject malformed entries.
 
-    F3 (PR #195 review): operator-supplied entries are validated against
-    a charset allowlist; malformed entries are dropped with a WARNING
-    rather than silently accepted. This matches the posture of
-    ``_resolve_ca_pins`` for SHA-256 pins. A typo like
-    ``STRANDS_MESH_POLICY_HOST_ALLOW=10.0.0.0/24,;rm -rf /`` produces a
-    visible signal that the operator's allowlist is not what they think
-    it is. (The malformed entry is not exploitable downstream because
-    ``is_safe_policy_host`` does literal-equality and CIDR comparisons,
-    not subprocess interpolation; this is a fail-loud-on-misconfig
-    posture, not an injection defence.)
+    Single helper used by every operator-extensible allowlist parser
+    (``_policy_host_allowlist``, ``_hf_repo_allowlist``,
+    ``_policy_type_allowlist``). Comma-splits *raw*, strips, drops
+    empties, and rejects entries that fail *regex* with a WARNING that
+    names the env var, the offending entry, and the expected charset.
+
+    The malformed entries are not exploitable downstream (none of the
+    values are subprocess-interpolated; the downstream consumers do
+    literal-equality / CIDR / set-membership comparisons), but a typo
+    like ``STRANDS_MESH_HF_REPO_ALLOW="nvidia,;rm -rf /"`` would
+    otherwise silently produce an allowlist containing ``';rm -rf '``
+    -- the operator-visible signal that something is wrong is the
+    WARNING; without it, the typo is invisible until the next time
+    someone reads the env var.
+
+    Caching at the call sites (``functools.lru_cache`` keyed on the
+    raw env-var string) means the WARNING fires once per distinct
+    misconfig value, not once per ``validate_command`` call.
     """
-    raw = os.getenv("STRANDS_MESH_POLICY_HOST_ALLOW", "")
-    extra: list[str] = []
+    entries: list[str] = []
     for raw_entry in raw.split(","):
-        host = raw_entry.strip()
-        if not host:
+        entry = raw_entry.strip()
+        if not entry:
             continue
-        if not _POLICY_HOST_ENTRY_RE.fullmatch(host):
-            import logging as _logging
-
-            _logging.getLogger(__name__).warning(
-                "[security] STRANDS_MESH_POLICY_HOST_ALLOW: dropping "
-                "malformed entry %r (charset must match [A-Za-z0-9.:/_-[\\]]+); "
-                "fix the env var to include this host",
-                host,
+        if not regex.fullmatch(entry):
+            logger.warning(
+                "[security] %s: dropping malformed entry %r "
+                "(charset must match %s); fix the env var to include this entry",
+                env_var,
+                entry,
+                regex.pattern,
             )
             continue
-        extra.append(host)
-    return list(_DEFAULT_POLICY_HOSTS) + extra
+        entries.append(entry)
+    return entries
+
+
+@functools.lru_cache(maxsize=1)
+def _policy_host_allowlist_cached(raw: str) -> tuple[str, ...]:
+    """Cached parse of ``STRANDS_MESH_POLICY_HOST_ALLOW``.
+
+    Cached parse keyed on the raw env-var string. Without the cache
+    every ``is_safe_policy_host`` call re-parses the env var and
+    re-emits the malformed-entry WARNING; on a busy mesh
+    ``validate_command`` runs per inbound cmd, and the WARNING flood
+    can drown the audit log on a typo'd env var. A
+    ``monkeypatch.setenv`` change naturally re-parses on the next
+    call (different cache key); tests that mutate the env in-place
+    can call :func:`_clear_security_caches_for_tests` to force a
+    refresh.
+    """
+    extras = _validate_env_allowlist_entries("STRANDS_MESH_POLICY_HOST_ALLOW", raw, _POLICY_HOST_ENTRY_RE)
+    return tuple(_DEFAULT_POLICY_HOSTS) + tuple(extras)
+
+
+def _policy_host_allowlist() -> list[str]:
+    """Return the configured policy-host allowlist (defaults + env extras)."""
+    return list(_policy_host_allowlist_cached(os.getenv("STRANDS_MESH_POLICY_HOST_ALLOW", "")))
 
 
 def is_safe_policy_host(host: str) -> bool:
@@ -242,18 +289,33 @@ def is_safe_policy_host(host: str) -> bool:
 # --- HuggingFace repo / local model path / policy_type allowlists -------
 
 
+@functools.lru_cache(maxsize=1)
+def _hf_repo_allowlist_cached(raw: str) -> tuple[str, ...]:
+    """Cached parse of ``STRANDS_MESH_HF_REPO_ALLOW``.
+
+    Cached parse keyed on the raw env-var string. Charset-validates each
+    operator-supplied entry via :func:`_validate_env_allowlist_entries`.
+    Strips trailing ``/`` so an operator who pastes ``"nvidia/"``-style
+    prefixes still matches the bare-org pattern, and lowercases each
+    entry for case-insensitive comparison against ``parts[0].lower()``
+    in :func:`is_safe_model_path`.
+    """
+    builtin = ("nvidia", "huggingface", "lerobot")
+    validated = _validate_env_allowlist_entries("STRANDS_MESH_HF_REPO_ALLOW", raw, _HF_REPO_ENTRY_RE)
+    extras = tuple(e.strip("/").lower() for e in validated)
+    return builtin + extras
+
+
 def _hf_repo_allowlist() -> list[str]:
     """Return operator-extensible HF repo prefix allowlist.
 
     Defaults to ``["nvidia", "huggingface", "lerobot"]`` covering GR00T
     and LeRobot models. Operators extend via
     ``STRANDS_MESH_HF_REPO_ALLOW`` (comma-separated ``<org>`` or
-    ``<org>/<repo>`` prefixes).
+    ``<org>/<repo>`` prefixes; charset enforced via
+    :data:`_HF_REPO_ENTRY_RE`).
     """
-    raw = os.getenv("STRANDS_MESH_HF_REPO_ALLOW", "")
-    extra = [pfx.strip().strip("/").lower() for pfx in raw.split(",") if pfx.strip()]
-    builtin = ["nvidia", "huggingface", "lerobot"]
-    return builtin + extra
+    return list(_hf_repo_allowlist_cached(os.getenv("STRANDS_MESH_HF_REPO_ALLOW", "")))
 
 
 def is_safe_model_path(path: str, *, hf_only: bool = False) -> bool:
@@ -281,7 +343,23 @@ def is_safe_model_path(path: str, *, hf_only: bool = False) -> bool:
         return False
 
     if hf_only:
-        if path.startswith("/") or "/" not in path:
+        # Require exactly two non-empty path segments under ``hf_only``.
+        # Real HuggingFace repo IDs are exactly ``<org>/<repo>``; deeper
+        # paths would be branch/revision pinning (e.g. ``org/repo/blob/sha``)
+        # which today's loaders do not accept. Without this check
+        # ``nvidia/etc/passwd`` would pass (3 segments, traversal-shaped,
+        # ``nvidia`` matches the org allowlist) and reach the HF loader,
+        # which would then 404 -- but the validator's job is to enforce
+        # the wire contract, not rely on downstream rejection. If a future
+        # loader adds revision-pin support, relax this gate then; the
+        # current gate is the conservative default for the documented
+        # ``<org>/<repo>`` shape.
+        if path.startswith("/"):
+            return False
+        # Match parts excluding the trailing-slash artefact (split
+        # produces an empty trailing segment for "org/").
+        non_empty_parts = [seg for seg in parts if seg]
+        if len(non_empty_parts) != 2:
             return False
         org = parts[0].lower()
         allow = _hf_repo_allowlist()
@@ -297,11 +375,38 @@ def is_safe_model_path(path: str, *, hf_only: bool = False) -> bool:
     return True
 
 
+@functools.lru_cache(maxsize=1)
+def _policy_type_allowlist_cached(raw: str) -> frozenset[str]:
+    """Cached parse of ``STRANDS_MESH_POLICY_TYPE_ALLOW``.
+
+    Cached parse keyed on the raw env-var string. Charset-validates each
+    entry against :data:`_POLICY_TYPE_ENTRY_RE` (lowercase identifier,
+    matching the shape of the built-in :data:`_DEFAULT_POLICY_TYPES`
+    set). Lowercases the raw input first so case-variant typos like
+    ``"FOO,BAR"`` are normalised before the regex compare.
+    """
+    extras = _validate_env_allowlist_entries("STRANDS_MESH_POLICY_TYPE_ALLOW", raw.lower(), _POLICY_TYPE_ENTRY_RE)
+    return frozenset(_DEFAULT_POLICY_TYPES | set(extras))
+
+
 def _policy_type_allowlist() -> frozenset[str]:
     """Return the configured policy_type allowlist (defaults + env extras)."""
-    raw = os.getenv("STRANDS_MESH_POLICY_TYPE_ALLOW", "")
-    extra = {pt.strip().lower() for pt in raw.split(",") if pt.strip()}
-    return frozenset(_DEFAULT_POLICY_TYPES | extra)
+    return _policy_type_allowlist_cached(os.getenv("STRANDS_MESH_POLICY_TYPE_ALLOW", ""))
+
+
+def _clear_security_caches_for_tests() -> None:
+    """Clear the per-allowlist ``lru_cache`` instances. For test use only.
+
+    The caches are keyed on the raw env-var string, so the next call
+    after a ``monkeypatch.setenv`` change naturally re-parses. This
+    helper exists for fixtures that want a deterministic WARNING emit
+    (e.g. tests asserting the malformed-entry log path) -- without
+    explicitly clearing, a previously-cached call from another test
+    would suppress the WARNING on the second invocation.
+    """
+    _policy_host_allowlist_cached.cache_clear()
+    _hf_repo_allowlist_cached.cache_clear()
+    _policy_type_allowlist_cached.cache_clear()
 
 
 def is_safe_policy_type(policy_type: str) -> bool:
@@ -404,28 +509,66 @@ def is_safe_server_address(addr: str) -> bool:
 
 
 def _coerce_float(name: str, value: Any, *, lo: float, hi: float, default: float | None) -> float:
-    """Coerce *value* to a float in ``[lo, hi]`` or raise ValidationError."""
+    """Coerce *value* to a float in ``[lo, hi]`` or raise :class:`ValidationError`.
+
+    Two defences against numeric edge cases that a naive bounds check
+    misses:
+
+    1. **NaN / inf rejection.** IEEE-754 ``NaN`` compares False against
+       any bound (``nan < lo`` and ``nan > hi`` are both False), so a
+       payload like ``{"duration": NaN}`` would silently pass a clamp
+       and reach the robot adapter where ``time.sleep(nan)`` raises and
+       ``time.monotonic() + nan`` produces a never-terminating deadline.
+       Python's ``json.loads`` accepts the JSON-non-standard literal
+       ``NaN`` by default so this IS reachable from the wire.
+    2. **Coercion-error wrapping.** ``float(...)`` can raise
+       ``OverflowError`` on a huge int or ``ValueError`` on an exotic
+       Decimal. Without the ``try/except``, those would bubble out as
+       bare exceptions and bypass the structured ``command_rejected``
+       audit + wire response in ``_exec_cmd`` (which catches
+       :class:`ValidationError` only).
+    """
     if value is None:
         if default is None:
             raise ValidationError(f"{name} is required")
         return default
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValidationError(f"{name} must be a number, got {type(value).__name__}")
-    coerced = float(value)
+    try:
+        coerced = float(value)
+    except (ValueError, OverflowError) as exc:
+        raise ValidationError(f"{name}: cannot coerce {value!r} to float ({exc})") from exc
+    if not math.isfinite(coerced):
+        raise ValidationError(f"{name} must be finite, got {coerced}")
     if coerced < lo or coerced > hi:
         raise ValidationError(f"{name}={coerced} out of bounds [{lo}, {hi}]")
     return coerced
 
 
 def _coerce_int(name: str, value: Any, *, lo: int, hi: int, default: int | None) -> int:
-    """Coerce *value* to an int in ``[lo, hi]`` or raise ValidationError."""
+    """Coerce *value* to an int in ``[lo, hi]`` or raise :class:`ValidationError`.
+
+    Mirrors the defences in :func:`_coerce_float`: explicit
+    finite-check on float inputs (``int(nan)`` raises a bare
+    ``ValueError`` that ``_exec_cmd`` would not audit as a structured
+    ``command_rejected``) and a ``try/except`` wrap so coercion errors
+    surface as :class:`ValidationError` instead of bypassing the
+    audit shape. Without these, ``{"action": "step", "steps": NaN}``
+    would log as a generic "dispatch error" and be invisible to the
+    validation-rejection forensics path.
+    """
     if value is None:
         if default is None:
             raise ValidationError(f"{name} is required")
         return default
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValidationError(f"{name} must be an integer, got {type(value).__name__}")
-    coerced = int(value)
+    if isinstance(value, float) and not math.isfinite(value):
+        raise ValidationError(f"{name} must be finite, got {value}")
+    try:
+        coerced = int(value)
+    except (ValueError, OverflowError) as exc:
+        raise ValidationError(f"{name}: cannot coerce {value!r} to int ({exc})") from exc
     if coerced < lo or coerced > hi:
         raise ValidationError(f"{name}={coerced} out of bounds [{lo}, {hi}]")
     return coerced
@@ -563,11 +706,13 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
         source = cmd.get("source_peer_id", "")
         if not isinstance(source, str) or not source:
             raise ValidationError("teleop_receive requires non-empty source_peer_id")
-        # R25: tighten to model_path-style charset/length contract.
-        # Without this, an authenticated peer could publish a teleop_receive
-        # cmd whose source_peer_id contains arbitrary unicode / control
-        # characters / NULs / shell metacharacters; the validator's job is
-        # to enforce the wire contract regardless of downstream callers.
+        # ``source_peer_id`` flows into ``r.start_teleop_receive(source, dev)``
+        # and into log messages, and is concatenated into device-key state. An
+        # authenticated peer publishing a ``teleop_receive`` cmd whose
+        # ``source_peer_id`` carries arbitrary unicode / control characters /
+        # NUL bytes / shell metacharacters has no business reaching downstream
+        # code, regardless of whether today's downstream consumers happen to
+        # be safe. The validator's job is to enforce the contract at the wire.
         if len(source) > MAX_PEER_ID_LEN:
             raise ValidationError(
                 f"teleop_receive.source_peer_id length {len(source)} > MAX_PEER_ID_LEN ({MAX_PEER_ID_LEN})."
@@ -583,6 +728,18 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
             device = cmd["device_name"]
             if not isinstance(device, str):
                 raise ValidationError("teleop_receive.device_name must be a string")
+            # Same charset + length discipline for device_name -- it is
+            # concatenated into log messages and used as a key in internal
+            # state mappings (e.g. the per-device state dict).
+            if len(device) > MAX_PEER_ID_LEN:
+                raise ValidationError(
+                    f"teleop_receive.device_name length {len(device)} > MAX_PEER_ID_LEN ({MAX_PEER_ID_LEN})."
+                )
+            if not _PEER_ID_RE.fullmatch(device):
+                raise ValidationError(
+                    "teleop_receive.device_name must match [A-Za-z0-9_.-]+ "
+                    "(no whitespace, NULs, control chars, shell metacharacters, or '/')."
+                )
             out["device_name"] = device
 
     elif action == "teleop_stop":
