@@ -232,25 +232,97 @@ def clear_peers() -> None:
 def _build_config() -> Any:
     """Create a ``zenoh.Config`` from environment variables.
 
+    The returned config layers (in order):
+
+    1. Explicit endpoints from ``ZENOH_CONNECT`` / ``ZENOH_LISTEN``.
+    2. Fleet namespace (:func:`_zenoh_config.namespace_block`).
+    3. Scouting policy (gossip on, multicast off by default).
+    4. Transport DoS bounds (max sessions, adminspace lockdown).
+    5. Per-key-expression rate caps (``downsampling`` block).
+    6. Per-message size caps (``low_pass_filter`` block).
+    7. mTLS terminator + ACL when ``STRANDS_MESH_AUTH_MODE=mtls``
+       (the default); skipped when explicitly set to ``none``.
+
     Returns:
         A ``zenoh.Config`` instance.
 
     Raises:
         ImportError: If ``eclipse-zenoh`` is not installed.
+        ValueError: If env-var clamps are violated or
+            ``STRANDS_MESH_AUTH_MODE`` is set to an unknown value.
+        FileNotFoundError: If ``STRANDS_MESH_AUTH_MODE=mtls`` and any
+            of the referenced cert/key/CA files do not exist.
     """
     import zenoh
 
+    from strands_robots.mesh import _acl_config, _zenoh_config
+
     config = zenoh.Config()
 
+    # Explicit endpoints from env vars (legacy ZENOH_CONNECT / ZENOH_LISTEN).
     connect = os.getenv("ZENOH_CONNECT")
     listen = os.getenv("ZENOH_LISTEN")
-
     if connect:
         endpoints = [e.strip() for e in connect.split(",")]
         config.insert_json5("connect/endpoints", json.dumps(endpoints))
     if listen:
         endpoints = [e.strip() for e in listen.split(",")]
         config.insert_json5("listen/endpoints", json.dumps(endpoints))
+
+    # Fleet hardening, applied unconditionally.
+    namespace = _zenoh_config.resolve_namespace()
+    blocks: list[tuple[str, str]] = [
+        _zenoh_config.namespace_block(),
+        *_zenoh_config.scouting_block(),
+        *_zenoh_config.transport_caps_block(),
+        _zenoh_config.adminspace_block(),
+        _zenoh_config.downsampling_block(),
+        _zenoh_config.low_pass_filter_block(),
+    ]
+
+    # mTLS + ACL when auth_mode=mtls. The "none" mode emits everything
+    # above except the auth + ACL blocks; it is dev-only.
+    auth_mode = _zenoh_config.resolve_auth_mode()
+    if auth_mode == "mtls":
+        blocks.append(_zenoh_config.link_protocols_block())
+        blocks.append(_zenoh_config.tls_block())
+        blocks.append(_acl_config.acl_block(namespace))
+        # in mtls mode the ACL is the third line of
+        # defence after the handshake. When the operator did not supply
+        # STRANDS_MESH_ACL_FILE, the built-in default is permissive
+        # (any CA-signed peer publishes/subscribes anywhere). Surface a
+        # WARNING on every session open so operators who forgot the env
+        # var hear about it -- parallel to the auth_mode=none warning
+        # below.
+        # only emit this WARNING when the
+        # operator has NOT explicitly opted into the dev/lab posture.
+        # Mesh.start emits a more-specific INFO/ERROR breadcrumb with
+        # the opt-in context; emitting both fires two log lines about
+        # the same thing on every session open AND has the WARNING
+        # contradict the operator's explicit acknowledgement.
+        accept_permissive = os.getenv("STRANDS_MESH_ACCEPT_PERMISSIVE_ACL", "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        if _acl_config.is_default_acl_in_use() and not accept_permissive:
+            logger.warning(
+                "STRANDS_MESH_ACL_FILE unset -- using PERMISSIVE built-in "
+                "default ACL. Any CA-signed peer can publish/subscribe "
+                "on any key. For production fleets supply an operator "
+                "ACL enumerating each peer's cert CN; see "
+                "examples/mesh_acl_example.json5."
+            )
+    else:
+        logger.error(
+            "[mesh] WIRE SECURITY DISABLED -- STRANDS_MESH_AUTH_MODE=none. "
+            "Both the mTLS terminator AND the ACL block are off. "
+            "Operator opted in via STRANDS_MESH_I_KNOW_THIS_IS_INSECURE=1. "
+            "This mode is for development on trusted networks only."
+        )
+
+    for path, value in blocks:
+        config.insert_json5(path, value)
 
     return config
 
@@ -333,9 +405,31 @@ def get_session() -> Any | None:
         listen_env = os.getenv("ZENOH_LISTEN")
 
         # When no explicit endpoints are set, try to become the local router.
+        # both the auto-listener AND the client
+        # fallback below MUST go through ``_build_config()`` -- the
+        # threat-coverage table claims namespace + mTLS + ACL +
+        # downsampling + low_pass_filter + max_sessions + adminspace
+        # lockdown apply on every Zenoh path, and earlier revisions, the auto-
+        # listener path used a bare ``zenoh.Config()`` and silently
+        # bypassed all of them. The default deployment shape (no
+        # ZENOH_CONNECT / ZENOH_LISTEN, first peer in the process) is
+        # exactly what most operators hit on first run; the security
+        # claim was therefore false on the most common code path.
+        # Compose mTLS-aware endpoints (``tls/...`` when auth_mode=mtls,
+        # plain ``tcp/...`` otherwise) so ``transport/link/protocols``
+        # restriction does not produce an unusable session.
         if not connect_env and not listen_env:
+            from strands_robots.mesh._zenoh_config import resolve_auth_mode
+
             try:
-                cfg = zenoh.Config()
+                _auth_mode = resolve_auth_mode()
+            except ValueError:
+                _auth_mode = "mtls"
+            scheme = "tls" if _auth_mode == "mtls" else "tcp"
+            local_ep = f"{scheme}/127.0.0.1:{mesh_port}"
+
+            try:
+                cfg = _build_config()
                 cfg.insert_json5("listen/endpoints", json.dumps([local_ep]))
                 cfg.insert_json5("connect/endpoints", json.dumps([local_ep]))
                 _SESSION = zenoh.open(cfg)
@@ -421,8 +515,18 @@ def _get_zenoh_session_directly() -> Any | None:
         listen_env = os.getenv("ZENOH_LISTEN")
 
         if not connect_env and not listen_env:
+            # (See get_session above for full rationale.)
+            from strands_robots.mesh._zenoh_config import resolve_auth_mode
+
             try:
-                cfg = zenoh.Config()
+                _auth_mode = resolve_auth_mode()
+            except ValueError:
+                _auth_mode = "mtls"
+            scheme = "tls" if _auth_mode == "mtls" else "tcp"
+            local_ep = f"{scheme}/127.0.0.1:{mesh_port}"
+
+            try:
+                cfg = _build_config()
                 cfg.insert_json5("listen/endpoints", json.dumps([local_ep]))
                 cfg.insert_json5("connect/endpoints", json.dumps([local_ep]))
                 _SESSION = zenoh.open(cfg)
