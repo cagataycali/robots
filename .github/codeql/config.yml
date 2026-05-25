@@ -16,27 +16,35 @@ query-filters:
   #
   # Globally suppressed. The rule walks `if TYPE_CHECKING:` blocks for cycle
   # detection, which makes it fire on the deliberate static-only cycle in
-  # strands_robots/simulation/{base,policy_runner,benchmark}.py. The runtime
-  # is provably safe under `from __future__ import annotations` (PEP 563):
-  # all type hints are string-form at runtime and never resolved at
-  # module-import time. The cycle is structurally required so policy_runner
-  # can call into the SimEngine ABC defined in base while base can advertise
-  # PolicyRunner-typed return values for static checkers.
+  # strands_robots/simulation/{base,policy_runner,benchmark}.py.
+  #
+  # Runtime is safe because the cycle is asymmetric, not closed:
+  # base.py:50 imports PolicyRunner / VideoConfig from policy_runner at
+  # module level (the runtime edge), but policy_runner.py:51-54 imports
+  # SimEngine / BenchmarkProtocol / Policy from base only under
+  # TYPE_CHECKING. There is no runtime back-edge that would close the
+  # cycle at import time. `from __future__ import annotations` (PEP 563)
+  # is additional belt-and-braces so type-hint resolution at runtime
+  # never re-enters either module.
   #
   # This is the only file shape in the repository where the rule fires
-  # today; a global suppression keeps the config small and avoids per-path
-  # filter syntax (CodeQL `query-filters` only filters by id/tags, not by
-  # path). If the rule ever fires on an unrelated file, the matching CodeQL
-  # alert will still appear in the Security tab as long as the underlying
-  # query is available -- this filter only suppresses the alert surfacing,
-  # not the analysis itself.
+  # today; a global suppression keeps the config small and avoids
+  # path-scoped filter syntax (CodeQL `query-filters` only filters by
+  # id / tags / precision, not by path). The cost we accept is that a
+  # future legitimate violation in unrelated code is silently suppressed
+  # too. Mitigation: the regression pins below guard runtime-safety
+  # invariants independent of CodeQL, and a future contributor who hits
+  # a new legitimate violation should drop this suppression and fix the
+  # new cycle properly rather than extend the filter.
   #
   # Regression contract: tests/simulation/test_no_cyclic_imports.py and
   # tests/simulation/test_no_import_cycle.py pin the runtime-safety
-  # invariants (modules import cleanly in fresh interpreters; the static
-  # graph between base and policy_runner is acyclic at runtime). Those
-  # pins fail loudly if the runtime cycle is ever introduced, independent
-  # of CodeQL's view.
+  # invariants. The first spawns fresh interpreters and asserts each
+  # affected module imports cleanly with no RecursionError / ImportError;
+  # the second builds the runtime import graph (excluding TYPE_CHECKING
+  # and inside-function edges) and asserts it is acyclic. Both fail
+  # loudly if the runtime cycle is ever reintroduced, independent of
+  # CodeQL's view of the AST.
   #
   # Refs: PR #209 (paused, full constraint analysis in S13/R6); issue #215
   # (this suppression); CodeQL alerts #83-#87, #253-#255 (the recurrent

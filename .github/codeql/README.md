@@ -20,23 +20,47 @@ form a deliberate static-only cycle so `policy_runner` can call into the
 `PolicyRunner`-typed return values to static checkers (mypy, IDE
 navigation, `typing.get_type_hints` consumers).
 
-**Why it is safe at runtime:** every file uses `from __future__ import
-annotations` (PEP 563). All type hints are string-form at runtime and
-are never resolved at module-import time. The lazy-import shim
-`_lazy_policy_runner()` defers the actual `PolicyRunner` / `VideoConfig`
-class lookup to call time, by which point both modules are fully
-loaded. Tests pin the runtime invariants:
+**Why it is safe at runtime:** the cycle is asymmetric, not closed.
+
+- `simulation/base.py:50` imports `PolicyRunner` and `VideoConfig` from
+  `simulation/policy_runner.py` at module level (the runtime edge that
+  static analysers see and flag).
+- `simulation/policy_runner.py:51-54` imports `SimEngine`,
+  `BenchmarkProtocol`, and `Policy` only under `if TYPE_CHECKING:`.
+  These are not real edges at import time -- `TYPE_CHECKING` is `False`
+  at runtime, the block is skipped, and the names exist only for the
+  static type system.
+- `simulation/benchmark.py:46-47` similarly imports `SimEngine` only
+  under `TYPE_CHECKING`.
+
+There is therefore no runtime back-edge from `policy_runner` (or
+`benchmark`) into `base`. `base` finishes importing cleanly before
+anything in `policy_runner` runs at module scope, so the cycle never
+closes at import time. `from __future__ import annotations` (PEP 563)
+on every affected file is the additional belt-and-braces guarantee
+that type-hint resolution itself never re-enters `base` or
+`policy_runner` via `typing.get_type_hints` consumers.
+
+The CodeQL-independent regression contract pins this invariant:
 
 - `tests/simulation/test_no_cyclic_imports.py` -- spawns a fresh Python
-  interpreter for each of the four affected modules and asserts each
-  imports cleanly with no recursion error.
+  interpreter for each of the three affected modules (and a combined
+  one-process run) and asserts each imports cleanly with no
+  `RecursionError` / `ImportError`. Catches the dynamic-import failure
+  mode where a top-level statement reintroduces a partial-module re-entry.
 - `tests/simulation/test_no_import_cycle.py::test_no_runtime_import_cycles`
-  -- builds the runtime import graph (excluding `TYPE_CHECKING` edges)
-  via `networkx.simple_cycles` and asserts it is acyclic.
+  -- builds the runtime import graph (excluding `TYPE_CHECKING` and
+  inside-function edges) via `networkx.simple_cycles` and asserts it is
+  acyclic. Catches the static-graph failure mode where someone hoists a
+  `TYPE_CHECKING` import to module scope and re-creates the cycle.
+- `tests/simulation/test_no_import_cycle.py::test_base_does_not_lazy_import_policy_runner`
+  -- counts module-level imports of `policy_runner` from `base.py` and
+  asserts the count stays at 1 (the documented module-level edge), so a
+  re-introduced inline lazy import inside a `SimEngine` method (the
+  prior bug shape) fails loudly.
 
-If the runtime cycle is ever reintroduced (e.g. by hoisting a lazy
-import to module scope), those pins fail loudly in CI -- independent of
-CodeQL's view of the AST.
+If the runtime cycle is ever reintroduced, those pins fail loudly in CI
+-- independent of CodeQL's view of the AST.
 
 **Why a global suppression rather than path-scoped:** CodeQL's
 `query-filters` keys filter by `id` / `tags` / `precision` only;
@@ -44,10 +68,13 @@ path-scoped exclusion of a single query is not supported (the only
 path-aware key is `paths-ignore`, which excludes a file from all
 queries -- too broad). The simulation triple is the only file shape in
 the repository where this query fires today, so a global exclude is
-equivalent in effect and keeps the config small. A future contributor
-who introduces a *new* legitimate violation in unrelated code would
-still want to know about it; in that case, drop this suppression and
-fix the new cycle properly.
+equivalent in effect *today* and keeps the config small. The cost we
+accept is that a future legitimate violation in unrelated code would
+be silently suppressed too. Mitigation: the regression pins above
+guard against runtime cycles independent of CodeQL, and a future
+contributor who introduces a new legitimate violation should drop this
+suppression and fix the new cycle properly rather than extend the
+filter.
 
 **References:**
 

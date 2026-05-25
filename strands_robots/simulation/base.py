@@ -27,17 +27,33 @@ if TYPE_CHECKING:
     from strands_robots.policies import Policy
 
 # CodeQL: the AST cycle base <-> policy_runner is a documented false-positive
-# suppressed via .github/codeql/config.yml (py/unsafe-cyclic-import). The
-# runtime is provably safe under `from __future__ import annotations`
-# (PEP 563); pin tests in tests/simulation/test_no_cyclic_imports.py and
-# tests/simulation/test_no_import_cycle.py guard the runtime invariants.
+# suppressed via .github/codeql/config.yml (py/unsafe-cyclic-import).
 # See .github/codeql/README.md for the full rationale.
 #
-# PolicyRunner and VideoConfig are used by run_policy / replay / eval_policy.
-# We could defer these with inline lazy imports (and historically did), but
-# policy_runner.py only imports `SimEngine` from base under TYPE_CHECKING so
-# the runtime cycle doesn't actually exist. Keep the imports at module level
-# to break the AST-visible cycle that static analysers flag.
+# Why this is safe at runtime: the cycle is asymmetric, not closed.
+# This module imports ``PolicyRunner`` / ``VideoConfig`` at module level
+# (the runtime edge), but ``policy_runner.py`` imports ``SimEngine`` from
+# ``base`` only under ``TYPE_CHECKING``. There is no runtime back-edge
+# from ``policy_runner`` into this module, so the cycle never closes at
+# import time. Do NOT hoist the ``TYPE_CHECKING`` import in
+# ``policy_runner.py`` to module scope -- that would close the loop and
+# break ``import strands_robots.simulation.policy_runner`` with
+# ``ImportError: cannot import name 'SimEngine' from partially initialized
+# module ...``. ``from __future__ import annotations`` (PEP 563) is
+# additional belt-and-braces, but the asymmetric edge is what makes the
+# import work; PEP 563 only governs how type hints are resolved later.
+#
+# Pin tests guard this invariant independent of CodeQL:
+# - tests/simulation/test_no_cyclic_imports.py: spawns fresh interpreters
+#   per affected module and asserts each imports cleanly.
+# - tests/simulation/test_no_import_cycle.py: AST-builds the runtime
+#   import graph (excluding TYPE_CHECKING / inside-function edges) and
+#   asserts it is acyclic; also pins that this module keeps exactly one
+#   module-level import of policy_runner (re-introducing inline lazy
+#   imports inside SimEngine methods was the prior bug shape).
+#
+# PolicyRunner and VideoConfig are used by run_policy / replay /
+# eval_policy on this class.
 #
 # Note (#191): we deliberately do NOT import ``OnFrame`` here, even under
 # ``TYPE_CHECKING`` — CodeQL's ``py/unsafe-cyclic-import`` rule walks
