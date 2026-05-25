@@ -59,9 +59,6 @@ logger = logging.getLogger(__name__)
 #: Maximum duration (seconds) accepted for ``execute`` / ``start`` commands.
 MAX_DURATION_S: float = 3600.0
 
-#: Maximum RPC timeout (seconds) accepted from peers.
-MAX_TIMEOUT_S: float = 300.0
-
 #: Maximum length (characters) of a natural-language ``instruction`` payload.
 MAX_INSTRUCTION_LEN: int = 2000
 
@@ -69,6 +66,13 @@ MAX_INSTRUCTION_LEN: int = 2000
 #: HF ids are well under 200 chars; 512 leaves headroom for nested local
 #: paths without becoming a DoS vector.
 MAX_MODEL_PATH_LEN: int = 512
+
+#: Maximum length of a remote policy ``server_address`` (host[:port] or URL).
+#: Bounded independently of :data:`MAX_MODEL_PATH_LEN`: a fully-qualified
+#: hostname is RFC-1035-bounded at 253 chars, IPv6-bracketed-host + port +
+#: scheme caps under 80, so 256 is roomy for any legitimate input while
+#: keeping the address-cap semantics owned by the address validator.
+MAX_SERVER_ADDRESS_LEN: int = 256
 
 #: Allowed characters for HF repo ids and local model paths. We reject
 #: ``..`` traversal, shell metacharacters, NUL bytes, whitespace, and any
@@ -440,7 +444,7 @@ def is_safe_server_address(addr: str) -> bool:
     """
     if not isinstance(addr, str) or not addr:
         return False
-    if len(addr) > MAX_MODEL_PATH_LEN:
+    if len(addr) > MAX_SERVER_ADDRESS_LEN:
         return False
     s = addr.strip()
 
@@ -588,8 +592,9 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
         - ``pretrained_name_or_path`` (optional): HF repo, allowlist-gated.
         - ``model_path`` (optional): HF id or local path, no traversal.
         - ``policy_type`` (optional): in :func:`is_safe_policy_type`.
-        - ``policy_provider`` (optional): in :func:`is_safe_policy_provider`,
-          defaults to ``"mock"``.
+        - ``policy_provider``: REQUIRED, in :func:`is_safe_policy_provider`.
+          No silent default -- a peer that omits this is rejected so it is
+          never ambiguous whether ``mock`` was an explicit choice or a bug.
         - ``server_address`` (optional): in :func:`is_safe_server_address`.
     * ``step``: ``steps`` integer in ``[1, 10_000]``, defaults to 1.
     * ``teleop_receive``: ``source_peer_id`` non-empty str.
@@ -637,6 +642,12 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
             raise ValidationError(
                 f"policy_host={policy_host!r} not in allowlist. Set STRANDS_MESH_POLICY_HOST_ALLOW to extend."
             )
+        # Preserve caller casing/whitespace verbatim. ``is_safe_policy_host``
+        # normalises internally for the allowlist match, but downstream
+        # consumers that string-equality-check against e.g. ``"localhost"``
+        # for loopback fast-paths MUST do their own normalisation -- the
+        # validator gates membership, not canonical form. Same contract for
+        # ``server_address`` below.
         out["policy_host"] = policy_host
 
         out["duration"] = _coerce_float(
@@ -774,7 +785,7 @@ __all__ = [
     "MAX_INSTRUCTION_LEN",
     "MAX_MODEL_PATH_LEN",
     "MAX_PEER_ID_LEN",
-    "MAX_TIMEOUT_S",
+    "MAX_SERVER_ADDRESS_LEN",
     "SecurityError",
     "ValidationError",
     "is_safe_model_path",
