@@ -10,8 +10,8 @@ Backend selection
 Selection is done at the first :func:`get_transport` call:
 
 - ``zenoh`` (default) — :class:`ZenohTransport`
-- ``iot``             — :class:`IotMqttTransport`
-- ``bridge``          — :class:`BridgeTransport` (Zenoh + IoT)
+- ``iot``  — :class:`IotMqttTransport`
+- ``bridge``  — :class:`BridgeTransport` (Zenoh + IoT)
 
 Subsequent calls in the same process bump the refcount but do NOT switch
 backends. To change the backend, every consumer must release first
