@@ -264,7 +264,7 @@ class TestAudit:
 
 
 class TestRateLimitTOCTOU:
-    """Review feedback: pre-fix, two concurrent emergency_stop calls could
+    """pre-fix, two concurrent emergency_stop calls could
     each pass _rate_limit_check, both get operator-approved, both record,
     briefly exceeding the configured 3/60s limit. The post-approval
     re-check under _RATE_LOCK closes the race.

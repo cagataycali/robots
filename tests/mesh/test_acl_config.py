@@ -39,8 +39,8 @@ class TestDefaultACL:
     def test_default_acl_self_consistent(self):
         """Pin: default_permission matches the rule set's effective behaviour.
 
-        This pins the R18 fix for the code-vs-doc drift review feedback flagged
-        5x across R5/R8/R10/R12/R13. Mixing default_permission='deny' with
+        This pins the prior fix for the code-vs-doc drift review feedback flagged
+        5x across the prior fix/the prior fix/the prior fix/the prior fix/the prior fix. Mixing default_permission='deny' with
         ['**'] allow-rules looks like deny-by-default but is actually allow-any.
         """
         acl = ac.default_acl("strands")
@@ -78,7 +78,7 @@ class TestACLFileLoader:
 
     def test_resolve_uses_default_when_unset(self):
         # When STRANDS_MESH_ACL_FILE is unset, resolve_acl returns default_acl()
-        # which is permissive-by-design (R18: default_permission=allow + empty rules).
+        # which is permissive-by-design (default_permission=allow + empty rules).
         acl = ac.resolve_acl("strands")
         assert acl["enabled"] is True
         assert acl["default_permission"] == "allow"
@@ -166,7 +166,7 @@ class TestACLFileLoader:
 
 
 class TestJSON5EndToEnd:
-    """End-to-end tests delegating to the json5 PyPI dep (post-F3 swap).
+    """End-to-end tests delegating to the json5 PyPI dep (post-the prior fix swap).
 
     The hand-rolled JSON5-lite preprocessor was replaced with json5.loads;
     these tests verify the shipped operator template parses cleanly and
@@ -270,14 +270,14 @@ class TestJSON5MalformedFailsLoudly:
 
 
 class TestDefaultACLPermissiveShape:
-    """Pin the post-R18 permissive-allow shape of the default ACL.
+    """Pin the post-the prior permissive-allow shape of the default ACL.
 
     Operators not supplying STRANDS_MESH_ACL_FILE get a permissive default
     by design: any peer that survived the mTLS handshake can publish and
     subscribe on any key (CHANGELOG section 8, README "Default ACL --
     permissive by design").
 
-    The R18 fix delivers this with default_permission='allow' + empty rules
+    The the prior fix fix delivers this with default_permission='allow' + empty rules
     (the simplest config matching the documented behaviour). Earlier mixes
     of default_permission='deny' + ['**'] allow-rules were flagged 5x in
     review for code-vs-doc drift; this class pins the correction.
@@ -329,7 +329,7 @@ class TestDefaultACLPermissiveShape:
 
 
 class TestIsDefaultACLInUse:
-    """Review feedback: operators forgetting STRANDS_MESH_ACL_FILE should
+    """operators forgetting STRANDS_MESH_ACL_FILE should
     get a runtime signal. is_default_acl_in_use() is the predicate the
     session-open WARNING calls."""
 
@@ -352,7 +352,7 @@ class TestIsDefaultACLInUse:
         assert ac.is_default_acl_in_use() is True
 
     def test_set_to_strict_path_returns_false(self, monkeypatch, tmp_path):
-        """F18-B: env-var pointing to a STRICT (non-permissive-shape)
+        """env-var pointing to a STRICT (non-permissive-shape)
         ACL file returns False -- the gate only fires on the
         permissive shape, regardless of source.
         """
@@ -371,12 +371,12 @@ class TestIsDefaultACLInUse:
         assert ac.is_default_acl_in_use() is False
 
     def test_set_to_unloadable_path_fails_closed(self, monkeypatch):
-        """F18-B: env-var pointing to a NONEXISTENT path fails closed
+        """env-var pointing to a NONEXISTENT path fails closed
         (returns True) so a typo does not silently lift the gate."""
         monkeypatch.setenv("STRANDS_MESH_ACL_FILE", "/etc/mesh-acl.json5")
         from strands_robots.mesh import _acl_config as ac
 
-        # Pre-F18 returned False; post-F18 the unloadable file fails
+        # the prior implementation returned False; post-the prior fix the unloadable file fails
         # closed and triggers the gate.
         assert ac.is_default_acl_in_use() is True
 
@@ -463,8 +463,8 @@ class TestJSON5DepSwap:
             assert not hasattr(ac, name), f"{name} should have been removed in F3-A"
 
     def test_json5_pep_dependency_lazy_import(self):
-        """json5 is imported lazily inside ``_parse_json5`` (F15-E).
-        Pre-F15 the import was at module top, which forced the dep
+        """json5 is imported lazily inside ``_parse_json5``.
+        the prior implementation the import was at module top, which forced the dep
         on dev users running auth_mode=none who don't load an ACL
         file. Lazy-import means the dep is only paid when an ACL
         file actually needs to be parsed."""
@@ -478,21 +478,21 @@ class TestJSON5DepSwap:
 
 
 # ---------------------------------------------------------------------
-# F3-B-1: bare except on permissive-ACL warning narrowed
+# the prior fix-1: bare except on permissive-ACL warning narrowed
 # ---------------------------------------------------------------------
 
 
-# === F16-D: default_acl() shape regression test ===
+# === default_acl() shape regression test ===
 
 
 class TestF16DefaultACLShapeIsLoadBearing:
-    """F16-D (PR #195 review): the ``default_acl()`` shape is now load-
-    bearing for the F11-B start-time gate -- if a future refactor
+    """the ``default_acl()`` shape is now load-
+    bearing for the prior start-time gate -- if a future refactor
     accidentally bypasses the ``mtls + permissive default ACL``
     refusal, this regression test catches a default that becomes
     accidentally less permissive (which would silently break the
     first-run UX) OR more permissive in a non-obvious way (e.g. allow
-    + non-empty rules) which would pass the F11-C is_truly_permissive_default
+    + non-empty rules) which would pass the prior is_truly_permissive_default
     check while shipping a different posture.
     """
 
@@ -504,21 +504,21 @@ class TestF16DefaultACLShapeIsLoadBearing:
         assert d["enabled"] is True
         assert d["default_permission"] == "allow"
         # Empty rules/subjects/policies -- the documented permissive-by-
-        # design shape that F11-C's loader logic special-cases.
+        # design shape that the prior implementation's loader logic special-cases.
         assert d["rules"] == []
         assert d["subjects"] == []
         assert d["policies"] == []
 
     def test_is_default_acl_in_use_picks_up_default(self, monkeypatch):
         """When STRANDS_MESH_ACL_FILE is unset, is_default_acl_in_use()
-        returns True so Mesh.start() can fire the F11-B gate."""
+        returns True so Mesh.start() can fire the prior gate."""
         from strands_robots.mesh._acl_config import is_default_acl_in_use
 
         monkeypatch.delenv("STRANDS_MESH_ACL_FILE", raising=False)
         assert is_default_acl_in_use() is True
 
     def test_is_default_acl_in_use_with_strict_file_returns_false(self, monkeypatch, tmp_path):
-        """F18-B: shape-based check. A strict file returns False;
+        """shape-based check. A strict file returns False;
         previous semantics (env-var-presence -> False) replaced.
         """
         from strands_robots.mesh._acl_config import is_default_acl_in_use

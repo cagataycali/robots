@@ -38,7 +38,7 @@ The same logic is exposed as a CLI entry point (registered in
 
     strands-robots iot provision so100-arm-01
     strands-robots iot provision-operator bedrock-agent-01
-    strands-robots iot teardown so100-arm-01    # cleanup
+    strands-robots iot teardown so100-arm-01  # cleanup
 """
 
 from __future__ import annotations
@@ -64,21 +64,21 @@ _AMAZON_ROOT_CA1_URL = "https://www.amazontrust.com/repository/AmazonRootCA1.pem
 #
 # Recompute when AWS rotates the root::
 #
-#   python -c "import hashlib, urllib.request as u; \
-#       print(hashlib.sha256(u.urlopen( \
-#           'https://www.amazontrust.com/repository/AmazonRootCA1.pem' \
-#       ).read()).hexdigest())"
+#  python -c "import hashlib, urllib.request as u; \
+#  print(hashlib.sha256(u.urlopen( \
+#  'https://www.amazontrust.com/repository/AmazonRootCA1.pem' \
+#  ).read()).hexdigest())"
 #
 # Last verified 2026-05.
 #
-# R7-3: this is now a TUPLE so a CA rotation can ship as a code change
+# this is now a TUPLE so a CA rotation can ship as a code change
 # that adds the new pin in advance and removes the old one in a follow-
 # up after rollout. Operators can also extend the accepted pins via
 # ``STRANDS_MESH_CA_PINS`` (comma-separated 64-char lowercase hex). The
 # env var augments the built-in tuple; it does not replace it.
 _AMAZON_ROOT_CA1_PINS: tuple[str, ...] = ("2c43952ee9e000ff2acc4e2ed0897c0a72ad5fa72c3d934e81741cbd54f05bd1",)
-# R8-10: the legacy ``_AMAZON_ROOT_CA1_SHA256`` alias was deleted.
-# CodeQL #229 flagged it as unused after R7-3 wired every reader
+# The legacy ``_AMAZON_ROOT_CA1_SHA256`` alias was deleted.
+# CodeQL #229 flagged it as unused after every reader was wired
 # through ``_resolve_ca_pins`` / ``_AMAZON_ROOT_CA1_PINS``. Internal
 # code references the tuple directly; error messages now format the
 # full pin set via ``_resolve_ca_pins`` so operators see every
@@ -308,7 +308,7 @@ def _validate_thing_name(thing_name: str) -> None:
     dash and underscore, length 1-128.  This is a **strict subset** of
     AWS IoT's accepted Thing-name charset (AWS allows ``:`` server-side;
     we reject it because of NTFS / classic Mac filesystem semantics).
-    Anything else (slashes, colons, dots, spaces, NUL, non-ASCII, ...)
+    Anything else (slashes, colons, dots, spaces, NUL, non-ASCII,...)
     is rejected -- a slip in upstream validation can never produce a
     path such as ``../../../etc/foo`` reaching
     ``cert_dir / f"{thing_name}.pem"``.
@@ -683,7 +683,7 @@ def _ensure_ca(ca_path: Path) -> None:
         # a prior compromised provisioning run. Operators who need
         # to refresh a re-encoded cert can delete the file and let
         # the download path run with the override set.
-        # R22-D: O_NOFOLLOW to prevent TOCTOU symlink-swap
+        # O_NOFOLLOW to prevent TOCTOU symlink-swap
         try:
             nofollow = getattr(os, "O_NOFOLLOW", 0)
             fd = os.open(ca_path, os.O_RDONLY | nofollow)
@@ -706,7 +706,7 @@ def _ensure_ca(ca_path: Path) -> None:
         return
 
     logger.info("[provision] downloading Amazon Root CA1 -> %s (pinned)", ca_path)
-    # R7-2: per-socket timeout via a custom HTTPSHandler.
+    # per-socket timeout via a custom HTTPSHandler.
     #
     # The previous implementation called ``socket.setdefaulttimeout(15.0)``
     # for the duration of the urlopen and restored it in ``finally``.
@@ -742,8 +742,7 @@ def _resolve_ca_pins() -> frozenset[str]:
     operator-supplied pins from ``STRANDS_MESH_CA_PINS``
     (comma-separated, 64-char lowercase hex; invalid entries are
     rejected with a WARNING and skipped). The env-var path lets a
-    fleet operator stage a new pin ahead of a code-level rotation
-    (R7-3) without a flag-day deploy. The built-in tuple is always
+    fleet operator stage a new pin ahead of a code-level rotation without a flag-day deploy. The built-in tuple is always
     included; the env var is additive only.
     """
     pins = set(_AMAZON_ROOT_CA1_PINS)
@@ -766,7 +765,7 @@ def _resolve_ca_pins() -> frozenset[str]:
 def _download_with_per_socket_timeout(url: str, timeout_s: float, max_bytes: int) -> bytes:
     """Download *url* with a per-socket recv timeout -- no process-global mutation.
 
-    R7-2: ``socket.setdefaulttimeout`` is a process-global. While its
+    ``socket.setdefaulttimeout`` is a process-global. While its
     try/finally restore is correct, every other thread doing socket I/O
     during the urlopen observes the foreign default. We install a one-
     shot ``HTTPSHandler`` whose ``https_open`` constructs HTTPSConnection
@@ -858,8 +857,8 @@ def verify_ca_pin(ca_path: Path) -> bool:
     compromised host would defeat exactly the forensic check operators
     rely on.
 
-    F3 (PR #195 review): mirrors the ``O_NOFOLLOW`` discipline that
-    ``_ensure_ca`` (R22-D) uses on the on-disk re-use path. Without it,
+    mirrors the ``O_NOFOLLOW`` discipline that
+    ``_ensure_ca`` uses on the on-disk re-use path. Without it,
     an attacker who can race a symlink between the operator-supplied
     ``ca_path`` and this read can redirect ``read_bytes()`` to a hash-
     matching decoy, defeating exactly this verifier. The asymmetric

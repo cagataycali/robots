@@ -39,7 +39,7 @@ def _bypass_ca_for_tests(monkeypatch):
     pinning behaviour itself has dedicated coverage in
     ``test_iot_ca_pin.py`` -- including a regression test that the
     on-disk re-use path always raw-checks the pin even when the
-    ``STRANDS_MESH_DISABLE_CA_PIN`` break-glass is set (R3-4).
+    ``STRANDS_MESH_DISABLE_CA_PIN`` break-glass is set.
 
     NB: we deliberately do NOT use ``STRANDS_MESH_DISABLE_CA_PIN=true``
     here. The break-glass only applies to the *download* path; the
@@ -421,7 +421,7 @@ class TestCleanupStaleCerts:
 
 
 class TestThingNameStrictSubset:
-    """Review feedback: docstring previously claimed AWS-IoT-compatible.
+    """docstring previously claimed AWS-IoT-compatible.
     The regex is in fact a strict subset (no colon). Pin the contract.
     """
 

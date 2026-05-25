@@ -117,11 +117,11 @@ def test_module_imports_with_no_env_vars(monkeypatch, reload_core):
     assert core.RESUME_REPLAY_CACHE_MAX == 4096
 
 
-# === F9-B: lazy resolution of RESUME_* env vars ===
+# === lazy resolution of RESUME_* env vars ===
 
 
 class TestResumeEnvLazyResolution:
-    """F9-B (PR #195 review): RESUME_* env vars are now re-read on every
+    """RESUME_* env vars are now re-read on every
     safety-handler call, not snapshotted at module import time. This
     means an operator setting STRANDS_MESH_RESUME_FRESHNESS_S AFTER
     importing strands_robots.mesh.core sees the new value without a

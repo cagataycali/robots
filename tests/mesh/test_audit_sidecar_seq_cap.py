@@ -11,7 +11,7 @@ no upper bound and no operator-visible signal.
 Note: the sidecar file is unsigned (the per-record HMAC defence
 covers the audit-log only), so this cap is the only fail-loud surface
 on the healthy-sidecar code path. The audit-log walk has both the cap
-and the F7-D HMAC-verify defence.
+and the prior HMAC-verify defence.
 
 These tests pin the cap, the WARNING, and the symmetric behaviour
 between the sidecar and audit-log seed paths.

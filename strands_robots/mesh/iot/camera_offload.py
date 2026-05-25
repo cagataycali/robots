@@ -246,7 +246,7 @@ def enable_for_mesh(mesh: Any, offloader: CameraOffloader | None = None) -> Came
                 if ref is None:
                     continue
                 ref["shape"] = list(shape)
-                # R5-2: cross-module callers go through Mesh.publish per
+                # cross-module callers go through Mesh.publish per
                 # AGENTS.md > Public API Hygiene (no `_method` references
                 # across modules). The /ref topic is mirrored to the cloud
                 # audit table; the publish path is gated by the Zenoh ACL

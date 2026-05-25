@@ -2,7 +2,7 @@
 
 The privacy kill switch (publish-side gate on Mesh._publish_cameras_once)
 must accept the same truthy values as every other boolean env var in the
-mesh layer (1 / true / yes / on, case-insensitive). Pre-F3-B the parser
+mesh layer (1 / true / yes / on, case-insensitive). the prior implementation the parser
 matched only the literal string 'true' -- an operator setting the var to
 '1' (matching their convention for STRANDS_MESH_MULTICAST=1) thought
 camera publishing was disabled while frames continued to publish. This
@@ -41,5 +41,5 @@ class TestCameraDisabledLenientParse:
 
 
 # ---------------------------------------------------------------------
-# F3-B-3: _on_safety_resume rejects empty/missing peer_id (R20 mirror)
+# the prior fix-3: _on_safety_resume rejects empty/missing peer_id (prior mirror)
 # ---------------------------------------------------------------------

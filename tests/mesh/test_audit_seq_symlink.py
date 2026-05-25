@@ -1,6 +1,6 @@
 """Pin: ``_load_seq_counters`` refuses to follow a symlinked sidecar.
 
-Background: PR #195 R20 review flagged that ``_persist_seq_counters`` checks
+Background: the prior fix review flagged that ``_persist_seq_counters`` checks
 ``is_symlink()`` and uses ``O_NOFOLLOW`` (defence in depth against a swap-and-
 write attack), but ``_load_seq_counters`` opened the sidecar with plain
 ``open()`` -- asymmetric defence (anti-pattern #25 in our system prompt).

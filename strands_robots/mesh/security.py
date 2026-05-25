@@ -13,7 +13,7 @@ configuration.
 What this module covers:
 
 * :func:`validate_command` -- action allowlist plus per-action bounds
-  (instruction length, duration, step count, ...).
+  (instruction length, duration, step count,...).
 * :func:`is_safe_policy_host` -- VLA inference target host / CIDR
   allowlist.
 * :func:`is_safe_model_path` -- HuggingFace repo / local model path
@@ -605,9 +605,9 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
     if action not in ALLOWED_ACTIONS:
         raise ValidationError(f"unknown action: {action!r} (allowed: {sorted(ALLOWED_ACTIONS)})")
 
-    # F7-C (PR #195 review): strict per-action key allowlist.
+    # strict per-action key allowlist.
     #
-    # Pre-F7 the validator did ``out = dict(cmd)`` and overlaid the
+    # Earlier the validator did ``out = dict(cmd)`` and overlaid the
     # validated fields, preserving every unknown key the caller sent.
     # Today's ``Mesh._dispatch`` only reads a known whitelist of keys,
     # so this was not exploitable -- but the contract was fragile: any
@@ -754,7 +754,7 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
         # override_code is the operator-supplied second factor for
         # clearing an estop lockout. Bound the type and length defensively
         # so a non-string or oversized value cannot reach
-        # Mesh._resume_lockout (which calls .strip() and would
+        # Mesh._resume_lockout (which calls.strip() and would
         # raise AttributeError on a list/dict, surfacing as a generic
         # dispatch error rather than a clean ValidationError).
         override_code = cmd.get("override_code", "")

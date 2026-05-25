@@ -1,4 +1,4 @@
-"""R21 pin tests for PSK rotation detection.
+"""the prior fix pin tests for PSK rotation detection.
 
 Yin's review on audit.py:582 -- the original snapshot was presence-only
 (``bool | None``). An operator who rotated the PSK *value* mid-run
@@ -9,9 +9,9 @@ PSK fails signature on the post-rotation segment; a verifier holding
 the NEW PSK fails on the pre-rotation segment. There is no
 record-internal signal of which PSK was active for which records.
 
-R21 fix: snapshot a fingerprint (``sha256(psk)[:16]``) and refuse any
+the prior fix fix: snapshot a fingerprint (``sha256(psk)[:16]``) and refuse any
 mid-run transition (set->unset, unset->set, OR rotated value) by
-writing a poison record (``sig="PSK_DEGRADED"``) -- mirroring the R19
+writing a poison record (``sig="PSK_DEGRADED"``) -- mirroring the prior
 poison record path.
 
 Per AGENTS.md > Review Learnings (#85) > "Pin regression tests for
@@ -37,7 +37,7 @@ def _reset_audit_state(monkeypatch, tmp_path):
 
 
 def test_psk_value_rotation_drops_record(monkeypatch, caplog):
-    """R21: rotating the PSK value mid-run must drop the next write
+    """rotating the PSK value mid-run must drop the next write
     with a poison record, not silently sign under the new key."""
     monkeypatch.setenv("STRANDS_MESH_AUDIT_PSK", "key-A")
     audit.log_safety_event(event_type="estop", peer_id="op-1", payload={"sender_id": "op-1"})
@@ -68,7 +68,7 @@ def test_psk_value_rotation_drops_record(monkeypatch, caplog):
 
 
 def test_psk_fingerprint_snapshot_uses_value_not_just_presence(monkeypatch):
-    """R21: the snapshot must encode the PSK *value* fingerprint, not
+    """the snapshot must encode the PSK *value* fingerprint, not
     just presence -- otherwise rotation goes undetected."""
     monkeypatch.setenv("STRANDS_MESH_AUDIT_PSK", "key-A")
     audit.log_safety_event(event_type="estop", peer_id="op-1", payload={})
@@ -82,7 +82,7 @@ def test_psk_fingerprint_snapshot_uses_value_not_just_presence(monkeypatch):
 
 
 def test_psk_unset_to_set_still_drops(monkeypatch):
-    """Carry-over R18 contract: unset->set transition still refused
+    """Carry-over the prior fix contract: unset->set transition still refused
     (would create unverifiable unsigned prefix)."""
     audit.log_safety_event(event_type="estop", peer_id="op-1", payload={})  # unsigned
 

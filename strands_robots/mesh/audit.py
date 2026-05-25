@@ -95,7 +95,7 @@ _DEFAULT_DIR = Path.home() / ".strands_robots"
 #
 # We deliberately don't use logging.handlers.RotatingFileHandler -- that
 # class doesn't honour O_NOFOLLOW and would re-open the file via the
-# default open() on rollover, defeating the F2 symlink guard. The
+# default open() on rollover, defeating the prior symlink guard. The
 # rotation here uses os.rename + os.open(O_NOFOLLOW) consistently.
 _DEFAULT_LOG_MAX_BYTES: int = 100 * 1024 * 1024  # 100 MiB
 _DEFAULT_LOG_MAX_FILES: int = 5
@@ -119,7 +119,7 @@ _WRITE_LOCK = threading.Lock()
 # yield a clean ``verify_audit_integrity()`` because every peer's seq
 # would start over at 1 -- defeating the gap-detection half of the
 # threat model. The sidecar is reloaded inside the cross-process
-# lockfile (``mesh_audit.seq.lock``, R5-3) on every ``_next_seq`` call
+# lockfile (``mesh_audit.seq.lock``) on every ``_next_seq`` call
 # and rewritten before the lock is released, so two processes sharing
 # the same ``STRANDS_MESH_AUDIT_DIR`` cannot roll the counter back.
 # Writes are fail-soft: a write failure logs at WARNING but does not
@@ -130,7 +130,7 @@ _WRITE_LOCK = threading.Lock()
 # writer processes against the same audit dir on Windows is not
 # safe and not supported.
 #
-# R4-7 -- audit-write amplification (accepted limitation): every event
+# audit-write amplification (accepted limitation): every event
 # triggers a synchronous double write (audit line + sidecar
 # tmp+os.replace+chmod+fsync). The Zenoh transport-layer
 # ``downsampling`` cap (``STRANDS_MESH_CMD_RATE_HZ``, default 20 Hz
@@ -156,7 +156,7 @@ _SEQ_COUNTERS: dict[str, int] = {}
 #: seq values.
 _MAX_SEED_SEQ: int = 100_000_000
 
-# F3 (PR #195 review): the PSK fingerprint snapshot at
+# the PSK fingerprint snapshot at
 # ``_AUDIT_STATE.psk_fingerprint`` is read+modified+compared on every
 # call to :func:`_sign_record`. Without a dedicated lock, two threads
 # racing on the very first record could both observe ``snapshot is None``
@@ -164,7 +164,7 @@ _MAX_SEED_SEQ: int = 100_000_000
 # the same read-modify-compare path is exercised on every subsequent
 # write where one thread can land between ``_audit_psk()`` and the
 # ``snapshot != current_fp`` comparison and observe a stale view that
-# defeats the PSK-degrade defence (R4-2 + R21). Hold this lock around
+# defeats the PSK-degrade defence . Hold this lock around
 # the entire fingerprint check so the compare-and-set is atomic.
 _PSK_STATE_LOCK = threading.Lock()
 
@@ -178,15 +178,14 @@ class _ProcessAuditState:
     ``global`` declaration on a module-level scalar (which CodeQL's
     "unused global variable" rule mis-classifies -- alert #222).
 
-    R4-2: ``psk_fingerprint`` snapshots a fingerprint of the
+    ``psk_fingerprint`` snapshots a fingerprint of the
     ``STRANDS_MESH_AUDIT_PSK`` value seen on the first record this
     process writes. Subsequent records compare to this snapshot --
     if the PSK gets unset, set, or rotated to a different value
     mid-run, ``_sign_record`` raises :class:`AuditPSKDegradedError`
     and the record is rejected. This closes:
-
-    * R4-2 (writer cleared PSK to forge unsigned records);
-    * R21 (writer rotated PSK value mid-run -- a verifier holding
+    * (writer cleared PSK to forge unsigned records);
+    * (writer rotated PSK value mid-run -- a verifier holding
       either key would fail signature on the other segment with
       no record-internal signal of which PSK was active when).
 
@@ -199,10 +198,10 @@ class _ProcessAuditState:
 
     def __init__(self) -> None:
         self.seq_loaded: bool = False
-        # ``None`` (unset sentinel)        = not yet observed.
-        # ``b""`` (empty bytes sentinel)   = first call observed NO PSK.
-        # any other ``bytes``              = first call observed a PSK,
-        #                                    fingerprint = sha256(psk)[:16].
+        # ``None`` (unset sentinel)  = not yet observed.
+        # ``b""`` (empty bytes sentinel)  = first call observed NO PSK.
+        # any other ``bytes``  = first call observed a PSK,
+        #  fingerprint = sha256(psk)[:16].
         self.psk_fingerprint: bytes | None = None
 
 
@@ -283,7 +282,7 @@ def _rotate_log_if_needed(path: Path, current_size: int) -> None:
     rotated files to durable storage out-of-band.
 
     Defence: also reject rotation if ``path`` is a symlink (paranoid
-    repeat of the F2 check; an attacker who races us between the
+    repeat of the prior check; an attacker who races us between the
     write check and rotation could otherwise redirect the rotated
     name).
     """
@@ -295,13 +294,13 @@ def _rotate_log_if_needed(path: Path, current_size: int) -> None:
         return
 
     max_files = _resolve_log_max_files()
-    # R8-4: cascade .{n} -> .{n+1} for n in [max_files, max_files-1, ..., 1].
-    # The previous range(max_files - 1, 0, -1) walked [max_files-1 .. 1] and
+    # cascade.{n} ->.{n+1} for n in [max_files, max_files-1,..., 1].
+    # The previous range(max_files - 1, 0, -1) walked [max_files-1.. 1] and
     # the predicate `n + 1 > max_files - 1` discarded n=max_files-1 instead
-    # of rolling it to .{max_files}, so rotated suffixes only ever reached
-    # .{max_files-1}. Walk from max_files now: file at .{max_files} (if
-    # any leftover from a misconfig) is unlinked, then .{max_files-1}
-    # through .1 cascade up by one.
+    # of rolling it to.{max_files}, so rotated suffixes only ever reached
+    # .{max_files-1}. Walk from max_files now: file at.{max_files} (if
+    # any leftover from a misconfig) is unlinked, then.{max_files-1}
+    # through.1 cascade up by one.
     for n in range(max_files, 0, -1):
         src_p = path.with_suffix(path.suffix + f".{n}")
         dst_p = path.with_suffix(path.suffix + f".{n + 1}")
@@ -319,7 +318,7 @@ def _rotate_log_if_needed(path: Path, current_size: int) -> None:
                     os.replace(src_p, dst_p)
             except OSError as exc:
                 logger.warning("[audit] rotation cascade failed at %s: %s", src_p, exc)
-    # Finally, rename the active log to .1 and let the next write
+    # Finally, rename the active log to.1 and let the next write
     # create a fresh empty file via O_CREAT.
     try:
         os.replace(path, path.with_suffix(path.suffix + ".1"))
@@ -336,7 +335,7 @@ def _seq_sidecar_path() -> Path:
 def _seq_lockfile_path() -> Path:
     """Path to the cross-process lockfile guarding the seq sidecar.
 
-    R5-3: two processes that host the same peer_id (multi-Mesh test
+    two processes that host the same peer_id (multi-Mesh test
     harness, supervised restart racing the parent, fleet duplicate)
     could otherwise both load the sidecar at seq=N, increment in
     memory to N+1 and N+2 independently, persist whichever arrives
@@ -371,7 +370,7 @@ def _seq_flock() -> Iterator[None]:
         logger.debug("[audit] cannot create seq lockfile dir: %s", exc)
         yield
         return
-    # R25: seq lockfile open lacked ``O_NOFOLLOW`` while the audit log
+    # seq lockfile open lacked ``O_NOFOLLOW`` while the audit log
     # itself (``_ensure_paths``), the sidecar (``_load_seq_counters`` /
     # ``_persist_seq_counters``), and the ACL loader all set it. An
     # attacker with write access to ``STRANDS_MESH_AUDIT_DIR`` who
@@ -421,7 +420,7 @@ def _load_seq_counters() -> None:
     flag on :data:`_AUDIT_STATE` so static analysers don't trip on a
     bare ``global`` for a module-level scalar.
 
-    R20: opens the sidecar with ``O_NOFOLLOW`` and refuses ``is_symlink``
+    opens the sidecar with ``O_NOFOLLOW`` and refuses ``is_symlink``
     paths -- mirrors :func:`_persist_seq_counters` so an attacker who
     swaps the sidecar with a symlink between two process invocations
     cannot redirect the counter restore. Without this guard, the inter-
@@ -429,9 +428,9 @@ def _load_seq_counters() -> None:
     but the reader would happily follow a symlink to attacker-chosen
     state (e.g. a sidecar from a different audit dir, or ``/dev/null``
     returning zero counters and rolling the cursor back). Asymmetric
-    defence flagged in PR #195 R20.
+    defence flagged earlier.
 
-    R22-A: when sidecar load fails OR is rejected as symlink, seed
+    when sidecar load fails OR is rejected as symlink, seed
     from the audit log by walking all records and taking max(seq) per
     peer_id. This prevents an attacker writing garbage to the sidecar
     from resetting all sequence counters to 0 on next boot.
@@ -449,7 +448,7 @@ def _load_seq_counters() -> None:
                 os.readlink(sidecar),
             )
         elif sidecar.exists():
-            # R20: O_NOFOLLOW on POSIX defeats a symlink-swap between
+            # O_NOFOLLOW on POSIX defeats a symlink-swap between
             # the is_symlink() check above and the open() below. On
             # Windows ``O_NOFOLLOW`` is 0 and the static check is the
             # only defence; this matches the audit-log open at L730+.
@@ -467,7 +466,7 @@ def _load_seq_counters() -> None:
                     # ``{"victim_peer_id": 999999999}``; without the
                     # cap, the legitimate writer's next event would jump
                     # the seq counter by ~10^9 with no upper bound. The
-                    # F7-D HMAC-verify defence applies only to the
+                    # the prior HMAC-verify defence applies only to the
                     # audit-log fallback; the sidecar itself is not
                     # signed, so the cap is the only defence on this
                     # path.
@@ -490,10 +489,10 @@ def _load_seq_counters() -> None:
     except (OSError, json.JSONDecodeError) as exc:
         logger.warning("[audit] could not load seq sidecar %s: %s", sidecar, exc)
 
-    # R22-A: If sidecar failed to load (corrupt/symlink/missing), seed
+    # If sidecar failed to load (corrupt/symlink/missing), seed
     # from the audit log to prevent fail-open sequence reset.
     #
-    # F7-D (PR #195 review): when STRANDS_MESH_AUDIT_PSK is configured,
+    # when STRANDS_MESH_AUDIT_PSK is configured,
     # ONLY seed from records whose HMAC ``sig`` we can verify. Without
     # this, the previous version trusted every record in the log
     # (signed or not) -- an attacker who could write to the audit log
@@ -517,7 +516,7 @@ def _load_seq_counters() -> None:
                 seq = record.get("seq")
                 if not (isinstance(peer_id, str) and isinstance(seq, int) and seq > 0):
                     continue
-                # F7-D: when a PSK is configured, only trust signed records
+                # when a PSK is configured, only trust signed records
                 # whose HMAC we can verify. This breaks the circular trust
                 # surface where an attacker who can write the audit log
                 # could poison the seq counter restore.
@@ -559,7 +558,7 @@ def _load_seq_counters() -> None:
             elif unverified_skipped:
                 logger.warning(
                     "[audit] sidecar load failed and %d audit records were unverified -- counters NOT seeded "
-                    "(this is the F7-D circular-trust defence; an attacker who wrote unsigned forgeries "
+                    "(this is the circular-trust defence; an attacker who wrote unsigned forgeries "
                     "to the audit log cannot poison the seq restore when STRANDS_MESH_AUDIT_PSK is set)",
                     unverified_skipped,
                 )
@@ -570,7 +569,7 @@ def _load_seq_counters() -> None:
             # style schema violations, TypeError covers record-shape
             # mismatches. An unexpected exception type is a programmer
             # bug we want to see in tests, not silently degrade the
-            # R22-A counter-reset defence.
+            # the prior counter-reset defence.
             logger.warning(
                 "[audit] could not seed from audit log after sidecar failure: %s",
                 log_exc,
@@ -584,7 +583,7 @@ def _persist_seq_counters() -> None:
 
     Caller MUST hold :data:`_SEQ_LOCK`.
 
-    Defence (Phase-4 / Cycle 4 / F3): if the sidecar is a symlink,
+    Defence (Phase-4 / Cycle 4): if the sidecar is a symlink,
     refuse to write. Same threat model as the audit log itself --
     attacker swaps the file with a symlink to redirect counter state
     or null-route it. The atomic ``tmp + os.replace`` already prevents
@@ -613,7 +612,7 @@ def _persist_seq_counters() -> None:
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
                 json.dump(_SEQ_COUNTERS, fh, sort_keys=True, separators=(",", ":"))
                 fh.flush()
-                # R4-3: fsync the temp fd before rename so a power-loss
+                # fsync the temp fd before rename so a power-loss
                 # cannot leave the audit log ahead of the sidecar. After
                 # restart, ``_load_seq_counters`` would otherwise pick up
                 # stale counters and the next event would write a duplicate
@@ -627,7 +626,7 @@ def _persist_seq_counters() -> None:
                     # weaker than ideal but the safety code path stays
                     # alive (audit persistence is fail-soft by contract).
                     pass
-        except Exception:  # noqa: BLE001 -- F16-E (PR #195 review): cleanup path that re-raises; we MUST close the fd on any failure of `fh.flush() / fsync / chmod / replace`, regardless of exception type. The unconditional ``raise`` below preserves the original exception so this is not silently swallowing.
+        except Exception:  # noqa: BLE001 -- cleanup path that re-raises; we MUST close the fd on any failure of `fh.flush() / fsync / chmod / replace`, regardless of exception type. The unconditional ``raise`` below preserves the original exception so this is not silently swallowing.
             try:
                 os.close(fd)
             except OSError:
@@ -638,7 +637,7 @@ def _persist_seq_counters() -> None:
                 pass
             raise
         os.replace(tmp, sidecar)
-        # R4-3: fsync the parent directory so the rename is durable
+        # fsync the parent directory so the rename is durable
         # too. POSIX-only -- Windows treats os.fsync on a directory fd
         # as undefined behaviour. Skip the dir fsync there; the rename
         # is atomic on NTFS so the visible-state ordering still holds.
@@ -682,7 +681,7 @@ def _persist_seq_counters() -> None:
 def _next_seq(peer_id: str) -> int:
     """Return the next monotonic sequence number for *peer_id*.
 
-    R5-3: the load+increment+persist sequence runs under TWO locks:
+    the load+increment+persist sequence runs under TWO locks:
 
     * :data:`_SEQ_LOCK` (intra-process) so multiple Mesh instances in
       one process don't interleave increments.
@@ -721,7 +720,7 @@ class AuditPSKDegradedError(RuntimeError):
     """Raised when STRANDS_MESH_AUDIT_PSK was set at first write but is
     no longer set at a subsequent write.
 
-    Round-4 / R4-2: a process that briefly clears its env to write a run
+    Round-4 / a process that briefly clears its env to write a run
     of unsigned forgeries -- then re-sets the PSK -- would otherwise yield
     records that ``verify_audit_integrity`` reports as ``missing_sig``
     while ``ok`` (the boolean reader-helpers check) stays True. We snap
@@ -749,7 +748,7 @@ def _sign_record(record: dict[str, Any]) -> str | None:
     """Compute the per-record HMAC signature, or ``None`` when no PSK
     is configured.
 
-    Round-4 / R4-2: snapshot a fingerprint of the PSK observed on
+    Round-4 / snapshot a fingerprint of the PSK observed on
     the first call. If a subsequent call sees a different fingerprint
     (PSK unset, set, or rotated to a different value), raise
     ``AuditPSKDegradedError`` so the audit log cannot silently
@@ -766,12 +765,12 @@ def _sign_record(record: dict[str, Any]) -> str | None:
     """
     psk = _audit_psk()
     current_fp = _psk_fingerprint(psk)
-    # F3 + F15-B (PR #195 review): atomic compare-and-set AND comparison
-    # under one lock. Pre-F15 the lock only held the snapshot fetch +
+    # Atomic compare-and-set AND comparison
+    # under one lock. Earlier the lock only held the snapshot fetch +
     # first-time set; the elif compare ran outside the lock. The
     # docstring at lines 150-158 promised "the entire fingerprint
     # check" was atomic; that claim now actually holds. Concretely:
-    # without F15-B, two threads racing on a PSK rotation could each
+    # Without the swap-after-compare, two threads racing on a PSK rotation could each
     # read the same pre-rotation snapshot, then both pass the
     # ``snapshot == current_fp`` check (both seeing post-rotation
     # current_fp), and both write under the new key without one
@@ -810,7 +809,7 @@ def _sign_record(record: dict[str, Any]) -> str | None:
             )
         else:
             # Both non-empty but different: rotated value.
-            # R21: the post-rotation segment would be unverifiable
+            # the post-rotation segment would be unverifiable
             # against the pre-rotation key and vice versa, with NO
             # record-internal signal of which key was active for
             # which records. Restart to rotate deliberately.
@@ -862,7 +861,7 @@ def _ensure_paths(path: Path) -> None:
     # Symlink check on the audit log itself. ``Path.is_symlink`` returns
     # False on a missing file and does NOT raise on permission errors,
     # so the previous try/except OSError wrapper was dead code that
-    # could silently swallow a TOCTOU race. R7-1: rely on the static
+    # could silently swallow a TOCTOU race. rely on the static
     # check for the eager-fail path AND on O_NOFOLLOW for the file
     # creation below so a symlink swap between the two cannot redirect
     # the create.
@@ -875,7 +874,7 @@ def _ensure_paths(path: Path) -> None:
         )
 
     if not path.exists():
-        # R7-1: create with O_NOFOLLOW so an attacker who races a
+        # create with O_NOFOLLOW so an attacker who races a
         # symlink in between the is_symlink check above and this open
         # cannot redirect the create. ``Path.touch`` follows symlinks
         # (verified at runtime in tests/mesh/test_security_regressions.py
@@ -935,7 +934,7 @@ def log_safety_event(event_type: str, peer_id: str, payload: dict[str, Any]) -> 
     try:
         sig = _sign_record(record)
     except AuditPSKDegradedError as exc:
-        # R4-2 + R19: STRANDS_MESH_AUDIT_PSK transitioned mid-run
+        # STRANDS_MESH_AUDIT_PSK transitioned mid-run
         # (signed->unsigned or unsigned->signed). We refuse to forge a
         # signature, but instead of silently dropping the record we
         # write a "poison" record with sig="PSK_DEGRADED" and a
@@ -943,16 +942,16 @@ def log_safety_event(event_type: str, peer_id: str, payload: dict[str, Any]) -> 
         # (verify_audit_integrity with PSK present) reports it as
         # ``missing_sig`` (sig is not a valid HMAC), which forces
         # ``ok=False`` and surfaces the transition to forensics.
-        # See PR #195 review thread PRRT_kwDORUMiZs6ER6_2.
+        #
         logger.error("[audit] %s -- writing poison record (sig=PSK_DEGRADED): %s", exc, record)
         record["sig"] = "PSK_DEGRADED"
         record["psk_degraded"] = str(exc)
     except Exception as sign_exc:  # noqa: BLE001 -- audit must be soft per contract (lines 768-771)
-        # F3 (PR #195 review): widen the fail-soft contract beyond
+        # widen the fail-soft contract beyond
         # AuditPSKDegradedError so the safety code path never crashes
         # on a sign-time error.
         #
-        # F14-A (PR #195 review): if a PSK was configured at this
+        # if a PSK was configured at this
         # moment, write a poison record (``sig="SIGN_FAILED"``) so a
         # forensic walker holding the same PSK sees the gap as a bad
         # signature and forces ``ok=False``. Without this, an
@@ -1090,7 +1089,7 @@ def read_audit_log(since: float | None = None) -> list[dict[str, Any]]:
         List of event dicts in chronological order. Returns an empty
         list if no audit file exists.
     """
-    # F8-B (PR #195 review): every other open in this module
+    # every other open in this module
     # carefully refuses symlinks via static is_symlink() + O_NOFOLLOW
     # (see _ensure_paths, _persist_seq_counters, _load_seq_counters).
     # ``read_audit_log`` is the forensic walker AND the seed source
@@ -1121,9 +1120,9 @@ def read_audit_log(since: float | None = None) -> list[dict[str, Any]]:
                         try:
                             record = json.loads(raw)
                         except json.JSONDecodeError as parse_exc:
-                            # F11-D (PR #195 review): forward-compatibility
+                            # forward-compatibility
                             # justifies skipping malformed lines, but
-                            # silent skip interacts badly with the R22-A
+                            # silent skip interacts badly with the prior
                             # seq-seed walk in ``_load_seq_counters``: a
                             # malformed line for peer X with seq=N is
                             # invisible to the walk's max(seq), so on
@@ -1169,15 +1168,15 @@ def verify_audit_integrity(records: list[dict[str, Any]] | None = None) -> dict[
         Dict with keys::
 
             {
-                "total":        <int>,   # records examined
-                "signed":       <int>,   # records with a sig field
-                "verified":     <int>,   # records whose sig validated
-                "bad_signature":<int>,   # records whose sig failed
-                "missing_sig":  <int>,   # signed log expected but missing
+                "total":  <int>,  # records examined
+                "signed":  <int>,  # records with a sig field
+                "verified":  <int>,  # records whose sig validated
+                "bad_signature":<int>,  # records whose sig failed
+                "missing_sig":  <int>,  # signed log expected but missing
                 "unverifiable_signed":<int>, # signed records, verifier lacks PSK
                 "psk_present":  <bool>,  # whether STRANDS_MESH_AUDIT_PSK was set
-                "sequence_gaps":[(prev_seq, this_seq), ...],
-                "ok":           <bool>,  # True iff bad_signature == 0 and
+                "sequence_gaps":[(prev_seq, this_seq),...],
+                "ok":  <bool>,  # True iff bad_signature == 0 and
                                          # sequence_gaps == [].
             }
     """
@@ -1209,7 +1208,7 @@ def verify_audit_integrity(records: list[dict[str, Any]] | None = None) -> dict[
         if sig is not None:
             signed += 1
             if psk is None:
-                # R21: verifier lacks PSK while the log carries signed
+                # verifier lacks PSK while the log carries signed
                 # records. Count so ``ok`` fails closed -- a forensic
                 # walker missing the PSK MUST NOT see a green light on
                 # a signed log it cannot actually verify.
@@ -1261,12 +1260,12 @@ def verify_audit_integrity(records: list[dict[str, Any]] | None = None) -> dict[
         "unverifiable_signed": unverifiable_signed,
         "psk_present": psk_present,
         "sequence_gaps": gaps,
-        # R4-2: when a PSK is configured at verification time, an
+        # when a PSK is configured at verification time, an
         # unsigned record (missing_sig > 0) is treated as a failure --
         # otherwise an attacker who briefly cleared the env mid-run
         # could write a stretch of unsigned forgeries and the
         # ``ok=True`` reader path would not flag them.
-        # R21: when the verifier lacks a PSK but the log carries
+        # when the verifier lacks a PSK but the log carries
         # signed records, fail closed. A forensic walker missing
         # the PSK MUST NOT report ok=True on an unverifiable log.
         "ok": (bad_signature == 0 and not gaps and not (psk_present and missing_sig > 0) and unverifiable_signed == 0),

@@ -12,9 +12,9 @@ What stays:
   ACL who observes a turn_id cannot publish a response on someone
   else's pending turn.
 * **A2 -- bridge filter exact-match**. Tail extensions are rejected.
-* **F1 -- log injection**. Newlines / control chars in payloads
+* **log injection**. Newlines / control chars in payloads
   cannot split JSONL records.
-* **F2 / F3 -- symlink swap on audit log + seq sidecar**.
+* **the prior fix / symlink swap on audit log + seq sidecar**.
 * **E1 -- audit-log size bounded by rotation**, with a hard cap on
   ``STRANDS_MESH_AUDIT_MAX_BYTES``.
 * **G1 / G2 -- affirmative-response check + inbox bound**.
@@ -92,7 +92,7 @@ def test_p4_a2_custom_prefix_via_env(monkeypatch):
     assert bridge_transport._should_bridge("strands/x/customx", suffixes) is False
 
 
-# --- F1 -- Log injection -------------------------------------------------
+# --- Log injection -------------------------------------------------
 
 
 def test_p4_f1_log_injection_via_newline_in_payload(tmp_path, monkeypatch):
@@ -119,7 +119,7 @@ def test_p4_f1_log_injection_via_newline_in_payload(tmp_path, monkeypatch):
             json.loads(line)
 
 
-# --- F2 / F3 -- Symlink swap ---------------------------------------------
+# --- the prior fix / Symlink swap ---------------------------------------------
 
 
 def test_p4_f2_audit_log_symlink_swap_blocked(tmp_path, monkeypatch):
@@ -157,7 +157,7 @@ def test_p4_f2_audit_log_symlink_swap_blocked(tmp_path, monkeypatch):
 def test_p4_f3_seq_sidecar_symlink_swap_blocked(tmp_path, monkeypatch):
     """Seq sidecar refuses to follow a symlink.
 
-    Same fail-soft semantics as F2: the writer logs a warning and the
+    Same fail-soft semantics as the writer logs a warning and the
     symlink target is NOT polluted.
     """
     monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))

@@ -1,13 +1,13 @@
-"""Pin test for R19 design-thread fix: ACL-file shape validation.
+"""Pin test for the prior design-thread fix: ACL-file shape validation.
 
-PR #195 review thread PRRT_kwDORUMiZs6ER6__ flagged that the ACL loader
+this PR review thread PRRT_kwDORUMiZs6ER6__ flagged that the ACL loader
 only validated 4 top-level keys + ``enabled: true``; everything below
 was unchecked. A typo like ``interface:`` (singular) or a missing
 ``cert_common_names`` field silently degrades a role-separated ACL to
 "match nothing" at the Zenoh layer -- a silent total outage operators
 must debug from Zenoh logs.
 
-R19 adds ``_validate_acl_shape`` which raises ``ValueError`` at parse
+the prior fix adds ``_validate_acl_shape`` which raises ``ValueError`` at parse
 time on each footgun.
 
 Pin: each test crafts a minimally-broken ACL file and asserts a clear
@@ -66,7 +66,7 @@ def test_valid_skeleton_loads_clean(tmp_path: Path) -> None:
 
 
 def test_subject_omitted_interfaces_accepted(tmp_path: Path) -> None:
-    """F2: ``interfaces`` is OPTIONAL per Zenoh schema.
+    """``interfaces`` is OPTIONAL per Zenoh schema.
 
     Per ``zenoh-config/src/lib.rs`` AclConfigSubjects.interfaces is
     ``Option<NEVec<...>>``; ``authorization.rs:446-454`` maps
@@ -87,7 +87,7 @@ def test_subject_omitted_interfaces_accepted(tmp_path: Path) -> None:
 def test_subject_empty_interfaces_rejected(tmp_path: Path) -> None:
     """Empty list is still rejected -- Zenoh raises ``Found empty
     interface value`` server-side, and the silent-total-deny failure
-    mode is real (R19 footgun). Either omit the field or enumerate.
+    mode is real (prior footgun). Either omit the field or enumerate.
     """
     doc = _valid_skeleton()
     doc["subjects"][0]["interfaces"] = []

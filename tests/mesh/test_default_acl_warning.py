@@ -1,6 +1,6 @@
-"""R19 pin tests: Mesh.start warning when mtls + default ACL combo is active.
+"""the prior fix pin tests: Mesh.start warning when mtls + default ACL combo is active.
 
-Reviewer concern (R18 thread @ 2026-05-23T07:38:02Z, _acl_config.py:359):
+Reviewer concern (prior thread @ 2026-05-23T07:38:02Z, _acl_config.py:359):
 > ``is_default_acl_in_use()`` exists but no consumer wires it. The dangerous-
 > but-easy-to-miss config is mtls + permissive default ACL. Suggested
 > follow-up: have ``Mesh.start`` emit a WARNING when both are active.
@@ -69,7 +69,7 @@ def _start_with_stub_session(stub_robot, caplog, level: int = logging.WARNING):
 
 
 def test_mtls_plus_default_acl_does_not_start(caplog, monkeypatch, stub_robot):
-    """F11-B (PR #195 review): mesh REFUSES to start under
+    """mesh REFUSES to start under
     ``mtls + permissive default ACL`` -- but does so by returning
     early without raising. The first-run ``Robot()`` /
     ``Simulation()`` constructor experience must not crash; the
@@ -84,7 +84,7 @@ def test_mtls_plus_default_acl_does_not_start(caplog, monkeypatch, stub_robot):
     monkeypatch.setenv("STRANDS_MESH_AUTH_MODE", "mtls")
     monkeypatch.delenv("STRANDS_MESH_ACCEPT_PERMISSIVE_ACL", raising=False)
 
-    # Must NOT raise -- F11-B made this refuse-and-return rather than refuse-and-raise.
+    # Must NOT raise -- the prior fix made this refuse-and-return rather than refuse-and-raise.
     records = _start_with_stub_session(stub_robot, caplog)
 
     # The operator-facing ERROR IS logged.
@@ -141,7 +141,7 @@ def test_auth_mode_none_does_not_emit_default_acl_warning(caplog, monkeypatch, s
 
 
 class TestPermissiveACLWarningExceptNarrow:
-    """The R19 permissive-ACL warning at Mesh.start() previously caught
+    """The the prior permissive-ACL warning at Mesh.start() previously caught
     `except Exception` and downgraded to DEBUG -- a future refactor that
     raised an unrelated type would silently lose the warning.
     """
@@ -163,20 +163,20 @@ class TestPermissiveACLWarningExceptNarrow:
 
 
 # ---------------------------------------------------------------------
-# F3-B-2: STRANDS_MESH_CAMERA_DISABLED via _bool_env (lenient parse)
+# the prior fix-2: STRANDS_MESH_CAMERA_DISABLED via _bool_env (lenient parse)
 # ---------------------------------------------------------------------
 
 
-# === F17-A: pre-session ACL gate (no wire activity on refusal) ===
+# === pre-session ACL gate (no wire activity on refusal) ===
 
 
 class TestF17PreSessionGate:
-    """F17-A (PR #195 review): the F11-B refuse-and-return gate
+    """the prior refuse-and-return gate
     previously fired AFTER session acquisition + 6 subscriber
     declarations, leaving the wire LIVE with the permissive ACL
     applied -- the very surface the gate was supposed to prevent.
 
-    F17-A moves the gate to the TOP of ``Mesh.start()``, before
+    the prior fix moves the gate to the TOP of ``Mesh.start()``, before
     ``get_session()``. A refusal returns BEFORE any wire activity.
     """
 
@@ -233,18 +233,18 @@ class TestF17PreSessionGate:
         assert m._refuse_under_permissive_default_acl() is False
 
 
-# === F18-B: shape-based is_default_acl_in_use ===
+# === shape-based is_default_acl_in_use ===
 
 
 class TestF18ShapeBasedACL:
-    """F18-B (PR #195 review): pre-F18 ``is_default_acl_in_use``
+    """pre-the prior ``is_default_acl_in_use``
     returned False whenever ``STRANDS_MESH_ACL_FILE`` was set,
     regardless of file content. An operator who shipped a permissive
     file (``default_permission: "allow"`` + empty rules/subjects/
-    policies) silenced the F9-E session-open gate while running with
+    policies) silenced the prior session-open gate while running with
     the same posture the gate was supposed to refuse.
 
-    Post-F18 the check is shape-based: it inspects the resolved ACL
+    Post-the prior fix the check is shape-based: it inspects the resolved ACL
     dict and returns True for any permissive-by-shape resolution.
     """
 
@@ -309,17 +309,17 @@ class TestF18ShapeBasedACL:
         assert is_default_acl_in_use() is True
 
 
-# === F18-C: TOCTOU defence on the ACL file path ===
+# === TOCTOU defence on the ACL file path ===
 
 
 class TestF18TOCTOUSingleLoad:
-    """F18-C (PR #195 review): pre-F18 ``Mesh.start`` called
+    """pre-the prior ``Mesh.start`` called
     ``is_default_acl_in_use()`` (which loads the ACL file) and then
     ``resolve_acl()`` (which loads it again). An attacker who could
     swap the file between the two reads could show the gate the SAFE
     shape and the wire builder the UNSAFE shape.
 
-    Post-F18 both calls share an identity-keyed cache so the same
+    Post-the prior fix both calls share an identity-keyed cache so the same
     ``Mesh.start`` flow sees one snapshot.
     """
 

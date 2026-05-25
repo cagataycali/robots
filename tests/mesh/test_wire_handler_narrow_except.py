@@ -7,7 +7,7 @@ future Zenoh API change. Per AGENTS.md > Review Learnings (#86) > "Exception
 Clauses Must Be Narrow", the four wire-input handlers must use the same
 ``(AttributeError, UnicodeDecodeError, json.JSONDecodeError)`` tuple.
 
-Pre-fix verification (R24-A):
+Pre-fix verification:
     git stash && pytest tests/mesh/test_wire_handler_narrow_except.py -v
     -> 3 tests fail: bare-except still present in source.
 """
@@ -67,12 +67,12 @@ def test_all_four_wire_handlers_use_same_tuple() -> None:
         )
 
 
-# === F7-B: bridge_transport dedup decode path uses the same narrow tuple ===
+# === bridge_transport dedup decode path uses the same narrow tuple ===
 
 
 def test_bridge_transport_dedup_decode_uses_narrow_tuple() -> None:
     """The bridge dedup decode path was a fifth wire-shaped exception
-    site. F7-B narrowed it to the same ``(AttributeError,
+    site. the prior fix narrowed it to the same ``(AttributeError,
     UnicodeDecodeError, json.JSONDecodeError)`` tuple used by the four
     safety/cmd/response handlers.
     """
@@ -88,12 +88,12 @@ def test_bridge_transport_dedup_decode_uses_narrow_tuple() -> None:
     )
 
 
-# === F15-D: _on_presence is the fifth wire-input handler ===
+# === _on_presence is the fifth wire-input handler ===
 
 
 def test_on_presence_uses_narrow_exception_tuple() -> None:
-    """F15-D (PR #195 review): ``_on_presence`` is the fifth wire-input
-    handler in core.py. Pre-F15 it was the only one with a bare
+    """``_on_presence`` is the fifth wire-input
+    handler in core.py. the prior implementation it was the only one with a bare
     ``except Exception`` on the parse path -- AGENTS.md > Review
     Learnings (#86) calls that out as forbidden, and the same threat
     model applies to presence (a Zenoh sample.payload parse).

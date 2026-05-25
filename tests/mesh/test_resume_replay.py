@@ -1,6 +1,6 @@
 """Regression tests for resume-replay defenses in Mesh._on_safety_resume.
 
-This test suite validates the fix for PR #195 reviewer concern:
+This test suite validates the fix for this PR reviewer concern:
 the cryptographic shape `HMAC(override_code, proof_nonce)` with the issuer
 choosing the nonce originally gave no replay defense between fellow
 operator-class peers.
@@ -41,7 +41,7 @@ def _sample(payload_dict):
 def _make_envelope(override_code, *, t=None, peer_id="op-1", proof_nonce=None, lockout_elapsed_s=1.0):
     """Mint a valid resume envelope keyed off a specific override code.
 
-    F18-A: the HMAC binds (peer_id, t, lockout_elapsed_s, proof_nonce)
+    the HMAC binds (peer_id, t, lockout_elapsed_s, proof_nonce)
     via a deterministic JSON encoding -- we mirror that on the issuing
     fixture side so the receiver-side compare passes.
     """
@@ -168,7 +168,7 @@ def test_envelope_within_forward_skew_accepted(monkeypatch):
 def test_replay_cache_bounded(monkeypatch):
     """Replay cache is bounded at RESUME_REPLAY_CACHE_MAX.
 
-    F9-B: hot paths now re-read the env var via lazy resolver, so the
+    hot paths now re-read the env var via lazy resolver, so the
     test sets the env var directly rather than monkeypatching the
     module-level constant (which is now only the import-time default).
     """
@@ -261,7 +261,7 @@ def test_replay_emits_audit_event(monkeypatch):
 
 
 class TestResumeStrictPeerId:
-    """The estop handler (R20) rejects envelopes with empty/missing
+    """The estop handler rejects envelopes with empty/missing
     peer_id outright. Resume must mirror that posture.
     """
 
@@ -293,12 +293,12 @@ class TestResumeStrictPeerId:
 
 
 # ---------------------------------------------------------------------
-# F3-B-4: remote_estop_redundant audit on second-operator estop
+# the prior fix-4: remote_estop_redundant audit on second-operator estop
 # ---------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------
-# F18-A: HMAC binds envelope routing fields (peer_id, t,
+# HMAC binds envelope routing fields (peer_id, t,
 # lockout_elapsed_s, proof_nonce). A captured envelope mutated on ANY
 # of those four fields by an attacker is rejected at the MAC layer
 # regardless of the cache state.
@@ -307,10 +307,10 @@ class TestResumeStrictPeerId:
 
 def test_f18a_captured_envelope_with_mutated_peer_id_rejected(monkeypatch):
     """Captured legitimate envelope, attacker rewrites peer_id only:
-    pre-F18 the MAC compare passed (covered nonce only), and the
+    pre-the prior fix the MAC compare passed (covered nonce only), and the
     cache key (issuer_id, proof_nonce) became (NEW_id, proof_nonce)
     -- a cache miss -- so the lockout cleared on every replay.
-    Post-F18 the MAC compare fails because peer_id is now bound."""
+    Post-the prior fix the MAC compare fails because peer_id is now bound."""
     monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret")
     m = _make_mesh()
 
@@ -324,14 +324,14 @@ def test_f18a_captured_envelope_with_mutated_peer_id_rejected(monkeypatch):
     m._estop_lockout.set()
     m._on_safety_resume(_sample(env))
 
-    # The lockout MUST stay engaged -- F18 rejects mutated envelopes
+    # The lockout MUST stay engaged -- the prior fix rejects mutated envelopes
     # at the MAC layer.
     assert m._estop_lockout.is_set() is True
 
 
 def test_f18a_captured_envelope_with_mutated_t_rejected(monkeypatch):
     """Captured legitimate envelope, attacker rewrites t to bypass
-    the freshness check (push it forward) -- post-F18 the MAC compare
+    the freshness check (push it forward) -- post-the prior fix the MAC compare
     fails because t is now bound to the signature."""
     monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret")
     m = _make_mesh()
@@ -367,7 +367,7 @@ def test_f18a_captured_envelope_with_mutated_lockout_elapsed_rejected(monkeypatc
 
 def test_f18a_envelope_without_lockout_elapsed_s_rejected(monkeypatch):
     """A malformed envelope missing lockout_elapsed_s is rejected
-    outright before MAC compare (F18-A shape gate)."""
+    outright before MAC compare (prior shape gate)."""
     monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret")
     m = _make_mesh()
 

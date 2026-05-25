@@ -54,7 +54,7 @@ class TestSequence:
 
     def test_sequence_per_peer(self):
         """seq is per-peer monotonic. Two peers writing concurrently each
-        produce their own 1, 2, 3, ... sequence. The overall log can
+        produce their own 1, 2, 3,... sequence. The overall log can
         interleave them but per-peer adjacency is preserved -- which is
         what verify_audit_integrity's gap-detection relies on."""
         audit.log_safety_event("e", "peer-a", {})
@@ -142,7 +142,7 @@ class TestVerifyIntegrity:
         assert result["sequence_gaps"] == [(1, 3)]
 
     def test_mixed_signed_and_unsigned_via_separate_processes(self, monkeypatch, tmp_path):
-        # Post-R18: a single process cannot transition unsigned -> signed
+        # Post-a single process cannot transition unsigned -> signed
         # mid-run (raises AuditPSKDegradedError). The "mixed" log shape
         # only arises when separate processes write to the same audit
         # directory at different times. Simulate by crafting the file
@@ -189,7 +189,7 @@ class TestVerifyIntegrity:
         audit.log_safety_event("e", "p1", {})
         records = audit.read_audit_log()
         # Mutate the in-memory list -- verify uses what we hand it.
-        # Review feedback: an unsigned record under PSK is forged
+        # an unsigned record under PSK is forged
         # by definition. The verifier MUST refuse to advance the
         # per-peer cursor past it, otherwise an attacker who omits the
         # sig field hides arbitrary deletions of subsequent records.
@@ -234,7 +234,7 @@ def test_read_audit_log_spans_rotated_files(tmp_path, monkeypatch):
             {"index": i, "filler": "x" * 32},
         )
 
-    # Verify the rotation actually happened (at least one .jsonl.N file
+    # Verify the rotation actually happened (at least one.jsonl.N file
     # alongside the active log).
     rotated = sorted(p.name for p in tmp_path.iterdir() if ".jsonl." in p.name)
     assert rotated, "test setup failed: no rotation produced"
@@ -313,7 +313,7 @@ def test_missing_sig_does_not_advance_cursor_when_psk_present(tmp_path, monkeypa
 
 
 def test_log_safety_event_does_not_propagate_seq_errors(monkeypatch, tmp_path, caplog):
-    """Review feedback: log_safety_event's docstring says 'Raises: Nothing'
+    """log_safety_event's docstring says 'Raises: Nothing'
     but _next_seq used to be invoked outside the try/except. Verify the fix:
     even when _next_seq raises, log_safety_event swallows and logs a WARNING.
     """
@@ -378,11 +378,11 @@ def test_psk_degrade_drops_record(monkeypatch, tmp_path, caplog):
 
     with caplog.at_level(logging.ERROR, logger="strands_robots.mesh.audit"):
         # Must NOT raise (audit failures must not crash the safety path).
-        # R19: writes a poison record with sig=PSK_DEGRADED instead of
+        # writes a poison record with sig=PSK_DEGRADED instead of
         # silent drop, preserving the forensic trail.
         audit.log_safety_event("unsigned_attempt", "peer-a", {"phase": "two"})
 
-    # R19: poison record IS written (was previously dropped). The poison
+    # poison record IS written (was previously dropped). The poison
     # record has sig="PSK_DEGRADED" which verify_audit_integrity reports
     # as bad_signature, surfacing the transition to forensics.
     records_after = list(audit.read_audit_log())
@@ -400,7 +400,7 @@ def test_psk_degrade_drops_record(monkeypatch, tmp_path, caplog):
 
 
 def test_psk_degrade_unsigned_to_signed_drops_record(monkeypatch, tmp_path, caplog):
-    """Pin regression: PSK upward-transition is also refused (B3 from R18 audit).
+    """Pin regression: PSK upward-transition is also refused (B3 from the prior fix audit).
 
     Scenario: process boots with PSK unset (writes unsigned records),
     then the PSK is installed mid-run. The next record MUST be dropped --
@@ -435,7 +435,7 @@ def test_psk_degrade_unsigned_to_signed_drops_record(monkeypatch, tmp_path, capl
     with caplog.at_level(logging.ERROR, logger="strands_robots.mesh.audit"):
         audit.log_safety_event("signed_attempt", "peer-a", {"phase": "two"})
 
-    # R19: poison record IS written (was previously dropped). Symmetric
+    # poison record IS written (was previously dropped). Symmetric
     # with the signed->unsigned direction.
     records_after = list(audit.read_audit_log())
     assert len(records_after) == 2, (
@@ -563,13 +563,13 @@ class TestPSKStateLock:
 
 
 # ---------------------------------------------------------------------
-# F3-C-2: log_safety_event widened fail-soft contract
+# the prior fix-2: log_safety_event widened fail-soft contract
 # ---------------------------------------------------------------------
 
 
 class TestAuditFailSoft:
     """The fail-soft contract (audit must never crash safety path)
-    previously caught only AuditPSKDegradedError. F3 widens it.
+    previously caught only AuditPSKDegradedError. the prior fix widens it.
     """
 
     def test_sign_record_runtime_error_does_not_crash(self, tmp_path, monkeypatch, caplog):
@@ -601,11 +601,11 @@ class TestAuditFailSoft:
 
 
 # ---------------------------------------------------------------------
-# F3-D-1: verify_ca_pin O_NOFOLLOW symlink defence
+# the prior fix-1: verify_ca_pin O_NOFOLLOW symlink defence
 # ---------------------------------------------------------------------
 
 
-# === F7-D: circular-trust defence on R22-A audit-log seed ===
+# === circular-trust defence on the prior audit-log seed ===
 
 
 class TestR22ASeedRequiresHmacWithPSK:
@@ -690,14 +690,14 @@ class TestR22ASeedRequiresHmacWithPSK:
         assert audit._SEQ_COUNTERS.get("operator-2", 0) == 5
 
 
-# === F14-A: poison record on _sign_record transient failure under PSK ===
+# === poison record on _sign_record transient failure under PSK ===
 
 
 class TestF14SignFailedPoisonRecord:
     """When ``_sign_record`` raises an unexpected exception (transient
     error, not the documented PSK-degrade path) AND a PSK is
     configured, we MUST write a poison record so a forensic walker
-    holding the same PSK sees the gap. Pre-F14 the fail-soft path
+    holding the same PSK sees the gap. the prior implementation the fail-soft path
     wrote an unsigned record, which a verifier without the PSK could
     not distinguish from any other dev-mode write.
     """

@@ -53,7 +53,7 @@ def _build_mtls(tmp_path, monkeypatch):
     key = tmp_path / "peer.key"
     for f in (ca, cert, key):
         f.write_text("dummy\n")
-    # R24-C: _resolve_tls_paths enforces mode 0o600 on the private key.
+    # _resolve_tls_paths enforces mode 0o600 on the private key.
     key.chmod(0o600)
     monkeypatch.setenv("STRANDS_MESH_AUTH_MODE", "mtls")
     monkeypatch.setenv("STRANDS_MESH_TLS_CA", str(ca))
@@ -144,7 +144,7 @@ class TestMTLSBuild:
         assert protos == ["tls"]
 
     def test_acl_block_present_with_default_allow(self, tmp_path, monkeypatch):
-        # Post-R18: default ACL is permissive-by-design (default_permission='allow'
+        # Post-default ACL is permissive-by-design (default_permission='allow'
         # + empty rules), matching the documented behaviour without code-vs-doc drift.
         cfg = _build_mtls(tmp_path, monkeypatch)
         acl = json.loads(cfg.get_json("access_control"))
@@ -191,7 +191,7 @@ class TestEndpointEnvVars:
 
 
 def test_auth_mode_none_logs_error_on_open(caplog):
-    """B2 (R18): auth_mode=none now logs at ERROR level (was WARNING)
+    """B2: auth_mode=none now logs at ERROR level (was WARNING)
     so production log volumes do not bury wire-auth-OFF events. Must
     fire at every session open (not once-and-forget)."""
     import logging
@@ -210,7 +210,7 @@ def test_auth_mode_none_logs_error_on_open(caplog):
 
 
 def test_auth_mode_none_requires_explicit_optin(monkeypatch):
-    """B2 (R18) pin: auth_mode=none without the second-factor env var
+    """B2 pin: auth_mode=none without the second-factor env var
     raises ValueError at config build. This prevents a typo / forgotten
     env / leaked CI fixture from silently disabling wire auth.
     """
@@ -228,14 +228,14 @@ def test_auth_mode_none_requires_explicit_optin(monkeypatch):
 
 
 def test_mtls_default_acl_logs_warning(tmp_path, monkeypatch, caplog):
-    """Review feedback: operators who forget STRANDS_MESH_ACL_FILE in mtls
+    """operators who forget STRANDS_MESH_ACL_FILE in mtls
     mode should get a WARNING on every session open."""
     ca = tmp_path / "ca.crt"
     cert = tmp_path / "peer.crt"
     key = tmp_path / "peer.key"
     for f in (ca, cert, key):
         f.write_text("dummy\n")
-    # R24-C: _resolve_tls_paths enforces mode 0o600 on the private key.
+    # _resolve_tls_paths enforces mode 0o600 on the private key.
     key.chmod(0o600)
     monkeypatch.setenv("STRANDS_MESH_AUTH_MODE", "mtls")
     monkeypatch.setenv("STRANDS_MESH_TLS_CA", str(ca))

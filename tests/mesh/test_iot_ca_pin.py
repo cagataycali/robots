@@ -105,7 +105,7 @@ class TestEnsureCA:
         assert ca_path.read_bytes() == _REAL_CA
 
     def test_download_rogue_cert_rejected(self, tmp_path):
-        # R7-2: the download path is _download_with_per_socket_timeout,
+        # the download path is _download_with_per_socket_timeout,
         # which builds its own opener (no setdefaulttimeout). Patch the
         # helper directly so the test stays focused on the pin-mismatch
         # rejection rather than urllib internals.
@@ -119,7 +119,7 @@ class TestEnsureCA:
         assert not ca_path.exists(), "rogue cert must NOT be written to disk"
 
     def test_download_oversized_rejected(self, tmp_path):
-        # R7-2: patch _download_with_per_socket_timeout directly. The
+        # patch _download_with_per_socket_timeout directly. The
         # body-size cap is enforced after the download returns.
         ca_path = tmp_path / "ca.pem"
         big = b"X" * (provision._CA_FETCH_MAX_BYTES + 100)
@@ -134,7 +134,7 @@ class TestEnsureCA:
 
 class TestVerifyCaPinSymlink:
     """The public verify_ca_pin must not follow symlinks (asymmetric
-    with _ensure_ca's R22-D defence was the actual gap).
+    with _ensure_ca's the prior fix defence was the actual gap).
     """
 
     def test_symlinked_ca_path_returns_false(self, tmp_path):
@@ -150,5 +150,5 @@ class TestVerifyCaPinSymlink:
 
 
 # ---------------------------------------------------------------------
-# F3-D-2: STRANDS_MESH_POLICY_HOST_ALLOW operator validation
+# the prior fix-2: STRANDS_MESH_POLICY_HOST_ALLOW operator validation
 # ---------------------------------------------------------------------

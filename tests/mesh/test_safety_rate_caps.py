@@ -1,4 +1,4 @@
-"""R21 pin tests for safety-topic rate / size caps in zenoh transport.
+"""the prior fix pin tests for safety-topic rate / size caps in zenoh transport.
 
 Yin's review on _zenoh_config.py:251 -- downsampling and low_pass_filter
 only target **/cmd / **/broadcast / **/camera/**. Neither glob covers
@@ -6,7 +6,7 @@ only target **/cmd / **/broadcast / **/camera/**. Neither glob covers
 flood safety/estop with novel-`t` envelopes (bypassing the receiver
 replay cache) and consume CPU on freshness checks at line rate.
 
-R21 fix: extend both blocks to cover **/safety/** with their own
+the prior fix fix: extend both blocks to cover **/safety/** with their own
 (lower) caps -- 2 Hz frequency, 4 KiB size. Configurable via
 ``STRANDS_MESH_SAFETY_RATE_HZ`` / ``STRANDS_MESH_MAX_SAFETY_BYTES``.
 
@@ -81,7 +81,7 @@ def test_safety_size_cap_below_camera_cap_by_design():
 
 
 def test_existing_cmd_and_broadcast_rules_unaffected():
-    """R21 must not regress the R6/R8 rate caps on cmd / broadcast --
+    """the prior fix must not regress the prior/the prior fix rate caps on cmd / broadcast --
     those are pinned by other tests but we double-check here."""
     rules = _downsampling_rules()
     cmd = next((r for r in rules if r["key_expr"] == "**/cmd"), None)

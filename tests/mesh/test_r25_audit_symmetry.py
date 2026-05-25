@@ -1,28 +1,28 @@
-"""R25 audit-symmetry pins for PR #195.
+"""the prior audit-symmetry pins for this PR.
 
-This file pins the four sites that R25 review (2026-05-25 06:42) flagged
+This file pins the four sites that the prior fix review (2026-05-25 06:42) flagged
 as asymmetric with established discipline elsewhere in the mesh module.
-Each test fails on pre-R25 code and passes on the R25 commit.
+Each test fails on pre-the prior fix code and passes on the prior commit.
 
 1. ``security.py``: ``teleop_receive.source_peer_id`` lacked the charset /
-   length contract that ``model_path`` already enforces (R25 thread on
+   length contract that ``model_path`` already enforces (prior thread on
    ``security.py:551``). An authenticated peer could publish a
    ``teleop_receive`` cmd with arbitrary unicode / control characters /
    NULs / shell metacharacters in ``source_peer_id``.
 
 2. ``core.py``: ``Mesh.start`` declare-subscribers cleanup used a bare
    ``except Exception`` (and a nested ``except Exception: pass``) on the
-   partial-failure path, masking programmer errors against the R24-A
-   wire-handler tuple discipline (R25 thread on ``core.py:380``).
+   partial-failure path, masking programmer errors against the prior
+   wire-handler tuple discipline (prior thread on ``core.py:380``).
 
 3. ``audit.py``: the seq lockfile open at line 366 lacked ``O_NOFOLLOW``,
    while the audit log itself, the seq sidecar, and the ACL loader all
-   set it (R25 thread on ``audit.py:366``). An attacker with write access
+   set it (prior thread on ``audit.py:366``). An attacker with write access
    to the audit dir could pre-create the lockfile as a symlink.
 
 4. ``_zenoh_config.py`` docstring: the ``STRANDS_MESH_TLS_KEY`` env-var
    description promised ``mode 0o600`` without the Windows caveat. The
-   loader silently skips the mode check on non-POSIX (R25 thread on
+   loader silently skips the mode check on non-POSIX (prior thread on
    ``_zenoh_config.py:508``).
 """
 
@@ -125,8 +125,7 @@ class TestLifecycleNarrowExcept:
         """Source-level pin: bare ``except Exception`` MUST NOT appear in ``Mesh.start``.
 
         We scan the AST of ``core.Mesh.start`` for any ``ExceptHandler``
-        whose ``type`` is a single ``Name(id='Exception')``. The R24-A
-        wire-handler narrowing established the project standard; the
+        whose ``type`` is a single ``Name(id='Exception')``. The the prior wire-handler narrowing established the project standard; the
         lifecycle path now matches.
         """
         import ast
@@ -161,7 +160,7 @@ class TestLifecycleNarrowExcept:
         """
         source = Path(inspect.getfile(core_mod)).read_text(encoding="utf-8")
         # The cleanup handler must catch (RuntimeError, OSError).
-        # We look for the canonical form that R25 lands.
+        # We look for the canonical form that the prior fix lands.
         assert "except (RuntimeError, OSError) as exc:" in source, (
             "Mesh.start cleanup branch must catch (RuntimeError, OSError) -- "
             "ZError is a RuntimeError subclass; transport faults surface as OSError"
@@ -178,7 +177,7 @@ class TestLifecycleNarrowExcept:
 class TestSeqLockfileNofollow:
     """Pin: ``_seq_flock`` opens the lockfile with O_NOFOLLOW.
 
-    Pre-R25 the open used ``os.O_RDWR | os.O_CREAT`` only. A symlink
+    Pre-the prior fix the open used ``os.O_RDWR | os.O_CREAT`` only. A symlink
     swap at ``mesh_audit.seq.lock`` would have ``flock`` land on the
     target inode rather than fail closed.
     """
@@ -231,7 +230,7 @@ def test_seq_flock_source_uses_o_nofollow():
 
     Cheap and platform-agnostic. The constant evaluates to 0 on
     Windows so the runtime behaviour degrades gracefully there;
-    what we pin here is the *source-level intent*, which the R25
+    what we pin here is the *source-level intent*, which the prior
     review specifically called out as missing (asymmetric with
     every other inode-write site in the same module).
     """
@@ -261,7 +260,7 @@ def test_seq_flock_source_uses_o_nofollow():
 def test_tls_key_docstring_documents_windows_caveat():
     """The STRANDS_MESH_TLS_KEY description must call out the Windows skip.
 
-    Pre-R25 the docstring said only ``mode 0o600`` and the README env-var
+    Pre-the prior fix the docstring said only ``mode 0o600`` and the README env-var
     matrix had no caveat -- a Windows operator who reads the docs and
     ships a key thinks the mode check is enforcing something. It isn't.
     """

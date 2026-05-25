@@ -60,11 +60,11 @@ ACL_FILE_MAX_BYTES: int = 256 * 1024
 # strictly safer than a hand-rolled approximation. ``json5`` is already
 # transitively available in many Python deployments; we add it to the
 # ``mesh`` extra so it ships with the rest of the wire-layer code.
-# F15-E: imported lazily inside ``_parse_json5`` -- only paid by
+# imported lazily inside ``_parse_json5`` -- only paid by
 # operators who actually load an ACL file.
 
-# F15-E (PR #195 review): json5 is imported lazily inside
-# ``_parse_json5`` rather than at module top-level. Pre-F15 every
+# json5 is imported lazily inside
+# ``_parse_json5`` rather than at module top-level. Importing it eagerly every
 # import of ``strands_robots.mesh`` (including ``session.py`` for
 # ``auth_mode=none`` dev paths) triggered the json5 import even when
 # no ACL file is loaded. Operators running with no ACL file (the
@@ -171,7 +171,7 @@ def _load_acl_file(path: Path) -> dict[str, Any]:
     if data["default_permission"] not in ("allow", "deny"):
         raise ValueError(f"ACL file {path} default_permission={data['default_permission']!r} must be 'allow' or 'deny'")
     if data["default_permission"] == "allow":
-        # F11-C (PR #195 review): only warn when the operator actually
+        # only warn when the operator actually
         # has rules/subjects/policies that *combine* with allow-by-default
         # in a blacklist shape. The built-in ``default_acl()`` (used when
         # STRANDS_MESH_ACL_FILE is unset) ships ``allow + empty rules/
@@ -194,7 +194,7 @@ def _load_acl_file(path: Path) -> dict[str, Any]:
 def _validate_acl_shape(data: dict[str, Any], path: Path) -> None:
     """Validate the shape of subjects/rules/policies after JSON parse.
 
-    R19 (PR #195 design-thread review): a typo like ``interface:``
+    a typo like ``interface:``
     (singular) or a missing ``cert_common_names`` field silently
     degrades a role-separated ACL to "match nothing" at the Zenoh
     layer, which manifests as a silent total outage operators must
@@ -239,18 +239,18 @@ def _validate_acl_shape(data: dict[str, Any], path: Path) -> None:
         if not isinstance(sid, str) or not sid:
             raise ValueError(f"ACL file {path}: subjects[{i}].id must be a non-empty string")
         subject_ids.add(sid)
-        # F2: ``interfaces`` is OPTIONAL per Zenoh's AclConfigSubjects
+        # ``interfaces`` is OPTIONAL per Zenoh's AclConfigSubjects
         # schema (``Option<NEVec<...>>``). When omitted, Zenoh treats
         # the subject's interface dimension as ``SubjectProperty::Wildcard``
         # (matches every link); see authorization.rs:446-454. The
         # cleanest CN-only ACL pattern is therefore:
         #
-        #   subjects: [{ id: "ops", cert_common_names: ["op-1", "op-2"] }]
+        #  subjects: [{ id: "ops", cert_common_names: ["op-1", "op-2"] }]
         #
         # which is exactly what Zenoh's own ``tests/authentication.rs``
         # uses. We still REJECT an empty list outright -- Zenoh's parser
         # raises ``Found empty interface value`` and the silent total-
-        # outage failure mode is real (R19 footgun). And we still treat
+        # outage failure mode is real (prior footgun). And we still treat
         # an unknown-key like ``interface:`` (singular typo) as an error
         # because the rest of the validator catches it via
         # ``deny_unknown_fields`` semantics in the Rust deserializer.
@@ -360,7 +360,7 @@ def default_acl(namespace: str) -> dict[str, Any]:
     }
 
 
-# F18-C (PR #195 review): TOCTOU defence. Pre-F18 ``Mesh.start``
+# TOCTOU defence. In an earlier revision ``Mesh.start``
 # called ``is_default_acl_in_use()`` (which now reads the file) and then
 # ``resolve_acl()`` (which reads it again) -- a small TOCTOU window where
 # an attacker who can rewrite the ACL file between the two reads sees
@@ -387,7 +387,7 @@ def _load_acl_cached(path: Path) -> dict[str, Any]:
 
     Two callers in the same ``Mesh.start`` flow (the gate check and the
     config builder) get the same dict object instead of two independent
-    reads -- closing the F18-C TOCTOU surface. If the file changes a
+    reads -- closing the prior TOCTOU surface. If the file changes a
     later call computes a fresh identity tuple and re-loads.
     """
     identity = _file_identity(path)
@@ -418,13 +418,13 @@ def _clear_acl_cache_for_test() -> None:
 
 
 def _is_permissive_acl_shape(data: dict[str, Any]) -> bool:
-    """F18-B (PR #195 review): inspect the resolved ACL *shape* for
+    """inspect the resolved ACL *shape* for
     the permissive pattern, regardless of where the dict came from
     (built-in default or operator-supplied file).
 
     The dangerous shape is ``default_permission == "allow"`` AND every
     explicit rule/subject/policy collection empty. This collapses the
-    F11-C / F9-E "operator file with permissive shape silently
+    Original behaviour ("operator file with permissive shape silently
     bypasses the gate" surface into one truth source -- the gate now
     triggers on the wire-effective posture, not on the env-var
     presence.
@@ -450,7 +450,7 @@ def is_default_acl_in_use(namespace: str = "strands") -> bool:
     combined with ``STRANDS_MESH_AUTH_MODE=mtls`` and the operator has
     not opted in via ``STRANDS_MESH_ACCEPT_PERMISSIVE_ACL=1``.
 
-    F18-B (PR #195 review): pre-F18 this returned ``not env_var_set``
+    Earlier revisions returned ``not env_var_set``
     -- an operator who supplied a permissive file silenced the gate
     while running with the same posture the gate was supposed to
     refuse. Now we resolve the file (or fall back to default) and
@@ -469,7 +469,7 @@ def is_default_acl_in_use(namespace: str = "strands") -> bool:
     try:
         resolved = _load_acl_cached(Path(path_env))
     except (OSError, ValueError, FileNotFoundError) as exc:
-        # F18-B: fail closed. A broken ACL file is treated as the
+        # fail closed. A broken ACL file is treated as the
         # most-dangerous-known posture so the operator hears about it
         # at start-up rather than silently degrading to permissive.
         logger.warning(
@@ -489,7 +489,7 @@ def resolve_acl(namespace: str) -> dict[str, Any]:
     """
     path_env = os.getenv("STRANDS_MESH_ACL_FILE", "").strip()
     if path_env:
-        # F18-C: shared cache so the F18-B shape gate and the wire
+        # shared cache so the prior shape gate and the wire
         # config builder see the SAME snapshot of the ACL file.
         return _load_acl_cached(Path(path_env))
     return default_acl(namespace)

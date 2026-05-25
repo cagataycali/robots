@@ -76,17 +76,17 @@ def _get_iot_transport_class() -> type[IotMqttTransport]:
 # Suffixes are matched against the part of the topic AFTER ``strands/``.
 #
 # Why this default:
-# - presence       — rare, retained on cloud, late operators need it
-# - health         — rare, retained, threshold alerts via Rules
-# - safety/event   — must hit cloud audit
-# - safety/estop   — defence-in-depth E-stop
-# - cmd            — operator-to-robot RPC (cloud → robot direction)
-# - response       — robot-to-operator RPC reply
-# - broadcast      — fan-out RPC
+# - presence  — rare, retained on cloud, late operators need it
+# - health  — rare, retained, threshold alerts via Rules
+# - safety/event  — must hit cloud audit
+# - safety/estop  — defence-in-depth E-stop
+# - cmd  — operator-to-robot RPC (cloud → robot direction)
+# - response  — robot-to-operator RPC reply
+# - broadcast  — fan-out RPC
 #
 # Explicitly NOT bridged by default (opt in via STRANDS_MESH_BRIDGE_TOPICS):
 # - state, pose, imu, odom, lidar — high volume, route via Basic Ingest if
-#   cloud needs them. See AWS_IOT_MESH_INTEGRATION.md §7.2 for the cost math.
+#  cloud needs them. See AWS_IOT_MESH_INTEGRATION.md §7.2 for the cost math.
 # - camera, input, hand — LAN-only by definition (size / latency).
 DEFAULT_BRIDGE_SUFFIXES: frozenset[str] = frozenset(
     {
@@ -105,13 +105,13 @@ DEFAULT_BRIDGE_SUFFIXES: frozenset[str] = frozenset(
 # trailing ``/<turn-id>`` segment that the bridge must accept. Every other
 # entry is matched exactly. This is the post-Phase-4 hardening:
 #
-#   Pre-fix: a sloppy prefix-walk in _should_bridge meant that
-#   ``strands/<x>/cmd/anything-attacker-tacks-on`` matched the ``cmd``
-#   filter entry and was bridged to MQTT. An attacker could pollute the
-#   cloud audit table / spam CloudWatch / inflate broker billing by
-#   appending arbitrary suffixes to allowed prefixes
-#   (``strands/x/safety/event/<10kb-blob>`` is the worst case -- it ends
-#   up in the DDB audit table).
+#  Pre-fix: a sloppy prefix-walk in _should_bridge meant that
+#  ``strands/<x>/cmd/anything-attacker-tacks-on`` matched the ``cmd``
+#  filter entry and was bridged to MQTT. An attacker could pollute the
+#  cloud audit table / spam CloudWatch / inflate broker billing by
+#  appending arbitrary suffixes to allowed prefixes
+#  (``strands/x/safety/event/<10kb-blob>`` is the worst case -- it ends
+#  up in the DDB audit table).
 #
 # Operators who need a bare-prefix match for a custom suffix can opt in
 # explicitly via ``STRANDS_MESH_BRIDGE_TOPICS_PREFIX``.
@@ -157,9 +157,9 @@ def _topic_suffix(topic: str) -> str:
 
     Handles three layouts:
 
-    - ``strands/broadcast``               -> ``broadcast``
-    - ``strands/safety/estop``            -> ``safety/estop``
-    - ``strands/{peer}/{kind}/...``       -> ``{kind}/...``
+    - ``strands/broadcast``  -> ``broadcast``
+    - ``strands/safety/estop``  -> ``safety/estop``
+    - ``strands/{peer}/{kind}/...``  -> ``{kind}/...``
     """
     if not topic.startswith("strands/"):
         return ""
@@ -266,7 +266,7 @@ class _CommandDeduplicator:
         self._seen: dict[tuple[str, str], float] = {}
         self._lock = threading.Lock()
         self._ttl = ttl_s if ttl_s is not None else _resolve_dedup_ttl()
-        # R15 strict mode: when True, _dedup_id falls back to full-payload hash
+        # Strict mode: when True, _dedup_id falls back to full-payload hash
         # for payloads with no canonical (sender_id, turn_id, command) tuple.
         # Used by bridge cross-transport path to dedup heartbeats etc.
         self._strict = strict
@@ -294,7 +294,7 @@ class _CommandDeduplicator:
             if not self._strict:
                 # Default: pass through (preserves heartbeat semantics).
                 return None
-            # R15 strict mode: full-payload hash fallback.
+            # Strict mode: full-payload hash fallback.
             try:
                 full = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
             except (TypeError, ValueError):
@@ -520,7 +520,7 @@ class BridgeTransport:
                     if isinstance(decoded, dict):
                         payload = decoded
                 except (AttributeError, UnicodeDecodeError, json.JSONDecodeError):
-                    # F7-B (PR #195 review): narrow per AGENTS.md > Review
+                    # narrow per AGENTS.md > Review
                     # Learnings (#86) > "Exception Clauses Must Be Narrow".
                     # Same tuple as the four wire handlers in core.py
                     # (_on_cmd, _on_response, _on_safety_estop,

@@ -335,9 +335,9 @@ class TestSafeHostAndModel:
 
 
 class TestValidateCommandResume:
-    """Pin R10 review fix: validate_command must bound resume.override_code.
+    """Pin the prior fix review fix: validate_command must bound resume.override_code.
 
-    Before R10, ``validate_command`` had no ``resume`` clause -- a peer
+    Before the prior fix, ``validate_command`` had no ``resume`` clause -- a peer
     sending ``{"action": "resume", "override_code": <non-string>}`` would
     pass validation and reach ``Mesh._resume_lockout`` where ``.strip()``
     raises ``AttributeError`` on a list/dict, surfacing as a generic
@@ -388,12 +388,12 @@ class TestValidateCommandResume:
         assert out["override_code"] == "x" * 256
 
 
-# === F7-C: validate_command strips unknown top-level keys ===
+# === validate_command strips unknown top-level keys ===
 
 
 class TestValidateCommandKeyAllowlist:
     """Defence-in-depth: the validator returns only validated fields.
-    Pre-F7-C the validator did `out = dict(cmd)` and preserved every
+    the prior implementation the validator did `out = dict(cmd)` and preserved every
     unknown key. Today's _dispatch only consumes a known whitelist so
     the gap was not exploitable, but a future handler that did `**cmd`
     would silently pick up attacker-controlled values.
@@ -443,15 +443,15 @@ class TestValidateCommandKeyAllowlist:
         assert out["sender_id"] == "operator-1"
 
 
-# === F15-C: _on_cmd requires an explicit `command` key with dict value ===
+# === _on_cmd requires an explicit `command` key with dict value ===
 
 
 class TestF15WireCommandKeyRequired:
-    """F15-C (PR #195 review): the wire-side _on_cmd requires an explicit
-    ``command`` key whose value is a dict. Pre-F15 the fallback
+    """the wire-side _on_cmd requires an explicit
+    ``command`` key whose value is a dict. the prior implementation the fallback
     ``data.get("command", data)`` allowed a flat envelope (action,
     instruction, etc. at top level) to be treated as the command,
-    bypassing the dict-shape contract that R24-B established for non-
+    bypassing the dict-shape contract that the prior fix established for non-
     dict commands.
 
     Behavioural test: drive a flat-shape envelope through ``_on_cmd``
@@ -488,7 +488,7 @@ class TestF15WireCommandKeyRequired:
         )
 
     def test_well_formed_envelope_with_command_key_dispatches(self):
-        """The legitimate wire shape (``{command: {...}, sender_id: ..., turn_id: ...}``)
+        """The legitimate wire shape (``{command: {...}, sender_id:..., turn_id:...}``)
         still dispatches normally."""
         from strands_robots.mesh import core as mesh_core
 

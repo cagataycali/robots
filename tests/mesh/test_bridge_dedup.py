@@ -209,14 +209,14 @@ class TestBridgeDedupIntegration:
 
 
 class TestMonotonicClockR12:
-    """R12 pin test - bridge dedup TTL math uses time.monotonic, not time.time.
+    """the prior fix pin test - bridge dedup TTL math uses time.monotonic, not time.time.
 
-    Pre-R12: time.time() was used for the now/cutoff math in
+    Pre-time.time() was used for the now/cutoff math in
     is_duplicate(). When the wall clock moves backwards (NTP step, manual
     'date -s', VM resume from snapshot) the TTL window math is wrong and
     cached entries either survive forever or all get evicted at once.
 
-    Post-R12: time.monotonic() is used; the cache survives wall-clock jumps.
+    Post-time.monotonic() is used; the cache survives wall-clock jumps.
     """
 
     def test_dedup_uses_monotonic_clock(self):
@@ -252,7 +252,7 @@ class TestMonotonicClockR12:
 
 
 class TestStrictDedupModeR15:
-    """R15 pin tests — opt-in strict mode dedups payloads with no canonical fields.
+    """the prior fix pin tests — opt-in strict mode dedups payloads with no canonical fields.
 
     Default mode (strict=False): payloads without (sender_id, turn_id, command)
     pass through (preserves heartbeat-style semantics where the same payload

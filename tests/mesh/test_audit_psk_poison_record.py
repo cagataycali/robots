@@ -1,13 +1,13 @@
-"""Pin test for R19 audit-poison-record on PSK degrade.
+"""Pin test for the prior audit-poison-record on PSK degrade.
 
-PR #195 review thread PRRT_kwDORUMiZs6ER6_2: silent drop on PSK degrade
+this PR review thread PRRT_kwDORUMiZs6ER6_2: silent drop on PSK degrade
 contradicts the module docstring. The docstring says the record is
 "rejected"; in practice the entire safety event vanishes from the
 audit log with only an ``error``-level log line. ``verify_audit_integrity``
 sees a clean log post-incident and an operator concludes nothing
 happened.
 
-R19 fix: write a poison record with ``sig="PSK_DEGRADED"`` and a
+the prior fix fix: write a poison record with ``sig="PSK_DEGRADED"`` and a
 ``psk_degraded`` reason field instead of dropping. A signed-record
 verifier (PSK present) reports it as ``bad_signature`` (the literal
 string is not a valid HMAC hex) which forces ``ok=False`` and
@@ -81,7 +81,7 @@ def test_psk_degrade_unsigned_to_signed_writes_poison(monkeypatch, tmp_path):
     monkeypatch.delenv("STRANDS_MESH_AUDIT_PSK", raising=False)
     audit.log_safety_event("first_unsigned", "peer-A", {"action": "estop"})
 
-    # Now ROTATE IN a PSK -- direction the symmetric R18 pin documents.
+    # Now ROTATE IN a PSK -- direction the symmetric the prior fix pin documents.
     monkeypatch.setenv("STRANDS_MESH_AUDIT_PSK", "appeared-mid-run")
     audit.log_safety_event("second_under_psk_appearance", "peer-A", {"action": "stop"})
 

@@ -1,14 +1,14 @@
-"""R21 pin tests: ``verify_audit_integrity`` must fail closed when the
+"""the prior fix pin tests: ``verify_audit_integrity`` must fail closed when the
 verifier lacks the PSK but signed records exist.
 
 Pre-fix bug: ``ok=True`` on a signed log that the local verifier
 cannot actually verify -- a forensic walker who has lost track of the
 PSK reads a green light on an unverifiable log. This is the inverse
-of the R4-2 attack (writer briefly cleared PSK to forge unsigned
+of the prior attack (writer briefly cleared PSK to forge unsigned
 records) and is closed by the same fail-closed posture.
 
 Per AGENTS.md > Review Learnings (#85) > "Pin regression tests for
-reviewed fixes." Each test fails on pre-fix HEAD and passes on R21+.
+reviewed fixes." Each test fails on pre-fix HEAD and passes on the prior fix+.
 """
 
 from __future__ import annotations
@@ -105,7 +105,7 @@ def test_verify_ok_true_when_psk_present_and_signed_records_verify(monkeypatch):
 def test_verify_unsigned_records_with_no_psk_either_side_reports_ok(monkeypatch):
     """When neither writer nor verifier has a PSK, an all-unsigned log is
     legitimately ok=True (this is the documented fully-unsigned mode).
-    Sanity check -- the R21 fix targets the verifier-lacks-PSK-on-signed-log
+    Sanity check -- the prior fix targets the verifier-lacks-PSK-on-signed-log
     case ONLY, not the all-unsigned case."""
     audit.log_safety_event(
         event_type="estop",
@@ -127,7 +127,7 @@ def test_verify_unsigned_records_with_no_psk_either_side_reports_ok(monkeypatch)
 def test_verify_returns_not_ok_when_mixed_signed_unsigned_with_verifier_lacking_psk(
     monkeypatch,
 ):
-    """R21: mix of signed (writer had PSK) and unsigned records -- verifier
+    """mix of signed (writer had PSK) and unsigned records -- verifier
     lacking PSK must still report ok=False because of the signed prefix
     it cannot verify."""
     # First write some signed records.

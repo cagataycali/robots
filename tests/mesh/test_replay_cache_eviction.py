@@ -17,7 +17,7 @@ Pin coverage:
 - generic over key type: works for ``float`` keys (estop shape) and
   ``tuple[str, str]`` keys (resume shape).
 
-Pre-fix verification: the helper is new in R23. The pre-R23 code
+Pre-fix verification: the helper is new in the prior fix. The pre-the prior fix code
 duplicates the eviction body inline; without this helper the duplicate
 implementations could drift (e.g. one caller could silently revert to
 ``time.time()`` for the cutoff, or change the drop fraction). These

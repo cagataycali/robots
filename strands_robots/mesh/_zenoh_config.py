@@ -143,10 +143,10 @@ DEFAULT_CMD_RATE_HZ: float = 20.0
 
 #: Per-key-expression frequency cap on safety topics (Hz).
 #:
-#: R21: legitimate operator estop / resume traffic is far below
+#: legitimate operator estop / resume traffic is far below
 #: 1 Hz steady-state. A peer publishing on ``safety/**`` faster
 #: than this rate is throttled at the transport, capping the
-#: novel-`t` flood surface that bypasses the receiver-side R9
+#: novel-`t` flood surface that bypasses the receiver-side replay defence
 #: replay cache.
 DEFAULT_SAFETY_RATE_HZ: float = 2.0
 
@@ -309,7 +309,7 @@ def downsampling_block() -> tuple[str, str]:
         lo=0.001,
         hi=10000.0,
     )
-    # R21: safety topics need their own (lower) rate cap. Without it
+    # safety topics need their own (lower) rate cap. Without it
     # a peer with any CA-signed cert can flood ``safety/estop`` at
     # line rate with novel ``t`` on each envelope -- bypassing the
     # receiver-side replay cache (key=(issuer_id, t)) and consuming
@@ -394,7 +394,7 @@ def low_pass_filter_block() -> tuple[str, str]:
     :func:`_filter_interfaces`. Earlier revisions enumerated every
     local NIC via psutil with a hardcoded fallback; that pattern
     silently bypassed the cap on hosts with non-canonical interface
-    names (``enp0s3``, ``wlp2s0``, ``cni0``, ``wg0``, ...) when psutil
+    names (``enp0s3``, ``wlp2s0``, ``cni0``, ``wg0``,...) when psutil
     was absent. Wildcard-by-default removes that footgun.
     """
     cmd_bytes = _int_env(
@@ -449,14 +449,14 @@ def low_pass_filter_block() -> tuple[str, str]:
                     {
                         "id": "strands_camera_size_cap",
                         "messages": ["put"],
-                        "flows": ["ingress"],  # R22-C: ingress-only, publisher trusts own frames
+                        "flows": ["ingress"],  # ingress-only, publisher trusts own frames
                         "key_exprs": ["**/camera/**"],
                         "size_limit": cam_bytes,
                     }
                 ),
                 _rule(
                     {
-                        # R21: safety topics need their own (smaller)
+                        # safety topics need their own (smaller)
                         # byte cap. A 100 KiB safety envelope is jumbo-
                         # frame DoS targeting the receiver-side HMAC and
                         # freshness math; legitimate safety envelopes are
@@ -493,7 +493,7 @@ def _resolve_tls_paths() -> tuple[Path, Path, Path]:
             "and STRANDS_MESH_TLS_KEY to be set"
         )
     paths = (Path(ca), Path(cert), Path(key))
-    # F7-A (PR #195 review): the existence + symlink check must come
+    # the existence + symlink check must come
     # before any other inspection. ``is_file`` follows symlinks; we
     # do an explicit ``is_symlink`` reject first so the path used for
     # mode + load is always the real file, never an attacker-redirected
@@ -507,7 +507,7 @@ def _resolve_tls_paths() -> tuple[Path, Path, Path]:
             )
         if not p.is_file():
             raise FileNotFoundError(f"mTLS {label} file does not exist: {p}")
-    # R24-C: enforce the mode 0o600 contract that the docstring (line 73)
+    # enforce the mode 0o600 contract that the docstring (line 73)
     # and README env-var matrix promise for the private key. A 0o644 key
     # file on a shared host is a real exfiltration surface; the operator
     # who set STRANDS_MESH_TLS_KEY thinks they get the documented protection.
@@ -529,7 +529,7 @@ def _resolve_tls_paths() -> tuple[Path, Path, Path]:
     # ``O_NOFOLLOW`` + lstat-reject discipline applied across
     # ``audit.py:_ensure_paths``, ``_load_seq_counters``, and
     # ``_acl_config.py:_load_acl_file``.
-    # See PR #195 threads PRRT_kwDORUMiZs6EUu8N + post-F3 follow-up.
+    #
     if not _is_posix():
         if not _NON_POSIX_TLS_WARNED["v"]:
             logger.warning(

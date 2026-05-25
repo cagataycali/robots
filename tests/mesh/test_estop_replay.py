@@ -1,5 +1,5 @@
 """
-Pin test for estop corroboration attribution (R22-B).
+Pin test for estop corroboration attribution.
 
 When two distinct operators broadcast safety/estop at colliding t values,
 the audit log should record this as estop_corroborated (positive forensic)
@@ -111,26 +111,26 @@ class TestEstopRedundantAudit:
 
 
 # ---------------------------------------------------------------------
-# F3-C-1: _PSK_STATE_LOCK exists and protects fingerprint snapshot
+# the prior fix-1: _PSK_STATE_LOCK exists and protects fingerprint snapshot
 # ---------------------------------------------------------------------
 
 
-# === F7-E: per-issuer fairness bound on the estop replay cache ===
+# === per-issuer fairness bound on the estop replay cache ===
 
 
 class TestEstopPerIssuerFairnessBound:
-    """The R20 float-only key closes peer_id-permutation replay but
+    """The the prior float-only key closes peer_id-permutation replay but
     opened a denial-of-estop surface where one attacker pre-publishing
     at ``t = now + skew - eps`` could occupy float slots.
 
-    F7-E adds a per-issuer slot cap: each issuer may occupy at most
+    the prior fix adds a per-issuer slot cap: each issuer may occupy at most
     ``RESUME_REPLAY_CACHE_MAX // 4`` slots before their newer entries
     are refused. This means at least 4 distinct issuers always have
     working slots regardless of attacker volume.
     """
 
     def test_one_issuer_cannot_exceed_cap(self, monkeypatch):
-        # Tighten the cache size via env (F9-B made this lazy-resolved)
+        # Tighten the cache size via env (prior made this lazy-resolved)
         monkeypatch.setenv("STRANDS_MESH_RESUME_REPLAY_CACHE_MAX", "8")
         # 8 / 4 = 2 slots per issuer
 
@@ -155,7 +155,7 @@ class TestEstopPerIssuerFairnessBound:
 
             m._on_safety_estop(S())
 
-        # F9-A: per-issuer count is derived from cache contents, not a
+        # per-issuer count is derived from cache contents, not a
         # separate dict. Count entries owned by attacker-1; the
         # attacker is capped at per_issuer_cap = MAX // 4 = 2 slots.
         attacker_slots = sum(1 for issuer, _mono in m._estop_replay_cache.values() if issuer == "attacker-1")
@@ -164,11 +164,11 @@ class TestEstopPerIssuerFairnessBound:
         )
 
 
-# === F9-A: per-issuer count derived from cache contents ===
+# === per-issuer count derived from cache contents ===
 
 
 class TestPerIssuerCountFromCache:
-    """F9-A (PR #195 review): the per-issuer fairness bound counts entries
+    """the per-issuer fairness bound counts entries
     by issuer from cache contents, not a separate dict that drifts after
     eviction. After eviction, an attacker who flooded their cap legitimately
     has fewer entries and can reclaim slots -- the dynamic-attacker rate
@@ -204,8 +204,8 @@ class TestPerIssuerCountFromCache:
 
 
 class TestF14OverCapBlocksLockout:
-    """F14-B (PR #195 review): when an issuer exceeds per_issuer_cap,
-    the lockout MUST NOT engage on their over-cap envelopes. Pre-F14
+    """when an issuer exceeds per_issuer_cap,
+    the lockout MUST NOT engage on their over-cap envelopes. the prior implementation
     the over-cap branch dropped only the cache slot but still let the
     fall-through ``self._estop_lockout.set()`` run, defeating the
     fairness bound's whole point (a sustained attacker at-cap still

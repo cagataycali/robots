@@ -287,14 +287,14 @@ def _build_config() -> Any:
         blocks.append(_zenoh_config.link_protocols_block())
         blocks.append(_zenoh_config.tls_block())
         blocks.append(_acl_config.acl_block(namespace))
-        # Review feedback: in mtls mode the ACL is the third line of
+        # in mtls mode the ACL is the third line of
         # defence after the handshake. When the operator did not supply
         # STRANDS_MESH_ACL_FILE, the built-in default is permissive
         # (any CA-signed peer publishes/subscribes anywhere). Surface a
         # WARNING on every session open so operators who forgot the env
         # var hear about it -- parallel to the auth_mode=none warning
         # below.
-        # F16-B (PR #195 review): only emit this WARNING when the
+        # only emit this WARNING when the
         # operator has NOT explicitly opted into the dev/lab posture.
         # Mesh.start emits a more-specific INFO/ERROR breadcrumb with
         # the opt-in context; emitting both fires two log lines about
@@ -405,11 +405,11 @@ def get_session() -> Any | None:
         listen_env = os.getenv("ZENOH_LISTEN")
 
         # When no explicit endpoints are set, try to become the local router.
-        # F11-A (PR #195 review): both the auto-listener AND the client
+        # both the auto-listener AND the client
         # fallback below MUST go through ``_build_config()`` -- the
         # threat-coverage table claims namespace + mTLS + ACL +
         # downsampling + low_pass_filter + max_sessions + adminspace
-        # lockdown apply on every Zenoh path, and pre-F11 the auto-
+        # lockdown apply on every Zenoh path, and earlier revisions, the auto-
         # listener path used a bare ``zenoh.Config()`` and silently
         # bypassed all of them. The default deployment shape (no
         # ZENOH_CONNECT / ZENOH_LISTEN, first peer in the process) is
@@ -515,7 +515,7 @@ def _get_zenoh_session_directly() -> Any | None:
         listen_env = os.getenv("ZENOH_LISTEN")
 
         if not connect_env and not listen_env:
-            # F11-A (see get_session above for full rationale).
+            # (See get_session above for full rationale.)
             from strands_robots.mesh._zenoh_config import resolve_auth_mode
 
             try:

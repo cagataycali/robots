@@ -4,7 +4,7 @@ Each test boots one or more real ``zenoh.open()`` peers in process
 and exercises a vector from PENTEST.md. They skip cleanly when
 ``eclipse-zenoh`` is unavailable.
 
-Vector IDs (from .autonomous/PLAN.md):
+Vector IDs (from.autonomous/PLAN.md):
 
 * Z3 -- downsampling caps cmd publish rate.
 * Z4 -- low_pass_filter caps cmd payload bytes.

@@ -1,5 +1,5 @@
 """
-Pin tests for audit sequence-counter recovery from corrupt sidecar (R22-A).
+Pin tests for audit sequence-counter recovery from corrupt sidecar.
 
 When the sidecar file (~/.strands_robots/mesh_audit.seq.json) is corrupt
 or rejected as a symlink, the system should seed _SEQ_COUNTERS by walking

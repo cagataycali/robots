@@ -240,7 +240,7 @@ def test_exec_cmd_publishes_error_on_dispatch_exception(
         m._exec_cmd({"sender_id": "alice", "turn_id": "t2", "command": {"action": "status"}})
     payload = next(d for k, d in captured_puts if k == "strands/alice/response/t2")
     assert payload["type"] == "error"
-    # R3-1: internal exception detail MUST NOT leak onto the wire. The
+    # internal exception detail MUST NOT leak onto the wire. The
     # error string is sanitised to a static "dispatch error" so a remote
     # caller cannot pivot on path / attribute / library-trace fragments.
     assert payload["error"] == "dispatch error"
@@ -262,12 +262,12 @@ def test_exec_cmd_rejects_unknown_action_with_validation_error(
 
 
 def test_exec_cmd_string_command_rejected() -> None:
-    """R24-B: bare-string commands on the wire bypass validate_command's dict-shape
+    """bare-string commands on the wire bypass validate_command's dict-shape
     contract. _exec_cmd must reject them, not silently coerce to {action:execute}.
 
-    Pre-R24-B contract was auto-wrap (a peer publishing "hello" got a mock-policy
+    Pre-the prior fix contract was auto-wrap (a peer publishing "hello" got a mock-policy
     execute), which let any mTLS+ACL-authorised peer drive the robot at the mock
-    provider with arbitrary text. See PR #195 thread PRRT_kwDORUMiZs6EUu8S.
+    provider with arbitrary text.
     """
     r = _FakeRobot()
     m = Mesh(r, peer_id="me")

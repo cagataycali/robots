@@ -1,14 +1,14 @@
 """Pin: estop replay cache resists peer_id permutation.
 
-Background: PR #195 R20 review flagged that the prior cache key
+Background: the prior fix review flagged that the prior cache key
 ``(issuer_peer_id, float(envelope_t))`` could be bypassed by an attacker
 who captures one valid estop envelope and replays it with a single-byte
 mutation to the payload ``peer_id`` field. ``peer_id`` is untrusted (it
 comes from the JSON body, not the TLS cert CN), so the cache key was
-attacker-controlled and the replay-defence claim in the R9 docstring was
+attacker-controlled and the replay-defence claim in the prior docstring was
 overstated.
 
-Fix (R20): cache key narrowed to ``float(envelope_t)`` alone, and
+Fix: cache key narrowed to ``float(envelope_t)`` alone, and
 envelopes with missing/empty ``peer_id`` are rejected outright.
 
 These tests pin both behaviours.
@@ -51,7 +51,7 @@ def receiver():
 def test_peer_id_permutation_cannot_replay(receiver, caplog):
     """A captured envelope replayed with a different ``peer_id`` is dropped.
 
-    Pre-fix (R19) the cache key was ``(issuer_peer_id, t)`` so flipping
+    Pre-fix the cache key was ``(issuer_peer_id, t)`` so flipping
     ``peer_id`` from ``"op-1"`` to ``"op-2"`` yielded a fresh key and the
     replay was accepted. Post-fix the cache key is ``float(t)`` alone.
     """

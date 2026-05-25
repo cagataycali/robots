@@ -63,13 +63,13 @@ class TestAuthMode:
         assert zc.resolve_auth_mode() == "mtls"
 
     def test_explicit_none_with_optin(self, monkeypatch):
-        # B2 (R18): "none" requires the second-factor env var.
+        # B2: "none" requires the second-factor env var.
         monkeypatch.setenv("STRANDS_MESH_AUTH_MODE", "none")
         monkeypatch.setenv("STRANDS_MESH_I_KNOW_THIS_IS_INSECURE", "1")
         assert zc.resolve_auth_mode() == "none"
 
     def test_explicit_none_without_optin_raises(self, monkeypatch):
-        # B2 (R18) pin: auth_mode=none without the second-factor env var
+        # B2 pin: auth_mode=none without the second-factor env var
         # must raise. This is what prevents a typo / forgotten env / leaked
         # CI fixture from silently disabling wire auth.
         monkeypatch.setenv("STRANDS_MESH_AUTH_MODE", "none")
@@ -188,12 +188,12 @@ class TestLowPassFilter:
         assert "**/camera/**" in cam["key_exprs"]
 
     def test_default_omits_interfaces_for_wildcard_binding(self):
-        """F1: by default, ``interfaces`` MUST be absent so Zenoh applies
+        """by default, ``interfaces`` MUST be absent so Zenoh applies
         the cap to every link via ``SubjectProperty::Wildcard`` (see
         zenoh/src/net/routing/interceptor/low_pass.rs:84-91 in 1.x).
 
         Pre-fix code enumerated NICs via psutil with a hardcoded
-        fallback list (``lo, eth0, en0, ...``); on hosts using
+        fallback list (``lo, eth0, en0,...``); on hosts using
         ``enp0s3`` / ``wlp2s0`` / ``cni0`` / ``wg0`` without psutil,
         the cap silently bypassed because no listed NIC matched.
         """
@@ -207,7 +207,7 @@ class TestLowPassFilter:
             )
 
     def test_explicit_filter_interfaces_honoured(self, monkeypatch):
-        """F1: when STRANDS_MESH_FILTER_INTERFACES is set, the
+        """when STRANDS_MESH_FILTER_INTERFACES is set, the
         operator-supplied list is attached to every rule verbatim.
         """
         monkeypatch.setenv("STRANDS_MESH_FILTER_INTERFACES", "wlan0, br-mesh ,wg0")
@@ -272,7 +272,7 @@ class TestTLSBlock:
         key = tmp_path / "peer.key"
         for f in (ca, cert, key):
             f.write_text("dummy\n")
-        # R24-C: _resolve_tls_paths enforces mode 0o600 on the private key.
+        # _resolve_tls_paths enforces mode 0o600 on the private key.
         key.chmod(0o600)
 
         monkeypatch.setenv("STRANDS_MESH_TLS_CA", str(ca))
@@ -352,12 +352,12 @@ def test_link_protocols_block_restricts_to_tls():
     assert json.loads(value) == ["tls"]
 
 
-# === F7-A: TLS key/cert/CA symlink rejection ===
+# === TLS key/cert/CA symlink rejection ===
 
 
 class TestTlsBlockSymlinkReject:
     """The mTLS file resolver must refuse symlinks for the key/cert/CA
-    paths (F7-A pin). Without it, an operator setting
+    paths (prior pin). Without it, an operator setting
     ``STRANDS_MESH_TLS_KEY=/safe/key.pem`` pointing at an attacker-
     writable target whose mode is 0o600 silently passes.
     """

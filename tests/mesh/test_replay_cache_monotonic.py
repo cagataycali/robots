@@ -1,6 +1,4 @@
-"""Pin test for R19: replay-cache TTL eviction must use time.monotonic().
-
-PR #195 audit B5: a wall-clock backward step (NTP correction, VM resume)
+"""Pin test for replay-cache TTL eviction must use time.monotonic(). a wall-clock backward step (NTP correction, VM resume)
 must NOT leave cache entries un-evictable; a forward step must NOT age
 fresh entries out early. The cache is local-only bookkeeping; envelope
 freshness still uses wall-clock because it compares the issuer's
@@ -56,7 +54,7 @@ def test_estop_cache_value_is_monotonic_not_wall_clock() -> None:
     m._on_safety_estop(_envelope(t=wall_now, peer_id="alice"))
 
     assert len(m._estop_replay_cache) == 1
-    # F9-A: cache value is now (issuer_id, mono_ts) tuple
+    # cache value is now (issuer_id, mono_ts) tuple
     stored_value = next(iter(m._estop_replay_cache.values()))
     if isinstance(stored_value, tuple):
         stored_ts = stored_value[1]  # F9-A tuple shape
@@ -83,7 +81,7 @@ def test_resume_cache_value_is_monotonic_not_wall_clock() -> None:
 
     m = _stub_mesh()
     # Resume needs a configured override code on the receiver.
-    # F18-A: HMAC binds (peer_id, t, lockout_elapsed_s, proof_nonce).
+    # HMAC binds (peer_id, t, lockout_elapsed_s, proof_nonce).
     import json as _json
 
     code = "test-override"

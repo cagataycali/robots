@@ -1,11 +1,11 @@
 """Pin: examples/mesh_acl_example.json5 references must resolve to live test files.
 
-Background: in R16 the test files under ``tests/mesh/`` were renamed away from
+Background: in the prior fix the test files under ``tests/mesh/`` were renamed away from
 methodology-style names (``test_redteam_zenoh.py``, ``test_pentest_findings.py``)
 to subject-under-test names (``test_zenoh_transport_security.py``,
 ``test_application_security.py``). Five direct references were updated, but
 ``examples/mesh_acl_example.json5:8`` retained the stale name and was caught
-re-flagged in R20 review (PR #195).
+re-flagged earlier review.
 
 This test pins the example-file references against the actual test tree so a
 future rename / move surfaces here, not in a 5-rounds-later reviewer comment.
