@@ -70,7 +70,12 @@ Configuration env vars
     Filesystem path to this peer's certificate (PEM).
 
 ``STRANDS_MESH_TLS_KEY``
-    Filesystem path to this peer's private key (PEM, mode 0o600).
+    Filesystem path to this peer's private key (PEM, mode 0o600 on POSIX).
+    On non-POSIX hosts (Windows) ``_resolve_tls_paths`` does not enforce
+    the file mode -- the loader skips the ``stat().st_mode`` check because
+    POSIX modes do not map cleanly onto NTFS ACLs. Operators on Windows
+    must rely on filesystem ACLs (e.g. restrict the key file to a single
+    Windows account) rather than the loader's mode gate.
 
 ``STRANDS_MESH_ACL_FILE``
     Filesystem path to a JSON5 ACL file. When unset, the built-in

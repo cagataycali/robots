@@ -377,12 +377,29 @@ class Mesh(SensorLoopsMixin):
                 # task.
                 declared.append(session.declare_subscriber("strands/safety/estop", self._on_safety_estop))
                 declared.append(session.declare_subscriber("strands/safety/resume", self._on_safety_resume))
-            except Exception as exc:
+            except (RuntimeError, OSError) as exc:
+                # R25: narrow the lifecycle cleanup catch from bare ``Exception``
+                # to the tuple Zenoh's ``declare_subscriber`` actually raises
+                # (``ZError`` is a subclass of ``RuntimeError``; transport-layer
+                # failures surface as ``OSError``). This mirrors the wire-handler
+                # tuple R24-A established for ``_on_cmd`` / ``_on_safety_estop``
+                # so programmer errors (``TypeError``, ``AttributeError``,
+                # ``MemoryError``) on the partial-failure cleanup path surface
+                # in tests rather than being silently swallowed.
                 for sub in declared:
                     try:
                         sub.undeclare()
-                    except Exception:
-                        pass
+                    except (RuntimeError, OSError):
+                        # Best-effort cleanup; an undeclare failure here
+                        # cannot recover the parent failure that put us in
+                        # this branch and surfacing it would mask the
+                        # original exc. DEBUG (not WARNING) because the
+                        # operator already gets the WARNING below and a
+                        # second per-sub line per failure becomes log noise.
+                        logger.debug(
+                            "[mesh] %s: undeclare failed during cleanup",
+                            self.peer_id,
+                        )
                 logger.warning("[mesh] %s: failed to declare subscribers: %s", self.peer_id, exc)
                 release_session()
                 self._has_session_ref = False

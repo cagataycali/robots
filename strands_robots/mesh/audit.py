@@ -362,10 +362,31 @@ def _seq_flock() -> Iterator[None]:
         logger.debug("[audit] cannot create seq lockfile dir: %s", exc)
         yield
         return
+    # R25: seq lockfile open lacked ``O_NOFOLLOW`` while the audit log
+    # itself (``_ensure_paths``), the sidecar (``_load_seq_counters`` /
+    # ``_persist_seq_counters``), and the ACL loader all set it. An
+    # attacker with write access to ``STRANDS_MESH_AUDIT_DIR`` who
+    # pre-creates ``mesh_audit.seq.lock`` as a symlink to e.g.
+    # ``/dev/null`` or a co-tenant file would otherwise have ``flock``
+    # land on the link target rather than fail closed, breaking the
+    # cross-process lock the docstring above promises. Restore the
+    # symmetric defence here.
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
     try:
-        fd = os.open(str(lockfile), os.O_RDWR | os.O_CREAT, 0o600)
+        fd = os.open(str(lockfile), os.O_RDWR | os.O_CREAT | nofollow, 0o600)
     except OSError as exc:
-        logger.debug("[audit] cannot open seq lockfile: %s", exc)
+        # ELOOP (40) is the kernel's signal that ``O_NOFOLLOW`` rejected
+        # a symlink. Distinguish it from generic IO so the operator gets
+        # an actionable message.
+        import errno
+
+        if getattr(exc, "errno", None) == errno.ELOOP:
+            logger.warning(
+                "[audit] seq lockfile %s is a symlink; refusing to flock its target",
+                lockfile,
+            )
+        else:
+            logger.debug("[audit] cannot open seq lockfile: %s", exc)
         yield
         return
     try:

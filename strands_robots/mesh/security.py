@@ -70,6 +70,21 @@ MAX_MODEL_PATH_LEN: int = 512
 #: byte outside the printable ASCII subset below.
 _MODEL_PATH_RE = re.compile(r"^[A-Za-z0-9_./\-]+$")
 
+#: Maximum length of a mesh ``peer_id`` as carried on wire-side ``cmd``
+#: payloads (e.g. ``teleop_receive.source_peer_id``). The local
+#: :class:`~strands_robots.mesh.core.Mesh` only generates short
+#: ``"<host>-<pid>-<short>"`` ids well under 64 bytes; 128 leaves
+#: headroom for operator-supplied namespaces without becoming a
+#: log-flood / dispatch-arg DoS vector.
+MAX_PEER_ID_LEN: int = 128
+
+#: Allowed characters for a peer_id appearing on the ``cmd`` wire surface.
+#: Mirrors :data:`_MODEL_PATH_RE` discipline (printable ASCII only, no
+#: shell metacharacters, no whitespace, no NULs, no unicode controls)
+#: but additionally forbids ``/`` because peer_ids are not paths and any
+#: ``/`` in one is a wire-side red flag.
+_PEER_ID_RE = re.compile(r"^[A-Za-z0-9_.\-]+$")
+
 #: Built-in policy_type allowlist. Mirrors the LeRobot policy registry
 #: families plus the generic providers DevDuck ships with. Operators
 #: extend via ``STRANDS_MESH_POLICY_TYPE_ALLOW`` (comma-separated).
@@ -548,6 +563,20 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
         source = cmd.get("source_peer_id", "")
         if not isinstance(source, str) or not source:
             raise ValidationError("teleop_receive requires non-empty source_peer_id")
+        # R25: tighten to model_path-style charset/length contract.
+        # Without this, an authenticated peer could publish a teleop_receive
+        # cmd whose source_peer_id contains arbitrary unicode / control
+        # characters / NULs / shell metacharacters; the validator's job is
+        # to enforce the wire contract regardless of downstream callers.
+        if len(source) > MAX_PEER_ID_LEN:
+            raise ValidationError(
+                f"teleop_receive.source_peer_id length {len(source)} > MAX_PEER_ID_LEN ({MAX_PEER_ID_LEN})."
+            )
+        if not _PEER_ID_RE.fullmatch(source):
+            raise ValidationError(
+                "teleop_receive.source_peer_id must match [A-Za-z0-9_.-]+ "
+                "(no whitespace, NULs, control chars, shell metacharacters, or '/')."
+            )
         out["source_peer_id"] = source
         # device_name is optional and defaults to "leader" in _dispatch.
         if "device_name" in cmd:
@@ -587,6 +616,7 @@ __all__ = [
     "MAX_DURATION_S",
     "MAX_INSTRUCTION_LEN",
     "MAX_MODEL_PATH_LEN",
+    "MAX_PEER_ID_LEN",
     "MAX_TIMEOUT_S",
     "SecurityError",
     "ValidationError",
