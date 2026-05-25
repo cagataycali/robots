@@ -124,7 +124,7 @@ def _parse_positive_int_env(name: str, default: str, *, minimum: int = 1) -> int
 #: on drifty NTP can extend via STRANDS_MESH_RESUME_FRESHNESS_S
 #: (sane bound: keep < 600). Bad input falls back to 60.
 #:
-#: F9-B (PR #195 review): the module-level value below is captured
+#: the module-level value below is captured
 #: once at import time for backward compatibility with code/tests
 #: that read these as constants. The runtime hot paths
 #: (:meth:`Mesh._on_safety_estop`, :meth:`Mesh._on_safety_resume`)
@@ -146,7 +146,7 @@ RESUME_REPLAY_CACHE_MAX: int = _parse_positive_int_env("STRANDS_MESH_RESUME_REPL
 def _resume_freshness_window_s() -> float:
     """Lazy resolver for ``STRANDS_MESH_RESUME_FRESHNESS_S``.
 
-    F9-B: re-reads the env var on every call so operator-set values
+    re-reads the env var on every call so operator-set values
     take effect without a process restart. Cheap (one ``os.getenv``
     + a regex parse via ``_parse_positive_float_env``) and called
     only on safety-handler entry, which is bounded by the transport
@@ -182,8 +182,7 @@ def _evict_replay_cache[K](
        of in-window entries -- active flood), drop the oldest 20 percent
        by stored timestamp.
 
-    Caller is responsible for passing the right ``ttl_s``. F17-D
-    (PR #195 review): the safety-replay caches now pass
+    Caller is responsible for passing the right ``ttl_s``. the safety-replay caches now pass
     ``RESUME_FRESHNESS_WINDOW_S + RESUME_FORWARD_SKEW_S`` so an
     accepted forward-skewed envelope (``t = now + skew``) stays in the
     cache for the full ``freshness + skew`` interval -- preventing a
@@ -205,6 +204,67 @@ def _evict_replay_cache[K](
         drop = max(1, len(ordered) // 5)
         for k, _ in ordered[:drop]:
             cache.pop(k, None)
+
+
+#: Lowercase hex digest at most 32 chars. ``ZenohId`` stringifies as
+#: a hex digest of the 16-byte session identifier (leading-zero
+#: trimmed, so 1..32 chars). Used by ``_extract_sample_source_zid``
+#: to reject obviously-bogus stand-ins (test ``MagicMock``,
+#: third-party transport shims) without paying the cost of importing
+#: zenoh just to ``isinstance`` check.
+_ZENOH_ZID_PATTERN = re.compile(r"^[0-9a-f]{1,32}$")
+
+
+def _extract_sample_source_zid(sample: Any) -> str | None:
+    """Return the TLS-bound publisher ZID from a Zenoh ``sample``, or ``None``.
+
+    Zenoh attaches ``sample.source_info.source_id.zid`` (the publishing
+    session's ``ZenohId``) at the wire level. The ``ZenohId`` is established
+    during the session bootstrap that follows the mTLS handshake, and the
+    ``zenoh-python`` API does not expose a public constructor for either
+    ``ZenohId`` or ``EntityGlobalId`` -- they can only be obtained from
+    ``Session.info.zid()`` or ``Publisher.id`` on a session that has already
+    completed the handshake against the trust roots in ``connect.tls``.
+
+    Combined with mTLS this means a peer holding a valid cert for one
+    session cannot mint an envelope that *also* claims the wire-level
+    ``source_zid`` of a different session: the cross-session forgery is
+    bounded by what their own session's ``ZenohId`` actually is.
+
+    The body's ``peer_id`` field remains application-level metadata (chosen
+    by the operator at ``init_mesh`` time and routable across reconnects);
+    this helper returns the wire-level identity that the safety handlers
+    pin HMAC inputs and replay caches to. The two are complementary: body
+    ``peer_id`` survives a session restart, wire ``source_zid`` survives an
+    attacker mutating the body.
+
+    Returns ``None`` when:
+
+    * the sample carries no ``source_info`` (publisher did not attach one --
+      e.g. the bridge/IoT transport path or a legacy publisher),
+    * the ``source_id`` is missing,
+    * the stringified value does not match the strict 1..32 hex digest
+      shape (a malformed sample, third-party transport shim, or unit-test
+      ``MagicMock`` whose ``source_id.zid`` defaults to a Mock repr),
+    * extraction raises (defence in depth -- treat as "no zid available"
+      rather than crashing the safety handler).
+    """
+    try:
+        si = getattr(sample, "source_info", None)
+        if si is None:
+            return None
+        sid = getattr(si, "source_id", None)
+        if sid is None:
+            return None
+        zid = getattr(sid, "zid", None)
+        if zid is None:
+            return None
+        zid_str = str(zid)
+        if not _ZENOH_ZID_PATTERN.match(zid_str):
+            return None
+        return zid_str
+    except (AttributeError, TypeError):
+        return None
 
 
 class Mesh(SensorLoopsMixin):
@@ -262,7 +322,7 @@ class Mesh(SensorLoopsMixin):
         # an attacker has live ACL access on safety/**.
         self._resume_replay_cache: dict[tuple[str, str], float] = {}
         self._resume_replay_lock = threading.Lock()
-        # R9: estop replay defense -- mirror of resume cache, keyed on
+        # estop replay defense -- mirror of resume cache, keyed on
         # (issuer_peer_id, envelope_t). Closes the captured-estop-replay DoS
         # surface that previously let any peer with live ACL access to
         # safety/** replay a captured envelope indefinitely. Reuses
@@ -270,29 +330,47 @@ class Mesh(SensorLoopsMixin):
         # _resume_replay_cache_max() (the safety-replay defenses are
         # symmetric in shape; sharing the bounds keeps env-var surface
         # minimal).
-        # F9-A (PR #195 review): cache shape is
+        # cache shape is
         # ``dict[float_t, (issuer_id, mono_ts)]``. The float key
-        # preserves the R20 peer_id-permutation defence (attacker
+        # preserves the prior peer_id-permutation defence (attacker
         # cannot mint novel keys by varying untrusted JSON peer_id);
         # the value carries issuer attribution AND the eviction
         # timestamp. Per-issuer counts are derived from cache
         # contents on demand -- no separate dict that can drift
-        # after eviction (the F7-E flaw).
+        # after eviction (the prior flaw).
         self._estop_replay_cache: dict[float, tuple[str, float]] = {}
         self._estop_replay_lock = threading.Lock()
+
+        # Safety topic publishers. Held lazily so the receiver path
+        # ``_publish_safety_envelope`` can attach a Zenoh
+        # ``SourceInfo(EntityGlobalId, monotonic_sn)`` -- the only API
+        # surface for getting an attacker-unforgeable wire-level zid
+        # onto an outbound sample. Reusing one publisher per topic
+        # also gives a stable ``EntityGlobalId.eid`` so the receiver
+        # can spot a same-zid attacker mutating eid mid-flight (which
+        # zenoh treats as a different publisher entity).
+        self._safety_publishers: dict[str, Any] = {}
+        self._safety_publishers_lock = threading.Lock()
+        # Monotonically increasing per-topic sequence number. Bound
+        # into ``SourceInfo.source_sn`` so the receiver can reject an
+        # off-the-wire replay even from the same session: two
+        # envelopes with the same ``(source_zid, source_sn)`` cannot
+        # both be legitimate.
+        self._safety_sn: dict[str, int] = {}
+        self._safety_sn_lock = threading.Lock()
 
     def __repr__(self) -> str:
         state = "alive" if self._running else "stopped"
         return f"Mesh(peer_id={self.peer_id!r}, type={self.peer_type!r}, {state})"
 
     def _refuse_under_permissive_default_acl(self) -> bool:
-        """F17-A (PR #195 review): pre-session ACL posture gate.
+        """pre-session ACL posture gate.
 
         Returns True if ``Mesh.start()`` MUST refuse to acquire a session
         because the operator is running ``mtls + permissive default ACL``
         without the ``STRANDS_MESH_ACCEPT_PERMISSIVE_ACL`` opt-in.
 
-        F11-B's original placement was AFTER session acquisition + 6
+        An earlier placement was AFTER session acquisition + 6
         subscriber declarations, which left the wire live with the
         permissive ACL applied. This helper runs at the TOP of ``start()``
         so a refusal returns BEFORE any wire activity.
@@ -341,16 +419,16 @@ class Mesh(SensorLoopsMixin):
     def start(self) -> None:
         """Acquire a Zenoh session and start all publishing loops.
 
-        F17-A (PR #195 review): the permissive-ACL refuse gate runs
+        the permissive-ACL refuse gate runs
         BEFORE ``get_session()`` so a refusal short-circuits without
-        touching the wire (F11-B regression where the gate fired
+        touching the wire (prior regression where the gate fired
         post-session-acquisition is now closed).
         """
         with self._lifecycle_lock:
             if self._running:
                 return
 
-            # F17-A: pre-session ACL posture gate. If this returns True,
+            # pre-session ACL posture gate. If this returns True,
             # the operator has not opted in to the dangerous combination
             # and we MUST NOT acquire a session.
             if self._refuse_under_permissive_default_acl():
@@ -378,11 +456,11 @@ class Mesh(SensorLoopsMixin):
                 declared.append(session.declare_subscriber("strands/safety/estop", self._on_safety_estop))
                 declared.append(session.declare_subscriber("strands/safety/resume", self._on_safety_resume))
             except (RuntimeError, OSError) as exc:
-                # R25: narrow the lifecycle cleanup catch from bare ``Exception``
+                # narrow the lifecycle cleanup catch from bare ``Exception``
                 # to the tuple Zenoh's ``declare_subscriber`` actually raises
                 # (``ZError`` is a subclass of ``RuntimeError``; transport-layer
                 # failures surface as ``OSError``). This mirrors the wire-handler
-                # tuple R24-A established for ``_on_cmd`` / ``_on_safety_estop``
+                # tuple established earlier for ``_on_cmd`` / ``_on_safety_estop``
                 # so programmer errors (``TypeError``, ``AttributeError``,
                 # ``MemoryError``) on the partial-failure cleanup path surface
                 # in tests rather than being silently swallowed.
@@ -408,7 +486,7 @@ class Mesh(SensorLoopsMixin):
             with self._subs_lock:
                 self._subs.extend(declared)
 
-            # F17-A: ACL gate moved to ``_refuse_under_permissive_default_acl``,
+            # ACL gate moved to ``_refuse_under_permissive_default_acl``,
             # called at the TOP of start() before session acquisition.
             self._running = True
 
@@ -477,6 +555,24 @@ class Mesh(SensorLoopsMixin):
                 sub.undeclare()
             except Exception:
                 pass
+
+        # Undeclare any safety publishers we lazily declared so the
+        # underlying Zenoh entity is released cleanly when the
+        # process drops the last session reference. ``undeclare()``
+        # is best-effort -- any failure here cannot recover state
+        # (we are already in stop()) and would only mask a more
+        # informative WARNING from the session teardown path.
+        with self._safety_publishers_lock:
+            pubs_to_drop = list(self._safety_publishers.values())
+            self._safety_publishers.clear()
+        for pub in pubs_to_drop:
+            try:
+                pub.undeclare()
+            except (RuntimeError, OSError):
+                logger.debug(
+                    "[mesh] %s: safety publisher undeclare failed during stop()",
+                    self.peer_id,
+                )
 
         with self._rpc_lock:
             for ev in self._pending.values():
@@ -615,7 +711,7 @@ class Mesh(SensorLoopsMixin):
             raw = sample.payload.to_bytes().decode()
             data = json.loads(raw)
         except (AttributeError, UnicodeDecodeError, json.JSONDecodeError):
-            # F15-D (PR #195 review): narrow per AGENTS.md > "Exception
+            # narrow per AGENTS.md > "Exception
             # Clauses Must Be Narrow". Same tuple as the four other
             # wire-input handlers (_on_cmd, _on_response,
             # _on_safety_estop, _on_safety_resume).
@@ -854,33 +950,33 @@ class Mesh(SensorLoopsMixin):
 
     def _exec_cmd(self, data: dict[str, Any]) -> None:
         sender = data.get("sender_id", "")
-        # R5-1: full 128-bit fallback. Pre-fix, an inbound command without
+        # full 128-bit fallback. Pre-fix, an inbound command without
         # turn_id triggered a 32-bit hex which was birthday-colliding under
         # heavy concurrent load and cheap to predict for an attacker who
         # could observe the response topic. D1 closed the outbound side;
         # this closes the symmetric receive-side surface.
         turn = data.get("turn_id") or uuid.uuid4().hex
-        # F15-C (PR #195 review): require an explicit ``command`` key.
-        # Pre-F15 the fallback ``data.get("command", data)`` allowed a
+        # require an explicit ``command`` key.
+        # Earlier the fallback ``data.get("command", data)`` allowed a
         # peer to publish a flat-shape envelope (sender_id, turn_id,
         # action, instruction, policy_provider all at top level) and
-        # have ``data`` itself treated as the command. R24-B rejected
+        # have ``data`` itself treated as the command. Earlier revisions rejected
         # bare-string non-dict commands; this closes the symmetric
         # flat-dict-envelope shape -- the wire contract REQUIRES a
         # ``command`` field whose value is a dict.
         cmd = data.get("command")
-        # R24-B: Reject non-dict commands at the wire boundary. A bare-string
+        # Reject non-dict commands at the wire boundary. A bare-string
         # coercion here would bypass validate_command's dict-shape contract --
         # any peer that survives mTLS+ACL could drive the robot at the mock
         # policy with arbitrary text simply by publishing "hello" instead of
         # {"action":"execute",...}. Outgoing send/broadcast/tell still accept
         # the ergonomic dict-or-string forms because tell() wraps internally.
-        # See PR #195 thread PRRT_kwDORUMiZs6EUu8S.
+        #
         rkey = f"strands/{sender}/response/{turn}" if sender else None
         if cmd is None or not isinstance(cmd, dict):
-            # F17-C (PR #195 review): route non-dict envelope rejection
+            # route non-dict envelope rejection
             # through the same audit + wire-response path as
-            # ValidationError. Pre-F17 this branch was silent on the
+            # ValidationError. Earlier this branch was silent on the
             # wire and in the audit log -- asymmetric with how every
             # other validation rejection produces a structured error
             # response and a forensic record.
@@ -916,7 +1012,7 @@ class Mesh(SensorLoopsMixin):
             return
 
         # Validate the command shape against the action allowlist + per-action
-        # schema (instruction length, duration bounds, policy_host allowlist, ...).
+        # schema (instruction length, duration bounds, policy_host allowlist,...).
         try:
             cmd = _security.validate_command(cmd)
         except _security.ValidationError as exc:
@@ -943,7 +1039,7 @@ class Mesh(SensorLoopsMixin):
                     },
                 )
             except (TypeError, ValueError, OSError) as audit_exc:
-                # F7-F (PR #195 review): narrow per AGENTS.md > Review
+                # narrow per AGENTS.md > Review
                 # Learnings (#86). ``log_safety_event`` raises TypeError
                 # / ValueError on payload shape, OSError on disk failure;
                 # the audit best-effort contract means we drop those, but
@@ -987,7 +1083,7 @@ class Mesh(SensorLoopsMixin):
                     {"sender": sender, "action": cmd.get("action") if isinstance(cmd, dict) else None},
                 )
             except (TypeError, ValueError, OSError) as audit_exc:
-                # F7-F (PR #195 review): narrow per AGENTS.md > "Exception
+                # narrow per AGENTS.md > "Exception
                 # Clauses Must Be Narrow". Same tuple as the symmetric
                 # narrowing at the ValidationError audit path above.
                 logger.debug("[mesh] %s: audit log unavailable: %s", self.peer_id, audit_exc)
@@ -1000,7 +1096,7 @@ class Mesh(SensorLoopsMixin):
             OSError,
             TypeError,
         ) as exc:
-            # F8-C (PR #195 review): narrowed from bare ``except Exception``
+            # narrowed from bare ``except Exception``
             # per AGENTS.md > Review Learnings (#86). The original goal
             # ("any unhandled exception in a robot adapter would crash
             # the dispatch thread and silently kill the mesh") is
@@ -1144,7 +1240,7 @@ class Mesh(SensorLoopsMixin):
             expected = self._expected_responders.get(turn)
             # Strict scoping for point-to-point sends. Broadcast accepts any.
             if expected is not None and expected != BROADCAST_RESPONDER and responder != expected:
-                # R8-3: structured forensic event via the audit log
+                # structured forensic event via the audit log
                 # (``response_hijack_rejected``) plus a WARNING line is
                 # the operator-and-forensic channel; an earlier draft
                 # also raised-and-caught a typed exception around the
@@ -1170,7 +1266,7 @@ class Mesh(SensorLoopsMixin):
                         },
                     )
                 except (TypeError, ValueError, OSError) as audit_exc:
-                    # F9-C (PR #195 review): narrow per AGENTS.md > Review
+                    # narrow per AGENTS.md > Review
                     # Learnings (#86). Same tuple as the other audit-publish
                     # wrappers in this file. Audit best-effort still holds;
                     # MemoryError / RuntimeError / future programmer errors
@@ -1195,8 +1291,7 @@ class Mesh(SensorLoopsMixin):
         publish/subscribe on any key"), so any cert-holding peer can
         originate an estop on out-of-the-box deployments.
 
-        R9 defense-in-depth -- captured-envelope replay protection
-        (PR #195 review feedback): even with an unrestricted ACL, a
+        Defense-in-depth -- captured-envelope replay protection. Even with an unrestricted ACL, a
         replay of a captured ``safety/estop`` envelope cannot keep the
         fleet locked indefinitely.  Mirrors :meth:`_on_safety_resume`:
 
@@ -1205,8 +1300,7 @@ class Mesh(SensorLoopsMixin):
         2. Forward-skew bound (``_resume_forward_skew_s()``) -- envelopes
            timestamped beyond the tolerance in the future are rejected
            (defeats clock-rollback attacks against the freshness check).
-        3. Per-receiver replay cache keyed on ``float(envelope_t)``
-           (R20) -- bounded LRU at ``_resume_replay_cache_max()`` entries.
+        3. Per-receiver replay cache keyed on ``float(envelope_t)`` -- bounded LRU at ``_resume_replay_cache_max()`` entries.
            Keyed on ``t`` alone (NOT ``(issuer_id, t)``) so an attacker
            who captures one envelope cannot replay it by varying the
            payload ``peer_id`` field, which is untrusted (comes from the
@@ -1224,10 +1318,55 @@ class Mesh(SensorLoopsMixin):
         if not isinstance(data, dict):
             return
 
-        # R9: freshness + replay defenses. An estop envelope without
-        # ``t`` is not from a canonical issuer -- reject (also closes
-        # the trivial replay surface where an attacker strips ``t`` to
-        # bypass the freshness check).
+        # Wire-level publisher attribution (cross-session forgery defence).
+        # When the sample carries a ``source_info.source_id.zid`` set by
+        # Zenoh during the mTLS-bootstrapped session handshake AND the
+        # body advertises a ``source_zid`` field, the two MUST agree.
+        # An attacker on a different mTLS session cannot make
+        # ``sample.source_info.source_id.zid`` point at a peer's session
+        # because zenoh-python exposes no public ``ZenohId`` constructor;
+        # the value is forced to whatever the publishing session bootstrapped
+        # to under ``connect.tls``. Bridge/IoT transports do not propagate
+        # ``source_info`` -- in that case both fields are absent and we
+        # fall back to the body-level HMAC-bind defences below.
+        wire_zid = _extract_sample_source_zid(sample)
+        body_zid = data.get("source_zid")
+        if wire_zid is not None and body_zid is not None:
+            if not isinstance(body_zid, str) or wire_zid != body_zid:
+                logger.warning(
+                    "[safety] %s: refusing remote estop -- body source_zid does not "
+                    "match TLS-bound wire source_zid (cross-session forgery rejected)",
+                    self.peer_id,
+                )
+                return
+        elif wire_zid is None and body_zid is not None:
+            # Body advertises a zid but the wire does not -- a mTLS
+            # peer that forgot to attach SourceInfo, or a transport
+            # that dropped it. Treat as malformed and reject; the
+            # canonical issuer always pairs the two.
+            logger.warning(
+                "[safety] %s: refusing remote estop -- body source_zid present but wire "
+                "source_zid absent (publisher misconfigured or attacker stripped SourceInfo)",
+                self.peer_id,
+            )
+            return
+        elif wire_zid is not None and body_zid is None:
+            # Wire carries a zid but the body does not -- a publisher
+            # from a pre-binding mesh version. Reject so we never
+            # downgrade silently to the body-only HMAC binding when
+            # the wire-level binding is available. Operators upgrade
+            # all peers together.
+            logger.warning(
+                "[safety] %s: refusing remote estop -- wire source_zid present but body "
+                "source_zid absent (publisher predates source_zid binding; upgrade required)",
+                self.peer_id,
+            )
+            return
+
+        # Freshness + replay defences. An estop envelope without ``t`` is
+        # not from a canonical issuer -- reject (also closes the trivial
+        # replay surface where an attacker strips ``t`` to bypass the
+        # freshness check).
         envelope_t = data.get("t")
         now = time.time()
         if not isinstance(envelope_t, (int, float)):
@@ -1255,7 +1394,7 @@ class Mesh(SensorLoopsMixin):
             )
             return
 
-        # R20: reject envelopes with missing/empty ``peer_id`` outright
+        # reject envelopes with missing/empty ``peer_id`` outright
         # rather than coalescing to ``<unknown>``. The canonical
         # :meth:`emergency_stop` issuer always sets ``peer_id``; a
         # malformed envelope is either a programming bug or an attacker
@@ -1269,7 +1408,7 @@ class Mesh(SensorLoopsMixin):
             )
             return
 
-        # R20: cache key is keyed on ``float(envelope_t)`` ALONE -- not
+        # cache key is keyed on ``float(envelope_t)`` ALONE -- not
         # ``(issuer_id, t)``. The previous (issuer, t) key let an
         # attacker who captured one valid envelope replay it
         # indefinitely by varying the payload ``peer_id`` (which is
@@ -1277,27 +1416,27 @@ class Mesh(SensorLoopsMixin):
         # CN). Keying on the wall-clock ``t`` alone closes that
         # peer_id-permutation surface; the only way to mint a new key
         # is to advance the timestamp, which is bounded by the
-        # freshness window above. F7-E adds a per-issuer slot cap
+        # freshness window above. A per-issuer slot cap
         # below to bound the denial-of-estop surface where one
         # attacker pre-publishes ``t = now + skew - eps`` to occupy
         # cache slots that legitimate same-float-tick estops would
-        # collide on. See PR #195 R20 thread on core.py:1026 + F7-E
-        # thread on the post-R20 denial-of-estop surface.
+
+        # (post-replay-cache: see the per-issuer denial-of-estop discussion).
         cache_key = float(envelope_t)
-        # F7-E per-issuer fairness bound: one issuer may occupy at
+        # Per-issuer fairness bound: one issuer may occupy at
         # most ``per_issuer_cap`` slots so a single attacker cannot
         # fill the global cache. Default cap is _resume_replay_cache_max()
         # / 4 -- four legitimate operators always have working slots.
         per_issuer_cap = max(1, _resume_replay_cache_max() // 4)
-        # R19: cache TTL bookkeeping uses time.monotonic() so an NTP step
+        # cache TTL bookkeeping uses time.monotonic() so an NTP step
         # backward cannot leave entries un-evictable and a step forward
         # cannot age fresh entries out early. Envelope freshness still
         # uses time.time() above (it must compare against the issuer's
-        # wall-clock). See PR #195 audit B5.
+        # wall-clock).
         now_mono = time.monotonic()
         with self._estop_replay_lock:
             if cache_key in self._estop_replay_cache:
-                # R22-B: If lockout is active and within 0.2s, this is corroboration
+                # If lockout is active and within 0.2s, this is corroboration
                 # (two distinct operators, same t) not a replay attack.
                 if self._estop_lockout.is_set() and (time.time() - self._last_estop_ts) < 0.2:
                     try:
@@ -1341,14 +1480,14 @@ class Mesh(SensorLoopsMixin):
                         audit_exc,
                     )
                 return
-            # F9-A: evict using the tuple-valued cache. We extract a
+            # evict using the tuple-valued cache. We extract a
             # mono_ts view, run the standard eviction, then re-key
             # the surviving entries from the original cache.
             ts_view: dict[float, float] = {k: v[1] for k, v in self._estop_replay_cache.items()}
             _evict_replay_cache(
                 ts_view,
                 max_size=_resume_replay_cache_max(),
-                # F17-D: include forward_skew so a forward-skewed envelope
+                # include forward_skew so a forward-skewed envelope
                 # at t=now+skew stays cached for the full freshness window
                 # rather than the lesser ``freshness`` only.
                 ttl_s=_resume_freshness_window_s() + _resume_forward_skew_s(),
@@ -1358,7 +1497,7 @@ class Mesh(SensorLoopsMixin):
             for evicted in set(self._estop_replay_cache.keys()) - set(ts_view.keys()):
                 self._estop_replay_cache.pop(evicted, None)
 
-            # F9-A per-issuer fairness check derived from cache contents.
+            # Per-issuer fairness check derived from cache contents.
             # No separate dict that drifts -- count entries owned by
             # ``issuer_id`` directly. After eviction this is naturally
             # correct: an attacker who flooded their cap and waited for
@@ -1373,7 +1512,7 @@ class Mesh(SensorLoopsMixin):
             if issuer_slots >= per_issuer_cap:
                 logger.warning(
                     "[safety] %s: REFUSED estop cache slot -- issuer %r already at cap %d "
-                    "(F9-A per-issuer fairness bound; flood suspected)",
+                    "(per-issuer fairness bound; flood suspected)",
                     self.peer_id,
                     issuer_id,
                     per_issuer_cap,
@@ -1402,11 +1541,11 @@ class Mesh(SensorLoopsMixin):
             else:
                 self._estop_replay_cache[cache_key] = (issuer_id, now_mono)
 
-            # F14-B (PR #195 review): when the issuer is over their
+            # when the issuer is over their
             # cap, refuse to engage the lockout AS WELL as refuse the
             # cache slot. Without this, a sustained attacker at-cap
             # could still drive the lockout to engage on every novel
-            # `t` they emit -- defeating the F9-A fairness bound's
+            # `t` they emit -- defeating the prior fairness bound's
             # whole point (limiting one attacker's wall-clock impact).
             # An at-cap issuer's estops are dropped at the cache layer
             # AND the lockout layer; they remain audited as
@@ -1433,7 +1572,7 @@ class Mesh(SensorLoopsMixin):
                 },
             )
         else:
-            # F3: a second legitimate estop (different issuer, fresh ``t``)
+            # a second legitimate estop (different issuer, fresh ``t``)
             # arriving while the lockout is already engaged would otherwise
             # be silently dropped from the audit trail -- forensics lose
             # the signal that another operator also tried to engage.
@@ -1478,14 +1617,53 @@ class Mesh(SensorLoopsMixin):
             raw = sample.payload.to_bytes().decode()
             data = json.loads(raw)
         except (AttributeError, UnicodeDecodeError, json.JSONDecodeError):
-            # Match _on_safety_estop's narrow exception tuple.
-            # AttributeError: sample.payload is None or not bytes-like
-            # UnicodeDecodeError: payload not valid UTF-8
-            # json.JSONDecodeError: payload is not valid JSON
+            # Narrow exception tuple matches ``_on_safety_estop``:
+            # AttributeError -> sample.payload is None or not bytes-like
+            # UnicodeDecodeError -> payload not valid UTF-8
+            # json.JSONDecodeError -> payload is not valid JSON
             # Wider exceptions (e.g. RuntimeError) bubble up and surface in logs
-            # rather than silently locking the fleet into a half-state.
+            # rather than silently leaving the fleet in a half-state.
             return
         if not isinstance(data, dict):
+            return
+
+        # Wire-level publisher attribution (cross-session forgery defence).
+        # Mirrors the parallel block in ``_on_safety_estop``: extract the
+        # TLS-bound zid from ``sample.source_info.source_id.zid`` and the
+        # body's advertised ``source_zid`` field. When both are present
+        # they MUST agree; when one is present but the other is not we
+        # reject (operator must upgrade all peers together so the binding
+        # is never silently downgraded). The wire-level zid is bound into
+        # the HMAC input below, so even a body mutation that flips
+        # ``peer_id`` and recomputes the MAC under the attacker's own
+        # session key cannot satisfy the compare unless the attacker can
+        # also forge ``sample.source_info.source_id.zid`` -- which they
+        # cannot, because ``ZenohId`` has no public Python constructor
+        # and the value is bootstrapped from the mTLS-authenticated
+        # session's identity.
+        wire_zid = _extract_sample_source_zid(sample)
+        body_zid = data.get("source_zid")
+        if wire_zid is not None and body_zid is not None:
+            if not isinstance(body_zid, str) or wire_zid != body_zid:
+                logger.warning(
+                    "[safety] %s: refusing remote resume -- body source_zid does not "
+                    "match TLS-bound wire source_zid (cross-session forgery rejected)",
+                    self.peer_id,
+                )
+                return
+        elif wire_zid is None and body_zid is not None:
+            logger.warning(
+                "[safety] %s: refusing remote resume -- body source_zid present but wire "
+                "source_zid absent (publisher misconfigured or attacker stripped SourceInfo)",
+                self.peer_id,
+            )
+            return
+        elif wire_zid is not None and body_zid is None:
+            logger.warning(
+                "[safety] %s: refusing remote resume -- wire source_zid present but body "
+                "source_zid absent (publisher predates source_zid binding; upgrade required)",
+                self.peer_id,
+            )
             return
 
         local_code = os.getenv("STRANDS_MESH_OVERRIDE_CODE", "").strip()
@@ -1506,24 +1684,24 @@ class Mesh(SensorLoopsMixin):
             )
             return
 
-        # F18-A (PR #195 review): the HMAC compare moved BELOW the
+        # the HMAC compare moved BELOW the
         # envelope_t + issuer_id + lockout_elapsed_s shape validation
         # because the MAC input now binds those fields. The
         # ``override_proof`` is only meaningful once we've confirmed
         # the wire envelope shape that was signed.
 
-        # Review feedback: freshness + replay cache.
+        # freshness + replay cache.
         # The HMAC by itself authenticates the override code but says
         # nothing about when the envelope was minted -- a replay of a
         # captured envelope would still verify. Two cheap defences:
         #
         # 1. Freshness: reject envelopes whose ``t`` field is older
-        #    than _resume_freshness_window_s() or more than the forward
-        #    skew in the future. This matches the operator NTP
-        #    requirement documented in CHANGELOG.
+        #  than _resume_freshness_window_s() or more than the forward
+        #  skew in the future. This matches the operator NTP
+        #  requirement documented in CHANGELOG.
         # 2. Per-receiver replay cache: refuse a (issuer, proof_nonce)
-        #    tuple we have already accepted within the freshness
-        #    window. Bounded at _resume_replay_cache_max() entries.
+        #  tuple we have already accepted within the freshness
+        #  window. Bounded at _resume_replay_cache_max() entries.
         envelope_t = data.get("t")
         now = time.time()
         if not isinstance(envelope_t, (int, float)):
@@ -1551,7 +1729,7 @@ class Mesh(SensorLoopsMixin):
             )
             return
 
-        # Mirror the R20 estop strict-reject: an envelope without a
+        # Mirror the prior estop strict-reject: an envelope without a
         # valid issuer peer_id would coalesce every "<unknown>"-issued
         # resume into a shared cache slot, polluting the bounded
         # ``_resume_replay_cache_max()`` allowance and giving any peer
@@ -1567,7 +1745,7 @@ class Mesh(SensorLoopsMixin):
             )
             return
 
-        # F18-A (PR #195 review): the envelope ``lockout_elapsed_s``
+        # the envelope ``lockout_elapsed_s``
         # must be an int/float to participate in the bound MAC input.
         # A missing/invalid value indicates a malformed envelope and
         # is rejected outright -- the canonical issuer at line 1986
@@ -1580,18 +1758,28 @@ class Mesh(SensorLoopsMixin):
             )
             return
 
-        # F18-A (PR #195 review): the HMAC now binds every routing
-        # field (peer_id, t, lockout_elapsed_s, proof_nonce). A captured
-        # envelope mutated by the attacker on ANY of those fields will
-        # fail this compare, closing the replay-mutation surface where
-        # the cache key (issuer_id, proof_nonce) was unsigned.
+        # The HMAC binds every body-routing field (peer_id, t,
+        # lockout_elapsed_s, proof_nonce) so a captured envelope mutated
+        # by the attacker on ANY of those fields fails the compare. When
+        # the wire carries a TLS-bound ``source_zid`` we additionally
+        # bind it into the MAC input so an attacker on a different mTLS
+        # session who happens to also hold the override code cannot
+        # mint a fresh resume claiming to be the legitimate session:
+        # the receiver re-derives the MAC using the wire-level
+        # ``sample.source_info.source_id.zid`` (bounded by mTLS trust
+        # roots; ``ZenohId`` has no public Python ctor) so a mutation
+        # of the body ``source_zid`` is provably caught and a same-body
+        # resume from a different session is provably caught.
+        mac_fields: dict[str, Any] = {
+            "peer_id": issuer_id,
+            "t": envelope_t,
+            "lockout_elapsed_s": envelope_elapsed,
+            "proof_nonce": proof_nonce,
+        }
+        if wire_zid is not None:
+            mac_fields["source_zid"] = wire_zid
         mac_input = json.dumps(
-            {
-                "peer_id": issuer_id,
-                "t": envelope_t,
-                "lockout_elapsed_s": envelope_elapsed,
-                "proof_nonce": proof_nonce,
-            },
+            mac_fields,
             sort_keys=True,
             separators=(",", ":"),
         ).encode()
@@ -1603,12 +1791,19 @@ class Mesh(SensorLoopsMixin):
         if not hmac.compare_digest(expected_proof, provided_proof):
             logger.warning(
                 "[safety] %s: refusing remote resume -- override_proof mismatch "
-                "(MAC binds peer_id+t+lockout_elapsed_s+proof_nonce; "
+                "(MAC binds peer_id+t+lockout_elapsed_s+proof_nonce%s; "
                 "captured-and-mutated replay rejected, constant-time compared)",
                 self.peer_id,
+                "+source_zid" if wire_zid is not None else "",
             )
             return
-        cache_key = (issuer_id, proof_nonce)
+        # Replay-cache key incorporates the TLS-bound wire zid when
+        # available so two sessions that legitimately share the same
+        # ``proof_nonce`` (e.g. two operators racing the same resume)
+        # do not collide -- and so an attacker on a different session
+        # cannot reuse a captured ``(issuer_peer_id, proof_nonce)`` to
+        # evict legitimate cache slots.
+        cache_key = (wire_zid or issuer_id, proof_nonce)
         with self._resume_replay_lock:
             if cache_key in self._resume_replay_cache:
                 logger.warning(
@@ -1638,7 +1833,7 @@ class Mesh(SensorLoopsMixin):
                         audit_exc,
                     )
                 return
-            # R19: TTL math uses time.monotonic() (see PR #195 B5) --
+            # TTL math uses time.monotonic() (see this PR B5) --
             # envelope freshness above stays on time.time() because it
             # compares against the issuer wall clock; cache eviction is
             # local-only bookkeeping.
@@ -1646,7 +1841,7 @@ class Mesh(SensorLoopsMixin):
             _evict_replay_cache(
                 self._resume_replay_cache,
                 max_size=_resume_replay_cache_max(),
-                # F17-D: see _evict_replay_cache docstring.
+                # see _evict_replay_cache docstring.
                 ttl_s=_resume_freshness_window_s() + _resume_forward_skew_s(),
                 now_mono=now_mono,
             )
@@ -1656,7 +1851,7 @@ class Mesh(SensorLoopsMixin):
             self._estop_lockout.clear()
             sender = data.get("peer_id", "<remote>")
             logger.warning("[safety] %s: lockout cleared via remote resume from %s", self.peer_id, sender)
-            # R8-1: audit the receiver-side resume transition. Mirrors
+            # audit the receiver-side resume transition. Mirrors
             # _on_safety_estop above so verify_audit_integrity walkers
             # see the close of the lockout window for every peer that
             # entered one.
@@ -1679,7 +1874,7 @@ class Mesh(SensorLoopsMixin):
         :meth:`_on_response` rejects forged responses from any peer
         other than *target*.
 
-        R4-5: explicit guard against passing the
+        explicit guard against passing the
         :data:`BROADCAST_RESPONDER` sentinel (or any string containing a
         NUL byte) as ``target``. ``init_mesh``'s peer_id regex already
         rejects NUL on the receive side, so a real peer can't collide,
@@ -1695,7 +1890,7 @@ class Mesh(SensorLoopsMixin):
                 "status": "error",
                 "error": "send: target may not contain NUL or equal the BROADCAST_RESPONDER sentinel",
             }
-        # R8-6: client-side validate before publishing. Prior to this fix,
+        # client-side validate before publishing. Prior to this fix,
         # programmatic callers (tests, third-party integrations, anything
         # that imports Mesh directly) skipped validate_command -- only the
         # robot_mesh tool path validated client-side. Receiver-side
@@ -1715,7 +1910,7 @@ class Mesh(SensorLoopsMixin):
         with self._rpc_lock:
             self._pending[turn] = event
             self._responses[turn] = []
-            # R5-defensive: belt-and-suspenders. The public guard above
+            # Defensively: belt-and-suspenders. The public guard above
             # already rejects target == BROADCAST_RESPONDER and target
             # containing NUL, but a future refactor that adds another
             # path into this method (e.g. an internal helper that bypasses
@@ -1748,7 +1943,7 @@ class Mesh(SensorLoopsMixin):
         """
         if not self._running:
             return []
-        # R8-6: client-side validate before publishing. broadcast()'s
+        # client-side validate before publishing. broadcast()'s
         # return type is list[dict] (responses), so a validation failure
         # has no structured slot -- log the rejection and return [] so
         # callers see "no responses" rather than a partial broadcast.
@@ -1902,15 +2097,23 @@ class Mesh(SensorLoopsMixin):
         self._estop_lockout.set()
         self._last_estop_ts = time.time()
         responses = self.broadcast({"action": "stop"}, timeout=3.0)
-        self.publish(
-            "strands/safety/estop",
-            {
-                "peer_id": self.peer_id,
-                "t": self._last_estop_ts,
-                "responses_received": len(responses),
-                "lockout_engaged": True,
-            },
-        )
+        # Wire-level publisher attribution: bind the local TLS-bound zid
+        # into both the body (so receivers can verify the body matches
+        # ``sample.source_info.source_id.zid``) and the publish path (via
+        # ``_publish_safety_envelope`` which attaches a ``SourceInfo``).
+        # When ``local_zid`` is ``None`` we are running on the bridge/IoT
+        # transport; the body-level HMAC binding still holds, only the
+        # cross-session forgery defence is unavailable.
+        local_zid = self._local_session_zid()
+        envelope: dict[str, Any] = {
+            "peer_id": self.peer_id,
+            "t": self._last_estop_ts,
+            "responses_received": len(responses),
+            "lockout_engaged": True,
+        }
+        if local_zid is not None:
+            envelope["source_zid"] = local_zid
+        self._publish_safety_envelope("strands/safety/estop", envelope)
         self.publish_safety_event(
             event_type="emergency_stop",
             severity="critical",
@@ -1928,7 +2131,7 @@ class Mesh(SensorLoopsMixin):
 
         Compared in constant time against ``STRANDS_MESH_OVERRIDE_CODE``.
 
-        R5-4: the wire response is a single generic shape (``{"status":
+        the wire response is a single generic shape (``{"status":
         "ok"}`` on success, ``{"status": "error", "error": "resume
         rejected"}`` on every failure including "lockout not engaged" and
         "override code unconfigured") so a remote prober cannot use
@@ -1943,28 +2146,28 @@ class Mesh(SensorLoopsMixin):
         ``publish_safety_event`` audit record where forensics can use it.
         Local callers (e.g. operator tooling that wants to show "already
         unlocked" UI) can still distinguish via the local audit log.
-            {"status": "error", "error": "<reason>"}               # rejected
+            {"status": "error", "error": "<reason>"}  # rejected
 
         Every attempt -- successful or not -- is recorded in the audit log
         through :meth:`publish_safety_event`.
         """
-        # R5-4: every non-success path returns the same generic dict so
+        # every non-success path returns the same generic dict so
         # a remote caller cannot use the response shape as an oracle.
         # Structured rejection reasons are preserved in the local audit
         # log via publish_safety_event.
         _generic_error = {"status": "error", "error": "resume rejected"}
 
-        # F16-C (PR #195 review): close the timing oracle by ALWAYS
+        # close the timing oracle by ALWAYS
         # running ``hmac.compare_digest`` on every code path, regardless
         # of whether the lockout is engaged or the override code is
         # configured. Without this, a remote prober can distinguish
         # "compare ran" from "compare didn't run" by response time and
         # learn:
-        #   - whether the lockout is engaged (lockout-not-engaged path
-        #     skipped the compare)
-        #   - whether STRANDS_MESH_OVERRIDE_CODE is configured (unset
-        #     path skipped the compare)
-        # The pre-F16 R5-4 response-shape parity (single generic error
+        #  - whether the lockout is engaged (lockout-not-engaged path
+        #  skipped the compare)
+        #  - whether STRANDS_MESH_OVERRIDE_CODE is configured (unset
+        #  path skipped the compare)
+        # The earlier response-shape parity (single generic error
         # dict) closed the message-shape oracle but not the timing
         # oracle.
         #
@@ -2013,7 +2216,7 @@ class Mesh(SensorLoopsMixin):
             payload={"sender_id": self.peer_id, "lockout_elapsed_s": elapsed},
         )
 
-        # R8-5: bind a proof-of-override-code into the resume envelope so
+        # bind a proof-of-override-code into the resume envelope so
         # receivers can re-verify on _on_safety_resume. Without this,
         # any operator-class peer could fan-out a resume just by virtue
         # of being on the ACL; the override code adds a second factor
@@ -2025,24 +2228,36 @@ class Mesh(SensorLoopsMixin):
         # or the audit log -- only the HMAC of (code, nonce).
         proof_nonce = uuid.uuid4().hex
         envelope_t = time.time()
-        # F18-A (PR #195 review): the HMAC input must bind every
-        # envelope-routing field, not just ``proof_nonce``. Pre-F18 the
-        # MAC covered ``proof_nonce`` alone, so a captured envelope
-        # could be re-emitted with attacker-mutated ``peer_id`` / ``t``
-        # / ``lockout_elapsed_s`` and the receiver-side compare still
-        # passed -- defeating freshness and replay-cache defences whose
-        # cache key includes the unsigned ``peer_id``.
+        # The HMAC input binds every envelope-routing field plus the
+        # local Zenoh session ZID. Binding ``source_zid`` closes the
+        # cross-session forgery surface where an attacker holding the
+        # override code on a different mTLS-authenticated session
+        # would otherwise be able to mint a resume claiming to come
+        # from the legitimate operator's session: the receiver
+        # re-derives the MAC using the wire-level
+        # ``sample.source_info.source_id.zid``, and ``ZenohId`` cannot
+        # be chosen by the publisher (zenoh-python exposes no public
+        # constructor; the value is established by the Zenoh bootstrap
+        # that follows the mTLS handshake and bounded by the trust
+        # roots in ``connect.tls``).
         #
-        # Bind the canonical wire fields into a deterministic JSON blob
-        # (sort_keys, no whitespace) so issuer + receiver compute the
-        # same digest byte-for-byte.
+        # Body-level fields (``peer_id``, ``t``, ``lockout_elapsed_s``,
+        # ``proof_nonce``) remain bound so the cache-key + freshness
+        # defences continue to hold for non-Zenoh transports where
+        # ``source_zid`` is absent (bridge / IoT). Bound as a
+        # deterministic JSON blob (sort_keys, no whitespace) so issuer
+        # and receiver compute the same digest byte-for-byte.
+        local_zid = self._local_session_zid()
+        mac_fields: dict[str, Any] = {
+            "peer_id": self.peer_id,
+            "t": envelope_t,
+            "lockout_elapsed_s": elapsed,
+            "proof_nonce": proof_nonce,
+        }
+        if local_zid is not None:
+            mac_fields["source_zid"] = local_zid
         mac_input = json.dumps(
-            {
-                "peer_id": self.peer_id,
-                "t": envelope_t,
-                "lockout_elapsed_s": elapsed,
-                "proof_nonce": proof_nonce,
-            },
+            mac_fields,
             sort_keys=True,
             separators=(",", ":"),
         ).encode()
@@ -2051,20 +2266,178 @@ class Mesh(SensorLoopsMixin):
             mac_input,
             "sha256",
         ).hexdigest()
-        self.publish(
-            "strands/safety/resume",
-            {
-                "peer_id": self.peer_id,
-                "t": envelope_t,
-                "lockout_elapsed_s": elapsed,
-                "proof_nonce": proof_nonce,
-                "override_proof": override_proof,
-            },
-        )
+        envelope: dict[str, Any] = {
+            "peer_id": self.peer_id,
+            "t": envelope_t,
+            "lockout_elapsed_s": elapsed,
+            "proof_nonce": proof_nonce,
+            "override_proof": override_proof,
+        }
+        if local_zid is not None:
+            envelope["source_zid"] = local_zid
+        self._publish_safety_envelope("strands/safety/resume", envelope)
         logger.warning("[safety] %s: resume after %.1fs lockout", self.peer_id, elapsed)
-        # R5-4: success is also generic on the wire; the local audit
+        # success is also generic on the wire; the local audit
         # record (resume_ok above) carries the elapsed time for forensics.
         return {"status": "ok"}
+
+    def _local_session_zid(self) -> str | None:
+        """Return our own Zenoh session's ZID (32-char hex), or ``None``.
+
+        The ZID is established during the Zenoh session bootstrap that
+        follows the mTLS handshake; it is unique per session and cannot
+        be chosen by the caller. Used in two places:
+
+        1. As the ``source_zid`` field embedded in safety envelope
+           bodies. Combined with the receiver-side check
+           ``body.source_zid == sample.source_info.source_id.zid`` this
+           closes the cross-session forgery window where an attacker
+           in a different session would have to convince Zenoh to
+           attach a wire-level ``source_id.zid`` that does not match
+           the body field. Zenoh-python exposes no public constructor
+           for ``ZenohId``/``EntityGlobalId``, so this binding is
+           bounded by the trust roots in ``connect.tls``.
+
+        2. As an HMAC input on resume envelopes so a captured
+           override-proof bound to one session's wire identity cannot
+           be replayed from a different session even if the attacker
+           also holds the override code (see
+           :meth:`_resume_lockout`).
+
+        Returns ``None`` for non-Zenoh transports (bridge / IoT) and
+        when no session is currently open. In that case the safety
+        path falls back to the body-level HMAC binding alone -- the
+        cross-session-forgery defence is Zenoh-specific because only
+        Zenoh exposes a TLS-bound publisher identity.
+        """
+        try:
+            from strands_robots.mesh.session import _current_zenoh_session_directly
+
+            session = _current_zenoh_session_directly()
+        except ImportError:
+            return None
+        if session is None:
+            return None
+        try:
+            zid = session.info.zid()
+        except (AttributeError, RuntimeError):
+            return None
+        if zid is None:
+            return None
+        zid_str = str(zid)
+        return zid_str or None
+
+    def _safety_publisher_for(self, key: str) -> Any | None:
+        """Lazily declare and cache a Zenoh ``Publisher`` for *key*.
+
+        The publisher is held for the lifetime of this Mesh and reused
+        across :meth:`_publish_safety_envelope` calls so:
+
+        * its ``EntityGlobalId.eid`` is stable -- a receiver-side
+          downstream defence can refuse same-zid envelopes whose eid
+          has shifted (which Zenoh treats as a fresh publisher entity).
+        * the per-publisher monotonic counter inside Zenoh increments
+          predictably; a replay across the same session is bounded by
+          our own ``_safety_sn`` counter (bound into ``source_sn``).
+
+        Returns ``None`` for non-Zenoh transports or when no session
+        is currently open. The caller falls back to the legacy
+        ``put()`` path in that case.
+        """
+        try:
+            from strands_robots.mesh.session import _current_zenoh_session_directly
+
+            session = _current_zenoh_session_directly()
+        except ImportError:
+            return None
+        if session is None:
+            return None
+        with self._safety_publishers_lock:
+            pub = self._safety_publishers.get(key)
+            if pub is not None:
+                return pub
+            try:
+                pub = session.declare_publisher(key)
+            except (RuntimeError, OSError) as exc:
+                logger.warning(
+                    "[mesh] %s: declare_publisher(%s) failed: %s",
+                    self.peer_id,
+                    key,
+                    exc,
+                )
+                return None
+            self._safety_publishers[key] = pub
+            return pub
+
+    def _next_safety_sn(self, key: str) -> int:
+        """Return a monotonically-increasing sequence number scoped to *key*.
+
+        Bound into the ``SourceInfo.source_sn`` field of every safety
+        envelope we publish. Pairs with ``source_zid`` so that the
+        receiver can refuse replays of (zid, sn) it has already
+        accepted, without coalescing with envelopes from other
+        sessions.
+        """
+        with self._safety_sn_lock:
+            sn = self._safety_sn.get(key, 0) + 1
+            self._safety_sn[key] = sn
+            return sn
+
+    def _publish_safety_envelope(self, key: str, payload: dict[str, Any]) -> None:
+        """Publish a safety envelope with TLS-bound source attribution.
+
+        Attempts the Zenoh-native path first: declare (or reuse) a
+        publisher on *key*, allocate a fresh per-topic sequence number,
+        and put the JSON-encoded *payload* with
+        ``SourceInfo(publisher.id, sn)`` attached. The receiver
+        extracts ``sample.source_info.source_id.zid`` and checks it
+        matches the body's ``source_zid`` field plus the HMAC binding
+        -- this closes the cross-session forgery window where an
+        attacker on a different session would have had to convince
+        Zenoh to attach our wire-level zid (which is bounded by mTLS
+        trust roots and the absence of a public ``ZenohId`` ctor in
+        zenoh-python).
+
+        Falls back to the legacy transport-agnostic ``put()`` path
+        when:
+
+        * the transport is not Zenoh (bridge / IoT),
+        * no Zenoh session is currently open,
+        * ``declare_publisher`` failed for any reason (logged at
+          WARNING by ``_safety_publisher_for``),
+        * the ``zenoh.SourceInfo`` constructor is unavailable on the
+          installed zenoh-python version.
+
+        In the fallback case the body-level HMAC binding still holds;
+        only the additional cross-session-forge defence is omitted.
+        """
+        pub = self._safety_publisher_for(key)
+        if pub is None:
+            put(key, payload)
+            return
+        try:
+            import zenoh
+        except ImportError:
+            put(key, payload)
+            return
+        sn = self._next_safety_sn(key)
+        try:
+            source_info = zenoh.SourceInfo(pub.id, sn)
+        except (TypeError, AttributeError):
+            # zenoh-python without the SourceInfo ctor (very old build);
+            # fall back to body-level binding only.
+            put(key, payload)
+            return
+        try:
+            pub.put(json.dumps(payload).encode(), source_info=source_info)
+        except (RuntimeError, OSError, TypeError) as exc:
+            logger.warning(
+                "[mesh] %s: safety publisher.put(%s) failed: %s",
+                self.peer_id,
+                key,
+                exc,
+            )
+            put(key, payload)
 
     def publish(self, key: str, payload: dict[str, Any]) -> None:
         """Publish *payload* on *key* via the mesh transport.
