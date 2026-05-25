@@ -147,6 +147,15 @@ _WRITE_LOCK = threading.Lock()
 _SEQ_LOCK = threading.Lock()
 _SEQ_COUNTERS: dict[str, int] = {}
 
+#: Upper bound on a per-peer seq value when seeding ``_SEQ_COUNTERS`` from
+#: an external source (sidecar OR audit-log walk). Real per-peer audit
+#: volumes are tens of millions per year; a seq value above this cap is
+#: almost certainly the result of a forged record / corrupted sidecar /
+#: deliberate poisoning attempt. Capping the seed prevents a single bad
+#: input from silently denying the legitimate writer the next ~billion
+#: seq values.
+_MAX_SEED_SEQ: int = 100_000_000
+
 # F3 (PR #195 review): the PSK fingerprint snapshot at
 # ``_AUDIT_STATE.psk_fingerprint`` is read+modified+compared on every
 # call to :func:`_sign_record`. Without a dedicated lock, two threads
@@ -450,12 +459,33 @@ def _load_seq_counters() -> None:
                 payload = json.load(fh)
             if isinstance(payload, dict):
                 for key, value in payload.items():
-                    if isinstance(key, str) and isinstance(value, int) and value >= 0:
-                        # Only restore if our in-memory value is lower --
-                        # never roll a counter backwards even if the file
-                        # somehow has a stale value.
-                        if value > _SEQ_COUNTERS.get(key, 0):
-                            _SEQ_COUNTERS[key] = value
+                    if not (isinstance(key, str) and isinstance(value, int) and value >= 0):
+                        continue
+                    # Cap the seed even on the healthy-sidecar path. An
+                    # attacker with audit-dir write access can drop a
+                    # syntactically valid sidecar like
+                    # ``{"victim_peer_id": 999999999}``; without the
+                    # cap, the legitimate writer's next event would jump
+                    # the seq counter by ~10^9 with no upper bound. The
+                    # F7-D HMAC-verify defence applies only to the
+                    # audit-log fallback; the sidecar itself is not
+                    # signed, so the cap is the only defence on this
+                    # path.
+                    if value > _MAX_SEED_SEQ:
+                        logger.warning(
+                            "[audit] refusing to seed seq counter for %r "
+                            "from sidecar value %d (cap=%d, possibly "
+                            "tampered sidecar)",
+                            key,
+                            value,
+                            _MAX_SEED_SEQ,
+                        )
+                        continue
+                    # Only restore if our in-memory value is lower --
+                    # never roll a counter backwards even if the file
+                    # somehow has a stale value.
+                    if value > _SEQ_COUNTERS.get(key, 0):
+                        _SEQ_COUNTERS[key] = value
             sidecar_loaded = True
     except (OSError, json.JSONDecodeError) as exc:
         logger.warning("[audit] could not load seq sidecar %s: %s", sidecar, exc)
@@ -500,15 +530,12 @@ def _load_seq_counters() -> None:
                     if not hmac.compare_digest(sig, expected):
                         unverified_skipped += 1
                         continue
-                # F15-A (PR #195 review): even without a PSK we cap the
-                # seq seed at a sane upper bound so a single forged log
+                # Cap the seed even without a PSK so a single forged log
                 # line cannot poison the counter to 10**9 and silently
                 # deny the legitimate writer the next ~billion seq
-                # values. Real per-peer audit volumes are tens of
-                # millions per year; a seq seed > 100M is almost
-                # certainly forged. Reject and audit the rejection at
-                # WARNING so the operator sees it.
-                _MAX_SEED_SEQ = 100_000_000
+                # values. The cap (:data:`_MAX_SEED_SEQ`) is shared
+                # with the sidecar path so both seed sources have the
+                # same fail-loud-on-tamper posture.
                 if seq > _MAX_SEED_SEQ:
                     logger.warning(
                         "[audit] refusing to seed seq counter for %r from "
