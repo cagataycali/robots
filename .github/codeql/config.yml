@@ -19,12 +19,12 @@ query-filters:
   # strands_robots/simulation/{base,policy_runner,benchmark}.py.
   #
   # Runtime is safe because the cycle is asymmetric, not closed:
-  # base.py:50 imports PolicyRunner / VideoConfig from policy_runner at
-  # module level (the runtime edge), but policy_runner.py:51-54 imports
-  # SimEngine / BenchmarkProtocol / Policy from base only under
-  # TYPE_CHECKING. There is no runtime back-edge that would close the
-  # cycle at import time. `from __future__ import annotations` (PEP 563)
-  # is additional belt-and-braces so type-hint resolution at runtime
+  # base.py's top-level ``from .policy_runner import PolicyRunner,
+  # VideoConfig`` statement is the only runtime edge. policy_runner.py
+  # imports SimEngine / BenchmarkProtocol / Policy from base only inside
+  # its ``if TYPE_CHECKING:`` block -- no runtime back-edge closes the
+  # cycle at import time. ``from __future__ import annotations`` (PEP
+  # 563) is additional belt-and-braces so type-hint resolution at runtime
   # never re-enters either module.
   #
   # This is the only file shape in the repository where the rule fires
