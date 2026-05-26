@@ -120,8 +120,7 @@ class TestCommandDeduplicator:
         second = {"sender_id": "a", "extra": 1}
         assert d.is_duplicate("k", first) is False
         assert d.is_duplicate("k", second) is False, (
-            "partial-canonical payloads must not alias under the default "
-            "pass-through path"
+            "partial-canonical payloads must not alias under the default pass-through path"
         )
 
     def test_partial_canonical_strict_mode_uses_full_payload(self):
@@ -141,7 +140,6 @@ class TestCommandDeduplicator:
         assert d.is_duplicate("k", second) is False
         # But identical strict-mode payloads still dedup.
         assert d.is_duplicate("k", first) is True
-
 
     def test_ttl_expiry(self):
         # Canonical-tuple payload so _dedup_id returns a real fingerprint
@@ -530,6 +528,7 @@ class TestStrictModeIntegrationR2:
             f"payloads through both paths; got {len(delivered)} delivered"
         )
 
+
 class TestNarrowExceptionsR3:
     """Source-grep regression pin: bridge_transport.py must not reintroduce
     bare ``except Exception``.
@@ -563,4 +562,3 @@ class TestNarrowExceptionsR3:
             "(RuntimeError, AttributeError, OSError) for teardown). "
             f"Offending lines: {offending}"
         )
-
