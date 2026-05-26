@@ -31,6 +31,7 @@ Pinned modules (the documented static-only cycle suppressed by
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 
@@ -45,6 +46,18 @@ _SIMULATION_TRIPLE: tuple[str, ...] = (
     "strands_robots.simulation.benchmark",
 )
 
+# Traceback-shape regex for the regression assertions below. We anchor on
+# the start-of-line ``ExceptionName:`` framing that Python emits for an
+# uncaught traceback (and for chained ``raise from`` re-raises) rather than
+# substring-matching the bare exception name. Substring matching is too
+# loose: any benign log line, deprecation warning, or docstring snippet
+# that happens to mention ``ImportError`` / ``RecursionError`` (for
+# example, an optional-dep warning saying "...will raise ImportError on
+# Python 3.13...") would otherwise fail the pin even though the import
+# itself succeeded. The traceback frame is the only stderr shape that
+# *actually* indicates the failure mode this pin exists to catch.
+_TRACEBACK_EXC_PATTERN = re.compile(r"^(ImportError|RecursionError):", re.MULTILINE)
+
 
 def _subprocess_env() -> dict[str, str]:
     """Env that keeps the parent ``sys.path`` visible to the child.
@@ -55,12 +68,23 @@ def _subprocess_env() -> dict[str, str]:
     ``PYTHONPATH``: same module-resolution behaviour as the parent, but a
     fresh ``sys.modules`` cache so the per-process import-time dynamics
     are exercised honestly.
+
+    Empty entries in ``sys.path`` and an empty inherited ``PYTHONPATH`` are
+    filtered out before joining. POSIX interprets a leading, trailing, or
+    interior empty pathsep entry as the *current working directory*, which
+    on a CI runner is the checkout root: that would silently inject ``.``
+    into the child's ``sys.path`` and could mask a regression where a
+    module is only importable because ``cwd`` happens to contain it.
     """
     env = os.environ.copy()
-    # Prepend the inherited sys.path so child resolves modules the same way
-    # this test process does -- editable install, wheel install, or src/
-    # checkout. ``-I`` would strip these and produce a false positive.
-    env["PYTHONPATH"] = os.pathsep.join(p for p in sys.path if p) + os.pathsep + env.get("PYTHONPATH", "")
+    # Build the explicit path list: real entries from sys.path first, then
+    # the parent's PYTHONPATH if (and only if) it is set and non-empty.
+    # ``-I`` would strip these and produce a false positive.
+    parts = [p for p in sys.path if p]
+    inherited = env.get("PYTHONPATH", "")
+    if inherited:
+        parts.append(inherited)
+    env["PYTHONPATH"] = os.pathsep.join(parts)
     return env
 
 
@@ -70,8 +94,8 @@ def test_module_imports_in_fresh_interpreter(module: str) -> None:
 
     Spawns ``python -c "import <module>"`` so the import is not contaminated
     by the test runner's already-cached ``sys.modules``. Asserts exit code 0
-    and no ``RecursionError`` / ``ImportError`` traces in stderr; on failure
-    surfaces both for diagnosis.
+    and no ``RecursionError`` / ``ImportError`` traceback frames in stderr;
+    on failure surfaces both for diagnosis.
 
     The 30-second timeout guards against an infinite-recursion regression
     (the precise failure mode this pin exists to catch) hanging the suite.
@@ -89,13 +113,14 @@ def test_module_imports_in_fresh_interpreter(module: str) -> None:
         f"stderr:\n{result.stderr}"
     )
     # Surface any import-time recursion or partial-failure traces as well.
-    # An import that "succeeds" (exit 0) but emits a RecursionError on
-    # stderr from a swallowed inner frame is still a regression.
-    assert "RecursionError" not in result.stderr, (
-        f"RecursionError surfaced during fresh-interpreter import of {module}:\n{result.stderr}"
-    )
-    assert "ImportError" not in result.stderr, (
-        f"ImportError surfaced during fresh-interpreter import of {module}:\n{result.stderr}"
+    # An import that "succeeds" (exit 0) but emits a traceback on stderr
+    # from a swallowed inner frame is still a regression. The regex anchors
+    # on the start-of-line ``ExceptionName:`` framing so benign log lines
+    # that happen to mention these exception names by name do not fail
+    # the pin.
+    match = _TRACEBACK_EXC_PATTERN.search(result.stderr)
+    assert match is None, (
+        f"{match.group(1)} traceback surfaced during fresh-interpreter import of {module}:\n{result.stderr}"
     )
 
 
@@ -121,4 +146,9 @@ def test_full_triple_imports_in_one_process() -> None:
         f"(exit {result.returncode}).\n"
         f"stdout:\n{result.stdout}\n"
         f"stderr:\n{result.stderr}"
+    )
+    match = _TRACEBACK_EXC_PATTERN.search(result.stderr)
+    assert match is None, (
+        f"{match.group(1)} traceback surfaced during combined fresh-interpreter "
+        f"import of the simulation triple:\n{result.stderr}"
     )
