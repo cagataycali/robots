@@ -80,6 +80,8 @@ def _get_iot_transport_class() -> type[IotMqttTransport]:
 # - health  — rare, retained, threshold alerts via Rules
 # - safety/event  — must hit cloud audit
 # - safety/estop  — defence-in-depth E-stop
+# - safety/resume  — paired with safety/estop; cloud audit needs the
+#   resume edge to close the safety incident timeline
 # - cmd  — operator-to-robot RPC (cloud → robot direction)
 # - response  — robot-to-operator RPC reply
 # - broadcast  — fan-out RPC
@@ -193,12 +195,12 @@ def _should_bridge(
       per-turn tail) accept a trailing path component. ``response``
       matches ``response/<turn>``.
 
-    The exact / prefix split closes the cloud-pollution attack
-    The pre-fix attack: without the split, an
-    attacker could append arbitrary tails to any allowed prefix and
-    have the bridge republish the message to MQTT (e.g. a 10 KiB blob
-    on ``strands/<x>/safety/event/<blob>`` ends up in the DDB audit
-    table).
+    The exact / prefix split closes a cloud-pollution attack: without
+    it, an attacker could append arbitrary tails to any allowed prefix
+    and have the bridge republish the message to MQTT (e.g. a 10 KiB
+    blob on ``strands/<x>/safety/event/<blob>`` ending up in the DDB
+    audit table). Only ``response`` legitimately carries a per-turn
+    tail, so it is the sole prefix-walk default.
     """
     if allowed_prefixes is None:
         allowed_prefixes = _resolve_bridge_prefix_filter()
@@ -278,9 +280,12 @@ def _resolve_dedup_strict() -> bool:
 class _CommandDeduplicator:
     """TTL-bounded cache of (key, dedup-id) tuples seen in the recent past.
 
-    Thread-safe. Uses envelope nonce when available, else a content fingerprint.
-    The cache key is *(topic_key, dedup_id)* so two distinct topics with
-    coincidentally matching dedup_ids don't collide.
+    Thread-safe. Identity is a SHA-256 fingerprint over the canonical
+    ``(sender_id, turn_id, command)`` tuple; payloads with no canonical
+    fields pass through (default) or fall back to a full-payload hash
+    (when ``strict=True``). The cache key is *(topic_key, dedup_id)* so
+    two distinct topics with coincidentally matching dedup_ids don't
+    collide.
     """
 
     __slots__ = ("_seen", "_lock", "_ttl", "_strict")
@@ -524,10 +529,12 @@ class BridgeTransport:
         once per logical message even when the same payload arrives on both
         sides.
 
-        Identity is the envelope nonce when present, otherwise a content
-        fingerprint over ``(sender_id, turn_id, command)``. Samples without
-        any extractable identity (heartbeats, raw blobs, etc.) bypass dedup
-        and are delivered as-is.
+        Identity is a SHA-256 fingerprint over the canonical
+        ``(sender_id, turn_id, command)`` tuple. Samples without any
+        canonical fields bypass dedup and are delivered as-is (default),
+        or fall back to a full-payload hash when
+        ``STRANDS_MESH_BRIDGE_DEDUP_STRICT=1`` (intended for heartbeats
+        that legitimately recur with identical content).
         """
         zenoh_sub: Any | None = None
         iot_sub: Any | None = None

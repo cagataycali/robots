@@ -5,11 +5,12 @@ once over MQTT) because subscriptions fan out on both sides. The
 :class:`_CommandDeduplicator` collapses those duplicates by message
 identity:
 
-* same envelope nonce -> delivered exactly once.
-* same content fingerprint (legacy un-enveloped payloads) -> delivered once.
+* same canonical ``(sender_id, turn_id, command)`` tuple -> delivered once.
 * distinct messages -> both delivered.
 * identity expires after the TTL.
-* malformed / no-identity samples bypass dedup and are delivered as-is.
+* payloads with no canonical fields bypass dedup (default) and are
+  delivered as-is; ``STRANDS_MESH_BRIDGE_DEDUP_STRICT=1`` opts into a
+  full-payload-hash fallback for heartbeat-style topics.
 """
 
 from __future__ import annotations
@@ -67,7 +68,7 @@ class TestCommandDeduplicator:
 
     def test_unsigned_fingerprint_dedup(self):
         d = _CommandDeduplicator(ttl_s=10.0)
-        # No nonce -> falls back to (sender, turn, command) fingerprint.
+        # Canonical-tuple fingerprint dedups on (sender_id, turn_id, command).
         legacy = {
             "sender_id": "alice",
             "turn_id": "t1",
@@ -188,8 +189,8 @@ class TestBridgeDedupIntegration:
         assert delivered == [broken]
 
     def test_dedup_resets_per_topic(self):
-        """Same nonce on different topics must NOT be deduplicated together
-        (different subscribers, different cache buckets)."""
+        """Same canonical tuple on different topics must NOT be deduplicated
+        together (different subscribers, different cache buckets)."""
         bridge, zenoh, iot = self._make_bridge()
         delivered_a: list[Any] = []
         delivered_b: list[Any] = []
@@ -364,3 +365,92 @@ class TestStrictEnvVarWiringR1:
 
         bridge = BridgeTransport(zenoh=zenoh, iot=iot)
         assert bridge._dedup._strict is False, "Invalid env var value must fall back to strict=False"
+
+
+class TestStrictModeIntegrationR2:
+    """Pin: in strict mode, envelope-shaped payloads (no canonical
+    sender_id/turn_id/command tuple) must dedup across the bridge's
+    Zenoh + IoT fanout via the full-payload-hash fallback.
+
+    Pre-fix coverage gap: every prior integration test in
+    :class:`TestBridgeDedupIntegration` drove canonical-tuple payloads,
+    so strict-mode behaviour at the bridge layer was unverified end to
+    end. Default-mode payloads with no canonical fields take the
+    pass-through path and the assertions held trivially regardless of
+    dedup correctness.
+    """
+
+    def test_strict_mode_dedups_envelope_payload_across_paths(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        from strands_robots.mesh.transport.bridge_transport import BridgeTransport
+
+        monkeypatch.setenv("STRANDS_MESH_BRIDGE_DEDUP_STRICT", "1")
+
+        zenoh = MagicMock()
+        zenoh.is_alive.return_value = True
+        zenoh.connect.return_value = True
+        zenoh.declare_subscriber.side_effect = lambda key, handler: ("zenoh", key, handler)
+
+        iot = MagicMock()
+        iot.is_alive.return_value = True
+        iot.connect.return_value = True
+        iot.declare_subscriber.side_effect = lambda key, handler: ("iot", key, handler)
+
+        bridge = BridgeTransport(zenoh=zenoh, iot=iot)
+        assert bridge._dedup._strict is True
+
+        delivered: list[Any] = []
+        bridge.declare_subscriber("strands/robot-a/cmd", lambda s: delivered.append(s))
+
+        zenoh_handler = zenoh.declare_subscriber.call_args.args[1]
+        iot_handler = iot.declare_subscriber.call_args.args[1]
+
+        # Envelope-shaped payload: no canonical tuple. In default mode this
+        # would pass through both calls; in strict mode the full-payload
+        # hash fingerprints it and the second arrival is dropped.
+        envelope = _FakeSample({"nonce": "abc1234567890def", "payload": {"sensor": "imu", "v": 1}})
+        zenoh_handler(envelope)
+        iot_handler(envelope)
+
+        assert len(delivered) == 1, (
+            f"strict mode must dedup envelope-shaped payloads across the "
+            f"bridge's Zenoh + IoT fanout; got {len(delivered)} delivered"
+        )
+
+    def test_default_mode_passes_envelope_payload_through_both_paths(self):
+        """Sibling pin: default mode (no env var) must NOT dedup
+        envelope-shaped payloads -- they have no canonical fields, so
+        the pass-through path is correct and intentional. Heartbeats
+        rely on this behaviour."""
+        from unittest.mock import MagicMock
+
+        from strands_robots.mesh.transport.bridge_transport import BridgeTransport
+
+        zenoh = MagicMock()
+        zenoh.is_alive.return_value = True
+        zenoh.connect.return_value = True
+        zenoh.declare_subscriber.side_effect = lambda key, handler: ("zenoh", key, handler)
+
+        iot = MagicMock()
+        iot.is_alive.return_value = True
+        iot.connect.return_value = True
+        iot.declare_subscriber.side_effect = lambda key, handler: ("iot", key, handler)
+
+        bridge = BridgeTransport(zenoh=zenoh, iot=iot)
+        assert bridge._dedup._strict is False
+
+        delivered: list[Any] = []
+        bridge.declare_subscriber("strands/robot-a/cmd", lambda s: delivered.append(s))
+
+        zenoh_handler = zenoh.declare_subscriber.call_args.args[1]
+        iot_handler = iot.declare_subscriber.call_args.args[1]
+
+        envelope = _FakeSample({"nonce": "abc1234567890def", "payload": {"sensor": "imu", "v": 1}})
+        zenoh_handler(envelope)
+        iot_handler(envelope)
+
+        assert len(delivered) == 2, (
+            f"default mode must pass envelope-shaped (no canonical fields) "
+            f"payloads through both paths; got {len(delivered)} delivered"
+        )
