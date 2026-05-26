@@ -38,7 +38,14 @@ log and reports:
 * records with broken signatures (content was edited or partially
   truncated mid-line),
 * sequence gaps (records were deleted),
-* records lacking a signature (mixed-mode log, expected during rollouts).
+* records lacking a signature (mixed-mode log -- only arises when
+  separate processes write to the same audit directory at different
+  times; e.g. a pre-PSK process and a post-PSK process across a rollout
+  restart. ``_sign_record`` hard-rejects any signed<->unsigned
+  transition WITHIN a single process by raising
+  ``AuditPSKDegradedError`` which the writer converts into a
+  ``sig="PSK_DEGRADED"`` poison record, so a single process cannot
+  silently flip signing modes mid-run).
 
 The PSK lives in env / Secrets Manager, never in the file. A reader that
 does not have the PSK can still read events; it just cannot verify them.
@@ -194,10 +201,24 @@ class _ProcessAuditState:
     backends. Storing the fingerprint never leaks the PSK itself.
     """
 
-    __slots__ = ("seq_loaded", "psk_fingerprint")
+    __slots__ = ("seq_loaded", "audit_log_seeded", "psk_fingerprint")
 
     def __init__(self) -> None:
         self.seq_loaded: bool = False
+        # ``audit_log_seeded`` is the once-per-process flag for the
+        # audit-log fallback path inside ``_load_seq_counters``. The
+        # sidecar path is cheap (one fstat + one JSON parse, O(peers))
+        # and runs on every ``_next_seq`` call so peer-process
+        # increments are merged inside the flock; the audit-log walk
+        # is O(records) and runs only when the sidecar is unusable.
+        # Without this flag a degraded sidecar made every safety event
+        # walk the entire audit log, turning a 100 MiB rotation set
+        # into seconds-per-event latency on the safety code path. The
+        # flag is set once the audit-log walk has run AND ``seq_loaded``
+        # has been observed True at least once; resetting ``seq_loaded``
+        # in ``_next_seq`` does not clear ``audit_log_seeded`` so the
+        # walk does not repeat.
+        self.audit_log_seeded: bool = False
         # ``None`` (unset sentinel)  = not yet observed.
         # ``b""`` (empty bytes sentinel)  = first call observed NO PSK.
         # any other ``bytes``  = first call observed a PSK,
@@ -485,7 +506,23 @@ def _load_seq_counters() -> None:
                     # somehow has a stale value.
                     if value > _SEQ_COUNTERS.get(key, 0):
                         _SEQ_COUNTERS[key] = value
-            sidecar_loaded = True
+                # Only mark the sidecar as loaded when its payload was
+                # a usable dict. A non-dict payload (``null``, ``[]``,
+                # a string, a number) parses as JSON but seeds zero
+                # counters; treating it as a successful load would skip
+                # the audit-log fallback below and silently let the
+                # attacker reset every peer's seq counter to 0 just by
+                # writing ``null`` into the sidecar. The sidecar guard
+                # has to be all-or-nothing: either we read a valid
+                # mapping or we fall through to the integrity-checked
+                # audit-log seed.
+                sidecar_loaded = True
+            else:
+                logger.warning(
+                    "[audit] sidecar %s parsed as non-dict (%s) -- falling through to audit-log seed",
+                    sidecar,
+                    type(payload).__name__,
+                )
     except (OSError, json.JSONDecodeError) as exc:
         logger.warning("[audit] could not load seq sidecar %s: %s", sidecar, exc)
 
@@ -505,7 +542,18 @@ def _load_seq_counters() -> None:
     # When no PSK is configured, everything is trusted (the dev
     # posture has no integrity gate and the threat model accepts
     # writers in the audit dir).
-    if not sidecar_loaded:
+    #
+    # ``audit_log_seeded`` gates the walk to once per
+    # process. ``_next_seq`` resets ``seq_loaded`` on every call so the
+    # cheap sidecar path runs inside the flock (peer-process increments
+    # have to be merged), but the audit-log walk is O(records) and a
+    # degraded sidecar would otherwise re-walk the entire rotation set
+    # on every safety event -- seconds of CPU on the hot path. Once
+    # the walk has run, the in-memory ``_SEQ_COUNTERS`` floor is
+    # established; subsequent calls only need the cheap sidecar merge,
+    # and the walk does not repeat unless a fresh process restart
+    # clears the flag.
+    if not sidecar_loaded and not _AUDIT_STATE.audit_log_seeded:
         try:
             records = read_audit_log()
             psk = _audit_psk()
@@ -574,6 +622,12 @@ def _load_seq_counters() -> None:
                 "[audit] could not seed from audit log after sidecar failure: %s",
                 log_exc,
             )
+        # Mark the audit-log walk as done regardless of whether it
+        # found anything. A second call into ``_load_seq_counters``
+        # while the sidecar is still degraded should not re-walk the
+        # log -- the in-memory floor we built is the best we have, and
+        # walking again only burns CPU on the safety code path.
+        _AUDIT_STATE.audit_log_seeded = True
 
     _AUDIT_STATE.seq_loaded = True
 
@@ -626,7 +680,23 @@ def _persist_seq_counters() -> None:
                     # weaker than ideal but the safety code path stays
                     # alive (audit persistence is fail-soft by contract).
                     pass
-        except Exception:  # noqa: BLE001 -- cleanup path that re-raises; we MUST close the fd on any failure of `fh.flush() / fsync / chmod / replace`, regardless of exception type. The unconditional ``raise`` below preserves the original exception so this is not silently swallowing.
+        except OSError:
+            # Defence-in-depth against the rare path where ``os.fdopen``
+            # itself raises *before* adopting the fd (e.g. invalid mode
+            # string, EMFILE while constructing the buffered wrapper).
+            # On the common path this branch is unreachable: ``with
+            # os.fdopen(fd, "w", ...) as fh:`` transfers fd ownership
+            # to the file object, and the context manager's ``__exit__``
+            # closes fd on any exception inside the with-block. Calling
+            # ``os.close(fd)`` here would then hit EBADF; we suppress
+            # that with the inner except so the original exception
+            # propagates unchanged via the explicit ``raise`` below.
+            #
+            # narrowed from ``except Exception`` because the only thing
+            # this path ever needs to handle is an OS-level failure
+            # acquiring the fd; fh.flush / fsync / chmod / replace all
+            # raise OSError too, and a programmer bug above (TypeError,
+            # AttributeError) should propagate without being caught.
             try:
                 os.close(fd)
             except OSError:
@@ -1111,45 +1181,46 @@ def read_audit_log(since: float | None = None) -> list[dict[str, Any]]:
                 )
                 continue
             fd = os.open(str(path), os.O_RDONLY | nofollow)
-            try:
-                with os.fdopen(fd, encoding="utf-8") as fh:
-                    for raw in fh:
-                        raw = raw.strip()
-                        if not raw:
+            with os.fdopen(fd, encoding="utf-8") as fh:
+                for raw in fh:
+                    raw = raw.strip()
+                    if not raw:
+                        continue
+                    try:
+                        record = json.loads(raw)
+                    except json.JSONDecodeError as parse_exc:
+                        # forward-compatibility
+                        # justifies skipping malformed lines, but
+                        # silent skip interacts badly with the prior
+                        # seq-seed walk in ``_load_seq_counters``: a
+                        # malformed line for peer X with seq=N is
+                        # invisible to the walk's max(seq), so on
+                        # next process restart the seq starts below
+                        # the highest seq actually written and the
+                        # next legit write produces a duplicate.
+                        # Emit a DEBUG breadcrumb so operators have
+                        # a forensic signal that the seq seed may
+                        # be incomplete; the line is still skipped
+                        # for forward-compatibility, but the
+                        # invisibility is no longer total.
+                        logger.debug(
+                            "[audit] skipping malformed line in %s: %s",
+                            path,
+                            parse_exc,
+                        )
+                        continue
+                    if since is not None:
+                        ts = record.get("ts")
+                        if not isinstance(ts, (int, float)) or ts < since:
                             continue
-                        try:
-                            record = json.loads(raw)
-                        except json.JSONDecodeError as parse_exc:
-                            # forward-compatibility
-                            # justifies skipping malformed lines, but
-                            # silent skip interacts badly with the prior
-                            # seq-seed walk in ``_load_seq_counters``: a
-                            # malformed line for peer X with seq=N is
-                            # invisible to the walk's max(seq), so on
-                            # next process restart the seq starts below
-                            # the highest seq actually written and the
-                            # next legit write produces a duplicate.
-                            # Emit a DEBUG breadcrumb so operators have
-                            # a forensic signal that the seq seed may
-                            # be incomplete; the line is still skipped
-                            # for forward-compatibility, but the
-                            # invisibility is no longer total.
-                            logger.debug(
-                                "[audit] skipping malformed line in %s: %s",
-                                path,
-                                parse_exc,
-                            )
-                            continue
-                        if since is not None:
-                            ts = record.get("ts")
-                            if not isinstance(ts, (int, float)) or ts < since:
-                                continue
-                        out.append(record)
-            except (OSError, UnicodeDecodeError):
-                # ``os.fdopen`` owns the fd; the with-block above closes
-                # it. If iter raises, we already closed the fd via
-                # context manager exit -- nothing else to do here.
-                raise
+                    out.append(record)
+            # OSError / UnicodeDecodeError raised inside the with-block
+            # propagate to the outer ``except OSError`` below. The
+            # context manager already closed ``fd`` via ``fh.close``,
+            # so no inner cleanup wrapper is needed here -- the
+            # previous inner ``try / except (OSError, UnicodeDecodeError):
+            # raise`` was a no-op (caught and re-raised with no extra
+            # work) and obscured the real flow.
         except OSError as exc:  # pragma: no cover -- best-effort read
             # ELOOP under O_NOFOLLOW is the symlink-raced-after-static-
             # check path; treated as silent skip same as a missing file.

@@ -31,10 +31,12 @@ def _isolated_audit(monkeypatch, tmp_path):
     monkeypatch.delenv("STRANDS_MESH_AUDIT_PSK", raising=False)
     audit._SEQ_COUNTERS.clear()
     audit._AUDIT_STATE.seq_loaded = False  # reset so tests are deterministic
+    audit._AUDIT_STATE.audit_log_seeded = False  # R3: gate the audit-log walk fallback (PR #221)
     audit._AUDIT_STATE.psk_fingerprint = None  # reset PSK snapshot too
     yield
     audit._SEQ_COUNTERS.clear()
     audit._AUDIT_STATE.seq_loaded = False
+    audit._AUDIT_STATE.audit_log_seeded = False  # R3: gate the audit-log walk fallback (PR #221)
     audit._AUDIT_STATE.psk_fingerprint = None
 
 
@@ -359,6 +361,7 @@ def test_psk_degrade_drops_record(monkeypatch, tmp_path, caplog):
     # Reset audit state for this test.
     audit._AUDIT_STATE.psk_fingerprint = None
     audit._AUDIT_STATE.seq_loaded = False
+    audit._AUDIT_STATE.audit_log_seeded = False  # R3: gate the audit-log walk fallback (PR #221)
     audit._SEQ_COUNTERS.clear()
 
     # Phase 1: PSK is set, first record is signed.
@@ -415,6 +418,7 @@ def test_psk_degrade_unsigned_to_signed_drops_record(monkeypatch, tmp_path, capl
     # Reset audit state.
     audit._AUDIT_STATE.psk_fingerprint = None
     audit._AUDIT_STATE.seq_loaded = False
+    audit._AUDIT_STATE.audit_log_seeded = False  # R3: gate the audit-log walk fallback (PR #221)
     audit._SEQ_COUNTERS.clear()
 
     # Phase 1: PSK is unset, first record is unsigned.
@@ -532,6 +536,7 @@ class TestPSKStateLock:
         # Reset state
         audit._AUDIT_STATE.psk_fingerprint = None
         audit._AUDIT_STATE.seq_loaded = False
+        audit._AUDIT_STATE.audit_log_seeded = False  # R3: gate the audit-log walk fallback (PR #221)
         audit._SEQ_COUNTERS.clear()
 
         errors: list[Exception] = []
@@ -573,6 +578,7 @@ class TestAuditFailSoft:
         monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
         audit._AUDIT_STATE.psk_fingerprint = None
         audit._AUDIT_STATE.seq_loaded = False
+        audit._AUDIT_STATE.audit_log_seeded = False  # R3: gate the audit-log walk fallback (PR #221)
         audit._SEQ_COUNTERS.clear()
 
         # Patch _sign_record to raise an unexpected RuntimeError
@@ -619,6 +625,7 @@ class TestR22ASeedRequiresHmacWithPSK:
         # Reset module state
         audit._AUDIT_STATE.psk_fingerprint = None
         audit._AUDIT_STATE.seq_loaded = False
+        audit._AUDIT_STATE.audit_log_seeded = False  # R3: gate the audit-log walk fallback (PR #221)
         audit._SEQ_COUNTERS.clear()
 
         # Write a legitimate record (signed)
@@ -640,6 +647,7 @@ class TestR22ASeedRequiresHmacWithPSK:
         # the seed-from-log path.
         audit._SEQ_COUNTERS.clear()
         audit._AUDIT_STATE.seq_loaded = False
+        audit._AUDIT_STATE.audit_log_seeded = False  # R3: gate the audit-log walk fallback (PR #221)
         sidecar = audit._seq_sidecar_path()
         sidecar.write_text("garbage")  # corrupt sidecar
 
@@ -659,6 +667,7 @@ class TestR22ASeedRequiresHmacWithPSK:
         monkeypatch.delenv("STRANDS_MESH_AUDIT_PSK", raising=False)
         audit._AUDIT_STATE.psk_fingerprint = None
         audit._AUDIT_STATE.seq_loaded = False
+        audit._AUDIT_STATE.audit_log_seeded = False  # R3: gate the audit-log walk fallback (PR #221)
         audit._SEQ_COUNTERS.clear()
 
         # Write an unsigned record (legitimate dev-mode write)
@@ -679,6 +688,7 @@ class TestR22ASeedRequiresHmacWithPSK:
             sidecar.unlink()
         audit._SEQ_COUNTERS.clear()
         audit._AUDIT_STATE.seq_loaded = False
+        audit._AUDIT_STATE.audit_log_seeded = False  # R3: gate the audit-log walk fallback (PR #221)
 
         with audit._SEQ_LOCK:
             audit._load_seq_counters()
@@ -704,6 +714,7 @@ class TestF14SignFailedPoisonRecord:
         monkeypatch.setenv("STRANDS_MESH_AUDIT_PSK", "real-psk")
         audit._AUDIT_STATE.psk_fingerprint = None
         audit._AUDIT_STATE.seq_loaded = False
+        audit._AUDIT_STATE.audit_log_seeded = False  # R3: gate the audit-log walk fallback (PR #221)
         audit._SEQ_COUNTERS.clear()
 
         # Patch _sign_record to raise an unexpected RuntimeError
@@ -732,6 +743,7 @@ class TestF14SignFailedPoisonRecord:
         monkeypatch.delenv("STRANDS_MESH_AUDIT_PSK", raising=False)
         audit._AUDIT_STATE.psk_fingerprint = None
         audit._AUDIT_STATE.seq_loaded = False
+        audit._AUDIT_STATE.audit_log_seeded = False  # R3: gate the audit-log walk fallback (PR #221)
         audit._SEQ_COUNTERS.clear()
 
         def boom(record):

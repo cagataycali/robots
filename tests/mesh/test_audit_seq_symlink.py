@@ -32,9 +32,11 @@ def _isolate_audit_state(tmp_path, monkeypatch):
     monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
     # Reset the module-level seq state (one-shot loaded flag + counters).
     audit._AUDIT_STATE.seq_loaded = False
+    audit._AUDIT_STATE.audit_log_seeded = False  # R3: gate the audit-log walk fallback (PR #221)
     audit._SEQ_COUNTERS.clear()
     yield
     audit._AUDIT_STATE.seq_loaded = False
+    audit._AUDIT_STATE.audit_log_seeded = False  # R3: gate the audit-log walk fallback (PR #221)
     audit._SEQ_COUNTERS.clear()
 
 
