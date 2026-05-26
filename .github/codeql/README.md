@@ -16,8 +16,9 @@ The `queries:` key on `github/codeql-action/init` (set to
 selects which CodeQL query *suite* runs. The `config-file:` value points
 at this directory's `config.yml`, which defines `query-filters`.
 
-Per the [CodeQL Action docs][codeql-config-docs] and the comment that
-already lives at `.github/workflows/codeql-advanced.yml:78-79`:
+Per the [CodeQL Action docs][codeql-config-docs] and the
+"queries listed here will override any specified in a config file"
+comment block in `.github/workflows/codeql-advanced.yml`:
 
 - A workflow-level `queries:` value *replaces* a config-file-level
   `queries:` value unless the workflow value is prefixed with `+`.
