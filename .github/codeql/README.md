@@ -46,16 +46,18 @@ navigation, `typing.get_type_hints` consumers).
 
 **Why it is safe at runtime:** the cycle is asymmetric, not closed.
 
-- `simulation/base.py:50` imports `PolicyRunner` and `VideoConfig` from
-  `simulation/policy_runner.py` at module level (the runtime edge that
-  static analysers see and flag).
-- `simulation/policy_runner.py:51-54` imports `SimEngine`,
-  `BenchmarkProtocol`, and `Policy` only under `if TYPE_CHECKING:`.
-  These are not real edges at import time -- `TYPE_CHECKING` is `False`
-  at runtime, the block is skipped, and the names exist only for the
-  static type system.
-- `simulation/benchmark.py:46-47` similarly imports `SimEngine` only
-  under `TYPE_CHECKING`.
+- `simulation/base.py`'s top-level `from
+  strands_robots.simulation.policy_runner import PolicyRunner,
+  VideoConfig` is the runtime edge that static analysers see and flag.
+  (Cited by symbol rather than line number so future edits above the
+  import don't silently invalidate this rationale.)
+- `simulation/policy_runner.py`'s `if TYPE_CHECKING:` block imports
+  `SimEngine`, `BenchmarkProtocol`, and `Policy`. These are not real
+  edges at import time -- `TYPE_CHECKING` is `False` at runtime, the
+  block is skipped, and the names exist only for the static type
+  system.
+- `simulation/benchmark.py`'s `if TYPE_CHECKING:` block similarly
+  imports `SimEngine`.
 
 There is therefore no runtime back-edge from `policy_runner` (or
 `benchmark`) into `base`. `base` finishes importing cleanly before
@@ -132,11 +134,15 @@ If results outside the simulation triple appear, drop the suppression
   the S13/R6 changelog of that PR.
 - Issue #215 -- this follow-up tracking the suppression.
 - CodeQL alerts #83, #84 -- closed by PR #209 R4.
-- CodeQL alerts #85, #86, #87 -- in `benchmark.py:42` and
-  `policy_runner.py:49-50`; closed by this suppression.
-- CodeQL alerts #253, #254, #255 -- recurrent alerts on `base.py:28`
-  introduced by PR #209 R5 attempting to recover mypy type info; closed
-  by this suppression.
+- CodeQL alerts #85, #86, #87 -- raised by the rule against the
+  `if TYPE_CHECKING:` blocks in `benchmark.py` and `policy_runner.py`;
+  closed by this suppression. (Historical line numbers in the alert
+  bodies: `benchmark.py:42`, `policy_runner.py:49-50` at the SHA that
+  raised the alerts.)
+- CodeQL alerts #253, #254, #255 -- recurrent alerts on `base.py`'s
+  `if TYPE_CHECKING:` block introduced by PR #209 R5 attempting to
+  recover mypy type info; closed by this suppression. (Historical line
+  number: `base.py:28` at the SHA that raised the alerts.)
 
 ## How to extend
 

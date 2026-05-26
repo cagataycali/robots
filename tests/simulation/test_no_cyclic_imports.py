@@ -83,7 +83,15 @@ def _subprocess_env() -> dict[str, str]:
     parts = [p for p in sys.path if p]
     inherited = env.get("PYTHONPATH", "")
     if inherited:
-        parts.append(inherited)
+        # Split on pathsep and filter empty entries individually rather
+        # than appending the inherited string verbatim. POSIX interprets
+        # any empty pathsep entry (leading ``:foo``, trailing ``foo:``,
+        # interior ``foo::bar``) as the *current working directory*, so
+        # appending an inherited PYTHONPATH that already contains an
+        # internal empty would silently inject ``cwd`` into the child's
+        # ``sys.path`` even though we filter our own ``sys.path`` empties
+        # above.
+        parts.extend(p for p in inherited.split(os.pathsep) if p)
     env["PYTHONPATH"] = os.pathsep.join(parts)
     return env
 
