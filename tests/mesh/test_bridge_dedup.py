@@ -43,7 +43,15 @@ class _FakeSample:
 class TestCommandDeduplicator:
     def test_first_call_not_duplicate(self):
         d = _CommandDeduplicator(ttl_s=10.0)
-        payload = {"nonce": "abcdef0123456789", "payload": {"sender_id": "a"}}
+        # Canonical-tuple payload so the assertion exercises the eviction
+        # path, not the pass-through branch (the previous version used a
+        # nonce-only payload that returned False trivially via _dedup_id
+        # returning None -- pinned by R3 review on PR #222).
+        payload = {
+            "sender_id": "alice",
+            "turn_id": "t-first",
+            "command": {"action": "status"},
+        }
         assert d.is_duplicate("k", payload) is False
 
     def test_repeat_payload_is_duplicate(self):
@@ -91,18 +99,85 @@ class TestCommandDeduplicator:
         # Still no dedup id -> still passes (does not record, so still False).
         assert d.is_duplicate("k", payload) is False
 
+    def test_partial_canonical_does_not_alias(self):
+        """Partial canonical payloads must not collapse to the same id.
+
+        R3 review on PR #222: previously, ``_dedup_id`` took the canonical
+        path whenever *any* of ``(sender_id, turn_id, command)`` was
+        non-None and serialised the missing fields as ``null``. Two
+        partial payloads from the same sender (e.g. ``{"sender_id": "a"}``
+        and ``{"sender_id": "a", "extra": 1}``) hashed to the same value
+        and were silently deduped against each other. The fix requires
+        all three fields present for the canonical path; partial payloads
+        fall through to pass-through (default) or full-payload-hash
+        (strict).
+        """
+        d = _CommandDeduplicator(ttl_s=10.0)
+        # Default mode: partial-canonical payloads pass through, so the
+        # second call does not dedup against the first even though the
+        # legacy path would have aliased them.
+        first = {"sender_id": "a"}
+        second = {"sender_id": "a", "extra": 1}
+        assert d.is_duplicate("k", first) is False
+        assert d.is_duplicate("k", second) is False, (
+            "partial-canonical payloads must not alias under the default "
+            "pass-through path"
+        )
+
+    def test_partial_canonical_strict_mode_uses_full_payload(self):
+        """Strict mode falls back to full-payload hash for partial canonical.
+
+        R3 fix on PR #222: in strict mode, a payload with only
+        ``sender_id`` set takes the full-payload hash path (not the
+        canonical path with ``turn_id``/``command`` as ``null``), so it
+        does not alias against any other partial payload from the same
+        sender.
+        """
+        d = _CommandDeduplicator(ttl_s=10.0, strict=True)
+        first = {"sender_id": "a"}
+        second = {"sender_id": "a", "extra": 1}
+        # Distinct full payloads -> distinct strict-mode fingerprints.
+        assert d.is_duplicate("k", first) is False
+        assert d.is_duplicate("k", second) is False
+        # But identical strict-mode payloads still dedup.
+        assert d.is_duplicate("k", first) is True
+
+
     def test_ttl_expiry(self):
+        # Canonical-tuple payload so _dedup_id returns a real fingerprint
+        # and the TTL eviction path is actually exercised. The previous
+        # version used a pass-through payload (nonce-only) so the second
+        # assertion held trivially regardless of TTL math (R3 review on
+        # PR #222: "test passes vacuously").
         d = _CommandDeduplicator(ttl_s=0.05)
-        payload = {"nonce": "abcdef0123456789"}
+        payload = {
+            "sender_id": "alice",
+            "turn_id": "t-ttl",
+            "command": {"action": "status"},
+        }
         assert d.is_duplicate("k", payload) is False
+        # Within TTL: still recorded.
+        assert d.is_duplicate("k", payload) is True
         time.sleep(0.1)
-        assert d.is_duplicate("k", payload) is False  # expired -> re-accepted
+        # Past TTL: re-accepted.
+        assert d.is_duplicate("k", payload) is False
 
     def test_clear(self):
+        # Canonical-tuple payload so the dedup actually records the entry
+        # and clear() has something to flush. The previous version used a
+        # pass-through payload, so the assertion held trivially even if
+        # clear() was a no-op (R3 review on PR #222).
         d = _CommandDeduplicator(ttl_s=10.0)
-        payload = {"nonce": "abcdef0123456789"}
-        d.is_duplicate("k", payload)
+        payload = {
+            "sender_id": "alice",
+            "turn_id": "t-clear",
+            "command": {"action": "status"},
+        }
+        assert d.is_duplicate("k", payload) is False
+        # Recorded -- second call would dup if clear() is broken.
+        assert d.is_duplicate("k", payload) is True
         d.clear()
+        # After clear the entry is gone, so first-call-after-clear is False.
         assert d.is_duplicate("k", payload) is False
 
 

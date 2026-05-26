@@ -281,11 +281,13 @@ class _CommandDeduplicator:
     """TTL-bounded cache of (key, dedup-id) tuples seen in the recent past.
 
     Thread-safe. Identity is a SHA-256 fingerprint over the canonical
-    ``(sender_id, turn_id, command)`` tuple; payloads with no canonical
-    fields pass through (default) or fall back to a full-payload hash
-    (when ``strict=True``). The cache key is *(topic_key, dedup_id)* so
-    two distinct topics with coincidentally matching dedup_ids don't
-    collide.
+    RPC triple ``(sender_id, turn_id, command)`` -- callers must not
+    reuse that triple for distinct deliveries (the contract assumes
+    ``turn_id`` is monotonic per-sender). Payloads with an incomplete
+    canonical triple pass through in default mode or fall back to a
+    full-payload hash in strict mode. The cache key is *(topic_key,
+    dedup_id)* so two distinct topics with coincidentally matching
+    dedup_ids don't collide.
     """
 
     __slots__ = ("_seen", "_lock", "_ttl", "_strict")
@@ -306,10 +308,24 @@ class _CommandDeduplicator:
     def _dedup_id(self, payload: dict[str, Any]) -> str | None:
         """Return a content fingerprint identifying this message.
 
-        SHA-256 over ``(sender_id, turn_id, command)`` -- the three
-        identifiers that make a mesh command unique. Returns ``None``
-        when none of those fields are present (no signal to dedup
-        against; pass through).
+        Identity is the canonical RPC triple ``(sender_id, turn_id,
+        command)``: callers must not reuse that triple for distinct
+        deliveries (the contract assumes ``turn_id`` is monotonic
+        per-sender). Two messages that share the triple but differ in
+        other top-level fields (timestamps, audit metadata, future-added
+        envelope fields) are treated as the same delivery -- this is the
+        intentional dedup contract for cross-transport bridge mode.
+
+        Returns ``None`` when the canonical triple is incomplete (any of
+        the three fields missing). In strict mode, an incomplete triple
+        falls through to a full-payload hash; in default mode it passes
+        through (the existing peer registry deduplicates by
+        ``peer_id``/``turn_id`` upstream).
+
+        The previous behaviour -- canonical path on *any* non-None field
+        -- aliased partial payloads (e.g. ``{"sender_id": "a"}`` would
+        dedup against ``{"sender_id": "a", "extra": 1}``). Pinned by
+        ``test_partial_canonical_does_not_alias``.
         """
         if not isinstance(payload, dict):
             return None
@@ -318,7 +334,10 @@ class _CommandDeduplicator:
         turn = payload.get("turn_id")
         cmd = payload.get("command")
 
-        if sender is None and turn is None and cmd is None:
+        # Canonical path requires all three fields present; partial
+        # canonical payloads fall through to the strict/pass-through
+        # branch so they do not alias against each other.
+        if sender is None or turn is None or cmd is None:
             if not self._strict:
                 # Default: pass through (preserves heartbeat semantics).
                 return None
