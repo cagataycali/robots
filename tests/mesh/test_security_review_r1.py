@@ -92,14 +92,16 @@ class TestPolicyProviderDocstringMatchesImplementation:
         assert "policy_provider" in doc
         # Negative assertion: the misleading "(optional)" + "defaults"
         # wording must be gone.
-        provider_section = doc[doc.find("policy_provider"):]
+        provider_section = doc[doc.find("policy_provider") :]
         # Take just the first paragraph mentioning policy_provider.
-        provider_section = provider_section[: provider_section.find("\n\n")] if "\n\n" in provider_section else provider_section
+        provider_section = (
+            provider_section[: provider_section.find("\n\n")] if "\n\n" in provider_section else provider_section
+        )
         # The phrase that was the bug: "(optional)" applied to policy_provider
         # specifically. Other "optional" mentions in the docstring are fine.
         # We pin the absence of the "defaults to \"mock\"" claim, which
         # was the specific drift.
-        assert "defaults to ``\"mock\"``" not in doc
+        assert 'defaults to ``"mock"``' not in doc
         # Positive assertion: the docstring acknowledges the requirement.
         assert "REQUIRED" in doc or "required" in provider_section.lower()
 
