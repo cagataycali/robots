@@ -529,3 +529,38 @@ class TestStrictModeIntegrationR2:
             f"default mode must pass envelope-shaped (no canonical fields) "
             f"payloads through both paths; got {len(delivered)} delivered"
         )
+
+class TestNarrowExceptionsR3:
+    """Source-grep regression pin: bridge_transport.py must not reintroduce
+    bare ``except Exception``.
+
+    AGENTS.md > Review Learnings: ``except Exception`` is forbidden for
+    non-recovery code paths. The R3 review on PR #222 surfaced seven such
+    sites in this module (handle teardown, connect/close, put,
+    declare_subscriber); each was narrowed to the documented
+    transport-failure surface tuple. This test fails if any future change
+    reintroduces a bare ``except Exception`` in the file.
+    """
+
+    def test_no_bare_except_exception_in_bridge_transport(self):
+        from strands_robots.mesh.transport import bridge_transport
+
+        path = Path(bridge_transport.__file__)
+        text = path.read_text(encoding="utf-8")
+        # Strip docstrings/comments would be over-engineering; the literal
+        # ``except Exception`` substring should not appear in source for
+        # this module under any guise.
+        offending = [
+            (i + 1, line)
+            for i, line in enumerate(text.splitlines())
+            if "except Exception" in line and not line.lstrip().startswith("#")
+        ]
+        assert offending == [], (
+            "bare `except Exception` reintroduced in bridge_transport.py "
+            "(AGENTS.md > Review Learnings forbids non-recovery use). "
+            "Narrow to the documented transport-failure tuple "
+            "((RuntimeError, ConnectionError, OSError) for IO; "
+            "(RuntimeError, AttributeError, OSError) for teardown). "
+            f"Offending lines: {offending}"
+        )
+

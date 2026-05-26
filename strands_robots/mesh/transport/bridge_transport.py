@@ -416,7 +416,13 @@ class _BridgeSubHandle:
                 continue
             try:
                 sub.undeclare()
-            except Exception as exc:
+            except (RuntimeError, AttributeError, OSError) as exc:
+                # Narrow per AGENTS.md > Review Learnings: idempotent
+                # teardown should swallow the documented transport-failure
+                # surface (RuntimeError = already-closed handle;
+                # AttributeError = mock or partial-init handle;
+                # OSError = socket teardown race) and let unexpected
+                # exceptions propagate.
                 logger.debug("[bridge] sub.undeclare() failed: %s", exc)
 
 
@@ -478,15 +484,23 @@ class BridgeTransport:
             return True
 
     def close(self) -> None:
-        """Close both backends. Idempotent."""
+        """Close both backends. Idempotent.
+
+        Narrow exception surface per AGENTS.md > Review Learnings:
+        idempotent teardown swallows the documented transport-failure
+        surface (RuntimeError = already-closed session,
+        ConnectionError = connection drop racing with close,
+        OSError = socket teardown race) and lets unexpected exceptions
+        propagate.
+        """
         with self._lock:
             try:
                 self._zenoh.close()
-            except Exception as exc:
+            except (RuntimeError, ConnectionError, OSError) as exc:
                 logger.debug("[bridge] zenoh.close() failed: %s", exc)
             try:
                 self._iot.close()
-            except Exception as exc:
+            except (RuntimeError, ConnectionError, OSError) as exc:
                 logger.debug("[bridge] iot.close() failed: %s", exc)
             self._zenoh_alive = False
             self._iot_alive = False
@@ -523,20 +537,24 @@ class BridgeTransport:
     def put(self, key: str, data: dict[str, Any]) -> None:
         """Publish to Zenoh always; publish to IoT only if the topic bridges.
 
-        Failure of one side does not affect the other.
+        Failure of one side does not affect the other. Narrow exception
+        surface per AGENTS.md > Review Learnings: transport-level failures
+        (RuntimeError from closed session, ConnectionError from broker
+        drop, OSError from socket-level write) are absorbed; everything
+        else propagates.
         """
         # Always Zenoh (LAN is cheap; preserves existing behaviour).
         if self._zenoh.is_alive():
             try:
                 self._zenoh.put(key, data)
-            except Exception as exc:
+            except (RuntimeError, ConnectionError, OSError) as exc:
                 logger.debug("[bridge] zenoh.put error on %s: %s", key, exc)
 
         # Filtered IoT.
         if self._iot.is_alive() and _should_bridge(key, self._bridge_suffixes):
             try:
                 self._iot.put(key, data)
-            except Exception as exc:
+            except (RuntimeError, ConnectionError, OSError) as exc:
                 logger.debug("[bridge] iot.put error on %s: %s", key, exc)
 
     def declare_subscriber(self, key_expr: str, handler: Callable[[Any], None]) -> _BridgeSubHandle:
@@ -591,13 +609,17 @@ class BridgeTransport:
         if self._zenoh.is_alive():
             try:
                 zenoh_sub = self._zenoh.declare_subscriber(key_expr, make_dedup_handler("zenoh"))
-            except Exception as exc:
+            except (RuntimeError, ConnectionError, OSError) as exc:
+                # Narrow per AGENTS.md > Review Learnings: subscribe-side
+                # transport failures (closed session, broker drop, socket
+                # error) degrade to the surviving side; unexpected errors
+                # propagate so genuine bugs aren't masked.
                 logger.debug("[bridge] zenoh.declare_subscriber(%s) failed: %s", key_expr, exc)
 
         if self._iot.is_alive():
             try:
                 iot_sub = self._iot.declare_subscriber(key_expr, make_dedup_handler("iot"))
-            except Exception as exc:
+            except (RuntimeError, ConnectionError, OSError) as exc:
                 logger.debug("[bridge] iot.declare_subscriber(%s) failed: %s", key_expr, exc)
 
         if zenoh_sub is None and iot_sub is None:
