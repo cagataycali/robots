@@ -713,9 +713,10 @@ or steering the robot at an attacker-controlled inference server.
 
 Bridge-transport deployments still need cross-transport deduplication
 because the same Zenoh + IoT MQTT topic can deliver the same payload
-twice. `mesh.transport.bridge_transport._CommandDeduplicator`
+twice. The bridge transport in `mesh.transport.bridge_transport`
 fingerprints incoming samples and dispatches each unique
-(`sender_id`, `turn_id`, `command`) once.
+(`sender_id`, `turn_id`, `command`) tuple once before forwarding to the
+application-layer handler.
 
 For a complete walkthrough of what each layer protects against, see
 `mesh/security.py`'s module docstring,
