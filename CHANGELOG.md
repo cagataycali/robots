@@ -155,12 +155,12 @@ Hardened independently of the Zenoh refactor:
 | `STRANDS_MESH_RESUME_FORWARD_SKEW_S` | `5` | Maximum forward clock skew (seconds) tolerated in resume envelope timestamps |
 | `STRANDS_MESH_RESUME_REPLAY_CACHE_MAX` | `4096` | Maximum entries in the per-receiver resume proof_nonce replay cache (LRU eviction) |
 
-All three resume-hardening env vars are parsed via
-``_parse_positive_float_env`` / ``_parse_positive_int_env`` helpers in
-``strands_robots.mesh.core``. Malformed values (non-numeric or
-negative) log a WARNING and fall back to the documented default
-instead of failing module import or silently disabling the replay
-cache. Pinned by ``tests/mesh/test_resume_env_validation.py``.
+All three resume-hardening env vars are parsed via internal
+positive-float / positive-int helpers in ``strands_robots.mesh.core``.
+Malformed values (non-numeric or negative) log a WARNING and fall
+back to the documented default instead of failing module import or
+silently disabling the replay cache. Pinned by
+``tests/mesh/test_resume_env_validation.py``.
 
 ### Tests
 
