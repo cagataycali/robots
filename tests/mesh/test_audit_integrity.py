@@ -317,7 +317,6 @@ def test_log_safety_event_does_not_propagate_seq_errors(monkeypatch, tmp_path, c
     but _next_seq used to be invoked outside the try/except. Verify the fix:
     even when _next_seq raises, log_safety_event swallows and logs a WARNING.
     """
-    import logging
 
     monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
     monkeypatch.delenv("STRANDS_MESH_AUDIT_PSK", raising=False)
@@ -355,7 +354,6 @@ def test_psk_degrade_drops_record(monkeypatch, tmp_path, caplog):
     accidentally inverts the comparison silently reintroduces the
     unsigned-downgrade path and the test suite stays green.
     """
-    import logging
 
     monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
     # Reset audit state for this test.
@@ -412,7 +410,6 @@ def test_psk_degrade_unsigned_to_signed_drops_record(monkeypatch, tmp_path, capl
     Without this pin a future refactor that drops the symmetric branch
     silently re-opens the forgery window between PSK rotations.
     """
-    import logging
 
     monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
     # Reset audit state.
