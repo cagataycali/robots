@@ -202,8 +202,7 @@ def test_session_default_acl_check_passes_namespace() -> None:
             target_fn = node
             break
     assert target_fn is not None, (
-        f"{src.name}: _build_config function not found -- pin is stale, "
-        "rename or refactor likely; update this test."
+        f"{src.name}: _build_config function not found -- pin is stale, rename or refactor likely; update this test."
     )
     bare_calls: list[int] = []
     for inner in ast.walk(target_fn):
