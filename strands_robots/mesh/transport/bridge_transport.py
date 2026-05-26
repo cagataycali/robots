@@ -252,6 +252,29 @@ def _resolve_dedup_ttl() -> float:
         return _DEFAULT_DEDUP_TTL_S
 
 
+def _resolve_dedup_strict() -> bool:
+    """Read ``STRANDS_MESH_BRIDGE_DEDUP_STRICT`` env var (default: off).
+
+    Strict mode makes the deduplicator hash the full payload when no
+    canonical (sender_id, turn_id, command) tuple is present. Without it,
+    non-canonical payloads bypass dedup entirely (safe for heartbeats that
+    legitimately recur with the same content).
+
+    Bridge cross-transport needs strict mode to dedup heartbeat-style
+    payloads that arrive on both Zenoh and MQTT.
+    """
+    raw = os.getenv("STRANDS_MESH_BRIDGE_DEDUP_STRICT", "").strip().lower()
+    if raw in ("", "0", "false", "no"):
+        return False
+    if raw in ("1", "true", "yes"):
+        return True
+    logger.warning(
+        "[bridge] STRANDS_MESH_BRIDGE_DEDUP_STRICT=%r invalid -- using default (off)",
+        raw,
+    )
+    return False
+
+
 class _CommandDeduplicator:
     """TTL-bounded cache of (key, dedup-id) tuples seen in the recent past.
 
@@ -404,7 +427,7 @@ class BridgeTransport:
         # BridgeTransport, shared between the Zenoh and IoT subscriber
         # wrappers -- whichever transport delivers a sample first wins,
         # and the other side silently drops the duplicate.
-        self._dedup = _CommandDeduplicator()
+        self._dedup = _CommandDeduplicator(strict=_resolve_dedup_strict())
 
     # Lifecycle
 

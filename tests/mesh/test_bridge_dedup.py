@@ -300,3 +300,67 @@ class TestStrictDedupModeR15:
         assert d.is_duplicate("k", a) is False
         # b has same canonical triple as a -> still a duplicate even though "extra" differs.
         assert d.is_duplicate("k", b) is True
+
+
+class TestStrictEnvVarWiringR1:
+    """Pinned regression test: STRANDS_MESH_BRIDGE_DEDUP_STRICT env var
+    must be wired through to BridgeTransport._dedup._strict.
+
+    Pre-fix: BridgeTransport.__init__ called _CommandDeduplicator() with no
+    kwargs, so the env var was a dead letter -- strict mode was unreachable
+    from the bridge, contradicting the PR description and making cross-
+    transport dedup of heartbeat-style payloads impossible.
+
+    Post-fix: _resolve_dedup_strict() reads the env var and threads it into
+    the _CommandDeduplicator constructor.
+    """
+
+    def test_env_var_enables_strict_mode(self, monkeypatch):
+        """Setting STRANDS_MESH_BRIDGE_DEDUP_STRICT=1 must propagate to the deduplicator."""
+        from unittest.mock import MagicMock
+
+        from strands_robots.mesh.transport.bridge_transport import BridgeTransport
+
+        monkeypatch.setenv("STRANDS_MESH_BRIDGE_DEDUP_STRICT", "1")
+
+        zenoh = MagicMock()
+        zenoh.is_alive.return_value = False
+        iot = MagicMock()
+        iot.is_alive.return_value = False
+
+        bridge = BridgeTransport(zenoh=zenoh, iot=iot)
+        assert bridge._dedup._strict is True, (
+            "STRANDS_MESH_BRIDGE_DEDUP_STRICT=1 must reach _CommandDeduplicator._strict"
+        )
+
+    def test_env_var_default_is_off(self, monkeypatch):
+        """Without the env var, strict mode defaults to off."""
+        from unittest.mock import MagicMock
+
+        from strands_robots.mesh.transport.bridge_transport import BridgeTransport
+
+        monkeypatch.delenv("STRANDS_MESH_BRIDGE_DEDUP_STRICT", raising=False)
+
+        zenoh = MagicMock()
+        zenoh.is_alive.return_value = False
+        iot = MagicMock()
+        iot.is_alive.return_value = False
+
+        bridge = BridgeTransport(zenoh=zenoh, iot=iot)
+        assert bridge._dedup._strict is False, "Default (no env var) must leave strict=False"
+
+    def test_env_var_invalid_warns_and_defaults_off(self, monkeypatch):
+        """Invalid value warns and defaults to off."""
+        from unittest.mock import MagicMock
+
+        from strands_robots.mesh.transport.bridge_transport import BridgeTransport
+
+        monkeypatch.setenv("STRANDS_MESH_BRIDGE_DEDUP_STRICT", "banana")
+
+        zenoh = MagicMock()
+        zenoh.is_alive.return_value = False
+        iot = MagicMock()
+        iot.is_alive.return_value = False
+
+        bridge = BridgeTransport(zenoh=zenoh, iot=iot)
+        assert bridge._dedup._strict is False, "Invalid env var value must fall back to strict=False"
