@@ -9,6 +9,30 @@ via the `config-file:` key on the `github/codeql-action/init` step.
 - `config.yml` -- query filter rules. See inline comments for per-rule
   rationale.
 
+## Query suite vs config-file interaction
+
+The `queries:` key on `github/codeql-action/init` (set to
+`security-and-quality` in `codeql.yml`, default in `codeql-advanced.yml`)
+selects which CodeQL query *suite* runs. The `config-file:` value points
+at this directory's `config.yml`, which defines `query-filters`.
+
+Per the [CodeQL Action docs][codeql-config-docs] and the comment that
+already lives at `.github/workflows/codeql-advanced.yml:78-79`:
+
+- A workflow-level `queries:` value *replaces* a config-file-level
+  `queries:` value unless the workflow value is prefixed with `+`.
+- `query-filters` from the config-file always layer *on top* of whichever
+  suite is active.
+
+`config.yml` here intentionally does not define a `queries:` key, so the
+workflow-selected suite (`security-and-quality` in `codeql.yml`) remains
+the active set; this config only contributes the `query-filters` layer.
+If a future contributor adds `queries:` to `config.yml`, the suite will
+*replace* the workflow's `security-and-quality` selection unless
+explicitly merged with `+queries: ...` in the workflow.
+
+[codeql-config-docs]: https://docs.github.com/en/code-security/code-scanning/automatically-scanning-your-code-for-vulnerabilities-and-errors/customizing-your-advanced-setup-for-code-scanning#using-a-custom-configuration-file
+
 ## Suppressed queries
 
 ### `py/unsafe-cyclic-import` (global)
@@ -46,8 +70,11 @@ The CodeQL-independent regression contract pins this invariant:
 - `tests/simulation/test_no_cyclic_imports.py` -- spawns a fresh Python
   interpreter for each of the three affected modules (and a combined
   one-process run) and asserts each imports cleanly with no
-  `RecursionError` / `ImportError`. Catches the dynamic-import failure
-  mode where a top-level statement reintroduces a partial-module re-entry.
+  `RecursionError` / `ImportError` traceback frames in stderr (anchored
+  on the start-of-line `ExceptionName:` framing rather than a substring
+  match, so benign log lines that mention the exception names by name
+  do not fail the pin). Catches the dynamic-import failure mode where
+  a top-level statement reintroduces a partial-module re-entry.
 - `tests/simulation/test_no_import_cycle.py::test_no_runtime_import_cycles`
   -- builds the runtime import graph (excluding `TYPE_CHECKING` and
   inside-function edges) via `networkx.simple_cycles` and asserts it is
@@ -75,6 +102,27 @@ guard against runtime cycles independent of CodeQL, and a future
 contributor who introduces a new legitimate violation should drop this
 suppression and fix the new cycle properly rather than extend the
 filter.
+
+**Periodic audit reminder:** the assumption that the simulation triple
+is the only file shape that fires this rule today drifts silently as
+the codebase grows. Maintainers should periodically (every minor
+release or every six months, whichever is sooner) enumerate what
+`py/unsafe-cyclic-import` would flag absent the filter, e.g. by running
+the CodeQL CLI locally with the suppression dropped:
+
+```bash
+# Drop the exclude block in .github/codeql/config.yml temporarily, then:
+codeql database create db --language=python --source-root=.
+codeql database analyze db \
+    codeql/python-queries:Imports/UnsafeCyclicImport.ql \
+    --format=sarif-latest --output=cyclic-import.sarif
+# Inspect cyclic-import.sarif: every result outside the simulation
+# triple is a candidate true-positive that the global exclude is
+# silently hiding.
+```
+
+If results outside the simulation triple appear, drop the suppression
+(or narrow it via path-scoped surgery) and fix the new cycle properly.
 
 **References:**
 
