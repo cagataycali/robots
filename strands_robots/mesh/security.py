@@ -164,17 +164,6 @@ class ValidationError(SecurityError):
     """Command payload failed schema or bounds checks."""
 
 
-class LockoutError(SecurityError):
-    """Command rejected because the local mesh is in emergency-stop lockout.
-
-    Raised from :meth:`Mesh._dispatch` when an action other than
-    ``status`` or ``resume`` arrives while ``_estop_lockout`` is engaged.
-    The wire response is intentionally generic -- the exception type
-    carries the real semantics so the dispatch wrapper can audit the
-    rejection symmetrically with :class:`ValidationError`.
-    """
-
-
 # --- Policy-host allowlist -----------------------------------------------
 
 
@@ -780,7 +769,6 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
 
 __all__ = [
     "ALLOWED_ACTIONS",
-    "LockoutError",
     "MAX_DURATION_S",
     "MAX_INSTRUCTION_LEN",
     "MAX_MODEL_PATH_LEN",
