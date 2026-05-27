@@ -135,6 +135,14 @@ Hardened independently of the Zenoh refactor:
 
 ### New env vars
 
+> **Curated subset.** This table covers the env vars whose semantics
+> changed (or that are net-new) in this release. The complete env-var
+> matrix is the canonical source -- see the `Mesh security configuration`
+> section of `README.md`, which documents every `STRANDS_MESH_*` var
+> the package reads (including audit / bridge / IoT / CA-pin / policy-
+> allowlist vars referenced in prose elsewhere in this changelog but
+> not duplicated as rows here).
+
 | Var | Default | Purpose |
 |---|---|---|
 | `STRANDS_MESH_AUTH_MODE` | `mtls` | `mtls` (prod) or `none` (dev only). `none` ALSO requires `STRANDS_MESH_I_KNOW_THIS_IS_INSECURE=1` -- ERROR-level log at every session open. |
