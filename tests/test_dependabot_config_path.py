@@ -16,9 +16,8 @@ never fired, and every workflow SHA pin became manual maintenance.
 This test pins:
   1. The config exists at the canonical path GitHub reads.
   2. The historical wrong path is no longer present (a future copy-paste
-     that re-creates it would silently disable the canonical file's
-     intended supersede semantics? No -- but it would re-create the
-     ambiguity that this test exists to prevent. Block both states.)
+     re-creates the silent-ignore state this test exists to prevent.
+     Block both states.
   3. The schema is the minimum-viable Dependabot v2 shape: a top-level
      ``version: 2`` and a non-empty ``updates`` list. A schema typo at
      either point silently disables the config without a parser error
@@ -104,6 +103,17 @@ def test_dependabot_yml_minimum_viable_schema() -> None:
             f"{CANONICAL.relative_to(REPO_ROOT)}: updates[{idx}] missing "
             f"'package-ecosystem' (required by Dependabot v2 schema). "
             f"Got keys: {sorted(entry.keys())}"
+        )
+        assert "directory" in entry, (
+            f"{CANONICAL.relative_to(REPO_ROOT)}: updates[{idx}] missing "
+            f"'directory' (required by Dependabot v2; entry is silently "
+            f"disabled without it)"
+        )
+        schedule = entry.get("schedule")
+        assert isinstance(schedule, dict) and "interval" in schedule, (
+            f"{CANONICAL.relative_to(REPO_ROOT)}: updates[{idx}] missing "
+            f"'schedule.interval' (required by Dependabot v2; entry is "
+            f"silently disabled without it)"
         )
 
 
