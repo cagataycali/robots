@@ -332,6 +332,11 @@ def is_safe_model_path(path: str, *, hf_only: bool = False) -> bool:
     if not _MODEL_PATH_RE.fullmatch(path):
         return False
     parts = path.replace("\\", "/").split("/")
+    # ``..`` is always a traversal red flag, in both hf_only and
+    # local-path modes. ``.`` and empty segments are legal in relative
+    # local paths (e.g. ``./local/checkpoint``, doubled separators
+    # collapse on disk) but illegal under the strict ``<org>/<repo>``
+    # contract -- those checks live in the ``hf_only`` branch below.
     if any(seg == ".." for seg in parts):
         return False
 
@@ -347,12 +352,18 @@ def is_safe_model_path(path: str, *, hf_only: bool = False) -> bool:
         # loader adds revision-pin support, relax this gate then; the
         # current gate is the conservative default for the documented
         # ``<org>/<repo>`` shape.
-        if path.startswith("/"):
+        # Reject any path-traversal, current-directory, or empty segment
+        # under the strict ``<org>/<repo>`` wire contract. Without these,
+        # degenerate inputs slipped through the prior ``non_empty_parts``
+        # length-2 gate: ``nvidia//repo`` (parts=['nvidia','','repo'],
+        # non_empty=2), ``nvidia/.`` (regex passes, ``.`` is not ``..``),
+        # and ``nvidia/repo/`` (trailing slash). HF would 404 on these,
+        # but the validator's job is to enforce the wire contract at the
+        # boundary -- not to rely on downstream rejection. Same posture
+        # as R1's reject of ``nvidia/etc/passwd``. (R3 review fix.)
+        if any(seg in ("", ".") for seg in parts):
             return False
-        # Match parts excluding the trailing-slash artefact (split
-        # produces an empty trailing segment for "org/").
-        non_empty_parts = [seg for seg in parts if seg]
-        if len(non_empty_parts) != 2:
+        if len(parts) != 2:
             return False
         org = parts[0].lower()
         allow = _hf_repo_allowlist()
