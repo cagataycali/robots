@@ -40,6 +40,9 @@ Configuration env vars
     ``nvidia,huggingface,lerobot``.
 ``STRANDS_MESH_POLICY_TYPE_ALLOW``
     Comma-separated extra policy_type / policy_provider values.
+    Note: this single env var extends both
+    :func:`is_safe_policy_type` and :func:`is_safe_policy_provider`
+    (they share one allowlist by design, see #239 bucket C).
 """
 
 from __future__ import annotations
@@ -107,6 +110,12 @@ _SAFE_PASSTHROUGH_RE = re.compile(r"^[\x20-\x7E]+$")
 #: ``sender_id``). These are ULID/UUID-shaped correlation tokens; 128
 #: chars is generous for any legitimate usage.
 MAX_PASSTHROUGH_LEN: int = 128
+
+#: Maximum length of an operator-supplied second-factor override code
+#: used to clear an estop lockout (``resume.override_code``). Bounded
+#: so a malformed payload cannot DoS the comparison via a multi-MB
+#: string.
+MAX_OVERRIDE_CODE_LEN: int = 256
 
 #: Charset for entries in ``STRANDS_MESH_HF_REPO_ALLOW``. Operator-supplied
 #: HuggingFace org / ``<org>/<repo>`` prefixes; rejects shell metacharacters,
@@ -271,6 +280,15 @@ def is_safe_policy_host(host: str) -> bool:
        so the trust boundary stays under operator control.
     """
     if not isinstance(host, str) or not host:
+        return False
+    # Charset gate before strip so external callers (PR-7 tools, PR-8
+    # iot) that import this function directly via ``__all__`` are also
+    # protected from CRLF / NUL / C0 control bytes. ``str.strip()``
+    # below otherwise silently drops ``\r\n\t\v\f``, letting
+    # ``"localhost\r\n"`` pass membership while preserving the
+    # injection-shaped bytes for any caller that bypasses
+    # :func:`validate_command`. AGENTS.md > Review Learnings (#92).
+    if not _SAFE_PASSTHROUGH_RE.fullmatch(host):
         return False
     host_lc = host.strip().lower()
     allowlist = _policy_host_allowlist()
@@ -663,11 +681,12 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
             raise ValidationError(
                 f"policy_host={policy_host!r} not in allowlist. Set STRANDS_MESH_POLICY_HOST_ALLOW to extend."
             )
-        # Gate control characters / CRLF / NUL before storing. The allowlist
-        # match above normalises internally (strip + lower), so payloads like
-        # "localhost\r\n" pass membership but carry injection-shaped bytes.
-        # Reject at the validator boundary per AGENTS.md > Review Learnings
-        # (#92): "Reject shell metacharacters in paths... \n, \r, \x00."
+        # R7 defence-in-depth. ``is_safe_policy_host`` now applies the
+        # same charset gate before its internal strip, so this
+        # post-check is redundant for in-process call sites. Kept
+        # because we Reject at the validator boundary regardless of
+        # how the membership compare is implemented; a future refactor
+        # of the allowlist must not silently drop the wire rejection.
         host_str = str(policy_host)
         if not _SAFE_PASSTHROUGH_RE.fullmatch(host_str):
             raise ValidationError(
@@ -801,8 +820,8 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
         override_code = cmd.get("override_code", "")
         if not isinstance(override_code, str):
             raise ValidationError("resume.override_code must be a string")
-        if len(override_code) > 256:
-            raise ValidationError("resume.override_code too long (>256 chars)")
+        if len(override_code) > MAX_OVERRIDE_CODE_LEN:
+            raise ValidationError(f"resume.override_code too long (>{MAX_OVERRIDE_CODE_LEN} chars)")
         if override_code and not _SAFE_PASSTHROUGH_RE.fullmatch(override_code):
             raise ValidationError(
                 "resume.override_code contains control characters (CRLF/NUL/C0). Use printable ASCII only."
@@ -817,6 +836,7 @@ __all__ = [
     "MAX_DURATION_S",
     "MAX_INSTRUCTION_LEN",
     "MAX_MODEL_PATH_LEN",
+    "MAX_OVERRIDE_CODE_LEN",
     "MAX_PASSTHROUGH_LEN",
     "MAX_PEER_ID_LEN",
     "MAX_SERVER_ADDRESS_LEN",

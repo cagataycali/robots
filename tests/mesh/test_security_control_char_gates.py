@@ -35,11 +35,19 @@ class TestPolicyHostControlCharGate:
         }
 
     def test_rejects_crlf(self):
-        with pytest.raises(ValidationError, match="control characters"):
+        # R7: ``is_safe_policy_host`` now applies the same charset
+        # gate before its internal strip, so allowlist-shaped errors
+        # are also acceptable for these inputs (control bytes that
+        # ``str.strip()`` would have dropped).
+        with pytest.raises(ValidationError, match="not in allowlist|control characters"):
             validate_command(self._cmd("localhost\r\n"))
 
     def test_rejects_newline(self):
-        with pytest.raises(ValidationError, match="control characters"):
+        # R7: ``is_safe_policy_host`` now applies the same charset
+        # gate before its internal strip, so allowlist-shaped errors
+        # are also acceptable for these inputs (control bytes that
+        # ``str.strip()`` would have dropped).
+        with pytest.raises(ValidationError, match="not in allowlist|control characters"):
             validate_command(self._cmd("localhost\n"))
 
     def test_rejects_nul(self):
@@ -48,7 +56,11 @@ class TestPolicyHostControlCharGate:
             validate_command(self._cmd("localhost\x00"))
 
     def test_rejects_tab(self):
-        with pytest.raises(ValidationError, match="control characters"):
+        # R7: ``is_safe_policy_host`` now applies the same charset
+        # gate before its internal strip, so allowlist-shaped errors
+        # are also acceptable for these inputs (control bytes that
+        # ``str.strip()`` would have dropped).
+        with pytest.raises(ValidationError, match="not in allowlist|control characters"):
             validate_command(self._cmd("localhost\t"))
 
     def test_rejects_bell(self):
@@ -120,7 +132,11 @@ class TestOverrideCodeCharsetGate:
             validate_command(self._cmd("\x00\x01\x02secret"))
 
     def test_rejects_crlf(self):
-        with pytest.raises(ValidationError, match="control characters"):
+        # R7: ``is_safe_policy_host`` now applies the same charset
+        # gate before its internal strip, so allowlist-shaped errors
+        # are also acceptable for these inputs (control bytes that
+        # ``str.strip()`` would have dropped).
+        with pytest.raises(ValidationError, match="not in allowlist|control characters"):
             validate_command(self._cmd("secret\r\nINJECT"))
 
     def test_rejects_bell(self):
@@ -153,7 +169,11 @@ class TestServerAddressControlCharGate:
         }
 
     def test_rejects_crlf(self):
-        with pytest.raises(ValidationError, match="control characters"):
+        # R7: ``is_safe_policy_host`` now applies the same charset
+        # gate before its internal strip, so allowlist-shaped errors
+        # are also acceptable for these inputs (control bytes that
+        # ``str.strip()`` would have dropped).
+        with pytest.raises(ValidationError, match="not in allowlist|control characters"):
             validate_command(self._cmd("http://localhost:8080\r\n"))
 
     def test_rejects_nul(self):
