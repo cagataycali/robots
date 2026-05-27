@@ -527,7 +527,7 @@ agent.tool.gr00t_inference(action="stop", port=8000)
 | `STRANDS_MESH_RESUME_REPLAY_CACHE_MAX` | Maximum number of `proof_nonce` values remembered in the per-receiver replay cache. Bounded LRU eviction prevents memory exhaustion from high-volume resume attempts. | `4096` |
 | `STRANDS_MESH_DEDUP_TTL` | Bridge-transport deduplication window (seconds). Caps how long the same envelope nonce is remembered across the Zenoh + IoT subscriber wrappers. | `120` |
 | `STRANDS_MESH_CAMERA_PRESIGN_TTL` | Lifetime (seconds) of presigned S3 GET URLs published in `/camera/.../ref` messages. Capped at 3600. | `60` |
-| `STRANDS_MESH_CAMERA_DISABLED` | Set to `true` to disable camera publishing entirely (privacy kill switch). `Mesh._publish_cameras_once` short-circuits before any frame is built. | `false` |
+| `STRANDS_MESH_CAMERA_DISABLED` | Set to `true` to disable camera publishing entirely (privacy kill switch). The camera publisher in `strands_robots.mesh` short-circuits before any frame is built; no `/camera/**` traffic is emitted. | `false` |
 | `STRANDS_MESH_CA_PINS` | Comma-separated additional Amazon Root CA1 SHA-256 fingerprints (64-char lowercase hex). Augments the built-in pin tuple so operators can stage a future-rotation pin ahead of a code-level rotation; the built-in tuple is always included. Invalid entries are logged at WARNING and skipped. R7-3 hardening for the CA-pin time-bomb concern. | unset |
 | `STRANDS_MESH_DISABLE_CA_PIN` | Break-glass: skip the SHA-256 pin check when **downloading** `AmazonRootCA1.pem` during IoT provisioning. A WARNING is logged on every disabled run. As of round-3, this NEVER applies to the on-disk re-use path — an existing CA file is always raw-pin-checked, so a rogue CA from a prior compromised run cannot be silently re-used. To refresh a re-encoded cert behind a proxy, delete the file and re-run with the override. Should never be set in production. | `false` |
 | `STRANDS_MESH_HF_REPO_ALLOW` | Comma-separated list of HuggingFace org prefixes (or full `<org>/<repo>` prefixes) that `pretrained_name_or_path` accepts in mesh `execute`/`start` commands. Defaults to `nvidia,huggingface,lerobot`. Round-3 hardening of threat-vector #3: blocks an authenticated peer from steering a robot at an attacker-controlled HF repo. | unset |
@@ -618,8 +618,7 @@ based on the cert Common Name presented during the handshake.
    stripped before matching) — `**/cmd` is the robust glob;
    `<namespace>/*/cmd` never matches.
 
-**Default ACL:** the built-in `mesh._acl_config.default_acl()`
-ships **permissive**: any peer with a CA-signed cert (already
+**Default ACL:** the built-in default ACL ships **permissive**: any peer with a CA-signed cert (already
 verified at the mTLS handshake) may publish and subscribe on any
 key. We chose permissive over default-deny because a hard-coded
 default-deny with no enumerated CNs blocks every legitimate message
@@ -694,7 +693,7 @@ that should accept fleet-wide remote resume.
 | Valid `robot-*` cert tries to publish on `*/cmd` (with `STRANDS_MESH_ACL_FILE` set) | **Mitigated.** The role-separated ACL template only allows `robot-*` peers ingress on telemetry topics; cmd publish is denied. **Without** `STRANDS_MESH_ACL_FILE`, the permissive default allows it — operators must opt in to per-role enforcement. |
 | Valid `op-*` cert floods `cmd` topic at 1 kHz | **Mitigated.** `downsampling` caps ingress at the configured frequency (default 20 Hz); the rest is dropped pre-deserialise. Verified live in `test_zenoh_transport_security.py::TestDownsamplingRateCap`. |
 | Valid `op-*` cert sends 100 MiB camera frame | **Mitigated.** `low_pass_filter` caps camera bytes at the configured limit (default 1 MiB) before the receiver allocates buffers. Verified live in `TestLowPassFilterByteCap`. |
-| Valid `op-*` cert tries to hijack another operator's RPC turn_id | **Mitigated.** `Mesh._on_response` requires `responder_id` to match the original target for point-to-point sends. Verified in `test_application_security.py::test_p4_d1_response_hijack_rejected_for_point_to_point`. |
+| Valid `op-*` cert tries to hijack another operator's RPC turn_id | **Mitigated.** The mesh response handler requires `responder_id` to match the original target for point-to-point sends; mismatched responses are dropped. Verified in `test_application_security.py::test_p4_d1_response_hijack_rejected_for_point_to_point`. |
 | Peer with valid CA cert but CN not in operator's ACL list | **Mitigated** when `STRANDS_MESH_ACL_FILE` is set with literal CN allowlists — the default-deny rule drops every put + declare_subscriber from a CN that does not appear in any subject (verified live in `TestACLEnforcement::test_unknown_cn_dropped_by_default_deny`). **Not mitigated by default** — the built-in permissive ACL admits any CA-signed peer; `STRANDS_MESH_ACCEPT_PERMISSIVE_ACL` is the explicit opt-in gate that prevents this from being silent. |
 | Two fleets share a network | **Mitigated.** `STRANDS_MESH_NAMESPACE` isolates routing. |
 | Stolen cert + key (host fully compromised) | **Out of scope.** The peer is the attacker. Operator response: revoke the cert at the CA, restart the fleet. |
@@ -719,10 +718,7 @@ fingerprints incoming samples and dispatches each unique
 (`sender_id`, `turn_id`, `command`) tuple once before forwarding to the
 application-layer handler.
 
-For a complete walkthrough of what each layer protects against, see
-`mesh/security.py`'s module docstring,
-`mesh/_zenoh_config.py` for the transport-side config, and
-`mesh/_acl_config.py` for the ACL builder.
+For a complete walkthrough of what each layer protects against, see the module docstring of `strands_robots.mesh.security`. The transport-side Zenoh session config and the ACL builder are constructed by the `strands_robots.mesh` package internals; pinning their public surface to the env vars in the matrix above keeps user-facing docs decoupled from the underscore-prefixed implementation modules.
 
 ### Cache Directory
 

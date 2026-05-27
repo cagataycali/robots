@@ -91,10 +91,11 @@ uncovered four bugs in our own first-pass config that this PR fixes:
 * Per-action sliding-window rate limit on the LLM tool.
 * Client-side `validate_command` on `Mesh.send` / `Mesh.broadcast`
   (so programmatic callers go through the same gate).
-* `Mesh._on_response` `responder_id` binding for point-to-point RPC
-  scope.
-* `STRANDS_MESH_OVERRIDE_CODE` second factor on
-  `_resume_lockout` (constant-time compare).
+* `responder_id` binding on the mesh response handler scopes
+  point-to-point RPC; mismatched responses are dropped before
+  reaching the application handler.
+* `STRANDS_MESH_OVERRIDE_CODE` second factor on the resume-
+  lockout path (constant-time compare against the configured code).
 
 ### Audit log (`mesh/audit.py`)
 
@@ -149,7 +150,7 @@ Hardened independently of the Zenoh refactor:
 | `STRANDS_MESH_MAX_CMD_BYTES` | `16384` | `low_pass_filter` cap on `**/cmd` |
 | `STRANDS_MESH_MAX_CAMERA_BYTES` | `1048576` | `low_pass_filter` cap on `**/camera/**` |
 | `STRANDS_MESH_MAX_SAFETY_BYTES` | `4096` | `low_pass_filter` cap on `**/safety/**` (R21 -- jumbo-frame DoS bound) |
-| `STRANDS_MESH_CAMERA_DISABLED` | `false` | Privacy kill switch -- when `true`, `Mesh._publish_cameras_once` short-circuits before any frame is built |
+| `STRANDS_MESH_CAMERA_DISABLED` | `false` | Privacy kill switch -- when `true`, the mesh camera publisher short-circuits before any frame is built; no `/camera/**` traffic is emitted |
 | `STRANDS_MESH_FILTER_INTERFACES` | unset (wildcard) | Optional comma-separated NIC allowlist for the `low_pass_filter` rules. Unset means "every link" (Zenoh's `SubjectProperty::Wildcard`). |
 | `STRANDS_MESH_RESUME_FRESHNESS_S` | `60` | Maximum age (seconds) of a resume envelope before rejection as stale |
 | `STRANDS_MESH_RESUME_FORWARD_SKEW_S` | `5` | Maximum forward clock skew (seconds) tolerated in resume envelope timestamps |
