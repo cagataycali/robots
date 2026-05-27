@@ -141,11 +141,14 @@ Hardened independently of the Zenoh refactor:
 
 > **Curated subset.** This table covers the env vars whose semantics
 > changed (or that are net-new) in this release. The complete env-var
-> matrix is the canonical source -- see the `Mesh security configuration`
-> section of `README.md`, which documents every `STRANDS_MESH_*` var
-> the package reads (including audit / bridge / IoT / CA-pin / policy-
-> allowlist vars referenced in prose elsewhere in this changelog but
-> not duplicated as rows here).
+> reference is the `Mesh security configuration` section of `README.md`,
+> which is the canonical operator-facing surface for every
+> `STRANDS_MESH_*` var (audit / bridge / IoT / CA-pin / policy-
+> allowlist / sensor-cadence vars referenced in prose elsewhere in
+> this changelog have rows there but are not duplicated as rows here).
+> Runtime ground truth: `rg STRANDS_MESH_ strands_robots/`. If this
+> section and the README disagree, the README has fallen behind a
+> source-side rename and the discrepancy is a docs bug.
 
 | Var | Default | Purpose |
 |---|---|---|
