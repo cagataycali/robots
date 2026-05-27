@@ -498,6 +498,7 @@ agent.tool.gr00t_inference(action="stop", port=8000)
 | `MUJOCO_GL` | GL backend for the MuJoCo renderer | auto |
 | `STRANDS_MESH` | Set to `false` to disable Zenoh mesh networking globally | `true` |
 | `STRANDS_MESH_PORT` | TCP port for the local Zenoh router | `7447` |
+| `STRANDS_MESH_BACKEND` | Selects the mesh transport implementation: `zenoh` (LAN-native), `iot` (AWS IoT MQTT), or `bridge` (Zenoh + IoT cross-transport). Unknown values fall back to `zenoh` with a WARNING; the policy is to keep the mesh running rather than crash on a typo. | `zenoh` |
 | `ZENOH_CONNECT` | Comma-separated list of remote Zenoh endpoints to connect to | - |
 | `ZENOH_LISTEN` | Comma-separated list of endpoints for the local Zenoh listener | - |
 | `STRANDS_MESH_AUDIT_DIR` | Directory for the safety audit log (`mesh_audit.jsonl`) and sequence-counter sidecar (`mesh_audit.seq.json`) | `~/.strands_robots/` |
@@ -513,6 +514,7 @@ agent.tool.gr00t_inference(action="stop", port=8000)
 | `STRANDS_MESH_TLS_CERT` | Filesystem path to this peer's certificate (PEM). Required when `STRANDS_MESH_AUTH_MODE=mtls`. | unset |
 | `STRANDS_MESH_TLS_KEY` | Filesystem path to this peer's private key (PEM, mode 0o600). Required when `STRANDS_MESH_AUTH_MODE=mtls`. | unset |
 | `STRANDS_MESH_ACL_FILE` | Filesystem path to a JSON5 ACL file enumerating each peer's exact cert CN (Zenoh 1.x does not support globs). Empty = use the permissive built-in default that allows any CA-signed peer to publish/subscribe; see `examples/mesh_acl_example.json5` for the role-separated template operators populate with their fleet's CNs. | unset |
+| `STRANDS_MESH_ACCEPT_PERMISSIVE_ACL` | Required to start the mesh under `mtls` + the permissive default ACL. Without the opt-in, `Mesh.start()` logs at ERROR and returns early; `mesh.alive` stays False and no Zenoh session is acquired. Set to `1` / `true` / `yes` to acknowledge the dev/lab posture explicitly (single-tenant only). Production deployments should ship a literal-CN `STRANDS_MESH_ACL_FILE` instead. | unset |
 | `STRANDS_MESH_MAX_SESSIONS` | Hard cap on simultaneous Zenoh unicast sessions. DoS bound. | `256` |
 | `STRANDS_MESH_MAX_CMD_BYTES` | Per-message byte cap on `cmd` / `broadcast` topics enforced via `low_pass_filter`. | `16384` |
 | `STRANDS_MESH_MAX_CAMERA_BYTES` | Per-message byte cap on camera topics. | `1048576` |
@@ -528,6 +530,17 @@ agent.tool.gr00t_inference(action="stop", port=8000)
 | `STRANDS_MESH_DEDUP_TTL` | Bridge-transport deduplication window (seconds). Caps how long the same envelope nonce is remembered across the Zenoh + IoT subscriber wrappers. | `120` |
 | `STRANDS_MESH_CAMERA_PRESIGN_TTL` | Lifetime (seconds) of presigned S3 GET URLs published in `/camera/.../ref` messages. Capped at 3600. | `60` |
 | `STRANDS_MESH_CAMERA_DISABLED` | Set to `true` to disable camera publishing entirely (privacy kill switch). The camera publisher in `strands_robots.mesh` short-circuits before any frame is built; no `/camera/**` traffic is emitted. | `false` |
+| `STRANDS_MESH_CAMERA_HZ` | Per-camera publish frequency (Hz) on `<ns>/<peer>/camera/<name>`. `0` (the default) disables periodic publishing -- frames are emitted on-demand only. Operators set a non-zero value to drive a fixed-rate stream. | `0` (off) |
+| `STRANDS_MESH_POSE_HZ` | Pose-topic publish cadence (Hz). Drives the `<peer>/pose` SE(3) loop in `strands_robots.mesh.sensors`; only runs if the robot exposes a `pose` attribute. | `10.0` |
+| `STRANDS_MESH_HEALTH_HZ` | Health-topic publish cadence (Hz). Drives the `<peer>/health` loop (battery / CPU / memory / disk / temps); only runs if the robot exposes a `health` attribute. | `0.5` |
+| `STRANDS_MESH_IMU_HZ` | IMU-topic publish cadence (Hz). Drives the `<peer>/imu` loop (roll / pitch / yaw / gyro / accel); only runs if the robot exposes an `imu` attribute. | `10.0` |
+| `STRANDS_MESH_ODOM_HZ` | Dead-reckoning odometry publish cadence (Hz). Drives the `<peer>/odom` loop. | `10.0` |
+| `STRANDS_MESH_LIDAR_SUMMARY_HZ` | LiDAR point-cloud summary cadence (Hz). Drives the `<peer>/lidar/summary` loop. The full state topic (`lidar/state`) runs at a separate compile-time cadence. | `5.0` |
+| `STRANDS_MESH_HAND_HZ` | End-effector publish cadence (Hz). Drives the `<peer>/hand/<name>/state` loop (joint positions / forces). | `50.0` |
+| `STRANDS_MESH_MAP_INFO_HZ` | Map-metadata publish cadence (Hz). Drives the `<peer>/map/info` loop. | `0.2` |
+| `STRANDS_MESH_FILTER_INTERFACES` | Optional comma-separated NIC allowlist for the `low_pass_filter` rules. Unset means "every link" (Zenoh's `SubjectProperty::Wildcard`). Operators set this on multi-homed hosts (e.g. WAN + LAN cap) to scope the byte caps to a specific interface. | unset (wildcard) |
+| `STRANDS_MESH_CAMERA_S3_BUCKET` | S3 bucket for the IoT camera-offload path (`mesh.iot.camera_offload`). Frames are uploaded to the bucket and a presigned GET URL is published on `/camera/.../ref` instead of the raw bytes. Empty = the offload path short-circuits with a debug log; no upload is attempted. | unset |
+| `STRANDS_MESH_CAMERA_S3_PREFIX` | Optional key prefix prepended to camera-offload S3 object keys. Trailing slashes are stripped. | unset |
 | `STRANDS_MESH_CA_PINS` | Comma-separated additional Amazon Root CA1 SHA-256 fingerprints (64-char lowercase hex). Augments the built-in pin tuple so operators can stage a future-rotation pin ahead of a code-level rotation; the built-in tuple is always included. Invalid entries are logged at WARNING and skipped. R7-3 hardening for the CA-pin time-bomb concern. | unset |
 | `STRANDS_MESH_DISABLE_CA_PIN` | Break-glass: skip the SHA-256 pin check when **downloading** `AmazonRootCA1.pem` during IoT provisioning. A WARNING is logged on every disabled run. As of round-3, this NEVER applies to the on-disk re-use path — an existing CA file is always raw-pin-checked, so a rogue CA from a prior compromised run cannot be silently re-used. To refresh a re-encoded cert behind a proxy, delete the file and re-run with the override. Should never be set in production. | `false` |
 | `STRANDS_MESH_HF_REPO_ALLOW` | Comma-separated list of HuggingFace org prefixes (or full `<org>/<repo>` prefixes) that `pretrained_name_or_path` accepts in mesh `execute`/`start` commands. Defaults to `nvidia,huggingface,lerobot`. Round-3 hardening of threat-vector #3: blocks an authenticated peer from steering a robot at an attacker-controlled HF repo. | unset |
