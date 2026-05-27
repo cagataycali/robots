@@ -717,7 +717,9 @@ payload still goes through `mesh.security.validate_command` to bound
 its contents — instruction length, duration, step counts, the
 `policy_host` allowlist (loopback only by default), the HuggingFace
 repo prefix gate (`STRANDS_MESH_HF_REPO_ALLOW`), and the policy
-type / provider allowlist (`STRANDS_MESH_POLICY_TYPE_ALLOW`). These
+type / provider allowlist (`STRANDS_MESH_POLICY_TYPE_ALLOW` is the
+single env var that extends both the `policy_type` and `policy_provider`
+gates -- they share one allowlist by design). These
 guard against an authorised peer requesting a 24-hour `execute` action
 or steering the robot at an attacker-controlled inference server.
 

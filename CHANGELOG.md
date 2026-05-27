@@ -37,6 +37,10 @@ What survives at the application layer (467 lines, was 1176):
 * `is_safe_policy_host`, `is_safe_model_path`, `is_safe_policy_type`,
   `is_safe_policy_provider`, `is_safe_server_address` — payload
   allowlists that ACL cannot see (it gates topics, not contents).
+  `is_safe_policy_type` and `is_safe_policy_provider` are separate
+  call-site validators but share a single env-var-extensible allowlist
+  (`STRANDS_MESH_POLICY_TYPE_ALLOW`); there is intentionally no
+  `_PROVIDER_ALLOW` env var.
 * `LockoutError` / `ValidationError` — typed exceptions for the
   command dispatcher.
 
