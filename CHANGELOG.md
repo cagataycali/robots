@@ -229,7 +229,7 @@ the tool already supplies `policy_provider` from its own arg.
 
 Dev / lab environments without PKI run `STRANDS_MESH_AUTH_MODE=none` AND `STRANDS_MESH_I_KNOW_THIS_IS_INSECURE=1`
 to keep plain-TCP behaviour; the mesh logs an ERROR at session
-open (matches README L508 and the env-var matrix at L139 — `STRANDS_MESH_I_KNOW_THIS_IS_INSECURE` is explicitly designed to be loud).
+open (matches the `Mesh security configuration > Authentication: mTLS (default)` section in `README.md` and the `STRANDS_MESH_I_KNOW_THIS_IS_INSECURE` row in this changelog's `New env vars` table — `STRANDS_MESH_I_KNOW_THIS_IS_INSECURE` is explicitly designed to be loud).
 
 ## Unreleased - #178 (LiberoOffScreenRenderEngine retired)
 
