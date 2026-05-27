@@ -94,6 +94,20 @@ MAX_PEER_ID_LEN: int = 128
 #: ``/`` in one is a wire-side red flag.
 _PEER_ID_RE = re.compile(r"^[A-Za-z0-9_.\-]+$")
 
+#: Charset gate for wire-routing passthrough fields (``turn_id``,
+#: ``sender_id``, ``override_code``) and host/address strings stored in
+#: ``out``. Rejects NUL, CRLF, and all C0/C1 control characters while
+#: allowing the full printable ASCII range (0x20-0x7E). Applied *after*
+#: type-check + length-bound so a malicious payload with embedded control
+#: bytes is rejected cleanly rather than passing through to audit logs or
+#: downstream string ops.
+_SAFE_PASSTHROUGH_RE = re.compile(r"^[\x20-\x7E]+$")
+
+#: Maximum length of wire-routing passthrough fields (``turn_id``,
+#: ``sender_id``). These are ULID/UUID-shaped correlation tokens; 128
+#: chars is generous for any legitimate usage.
+MAX_PASSTHROUGH_LEN: int = 128
+
 #: Charset for entries in ``STRANDS_MESH_HF_REPO_ALLOW``. Operator-supplied
 #: HuggingFace org / ``<org>/<repo>`` prefixes; rejects shell metacharacters,
 #: whitespace, NUL bytes, and any byte outside the printable ASCII subset.
@@ -171,7 +185,7 @@ class ValidationError(SecurityError):
 #: ``STRANDS_MESH_POLICY_HOST_ALLOW``. Rejects shell metacharacters,
 #: whitespace, NUL bytes, and any byte outside the printable ASCII
 #: subset typical of DNS labels and CIDR ranges.
-_POLICY_HOST_ENTRY_RE = re.compile(r"^[A-Za-z0-9.:/_\-\[\]]+$")
+_POLICY_HOST_ENTRY_RE = re.compile(r"^[A-Za-z0-9.:/_\-]+$")
 
 
 def _validate_env_allowlist_entries(env_var: str, raw: str, regex: re.Pattern[str]) -> list[str]:
@@ -621,13 +635,20 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
     # value. Defence-in-depth: build ``out`` from the *validated*
     # subset only.
     out: dict[str, Any] = {"action": action}
-    # turn_id and sender_id are wire-routing fields that pass through
-    # unchanged (they identify the RPC turn, not the action payload);
-    # whitelisting them keeps the existing _on_cmd/_on_response
-    # correlation working. Anything else gets dropped silently.
+    # turn_id and sender_id are wire-routing fields (RPC turn correlation,
+    # not action payload). Type-check, length-bound, and charset-validate
+    # them so control bytes / non-string types cannot reach audit logs or
+    # downstream string ops. Anything else gets dropped silently.
     for passthrough in ("turn_id", "sender_id"):
         if passthrough in cmd:
-            out[passthrough] = cmd[passthrough]
+            value = cmd[passthrough]
+            if not isinstance(value, str):
+                raise ValidationError(f"{passthrough} must be a string (got {type(value).__name__})")
+            if len(value) > MAX_PASSTHROUGH_LEN:
+                raise ValidationError(f"{passthrough} exceeds {MAX_PASSTHROUGH_LEN} chars (got {len(value)})")
+            if not _SAFE_PASSTHROUGH_RE.fullmatch(value):
+                raise ValidationError(f"{passthrough} contains control characters, NUL, or non-printable bytes")
+            out[passthrough] = value
 
     if action in ("execute", "start"):
         instruction = cmd.get("instruction", "")
@@ -642,12 +663,16 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
             raise ValidationError(
                 f"policy_host={policy_host!r} not in allowlist. Set STRANDS_MESH_POLICY_HOST_ALLOW to extend."
             )
-        # Preserve caller casing/whitespace verbatim. ``is_safe_policy_host``
-        # normalises internally for the allowlist match, but downstream
-        # consumers that string-equality-check against e.g. ``"localhost"``
-        # for loopback fast-paths MUST do their own normalisation -- the
-        # validator gates membership, not canonical form. Same contract for
-        # ``server_address`` below.
+        # Gate control characters / CRLF / NUL before storing. The allowlist
+        # match above normalises internally (strip + lower), so payloads like
+        # "localhost\r\n" pass membership but carry injection-shaped bytes.
+        # Reject at the validator boundary per AGENTS.md > Review Learnings
+        # (#92): "Reject shell metacharacters in paths... \n, \r, \x00."
+        host_str = str(policy_host)
+        if not _SAFE_PASSTHROUGH_RE.fullmatch(host_str):
+            raise ValidationError(
+                f"policy_host={policy_host!r} contains control characters (CRLF/NUL/C0). Use printable ASCII only."
+            )
         out["policy_host"] = policy_host
 
         out["duration"] = _coerce_float(
@@ -707,6 +732,11 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
             if not isinstance(value, str) or not is_safe_server_address(value):
                 raise ValidationError(
                     f"server_address={value!r} host not in allowlist. Set STRANDS_MESH_POLICY_HOST_ALLOW to extend."
+                )
+            # Same CRLF/NUL/control-byte gate as policy_host.
+            if not _SAFE_PASSTHROUGH_RE.fullmatch(value):
+                raise ValidationError(
+                    f"server_address={value!r} contains control characters (CRLF/NUL/C0). Use printable ASCII only."
                 )
             out["server_address"] = value
 
@@ -773,6 +803,10 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
             raise ValidationError("resume.override_code must be a string")
         if len(override_code) > 256:
             raise ValidationError("resume.override_code too long (>256 chars)")
+        if override_code and not _SAFE_PASSTHROUGH_RE.fullmatch(override_code):
+            raise ValidationError(
+                "resume.override_code contains control characters (CRLF/NUL/C0). Use printable ASCII only."
+            )
         out["override_code"] = override_code
 
     return out
@@ -783,6 +817,7 @@ __all__ = [
     "MAX_DURATION_S",
     "MAX_INSTRUCTION_LEN",
     "MAX_MODEL_PATH_LEN",
+    "MAX_PASSTHROUGH_LEN",
     "MAX_PEER_ID_LEN",
     "MAX_SERVER_ADDRESS_LEN",
     "SecurityError",

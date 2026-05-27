@@ -159,4 +159,8 @@ class TestPolicyHostCasingPreserved:
         source = inspect.getsource(sec.validate_command)
         # Either of these substrings is sufficient evidence the
         # comment is in place; the exact wording may evolve.
-        assert "Preserve caller casing" in source or "MUST do their own normalisation" in source
+        assert (
+            "Gate control characters" in source
+            or "MUST do their own normalisation" in source
+            or "Reject at the validator boundary" in source
+        )
