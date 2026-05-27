@@ -151,17 +151,17 @@ Hardened independently of the Zenoh refactor:
 |---|---|---|
 | `STRANDS_MESH_AUTH_MODE` | `mtls` | `mtls` (prod) or `none` (dev only). `none` ALSO requires `STRANDS_MESH_I_KNOW_THIS_IS_INSECURE=1` -- ERROR-level log at every session open. |
 | `STRANDS_MESH_I_KNOW_THIS_IS_INSECURE` | unset | Second-factor opt-in for `auth_mode=none`. Accepts `1`/`true`/`yes`. Refused otherwise -- prevents silent wire-auth disable from typos / forgotten env / leaked CI fixtures. |
-| `STRANDS_MESH_ACCEPT_PERMISSIVE_ACL` | unset | **Required to start the mesh** under `mtls + permissive default ACL` (F11-B). Without the opt-in, `Mesh.start()` logs at ERROR and returns early -- `mesh.alive` stays False, no Zenoh session is acquired. Set to `1`/`true`/`yes` to acknowledge the dev/lab posture explicitly (single-tenant only). Production deployments should ship a literal-CN `STRANDS_MESH_ACL_FILE` instead. |
+| `STRANDS_MESH_ACCEPT_PERMISSIVE_ACL` | unset | **Required to start the mesh** under `mtls` + the permissive default ACL. Without the opt-in, `Mesh.start()` logs at ERROR and returns early -- `mesh.alive` stays False, no Zenoh session is acquired. Set to `1`/`true`/`yes` to acknowledge the dev/lab posture explicitly (single-tenant only). Production deployments should ship a literal-CN `STRANDS_MESH_ACL_FILE` instead. |
 | `STRANDS_MESH_TLS_CA` / `_CERT` / `_KEY` | unset | mTLS material; required when auth_mode=mtls |
 | `STRANDS_MESH_ACL_FILE` | unset | Operator-supplied JSON5 ACL with literal-CN enumeration |
 | `STRANDS_MESH_NAMESPACE` | `strands` | Fleet routing prefix |
 | `STRANDS_MESH_MULTICAST` | `false` | Gossip-only by default |
 | `STRANDS_MESH_MAX_SESSIONS` | `256` | Unicast session DoS bound |
 | `STRANDS_MESH_CMD_RATE_HZ` | `20.0` | `downsampling` cap on `**/cmd` |
-| `STRANDS_MESH_SAFETY_RATE_HZ` | `2.0` | `downsampling` cap on `**/safety/**` (R21 -- bounds novel-`t` flood vector) |
+| `STRANDS_MESH_SAFETY_RATE_HZ` | `2.0` | `downsampling` cap on `**/safety/**` -- bounds the novel-`t` flood vector that bypasses receiver-side replay caches |
 | `STRANDS_MESH_MAX_CMD_BYTES` | `16384` | `low_pass_filter` cap on `**/cmd` |
 | `STRANDS_MESH_MAX_CAMERA_BYTES` | `1048576` | `low_pass_filter` cap on `**/camera/**` |
-| `STRANDS_MESH_MAX_SAFETY_BYTES` | `4096` | `low_pass_filter` cap on `**/safety/**` (R21 -- jumbo-frame DoS bound) |
+| `STRANDS_MESH_MAX_SAFETY_BYTES` | `4096` | `low_pass_filter` cap on `**/safety/**` -- jumbo-frame DoS bound on safety envelopes |
 | `STRANDS_MESH_CAMERA_DISABLED` | `false` | Privacy kill switch -- when `true`, the mesh camera publisher short-circuits before any frame is built; no `/camera/**` traffic is emitted |
 | `STRANDS_MESH_FILTER_INTERFACES` | unset (wildcard) | Optional comma-separated NIC allowlist for the `low_pass_filter` rules. Unset means "every link" (Zenoh's `SubjectProperty::Wildcard`). |
 | `STRANDS_MESH_RESUME_FRESHNESS_S` | `60` | Maximum age (seconds) of a resume envelope before rejection as stale |
