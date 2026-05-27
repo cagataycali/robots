@@ -173,6 +173,13 @@ silently disabling the replay cache. Pinned by
 
 ### Tests
 
+> **Path citations.** Test paths below name the files as they land
+> on `main` after the full PR-1..PR-9 stack merges. Individual paths
+> may be renamed or restructured during review of the predecessor
+> PRs; if a citation goes stale, treat the file name as the intent
+> and check `git log --diff-filter=A tests/mesh/` for the actual
+> path on the merge commit.
+
 * **839 mesh tests pass** (4 skipped with documented reasons -- 2 ACL fanout cases tracked in #200, plus 2 mTLS-handshake tests gated on the cryptography PyPI dep).
 * New: `tests/mesh/_pki.py` — ephemeral CA + leaf cert helper.
 * New: `tests/mesh/test_zenoh_transport_security.py` — 11 tests, 9 active, run
