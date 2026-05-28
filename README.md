@@ -579,6 +579,16 @@ Disable globally with `STRANDS_MESH=false` or per-robot with
 
 ### Mesh security
 
+> **Stack note (mesh-security-hardening, PRs #218-#226).** The
+> guarantees, env-var rows, and threat-vector verdicts in this section
+> describe the **release-tagged** state after the full PR stack lands.
+> On intermediate `main` commits between #218 and #226, the source-side
+> readers and example files cited below may not all exist yet -- run
+> the verification block in `CHANGELOG.md` (`### New env vars` preface)
+> to confirm against the current tree. Stacking-order gaps are tracked
+> in #243 (example file references) and #244 (`_BRIDGE_TOPICS_PREFIX`
+> reader).
+
 The mesh layer relies on **Zenoh built-in security primitives** —
 mTLS at the transport, key-expression ACLs above it, and per-key
 rate / size caps for DoS bounds. There is no application-layer

@@ -148,7 +148,11 @@ Hardened independently of the Zenoh refactor:
 > this changelog have rows there but are not duplicated as rows here).
 > Runtime ground truth: `rg STRANDS_MESH_ strands_robots/`. If this
 > section and the README disagree, the README has fallen behind a
-> source-side rename and the discrepancy is a docs bug.
+> source-side rename and the discrepancy is a docs bug. The `Default`
+> column reflects the values set by the predecessor PRs in the
+> mesh-security-hardening stack (#218-#226); on intermediate `main`
+> commits before the stack lands, the source-side reader for a given
+> row may not exist yet -- the same ground-truth `rg` resolves it.
 
 | Var | Default | Purpose |
 |---|---|---|
