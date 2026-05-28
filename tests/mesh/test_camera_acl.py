@@ -47,8 +47,14 @@ class TestPresignTTL:
     def test_zero_or_negative_clamped_up(self, monkeypatch):
         monkeypatch.delenv("STRANDS_MESH_CAMERA_PRESIGN_TTL", raising=False)
         off = CameraOffloader(bucket="test-bucket", presign_ttl=0)
-        # presign_ttl=0 is falsy -> falls back to default
-        assert off.presign_ttl == DEFAULT_PRESIGN_TTL_SECONDS
+        # presign_ttl=0 is explicitly passed (not None) -> clamped to floor of 1
+        assert off.presign_ttl == 1
+
+    def test_negative_clamped_up(self, monkeypatch):
+        monkeypatch.delenv("STRANDS_MESH_CAMERA_PRESIGN_TTL", raising=False)
+        off = CameraOffloader(bucket="test-bucket", presign_ttl=-5)
+        # Negative values are clamped to 1
+        assert off.presign_ttl == 1
 
 
 class TestCameraKillSwitch:

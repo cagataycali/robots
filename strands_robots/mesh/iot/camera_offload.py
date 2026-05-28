@@ -76,7 +76,11 @@ class CameraOffloader:
     ) -> None:
         self.bucket = bucket or os.getenv("STRANDS_MESH_CAMERA_S3_BUCKET", "")
         self.prefix = (prefix or os.getenv("STRANDS_MESH_CAMERA_S3_PREFIX") or "").strip("/")
-        ttl_raw = presign_ttl or int(os.getenv("STRANDS_MESH_CAMERA_PRESIGN_TTL", str(DEFAULT_PRESIGN_TTL_SECONDS)))
+        ttl_raw = (
+            presign_ttl
+            if presign_ttl is not None
+            else int(os.getenv("STRANDS_MESH_CAMERA_PRESIGN_TTL", str(DEFAULT_PRESIGN_TTL_SECONDS)))
+        )
         if ttl_raw > MAX_PRESIGN_TTL_SECONDS:
             logger.warning(
                 "[camera_offload] STRANDS_MESH_CAMERA_PRESIGN_TTL=%d > %d cap; clamping",
