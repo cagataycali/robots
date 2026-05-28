@@ -37,7 +37,23 @@ Configuration
 ``STRANDS_MESH_CAMERA_S3_PREFIX``
     Optional prefix inside the bucket (defaults to ``""``).
 ``STRANDS_MESH_CAMERA_PRESIGN_TTL``
-    Seconds the presigned GET URL stays valid (default 3600).
+    Seconds the presigned GET URL stays valid. Defaults to
+    :data:`DEFAULT_PRESIGN_TTL_SECONDS` (60s); clamped at
+    :data:`MAX_PRESIGN_TTL_SECONDS` (1 hour) to prevent accidental
+    day- or week-long URLs. Pass ``presign_ttl=N`` to override
+    explicitly; the env-var fallback only applies when the kwarg is
+    ``None``.
+
+Bucket-ownership threat model
+-----------------------------
+The S3 PutObject path in :meth:`CameraOffloader._upload_frame` does
+not pass an ``ACL=`` kwarg. The contract for the offload bucket is
+that the operator configures it with object-ownership control
+``BucketOwnerEnforced`` (and a bucket policy that denies public
+ACLs); that enforcement is out of scope for this library because
+deployments differ on whether the bucket is shared with non-mesh
+producers. A future code-side ``ACL="private"`` + ``ChecksumAlgorithm``
+hardening is tracked in #249.
 """
 
 from __future__ import annotations

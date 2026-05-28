@@ -1,17 +1,22 @@
 """Camera-frame access-control tests.
 
-Two behaviours are covered:
+Covers :class:`CameraOffloader` presigned-URL TTL semantics:
 
-* :class:`CameraOffloader` enforces a short default TTL on presigned S3
-  URLs (60 seconds) and clamps any operator override at 1 hour.
-* The :envvar:`STRANDS_MESH_CAMERA_DISABLED` kill switch short-circuits
-  :meth:`Mesh._publish_cameras_once` so the loop never builds frames or
-  signs envelopes -- useful for privacy-sensitive deployments.
+* The short default TTL of 60 seconds, as a posture pin.
+* The 1-hour ceiling that clamps over-eager operator overrides.
+* The None-vs-explicit-0 distinction (env fallback only when None;
+  explicit 0 is treated as an operator value and clamped to 1).
+
+The privacy kill-switch (``STRANDS_MESH_CAMERA_DISABLED``) and the S3
+PutObject ACL hardening were dropped from PR #228 R2 because the
+intended publish-side gate was never landed in production code; the
+prior tests passed for incidental reasons (short-circuiting at the
+inner-None guard rather than any kill-switch guard) and gave false
+reassurance. Both items are tracked in the deferred follow-up issue
+#249 and will land with their own pin tests there.
 """
 
 from __future__ import annotations
-
-from unittest.mock import MagicMock, patch
 
 from strands_robots.mesh.iot.camera_offload import (
     DEFAULT_PRESIGN_TTL_SECONDS,
@@ -55,32 +60,3 @@ class TestPresignTTL:
         off = CameraOffloader(bucket="test-bucket", presign_ttl=-5)
         # Negative values are clamped to 1
         assert off.presign_ttl == 1
-
-
-class TestCameraKillSwitch:
-    def test_disabled_short_circuits_publish(self, monkeypatch):
-        """The privacy kill switch must skip both frame collection and
-        any signed put() calls, so even an attacker with the PSK can't
-        observe activity."""
-        monkeypatch.setenv("STRANDS_MESH_CAMERA_DISABLED", "true")
-        from strands_robots.mesh.core import Mesh
-
-        m = Mesh(MagicMock(), peer_id="cam-test")
-        with patch.object(m, "publish") as mock_put:
-            m._publish_cameras_once()
-        mock_put.assert_not_called()
-
-    def test_enabled_does_not_short_circuit(self, monkeypatch):
-        """When the kill switch is unset, the loop runs (will fail later
-        when it tries to read a real camera, but the env-gate did not
-        block it)."""
-        monkeypatch.delenv("STRANDS_MESH_CAMERA_DISABLED", raising=False)
-        from strands_robots.mesh.core import Mesh
-
-        # Robot has no inner robot -> loop returns at the inner-None guard,
-        # NOT at the kill-switch guard.
-        robot = MagicMock(spec_set=["robot"])
-        robot.robot = None
-        m = Mesh(robot, peer_id="cam-test")
-        # No exception, completes naturally.
-        m._publish_cameras_once()
