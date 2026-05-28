@@ -175,12 +175,14 @@ Hardened independently of the Zenoh refactor:
 | `STRANDS_MESH_RESUME_FORWARD_SKEW_S` | `5` | Maximum forward clock skew (seconds) tolerated in resume envelope timestamps |
 | `STRANDS_MESH_RESUME_REPLAY_CACHE_MAX` | `4096` | Maximum entries in the per-receiver resume proof_nonce replay cache (LRU eviction) |
 
-All three resume-hardening env vars are parsed via internal
+On the release-tagged state (after the full PR-1..PR-9 stack lands),
+the three resume-hardening env vars above are parsed via internal
 positive-float / positive-int helpers in ``strands_robots.mesh.core``.
 Malformed values (non-numeric or negative) log a WARNING and fall
 back to the documented default instead of failing module import or
 silently disabling the replay cache. Pinned by
-``tests/mesh/test_resume_env_validation.py``.
+``tests/mesh/test_resume_env_validation.py`` (or successor; see
+the ``### Tests`` block-quote below for the path-citation contract).
 
 ### Tests
 
@@ -217,7 +219,14 @@ Existing deployments under `STRANDS_MESH_PSK`:
 4. Drop all `STRANDS_MESH_PSK` / `STRANDS_MESH_PEER_KEY*` /
    `STRANDS_MESH_REPLAY_WINDOW` / `STRANDS_MESH_PEER_RATE` env vars.
 
-### Breaking: `policy_provider` is required on `execute` / `start`
+### BREAKING CHANGE: `policy_provider` is required on `execute` / `start`
+
+> **Caller-visible behavioural change.** Any code calling
+> `Mesh.send` / `Mesh.broadcast` with an `execute` or `start`
+> command and no `policy_provider` field will now raise
+> `ValidationError` instead of silently dispatching against the
+> mock policy. See the migration block immediately below for
+> the explicit-field shape callers must adopt.
 
 Pre-PR, `policy_provider` defaulted to `"mock"` inside the dispatcher.
 `validate_command` (`mesh/security.py`) now REJECTS any `execute` /
