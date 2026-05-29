@@ -190,9 +190,20 @@ def _evict_replay_cache[K](
     captured forward-skewed envelope from being replayed seconds after
     its original acceptance window closed.
 
-    Single source of truth for both ``_estop_replay_cache`` and
-    ``_resume_replay_cache`` eviction. Callers own insertion and the
-    per-cache lock; this helper is pure bookkeeping.
+    Single source of truth for both ``_resume_replay_cache`` (a
+    direct ``dict[K, float]``) and ``_estop_replay_cache`` (a
+    ``dict[float, tuple[issuer_id, mono_ts, wire_zid]]``, which the
+    estop call site reduces to a ``ts_view`` ``dict[K, float]`` before
+    calling this helper, then applies the surviving keyset back to its
+    real cache via set-difference). The view-shim strips the
+    issuer/zid attribution before this helper sees it; any future
+    eviction policy that needs issuer- or zid-aware behaviour (e.g.
+    "evict over-cap issuers preferentially" or "weight TTL by source
+    session") cannot live in this helper -- it would have to be
+    re-implemented inline at the estop call site, or this helper
+    widened to ``dict[K, V]`` + ``value_to_ts: Callable[[V], float]``.
+    Callers own insertion and the per-cache lock; this helper is pure
+    bookkeeping.
     """
     if len(cache) < max_size:
         return
