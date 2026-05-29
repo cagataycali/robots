@@ -519,7 +519,8 @@ def teardown_thing(
         are shared across all robots and removing them would break siblings.
 
         Idempotent: missing Thing or no certs is a silent success.
-    n    Note:
+
+    Note:
             ``cert_dir`` is treated as trusted operator input -- it is not
             validated beyond ``Path()`` coercion.  Do not pass LLM-generated
             or otherwise untrusted values; this is a privileged provisioning API.

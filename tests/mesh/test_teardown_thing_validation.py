@@ -149,3 +149,27 @@ class TestTeardownThingCertDirParity:
         assert not any(name.endswith(".public.key") for name in attempted), (
             f"unexpected .public.key unlink attempt in {attempted}"
         )
+
+
+class TestTeardownThingDocstringShape:
+    """Pin: teardown_thing's docstring must be well-formed.
+
+    Regression marker for the R7 docstring-typo bug (`n    Note:` left a
+    literal `n` glyph between the docstring body and the Note section).
+    A future agent applying line-oriented edits must not reintroduce
+    bare-letter glyphs that would otherwise read as Python identifiers.
+    """
+
+    def test_no_stray_n_literal_in_docstring(self):
+        """The docstring must not contain a bare `n    Note:` artefact."""
+        from strands_robots.mesh.iot.provision import teardown_thing
+
+        ds = teardown_thing.__doc__
+        assert ds is not None, "teardown_thing.__doc__ went missing"
+        # The R7 typo manifested as a literal 'n    Note:' on a line by itself
+        # (where '\n    Note:' was intended). Pin the absence of that artefact.
+        assert "n    Note:" not in ds, "stray 'n' before Note: section -- R7 docstring typo regression"
+        # And keep the Note section itself, since the original R7 fix was
+        # adding the cert_dir trust note.
+        assert "Note:" in ds, "Note: section must remain"
+        assert "trusted operator input" in ds, "cert_dir trust note (R7) must remain"
