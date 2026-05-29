@@ -325,6 +325,7 @@ class Mesh(SensorLoopsMixin):
         # which requires the operator-supplied override code.
         self._estop_lockout = threading.Event()
         self._last_estop_ts: float = 0.0
+        self._last_estop_mono: float = 0.0
         # _on_safety_resume must defend
         # against replay of a previously-observed override-proof envelope.
         # The receiver caches (proof_nonce, issuer_peer_id) tuples it has
@@ -1484,14 +1485,12 @@ class Mesh(SensorLoopsMixin):
                 else:
                     cached_wire_zid = None
                 wire_zids_distinct = (
-                    cached_wire_zid is not None
-                    and wire_zid is not None
-                    and cached_wire_zid != wire_zid
+                    cached_wire_zid is not None and wire_zid is not None and cached_wire_zid != wire_zid
                 )
                 if (
                     wire_zids_distinct
                     and self._estop_lockout.is_set()
-                    and (time.time() - self._last_estop_ts) < 0.2
+                    and (time.monotonic() - self._last_estop_mono) < 0.2
                 ):
                     try:
                         self.publish_safety_event(
@@ -1616,6 +1615,7 @@ class Mesh(SensorLoopsMixin):
         if not self._estop_lockout.is_set():
             self._estop_lockout.set()
             self._last_estop_ts = time.time()
+            self._last_estop_mono = time.monotonic()
             sender = data.get("peer_id", "<remote>")
             logger.critical(
                 "[safety] %s: lockout engaged via remote estop from %s",
@@ -2156,6 +2156,7 @@ class Mesh(SensorLoopsMixin):
         """
         self._estop_lockout.set()
         self._last_estop_ts = time.time()
+        self._last_estop_mono = time.monotonic()
         responses = self.broadcast({"action": "stop"}, timeout=3.0)
         # Wire-level publisher attribution: bind the local TLS-bound zid
         # into both the body (so receivers can verify the body matches
