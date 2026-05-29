@@ -12,8 +12,8 @@ Topic schema for ``strands/{peer_id}/input/{device_name}``::
         "method": "arm" | "gamepad" | "keyboard" | "phone",
         "t": <unix-timestamp>,
         "seq": <monotonic-frame-counter>,
-        "action": {"motor.pos": float,...},
-        "events": {"terminate_episode": bool,...} | null
+        "action": {"motor.pos": float, ...},
+        "events": {"terminate_episode": bool, ...} | null
     }
 """
 

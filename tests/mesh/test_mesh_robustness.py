@@ -232,7 +232,7 @@ def test_hardware_robot_cleanup_stops_mesh() -> None:
     from strands_robots import hardware_robot
 
     # Build a HardwareRobot without going through the full robot() path —
-    # we just need an instance with the.mesh attribute and a cleanup() that
+    # we just need an instance with the .mesh attribute and a cleanup() that
     # works (no real hardware).
     hw = hardware_robot.Robot.__new__(hardware_robot.Robot)
     # Minimal fields cleanup() reads.

@@ -52,7 +52,7 @@ __all__ = [
     # Factory & registry
     "init_mesh",
     "get_local_robots",
-    # Session helpers (re-exported from.session for convenience)
+    # Session helpers (re-exported from .session for convenience)
     "put",
     "get_session",
     "release_session",
