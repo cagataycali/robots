@@ -139,3 +139,54 @@ class TestResumeLockoutTimingOracleClosed:
             "leaks len(provided) via compare_digest's length-mismatch "
             "shortcut."
         )
+
+
+# ---------------------------------------------------------------------------
+# Thread 5: Mesh.publish must shadow SensorLoopsMixin.publish via MRO.
+# ---------------------------------------------------------------------------
+
+
+def test_mesh_publish_shadows_sensor_loops_mixin():
+    """``Mesh.publish`` must shadow the ``SensorLoopsMixin.publish`` stub.
+
+    Review feedback: the mixin's ``publish`` body raises
+    ``NotImplementedError`` -- a deliberate replacement for the prior
+    ``...`` no-effect statement (CodeQL #226). The contract is that
+    ``Mesh`` itself defines a real ``publish`` so the stub is never
+    reached at runtime.
+
+    The contract chain ('``Mesh.publish`` shadows this stub via MRO')
+    depends on every host class declaring ``class Mesh(SensorLoopsMixin)``
+    AND defining its own ``publish``. A future refactor that inserts
+    another mixin between them (e.g. one that also implements ``publish``
+    but forwards differently), or removes ``Mesh.publish`` entirely,
+    would silently fall through to ``NotImplementedError`` only at
+    runtime when a sensor loop fires (POSE_HZ tick, IMU tick, etc.) --
+    a latent fault that escapes import-time checks and unit tests of
+    other paths.
+
+    This test surfaces such a regression at collection time, so a
+    subclass authoring error trips CI before any sensor loop runs in
+    production. Per AGENTS.md > "Pin regression tests for reviewed
+    fixes".
+    """
+    from strands_robots.mesh import sensors
+
+    mesh_publish = core.Mesh.publish
+    mixin_publish = sensors.SensorLoopsMixin.publish
+
+    assert mesh_publish is not mixin_publish, (
+        "Mesh.publish must override SensorLoopsMixin.publish; the mixin "
+        "stub raises NotImplementedError and is never meant to execute. "
+        "If this fires, either Mesh lost its publish definition or a "
+        "mixin was reordered -- check the MRO."
+    )
+
+    # Belt-and-braces: Mesh's own ``__dict__`` must carry ``publish``,
+    # not just inherit it from somewhere on the MRO. This catches the
+    # subtler regression where someone deletes ``Mesh.publish`` and
+    # accidentally relies on a different mixin's implementation.
+    assert "publish" in core.Mesh.__dict__, (
+        "Mesh.publish must be defined on Mesh itself, not inherited "
+        "from the mixin."
+    )
