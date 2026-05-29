@@ -34,12 +34,44 @@ def _envelope(t: float, peer_id: str = "issuer", **extra):
     return SimpleNamespace(payload=SimpleNamespace(to_bytes=lambda r=raw: r))
 
 
-def test_distinct_issuers_same_t_audited_as_corroborated():
-    """
-    Two distinct operators with colliding t should audit as corroborated.
+_OPERATOR_A_ZID = "0123456789abcdef0123456789abcdef"
+_OPERATOR_B_ZID = "fedcba9876543210fedcba9876543210"
 
-    Pre-fix: second estop audited as estop_replay_rejected (false negative).
-    Post-fix: second estop within 0.2s of lockout audited as estop_corroborated.
+
+def _envelope_with_wire_zid(t, peer_id, wire_zid, **extra):
+    """Build a Zenoh-sample fake whose ``source_info.source_id.zid``
+    stringifies to *wire_zid* and whose body declares ``source_zid`` to
+    match (the production code requires body/wire agreement before the
+    cache check is reached).
+    """
+    body = {"peer_id": peer_id, "t": t, "source_zid": wire_zid, **extra}
+    raw = json.dumps(body).encode()
+
+    class _Zid:
+        def __init__(self, s):
+            self._s = s
+
+        def __str__(self):
+            return self._s
+
+    return SimpleNamespace(
+        payload=SimpleNamespace(to_bytes=lambda r=raw: r),
+        source_info=SimpleNamespace(
+            source_id=SimpleNamespace(zid=_Zid(wire_zid)),
+            source_sn=1,
+        ),
+    )
+
+
+def test_distinct_issuers_distinct_wire_zids_same_t_audited_as_corroborated():
+    """
+    Two distinct operators on distinct mTLS sessions with colliding t
+    should audit as corroborated.
+
+    The wire_zid distinctness is the trust anchor: peer_id is
+    body-supplied (untrusted) and was the original mis-classification
+    surface (R7 regression). wire_zid is bound by Zenoh's mTLS handshake
+    and cannot be forged by a same-session attacker.
     """
     mesh = _stub_mesh()
     audit_calls = []
@@ -49,23 +81,139 @@ def test_distinct_issuers_same_t_audited_as_corroborated():
 
     mesh.publish_safety_event = capture_audit  # type: ignore[method-assign]
 
-    # First estop from operator A
+    # First estop from operator A on session zid A.
     envelope_t = time.time()
     mesh._estop_lockout.set()
     mesh._last_estop_ts = envelope_t
-    mesh._estop_replay_cache[float(envelope_t)] = time.monotonic()
+    mesh._estop_replay_cache[float(envelope_t)] = (
+        "operator-A",
+        time.monotonic(),
+        _OPERATOR_A_ZID,
+    )
 
-    # Second estop from operator B with same t (colliding timestamp)
-    mesh._on_safety_estop(_envelope(t=envelope_t, peer_id="operator-B", reason="Operator B emergency"))
+    # Second estop from operator B on a DIFFERENT session zid, same t.
+    mesh._on_safety_estop(
+        _envelope_with_wire_zid(
+            t=envelope_t,
+            peer_id="operator-B",
+            wire_zid=_OPERATOR_B_ZID,
+            reason="Operator B emergency",
+        )
+    )
 
-    # Pre-fix: audit_calls contains estop_replay_rejected
-    # Post-fix: audit_calls contains estop_corroborated (lockout active, within 0.2s)
     assert len(audit_calls) == 1, f"Expected 1 audit call, got {len(audit_calls)}"
     assert audit_calls[0]["event_type"] == "estop_corroborated", (
         f"Expected estop_corroborated, got {audit_calls[0]['event_type']}"
     )
     assert audit_calls[0]["severity"] == "info"
     assert audit_calls[0]["payload"]["issuer"] == "operator-B"
+    # New: corroboration audit names the cross-session wire zids so an
+    # operator dashboard can prove independence post-hoc.
+    assert audit_calls[0]["payload"]["wire_zid"] == _OPERATOR_B_ZID
+    assert audit_calls[0]["payload"]["corroborates_wire_zid"] == _OPERATOR_A_ZID
+
+
+def test_same_wire_zid_mutated_peer_id_audited_as_replay_rejected():
+    """
+    R7 regression pin: a same-session attacker who captures a legitimate
+    estop and republishes within 200 ms with a mutated body ``peer_id``
+    must audit as ``estop_replay_rejected`` (severity ``warning``,
+    operator-dashboard-visible) -- NOT ``estop_corroborated`` (severity
+    ``info``, false-positive forensic).
+
+    Pre-fix: the corroboration heuristic was "lockout active + within
+    0.2 s of last estop", which classified this attacker case as
+    corroboration because the cache key (``float(t)``) was peer_id-blind
+    and the heuristic did not consult the wire_zid.
+
+    Post-fix: corroboration requires both wire_zids to be non-None AND
+    distinct. A same-zid replay -- regardless of body peer_id -- audits
+    as replay_rejected.
+    """
+    mesh = _stub_mesh()
+    audit_calls = []
+
+    def capture_audit(**kwargs):
+        audit_calls.append(kwargs)
+
+    mesh.publish_safety_event = capture_audit  # type: ignore[method-assign]
+
+    # Legitimate first estop establishes the cache slot bound to wire_zid A.
+    envelope_t = time.time()
+    mesh._estop_lockout.set()
+    mesh._last_estop_ts = envelope_t
+    mesh._estop_replay_cache[float(envelope_t)] = (
+        "legit-operator",
+        time.monotonic(),
+        _OPERATOR_A_ZID,
+    )
+
+    # Attacker on the SAME wire_zid republishes with a mutated body
+    # peer_id, hoping to earn an ``estop_corroborated`` (severity info)
+    # attribution they did not provide.
+    mesh._on_safety_estop(
+        _envelope_with_wire_zid(
+            t=envelope_t,
+            peer_id="attacker-claims-corroboration",
+            wire_zid=_OPERATOR_A_ZID,  # same wire_zid as the cached slot
+            reason="forged corroboration attempt",
+        )
+    )
+
+    assert len(audit_calls) == 1, f"Expected 1 audit call, got {len(audit_calls)}"
+    # Critical: the audit must classify this as REPLAY, not corroboration.
+    assert audit_calls[0]["event_type"] == "estop_replay_rejected", (
+        f"R7 regression: same-wire-zid mutated-peer_id replay must audit as "
+        f"estop_replay_rejected, got {audit_calls[0]['event_type']}"
+    )
+    assert audit_calls[0]["severity"] == "warning"
+    # The replay-rejection payload preserves the (forged) attacker peer_id
+    # and the original t for forensics, but the severity/event_type
+    # signals are correct.
+    assert audit_calls[0]["payload"]["issuer"] == "attacker-claims-corroboration"
+    assert audit_calls[0]["payload"]["issuer_t"] == envelope_t
+
+
+def test_attribution_less_transport_same_t_audited_as_replay_rejected():
+    """
+    Bridge / IoT transports legitimately have no SourceInfo, so wire_zid
+    is ``None`` on either or both sides. Without a TLS-bound attribution
+    anchor, corroboration cannot be proven -- the second envelope MUST
+    be classified as replay (the conservative, security-preserving
+    default), not silently downgraded to ``info``.
+    """
+    mesh = _stub_mesh()
+    audit_calls = []
+
+    def capture_audit(**kwargs):
+        audit_calls.append(kwargs)
+
+    mesh.publish_safety_event = capture_audit  # type: ignore[method-assign]
+
+    envelope_t = time.time()
+    mesh._estop_lockout.set()
+    mesh._last_estop_ts = envelope_t
+    # Cached slot has wire_zid=None (bridge publisher).
+    mesh._estop_replay_cache[float(envelope_t)] = (
+        "bridge-operator",
+        time.monotonic(),
+        None,
+    )
+
+    # Incoming envelope ALSO has wire_zid=None (no source_info).
+    body = {"peer_id": "second-bridge-operator", "t": envelope_t}
+    raw = json.dumps(body).encode()
+    sample = SimpleNamespace(
+        payload=SimpleNamespace(to_bytes=lambda r=raw: r),
+        source_info=None,
+    )
+    mesh._on_safety_estop(sample)
+
+    assert len(audit_calls) == 1
+    assert audit_calls[0]["event_type"] == "estop_replay_rejected", (
+        "attribution-less transports cannot prove corroboration; must "
+        "audit as replay_rejected"
+    )
 
 
 class TestEstopRedundantAudit:
@@ -158,7 +306,7 @@ class TestEstopPerIssuerFairnessBound:
         # per-issuer count is derived from cache contents, not a
         # separate dict. Count entries owned by attacker-1; the
         # attacker is capped at per_issuer_cap = MAX // 4 = 2 slots.
-        attacker_slots = sum(1 for issuer, _mono in m._estop_replay_cache.values() if issuer == "attacker-1")
+        attacker_slots = sum(1 for issuer, _mono, _zid in m._estop_replay_cache.values() if issuer == "attacker-1")
         assert attacker_slots <= 2, (
             f"attacker should be capped at 2 slots, got {attacker_slots} (cache: {m._estop_replay_cache})"
         )
@@ -195,12 +343,20 @@ class TestPerIssuerCountFromCache:
         m._on_safety_estop(S())
 
         assert len(m._estop_replay_cache) == 1
-        # Value is now (issuer_id, mono_ts) tuple
+        # Value is (issuer_id, mono_ts, wire_zid_or_None) 3-tuple.
+        # The third element captures the TLS-bound publisher zid in
+        # effect when the slot was first populated; it gates the
+        # corroboration-vs-replay classification on later same-t hits.
         value = next(iter(m._estop_replay_cache.values()))
-        assert isinstance(value, tuple), "cache value must be (issuer_id, mono_ts) tuple"
-        issuer, mono_ts = value
+        assert isinstance(value, tuple), "cache value must be (issuer_id, mono_ts, wire_zid) tuple"
+        assert len(value) == 3, f"cache value must be 3-tuple, got len={len(value)}"
+        issuer, mono_ts, wire_zid = value
         assert issuer == "alice"
         assert isinstance(mono_ts, float)
+        # No source_info on the test envelope -> wire_zid is None.
+        # This is the bridge/IoT path; corroboration is unavailable but
+        # the cache entry is still valid for replay-rejection.
+        assert wire_zid is None, f"expected wire_zid=None for source_info-less stub, got {wire_zid!r}"
 
 
 class TestF14OverCapBlocksLockout:

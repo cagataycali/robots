@@ -338,7 +338,7 @@ class Mesh(SensorLoopsMixin):
         # timestamp. Per-issuer counts are derived from cache
         # contents on demand -- no separate dict that can drift
         # after eviction (the prior flaw).
-        self._estop_replay_cache: dict[float, tuple[str, float]] = {}
+        self._estop_replay_cache: dict[float, tuple[str, float, str | None]] = {}
         self._estop_replay_lock = threading.Lock()
 
         # Safety topic publishers. Held lazily so the receiver path
@@ -1436,14 +1436,61 @@ class Mesh(SensorLoopsMixin):
         now_mono = time.monotonic()
         with self._estop_replay_lock:
             if cache_key in self._estop_replay_cache:
-                # If lockout is active and within 0.2s, this is corroboration
-                # (two distinct operators, same t) not a replay attack.
-                if self._estop_lockout.is_set() and (time.time() - self._last_estop_ts) < 0.2:
+                # Corroboration vs replay disambiguation gated on the
+                # TLS-bound wire ``source_zid``. The previous heuristic
+                # ("lockout active + within 0.2s -> corroboration") was
+                # forgeable: a same-session attacker who captured a
+                # legitimate envelope could republish it within 200 ms
+                # with a mutated body ``peer_id`` and earn an
+                # ``estop_corroborated`` audit (severity ``info``,
+                # operator-dashboard-invisible) instead of
+                # ``estop_replay_rejected`` (severity ``warning``).
+                #
+                # The cache value tuple now carries the wire_zid in
+                # effect when the slot was first populated. A second
+                # envelope is treated as legitimate cross-session
+                # corroboration ONLY IF:
+                #   * the cached wire_zid is non-None (slot was
+                #     established by a TLS-bound publisher),
+                #   * the new wire_zid is non-None,
+                #   * the two zids differ (two distinct mTLS
+                #     sessions -> two distinct operators).
+                # Same-zid replay -- including the
+                # mutated-peer_id case -- audits as
+                # ``estop_replay_rejected`` per the original threat
+                # model. Bridge / IoT transports that legitimately have
+                # no SourceInfo (wire_zid is ``None`` on either side)
+                # also fall into the rejection branch: corroboration
+                # over an attribution-less transport cannot be proven.
+                cached_entry = self._estop_replay_cache[cache_key]
+                # Defensive unpack: the canonical value is a
+                # ``(issuer_id, mono_ts, wire_zid)`` 3-tuple, but legacy
+                # test stubs may seed the cache with a bare float
+                # mono_ts. ``isinstance`` keeps this method total.
+                if isinstance(cached_entry, tuple) and len(cached_entry) >= 3:
+                    cached_wire_zid = cached_entry[2]
+                else:
+                    cached_wire_zid = None
+                wire_zids_distinct = (
+                    cached_wire_zid is not None
+                    and wire_zid is not None
+                    and cached_wire_zid != wire_zid
+                )
+                if (
+                    wire_zids_distinct
+                    and self._estop_lockout.is_set()
+                    and (time.time() - self._last_estop_ts) < 0.2
+                ):
                     try:
                         self.publish_safety_event(
                             event_type="estop_corroborated",
                             severity="info",
-                            payload={"issuer": issuer_id, "issuer_t": envelope_t},
+                            payload={
+                                "issuer": issuer_id,
+                                "issuer_t": envelope_t,
+                                "wire_zid": wire_zid,
+                                "corroborates_wire_zid": cached_wire_zid,
+                            },
                         )
                     except (TypeError, ValueError, OSError) as audit_exc:
                         # Narrow per AGENTS.md > "Exception Clauses Must Be Narrow".
@@ -1456,7 +1503,8 @@ class Mesh(SensorLoopsMixin):
                             audit_exc,
                         )
                     return
-                # Original replay rejection
+                # Original replay rejection (now also covers same-wire-zid
+                # mutated-peer_id replays and attribution-less transports).
                 logger.warning(
                     "[safety] %s: REJECTED remote estop -- replay of (issuer=%s, t=%s) already accepted",
                     self.peer_id,
@@ -1508,7 +1556,7 @@ class Mesh(SensorLoopsMixin):
             # at every instant -- they never hold more than that fraction
             # of the global cache, so legitimate operators always have
             # ``_resume_replay_cache_max() - per_issuer_cap`` slots available.
-            issuer_slots = sum(1 for issuer, _mono in self._estop_replay_cache.values() if issuer == issuer_id)
+            issuer_slots = sum(1 for issuer, _mono, _zid in self._estop_replay_cache.values() if issuer == issuer_id)
             if issuer_slots >= per_issuer_cap:
                 logger.warning(
                     "[safety] %s: REFUSED estop cache slot -- issuer %r already at cap %d "
@@ -1539,7 +1587,7 @@ class Mesh(SensorLoopsMixin):
                         audit_exc,
                     )
             else:
-                self._estop_replay_cache[cache_key] = (issuer_id, now_mono)
+                self._estop_replay_cache[cache_key] = (issuer_id, now_mono, wire_zid)
 
             # when the issuer is over their
             # cap, refuse to engage the lockout AS WELL as refuse the
