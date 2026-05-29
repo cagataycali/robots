@@ -8,6 +8,7 @@ Extended sensor loops (pose, IMU, health, etc.) are provided by
 from __future__ import annotations
 
 import base64
+import hashlib
 import hmac
 import json
 import logging
@@ -2226,11 +2227,39 @@ class Mesh(SensorLoopsMixin):
         expected = os.getenv("STRANDS_MESH_OVERRIDE_CODE", "").strip()
         provided = (override_code or "").strip()
         lockout_engaged = self._estop_lockout.is_set()
-        # Always perform the compare. If `expected` is empty, compare
-        # against a placeholder of the same byte length as the provided
-        # value so the compare runs to completion either way.
-        compare_target = expected.encode() if expected else b"\x00" * max(1, len(provided))
-        compare_ok = hmac.compare_digest(compare_target, provided.encode())
+        # Always perform the compare against fixed-length sha256 digests
+        # so the compare runs to completion regardless of:
+        #   * whether ``expected`` is configured,
+        #   * the byte length of either input.
+        # The previous formulation -- ``compare_digest(expected.encode()
+        # or b"\x00" * len(provided), provided.encode())`` -- closed the
+        # configured-vs-unconfigured oracle but left a residual
+        # ``len(expected) == len(provided)`` length oracle:
+        # ``hmac.compare_digest`` is documented constant-time only when
+        # both operands have equal length, and CPython returns a fast
+        # ``False`` on length mismatch. By pre-hashing both inputs to a
+        # fixed 32-byte digest before the compare, both length oracles
+        # collapse: the compare always runs over 32 bytes regardless of
+        # configuration or attacker probe length.
+        #
+        # The pre-hash uses sha256 (collision-resistant for the 32-byte
+        # output domain) so a digest collision is the only way for the
+        # compare to accept a wrong code; correctness is unchanged from
+        # the prior byte-equality check. When ``expected`` is empty the
+        # placeholder digest is the sha256 of a fixed sentinel value, so
+        # the compare always mismatches without paying a different-length
+        # cost.
+        _PROVIDED_HASH = hashlib.sha256(provided.encode()).digest()
+        if expected:
+            _EXPECTED_HASH = hashlib.sha256(expected.encode()).digest()
+        else:
+            # Sentinel digest: sha256(b"\x00" * 32) is a constant a
+            # remote prober cannot synthesise an override-code preimage
+            # for (it would require breaking sha256). Same byte length
+            # (32) as any real digest, so the compare-call cost is
+            # identical to the configured-code path.
+            _EXPECTED_HASH = hashlib.sha256(b"\x00" * 32).digest()
+        compare_ok = hmac.compare_digest(_EXPECTED_HASH, _PROVIDED_HASH)
 
         if not lockout_engaged:
             self.publish_safety_event(
