@@ -29,17 +29,20 @@ from strands_robots.mesh.iot.provision import (
 # Test fixtures
 
 
-@pytest.fixture(autouse=True)
-def _bypass_ca_for_tests(monkeypatch):
-    """Bypass the Amazon Root CA pin check for every test in this module.
+@pytest.fixture
+def bypass_ca(monkeypatch):
+    """Opt-in CA-pin bypass for tests that exercise ``provision_robot``
+    / ``provision_operator`` orchestration.
 
-    The provisioning tests focus on IoT API call orchestration, not CA
-    fetching. We monkey-patch ``_ensure_ca`` to a no-op so the tests do
-    not need to pre-seed a real pinned CA file or mock urllib. The CA
-    pinning behaviour itself has dedicated coverage in
-    ``test_iot_ca_pin.py`` -- including a regression test that the
-    on-disk re-use path always raw-checks the pin even when the
-    ``STRANDS_MESH_DISABLE_CA_PIN`` break-glass is set.
+    Stub ``_ensure_ca`` to a no-op so a test does not need to pre-seed
+    a real pinned CA file or mock urllib.  CA pinning behaviour itself
+    has dedicated coverage in ``test_iot_ca_pin.py`` -- including a
+    regression test that the on-disk re-use path always raw-checks the
+    pin even when the ``STRANDS_MESH_DISABLE_CA_PIN`` break-glass is
+    set.  Tests that don't go through the provisioning entry points
+    don't get the bypass, so a future refactor that drops the
+    ``_ensure_ca`` call from ``provision_robot`` would still surface in
+    a test that exercises the production call path.
 
     NB: we deliberately do NOT use ``STRANDS_MESH_DISABLE_CA_PIN=true``
     here. The break-glass only applies to the *download* path; the
@@ -197,6 +200,7 @@ class TestEnsurePolicy:
 
 
 class TestProvisionRobot:
+    pytestmark = pytest.mark.usefixtures("bypass_ca")
     """End-to-end provisioning with all AWS calls mocked."""
 
     def test_writes_certs_with_correct_permissions(self, fake_iot_client, tmp_cert_dir, monkeypatch):
@@ -294,6 +298,7 @@ class TestProvisionRobot:
 
 
 class TestProvisionOperator:
+    pytestmark = pytest.mark.usefixtures("bypass_ca")
     """Operator provisioning uses the operator policy, not the robot policy."""
 
     def test_uses_operator_policy(self, fake_iot_client, tmp_cert_dir, monkeypatch):
@@ -347,6 +352,7 @@ class TestProvisionedThingDataclass:
 
 
 class TestCleanupStaleCerts:
+    pytestmark = pytest.mark.usefixtures("bypass_ca")
     """Re-running provision_robot must not accumulate certs.
 
     Regression coverage for the security-relevant bug found in cycle 9 of

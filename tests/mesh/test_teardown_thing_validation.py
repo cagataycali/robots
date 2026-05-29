@@ -56,3 +56,96 @@ class TestTeardownThingValidation:
             provision.teardown_thing("valid-robot-name_123")
 
         assert mock_called, "_require_boto3 should be called after validation passes"
+
+
+class TestTeardownThingCertDirParity:
+    """teardown_thing must honour a custom cert_dir to match provision_robot.
+
+    Regression for the asymmetry where provision_robot accepted ``cert_dir=``
+    but teardown_thing was hardcoded to DEFAULT_CERT_DIR -- callers who
+    provisioned with a custom cert_dir would silently leak .cert.pem and
+    .private.key on disk forever after teardown.
+    """
+
+    def test_cert_dir_kwarg_unlinks_local_files(self, tmp_path, monkeypatch):
+        """teardown_thing(thing, cert_dir=tmp) must unlink files under tmp,
+        not under DEFAULT_CERT_DIR."""
+        from strands_robots.mesh.iot import provision
+
+        # Seed cert + key files in a custom dir
+        custom_dir = tmp_path / "iot"
+        custom_dir.mkdir()
+        cert = custom_dir / "test-robot.cert.pem"
+        key = custom_dir / "test-robot.private.key"
+        cert.write_text("FAKE CERT")
+        key.write_text("FAKE KEY")
+        assert cert.exists() and key.exists()
+
+        # Stub boto3 + the iot client so teardown reaches the unlink loop
+        # without making real AWS calls.
+        fake_iot = type("FakeIoT", (), {})()
+
+        class _NotFound(Exception):
+            pass
+
+        fake_iot.exceptions = type(
+            "FakeExc",
+            (),
+            {"ResourceNotFoundException": _NotFound},
+        )()
+        fake_iot.list_thing_principals = lambda **kw: {"principals": []}
+        fake_iot.delete_thing = lambda **kw: None
+
+        fake_boto3 = type("FakeBoto3", (), {})()
+        fake_boto3.client = lambda *a, **kw: fake_iot
+        monkeypatch.setattr(provision, "_require_boto3", lambda: fake_boto3)
+
+        provision.teardown_thing("test-robot", cert_dir=custom_dir)
+
+        # Both files should now be gone under the custom dir.
+        assert not cert.exists(), "cert.pem leaked under custom cert_dir"
+        assert not key.exists(), "private.key leaked under custom cert_dir"
+
+    def test_no_public_key_suffix_attempted(self, tmp_path, monkeypatch):
+        """``.public.key`` was dead code (``_create_cert`` never writes it).
+        teardown_thing should not attempt to unlink it."""
+        from strands_robots.mesh.iot import provision
+
+        custom_dir = tmp_path / "iot"
+        custom_dir.mkdir()
+
+        attempted: list[str] = []
+        original_unlink = type(custom_dir).unlink
+
+        def _track_unlink(self, *a, **kw):
+            attempted.append(self.name)
+            return original_unlink(self, *a, **kw)
+
+        monkeypatch.setattr(type(custom_dir), "unlink", _track_unlink)
+
+        fake_iot = type("FakeIoT", (), {})()
+
+        class _NotFound(Exception):
+            pass
+
+        fake_iot.exceptions = type(
+            "FakeExc",
+            (),
+            {"ResourceNotFoundException": _NotFound},
+        )()
+        fake_iot.list_thing_principals = lambda **kw: {"principals": []}
+        fake_iot.delete_thing = lambda **kw: None
+        fake_boto3 = type("FakeBoto3", (), {})()
+        fake_boto3.client = lambda *a, **kw: fake_iot
+        monkeypatch.setattr(provision, "_require_boto3", lambda: fake_boto3)
+
+        # Pre-seed only the suffixes _create_cert actually writes.
+        (custom_dir / "robot.cert.pem").write_text("c")
+        (custom_dir / "robot.private.key").write_text("k")
+
+        provision.teardown_thing("robot", cert_dir=custom_dir)
+
+        # We should never have attempted a `.public.key` suffix.
+        assert not any(name.endswith(".public.key") for name in attempted), (
+            f"unexpected .public.key unlink attempt in {attempted}"
+        )

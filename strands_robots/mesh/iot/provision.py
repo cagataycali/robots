@@ -491,12 +491,19 @@ def provision_operator(
     )
 
 
-def teardown_thing(thing_name: str, *, region: str | None = None) -> None:
+def teardown_thing(
+    thing_name: str,
+    *,
+    region: str | None = None,
+    cert_dir: Path | str | None = None,
+) -> None:
     """Detach + delete every cert attached to *thing_name*, then delete the Thing.
 
-    Cleans up the cert files in ``DEFAULT_CERT_DIR`` if they're named after
-    this Thing. Does NOT delete the policies — those are shared across all
-    robots and removing them would break siblings.
+    Cleans up the cert files under *cert_dir* (defaults to
+    :data:`DEFAULT_CERT_DIR`) if they're named after this Thing.  Pass the
+    same ``cert_dir`` you used at provision time so the on-disk cert and key
+    are removed instead of orphaned.  Does NOT delete the policies — those
+    are shared across all robots and removing them would break siblings.
 
     Idempotent: missing Thing or no certs is a silent success.
     """
@@ -514,18 +521,18 @@ def teardown_thing(thing_name: str, *, region: str | None = None) -> None:
         cert_id = cert_arn.rsplit("/", 1)[-1]
         try:
             iot.detach_thing_principal(thingName=thing_name, principal=cert_arn)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- iot.exceptions.ClientError / BotoCoreError; teardown is idempotent best-effort
             logger.debug("[teardown] detach %s from %s: %s", cert_id, thing_name, exc)
         # Detach all attached policies first
         try:
             for pol in iot.list_attached_policies(target=cert_arn).get("policies", []):
                 iot.detach_policy(policyName=pol["policyName"], target=cert_arn)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- iot.exceptions.ClientError / BotoCoreError; teardown is idempotent best-effort
             logger.debug("[teardown] detach policies from %s: %s", cert_id, exc)
         try:
             iot.update_certificate(certificateId=cert_id, newStatus="INACTIVE")
             iot.delete_certificate(certificateId=cert_id, forceDelete=True)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- iot.exceptions.ClientError / BotoCoreError; teardown is idempotent best-effort
             logger.warning("[teardown] could not delete cert %s: %s", cert_id, exc)
 
     # Delete the Thing
@@ -535,9 +542,13 @@ def teardown_thing(thing_name: str, *, region: str | None = None) -> None:
     except iot.exceptions.ResourceNotFoundException:
         pass
 
-    # Remove local cert files
-    for suffix in (".cert.pem", ".private.key", ".public.key"):
-        p = DEFAULT_CERT_DIR / f"{thing_name}{suffix}"
+    # Remove local cert files.  Honour a custom ``cert_dir`` so we don't
+    # orphan certs provisioned with ``provision_robot(..., cert_dir=...)``.
+    # ``_create_cert`` only writes ``.cert.pem`` and ``.private.key`` -- a
+    # ``.public.key`` suffix was dead code and is intentionally dropped.
+    target_cert_dir = Path(cert_dir) if cert_dir else DEFAULT_CERT_DIR
+    for suffix in (".cert.pem", ".private.key"):
+        p = target_cert_dir / f"{thing_name}{suffix}"
         if p.exists():
             try:
                 p.unlink()

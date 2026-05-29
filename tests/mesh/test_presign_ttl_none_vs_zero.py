@@ -60,3 +60,40 @@ class TestPresignTTLNoneVsZero:
         monkeypatch.delenv("STRANDS_MESH_CAMERA_PRESIGN_TTL", raising=False)
         off = CameraOffloader(bucket="b", presign_ttl=-10)
         assert off.presign_ttl == 1
+
+
+class TestEnvVarMalformed:
+    """Non-integer STRANDS_MESH_CAMERA_PRESIGN_TTL must not crash __init__.
+
+    Regression: ``int(os.getenv(...))`` would raise ValueError on a typo'd
+    env var ('forever', '1m', whitespace), bricking CameraOffloader at
+    construction time with a confusing traceback.  We fall back to the
+    documented default with a WARNING instead.
+    """
+
+    def test_non_numeric_falls_back_with_warning(self, monkeypatch, caplog):
+        import logging
+
+        from strands_robots.mesh.iot.camera_offload import (
+            DEFAULT_PRESIGN_TTL_SECONDS,
+            CameraOffloader,
+        )
+
+        monkeypatch.setenv("STRANDS_MESH_CAMERA_PRESIGN_TTL", "forever")
+        with caplog.at_level(logging.WARNING, logger="strands_robots.mesh.iot.camera_offload"):
+            c = CameraOffloader(bucket="b")
+        assert c.presign_ttl == DEFAULT_PRESIGN_TTL_SECONDS
+        assert any("is not an integer" in m for m in caplog.messages), (
+            f"expected WARNING about non-integer env var; got {caplog.messages}"
+        )
+
+    def test_empty_string_falls_back_silently(self, monkeypatch):
+        """Empty string should be treated as 'unset' (no warning), not crash."""
+        from strands_robots.mesh.iot.camera_offload import (
+            DEFAULT_PRESIGN_TTL_SECONDS,
+            CameraOffloader,
+        )
+
+        monkeypatch.setenv("STRANDS_MESH_CAMERA_PRESIGN_TTL", "")
+        c = CameraOffloader(bucket="b")
+        assert c.presign_ttl == DEFAULT_PRESIGN_TTL_SECONDS

@@ -269,9 +269,10 @@ class TestCameraOffloaderTTLBounds:
     def test_ttl_zero_clamped_to_one(self):
         c = CameraOffloader(bucket="b", presign_ttl=0)
         # ttl=0 means "always-expired URL" which is useless; clamp to 1.
-        # NB: presign_ttl=0 is falsy so the os.getenv fallback runs;
-        # the code path explicitly clamps anything < 1 to 1.
-        assert c.presign_ttl >= 1
+        # presign_ttl=0 is explicit (not None), so the env-var fallback is
+        # skipped and the < 1 floor clamps it to exactly 1.  See
+        # tests/mesh/test_presign_ttl_none_vs_zero.py for the full matrix.
+        assert c.presign_ttl == 1
 
     def test_ttl_negative_env_clamped(self, monkeypatch):
         monkeypatch.setenv("STRANDS_MESH_CAMERA_PRESIGN_TTL", "-99")
