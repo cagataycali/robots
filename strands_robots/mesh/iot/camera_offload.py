@@ -116,6 +116,11 @@ class CameraOffloader:
             )
             ttl_raw = MAX_PRESIGN_TTL_SECONDS
         if ttl_raw < 1:
+            if presign_ttl is None:
+                logger.warning(
+                    "[camera_offload] STRANDS_MESH_CAMERA_PRESIGN_TTL=%d < 1 floor; clamping to 1s",
+                    ttl_raw,
+                )
             ttl_raw = 1
         self.presign_ttl = ttl_raw
         self.region = region or os.getenv("AWS_REGION", os.getenv("AWS_DEFAULT_REGION"))

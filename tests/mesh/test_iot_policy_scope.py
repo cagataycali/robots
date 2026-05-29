@@ -104,3 +104,26 @@ class TestOperatorPolicy:
         for r in st["Resource"]:
             assert "/camera/" not in r
             assert "/input/" not in r
+
+    def test_publish_to_fleet_wildcard_is_deliberate(self):
+        """Pin: OperatorPublishToFleet uses ``strands/*/cmd`` wildcard by design.
+
+        The system has no per-operator-to-per-robot binding. A compromised
+        operator credential has equivalent scope to a compromised fleet
+        command authority. Mitigations are short-lived certs, the
+        OperatorShadow attribute condition, and the operational audit log.
+        A per-robot operator scope would require one policy document per
+        robot, scaling policy count linearly with fleet size.
+
+        If this test breaks, someone narrowed the operator publish scope --
+        verify the corresponding transport/dispatch code still routes
+        commands correctly.
+        """
+        sids = _statements_by_sid(_OPERATOR_POLICY_DOC)
+        st = sids["OperatorPublishToFleet"]
+        resources = st["Resource"]
+        # The wildcard ``strands/*/cmd`` must exist for the operator to
+        # address any robot without a per-robot policy.
+        assert any(r.endswith(":topic/strands/*/cmd") for r in resources), (
+            "OperatorPublishToFleet must retain the */cmd wildcard (deliberate design choice)"
+        )

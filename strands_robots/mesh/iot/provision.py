@@ -231,6 +231,19 @@ _OPERATOR_POLICY_DOC: dict[str, Any] = {
             "Resource": "arn:aws:iot:*:*:client/${iot:Connection.Thing.ThingName}",
         },
         {
+            # Deliberate wildcard: any operator credential can publish
+            # ``cmd`` to any robot (``strands/*/cmd``). The system has
+            # no per-operator-to-per-robot binding by design -- the
+            # threat model of a compromised operator is equivalent to a
+            # compromised fleet command authority. Mitigations: short-
+            # lived certs (rotation via ``provision_operator`` re-run),
+            # the OperatorShadow attribute condition that gates shadow
+            # reads, and operational audit (``mesh_audit.jsonl`` logs
+            # every command dispatch). A per-robot operator scope would
+            # require a per-robot policy document, which explodes the
+            # policy count linearly with fleet size. Pinned as
+            # intentional by test_iot_policy_scope.py::TestOperatorPolicy
+            # ::test_publish_to_fleet_wildcard_is_deliberate.
             "Sid": "OperatorPublishToFleet",
             "Effect": "Allow",
             "Action": ["iot:Publish", "iot:RetainPublish"],
@@ -499,13 +512,17 @@ def teardown_thing(
 ) -> None:
     """Detach + delete every cert attached to *thing_name*, then delete the Thing.
 
-    Cleans up the cert files under *cert_dir* (defaults to
-    :data:`DEFAULT_CERT_DIR`) if they're named after this Thing.  Pass the
-    same ``cert_dir`` you used at provision time so the on-disk cert and key
-    are removed instead of orphaned.  Does NOT delete the policies — those
-    are shared across all robots and removing them would break siblings.
+        Cleans up the cert files under *cert_dir* (defaults to
+        :data:`DEFAULT_CERT_DIR`) if they're named after this Thing.  Pass the
+        same ``cert_dir`` you used at provision time so the on-disk cert and key
+        are removed instead of orphaned.  Does NOT delete the policies — those
+        are shared across all robots and removing them would break siblings.
 
-    Idempotent: missing Thing or no certs is a silent success.
+        Idempotent: missing Thing or no certs is a silent success.
+    n    Note:
+            ``cert_dir`` is treated as trusted operator input -- it is not
+            validated beyond ``Path()`` coercion.  Do not pass LLM-generated
+            or otherwise untrusted values; this is a privileged provisioning API.
     """
     _validate_thing_name(thing_name)
     boto3 = _require_boto3()
