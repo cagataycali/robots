@@ -12,7 +12,6 @@ import pytest
 
 from strands_robots.mesh import core
 
-
 # ---------------------------------------------------------------------------
 # Thread 4: _resume_lockout HMAC compare is constant-time independent of
 # the byte length of the provided override code.
@@ -48,9 +47,7 @@ class TestResumeLockoutTimingOracleClosed:
         m.publish_safety_event = lambda **kw: None
         return m
 
-    def test_compare_target_is_fixed_length_when_expected_unset(
-        self, stub_mesh, monkeypatch
-    ):
+    def test_compare_target_is_fixed_length_when_expected_unset(self, stub_mesh, monkeypatch):
         """When ``STRANDS_MESH_OVERRIDE_CODE`` is unset the placeholder
         digest must still be 32 bytes (the sha256 of a fixed sentinel),
         matching the byte length of any real digest. This collapses the
@@ -71,9 +68,7 @@ class TestResumeLockoutTimingOracleClosed:
         # Lockout must not have cleared either way.
         assert stub_mesh._estop_lockout.is_set()
 
-    def test_compare_runs_on_fixed_digest_length_regardless_of_provided_length(
-        self, stub_mesh, monkeypatch
-    ):
+    def test_compare_runs_on_fixed_digest_length_regardless_of_provided_length(self, stub_mesh, monkeypatch):
         """The compare must operate on 32-byte sha256 digests so probes
         of varying length cannot leak ``len(expected)``.
 
@@ -96,9 +91,7 @@ class TestResumeLockoutTimingOracleClosed:
             assert result == {"status": "error", "error": "resume rejected"}, (
                 f"length-{len(probe)} probe leaked through compare (expected reject)"
             )
-            assert stub_mesh._estop_lockout.is_set(), (
-                f"length-{len(probe)} probe cleared lockout (compare oracle leak)"
-            )
+            assert stub_mesh._estop_lockout.is_set(), f"length-{len(probe)} probe cleared lockout (compare oracle leak)"
 
     def test_correct_override_code_clears_lockout(self, stub_mesh, monkeypatch):
         """The pre-hash refactor must not break the happy path: a
@@ -186,7 +179,96 @@ def test_mesh_publish_shadows_sensor_loops_mixin():
     # not just inherit it from somewhere on the MRO. This catches the
     # subtler regression where someone deletes ``Mesh.publish`` and
     # accidentally relies on a different mixin's implementation.
-    assert "publish" in core.Mesh.__dict__, (
-        "Mesh.publish must be defined on Mesh itself, not inherited "
-        "from the mixin."
-    )
+    assert "publish" in core.Mesh.__dict__, "Mesh.publish must be defined on Mesh itself, not inherited from the mixin."
+
+
+# ---------------------------------------------------------------------------
+# Thread 6: _estop_replay_cache shape invariant -- all entries are 3-tuples
+# (issuer_id, mono_ts, wire_zid). No half-defensive isinstance shim.
+# ---------------------------------------------------------------------------
+
+
+class TestEstopReplayCacheShapeInvariant:
+    """The ``_estop_replay_cache`` must only contain ``(str, float, str | None)``
+    3-tuple values. The type annotation at ``__init__`` declares this and the
+    sole writer (the acceptance path in ``_on_safety_estop``) emits it.
+
+    Pre-fix: a defensive ``isinstance(cached_entry, tuple) and len(cached_entry) >= 3``
+    at the corroboration-branch entry tolerated bare-float legacy stubs, but the
+    ts_view comprehension (``v[1]``) and per-issuer iteration (``for issuer, _mono,
+    _zid in ...values()``) both crashed on bare floats. The half-defensive state
+    masked contract violations at the corroboration site while letting them explode
+    at eviction time -- the worst of both worlds.
+
+    Post-fix: no isinstance guard. A bare-float entry crashes immediately on the
+    cache-hit path (``cached_entry[2]`` on a float raises TypeError), so shape
+    violations surface as close to the writer bug as possible.
+
+    This test pins the structural invariant: ``_on_safety_estop`` writes
+    3-tuples AND no defensive isinstance exists in the source.
+
+    Addresses review thread on core.py:1570.
+    """
+
+    def test_cache_writer_emits_3_tuple(self):
+        """The acceptance path writes (issuer_id, mono_ts, wire_zid)."""
+        import inspect
+
+        source = inspect.getsource(core.Mesh._on_safety_estop)
+        # The writer line: self._estop_replay_cache[cache_key] = (issuer_id, now_mono, wire_zid)
+        assert "(issuer_id, now_mono, wire_zid)" in source, (
+            "The estop replay cache writer must emit the canonical 3-tuple "
+            "(issuer_id, now_mono, wire_zid). If this fails, the shape "
+            "contract at __init__ has drifted from the writer."
+        )
+
+    def test_no_defensive_isinstance_on_cache_entry(self):
+        """The isinstance shim must be absent -- direct subscript access
+        surfaces shape violations immediately."""
+        import inspect
+
+        source = inspect.getsource(core.Mesh._on_safety_estop)
+        assert "isinstance(cached_entry, tuple)" not in source, (
+            "The defensive isinstance(cached_entry, tuple) shim was removed "
+            "because it disagreed with ts_view and per-issuer iteration. "
+            "If this fires, someone reintroduced the half-defensive state."
+        )
+
+    def test_bare_float_in_cache_crashes_on_hit(self):
+        """Verify that a bare-float cache entry is not tolerated.
+
+        Pre-fix this would silently set cached_wire_zid=None (degrading
+        corroboration to always-rejected). Post-fix it raises TypeError
+        on ``cached_entry[2]`` immediately.
+        """
+        import threading
+        import time
+
+        m = core.Mesh.__new__(core.Mesh)
+        m.peer_id = "test-receiver"
+        m._estop_replay_cache = {}
+        m._estop_replay_lock = threading.Lock()
+        m._estop_lockout = threading.Event()
+        m._last_estop_ts = 0.0
+        m._last_estop_mono = 0.0
+
+        # Seed a BARE FLOAT (the shape the removed isinstance tolerated)
+        bad_key = time.time()
+        m._estop_replay_cache[bad_key] = 123.456  # type: ignore[assignment]
+
+        # Simulate a cache-hit read at the corroboration branch.
+        # Post-fix: direct ``cached_entry[2]`` on a float raises TypeError.
+        cached_entry = m._estop_replay_cache[bad_key]
+        with pytest.raises(TypeError):
+            _ = cached_entry[2]  # type: ignore[index]
+
+    def test_type_annotation_matches_3_tuple(self):
+        """The __init__ type annotation must declare the 3-tuple shape."""
+        import inspect
+
+        source = inspect.getsource(core.Mesh.__init__)
+        assert "dict[float, tuple[str, float, str | None]]" in source, (
+            "The _estop_replay_cache type annotation must be "
+            "dict[float, tuple[str, float, str | None]] to enforce "
+            "the 3-tuple shape contract."
+        )

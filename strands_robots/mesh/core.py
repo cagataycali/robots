@@ -343,14 +343,14 @@ class Mesh(SensorLoopsMixin):
         # _resume_replay_cache_max() (the safety-replay defenses are
         # symmetric in shape; sharing the bounds keeps env-var surface
         # minimal).
-        # cache shape is
-        # ``dict[float_t, (issuer_id, mono_ts)]``. The float key
-        # preserves the prior peer_id-permutation defence (attacker
-        # cannot mint novel keys by varying untrusted JSON peer_id);
-        # the value carries issuer attribution AND the eviction
-        # timestamp. Per-issuer counts are derived from cache
-        # contents on demand -- no separate dict that can drift
-        # after eviction (the prior flaw).
+        # Cache shape: ``dict[float_t, (issuer_id, mono_ts, wire_zid)]``.
+        # The float key preserves the peer_id-permutation defence
+        # (attacker cannot mint novel keys by varying untrusted JSON
+        # peer_id); the 3-tuple value carries issuer attribution,
+        # the monotonic eviction timestamp, AND the TLS wire_zid at
+        # capture (for corroboration gating). Per-issuer counts are
+        # derived from cache contents on demand -- no separate dict
+        # that can drift after eviction.
         self._estop_replay_cache: dict[float, tuple[str, float, str | None]] = {}
         self._estop_replay_lock = threading.Lock()
 
@@ -1476,14 +1476,13 @@ class Mesh(SensorLoopsMixin):
                 # also fall into the rejection branch: corroboration
                 # over an attribution-less transport cannot be proven.
                 cached_entry = self._estop_replay_cache[cache_key]
-                # Defensive unpack: the canonical value is a
-                # ``(issuer_id, mono_ts, wire_zid)`` 3-tuple, but legacy
-                # test stubs may seed the cache with a bare float
-                # mono_ts. ``isinstance`` keeps this method total.
-                if isinstance(cached_entry, tuple) and len(cached_entry) >= 3:
-                    cached_wire_zid = cached_entry[2]
-                else:
-                    cached_wire_zid = None
+                # Cache values are always ``(issuer_id, mono_ts, wire_zid)``
+                # 3-tuples. The type annotation at __init__ enforces this
+                # shape and the only writer (line ~1601) emits it. No
+                # defensive isinstance -- half-defensive code disagrees
+                # with ts_view (line ~1545) and per-issuer iteration
+                # (line ~1570) which both assume the 3-tuple shape.
+                cached_wire_zid = cached_entry[2]
                 wire_zids_distinct = (
                     cached_wire_zid is not None and wire_zid is not None and cached_wire_zid != wire_zid
                 )
