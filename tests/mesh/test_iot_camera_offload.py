@@ -436,7 +436,6 @@ class TestPatchedPublishClosure:
         # Build a mesh stub
         mesh = MagicMock()
         mesh.peer_id = "robot-x"
-        mesh.publish = MagicMock()
         # Connected inner robot with one camera
         frame = np.zeros((480, 640, 3), dtype=np.uint8)
         mesh.robot.robot.is_connected = True
@@ -451,9 +450,9 @@ class TestPatchedPublishClosure:
         assert off_returned is off
         # Trigger the patched publish
         mesh._publish_cameras_once()
-        # mesh.publish must have been called exactly once for the ref topic
-        calls = [c for c in mesh.publish.call_args_list if "/ref" in c.args[0]]
-        assert len(calls) == 1, f"expected 1 ref publish, got {mesh.publish.call_args_list}"
+        # transport.put must have been called exactly once for the ref topic
+        calls = [c for c in transport.put.call_args_list if "/ref" in c.args[0]]
+        assert len(calls) == 1, f"expected 1 ref publish, got {transport.put.call_args_list}"
         topic, ref = calls[0].args
         assert topic == "strands/robot-x/camera/front/ref"
         assert ref["peer_id"] == "robot-x"
@@ -463,50 +462,50 @@ class TestPatchedPublishClosure:
         assert ref["presigned_url"] == "https://example.com/signed"
 
     def test_closure_skips_disconnected_robot(self, monkeypatch):
-        mesh, off, _t = self._make_mesh_with_camera(monkeypatch)
+        mesh, off, transport = self._make_mesh_with_camera(monkeypatch)
         mesh.robot.robot.is_connected = False
         enable_for_mesh(mesh, offloader=off)
         mesh._publish_cameras_once()
         # No /ref publish when disconnected
-        assert not any("/ref" in c.args[0] for c in mesh.publish.call_args_list)
+        assert not any("/ref" in c.args[0] for c in transport.put.call_args_list)
 
     def test_closure_skips_when_transport_dead(self, monkeypatch):
         mesh, off, transport = self._make_mesh_with_camera(monkeypatch)
         transport.is_alive.return_value = False
         enable_for_mesh(mesh, offloader=off)
         mesh._publish_cameras_once()
-        assert not any("/ref" in c.args[0] for c in mesh.publish.call_args_list)
+        assert not any("/ref" in c.args[0] for c in transport.put.call_args_list)
 
     def test_closure_skips_camera_with_no_frame(self, monkeypatch):
-        mesh, off, _t = self._make_mesh_with_camera(monkeypatch)
+        mesh, off, transport = self._make_mesh_with_camera(monkeypatch)
         # Two cameras configured, but only one has data
         frame = np.zeros((480, 640, 3), dtype=np.uint8)
         mesh.robot.robot.config.cameras = {"front": object(), "back": object()}
         mesh.robot.robot.get_observation.return_value = {"front": frame, "back": None}
         enable_for_mesh(mesh, offloader=off)
         mesh._publish_cameras_once()
-        ref_calls = [c for c in mesh.publish.call_args_list if "/ref" in c.args[0]]
+        ref_calls = [c for c in transport.put.call_args_list if "/ref" in c.args[0]]
         assert len(ref_calls) == 1
         assert ref_calls[0].args[0] == "strands/robot-x/camera/front/ref"
 
     def test_closure_handles_observation_failure(self, monkeypatch, caplog):
         import logging
 
-        mesh, off, _t = self._make_mesh_with_camera(monkeypatch)
+        mesh, off, transport = self._make_mesh_with_camera(monkeypatch)
         mesh.robot.robot.get_observation.side_effect = RuntimeError("hardware glitch")
         enable_for_mesh(mesh, offloader=off)
         with caplog.at_level(logging.DEBUG, logger="strands_robots.mesh.iot.camera_offload"):
             # Must not raise -- offload is best-effort
             mesh._publish_cameras_once()
-        assert not any("/ref" in c.args[0] for c in mesh.publish.call_args_list)
+        assert not any("/ref" in c.args[0] for c in transport.put.call_args_list)
 
     def test_closure_skips_dtype_dtype_promotion_to_uint8(self, monkeypatch):
         """Float frames are silently coerced to uint8 before JPEG-encoding."""
-        mesh, off, _t = self._make_mesh_with_camera(monkeypatch)
+        mesh, off, transport = self._make_mesh_with_camera(monkeypatch)
         # Use a float32 frame with valid uint8 range
         frame = np.zeros((100, 100, 3), dtype=np.float32)
         mesh.robot.robot.get_observation.return_value = {"front": frame}
         enable_for_mesh(mesh, offloader=off)
         mesh._publish_cameras_once()
-        ref_calls = [c for c in mesh.publish.call_args_list if "/ref" in c.args[0]]
+        ref_calls = [c for c in transport.put.call_args_list if "/ref" in c.args[0]]
         assert len(ref_calls) == 1

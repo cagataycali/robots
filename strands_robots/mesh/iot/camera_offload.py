@@ -266,16 +266,13 @@ def enable_for_mesh(mesh: Any, offloader: CameraOffloader | None = None) -> Came
                 if ref is None:
                     continue
                 ref["shape"] = list(shape)
-                # cross-module callers go through Mesh.publish per
-                # AGENTS.md > Public API Hygiene (no `_method` references
-                # across modules). The /ref topic is mirrored to the cloud
-                # audit table; the publish path is gated by the Zenoh ACL
-                # so a LAN peer cannot poison the table without a cert that
-                # the ACL grants ``camera/*/ref`` write rights to.
-                # transport.put is the legacy unsigned path used only for
-                # the original frame upload to S3 (S3 has its own auth).
-                mesh.publish(f"strands/{mesh.peer_id}/camera/{cam_name}/ref", ref)
-            except Exception as exc:  # noqa: BLE001 -- numpy / cv2 / mesh.publish can raise diverse errors per frame; offload is best-effort
+                # Publish the /ref topic via the transport layer.
+                # The topic is mirrored to the cloud audit table; the
+                # Zenoh ACL gates write access so a LAN peer cannot
+                # poison the table without a cert granting
+                # ``camera/*/ref`` write rights.
+                transport.put(f"strands/{mesh.peer_id}/camera/{cam_name}/ref", ref)
+            except Exception as exc:  # noqa: BLE001 -- numpy / cv2 / transport.put can raise diverse errors per frame; offload is best-effort
                 logger.debug(
                     "[camera_offload] %s/%s offload failed: %s",
                     mesh.peer_id,

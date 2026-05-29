@@ -133,8 +133,12 @@ class TestEnsureCA:
 
 
 class TestVerifyCaPinSymlink:
-    """The public verify_ca_pin must not follow symlinks (asymmetric
-    with _ensure_ca's the prior fix defence was the actual gap).
+    """verify_ca_pin must not follow symlinks.
+
+    Symlink-following on the on-disk CA path is a TOCTOU gap: an attacker
+    could race a symlink into place after _ensure_ca downloads but before
+    verify_ca_pin reads.  Refusing O_NOFOLLOW at the verify layer closes
+    the window.
     """
 
     def test_symlinked_ca_path_returns_false(self, tmp_path):
@@ -147,8 +151,3 @@ class TestVerifyCaPinSymlink:
 
         # verify_ca_pin must refuse to read through the symlink
         assert verify_ca_pin(symlink) is False
-
-
-# ---------------------------------------------------------------------
-# the prior fix-2: STRANDS_MESH_POLICY_HOST_ALLOW operator validation
-# ---------------------------------------------------------------------

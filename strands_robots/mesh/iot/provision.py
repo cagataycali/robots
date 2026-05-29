@@ -321,8 +321,8 @@ def _validate_thing_name(thing_name: str) -> None:
         raise ValueError(f"thing_name must be a non-empty string, got {thing_name!r}")
     if not _THING_NAME_RE.match(thing_name):
         raise ValueError(
-            f"thing_name={thing_name!r} contains invalid characters. "
-            "Allowed: ^[a-zA-Z0-9_-]{1,128}$ (no /, ., or whitespace)."
+            f"thing_name={thing_name!r} contains invalid characters; "
+            "allowed: ASCII letters, digits, '-', '_'; max 128 chars."
         )
 
 
@@ -500,6 +500,7 @@ def teardown_thing(thing_name: str, *, region: str | None = None) -> None:
 
     Idempotent: missing Thing or no certs is a silent success.
     """
+    _validate_thing_name(thing_name)
     boto3 = _require_boto3()
     iot = boto3.client("iot", region_name=region)
 
