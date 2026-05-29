@@ -47,7 +47,7 @@ def _stub_mesh() -> core.Mesh:
     m._estop_lockout = threading.Event()
     m._last_estop_ts = 0.0
     m._last_estop_mono = 0.0
-    m.publish_safety_event = mock.MagicMock()
+    m.publish_safety_event = mock.MagicMock()  # type: ignore[method-assign]
     return m
 
 
@@ -119,7 +119,7 @@ def test_corroboration_window_uses_monotonic_not_wall_clock() -> None:
 
     # Assert: the corroboration branch fired (not replay_rejected).
     # Look for estop_corroborated event_type in the publish calls.
-    calls = m.publish_safety_event.call_args_list
+    calls = m.publish_safety_event.call_args_list  # type: ignore[attr-defined]
     event_types = [c.kwargs.get("event_type") for c in calls if c.kwargs]
     assert "estop_corroborated" in event_types, (
         f"Expected estop_corroborated but got events: {event_types}. "

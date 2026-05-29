@@ -36,6 +36,7 @@ import hmac
 import json
 import time
 import uuid
+from typing import Any
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -49,7 +50,7 @@ _LEGIT_ZID = "0123456789abcdef0123456789abcdef"
 _ATTACKER_ZID = "fedcba9876543210fedcba9876543210"
 
 
-def _zid_obj(zid_str: str) -> SimpleNamespace:
+def _zid_obj(zid_str: str) -> Any:
     """Stand-in for ``zenoh.ZenohId`` whose ``str()`` returns the hex digest."""
 
     class _Zid:
