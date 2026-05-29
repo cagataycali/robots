@@ -211,8 +211,7 @@ def test_attribution_less_transport_same_t_audited_as_replay_rejected():
 
     assert len(audit_calls) == 1
     assert audit_calls[0]["event_type"] == "estop_replay_rejected", (
-        "attribution-less transports cannot prove corroboration; must "
-        "audit as replay_rejected"
+        "attribution-less transports cannot prove corroboration; must audit as replay_rejected"
     )
 
 
