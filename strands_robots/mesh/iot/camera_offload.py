@@ -267,10 +267,14 @@ def enable_for_mesh(mesh: Any, offloader: CameraOffloader | None = None) -> Came
                     continue
                 ref["shape"] = list(shape)
                 # Publish the /ref topic via the transport layer.
-                # The topic is mirrored to the cloud audit table; the
-                # Zenoh ACL gates write access so a LAN peer cannot
-                # poison the table without a cert granting
-                # ``camera/*/ref`` write rights.
+                # On ``iot`` the IoT Policy's AllowOwnTopics statement
+                # bounds writes to ``strands/<ThingName>/*`` (covers
+                # ``camera/*/ref`` via the trailing wildcard); on
+                # ``bridge`` the Zenoh ACL adds a LAN-side gate on top.
+                # ``enable_for_mesh`` early-returns unless the active
+                # backend is one of those two, so the publish reaches
+                # the wire only when at least one of these gates is in
+                # force.
                 transport.put(f"strands/{mesh.peer_id}/camera/{cam_name}/ref", ref)
             except Exception as exc:  # noqa: BLE001 -- numpy / cv2 / transport.put can raise diverse errors per frame; offload is best-effort
                 logger.debug(

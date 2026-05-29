@@ -688,6 +688,9 @@ def _ensure_ca(ca_path: Path) -> None:
         # to refresh a re-encoded cert can delete the file and let
         # the download path run with the override set.
         # O_NOFOLLOW to prevent TOCTOU symlink-swap
+        # tracked: #251 -- chunked-read parity with verify_ca_pin (a rare
+        # short read on interrupted syscalls would surface as a misleading
+        # "failed pin check" instead of "short read").
         try:
             nofollow = getattr(os, "O_NOFOLLOW", 0)
             fd = os.open(ca_path, os.O_RDONLY | nofollow)

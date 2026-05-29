@@ -151,3 +151,41 @@ class TestVerifyCaPinSymlink:
 
         # verify_ca_pin must refuse to read through the symlink
         assert verify_ca_pin(symlink) is False
+
+
+class TestMultiPinRotation:
+    """Pin-tuple rotation regression: a follow-up cannot collapse the
+    tuple back to a string without breaking this test.
+
+    AGENTS.md > Review Learnings (#85) > "Pin regression tests for
+    reviewed fixes" -- the move from a single ``str`` to a
+    ``tuple[str, ...]`` exists *so that* a CA rotation can ship as a
+    code-only deploy that adds the new pin alongside the old one.
+    Without an explicit test that exercises the multi-entry path, every
+    existing test still passes when someone "simplifies" the tuple back
+    to a string -- and the rotation contract silently breaks.
+    """
+
+    def test_tuple_supports_multiple_pins(self, monkeypatch):
+        import hashlib
+
+        # Synthesize a second pin pointing at a fictional rotated CA.
+        future_bytes = b"future-rotated-ca"
+        future_pin = hashlib.sha256(future_bytes).hexdigest()
+
+        # Append the new pin to the live tuple via monkeypatch to mirror
+        # the rotation path: existing pin still accepted, new pin also
+        # accepted. _hash_matches_pin reads the module-level constant
+        # via _resolve_ca_pins, so the patch is visible.
+        monkeypatch.setattr(
+            provision,
+            "_AMAZON_ROOT_CA1_PINS",
+            provision._AMAZON_ROOT_CA1_PINS + (future_pin,),
+        )
+
+        # Original canonical CA bytes still pass.
+        assert provision._hash_matches_pin(_REAL_CA) is True
+        # New rotated CA bytes also pass.
+        assert provision._hash_matches_pin(future_bytes) is True
+        # Something that matches neither pin is still rejected.
+        assert provision._hash_matches_pin(b"unrelated bytes") is False
