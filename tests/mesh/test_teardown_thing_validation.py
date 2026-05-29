@@ -152,12 +152,23 @@ class TestTeardownThingCertDirParity:
 
 
 class TestTeardownThingDocstringShape:
-    """Pin: teardown_thing's docstring must be well-formed.
+    """Pin: teardown_thing's docstring must render with consistent indentation.
 
-    Regression marker for the R7 docstring-typo bug (`n    Note:` left a
-    literal `n` glyph between the docstring body and the Note section).
-    A future agent applying line-oriented edits must not reintroduce
-    bare-letter glyphs that would otherwise read as Python identifiers.
+    Regression marker for two related defects in the same docstring:
+
+    1. R7 docstring-typo bug (a literal `n` glyph between the body and the
+       `Note:` section -- the failure mode of an editor inserting `n` instead
+       of `\n`).
+    2. R7-fix indentation bug: the original repair left the body at 8 spaces,
+       the `Note:` heading at 4, and the Note body at 12 -- which `cleandoc`
+       resolved to a body indented as if it were a literal blockquote with the
+       Note body double-indented underneath. Sphinx / pdoc / IDE help renderers
+       treat that as a malformed Google-style docstring.
+
+    The pin tests assert on *post-cleandoc structure*, not adjacent substrings,
+    because the original R7-fix pin asserted only on substring presence and
+    missed the whole indentation regression. A pin test must reject the same
+    failure mode it was added to prevent.
     """
 
     def test_no_stray_n_literal_in_docstring(self):
@@ -173,3 +184,37 @@ class TestTeardownThingDocstringShape:
         # adding the cert_dir trust note.
         assert "Note:" in ds, "Note: section must remain"
         assert "trusted operator input" in ds, "cert_dir trust note (R7) must remain"
+
+    def test_cleandoc_renders_consistent_indentation(self):
+        """After ``inspect.cleandoc``, body, ``Note:`` heading, and Note body
+        must use the Google-style indent ladder: body and heading at 0, Note
+        body at 4. The R7-fix indentation bug rendered body at 4 (blockquote)
+        and Note body at 8 (double-indented).
+        """
+        import inspect
+
+        from strands_robots.mesh.iot.provision import teardown_thing
+
+        cleaned = inspect.cleandoc(teardown_thing.__doc__ or "")
+        lines = cleaned.split("\n")
+
+        # Summary line at column 0.
+        assert lines[0].startswith("Detach + delete"), "summary line missing"
+        assert not lines[0].startswith(" "), "summary line must be at column 0"
+
+        # Body paragraph ("Cleans up the cert files") must be at column 0,
+        # not indented as a literal blockquote.
+        body_line = next(ln for ln in lines if ln.lstrip().startswith("Cleans up the cert files"))
+        assert body_line == body_line.lstrip(), (
+            f"docstring body must render at column 0 after cleandoc; "
+            f"got {len(body_line) - len(body_line.lstrip())} leading spaces"
+        )
+
+        # `Note:` heading at column 0.
+        note_heading = next(ln for ln in lines if ln.rstrip() == "Note:")
+        assert note_heading == "Note:", f"`Note:` heading must render at column 0; got {note_heading!r}"
+
+        # Note body at exactly 4 spaces (one indent level under heading).
+        note_body_line = next(ln for ln in lines if ln.lstrip().startswith("``cert_dir`` is treated"))
+        leading = len(note_body_line) - len(note_body_line.lstrip())
+        assert leading == 4, f"Note body must render at 4 spaces (Google-style); got {leading}"

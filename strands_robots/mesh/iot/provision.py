@@ -512,18 +512,18 @@ def teardown_thing(
 ) -> None:
     """Detach + delete every cert attached to *thing_name*, then delete the Thing.
 
-        Cleans up the cert files under *cert_dir* (defaults to
-        :data:`DEFAULT_CERT_DIR`) if they're named after this Thing.  Pass the
-        same ``cert_dir`` you used at provision time so the on-disk cert and key
-        are removed instead of orphaned.  Does NOT delete the policies — those
-        are shared across all robots and removing them would break siblings.
+    Cleans up the cert files under *cert_dir* (defaults to
+    :data:`DEFAULT_CERT_DIR`) if they're named after this Thing.  Pass the
+    same ``cert_dir`` you used at provision time so the on-disk cert and key
+    are removed instead of orphaned.  Does NOT delete the policies — those
+    are shared across all robots and removing them would break siblings.
 
-        Idempotent: missing Thing or no certs is a silent success.
+    Idempotent: missing Thing or no certs is a silent success.
 
     Note:
-            ``cert_dir`` is treated as trusted operator input -- it is not
-            validated beyond ``Path()`` coercion.  Do not pass LLM-generated
-            or otherwise untrusted values; this is a privileged provisioning API.
+        ``cert_dir`` is treated as trusted operator input -- it is not
+        validated beyond ``Path()`` coercion.  Do not pass LLM-generated
+        or otherwise untrusted values; this is a privileged provisioning API.
     """
     _validate_thing_name(thing_name)
     boto3 = _require_boto3()
