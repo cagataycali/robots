@@ -272,3 +272,76 @@ class TestEstopReplayCacheShapeInvariant:
             "dict[float, tuple[str, float, str | None]] to enforce "
             "the 3-tuple shape contract."
         )
+
+
+class TestEstopLockoutEngagesAtCap:
+    """Pin: lockout ALWAYS engages even when per-issuer cache cap is exceeded.
+
+    Regression for review thread core.py:1611 (2026-05-30).
+
+    Pre-fix: issuer_slots >= per_issuer_cap triggered an early return,
+    preventing lockout engagement. A legitimate operator whose estops
+    filled their per-issuer cache cap had subsequent estops silently
+    dropped from BOTH cache AND lockout -- inverting the safety contract.
+
+    Post-fix: the cache slot is still refused (resource fairness), but
+    the lockout engages unconditionally (safety-primitive availability).
+    """
+
+    def test_lockout_engages_when_issuer_at_cap(self):
+        """A legitimate operator at per-issuer cache cap still engages lockout."""
+        import inspect
+        import threading
+
+        m = core.Mesh.__new__(core.Mesh)
+        m.peer_id = "test-receiver"
+        m._estop_replay_cache = {}
+        m._estop_replay_lock = threading.Lock()
+        m._estop_lockout = threading.Event()
+        m._last_estop_ts = 0.0
+        m._last_estop_mono = 0.0
+
+        # Verify the early return is absent from the source.
+        source = inspect.getsource(core.Mesh._on_safety_estop)
+
+        # The problematic pattern: a second `issuer_slots >= per_issuer_cap`
+        # check followed by `return` that prevented lockout engagement.
+        # Count occurrences of "issuer_slots >= per_issuer_cap" -- there should
+        # be exactly ONE (the cache-slot gating), not TWO (cache + lockout).
+        occurrences = source.count("issuer_slots >= per_issuer_cap")
+        assert occurrences == 1, (
+            f"Expected exactly 1 occurrence of 'issuer_slots >= per_issuer_cap' "
+            f"(the cache-slot gate), found {occurrences}. "
+            f"A second occurrence that early-returns before lockout engagement "
+            f"is the safety regression this test pins against."
+        )
+
+    def test_no_early_return_between_cache_and_lockout(self):
+        """Structural: no bare `return` between cache logic and lockout block."""
+        import inspect
+        import re
+
+        source = inspect.getsource(core.Mesh._on_safety_estop)
+        lines = source.split("\n")
+
+        # Find the line with "self._estop_replay_cache[cache_key] ="
+        cache_write_idx = None
+        lockout_check_idx = None
+        for i, line in enumerate(lines):
+            if "self._estop_replay_cache[cache_key] =" in line:
+                cache_write_idx = i
+            if "if not self._estop_lockout.is_set():" in line:
+                lockout_check_idx = i
+                break
+
+        assert cache_write_idx is not None, "Could not find cache write line"
+        assert lockout_check_idx is not None, "Could not find lockout check line"
+
+        # Between cache write and lockout check, there must be no bare `return`
+        between = lines[cache_write_idx + 1 : lockout_check_idx]
+        bare_returns = [line.strip() for line in between if re.match(r"^\s*return\s*$", line)]
+        assert not bare_returns, (
+            f"Found bare 'return' statement(s) between cache-write and "
+            f"lockout-engage block: {bare_returns}. This would silently "
+            f"drop the lockout for at-cap issuers (safety regression)."
+        )
