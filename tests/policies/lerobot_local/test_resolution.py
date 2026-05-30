@@ -196,10 +196,22 @@ class TestPolicyConfigDiscovery:
 
         from lerobot.configs.policies import PreTrainedConfig
 
-        import strands_robots.policies.lerobot_local.resolution as resolution
+        from strands_robots.policies.lerobot_local import resolution
 
         original_import = importlib.import_module
-        booby_trap = "lerobot.policies.act.configuration_act"
+        # Pick a booby_trap that ``pkgutil.iter_modules`` actually visits.
+        # ``pkgutil.iter_modules`` only yields subpackages with an
+        # ``__init__.py`` (regular packages) -- subpackages laid out as
+        # namespace packages (no ``__init__.py``) are silently skipped.
+        # In lerobot 0.5.x, the regular-package subpackages are
+        # ``{groot, multi_task_dit, pi0, pi05, pi0_fast, rtc, wall_x, xvla}``
+        # -- the rest (act, diffusion, smolvla, ...) are namespace
+        # packages and thus not enumerable here. ``pi0`` is stable across
+        # all lerobot 0.5.x and is therefore a safe target. See issue
+        # #278 for the namespace-package coverage gap (separate from
+        # this regression test, which only pins the
+        # walk-continues-after-error contract).
+        booby_trap = "lerobot.policies.pi0.configuration_pi0"
         trap_triggered = []
 
         def maybe_raise(name, *args, **kwargs):
@@ -233,22 +245,26 @@ class TestPolicyConfigDiscovery:
 
         # The walk surfaced the booby-trapped subpackage at WARNING
         # level so an operator can see it in production logs.
-        warning_texts = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
-        trap_warnings = [t for t in warning_texts if booby_trap in t]
-        assert trap_warnings, (
-            "Expected a WARNING about the booby-trapped configuration_act "
-            f"import; got warning messages: {warning_texts}"
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING and booby_trap in r.message]
+        assert warnings, (
+            "Expected a WARNING about the booby-trapped "
+            f"{booby_trap} import; got records: "
+            f"{[r.message for r in caplog.records]}"
         )
 
-        # ...AND the registry still contains the other policies that
-        # the walk reached after the failure. Pre-R1 the walk would
-        # have returned at the first non-ImportError, leaving
-        # everything after it unregistered.
+        # ...AND the registry still contains policies the walk reached
+        # AFTER the failure. Pre-R1 the walk would return at the first
+        # non-ImportError, leaving everything after it unregistered.
+        # We assert against subpackages the walker actually visits
+        # (regular packages with __init__.py): ``wall_x`` and ``xvla``
+        # come after ``pi0`` alphabetically and are stable in lerobot
+        # 0.5.x. ``groot`` comes BEFORE ``pi0`` so we include it as the
+        # "registered before the failure" anchor.
         registered = set(PreTrainedConfig.get_known_choices().keys())
-        survivors = registered & {"diffusion", "smolvla", "molmoact2"}
+        survivors = registered & {"groot", "wall_x", "xvla"}
         assert survivors, (
-            "Walk aborted on the first non-ImportError; expected at least "
-            "one of {diffusion, smolvla, molmoact2} to still be "
+            "Walk aborted on the first non-ImportError; expected at "
+            "least one of {'groot', 'wall_x', 'xvla'} to still be "
             f"registered. Got: {sorted(registered)}"
         )
 
