@@ -76,9 +76,13 @@ class TestPolicyConfigDiscovery:
 
         registered = set(PreTrainedConfig.get_known_choices().keys())
 
-        # All policies that ship in lerobot >=0.5.x. Adding more upstream
-        # is a no-op for strands_robots -- the pkgutil walker picks them
-        # up automatically.
+        # Stable across lerobot 0.5.x; adding more upstream is a no-op
+        # for strands_robots (the pkgutil walker picks them up
+        # automatically). Newer policies (e.g. molmoact2, which only
+        # ships in lerobot 0.5.2+ via lerobot PR #3604) are asserted
+        # via dedicated importorskip-gated tests below; pinning them
+        # here would couple this regression test to the specific
+        # lerobot minor version installed in CI.
         expected_min = {
             "act",
             "diffusion",
@@ -86,7 +90,6 @@ class TestPolicyConfigDiscovery:
             "smolvla",
             "tdmpc",
             "vqbet",
-            "molmoact2",  # lerobot PR #3604, shipped in 0.5.2+
         }
         missing = expected_min - registered
         assert not missing, f"Discovery missed lerobot built-in policies: {missing}. Registered: {sorted(registered)}"
@@ -103,7 +106,14 @@ class TestPolicyConfigDiscovery:
         ONLY ``act`` ended up registered; lookups for any other policy
         type silently fell through to manual config.json parsing,
         which failed for repos that rely on draccus resolution.
+
+        Skipped when the installed lerobot is older than 0.5.2 (which
+        added molmoact2 in lerobot PR #3604) -- the broader "every
+        subpackage gets walked" invariant is covered by
+        ``test_pkgutil_walk_registers_every_lerobot_policy_subpackage``
+        without depending on a specific minor-version policy.
         """
+        pytest.importorskip("lerobot.policies.molmoact2")
         import sys
 
         # Snapshot the current lerobot imports BEFORE we touch anything,
