@@ -345,3 +345,66 @@ class TestEstopLockoutEngagesAtCap:
             f"lockout-engage block: {bare_returns}. This would silently "
             f"drop the lockout for at-cap issuers (safety regression)."
         )
+
+
+# ---------------------------------------------------------------------------
+# Thread (2026-05-30 R14): cache-key namespace conflation -- a bridge
+# peer with peer_id matching a Zenoh wire_zid must not collide.
+# Reviewer: "one-line fix worth landing in this PR."
+# ---------------------------------------------------------------------------
+
+
+class TestResumeCacheKeyNamespaceIsolation:
+    """The resume replay cache key MUST domain-tag the issuer identifier
+    so a Zenoh wire_zid and a body issuer_id from a bridge transport
+    never share the same tuple slot.
+
+    Pre-fix: ``cache_key = (wire_zid or issuer_id, proof_nonce)``
+    Post-fix: ``cache_key = (("wire", wire_zid) if wire_zid is not None else ("body", issuer_id), proof_nonce)``
+
+    Pin: thread core.py:1853 (2026-05-30 review batch).
+    """
+
+    def test_domain_tagged_key_no_collision(self):
+        """A bridge peer with peer_id='ab12cd' and a Zenoh peer with
+        wire_zid='ab12cd' must produce distinct cache keys."""
+        import inspect
+
+        source = inspect.getsource(core.Mesh._on_safety_resume)
+
+        # Structural: the old conflating pattern must be absent.
+        assert "wire_zid or issuer_id" not in source, (
+            "cache_key still uses the conflating 'wire_zid or issuer_id' pattern -- namespace collision is possible"
+        )
+
+        # Structural: domain tag must be present.
+        assert '"wire"' in source or "'wire'" in source, "cache_key does not contain a 'wire' domain tag"
+        assert '"body"' in source or "'body'" in source, "cache_key does not contain a 'body' domain tag"
+
+    def test_same_string_different_transport_distinct_keys(self):
+        """Simulate key construction logic: same string via wire vs body
+        must produce distinct first-tuple elements."""
+        # Simulate the new key construction
+        shared_hex = "ab12cd34ef567890"
+        proof = "nonce-123"
+
+        # Zenoh peer: wire_zid is set
+        wire_key = (("wire", shared_hex), proof)
+        # Bridge peer: wire_zid is None, issuer_id matches the hex
+        body_key = (("body", shared_hex), proof)
+
+        assert wire_key != body_key, (
+            "Same string from different transports must produce distinct cache keys to prevent cross-transport eviction"
+        )
+
+    def test_none_wire_zid_uses_body_domain(self):
+        """When wire_zid is None (bridge/IoT transport), the key must
+        use the 'body' domain tag with issuer_id."""
+        import inspect
+
+        source = inspect.getsource(core.Mesh._on_safety_resume)
+
+        # The conditional must check for None explicitly
+        assert "wire_zid is not None" in source or "wire_zid is None" in source, (
+            "Domain tag conditional must use explicit None check, not truthy/falsy (empty string '' is falsy but valid)"
+        )

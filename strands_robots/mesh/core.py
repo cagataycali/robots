@@ -1850,7 +1850,12 @@ class Mesh(SensorLoopsMixin):
         # do not collide -- and so an attacker on a different session
         # cannot reuse a captured ``(issuer_peer_id, proof_nonce)`` to
         # evict legitimate cache slots.
-        cache_key = (wire_zid or issuer_id, proof_nonce)
+        # Domain-tagged key prevents namespace collision between Zenoh
+        # wire_zid (hex, TLS-bound) and body issuer_id (app metadata).
+        # A bridge peer with peer_id="ab12cd" and a Zenoh peer with
+        # wire_zid="ab12cd" no longer conflate into the same slot.
+        issuer_key = ("wire", wire_zid) if wire_zid is not None else ("body", issuer_id)
+        cache_key = (issuer_key, proof_nonce)
         with self._resume_replay_lock:
             if cache_key in self._resume_replay_cache:
                 logger.warning(
