@@ -562,3 +562,74 @@ class TestNarrowExceptionsR3:
             "(RuntimeError, AttributeError, OSError) for teardown). "
             f"Offending lines: {offending}"
         )
+
+
+# --- R4: Wildcard-subscription dedup-key isolation (PR #222 thread L598) -------
+
+
+class TestWildcardSubscriptionDedupIsolationR4:
+    """Pin test: dedup keys on the delivered topic, not the subscription pattern.
+
+    Pre-fix code used the closure-captured ``key_expr`` (the subscription
+    pattern, e.g. ``strands/+/cmd``) as the dedup-cache key. This aliased
+    messages delivered on distinct topics under the same wildcard (e.g.
+    ``strands/robot-a/cmd`` and ``strands/robot-b/cmd``), causing the
+    second delivery to be silently dropped.
+
+    The fix uses ``str(sample.key_expr)`` (the actual delivered topic)
+    so each concrete topic has its own dedup slot.
+
+    Fails on pre-fix code: if key_expr from the closure were used, the
+    second ``is_duplicate`` call with a different delivered topic but same
+    payload would return True.
+    """
+
+    def test_distinct_delivered_topics_not_aliased(self):
+        """Same payload on two concrete topics under one wildcard must not dedup."""
+        d = _CommandDeduplicator(ttl_s=10.0)
+        payload = {
+            "sender_id": "operator-1",
+            "turn_id": "turn-abc",
+            "command": {"action": "move", "target": [1, 0, 0]},
+        }
+        # First delivery on robot-a/cmd: not a dup.
+        assert d.is_duplicate("strands/robot-a/cmd", payload) is False
+        # Same payload delivered on robot-b/cmd: must NOT be a dup
+        # because it's a different concrete topic (different robot).
+        assert d.is_duplicate("strands/robot-b/cmd", payload) is False
+
+    def test_same_delivered_topic_still_deduplicates(self):
+        """Same payload on the same concrete topic must still dedup."""
+        d = _CommandDeduplicator(ttl_s=10.0)
+        payload = {
+            "sender_id": "operator-1",
+            "turn_id": "turn-def",
+            "command": {"action": "stop"},
+        }
+        assert d.is_duplicate("strands/robot-a/cmd", payload) is False
+        assert d.is_duplicate("strands/robot-a/cmd", payload) is True
+
+    def test_bridge_handler_uses_sample_key_expr_not_subscription_pattern(self):
+        """Structural pin: the _filtered handler in declare_subscriber passes
+        sample.key_expr to is_duplicate, not the closure-captured key_expr.
+
+        Inspects the source to ensure a future refactor does not
+        accidentally revert to the subscription-pattern key.
+        """
+        import inspect
+
+        from strands_robots.mesh.transport import bridge_transport
+
+        source = inspect.getsource(bridge_transport.BridgeTransport.declare_subscriber)
+        # The fix introduces a delivered_topic variable derived from sample.key_expr.
+        assert "delivered_topic" in source, (
+            "declare_subscriber must derive a delivered_topic from sample.key_expr for dedup-cache keying (R4 fix)"
+        )
+        assert 'getattr(sample, "key_expr"' in source, (
+            "declare_subscriber must read sample.key_expr (the actual delivered topic) for dedup keying"
+        )
+        # The dedup call must use delivered_topic, not the closure key_expr.
+        assert "is_duplicate(delivered_topic" in source, (
+            "is_duplicate() must be called with delivered_topic, not "
+            "the subscription-pattern key_expr (R4 wildcard-alias fix)"
+        )

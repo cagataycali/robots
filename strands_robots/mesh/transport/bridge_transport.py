@@ -595,11 +595,19 @@ class BridgeTransport:
                     # ``test_wire_handler_narrow_except.py``.
                     payload = None
 
-                if payload is not None and self._dedup.is_duplicate(key_expr, payload):
+                # Use the actual delivered topic (sample.key_expr), not the
+                # subscription pattern (key_expr), for dedup-cache keying.
+                # A wildcard subscription like "strands/+/cmd" must not alias
+                # messages delivered on distinct topics (e.g. robot-a/cmd vs
+                # robot-b/cmd).  Falls back to the subscription key_expr when
+                # the sample does not expose key_expr (should never happen per
+                # the _MqttSample / zenoh.Sample contracts).
+                delivered_topic = str(getattr(sample, "key_expr", key_expr))
+                if payload is not None and self._dedup.is_duplicate(delivered_topic, payload):
                     logger.debug(
                         "[bridge] dropped duplicate from %s on %s",
                         transport_label,
-                        key_expr,
+                        delivered_topic,
                     )
                     return
                 handler(sample)
