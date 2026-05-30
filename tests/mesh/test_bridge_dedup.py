@@ -716,8 +716,6 @@ class TestMissingKeyExprWarnsR5:
         assert delivered is not None, "test setup: sample must have key_expr"
 
         # The dedup call itself should work without warning.
-        import json
-
         raw = sample.payload.to_bytes().decode()
         payload = json.loads(raw)
         with caplog.at_level(logging.WARNING):

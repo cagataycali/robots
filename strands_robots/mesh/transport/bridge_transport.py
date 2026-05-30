@@ -326,6 +326,18 @@ class _CommandDeduplicator:
         -- aliased partial payloads (e.g. ``{"sender_id": "a"}`` would
         dedup against ``{"sender_id": "a", "extra": 1}``). Pinned by
         ``test_partial_canonical_does_not_alias``.
+
+        JSON-encodability contract: ``command`` payloads on the canonical
+        identity path MUST be pure-JSON-encodable (str/int/float/bool/None,
+        list, dict). The ``default=str`` argument to ``json.dumps`` is a
+        defensive coercion that prevents ``TypeError`` from non-JSON types
+        (datetime, bytes, custom objects), but the resulting fingerprint is
+        non-deterministic for objects whose ``str()`` includes their memory
+        address (e.g. instances without a ``__str__`` override). Producers
+        relying on dedup correctness for non-JSON ``command`` shapes are in
+        contract violation. Tracked for resolution (drop ``default=str`` and
+        let TypeError surface, vs. enforce JSON contract at producer side)
+        in #233.
         """
         if not isinstance(payload, dict):
             return None
