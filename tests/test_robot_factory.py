@@ -699,32 +699,58 @@ class TestRealModeConfigDiscovery:
         else:
             pytest.fail("expected ValueError")
 
-    def test_robot_factory_end_to_end_real_mode_so101(self):
-        """Public-API happy-path: ``Robot('so101', mode='real', port=...)``
-        gets through the factory, uses lerobot's draccus discovery, and
-        constructs a HardwareRobot wrapping a real lerobot SOFollower
-        (with ``_initialize_robot`` mocked so we don't touch hardware).
+    def test_robot_factory_real_mode_so101_runs_create_minimal_config_and_pins_id_override(self):
+        """Public-API end-to-end pin for the ENTIRE `mode='real'` path
+        the previous helper-only tests (which poke
+        `_create_minimal_config` via `__new__`) cannot exercise.
 
-        This exercises the full call chain that caused issue #275 to be
-        filed -- the previous tests poke ``_create_minimal_config`` via
-        ``__new__`` so they only cover the helper. This one goes through
-        ``Robot()``."""
+        This test patches lerobot's own `make_robot_from_config`
+        (inside `lerobot.robots.utils`, the only import site
+        `_initialize_robot` uses) rather than `_initialize_robot`
+        itself. That keeps `_create_minimal_config` -- the entire new
+        discovery path this PR is about -- ON the call chain, so the
+        test actually exercises:
+
+          - the discovery walk,
+          - the draccus `get_choice_class` lookup,
+          - dataclass-field filtering of forwarded kwargs,
+          - the `id=` override semantics advertised in the PR
+            description.
+
+        Pins:
+
+          1. The factory dispatches `Robot('so101', mode='real')` to
+             the hardware path (returns a HardwareRobot).
+          2. The constructed lerobot config carries the user's
+             `id="left_arm"` rather than the default `tool_name_str`.
+             Per AGENTS.md > Review Learnings (#85) > "Pin regression
+             tests for reviewed fixes", this advertised behaviour was
+             previously unpinned: the prior version of this test
+             patched `_initialize_robot` so `_create_minimal_config`
+             never ran and the `id=` override was never asserted on.
+        """
+        pytest.importorskip("lerobot.robots.so_follower")
+
         from unittest.mock import MagicMock, patch
 
         from strands_robots import Robot
 
-        # Sentinel returned from _initialize_robot — pretend it's a built
-        # lerobot Robot instance so the strands HardwareRobot.__init__
-        # completes happily without trying to talk to a serial port.
+        # Sentinel returned by the patched lerobot factory: pretend it's
+        # a built lerobot Robot instance so HardwareRobot.__init__
+        # completes happily without any serial-port traffic.
         fake_lerobot_robot = MagicMock(name="lerobot_robot_instance")
         fake_lerobot_robot.name = "so_follower"
         fake_lerobot_robot.config = MagicMock()
         fake_lerobot_robot.config.cameras = {}
 
+        # `make_robot_from_config` is imported function-locally inside
+        # `_initialize_robot` from `lerobot.robots.utils`; patch it at
+        # the source module so the patched callable is what
+        # `_initialize_robot` resolves at call time.
         with patch(
-            "strands_robots.hardware_robot.Robot._initialize_robot",
+            "lerobot.robots.utils.make_robot_from_config",
             return_value=fake_lerobot_robot,
-        ):
+        ) as make_cfg:
             r = Robot(
                 "so101",
                 mode="real",
@@ -733,14 +759,56 @@ class TestRealModeConfigDiscovery:
                 id="left_arm",
             )
 
-        # The factory returned a HardwareRobot, mesh attrs are initialised,
-        # and the inner robot is the fake we injected.
+        # Pin 1: factory dispatch shape.
         from strands_robots.hardware_robot import Robot as HwRobot
 
         assert isinstance(r, HwRobot)
         assert r.robot is fake_lerobot_robot
-        assert r.mesh is None or hasattr(r.mesh, "stop")  # mesh is opt-in; just ensure attr exists
-        assert hasattr(r, "peer_id")  # populated by factory if mesh started, else None
+        assert hasattr(r, "mesh")
+        assert hasattr(r, "peer_id")
+
+        # Pin 2: `_create_minimal_config` actually ran and produced a
+        # config with the user's `id=` override winning over the
+        # default `tool_name_str`. The advertised behaviour in the PR
+        # description ("Users may now override the lerobot `id` ...
+        # Default remains the strands tool name") is now actually
+        # asserted on.
+        assert make_cfg.called, (
+            "lerobot.robots.utils.make_robot_from_config was not invoked; "
+            "_initialize_robot must have taken a different code path. "
+            "The discovery + config-build chain is no longer covered."
+        )
+        cfg = make_cfg.call_args.args[0]
+        assert cfg.id == "left_arm", (
+            f"id= kwarg must win over tool_name_str; got cfg.id={cfg.id!r}. "
+            "Did a refactor swap kwargs.get('id', self.tool_name_str) for "
+            "self.tool_name_str unconditionally?"
+        )
+        assert cfg.port == "/dev/null"
+        assert cfg.use_degrees is True
+
+    def test_id_kwarg_overrides_tool_name_directly(self):
+        """Helper-level pin for the same advertised `id=` override
+        behaviour, without going through `Robot()`. Belt-and-suspenders
+        with the end-to-end test above: if some refactor breaks the
+        factory dispatch, the helper-level pin still catches a
+        regression in `_create_minimal_config`'s `id=` handling.
+        """
+        pytest.importorskip("lerobot.robots.so_follower")
+
+        from strands_robots.hardware_robot import Robot as HwRobot
+
+        hw = HwRobot.__new__(HwRobot)
+        hw.tool_name_str = "default_tool_name"
+
+        # With an explicit id=, the user's value must win.
+        cfg = hw._create_minimal_config("so101_follower", cameras={}, port="/dev/null", id="left_arm")
+        assert cfg.id == "left_arm"
+
+        # With no id=, default to the strands tool name (the
+        # backwards-compatible fallthrough advertised in the docstring).
+        cfg2 = hw._create_minimal_config("so101_follower", cameras={}, port="/dev/null")
+        assert cfg2.id == "default_tool_name"
 
     def test_walk_continues_when_driver_raises_oserror_at_import(self):
         """Pin AGENTS.md > Review Learnings (#86) > "Exception Clauses Must
