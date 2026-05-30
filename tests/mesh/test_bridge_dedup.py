@@ -789,3 +789,73 @@ class TestOneShotWarningR7:
             "declare_subscriber must use a one-shot gate (_warned_missing_key_expr) "
             "to prevent per-sample warning floods (R7 fix)"
         )
+
+
+class TestEmptyStringCanonicalRejectionR10:
+    """Pin test: empty/whitespace-only sender_id or turn_id must NOT take the
+    canonical hash path -- they fall through to strict/pass-through to avoid
+    aliasing distinct deliveries that happen to share empty identifiers.
+
+    Fails on pre-fix code where the predicate was ``is None`` only.
+    """
+
+    def test_empty_sender_does_not_take_canonical_path(self):
+        """Empty sender_id routes to pass-through (not a duplicate)."""
+        from strands_robots.mesh.transport.bridge_transport import _CommandDeduplicator
+
+        d = _CommandDeduplicator(ttl_s=10.0)
+        p1 = {"sender_id": "", "turn_id": "t1", "command": {"action": "move"}}
+        p2 = {"sender_id": "", "turn_id": "t1", "command": {"action": "stop"}}
+        # In default (non-strict) mode, empty sender -> pass-through -> not deduped
+        assert d.is_duplicate("k", p1) is False
+        assert d.is_duplicate("k", p2) is False  # would be True on pre-fix code
+
+    def test_whitespace_sender_does_not_take_canonical_path(self):
+        """Whitespace-only sender_id routes to pass-through."""
+        from strands_robots.mesh.transport.bridge_transport import _CommandDeduplicator
+
+        d = _CommandDeduplicator(ttl_s=10.0)
+        p = {"sender_id": "   ", "turn_id": "t1", "command": {"action": "x"}}
+        # Pass-through: first call is not duplicate, second also not duplicate
+        # because pass-through returns None (no dedup identity).
+        assert d.is_duplicate("k", p) is False
+        assert d.is_duplicate("k", p) is False
+
+    def test_empty_turn_does_not_take_canonical_path(self):
+        """Empty turn_id routes to pass-through."""
+        from strands_robots.mesh.transport.bridge_transport import _CommandDeduplicator
+
+        d = _CommandDeduplicator(ttl_s=10.0)
+        p = {"sender_id": "alice", "turn_id": "", "command": {"action": "x"}}
+        assert d.is_duplicate("k", p) is False
+        assert d.is_duplicate("k", p) is False  # not deduped
+
+    def test_valid_canonical_still_dedupes(self):
+        """Non-empty valid fields still correctly deduplicate."""
+        from strands_robots.mesh.transport.bridge_transport import _CommandDeduplicator
+
+        d = _CommandDeduplicator(ttl_s=10.0)
+        p = {"sender_id": "alice", "turn_id": "t1", "command": {"action": "x"}}
+        assert d.is_duplicate("k", p) is False
+        assert d.is_duplicate("k", p) is True  # correctly deduped
+
+
+class TestSafetyResumeQosPolicyR10:
+    """Pin test: safety/resume must be routed at QoS 1 + retained, matching
+    safety/estop. Fails if the _TOPIC_POLICY entry is missing."""
+
+    def test_safety_resume_qos_matches_estop(self):
+        from strands_robots.mesh.transport.iot_transport import _qos_and_retain_for
+
+        resume_qos, resume_retain = _qos_and_retain_for("strands/robot-a/safety/resume")
+        estop_qos, estop_retain = _qos_and_retain_for("strands/robot-a/safety/estop")
+        assert resume_qos == estop_qos == 1, f"safety/resume QoS={resume_qos}, expected 1"
+        assert resume_retain == estop_retain is True, f"safety/resume retain={resume_retain}"
+
+    def test_safety_resume_in_topic_policy(self):
+        from strands_robots.mesh.transport.iot_transport import _TOPIC_POLICY
+
+        assert "safety/resume" in _TOPIC_POLICY, "safety/resume missing from _TOPIC_POLICY"
+        qos, retain = _TOPIC_POLICY["safety/resume"]
+        assert qos == 1
+        assert retain is True

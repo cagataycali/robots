@@ -78,6 +78,7 @@ _TOPIC_POLICY: dict[str, tuple[int, bool]] = {
     "map/info": (0, True),
     "safety/event": (1, True),
     "safety/estop": (1, True),
+    "safety/resume": (1, True),  # paired with safety/estop; closes incident windows
     "stream": (0, False),
     "stream/meta": (0, False),
     # Camera frames are too big for MQTT — IotMqttTransport drops them.

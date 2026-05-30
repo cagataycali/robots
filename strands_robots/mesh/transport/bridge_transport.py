@@ -243,6 +243,11 @@ _MAX_DEDUP_ENTRIES = 10_000
 
 
 def _resolve_dedup_ttl() -> float:
+    """Read ``STRANDS_MESH_DEDUP_TTL`` env var (default: 120s).
+
+    NOTE: read once at ``BridgeTransport`` construction; mid-process
+    env-var changes require a bridge restart to take effect.
+    """
     raw = os.getenv("STRANDS_MESH_DEDUP_TTL")
     if raw is None:
         return _DEFAULT_DEDUP_TTL_S
@@ -353,10 +358,14 @@ class _CommandDeduplicator:
         turn = payload.get("turn_id")
         cmd = payload.get("command")
 
-        # Canonical path requires all three fields present; partial
-        # canonical payloads fall through to the strict/pass-through
-        # branch so they do not alias against each other.
-        if sender is None or turn is None or cmd is None:
+        # Canonical path requires all three fields present AND non-blank;
+        # partial/empty canonical payloads fall through to the strict/pass-
+        # through branch so they do not alias against each other.
+        # Empty-string rejection aligns with R20 bridge-side counterpart.
+        def _is_blank(v: object) -> bool:
+            return v is None or (isinstance(v, str) and v.strip() == "")
+
+        if _is_blank(sender) or _is_blank(turn) or cmd is None:
             if not self._strict:
                 # Default: pass through (preserves heartbeat semantics).
                 return None
