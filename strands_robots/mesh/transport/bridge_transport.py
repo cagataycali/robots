@@ -599,10 +599,25 @@ class BridgeTransport:
                 # subscription pattern (key_expr), for dedup-cache keying.
                 # A wildcard subscription like "strands/+/cmd" must not alias
                 # messages delivered on distinct topics (e.g. robot-a/cmd vs
-                # robot-b/cmd).  Falls back to the subscription key_expr when
-                # the sample does not expose key_expr (should never happen per
-                # the _MqttSample / zenoh.Sample contracts).
-                delivered_topic = str(getattr(sample, "key_expr", key_expr))
+                # robot-b/cmd).  Per the _MqttSample / zenoh.Sample contracts
+                # key_expr is always present; a missing attribute is a bug
+                # (mock shape drift, transport refactor) so we fall back to the
+                # subscription pattern AND emit a warning so the regression is
+                # observable in operator logs (per AGENTS.md > Review Learnings
+                # (#85) > "No silent defaults on error"). Pinned by
+                # test_missing_key_expr_warns_and_falls_back.
+                _sentinel = object()
+                _delivered = getattr(sample, "key_expr", _sentinel)
+                if _delivered is _sentinel:
+                    logger.warning(
+                        "[bridge] sample on subscription %r is missing"
+                        " key_expr; falling back to subscription pattern"
+                        " for dedup cache key (R5 contract drift -- this"
+                        " reintroduces wildcard-aliasing if it persists)",
+                        key_expr,
+                    )
+                    _delivered = key_expr
+                delivered_topic = str(_delivered)
                 if payload is not None and self._dedup.is_duplicate(delivered_topic, payload):
                     logger.debug(
                         "[bridge] dropped duplicate from %s on %s",
