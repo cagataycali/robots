@@ -214,42 +214,42 @@ class TestPolicyConfigDiscovery:
         booby_trap = "lerobot.policies.pi0.configuration_pi0"
         trap_triggered = []
 
+        trap_triggered = []
+
         def maybe_raise(name, *args, **kwargs):
             if name == booby_trap:
                 trap_triggered.append(name)
                 raise RuntimeError("simulated decorator-time re-registration collision")
             return original_import(name, *args, **kwargs)
 
-        # Patch importlib.import_module directly (not via resolution.importlib)
-        # to ensure the monkeypatch is visible regardless of how Python
-        # resolves the module attribute lookup inside the cached function.
+        # Patch importlib.import_module directly to ensure visibility
+        # regardless of how Python resolves the module attribute lookup
+        # inside the @functools.cache-wrapped function.
         monkeypatch.setattr(importlib, "import_module", maybe_raise)
 
         resolution._ensure_policy_configs_registered.cache_clear()
         # Capture all WARNING+ records without restricting to a specific
-        # logger name -- avoids edge cases where caplog's per-logger level
-        # gating interacts poorly with handler propagation.
+        # logger name -- avoids edge cases where caplog per-logger level
+        # gating interacts with handler propagation.
         with caplog.at_level(logging.WARNING):
             resolution._ensure_policy_configs_registered()
 
-        # Verify the monkeypatch was actually invoked for the booby-trapped
-        # candidate. If it was not, the walker did not reach this subpackage
-        # (e.g. pkgutil.iter_modules returned nothing or act was not yielded
-        # as is_pkg=True), and the test premise is invalid for this env.
+        # Verify the monkeypatch was actually invoked for the target.
+        # If it was not, pkgutil did not yield this subpackage and the
+        # test premise is invalid for this lerobot installation.
         if not trap_triggered:
             pytest.skip(
-                "monkeypatch for configuration_act was never invoked; "
-                "lerobot.policies may not expose act as a pkgutil-iterable "
-                "subpackage in this installation"
+                f"monkeypatch for {booby_trap} was never invoked; "
+                "pkgutil.iter_modules may not yield this subpackage "
+                "in the installed lerobot version"
             )
 
         # The walk surfaced the booby-trapped subpackage at WARNING
         # level so an operator can see it in production logs.
-        warnings = [r for r in caplog.records if r.levelno == logging.WARNING and booby_trap in r.message]
-        assert warnings, (
-            "Expected a WARNING about the booby-trapped "
-            f"{booby_trap} import; got records: "
-            f"{[r.message for r in caplog.records]}"
+        warning_texts = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+        trap_warnings = [t for t in warning_texts if booby_trap in t]
+        assert trap_warnings, (
+            f"Expected a WARNING about the booby-trapped {booby_trap} import; got warning messages: {warning_texts}"
         )
 
         # ...AND the registry still contains policies the walk reached
