@@ -64,6 +64,20 @@ def _ensure_policy_configs_registered() -> None:
 
     ``@functools.cache`` makes the second call a dict lookup -- the
     full walk only happens once per process.
+
+    Caching contract for callers
+    ----------------------------
+    The cache is keyed on the empty argument tuple, so it is decoupled
+    from ``sys.modules`` state. If something later in the process
+    invalidates the lerobot import graph (a test reloads modules, a
+    multiprocess spawn that mutates module state, an explicit
+    ``importlib.reload(lerobot.policies)`` to pick up a freshly stubbed
+    layout), callers MUST invoke
+    ``_ensure_policy_configs_registered.cache_clear()`` before calling
+    this helper again -- otherwise the cache returns immediately and
+    the new ``sys.modules`` state is never re-walked. The
+    ``test_molmoact2_registered_after_stubbed_lerobot_policies``
+    regression test exercises exactly this contract.
     """
     # Make sure lerobot.policies is at least registered in sys.modules
     # without executing its (potentially heavy) __init__.
@@ -97,7 +111,40 @@ def _ensure_policy_configs_registered() -> None:
                 importlib.import_module(candidate)
                 break  # one success per subpackage is enough
             except ImportError as exc:
+                # Module simply not present (no ``configuration_<name>``
+                # in this subpackage): expected, fall through to the
+                # next candidate. Debug-level only -- this happens for
+                # most subpackages that re-export from the package init.
                 logger.debug("[policy resolution] skip %s: %s", candidate, exc)
+                continue
+            except (AttributeError, RuntimeError, TypeError) as exc:
+                # Decorator-time failures are real and observable but
+                # MUST NOT abort the walk -- otherwise one buggy
+                # subpackage poisons every later registration AND the
+                # @functools.cache freezes the half-populated state for
+                # the rest of the process. Concrete cases this catches:
+                #   * ``@PreTrainedConfig.register_subclass(...)``
+                #     re-registering an already-known key
+                #     (RuntimeError / TypeError depending on draccus
+                #     version)
+                #   * a ``configuration_*`` that imports cleanly but
+                #     references a renamed attribute on a sibling
+                #     module (AttributeError)
+                #   * a draccus version-check that raises RuntimeError
+                #     during module import
+                # We log at WARNING (not DEBUG) because, unlike a missing
+                # ``configuration_<name>`` shim, this signals a genuine
+                # bug in either lerobot or strands_robots and an operator
+                # would want to see it in normal log output.
+                logger.warning(
+                    "[policy resolution] %s raised %s during registration; "
+                    "skipping this subpackage and continuing the walk: %s",
+                    candidate,
+                    type(exc).__name__,
+                    exc,
+                )
+                # Try the next candidate for THIS subpackage; if both
+                # raise, we move on to the next subpackage.
                 continue
 
 

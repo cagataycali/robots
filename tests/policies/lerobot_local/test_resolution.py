@@ -6,10 +6,42 @@ from __future__ import annotations
 
 import pytest
 
-pytestmark = pytest.mark.skipif(
-    pytest.importorskip("lerobot", reason="lerobot is required for resolution tests") is None,
-    reason="lerobot not installed",
-)
+# pytest.importorskip raises Skipped at collection time if lerobot is not
+# importable; it never returns None. Calling it once at module top is the
+# canonical "skip the whole module unless this dep is installed" pattern --
+# any subsequent ``pytest.mark.skipif(... is None, ...)`` wrapper would just
+# be belt-and-suspenders dead code (the importorskip already handled it).
+pytest.importorskip("lerobot")
+
+
+def _snapshot_lerobot_modules() -> dict:
+    """Snapshot all currently-loaded ``lerobot`` modules.
+
+    Returns a dict suitable for restoring the caller's ``sys.modules``
+    state via ``sys.modules.update(snapshot)`` after a destructive
+    purge. The predicate matches the canonical lerobot package and any
+    of its dotted children -- ``"lerobot" in name`` would also catch
+    sibling packages whose name happens to contain the substring (e.g.
+    a hypothetical ``my_lerobot_helper``), which is broader than the
+    purge actually intends.
+    """
+    import sys
+
+    return {name: module for name, module in sys.modules.items() if name == "lerobot" or name.startswith("lerobot.")}
+
+
+def _purge_lerobot_modules(snapshot: dict) -> None:
+    """Remove every entry in *snapshot* from ``sys.modules``.
+
+    ``snapshot`` is materialized first so the caller can iterate it
+    while ``sys.modules`` is being mutated. Symmetric with
+    ``_snapshot_lerobot_modules`` so that a purge + restore round-trip
+    leaves the interpreter in its original state.
+    """
+    import sys
+
+    for name in snapshot:
+        sys.modules.pop(name, None)
 
 
 class TestPolicyConfigDiscovery:
@@ -74,30 +106,56 @@ class TestPolicyConfigDiscovery:
         """
         import sys
 
-        # Reset every cached lerobot import so the stub gets a chance
-        # to take effect on this test.
-        for mod_name in [m for m in sys.modules if "lerobot" in m]:
-            del sys.modules[mod_name]
+        # Snapshot the current lerobot imports BEFORE we touch anything,
+        # so the test can fail / abort and the interpreter still exits
+        # with the same module state it started with. The previous
+        # version of this test purged the modules without a teardown,
+        # which (a) leaked the stub installed two lines below into
+        # every later test that imports lerobot.policies and (b)
+        # silently changed the production ``PreTrainedConfig`` class
+        # identity for the rest of the run.
+        snapshot = _snapshot_lerobot_modules()
+        _purge_lerobot_modules(snapshot)
+        try:
+            from strands_robots.policies.lerobot_local.resolution import (
+                _ensure_lerobot_policies_importable,
+                _ensure_policy_configs_registered,
+            )
 
-        from strands_robots.policies.lerobot_local.resolution import (
-            _ensure_lerobot_policies_importable,
-            _ensure_policy_configs_registered,
-        )
+            _ensure_lerobot_policies_importable()  # installs the stub
+            # ``@functools.cache`` is keyed on the empty tuple, so a
+            # prior call in this process would short-circuit and the
+            # walk we want to exercise would never run. The contract
+            # noted in the helper's docstring is that callers who
+            # invalidate ``sys.modules`` MUST clear the cache first.
+            _ensure_policy_configs_registered.cache_clear()
+            _ensure_policy_configs_registered()
 
-        _ensure_lerobot_policies_importable()  # installs the stub
-        _ensure_policy_configs_registered.cache_clear()
-        _ensure_policy_configs_registered()
+            from lerobot.configs.policies import PreTrainedConfig
 
-        from lerobot.configs.policies import PreTrainedConfig
+            registered = set(PreTrainedConfig.get_known_choices().keys())
+            assert "molmoact2" in registered, (
+                f"molmoact2 missing after stub+walk; registered: {sorted(registered)}. "
+                "Did the pkgutil walker get reverted to single-canary bootstrap?"
+            )
+            # Also verify the symmetric case for an older policy that pre-dates
+            # the stub mechanism, to make sure we didn't break the existing path.
+            assert "act" in registered
+        finally:
+            # Restore the snapshot regardless of test outcome so a
+            # later test ordering (e.g. running this BEFORE
+            # ``test_pkgutil_walk_registers_every_lerobot_policy_subpackage``)
+            # does not see the stubbed ``lerobot.policies`` and the
+            # mid-run-rebuilt ``lerobot.configs.policies``.
+            _purge_lerobot_modules(_snapshot_lerobot_modules())
+            sys.modules.update(snapshot)
+            # Drop the cache one more time so the next test in the
+            # suite re-walks against the restored, real lerobot.
+            from strands_robots.policies.lerobot_local.resolution import (
+                _ensure_policy_configs_registered,
+            )
 
-        registered = set(PreTrainedConfig.get_known_choices().keys())
-        assert "molmoact2" in registered, (
-            f"molmoact2 missing after stub+walk; registered: {sorted(registered)}. "
-            "Did the pkgutil walker get reverted to single-canary bootstrap?"
-        )
-        # Also verify the symmetric case for an older policy that pre-dates
-        # the stub mechanism, to make sure we didn't break the existing path.
-        assert "act" in registered
+            _ensure_policy_configs_registered.cache_clear()
 
     def test_resolve_class_by_name_handles_molmoact2_modeling_convention(self):
         """``modeling_<type>`` lookup works for new policies that follow
@@ -112,3 +170,63 @@ class TestPolicyConfigDiscovery:
         cls = resolve_policy_class_by_name("molmoact2")
         assert cls.__name__ == "MolmoAct2Policy"
         assert cls.__module__.endswith("molmoact2.modeling_molmoact2")
+
+    def test_walk_continues_after_subpackage_decorator_failure(self, monkeypatch, caplog):
+        """A subpackage whose ``configuration_*`` raises a non-ImportError
+        (e.g. ``RuntimeError`` from a re-registration collision, or
+        ``AttributeError`` from a renamed sibling attribute) MUST NOT
+        abort the walk. Pre-R1 the helper caught only ``ImportError``,
+        so a single buggy decorator on one subpackage would leave the
+        registry permanently half-populated for the lifetime of the
+        process (because ``@functools.cache`` then froze the failed
+        state).
+        """
+        import importlib
+        import logging
+
+        # Build a fake set of subpackage names. The first one will
+        # blow up at decorator-evaluation time; the second one must
+        # still register. Using the real lerobot package means the
+        # successful-path behaviour is also exercised.
+        from lerobot.configs.policies import PreTrainedConfig
+
+        import strands_robots.policies.lerobot_local.resolution as resolution
+
+        original_import = importlib.import_module
+        booby_trap = "lerobot.policies.act.configuration_act"
+
+        def maybe_raise(name, *args, **kwargs):
+            if name == booby_trap:
+                raise RuntimeError("simulated decorator-time re-registration collision")
+            return original_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(resolution.importlib, "import_module", maybe_raise)
+
+        resolution._ensure_policy_configs_registered.cache_clear()
+        with caplog.at_level(
+            logging.WARNING,
+            logger="strands_robots.policies.lerobot_local.resolution",
+        ):
+            resolution._ensure_policy_configs_registered()
+
+        # The walk surfaced the booby-trapped subpackage at WARNING
+        # level so an operator can see it in production logs.
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING and booby_trap in r.message]
+        assert warnings, (
+            "Expected a WARNING about the booby-trapped configuration_act "
+            f"import; got records: {[r.message for r in caplog.records]}"
+        )
+
+        # ...AND the registry still contains the other policies that
+        # the walk reached after the failure. Pre-R1 the walk would
+        # have returned at the first non-ImportError, leaving
+        # everything after it unregistered.
+        registered = set(PreTrainedConfig.get_known_choices().keys())
+        survivors = registered & {"diffusion", "smolvla", "molmoact2"}
+        assert survivors, (
+            "Walk aborted on the first non-ImportError; expected at least "
+            "one of {'diffusion', 'smolvla', 'molmoact2'} to still be "
+            f"registered. Got: {sorted(registered)}"
+        )
+
+        resolution._ensure_policy_configs_registered.cache_clear()
