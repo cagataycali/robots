@@ -778,3 +778,59 @@ class TestRealModeConfigDiscovery:
         assert known - {"so100_follower", "so101_follower"}, (
             f"Walk aborted on so_follower OSError; only {known} registered."
         )
+
+    def test_unknown_kwarg_typo_raises_value_error(self):
+        """Pin AGENTS.md > Review Learnings (#86) > "Reject silently-dropped
+        kwargs". A user typo like ``prot=`` (instead of ``port=``) must
+        surface as a clear ``ValueError`` at config-build time, not be
+        silently dropped and surface hours later as a misleading
+        connection failure.
+
+        The cross-robot polymorphism case -- forwardable kwargs that
+        belong to a sibling robot, e.g. ``kp`` to so101 -- is NOT what
+        this test pins (that case is handled by
+        ``test_extra_kwargs_filtered_against_dataclass_fields``). This
+        test is specifically about kwargs that are unknown to the entire
+        ``forwardable`` allowlist (typos, kwargs from a different
+        subsystem entirely).
+        """
+        pytest.importorskip("lerobot.robots.so_follower")
+
+        from strands_robots.hardware_robot import Robot as HwRobot
+
+        hw = HwRobot.__new__(HwRobot)
+        hw.tool_name_str = "so101_typo"
+
+        with pytest.raises(ValueError, match=r"Unknown kwarg.*prot"):
+            hw._create_minimal_config(
+                "so101_follower",
+                cameras={},
+                prot="/dev/ttyACM0",  # typo: should be `port`
+            )
+
+    def test_known_cross_robot_kwarg_is_silently_filtered_not_rejected(self):
+        """Companion to ``test_unknown_kwarg_typo_raises_value_error``:
+        a kwarg that IS in ``forwardable`` but does NOT belong to the
+        target robot's dataclass (e.g. ``kp`` to so101) must NOT raise.
+        That deliberate tolerance is the only reason
+        ``Robot('so101', mode='real', kp=[...])`` doesn't blow up when a
+        caller is iterating over a heterogeneous fleet -- the strict
+        rejection only applies to kwargs no robot in the family knows.
+        """
+        pytest.importorskip("lerobot.robots.so_follower")
+
+        from strands_robots.hardware_robot import Robot as HwRobot
+
+        hw = HwRobot.__new__(HwRobot)
+        hw.tool_name_str = "so101_polymorphism"
+
+        # Must not raise -- ``kp`` is a unitree_g1 kwarg, in ``forwardable``,
+        # but not on so101_follower's dataclass. Silent filter is correct.
+        cfg = hw._create_minimal_config(
+            "so101_follower",
+            cameras={},
+            port="/dev/null",
+            kp=[1.0] * 29,
+        )
+        assert cfg.port == "/dev/null"
+        assert not hasattr(cfg, "kp")

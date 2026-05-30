@@ -243,8 +243,18 @@ class Robot(AgentTool):
         ``is_simulation``, ``control_dt``, ``gravity_compensation``,
         ``controller``, ``max_relative_target``, ``disable_torque_on_disconnect``)
         are forwarded if and only if the resolved config dataclass declares
-        a matching field -- extra kwargs are dropped silently to keep the
-        public API stable across lerobot releases.
+        a matching field. This means kwargs that exist in the union-of-
+        robots allowlist but not on the current robot's dataclass are
+        dropped silently -- that is the deliberate cross-robot
+        polymorphism (``Robot('so101', kp=[...])`` won't fail just because
+        ``kp`` is a unitree_g1 thing).
+
+        A kwarg that is NOT in the allowlist at all is rejected with
+        ``ValueError`` rather than dropped, per AGENTS.md > Review
+        Learnings (#86) > "Reject silently-dropped kwargs". This catches
+        typos like ``prot=`` (instead of ``port=``) at config-build time
+        rather than as a delayed connection failure with no kwarg in
+        sight.
         """
         # ``lerobot`` is already a hard dep at this point (``_initialize_robot``
         # imports it eagerly). Importing the camera + config modules here is
@@ -357,6 +367,26 @@ class Robot(AgentTool):
         for key in forwardable:
             if key in kwargs and key in valid_fields:
                 config_data[key] = kwargs[key]
+
+        # Reject kwargs that no robot in the family knows about. Per
+        # AGENTS.md > Review Learnings (#86) > "Reject silently-dropped
+        # kwargs", a typo like ``prot=`` or a kwarg meant for a different
+        # subsystem must surface immediately, not as a delayed connection
+        # failure. Note we still tolerate forwardable-but-not-on-this-
+        # robot (e.g. ``kp`` to so101) -- that is the deliberate cross-
+        # robot polymorphism the forwardable loop above implements.
+        always_allowed = {"id", "cameras"}
+        recognised = set(forwardable) | always_allowed
+        unknown = set(kwargs) - recognised
+        if unknown:
+            raise ValueError(
+                f"Unknown kwarg(s) for robot_type={robot_type!r}: "
+                f"{sorted(unknown)}. This robot's dataclass accepts: "
+                f"{sorted(valid_fields)}. The cross-robot allowlist is: "
+                f"{sorted(recognised)}. (If this is a typo, fix it; if "
+                f"this is a genuinely new lerobot kwarg, add it to "
+                f"``forwardable`` in ``_create_minimal_config``.)"
+            )
 
         try:
             return ConfigClass(**config_data)

@@ -118,8 +118,13 @@ WARNING symmetry), #260 (warn on re-use of break-glass-written CA).
   `calibration_dir`, `mock`, `use_degrees`,
   `max_relative_target`, `disable_torque_on_disconnect`) are forwarded
   if and only if the resolved config dataclass declares a matching field.
-  Extra kwargs are dropped silently — callers can pass union-of-all-known
-  kwargs without breaking simpler robots.
+  Forwardable-but-not-on-this-robot kwargs are dropped silently (cross-
+  robot polymorphism: ``Robot('so101', kp=[...])`` does not blow up
+  because ``kp`` is a unitree_g1 kwarg). Kwargs that are unknown to the
+  entire ``forwardable`` allowlist (typos like ``prot=``, kwargs from
+  another subsystem) raise ``ValueError`` immediately at config-build
+  time, per AGENTS.md > Review Learnings (#86) > "Reject silently-
+  dropped kwargs".
 
 - The hand-rolled `config_mapping` (so100/so101/koch/openarm/bi-* only)
   is gone. Adding a new lerobot-supported robot now requires zero
