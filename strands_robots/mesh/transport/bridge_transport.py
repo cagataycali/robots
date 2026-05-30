@@ -375,7 +375,8 @@ class _CommandDeduplicator:
                 for k in stale:
                     self._seen.pop(k, None)
                 if len(self._seen) > _MAX_DEDUP_ENTRIES:
-                    # drop oldest 20%
+                    # TODO(#231): replace sort+slice with heap-based GC;
+                    # lock-hold time is O(N log N) here -- drop oldest 20%
                     ordered = sorted(self._seen.items(), key=lambda kv: kv[1])
                     drop = max(1, len(ordered) // 5)
                     for k, _ in ordered[:drop]:
@@ -449,6 +450,7 @@ class BridgeTransport:
         self._zenoh = zenoh or ZenohTransportCls()
         self._iot = iot or IotMqttTransportCls()
         self._bridge_suffixes = bridge_suffixes if bridge_suffixes is not None else _resolve_bridge_filter()
+        self._bridge_prefixes = _resolve_bridge_prefix_filter()
         self._zenoh_alive = False
         self._iot_alive = False
         self._lock = threading.Lock()
@@ -551,7 +553,7 @@ class BridgeTransport:
                 logger.debug("[bridge] zenoh.put error on %s: %s", key, exc)
 
         # Filtered IoT.
-        if self._iot.is_alive() and _should_bridge(key, self._bridge_suffixes):
+        if self._iot.is_alive() and _should_bridge(key, self._bridge_suffixes, self._bridge_prefixes):
             try:
                 self._iot.put(key, data)
             except (RuntimeError, ConnectionError, OSError) as exc:
@@ -577,6 +579,8 @@ class BridgeTransport:
         iot_sub: Any | None = None
 
         def make_dedup_handler(transport_label: str) -> Callable[[Any], None]:
+            _warned_missing_key_expr = [False]  # one-shot gate for R7 (avoids per-sample noise)
+
             def _filtered(sample: Any) -> None:
                 # Extract payload for dedup. We do NOT json-decode if the
                 # sample doesn't expose a payload -- fall back to raw handler.
@@ -609,13 +613,15 @@ class BridgeTransport:
                 _sentinel = object()
                 _delivered = getattr(sample, "key_expr", _sentinel)
                 if _delivered is _sentinel:
-                    logger.warning(
-                        "[bridge] sample on subscription %r is missing"
-                        " key_expr; falling back to subscription pattern"
-                        " for dedup cache key (R5 contract drift -- this"
-                        " reintroduces wildcard-aliasing if it persists)",
-                        key_expr,
-                    )
+                    if not _warned_missing_key_expr[0]:
+                        logger.warning(
+                            "[bridge] sample on subscription %r is missing"
+                            " key_expr; falling back to subscription pattern"
+                            " for dedup cache key (R5 contract drift -- this"
+                            " reintroduces wildcard-aliasing if it persists)",
+                            key_expr,
+                        )
+                        _warned_missing_key_expr[0] = True
                     _delivered = key_expr
                 delivered_topic = str(_delivered)
                 if payload is not None and self._dedup.is_duplicate(delivered_topic, payload):
