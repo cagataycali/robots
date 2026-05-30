@@ -59,6 +59,10 @@ Applies to ``strands_robots.mesh.iot.provision`` and
   ``provision_operator``, and ``teardown_thing``. Rejects path
   separators, dots, spaces, NUL, non-ASCII, and trailing
   ``\n``/``\r``/``\t``. Pre-existing AWS IoT Things containing ``:``
+
+  ``
+``/``
+``/``	``. Pre-existing AWS IoT Things containing ``:``
   must be renamed (we deliberately reject ``:`` due to NTFS / classic
   Mac filesystem semantics).
 - **IoT policy scope** — robot/operator policies use explicit
@@ -78,7 +82,51 @@ New env vars (documented in README Configuration matrix):
 Known follow-ups: #249 (camera privacy kill-switch + S3 ACL),
 #251 (chunked-read parity in ``_ensure_ca``), #259 (kwarg negative-TTL
 WARNING symmetry), #260 (warn on re-use of break-glass-written CA).
+## Unreleased — Policy registry: future-proof discovery for `lerobot.policies`
 
+### Fixed
+
+- `LerobotLocalPolicy` now correctly resolves any policy lerobot ships,
+  including new ones like `molmoact2` (lerobot PR #3604, shipped in
+  0.5.2+). Previously the resolver imported a single hand-coded canary
+  (`lerobot.policies.act.configuration_act`) and assumed lerobot's
+  `policies/__init__.py` would side-effect every other policy config
+  into the draccus `PreTrainedConfig` registry. That assumption breaks
+  TWO ways:
+
+  1. The runtime path in `LerobotLocalPolicy` already installs a
+     lightweight stub for `lerobot.policies` to skip eagerly importing
+     the heavy ``__init__.py`` (which pulls in groot/transformers/
+     flash-attn). With the stub in place, importing a single
+     `configuration_*` no longer cascades — only the canary policy
+     gets registered, and every other lookup falls back to manual
+     config.json parsing (which fails for repos that rely on draccus).
+
+  2. lerobot has been progressively making subsystems lazy
+     (`lerobot.robots.__init__` no longer imports its drivers eagerly
+     — see #275/#276). The same transition could happen to
+     `lerobot.policies` at any time.
+
+### Changed (internal)
+
+- `strands_robots/policies/lerobot_local/resolution.py`:
+  `_ensure_policy_configs_registered` now walks every subpackage of
+  `lerobot.policies` with `pkgutil.iter_modules` and imports each
+  `configuration_<name>` module (preferred — skips the heavy
+  `modeling_<name>` import), falling back to the package itself.
+  Symmetric with the robots-side fix in
+  `hardware_robot._ensure_lerobot_robots_registered` (#276).
+- Replaced the `_CONFIGS_REGISTERED` global flag with `@functools.cache`
+  (silences CodeQL false positive, exposes `.cache_clear()` for tests).
+- `pkgutil` and `functools` hoisted to module top.
+
+### Tests
+
+- 3 new tests in `tests/policies/lerobot_local/test_resolution.py`:
+  `TestPolicyConfigDiscovery` — covers the all-subpackages walk, the
+  drift-symptom case where the lerobot.policies stub is active, and
+  the molmoact2 modeling-convention class lookup. All run with
+  `pytest.importorskip("lerobot")`.
 ## Unreleased - #178 (LiberoOffScreenRenderEngine retired)
 
 ### Removed: ``LiberoOffScreenRenderEngine`` simulation backend (BREAKING)
