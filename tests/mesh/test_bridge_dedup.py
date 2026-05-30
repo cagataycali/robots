@@ -653,33 +653,18 @@ class TestMissingKeyExprWarnsR5:
     record.
     """
 
-    def test_missing_key_expr_warns_and_falls_back(self, caplog):
-        """A subscriber receiving a sample without key_expr must warn."""
+    def test_missing_key_expr_warns_and_falls_back(self):
+        """A subscriber receiving a sample without key_expr must warn.
+
+        Source-grep pin (not a runtime test): the live-subscriber path is
+        already exercised by R4 ``test_distinct_delivered_topics_not_aliased``;
+        here we lock in the *source contract* so a refactor of the
+        ``_filtered`` closure cannot silently drop the sentinel + warning
+        without failing this test.
+        """
+        import inspect
 
         from strands_robots.mesh.transport import bridge_transport
-
-        # Build a transport with both transport stubs disabled so we can
-        # exercise the inner _filtered closure directly.
-        bt = bridge_transport.BridgeTransport.__new__(bridge_transport.BridgeTransport)
-        bt._dedup = bridge_transport._CommandDeduplicator(ttl_s=10.0)
-        bt._zenoh = None
-        bt._iot = None
-
-        # Reach into declare_subscriber to materialise a _filtered closure
-        # without a live subscriber. We rebuild the closure by hand using
-        # the same code path: a tiny helper that wraps a no-op handler with
-        # the dedup filter, exactly like declare_subscriber would.
-        captured: list[Any] = []
-
-        def handler(sample: Any) -> None:
-            captured.append(sample)
-
-        # Mirror the structure of declare_subscriber's _filtered closure
-        # but use the public helper directly: invoke is_duplicate with the
-        # delivered-topic resolution logic from the production code.
-        # We test the *source contract* via the production class so a
-        # refactor of the closure must keep the warning behaviour.
-        import inspect
 
         src = inspect.getsource(bridge_transport.BridgeTransport.declare_subscriber)
         # Structural pin: the source must use a sentinel sentinel pattern
@@ -695,7 +680,7 @@ class TestMissingKeyExprWarnsR5:
             "wildcard-aliasing bug (R5 fix)"
         )
 
-    def test_present_key_expr_does_not_warn(self, caplog):
+    def test_present_key_expr_does_not_warn(self):
         """A sample with key_expr set must NOT emit the R5 warning."""
         # Negative pin: well-formed sample exercises the happy path.
         # Done via source-grep: the warning is gated on sentinel branch,
