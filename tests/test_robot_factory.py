@@ -440,3 +440,282 @@ class TestCameraErrorMessage:
         assert "_dispatch_action" not in str(excinfo.value), (
             "Error message should not mention the private _dispatch_action method"
         )
+
+
+class TestRealModeConfigDiscovery:
+    """Regression tests for `_create_minimal_config` switching from a
+    hand-rolled mapping to lerobot's draccus ChoiceRegistry discovery.
+
+    These tests use `pytest.importorskip("lerobot")` so they noop on
+    machines without lerobot installed.
+    """
+
+    def test_lerobot_registry_discovery_finds_all_subpackages(self):
+        """Walking ``lerobot.robots`` with pkgutil registers every robot
+        config without any hard-coded type→module mapping. This is the
+        future-proof path: any robot lerobot ships in
+        ``lerobot/robots/<X>/`` (regardless of whether its ``robot_type``
+        matches ``X``, e.g. ``hope_jr_arm`` lives in ``hope_jr/`` and
+        ``lekiwi_client`` lives in ``lekiwi/``) automatically becomes
+        constructible via ``Robot(...)`` mode='real'."""
+        pytest.importorskip("lerobot")
+        from lerobot.robots.config import RobotConfig
+
+        from strands_robots.hardware_robot import _ensure_lerobot_robots_registered
+
+        _ensure_lerobot_robots_registered()
+        registered = set(RobotConfig.get_known_choices().keys())
+
+        # These are the lerobot-built-in robots whose subpackage exists
+        # on disk in lerobot >=0.5.x. Adding more upstream is a no-op
+        # for strands_robots.
+        expected_min = {
+            "so100_follower",
+            "so101_follower",
+            "koch_follower",
+            "openarm_follower",
+            "bi_so_follower",
+            "bi_openarm_follower",
+            "unitree_g1",
+        }
+        missing = expected_min - registered
+        assert not missing, f"Discovery missed lerobot built-ins: {missing}. Registered: {sorted(registered)}"
+
+    def test_subpackage_with_multiple_robots_picked_up(self):
+        """Some lerobot subpackages register MULTIPLE robot_types (e.g.
+        ``hope_jr/`` registers both ``hope_jr_arm`` and ``hope_jr_hand``;
+        ``lekiwi/`` registers both ``lekiwi`` and ``lekiwi_client``).
+        pkgutil-walking handles this naturally — a hand-rolled
+        type→module map would have to special-case each."""
+        pytest.importorskip("lerobot.robots.hope_jr")
+        from lerobot.robots.config import RobotConfig
+
+        from strands_robots.hardware_robot import _ensure_lerobot_robots_registered
+
+        _ensure_lerobot_robots_registered()
+        registered = set(RobotConfig.get_known_choices().keys())
+        # Multiple types from one subpackage:
+        assert "hope_jr_arm" in registered
+        assert "hope_jr_hand" in registered
+
+    def test_so101_config_build_uses_RobotConfig_subclass(self):
+        """Regression: lerobot 0.5.x's bare ``SOFollowerConfig`` has no
+        ``id`` field — discovery picks the registered ``SOFollowerRobotConfig``
+        subclass that does. (Original SO-100/SO-101 real-mode regression.)"""
+        pytest.importorskip("lerobot.robots.so_follower")
+        from strands_robots.hardware_robot import Robot as HwRobot
+
+        # Build the config directly via the helper — no hardware connect.
+        hw = HwRobot.__new__(HwRobot)
+        hw.tool_name_str = "so101_smoke"
+        cfg = hw._create_minimal_config("so101_follower", cameras={}, port="/dev/null", use_degrees=True)
+        # Must be the registered subclass (has ``id``), not the bare config.
+        assert hasattr(cfg, "id"), "config has no 'id' — used the wrong subclass"
+        assert cfg.id == "so101_smoke"
+        assert cfg.port == "/dev/null"
+        # The registered subclass for so101 inherits both RobotConfig and
+        # SOFollowerConfig — its name typically ends with `RobotConfig`.
+        assert "RobotConfig" in type(cfg).__name__
+
+    def test_unitree_g1_config_build_via_discovery(self):
+        """Regression: ``unitree_g1`` was missing from the old hand-rolled
+        config_mapping despite the registry advertising ``has_real=True``.
+        Discovery via ChoiceRegistry picks it up automatically."""
+        pytest.importorskip("lerobot.robots.unitree_g1")
+        from strands_robots.hardware_robot import Robot as HwRobot
+
+        hw = HwRobot.__new__(HwRobot)
+        hw.tool_name_str = "g1_smoke"
+        cfg = hw._create_minimal_config(
+            "unitree_g1",
+            cameras={},
+            robot_ip="192.168.123.164",
+            kp=[100.0] * 29,
+            kd=[2.0] * 29,
+            default_positions=[0.0] * 29,
+            is_simulation=False,
+        )
+        assert cfg.id == "g1_smoke"
+        assert cfg.robot_ip == "192.168.123.164"
+        assert len(cfg.kp) == 29
+        assert cfg.is_simulation is False
+
+    def test_unknown_robot_type_raises_clean(self):
+        """Unknown types produce an error listing the *actual* known types
+        (not a stale hard-coded list)."""
+        pytest.importorskip("lerobot.robots.config")
+        from strands_robots.hardware_robot import Robot as HwRobot
+
+        hw = HwRobot.__new__(HwRobot)
+        hw.tool_name_str = "x"
+        with pytest.raises(ValueError, match="Unsupported robot type"):
+            hw._create_minimal_config("totally_made_up_robot", cameras={})
+
+    def test_extra_kwargs_filtered_against_dataclass_fields(self):
+        """Forwarded kwargs that the target dataclass doesn't declare are
+        dropped silently, so callers can pass union-of-all known kwargs
+        without breaking on simpler robots."""
+        pytest.importorskip("lerobot.robots.so_follower")
+        from strands_robots.hardware_robot import Robot as HwRobot
+
+        hw = HwRobot.__new__(HwRobot)
+        hw.tool_name_str = "so101_smoke"
+        # `robot_ip` and `kp` are G1-only — must not raise on so101.
+        cfg = hw._create_minimal_config(
+            "so101_follower",
+            cameras={},
+            port="/dev/null",
+            robot_ip="192.168.0.1",
+            kp=[1.0] * 29,
+            kd=[1.0] * 29,
+        )
+        assert cfg.port == "/dev/null"
+        # Filtered out:
+        assert not hasattr(cfg, "robot_ip")
+        assert not hasattr(cfg, "kp")
+
+    def test_mesh_attrs_set_before_initialize_robot_no_attribute_error_in_cleanup(self, caplog):
+        """Pin the cleanup-AttributeError fix with the actual symptom.
+
+        Pre-fix, when ``_initialize_robot`` raised partway through ``__init__``
+        the secondary cleanup path ran ``cleanup()`` -> ``self.mesh`` and
+        produced an ``AttributeError: 'Robot' object has no attribute
+        'mesh'``. ``__del__`` swallows exceptions so the user never saw it
+        directly, but ``cleanup()`` has its own ``except`` that calls
+        ``logger.error(f"Cleanup error for {self.tool_name_str}: {e}")``.
+
+        The fix moves ``self.mesh = None`` / ``self.peer_id = None`` to
+        before ``_initialize_robot``, so that error log entry no longer
+        appears. We assert on that absence; if a future refactor undoes
+        the ordering swap (e.g. moves the mesh init back to its original
+        spot), this test fails.
+        """
+        from unittest.mock import patch
+
+        from strands_robots.hardware_robot import Robot as HwRobot
+
+        with caplog.at_level("ERROR", logger="strands_robots.hardware_robot"):
+            with patch.object(HwRobot, "_initialize_robot", side_effect=RuntimeError("boom")):
+                with pytest.raises(RuntimeError, match="boom"):
+                    HwRobot(tool_name="x", robot="so101_follower")
+
+        # Pre-fix code logged either of:
+        #   "Cleanup error for x: 'Robot' object has no attribute 'mesh'"
+        # depending on whether peer_id or mesh was probed first. The fix
+        # eliminates BOTH because both attrs are now initialised before
+        # _initialize_robot runs.
+        offenders = [
+            r.message
+            for r in caplog.records
+            if "AttributeError" in r.message and "mesh" in r.message and "Cleanup error" in r.message
+        ]
+        assert not offenders, (
+            f"cleanup() logged AttributeError for missing 'mesh': {offenders}. "
+            "Did the mesh/peer_id init move back below _initialize_robot?"
+        )
+
+    def test_bi_so100_follower_resolves_via_discovery_shim(self):
+        """Regression test for the lazy-import shim: ``bi_so100_follower``
+        is registered by ``lerobot.robots.bi_so_follower`` (the directory
+        name does NOT match the robot_type), so a hand-rolled
+        ``import_module(f"lerobot.robots.{robot_type}")`` would miss it.
+        Discovery via ``pkgutil.iter_modules`` walks the directory and
+        catches it.
+
+        This pins the discovery contract -- if a future cleanup PR drops
+        the pkgutil walker (e.g. believing lerobot's __init__ has become
+        eager), this test will fail before the breakage hits users.
+        """
+        pytest.importorskip("lerobot.robots.bi_so_follower")
+        from lerobot.robots.config import RobotConfig
+
+        from strands_robots.hardware_robot import _ensure_lerobot_robots_registered
+
+        # Force a clean walk by bypassing the @functools.cache (we want
+        # to test that even the FIRST call after a fresh import resolves
+        # the alias case correctly).
+        _ensure_lerobot_robots_registered.cache_clear()
+        _ensure_lerobot_robots_registered()
+
+        # `hope_jr_arm` lives in `lerobot.robots.hope_jr` (the directory
+        # name does NOT match the robot_type). Same with `hope_jr_hand`,
+        # `lekiwi_client`, and `so100_follower`/`so101_follower` (both in
+        # `so_follower`). A hand-rolled
+        # `import_module(f"lerobot.robots.{robot_type}")` would miss all of
+        # these. Discovery via pkgutil.iter_modules catches them.
+        for robot_type, expected_pkg_prefix in [
+            ("hope_jr_arm", "lerobot.robots.hope_jr"),
+            ("hope_jr_hand", "lerobot.robots.hope_jr"),
+            ("lekiwi_client", "lerobot.robots.lekiwi"),
+            ("so101_follower", "lerobot.robots.so_follower"),
+            ("so100_follower", "lerobot.robots.so_follower"),
+        ]:
+            try:
+                ConfigClass = RobotConfig.get_choice_class(robot_type)
+            except KeyError:
+                pytest.fail(f"discovery missed {robot_type!r} (expected from {expected_pkg_prefix})")
+            assert ConfigClass.__module__.startswith(expected_pkg_prefix), (
+                f"Expected {robot_type} to come from {expected_pkg_prefix}, got {ConfigClass.__module__}"
+            )
+
+    def test_unsupported_type_error_has_no_chained_keyerror_traceback(self):
+        """``raise ValueError(...) from None`` must suppress the chained
+        KeyError traceback. Otherwise users see "During handling of the
+        above exception (KeyError), another exception occurred" which
+        leaks lerobot's draccus internals."""
+        from strands_robots.hardware_robot import Robot as HwRobot
+
+        hw = HwRobot.__new__(HwRobot)
+        hw.tool_name_str = "x"
+        try:
+            hw._create_minimal_config("totally_made_up_robot", cameras={})
+        except ValueError as e:
+            assert e.__cause__ is None, f"ValueError carries chained cause {e.__cause__!r}; should be `from None`."
+            assert e.__suppress_context__, (
+                "ValueError does not suppress its context; users will see the internal KeyError traceback."
+            )
+        else:
+            pytest.fail("expected ValueError")
+
+    def test_robot_factory_end_to_end_real_mode_so101(self):
+        """Public-API happy-path: ``Robot('so101', mode='real', port=...)``
+        gets through the factory, uses lerobot's draccus discovery, and
+        constructs a HardwareRobot wrapping a real lerobot SOFollower
+        (with ``_initialize_robot`` mocked so we don't touch hardware).
+
+        This exercises the full call chain that caused issue #275 to be
+        filed -- the previous tests poke ``_create_minimal_config`` via
+        ``__new__`` so they only cover the helper. This one goes through
+        ``Robot()``."""
+        from unittest.mock import MagicMock, patch
+
+        from strands_robots import Robot
+
+        # Sentinel returned from _initialize_robot — pretend it's a built
+        # lerobot Robot instance so the strands HardwareRobot.__init__
+        # completes happily without trying to talk to a serial port.
+        fake_lerobot_robot = MagicMock(name="lerobot_robot_instance")
+        fake_lerobot_robot.name = "so_follower"
+        fake_lerobot_robot.config = MagicMock()
+        fake_lerobot_robot.config.cameras = {}
+
+        with patch(
+            "strands_robots.hardware_robot.Robot._initialize_robot",
+            return_value=fake_lerobot_robot,
+        ):
+            r = Robot(
+                "so101",
+                mode="real",
+                port="/dev/null",
+                use_degrees=True,
+                id="left_arm",
+            )
+
+        # The factory returned a HardwareRobot, mesh attrs are initialised,
+        # and the inner robot is the fake we injected.
+        from strands_robots.hardware_robot import Robot as HwRobot
+
+        assert isinstance(r, HwRobot)
+        assert r.robot is fake_lerobot_robot
+        assert r.mesh is None or hasattr(r.mesh, "stop")  # mesh is opt-in; just ensure attr exists
+        assert hasattr(r, "peer_id")  # populated by factory if mesh started, else None

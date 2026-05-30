@@ -16,7 +16,11 @@ Features:
 from __future__ import annotations
 
 import asyncio
+import dataclasses
+import functools
+import importlib
 import logging
+import pkgutil
 import threading
 import time
 from collections.abc import AsyncGenerator
@@ -36,6 +40,72 @@ if TYPE_CHECKING:
     from .policies import Policy
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Lazy lerobot RobotConfig registration helper.
+# ---------------------------------------------------------------------------
+#
+# lerobot's robot drivers register themselves with ``RobotConfig`` (a
+# draccus ``ChoiceRegistry``) via ``@RobotConfig.register_subclass(...)``
+# at module import time. Because ``lerobot.robots.__init__`` does not
+# eagerly import every subpackage, the registry is empty until something
+# triggers the import. ``_create_minimal_config`` calls this helper once
+# per process to populate it. ``@functools.cache`` makes the second call
+# a dict lookup, so the per-Robot() overhead amortises to ~0.
+
+
+@functools.cache
+def _ensure_lerobot_robots_registered() -> None:
+    """Import every robot driver subpackage so RobotConfig is populated.
+
+    Walks ``lerobot.robots`` with ``pkgutil`` so we automatically pick up
+    every robot lerobot ships -- past, present, and future -- including
+    those whose ``robot_type`` doesn't match its subpackage name (e.g.
+    ``hope_jr_arm`` in ``hope_jr/``, ``lekiwi_client`` in ``lekiwi/``,
+    ``so100_follower`` and ``so101_follower`` both in ``so_follower/``).
+    Then invokes lerobot's third-party plugin loader so any installed
+    ``lerobot_robot_*`` distribution registers itself too.
+
+    Idempotent via ``@functools.cache`` -- the first call walks the tree,
+    subsequent calls are dict lookups.
+    """
+    try:
+        import lerobot.robots as _lr_robots
+    except ImportError:
+        # lerobot not installed -- caller will get a clean error at the
+        # ChoiceRegistry lookup site.
+        return
+
+    # Walk every immediate subpackage of ``lerobot.robots`` and import
+    # it. Each subpackage's ``__init__`` (or its ``config_*`` module)
+    # runs the ``@RobotConfig.register_subclass(...)`` decorator as a
+    # side effect.
+    for _, sub_name, is_pkg in pkgutil.iter_modules(_lr_robots.__path__):
+        if not is_pkg:
+            continue
+        full_name = f"{_lr_robots.__name__}.{sub_name}"
+        try:
+            importlib.import_module(full_name)
+        except ImportError as exc:
+            # Driver-specific runtime dep missing (e.g. ``unitree_sdk2py``,
+            # ``reachy2_sdk``). Robot simply won't appear in the choice
+            # registry -- that is the correct outcome: trying to construct
+            # it later will raise ``Unsupported robot type`` with the
+            # actual list of available types.
+            logger.debug("[hardware_robot] skip %s: %s", full_name, exc)
+
+    # Pick up third-party plugins (``lerobot_robot_*`` distributions) via
+    # lerobot's own loader if available -- lets external robot vendors
+    # expose drivers without any strands_robots involvement.
+    try:
+        from lerobot.utils.import_utils import register_third_party_plugins
+
+        register_third_party_plugins()
+    except ImportError:
+        # ``register_third_party_plugins`` lives in modern lerobot only;
+        # older versions skip this opt-in step (built-ins still work).
+        logger.debug("[hardware_robot] register_third_party_plugins unavailable")
 
 
 class TaskStatus(Enum):
@@ -100,6 +170,14 @@ class Robot(AgentTool):
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"{tool_name}_executor")
         self._shutdown_event = threading.Event()
 
+        # Mesh attributes — populated by the Robot() factory after init.
+        # Plain attributes (not properties) so test code can swap a fake mesh
+        # in without going through the factory.
+        # Set BEFORE _initialize_robot so cleanup()/__del__ never see an
+        # AttributeError if construction fails partway through.
+        self.mesh: Any = None
+        self.peer_id: str | None = None
+
         # Initialize robot using lerobot's abstraction
         self.robot = self._initialize_robot(robot, cameras, **kwargs)
 
@@ -114,12 +192,6 @@ class Robot(AgentTool):
 
         if data_config:
             logger.info("Data config: %s", data_config)
-
-        # Mesh attributes — populated by the Robot() factory after init.
-        # Plain attributes (not properties) so test code can swap a fake mesh
-        # in without going through the factory.
-        self.mesh: Any = None
-        self.peer_id: str | None = None
 
     def _initialize_robot(
         self, robot: LeRobotRobot | RobotConfig | str, cameras: dict[str, dict[str, Any]] | None, **kwargs: Any
@@ -151,14 +223,35 @@ class Robot(AgentTool):
     def _create_minimal_config(
         self, robot_type: str, cameras: dict[str, dict[str, Any]] | None, **kwargs: Any
     ) -> RobotConfig:
-        """Create minimal robot config using specific robot config classes."""
-        from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
+        """Create a minimal lerobot RobotConfig for ``robot_type``.
 
-        # Convert cameras to lerobot format
-        camera_configs = {}
+        Uses lerobot's draccus ``ChoiceRegistry`` to resolve the registered
+        config subclass. This is the same lookup ``make_robot_from_config``
+        performs internally and means we automatically support every robot
+        lerobot ships (so100/so101, koch, openarm, unitree_g1, aloha, ...)
+        without maintaining a hand-rolled mapping.
+
+        Robot-specific kwargs (``port``, ``robot_ip``, ``kp``, ``kd``,
+        ``default_positions``, ``calibration_dir``, ``mock``, ``use_degrees``,
+        ``is_simulation``, ``control_dt``, ``gravity_compensation``,
+        ``controller``, ``max_relative_target``, ``disable_torque_on_disconnect``)
+        are forwarded if and only if the resolved config dataclass declares
+        a matching field -- extra kwargs are dropped silently to keep the
+        public API stable across lerobot releases.
+        """
+        # ``lerobot`` is already a hard dep at this point (``_initialize_robot``
+        # imports it eagerly). Importing the camera + config modules here is
+        # cheap and the only reason it isn't at module top is that some
+        # downstream packagers tree-shake unused submodules.
+        from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
+        from lerobot.robots.config import RobotConfig
+
+        # Convert cameras to lerobot format.
+        camera_configs: dict[str, Any] = {}
         if cameras:
             for name, config in cameras.items():
-                if config.get("type", "opencv") == "opencv":
+                cam_type = config.get("type", "opencv")
+                if cam_type == "opencv":
                     camera_configs[name] = OpenCVCameraConfig(
                         index_or_path=config["index_or_path"],
                         fps=config.get("fps", 30),
@@ -168,54 +261,102 @@ class Robot(AgentTool):
                         color_mode=config.get("color_mode", "rgb"),
                     )
                 else:
-                    raise ValueError(f"Unsupported camera type: {config.get('type')}")
+                    raise ValueError(f"Unsupported camera type: {cam_type}")
 
-        # Map robot type to specific config class.
-        # lerobot >=0.5.0 unified SO-100/SO-101 into ``so_follower``.
-        config_mapping = {
-            "so101_follower": ("lerobot.robots.so_follower", "SOFollowerConfig"),
-            "so100_follower": ("lerobot.robots.so_follower", "SOFollowerConfig"),
-            "bi_so100_follower": ("lerobot.robots.bi_so_follower", "BiSOFollowerConfig"),
-            "bi_so101_follower": ("lerobot.robots.bi_so_follower", "BiSOFollowerConfig"),
-            "koch_follower": ("lerobot.robots.koch_follower", "KochFollowerConfig"),
-            "openarm_follower": ("lerobot.robots.openarm_follower", "OpenArmFollowerConfig"),
-            "bi_openarm_follower": ("lerobot.robots.bi_openarm_follower", "BiOpenArmFollowerConfig"),
-            # Add more as needed
-        }
+        # Trigger lerobot's lazy registration. Each robot driver registers
+        # its config via @RobotConfig.register_subclass at module-import
+        # time, but ``lerobot.robots.__init__`` does NOT eagerly import
+        # every driver subpackage (deliberate: keeps ``import lerobot``
+        # cheap when only one robot is needed, and avoids hard deps on
+        # robot-specific SDKs). The mapping ``robot_type → import path``
+        # is also non-trivial:
+        #
+        #     so101_follower  → lerobot.robots.so_follower (shared module)
+        #     hope_jr_arm     → lerobot.robots.hope_jr     (shared module)
+        #     lekiwi_client   → lerobot.robots.lekiwi      (shared module)
+        #
+        # so we cannot just ``import_module(f"lerobot.robots.{robot_type}")``.
+        # Instead we walk every subpackage of ``lerobot.robots`` once
+        # (filesystem-driven, future-proof) and use lerobot's own
+        # third-party plugin loader for ``lerobot_robot_*`` distributions.
+        # Both calls are cached after the first invocation so subsequent
+        # ``Robot()`` calls are essentially free.
+        _ensure_lerobot_robots_registered()
 
-        if robot_type not in config_mapping:
-            raise ValueError(f"Unsupported robot type: {robot_type}. Supported types: {list(config_mapping.keys())}")
-
-        # Import specific config class dynamically
-        module_name, class_name = config_mapping[robot_type]
+        # Resolve the config class via lerobot's draccus ChoiceRegistry —
+        # this is the source-of-truth lookup that ``make_robot_from_config``
+        # uses; staying on it means we track upstream renames automatically.
         try:
-            import importlib
+            ConfigClass = RobotConfig.get_choice_class(robot_type)
+        except KeyError:
+            available = sorted(RobotConfig.get_known_choices().keys())
+            # ``from None`` -- the KeyError is an internal detail of
+            # lerobot's draccus registry; suppress the chained traceback
+            # for a cleaner user-facing error.
+            raise ValueError(
+                f"Unsupported robot type: {robot_type!r}. Known lerobot robot types: {available}"
+            ) from None
 
-            module = importlib.import_module(module_name)
-            ConfigClass = getattr(module, class_name)
-        except Exception as e:
-            raise ValueError(f"Failed to import {class_name} from {module_name}: {e}")
+        # Build candidate field set so we only pass kwargs the dataclass
+        # actually accepts. ``RobotConfig.get_choice_class`` always returns
+        # a dataclass today (every ``@RobotConfig.register_subclass`` site
+        # is a ``@dataclass``-decorated class). If that contract ever
+        # breaks we want a loud error here, not a silent default that
+        # blindly forwards every kwarg downstream (per AGENTS.md > Key
+        # Conventions #6 -- "no silent defaults on error").
+        try:
+            valid_fields = {f.name for f in dataclasses.fields(ConfigClass)}
+        except TypeError as exc:
+            raise TypeError(
+                f"lerobot returned a non-dataclass config class "
+                f"{ConfigClass!r} for robot_type={robot_type!r}; strands_robots "
+                f"cannot filter kwargs safely. Please file an issue against "
+                f"lerobot or strands_robots."
+            ) from exc
 
-        # Create config with proper parameters
-        config_data = {
-            "id": self.tool_name_str,
-            "cameras": camera_configs,
-        }
+        config_data: dict[str, Any] = {}
 
-        # Filter kwargs to only include supported fields for this robot type
-        # Port is common for most serial robots
-        if "port" in kwargs:
-            config_data["port"] = kwargs["port"]
+        # ``id`` namespaces lerobot's calibration files. Users can override
+        # by passing ``id=...`` (e.g. when one calibration file is shared by
+        # multiple peer instances of the same robot type -- left_arm.json,
+        # right_arm.json). Default to the strands tool name otherwise.
+        if "id" in valid_fields:
+            config_data["id"] = kwargs.get("id", self.tool_name_str)
 
-        # Add other common fields as needed
-        for key in ["calibration_dir", "mock", "use_degrees"]:
-            if key in kwargs:
+        # Cameras are common to every lerobot Robot.
+        if "cameras" in valid_fields:
+            config_data["cameras"] = camera_configs
+
+        # Forward known robot-specific kwargs only if the target dataclass
+        # declares them. The full set is union-of-all known lerobot robot
+        # configs — adding new ones here is safe because we filter against
+        # ``valid_fields`` before constructing.
+        forwardable = (
+            "port",  # serial robots (so100/so101, koch, openarm, ...)
+            "robot_ip",  # network robots (unitree_g1, lekiwi, reachy2, ...)
+            "kp",
+            "kd",  # PD-controlled robots (g1, h1, ...)
+            "default_positions",  # humanoids
+            "control_dt",  # humanoids / locomotion
+            "is_simulation",  # robots that share a sim/real driver
+            "gravity_compensation",  # arms with IK comp
+            "controller",  # locomotion controller selection
+            "calibration_dir",
+            "mock",
+            "use_degrees",
+            "max_relative_target",
+            "disable_torque_on_disconnect",
+        )
+        for key in forwardable:
+            if key in kwargs and key in valid_fields:
                 config_data[key] = kwargs[key]
 
         try:
             return ConfigClass(**config_data)
         except Exception as e:
-            raise ValueError(f"Failed to create {class_name} for robot type '{robot_type}': {e}. Config: {config_data}")
+            raise ValueError(
+                f"Failed to construct {ConfigClass.__name__} for robot type {robot_type!r}: {e}. Config: {config_data}"
+            ) from e
 
     async def _get_policy(
         self, policy_port: int | None = None, policy_host: str = "localhost", policy_provider: str = "groot"

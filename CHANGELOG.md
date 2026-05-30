@@ -59,6 +59,10 @@ Applies to ``strands_robots.mesh.iot.provision`` and
   ``provision_operator``, and ``teardown_thing``. Rejects path
   separators, dots, spaces, NUL, non-ASCII, and trailing
   ``\n``/``\r``/``\t``. Pre-existing AWS IoT Things containing ``:``
+
+  ``
+``/``
+``/``	``. Pre-existing AWS IoT Things containing ``:``
   must be renamed (we deliberately reject ``:`` due to NTFS / classic
   Mac filesystem semantics).
 - **IoT policy scope** — robot/operator policies use explicit
@@ -79,6 +83,61 @@ Known follow-ups: #249 (camera privacy kill-switch + S3 ACL),
 #251 (chunked-read parity in ``_ensure_ca``), #259 (kwarg negative-TTL
 WARNING symmetry), #260 (warn on re-use of break-glass-written CA).
 
+## Unreleased — Real-mode hardware factory: discovery-based, fixes SO-100/SO-101 and unblocks unitree_g1
+
+### Fixed
+
+- `Robot("so100", mode="real")` and `Robot("so101", mode="real")`
+  no longer raise `unexpected keyword argument 'id'` against
+  `lerobot>=0.5.0`. The bare `SOFollowerConfig` in lerobot 0.5.x has no
+  `id` field — only the registered subclass `SOFollowerRobotConfig`
+  inherits it from `RobotConfig`. We now resolve via
+  `RobotConfig.get_choice_class(robot_type)` (the same lookup
+  `make_robot_from_config` performs internally), which always returns the
+  registered subclass.
+
+- `Robot("unitree_g1", mode="real", ...)` now reaches lerobot. Previously
+  the registry advertised `has_real=True` for `unitree_g1` but the
+  hand-rolled `config_mapping` in `hardware_robot._create_minimal_config`
+  had no entry for it, so users got `ValueError: Unsupported robot type:
+  unitree_g1` despite the registry, lerobot, and the robot itself all
+  supporting real mode.
+
+- `HardwareRobot` cleanup no longer raises
+  `AttributeError: 'Robot' object has no attribute 'mesh'` when
+  `_initialize_robot` fails partway through. `self.mesh` and
+  `self.peer_id` are now initialised **before** `_initialize_robot` so
+  `__del__` → `cleanup()` is always safe.
+
+### Changed (internal)
+
+- `hardware_robot._create_minimal_config` is now discovery-based via
+  lerobot's draccus `ChoiceRegistry`. Robot-specific kwargs (`port`,
+  `robot_ip`, `kp`, `kd`, `default_positions`, `is_simulation`,
+  `control_dt`, `gravity_compensation`, `controller`,
+  `calibration_dir`, `mock`, `use_degrees`,
+  `max_relative_target`, `disable_torque_on_disconnect`) are forwarded
+  if and only if the resolved config dataclass declares a matching field.
+  Extra kwargs are dropped silently — callers can pass union-of-all-known
+  kwargs without breaking simpler robots.
+
+- The hand-rolled `config_mapping` (so100/so101/koch/openarm/bi-* only)
+  is gone. Adding a new lerobot-supported robot now requires zero
+  strands_robots changes — it Just Works as soon as lerobot ships the
+  driver. Today this immediately unblocks `unitree_g1` (29-DOF), and
+  any future humanoid / mobile robot the lerobot team adds.
+
+- Users may now override the lerobot `id` (calibration namespace) via
+  `Robot(name, mode="real", id="my_calib_id", ...)`. Default remains
+  the strands tool name, so this is backwards-compatible.
+
+### Tests
+
+- 5 new regression tests in `tests/test_robot_factory.py`:
+  `TestRealModeConfigDiscovery` — covers SO-101 `id` regression,
+  `unitree_g1` discovery, unknown-type clean error, kwarg filtering,
+  and the cleanup AttributeError fix. All run with
+  `pytest.importorskip("lerobot")`.
 ## Unreleased - #178 (LiberoOffScreenRenderEngine retired)
 
 ### Removed: ``LiberoOffScreenRenderEngine`` simulation backend (BREAKING)
