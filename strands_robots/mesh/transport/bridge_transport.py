@@ -264,6 +264,9 @@ def _resolve_dedup_strict() -> bool:
 
     Bridge cross-transport needs strict mode to dedup heartbeat-style
     payloads that arrive on both Zenoh and MQTT.
+
+    NOTE: read once at ``BridgeTransport`` construction; mid-process
+    env-var changes require a bridge restart to take effect.
     """
     raw = os.getenv("STRANDS_MESH_BRIDGE_DEDUP_STRICT", "").strip().lower()
     if raw in ("", "0", "false", "no"):
@@ -338,6 +341,10 @@ class _CommandDeduplicator:
         contract violation. Tracked for resolution (drop ``default=str`` and
         let TypeError surface, vs. enforce JSON contract at producer side)
         in #233.
+
+        The strict-mode full-payload hash (partial-canonical fallback at
+        lines below) shares the same ``default=str`` non-determinism risk;
+        #233 covers both paths.
         """
         if not isinstance(payload, dict):
             return None
@@ -590,8 +597,11 @@ class BridgeTransport:
         zenoh_sub: Any | None = None
         iot_sub: Any | None = None
 
+        # One-shot warning gate shared across both transport sides (zenoh + iot).
+        # A missing key_expr is a per-subscription contract drift, not per-side.
+        _warned_missing_key_expr = [False]
+
         def make_dedup_handler(transport_label: str) -> Callable[[Any], None]:
-            _warned_missing_key_expr = [False]  # one-shot gate for R7 (avoids per-sample noise)
 
             def _filtered(sample: Any) -> None:
                 # Extract payload for dedup. We do NOT json-decode if the
