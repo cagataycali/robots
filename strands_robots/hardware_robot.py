@@ -87,12 +87,19 @@ def _ensure_lerobot_robots_registered() -> None:
         full_name = f"{_lr_robots.__name__}.{sub_name}"
         try:
             importlib.import_module(full_name)
-        except ImportError as exc:
+        except (ImportError, OSError) as exc:
             # Driver-specific runtime dep missing (e.g. ``unitree_sdk2py``,
-            # ``reachy2_sdk``). Robot simply won't appear in the choice
+            # ``reachy2_sdk``) OR an OS-level probe failure inside a
+            # driver's ``__init__`` (USB enumeration in ``unitree_sdk2py``
+            # raising ``OSError``, ``FileNotFoundError`` on a missing SDK
+            # config, etc.). Robot simply won't appear in the choice
             # registry -- that is the correct outcome: trying to construct
             # it later will raise ``Unsupported robot type`` with the
-            # actual list of available types.
+            # actual list of available types. Per AGENTS.md > Review
+            # Learnings (#86) > "Exception Clauses Must Be Narrow" the
+            # canonical pattern for hardware-probing imports is
+            # ``(ImportError, OSError)``; widening further would mask
+            # genuine bugs in driver registration code.
             logger.debug("[hardware_robot] skip %s: %s", full_name, exc)
 
     # Pick up third-party plugins (``lerobot_robot_*`` distributions) via

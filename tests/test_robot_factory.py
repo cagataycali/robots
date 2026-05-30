@@ -1,5 +1,7 @@
 """Tests for strands_robots.robot — Robot() factory and list_robots()."""
 
+import importlib
+
 import pytest
 
 from strands_robots.registry import (
@@ -719,3 +721,60 @@ class TestRealModeConfigDiscovery:
         assert r.robot is fake_lerobot_robot
         assert r.mesh is None or hasattr(r.mesh, "stop")  # mesh is opt-in; just ensure attr exists
         assert hasattr(r, "peer_id")  # populated by factory if mesh started, else None
+
+    def test_walk_continues_when_driver_raises_oserror_at_import(self):
+        """Pin AGENTS.md > Review Learnings (#86) > "Exception Clauses Must
+        Be Narrow" / hardware-probing pattern. A driver subpackage whose
+        ``__init__`` raises a non-``ImportError`` (e.g. ``OSError`` from a
+        USB probe in ``unitree_sdk2py``) must not abort the entire
+        ``_ensure_lerobot_robots_registered`` walk -- subsequent driver
+        registrations must still happen.
+
+        Pre-fix code used ``except ImportError`` only; an ``OSError``
+        would propagate out of ``importlib.import_module``, abort the
+        for-loop, and silently skip every later driver. This is the same
+        silent-degradation mode the surrounding comment claims to guard
+        against.
+        """
+        pytest.importorskip("lerobot")
+
+        from unittest.mock import patch
+
+        from strands_robots.hardware_robot import _ensure_lerobot_robots_registered
+
+        real_import = importlib.import_module
+        booby_target = "lerobot.robots.so_follower"
+
+        def fake_import(name, *args, **kwargs):
+            if name == booby_target:
+                raise OSError("simulated USB probe failure during driver __init__")
+            return real_import(name, *args, **kwargs)
+
+        # Force a clean walk: the cache from prior tests would short-circuit.
+        _ensure_lerobot_robots_registered.cache_clear()
+
+        with patch(
+            "strands_robots.hardware_robot.importlib.import_module",
+            side_effect=fake_import,
+        ):
+            # Must not raise -- the OSError from so_follower must be caught
+            # and the walk must continue past it.
+            _ensure_lerobot_robots_registered()
+
+        # Re-walk with the patch removed so the rest of the test session
+        # sees a fully-populated registry (the patched walk skipped
+        # so_follower entirely).
+        _ensure_lerobot_robots_registered.cache_clear()
+        _ensure_lerobot_robots_registered()
+
+        # Sanity: at least one driver other than so_follower is registered,
+        # proving the walk continued past the booby-trapped subpackage.
+        from lerobot.robots.config import RobotConfig
+
+        known = set(RobotConfig.get_known_choices().keys())
+        # ``hope_jr_arm`` and ``lekiwi_client`` come from sibling subpackages
+        # alphabetically before AND after ``so_follower`` -- one of each
+        # must be present even when so_follower fails.
+        assert known - {"so100_follower", "so101_follower"}, (
+            f"Walk aborted on so_follower OSError; only {known} registered."
+        )
