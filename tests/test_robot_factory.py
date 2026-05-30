@@ -452,6 +452,27 @@ class TestRealModeConfigDiscovery:
     machines without lerobot installed.
     """
 
+    @pytest.fixture(autouse=True)
+    def _clear_discovery_cache(self):
+        """Reset ``_ensure_lerobot_robots_registered``'s
+        ``@functools.cache`` around each test in the class so test
+        ordering (``--last-failed``, ``pytest-xdist``, random-order
+        plugins) cannot leave stale registry state behind. Without
+        this, any test that booby-traps the walker (the OSError /
+        decorator-failure pins) would have to remember to clear the
+        cache on the way in AND out, and a future test in this class
+        that forgets would inherit a half-populated registry from the
+        last booby-trap and fail in a debugger-hostile way.
+        """
+        try:
+            from strands_robots.hardware_robot import _ensure_lerobot_robots_registered
+        except ImportError:
+            yield
+            return
+        _ensure_lerobot_robots_registered.cache_clear()
+        yield
+        _ensure_lerobot_robots_registered.cache_clear()
+
     def test_lerobot_registry_discovery_finds_all_subpackages(self):
         """Walking ``lerobot.robots`` with pkgutil registers every robot
         config without any hard-coded type→module mapping. This is the
@@ -633,10 +654,9 @@ class TestRealModeConfigDiscovery:
 
         from strands_robots.hardware_robot import _ensure_lerobot_robots_registered
 
-        # Force a clean walk by bypassing the @functools.cache (we want
-        # to test that even the FIRST call after a fresh import resolves
-        # the alias case correctly).
-        _ensure_lerobot_robots_registered.cache_clear()
+        # Cache is cleared by the class-level ``_clear_discovery_cache``
+        # autouse fixture so the first call here is the FIRST call after
+        # a fresh import -- exactly the scenario this test pins.
         _ensure_lerobot_robots_registered()
 
         # `hope_jr_arm` lives in `lerobot.robots.hope_jr` (the directory
@@ -750,9 +770,10 @@ class TestRealModeConfigDiscovery:
                 raise OSError("simulated USB probe failure during driver __init__")
             return real_import(name, *args, **kwargs)
 
-        # Force a clean walk: the cache from prior tests would short-circuit.
-        _ensure_lerobot_robots_registered.cache_clear()
-
+        # Cache is cleared by the autouse fixture, but we need TWO walks
+        # in this test: one with the booby-trap to verify the walk
+        # continues past the OSError, and a second clean walk so the
+        # subsequent assertion sees the full registry.
         with patch(
             "strands_robots.hardware_robot.importlib.import_module",
             side_effect=fake_import,
@@ -761,9 +782,9 @@ class TestRealModeConfigDiscovery:
             # and the walk must continue past it.
             _ensure_lerobot_robots_registered()
 
-        # Re-walk with the patch removed so the rest of the test session
-        # sees a fully-populated registry (the patched walk skipped
-        # so_follower entirely).
+        # Clean re-walk with the patch removed so the assertion below
+        # sees a fully-populated registry (the patched walk above
+        # skipped so_follower entirely).
         _ensure_lerobot_robots_registered.cache_clear()
         _ensure_lerobot_robots_registered()
 
