@@ -333,7 +333,10 @@ class Mesh(SensorLoopsMixin):
         # Combined with the freshness check on the envelope ``t`` field
         # this closes the recorded-and-replayed-resume surface even when
         # an attacker has live ACL access on safety/**.
-        self._resume_replay_cache: dict[tuple[str, str], float] = {}
+        # Key shape: ((domain_tag, issuer), proof_nonce) where domain_tag is
+        # "wire" for TLS-bound Zenoh wire_zid or "body" for app-level issuer_id.
+        # Tuple-of-tuples prevents cross-transport namespace collision (R12).
+        self._resume_replay_cache: dict[tuple[tuple[str, str], str], float] = {}
         self._resume_replay_lock = threading.Lock()
         # estop replay defense -- mirror of resume cache, keyed on
         # (issuer_peer_id, envelope_t). Closes the captured-estop-replay DoS
