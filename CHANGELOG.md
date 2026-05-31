@@ -110,9 +110,14 @@ WARNING symmetry), #260 (warn on re-use of break-glass-written CA).
 ### Changed (internal)
 
 - `strands_robots/policies/lerobot_local/resolution.py`:
-  `_ensure_policy_configs_registered` now walks every subpackage of
-  `lerobot.policies` with `pkgutil.iter_modules` and imports each
-  `configuration_<name>` module (preferred — skips the heavy
+  `_ensure_policy_configs_registered` now enumerates every subpackage
+  of `lerobot.policies` (taking the union of `pkgutil.iter_modules`
+  output and an on-disk directory listing of every `__path__`
+  entry — the directory listing is required because in lerobot
+  0.5.x several subpackages are PEP 420 namespace packages
+  (`act/`, `diffusion/`, `smolvla/`, `tdmpc/`, `vqbet/`) which
+  `iter_modules` does not yield with `is_pkg=True`) and imports
+  each `configuration_<name>` module (preferred — skips the heavy
   `modeling_<name>` import), falling back to the package itself.
   Symmetric with the robots-side fix in
   `hardware_robot._ensure_lerobot_robots_registered` (#276).
@@ -122,7 +127,7 @@ WARNING symmetry), #260 (warn on re-use of break-glass-written CA).
 
 ### Tests
 
-- 3 new tests in `tests/policies/lerobot_local/test_resolution.py`:
+- 5 new tests in `tests/policies/lerobot_local/test_resolution.py`:
   `TestPolicyConfigDiscovery` — covers the all-subpackages walk, the
   drift-symptom case where the lerobot.policies stub is active, and
   the molmoact2 modeling-convention class lookup. All run with

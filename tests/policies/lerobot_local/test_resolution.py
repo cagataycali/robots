@@ -94,6 +94,66 @@ class TestPolicyConfigDiscovery:
         missing = expected_min - registered
         assert not missing, f"Discovery missed lerobot built-in policies: {missing}. Registered: {sorted(registered)}"
 
+    def test_namespace_package_policies_registered_after_stubbed_lerobot_policies(self):
+        """Stub-active codepath must register subpackages laid out as PEP 420
+        namespace packages (no ``__init__.py``).
+
+        In lerobot 0.5.x, several subpackages of ``lerobot.policies`` are
+        namespace packages: ``act/``, ``diffusion/``, ``smolvla/``,
+        ``tdmpc/``, ``vqbet/``. ``pkgutil.iter_modules`` does not yield
+        them with ``is_pkg=True``, so a walker that gates on
+        ``is_pkg`` silently skips them on the stub-active codepath
+        (the very codepath this helper exists to repair).
+        Pre-fix this test fails with ``act`` (and friends) missing
+        from the registry; post-fix the on-disk directory listing
+        catches them and ``configuration_act`` is imported regardless
+        of namespace-package layout. See issue #278 for the upstream
+        layout context.
+        """
+        # ``act`` ships in every lerobot 0.5.x; ``importorskip`` only
+        # skips the test if lerobot itself is missing (already gated
+        # by the module-level ``importorskip("lerobot")``).
+        pytest.importorskip("lerobot.policies")
+        import sys
+
+        snapshot = _snapshot_lerobot_modules()
+        _purge_lerobot_modules(snapshot)
+        try:
+            from strands_robots.policies.lerobot_local.resolution import (
+                _ensure_lerobot_policies_importable,
+                _ensure_policy_configs_registered,
+            )
+
+            _ensure_lerobot_policies_importable()  # installs the stub
+            _ensure_policy_configs_registered.cache_clear()
+            _ensure_policy_configs_registered()
+
+            from lerobot.configs.policies import PreTrainedConfig
+
+            registered = set(PreTrainedConfig.get_known_choices().keys())
+            # ``act`` is the canary that the previous canary-import
+            # bootstrap also registered, so the regression test fails
+            # loudly the moment the stub-active path drops it. The
+            # other namespace-package subpackages live alongside it
+            # in lerobot 0.5.x and SHOULD also land in the registry
+            # post-fix (``expected_min`` only asserts ``act`` to keep
+            # the test stable across lerobot minor versions; the
+            # broader coverage is asserted by the non-stub
+            # ``test_pkgutil_walk_registers_every_lerobot_policy_subpackage``).
+            assert "act" in registered, (
+                f"act missing after stub+walk; registered: {sorted(registered)}. "
+                "Did the walker drop on-disk-directory enumeration of "
+                "namespace-package subpackages?"
+            )
+        finally:
+            _purge_lerobot_modules(_snapshot_lerobot_modules())
+            sys.modules.update(snapshot)
+            from strands_robots.policies.lerobot_local.resolution import (
+                _ensure_policy_configs_registered,
+            )
+
+            _ensure_policy_configs_registered.cache_clear()
+
     def test_molmoact2_registered_after_stubbed_lerobot_policies(self):
         """The ``LerobotLocalPolicy`` runtime path installs a lightweight
         stub for ``lerobot.policies`` (to avoid executing its potentially

@@ -91,14 +91,54 @@ def _ensure_policy_configs_registered() -> None:
         logger.debug("lerobot not installed; skipping policy config registration")
         return
 
-    # Walk every immediate subpackage of ``lerobot.policies`` and import
-    # its ``configuration_*`` module (or the package itself, which most
-    # subpackages re-export the configuration from). Each subpackage's
-    # config import runs ``@PreTrainedConfig.register_subclass(...)`` as
-    # a side effect.
-    for _, sub_name, is_pkg in pkgutil.iter_modules(_lr_policies.__path__):
-        if not is_pkg:
-            continue
+    # Enumerate every immediate subpackage of ``lerobot.policies`` and
+    # import its ``configuration_*`` module (or the package itself,
+    # which most subpackages re-export the configuration from). Each
+    # subpackage's config import runs
+    # ``@PreTrainedConfig.register_subclass(...)`` as a side effect.
+    #
+    # We deliberately do NOT rely solely on ``pkgutil.iter_modules``
+    # here: in lerobot 0.5.x several subpackages are laid out as PEP 420
+    # *namespace packages* (no ``__init__.py``) -- e.g. ``act/``,
+    # ``diffusion/``, ``smolvla/``, ``tdmpc/``, ``vqbet/``. ``iter_modules``
+    # either yields them with ``is_pkg=False`` (or skips them entirely
+    # depending on the loader), so a guard like ``if not is_pkg: continue``
+    # would silently miss every namespace-package subpackage on the
+    # stub-active codepath -- the very codepath this helper exists to
+    # repair (``_ensure_lerobot_policies_importable()`` installs a stub
+    # whose ``__path__`` points at the on-disk lerobot/policies/
+    # directory, so on-disk directory entries ARE the source of truth).
+    #
+    # Take the union of ``pkgutil.iter_modules`` names and the on-disk
+    # subdirectory listing of every entry in ``__path__``. Then attempt
+    # ``configuration_<name>`` for each unique name. The inner
+    # ``import_module`` call naturally fails on non-importable entries
+    # (e.g. ``__pycache__``, lone ``.py`` files, etc.) via
+    # ``ImportError``, which is the documented "skip" path below. See
+    # issue #278 for the upstream lerobot layout that motivated this.
+    sub_names: set[str] = set()
+    for _, sub_name, _is_pkg in pkgutil.iter_modules(_lr_policies.__path__):
+        sub_names.add(sub_name)
+    for path_entry in _lr_policies.__path__:
+        try:
+            for child in Path(path_entry).iterdir():
+                if not child.is_dir():
+                    continue
+                name = child.name
+                # Skip dunder dirs (``__pycache__``) and dot dirs.
+                if name.startswith("_") or name.startswith("."):
+                    continue
+                # Identifier check: only valid Python module names.
+                if not name.isidentifier():
+                    continue
+                sub_names.add(name)
+        except OSError as exc:
+            # ``__path__`` entry not enumerable (rare; e.g. zip-imported
+            # lerobot or a stale path). Fall through to whatever
+            # iter_modules already produced.
+            logger.debug("[policy resolution] cannot scan %s: %s", path_entry, exc)
+
+    for sub_name in sorted(sub_names):
         # Try the canonical configuration_<name> module first because
         # it skips importing modeling_* (which is the heavy-deps file
         # that pulls in transformers/flash-attn). Fall back to the
