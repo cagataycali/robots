@@ -55,6 +55,26 @@ logger = logging.getLogger(__name__)
 # a dict lookup, so the per-Robot() overhead amortises to ~0.
 
 
+# Cross-robot kwargs forwarded to lerobot config constructors.  Exposed as a
+# module-level constant so tests can import it (single source of truth).
+_FORWARDABLE_KWARGS = (
+    "port",  # serial robots (so100/so101, koch, openarm, ...)
+    "robot_ip",  # network robots (unitree_g1, lekiwi, reachy2, ...)
+    "kp",
+    "kd",  # PD-controlled robots (g1, h1, ...)
+    "default_positions",  # humanoids
+    "control_dt",  # humanoids / locomotion
+    "is_simulation",  # robots that share a sim/real driver
+    "gravity_compensation",  # arms with IK comp
+    "controller",  # locomotion controller selection
+    "calibration_dir",
+    "mock",
+    "use_degrees",
+    "max_relative_target",
+    "disable_torque_on_disconnect",
+)
+
+
 @functools.cache
 def _ensure_lerobot_robots_registered() -> None:
     """Import every robot driver subpackage so RobotConfig is populated.
@@ -72,9 +92,11 @@ def _ensure_lerobot_robots_registered() -> None:
     """
     try:
         import lerobot.robots as _lr_robots
-    except ImportError:
+    except ImportError as exc:
         # lerobot not installed -- caller will get a clean error at the
-        # ChoiceRegistry lookup site.
+        # ChoiceRegistry lookup site.  Warn (not debug) so partial-install
+        # diagnostics are auditable without --log-level=DEBUG.
+        logger.warning("lerobot.robots not importable: %s", exc)
         return
 
     # Walk every immediate subpackage of ``lerobot.robots`` and import
@@ -107,12 +129,15 @@ def _ensure_lerobot_robots_registered() -> None:
     # expose drivers without any strands_robots involvement.
     try:
         from lerobot.utils.import_utils import register_third_party_plugins
-
-        register_third_party_plugins()
     except ImportError:
         # ``register_third_party_plugins`` lives in modern lerobot only;
         # older versions skip this opt-in step (built-ins still work).
         logger.debug("[hardware_robot] register_third_party_plugins unavailable")
+    else:
+        try:
+            register_third_party_plugins()
+        except Exception as exc:  # noqa: BLE001 -- third-party plugin code is untrusted
+            logger.warning("[hardware_robot] third-party plugin registration failed: %s", exc)
 
 
 class TaskStatus(Enum):
@@ -348,22 +373,7 @@ class Robot(AgentTool):
         # declares them. The full set is union-of-all known lerobot robot
         # configs — adding new ones here is safe because we filter against
         # ``valid_fields`` before constructing.
-        forwardable = (
-            "port",  # serial robots (so100/so101, koch, openarm, ...)
-            "robot_ip",  # network robots (unitree_g1, lekiwi, reachy2, ...)
-            "kp",
-            "kd",  # PD-controlled robots (g1, h1, ...)
-            "default_positions",  # humanoids
-            "control_dt",  # humanoids / locomotion
-            "is_simulation",  # robots that share a sim/real driver
-            "gravity_compensation",  # arms with IK comp
-            "controller",  # locomotion controller selection
-            "calibration_dir",
-            "mock",
-            "use_degrees",
-            "max_relative_target",
-            "disable_torque_on_disconnect",
-        )
+        forwardable = _FORWARDABLE_KWARGS
         for key in forwardable:
             if key in kwargs and key in valid_fields:
                 config_data[key] = kwargs[key]

@@ -835,8 +835,8 @@ class TestRealModeConfigDiscovery:
 
         # Cache is cleared by the autouse fixture, but we need TWO walks
         # in this test: one with the booby-trap to verify the walk
-        # continues past the OSError, and a second clean walk so the
-        # subsequent assertion sees the full registry.
+        # continues past the OSError, and a second clean walk to restore
+        # state for subsequent tests.
         with patch(
             "strands_robots.hardware_robot.importlib.import_module",
             side_effect=fake_import,
@@ -845,23 +845,24 @@ class TestRealModeConfigDiscovery:
             # and the walk must continue past it.
             _ensure_lerobot_robots_registered()
 
-        # Clean re-walk with the patch removed so the assertion below
-        # sees a fully-populated registry (the patched walk above
-        # skipped so_follower entirely).
-        _ensure_lerobot_robots_registered.cache_clear()
-        _ensure_lerobot_robots_registered()
-
-        # Sanity: at least one driver other than so_follower is registered,
-        # proving the walk continued past the booby-trapped subpackage.
+        # Capture registry state IMMEDIATELY after the booby-trapped walk
+        # (before any clean re-walk) to prove the walk continued past the
+        # OSError.  This is the pinning assertion: pre-fix code (except
+        # ImportError only) would abort the walk at so_follower, leaving
+        # drivers registered AFTER it in alphabetical order missing.
         from lerobot.robots.config import RobotConfig
 
-        known = set(RobotConfig.get_known_choices().keys())
-        # ``hope_jr_arm`` and ``lekiwi_client`` come from sibling subpackages
-        # alphabetically before AND after ``so_follower`` -- one of each
-        # must be present even when so_follower fails.
-        assert known - {"so100_follower", "so101_follower"}, (
-            f"Walk aborted on so_follower OSError; only {known} registered."
+        known_after_booby_trap = set(RobotConfig.get_known_choices().keys())
+        # Drivers from subpackages OTHER than so_follower must be present,
+        # proving the walk didn't abort on the OSError.
+        assert known_after_booby_trap - {"so100_follower", "so101_follower"}, (
+            f"Walk aborted on so_follower OSError; only {known_after_booby_trap} "
+            f"registered during the booby-trapped walk."
         )
+
+        # Clean re-walk to restore full registry state for other tests.
+        _ensure_lerobot_robots_registered.cache_clear()
+        _ensure_lerobot_robots_registered()
 
     def test_unknown_kwarg_typo_raises_value_error(self):
         """Pin AGENTS.md > Review Learnings (#86) > "Reject silently-dropped
@@ -931,35 +932,19 @@ class TestRealModeConfigDiscovery:
         from lerobot.robots.config import RobotConfig
 
         from strands_robots.hardware_robot import (
-            Robot as HwRobot,
+            _FORWARDABLE_KWARGS,
+            _ensure_lerobot_robots_registered,
         )
         from strands_robots.hardware_robot import (
-            _ensure_lerobot_robots_registered,
+            Robot as HwRobot,
         )
 
         _ensure_lerobot_robots_registered()
         ConfigClass = RobotConfig.get_choice_class("so101_follower")
         real_fields = {f.name for f in dataclasses.fields(ConfigClass)}
 
-        # Dynamically find a field that IS on the dataclass but is NOT in
-        # the forwardable tuple. If none exist (all are already in
-        # forwardable), skip gracefully.
-        forwardable_set = {
-            "port",
-            "robot_ip",
-            "kp",
-            "kd",
-            "default_positions",
-            "control_dt",
-            "is_simulation",
-            "gravity_compensation",
-            "controller",
-            "calibration_dir",
-            "mock",
-            "use_degrees",
-            "max_relative_target",
-            "disable_torque_on_disconnect",
-        }
+        # Import from production code -- single source of truth (no drift).
+        forwardable_set = set(_FORWARDABLE_KWARGS)
         dataclass_only_fields = real_fields - forwardable_set - {"id", "cameras"}
         if not dataclass_only_fields:
             pytest.skip("No dataclass-only fields found on SO101 config")
