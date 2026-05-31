@@ -318,7 +318,6 @@ class TestPolicyConfigDiscovery:
         imported_modules = []
         original_import = importlib.import_module
 
-
         def tracking_import(name, *args, **kwargs):
             if name.startswith("lerobot.policies."):
                 # For our synthetic subpackages, manually handle the import
@@ -437,7 +436,7 @@ def test_iter_modules_non_package_siblings_excluded(tmp_path):
     fake_lr_policies.__name__ = "lerobot.policies"
 
     snapshot = _snapshot_lerobot_modules()
-    _purge_lerobot_modules()
+    _purge_lerobot_modules(snapshot)
 
     try:
         sys.modules["lerobot"] = fake_lr
@@ -474,6 +473,7 @@ def test_iter_modules_non_package_siblings_excluded(tmp_path):
             f"on production lerobot installs. Candidates attempted: {attempted_candidates}"
         )
     finally:
-        _purge_lerobot_modules()
+        # Purge any lerobot modules that were added during the test
+        _purge_lerobot_modules(_snapshot_lerobot_modules())
         sys.modules.update(snapshot)
         resolution._ensure_policy_configs_registered.cache_clear()
