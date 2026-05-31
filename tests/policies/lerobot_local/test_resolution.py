@@ -60,10 +60,18 @@ class TestPolicyConfigDiscovery:
     """
 
     def test_pkgutil_walk_registers_every_lerobot_policy_subpackage(self):
-        """Walking ``lerobot.policies`` with pkgutil registers every
-        policy config without any hand-coded list. The discovery is
-        symmetric with the robots-side fix in
-        ``hardware_robot._ensure_lerobot_robots_registered``.
+        """End-to-end registry completeness: after calling the helper,
+        every lerobot 0.5.x built-in policy MUST be in the
+        ``PreTrainedConfig`` choice registry.
+
+        Note: this test does NOT install the stub first, so lerobot's
+        eager ``policies/__init__.py`` may do some of the registration
+        work via its own side-effect imports. The stub-active codepath
+        (where the walker is the sole registration mechanism) is
+        validated separately by
+        ``test_namespace_package_policies_registered_after_stubbed_lerobot_policies``.
+        This test pins the observable contract: regardless of how
+        registration happens internally, the registry is complete.
         """
         from lerobot.configs.policies import PreTrainedConfig
 
@@ -241,7 +249,7 @@ class TestPolicyConfigDiscovery:
         assert cls.__name__ == "MolmoAct2Policy"
         assert cls.__module__.endswith("molmoact2.modeling_molmoact2")
 
-    def test_walk_continues_after_subpackage_decorator_failure(self, monkeypatch, caplog):
+    def test_walk_continues_after_subpackage_decorator_failure(self, tmp_path, monkeypatch, caplog):
         """A subpackage whose ``configuration_*`` raises a non-ImportError
         (e.g. ``RuntimeError`` from a re-registration collision, or
         ``AttributeError`` from a renamed sibling attribute) MUST NOT
@@ -250,82 +258,133 @@ class TestPolicyConfigDiscovery:
         registry permanently half-populated for the lifetime of the
         process (because ``@functools.cache`` then froze the failed
         state).
+
+        This test constructs a synthetic ``lerobot.policies``-like
+        namespace in a tmpdir with a booby-trapped subpackage that
+        raises ``RuntimeError`` at import time, plus a healthy
+        subpackage that should still register. This approach is immune
+        to upstream lerobot layout changes (e.g. a subpackage
+        transitioning from regular to namespace package) and never
+        silently SKIPs.
         """
         import importlib
         import logging
-
-        from lerobot.configs.policies import PreTrainedConfig
+        import sys
+        import types
 
         from strands_robots.policies.lerobot_local import resolution
 
+        # --- Build a synthetic lerobot.policies tree in tmpdir ---
+        # Structure:
+        #   tmp_path/
+        #     healthy_policy/
+        #       __init__.py           (empty, makes it a regular package)
+        #       configuration_healthy_policy.py  (registers a fake config)
+        #     broken_policy/
+        #       __init__.py           (empty)
+        #       configuration_broken_policy.py   (raises RuntimeError)
+        #     also_healthy/
+        #       __init__.py           (empty)
+        #       configuration_also_healthy.py    (registers another fake)
+
+        healthy_dir = tmp_path / "healthy_policy"
+        healthy_dir.mkdir()
+        (healthy_dir / "__init__.py").write_text("")
+        (healthy_dir / "configuration_healthy_policy.py").write_text(
+            "# Healthy configuration module -- import succeeds.\nREGISTERED = True\n"
+        )
+
+        broken_dir = tmp_path / "broken_policy"
+        broken_dir.mkdir()
+        (broken_dir / "__init__.py").write_text("")
+        (broken_dir / "configuration_broken_policy.py").write_text(
+            "raise RuntimeError('simulated decorator-time re-registration collision')\n"
+        )
+
+        also_healthy_dir = tmp_path / "also_healthy"
+        also_healthy_dir.mkdir()
+        (also_healthy_dir / "__init__.py").write_text("")
+        (also_healthy_dir / "configuration_also_healthy.py").write_text(
+            "# Another healthy configuration module.\nREGISTERED = True\n"
+        )
+
+        # We need 'lerobot' itself to remain so _ensure_lerobot_policies_importable
+        # can find lerobot.__path__, but we replace lerobot.policies.
+        fake_policies = types.ModuleType("lerobot.policies")
+        fake_policies.__path__ = [str(tmp_path)]
+        fake_policies.__package__ = "lerobot.policies"
+
+        # Track which modules got imported through our synthetic tree
+        imported_modules = []
         original_import = importlib.import_module
-        # Pick a booby_trap that ``pkgutil.iter_modules`` actually visits.
-        # ``pkgutil.iter_modules`` only yields subpackages with an
-        # ``__init__.py`` (regular packages) -- subpackages laid out as
-        # namespace packages (no ``__init__.py``) are silently skipped.
-        # In lerobot 0.5.x, the regular-package subpackages are
-        # ``{groot, multi_task_dit, pi0, pi05, pi0_fast, rtc, wall_x, xvla}``
-        # -- the rest (act, diffusion, smolvla, ...) are namespace
-        # packages and thus not enumerable here. ``pi0`` is stable across
-        # all lerobot 0.5.x and is therefore a safe target. See issue
-        # #278 for the namespace-package coverage gap (separate from
-        # this regression test, which only pins the
-        # walk-continues-after-error contract).
-        booby_trap = "lerobot.policies.pi0.configuration_pi0"
-        trap_triggered = []
 
-        trap_triggered = []
 
-        def maybe_raise(name, *args, **kwargs):
-            if name == booby_trap:
-                trap_triggered.append(name)
-                raise RuntimeError("simulated decorator-time re-registration collision")
+        def tracking_import(name, *args, **kwargs):
+            if name.startswith("lerobot.policies."):
+                # For our synthetic subpackages, manually handle the import
+                parts = name.split(".")
+                if len(parts) >= 3:
+                    sub_name = parts[2]  # e.g. "healthy_policy"
+                    sub_dir = tmp_path / sub_name
+                    if sub_dir.is_dir():
+                        if len(parts) == 3:
+                            # Package import
+                            mod = types.ModuleType(name)
+                            mod.__path__ = [str(sub_dir)]
+                            mod.__package__ = name
+                            sys.modules[name] = mod
+                            imported_modules.append(name)
+                            return mod
+                        elif len(parts) == 4:
+                            # Submodule import (e.g. configuration_broken_policy)
+                            module_name = parts[3]
+                            module_file = sub_dir / f"{module_name}.py"
+                            if module_file.exists():
+                                source = module_file.read_text()
+                                mod = types.ModuleType(name)
+                                mod.__file__ = str(module_file)
+                                mod.__package__ = ".".join(parts[:3])
+                                # Execute the source -- this is where broken_policy raises
+                                exec(compile(source, str(module_file), "exec"), mod.__dict__)  # noqa: S102
+                                sys.modules[name] = mod
+                                imported_modules.append(name)
+                                return mod
+                            raise ImportError(f"No module named '{name}'")
+                # Fall through to real import for anything not in our tree
+                raise ImportError(f"No module named '{name}'")
             return original_import(name, *args, **kwargs)
 
-        # Patch importlib.import_module directly to ensure visibility
-        # regardless of how Python resolves the module attribute lookup
-        # inside the @functools.cache-wrapped function.
-        monkeypatch.setattr(importlib, "import_module", maybe_raise)
+        monkeypatch.setattr(importlib, "import_module", tracking_import)
+
+        # Install our fake lerobot.policies
+        monkeypatch.setitem(sys.modules, "lerobot.policies", fake_policies)
 
         resolution._ensure_policy_configs_registered.cache_clear()
-        # Capture all WARNING+ records without restricting to a specific
-        # logger name -- avoids edge cases where caplog per-logger level
-        # gating interacts with handler propagation.
+
         with caplog.at_level(logging.WARNING):
             resolution._ensure_policy_configs_registered()
 
-        # Verify the monkeypatch was actually invoked for the target.
-        # If it was not, pkgutil did not yield this subpackage and the
-        # test premise is invalid for this lerobot installation.
-        if not trap_triggered:
-            pytest.skip(
-                f"monkeypatch for {booby_trap} was never invoked; "
-                "pkgutil.iter_modules may not yield this subpackage "
-                "in the installed lerobot version"
-            )
+        # The booby-trapped subpackage MUST have been attempted --
+        # no silent skip possible since we control the directory.
+        broken_attempted = any("broken_policy" in m for m in imported_modules)
+        assert broken_attempted, f"The walker never attempted to import broken_policy; imported: {imported_modules}"
 
-        # The walk surfaced the booby-trapped subpackage at WARNING
-        # level so an operator can see it in production logs.
+        # The walk surfaced the failure at WARNING level.
         warning_texts = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
-        trap_warnings = [t for t in warning_texts if booby_trap in t]
+        trap_warnings = [t for t in warning_texts if "broken_policy" in t]
         assert trap_warnings, (
-            f"Expected a WARNING about the booby-trapped {booby_trap} import; got warning messages: {warning_texts}"
+            f"Expected a WARNING about the booby-trapped broken_policy import; got warning messages: {warning_texts}"
         )
 
-        # ...AND the registry still contains policies the walk reached
-        # AFTER the failure. Pre-R1 the walk would return at the first
-        # non-ImportError, leaving everything after it unregistered.
-        # We assert against subpackages the walker actually visits
-        # (regular packages with __init__.py): ``wall_x`` and ``xvla``
-        # come after ``pi0`` alphabetically and are stable in lerobot
-        # 0.5.x. ``groot`` comes BEFORE ``pi0`` so we include it as the
-        # "registered before the failure" anchor.
-        registered = set(PreTrainedConfig.get_known_choices().keys())
-        survivors = registered & {"groot", "wall_x", "xvla"}
-        assert survivors, (
-            "Walk aborted on the first non-ImportError; expected at "
-            "least one of {'groot', 'wall_x', 'xvla'} to still be "
-            f"registered. Got: {sorted(registered)}"
+        # The healthy subpackages that come alphabetically before AND
+        # after the broken one MUST have been imported -- proving the
+        # walk continued past the failure.
+        healthy_imported = any("healthy_policy" in m for m in imported_modules)
+        also_healthy_imported = any("also_healthy" in m for m in imported_modules)
+        assert healthy_imported and also_healthy_imported, (
+            "Walk aborted on the first non-ImportError; expected both "
+            "'healthy_policy' and 'also_healthy' to be attempted. "
+            f"Imported: {imported_modules}"
         )
 
         resolution._ensure_policy_configs_registered.cache_clear()
