@@ -811,7 +811,7 @@ class TestRealModeConfigDiscovery:
         ``__init__`` raises a non-``ImportError`` (e.g. ``OSError`` from a
         USB probe in ``unitree_sdk2py``) must not abort the entire
         ``_ensure_lerobot_robots_registered`` walk -- subsequent driver
-        registrations must still happen.
+        imports must still happen.
 
         Pre-fix code used ``except ImportError`` only; an ``OSError``
         would propagate out of ``importlib.import_module``, abort the
@@ -819,36 +819,36 @@ class TestRealModeConfigDiscovery:
         silent-degradation mode the surrounding comment claims to guard
         against.
 
-        Pinning technique: capture the registry state BEFORE and AFTER
-        the booby-trapped walk, then assert the walk ADDED entries (the
-        delta). This eliminates false-positives from process-global
-        ``RobotConfig`` state leaked by prior tests -- the real reason
-        the pre-delta assertion passed vacuously under pytest ordering.
+        Pinning technique: capture the *call sequence* of
+        ``importlib.import_module`` and assert that at least one
+        ``lerobot.robots.*`` import was attempted AFTER the booby-trapped
+        target raised. We deliberately do NOT inspect ``RobotConfig``
+        state -- that registry (draccus ``ChoiceRegistry``) and
+        ``sys.modules`` are both process-global, so prior tests in the
+        session may have already populated them; the @functools.cache
+        clear by the autouse fixture is not enough to neutralise that
+        layer of state. The behavioural contract being pinned ("the loop
+        kept going past the OSError") is directly observable as
+        subsequent ``import_module`` calls regardless of whether those
+        modules were already cached at the Python-import level.
         """
         pytest.importorskip("lerobot")
 
         from unittest.mock import patch
 
-        from lerobot.robots.config import RobotConfig
-
         from strands_robots.hardware_robot import _ensure_lerobot_robots_registered
 
         real_import = importlib.import_module
         booby_target = "lerobot.robots.so_follower"
+        import_calls: list[str] = []
 
         def fake_import(name, *args, **kwargs):
+            import_calls.append(name)
             if name == booby_target:
                 raise OSError("simulated USB probe failure during driver __init__")
             return real_import(name, *args, **kwargs)
 
-        # Snapshot registry BEFORE the booby-trapped walk.  RobotConfig is
-        # process-global (draccus ChoiceRegistry) so prior tests may have
-        # populated it.  The delta (after - before) isolates what THIS walk
-        # registered and eliminates false-positives from stale state.
-        known_before = set(RobotConfig.get_known_choices().keys())
-
-        # Cache is cleared by the autouse fixture.  Run the booby-trapped
-        # walk inside the patch; so_follower will raise OSError.
+        # Cache is cleared by the autouse fixture so the walk runs.
         with patch(
             "strands_robots.hardware_robot.importlib.import_module",
             side_effect=fake_import,
@@ -857,36 +857,30 @@ class TestRealModeConfigDiscovery:
             # and the walk must continue past it.
             _ensure_lerobot_robots_registered()
 
-            # Capture registry state INSIDE the patch block (walk is done).
-            known_after_booby_trap = set(RobotConfig.get_known_choices().keys())
-
-        # Delta: what the booby-trapped walk ADDED to the registry.
-        newly_registered = known_after_booby_trap - known_before
-
-        # The booby-trapped walk must have registered drivers OTHER than
-        # so_follower types (which were skipped due to OSError). Pre-fix
-        # code (except ImportError only) would abort the entire walk at
-        # so_follower, adding NOTHING -- making this assertion fail.
-        non_so_follower_new = newly_registered - {"so100_follower", "so101_follower"}
-        assert non_so_follower_new, (
-            f"Walk aborted on so_follower OSError; newly registered "
-            f"types (delta): {newly_registered}. Pre-walk state had "
-            f"{len(known_before)} types. The walk must continue past "
-            f"the OSError and register subsequent drivers."
+        # Sanity: the booby-trap actually fired.  If lerobot ever drops
+        # ``so_follower`` upstream, this fails loudly with a setup-error
+        # message rather than a misleading regression-error message.
+        assert booby_target in import_calls, (
+            f"Booby target {booby_target!r} was never attempted by the walk; "
+            f"test setup is stale (lerobot may have renamed/dropped it). "
+            f"Full call sequence: {import_calls}"
         )
 
-        # so_follower types must NOT be in the delta (the booby-trap
-        # prevented their registration).
-        so_follower_types = {"so100_follower", "so101_follower"}
-        assert not (newly_registered & so_follower_types), (
-            f"so_follower types {newly_registered & so_follower_types} were "
-            f"registered despite the OSError booby-trap -- either the patch "
-            f"didn't fire or the walk re-ran without the patch."
+        # The contract: at least one ``lerobot.robots.*`` driver import
+        # was attempted AFTER the booby-trap raised.  Pre-fix code
+        # (``except ImportError`` only) would re-raise the OSError,
+        # break out of the for-loop, and ``import_calls`` would contain
+        # NO ``lerobot.robots.*`` entries after ``booby_target``.
+        booby_index = import_calls.index(booby_target)
+        later_lerobot_drivers = [
+            n for n in import_calls[booby_index + 1 :] if n.startswith("lerobot.robots.") and n != booby_target
+        ]
+        assert later_lerobot_drivers, (
+            f"Walk aborted at {booby_target}; OSError was not caught by the "
+            f"per-driver except clause. No further ``lerobot.robots.*`` "
+            f"import attempts after the booby-trap. Full call sequence: "
+            f"{import_calls}"
         )
-
-        # Clean re-walk to restore full registry state for other tests.
-        _ensure_lerobot_robots_registered.cache_clear()
-        _ensure_lerobot_robots_registered()
 
     def test_unknown_kwarg_typo_raises_value_error(self):
         """Pin AGENTS.md > Review Learnings (#86) > "Reject silently-dropped
