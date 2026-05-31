@@ -55,8 +55,26 @@ logger = logging.getLogger(__name__)
 # a dict lookup, so the per-Robot() overhead amortises to ~0.
 
 
-# Cross-robot kwargs forwarded to lerobot config constructors.  Exposed as a
-# module-level constant so tests can import it (single source of truth).
+# Cross-robot kwargs forwarded to lerobot config constructors.  Exposed
+# as a module-level constant so tests can import it (single source of
+# truth).
+#
+# Post-R5, the dual-gate semantics are:
+#   - kwargs in this allowlist BUT NOT on the resolved target dataclass
+#     are silently dropped (cross-robot polymorphism: passing ``kp=...``
+#     to so101 doesn't blow up just because ``kp`` is a unitree_g1
+#     kwarg).
+#   - kwargs declared on the resolved target dataclass are forwarded
+#     automatically, regardless of whether they appear in this list
+#     (so a future lerobot field like ``wifi_ssid`` Just Works without
+#     a strands_robots release).
+#   - kwargs unknown to BOTH are rejected at config-build time
+#     (typos like ``prot=``, kwargs from another subsystem entirely).
+#
+# So this allowlist's job is narrow: it's the set of kwargs whose
+# silent-drop on a non-matching robot we tolerate as a documented
+# polymorphism win.  It is not a forwarding gate -- ``valid_fields``
+# is.
 _FORWARDABLE_KWARGS = (
     "port",  # serial robots (so100/so101, koch, openarm, ...)
     "robot_ip",  # network robots (unitree_g1, lekiwi, reachy2, ...)
@@ -93,10 +111,24 @@ def _ensure_lerobot_robots_registered() -> None:
     try:
         import lerobot.robots as _lr_robots
     except ImportError as exc:
-        # lerobot not installed -- caller will get a clean error at the
-        # ChoiceRegistry lookup site.  Warn (not debug) so partial-install
-        # diagnostics are auditable without --log-level=DEBUG.
-        logger.warning("lerobot.robots not importable: %s", exc)
+        # Distinguish two failure modes so the log level matches signal
+        # value:
+        #   1. lerobot wholly absent -- expected on sim-only / CI-only
+        #      hosts that never reach hardware code; debug is enough.
+        #      Caller will get a clean ``Unsupported robot type`` at the
+        #      ChoiceRegistry lookup site.
+        #   2. lerobot present but ``lerobot.robots`` unimportable --
+        #      genuine partial-install signal worth a warning so the
+        #      operator can triage without ``--log-level=DEBUG``.
+        try:
+            import lerobot  # noqa: F401  (probe-only)
+        except ImportError:
+            logger.debug("lerobot not installed: %s", exc)
+        else:
+            logger.warning(
+                "lerobot is installed but lerobot.robots is not importable (partial install?): %s",
+                exc,
+            )
         return
 
     # Walk every immediate subpackage of ``lerobot.robots`` and import

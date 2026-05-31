@@ -118,13 +118,17 @@ WARNING symmetry), #260 (warn on re-use of break-glass-written CA).
   `calibration_dir`, `mock`, `use_degrees`,
   `max_relative_target`, `disable_torque_on_disconnect`) are forwarded
   if and only if the resolved config dataclass declares a matching field.
-  Forwardable-but-not-on-this-robot kwargs are dropped silently (cross-
-  robot polymorphism: ``Robot('so101', kp=[...])`` does not blow up
-  because ``kp`` is a unitree_g1 kwarg). Kwargs that are unknown to the
-  entire ``forwardable`` allowlist (typos like ``prot=``, kwargs from
-  another subsystem) raise ``ValueError`` immediately at config-build
-  time, per AGENTS.md > Review Learnings (#86) > "Reject silently-
-  dropped kwargs".
+  Kwargs declared on the resolved target dataclass are forwarded
+  automatically (so a future lerobot field like ``wifi_ssid`` Just Works
+  the moment lerobot's dataclass declares it -- no strands_robots
+  release needed). Kwargs in the cross-robot allowlist but NOT on the
+  target dataclass are silently dropped (cross-robot polymorphism:
+  ``Robot('so101', kp=[...])`` does not blow up because ``kp`` is a
+  unitree_g1 kwarg). Kwargs that are unknown to BOTH the cross-robot
+  allowlist AND the resolved robot's dataclass fields raise
+  ``ValueError`` immediately at config-build time (typos like
+  ``prot=``, kwargs from another subsystem), per AGENTS.md > Review
+  Learnings (#86) > "Reject silently-dropped kwargs".
 
 - The hand-rolled `config_mapping` (so100/so101/koch/openarm/bi-* only)
   is gone. Adding a new lerobot-supported robot now requires zero
