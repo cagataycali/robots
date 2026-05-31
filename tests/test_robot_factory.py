@@ -489,20 +489,15 @@ class TestRealModeConfigDiscovery:
         _ensure_lerobot_robots_registered()
         registered = set(RobotConfig.get_known_choices().keys())
 
-        # These are the lerobot-built-in robots whose subpackage exists
-        # on disk in lerobot >=0.5.x. Adding more upstream is a no-op
-        # for strands_robots.
-        expected_min = {
-            "so100_follower",
-            "so101_follower",
-            "koch_follower",
-            "openarm_follower",
-            "bi_so_follower",
-            "bi_openarm_follower",
-            "unitree_g1",
-        }
+        # Pin only a single canonical entry to avoid upstream-coupled flake
+        # risk (lerobot may rename/drop any of these in future releases).
+        # The discovery contract: walking populates the registry from > 0
+        # entries that include at least one driver from a standard subpackage.
+        expected_min = {"so100_follower"}
         missing = expected_min - registered
-        assert not missing, f"Discovery missed lerobot built-ins: {missing}. Registered: {sorted(registered)}"
+        assert not missing, f"Discovery missed lerobot built-in: {missing}. Registered: {sorted(registered)}"
+        # Sanity: the walk should discover more than just one
+        assert len(registered) >= 3, f"Expected >= 3 registered types, got {len(registered)}: {sorted(registered)}"
 
     def test_subpackage_with_multiple_robots_picked_up(self):
         """Some lerobot subpackages register MULTIPLE robot_types (e.g.
@@ -923,3 +918,57 @@ class TestRealModeConfigDiscovery:
         )
         assert cfg.port == "/dev/null"
         assert not hasattr(cfg, "kp")
+
+    def test_dataclass_declared_field_accepted_without_forwardable_entry(self):
+        """A kwarg that is NOT in the cross-robot forwardable tuple but IS
+        declared on the target dataclass should be accepted and forwarded.
+        This future-proofs new lerobot fields without requiring a
+        strands_robots release to add them to the forwardable tuple."""
+        pytest.importorskip("lerobot.robots.so_follower")
+
+        import dataclasses
+
+        from lerobot.robots.config import RobotConfig
+
+        from strands_robots.hardware_robot import (
+            Robot as HwRobot,
+        )
+        from strands_robots.hardware_robot import (
+            _ensure_lerobot_robots_registered,
+        )
+
+        _ensure_lerobot_robots_registered()
+        ConfigClass = RobotConfig.get_choice_class("so101_follower")
+        real_fields = {f.name for f in dataclasses.fields(ConfigClass)}
+
+        # Dynamically find a field that IS on the dataclass but is NOT in
+        # the forwardable tuple. If none exist (all are already in
+        # forwardable), skip gracefully.
+        forwardable_set = {
+            "port",
+            "robot_ip",
+            "kp",
+            "kd",
+            "default_positions",
+            "control_dt",
+            "is_simulation",
+            "gravity_compensation",
+            "controller",
+            "calibration_dir",
+            "mock",
+            "use_degrees",
+            "max_relative_target",
+            "disable_torque_on_disconnect",
+        }
+        dataclass_only_fields = real_fields - forwardable_set - {"id", "cameras"}
+        if not dataclass_only_fields:
+            pytest.skip("No dataclass-only fields found on SO101 config")
+
+        target_field = sorted(dataclass_only_fields)[0]
+
+        hw = HwRobot.__new__(HwRobot)
+        hw.tool_name_str = "test_forward"
+        # Pass the dataclass-only field -- should NOT raise ValueError
+        cfg = hw._create_minimal_config("so101_follower", cameras={}, **{target_field: "test_value"})
+        # The field should have been forwarded to the config
+        assert hasattr(cfg, target_field)

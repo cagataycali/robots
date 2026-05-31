@@ -368,29 +368,35 @@ class Robot(AgentTool):
             if key in kwargs and key in valid_fields:
                 config_data[key] = kwargs[key]
 
-        # Reject kwargs that no robot in the family knows about. Per
-        # AGENTS.md > Review Learnings (#86) > "Reject silently-dropped
-        # kwargs", a typo like ``prot=`` or a kwarg meant for a different
-        # subsystem must surface immediately, not as a delayed connection
-        # failure. Note we still tolerate forwardable-but-not-on-this-
-        # robot (e.g. ``kp`` to so101) -- that is the deliberate cross-
-        # robot polymorphism the forwardable loop above implements.
+        # Forward kwargs that are declared on the target dataclass but not
+        # in the cross-robot allowlist. This future-proofs new lerobot fields
+        # without requiring a strands_robots release to add them to forwardable.
+        for key in kwargs:
+            if key not in config_data and key not in {"id", "cameras"} and key in valid_fields:
+                config_data[key] = kwargs[key]
+
+        # Reject kwargs unknown to BOTH the cross-robot allowlist AND the
+        # resolved target dataclass. Per AGENTS.md > Review Learnings (#86)
+        # > "Reject silently-dropped kwargs", a typo like ``prot=`` must
+        # surface immediately -- but a genuinely new lerobot field that the
+        # target dataclass declares should Just Work without a strands_robots
+        # release. This keeps typo-rejection while preserving the "zero
+        # strands_robots changes for new robots" promise for new *kwargs* too.
         always_allowed = {"id", "cameras"}
-        recognised = set(forwardable) | always_allowed
+        recognised = set(forwardable) | always_allowed | valid_fields
         unknown = set(kwargs) - recognised
         if unknown:
             raise ValueError(
                 f"Unknown kwarg(s) for robot_type={robot_type!r}: "
                 f"{sorted(unknown)}. This robot's dataclass accepts: "
                 f"{sorted(valid_fields)}. The cross-robot allowlist is: "
-                f"{sorted(recognised)}. (If this is a typo, fix it; if "
-                f"this is a genuinely new lerobot kwarg, add it to "
-                f"``forwardable`` in ``_create_minimal_config``.)"
+                f"{sorted(set(forwardable) | always_allowed)}. "
+                f"(If this is a typo, fix it.)"
             )
 
         try:
             return ConfigClass(**config_data)
-        except Exception as e:
+        except (TypeError, ValueError) as e:
             raise ValueError(
                 f"Failed to construct {ConfigClass.__name__} for robot type {robot_type!r}: {e}. Config: {config_data}"
             ) from e

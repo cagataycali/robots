@@ -138,11 +138,13 @@ WARNING symmetry), #260 (warn on re-use of break-glass-written CA).
 
 ### Tests
 
-- 5 new regression tests in `tests/test_robot_factory.py`:
+- 13 regression tests in `tests/test_robot_factory.py`:
   `TestRealModeConfigDiscovery` — covers SO-101 `id` regression,
   `unitree_g1` discovery, unknown-type clean error, kwarg filtering,
   and the cleanup AttributeError fix. All run with
   `pytest.importorskip("lerobot")`.
+  cleanup AttributeError fix, dataclass-field forwarding, and more. All
+  run with `pytest.importorskip("lerobot")`.
 ## Unreleased - #178 (LiberoOffScreenRenderEngine retired)
 
 ### Removed: ``LiberoOffScreenRenderEngine`` simulation backend (BREAKING)
