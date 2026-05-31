@@ -818,10 +818,18 @@ class TestRealModeConfigDiscovery:
         for-loop, and silently skip every later driver. This is the same
         silent-degradation mode the surrounding comment claims to guard
         against.
+
+        Pinning technique: capture the registry state BEFORE and AFTER
+        the booby-trapped walk, then assert the walk ADDED entries (the
+        delta). This eliminates false-positives from process-global
+        ``RobotConfig`` state leaked by prior tests -- the real reason
+        the pre-delta assertion passed vacuously under pytest ordering.
         """
         pytest.importorskip("lerobot")
 
         from unittest.mock import patch
+
+        from lerobot.robots.config import RobotConfig
 
         from strands_robots.hardware_robot import _ensure_lerobot_robots_registered
 
@@ -833,10 +841,14 @@ class TestRealModeConfigDiscovery:
                 raise OSError("simulated USB probe failure during driver __init__")
             return real_import(name, *args, **kwargs)
 
-        # Cache is cleared by the autouse fixture, but we need TWO walks
-        # in this test: one with the booby-trap to verify the walk
-        # continues past the OSError, and a second clean walk to restore
-        # state for subsequent tests.
+        # Snapshot registry BEFORE the booby-trapped walk.  RobotConfig is
+        # process-global (draccus ChoiceRegistry) so prior tests may have
+        # populated it.  The delta (after - before) isolates what THIS walk
+        # registered and eliminates false-positives from stale state.
+        known_before = set(RobotConfig.get_known_choices().keys())
+
+        # Cache is cleared by the autouse fixture.  Run the booby-trapped
+        # walk inside the patch; so_follower will raise OSError.
         with patch(
             "strands_robots.hardware_robot.importlib.import_module",
             side_effect=fake_import,
@@ -845,19 +857,31 @@ class TestRealModeConfigDiscovery:
             # and the walk must continue past it.
             _ensure_lerobot_robots_registered()
 
-        # Capture registry state IMMEDIATELY after the booby-trapped walk
-        # (before any clean re-walk) to prove the walk continued past the
-        # OSError.  This is the pinning assertion: pre-fix code (except
-        # ImportError only) would abort the walk at so_follower, leaving
-        # drivers registered AFTER it in alphabetical order missing.
-        from lerobot.robots.config import RobotConfig
+            # Capture registry state INSIDE the patch block (walk is done).
+            known_after_booby_trap = set(RobotConfig.get_known_choices().keys())
 
-        known_after_booby_trap = set(RobotConfig.get_known_choices().keys())
-        # Drivers from subpackages OTHER than so_follower must be present,
-        # proving the walk didn't abort on the OSError.
-        assert known_after_booby_trap - {"so100_follower", "so101_follower"}, (
-            f"Walk aborted on so_follower OSError; only {known_after_booby_trap} "
-            f"registered during the booby-trapped walk."
+        # Delta: what the booby-trapped walk ADDED to the registry.
+        newly_registered = known_after_booby_trap - known_before
+
+        # The booby-trapped walk must have registered drivers OTHER than
+        # so_follower types (which were skipped due to OSError). Pre-fix
+        # code (except ImportError only) would abort the entire walk at
+        # so_follower, adding NOTHING -- making this assertion fail.
+        non_so_follower_new = newly_registered - {"so100_follower", "so101_follower"}
+        assert non_so_follower_new, (
+            f"Walk aborted on so_follower OSError; newly registered "
+            f"types (delta): {newly_registered}. Pre-walk state had "
+            f"{len(known_before)} types. The walk must continue past "
+            f"the OSError and register subsequent drivers."
+        )
+
+        # so_follower types must NOT be in the delta (the booby-trap
+        # prevented their registration).
+        so_follower_types = {"so100_follower", "so101_follower"}
+        assert not (newly_registered & so_follower_types), (
+            f"so_follower types {newly_registered & so_follower_types} were "
+            f"registered despite the OSError booby-trap -- either the patch "
+            f"didn't fire or the walk re-ran without the patch."
         )
 
         # Clean re-walk to restore full registry state for other tests.
