@@ -388,3 +388,92 @@ class TestPolicyConfigDiscovery:
         )
 
         resolution._ensure_policy_configs_registered.cache_clear()
+
+
+def test_iter_modules_non_package_siblings_excluded(tmp_path):
+    """Pin for R6-1: ``iter_modules`` non-package entries must NOT be walked.
+
+    In lerobot 0.5.x, ``lerobot/policies/`` contains non-package siblings
+    like ``factory.py``, ``utils.py``, ``pretrained.py``, ``pi_gemma.py``.
+    If these are fed into the walker's candidate tuple, the package-level
+    fallback (``lerobot.policies.factory``) succeeds and pulls in
+    transformers/diffusers -- exactly the heavy import graph the stub
+    mechanism exists to avoid.
+
+    This test constructs a synthetic ``lerobot.policies``-like namespace
+    with one regular-package subdir and one non-package ``.py`` file, runs
+    the walker, and asserts only the package was walked.
+
+    Pre-fix (without ``if _is_pkg:`` guard): the ``.py`` sibling would
+    appear in the walker's candidates and the package-level fallback for
+    it would be attempted.
+    """
+    import importlib
+    import sys
+    import types
+
+    from strands_robots.policies.lerobot_local import resolution
+
+    # Build a synthetic lerobot.policies-like directory:
+    # tmp_path/
+    #   real_policy/
+    #     configuration_real_policy.py  -> registers the policy
+    #   heavy_sibling.py  -> a non-package .py file that should NOT be imported
+    real_pkg = tmp_path / "real_policy"
+    real_pkg.mkdir()
+    (real_pkg / "__init__.py").write_text("")
+    (real_pkg / "configuration_real_policy.py").write_text("REGISTERED = True  # simulates decorator registration")
+
+    # A non-package sibling (simulates factory.py / utils.py)
+    (tmp_path / "heavy_sibling.py").write_text(
+        "raise RuntimeError('heavy_sibling should never be imported by the walker')"
+    )
+
+    # Install a fake lerobot.policies module pointing at tmp_path
+    fake_lr = types.ModuleType("lerobot")
+    fake_lr.__path__ = []
+    fake_lr_policies = types.ModuleType("lerobot.policies")
+    fake_lr_policies.__path__ = [str(tmp_path)]
+    fake_lr_policies.__name__ = "lerobot.policies"
+
+    snapshot = _snapshot_lerobot_modules()
+    _purge_lerobot_modules()
+
+    try:
+        sys.modules["lerobot"] = fake_lr
+        sys.modules["lerobot.policies"] = fake_lr_policies
+
+        resolution._ensure_policy_configs_registered.cache_clear()
+
+        # Track what gets imported
+        original_import = importlib.import_module
+        attempted_candidates = []
+
+        def tracking_import(name, *args, **kwargs):
+            attempted_candidates.append(name)
+            return original_import(name, *args, **kwargs)
+
+        import unittest.mock
+
+        with unittest.mock.patch.object(importlib, "import_module", side_effect=tracking_import):
+            resolution._ensure_policy_configs_registered()
+
+        # The walker MUST have attempted configuration_real_policy (via
+        # the directory-listing branch -- real_policy/ is a directory).
+        assert any("real_policy" in c for c in attempted_candidates), (
+            f"Expected 'real_policy' in walker candidates; got: {attempted_candidates}"
+        )
+
+        # The walker MUST NOT have attempted heavy_sibling (it's a .py
+        # file, not a directory, and iter_modules should filter it with
+        # is_pkg=True). If this assertion fails, the is_pkg guard is
+        # missing and the non-package leak is back.
+        assert not any("heavy_sibling" in c for c in attempted_candidates), (
+            "Non-package sibling 'heavy_sibling' was walked by the resolver -- "
+            "the is_pkg filter is missing. This would pull in transformers/diffusers "
+            f"on production lerobot installs. Candidates attempted: {attempted_candidates}"
+        )
+    finally:
+        _purge_lerobot_modules()
+        sys.modules.update(snapshot)
+        resolution._ensure_policy_configs_registered.cache_clear()

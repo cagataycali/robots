@@ -78,6 +78,12 @@ def _ensure_policy_configs_registered() -> None:
     the new ``sys.modules`` state is never re-walked. The
     ``test_molmoact2_registered_after_stubbed_lerobot_policies``
     regression test exercises exactly this contract.
+
+    Note: the ``ImportError`` early-return (lerobot not installed) is
+    also cached. In the rare case where lerobot becomes available later
+    in the same process (e.g. a notebook ``pip install``), callers must
+    ``cache_clear()`` before retrying. This is acceptable because the
+    realistic failure mode (no lerobot at all) is terminal.
     """
     # Make sure lerobot.policies is at least registered in sys.modules
     # without executing its (potentially heavy) __init__.
@@ -97,28 +103,28 @@ def _ensure_policy_configs_registered() -> None:
     # subpackage's config import runs
     # ``@PreTrainedConfig.register_subclass(...)`` as a side effect.
     #
-    # We deliberately do NOT rely solely on ``pkgutil.iter_modules``
-    # here: in lerobot 0.5.x several subpackages are laid out as PEP 420
-    # *namespace packages* (no ``__init__.py``) -- e.g. ``act/``,
-    # ``diffusion/``, ``smolvla/``, ``tdmpc/``, ``vqbet/``. ``iter_modules``
-    # either yields them with ``is_pkg=False`` (or skips them entirely
-    # depending on the loader), so a guard like ``if not is_pkg: continue``
-    # would silently miss every namespace-package subpackage on the
-    # stub-active codepath -- the very codepath this helper exists to
-    # repair (``_ensure_lerobot_policies_importable()`` installs a stub
-    # whose ``__path__`` points at the on-disk lerobot/policies/
-    # directory, so on-disk directory entries ARE the source of truth).
+    # Two enumeration sources, unioned:
     #
-    # Take the union of ``pkgutil.iter_modules`` names and the on-disk
-    # subdirectory listing of every entry in ``__path__``. Then attempt
-    # ``configuration_<name>`` for each unique name. The inner
-    # ``import_module`` call naturally fails on non-importable entries
-    # (e.g. ``__pycache__``, lone ``.py`` files, etc.) via
-    # ``ImportError``, which is the documented "skip" path below. See
-    # issue #278 for the upstream lerobot layout that motivated this.
+    # 1. ``pkgutil.iter_modules`` -- yields regular packages (those with
+    #    ``__init__.py``). We filter with ``is_pkg=True`` so non-package
+    #    siblings (``factory.py``, ``utils.py``, ``pretrained.py``,
+    #    ``pi_gemma.py``) are excluded. Importing those as a package-level
+    #    fallback would pull in transformers/diffusers -- exactly the heavy
+    #    import graph the stub mechanism exists to avoid.
+    #
+    # 2. On-disk directory listing of every ``__path__`` entry. In lerobot
+    #    0.5.x several subpackages are PEP 420 *namespace packages* (no
+    #    ``__init__.py``) -- e.g. ``act/``, ``diffusion/``, ``smolvla/``,
+    #    ``tdmpc/``, ``vqbet/``. ``iter_modules`` skips these (or yields
+    #    them with ``is_pkg=False``), so the directory scan is the ground
+    #    truth for namespace-package coverage on the stub-active codepath.
+    #
+    # The union of both sources covers all subpackages regardless of layout.
+    # See issue #278 for the upstream lerobot layout that motivated this.
     sub_names: set[str] = set()
     for _, sub_name, _is_pkg in pkgutil.iter_modules(_lr_policies.__path__):
-        sub_names.add(sub_name)
+        if _is_pkg:
+            sub_names.add(sub_name)
     for path_entry in _lr_policies.__path__:
         try:
             for child in Path(path_entry).iterdir():
