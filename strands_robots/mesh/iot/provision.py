@@ -687,6 +687,10 @@ def _create_cert(iot: Any, cert_path: Path, key_path: Path) -> tuple[str, str]:
     return cert_arn, cert_id
 
 
+# Issue #261: one-WARN-per-process gate for unverified-origin CA re-use.
+_UNVERIFIED_CA_WARNED: set[Path] = set()
+
+
 def _ensure_ca(ca_path: Path) -> None:
     """Ensure a verified copy of Amazon Root CA1 lives at *ca_path*.
 
@@ -717,14 +721,28 @@ def _ensure_ca(ca_path: Path) -> None:
         # to refresh a re-encoded cert can delete the file and let
         # the download path run with the override set.
         # O_NOFOLLOW to prevent TOCTOU symlink-swap
-        # tracked: #251 -- chunked-read parity with verify_ca_pin (a rare
-        # short read on interrupted syscalls would surface as a misleading
-        # "failed pin check" instead of "short read").
+        # Issue #251: chunked-read loop (mirrors verify_ca_pin). Single
+        # ``os.read(fd, 10MB)`` returns *up to* the requested byte count
+        # so on interrupted syscalls / unusual filesystems the read can
+        # return short, in which case ``_hash_matches_pin(existing)``
+        # hashes a partial file and rejects (fail-closed, OK) -- but
+        # the surrounding error message says "failed pin check" rather
+        # than the truthful "short read", which is hostile to the
+        # operator triaging the issue. The chunked loop drains the file
+        # or hits the 10 MiB cap, matching ``verify_ca_pin`` posture.
         try:
             nofollow = getattr(os, "O_NOFOLLOW", 0)
             fd = os.open(ca_path, os.O_RDONLY | nofollow)
             try:
-                existing = os.read(fd, 10 * 1024 * 1024)  # 10 MiB bound
+                chunks: list[bytes] = []
+                remaining = 10 * 1024 * 1024  # 10 MiB bound
+                while remaining > 0:
+                    buf = os.read(fd, min(65536, remaining))
+                    if not buf:
+                        break
+                    chunks.append(buf)
+                    remaining -= len(buf)
+                existing = b"".join(chunks)
             finally:
                 os.close(fd)
         except OSError as exc:
@@ -739,6 +757,24 @@ def _ensure_ca(ca_path: Path) -> None:
             )
             accepted = ", ".join(sorted(_resolve_ca_pins()))
             raise RuntimeError(f"AmazonRootCA1 at {ca_path} failed pin check; accepted pins: {accepted}")
+        # Issue #261: WARN if this CA was originally downloaded under
+        # the STRANDS_MESH_DISABLE_CA_PIN break-glass. The pin check above
+        # passed (so the bytes match a known good pin), but the operator
+        # should be aware that an unverified-origin CA is being re-used
+        # in case they want to refresh it via the canonical (pinned) path.
+        # Emit one WARNING per process (gated on a module-level set).
+        marker = ca_path.with_suffix(ca_path.suffix + ".unverified")
+        if marker.exists() and ca_path not in _UNVERIFIED_CA_WARNED:
+            _UNVERIFIED_CA_WARNED.add(ca_path)
+            logger.warning(
+                "[provision] re-using CA at %s that was originally downloaded "
+                "with STRANDS_MESH_DISABLE_CA_PIN=true (sidecar marker %s "
+                "exists). The pin check on the on-disk bytes passed, but the "
+                "ORIGIN of those bytes was not pin-verified. Delete both files "
+                "and re-run without the break-glass to refresh via the canonical path.",
+                ca_path,
+                marker,
+            )
         return
 
     logger.info("[provision] downloading Amazon Root CA1 -> %s (pinned)", ca_path)
@@ -769,6 +805,23 @@ def _ensure_ca(ca_path: Path) -> None:
         os.chmod(ca_path, 0o644)
     except OSError:
         pass
+
+    # Issue #261: when the break-glass STRANDS_MESH_DISABLE_CA_PIN was
+    # active during this download, write a sidecar marker so future
+    # _ensure_ca invocations can WARN about re-using an unverified CA
+    # even when the env var is no longer set.
+    if os.getenv("STRANDS_MESH_DISABLE_CA_PIN", "").strip().lower() == "true":
+        marker = ca_path.with_suffix(ca_path.suffix + ".unverified")
+        try:
+            marker.write_text(
+                "# This CA was downloaded with STRANDS_MESH_DISABLE_CA_PIN=true.\n"
+                "# Future _ensure_ca calls on this host will WARN until this\n"
+                "# marker is removed (e.g. by deleting the CA + re-running with\n"
+                "# the pin enforced).\n"
+            )
+            os.chmod(marker, 0o644)
+        except OSError:
+            pass
 
 
 def _resolve_ca_pins() -> frozenset[str]:

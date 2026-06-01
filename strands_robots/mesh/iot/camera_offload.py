@@ -116,10 +116,19 @@ class CameraOffloader:
             )
             ttl_raw = MAX_PRESIGN_TTL_SECONDS
         if ttl_raw < 1:
-            if presign_ttl is None:
+            # Issue #262: WARN on any sub-1 value EXCEPT exactly 0.
+            # ``presign_ttl=0`` is the documented kwarg-vs-env-precedence
+            # sentinel pinned by ``test_presign_ttl_none_vs_zero.py`` (R1
+            # fix). ``presign_ttl=-99`` is unambiguously a bug at the call
+            # site -- no caller deliberately wants a negative TTL clamped
+            # to 1 -- and we surface it. The env-var path always WARNs
+            # (operator-side bug if STRANDS_MESH_CAMERA_PRESIGN_TTL=-99).
+            if presign_ttl is None or presign_ttl != 0:
+                source = "env" if presign_ttl is None else "kwarg"
                 logger.warning(
-                    "[camera_offload] STRANDS_MESH_CAMERA_PRESIGN_TTL=%d < 1 floor; clamping to 1s",
+                    "[camera_offload] presign_ttl=%d < 1 floor; clamping to 1s (source=%s)",
                     ttl_raw,
+                    source,
                 )
             ttl_raw = 1
         self.presign_ttl = ttl_raw

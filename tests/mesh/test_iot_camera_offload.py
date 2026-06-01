@@ -510,3 +510,56 @@ class TestPatchedPublishClosure:
         mesh._publish_cameras_once()
         ref_calls = [c for c in transport.put.call_args_list if "/ref" in c.args[0]]
         assert len(ref_calls) == 1
+
+
+# ----------------------------------------------------------------------
+# Issue #262: presign_ttl negative kwarg WARNING (asymmetric clamp fix)
+# ----------------------------------------------------------------------
+
+
+class TestNegativeKwargWarns:
+    """Pin: ``presign_ttl=-99`` (unambiguous bug at call site) emits a
+    WARNING when clamped to 1, but ``presign_ttl=0`` (documented
+    sentinel pinned by R1 fix) does NOT.
+    """
+
+    def test_negative_kwarg_emits_warning(self, caplog):
+        from strands_robots.mesh.iot.camera_offload import CameraOffloader
+
+        caplog.clear()
+        with caplog.at_level("WARNING"):
+            off = CameraOffloader(bucket="test-bucket", presign_ttl=-99)
+
+        assert off.presign_ttl == 1
+        warns = [r for r in caplog.records if "presign_ttl" in r.message]
+        assert len(warns) == 1, f"expected 1 WARNING, got {warns}"
+        assert "source=kwarg" in warns[0].message
+        assert "-99" in warns[0].message
+
+    def test_zero_kwarg_no_warning(self, caplog):
+        """Sentinel value 0 (kwarg-vs-env-precedence pin from R1) must
+        NOT emit a WARNING -- documented deliberate caller value.
+        """
+        from strands_robots.mesh.iot.camera_offload import CameraOffloader
+
+        caplog.clear()
+        with caplog.at_level("WARNING"):
+            off = CameraOffloader(bucket="test-bucket", presign_ttl=0)
+
+        assert off.presign_ttl == 1
+        warns = [r for r in caplog.records if "presign_ttl" in r.message]
+        assert len(warns) == 0, f"expected no WARNING for sentinel 0, got {warns}"
+
+    def test_negative_env_emits_warning(self, monkeypatch, caplog):
+        """Env-var path always WARNs (operator-side bug)."""
+        from strands_robots.mesh.iot.camera_offload import CameraOffloader
+
+        monkeypatch.setenv("STRANDS_MESH_CAMERA_PRESIGN_TTL", "-99")
+        caplog.clear()
+        with caplog.at_level("WARNING"):
+            off = CameraOffloader(bucket="test-bucket")
+
+        assert off.presign_ttl == 1
+        warns = [r for r in caplog.records if "presign_ttl" in r.message]
+        assert len(warns) == 1
+        assert "source=env" in warns[0].message
