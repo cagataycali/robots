@@ -205,8 +205,10 @@ def _evict_replay_cache[K](
     Callers own insertion and the per-cache lock; this helper is pure
     bookkeeping.
     """
-    if len(cache) < max_size:
-        return
+    # ALWAYS run the TTL purge -- on low-traffic meshes the cache may
+    # never reach max_size but stale entries still accumulate
+    # indefinitely (issue #274). The TTL purge is O(n) and bounded by
+    # the cache size, so it's cheap to run unconditionally.
     cutoff = now_mono - ttl_s
     stale = [k for k, ts in cache.items() if ts < cutoff]
     for k in stale:
@@ -1148,6 +1150,26 @@ class Mesh(SensorLoopsMixin):
                         "timestamp": time.time(),
                     },
                 )
+            # Audit the dispatch-error path so a remote prober cannot
+            # silently fish for adapter exceptions without leaving a
+            # forensic trail (issue #257). Reuses ``command_rejected``
+            # event_type with reason="dispatch error" to keep the
+            # operator audit-walker grep simple.
+            try:
+                log_safety_event(
+                    "command_rejected",
+                    self.peer_id,
+                    {
+                        "sender": sender,
+                        "reason": "dispatch error",
+                        "action": cmd.get("action") if isinstance(cmd, dict) else None,
+                    },
+                )
+            except (TypeError, ValueError, OSError) as audit_exc:
+                # Wrap audit emission in narrow except so an audit-sink
+                # failure on the dispatch-error path doesn't crash back
+                # through the mesh wire handler we just narrowed in R24-A.
+                logger.debug("[mesh] %s: audit log unavailable: %s", self.peer_id, audit_exc)
 
     def _dispatch(self, cmd: dict[str, Any]) -> dict[str, Any]:
         action = cmd.get("action", "status")
@@ -1602,11 +1624,24 @@ class Mesh(SensorLoopsMixin):
             else:
                 self._estop_replay_cache[cache_key] = (issuer_id, now_mono, wire_zid)
 
-        if not self._estop_lockout.is_set():
-            self._estop_lockout.set()
-            self._last_estop_ts = time.time()
-            self._last_estop_mono = time.monotonic()
-            sender = data.get("peer_id", "<remote>")
+            # Lockout state mutation must be inside _estop_replay_lock
+            # to close the concurrent-estops race (issue #273): two
+            # invocations from distinct issuers could both pass the
+            # is_set() check before either calls set() and both would
+            # publish remote_estop_engaged instead of one + one
+            # remote_estop_redundant. Mutating + reading
+            # _last_estop_ts/_last_estop_mono inside the lock also
+            # prevents the inconsistent timestamp pair the
+            # corroboration window check at line ~1492 depends on.
+            lockout_was_engaged = self._estop_lockout.is_set()
+            if not lockout_was_engaged:
+                self._estop_lockout.set()
+                self._last_estop_ts = time.time()
+                self._last_estop_mono = time.monotonic()
+            lockout_engaged_since = self._last_estop_ts
+
+        sender = data.get("peer_id", "<remote>")
+        if not lockout_was_engaged:
             logger.critical(
                 "[safety] %s: lockout engaged via remote estop from %s",
                 self.peer_id,
@@ -1635,7 +1670,7 @@ class Mesh(SensorLoopsMixin):
                     payload={
                         "issuer": data.get("peer_id"),
                         "issuer_t": envelope_t,
-                        "lockout_engaged_since": self._last_estop_ts,
+                        "lockout_engaged_since": lockout_engaged_since,
                     },
                 )
             except (TypeError, ValueError, OSError) as audit_exc:
@@ -1902,9 +1937,9 @@ class Mesh(SensorLoopsMixin):
             )
             self._resume_replay_cache[cache_key] = now_mono
 
+        sender = data.get("peer_id", "<remote>")
         if self._estop_lockout.is_set():
             self._estop_lockout.clear()
-            sender = data.get("peer_id", "<remote>")
             logger.warning("[safety] %s: lockout cleared via remote resume from %s", self.peer_id, sender)
             # audit the receiver-side resume transition. Mirrors
             # _on_safety_estop above so verify_audit_integrity walkers
@@ -1919,6 +1954,30 @@ class Mesh(SensorLoopsMixin):
                     "issuer_t": data.get("t"),
                 },
             )
+        else:
+            # Mirror the estop _redundant pattern: a successfully-validated
+            # resume that arrives on an already-cleared lockout still
+            # consumed a replay-cache slot, so forensics need the signal
+            # too (issue #271). Without this audit, a fleet audit-walker
+            # reconciling estop_engaged/resume_applied pairs has gaps for
+            # the case where multiple operators legitimately hit resume
+            # in close succession.
+            try:
+                self.publish_safety_event(
+                    event_type="remote_resume_redundant",
+                    severity="info",
+                    payload={
+                        "trigger": "remote",
+                        "issuer": sender,
+                        "issuer_t": data.get("t"),
+                    },
+                )
+            except (TypeError, ValueError, OSError) as audit_exc:
+                logger.debug(
+                    "[mesh] %s: remote_resume_redundant audit publish failed: %s",
+                    self.peer_id,
+                    audit_exc,
+                )
 
     # RPC -- outgoing
     def send(self, target: str, cmd: dict[str, Any], timeout: float = 30.0) -> dict[str, Any]:
@@ -2268,28 +2327,55 @@ class Mesh(SensorLoopsMixin):
             _EXPECTED_HASH = hashlib.sha256(b"\x00" * 32).digest()
         compare_ok = hmac.compare_digest(_EXPECTED_HASH, _PROVIDED_HASH)
 
+        # Issue #272: the structured ``reason`` field used to be published
+        # via ``publish_safety_event`` which fans out to
+        # ``strands/{peer_id}/safety/event`` -- any peer subscribed to
+        # ``strands/+/safety/event`` could read the rejection reason and
+        # use it as a content-channel oracle (lockout-not-engaged vs
+        # not-configured vs bad-code). Now we publish ONLY an opaque
+        # ``reason_code`` over the wire (uniform "denied" string) and
+        # write the structured reason to the LOCAL audit log via
+        # ``log_safety_event`` (file-backed; not broadcast).
+        # Issue #256: every rejection branch performs the same I/O
+        # work shape (one local audit + one wire publish) so the
+        # latency oracle collapses too.
+        def _emit_resume_denied(reason_text: str, severity: str) -> None:
+            try:
+                log_safety_event(
+                    "resume_denied",
+                    self.peer_id,
+                    {"sender_id": self.peer_id, "reason": reason_text, "severity": severity},
+                )
+            except (TypeError, ValueError, OSError) as audit_exc:
+                logger.debug(
+                    "[mesh] %s: resume_denied local audit failed: %s",
+                    self.peer_id,
+                    audit_exc,
+                )
+            try:
+                # Wire-broadcast carries ONLY the opaque code, no reason.
+                self.publish_safety_event(
+                    event_type="resume_denied",
+                    severity=severity,
+                    payload={"sender_id": self.peer_id, "reason_code": "denied"},
+                )
+            except (TypeError, ValueError, OSError) as audit_exc:
+                logger.debug(
+                    "[mesh] %s: resume_denied wire publish failed: %s",
+                    self.peer_id,
+                    audit_exc,
+                )
+
         if not lockout_engaged:
-            self.publish_safety_event(
-                event_type="resume_denied",
-                severity="info",
-                payload={"sender_id": self.peer_id, "reason": "lockout not engaged"},
-            )
+            _emit_resume_denied("lockout not engaged", "info")
             return _generic_error
 
         if not expected:
-            self.publish_safety_event(
-                event_type="resume_denied",
-                severity="warning",
-                payload={"sender_id": self.peer_id, "reason": "STRANDS_MESH_OVERRIDE_CODE not configured"},
-            )
+            _emit_resume_denied("STRANDS_MESH_OVERRIDE_CODE not configured", "warning")
             return _generic_error
 
         if not compare_ok:
-            self.publish_safety_event(
-                event_type="resume_denied",
-                severity="warning",
-                payload={"sender_id": self.peer_id, "reason": "bad override code"},
-            )
+            _emit_resume_denied("bad override code", "warning")
             return _generic_error
 
         elapsed = time.time() - self._last_estop_ts

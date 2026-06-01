@@ -109,7 +109,8 @@ def test_replay_of_same_envelope_is_rejected(monkeypatch):
     assert m._estop_lockout.is_set() is True  # lockout stays set
 
     # Verify cache contains the (issuer, proof_nonce) tuple
-    cache_key = (env["peer_id"], env["proof_nonce"])
+    # issue #264: domain-tagged cache key prevents wire_zid/issuer_id namespace collision
+    cache_key = (("body", env["peer_id"]), env["proof_nonce"])
     assert cache_key in m._resume_replay_cache
 
     # Verify audit event was emitted

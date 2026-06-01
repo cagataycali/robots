@@ -187,6 +187,16 @@ class ValidationError(SecurityError):
     """Command payload failed schema or bounds checks."""
 
 
+class LockoutError(SecurityError):
+    """Command rejected because emergency-stop lockout is engaged.
+
+    Raised by :class:`Mesh._dispatch` for every action other than ``status``
+    and ``resume`` while ``self._estop_lockout`` is set. Caught by
+    :meth:`Mesh._exec_cmd` to emit a structured ``command_rejected_lockout``
+    audit event and a ``type="error"`` wire response.
+    """
+
+
 # --- Policy-host allowlist -----------------------------------------------
 
 
@@ -848,4 +858,5 @@ __all__ = [
     "is_safe_policy_type",
     "is_safe_server_address",
     "validate_command",
+    "LockoutError",
 ]

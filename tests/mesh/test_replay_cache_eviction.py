@@ -32,11 +32,22 @@ import pytest
 from strands_robots.mesh.core import _evict_replay_cache
 
 
-def test_below_cap_is_noop() -> None:
-    """If the cache is below ``max_size`` the helper must not touch it."""
+def test_below_cap_keeps_fresh_entries() -> None:
+    """If the cache is below ``max_size`` AND entries are fresh, no-op (issue #274)."""
+    # Fresh entries: ts=180, 181 with cutoff=200-60=140 -> all fresh
+    cache: dict[float, float] = {1.0: 180.0, 2.0: 181.0}
+    _evict_replay_cache(cache, max_size=10, ttl_s=60.0, now_mono=200.0)
+    assert cache == {1.0: 180.0, 2.0: 181.0}
+
+
+def test_below_cap_still_purges_stale_entries() -> None:
+    """Issue #274: TTL purge MUST run even when below max_size to prevent
+    indefinite accumulation of stale entries on low-traffic meshes."""
+    # ts=100, 101 with cutoff=200-60=140 -> both stale
     cache: dict[float, float] = {1.0: 100.0, 2.0: 101.0}
     _evict_replay_cache(cache, max_size=10, ttl_s=60.0, now_mono=200.0)
-    assert cache == {1.0: 100.0, 2.0: 101.0}
+    # Stale entries dropped despite below-cap
+    assert cache == {}
 
 
 def test_at_cap_with_stale_entries_drops_only_stale() -> None:

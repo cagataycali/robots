@@ -330,7 +330,7 @@ class TestEstopLockoutEngagesAtCap:
         for i, line in enumerate(lines):
             if "self._estop_replay_cache[cache_key] =" in line:
                 cache_write_idx = i
-            if "if not self._estop_lockout.is_set():" in line:
+            if "if not lockout_was_engaged:" in line or "if not self._estop_lockout.is_set():" in line:
                 lockout_check_idx = i
                 break
 

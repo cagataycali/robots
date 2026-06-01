@@ -25,6 +25,7 @@ def _stub_mesh() -> core.Mesh:
     m._resume_replay_lock = threading.Lock()
     m._estop_lockout = threading.Event()
     m._last_estop_ts = 0.0
+    m._last_estop_mono = 0.0
     return m
 
 
@@ -85,6 +86,7 @@ def test_distinct_issuers_distinct_wire_zids_same_t_audited_as_corroborated():
     envelope_t = time.time()
     mesh._estop_lockout.set()
     mesh._last_estop_ts = envelope_t
+    mesh._last_estop_mono = time.monotonic()  # corroboration window check uses _last_estop_mono
     mesh._estop_replay_cache[float(envelope_t)] = (
         "operator-A",
         time.monotonic(),
@@ -222,10 +224,13 @@ class TestEstopRedundantAudit:
 
     def test_redundant_estop_emits_audit_event(self, tmp_path, monkeypatch):
         monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
-        # Reset audit state for isolated test
-        audit_mod._AUDIT_STATE.psk_fingerprint = None
-        audit_mod._AUDIT_STATE.seq_loaded = False
-        audit_mod._SEQ_COUNTERS.clear()
+        # Reset audit state for isolated test (PR4 audit-tamper-evident
+        # adds these globals; on PR6 standalone they may not exist).
+        if hasattr(audit_mod, "_AUDIT_STATE"):
+            audit_mod._AUDIT_STATE.psk_fingerprint = None
+            audit_mod._AUDIT_STATE.seq_loaded = False
+        if hasattr(audit_mod, "_SEQ_COUNTERS"):
+            audit_mod._SEQ_COUNTERS.clear()
 
         class StubRobot:
             pass
@@ -358,16 +363,19 @@ class TestPerIssuerCountFromCache:
         assert wire_zid is None, f"expected wire_zid=None for source_info-less stub, got {wire_zid!r}"
 
 
-class TestF14OverCapBlocksLockout:
-    """when an issuer exceeds per_issuer_cap,
-    the lockout MUST NOT engage on their over-cap envelopes. the prior implementation
-    the over-cap branch dropped only the cache slot but still let the
-    fall-through ``self._estop_lockout.set()`` run, defeating the
-    fairness bound's whole point (a sustained attacker at-cap still
-    triggered fleet-wide lockouts on every novel ``t`` they emitted).
+class TestF14OverCapStillEngagesLockout:
+    """Issue #263/#270: per-issuer cap MUST NOT deny lockout-engagement.
+    The cap protects the bounded replay-cache resource; the lockout itself
+    is idempotent boolean state with no resource cost. Suppressing the
+    lockout for an over-cap issuer is a denial-of-estop on legitimate
+    operators (e.g. fault-handling loops re-emitting estop on every
+    detection cycle, or multi-robot consoles fanning repeated stops).
+
+    The cap-exceeded audit event still fires; only the cache-slot
+    insertion is gated. Safety-over-DoS priority is preserved.
     """
 
-    def test_at_cap_envelope_does_not_engage_lockout(self, monkeypatch):
+    def test_at_cap_envelope_still_engages_lockout(self, monkeypatch):
         # Tighten cap for fast test
         monkeypatch.setenv("STRANDS_MESH_RESUME_REPLAY_CACHE_MAX", "8")
         # 8 / 4 = 2 slots per issuer
@@ -378,15 +386,16 @@ class TestF14OverCapBlocksLockout:
         m._estop_replay_lock = threading.Lock()
         m._estop_lockout = threading.Event()
         m._last_estop_ts = 0.0
+        m._last_estop_mono = 0.0
         m._running = True
         m.publish = lambda key, data: None
         m.publish_safety_event = lambda **kw: None
 
         now = time.time()
 
-        # First two envelopes from attacker fill the cap and engage lockout
+        # First two envelopes from operator fill the cap and engage lockout
         for i in range(2):
-            envelope = {"peer_id": "attacker", "t": now + 0.001 * i, "type": "estop"}
+            envelope = {"peer_id": "operator", "t": now + 0.001 * i, "type": "estop"}
 
             class S:
                 payload = type("P", (), {"to_bytes": lambda self, e=envelope: json.dumps(e).encode()})()
@@ -395,15 +404,24 @@ class TestF14OverCapBlocksLockout:
 
         assert m._estop_lockout.is_set(), "first 2 should engage lockout"
 
-        # Clear lockout and try a 3rd envelope (over cap) -- it must NOT re-engage
+        # Clear lockout and try a 3rd envelope (over cap) -- it MUST re-engage
+        # for safety-over-DoS reasons. The cache-slot is still gated.
         m._estop_lockout.clear()
-        envelope = {"peer_id": "attacker", "t": now + 0.005, "type": "estop"}
+        cache_size_before = len(m._estop_replay_cache)
+        envelope = {"peer_id": "operator", "t": now + 0.005, "type": "estop"}
 
         class S2:
             payload = type("P", (), {"to_bytes": lambda self: json.dumps(envelope).encode()})()
 
         m._on_safety_estop(S2())
 
-        assert not m._estop_lockout.is_set(), (
-            f"F14-B: over-cap envelope must NOT engage lockout. Cache: {m._estop_replay_cache}"
+        # Per issue #263: the lockout MUST engage even when the issuer is
+        # at-cap. The cap only suppresses the cache-slot insert (DoS bound).
+        assert m._estop_lockout.is_set(), (
+            f"#263: over-cap envelope MUST still engage lockout (safety-over-DoS). "
+            f"Cache: {m._estop_replay_cache}"
+        )
+        # Cache slot was NOT consumed (cap held)
+        assert len(m._estop_replay_cache) == cache_size_before, (
+            "cap-exceeded envelope should not consume a cache slot"
         )

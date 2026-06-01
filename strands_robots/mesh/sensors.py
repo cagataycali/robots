@@ -99,6 +99,10 @@ class SensorLoopsMixin:
                 pose = self._read_pose()
                 if pose:
                     self.publish(f"strands/{self.peer_id}/pose", pose)
+            except NotImplementedError:
+                # MRO contract violation: surface immediately rather than
+                # silently dropping every sensor tick (issue #258).
+                raise
             except Exception as exc:  # noqa: BLE001
                 logger.debug("[mesh] %s: pose tick error: %s", self.peer_id, exc)
             if self._stop_event.wait(period):
@@ -177,6 +181,10 @@ class SensorLoopsMixin:
                 health = self._read_health()
                 if health:
                     self.publish(f"strands/{self.peer_id}/health", health)
+            except NotImplementedError:
+                # MRO contract violation: surface immediately rather than
+                # silently dropping every sensor tick (issue #258).
+                raise
             except Exception as exc:  # noqa: BLE001
                 logger.debug("[mesh] %s: health tick error: %s", self.peer_id, exc)
             if self._stop_event.wait(period):
@@ -259,6 +267,10 @@ class SensorLoopsMixin:
                 imu = self._read_imu()
                 if imu:
                     self.publish(f"strands/{self.peer_id}/imu", imu)
+            except NotImplementedError:
+                # MRO contract violation: surface immediately rather than
+                # silently dropping every sensor tick (issue #258).
+                raise
             except Exception as exc:  # noqa: BLE001
                 logger.debug("[mesh] %s: imu tick error: %s", self.peer_id, exc)
             if self._stop_event.wait(period):
@@ -310,6 +322,10 @@ class SensorLoopsMixin:
                 odom = self._read_odom()
                 if odom:
                     self.publish(f"strands/{self.peer_id}/odom", odom)
+            except NotImplementedError:
+                # MRO contract violation: surface immediately rather than
+                # silently dropping every sensor tick (issue #258).
+                raise
             except Exception as exc:  # noqa: BLE001
                 logger.debug("[mesh] %s: odom tick error: %s", self.peer_id, exc)
             if self._stop_event.wait(period):
@@ -425,6 +441,10 @@ class SensorLoopsMixin:
                 info = self._read_map_info()
                 if info:
                     self.publish(f"strands/{self.peer_id}/map/info", info)
+            except NotImplementedError:
+                # MRO contract violation: surface immediately rather than
+                # silently dropping every sensor tick (issue #258).
+                raise
             except Exception as exc:  # noqa: BLE001
                 logger.debug("[mesh] %s: map_info tick error: %s", self.peer_id, exc)
             if self._stop_event.wait(period):
