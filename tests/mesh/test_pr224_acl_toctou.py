@@ -10,8 +10,6 @@ ONE ACL file read per ``Mesh.start()``.
 
 from __future__ import annotations
 
-import pytest
-
 
 def test_snapshot_acl_returns_permissive_for_default():
     """No env var -> built-in default -> permissive=True, resolved=default_acl."""
@@ -24,8 +22,9 @@ def test_snapshot_acl_returns_permissive_for_default():
 
 def test_snapshot_acl_returns_non_permissive_for_role_separated_file(tmp_path, monkeypatch):
     """Operator-supplied role-separated ACL -> permissive=False, resolved=loaded dict."""
-    from strands_robots.mesh import _acl_config
     import json
+
+    from strands_robots.mesh import _acl_config
 
     acl_file = tmp_path / "acl.json5"
     acl_file.write_text(
@@ -33,7 +32,15 @@ def test_snapshot_acl_returns_non_permissive_for_role_separated_file(tmp_path, m
             {
                 "enabled": True,
                 "default_permission": "deny",
-                "rules": [{"id": "operator", "permission": "allow", "flows": ["egress"], "messages": ["put"], "key_exprs": ["strands/safety/estop"]}],
+                "rules": [
+                    {
+                        "id": "operator",
+                        "permission": "allow",
+                        "flows": ["egress"],
+                        "messages": ["put"],
+                        "key_exprs": ["strands/safety/estop"],
+                    }
+                ],
                 "subjects": [{"id": "op", "cert_common_names": ["operator-1"]}],
                 "policies": [{"rules": ["operator"], "subjects": ["op"]}],
             }
@@ -53,8 +60,9 @@ def test_snapshot_acl_single_file_read(tmp_path, monkeypatch):
     invalidated the identity-tuple cache and re-read the file. Pinning
     that snapshot_acl performs at most one _load_acl_file call.
     """
-    from strands_robots.mesh import _acl_config
     import json
+
+    from strands_robots.mesh import _acl_config
 
     acl_file = tmp_path / "acl.json5"
     acl_file.write_text(json.dumps({"enabled": True, "default_permission": "deny"}))
@@ -82,8 +90,9 @@ def test_snapshot_acl_single_file_read(tmp_path, monkeypatch):
 
 def test_acl_block_from_uses_provided_dict():
     """acl_block_from doesn't re-read the file -- it serialises the given dict."""
-    from strands_robots.mesh import _acl_config
     import json
+
+    from strands_robots.mesh import _acl_config
 
     custom = {"enabled": True, "default_permission": "deny", "marker": "from-snapshot"}
     key, value = _acl_config.acl_block_from(custom)
