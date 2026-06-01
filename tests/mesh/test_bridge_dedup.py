@@ -890,9 +890,7 @@ class TestDedupNonJsonCommandBypassed:
         # Issue #233: should return None (bypass), not a fingerprint
         # containing the address
         ident = dedup._dedup_id(payload)
-        assert ident is None, (
-            f"non-JSON command must bypass dedup; got fingerprint {ident!r}"
-        )
+        assert ident is None, f"non-JSON command must bypass dedup; got fingerprint {ident!r}"
 
     def test_strict_partial_path_returns_none_for_non_json_payload(self):
         from strands_robots.mesh.transport.bridge_transport import _CommandDeduplicator
@@ -908,9 +906,7 @@ class TestDedupNonJsonCommandBypassed:
             "metadata": Custom(),  # non-JSON, no canonical fields
         }
         ident = dedup._dedup_id(payload)
-        assert ident is None, (
-            f"non-JSON strict-mode payload must bypass dedup; got {ident!r}"
-        )
+        assert ident is None, f"non-JSON strict-mode payload must bypass dedup; got {ident!r}"
 
     def test_canonical_path_pure_json_command_still_dedupes(self):
         """Sanity: pure-JSON command still produces stable fingerprint."""
