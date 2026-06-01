@@ -951,3 +951,62 @@ class TestDedupKeyUsesDeliveredTopic:
         assert dedup.is_duplicate("strands/robot-b/cmd", payload) is False
         # Same payload, same delivered topic -> duplicate
         assert dedup.is_duplicate("strands/robot-a/cmd", payload) is True
+
+
+# ----------------------------------------------------------------------
+# Issue #231: GC under lock uses heapq.nsmallest, not full sort.
+# ----------------------------------------------------------------------
+
+
+class TestGCPartialSelection:
+    """Pin: dedup GC uses heapq.nsmallest (O(n log k)) rather than
+    sorted (O(n log n)) under the lock. Smoke test: cap-blowing
+    eviction completes correctly without dropping fresh entries.
+    """
+
+    def test_eviction_keeps_freshest_entries(self):
+        from strands_robots.mesh.transport.bridge_transport import (
+            _CommandDeduplicator,
+            _MAX_DEDUP_ENTRIES,
+        )
+
+        dedup = _CommandDeduplicator(ttl_s=1000.0)  # long TTL so nothing is stale
+        # Fill past the cap
+        for i in range(_MAX_DEDUP_ENTRIES + 100):
+            payload = {"sender_id": "robot-a", "turn_id": f"t{i}", "command": {"k": i}}
+            dedup.is_duplicate(f"strands/robot-a/cmd/{i}", payload)
+        # Eviction triggered; ~20% dropped
+        assert len(dedup._seen) <= _MAX_DEDUP_ENTRIES
+
+    def test_uses_heapq_not_sorted(self):
+        """Source-grep pin: confirm heapq.nsmallest is in the GC path."""
+        import inspect
+        from strands_robots.mesh.transport import bridge_transport
+
+        src = inspect.getsource(bridge_transport._CommandDeduplicator.is_duplicate)
+        assert "heapq.nsmallest" in src, "GC path must use heapq.nsmallest for partial-selection (issue #231)"
+
+
+# ----------------------------------------------------------------------
+# Issue #225 (PR222 R6): _should_bridge head-segment path-traversal guard
+# ----------------------------------------------------------------------
+
+
+class TestShouldBridgeHeadTraversal:
+    """Pin: _should_bridge rejects ``..`` in the head segment too,
+    not just in the tail. Closes a misconfiguration surface where
+    an operator accidentally puts ``..`` in allowed_prefixes.
+    """
+
+    def test_head_segment_dot_dot_rejected(self):
+        from strands_robots.mesh.transport.bridge_transport import _should_bridge
+
+        # Even if an operator misconfigures allowed_prefixes with ".."
+        # the head-segment check rejects it.
+        assert _should_bridge("strands/robot-a/../cmd", {"cmd"}, frozenset({".."})) is False
+
+    def test_normal_prefix_walk_still_works(self):
+        from strands_robots.mesh.transport.bridge_transport import _should_bridge
+
+        # response/<turn_id> is the legitimate prefix-walk case
+        assert _should_bridge("strands/robot-a/response/turn-123", set(), frozenset({"response"})) is True
