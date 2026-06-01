@@ -495,6 +495,58 @@ def resolve_acl(namespace: str) -> dict[str, Any]:
     return default_acl(namespace)
 
 
+def snapshot_acl(namespace: str = "strands") -> tuple[bool, dict[str, Any]]:
+    """Atomically resolve the ACL and report its permissive-by-shape state.
+
+    Issue #218: closes the TOCTOU window between ``is_default_acl_in_use``
+    and ``resolve_acl``. The previous two-call pattern computed a fresh
+    identity tuple per call, missing the cache when an attacker rewrote
+    the ACL file between calls. ``snapshot_acl`` performs a single
+    ``_load_acl_cached`` call and derives both signals from it.
+
+    Returns:
+        (is_permissive_by_shape, resolved_acl_dict)
+
+    Mesh.start should call this once at the top and thread the
+    resolved dict through both the refuse-to-start gate and the
+    ``acl_block`` insertion.
+    """
+    path_env = os.getenv("STRANDS_MESH_ACL_FILE", "").strip()
+    if not path_env:
+        # Built-in default: known permissive-by-shape.
+        return True, default_acl(namespace)
+    try:
+        resolved = _load_acl_cached(Path(path_env))
+    except (OSError, ValueError) as exc:
+        # fail closed: unloadable file is treated as permissive so the
+        # gate at Mesh.start refuses to bring up the wire.
+        logger.warning(
+            "[mesh] ACL file %s could not be loaded for snapshot (%s); "
+            "treating as permissive-by-default for the start-time gate",
+            path_env,
+            exc,
+        )
+        return True, default_acl(namespace)
+    return _is_permissive_acl_shape(resolved), resolved
+
+
+def acl_block_from(resolved: dict[str, Any]) -> tuple[str, str]:
+    """Return ``("access_control", <json5>)`` from a pre-resolved dict.
+
+    Companion to :func:`snapshot_acl` -- pass the dict returned by the
+    snapshot to bypass a second file read. Use this in Mesh.start so
+    the refuse-to-start gate and the wire config builder share exactly
+    one snapshot of the ACL file.
+    """
+    return ("access_control", json.dumps(resolved))
+
+
 def acl_block(namespace: str) -> tuple[str, str]:
-    """Return ``("access_control", <json5>)`` for the current config."""
+    """Return ``("access_control", <json5>)`` for the current config.
+
+    .. note::
+        Prefer :func:`snapshot_acl` + :func:`acl_block_from` in new code
+        to avoid the TOCTOU window between gate-shape-check and
+        wire-config-build (issue #218).
+    """
     return ("access_control", json.dumps(resolve_acl(namespace)))

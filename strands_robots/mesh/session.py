@@ -286,7 +286,15 @@ def _build_config() -> Any:
     if auth_mode == "mtls":
         blocks.append(_zenoh_config.link_protocols_block())
         blocks.append(_zenoh_config.tls_block())
-        blocks.append(_acl_config.acl_block(namespace))
+        # Issue #218: take ONE snapshot of the ACL state and thread it
+        # through both the wire-config-build path AND the refuse-to-start
+        # shape gate below. The previous two-call pattern
+        # (``acl_block`` + ``is_default_acl_in_use``) had a TOCTOU window
+        # where an attacker rewriting the ACL file between calls could
+        # bypass the shape gate while feeding a malicious ACL into the
+        # wire config.
+        is_permissive, resolved_acl = _acl_config.snapshot_acl(namespace)
+        blocks.append(_acl_config.acl_block_from(resolved_acl))
         # in mtls mode the ACL is the third line of
         # defence after the handshake. When the operator did not supply
         # STRANDS_MESH_ACL_FILE, the built-in default is permissive
@@ -305,7 +313,7 @@ def _build_config() -> Any:
             "true",
             "yes",
         )
-        if _acl_config.is_default_acl_in_use(namespace) and not accept_permissive:
+        if is_permissive and not accept_permissive:
             logger.warning(
                 "STRANDS_MESH_ACL_FILE unset -- using PERMISSIVE built-in "
                 "default ACL. Any CA-signed peer can publish/subscribe "
