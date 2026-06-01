@@ -463,7 +463,14 @@ def robot_mesh(
         except _security.ValidationError as exc:
             _audit_tool_action(action, target, False, f"validation: {exc}")
             return _err(f"tell rejected: {exc}")
-        result = mesh.tell(target, instruction, **kwargs)
+        try:
+            result = mesh.tell(target, instruction, **kwargs)
+        except Exception as exc:  # noqa: BLE001
+            # Audit dispatch failures (mesh.tell may raise on transport
+            # error, lockout, etc.). Previously only ``success=True`` was
+            # emitted, leaving a forensic gap on failure paths.
+            _audit_tool_action(action, target, False, f"dispatch error: {type(exc).__name__}: {exc}")
+            raise
         _audit_tool_action(action, target, True, f"instruction={instruction[:200]}")
         return _ok(f"[tell -> {target}] {json.dumps(result, default=str)[:600]}")
 
@@ -488,21 +495,29 @@ def robot_mesh(
         except _security.ValidationError as exc:
             _audit_tool_action(action, target, False, f"validation: {exc}")
             return _err(f"send rejected: {exc}")
-        result = mesh.send(target, cmd, timeout=timeout)
+        try:
+            result = mesh.send(target, cmd, timeout=timeout)
+        except Exception as exc:  # noqa: BLE001
+            _audit_tool_action(action, target, False, f"dispatch error: {type(exc).__name__}: {exc}")
+            raise
         _audit_tool_action(action, target, True, f"action={cmd.get('action')}")
         return _ok(f"[send -> {target}] {json.dumps(result, default=str)[:600]}")
 
     # ── action: broadcast ─────────────────────────────────────────────────
     if action == "broadcast":
         # R8-7: pre-validated above before the HITL interrupt fired, so
-        # the cmd here is already a clean validated dict. Defensive
-        # assert: validated_broadcast_cmd is None only on a programmer
-        # error (someone added "broadcast" without the pre-validate).
-        assert validated_broadcast_cmd is not None, (
-            "broadcast reached its handler without pre-validation — R8-7 contract broken"
-        )
+        # the cmd here is already a clean validated dict.
+        # Use explicit raise (not assert) -- assert is stripped under
+        # ``python -O`` / ``PYTHONOPTIMIZE=1`` which would silently send
+        # an unvalidated cmd to mesh.broadcast.
+        if validated_broadcast_cmd is None:
+            raise RuntimeError("broadcast reached its handler without pre-validation -- R8-7 contract broken")
         cmd = validated_broadcast_cmd
-        results = mesh.broadcast(cmd, timeout=timeout)
+        try:
+            results = mesh.broadcast(cmd, timeout=timeout)
+        except Exception as exc:  # noqa: BLE001
+            _audit_tool_action(action, "*", False, f"dispatch error: {type(exc).__name__}: {exc}")
+            raise
         _audit_tool_action(action, "*", True, f"action={cmd.get('action')} responses={len(results)}")
         text = f"[broadcast] {len(results)} responses\n"
         for r in results[:10]:
@@ -516,7 +531,11 @@ def robot_mesh(
         if not target:
             _audit_tool_action(action, target, False, "missing target")
             return _err("stop requires target")
-        result = mesh.send(target, {"action": "stop"}, timeout=min(timeout, 5.0))
+        try:
+            result = mesh.send(target, {"action": "stop"}, timeout=min(timeout, 5.0))
+        except Exception as exc:  # noqa: BLE001
+            _audit_tool_action(action, target, False, f"dispatch error: {type(exc).__name__}: {exc}")
+            raise
         _audit_tool_action(action, target, True, "")
         return _ok(f"[stop -> {target}] {json.dumps(result, default=str)[:600]}")
 
@@ -524,7 +543,11 @@ def robot_mesh(
     if action == "emergency_stop":
         # Operator approval was already obtained above through the
         # interrupt gate; this branch only runs on an affirmative response.
-        results = mesh.emergency_stop()
+        try:
+            results = mesh.emergency_stop()
+        except Exception as exc:  # noqa: BLE001
+            _audit_tool_action(action, "*", False, f"dispatch error: {type(exc).__name__}: {exc}")
+            raise
         _audit_tool_action(action, "*", True, f"responses={len(results)}")
         return _ok(f"[E-STOP] broadcast complete - {len(results)} responses (audit log written)")
 
