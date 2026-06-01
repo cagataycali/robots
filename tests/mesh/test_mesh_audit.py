@@ -141,3 +141,51 @@ def test_log_safety_event_re_chmods_file_each_call(audit_env):
     mesh_audit.log_safety_event("emergency_stop", "peer-a", {"i": 2})
     mode = log_file.stat().st_mode & 0o777
     assert mode == 0o600
+
+
+# -----------------------------------------------------------------------
+# Issue #238: _seq_flock hard-fails on symlinked lockfile (no silent
+# downgrade of cross-process serialisation).
+# -----------------------------------------------------------------------
+
+
+class TestSeqFlockSymlinkRejection:
+    """Pin: pre-creating ``mesh_audit.seq.lock`` as a symlink must
+    raise ``SeqLockSymlinkError`` rather than silently yielding without
+    a lock. Closes the gap that defeated the per-peer-monotonic-seq
+    guarantee under attacker control of the audit dir.
+    """
+
+    def test_symlinked_lockfile_raises_hard_fail(self, tmp_path, monkeypatch):
+        import os
+        from strands_robots.mesh import audit as audit_mod
+
+        monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
+
+        # Pre-create the lockfile as a symlink
+        lockfile = tmp_path / "mesh_audit.seq.lock"
+        target = tmp_path / "innocent_target"
+        target.touch()
+        os.symlink(str(target), str(lockfile))
+        assert lockfile.is_symlink()
+
+        # Try to acquire the seq flock -- must raise SeqLockSymlinkError
+        # not silently yield without a lock
+        with pytest.raises(audit_mod.SeqLockSymlinkError):
+            with audit_mod._seq_flock():
+                pass  # should never reach here
+
+    def test_normal_lockfile_still_works(self, tmp_path, monkeypatch):
+        """Sanity: regular (non-symlink) lockfile path is untouched."""
+        from strands_robots.mesh import audit as audit_mod
+
+        monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
+
+        # No pre-created lockfile -- _seq_flock creates it normally
+        with audit_mod._seq_flock():
+            pass  # acquires lock successfully
+
+        # Lockfile should now exist as a regular file (not a symlink)
+        lockfile = tmp_path / "mesh_audit.seq.lock"
+        assert lockfile.exists()
+        assert not lockfile.is_symlink()

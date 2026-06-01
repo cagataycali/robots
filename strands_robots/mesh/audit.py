@@ -404,18 +404,30 @@ def _seq_flock() -> Iterator[None]:
     try:
         fd = os.open(str(lockfile), os.O_RDWR | os.O_CREAT | nofollow, 0o600)
     except OSError as exc:
-        # ELOOP (40) is the kernel's signal that ``O_NOFOLLOW`` rejected
-        # a symlink. Distinguish it from generic IO so the operator gets
-        # an actionable message.
+        # Issue #238: hard-fail on ELOOP rather than silently yielding
+        # without a lock. The previous behaviour silently downgraded the
+        # cross-process flock to no-lock when an attacker pre-created
+        # ``mesh_audit.seq.lock`` as a symlink, defeating the
+        # per-peer-monotonic-seq guarantee the docstring promises.
+        # Symmetric with ``_ensure_paths`` which raises on the audit
+        # log being a symlink.
         import errno
 
         if getattr(exc, "errno", None) == errno.ELOOP:
-            logger.warning(
-                "[audit] seq lockfile %s is a symlink; refusing to flock its target",
-                lockfile,
-            )
-        else:
-            logger.debug("[audit] cannot open seq lockfile: %s", exc)
+            # Hard-fail: raise into _next_seq's caller so the safety
+            # event records a SEQ_LOCK_DEGRADED poison entry (mirrors
+            # the PSK_DEGRADED discipline). The caller's try/except in
+            # log_safety_event downgrades to a poison record on this
+            # exception type, preserving forensic visibility.
+            raise SeqLockSymlinkError(
+                f"audit seq lockfile {lockfile} is a symlink (O_NOFOLLOW rejected); "
+                "refusing to silently downgrade cross-process serialisation"
+            ) from exc
+        # Non-ELOOP errors (e.g. EACCES, ENOSPC) still degrade to
+        # yield-without-lock with a DEBUG log -- those are operational
+        # failures, not active attacker symlink swaps. Preserves the
+        # existing best-effort posture for non-attack failure modes.
+        logger.debug("[audit] cannot open seq lockfile: %s", exc)
         yield
         return
     try:
@@ -784,6 +796,19 @@ def _canonical_bytes(record: dict[str, Any]) -> bytes:
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
+
+
+class SeqLockSymlinkError(RuntimeError):
+    """Raised when the audit seq lockfile is a symlink (issue #238).
+
+    An attacker with write access to ``STRANDS_MESH_AUDIT_DIR`` could
+    pre-create ``mesh_audit.seq.lock`` as a symlink to e.g. ``/dev/null``
+    so that ``fcntl.flock`` lands on the link target rather than fail
+    closed -- silently downgrading the cross-process serialisation the
+    audit log's per-peer monotonic seq guarantee depends on. Hard-fail
+    posture (matching ``_ensure_paths`` for the audit log itself) is
+    safer than the silent yield-without-lock that this defends against.
+    """
 
 
 class AuditPSKDegradedError(RuntimeError):
