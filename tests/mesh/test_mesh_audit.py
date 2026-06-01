@@ -158,6 +158,7 @@ class TestSeqFlockSymlinkRejection:
 
     def test_symlinked_lockfile_raises_hard_fail(self, tmp_path, monkeypatch):
         import os
+
         from strands_robots.mesh import audit as audit_mod
 
         monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
