@@ -859,3 +859,99 @@ class TestSafetyResumeQosPolicyR10:
         qos, retain = _TOPIC_POLICY["safety/resume"]
         assert qos == 1
         assert retain is True
+
+
+# ------------------------------------------------------------------------
+# Issue #233: drop default=str so non-JSON command payloads bypass dedup
+# rather than producing non-deterministic address-suffixed fingerprints.
+# ------------------------------------------------------------------------
+
+
+class TestDedupNonJsonCommandBypassed:
+    """When ``command`` contains a non-JSON-encodable object (e.g. a custom
+    instance without ``__str__`` override) the canonical fingerprint must
+    return ``None`` (dedup bypassed) rather than producing a fingerprint
+    that contains the object's memory address.
+    """
+
+    def test_canonical_path_returns_none_for_non_json_command(self):
+        from strands_robots.mesh.transport.bridge_transport import _CommandDeduplicator
+
+        dedup = _CommandDeduplicator()
+
+        class Custom:
+            pass  # No __str__ override -> str() returns "<Custom object at 0x...>"
+
+        payload = {
+            "sender_id": "robot-a",
+            "turn_id": "t1",
+            "command": Custom(),  # non-JSON
+        }
+        # Issue #233: should return None (bypass), not a fingerprint
+        # containing the address
+        ident = dedup._dedup_id(payload)
+        assert ident is None, (
+            f"non-JSON command must bypass dedup; got fingerprint {ident!r}"
+        )
+
+    def test_strict_partial_path_returns_none_for_non_json_payload(self):
+        from strands_robots.mesh.transport.bridge_transport import _CommandDeduplicator
+
+        dedup = _CommandDeduplicator(strict=True)
+
+        class Custom:
+            pass
+
+        # Strict mode + missing canonical fields -> falls to full-payload hash.
+        # Non-JSON in any field -> bypass.
+        payload = {
+            "metadata": Custom(),  # non-JSON, no canonical fields
+        }
+        ident = dedup._dedup_id(payload)
+        assert ident is None, (
+            f"non-JSON strict-mode payload must bypass dedup; got {ident!r}"
+        )
+
+    def test_canonical_path_pure_json_command_still_dedupes(self):
+        """Sanity: pure-JSON command still produces stable fingerprint."""
+        from strands_robots.mesh.transport.bridge_transport import _CommandDeduplicator
+
+        dedup = _CommandDeduplicator()
+        payload = {
+            "sender_id": "robot-a",
+            "turn_id": "t1",
+            "command": {"action": "move", "args": [1, 2, 3]},
+        }
+        ident1 = dedup._dedup_id(payload)
+        ident2 = dedup._dedup_id(payload)
+        assert ident1 is not None
+        assert ident1 == ident2, "pure-JSON canonical fingerprint must be deterministic"
+
+
+# ------------------------------------------------------------------------
+# Issue #232: dedup cache key must use delivered topic, not subscription
+# pattern, so wildcard subscriptions don't alias deliveries across robots.
+# ------------------------------------------------------------------------
+
+
+class TestDedupKeyUsesDeliveredTopic:
+    """Pin: the per-subscription dedup cache key uses the delivered topic
+    (``sample.key_expr``), not the subscription pattern (``key_expr``
+    closure variable). Two distinct topics matching the same wildcard
+    subscription must NOT alias against each other.
+    """
+
+    def test_distinct_delivered_topics_do_not_alias(self):
+        from strands_robots.mesh.transport.bridge_transport import _CommandDeduplicator
+
+        dedup = _CommandDeduplicator()
+        payload = {
+            "sender_id": "robot-a",
+            "turn_id": "t1",
+            "command": {"action": "stop"},
+        }
+        # Same payload, different delivered topics -> not duplicates
+        assert dedup.is_duplicate("strands/robot-a/cmd", payload) is False
+        assert dedup.is_duplicate("strands/robot-b/cmd", payload) is False
+        # Same payload, same delivered topic -> duplicate
+        assert dedup.is_duplicate("strands/robot-a/cmd", payload) is True

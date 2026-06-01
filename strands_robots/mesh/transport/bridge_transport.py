@@ -371,17 +371,30 @@ class _CommandDeduplicator:
                 return None
             # Strict mode: full-payload hash fallback.
             try:
-                full = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+                # Issue #233: dropped ``default=str`` from canonical-path
+                # encoders. Custom objects without ``__str__`` overrides
+                # produced address-suffixed strings (``<Foo object at 0x...>``)
+                # which made the fingerprint non-deterministic. Now we let
+                # TypeError fall through to pass-through (same semantics as
+                # missing-canonical-fields: dedup is bypassed, peer-registry
+                # upstream still bounds replays).
+                full = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
             except (TypeError, ValueError):
                 return None
             return "p:" + hashlib.sha256(full).hexdigest()
 
-        canonical = json.dumps(
-            {"sender": sender, "turn": turn, "cmd": cmd},
-            sort_keys=True,
-            separators=(",", ":"),
-            default=str,
-        ).encode("utf-8")
+        try:
+            # Issue #233: dropped ``default=str``. Non-JSON ``command``
+            # payloads now bypass dedup (return None) rather than producing
+            # a non-deterministic address-suffixed fingerprint that appears
+            # to dedup in tests but doesn't in production.
+            canonical = json.dumps(
+                {"sender": sender, "turn": turn, "cmd": cmd},
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        except (TypeError, ValueError):
+            return None
         # Full 256-bit (64 hex chars) -- no birthday-attack truncation.
         return "f:" + hashlib.sha256(canonical).hexdigest()
 
