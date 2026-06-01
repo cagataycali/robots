@@ -418,10 +418,7 @@ class TestF14OverCapStillEngagesLockout:
         # Per issue #263: the lockout MUST engage even when the issuer is
         # at-cap. The cap only suppresses the cache-slot insert (DoS bound).
         assert m._estop_lockout.is_set(), (
-            f"#263: over-cap envelope MUST still engage lockout (safety-over-DoS). "
-            f"Cache: {m._estop_replay_cache}"
+            f"#263: over-cap envelope MUST still engage lockout (safety-over-DoS). Cache: {m._estop_replay_cache}"
         )
         # Cache slot was NOT consumed (cap held)
-        assert len(m._estop_replay_cache) == cache_size_before, (
-            "cap-exceeded envelope should not consume a cache slot"
-        )
+        assert len(m._estop_replay_cache) == cache_size_before, "cap-exceeded envelope should not consume a cache slot"

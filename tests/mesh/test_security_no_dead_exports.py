@@ -14,19 +14,14 @@ from strands_robots.mesh import security
 def test_lockout_error_is_exported():
     """PR-6 consumer (Mesh._dispatch) is now in scope, so LockoutError lands."""
     assert "LockoutError" in security.__all__, (
-        "LockoutError must be exported now that PR-6 (Mesh._dispatch) "
-        "is the consumer."
+        "LockoutError must be exported now that PR-6 (Mesh._dispatch) is the consumer."
     )
 
 
 def test_lockout_error_class_is_defined():
     """LockoutError class is defined alongside its consumer."""
-    assert hasattr(security, "LockoutError"), (
-        "LockoutError class must be defined alongside Mesh._dispatch consumer."
-    )
-    assert issubclass(security.LockoutError, security.SecurityError), (
-        "LockoutError must inherit from SecurityError."
-    )
+    assert hasattr(security, "LockoutError"), "LockoutError class must be defined alongside Mesh._dispatch consumer."
+    assert issubclass(security.LockoutError, security.SecurityError), "LockoutError must inherit from SecurityError."
 
 
 def test_all_exports_are_importable():
