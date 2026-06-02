@@ -30,6 +30,33 @@ from strands_robots.mesh.iot.provision import (
 
 
 @pytest.fixture
+def bypass_ca(monkeypatch):
+    """Opt-in CA-pin bypass for tests that exercise ``provision_robot``
+    / ``provision_operator`` orchestration.
+
+    Stub ``_ensure_ca`` to a no-op so a test does not need to pre-seed
+    a real pinned CA file or mock urllib.  CA pinning behaviour itself
+    has dedicated coverage in ``test_iot_ca_pin.py`` -- including a
+    regression test that the on-disk re-use path always raw-checks the
+    pin even when the ``STRANDS_MESH_DISABLE_CA_PIN`` break-glass is
+    set.  Tests that don't go through the provisioning entry points
+    don't get the bypass, so a future refactor that drops the
+    ``_ensure_ca`` call from ``provision_robot`` would still surface in
+    a test that exercises the production call path.
+
+    NB: we deliberately do NOT use ``STRANDS_MESH_DISABLE_CA_PIN=true``
+    here. The break-glass only applies to the *download* path; the
+    on-disk re-use path always raw-checks the pin, so a pre-seeded
+    ``fake-ca`` file would be (correctly) rejected.
+    """
+    monkeypatch.setattr(
+        "strands_robots.mesh.iot.provision._ensure_ca",
+        lambda ca_path: None,
+    )
+    yield
+
+
+@pytest.fixture
 def tmp_cert_dir(tmp_path):
     """Isolated cert dir so we don't write to ~/.strands_robots."""
     d = tmp_path / "iot"
@@ -173,6 +200,7 @@ class TestEnsurePolicy:
 
 
 class TestProvisionRobot:
+    pytestmark = pytest.mark.usefixtures("bypass_ca")
     """End-to-end provisioning with all AWS calls mocked."""
 
     def test_writes_certs_with_correct_permissions(self, fake_iot_client, tmp_cert_dir, monkeypatch):
@@ -181,8 +209,6 @@ class TestProvisionRobot:
             "strands_robots.mesh.iot.provision._require_boto3",
             lambda: MagicMock(client=lambda *a, **kw: fake_iot_client),
         )
-        # Skip the urlopen call for the CA — write a fake one.
-        (tmp_cert_dir / "AmazonRootCA1.pem").write_text("fake-ca")
 
         result = provision_robot(
             "test-robot-01",
@@ -204,7 +230,6 @@ class TestProvisionRobot:
             "strands_robots.mesh.iot.provision._require_boto3",
             lambda: MagicMock(client=lambda *a, **kw: fake_iot_client),
         )
-        (tmp_cert_dir / "AmazonRootCA1.pem").write_text("fake-ca")
 
         provision_robot("r", cert_dir=tmp_cert_dir)
 
@@ -221,7 +246,6 @@ class TestProvisionRobot:
             "strands_robots.mesh.iot.provision._require_boto3",
             lambda: MagicMock(client=lambda *a, **kw: fake_iot_client),
         )
-        (tmp_cert_dir / "AmazonRootCA1.pem").write_text("fake-ca")
 
         result = provision_robot("e2", cert_dir=tmp_cert_dir)
         env = result.env_vars()
@@ -238,7 +262,6 @@ class TestProvisionRobot:
             "strands_robots.mesh.iot.provision._require_boto3",
             lambda: MagicMock(client=lambda *a, **kw: fake_iot_client),
         )
-        (tmp_cert_dir / "AmazonRootCA1.pem").write_text("fake-ca")
 
         provision_robot("my-robot", cert_dir=tmp_cert_dir)
 
@@ -252,7 +275,6 @@ class TestProvisionRobot:
             "strands_robots.mesh.iot.provision._require_boto3",
             lambda: MagicMock(client=lambda *a, **kw: fake_iot_client),
         )
-        (tmp_cert_dir / "AmazonRootCA1.pem").write_text("fake-ca")
 
         provision_robot("my-robot", cert_dir=tmp_cert_dir, attributes={"hw": "so100"})
 
@@ -267,7 +289,6 @@ class TestProvisionRobot:
             "strands_robots.mesh.iot.provision._require_boto3",
             lambda: MagicMock(client=lambda *a, **kw: fake_iot_client),
         )
-        (tmp_cert_dir / "AmazonRootCA1.pem").write_text("fake-ca")
 
         provision_robot("my-robot", cert_dir=tmp_cert_dir, attributes={"strands-mesh-role": "custom"})
 
@@ -277,6 +298,7 @@ class TestProvisionRobot:
 
 
 class TestProvisionOperator:
+    pytestmark = pytest.mark.usefixtures("bypass_ca")
     """Operator provisioning uses the operator policy, not the robot policy."""
 
     def test_uses_operator_policy(self, fake_iot_client, tmp_cert_dir, monkeypatch):
@@ -284,7 +306,6 @@ class TestProvisionOperator:
             "strands_robots.mesh.iot.provision._require_boto3",
             lambda: MagicMock(client=lambda *a, **kw: fake_iot_client),
         )
-        (tmp_cert_dir / "AmazonRootCA1.pem").write_text("fake-ca")
 
         result = provision_operator("ops-1", cert_dir=tmp_cert_dir)
 
@@ -331,6 +352,7 @@ class TestProvisionedThingDataclass:
 
 
 class TestCleanupStaleCerts:
+    pytestmark = pytest.mark.usefixtures("bypass_ca")
     """Re-running provision_robot must not accumulate certs.
 
     Regression coverage for the security-relevant bug found in cycle 9 of
@@ -347,7 +369,6 @@ class TestCleanupStaleCerts:
             "strands_robots.mesh.iot.provision._require_boto3",
             lambda: MagicMock(client=lambda *a, **kw: fake_iot_client),
         )
-        (tmp_cert_dir / "AmazonRootCA1.pem").write_text("fake-ca")
 
         # Pretend the Thing already has an old cert attached.
         old_cert_arn = "arn:aws:iot:us-west-2:123:cert/old-cert-id-aaaaa"
@@ -373,7 +394,6 @@ class TestCleanupStaleCerts:
             "strands_robots.mesh.iot.provision._require_boto3",
             lambda: MagicMock(client=lambda *a, **kw: fake_iot_client),
         )
-        (tmp_cert_dir / "AmazonRootCA1.pem").write_text("fake-ca")
 
         fake_iot_client.list_thing_principals.return_value = {
             "principals": ["arn:aws:iot:us-west-2:123:cert/cant-delete"]
@@ -404,3 +424,53 @@ class TestCleanupStaleCerts:
         assert n == 0
         iot.detach_thing_principal.assert_not_called()
         iot.delete_certificate.assert_not_called()
+
+
+class TestThingNameStrictSubset:
+    """docstring previously claimed AWS-IoT-compatible.
+    The regex is in fact a strict subset (no colon). Pin the contract.
+    """
+
+    def test_alphanumerics_accepted(self):
+        from strands_robots.mesh.iot import provision
+
+        provision._validate_thing_name("robot-01")  # must NOT raise
+        provision._validate_thing_name("R")
+        provision._validate_thing_name("a" * 128)
+
+    def test_colon_rejected_even_though_aws_allows(self):
+        """AWS IoT permits ``:`` in Thing names; we deliberately do not."""
+        from strands_robots.mesh.iot import provision
+
+        with pytest.raises(ValueError, match="invalid characters"):
+            provision._validate_thing_name("robot:01")
+
+    def test_path_traversal_rejected(self):
+        from strands_robots.mesh.iot import provision
+
+        with pytest.raises(ValueError, match="invalid characters"):
+            provision._validate_thing_name("../../etc/passwd")
+
+    def test_too_long_rejected(self):
+        from strands_robots.mesh.iot import provision
+
+        with pytest.raises(ValueError, match="invalid characters"):
+            provision._validate_thing_name("a" * 129)
+
+    def test_empty_rejected(self):
+        from strands_robots.mesh.iot import provision
+
+        with pytest.raises(ValueError, match="non-empty"):
+            provision._validate_thing_name("")
+
+    def test_slash_rejected(self):
+        from strands_robots.mesh.iot import provision
+
+        with pytest.raises(ValueError, match="invalid characters"):
+            provision._validate_thing_name("robot/01")
+
+    def test_dot_rejected(self):
+        from strands_robots.mesh.iot import provision
+
+        with pytest.raises(ValueError, match="invalid characters"):
+            provision._validate_thing_name("robot.01")
