@@ -524,7 +524,7 @@ def test_mesh_start_clears_snapshot_on_refused_path(monkeypatch: pytest.MonkeyPa
     mesh.peer_id = "test-refused-cleanup"
     import threading
 
-    mesh._lifecycle_lock = threading.RLock()
+    mesh._lifecycle_lock = threading.Lock()
     mesh._running = False
     mesh._has_session_ref = False
     mesh._acl_snapshot = None
