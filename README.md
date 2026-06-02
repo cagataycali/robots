@@ -498,12 +498,53 @@ agent.tool.gr00t_inference(action="stop", port=8000)
 | `MUJOCO_GL` | GL backend for the MuJoCo renderer | auto |
 | `STRANDS_MESH` | Set to `false` to disable Zenoh mesh networking globally | `true` |
 | `STRANDS_MESH_PORT` | TCP port for the local Zenoh router | `7447` |
+| `STRANDS_MESH_BACKEND` | Selects the mesh transport implementation: `zenoh` (LAN-native), `iot` (AWS IoT MQTT), or `bridge` (Zenoh + IoT cross-transport). Unknown values fall back to `zenoh` with a WARNING; the policy is to keep the mesh running rather than crash on a typo. | `zenoh` |
 | `ZENOH_CONNECT` | Comma-separated list of remote Zenoh endpoints to connect to | - |
 | `ZENOH_LISTEN` | Comma-separated list of endpoints for the local Zenoh listener | - |
-| `STRANDS_MESH_AUDIT_DIR` | Directory for the safety audit log (`mesh_audit.jsonl`) | `~/.strands_robots/` |
-| `STRANDS_MESH_CA_PINS` | Comma-separated SHA-256 hex pins, **additive** to the bundled Amazon Root CA1 pin tuple. Operator break-glass for an AWS-side root rotation that arrives before the next `strands-robots` release ships the new pin. Must match `^[0-9a-fA-F]{64}$` per entry. | unset |
-| `STRANDS_MESH_DISABLE_CA_PIN` | Set to `true` (case-insensitive) to skip CA pin verification on the *download* path only. The on-disk re-use path always raw-checks the pin regardless. Last-resort break-glass; prefer `STRANDS_MESH_CA_PINS` for rotations. | `false` |
-| `STRANDS_MESH_CAMERA_PRESIGN_TTL` | Default TTL (seconds) for S3 presigned URLs emitted on the IoT camera-offload path. Capped at 3600s (1h); a `0` is clamped to 1s. Non-integer values fall back to the default with a WARNING. | `60` |
+| `STRANDS_MESH_AUDIT_DIR` | Directory for the safety audit log (`mesh_audit.jsonl`) and sequence-counter sidecar (`mesh_audit.seq.json`) | `~/.strands_robots/` |
+| `STRANDS_MESH_AUDIT_MAX_BYTES` | Maximum size (bytes) of the active audit log before rotation. Hard-capped at 10 GiB. Prevents an attacker who can publish safety events from filling the disk. | `104857600` (100 MiB) |
+| `STRANDS_MESH_AUDIT_MAX_FILES` | Maximum number of rotated audit log copies kept (`mesh_audit.jsonl.1` … `.N`). Hard-capped at 100. Older rotations are discarded. | `5` |
+| `STRANDS_MESH_BRIDGE_TOPICS` | Comma-separated allowlist of key-expression suffixes the Zenoh / AWS IoT bridge transport forwards across the cloud boundary. Read by `mesh.transport.bridge_transport`. Empty / unset uses the default suffix set (`presence,health,safety/event,safety/estop,cmd,response,broadcast`); high-volume telemetry (`state`, `pose`, `imu`, `odom`, `lidar`, `camera`, `input`, `hand`) is **not** bridged by default — set this var explicitly to opt in. Match semantics are exact for every entry except those listed in `STRANDS_MESH_BRIDGE_TOPICS_PREFIX`. | `presence,health,safety/event,safety/estop,cmd,response,broadcast` |
+| `STRANDS_MESH_BRIDGE_TOPICS_PREFIX` | Comma-separated list of bridge filter entries that match as path-prefix (entry matches `entry/<anything>`). Default: `response` (so `response/<turn-id>` bridges). All other entries in `STRANDS_MESH_BRIDGE_TOPICS` match exactly; this is **intended to close** the prefix-bypass attack where a sub-key under a bridged topic could otherwise match by accident (the source-side reader for this var ships in the predecessor PR #222 -- tracking #244; on intermediate `main` commits before #222 lands, the bidirectional prefix match in `_should_bridge` still applies). | `response` |
+| `STRANDS_MESH_AUTH_MODE` | Wire authentication mode. `mtls` (default) enables Zenoh's TLS terminator + ACL; `none` is a dev-only mode that disables both. `none` ALSO requires `STRANDS_MESH_I_KNOW_THIS_IS_INSECURE=1` -- without that explicit second factor `none` raises `ValueError` at config build. | `mtls` |
+| `STRANDS_MESH_I_KNOW_THIS_IS_INSECURE` | Second-factor opt-in for `STRANDS_MESH_AUTH_MODE=none`. Accepts `1` / `true` / `yes` (case-insensitive). Without it, `auth_mode=none` is refused so a typo / forgotten env / leaked CI fixture cannot silently disable wire auth. Logs ERROR (not WARNING) on every session open when active. | unset |
+| `STRANDS_MESH_NAMESPACE` | Fleet namespace prefix prepended to every key-expression. Two fleets with different namespaces cannot collide on the same network. | `strands` |
+| `STRANDS_MESH_MULTICAST` | `true` enables multicast scouting. Default is gossip-only, which closes the LAN-attacker-enrollment surface. | `false` |
+| `STRANDS_MESH_TLS_CA` | Filesystem path to the CA bundle used to verify peer certificates. Required when `STRANDS_MESH_AUTH_MODE=mtls`. | unset |
+| `STRANDS_MESH_TLS_CERT` | Filesystem path to this peer's certificate (PEM). Required when `STRANDS_MESH_AUTH_MODE=mtls`. | unset |
+| `STRANDS_MESH_TLS_KEY` | Filesystem path to this peer's private key (PEM, mode 0o600). Required when `STRANDS_MESH_AUTH_MODE=mtls`. | unset |
+| `STRANDS_MESH_ACL_FILE` | Filesystem path to a JSON5 ACL file enumerating each peer's exact cert CN (Zenoh 1.x does not support globs). Empty = use the permissive built-in default that allows any CA-signed peer to publish/subscribe; see `examples/mesh_acl_example.json5` for the role-separated template operators populate with their fleet's CNs. | unset |
+| `STRANDS_MESH_ACCEPT_PERMISSIVE_ACL` | Required to start the mesh under `mtls` + the permissive default ACL. Without the opt-in, `Mesh.start()` logs at ERROR and returns early; `mesh.alive` stays False and no Zenoh session is acquired. Set to `1` / `true` / `yes` to acknowledge the dev/lab posture explicitly (single-tenant only). Production deployments should ship a literal-CN `STRANDS_MESH_ACL_FILE` instead. | unset |
+| `STRANDS_MESH_MAX_SESSIONS` | Hard cap on simultaneous Zenoh unicast sessions. DoS bound. | `256` |
+| `STRANDS_MESH_MAX_CMD_BYTES` | Per-message byte cap on `cmd` / `broadcast` topics enforced via `low_pass_filter`. | `16384` |
+| `STRANDS_MESH_MAX_CAMERA_BYTES` | Per-message byte cap on camera topics. | `1048576` |
+| `STRANDS_MESH_CMD_RATE_HZ` | Per-key-expression frequency cap for `cmd` topics enforced via `downsampling`. Floods are dropped at the transport before reaching the deserialiser. | `20.0` |
+| `STRANDS_MESH_SAFETY_RATE_HZ` | Per-key-expression frequency cap on `safety/**` topics (`safety/estop`, `safety/resume`). Caps novel-`t` floods that bypass the receiver-side replay cache. | `2.0` |
+| `STRANDS_MESH_MAX_SAFETY_BYTES` | Per-message byte cap on `safety/**` topics. Safety envelopes are small JSON dicts; jumbo-frame envelopes on this topic are DoS targeting receiver HMAC + freshness math. | `4096` |
+| `STRANDS_MESH_POLICY_HOST_ALLOW` | Comma-separated host/CIDR list extending the default loopback-only `policy_host` allowlist for VLA inference targets (e.g. `vla.internal,10.0.0.0/24`). | unset |
+| `STRANDS_MESH_AUDIT_PSK` | Separate PSK for HMAC-signing audit-log records. Independent of the wire PSK so audit signing can rotate on its own schedule. Unset = audit records carry no signature (`verify_audit_integrity` reports them as unverifiable). | unset |
+| `STRANDS_MESH_OVERRIDE_CODE` | Operator code that clears the local emergency-stop lockout. Receivers verify the code in constant time against this env var. Unset = the local peer cannot be resumed remotely. | unset |
+| `STRANDS_MESH_RESUME_FRESHNESS_S` | Maximum age (seconds) of a resume envelope before it is rejected as stale. Prevents replay of captured resume proofs outside this window. | `60` |
+| `STRANDS_MESH_RESUME_FORWARD_SKEW_S` | Maximum forward clock skew (seconds) tolerated in a resume envelope timestamp. Rejects envelopes timestamped in the future beyond this tolerance. | `5` |
+| `STRANDS_MESH_RESUME_REPLAY_CACHE_MAX` | Maximum number of `proof_nonce` values remembered in the per-receiver replay cache. Bounded LRU eviction prevents memory exhaustion from high-volume resume attempts. | `4096` |
+| `STRANDS_MESH_DEDUP_TTL` | Bridge-transport deduplication window (seconds). Caps how long the same envelope nonce is remembered across the Zenoh + IoT subscriber wrappers. | `120` |
+| `STRANDS_MESH_CAMERA_PRESIGN_TTL` | Lifetime (seconds) of presigned S3 GET URLs published in `/camera/.../ref` messages. Capped at 3600. | `60` |
+| `STRANDS_MESH_CAMERA_DISABLED` | Set to `true` to disable camera publishing entirely (privacy kill switch). The camera publisher in `strands_robots.mesh` short-circuits before any frame is built; no `/camera/**` traffic is emitted. | `false` |
+| `STRANDS_MESH_CAMERA_HZ` | Per-camera publish frequency (Hz) on `<ns>/<peer>/camera/<name>`. `0` (the default) disables periodic publishing -- frames are emitted on-demand only. Operators set a non-zero value to drive a fixed-rate stream. | `0` (off) |
+| `STRANDS_MESH_POSE_HZ` | Pose-topic publish cadence (Hz). Drives the `<peer>/pose` SE(3) loop in `strands_robots.mesh.sensors`; only runs if the robot exposes a `pose` attribute. | `10.0` |
+| `STRANDS_MESH_HEALTH_HZ` | Health-topic publish cadence (Hz). Drives the `<peer>/health` loop (battery / CPU / memory / disk / temps); only runs if the robot exposes a `health` attribute. | `0.5` |
+| `STRANDS_MESH_IMU_HZ` | IMU-topic publish cadence (Hz). Drives the `<peer>/imu` loop (roll / pitch / yaw / gyro / accel); only runs if the robot exposes an `imu` attribute. | `10.0` |
+| `STRANDS_MESH_ODOM_HZ` | Dead-reckoning odometry publish cadence (Hz). Drives the `<peer>/odom` loop. | `10.0` |
+| `STRANDS_MESH_LIDAR_SUMMARY_HZ` | LiDAR point-cloud summary cadence (Hz). Drives the `<peer>/lidar/summary` loop. The full state topic (`lidar/state`) runs at a separate compile-time cadence. | `5.0` |
+| `STRANDS_MESH_HAND_HZ` | End-effector publish cadence (Hz). Drives the `<peer>/hand/<name>/state` loop (joint positions / forces). | `50.0` |
+| `STRANDS_MESH_MAP_INFO_HZ` | Map-metadata publish cadence (Hz). Drives the `<peer>/map/info` loop. | `0.2` |
+| `STRANDS_MESH_FILTER_INTERFACES` | Optional comma-separated NIC allowlist for the `low_pass_filter` rules. Unset means "every link" (Zenoh's `SubjectProperty::Wildcard`). Operators set this on multi-homed hosts (e.g. WAN + LAN cap) to scope the byte caps to a specific interface. | unset (wildcard) |
+| `STRANDS_MESH_CAMERA_S3_BUCKET` | S3 bucket for the IoT camera-offload path (`mesh.iot.camera_offload`). Frames are uploaded to the bucket and a presigned GET URL is published on `/camera/.../ref` instead of the raw bytes. Empty = the offload path short-circuits with a debug log; no upload is attempted. | unset |
+| `STRANDS_MESH_CAMERA_S3_PREFIX` | Optional key prefix prepended to camera-offload S3 object keys. Trailing slashes are stripped. | unset |
+| `STRANDS_MESH_CA_PINS` | Comma-separated additional Amazon Root CA1 SHA-256 fingerprints (64-char lowercase hex). Augments the built-in pin tuple so operators can stage a future-rotation pin ahead of a code-level rotation; the built-in tuple is always included. Invalid entries are logged at WARNING and skipped. Operator-staged additional pins remove the dependency on a code-level release for an upcoming AWS Root CA rotation. | unset |
+| `STRANDS_MESH_DISABLE_CA_PIN` | Break-glass: skip the SHA-256 pin check when **downloading** `AmazonRootCA1.pem` during IoT provisioning. A WARNING is logged on every disabled run. The override applies ONLY to the **download** path; an existing on-disk CA file is always raw-pin-checked, so a rogue CA from a prior compromised run cannot be silently re-used. To refresh a re-encoded cert behind a proxy, delete the file and re-run with the override. Should never be set in production. | `false` |
+| `STRANDS_MESH_HF_REPO_ALLOW` | Comma-separated list of HuggingFace org prefixes (or full `<org>/<repo>` prefixes) that `pretrained_name_or_path` accepts in mesh `execute`/`start` commands. Defaults to `nvidia,huggingface,lerobot`. Blocks an authenticated peer from steering a robot at an attacker-controlled HF repo. | unset |
+| `STRANDS_MESH_POLICY_TYPE_ALLOW` | Comma-separated list of additional values that mesh `execute`/`start` commands accept on top of the built-in allowlist (`mock`, `groot`, `lerobot`, `lerobot_local`, `act`, `diffusion`, `tdmpc`, `vqbet`, `pi0`, `pi0fast`, `smolvla`, `sac`). Extends BOTH the `policy_type` and `policy_provider` gates -- the two are separate call-site validators in `mesh.security` (different prompts, different error messages) but share this single allowlist by design; there is intentionally no `_PROVIDER_ALLOW` env var. | unset |
 | `GROOT_API_TOKEN` | API token for GR00T inference service | - |
 | `STRANDS_ROBOT_MODE` | Override `Robot()` factory mode detection (`sim`, `real`, `auto`) | `auto` |
 | `STRANDS_TRUST_REMOTE_CODE` | Set to `1` to opt into HuggingFace `trust_remote_code` for `lerobot_local` policies | unset |
@@ -535,6 +576,173 @@ sim_a.mesh.emergency_stop()     # broadcast E-STOP, audited to disk
 Disable globally with `STRANDS_MESH=false` or per-robot with
 `Robot("so100", mesh=False)`.  Install the optional dependency with
 `pip install strands-robots[mesh]`.
+
+### Mesh security
+
+> **Stack note (mesh-security-hardening, PRs #218-#226).** The
+> guarantees, env-var rows, and threat-vector verdicts in this section
+> describe the **release-tagged** state after the full PR stack lands.
+> On intermediate `main` commits between #218 and #226, the source-side
+> readers and example files cited below may not all exist yet -- run
+> the verification block in `CHANGELOG.md` (`### New env vars` preface)
+> to confirm against the current tree. Stacking-order gaps are tracked
+> in #243 (example file references) and #244 (`_BRIDGE_TOPICS_PREFIX`
+> reader).
+
+The mesh layer relies on **Zenoh built-in security primitives** —
+mTLS at the transport, key-expression ACLs above it, and per-key
+rate / size caps for DoS bounds. There is no application-layer
+crypto envelope: identity, fleet membership, replay protection,
+and authorisation all happen *before* the deserialiser runs.
+
+#### Authentication: mTLS (default)
+
+`STRANDS_MESH_AUTH_MODE=mtls` (the default) wires Zenoh's
+`transport/link/tls` block:
+
+* `STRANDS_MESH_TLS_CA` — path to the CA bundle that signs every
+  legitimate peer cert.
+* `STRANDS_MESH_TLS_CERT` — this peer's PEM cert. Cert Common Name
+  encodes the role: `robot-<id>` for robots, `op-<id>` for operators,
+  `audit-<id>` for read-only observers.
+* `STRANDS_MESH_TLS_KEY` — this peer's private key (mode 0o600).
+
+Mutual TLS is mandatory; `verify_name_on_connect` is on. A peer
+without a CA-signed cert fails the TLS handshake — its bytes never
+reach the JSON deserialiser. `transport/link/protocols` is locked
+to `["tls"]` so an attacker cannot downgrade to plain TCP.
+
+For development on a trusted network, set `STRANDS_MESH_AUTH_MODE=none`
+AND `STRANDS_MESH_I_KNOW_THIS_IS_INSECURE=1` to skip TLS + ACL. The
+second-factor env var is required because `auth_mode=none` disables
+BOTH the mTLS terminator AND the ACL block in a single env var; without
+the explicit opt-in a typo / forgotten env / leaked CI fixture would
+silently disable wire auth in production. The mesh logs an ERROR at
+session-open time when this mode is active.
+
+#### Authorisation: ACL on cert Common Name
+
+The Zenoh `access_control` block sits above the mTLS terminator and
+gates which peers may publish/subscribe on which key-expressions
+based on the cert Common Name presented during the handshake.
+
+**Important Zenoh 1.x constraints (verified against live sessions in
+`tests/mesh/test_zenoh_transport_security.py`):**
+
+1. `enabled: true` is required — without it the entire ACL block is
+   silently disabled, which is why the loader hard-rejects any file
+   that omits it.
+2. `cert_common_names` matches **literal CNs only** — globs like
+   `"robot-*"` and regexes match nothing. Operators with per-role
+   enforcement enumerate every peer's exact CN.
+3. Subject `interfaces` must be a non-empty list — leaving it unset
+   makes the subject match nothing.
+4. `key_exprs` see the user-side key (the namespace prefix is
+   stripped before matching) — `**/cmd` is the robust glob;
+   `<namespace>/*/cmd` never matches.
+
+**Default ACL:** the built-in default ACL ships **permissive**: any peer with a CA-signed cert (already
+verified at the mTLS handshake) may publish and subscribe on any
+key. We chose permissive over default-deny because a hard-coded
+default-deny with no enumerated CNs blocks every legitimate message
+on first run — silent total outage. The mTLS handshake is the
+fleet-membership gate; ACL is the third line of defence and
+operators opt in explicitly.
+
+**Role separation:** to enforce the standard `robot-*` /
+`operator-*` / `audit-*` split, set `STRANDS_MESH_ACL_FILE` to the
+template at `examples/mesh_acl_example.json5` and edit the
+`cert_common_names` lists with each peer's exact CN. The example
+ships three roles: `robot-*` may publish telemetry only;
+`operator-*` may publish cmd/broadcast/safety topics; `audit-*` may
+subscribe to everything but cannot publish.
+
+**Audit attribution:** ACL drops are visible in Zenoh's own log
+output (`zenoh::net::routing::interceptor::access_control`) — they
+do NOT currently surface in `mesh/audit.py`. A peer with a valid CA
+cert but a CN not enumerated in the ACL is dropped silently from
+the operator's perspective; tail Zenoh logs to investigate.
+
+#### Discovery: gossip-only by default
+
+`STRANDS_MESH_MULTICAST=false` (the default) disables Zenoh's
+multicast scouting. Peers find each other through gossip seeded by
+explicit `ZENOH_CONNECT` endpoints. Multicast on a hostile LAN is a
+discovery surface — any host that joins `224.0.0.224:7446` sees every
+peer's presence broadcast. Operators on a controlled LAN can opt back
+in with `STRANDS_MESH_MULTICAST=true`; we do not recommend it.
+
+#### Fleet isolation: namespace
+
+`STRANDS_MESH_NAMESPACE` (default `strands`) prepends an
+immutable prefix to every key-expression at the routing layer. Two
+fleets with different namespaces cannot route messages between each
+other, even when peer-ids collide.
+
+#### DoS bounds: downsampling + low_pass_filter
+
+Two transport-layer caps are emitted unconditionally:
+
+* `downsampling` enforces a per-key-expression frequency cap on
+  `<ns>/*/cmd` and `<ns>/broadcast` (`STRANDS_MESH_CMD_RATE_HZ`,
+  default 20 Hz). A peer publishing faster has the extra messages
+  dropped at the transport — flood attacks cost nothing on the
+  receiver side.
+* `low_pass_filter` enforces per-message byte caps:
+  `STRANDS_MESH_MAX_CMD_BYTES` (default 16 KiB) on cmd / broadcast
+  topics, `STRANDS_MESH_MAX_CAMERA_BYTES` (default 1 MiB) on camera
+  topics. Jumbo frames are dropped pre-deserialise.
+
+Plus `transport/unicast/max_sessions` (`STRANDS_MESH_MAX_SESSIONS`,
+default 256) caps simultaneous peer count.
+
+#### Emergency-stop authorisation
+
+`Mesh.emergency_stop()` and the receiver-side resume handler use the
+operator override code (`STRANDS_MESH_OVERRIDE_CODE`) as a *second
+factor* on top of the mTLS-bound operator role. Resume RPC carries
+`HMAC(override_code, proof_nonce)`; receivers recompute it locally
+and reject mismatches. Receivers without the override code configured
+**fail closed** — operators must distribute the code to every peer
+that should accept fleet-wide remote resume.
+
+#### Threat-vector coverage
+
+| Adversary tier | Coverage |
+|---|---|
+| LAN outsider, no cert | **Mitigated.** TLS handshake rejects the connection. |
+| Cert from a different CA | **Mitigated.** Our CA bundle does not verify it; handshake fails. |
+| Valid `robot-*` cert tries to publish on `*/cmd` | **Mitigated** when `STRANDS_MESH_ACL_FILE` is set with role-separated CN allowlists -- the template only grants `robot-*` peers ingress on telemetry topics; cmd publish is denied. **Not mitigated by default** -- the built-in permissive ACL admits any CA-signed peer to every key-expression including `*/cmd`. The default-state safety net is `STRANDS_MESH_ACCEPT_PERMISSIVE_ACL`: without that opt-in, `Mesh.start()` refuses to acquire a Zenoh session under the permissive default in `mtls` mode, so an operator who forgot to ship an ACL file fails closed instead of running wide-open. |
+| Valid `op-*` cert floods `cmd` topic at 1 kHz | **Mitigated.** `downsampling` caps ingress at the configured frequency (default 20 Hz); the rest is dropped pre-deserialise. Verified live in `test_zenoh_transport_security.py::TestDownsamplingRateCap`. |
+| Valid `op-*` cert sends 100 MiB camera frame | **Mitigated.** `low_pass_filter` caps camera bytes at the configured limit (default 1 MiB) before the receiver allocates buffers. Verified live in `TestLowPassFilterByteCap`. |
+| Valid `op-*` cert tries to hijack another operator's RPC turn_id | **Mitigated.** The mesh response handler requires `responder_id` to match the original target for point-to-point sends; mismatched responses are dropped. Verified in `test_application_security.py::test_p4_d1_response_hijack_rejected_for_point_to_point`. |
+| Peer with valid CA cert but CN not in operator's ACL list | **Mitigated** when `STRANDS_MESH_ACL_FILE` is set with literal CN allowlists — the default-deny rule drops every put + declare_subscriber from a CN that does not appear in any subject (verified live in `TestACLEnforcement::test_unknown_cn_dropped_by_default_deny`). **Not mitigated by default** — the built-in permissive ACL admits any CA-signed peer to every key-expression. The default-state safety net is `STRANDS_MESH_ACCEPT_PERMISSIVE_ACL`: without that opt-in, `Mesh.start()` refuses to acquire a Zenoh session under the permissive default in `mtls` mode, so an operator who forgot to ship an ACL file fails closed instead of running wide-open. Production deployments must ship a literal-CN ACL file. |
+| Two fleets share a network | **Mitigated.** `STRANDS_MESH_NAMESPACE` isolates routing. |
+| Stolen cert + key (host fully compromised) | **Out of scope.** The peer is the attacker. Operator response: revoke the cert at the CA, restart the fleet. |
+
+#### Payload semantics: `validate_command`
+
+After the wire layer authenticates and authorises a command, the
+payload still goes through `mesh.security.validate_command` to bound
+its contents — instruction length, duration, step counts, the
+`policy_host` allowlist (loopback only by default), the HuggingFace
+repo prefix gate (`STRANDS_MESH_HF_REPO_ALLOW`), and the policy
+type / provider allowlist (`STRANDS_MESH_POLICY_TYPE_ALLOW` is the
+single env var that extends both the `policy_type` and `policy_provider`
+gates -- they share one allowlist by design). These
+guard against an authorised peer requesting a 24-hour `execute` action
+or steering the robot at an attacker-controlled inference server.
+
+#### Bridge transport (Zenoh + AWS IoT)
+
+Bridge-transport deployments still need cross-transport deduplication
+because the same Zenoh + IoT MQTT topic can deliver the same payload
+twice. The bridge transport in `mesh.transport.bridge_transport`
+fingerprints incoming samples and dispatches each unique
+(`sender_id`, `turn_id`, `command`) tuple once before forwarding to the
+application-layer handler.
+
+For a complete walkthrough of what each layer protects against, see the module docstring of `strands_robots.mesh.security`. The transport-side Zenoh session config and the ACL builder are constructed by the `strands_robots.mesh` package internals; pinning their public surface to the env vars in the matrix above keeps user-facing docs decoupled from the underscore-prefixed implementation modules.
 
 ### Cache Directory
 
