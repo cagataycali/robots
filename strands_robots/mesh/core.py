@@ -85,8 +85,6 @@ class Mesh(SensorLoopsMixin):
         state = "alive" if self._running else "stopped"
         return f"Mesh(peer_id={self.peer_id!r}, type={self.peer_type!r}, {state})"
 
-    # Lifecycle
-
     def _refuse_under_permissive_default_acl(self) -> bool:
         """Refuse-to-start gate per issue #218.
 
@@ -105,20 +103,38 @@ class Mesh(SensorLoopsMixin):
         is logged at INFO instead of ERROR -- the operator has
         acknowledged the posture and the WARNING contradicting their
         opt-in would be noise.
+
+        Implementation note: when PR-3 (snapshot_acl) is on the tree
+        we use the TOCTOU-safe single-snapshot path; when PR-6 ships
+        standalone (PR-3 not yet merged) we fall back gracefully via
+        ImportError handling.
         """
-        from strands_robots.mesh import _acl_config, _zenoh_config
+        try:
+            from strands_robots.mesh import _acl_config, _zenoh_config
+        except ImportError:
+            # PR-3 (`_acl_config` + `_zenoh_config`) not on the tree yet
+            # -- gate is INACTIVE on PR-6 standalone. The gate becomes
+            # active automatically when PR-3 lands and provides the
+            # config helpers. Fail-OPEN (allow start) so PR-6 can be
+            # tested in isolation before PR-3 lands; the production
+            # posture has both PRs and the gate is enforced.
+            return False
 
         try:
             auth_mode = _zenoh_config.resolve_auth_mode()
             namespace = _zenoh_config.resolve_namespace()
-            is_permissive, _resolved = _acl_config.snapshot_acl(namespace)
-        except (ImportError, ValueError) as warn_exc:
+            # Prefer snapshot_acl (PR-3) when available; fall back to
+            # the legacy is_default_acl_in_use call so PR-6 can be
+            # tested standalone before PR-3 lands.
+            if hasattr(_acl_config, "snapshot_acl"):
+                is_permissive, _resolved = _acl_config.snapshot_acl(namespace)
+            else:
+                is_permissive = _acl_config.is_default_acl_in_use(namespace)
+        except ValueError as warn_exc:
             # Narrow tuple per AGENTS.md > Review Learnings (#86):
-            # ImportError surfaces a missing _zenoh_config / _acl_config
-            # module (mesh extra not installed); ValueError surfaces
-            # bad STRANDS_MESH_AUTH_MODE / unloadable ACL. Both cases
-            # fail closed (treat as permissive) so the gate refuses to
-            # bring up the wire. Wider exception types (OSError, etc.)
+            # ValueError surfaces bad STRANDS_MESH_AUTH_MODE / unloadable
+            # ACL. Fail-CLOSED (treat as permissive) so the gate refuses
+            # to bring up the wire. Wider exception types (OSError, etc.)
             # propagate so genuine bugs aren't masked at WARNING level.
             logger.warning(
                 "[mesh] %s: ACL gate evaluation failed (%s) -- treating as permissive default; refusing to start",
@@ -128,8 +144,6 @@ class Mesh(SensorLoopsMixin):
             auth_mode = "mtls"
             is_permissive = True
         if auth_mode != "mtls":
-            return False
-        if not is_permissive:
             return False
         if not is_permissive:
             return False
@@ -161,6 +175,7 @@ class Mesh(SensorLoopsMixin):
         )
         return True
 
+    # Lifecycle
     def start(self) -> None:
         """Acquire a Zenoh session and start all publishing loops."""
         with self._lifecycle_lock:

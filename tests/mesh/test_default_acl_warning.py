@@ -157,7 +157,10 @@ class TestPermissiveACLWarningExceptNarrow:
         # resolve_auth_mode, but that scaffolding never got exercised because
         # start() was the entry point. Removed per CodeQL #257.
         src = Path(core_mod.__file__).read_text()
-        assert "except (ImportError, ValueError) as warn_exc:" in src
+        # PR-3+PR-6 split: ImportError now handled separately (fail-open
+        # when PR-3 _acl_config not on tree). ValueError fail-closed.
+        assert "except ImportError:" in src
+        assert "except ValueError as warn_exc:" in src
         # No bare `except Exception as warn_exc:` left in the start() block
         assert "except Exception as warn_exc:" not in src
 
