@@ -15,7 +15,7 @@ Zenoh callbacks receive a ``zenoh.Sample`` with ``.key_expr`` and
 ``bytes`` payload. Rather than pick a concrete type and force one transport
 to adapt, we declare the **structural protocol** all callers actually use:
 
-    sample.key_expr        # str  — the topic / key the message arrived on
+    sample.key_expr  # str  — the topic / key the message arrived on
     sample.payload.to_bytes()  # bytes — the raw payload
 
 Concrete backends produce objects matching this shape. The MQTT backend ships
@@ -107,7 +107,7 @@ class MeshTransport(Protocol):
 
         Wildcard translation:
             Zenoh ``*``  matches one segment → MQTT ``+``
-            Zenoh ``**`` matches tail        → MQTT ``#``
+            Zenoh ``**`` matches tail  → MQTT ``#``
             MQTT-backed implementations translate these on the fly.
 
         Args:
