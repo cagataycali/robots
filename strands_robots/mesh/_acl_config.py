@@ -13,8 +13,8 @@ Zenoh 1.x quirks (each verified against a live session in
 * ``cert_common_names`` matches LITERAL CNs only; globs and regexes
   match nothing. Operators tighten the default by enumerating each
   peer's exact cert CN in ``STRANDS_MESH_ACL_FILE``.
-* Subject ``interfaces`` must be a non-empty list -- leaving it unset
-  causes the subject to match nothing.
+* Subject ``interfaces`` is OPTIONAL -- omitting it causes the subject
+  to match on every link (wildcard). An empty list ``[]`` is rejected.
 * ``key_exprs`` match the user-side key (the namespace prefix is
   stripped from the matcher's view), so ``**/cmd`` is the robust
   glob; ``"<namespace>/*/cmd"`` never matches.
@@ -276,6 +276,18 @@ def _validate_acl_shape(data: dict[str, Any], path: Path) -> None:
             raise ValueError(
                 f"ACL file {path}: subjects[{i}={sid!r}].cert_common_names must be a list "
                 f"(or omitted), got {type(cns).__name__}. Common typo: cert_common_name (singular)."
+            )
+        # Warn when neither interfaces nor cert_common_names is set --
+        # a subject with only an "id" silently matches every peer on
+        # every link (SubjectProperty::Wildcard on both dimensions).
+        if "interfaces" not in subj and cns is None:
+            logger.warning(
+                "ACL file %s: subjects[%d=%r] has neither "
+                "'interfaces' nor 'cert_common_names' -- it matches "
+                "every peer on every link. Add at least one to restrict scope.",
+                path,
+                i,
+                sid,
             )
 
     # 3. Rules.
