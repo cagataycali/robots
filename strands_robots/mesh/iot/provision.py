@@ -164,6 +164,23 @@ _ROBOT_POLICY_DOC: dict[str, Any] = {
             ],
         },
         {
+            # This wildcard middle segment is the OPERATOR'S thing-name
+            # (the recipient of the response). The robot legitimately
+            # needs to publish to the operator's own response inbox to
+            # complete the request/response RPC pattern. Scoping
+            # tighter (e.g. ``${iot:Connection.Thing.ThingName}/...``)
+            # would force the operator to know each robot's name to
+            # route responses, breaking the topic contract.
+            #
+            # The trailing ``/*`` is the per-turn id (UUID per
+            # call). The middle wildcard is the only legitimate broadening.
+            #
+            # Defence-in-depth: the operator-side ACL (``AllowOwnSubscriptions``
+            # at line 187) restricts each operator to subscribing only to
+            # ``strands/${ThingName}/...``, so a robot publishing to
+            # ``strands/<other-operator>/response/<turn>`` lands on a
+            # topic nobody is authorised to subscribe to (the message
+            # is silently dropped by the broker per the IoT Core contract).
             "Sid": "AllowResponseToAnyOperator",
             "Effect": "Allow",
             "Action": "iot:Publish",
@@ -529,8 +546,15 @@ def teardown_thing(
     boto3 = _require_boto3()
     iot = boto3.client("iot", region_name=region)
 
+    # Paginate principals: ``list_thing_principals`` returns up to 8
+    # principals per call (AWS IoT default page size); a Thing with more
+    # than 8 attached certs (rare but possible after multiple
+    # provision_robot calls) would otherwise leave certs orphaned.
     try:
-        principals = iot.list_thing_principals(thingName=thing_name).get("principals", [])
+        paginator = iot.get_paginator("list_thing_principals")
+        principals: list[str] = []
+        for page in paginator.paginate(thingName=thing_name):
+            principals.extend(page.get("principals", []))
     except iot.exceptions.ResourceNotFoundException:
         logger.info("[teardown] thing %s not found, skipping", thing_name)
         principals = []
