@@ -966,8 +966,8 @@ class TestGCPartialSelection:
 
     def test_eviction_keeps_freshest_entries(self):
         from strands_robots.mesh.transport.bridge_transport import (
-            _CommandDeduplicator,
             _MAX_DEDUP_ENTRIES,
+            _CommandDeduplicator,
         )
 
         dedup = _CommandDeduplicator(ttl_s=1000.0)  # long TTL so nothing is stale
@@ -981,6 +981,7 @@ class TestGCPartialSelection:
     def test_uses_heapq_not_sorted(self):
         """Source-grep pin: confirm heapq.nsmallest is in the GC path."""
         import inspect
+
         from strands_robots.mesh.transport import bridge_transport
 
         src = inspect.getsource(bridge_transport._CommandDeduplicator.is_duplicate)
