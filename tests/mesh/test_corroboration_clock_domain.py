@@ -52,8 +52,14 @@ def _stub_mesh() -> core.Mesh:
 
 
 def _envelope(t: float, peer_id: str = "issuer-A", source_zid: str | None = None) -> Any:
-    """Build a minimal Zenoh sample stub for _on_safety_estop."""
+    """Build a minimal Zenoh sample stub for _on_safety_estop.
+
+    Body includes ``source_zid`` to match the wire-level zid binding
+    introduced in PR-225 (rejects mismatched wire-vs-body zid).
+    """
     body: dict[str, Any] = {"peer_id": peer_id, "t": t}
+    if source_zid is not None:
+        body["source_zid"] = source_zid
     raw = json.dumps(body).encode()
     sample = SimpleNamespace(payload=SimpleNamespace(to_bytes=lambda r=raw: r))
     # Wire source_zid via the SourceInfo attribute that the handler extracts.
@@ -108,12 +114,14 @@ def test_corroboration_window_uses_monotonic_not_wall_clock() -> None:
 
     with mock.patch("time.time", return_value=wall_after_ntp):
         with mock.patch("time.monotonic", return_value=mono_after):
-            # Patch _extract_sample_source_zid to return wire_zid_b.
+            # Patch the MODULE-LEVEL _extract_sample_source_zid
+            # (called from core.py at the wire-zid extract site).
+            # Patching it on the instance with create=True was a no-op
+            # because core.py calls the module-level function.
             with mock.patch.object(
-                m,
+                core,
                 "_extract_sample_source_zid",
                 return_value=wire_zid_b,
-                create=True,
             ):
                 m._on_safety_estop(envelope)
 
