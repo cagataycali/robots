@@ -84,7 +84,11 @@ def test_snapshot_acl_single_file_read(tmp_path, monkeypatch):
         _acl_config._load_acl_cached.cache_clear()
 
     is_permissive, resolved = _acl_config.snapshot_acl("strands")
-    # snapshot_acl performs at most ONE _load_acl_file call
+    # Sanity-check the return shape so the test fails loudly if the
+    # signature changes (rather than silently passing on a refactor).
+    assert isinstance(is_permissive, bool)
+    assert isinstance(resolved, dict)
+    # Core invariant: snapshot_acl performs at most ONE _load_acl_file call
     assert call_count[0] <= 1, f"snapshot_acl called _load_acl_file {call_count[0]} times; must be <= 1"
 
 

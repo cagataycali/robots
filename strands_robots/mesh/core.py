@@ -86,10 +86,97 @@ class Mesh(SensorLoopsMixin):
         return f"Mesh(peer_id={self.peer_id!r}, type={self.peer_type!r}, {state})"
 
     # Lifecycle
+
+    def _refuse_under_permissive_default_acl(self) -> bool:
+        """Refuse-to-start gate per issue #218.
+
+        Returns True (refuse) when:
+        - STRANDS_MESH_AUTH_MODE == "mtls" (ACL is the third line of defence)
+        - AND the resolved ACL is permissive-by-shape (built-in default
+          or operator file with default_permission=allow + no rules)
+        - AND STRANDS_MESH_ACCEPT_PERMISSIVE_ACL is NOT set (operator
+          has not explicitly acknowledged the dev/lab posture).
+
+        Logs an ERROR breadcrumb on refusal so the operator sees the
+        actionable remediation paths (set ACL file / accept opt-in /
+        disable mesh).
+
+        On opt-in (STRANDS_MESH_ACCEPT_PERMISSIVE_ACL=1) the same shape
+        is logged at INFO instead of ERROR -- the operator has
+        acknowledged the posture and the WARNING contradicting their
+        opt-in would be noise.
+        """
+        from strands_robots.mesh import _acl_config, _zenoh_config
+
+        try:
+            auth_mode = _zenoh_config.resolve_auth_mode()
+            namespace = _zenoh_config.resolve_namespace()
+            is_permissive, _resolved = _acl_config.snapshot_acl(namespace)
+        except (ImportError, ValueError) as warn_exc:
+            # Narrow tuple per AGENTS.md > Review Learnings (#86):
+            # ImportError surfaces a missing _zenoh_config / _acl_config
+            # module (mesh extra not installed); ValueError surfaces
+            # bad STRANDS_MESH_AUTH_MODE / unloadable ACL. Both cases
+            # fail closed (treat as permissive) so the gate refuses to
+            # bring up the wire. Wider exception types (OSError, etc.)
+            # propagate so genuine bugs aren't masked at WARNING level.
+            logger.warning(
+                "[mesh] %s: ACL gate evaluation failed (%s) -- treating as permissive default; refusing to start",
+                self.peer_id,
+                warn_exc,
+            )
+            auth_mode = "mtls"
+            is_permissive = True
+        if auth_mode != "mtls":
+            return False
+        if not is_permissive:
+            return False
+        if not is_permissive:
+            return False
+
+        accept_permissive = os.getenv("STRANDS_MESH_ACCEPT_PERMISSIVE_ACL", "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        if accept_permissive:
+            logger.info(
+                "[mesh] %s: permissive default ACL active under mtls "
+                "(STRANDS_MESH_ACCEPT_PERMISSIVE_ACL=1 acknowledged) -- "
+                "starting in dev/lab posture",
+                self.peer_id,
+            )
+            return False
+
+        logger.error(
+            "[mesh] %s: PERMISSIVE DEFAULT ACL ACTIVE UNDER MTLS -- "
+            "Mesh NOT STARTED. Any CA-signed peer can publish/subscribe "
+            "on any key. Remediate one of:\n"
+            "  1. Supply STRANDS_MESH_ACL_FILE pointing at a role-separated "
+            "ACL (see examples/mesh_acl_example.json5).\n"
+            "  2. Set STRANDS_MESH_ACCEPT_PERMISSIVE_ACL=1 to acknowledge "
+            "the dev/lab posture.\n"
+            "  3. Disable the mesh (do not call Mesh.start()).",
+            self.peer_id,
+        )
+        return True
+
     def start(self) -> None:
         """Acquire a Zenoh session and start all publishing loops."""
         with self._lifecycle_lock:
             if self._running:
+                return
+
+            # Issue #218 / R3: refuse-to-start gate when mtls is configured
+            # but the ACL is permissive-by-shape (built-in default OR
+            # operator file with default_permission=allow). The gate
+            # closes the "fleet thinks mTLS protects them, but ACL is
+            # wide open" silent-misconfiguration footgun. Operators who
+            # explicitly accept the dev/lab posture set
+            # STRANDS_MESH_ACCEPT_PERMISSIVE_ACL=1.
+            if self._refuse_under_permissive_default_acl():
+                # Logged at ERROR; mesh stays not-started (mesh.alive == False).
+                # Caller's Robot() construction succeeds; only the wire is gated.
                 return
 
             session = get_session()

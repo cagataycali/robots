@@ -340,7 +340,15 @@ def default_acl(namespace: str) -> dict[str, Any]:
     layer ``validate_command`` gates payload semantics. ACL is the
     third line of defence and operators opt in explicitly.
     """
-    _ = namespace  # `namespace` config does the routing isolation; ACL key_exprs do not need it
+    # ``namespace`` parameter is kept for API symmetry with the public
+    # functions in this module (``acl_block``, ``resolve_acl``,
+    # ``snapshot_acl``, ``is_default_acl_in_use``) -- they all take a
+    # namespace string so callers can pass it positionally without
+    # special-casing ``default_acl``. The built-in default ACL itself is
+    # namespace-independent (Zenoh's namespace config does the routing
+    # isolation; ACL key_exprs are RELATIVE to the active namespace and
+    # do not need a namespace prefix). Review thread PR#224 _acl_config.py:343.
+    _ = namespace  # noqa: F841 -- kept for API symmetry
     return {
         "enabled": True,
         # Permissive default: any peer that survived the mTLS handshake may

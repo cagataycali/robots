@@ -442,19 +442,35 @@ def get_session() -> Any | None:
             scheme = "tls" if _auth_mode == "mtls" else "tcp"
             local_ep = f"{scheme}/127.0.0.1:{mesh_port}"
 
+            # Build config OUTSIDE the listener try so a bad ACL /
+            # TLS configuration (ValueError from _build_config) propagates
+            # loudly to Mesh.start rather than being silently downgraded
+            # to client-mode as if it were a port-already-bound error
+            # (review thread at session.py:445).
+            cfg = _build_config()
+            cfg.insert_json5("listen/endpoints", json.dumps([local_ep]))
+            cfg.insert_json5("connect/endpoints", json.dumps([local_ep]))
+            # Resolve zenoh.ZError dynamically -- when tests mock the
+            # zenoh module, ``zenoh.ZError`` is a MagicMock (not a class)
+            # and including it directly in the except tuple raises
+            # TypeError. Fall back to a benign placeholder when zenoh is
+            # mocked or ZError is not a real class.
+            _ZError = getattr(zenoh, "ZError", None)
+            _ZError = _ZError if isinstance(_ZError, type) and issubclass(_ZError, BaseException) else RuntimeError
             try:
-                cfg = _build_config()
-                cfg.insert_json5("listen/endpoints", json.dumps([local_ep]))
-                cfg.insert_json5("connect/endpoints", json.dumps([local_ep]))
                 _SESSION = zenoh.open(cfg)
                 _SESSION_REFS = 1
                 logger.info("Zenoh mesh session opened (listener on %s)", local_ep)
                 return _SESSION
-            except Exception as exc:  # noqa: BLE001 — fall back to client mode
+            except (RuntimeError, OSError, ConnectionError, _ZError) as exc:
+                # Narrow tuple per AGENTS.md > Review Learnings (#86):
+                # ``RuntimeError`` / ``OSError`` / ``ConnectionError`` /
+                # ``zenoh.ZError`` cover the realistic transport-side
+                # failures (port-bound, bad iface, broker drop) without
+                # masking config-shape ``ValueError`` raised by
+                # ``_build_config`` upstream (which is now outside the
+                # try anyway -- belt-and-braces).
                 # Port already bound (the most common case) is not an error.
-                # Log at debug so a real misconfiguration (e.g. bad iface) can
-                # still be diagnosed without spamming WARNING during the
-                # normal "second process joining the mesh" flow.
                 logger.debug(
                     "Zenoh listener on %s unavailable (%s) — trying client mode",
                     local_ep,
