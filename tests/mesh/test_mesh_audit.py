@@ -190,3 +190,57 @@ class TestSeqFlockSymlinkRejection:
         lockfile = tmp_path / "mesh_audit.seq.lock"
         assert lockfile.exists()
         assert not lockfile.is_symlink()
+
+
+# -----------------------------------------------------------------------
+# Issue #238 R2: SEQ_LOCK_DEGRADED poison record discipline
+# -----------------------------------------------------------------------
+
+
+class TestSeqLockDegradedPoisonRecord:
+    """Pin: when ``_next_seq`` raises ``SeqLockSymlinkError``,
+    ``log_safety_event`` writes a poison record with
+    ``sig="SEQ_LOCK_DEGRADED"`` rather than silently dropping the
+    record. Mirrors the PSK_DEGRADED discipline.
+    """
+
+    def test_symlinked_seq_lockfile_writes_poison_record(self, tmp_path, monkeypatch):
+        import os
+
+        from strands_robots.mesh import audit as audit_mod
+
+        monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
+
+        # Create the audit dir and the lockfile-as-symlink
+        tmp_path.mkdir(exist_ok=True)
+        lockfile = tmp_path / "mesh_audit.seq.lock"
+        if lockfile.exists():
+            lockfile.unlink()
+        target = tmp_path / "innocent"
+        target.touch()
+        os.symlink(str(target), str(lockfile))
+        assert lockfile.is_symlink()
+
+        # Reset state
+        if hasattr(audit_mod, "_AUDIT_STATE"):
+            audit_mod._AUDIT_STATE.psk_fingerprint = None
+            audit_mod._AUDIT_STATE.seq_loaded = False
+            audit_mod._AUDIT_STATE.audit_log_seeded = True
+        if hasattr(audit_mod, "_SEQ_COUNTERS"):
+            audit_mod._SEQ_COUNTERS.clear()
+
+        # log_safety_event must NOT crash; instead it writes a poison record
+        audit_mod.log_safety_event("test_event", "victim-peer", {"k": "v"})
+
+        # Walk the audit log -- the record must be present with the
+        # SEQ_LOCK_DEGRADED poison sig
+        records = audit_mod.read_audit_log()
+        assert len(records) >= 1
+        seq_lock_records = [r for r in records if r.get("sig") == "SEQ_LOCK_DEGRADED"]
+        assert len(seq_lock_records) == 1, (
+            f"expected 1 SEQ_LOCK_DEGRADED poison record; got: {[r.get('sig') for r in records]}"
+        )
+        rec = seq_lock_records[0]
+        assert rec["event"] == "test_event"
+        assert rec["peer_id"] == "victim-peer"
+        assert "seq_lock_degraded" in rec  # contains the reason

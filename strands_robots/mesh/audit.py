@@ -490,6 +490,13 @@ def _load_seq_counters() -> None:
             with os.fdopen(fd, encoding="utf-8") as fh:
                 payload = json.load(fh)
             if isinstance(payload, dict):
+                # Track whether any entry was actually merged; an empty
+                # dict (or a dict with no valid entries) must NOT flip
+                # sidecar_loaded=True, otherwise the audit-log fallback
+                # is skipped and an attacker writing ``{}`` gets every
+                # peer's seq reset. (R3 follow-up — review thread on
+                # PR#221 audit.py:531).
+                merged_any = False
                 for key, value in payload.items():
                     if not (isinstance(key, str) and isinstance(value, int) and value >= 0):
                         continue
@@ -518,17 +525,18 @@ def _load_seq_counters() -> None:
                     # somehow has a stale value.
                     if value > _SEQ_COUNTERS.get(key, 0):
                         _SEQ_COUNTERS[key] = value
-                # Only mark the sidecar as loaded when its payload was
-                # a usable dict. A non-dict payload (``null``, ``[]``,
-                # a string, a number) parses as JSON but seeds zero
-                # counters; treating it as a successful load would skip
-                # the audit-log fallback below and silently let the
-                # attacker reset every peer's seq counter to 0 just by
-                # writing ``null`` into the sidecar. The sidecar guard
-                # has to be all-or-nothing: either we read a valid
-                # mapping or we fall through to the integrity-checked
+                        merged_any = True
+                # Only mark the sidecar as loaded when at least one
+                # valid entry was merged. An empty dict (``{}``) parses
+                # as JSON but seeds zero counters; treating it as a
+                # successful load would skip the audit-log fallback
+                # below and silently let the attacker reset every
+                # peer's seq counter to 0 just by writing ``{}`` into
+                # the sidecar. The sidecar guard is now all-or-nothing
+                # AND fall-through-on-empty: either we merged real
+                # entries or we fall through to the integrity-checked
                 # audit-log seed.
-                sidecar_loaded = True
+                sidecar_loaded = merged_any
             else:
                 logger.warning(
                     "[audit] sidecar %s parsed as non-dict (%s) -- falling through to audit-log seed",
@@ -1009,8 +1017,23 @@ def log_safety_event(event_type: str, peer_id: str, payload: dict[str, Any]) -> 
         an audit-log failure must never propagate up into the safety code
         path that called this function.
     """
+    seq_lock_degraded_reason: str | None = None
     try:
         seq = _next_seq(peer_id)
+    except SeqLockSymlinkError as exc:
+        # PR#221 R3 (issue #238): the seq lockfile is a symlink. Raise
+        # the visible signal: write a poison record with
+        # ``sig="SEQ_LOCK_DEGRADED"`` so verify_audit_integrity walkers
+        # see a gap on this peer's stream. seq is unknown -- use 0 as
+        # the placeholder so the record still serialises; the poison
+        # ``sig`` is the discriminator a verifier keys on.
+        logger.error(
+            "[audit] SEQ_LOCK_DEGRADED for peer_id=%r: %s -- writing poison record",
+            peer_id,
+            exc,
+        )
+        seq = 0
+        seq_lock_degraded_reason = str(exc)
     except Exception as exc:  # noqa: BLE001 -- audit log failures MUST be soft per contract
         logger.warning(
             "[audit] _next_seq failed for peer_id=%r: %s -- record dropped (no seq)",
@@ -1025,50 +1048,57 @@ def log_safety_event(event_type: str, peer_id: str, payload: dict[str, Any]) -> 
         "payload": payload,
         "seq": seq,
     }
+    if seq_lock_degraded_reason is not None:
+        # Poison-record discipline: signal SEQ_LOCK_DEGRADED so a
+        # verifier flags the seq-counter integrity gap. Mirrors the
+        # PSK_DEGRADED / SIGN_FAILED poison patterns below.
+        record["sig"] = "SEQ_LOCK_DEGRADED"
+        record["seq_lock_degraded"] = seq_lock_degraded_reason
     sig: str | None = None
-    try:
-        sig = _sign_record(record)
-    except AuditPSKDegradedError as exc:
-        # STRANDS_MESH_AUDIT_PSK transitioned mid-run
-        # (signed->unsigned or unsigned->signed). We refuse to forge a
-        # signature, but instead of silently dropping the record we
-        # write a "poison" record with sig="PSK_DEGRADED" and a
-        # ``psk_degraded`` reason field. A signed-record verifier
-        # (verify_audit_integrity with PSK present) reports it as
-        # ``missing_sig`` (sig is not a valid HMAC), which forces
-        # ``ok=False`` and surfaces the transition to forensics.
-        #
-        logger.error("[audit] %s -- writing poison record (sig=PSK_DEGRADED): %s", exc, record)
-        record["sig"] = "PSK_DEGRADED"
-        record["psk_degraded"] = str(exc)
-    except Exception as sign_exc:  # noqa: BLE001 -- audit must be soft per contract (lines 768-771)
-        # widen the fail-soft contract beyond
-        # AuditPSKDegradedError so the safety code path never crashes
-        # on a sign-time error.
-        #
-        # if a PSK was configured at this
-        # moment, write a poison record (``sig="SIGN_FAILED"``) so a
-        # forensic walker holding the same PSK sees the gap as a bad
-        # signature and forces ``ok=False``. Without this, an
-        # unsigned record would be invisible to a verifier running
-        # without the PSK (psk_present=False -> missing_sig branch
-        # not exercised) and silently weaken the documented
-        # PSK-degrade contract.
-        logger.error(
-            "[audit] _sign_record raised %s: %s",
-            type(sign_exc).__name__,
-            sign_exc,
-        )
-        if _audit_psk() is not None:
-            # PSK is configured, but signing failed transiently. Write
-            # a poison record so verify_audit_integrity flags the gap.
-            record["sig"] = "SIGN_FAILED"
-            record["sign_error"] = f"{type(sign_exc).__name__}: {sign_exc}"
-        # else: no PSK configured -- the unsigned write is the
-        # documented dev-mode posture.
-    else:
-        if sig is not None:
-            record["sig"] = sig
+    if seq_lock_degraded_reason is None:
+        try:
+            sig = _sign_record(record)
+        except AuditPSKDegradedError as exc:
+            # STRANDS_MESH_AUDIT_PSK transitioned mid-run
+            # (signed->unsigned or unsigned->signed). We refuse to forge a
+            # signature, but instead of silently dropping the record we
+            # write a "poison" record with sig="PSK_DEGRADED" and a
+            # ``psk_degraded`` reason field. A signed-record verifier
+            # (verify_audit_integrity with PSK present) reports it as
+            # ``missing_sig`` (sig is not a valid HMAC), which forces
+            # ``ok=False`` and surfaces the transition to forensics.
+            #
+            logger.error("[audit] %s -- writing poison record (sig=PSK_DEGRADED): %s", exc, record)
+            record["sig"] = "PSK_DEGRADED"
+            record["psk_degraded"] = str(exc)
+        except Exception as sign_exc:  # noqa: BLE001 -- audit must be soft per contract (lines 768-771)
+            # widen the fail-soft contract beyond
+            # AuditPSKDegradedError so the safety code path never crashes
+            # on a sign-time error.
+            #
+            # if a PSK was configured at this
+            # moment, write a poison record (``sig="SIGN_FAILED"``) so a
+            # forensic walker holding the same PSK sees the gap as a bad
+            # signature and forces ``ok=False``. Without this, an
+            # unsigned record would be invisible to a verifier running
+            # without the PSK (psk_present=False -> missing_sig branch
+            # not exercised) and silently weaken the documented
+            # PSK-degrade contract.
+            logger.error(
+                "[audit] _sign_record raised %s: %s",
+                type(sign_exc).__name__,
+                sign_exc,
+            )
+            if _audit_psk() is not None:
+                # PSK is configured, but signing failed transiently. Write
+                # a poison record so verify_audit_integrity flags the gap.
+                record["sig"] = "SIGN_FAILED"
+                record["sign_error"] = f"{type(sign_exc).__name__}: {sign_exc}"
+            # else: no PSK configured -- the unsigned write is the
+            # documented dev-mode posture.
+        else:
+            if sig is not None:
+                record["sig"] = sig
 
     line = json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n"
     path = audit_log_path()
