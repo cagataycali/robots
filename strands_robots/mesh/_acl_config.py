@@ -23,12 +23,15 @@ Zenoh 1.x quirks (each verified against a live session in
   ``ingress`` (the publisher's cert CN is known to the receiver).
 
 JSON5 is the on-disk format (line + block comments, trailing commas,
-unquoted keys). The loader uses a stdlib JSON5-lite preprocessor --
-no third-party dependency.
+unquoted keys). The loader delegates to the ``json5`` PyPI dependency
+(declared in ``pyproject.toml``'s ``[mesh]`` extra and imported lazily
+inside :func:`_parse_json5` so operators running without an ACL file
+don't pay the import cost).
 """
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import os
@@ -81,8 +84,19 @@ def _parse_json5(raw: str, path: Path) -> Any:
     boundary: a malformed file does NOT silently degrade to the
     permissive default.
     """
+    # Review thread _acl_config.py:85 -- use the project-standard
+    # ``require_optional`` helper so the operator-facing import error
+    # carries the canonical install-hint format used elsewhere in the
+    # SDK (groot, libero, etc.). This still lazy-imports
+    # (only operators with an ACL file pay the cost).
+    from strands_robots.utils import require_optional
+
     try:
-        import json5  # type: ignore[import-not-found]
+        json5 = require_optional(
+            "json5",
+            extra="mesh",
+            purpose="parsing STRANDS_MESH_ACL_FILE (JSON5 format)",
+        )
     except ImportError as exc:
         raise ImportError(
             "json5 is required to parse STRANDS_MESH_ACL_FILE -- install "
@@ -277,10 +291,17 @@ def _validate_acl_shape(data: dict[str, Any], path: Path) -> None:
                 f"ACL file {path}: subjects[{i}={sid!r}].cert_common_names must be a list "
                 f"(or omitted), got {type(cns).__name__}. Common typo: cert_common_name (singular)."
             )
-        # Warn when neither interfaces nor cert_common_names is set --
-        # a subject with only an "id" silently matches every peer on
-        # every link (SubjectProperty::Wildcard on both dimensions).
-        if "interfaces" not in subj and cns is None:
+        # Review thread _acl_config.py:279 -- warn when neither
+        # ``interfaces`` nor ``cert_common_names`` constrains the
+        # subject. A subject with only an ``id`` (or with both fields
+        # explicitly empty) silently matches every peer on every link
+        # (``SubjectProperty::Wildcard`` on both dimensions), which
+        # combined with ``default_permission: "deny"`` and an
+        # ``allow`` wildcard rule produces a wire-effectively
+        # permissive ACL the operator did not intend.
+        ifaces_constrains = "interfaces" in subj and bool(subj.get("interfaces"))
+        cns_constrains = isinstance(cns, list) and bool(cns)
+        if not ifaces_constrains and not cns_constrains:
             logger.warning(
                 "ACL file %s: subjects[%d=%r] has neither "
                 "'interfaces' nor 'cert_common_names' -- it matches "
@@ -418,7 +439,11 @@ def _load_acl_cached(path: Path) -> dict[str, Any]:
     with _ACL_CACHE_LOCK:
         cached = _ACL_CACHE.get(identity)
         if cached is not None:
-            return cached
+            # Review thread _acl_config.py:429 -- return a deep copy so
+            # caller mutation does not poison the cache for subsequent
+            # callers. The cost is a small dict copy on every hit (ACL
+            # files are tiny by ACL_FILE_MAX_BYTES = 256KiB).
+            return copy.deepcopy(cached)
     loaded = _load_acl_file(path)
     with _ACL_CACHE_LOCK:
         # Cap the cache at 4 entries -- ACL files are tiny and the
@@ -426,7 +451,10 @@ def _load_acl_cached(path: Path) -> dict[str, Any]:
         # touch the file repeatedly from inflating memory.
         if len(_ACL_CACHE) >= 4:
             _ACL_CACHE.pop(next(iter(_ACL_CACHE)))
-        _ACL_CACHE[identity] = loaded
+        # Store a deep copy in the cache so caller mutation of the
+        # returned dict does NOT poison the cached entry (review
+        # _acl_config.py:429). Symmetric with the deep-copy on hit.
+        _ACL_CACHE[identity] = copy.deepcopy(loaded)
     return loaded
 
 
@@ -437,23 +465,119 @@ def _clear_acl_cache_for_test() -> None:
         _ACL_CACHE.clear()
 
 
+# Issue #218 / review session.py:296 -- thread-local single-flight ACL
+# snapshot. ``Mesh.start`` calls ``snapshot_acl`` once at the gate, then
+# ``session._build_config`` runs inside the same call stack and would
+# call ``snapshot_acl`` AGAIN. The previous identity-tuple cache could
+# miss if an attacker rewrote the file between the two calls (size /
+# mtime_ns delta). The thread-local stashes the gate's resolved dict
+# so ``_build_config`` reuses it verbatim, closing the TOCTOU window
+# regardless of cache state.
+_THREAD_SNAPSHOT: threading.local = threading.local()
+
+
+def _set_thread_snapshot(resolved: dict[str, Any] | None) -> None:
+    """Stash a resolved ACL dict on the current thread for downstream reuse."""
+    _THREAD_SNAPSHOT.value = resolved
+
+
+def _get_thread_snapshot() -> dict[str, Any] | None:
+    """Return the current thread's stashed ACL snapshot, if any."""
+    return getattr(_THREAD_SNAPSHOT, "value", None)
+
+
+def _clear_thread_snapshot() -> None:
+    """Clear the current thread's snapshot (called after Mesh.start)."""
+    if hasattr(_THREAD_SNAPSHOT, "value"):
+        _THREAD_SNAPSHOT.value = None
+
+
 def _is_permissive_acl_shape(data: dict[str, Any]) -> bool:
     """inspect the resolved ACL *shape* for
     the permissive pattern, regardless of where the dict came from
     (built-in default or operator-supplied file).
 
-    The dangerous shape is ``default_permission == "allow"`` AND every
-    explicit rule/subject/policy collection empty. This collapses the
-    Original behaviour ("operator file with permissive shape silently
-    bypasses the gate" surface into one truth source -- the gate now
-    triggers on the wire-effective posture, not on the env-var
-    presence.
+    Two patterns are flagged as permissive-by-shape:
+
+    1. ``default_permission == "allow"`` AND every explicit
+       rule/subject/policy collection empty. The original built-in
+       ``default_acl()`` shape -- "any CA-signed peer can publish/
+       subscribe everywhere".
+
+    2. ``default_permission == "deny"`` BUT the operator opens
+       everything back up via a wildcard rule + wildcard subject:
+       a rule whose ``key_exprs`` contains ``"**"`` AND
+       ``permission == "allow"``, AND there exists a subject lacking
+       BOTH ``interfaces`` AND ``cert_common_names`` (i.e.
+       ``SubjectProperty::Wildcard`` on every dimension), AND that
+       subject is referenced by the wildcard rule's policy.
+
+       This is the gap flagged in review at _acl_config.py:456 --
+       ``default_permission: "deny"`` plus a single ``key_exprs:
+       ["**"]/permission: "allow"`` rule plus a wildcard subject
+       ("any CA-signed peer publishes/subscribes everywhere") was
+       wire-effectively permissive but bypassed the previous narrow
+       check.
+
+    Returns True when EITHER pattern matches, so the
+    ``Mesh.start`` refuse-to-start gate triggers on the
+    wire-effective posture, not on the env-var presence or on the
+    superficial ``default_permission`` literal.
     """
     if not isinstance(data, dict):
         return False
-    if data.get("default_permission") != "allow":
+    default_perm = data.get("default_permission")
+    rules = data.get("rules") or []
+    subjects = data.get("subjects") or []
+    policies = data.get("policies") or []
+
+    # Pattern 1: built-in default shape (allow + empty everything else)
+    if default_perm == "allow" and not rules and not subjects and not policies:
+        return True
+
+    # Pattern 2: deny + wildcard-rule + wildcard-subject + cross-policy
+    if default_perm != "deny":
         return False
-    return not data.get("rules") and not data.get("subjects") and not data.get("policies")
+    if not isinstance(rules, list) or not isinstance(subjects, list):
+        return False
+    if not isinstance(policies, list):
+        return False
+
+    def _is_wildcard_rule(r: Any) -> bool:
+        if not isinstance(r, dict):
+            return False
+        if r.get("permission") != "allow":
+            return False
+        kes = r.get("key_exprs") or []
+        return isinstance(kes, list) and "**" in kes
+
+    def _is_wildcard_subject(s: Any) -> bool:
+        if not isinstance(s, dict):
+            return False
+        # Wildcard on both dimensions: no interfaces AND no
+        # cert_common_names. Either field absent OR explicitly empty
+        # (the validator already rejects empty interfaces lists, but
+        # belt-and-braces here for hand-rolled dicts).
+        ifaces = s.get("interfaces")
+        cns = s.get("cert_common_names")
+        return not ifaces and not cns
+
+    wildcard_rule_ids = {r.get("id") for r in rules if _is_wildcard_rule(r)}
+    if not wildcard_rule_ids:
+        return False
+    wildcard_subject_ids = {s.get("id") for s in subjects if _is_wildcard_subject(s)}
+    if not wildcard_subject_ids:
+        return False
+
+    # Pattern 2 matches iff any policy ties a wildcard rule to a wildcard subject.
+    for pol in policies:
+        if not isinstance(pol, dict):
+            continue
+        pol_rules = set(pol.get("rules") or [])
+        pol_subjects = set(pol.get("subjects") or [])
+        if pol_rules & wildcard_rule_ids and pol_subjects & wildcard_subject_ids:
+            return True
+    return False
 
 
 def is_default_acl_in_use(namespace: str = "strands") -> bool:
@@ -518,19 +642,35 @@ def resolve_acl(namespace: str) -> dict[str, Any]:
 def snapshot_acl(namespace: str = "strands") -> tuple[bool, dict[str, Any]]:
     """Atomically resolve the ACL and report its permissive-by-shape state.
 
-    Issue #218: closes the TOCTOU window between ``is_default_acl_in_use``
-    and ``resolve_acl``. The previous two-call pattern computed a fresh
-    identity tuple per call, missing the cache when an attacker rewrote
-    the ACL file between calls. ``snapshot_acl`` performs a single
-    ``_load_acl_cached`` call and derives both signals from it.
+    Issue #218 + review thread session.py:296: closes the TOCTOU window
+    between the ``Mesh.start`` refuse-to-start gate and the
+    ``session._build_config`` wire-config builder.
+
+    Two-tier single-flight:
+
+    1. **Thread-local hit**: when ``Mesh.start`` has already taken the
+       snapshot and stashed it via :func:`_set_thread_snapshot`, we
+       return THAT exact dict without touching the filesystem -- so an
+       attacker rewriting the file between gate and build cannot create
+       a cache miss. The thread-local is cleared at the end of
+       ``Mesh.start`` so subsequent calls re-resolve.
+
+    2. **Identity-tuple cache hit**: the legacy
+       ``(path, dev, ino, size, mtime_ns)``-keyed cache. Same dict for
+       same file identity, but a rewrite between two ``snapshot_acl``
+       calls in *separate* threads (or after the thread-local clear)
+       still yields a fresh load. That is the by-design refresh window
+       -- the TOCTOU defence is local to a single ``Mesh.start`` flow.
 
     Returns:
         (is_permissive_by_shape, resolved_acl_dict)
-
-    Mesh.start should call this once at the top and thread the
-    resolved dict through both the refuse-to-start gate and the
-    ``acl_block`` insertion.
     """
+    # Tier 1: thread-local single-flight (closes TOCTOU within a single
+    # Mesh.start flow even across separate snapshot_acl() callers).
+    cached = _get_thread_snapshot()
+    if cached is not None:
+        return _is_permissive_acl_shape(cached), cached
+
     path_env = os.getenv("STRANDS_MESH_ACL_FILE", "").strip()
     if not path_env:
         # Built-in default: known permissive-by-shape.

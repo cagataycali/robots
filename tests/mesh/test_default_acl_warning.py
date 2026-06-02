@@ -157,12 +157,15 @@ class TestPermissiveACLWarningExceptNarrow:
         # resolve_auth_mode, but that scaffolding never got exercised because
         # start() was the entry point. Removed per CodeQL #257.
         src = Path(core_mod.__file__).read_text()
-        # PR-3+PR-6 split: ImportError now handled separately (fail-open
-        # when PR-3 _acl_config not on tree). ValueError fail-closed.
-        assert "except ImportError:" in src
+        # PR-3 ships _acl_config + _zenoh_config in the same diff, so the
+        # ImportError fallback was dead code (review thread core.py:121).
+        # The gate now resolves snapshot_acl directly under a narrow
+        # ValueError catch (fail-CLOSED on bad config).
         assert "except ValueError as warn_exc:" in src
         # No bare `except Exception as warn_exc:` left in the start() block
         assert "except Exception as warn_exc:" not in src
+        # And no dead ImportError fallback either.
+        assert "except ImportError:" not in src
 
 
 # ---------------------------------------------------------------------

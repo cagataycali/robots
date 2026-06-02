@@ -286,13 +286,18 @@ def _build_config() -> Any:
     if auth_mode == "mtls":
         blocks.append(_zenoh_config.link_protocols_block())
         blocks.append(_zenoh_config.tls_block())
-        # Issue #218: take ONE snapshot of the ACL state and thread it
-        # through both the wire-config-build path AND the refuse-to-start
-        # shape gate below. The previous two-call pattern
-        # (``acl_block`` + ``is_default_acl_in_use``) had a TOCTOU window
-        # where an attacker rewriting the ACL file between calls could
-        # bypass the shape gate while feeding a malicious ACL into the
-        # wire config.
+        # Issue #218 / review session.py:296: take ONE snapshot of the
+        # ACL state and thread it through both the wire-config-build
+        # path AND the refuse-to-start shape gate at Mesh.start. The
+        # previous two-call pattern (``acl_block`` +
+        # ``is_default_acl_in_use``) AND the cache-keyed-on-mtime
+        # variant both had a TOCTOU window where an attacker rewriting
+        # the ACL file between calls could bypass the shape gate while
+        # feeding a malicious ACL into the wire config.
+        # ``snapshot_acl`` consults a thread-local single-flight first,
+        # so when ``Mesh.start`` has already resolved the ACL and
+        # stashed it, this call returns THAT exact dict without
+        # touching the filesystem.
         is_permissive, resolved_acl = _acl_config.snapshot_acl(namespace)
         blocks.append(_acl_config.acl_block_from(resolved_acl))
         # in mtls mode the ACL is the third line of
@@ -478,26 +483,40 @@ def get_session() -> Any | None:
                 )
 
             # Fall back to client mode — connect to the existing listener.
+            # Build cfg OUTSIDE the try so a config-shape ValueError
+            # (NaN env clamp, missing TLS file, bad ACL) propagates
+            # loudly to Mesh.start instead of being silently downgraded
+            # to "session unavailable" (review threads session.py:465 and 489).
+            cfg = _build_config()
+            cfg.insert_json5("mode", '"client"')
+            cfg.insert_json5("connect/endpoints", json.dumps([local_ep]))
             try:
-                cfg = _build_config()
-                cfg.insert_json5("mode", '"client"')
-                cfg.insert_json5("connect/endpoints", json.dumps([local_ep]))
                 _SESSION = zenoh.open(cfg)
                 _SESSION_REFS = 1
                 logger.info("Zenoh mesh session opened (client → %s)", local_ep)
                 return _SESSION
-            except Exception as exc:
+            except (RuntimeError, OSError, ConnectionError, _ZError) as exc:
+                # Narrow tuple per AGENTS.md > Review Learnings (#86):
+                # transport-level failures only; config-shape ValueError
+                # propagates to caller so misconfigured mTLS surfaces loudly.
                 logger.warning("Zenoh session open failed (client mode): %s", exc)
                 return None
 
         # Explicit endpoints provided via env vars.
+        # Build cfg outside the try (same loud-on-misconfig discipline
+        # as the auto-listener path; review thread session.py:500).
+        cfg = _build_config()
+        # Re-resolve _ZError under the explicit-endpoints branch (reached
+        # when _LOCAL_LISTEN env var is unset, so the listener-block
+        # binding above never executed).
+        _ZError = getattr(zenoh, "ZError", None)
+        _ZError = _ZError if isinstance(_ZError, type) and issubclass(_ZError, BaseException) else RuntimeError
         try:
-            cfg = _build_config()
             _SESSION = zenoh.open(cfg)
             _SESSION_REFS = 1
             logger.info("Zenoh mesh session opened")
             return _SESSION
-        except Exception as exc:
+        except (RuntimeError, OSError, ConnectionError, _ZError) as exc:
             logger.warning("Zenoh session open failed: %s", exc)
             return None
 
@@ -561,40 +580,49 @@ def _get_zenoh_session_directly() -> Any | None:
             scheme = "tls" if _auth_mode == "mtls" else "tcp"
             local_ep = f"{scheme}/127.0.0.1:{mesh_port}"
 
+            # Build cfg outside the listener try so config-shape
+            # ValueError surfaces loudly (review thread session.py:568).
+            cfg = _build_config()
+            cfg.insert_json5("listen/endpoints", json.dumps([local_ep]))
+            cfg.insert_json5("connect/endpoints", json.dumps([local_ep]))
+            _ZError = getattr(zenoh, "ZError", None)
+            _ZError = _ZError if isinstance(_ZError, type) and issubclass(_ZError, BaseException) else RuntimeError
             try:
-                cfg = _build_config()
-                cfg.insert_json5("listen/endpoints", json.dumps([local_ep]))
-                cfg.insert_json5("connect/endpoints", json.dumps([local_ep]))
                 _SESSION = zenoh.open(cfg)
                 _SESSION_REFS = 1
                 logger.info("Zenoh mesh session opened (listener on %s)", local_ep)
                 return _SESSION
-            except Exception as exc:  # noqa: BLE001
+            except (RuntimeError, OSError, ConnectionError, _ZError) as exc:
+                # Narrow tuple per review thread session.py:568 -- mirror the
+                # narrowing applied in get_session() upstairs. Config-shape
+                # ValueError now propagates instead of being swallowed at DEBUG.
                 logger.debug(
                     "Zenoh listener on %s unavailable (%s) — trying client mode",
                     local_ep,
                     exc,
                 )
 
+            cfg = _build_config()
+            cfg.insert_json5("mode", '"client"')
+            cfg.insert_json5("connect/endpoints", json.dumps([local_ep]))
             try:
-                cfg = _build_config()
-                cfg.insert_json5("mode", '"client"')
-                cfg.insert_json5("connect/endpoints", json.dumps([local_ep]))
                 _SESSION = zenoh.open(cfg)
                 _SESSION_REFS = 1
                 logger.info("Zenoh mesh session opened (client → %s)", local_ep)
                 return _SESSION
-            except Exception as exc:
+            except (RuntimeError, OSError, ConnectionError, _ZError) as exc:
                 logger.warning("Zenoh session open failed (client mode): %s", exc)
                 return None
 
+        cfg = _build_config()
+        _ZError = getattr(zenoh, "ZError", None)
+        _ZError = _ZError if isinstance(_ZError, type) and issubclass(_ZError, BaseException) else RuntimeError
         try:
-            cfg = _build_config()
             _SESSION = zenoh.open(cfg)
             _SESSION_REFS = 1
             logger.info("Zenoh mesh session opened")
             return _SESSION
-        except Exception as exc:
+        except (RuntimeError, OSError, ConnectionError, _ZError) as exc:
             logger.warning("Zenoh session open failed: %s", exc)
             return None
 
