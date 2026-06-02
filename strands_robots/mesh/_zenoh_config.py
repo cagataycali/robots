@@ -93,6 +93,7 @@ import json
 import logging
 import math
 import os
+import threading
 from pathlib import Path
 
 # One-shot flag for the non-POSIX TLS-mode warning. ``_resolve_tls_paths``
@@ -101,6 +102,7 @@ from pathlib import Path
 # module-level dict (rather than a plain bool) keeps mutation explicit at
 # the call site without needing a ``global`` declaration.
 _NON_POSIX_TLS_WARNED: dict[str, bool] = {"v": False}
+_NON_POSIX_TLS_WARNED_LOCK = threading.Lock()
 
 
 def _is_posix() -> bool:
@@ -531,7 +533,14 @@ def _resolve_tls_paths() -> tuple[Path, Path, Path]:
     # ``_acl_config.py:_load_acl_file``.
     #
     if not _is_posix():
-        if not _NON_POSIX_TLS_WARNED["v"]:
+        # Atomic check-and-set under lock so concurrent _build_config
+        # calls (e.g. multi-threaded test harness) don't both fire the
+        # WARNING. Mutation outside lock was flagged in PR#224 review.
+        with _NON_POSIX_TLS_WARNED_LOCK:
+            should_warn = not _NON_POSIX_TLS_WARNED["v"]
+            if should_warn:
+                _NON_POSIX_TLS_WARNED["v"] = True
+        if should_warn:
             logger.warning(
                 "[mesh] mTLS key mode (0o600) check is SKIPPED on non-POSIX "
                 "platform (%s). The README env-var matrix promises mode "
@@ -541,7 +550,6 @@ def _resolve_tls_paths() -> tuple[Path, Path, Path]:
                 os.name,
                 paths[2],
             )
-            _NON_POSIX_TLS_WARNED["v"] = True
     else:
         key_path = paths[2]
         # Symlink reject already applied to all three TLS paths in the
