@@ -204,9 +204,7 @@ class TestUnverifiedMarkerPermissions:
     this commit.
     """
 
-    def test_marker_written_owner_only_when_breakglass_active(
-        self, tmp_path, monkeypatch
-    ):
+    def test_marker_written_owner_only_when_breakglass_active(self, tmp_path, monkeypatch):
         import stat
 
         ca_path = tmp_path / "ca.pem"
@@ -219,8 +217,7 @@ class TestUnverifiedMarkerPermissions:
 
         marker = ca_path.with_suffix(ca_path.suffix + ".unverified")
         assert marker.exists(), (
-            "_ensure_ca must write the .unverified marker when the "
-            "break-glass is active so subsequent runs can WARN."
+            "_ensure_ca must write the .unverified marker when the break-glass is active so subsequent runs can WARN."
         )
 
         mode = stat.S_IMODE(marker.stat().st_mode)
@@ -230,9 +227,7 @@ class TestUnverifiedMarkerPermissions:
             "were flagged by CodeQL py/overly-permissive-file-permission."
         )
 
-    def test_marker_not_written_when_breakglass_inactive(
-        self, tmp_path, monkeypatch
-    ):
+    def test_marker_not_written_when_breakglass_inactive(self, tmp_path, monkeypatch):
         ca_path = tmp_path / "ca.pem"
         # Break-glass NOT set -- marker must not appear.
         monkeypatch.delenv("STRANDS_MESH_DISABLE_CA_PIN", raising=False)
