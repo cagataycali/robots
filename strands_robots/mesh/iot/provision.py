@@ -848,9 +848,17 @@ def _ensure_ca(ca_path: Path) -> None:
                 "# marker is removed (e.g. by deleting the CA + re-running with\n"
                 "# the pin enforced).\n"
             )
-            os.chmod(marker, 0o644)
+            # Owner-only: marker is a local sentinel read only by this
+            # process via _ensure_ca; no other user needs read access.
+            # Tightens CodeQL py/overly-permissive-file-permission alert
+            # vs the prior 0o644 default.
+            os.chmod(marker, 0o600)
         except OSError:
-            pass
+            # Best-effort marker write: an unwritable cert_dir already
+            # surfaced via the preceding write_bytes/write_text path.
+            # Failing to chmod the marker should not abort provisioning;
+            # the WARN-on-reuse contract is degraded-but-honest.
+            logger.debug("[provision] CA-unverified marker chmod failed -- continuing", exc_info=True)
 
 
 def _resolve_ca_pins() -> frozenset[str]:

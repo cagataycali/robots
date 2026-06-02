@@ -189,3 +189,62 @@ class TestMultiPinRotation:
         assert provision._hash_matches_pin(future_bytes) is True
         # Something that matches neither pin is still rejected.
         assert provision._hash_matches_pin(b"unrelated bytes") is False
+
+
+class TestUnverifiedMarkerPermissions:
+    """The CA-unverified sidecar marker must be owner-only (mode 0o600).
+
+    AGENTS.md > Review Learnings (#85) > "Pin regression tests for
+    reviewed fixes" + CodeQL py/overly-permissive-file-permission
+    (alert #273): the marker is a local sentinel read only by this
+    process via ``_ensure_ca`` to WARN about re-using a CA downloaded
+    under the ``STRANDS_MESH_DISABLE_CA_PIN=true`` break-glass. No
+    other user needs read access; world-readable mode (0o644) was
+    flagged by CodeQL on the previous round and tightened to 0o600 in
+    this commit.
+    """
+
+    def test_marker_written_owner_only_when_breakglass_active(
+        self, tmp_path, monkeypatch
+    ):
+        import stat
+
+        ca_path = tmp_path / "ca.pem"
+        monkeypatch.setenv("STRANDS_MESH_DISABLE_CA_PIN", "true")
+        with patch(
+            "strands_robots.mesh.iot.provision._download_with_per_socket_timeout",
+            return_value=b"any-bytes-the-pin-bypass-accepts",
+        ):
+            provision._ensure_ca(ca_path)
+
+        marker = ca_path.with_suffix(ca_path.suffix + ".unverified")
+        assert marker.exists(), (
+            "_ensure_ca must write the .unverified marker when the "
+            "break-glass is active so subsequent runs can WARN."
+        )
+
+        mode = stat.S_IMODE(marker.stat().st_mode)
+        assert mode == 0o600, (
+            f"marker mode is 0o{mode:o}; must be 0o600 (owner-only). "
+            "World-readable permissions on the unverified-CA sentinel "
+            "were flagged by CodeQL py/overly-permissive-file-permission."
+        )
+
+    def test_marker_not_written_when_breakglass_inactive(
+        self, tmp_path, monkeypatch
+    ):
+        ca_path = tmp_path / "ca.pem"
+        # Break-glass NOT set -- marker must not appear.
+        monkeypatch.delenv("STRANDS_MESH_DISABLE_CA_PIN", raising=False)
+        with patch(
+            "strands_robots.mesh.iot.provision._download_with_per_socket_timeout",
+            return_value=_REAL_CA,
+        ):
+            provision._ensure_ca(ca_path)
+
+        marker = ca_path.with_suffix(ca_path.suffix + ".unverified")
+        assert not marker.exists(), (
+            "marker must only appear when the break-glass was active "
+            "during the download; the canonical-CA path must not leak "
+            "the sentinel."
+        )
