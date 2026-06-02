@@ -183,21 +183,31 @@ class Mesh(SensorLoopsMixin):
             # wide open" silent-misconfiguration footgun. Operators who
             # explicitly accept the dev/lab posture set
             # STRANDS_MESH_ACCEPT_PERMISSIVE_ACL=1.
-            if self._refuse_under_permissive_default_acl():
-                # Logged at ERROR; mesh stays not-started (mesh.alive == False).
-                # Caller's Robot() construction succeeds; only the wire is gated.
-                return
+            #
+            # Review thread core.py:189 -- the gate stashes a thread-local
+            # snapshot via ``_set_thread_snapshot`` (called inside
+            # ``_refuse_under_permissive_default_acl``) BEFORE deciding
+            # whether to refuse. Wrap both the gate and ``get_session()``
+            # in the same try/finally so the snapshot is cleared on the
+            # refused-start branch too, otherwise a subsequent direct
+            # ``get_session()`` on the same thread (integration test, or
+            # a caller bypassing Mesh) would observe a stale snapshot.
+            from strands_robots.mesh import _acl_config
 
             try:
+                if self._refuse_under_permissive_default_acl():
+                    # Logged at ERROR; mesh stays not-started (mesh.alive == False).
+                    # Caller's Robot() construction succeeds; only the wire is gated.
+                    return
                 session = get_session()
             finally:
                 # Snapshot has been consumed by ``session._build_config``
                 # via the thread-local single-flight (issue #218 +
-                # review session.py:296). Clear it so the next
-                # ``Mesh.start`` (different instance, same thread)
-                # gets a fresh resolution.
-                from strands_robots.mesh import _acl_config
-
+                # review session.py:296), or we refused to start before
+                # ``get_session`` was reached -- either way, clear it so
+                # the next ``Mesh.start`` (different instance, same
+                # thread) or direct ``get_session()`` call sees fresh
+                # state.
                 _acl_config._clear_thread_snapshot()
             if session is None:
                 logger.debug("[mesh] %s: zenoh unavailable, mesh off", self.peer_id)

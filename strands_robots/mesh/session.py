@@ -316,15 +316,22 @@ def _build_config() -> Any:
     # (transport restricted to TLS by ``link_protocols_block``). Mirrors
     # the loud-on-misconfig discipline of ``_float_env``,
     # ``_load_acl_file``, ``resolve_auth_mode``.
+    # Resolve auth_mode ONCE for the entire ``_build_config`` call so
+    # endpoint validation and the later mTLS/none branch selection see
+    # the SAME value, even when no ``Mesh.start`` thread-local is in
+    # play (direct ``get_session()`` callers, integration tests).
+    # Review thread session.py:357 -- two independent reads of
+    # ``os.environ['STRANDS_MESH_AUTH_MODE']`` between scheme
+    # validation and block selection used to allow a concurrent test
+    # fixture / plugin mutating env to put the two halves of the
+    # builder out of sync (mtls scheme check vs none-block emission).
+    _stashed_mode = _acl_config._get_thread_auth_mode()
+    auth_mode = _stashed_mode if _stashed_mode is not None else _zenoh_config.resolve_auth_mode()
+
     connect = os.getenv("ZENOH_CONNECT")
     listen = os.getenv("ZENOH_LISTEN")
-    # Resolve auth_mode early so endpoint validation uses the same
-    # value the wire-config builder will use below (thread-local
-    # single-flight per review core.py:139).
-    _stashed_mode_early = _acl_config._get_thread_auth_mode()
-    _auth_mode_early = _stashed_mode_early if _stashed_mode_early is not None else _zenoh_config.resolve_auth_mode()
-    _validate_endpoint_schemes(connect, "ZENOH_CONNECT", _auth_mode_early)
-    _validate_endpoint_schemes(listen, "ZENOH_LISTEN", _auth_mode_early)
+    _validate_endpoint_schemes(connect, "ZENOH_CONNECT", auth_mode)
+    _validate_endpoint_schemes(listen, "ZENOH_LISTEN", auth_mode)
     if connect:
         endpoints = [e.strip() for e in connect.split(",")]
         config.insert_json5("connect/endpoints", json.dumps(endpoints))
@@ -344,17 +351,10 @@ def _build_config() -> Any:
     ]
 
     # mTLS + ACL when auth_mode=mtls. The "none" mode emits everything
-    # above except the auth + ACL blocks; it is dev-only.
-    #
-    # Review thread core.py:139: prefer the thread-local auth_mode
-    # stashed by ``Mesh._refuse_under_permissive_default_acl`` so the
-    # gate and the builder see the SAME value, even if
-    # ``STRANDS_MESH_AUTH_MODE`` flips between the two reads (concurrent
-    # test fixture, plugin mutating os.environ). Falls back to a fresh
-    # resolve when no Mesh.start is on the stack (direct
-    # ``get_session()`` callers, integration tests).
-    _stashed_mode = _acl_config._get_thread_auth_mode()
-    auth_mode = _stashed_mode if _stashed_mode is not None else _zenoh_config.resolve_auth_mode()
+    # above except the auth + ACL blocks; it is dev-only. ``auth_mode``
+    # was resolved once at the top of ``_build_config`` (review thread
+    # session.py:357) so endpoint validation and block selection share
+    # the same value.
     if auth_mode == "mtls":
         blocks.append(_zenoh_config.link_protocols_block())
         blocks.append(_zenoh_config.tls_block())

@@ -85,6 +85,39 @@ Configuration env vars
     a custom ACL file (template at ``examples/mesh_acl_example.json5``).
     See CHANGELOG.md Section 8 for the rationale (Zenoh 1.x ACL CN-glob
     quirks made a true default-deny silently total-deny on first run).
+
+``STRANDS_MESH_ACCEPT_PERMISSIVE_ACL``
+    Set to ``1`` / ``true`` / ``yes`` to acknowledge the permissive
+    built-in default ACL under ``STRANDS_MESH_AUTH_MODE=mtls``. When
+    unset, ``Mesh.start`` refuses to bring up the wire if the ACL shape
+    is permissive (default), preventing the "fleet thinks mTLS protects
+    them, but ACL is wide open" silent-misconfiguration footgun. The
+    opt-in is intended for dev/lab postures where role separation is
+    deliberately deferred; it does NOT silence the per-session
+    permissive WARNING (still emitted at INFO instead of ERROR so the
+    posture stays auditable). Production fleets must supply
+    ``STRANDS_MESH_ACL_FILE`` instead.
+
+``STRANDS_MESH_I_KNOW_THIS_IS_INSECURE``
+    Set to ``1`` / ``true`` / ``yes`` to acknowledge running with
+    ``STRANDS_MESH_AUTH_MODE=none`` (no TLS, no ACL). Required as a
+    second factor on top of ``AUTH_MODE=none`` -- the env var alone
+    is not enough to bring up an insecure session. The intent is
+    documentation: an operator searching for "why won't none mode
+    start" is forced to read the warning text and the variable name
+    before the wire comes up. Never set this on a network you do not
+    fully trust.
+
+``STRANDS_MESH_FILTER_INTERFACES``
+    Comma-separated allowlist of network interface names (e.g.
+    ``eth0,wlan0``) used by ``low_pass_filter`` when enumerating NICs
+    for per-message size caps. Empty / unset means apply the default
+    wildcard (``*``) -- all interfaces are subject to the cap.
+    Operators on hosts with many virtual interfaces (containers, VPN
+    tunnels) can use this to scope the cap to the physical/wire
+    interfaces. The value is honoured by
+    :func:`_filter_interfaces` and surfaced in the
+    ``low_pass_filter`` block.
 """
 
 from __future__ import annotations

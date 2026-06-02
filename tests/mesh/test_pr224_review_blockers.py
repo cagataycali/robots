@@ -417,3 +417,152 @@ def test_session_no_redundant_local_ep_assignment() -> None:
     assert src.count('local_ep = f"tcp/127.0.0.1:{mesh_port}"') == 0, (
         "CodeQL #262: redundant local_ep assignment must not be reintroduced"
     )
+
+
+# ============================================================
+# Round-3 follow-through pins (post-19:58 review)
+# ============================================================
+
+
+def test_build_config_resolves_auth_mode_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review thread session.py:357 -- ``_build_config`` must resolve
+    ``auth_mode`` exactly once (single ``os.environ`` read) and reuse
+    it for both endpoint validation and block selection. Previously,
+    two independent ``resolve_auth_mode()`` calls between scheme
+    validation and the mTLS branch could disagree if env mutated
+    between them.
+    """
+    from pathlib import Path
+
+    from strands_robots.mesh import session as session_mod
+
+    src = Path(session_mod.__file__).read_text()
+
+    # The function body of _build_config must contain exactly ONE
+    # call to resolve_auth_mode() (the early single-read site). The
+    # second read site at the mTLS branch was removed.
+    func_idx = src.index("def _build_config(")
+    # Bound the search to the function body only. The next def starts
+    # the boundary; pick a generous fallback if not found.
+    next_def_idx = src.find("\ndef ", func_idx + 1)
+    if next_def_idx == -1:
+        next_def_idx = len(src)
+    body = src[func_idx:next_def_idx]
+    n = body.count("_zenoh_config.resolve_auth_mode()")
+    assert n == 1, f"_build_config must resolve auth_mode exactly once (review thread session.py:357); found {n} calls"
+    # The single resolve site must precede the endpoint validators
+    # so they share the same value.
+    resolve_idx = body.index("_zenoh_config.resolve_auth_mode()")
+    val_idx = body.index('_validate_endpoint_schemes(connect, "ZENOH_CONNECT"')
+    assert resolve_idx < val_idx, "auth_mode must be resolved BEFORE endpoint validation"
+
+
+def test_build_config_endpoint_validation_uses_same_auth_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Behavioural pin: a mid-call mutation of STRANDS_MESH_AUTH_MODE
+    cannot put endpoint validation and block selection out of sync
+    because both reuse the single resolved value. Simulate the
+    mutation by tracking calls to ``resolve_auth_mode`` and asserting
+    only one happens per ``_build_config`` invocation when no
+    thread-local snapshot is active.
+    """
+    from strands_robots.mesh import _acl_config, _zenoh_config
+
+    # Ensure no thread-local from a prior test leaks.
+    _acl_config._clear_thread_snapshot()
+
+    call_count = {"n": 0}
+    real_resolve = _zenoh_config.resolve_auth_mode
+
+    def counting_resolve() -> str:
+        call_count["n"] += 1
+        return real_resolve()
+
+    monkeypatch.setattr(_zenoh_config, "resolve_auth_mode", counting_resolve)
+    monkeypatch.setenv("STRANDS_MESH_AUTH_MODE", "none")
+    monkeypatch.setenv("STRANDS_MESH_I_KNOW_THIS_IS_INSECURE", "1")
+    monkeypatch.delenv("ZENOH_CONNECT", raising=False)
+    monkeypatch.delenv("ZENOH_LISTEN", raising=False)
+
+    try:
+        from strands_robots.mesh.session import _build_config
+
+        _build_config()
+    except ImportError:
+        pytest.skip("zenoh wheel not installed -- skipping live config build")
+    except Exception:
+        # The build may raise downstream (missing TLS files etc.)
+        # but the resolve count up to that point is what we assert.
+        pass
+
+    assert call_count["n"] == 1, (
+        f"_build_config must resolve auth_mode exactly once per call "
+        f"when no thread-local is active; saw {call_count['n']}"
+    )
+
+
+def test_mesh_start_clears_snapshot_on_refused_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review thread core.py:189 -- when ``Mesh.start`` refuses to
+    bring up the wire because of a permissive ACL under mtls, the
+    thread-local snapshot stashed by the gate MUST still be cleared
+    on return. Otherwise a subsequent direct ``get_session()`` on
+    the same thread would observe stale state.
+    """
+    from strands_robots.mesh import _acl_config
+    from strands_robots.mesh.core import Mesh
+
+    # Force the refuse-to-start branch: mtls posture + permissive
+    # default ACL + no opt-in.
+    monkeypatch.setenv("STRANDS_MESH_AUTH_MODE", "mtls")
+    monkeypatch.delenv("STRANDS_MESH_ACL_FILE", raising=False)
+    monkeypatch.delenv("STRANDS_MESH_ACCEPT_PERMISSIVE_ACL", raising=False)
+
+    # Pre-poison the thread-local with a sentinel so we can detect a leak.
+    _acl_config._clear_thread_snapshot()
+    assert _acl_config._get_thread_snapshot() is None
+
+    mesh = Mesh.__new__(Mesh)  # bypass __init__ to avoid full lifecycle setup
+    mesh.peer_id = "test-refused-cleanup"
+    import threading
+
+    mesh._lifecycle_lock = threading.RLock()
+    mesh._running = False
+    mesh._has_session_ref = False
+    mesh._acl_snapshot = None
+
+    # _refuse_under_permissive_default_acl will set the snapshot
+    # internally, then return True; start() must clear it before
+    # returning even on the refused branch.
+    mesh.start()
+
+    # The thread-local must be empty after start() returns -- whether
+    # we refused or got a session.
+    assert _acl_config._get_thread_snapshot() is None, "core.py:189 leak: refused-start path left stale snapshot"
+    assert _acl_config._get_thread_auth_mode() is None, "core.py:189 leak: refused-start path left stale auth_mode"
+
+
+def test_zenoh_config_env_var_matrix_documents_three_vars() -> None:
+    """Review thread _zenoh_config.py:382 -- AGENTS.md (#86) requires
+    every STRANDS_MESH_* env var to be documented in the module
+    docstring's env-var matrix. Three vars (FILTER_INTERFACES,
+    ACCEPT_PERMISSIVE_ACL, I_KNOW_THIS_IS_INSECURE) were missing.
+    """
+    from pathlib import Path
+
+    from strands_robots.mesh import _zenoh_config
+
+    src = Path(_zenoh_config.__file__).read_text()
+    # Bound the search to the module docstring.
+    docstring_end = src.index("from __future__ import annotations")
+    matrix = src[:docstring_end]
+
+    # Each var must appear as a documented section header
+    # (``STRANDS_MESH_X``, in RST literal-quote style).
+    for var in (
+        "STRANDS_MESH_ACCEPT_PERMISSIVE_ACL",
+        "STRANDS_MESH_I_KNOW_THIS_IS_INSECURE",
+        "STRANDS_MESH_FILTER_INTERFACES",
+    ):
+        anchor = f"``{var}``"
+        assert anchor in matrix, (
+            f"AGENTS.md (#86) env-var rule: {var} must be documented in the module-level matrix as {anchor!r}"
+        )
