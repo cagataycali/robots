@@ -92,7 +92,7 @@ def _parse_json5(raw: str, path: Path) -> Any:
     from strands_robots.utils import require_optional
 
     try:
-        json5 = require_optional(
+        _json5_mod: Any = require_optional(
             "json5",
             extra="mesh",
             purpose="parsing STRANDS_MESH_ACL_FILE (JSON5 format)",
@@ -104,7 +104,7 @@ def _parse_json5(raw: str, path: Path) -> Any:
             "json5) or ``pip install json5``"
         ) from exc
     try:
-        return json5.loads(raw)
+        return _json5_mod.loads(raw)
     except ValueError as exc:
         # json5 raises ValueError (subclass) with a useful message that
         # includes line/column. Re-raise with the path attached so an
@@ -185,21 +185,22 @@ def _load_acl_file(path: Path) -> dict[str, Any]:
     if data["default_permission"] not in ("allow", "deny"):
         raise ValueError(f"ACL file {path} default_permission={data['default_permission']!r} must be 'allow' or 'deny'")
     if data["default_permission"] == "allow":
-        # only warn when the operator actually
-        # has rules/subjects/policies that *combine* with allow-by-default
-        # in a blacklist shape. The built-in ``default_acl()`` (used when
-        # STRANDS_MESH_ACL_FILE is unset) ships ``allow + empty rules/
-        # subjects/policies`` -- the documented permissive-by-design
-        # posture. Warning operators who copy that shape into a file is
-        # asymmetric scolding; reserve the warning for the actual
-        # blacklist anti-pattern (allow + non-empty rules).
-        is_truly_permissive_default = not data.get("rules") and not data.get("subjects") and not data.get("policies")
-        if not is_truly_permissive_default:
+        # Reserve the blacklist warning for the actual anti-pattern --
+        # ``allow`` + non-empty ``rules``. The built-in ``default_acl()``
+        # (used when STRANDS_MESH_ACL_FILE is unset) ships ``allow +
+        # empty rules/subjects/policies``; warning operators who copy
+        # that shape into a file is asymmetric scolding. Per review
+        # thread _acl_config.py:199, scope the trigger to ``rules``
+        # specifically (the load-bearing part of the blacklist
+        # anti-pattern) and phrase the warning to match: "allow +
+        # rules" is the foot-gun, not "allow + anything".
+        if data.get("rules"):
             logger.warning(
-                "[acl] %s uses default_permission='allow' with rules -- "
+                "[acl] %s uses default_permission='allow' with %d rule(s) -- "
                 "this is a blacklist policy and any rule gap exposes "
                 "the mesh. Prefer 'deny' with explicit allow rules.",
                 path,
+                len(data["rules"]),
             )
     _validate_acl_shape(data, path)
     return data
@@ -291,24 +292,34 @@ def _validate_acl_shape(data: dict[str, Any], path: Path) -> None:
                 f"ACL file {path}: subjects[{i}={sid!r}].cert_common_names must be a list "
                 f"(or omitted), got {type(cns).__name__}. Common typo: cert_common_name (singular)."
             )
-        # Review thread _acl_config.py:279 -- warn when neither
-        # ``interfaces`` nor ``cert_common_names`` constrains the
-        # subject. A subject with only an ``id`` (or with both fields
-        # explicitly empty) silently matches every peer on every link
-        # (``SubjectProperty::Wildcard`` on both dimensions), which
-        # combined with ``default_permission: "deny"`` and an
-        # ``allow`` wildcard rule produces a wire-effectively
-        # permissive ACL the operator did not intend.
+        # Review thread _acl_config.py:279/293 -- HARD-REJECT subjects
+        # that constrain neither ``interfaces`` nor
+        # ``cert_common_names``. A subject with only an ``id`` (or
+        # with both fields explicitly empty) maps to
+        # ``SubjectProperty::Wildcard`` on every dimension -- "any
+        # peer on any link" -- which combined with
+        # ``default_permission: "deny"`` and an ``allow`` rule
+        # produces a wire-effectively permissive ACL the operator did
+        # not intend. Symmetric with the empty-list rejection above
+        # (which also looks like "match nothing" but in inverted form
+        # -- "match everything" is the dangerous footgun the parser
+        # MUST refuse, not warn about).
+        #
+        # Operators who deliberately want a wildcard binding can
+        # express it with ``interfaces: ["*"]`` (which Zenoh accepts
+        # as the explicit any-link wildcard) plus an explicit CN
+        # list, so this rejection does not block a legitimate
+        # use case.
         ifaces_constrains = "interfaces" in subj and bool(subj.get("interfaces"))
         cns_constrains = isinstance(cns, list) and bool(cns)
         if not ifaces_constrains and not cns_constrains:
-            logger.warning(
-                "ACL file %s: subjects[%d=%r] has neither "
-                "'interfaces' nor 'cert_common_names' -- it matches "
-                "every peer on every link. Add at least one to restrict scope.",
-                path,
-                i,
-                sid,
+            raise ValueError(
+                f"ACL file {path}: subjects[{i}={sid!r}] has neither "
+                f"'interfaces' nor 'cert_common_names' (or both are empty) -- "
+                f"it would match every peer on every link "
+                f"(SubjectProperty::Wildcard on both dimensions). Add at least "
+                f"one constraint to restrict scope; for an explicit "
+                f'any-link wildcard use ``interfaces: ["*"]``.'
             )
 
     # 3. Rules.
@@ -455,7 +466,16 @@ def _load_acl_cached(path: Path) -> dict[str, Any]:
         # returned dict does NOT poison the cached entry (review
         # _acl_config.py:429). Symmetric with the deep-copy on hit.
         _ACL_CACHE[identity] = copy.deepcopy(loaded)
-    return loaded
+    # Review thread _acl_config.py:458 -- return a deep copy on miss
+    # too, so the FIRST caller for a given file identity sees the same
+    # immutability contract subsequent callers get from the hit branch.
+    # The previous code returned ``loaded`` directly, giving the first
+    # caller a mutable handle on the parsed dict while later callers
+    # got fresh deep copies -- an asymmetry that would silently bite
+    # any future caller that mutates the result (e.g.
+    # ``acl_block_from(resolved)`` is one accidental refactor away
+    # from a ``json.dumps(resolved)`` that mutates).
+    return copy.deepcopy(loaded)
 
 
 def _clear_acl_cache_for_test() -> None:
@@ -476,14 +496,51 @@ def _clear_acl_cache_for_test() -> None:
 _THREAD_SNAPSHOT: threading.local = threading.local()
 
 
-def _set_thread_snapshot(resolved: dict[str, Any] | None) -> None:
-    """Stash a resolved ACL dict on the current thread for downstream reuse."""
-    _THREAD_SNAPSHOT.value = resolved
+def _set_thread_snapshot(
+    resolved: dict[str, Any] | None,
+    *,
+    auth_mode: str | None = None,
+) -> None:
+    """Stash a resolved ACL dict (and optional ``auth_mode``) on the
+    current thread for downstream reuse.
+
+    Review thread core.py:139 -- the ``auth_mode`` env var
+    (``STRANDS_MESH_AUTH_MODE``) is read independently by
+    ``Mesh._refuse_under_permissive_default_acl`` and
+    ``session._build_config``. A flip between the two reads (concurrent
+    test fixture, plugin mutating ``os.environ``) yields inconsistent
+    state. Stashing both signals together preserves the
+    "one snapshot per ``Mesh.start``" invariant the docstring
+    promises.
+    """
+    _THREAD_SNAPSHOT.value = (resolved, auth_mode) if auth_mode is not None else resolved
 
 
 def _get_thread_snapshot() -> dict[str, Any] | None:
-    """Return the current thread's stashed ACL snapshot, if any."""
-    return getattr(_THREAD_SNAPSHOT, "value", None)
+    """Return the current thread's stashed ACL snapshot, if any.
+
+    Returns the resolved dict only -- callers that need ``auth_mode``
+    use :func:`_get_thread_auth_mode`.
+    """
+    val = getattr(_THREAD_SNAPSHOT, "value", None)
+    if isinstance(val, tuple):
+        first = val[0]
+        if first is None or isinstance(first, dict):
+            return first
+        return None
+    if val is None or isinstance(val, dict):
+        return val
+    return None
+
+
+def _get_thread_auth_mode() -> str | None:
+    """Return the thread-local ``auth_mode`` stashed alongside the ACL,
+    or ``None`` if the snapshot was set without one (legacy callers)."""
+    val = getattr(_THREAD_SNAPSHOT, "value", None)
+    if isinstance(val, tuple) and len(val) == 2:
+        second = val[1]
+        return second if (second is None or isinstance(second, str)) else None
+    return None
 
 
 def _clear_thread_snapshot() -> None:

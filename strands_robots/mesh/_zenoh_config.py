@@ -101,8 +101,17 @@ from pathlib import Path
 # Windows process would emit the same WARNING per peer connection. The
 # module-level dict (rather than a plain bool) keeps mutation explicit at
 # the call site without needing a ``global`` declaration.
-_NON_POSIX_TLS_WARNED: dict[str, bool] = {"v": False}
+# Review thread _zenoh_config.py:540 -- key the one-shot WARNING on
+# the resolved key path (with mtime fingerprint for rotation detection)
+# rather than a single boolean cell. A long-running process that
+# rotates ``STRANDS_MESH_TLS_KEY`` to a different file used to see
+# the WARNING for the first key only; subsequent rotations were
+# silently muted even though the documented Windows-mode-skip
+# guarantee applies per-file. Bound at 16 entries to cap memory in
+# the rotation-loop attacker case.
+_NON_POSIX_TLS_WARNED_KEYS: set[tuple[str, int]] = set()
 _NON_POSIX_TLS_WARNED_LOCK = threading.Lock()
+_NON_POSIX_TLS_WARNED_MAX = 16
 
 
 def _is_posix() -> bool:
@@ -535,11 +544,30 @@ def _resolve_tls_paths() -> tuple[Path, Path, Path]:
     if not _is_posix():
         # Atomic check-and-set under lock so concurrent _build_config
         # calls (e.g. multi-threaded test harness) don't both fire the
-        # WARNING. Mutation outside lock was flagged in PR#224 review.
+        # WARNING. Per review thread _zenoh_config.py:540, key the
+        # one-shot on (key_path, mtime_ns) so rotating
+        # ``STRANDS_MESH_TLS_KEY`` to a different file (or replacing
+        # the file in-place) re-arms the warning.
+        try:
+            _key_st = os.stat(str(paths[2]), follow_symlinks=False)
+            _key_id: tuple[str, int] = (str(paths[2]), _key_st.st_mtime_ns)
+        except OSError:
+            # Cannot stat the key path -- fall back to path-only keying
+            # so we still differentiate between rotations even when
+            # filesystem ACLs hide the timestamp.
+            _key_id = (str(paths[2]), 0)
         with _NON_POSIX_TLS_WARNED_LOCK:
-            should_warn = not _NON_POSIX_TLS_WARNED["v"]
+            should_warn = _key_id not in _NON_POSIX_TLS_WARNED_KEYS
             if should_warn:
-                _NON_POSIX_TLS_WARNED["v"] = True
+                # Bound the set so a rogue caller looping over key files
+                # cannot inflate memory. Eviction is FIFO-ish (set
+                # iteration order is insertion order on CPython 3.7+,
+                # but we don't rely on that for correctness -- worst
+                # case re-emit the WARNING for an evicted key, which is
+                # fine).
+                if len(_NON_POSIX_TLS_WARNED_KEYS) >= _NON_POSIX_TLS_WARNED_MAX:
+                    _NON_POSIX_TLS_WARNED_KEYS.pop()
+                _NON_POSIX_TLS_WARNED_KEYS.add(_key_id)
         if should_warn:
             logger.warning(
                 "[mesh] mTLS key mode (0o600) check is SKIPPED on non-POSIX "

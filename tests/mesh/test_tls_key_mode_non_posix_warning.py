@@ -29,10 +29,10 @@ from strands_robots.mesh import _zenoh_config as zc
 
 @pytest.fixture
 def reset_tls_warned():
-    """Reset the one-shot warning flag around each test."""
-    zc._NON_POSIX_TLS_WARNED["v"] = False
+    """Reset the per-key-path warning set around each test."""
+    zc._NON_POSIX_TLS_WARNED_KEYS.clear()
     yield
-    zc._NON_POSIX_TLS_WARNED["v"] = False
+    zc._NON_POSIX_TLS_WARNED_KEYS.clear()
 
 
 def _make_tls_files(tmp_path: Path) -> tuple[Path, Path, Path]:

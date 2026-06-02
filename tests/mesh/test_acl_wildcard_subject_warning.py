@@ -1,21 +1,22 @@
-"""Pin test for wildcard-subject detection in ACL validator.
+"""Pin test for wildcard-subject HARD REJECT in ACL validator.
 
-Review thread PRRT_kwDORUMiZs6GTwcv flagged that a subject with neither
-``interfaces`` nor ``cert_common_names`` silently matches every peer on
-every link -- effectively a wildcard subject that an operator may not
-have intended. Combined with ``default_permission: "deny"`` and an
-``allow`` rule, this produces an effectively-permissive ACL without
-operator awareness.
+Review threads PRRT_kwDORUMiZs6GTwcv and _acl_config.py:279/293 flagged
+that a subject with neither ``interfaces`` nor ``cert_common_names``
+silently match every peer on every link
+(``SubjectProperty::Wildcard`` on both dimensions). Combined with
+``default_permission: "deny"`` and an ``allow`` rule, this produces
+an effectively-permissive ACL the operator did not intend.
 
-Pin: the validator now emits a WARNING when a subject has only an ``id``
-and no constraining fields. Pre-fix HEAD silently accepts the
-wide-open subject with no diagnostic.
+Pin: the validator now HARD-REJECTS wildcard subjects (raises
+``ValueError`` at parse time). This is symmetric with the empty-list
+rejection elsewhere in the validator: "match nothing" and "match
+everything" are both refused loudly. Pre-fix HEAD only WARNED on the
+unbounded case.
 """
 
 from __future__ import annotations
 
 import json
-import logging
 from pathlib import Path
 
 import pytest
@@ -53,60 +54,33 @@ def _write(tmp_path: Path, doc: dict) -> Path:
     return p
 
 
-class TestWildcardSubjectWarning:
+class TestWildcardSubjectHardReject:
     """Validate that subjects with neither interfaces nor cert_common_names
-    emit a WARNING during shape validation."""
+    are HARD-REJECTED at parse time (was a soft WARNING pre-fix)."""
 
-    def test_subject_without_interfaces_or_cns_warns(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
-        """A subject with only an ``id`` triggers a wildcard warning."""
+    def test_subject_without_interfaces_or_cns_rejected(self, tmp_path: Path) -> None:
+        """A subject with only an ``id`` is rejected with ValueError."""
         doc = _minimal_acl([{"id": "wide-open"}])
-        path = _write(tmp_path, doc)
+        with pytest.raises(ValueError, match="(?i)match every peer"):
+            _acl_config._validate_acl_shape(doc, _write(tmp_path, doc))
 
-        with caplog.at_level(logging.WARNING, logger="strands_robots.mesh._acl_config"):
-            _acl_config._validate_acl_shape(doc, path)
-
-        assert any("wide-open" in msg and "matches every peer" in msg for msg in caplog.messages), (
-            f"Expected wildcard-subject warning for 'wide-open', got: {caplog.messages}"
-        )
-
-    def test_subject_with_interfaces_only_does_not_warn(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
-        """A subject with ``interfaces`` set does not trigger the warning."""
+    def test_subject_with_interfaces_only_accepts(self, tmp_path: Path) -> None:
+        """A subject with ``interfaces`` set parses cleanly."""
         doc = _minimal_acl([{"id": "nic-bound", "interfaces": ["eth0"]}])
-        path = _write(tmp_path, doc)
+        _acl_config._validate_acl_shape(doc, _write(tmp_path, doc))  # no raise
 
-        with caplog.at_level(logging.WARNING, logger="strands_robots.mesh._acl_config"):
-            _acl_config._validate_acl_shape(doc, path)
-
-        assert not any("matches every peer" in msg for msg in caplog.messages), (
-            f"Unexpected wildcard warning: {caplog.messages}"
-        )
-
-    def test_subject_with_cns_only_does_not_warn(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
-        """A subject with ``cert_common_names`` set does not trigger the warning."""
+    def test_subject_with_cns_only_accepts(self, tmp_path: Path) -> None:
+        """A subject with ``cert_common_names`` set parses cleanly."""
         doc = _minimal_acl([{"id": "cn-bound", "cert_common_names": ["robot-1"]}])
-        path = _write(tmp_path, doc)
+        _acl_config._validate_acl_shape(doc, _write(tmp_path, doc))  # no raise
 
-        with caplog.at_level(logging.WARNING, logger="strands_robots.mesh._acl_config"):
-            _acl_config._validate_acl_shape(doc, path)
-
-        assert not any("matches every peer" in msg for msg in caplog.messages), (
-            f"Unexpected wildcard warning: {caplog.messages}"
-        )
-
-    def test_subject_with_both_does_not_warn(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
-        """A subject with both fields set does not trigger the warning."""
+    def test_subject_with_both_accepts(self, tmp_path: Path) -> None:
+        """A subject with both fields set parses cleanly."""
         doc = _minimal_acl([{"id": "fully-bound", "interfaces": ["wlan0"], "cert_common_names": ["op-1"]}])
-        path = _write(tmp_path, doc)
+        _acl_config._validate_acl_shape(doc, _write(tmp_path, doc))  # no raise
 
-        with caplog.at_level(logging.WARNING, logger="strands_robots.mesh._acl_config"):
-            _acl_config._validate_acl_shape(doc, path)
-
-        assert not any("matches every peer" in msg for msg in caplog.messages), (
-            f"Unexpected wildcard warning: {caplog.messages}"
-        )
-
-    def test_mixed_subjects_warns_only_for_unbounded(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
-        """Only the wildcard subject triggers the warning, not the bounded one."""
+    def test_mixed_subjects_rejects_first_unbounded(self, tmp_path: Path) -> None:
+        """Mixed list with one wildcard subject is rejected (first match)."""
         doc = _minimal_acl(
             [
                 {"id": "bounded", "cert_common_names": ["robot-1"]},
@@ -115,12 +89,12 @@ class TestWildcardSubjectWarning:
         )
         # Fix policies to reference both subjects
         doc["policies"][0]["subjects"] = ["bounded", "unbounded"]
-        path = _write(tmp_path, doc)
+        with pytest.raises(ValueError, match=r"unbounded.*match every peer"):
+            _acl_config._validate_acl_shape(doc, _write(tmp_path, doc))
 
-        with caplog.at_level(logging.WARNING, logger="strands_robots.mesh._acl_config"):
-            _acl_config._validate_acl_shape(doc, path)
-
-        warning_msgs = [m for m in caplog.messages if "matches every peer" in m]
-        assert len(warning_msgs) == 1
-        assert "unbounded" in warning_msgs[0]
-        assert "'bounded'" not in warning_msgs[0]
+    def test_subject_with_empty_cns_list_rejected(self, tmp_path: Path) -> None:
+        """A subject with ``cert_common_names: []`` is rejected (empty
+        list = no constraint, same as None)."""
+        doc = _minimal_acl([{"id": "wide-open", "cert_common_names": []}])
+        with pytest.raises(ValueError, match="(?i)match every peer"):
+            _acl_config._validate_acl_shape(doc, _write(tmp_path, doc))

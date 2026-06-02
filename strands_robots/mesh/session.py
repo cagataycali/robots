@@ -229,6 +229,54 @@ def clear_peers() -> None:
 # Session lifecycle
 
 
+# Review thread session.py:270 -- endpoint scheme validation. Under
+# ``STRANDS_MESH_AUTH_MODE=mtls`` the wire-config builder restricts
+# transports to TLS via ``link_protocols_block``; an operator who sets
+# ``ZENOH_LISTEN=tcp/...`` (the documented format) gets a confusing
+# zenoh runtime failure instead of a loud ``ValueError`` at config-build
+# time. Validate the scheme up-front so the misconfig surfaces at the
+# same loud-on-misconfig boundary as ``_float_env`` / ``_load_acl_file``
+# / ``resolve_auth_mode``.
+_MTLS_OK_SCHEMES: tuple[str, ...] = ("tls", "quic")
+_NONE_OK_SCHEMES: tuple[str, ...] = ("tcp", "udp", "tls", "quic")
+
+
+def _validate_endpoint_schemes(endpoints_raw: str | None, env_name: str, auth_mode: str) -> None:
+    """Reject endpoints whose scheme is incompatible with ``auth_mode``.
+
+    Args:
+        endpoints_raw: Comma-separated endpoint string from env, or None.
+        env_name: Name of the env var (for the error message).
+        auth_mode: ``"mtls"`` or ``"none"``.
+
+    Raises:
+        ValueError: If ANY endpoint in the list uses a scheme blocked
+            under the current ``auth_mode``.
+    """
+    if not endpoints_raw:
+        return
+    if auth_mode == "mtls":
+        ok = _MTLS_OK_SCHEMES
+    elif auth_mode == "none":
+        ok = _NONE_OK_SCHEMES
+    else:
+        # Unknown auth_mode -- let resolve_auth_mode() raise downstream.
+        return
+    for ep in (e.strip() for e in endpoints_raw.split(",")):
+        if not ep:
+            continue
+        scheme = ep.split("/", 1)[0].lower()
+        if scheme not in ok:
+            raise ValueError(
+                f"{env_name}={endpoints_raw!r} contains endpoint {ep!r} with "
+                f"scheme {scheme!r} -- under STRANDS_MESH_AUTH_MODE={auth_mode!r} "
+                f"only {ok} schemes are accepted (the wire-config builder "
+                f"restricts transports via link_protocols_block). Use a "
+                f"compatible scheme or set STRANDS_MESH_AUTH_MODE=none for "
+                f"the development posture (insecure)."
+            )
+
+
 def _build_config() -> Any:
     """Create a ``zenoh.Config`` from environment variables.
 
@@ -260,8 +308,23 @@ def _build_config() -> Any:
     config = zenoh.Config()
 
     # Explicit endpoints from env vars (legacy ZENOH_CONNECT / ZENOH_LISTEN).
+    # Review thread session.py:270 -- validate endpoint schemes against
+    # auth_mode BEFORE inserting them, so an operator who set
+    # ``ZENOH_LISTEN=tcp/0.0.0.0:7447`` under the default
+    # ``STRANDS_MESH_AUTH_MODE=mtls`` posture gets a loud
+    # ``ValueError`` instead of a confusing zenoh runtime failure
+    # (transport restricted to TLS by ``link_protocols_block``). Mirrors
+    # the loud-on-misconfig discipline of ``_float_env``,
+    # ``_load_acl_file``, ``resolve_auth_mode``.
     connect = os.getenv("ZENOH_CONNECT")
     listen = os.getenv("ZENOH_LISTEN")
+    # Resolve auth_mode early so endpoint validation uses the same
+    # value the wire-config builder will use below (thread-local
+    # single-flight per review core.py:139).
+    _stashed_mode_early = _acl_config._get_thread_auth_mode()
+    _auth_mode_early = _stashed_mode_early if _stashed_mode_early is not None else _zenoh_config.resolve_auth_mode()
+    _validate_endpoint_schemes(connect, "ZENOH_CONNECT", _auth_mode_early)
+    _validate_endpoint_schemes(listen, "ZENOH_LISTEN", _auth_mode_early)
     if connect:
         endpoints = [e.strip() for e in connect.split(",")]
         config.insert_json5("connect/endpoints", json.dumps(endpoints))
@@ -282,7 +345,16 @@ def _build_config() -> Any:
 
     # mTLS + ACL when auth_mode=mtls. The "none" mode emits everything
     # above except the auth + ACL blocks; it is dev-only.
-    auth_mode = _zenoh_config.resolve_auth_mode()
+    #
+    # Review thread core.py:139: prefer the thread-local auth_mode
+    # stashed by ``Mesh._refuse_under_permissive_default_acl`` so the
+    # gate and the builder see the SAME value, even if
+    # ``STRANDS_MESH_AUTH_MODE`` flips between the two reads (concurrent
+    # test fixture, plugin mutating os.environ). Falls back to a fresh
+    # resolve when no Mesh.start is on the stack (direct
+    # ``get_session()`` callers, integration tests).
+    _stashed_mode = _acl_config._get_thread_auth_mode()
+    auth_mode = _stashed_mode if _stashed_mode is not None else _zenoh_config.resolve_auth_mode()
     if auth_mode == "mtls":
         blocks.append(_zenoh_config.link_protocols_block())
         blocks.append(_zenoh_config.tls_block())
@@ -412,7 +484,6 @@ def get_session() -> Any | None:
                 exc,
             )
             mesh_port = 7447
-        local_ep = f"tcp/127.0.0.1:{mesh_port}"
 
         connect_env = os.getenv("ZENOH_CONNECT")
         listen_env = os.getenv("ZENOH_LISTEN")
@@ -558,7 +629,6 @@ def _get_zenoh_session_directly() -> Any | None:
                 exc,
             )
             mesh_port = 7447
-        local_ep = f"tcp/127.0.0.1:{mesh_port}"
 
         connect_env = os.getenv("ZENOH_CONNECT")
         listen_env = os.getenv("ZENOH_LISTEN")

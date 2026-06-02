@@ -131,12 +131,12 @@ class Mesh(SensorLoopsMixin):
             auth_mode = "mtls"
             is_permissive = True
             resolved = None
-        # Stash the snapshot on the Mesh instance and on a thread-local
-        # used by ``session._build_config`` so the wire-config builder
-        # picks up the SAME dict the gate inspected. Issue #218 +
-        # review thread session.py:296.
+        # Stash the snapshot AND auth_mode on a thread-local used by
+        # ``session._build_config`` so the wire-config builder picks up
+        # the SAME dict the gate inspected AND the SAME auth_mode value.
+        # Issue #218 + review threads session.py:296 / core.py:139.
         self._acl_snapshot = resolved
-        _acl_config._set_thread_snapshot(resolved)
+        _acl_config._set_thread_snapshot(resolved, auth_mode=auth_mode)
         if auth_mode != "mtls":
             return False
         if not is_permissive:

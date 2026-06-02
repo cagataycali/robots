@@ -149,8 +149,21 @@ class TestACLFileLoader:
             ac.resolve_acl("strands")
 
     def test_default_allow_logs_warning(self, monkeypatch, tmp_path, caplog):
+        # Per review thread _acl_config.py:199, the warning is scoped to
+        # ``allow + non-empty rules`` (the actual blacklist anti-pattern).
+        # ``allow + empty rules`` is the documented permissive-default
+        # shape and does NOT warn.
         bad = self._good_acl_dict()
         bad["default_permission"] = "allow"
+        bad["rules"] = [
+            {
+                "id": "blacklisted",
+                "key_exprs": ["strands/secret/**"],
+                "messages": ["put"],
+                "flows": ["ingress"],
+                "permission": "deny",
+            }
+        ]
         path = tmp_path / "blacklist.json"
         path.write_text(json.dumps(bad))
         monkeypatch.setenv("STRANDS_MESH_ACL_FILE", str(path))
