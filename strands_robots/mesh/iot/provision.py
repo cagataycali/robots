@@ -550,11 +550,16 @@ def teardown_thing(
     # principals per call (AWS IoT default page size); a Thing with more
     # than 8 attached certs (rare but possible after multiple
     # provision_robot calls) would otherwise leave certs orphaned.
+    # Fallback to single-call when the client doesn't expose
+    # ``get_paginator`` (test mocks, custom shims).
+    principals: list[str] = []
     try:
-        paginator = iot.get_paginator("list_thing_principals")
-        principals: list[str] = []
-        for page in paginator.paginate(thingName=thing_name):
-            principals.extend(page.get("principals", []))
+        if hasattr(iot, "get_paginator"):
+            paginator = iot.get_paginator("list_thing_principals")
+            for page in paginator.paginate(thingName=thing_name):
+                principals.extend(page.get("principals", []))
+        else:
+            principals = list(iot.list_thing_principals(thingName=thing_name).get("principals", []))
     except iot.exceptions.ResourceNotFoundException:
         logger.info("[teardown] thing %s not found, skipping", thing_name)
         principals = []
