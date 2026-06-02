@@ -406,7 +406,7 @@ class Mesh(SensorLoopsMixin):
         ImportError handling.
         """
         try:
-            from strands_robots.mesh import _acl_config, _zenoh_config
+            from strands_robots.mesh import _acl_config, _zenoh_config  # type: ignore[attr-defined,import-untyped]
         except ImportError:
             # PR-3 (`_acl_config` + `_zenoh_config`) not on the tree yet
             # -- gate is INACTIVE on PR-6 standalone. The gate becomes
@@ -886,7 +886,7 @@ class Mesh(SensorLoopsMixin):
         # Operators using ``=1`` / ``=yes`` / ``=on`` get the same
         # behaviour as ``=true``; bad values fail-loud rather than
         # silently re-enabling camera publishing on a privacy flag.
-        from strands_robots.mesh._zenoh_config import _bool_env as _zc_bool_env
+        from strands_robots.mesh._zenoh_config import _bool_env as _zc_bool_env  # type: ignore[import-untyped]
 
         if _zc_bool_env("STRANDS_MESH_CAMERA_DISABLED", default=False):
             return
