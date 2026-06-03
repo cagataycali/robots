@@ -566,3 +566,180 @@ def test_zenoh_config_env_var_matrix_documents_three_vars() -> None:
         assert anchor in matrix, (
             f"AGENTS.md (#86) env-var rule: {var} must be documented in the module-level matrix as {anchor!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# R4 (review thread session.py:517) -- ``auth_mode`` race at
+# ``get_session()`` boundary. The fix at session.py:517-518 closes the
+# same race R3-follow-through closed at the ``_build_config`` boundary,
+# but one frame up: ``get_session`` and ``_get_zenoh_session_directly``
+# now prefer the thread-local ``auth_mode`` stash before falling back
+# to ``resolve_auth_mode()``.
+# ---------------------------------------------------------------------------
+
+
+def test_get_session_prefers_thread_local_auth_mode_over_env() -> None:
+    """When ``Mesh.start`` has stashed ``auth_mode`` on the
+    thread-local, ``get_session()`` MUST honour it for listener-scheme
+    selection rather than re-reading ``STRANDS_MESH_AUTH_MODE`` from
+    ``os.environ``. Without this, the listener endpoint scheme
+    (composed in ``get_session``) and the wire-config block (composed
+    in ``_build_config``) can disagree if the env var flips between the
+    two reads.
+    """
+    import inspect
+
+    from strands_robots.mesh import session as _session
+
+    src = inspect.getsource(_session.get_session)
+    # The thread-local read must precede the resolve_auth_mode fallback
+    # in source order. Both helpers must appear in get_session.
+    assert "_get_thread_auth_mode" in src, (
+        "get_session must consult the thread-local auth_mode stash before "
+        "falling back to resolve_auth_mode (review thread session.py:517)"
+    )
+    # Specifically the conditional fallback shape must be present, not
+    # the bare unconditional resolve_auth_mode read R3 left in place.
+    assert "_stashed_mode if _stashed_mode is not None else resolve_auth_mode()" in src, (
+        "get_session must use the conditional fallback "
+        "_stashed_mode if _stashed_mode is not None else resolve_auth_mode()"
+    )
+
+
+def test_get_zenoh_session_directly_prefers_thread_local_auth_mode_over_env() -> None:
+    """Mirror of the get_session check for the duplicate path
+    ``_get_zenoh_session_directly`` (review thread session.py:517 also
+    notes this site one frame up)."""
+    import inspect
+
+    from strands_robots.mesh import session as _session
+
+    src = inspect.getsource(_session._get_zenoh_session_directly)
+    assert "_get_thread_auth_mode" in src, (
+        "_get_zenoh_session_directly must consult the thread-local auth_mode "
+        "stash before falling back to resolve_auth_mode (review thread session.py:517)"
+    )
+    assert "_stashed_mode if _stashed_mode is not None else resolve_auth_mode()" in src, (
+        "_get_zenoh_session_directly must use the conditional fallback "
+        "_stashed_mode if _stashed_mode is not None else resolve_auth_mode()"
+    )
+
+
+def test_get_session_skips_resolve_auth_mode_when_thread_local_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Behavioural pin: when a thread-local ``auth_mode`` snapshot is
+    present, ``get_session`` MUST NOT call ``resolve_auth_mode``
+    (which would re-read ``STRANDS_MESH_AUTH_MODE`` from
+    ``os.environ`` and risk seeing a mid-call mutation). Mirrors the
+    same invariant ``_build_config`` honours at session.py:328-329.
+
+    Implementation strategy: monkeypatch ``_zenoh_config.resolve_auth_mode``
+    to a counter, prime the thread-local, then enter ``get_session``
+    via a fake ``zenoh.open`` that raises early so we exit before the
+    ``_build_config`` -> ``zenoh.open`` chain. The single assertion
+    is that ``resolve_auth_mode`` is NOT called for the scheme-
+    selection block when the thread-local is primed.
+    """
+    from strands_robots.mesh import _acl_config, _zenoh_config
+    from strands_robots.mesh import session as _session
+
+    _acl_config._clear_thread_snapshot()
+    _session._SESSION = None
+    _session._SESSION_REFS = 0
+
+    call_count = {"n": 0}
+
+    def counting_resolve() -> str:
+        call_count["n"] += 1
+        return "mtls"
+
+    monkeypatch.setattr(_zenoh_config, "resolve_auth_mode", counting_resolve)
+    # Env says mtls; the thread-local will override with "none".
+    monkeypatch.setenv("STRANDS_MESH_AUTH_MODE", "mtls")
+    monkeypatch.delenv("ZENOH_CONNECT", raising=False)
+    monkeypatch.delenv("ZENOH_LISTEN", raising=False)
+
+    # Force _build_config to short-circuit so we measure the
+    # resolve_auth_mode call from the get_session scheme-selection
+    # block in isolation.
+    sentinel_exc = RuntimeError("short-circuit for test")
+
+    def _short_circuit_build():
+        raise sentinel_exc
+
+    monkeypatch.setattr(_session, "_build_config", _short_circuit_build)
+
+    _acl_config._set_thread_snapshot(None, auth_mode="none")
+    try:
+        try:
+            _session.get_session()
+        except RuntimeError as exc:
+            if exc is not sentinel_exc:
+                raise
+    finally:
+        _acl_config._clear_thread_snapshot()
+        _session._SESSION = None
+        _session._SESSION_REFS = 0
+
+    # The thread-local says "none"; resolve_auth_mode MUST NOT have
+    # been called in the scheme-selection block. (It also is not
+    # called by the short-circuited _build_config.)
+    assert call_count["n"] == 0, (
+        "get_session must skip resolve_auth_mode when the thread-local "
+        f"auth_mode is primed; saw {call_count['n']} call(s) "
+        "(review thread session.py:517)"
+    )
+
+
+def test_get_session_falls_back_to_resolve_auth_mode_without_thread_local(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Symmetric pin: a direct ``get_session`` caller (no
+    ``Mesh.start`` priming the thread-local) MUST still resolve
+    ``auth_mode`` from the env via ``resolve_auth_mode`` -- the
+    legacy contract is preserved by the conditional fallback.
+    """
+    from strands_robots.mesh import _acl_config, _zenoh_config
+    from strands_robots.mesh import session as _session
+
+    _acl_config._clear_thread_snapshot()
+    _session._SESSION = None
+    _session._SESSION_REFS = 0
+
+    call_count = {"n": 0}
+
+    def counting_resolve() -> str:
+        call_count["n"] += 1
+        return "none"
+
+    monkeypatch.setattr(_zenoh_config, "resolve_auth_mode", counting_resolve)
+    monkeypatch.setenv("STRANDS_MESH_AUTH_MODE", "none")
+    monkeypatch.setenv("STRANDS_MESH_I_KNOW_THIS_IS_INSECURE", "1")
+    monkeypatch.delenv("ZENOH_CONNECT", raising=False)
+    monkeypatch.delenv("ZENOH_LISTEN", raising=False)
+
+    sentinel_exc = RuntimeError("short-circuit for test")
+
+    def _short_circuit_build():
+        raise sentinel_exc
+
+    monkeypatch.setattr(_session, "_build_config", _short_circuit_build)
+
+    try:
+        try:
+            _session.get_session()
+        except RuntimeError as exc:
+            if exc is not sentinel_exc:
+                raise
+    finally:
+        _session._SESSION = None
+        _session._SESSION_REFS = 0
+
+    # Without a thread-local, exactly one resolve_auth_mode call from
+    # the scheme-selection block (the short-circuited _build_config
+    # never reaches its own resolve site).
+    assert call_count["n"] == 1, (
+        "get_session must call resolve_auth_mode exactly once when no "
+        f"thread-local auth_mode is primed; saw {call_count['n']} call(s)"
+    )

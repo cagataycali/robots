@@ -503,6 +503,7 @@ def get_session() -> Any | None:
         # plain ``tcp/...`` otherwise) so ``transport/link/protocols``
         # restriction does not produce an unusable session.
         if not connect_env and not listen_env:
+            from strands_robots.mesh import _acl_config
             from strands_robots.mesh._zenoh_config import resolve_auth_mode
 
             # Loud-on-misconfig: if STRANDS_MESH_AUTH_MODE is set to
@@ -514,7 +515,21 @@ def get_session() -> Any | None:
             # invokes resolve_auth_mode() again unconditionally).
             # Aligns with the loud-on-misconfig posture of _float_env
             # and _load_acl_file. Addressed in PR-224 R1.
-            _auth_mode = resolve_auth_mode()
+            #
+            # R4 (review thread session.py:517): prefer the thread-local
+            # ``auth_mode`` stash from ``Mesh.start``. This is the same
+            # one-resolve-per-Mesh.start invariant ``_build_config``
+            # already honours at line 328-329; without it, the listener
+            # endpoint scheme (composed here) and the wire-config block
+            # (composed inside ``_build_config``) can disagree if
+            # ``STRANDS_MESH_AUTH_MODE`` flips between the two reads
+            # (concurrent test fixture, plugin mutating ``os.environ``,
+            # or ``Mesh.start`` clearing the snapshot mid-call). Direct
+            # callers of ``get_session()`` without ``Mesh.start``
+            # priming the snapshot fall through to ``resolve_auth_mode``
+            # (the legacy contract).
+            _stashed_mode = _acl_config._get_thread_auth_mode()
+            _auth_mode = _stashed_mode if _stashed_mode is not None else resolve_auth_mode()
             scheme = "tls" if _auth_mode == "mtls" else "tcp"
             local_ep = f"{scheme}/127.0.0.1:{mesh_port}"
 
@@ -635,6 +650,7 @@ def _get_zenoh_session_directly() -> Any | None:
 
         if not connect_env and not listen_env:
             # (See get_session above for full rationale.)
+            from strands_robots.mesh import _acl_config
             from strands_robots.mesh._zenoh_config import resolve_auth_mode
 
             # Loud-on-misconfig: if STRANDS_MESH_AUTH_MODE is set to
@@ -646,7 +662,14 @@ def _get_zenoh_session_directly() -> Any | None:
             # invokes resolve_auth_mode() again unconditionally).
             # Aligns with the loud-on-misconfig posture of _float_env
             # and _load_acl_file. Addressed in PR-224 R1.
-            _auth_mode = resolve_auth_mode()
+            #
+            # R4 (review thread session.py:517): prefer the thread-local
+            # ``auth_mode`` stash. Mirrors the same fix at the
+            # ``get_session`` boundary upstairs and the
+            # ``_build_config`` boundary at line 328-329. See full
+            # rationale on the upstream copy.
+            _stashed_mode = _acl_config._get_thread_auth_mode()
+            _auth_mode = _stashed_mode if _stashed_mode is not None else resolve_auth_mode()
             scheme = "tls" if _auth_mode == "mtls" else "tcp"
             local_ep = f"{scheme}/127.0.0.1:{mesh_port}"
 
