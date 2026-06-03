@@ -1100,7 +1100,15 @@ def log_safety_event(event_type: str, peer_id: str, payload: dict[str, Any]) -> 
             if sig is not None:
                 record["sig"] = sig
 
-    line = json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n"
+    try:
+        line = json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n"
+    except (TypeError, ValueError) as exc:
+        logger.warning(
+            "[audit] could not serialise record for peer_id=%r: %s -- record dropped",
+            peer_id,
+            exc,
+        )
+        return
     path = audit_log_path()
 
     with _WRITE_LOCK:
