@@ -7,9 +7,17 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import numpy as np
+import pytest
 
-from strands_robots.mesh.iot.camera_offload import (
+# numpy is only used by three frame-encoding tests below. Use
+# pytest.importorskip so this module is collected (and the bulk
+# of the suite still runs) on environments that ship without numpy.
+# AGENTS.md > Review Learnings (#85): test import paths must match
+# production -- the camera_offload production code does not require
+# numpy at module-import time, so neither should this file.
+np = pytest.importorskip("numpy")
+
+from strands_robots.mesh.iot.camera_offload import (  # noqa: E402  # importorskip must precede
     CameraOffloader,
     enable_for_mesh,
 )

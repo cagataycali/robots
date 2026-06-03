@@ -349,7 +349,7 @@ def _validate_thing_name(thing_name: str) -> None:
     """
     if not isinstance(thing_name, str) or not thing_name:
         raise ValueError(f"thing_name must be a non-empty string, got {thing_name!r}")
-    if not _THING_NAME_RE.match(thing_name):
+    if not _THING_NAME_RE.fullmatch(thing_name):
         raise ValueError(
             f"thing_name={thing_name!r} contains invalid characters; "
             "allowed: ASCII letters, digits, '-', '_'; max 128 chars."

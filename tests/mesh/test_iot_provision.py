@@ -474,3 +474,48 @@ class TestThingNameStrictSubset:
 
         with pytest.raises(ValueError, match="invalid characters"):
             provision._validate_thing_name("robot.01")
+
+
+class TestValidateThingNameFullmatch:
+    """Regression: ``_validate_thing_name`` must use ``re.fullmatch`` so a
+    trailing newline / CR / form-feed / EOL character is rejected.
+
+    ``re.match(r'^[a-zA-Z0-9_-]{1,128}$', s)`` accepts ``'robot\\n'``
+    because in non-MULTILINE mode ``$`` matches *just before a trailing
+    newline*. The PR description for #228 explicitly claims the regex
+    is "anchored, not just `match`" — these tests pin that contract.
+
+    A bypass surface exists wherever ``thing_name`` is interpolated
+    into a filesystem path or an AWS API call (cert files under
+    ``cert_dir``, IoT topic ARNs, S3 keys via ``mesh.peer_id``).
+    """
+
+    def test_trailing_newline_rejected(self):
+        from strands_robots.mesh.iot import provision
+
+        with pytest.raises(ValueError, match="invalid characters"):
+            provision._validate_thing_name("robot\n")
+
+    def test_trailing_carriage_return_rejected(self):
+        from strands_robots.mesh.iot import provision
+
+        with pytest.raises(ValueError, match="invalid characters"):
+            provision._validate_thing_name("robot\r")
+
+    def test_embedded_newline_rejected(self):
+        from strands_robots.mesh.iot import provision
+
+        with pytest.raises(ValueError, match="invalid characters"):
+            provision._validate_thing_name("robot\nfoo")
+
+    def test_trailing_tab_rejected(self):
+        from strands_robots.mesh.iot import provision
+
+        with pytest.raises(ValueError, match="invalid characters"):
+            provision._validate_thing_name("robot\t")
+
+    def test_trailing_form_feed_rejected(self):
+        from strands_robots.mesh.iot import provision
+
+        with pytest.raises(ValueError, match="invalid characters"):
+            provision._validate_thing_name("robot\x0c")
