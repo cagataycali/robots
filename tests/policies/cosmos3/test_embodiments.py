@@ -3,7 +3,6 @@
 import pytest
 
 from strands_robots.policies.cosmos3.embodiments import (
-    EMBODIMENTS,
     Cosmos3Embodiment,
     get_embodiment,
     list_embodiments,

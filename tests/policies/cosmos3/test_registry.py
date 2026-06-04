@@ -1,7 +1,5 @@
 """Cosmos 3 registry + factory resolution tests."""
 
-import numpy as np
-
 from strands_robots.policies import create_policy, list_providers
 from strands_robots.policies.cosmos3 import Cosmos3Policy
 from strands_robots.policies.cosmos3.client import Cosmos3WebsocketClient
