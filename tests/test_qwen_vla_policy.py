@@ -50,6 +50,8 @@ def _make_service_policy(data_config, action_response, **kwargs):
     policy._default_instruction = None
     policy._local_model = None
     policy._mode = "service"
+    policy._flatten_to_joints = False
+    policy._robot_state_keys = []
     obs_map = kwargs.get("observation_mapping")
     act_map = kwargs.get("action_mapping")
     policy._obs_mapping = (
@@ -183,3 +185,63 @@ class TestPolicyMeta:
         policy = _make_service_policy("so100", {})
         with pytest.raises(ValueError, match="instruction"):
             policy.get_actions_sync({"single_arm": np.zeros(6)}, "")
+
+
+class TestFlattenToJoints:
+    """The sim-compatibility path: grouped action vectors -> per-joint scalars.
+
+    Surfaced by actually driving the MuJoCo sim, whose so100 exposes 6 per-joint
+    actuators (Rotation..Jaw) and rejects grouped vector ctrl values.
+    """
+
+    def test_set_robot_state_keys_enables_flatten(self):
+        policy = _make_service_policy("so100", {})
+        assert policy._flatten_to_joints is False
+        policy.set_robot_state_keys(["Rotation", "Pitch", "Elbow", "Wrist_Pitch", "Wrist_Roll", "Jaw"])
+        assert policy._flatten_to_joints is True
+        assert len(policy._robot_state_keys) == 6
+
+    def test_flatten_grouped_to_scalars(self):
+        # so100 model emits single_arm(6) + gripper(1) = 7 channels.
+        resp = {
+            "action.single_arm": np.tile(np.arange(6, dtype=np.float32), (4, 1)),
+            "action.gripper": np.full((4, 1), 9.0, np.float32),
+        }
+        policy = _make_service_policy("so100", resp)
+        joints = ["Rotation", "Pitch", "Elbow", "Wrist_Pitch", "Wrist_Roll", "Jaw"]
+        policy.set_robot_state_keys(joints)
+        actions = policy.get_actions_sync({"single_arm": np.zeros(6), "gripper": np.zeros(1)}, "x")
+        # Each step must now be 6 scalar (per-joint) values, NOT grouped vectors.
+        step = actions[0]
+        assert set(step.keys()) == set(joints)
+        for v in step.values():
+            assert isinstance(v, float)
+        # single_arm (0..5) maps to the first 6 joints in order.
+        assert step["Rotation"] == 0.0
+        assert step["Jaw"] == 5.0  # 6th channel = single_arm[5] (gripper is the 7th, dropped at 6 joints)
+
+    def test_flatten_takes_valid_prefix_of_padded_chunk(self):
+        # A unified K=32 chunk (zero-padded) -> first 6 valid channels to 6 joints.
+        resp = {"action": np.tile(np.arange(32, dtype=np.float32), (4, 1))}
+        policy = _make_service_policy("so100", resp)
+        joints = ["j0", "j1", "j2", "j3", "j4", "j5"]
+        policy.set_robot_state_keys(joints)
+        actions = policy.get_actions_sync({"single_arm": np.zeros(6), "gripper": np.zeros(1)}, "x")
+        assert sorted(actions[0].keys()) == sorted(joints)
+        assert all(isinstance(v, float) for v in actions[0].values())
+
+    def test_sim_obs_bridge_uses_default_camera_and_joint_state(self):
+        # When obs is keyed by joint names + a 'default' RGB cam (the MuJoCo
+        # schema), _build_observation must auto-bridge instead of warning.
+        resp = {"action.single_arm": np.zeros((4, 6), np.float32), "action.gripper": np.zeros((4, 1), np.float32)}
+        policy = _make_service_policy("so100", resp)
+        joints = ["Rotation", "Pitch", "Elbow", "Wrist_Pitch", "Wrist_Roll", "Jaw"]
+        policy.set_robot_state_keys(joints)
+        sim_obs = {**{j: 0.1 * i for i, j in enumerate(joints)}, "default": np.zeros((48, 64, 3), np.uint8)}
+        built = policy._build_observation(sim_obs, "pick up the cube")
+        # The 'default' camera became the embodiment's primary view tag.
+        assert len(built["video"]) == 1
+        assert next(iter(built["video"].values())).shape == (1, 1, 48, 64, 3)
+        # The per-joint scalars were assembled into one state vector.
+        assert len(built["state"]) == 1
+        assert next(iter(built["state"].values())).shape[-1] == 6

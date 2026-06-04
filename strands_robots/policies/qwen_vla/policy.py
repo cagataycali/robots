@@ -185,6 +185,7 @@ class QwenVlaPolicy(Policy):
         action_mapping: dict[str, str] | None = None,
         language_key: str = "task",
         instruction: str | None = None,
+        flatten_to_joints: bool = False,
         **kwargs,
     ):
         self.data_config = load_data_config(data_config)
@@ -193,6 +194,13 @@ class QwenVlaPolicy(Policy):
         self.denoising_steps = denoising_steps
         self._language_key = language_key
         self._default_instruction = instruction
+        # When True (or when set_robot_state_keys gives a flat per-joint
+        # list), grouped action vectors are flattened into one scalar per
+        # robot joint - required to drive per-joint actuators like the
+        # MuJoCo sim's so100 (Rotation, Pitch, ... Jaw). See
+        # set_robot_state_keys / _flatten_to_joints.
+        self._flatten_to_joints = flatten_to_joints
+        self._robot_state_keys: list[str] = []
 
         self._local_model: Any = None
         self._client: QwenVlaInferenceClient | None = None
@@ -267,7 +275,22 @@ class QwenVlaPolicy(Policy):
         return True
 
     def set_robot_state_keys(self, robot_state_keys: list[str]) -> None:
-        """No-op. Explicit mappings handle robot<->model key translation."""
+        """Record the robot's per-joint actuator names (from the sim/hardware).
+
+        The simulation calls this with the robot's flat joint-name list
+        (e.g. ``["Rotation", "Pitch", "Elbow", "Wrist_Pitch", "Wrist_Roll",
+        "Jaw"]`` for so100). When set, :meth:`get_actions` flattens the
+        model's grouped action vectors into one scalar per joint, in order,
+        so the per-joint actuator interface (``data.ctrl[i] = scalar``)
+        accepts them directly. Without this the grouped vectors would be
+        rejected by per-joint backends - the exact failure surfaced when
+        driving the MuJoCo sim. Passing a non-empty list implicitly enables
+        ``flatten_to_joints``.
+        """
+        self._robot_state_keys = list(robot_state_keys)
+        if robot_state_keys:
+            self._flatten_to_joints = True
+            logger.info("Qwen-VLA will flatten actions to %d robot joints: %s", len(robot_state_keys), robot_state_keys)
 
     def reset(self, seed: int | None = None) -> None:
         """Per-episode reset (the #187 reproducibility contract).
@@ -323,8 +346,12 @@ class QwenVlaPolicy(Policy):
         if not instr:
             raise ValueError("get_actions requires an instruction (none provided and no default set)")
         if self._mode == "local":
-            return self._local_get_actions(observation_dict, instr)
-        return self._service_get_actions(observation_dict, instr)
+            actions = self._local_get_actions(observation_dict, instr)
+        else:
+            actions = self._service_get_actions(observation_dict, instr)
+        if self._flatten_to_joints and self._robot_state_keys:
+            actions = self._flatten_actions_to_joints(actions)
+        return actions
 
     # Observation building
 
@@ -336,21 +363,46 @@ class QwenVlaPolicy(Policy):
         pack video + state into ``{view_tag: ndarray}`` and ``{state_key:
         ndarray}`` plus the rendered prompt under the language key.
         """
+        # Detect a per-joint sim observation: the robot obs is keyed by the
+        # actual joint names (from set_robot_state_keys) + camera frames, not by
+        # the data_config's grouped state/video keys. In that case we auto-bridge
+        # rather than warn-and-drop - making the provider usable in the MuJoCo
+        # sim out of the box.
+        sim_mode = bool(self._flatten_to_joints and self._robot_state_keys)
+
         video_dict: dict[str, np.ndarray] = {}
         for robot_key, model_key in self._obs_mapping.video.items():
             if robot_key in robot_obs:
                 # Resolve the paper's camera view token for this video key.
                 view_tag = self.data_config.image_view_tags.get(f"video.{model_key}", model_key)
                 video_dict[view_tag] = _to_video_batch(robot_obs[robot_key])
-            else:
+            elif not sim_mode:
                 logger.warning("Robot camera '%s' missing in observation", robot_key)
+        # Sim fallback: use whatever camera frame(s) the sim actually rendered
+        # (e.g. the MuJoCo "default" cam) under the embodiment's primary view tag.
+        if sim_mode and not video_dict:
+            primary_tag = next(iter(self.data_config.image_view_tags.values()), "ego")
+            for k, v in robot_obs.items():
+                arr = np.asarray(v)
+                if arr.ndim == 3 and arr.shape[-1] == 3:
+                    video_dict[primary_tag] = _to_video_batch(arr)
+                    break
 
         state_dict: dict[str, np.ndarray] = {}
         for robot_key, model_key in self._obs_mapping.state.items():
             if robot_key in robot_obs:
                 state_dict[model_key] = _to_state_batch(robot_obs[robot_key])
-            else:
+            elif not sim_mode:
                 logger.warning("Robot state '%s' missing in observation", robot_key)
+        # Sim fallback: assemble a single flat state vector from the per-joint
+        # scalars the sim provides, in joint order, under the first state key.
+        if sim_mode and not state_dict:
+            joint_vals = [float(robot_obs[j]) for j in self._robot_state_keys if j in robot_obs]
+            if joint_vals:
+                first_state_key = (
+                    self.data_config.state_keys[0].removeprefix("state.") if self.data_config.state_keys else "state"
+                )
+                state_dict[first_state_key] = _to_state_batch(np.asarray(joint_vals, dtype=np.float32))
 
         prompt = self.data_config.embodiment_prompt(instruction)
 
@@ -427,6 +479,53 @@ class QwenVlaPolicy(Policy):
             start = i * width
             end = start + width if i < n - 1 else total
             out[fam] = chunk[:, start:end]
+        return out
+
+    def _flatten_actions_to_joints(self, actions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Flatten grouped action vectors into one scalar per robot joint.
+
+        Concatenates each timestep's mapped action values (in action_mapping
+        order, scalars and vectors alike) and assigns them positionally to the
+        robot's joint names recorded by :meth:`set_robot_state_keys`. This
+        bridges the model's grouped action layout (e.g. ``single_arm`` 6-vec +
+        ``gripper`` 1-vec) to a per-joint actuator interface (so100's
+        ``Rotation, Pitch, Elbow, Wrist_Pitch, Wrist_Roll, Jaw``).
+
+        If the concatenated width does not match the joint count, the overlap
+        is used and a one-time warning is logged (no silent truncation of
+        intent): extra model channels are dropped, missing joints are left
+        unset so the backend keeps their last command.
+        """
+        joints = self._robot_state_keys
+        out: list[dict[str, Any]] = []
+        warned = False
+        for step in actions:
+            flat: list[float] = []
+            for model_key in self._action_mapping.actions:
+                robot_key = self._action_mapping.actions[model_key]
+                if robot_key in step:
+                    v = step[robot_key]
+                elif model_key in step:
+                    v = step[model_key]
+                else:
+                    continue
+                arr = np.atleast_1d(np.asarray(v, dtype=np.float32))
+                flat.extend(arr.tolist())
+            # The unified Y[H,K] is zero-padded (section 2.4): the leading
+            # channels are the valid action dims, the tail is padding. A flat
+            # vector WIDER than the joint count is expected - take the valid
+            # leading prefix. Only warn when the model produced FEWER channels
+            # than joints (genuinely under-specified).
+            if len(flat) < len(joints) and not warned:
+                logger.warning(
+                    "Qwen-VLA flatten: model produced %d action channels but robot has %d joints; "
+                    "leaving %d joints unset (backend keeps last command)",
+                    len(flat),
+                    len(joints),
+                    len(joints) - len(flat),
+                )
+                warned = True
+            out.append({joints[i]: float(flat[i]) for i in range(min(len(flat), len(joints)))})
         return out
 
     # LOCAL inference
