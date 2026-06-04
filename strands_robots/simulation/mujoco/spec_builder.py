@@ -420,7 +420,7 @@ class SpecBuilder:
         # second coplanar infinite plane at z=0 with a different material causes
         # severe depth-buffer Z-fighting (the floor renders as a flickering
         # checker/triangle mess). Remove the robot scene's plane(s) so exactly
-        # one ground plane survives. See #319.
+        # one ground plane survives. See #320.
         _plane_geoms = [g for g in robot_spec.geoms if g.type == mujoco.mjtGeom.mjGEOM_PLANE]
         for _g in _plane_geoms:
             robot_spec.delete(_g)
