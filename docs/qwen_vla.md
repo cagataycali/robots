@@ -136,6 +136,68 @@ The tool validates every input against allowlists (no shell metacharacters in
 |---|---|
 | `QWEN_VLA_API_TOKEN` | ZMQ auth token for SERVICE mode (sent with each request). |
 
+## Training (4-stage recipe)
+
+Install the training extra:
+
+```bash
+pip install 'strands-robots[qwen-vla-train]'   # adds torch, transformers, accelerate
+```
+
+The recipe is T2A -> CPT -> SFT -> RL (arXiv:2605.30280v2 sections 3-4):
+
+| Stage | Module | Produces | Key knobs |
+|---|---|---|---|
+| 1. T2A | `stage1_t2a.run_t2a` | DiT warm-start | VLM frozen, no images, Sigmoid-Normal t |
+| 2. CPT | `stage2_cpt.run_cpt` | Qwen-VLA-Base | joint VLM+DiT, Beta t, VL 0.1/action 1.0 |
+| 3. SFT | `stage3_sft.run_sft` | Qwen-VLA (SFT) | multi-task + teleop, H=16 manip / 8 nav |
+| 4. RL  | `stage4_rl.run_rl` | Qwen-VLA-Instruct | PPO+GAE on sim success, value-head 20x LR |
+
+```python
+from strands_robots.training.qwen_vla import T2AConfig, run_t2a, get_embodiment_tag
+
+cfg = T2AConfig(max_steps=2000, batch_size=64)
+summary = run_t2a(cfg, get_embodiment_tag("so100"), action_channels=7, model=loaded_model)
+```
+
+### Data pipeline (Phase B)
+
+- `data/embodiment_tags.py` - single source of truth for prompt fields,
+  derived from the inference data configs (train/eval prompts are identical).
+- `data/lerobot_adapter.py` - `LeRobotAdapter` turns a `DatasetRecorder`
+  frame + action chunk into the unified `(video, state, language, Y[HxK],
+  mask)` training sample.
+- `data/language_action.py` - `LanguageActionGenerator` produces the
+  text-only T2A corpus (6 task families, analytic EEF goals, no renderer).
+- `data/mixture.py` - `MixtureSampler` reproduces the Table-1 proportions
+  (manip 74.2% / nav 7.5% / ego 6% / sim 3.7% / VL 8.5%); up-weight your own
+  collected data via overrides.
+
+### Driving training from an agent
+
+```python
+from strands_robots.tools import qwen_vla_train
+
+qwen_vla_train(action="stages")                       # list the 4 stages
+qwen_vla_train(action="config", stage="cpt")          # show resolved config
+qwen_vla_train(action="corpus", embodiment="so100")   # preview T2A corpus
+qwen_vla_train(action="hotswap", checkpoint="ckpt/new",  # redeploy into a server
+               server_host="127.0.0.1", server_port=5556)
+```
+
+### Continuous collect -> tune -> redeploy loop (Phase G)
+
+1. Fleet collects demos via `DatasetRecorder` -> LeRobotDatasets.
+2. `LeRobotAdapter` + `run_sft` / `run_rl` post-tune the checkpoint.
+3. `qwen_vla_train(action="hotswap", ...)` swaps the new checkpoint into the
+   running `QwenVlaPolicy` SERVICE instances - no downtime.
+
+### Configuration (training env vars)
+
+| Variable | Purpose |
+|---|---|
+| `STRANDS_QWEN_VLA_WIRE_LOG` | (reserved) dump SERVICE wire payloads for offline diff. |
+
 ## Status
 
 - **Phase A (inference provider)**: shipped — prompt, data configs, normalize,
