@@ -1,0 +1,167 @@
+"""Unit tests for Cosmos3Policy — no GPU, no server (mocked client)."""
+
+import asyncio
+
+import numpy as np
+import pytest
+
+from strands_robots.policies.base import Policy
+from strands_robots.policies.cosmos3 import Cosmos3Policy
+from strands_robots.policies.cosmos3.policy import _to_image_uint8
+
+
+class FakeClient:
+    """Stand-in for Cosmos3WebsocketClient — records the obs, returns a chunk."""
+
+    def __init__(self, action: np.ndarray):
+        self._action = action
+        self.last_obs = None
+        self.reset_calls = 0
+
+    def infer(self, observation):
+        self.last_obs = observation
+        return {"action": self._action, "server_timing": {"infer_ms": 1.0}}
+
+    def reset(self):
+        self.reset_calls += 1
+
+    def get_server_metadata(self):
+        return {}
+
+
+def _droid_chunk(t=32, d=8):
+    rng = np.random.default_rng(0)
+    return rng.standard_normal((t, d)).astype(np.float32)
+
+
+def _make_droid_policy(action=None, **kw):
+    action = _droid_chunk() if action is None else action
+    return Cosmos3Policy(embodiment="droid", client=FakeClient(action), **kw)
+
+
+# ── Contract / construction ──────────────────────────────────────────────
+
+
+def test_is_a_policy():
+    p = _make_droid_policy()
+    assert isinstance(p, Policy)
+    assert p.provider_name == "cosmos3"
+    assert p.requires_images is True
+
+
+def test_invalid_action_space_raises():
+    with pytest.raises(ValueError, match="no action_space"):
+        Cosmos3Policy(embodiment="droid", action_space="not_a_space", client=FakeClient(_droid_chunk()))
+
+
+def test_default_action_space_from_embodiment():
+    assert _make_droid_policy().action_space == "joint_pos"
+    p = Cosmos3Policy(embodiment="av", client=FakeClient(_droid_chunk(60, 9)))
+    assert p.action_space == "midtrain"
+
+
+# ── get_actions: shape + naming ──────────────────────────────────────────
+
+
+def _obs_with_state_and_images():
+    img = np.zeros((360, 640, 3), dtype=np.uint8)
+    obs = {
+        "observation/wrist_image_left": img,
+        "observation/exterior_image_1_left": img,
+        "observation/exterior_image_2_left": img,
+    }
+    # robot joint state (scalar floats) + gripper
+    for i in range(7):
+        obs[f"joint_{i}"] = float(i) * 0.1
+    obs["gripper"] = 0.5
+    return obs
+
+
+def test_get_actions_returns_chunk_of_dicts():
+    p = _make_droid_policy()
+    p.set_robot_state_keys([f"joint_{i}" for i in range(7)] + ["gripper"])
+    out = asyncio.run(p.get_actions(_obs_with_state_and_images(), "pick up the cube"))
+    assert isinstance(out, list)
+    assert len(out) == 32
+    step = out[0]
+    assert set(step.keys()) == {f"joint_{i}" for i in range(7)} | {"gripper"}
+    assert all(isinstance(v, float) for v in step.values())
+
+
+def test_get_actions_builds_correct_server_obs():
+    client = FakeClient(_droid_chunk())
+    p = Cosmos3Policy(embodiment="droid", client=client)
+    p.set_robot_state_keys([f"joint_{i}" for i in range(7)] + ["gripper"])
+    asyncio.run(p.get_actions(_obs_with_state_and_images(), "do it"))
+    obs = client.last_obs
+    assert obs["prompt"] == "do it"
+    assert obs["observation/wrist_image_left"].shape == (360, 640, 3)
+    assert obs["observation/wrist_image_left"].dtype == np.uint8
+    assert obs["observation/joint_position"].shape == (1, 7)
+    assert obs["observation/gripper_position"].shape == (1, 1)
+
+
+def test_action_mapping_renames_columns():
+    p = Cosmos3Policy(
+        embodiment="droid",
+        client=FakeClient(_droid_chunk()),
+        action_mapping={"joint_0": "shoulder_pan", "gripper": "grip"},
+    )
+    p.set_robot_state_keys([f"joint_{i}" for i in range(7)] + ["gripper"])
+    out = asyncio.run(p.get_actions(_obs_with_state_and_images(), "x"))
+    assert "shoulder_pan" in out[0]
+    assert "grip" in out[0]
+    assert "joint_0" not in out[0]
+
+
+def test_default_prompt_used_when_instruction_empty():
+    client = FakeClient(_droid_chunk())
+    p = Cosmos3Policy(embodiment="droid", client=client, prompt="default task")
+    p.set_robot_state_keys([f"joint_{i}" for i in range(7)] + ["gripper"])
+    asyncio.run(p.get_actions(_obs_with_state_and_images(), ""))
+    assert client.last_obs["prompt"] == "default task"
+
+
+# ── reset / sync wrapper ─────────────────────────────────────────────────
+
+
+def test_reset_forwards_to_client():
+    client = FakeClient(_droid_chunk())
+    p = Cosmos3Policy(embodiment="droid", client=client)
+    p.reset(seed=7)
+    assert client.reset_calls == 1
+
+
+def test_get_actions_sync_wrapper():
+    p = _make_droid_policy()
+    p.set_robot_state_keys([f"joint_{i}" for i in range(7)] + ["gripper"])
+    out = p.get_actions_sync(_obs_with_state_and_images(), "go")
+    assert len(out) == 32
+
+
+# ── helpers / unpacking edge cases ───────────────────────────────────────
+
+
+def test_unpack_1d_action_promoted():
+    p = _make_droid_policy()
+    steps = p._unpack_actions(np.zeros(8, dtype=np.float32))
+    assert len(steps) == 1
+    assert len(steps[0]) == 8
+
+
+def test_unpack_unexpected_width_pads_names():
+    p = _make_droid_policy()
+    steps = p._unpack_actions(np.zeros((2, 10), dtype=np.float32))  # wider than 8
+    assert "action_8" in steps[0] and "action_9" in steps[0]
+
+
+def test_to_image_uint8_coerces_float():
+    img = np.ones((4, 4, 3), dtype=np.float32) * 300.0
+    out = _to_image_uint8(img)
+    assert out.dtype == np.uint8
+    assert out.max() == 255  # clipped
+
+
+def test_to_image_uint8_rejects_bad_shape():
+    with pytest.raises(ValueError, match="H, W, 3"):
+        _to_image_uint8(np.zeros((4, 4), dtype=np.uint8))

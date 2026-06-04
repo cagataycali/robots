@@ -273,3 +273,17 @@ framework robolab WebSocket server returns a `(32, 8)` action chunk
 (32 steps x [7 joints + gripper]) from image+state+instruction. Warm latency
 ~3.1s/chunk. See `scratch/PHASE1_RESULTS.md` + `scratch/c3_policy_client_smoke.py`.
 Gate cleared -> proceed to Phase 2 (client + embodiments + mocked tests).
+
+## Phase 2+3 status (2026-06-04) — ✅ COMPLETE
+
+Built the full Cosmos3 policy provider:
+- `strands_robots/policies/cosmos3/{__init__,policy,client,embodiments}.py`
+- registry entry in `policies.json` + export in `policies/__init__.py`
+- `[cosmos3-service]` extra in pyproject (openpi-client)
+- `tests/policies/cosmos3/` — 25 unit tests, all green (mocked, no GPU)
+- live OpenPI client<->server roundtrip through Cosmos3Policy verified
+- `PR.md` with color-coded mermaid diagrams, embodiment table, usage +
+  MuJoCo episode-recording walkthrough.
+
+`create_policy("cosmos3", embodiment="droid", port=8000)` is ready to use.
+Gate cleared -> Phase 4 (full hardware rollout in sim) + Phase 5 (docs/examples).

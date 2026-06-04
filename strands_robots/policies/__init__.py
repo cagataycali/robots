@@ -35,9 +35,16 @@ from strands_robots.policies.factory import (
 )
 from strands_robots.policies.mock import MockPolicy
 
+# Cosmos3Policy is import-safe (numpy only; openpi is lazy in the client).
+try:
+    from strands_robots.policies.cosmos3 import Cosmos3Policy
+except Exception:  # pragma: no cover - keep policies importable if cosmos3 deps drift
+    Cosmos3Policy = None  # type: ignore[assignment, misc]
+
 __all__ = [
     "Policy",
     "MockPolicy",
+    "Cosmos3Policy",
     "create_policy",
     "register_policy",
     "list_providers",
