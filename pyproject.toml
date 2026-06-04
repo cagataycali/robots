@@ -46,8 +46,12 @@ groot-service = [
     "msgpack>=1.0.0,<2.0.0",
 ]
 cosmos3-service = [
-    # OpenPI msgpack+NumPy WebSocket client for the Cosmos 3 RoboLab policy server
-    # (cosmos_framework.scripts.action_policy_server_robolab).
+    # OpenPI msgpack+NumPy WebSocket client for the Cosmos 3 RoboLab policy
+    # server (cosmos_framework.scripts.action_policy_server_robolab).
+    #
+    # NOT included in [all]: openpi-client pins numpy<2.0.0, which is mutually
+    # exclusive with lerobot (numpy>=2.0.0). Install on its own when you need
+    # Cosmos 3 service-mode inference:  pip install 'strands-robots[cosmos3-service]'
     "openpi-client",
     "msgpack>=1.0.0,<2.0.0",
     "websockets>=12.0",
@@ -86,7 +90,6 @@ mesh-iot = [
 ]
 all = [
     "strands-robots[groot-service]",
-    "strands-robots[cosmos3-service]",
     "strands-robots[lerobot]",
     "strands-robots[sim-mujoco]",
     "strands-robots[mesh]",
