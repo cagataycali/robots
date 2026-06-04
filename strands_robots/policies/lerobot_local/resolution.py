@@ -231,7 +231,11 @@ def resolve_policy_class_by_name(policy_type: str) -> type[Any]:
         from lerobot.policies.factory import get_policy_class
 
         return get_policy_class(policy_type)
-    except (ImportError, AttributeError, RuntimeError):
+    except (ImportError, AttributeError, RuntimeError, TypeError):
+        # TypeError catches lerobot 0.5.x's groot dataclass ordering bug under
+        # transformers 5.x (non-default `backbone_cfg` after defaulted fields
+        # in `groot_n1.py:GR00TN15Config`). Falls through to the canonical
+        # ImportError below, matching the docstring's contract.
         pass
 
     # Strategy 4: PreTrainedPolicy - only if it's NOT abstract

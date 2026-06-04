@@ -670,6 +670,39 @@ class TestPolicyResolution:
             result = resolve_policy_class_by_name("act")
             assert result is mock_policy_class
 
+    def test_resolve_strategy3_typeerror_falls_through_to_importerror(self):
+        # Pin: lerobot 0.5.x's groot config raises TypeError at module-import
+        # time under transformers 5.x (non-default `backbone_cfg` after
+        # defaulted fields in `groot_n1.py:GR00TN15Config`). The Strategy-3
+        # except tuple must include TypeError so resolution falls through to
+        # the canonical ImportError, instead of leaking the upstream TypeError.
+        # Pre-fix code raises TypeError; post-fix raises ImportError.
+        import sys
+
+        # Strategies 1+2+4 mocked to ImportError via importlib.import_module;
+        # Strategy 3 uses a `from ... import` statement and goes through the
+        # normal Python import machinery, so we inject a sys.modules sentinel
+        # that raises TypeError on attribute access (matches the upstream
+        # dataclass-creation failure shape).
+        class _RaisingFactoryModule:
+            def __getattr__(self, name):
+                raise TypeError("non-default argument 'backbone_cfg' follows default argument")
+
+        saved = sys.modules.get("lerobot.policies.factory")
+        sys.modules["lerobot.policies.factory"] = _RaisingFactoryModule()
+        try:
+            with patch(
+                "importlib.import_module",
+                side_effect=ImportError("mock: lerobot.policies submodule unavailable"),
+            ):
+                with pytest.raises(ImportError):
+                    resolve_policy_class_by_name("nonexistent_policy_type_xyz")
+        finally:
+            if saved is None:
+                sys.modules.pop("lerobot.policies.factory", None)
+            else:
+                sys.modules["lerobot.policies.factory"] = saved
+
     def test_read_policy_type_from_local_config(self, tmp_path):
 
         config_dir = tmp_path / "model"
