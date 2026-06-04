@@ -11,6 +11,9 @@ Security (PR #90/#92 lessons):
       config name, ``host`` must be a literal IP / hostname with no shell
       metacharacters, ``model_path`` is validated through ``validate_save_path``
       so it cannot point at a protected system directory or use ``..``.
+    * ``server_command``'s argv[0] is matched against ``validate_executable``
+      (Python / uv launcher allowlist) before any subprocess is spawned, so
+      a coerced caller cannot select an arbitrary binary as the entrypoint.
     * Servers bind to ``127.0.0.1`` by default - never ``0.0.0.0`` - so an
       accidentally-started server is not exposed on the network.
     * No value is interpolated into a shell string; subprocess is invoked with
@@ -27,7 +30,7 @@ from typing import Any
 from strands import tool
 
 from strands_robots.policies.qwen_vla.data_config import DATA_CONFIG_MAP
-from strands_robots.tools._path_validation import _HOST_RE, validate_save_path
+from strands_robots.tools._path_validation import _HOST_RE, validate_executable, validate_save_path
 
 # Default ZMQ port for Qwen-VLA (distinct from GR00T's 5555 so both can run).
 _DEFAULT_PORT = 5556
@@ -145,6 +148,10 @@ def qwen_vla_inference(
             (space-separated). Defaults to the upstream
             ``python -m qwen_vla.serve`` once released; until then ``start``
             returns a clear not-available error unless this is supplied.
+            argv[0] is restricted to a Python / uv launcher allowlist
+            (``python``, ``python3``, ``python3.<minor>``, ``uv``, optionally
+            as an absolute path) - any other entrypoint is rejected before
+            ``subprocess.Popen`` is reached (PR #92 LLM-input-safety baseline).
 
     Returns:
         A structured status dict: ``{"status": "success"|"error", ...}``.
@@ -281,6 +288,18 @@ def _start_service(
     base_argv = shlex.split(server_command)
     if not base_argv:
         return {"status": "error", "message": "server_command must not be empty"}
+
+    # ``server_command`` is an agent-callable parameter that flows directly
+    # into ``subprocess.Popen``'s argv[0]. Even with ``shell=False``, argv[0]
+    # is the executable path, so an unvalidated value lets a coerced caller
+    # pick an arbitrary binary. AGENTS.md > Review Learnings (PR #92) >
+    # 'LLM Input Safety' requires a regex allowlist on every parameter that
+    # reaches subprocess; restrict argv[0] to the documented Python/uv
+    # launcher shapes (``python -m qwen_vla.serve`` is the canonical form).
+    try:
+        validate_executable(base_argv[0], label="server_command[0]")
+    except ValueError as e:
+        return {"status": "error", "message": str(e)}
 
     argv = [
         *base_argv,

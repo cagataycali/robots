@@ -138,3 +138,52 @@ def validate_host(host: str, *, label: str = "host") -> str:
     if not _HOST_RE.match(host):
         raise ValueError(f"{label} {host!r} contains invalid characters (allowed: letters, digits, '.', '-', ':', '_')")
     return host
+
+
+# Subprocess-executable allowlist (PR #92 LLM-input-safety baseline). Tool
+# parameters that flow into ``subprocess.Popen``'s argv[0] must be matched
+# against this regex before launch; a malicious or LLM-coerced caller could
+# otherwise pick an arbitrary binary as the entrypoint even though
+# ``shell=False`` neutralises shell injection.
+#
+# The allowlist matches the documented Qwen-VLA / GR00T entrypoints only:
+#   * ``python``, ``python3``, ``python3.<minor>``
+#   * ``uv``
+#   * absolute paths whose basename satisfies the same rule
+#     (e.g. ``/usr/bin/python3.12``, ``/opt/venv/bin/uv``)
+_EXECUTABLE_BASENAME_RE = re.compile(r"^(?:python(?:3(?:\.\d+)?)?|uv)$")
+_EXECUTABLE_PATH_RE = re.compile(r"^[A-Za-z0-9_./-]+$")
+
+
+def validate_executable(executable: str, *, label: str = "executable") -> str:
+    """Validate a subprocess-entrypoint executable supplied by a tool caller.
+
+    Accepts only Python-launcher style entrypoints: bare ``python`` /
+    ``python3`` / ``python3.<minor>`` / ``uv``, or absolute paths whose
+    basename matches the same rule (e.g. ``/usr/bin/python3.12``).
+
+    Args:
+        executable: The argv[0] value to validate.
+        label: Field name for error messages.
+
+    Returns:
+        The validated executable unchanged.
+
+    Raises:
+        ValueError: If the executable is empty, contains characters outside
+            the path allowlist, or its basename is not on the allowlist.
+    """
+    if not executable:
+        raise ValueError(f"{label} must not be empty")
+    if not _EXECUTABLE_PATH_RE.match(executable):
+        raise ValueError(
+            f"{label} {executable!r} contains invalid characters (allowed: letters, digits, '.', '_', '-', '/')"
+        )
+    basename = executable.rsplit("/", 1)[-1]
+    if not _EXECUTABLE_BASENAME_RE.match(basename):
+        raise ValueError(
+            f"{label} {executable!r} is not on the entrypoint allowlist "
+            "(must be python / python3 / python3.<minor> / uv, optionally "
+            "as an absolute path)"
+        )
+    return executable
