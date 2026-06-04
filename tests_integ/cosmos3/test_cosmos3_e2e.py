@@ -27,9 +27,7 @@ import pytest
 openpi_client = pytest.importorskip(
     "openpi_client", reason="openpi-client not installed - pip install 'strands-robots[cosmos3-service]'"
 )
-pytest.importorskip(
-    "openpi_client.base_policy", reason="openpi-client too old (no base_policy)"
-)
+pytest.importorskip("openpi_client.base_policy", reason="openpi-client too old (no base_policy)")
 # Server side ships in openpi-server (or full openpi). Skip if absent.
 try:
     from openpi_server.websocket_policy_server import WebsocketPolicyServer
@@ -48,7 +46,7 @@ from openpi_client.base_policy import BasePolicy  # noqa: E402
 
 from strands_robots.policies import create_policy  # noqa: E402
 
-_CHUNK = (np.arange(32 * 8, dtype=np.float32).reshape(32, 8) * 0.01)
+_CHUNK = np.arange(32 * 8, dtype=np.float32).reshape(32, 8) * 0.01
 
 
 def _free_port() -> int:
@@ -79,9 +77,7 @@ class _FakeDroidPolicy(BasePolicy):
 @pytest.fixture()
 def server_port():
     port = _free_port()
-    server = WebsocketPolicyServer(
-        policy=_FakeDroidPolicy(), host="localhost", port=port, metadata={"ok": True}
-    )
+    server = WebsocketPolicyServer(policy=_FakeDroidPolicy(), host="localhost", port=port, metadata={"ok": True})
     t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()
     time.sleep(1.0)  # let the event loop bind
@@ -115,9 +111,7 @@ def test_real_wire_roundtrip_through_cosmos3_policy(server_port):
 
 
 def test_robot_panda_mapping_over_real_wire(server_port):
-    policy = create_policy(
-        "cosmos3", embodiment="droid", host="localhost", port=server_port, robot="panda"
-    )
+    policy = create_policy("cosmos3", embodiment="droid", host="localhost", port=server_port, robot="panda")
     policy.set_robot_state_keys([f"joint_{i}" for i in range(7)] + ["gripper"])
     chunk = policy.get_actions_sync(_obs(), "go")
     assert set(chunk[0]) == {f"joint{i}" for i in range(1, 8)} | {"finger_joint1"}

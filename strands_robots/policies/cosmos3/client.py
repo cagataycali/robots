@@ -58,9 +58,7 @@ class Cosmos3WebsocketClient:
         """Connect on first use (lazy)."""
         if self._client is None:
             mod = _load_openpi_client()
-            self._client = mod.WebsocketClientPolicy(
-                host=self.host, port=self.port, api_key=self.api_key
-            )
+            self._client = mod.WebsocketClientPolicy(host=self.host, port=self.port, api_key=self.api_key)
             logger.info("Cosmos3WebsocketClient connected to ws://%s:%s", self.host, self.port)
         return self._client
 

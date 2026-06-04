@@ -179,7 +179,7 @@ def test_missing_gripper_raises_no_silent_default():
     client = FakeClient(_droid_chunk())
     p = Cosmos3Policy(embodiment="droid", client=client)
     p.set_robot_state_keys([f"joint_{i}" for i in range(7)])  # 7 joints, NO gripper
-    obs = {f"observation/wrist_image_left": np.zeros((360, 640, 3), np.uint8)}
+    obs = {"observation/wrist_image_left": np.zeros((360, 640, 3), np.uint8)}
     obs.update({f"joint_{i}": 0.1 * i for i in range(7)})
     obs["observation/wrist_image_left"] = np.zeros((360, 640, 3), np.uint8)
     with pytest.raises(ValueError, match="gripper"):
@@ -192,7 +192,9 @@ def test_missing_joints_raises():
     p.set_robot_state_keys(["joint_0", "joint_1", "gripper"])  # only 2 joints
     obs = {
         "observation/wrist_image_left": np.zeros((360, 640, 3), np.uint8),
-        "joint_0": 0.0, "joint_1": 0.1, "gripper": 0.5,
+        "joint_0": 0.0,
+        "joint_1": 0.1,
+        "gripper": 0.5,
     }
     with pytest.raises(ValueError, match="7 joint state"):
         asyncio.run(p.get_actions(obs, "go"))

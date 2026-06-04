@@ -27,6 +27,11 @@ Usage::
 """
 
 from strands_robots.policies.base import Policy
+
+# Cosmos3Policy is import-safe: it depends only on numpy; the optional
+# ``openpi-client`` dependency is imported lazily inside the WebSocket client.
+# Imported unconditionally, exactly like MockPolicy above.
+from strands_robots.policies.cosmos3 import Cosmos3Policy
 from strands_robots.policies.factory import (
     UntrustedRemoteCodeError,
     create_policy,
@@ -34,11 +39,6 @@ from strands_robots.policies.factory import (
     register_policy,
 )
 from strands_robots.policies.mock import MockPolicy
-
-# Cosmos3Policy is import-safe: it depends only on numpy; the optional
-# ``openpi-client`` dependency is imported lazily inside the WebSocket client.
-# Imported unconditionally, exactly like MockPolicy above.
-from strands_robots.policies.cosmos3 import Cosmos3Policy
 
 __all__ = [
     "Policy",

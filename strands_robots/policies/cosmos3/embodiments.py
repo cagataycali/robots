@@ -82,8 +82,15 @@ EMBODIMENTS: dict[str, Cosmos3Embodiment] = {
         action_layouts={
             # EE 9D pose delta (3D translation + 6D rotation) + 1D grasp.
             "midtrain": [
-                "tx", "ty", "tz",
-                "r0", "r1", "r2", "r3", "r4", "r5",
+                "tx",
+                "ty",
+                "tz",
+                "r0",
+                "r1",
+                "r2",
+                "r3",
+                "r4",
+                "r5",
                 "grasp",
             ],
         },

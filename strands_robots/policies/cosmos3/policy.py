@@ -166,10 +166,13 @@ class Cosmos3Policy(Policy):
         self._client = client or Cosmos3WebsocketClient(host=host, port=port, api_key=api_key)
         logger.info(
             "Cosmos3Policy ready [embodiment=%s domain=%s action_space=%s chunk=%d ws://%s:%d]",
-            self.embodiment.name, self.embodiment.domain_name, self.action_space,
-            self.embodiment.action_chunk_size, host, port,
+            self.embodiment.name,
+            self.embodiment.domain_name,
+            self.action_space,
+            self.embodiment.action_chunk_size,
+            host,
+            port,
         )
-
 
     @property
     def provider_name(self) -> str:
@@ -231,7 +234,6 @@ class Cosmos3Policy(Policy):
         action = np.asarray(result["action"])
         return self._unpack_actions(action)
 
-
     def _default_obs_mapping(self) -> dict[str, str]:
         """Identity-ish default: assume robot obs already uses server keys.
 
@@ -241,9 +243,7 @@ class Cosmos3Policy(Policy):
         """
         return {k: k for k in self.embodiment.camera_keys}
 
-    def _build_server_observation(
-        self, robot_obs: dict[str, Any], prompt: str
-    ) -> dict[str, Any]:
+    def _build_server_observation(self, robot_obs: dict[str, Any], prompt: str) -> dict[str, Any]:
         """Translate the flat robot observation into the server's OpenPI dict."""
         obs: dict[str, Any] = {"prompt": prompt}
 
@@ -290,9 +290,7 @@ class Cosmos3Policy(Policy):
         gripper: float | None = None
 
         # Use declared state-key order when available.
-        state_keys = self.robot_state_keys or [
-            k for k, v in robot_obs.items() if np.isscalar(v) or np.ndim(v) == 0
-        ]
+        state_keys = self.robot_state_keys or [k for k, v in robot_obs.items() if np.isscalar(v) or np.ndim(v) == 0]
         present = [k for k in state_keys if k in robot_obs]
         # First pass: pull any explicitly gripper/finger-named key as the gripper.
         gripper_keys = [k for k in present if ("gripper" in k.lower() or "finger" in k.lower())]
@@ -332,7 +330,6 @@ class Cosmos3Policy(Policy):
                     f"Available observation keys: {sorted(robot_obs)}"
                 )
             obs["observation/gripper_position"] = np.asarray([[gripper]], dtype=np.float32)
-
 
     def _action_column_names(self, width: int) -> list[str]:
         """Resolve the per-column action names for the active action space."""
