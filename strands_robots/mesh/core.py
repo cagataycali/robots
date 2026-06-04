@@ -2591,6 +2591,25 @@ class Mesh(SensorLoopsMixin):
             self._safety_sn[key] = sn
             return sn
 
+    def _strip_wire_zid(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Return a copy of *payload* without the wire-level ``source_zid``.
+
+        Used on the legacy ``put()`` fallback path: when no Zenoh
+        ``SourceInfo`` can be attached, a body that still advertises
+        ``source_zid`` is hard-rejected by the receiver (wire-absent +
+        body-present == "publisher stripped SourceInfo"). Removing the
+        body field makes the envelope match the receiver's
+        transport-agnostic accept-without-zid contract (availability
+        fix). The body-level HMAC binding still holds for non-Zenoh
+        transports because those never bound ``source_zid`` in the
+        first place (``_local_session_zid()`` returned ``None``).
+        """
+        if "source_zid" not in payload:
+            return payload
+        clean = dict(payload)
+        clean.pop("source_zid", None)
+        return clean
+
     def _publish_safety_envelope(self, key: str, payload: dict[str, Any]) -> None:
         """Publish a safety envelope with TLS-bound source attribution.
 
@@ -2621,12 +2640,12 @@ class Mesh(SensorLoopsMixin):
         """
         pub = self._safety_publisher_for(key)
         if pub is None:
-            put(key, payload)
+            put(key, self._strip_wire_zid(payload))
             return
         try:
             import zenoh
         except ImportError:
-            put(key, payload)
+            put(key, self._strip_wire_zid(payload))
             return
         sn = self._next_safety_sn(key)
         try:
@@ -2634,7 +2653,7 @@ class Mesh(SensorLoopsMixin):
         except (TypeError, AttributeError):
             # zenoh-python without the SourceInfo ctor (very old build);
             # fall back to body-level binding only.
-            put(key, payload)
+            put(key, self._strip_wire_zid(payload))
             return
         try:
             pub.put(json.dumps(payload).encode(), source_info=source_info)
@@ -2645,7 +2664,7 @@ class Mesh(SensorLoopsMixin):
                 key,
                 exc,
             )
-            put(key, payload)
+            put(key, self._strip_wire_zid(payload))
 
     def publish(self, key: str, payload: dict[str, Any]) -> None:
         """Publish *payload* on *key* via the mesh transport.

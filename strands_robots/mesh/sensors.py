@@ -366,6 +366,10 @@ class SensorLoopsMixin:
                     if state:
                         self.publish(f"strands/{self.peer_id}/lidar/state", state)
                     last_state_publish = now
+            except NotImplementedError:
+                # MRO contract violation: surface immediately rather than
+                # silently dropping every sensor tick (issue #258).
+                raise
             except Exception as exc:  # noqa: BLE001
                 logger.debug("[mesh] %s: lidar tick error: %s", self.peer_id, exc)
             if self._stop_event.wait(summary_period):
@@ -408,6 +412,10 @@ class SensorLoopsMixin:
                 if hands:
                     for hand_name, hand_data in hands.items():
                         self.publish(f"strands/{self.peer_id}/hand/{hand_name}/state", hand_data)
+            except NotImplementedError:
+                # MRO contract violation: surface immediately rather than
+                # silently dropping every sensor tick (issue #258).
+                raise
             except Exception as exc:  # noqa: BLE001
                 logger.debug("[mesh] %s: hand tick error: %s", self.peer_id, exc)
             if self._stop_event.wait(period):
@@ -477,7 +485,11 @@ class SensorLoopsMixin:
         event: dict[str, Any] = {
             "peer_id": self.peer_id,
             "type": event_type,
-            "severity": severity,
+            # Issue #272: uniform on the wire so a subscriber on
+            # strands/+/safety/event cannot use per-branch severity as a
+            # content-channel oracle for the rejection reason. The real
+            # severity is preserved only in the local audit record below.
+            "severity": "info",
             "payload": payload or {},
             "t": time.time(),
         }
