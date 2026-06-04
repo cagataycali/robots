@@ -1,0 +1,109 @@
+{
+  "configs": {
+    "so100": {
+      "video_keys": ["video.webcam"],
+      "state_keys": ["state.single_arm", "state.gripper"],
+      "action_keys": ["action.single_arm", "action.gripper"],
+      "language_keys": ["annotation.human.task_description"],
+      "robot_tag": "so100",
+      "arm_config": "single",
+      "has_waist": false,
+      "has_mobile_base": false,
+      "fps": 30,
+      "chunk_size": 16,
+      "image_view_tags": {"video.webcam": "ego"},
+      "observation_indices": [0],
+      "action_indices": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+    },
+    "so100_dualcam": {
+      "_extends": "so100",
+      "video_keys": ["video.front", "video.wrist"],
+      "image_view_tags": {"video.front": "ego", "video.wrist": "cam_right_wrist"}
+    },
+    "aloha_bimanual": {
+      "video_keys": ["video.cam_high", "video.cam_left_wrist", "video.cam_right_wrist"],
+      "state_keys": ["state.left_arm", "state.right_arm", "state.left_gripper", "state.right_gripper"],
+      "action_keys": ["action.left_arm", "action.right_arm", "action.left_gripper", "action.right_gripper"],
+      "language_keys": ["annotation.human.task_description"],
+      "robot_tag": "aloha",
+      "arm_config": "dual",
+      "has_waist": false,
+      "has_mobile_base": false,
+      "fps": 50,
+      "chunk_size": 16,
+      "image_view_tags": {"video.cam_high": "ego", "video.cam_left_wrist": "cam_left_wrist", "video.cam_right_wrist": "cam_right_wrist"},
+      "observation_indices": [0],
+      "action_indices": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+    },
+    "widowx": {
+      "video_keys": ["video.image_0"],
+      "state_keys": ["state.x", "state.y", "state.z", "state.roll", "state.pitch", "state.yaw", "state.gripper"],
+      "action_keys": ["action.x", "action.y", "action.z", "action.roll", "action.pitch", "action.yaw", "action.gripper"],
+      "language_keys": ["annotation.human.task_description"],
+      "robot_tag": "widowx",
+      "arm_config": "single",
+      "has_waist": false,
+      "has_mobile_base": false,
+      "fps": 5,
+      "chunk_size": 16,
+      "image_view_tags": {"video.image_0": "ego"},
+      "observation_indices": [0],
+      "action_indices": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+    },
+    "unitree_g1": {
+      "video_keys": ["video.ego_view"],
+      "state_keys": ["state.left_arm", "state.right_arm", "state.left_hand", "state.right_hand", "state.waist"],
+      "action_keys": ["action.left_arm", "action.right_arm", "action.left_hand", "action.right_hand", "action.waist"],
+      "language_keys": ["annotation.human.task_description"],
+      "robot_tag": "unitree_g1",
+      "arm_config": "dual",
+      "has_waist": true,
+      "has_mobile_base": false,
+      "fps": 30,
+      "chunk_size": 16,
+      "image_view_tags": {"video.ego_view": "ego"},
+      "observation_indices": [0],
+      "action_indices": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+    },
+    "unitree_g1_mobile": {
+      "_extends": "unitree_g1",
+      "has_mobile_base": true,
+      "action_keys": ["action.left_arm", "action.right_arm", "action.left_hand", "action.right_hand", "action.waist", "action.base_velocity"]
+    },
+    "franka_panda": {
+      "video_keys": ["video.front", "video.wrist"],
+      "state_keys": ["state.joint_position", "state.gripper"],
+      "action_keys": ["action.joint_position", "action.gripper"],
+      "language_keys": ["annotation.human.task_description"],
+      "robot_tag": "franka_panda",
+      "arm_config": "single",
+      "has_waist": false,
+      "has_mobile_base": false,
+      "fps": 20,
+      "chunk_size": 16,
+      "image_view_tags": {"video.front": "ego", "video.wrist": "cam_right_wrist"},
+      "observation_indices": [0],
+      "action_indices": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+    },
+    "libero_panda": {
+      "video_keys": ["video.image", "video.wrist_image"],
+      "state_keys": ["state.x", "state.y", "state.z", "state.roll", "state.pitch", "state.yaw", "state.gripper"],
+      "action_keys": ["action.x", "action.y", "action.z", "action.roll", "action.pitch", "action.yaw", "action.gripper"],
+      "language_keys": ["annotation.human.task_description"],
+      "robot_tag": "franka_panda",
+      "arm_config": "single",
+      "has_waist": false,
+      "has_mobile_base": false,
+      "fps": 20,
+      "chunk_size": 16,
+      "image_view_tags": {"video.image": "ego", "video.wrist_image": "cam_right_wrist"},
+      "observation_indices": [0],
+      "action_indices": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+    }
+  },
+  "aliases": {
+    "aloha": "aloha_bimanual",
+    "g1": "unitree_g1",
+    "libero": "libero_panda"
+  }
+}
