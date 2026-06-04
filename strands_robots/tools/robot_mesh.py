@@ -251,7 +251,7 @@ def _resolve_mesh(target: str) -> Any | None:
 @tool(context=True)
 def robot_mesh(
     action: str,
-    tool_context: ToolContext,
+    tool_context: ToolContext | None = None,
     target: str = "",
     instruction: str = "",
     command: str = "",
@@ -349,6 +349,12 @@ def robot_mesh(
     # "y" / "n") is delivered back outside the LLM's tool-argument flow,
     # so an injected prompt cannot smuggle approval.
     if action in _INTERRUPT_REQUIRED:
+        if tool_context is None:
+            _audit_tool_action(action, target, False, "interrupt unavailable: no tool_context")
+            return _err(
+                f"action '{action}' requires a human-in-the-loop interrupt, "
+                "but no tool_context is available in this calling context."
+            )
         try:
             response = tool_context.interrupt(
                 f"robot_mesh-{action}-approval",
