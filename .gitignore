@@ -10,4 +10,3 @@ dist
 MUJOCO_LOG.TXT
 .coverage.*
 AGENTS.local.md
-.venv-test/
