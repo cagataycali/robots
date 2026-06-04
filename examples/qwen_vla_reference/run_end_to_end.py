@@ -51,8 +51,17 @@ CKPT_DIR = HERE / "_ckpts"
 CKPT_DIR.mkdir(exist_ok=True)
 EMB = get_embodiment_tag("so100")
 ACTION_CHANNELS = 7  # so100: 6-dof arm + gripper
-PORT = 5566
 HOST = "127.0.0.1"
+
+
+def _free_port():
+    import socket as _s
+    with _s.socket() as s:
+        s.bind((HOST, 0))
+        return s.getsockname()[1]
+
+
+PORT = _free_port()
 
 
 def banner(title):

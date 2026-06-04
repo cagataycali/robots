@@ -25,7 +25,8 @@ runnable reference model (`examples/qwen_vla_reference/`): all 4 training
 stages, both inference modes, and hot-swap redeploy. See
 [Local verification](#local-verification).
 
-- **156 tests** (144 unit + stub/e2e integration), ruff-clean, 0 regressions.
+- **160 tests** (144 unit + 16 integration: stub round-trip, full e2e,
+  multi-embodiment), ruff-clean, 0 regressions.
 
 ---
 
@@ -259,6 +260,18 @@ The value head, trained under PPO+GAE with the clipped surrogate, converges
 toward the exogenous reward target — a faithful (toy-scale) reproduction of
 the Table-11 non-negative-transfer trend.
 
+### Heterogeneous embodiments through one model (live server)
+
+One K=32 model + one ZMQ server, four distinct action layouts unpacked
+correctly via the §2.4 channel mask:
+
+```
+OK so100              H=16 keys=[gripper, single_arm]
+OK aloha_bimanual     H=16 keys=[left_arm, left_gripper, right_arm, right_gripper]
+OK unitree_g1_mobile  H=16 keys=[base_velocity, left_arm, left_hand, right_arm, right_hand, waist]
+OK widowx             H=16 keys=[gripper, pitch, roll, x, y, yaw, z]
+```
+
 > The reference model (`examples/qwen_vla_reference/`) is a **small but genuine**
 > Qwen-VLA architecture (VLM-style conditioning encoder + AdaLN DiT flow-matching
 > action expert + stop-grad value head). It exists so the full pipeline is
@@ -274,6 +287,7 @@ the Table-11 non-negative-transfer trend.
 | Unit (`tests/test_qwen_vla_*.py`) | 144 | ✅ pass |
 | Integration stub (`tests_integ/qwen_vla/test_qwen_vla_inference.py`) | 4 (+1 GPU skip) | ✅ pass |
 | Integration e2e (`tests_integ/qwen_vla/test_qwen_vla_e2e.py`) | 1 GPU | ✅ pass (15.8 s) |
+| Integration multi-embodiment (`...test_qwen_vla_multi_embodiment.py`) | 4 GPU | ✅ pass (7.8 s) |
 | ruff check + format | — | ✅ clean |
 | Pre-existing repo failures touched | 0 | ✅ none |
 
