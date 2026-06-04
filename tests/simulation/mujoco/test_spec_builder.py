@@ -375,3 +375,39 @@ class TestFromSources:
         spec = SpecBuilder.from_file(str(p))
         model = spec.compile()
         assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "y") >= 0
+
+
+def test_attach_robot_strips_robot_scene_ground_plane(tmp_path):
+    """Robot-scene floor planes are stripped on attach to avoid z-fighting (#319).
+
+    A robot MJCF that ships its own ground plane (e.g. the franka_emika_panda
+    scene.xml) must NOT add a second coplanar plane at z=0 when attached into a
+    world that already owns the ``ground`` plane — two coplanar infinite planes
+    cause severe depth-buffer Z-fighting in the renderer.
+    """
+    # A minimal robot MJCF that ships its own floor plane + one body/joint.
+    robot_xml = """
+    <mujoco model="bot">
+      <worldbody>
+        <geom name="floor" type="plane" size="0 0 0.05"/>
+        <body name="link" pos="0 0 0.1">
+          <joint name="j1" type="hinge" axis="0 0 1"/>
+          <geom type="box" size="0.05 0.05 0.05"/>
+        </body>
+      </worldbody>
+    </mujoco>
+    """
+    robot_file = tmp_path / "bot.xml"
+    robot_file.write_text(robot_xml)
+
+    world = SimWorld(ground_plane=True)
+    spec = SpecBuilder.build(world)  # adds exactly one "ground" plane
+    robot = SimRobot(name="arm", urdf_path=str(robot_file), position=[0.0, 0.0, 0.0], orientation=[1.0, 0.0, 0.0, 0.0])
+
+    joint_names = SpecBuilder.attach_robot(spec, robot, str(robot_file))
+    assert "j1" in joint_names  # attach still works (joint discovered)
+
+    model = spec.compile()
+    plane_ids = [g for g in range(model.ngeom) if model.geom_type[g] == mujoco.mjtGeom.mjGEOM_PLANE]
+    assert len(plane_ids) == 1, "exactly one ground plane must survive (no z-fight)"
+    assert mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, plane_ids[0]) == "ground"

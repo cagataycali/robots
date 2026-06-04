@@ -413,6 +413,18 @@ class SpecBuilder:
 
         robot_spec = mujoco.MjSpec.from_file(str(robot_file_path))
 
+        # Strip any ground/floor PLANE geom shipped by the robot's own scene
+        # MJCF (e.g. franka_emika_panda/scene.xml ships
+        # ``<geom name="floor" type="plane" .../>`` at z=0). The world already
+        # owns a single ``ground`` plane (see SpecBuilder.build); attaching a
+        # second coplanar infinite plane at z=0 with a different material causes
+        # severe depth-buffer Z-fighting (the floor renders as a flickering
+        # checker/triangle mess). Remove the robot scene's plane(s) so exactly
+        # one ground plane survives. See #319.
+        _plane_geoms = [g for g in robot_spec.geoms if g.type == mujoco.mjtGeom.mjGEOM_PLANE]
+        for _g in _plane_geoms:
+            robot_spec.delete(_g)
+
         # Collect source joint names BEFORE attach - attach mutates the child
         # spec in-place (the child gets reparented).
         source_joint_names: list[str] = []
