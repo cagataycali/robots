@@ -16,6 +16,8 @@ provided for the actual training loop and is import-guarded behind the
 ``qwen-vla-train`` extra.
 """
 
+from typing import Any
+
 import numpy as np
 
 from strands_robots.training.qwen_vla.config import TimestepDist
@@ -84,12 +86,14 @@ def interpolate(x0: np.ndarray, x1: np.ndarray, t: np.ndarray) -> np.ndarray:
     if t.shape[0] != x0.shape[0]:
         raise ValueError(f"t batch {t.shape[0]} != x0 batch {x0.shape[0]}")
     t_b = t.reshape((-1,) + (1,) * (x0.ndim - 1))
-    return (1.0 - t_b) * x0 + t_b * x1
+    x_t: np.ndarray = (1.0 - t_b) * x0 + t_b * x1
+    return x_t
 
 
 def target_velocity(x0: np.ndarray, x1: np.ndarray) -> np.ndarray:
     """Flow-matching target velocity ``v* = x1 - x0`` (eq. 2)."""
-    return np.asarray(x1, dtype=np.float64) - np.asarray(x0, dtype=np.float64)
+    diff: np.ndarray = np.asarray(x1, dtype=np.float64) - np.asarray(x0, dtype=np.float64)
+    return diff
 
 
 def masked_flow_matching_loss(
@@ -141,7 +145,7 @@ def masked_flow_matching_loss(
     return float(per_sample_loss[valid_samples].mean())
 
 
-def torch_flow_matching_loss(pred_velocity, target_velocity_arr, mask):
+def torch_flow_matching_loss(pred_velocity: Any, target_velocity_arr: Any, mask: Any) -> Any:
     """Torch equivalent of :func:`masked_flow_matching_loss` for the train loop.
 
     Import-guarded: requires the ``qwen-vla-train`` extra (torch). Keeps the
@@ -150,7 +154,7 @@ def torch_flow_matching_loss(pred_velocity, target_velocity_arr, mask):
     """
     from strands_robots.utils import require_optional
 
-    torch = require_optional("torch", extra="qwen-vla-train", purpose="Qwen-VLA flow-matching training")
+    torch: Any = require_optional("torch", extra="qwen-vla-train", purpose="Qwen-VLA flow-matching training")
 
     if mask.dim() == 2:
         mask = mask.unsqueeze(0).expand_as(pred_velocity)

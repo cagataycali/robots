@@ -12,6 +12,7 @@ the model / env objects passed to :func:`run_rl`.
 """
 
 import logging
+from typing import Any
 
 import numpy as np
 
@@ -55,7 +56,7 @@ def clipped_ppo_objective(
     return float(np.minimum(unclipped, clipped).mean())
 
 
-def run_rl(config: RLConfig, *, model=None, env=None):
+def run_rl(config: RLConfig, *, model: Any = None, env: Any = None) -> dict[str, Any]:
     """Run the Stage-4 PPO training loop.
 
     Args:

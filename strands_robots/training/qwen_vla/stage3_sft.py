@@ -10,13 +10,14 @@ Orchestration is torch-gated via :func:`run_sft`.
 """
 
 import logging
+from typing import Any
 
 from strands_robots.training.qwen_vla.config import SFTConfig
 
 logger = logging.getLogger(__name__)
 
 
-def run_sft(config: SFTConfig, *, model=None, dataset=None):
+def run_sft(config: SFTConfig, *, model: Any = None, dataset: Any = None) -> dict[str, Any]:
     """Run the Stage-3 SFT training loop.
 
     Args:

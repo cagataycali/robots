@@ -152,7 +152,7 @@ def to_torch(sample: QwenVlaSample) -> dict[str, Any]:
     """
     from strands_robots.utils import require_optional
 
-    torch = require_optional("torch", extra="qwen-vla-train", purpose="Qwen-VLA training tensors")
+    torch: Any = require_optional("torch", extra="qwen-vla-train", purpose="Qwen-VLA training tensors")
     return {
         "video": {k: torch.from_numpy(v) for k, v in sample.video.items()},
         "state": torch.from_numpy(sample.state),

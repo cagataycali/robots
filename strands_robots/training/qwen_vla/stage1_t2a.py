@@ -10,6 +10,7 @@ import-guarded behind the ``qwen-vla-train`` extra via :func:`run_t2a`.
 """
 
 import logging
+from typing import Any
 
 import numpy as np
 
@@ -34,7 +35,7 @@ def build_t2a_batch(
     *,
     action_channels: int,
     rng: np.random.Generator,
-) -> dict[str, np.ndarray]:
+) -> dict[str, Any]:
     """Assemble one T2A flow-matching training batch (no torch).
 
     Draws ``config.batch_size`` language-action examples, builds the
@@ -73,8 +74,8 @@ def run_t2a(
     embodiment: EmbodimentTag,
     *,
     action_channels: int,
-    model=None,
-):
+    model: Any = None,
+) -> dict[str, Any]:
     """Run the Stage-1 T2A training loop.
 
     Requires the ``qwen-vla-train`` extra (torch) and a model exposing the DiT

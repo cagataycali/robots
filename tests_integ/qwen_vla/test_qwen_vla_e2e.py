@@ -29,7 +29,7 @@ pytestmark = pytest.mark.gpu
 
 
 def test_full_closed_loop():
-    import run_end_to_end as e2e
+    import run_end_to_end as e2e  # type: ignore[import-not-found]
 
     report = e2e.main()
 

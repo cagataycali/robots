@@ -10,6 +10,7 @@ Orchestration is torch-gated via :func:`run_cpt`.
 """
 
 import logging
+from typing import Any
 
 from strands_robots.training.qwen_vla.config import CPTConfig
 from strands_robots.training.qwen_vla.data.mixture import MixtureSampler
@@ -17,7 +18,7 @@ from strands_robots.training.qwen_vla.data.mixture import MixtureSampler
 logger = logging.getLogger(__name__)
 
 
-def run_cpt(config: CPTConfig, *, model=None, data_sources: MixtureSampler | None = None):
+def run_cpt(config: CPTConfig, *, model: Any = None, data_sources: MixtureSampler | None = None) -> dict[str, Any]:
     """Run the Stage-2 CPT training loop (joint VLM + DiT).
 
     Args:
