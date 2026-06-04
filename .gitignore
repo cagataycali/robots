@@ -10,3 +10,4 @@ dist
 MUJOCO_LOG.TXT
 .coverage.*
 AGENTS.local.md
+examples/qwen_vla_reference/_ckpts/

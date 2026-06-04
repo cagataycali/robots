@@ -63,8 +63,9 @@ def build_t2a_batch(
     x_t = interpolate(x0, x1, t)
     target = target_velocity(x0, x1)
     mask = np.stack([build_channel_mask(c=action_channels, k=k, h_task=h, h=h) for _ in examples])
+    prompts = [ex.prompt for ex in examples]
 
-    return {"x_t": x_t, "target": target, "mask": mask, "timesteps": t}
+    return {"x_t": x_t, "target": target, "mask": mask, "timesteps": t, "prompts": prompts}
 
 
 def run_t2a(
@@ -119,11 +120,20 @@ def run_t2a(
     final_loss = float("nan")
     for step in range(config.max_steps):
         batch = build_t2a_batch(generator, embodiment, config, action_channels=action_channels, rng=rng)
-        # The model performs: pred = dit(x_t, t, language_cond); we score with
-        # the same masked CFM loss the NumPy reference validates.
-        pred = model.predict_velocity(batch["x_t"], batch["timesteps"])
-        final_loss = masked_flow_matching_loss(pred, batch["target"], batch["mask"])
-        model.optimizer_step(final_loss)
+        # Preferred path: the model computes its OWN differentiable masked CFM
+        # loss (so the optimizer can backprop) - this is what a real torch model
+        # exposes. We still cross-check against the NumPy reference below.
+        if hasattr(model, "t2a_loss"):
+            loss = model.t2a_loss(
+                batch["x_t"], batch["timesteps"], batch["target"], batch["mask"], batch.get("prompts")
+            )
+            final_loss = model.optimizer_step(loss)
+        else:
+            # Fallback (no-torch reference / smoke): score with the validated
+            # NumPy masked loss and let the model take a generic step.
+            pred = model.predict_velocity(batch["x_t"], batch["timesteps"])
+            final_loss = masked_flow_matching_loss(pred, batch["target"], batch["mask"])
+            model.optimizer_step(final_loss)
         if step % 100 == 0:
             logger.info("T2A step %d/%d loss=%.4f", step, config.max_steps, final_loss)
 
