@@ -400,32 +400,19 @@ class Mesh(SensorLoopsMixin):
         acknowledged the posture and the WARNING contradicting their
         opt-in would be noise.
 
-        Implementation note: when PR-3 (snapshot_acl) is on the tree
-        we use the TOCTOU-safe single-snapshot path; when PR-6 ships
-        standalone (PR-3 not yet merged) we fall back gracefully via
-        ImportError handling.
+        Implementation note: takes a single ACL snapshot via
+        :func:`_acl_config.snapshot_acl` and stashes the result on
+        ``self._acl_snapshot`` so :func:`session._build_config`
+        downstream can reuse the SAME dict (closes the
+        ``Mesh.start`` -> ``_build_config`` TOCTOU window flagged in
+        review at session.py:296).
         """
-        try:
-            from strands_robots.mesh import _acl_config, _zenoh_config  # type: ignore[attr-defined,import-untyped]
-        except ImportError:
-            # PR-3 (`_acl_config` + `_zenoh_config`) not on the tree yet
-            # -- gate is INACTIVE on PR-6 standalone. The gate becomes
-            # active automatically when PR-3 lands and provides the
-            # config helpers. Fail-OPEN (allow start) so PR-6 can be
-            # tested in isolation before PR-3 lands; the production
-            # posture has both PRs and the gate is enforced.
-            return False
+        from strands_robots.mesh import _acl_config, _zenoh_config
 
         try:
             auth_mode = _zenoh_config.resolve_auth_mode()
             namespace = _zenoh_config.resolve_namespace()
-            # Prefer snapshot_acl (PR-3) when available; fall back to
-            # the legacy is_default_acl_in_use call so PR-6 can be
-            # tested standalone before PR-3 lands.
-            if hasattr(_acl_config, "snapshot_acl"):
-                is_permissive, _resolved = _acl_config.snapshot_acl(namespace)
-            else:
-                is_permissive = _acl_config.is_default_acl_in_use(namespace)
+            is_permissive, resolved = _acl_config.snapshot_acl(namespace)
         except ValueError as warn_exc:
             # Narrow tuple per AGENTS.md > Review Learnings (#86):
             # ValueError surfaces bad STRANDS_MESH_AUTH_MODE / unloadable
@@ -439,6 +426,13 @@ class Mesh(SensorLoopsMixin):
             )
             auth_mode = "mtls"
             is_permissive = True
+            resolved = None
+        # Stash the snapshot AND auth_mode on a thread-local used by
+        # ``session._build_config`` so the wire-config builder picks up
+        # the SAME dict the gate inspected AND the SAME auth_mode value.
+        # Issue #218 + review threads session.py:296 / core.py:139.
+        self._acl_snapshot = resolved
+        _acl_config._set_thread_snapshot(resolved, auth_mode=auth_mode)
         if auth_mode != "mtls":
             return False
         if not is_permissive:
@@ -485,12 +479,32 @@ class Mesh(SensorLoopsMixin):
             # wide open" silent-misconfiguration footgun. Operators who
             # explicitly accept the dev/lab posture set
             # STRANDS_MESH_ACCEPT_PERMISSIVE_ACL=1.
-            if self._refuse_under_permissive_default_acl():
-                # Logged at ERROR; mesh stays not-started (mesh.alive == False).
-                # Caller's Robot() construction succeeds; only the wire is gated.
-                return
+            #
+            # Review thread core.py:189 -- the gate stashes a thread-local
+            # snapshot via ``_set_thread_snapshot`` (called inside
+            # ``_refuse_under_permissive_default_acl``) BEFORE deciding
+            # whether to refuse. Wrap both the gate and ``get_session()``
+            # in the same try/finally so the snapshot is cleared on the
+            # refused-start branch too, otherwise a subsequent direct
+            # ``get_session()`` on the same thread (integration test, or
+            # a caller bypassing Mesh) would observe a stale snapshot.
+            from strands_robots.mesh import _acl_config
 
-            session = get_session()
+            try:
+                if self._refuse_under_permissive_default_acl():
+                    # Logged at ERROR; mesh stays not-started (mesh.alive == False).
+                    # Caller's Robot() construction succeeds; only the wire is gated.
+                    return
+                session = get_session()
+            finally:
+                # Snapshot has been consumed by ``session._build_config``
+                # via the thread-local single-flight (issue #218 +
+                # review session.py:296), or we refused to start before
+                # ``get_session`` was reached -- either way, clear it so
+                # the next ``Mesh.start`` (different instance, same
+                # thread) or direct ``get_session()`` call sees fresh
+                # state.
+                _acl_config._clear_thread_snapshot()
             if session is None:
                 logger.debug("[mesh] %s: zenoh unavailable, mesh off", self.peer_id)
                 return
