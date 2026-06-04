@@ -126,6 +126,29 @@ _EMBODIMENT_ALIASES = {
 }
 
 
+# Built-in action mappings: DROID action-layout column -> robot actuator name.
+# The released Cosmos3-Nano-Policy-DROID joint_pos layout is
+# [joint_0..joint_6, gripper]; a MuJoCo Franka/Panda exposes joint1..joint7 +
+# finger_joint1. Pass ``action_mapping=ROBOT_ACTION_MAPPINGS["panda"]`` (or just
+# ``robot="panda"`` sugar in create_policy) so per-step dicts use real actuator
+# names and don't silently miss in ``send_action``.
+ROBOT_ACTION_MAPPINGS: dict[str, dict[str, str]] = {
+    "panda": {
+        **{f"joint_{i}": f"joint{i + 1}" for i in range(7)},  # joint_0->joint1 ... joint_6->joint7
+        "gripper": "finger_joint1",
+    },
+    "franka": {
+        **{f"joint_{i}": f"joint{i + 1}" for i in range(7)},
+        "gripper": "finger_joint1",
+    },
+}
+
+
+def get_robot_action_mapping(robot: str) -> dict[str, str] | None:
+    """Return a built-in DROID-layout -> robot-actuator action_mapping, if known."""
+    return ROBOT_ACTION_MAPPINGS.get(robot.lower().strip())
+
+
 def get_embodiment(name: str) -> Cosmos3Embodiment:
     """Resolve an embodiment by name or alias.
 
@@ -146,6 +169,11 @@ def get_embodiment(name: str) -> Cosmos3Embodiment:
             f"Available: {sorted(EMBODIMENTS)} (+ aliases {sorted(_EMBODIMENT_ALIASES)})"
         )
     return EMBODIMENTS[key]
+
+
+def list_robot_action_mappings() -> list[str]:
+    """List robots with a built-in DROID action mapping."""
+    return sorted(ROBOT_ACTION_MAPPINGS)
 
 
 def list_embodiments() -> list[str]:

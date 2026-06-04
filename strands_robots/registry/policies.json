@@ -74,6 +74,7 @@
                 "action_space",
                 "observation_mapping",
                 "action_mapping",
+                "robot",
                 "prompt",
                 "api_key"
             ],

@@ -35,11 +35,10 @@ from strands_robots.policies.factory import (
 )
 from strands_robots.policies.mock import MockPolicy
 
-# Cosmos3Policy is import-safe (numpy only; openpi is lazy in the client).
-try:
-    from strands_robots.policies.cosmos3 import Cosmos3Policy
-except Exception:  # pragma: no cover - keep policies importable if cosmos3 deps drift
-    Cosmos3Policy = None  # type: ignore[assignment, misc]
+# Cosmos3Policy is import-safe: it depends only on numpy; the optional
+# ``openpi-client`` dependency is imported lazily inside the WebSocket client.
+# Imported unconditionally, exactly like MockPolicy above.
+from strands_robots.policies.cosmos3 import Cosmos3Policy
 
 __all__ = [
     "Policy",

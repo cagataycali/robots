@@ -184,3 +184,76 @@ def test_finger_joint_gripper_mapping():
     assert client.last_obs["observation/joint_position"].shape == (1, 7)
     assert client.last_obs["observation/gripper_position"].shape == (1, 1)
     assert abs(float(client.last_obs["observation/gripper_position"][0, 0]) - 0.02) < 1e-6
+
+
+# ── Review follow-ups (PR #317): fail-fast validation ────────────────────
+
+
+def test_missing_gripper_raises_no_silent_default():
+    """joint_pos without a gripper state key must raise, not fabricate 0.0."""
+    client = FakeClient(_droid_chunk())
+    p = Cosmos3Policy(embodiment="droid", client=client)
+    p.set_robot_state_keys([f"joint_{i}" for i in range(7)])  # 7 joints, NO gripper
+    obs = {f"observation/wrist_image_left": np.zeros((360, 640, 3), np.uint8)}
+    obs.update({f"joint_{i}": 0.1 * i for i in range(7)})
+    obs["observation/wrist_image_left"] = np.zeros((360, 640, 3), np.uint8)
+    with pytest.raises(ValueError, match="gripper"):
+        asyncio.run(p.get_actions(obs, "go"))
+
+
+def test_missing_joints_raises():
+    client = FakeClient(_droid_chunk())
+    p = Cosmos3Policy(embodiment="droid", client=client)
+    p.set_robot_state_keys(["joint_0", "joint_1", "gripper"])  # only 2 joints
+    obs = {
+        "observation/wrist_image_left": np.zeros((360, 640, 3), np.uint8),
+        "joint_0": 0.0, "joint_1": 0.1, "gripper": 0.5,
+    }
+    with pytest.raises(ValueError, match="7 joint state"):
+        asyncio.run(p.get_actions(obs, "go"))
+
+
+def test_invalid_action_mapping_key_raises_at_construction():
+    with pytest.raises(ValueError, match="not in the .* action layout"):
+        Cosmos3Policy(
+            embodiment="droid",
+            client=FakeClient(_droid_chunk()),
+            action_mapping={"not_a_column": "whatever"},
+        )
+
+
+def test_requires_images_guard_raises_without_camera():
+    client = FakeClient(_droid_chunk())
+    p = Cosmos3Policy(embodiment="droid", client=client)
+    p.set_robot_state_keys([f"joint_{i}" for i in range(7)] + ["gripper"])
+    obs = {f"joint_{i}": 0.1 * i for i in range(7)}
+    obs["gripper"] = 0.5  # state only, no camera
+    with pytest.raises(ValueError, match="requires at least one camera"):
+        asyncio.run(p.get_actions(obs, "go"))
+
+
+def test_robot_panda_sugar_applies_builtin_mapping():
+    """robot='panda' auto-maps DROID columns to Panda actuators."""
+    client = FakeClient(_droid_chunk())
+    p = Cosmos3Policy(embodiment="droid", client=client, robot="panda")
+    p.set_robot_state_keys([f"joint{i}" for i in range(1, 8)] + ["finger_joint1"])
+    obs = {
+        "observation/wrist_image_left": np.zeros((360, 640, 3), np.uint8),
+        "observation/exterior_image_1_left": np.zeros((360, 640, 3), np.uint8),
+        "observation/exterior_image_2_left": np.zeros((360, 640, 3), np.uint8),
+    }
+    for i in range(1, 8):
+        obs[f"joint{i}"] = 0.1 * i
+    obs["finger_joint1"] = 0.02
+    out = asyncio.run(p.get_actions(obs, "go"))
+    assert set(out[0].keys()) == {f"joint{i}" for i in range(1, 8)} | {"finger_joint1"}
+
+
+def test_explicit_action_mapping_overrides_robot_sugar():
+    p = Cosmos3Policy(
+        embodiment="droid",
+        client=FakeClient(_droid_chunk()),
+        robot="panda",
+        action_mapping={"gripper": "grip"},  # explicit wins
+    )
+    assert p._action_mapping == {"gripper": "grip"}

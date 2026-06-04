@@ -42,14 +42,18 @@ Example::
 
     from strands_robots.policies import create_policy
 
+    # robot="panda" applies the built-in DROID-layout -> Panda actuator mapping
+    # (joint_0..joint_6 -> joint1..joint7, gripper -> finger_joint1), so the
+    # per-step dicts use real MuJoCo Panda actuator names without manual mapping.
     policy = create_policy(
         "cosmos3",
         embodiment="droid",
         host="localhost",
         port=8000,
+        robot="panda",
     )
     chunk = policy.get_actions_sync(observation, "pick up the cube")
-    # chunk == [{"joint_0": .., ..., "gripper": ..}, ...]  (one per timestep)
+    # chunk == [{"joint1": .., ..., "finger_joint1": ..}, ...]  (one per timestep)
 """
 
 from __future__ import annotations
@@ -62,9 +66,18 @@ import numpy as np
 from strands_robots.policies.base import Policy
 
 from .client import Cosmos3WebsocketClient
-from .embodiments import Cosmos3Embodiment, get_embodiment
+from .embodiments import Cosmos3Embodiment, get_embodiment, get_robot_action_mapping
 
 logger = logging.getLogger(__name__)
+
+
+_IMAGE_KEY_HINTS = ("image", "rgb", "cam")
+
+
+def _is_image_key(server_key: str) -> bool:
+    """Heuristic: does an OpenPI server key name a camera image?"""
+    low = server_key.lower()
+    return any(h in low for h in _IMAGE_KEY_HINTS)
 
 
 def _to_image_uint8(value: Any) -> np.ndarray:
@@ -92,7 +105,11 @@ class Cosmos3Policy(Policy):
             When ``None``, a default mapping is used (see :meth:`_default_obs_mapping`).
         action_mapping: ``{action_column_name: robot_actuator_name}``. Renames
             the embodiment's action-layout columns to robot actuator names.
+            Keys are validated against the active layout at construction.
             When ``None``, columns keep their layout names.
+        robot: Convenience — name of a known robot (``"panda"``/``"franka"``)
+            whose built-in DROID-layout action mapping is applied when
+            ``action_mapping`` is not given. Explicit ``action_mapping`` wins.
         prompt: Default instruction used when ``get_actions`` is called with an
             empty instruction.
         api_key: Optional bearer token for the server.
@@ -113,6 +130,7 @@ class Cosmos3Policy(Policy):
         action_space: str | None = None,
         observation_mapping: dict[str, str] | None = None,
         action_mapping: dict[str, str] | None = None,
+        robot: str | None = None,
         prompt: str = "",
         api_key: str | None = None,
         client: Cosmos3WebsocketClient | None = None,
@@ -129,7 +147,21 @@ class Cosmos3Policy(Policy):
             )
         self.default_prompt = prompt
         self._obs_mapping = observation_mapping or self._default_obs_mapping()
+        # ``robot=`` sugar: apply a built-in DROID-layout -> actuator mapping
+        # (e.g. robot="panda" -> joint_0..6->joint1..7, gripper->finger_joint1)
+        # unless the caller supplied an explicit action_mapping.
+        if action_mapping is None and robot is not None:
+            action_mapping = get_robot_action_mapping(robot)
         self._action_mapping = action_mapping or {}
+        # Validate action_mapping keys name real action-layout columns so a
+        # typo'd rename can't silently emit a key the robot never consumes.
+        layout_cols = set(self.embodiment.action_layouts[self.action_space])
+        bad = [k for k in self._action_mapping if k not in layout_cols]
+        if bad:
+            raise ValueError(
+                f"action_mapping keys {bad} are not in the {self.embodiment.name!r} "
+                f"{self.action_space!r} action layout. Valid columns: {sorted(layout_cols)}"
+            )
         self.robot_state_keys: list[str] = []
         self._client = client or Cosmos3WebsocketClient(host=host, port=port, api_key=api_key)
         logger.info(
@@ -159,13 +191,27 @@ class Cosmos3Policy(Policy):
         self.robot_state_keys = list(robot_state_keys)
 
     def reset(self, seed: int | None = None) -> None:
-        """Per-episode reset — forward a best-effort hint to the server."""
+        """Per-episode reset.
+
+        Forwards a best-effort ``reset`` hint to the policy server and reseeds
+        the local NumPy RNG when ``seed`` is given.
+
+        .. note::
+            **The ``seed`` is NOT forwarded to the server's diffusion sampler.**
+            The Cosmos Framework RoboLab server's ``reset`` endpoint (and
+            OpenPI's ``WebsocketClientPolicy.reset()``) take no arguments, so
+            the server-side per-episode RNG is not re-seeded from here. As
+            documented in :meth:`Policy.reset` (the #187 reproducibility
+            caveat), rollouts are therefore **not** byte-reproducible across
+            re-runs purely by passing ``seed``. To get deterministic server
+            rollouts, launch the server with ``--deterministic-seed`` (and a
+            fixed ``--seed``), or extend the robolab server to accept a
+            per-request seed (tracked as an upstream feature request).
+        """
         self._client.reset()
+        # Local reseed only — np.random.seed(int) never raises, so no guard.
         if seed is not None:
-            try:
-                np.random.seed(seed)
-            except Exception:  # noqa: BLE001
-                pass
+            np.random.seed(seed)
 
     async def get_actions(
         self, observation_dict: dict[str, Any], instruction: str, **kwargs: Any
@@ -219,6 +265,17 @@ class Cosmos3Policy(Policy):
         if self.action_space == "joint_pos":
             self._attach_joint_state(robot_obs, obs)
 
+        # requires_images guard: Cosmos 3 conditions on at least one camera
+        # frame. If the obs_mapping named cameras but none were present in the
+        # runtime observation, fail fast with an actionable message instead of
+        # sending an image-less request the server will reject opaquely.
+        if not any(k.startswith("observation/") and _is_image_key(k) for k in obs):
+            raise ValueError(
+                "Cosmos3Policy requires at least one camera frame, but none of the "
+                f"mapped camera keys {sorted(self._obs_mapping)} were found in the "
+                f"observation. Available observation keys: {sorted(robot_obs)}"
+            )
+
         return obs
 
     def _attach_joint_state(self, robot_obs: dict[str, Any], obs: dict[str, Any]) -> None:
@@ -249,18 +306,33 @@ class Cosmos3Policy(Policy):
                 continue
             if len(joints) < 7:
                 joints.append(float(np.asarray(robot_obs[k]).reshape(-1)[0]))
-        # Fallback: if no gripper-named key but we have an extra 8th joint-like
-        # key, use it as the gripper so the server's joint_pos space is complete.
+        # Fallback: if no gripper/finger-named key but we have an extra 8th
+        # joint-like state key, treat it as the gripper.
         if gripper is None:
             non_gripper = [k for k in present if k not in gripper_keys]
             if len(non_gripper) >= 8:
                 gripper = float(np.asarray(robot_obs[non_gripper[7]]).reshape(-1)[0])
-            else:
-                gripper = 0.0  # default open; server still needs the key present
 
-        if len(joints) >= 7 and "observation/joint_position" not in obs:
+        # joint_pos requires BOTH joints(7) and gripper — the server applies
+        # `1 - gripper` and conditions on it. Never fabricate a silent default
+        # (AGENTS.md key convention #6); surface a clear, actionable error.
+        if "observation/joint_position" not in obs:
+            if len(joints) < 7:
+                raise ValueError(
+                    "Cosmos3Policy(action_space='joint_pos') needs 7 joint state "
+                    f"values but found {len(joints)}. Set robot_state_keys (7 joints "
+                    "+ gripper) or pass an observation_mapping. "
+                    f"Available observation keys: {sorted(robot_obs)}"
+                )
             obs["observation/joint_position"] = np.asarray(joints[:7], dtype=np.float32).reshape(1, 7)
-        if gripper is not None and "observation/gripper_position" not in obs:
+        if "observation/gripper_position" not in obs:
+            if gripper is None:
+                raise ValueError(
+                    "Cosmos3Policy(action_space='joint_pos') could not find a "
+                    "gripper state key (names containing 'gripper'/'finger', or an "
+                    "8th state key). Set robot_state_keys with a gripper entry. "
+                    f"Available observation keys: {sorted(robot_obs)}"
+                )
             obs["observation/gripper_position"] = np.asarray([[gripper]], dtype=np.float32)
 
     # ── Action unpacking ──────────────────────────────────────────────────

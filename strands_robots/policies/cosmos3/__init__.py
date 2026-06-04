@@ -18,9 +18,12 @@ Available embodiments: droid, umi, av, bridge (see ``embodiments.py``).
 from .client import Cosmos3WebsocketClient
 from .embodiments import (
     EMBODIMENTS,
+    ROBOT_ACTION_MAPPINGS,
     Cosmos3Embodiment,
     get_embodiment,
+    get_robot_action_mapping,
     list_embodiments,
+    list_robot_action_mappings,
 )
 from .policy import Cosmos3Policy
 
@@ -29,6 +32,9 @@ __all__ = [
     "Cosmos3WebsocketClient",
     "Cosmos3Embodiment",
     "EMBODIMENTS",
+    "ROBOT_ACTION_MAPPINGS",
     "get_embodiment",
+    "get_robot_action_mapping",
     "list_embodiments",
+    "list_robot_action_mappings",
 ]
