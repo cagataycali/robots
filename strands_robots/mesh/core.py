@@ -85,6 +85,90 @@ class Mesh(SensorLoopsMixin):
         state = "alive" if self._running else "stopped"
         return f"Mesh(peer_id={self.peer_id!r}, type={self.peer_type!r}, {state})"
 
+    def _refuse_under_permissive_default_acl(self) -> bool:
+        """Refuse-to-start gate per issue #218.
+
+        Returns True (refuse) when:
+        - STRANDS_MESH_AUTH_MODE == "mtls" (ACL is the third line of defence)
+        - AND the resolved ACL is permissive-by-shape (built-in default
+          or operator file with default_permission=allow + no rules)
+        - AND STRANDS_MESH_ACCEPT_PERMISSIVE_ACL is NOT set (operator
+          has not explicitly acknowledged the dev/lab posture).
+
+        Logs an ERROR breadcrumb on refusal so the operator sees the
+        actionable remediation paths (set ACL file / accept opt-in /
+        disable mesh).
+
+        On opt-in (STRANDS_MESH_ACCEPT_PERMISSIVE_ACL=1) the same shape
+        is logged at INFO instead of ERROR -- the operator has
+        acknowledged the posture and the WARNING contradicting their
+        opt-in would be noise.
+
+        Implementation note: takes a single ACL snapshot via
+        :func:`_acl_config.snapshot_acl` and stashes the result on
+        ``self._acl_snapshot`` so :func:`session._build_config`
+        downstream can reuse the SAME dict (closes the
+        ``Mesh.start`` -> ``_build_config`` TOCTOU window flagged in
+        review at session.py:296).
+        """
+        from strands_robots.mesh import _acl_config, _zenoh_config
+
+        try:
+            auth_mode = _zenoh_config.resolve_auth_mode()
+            namespace = _zenoh_config.resolve_namespace()
+            is_permissive, resolved = _acl_config.snapshot_acl(namespace)
+        except ValueError as warn_exc:
+            # Narrow tuple per AGENTS.md > Review Learnings (#86):
+            # ValueError surfaces bad STRANDS_MESH_AUTH_MODE / unloadable
+            # ACL. Fail-CLOSED (treat as permissive) so the gate refuses
+            # to bring up the wire. Wider exception types (OSError, etc.)
+            # propagate so genuine bugs aren't masked at WARNING level.
+            logger.warning(
+                "[mesh] %s: ACL gate evaluation failed (%s) -- treating as permissive default; refusing to start",
+                self.peer_id,
+                warn_exc,
+            )
+            auth_mode = "mtls"
+            is_permissive = True
+            resolved = None
+        # Stash the snapshot AND auth_mode on a thread-local used by
+        # ``session._build_config`` so the wire-config builder picks up
+        # the SAME dict the gate inspected AND the SAME auth_mode value.
+        # Issue #218 + review threads session.py:296 / core.py:139.
+        self._acl_snapshot = resolved
+        _acl_config._set_thread_snapshot(resolved, auth_mode=auth_mode)
+        if auth_mode != "mtls":
+            return False
+        if not is_permissive:
+            return False
+
+        accept_permissive = os.getenv("STRANDS_MESH_ACCEPT_PERMISSIVE_ACL", "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        if accept_permissive:
+            logger.info(
+                "[mesh] %s: permissive default ACL active under mtls "
+                "(STRANDS_MESH_ACCEPT_PERMISSIVE_ACL=1 acknowledged) -- "
+                "starting in dev/lab posture",
+                self.peer_id,
+            )
+            return False
+
+        logger.error(
+            "[mesh] %s: PERMISSIVE DEFAULT ACL ACTIVE UNDER MTLS -- "
+            "Mesh NOT STARTED. Any CA-signed peer can publish/subscribe "
+            "on any key. Remediate one of:\n"
+            "  1. Supply STRANDS_MESH_ACL_FILE pointing at a role-separated "
+            "ACL (see examples/mesh_acl_example.json5).\n"
+            "  2. Set STRANDS_MESH_ACCEPT_PERMISSIVE_ACL=1 to acknowledge "
+            "the dev/lab posture.\n"
+            "  3. Disable the mesh (do not call Mesh.start()).",
+            self.peer_id,
+        )
+        return True
+
     # Lifecycle
     def start(self) -> None:
         """Acquire a Zenoh session and start all publishing loops."""
@@ -92,7 +176,39 @@ class Mesh(SensorLoopsMixin):
             if self._running:
                 return
 
-            session = get_session()
+            # Issue #218 / R3: refuse-to-start gate when mtls is configured
+            # but the ACL is permissive-by-shape (built-in default OR
+            # operator file with default_permission=allow). The gate
+            # closes the "fleet thinks mTLS protects them, but ACL is
+            # wide open" silent-misconfiguration footgun. Operators who
+            # explicitly accept the dev/lab posture set
+            # STRANDS_MESH_ACCEPT_PERMISSIVE_ACL=1.
+            #
+            # Review thread core.py:189 -- the gate stashes a thread-local
+            # snapshot via ``_set_thread_snapshot`` (called inside
+            # ``_refuse_under_permissive_default_acl``) BEFORE deciding
+            # whether to refuse. Wrap both the gate and ``get_session()``
+            # in the same try/finally so the snapshot is cleared on the
+            # refused-start branch too, otherwise a subsequent direct
+            # ``get_session()`` on the same thread (integration test, or
+            # a caller bypassing Mesh) would observe a stale snapshot.
+            from strands_robots.mesh import _acl_config
+
+            try:
+                if self._refuse_under_permissive_default_acl():
+                    # Logged at ERROR; mesh stays not-started (mesh.alive == False).
+                    # Caller's Robot() construction succeeds; only the wire is gated.
+                    return
+                session = get_session()
+            finally:
+                # Snapshot has been consumed by ``session._build_config``
+                # via the thread-local single-flight (issue #218 +
+                # review session.py:296), or we refused to start before
+                # ``get_session`` was reached -- either way, clear it so
+                # the next ``Mesh.start`` (different instance, same
+                # thread) or direct ``get_session()`` call sees fresh
+                # state.
+                _acl_config._clear_thread_snapshot()
             if session is None:
                 logger.debug("[mesh] %s: zenoh unavailable, mesh off", self.peer_id)
                 return
