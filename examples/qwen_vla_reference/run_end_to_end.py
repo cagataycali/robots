@@ -27,12 +27,10 @@ import torch
 
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
-import reference_model  # noqa: E402
+from reference_model import ReferenceQwenVla  # noqa: E402
 from sim_env import ReferenceSimEnv  # noqa: E402
 
 from strands_robots.policies.qwen_vla import QwenVlaPolicy, compute_quantile_stats  # noqa: E402
-
-ReferenceQwenVla = reference_model.ReferenceQwenVla
 from strands_robots.training.qwen_vla import (  # noqa: E402
     CPTConfig,
     RLConfig,
@@ -262,8 +260,10 @@ def local_inference() -> dict:
 
     orig = pol._qwen_vla_installed
     pol._qwen_vla_installed = lambda: True
-    # Monkeypatch the lazy import target.
-    sys.modules["qwen_vla"] = reference_model
+    # Monkeypatch the lazy import target to the reference module (already
+    # imported above via `from reference_model import ...`, so it lives in
+    # sys.modules - no second import needed).
+    sys.modules["qwen_vla"] = sys.modules["reference_model"]
     try:
         policy = QwenVlaPolicy(data_config="so100", model_path=str(CKPT_DIR / "qwen_vla_instruct.pt"), device="cuda")
         obs = {
