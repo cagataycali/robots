@@ -48,6 +48,19 @@ groot-service = [
 lerobot = [
     "lerobot>=0.5.0,<0.6.0",
 ]
+qwen-vla-service = [
+    "pyzmq>=27.0.0,<28.0.0",
+    "msgpack>=1.0.0,<2.0.0",
+]
+qwen-vla = [
+    "strands-robots[qwen-vla-service]",
+    "torch>=2.4.0,<3.0.0",
+    "transformers>=4.46.0,<5.0.0",
+]
+qwen-vla-train = [
+    "strands-robots[qwen-vla]",
+    "accelerate>=1.0.0,<2.0.0",
+]
 sim = [
     "robot_descriptions>=1.11.0,<2.0.0",
 ]
@@ -79,6 +92,7 @@ mesh-iot = [
 ]
 all = [
     "strands-robots[groot-service]",
+    "strands-robots[qwen-vla]",
     "strands-robots[lerobot]",
     "strands-robots[sim-mujoco]",
     "strands-robots[mesh]",
