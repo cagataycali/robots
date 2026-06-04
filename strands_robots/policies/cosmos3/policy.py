@@ -170,7 +170,6 @@ class Cosmos3Policy(Policy):
             self.embodiment.action_chunk_size, host, port,
         )
 
-    # ── Policy interface ──────────────────────────────────────────────────
 
     @property
     def provider_name(self) -> str:
@@ -232,7 +231,6 @@ class Cosmos3Policy(Policy):
         action = np.asarray(result["action"])
         return self._unpack_actions(action)
 
-    # ── Observation translation ───────────────────────────────────────────
 
     def _default_obs_mapping(self) -> dict[str, str]:
         """Identity-ish default: assume robot obs already uses server keys.
@@ -335,7 +333,6 @@ class Cosmos3Policy(Policy):
                 )
             obs["observation/gripper_position"] = np.asarray([[gripper]], dtype=np.float32)
 
-    # ── Action unpacking ──────────────────────────────────────────────────
 
     def _action_column_names(self, width: int) -> list[str]:
         """Resolve the per-column action names for the active action space."""

@@ -39,9 +39,6 @@ def _make_droid_policy(action=None, **kw):
     return Cosmos3Policy(embodiment="droid", client=FakeClient(action), **kw)
 
 
-# ── Contract / construction ──────────────────────────────────────────────
-
-
 def test_is_a_policy():
     p = _make_droid_policy()
     assert isinstance(p, Policy)
@@ -58,9 +55,6 @@ def test_default_action_space_from_embodiment():
     assert _make_droid_policy().action_space == "joint_pos"
     p = Cosmos3Policy(embodiment="av", client=FakeClient(_droid_chunk(60, 9)))
     assert p.action_space == "midtrain"
-
-
-# ── get_actions: shape + naming ──────────────────────────────────────────
 
 
 def _obs_with_state_and_images():
@@ -122,9 +116,6 @@ def test_default_prompt_used_when_instruction_empty():
     assert client.last_obs["prompt"] == "default task"
 
 
-# ── reset / sync wrapper ─────────────────────────────────────────────────
-
-
 def test_reset_forwards_to_client():
     client = FakeClient(_droid_chunk())
     p = Cosmos3Policy(embodiment="droid", client=client)
@@ -137,9 +128,6 @@ def test_get_actions_sync_wrapper():
     p.set_robot_state_keys([f"joint_{i}" for i in range(7)] + ["gripper"])
     out = p.get_actions_sync(_obs_with_state_and_images(), "go")
     assert len(out) == 32
-
-
-# ── helpers / unpacking edge cases ───────────────────────────────────────
 
 
 def test_unpack_1d_action_promoted():
@@ -184,9 +172,6 @@ def test_finger_joint_gripper_mapping():
     assert client.last_obs["observation/joint_position"].shape == (1, 7)
     assert client.last_obs["observation/gripper_position"].shape == (1, 1)
     assert abs(float(client.last_obs["observation/gripper_position"][0, 0]) - 0.02) < 1e-6
-
-
-# ── Review follow-ups (PR #317): fail-fast validation ────────────────────
 
 
 def test_missing_gripper_raises_no_silent_default():
