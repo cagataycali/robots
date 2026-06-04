@@ -35,7 +35,7 @@ def test_aliases_resolve():
 
 
 def test_unknown_embodiment_raises():
-    with pytest.raises(KeyError, match="Unknown Cosmos 3 embodiment"):
+    with pytest.raises(ValueError, match="Unknown Cosmos 3 embodiment"):
         get_embodiment("totally_not_a_robot")
 
 

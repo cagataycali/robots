@@ -159,12 +159,13 @@ def get_embodiment(name: str) -> Cosmos3Embodiment:
         The matching :class:`Cosmos3Embodiment`.
 
     Raises:
-        KeyError: If the embodiment is unknown.
+        ValueError: If the embodiment is unknown (consistent with the other
+            invalid-argument validations in Cosmos3Policy).
     """
     key = name.lower().strip()
     key = _EMBODIMENT_ALIASES.get(key, key)
     if key not in EMBODIMENTS:
-        raise KeyError(
+        raise ValueError(
             f"Unknown Cosmos 3 embodiment {name!r}. "
             f"Available: {sorted(EMBODIMENTS)} (+ aliases {sorted(_EMBODIMENT_ALIASES)})"
         )
