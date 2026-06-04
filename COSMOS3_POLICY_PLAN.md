@@ -265,3 +265,11 @@ weights → add `"cosmos3"` to `_HF_REMOTE_CODE_PROVIDERS` in `factory.py`.
 5. Registry entry + `cosmos3://` + `nvidia/Cosmos3...` ID resolution + trust-remote gate.
 6. Contract preserved: `Cosmos3Policy(Policy)` returns action chunks as `list[dict]`.
 7. Run locally first (Phase 1 server + client smoke) → verify I/O → implement.
+
+## Phase 1 status (2026-06-04) — ✅ VERIFIED
+
+Server + client smoke PASSED. `nvidia/Cosmos3-Nano-Policy-DROID` via the
+framework robolab WebSocket server returns a `(32, 8)` action chunk
+(32 steps x [7 joints + gripper]) from image+state+instruction. Warm latency
+~3.1s/chunk. See `scratch/PHASE1_RESULTS.md` + `scratch/c3_policy_client_smoke.py`.
+Gate cleared -> proceed to Phase 2 (client + embodiments + mocked tests).
