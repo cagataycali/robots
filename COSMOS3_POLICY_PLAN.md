@@ -287,3 +287,12 @@ Built the full Cosmos3 policy provider:
 
 `create_policy("cosmos3", embodiment="droid", port=8000)` is ready to use.
 Gate cleared -> Phase 4 (full hardware rollout in sim) + Phase 5 (docs/examples).
+
+## Phase 4 status (2026-06-04) — ✅ COMPLETE (live + recorded + pushed)
+
+Real Cosmos3-Nano-Policy-DROID drove a Franka/Panda in MuJoCo; 3 episodes
+recorded to LeRobotDataset (4 cams, 144 frames, 15fps) and pushed to HF:
+https://huggingface.co/datasets/cagataydev/cosmos3-droid-mujoco
+Videos embedded in PR.md (docs/media/cosmos3/). Scripts:
+scratch/mujoco_record_episode.py + scratch/mujoco_record_multi.py.
+Fixed Cosmos3Policy gripper mapping for finger_joint keys (+test). 26 tests green.

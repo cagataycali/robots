@@ -165,3 +165,22 @@ def test_to_image_uint8_coerces_float():
 def test_to_image_uint8_rejects_bad_shape():
     with pytest.raises(ValueError, match="H, W, 3"):
         _to_image_uint8(np.zeros((4, 4), dtype=np.uint8))
+
+
+def test_finger_joint_gripper_mapping():
+    """Panda-style state keys (joint1..joint7 + finger_joint1) build (1,7)+(1,1)."""
+    client = FakeClient(_droid_chunk())
+    p = Cosmos3Policy(embodiment="droid", client=client)
+    p.set_robot_state_keys([f"joint{i}" for i in range(1, 8)] + ["finger_joint1"])
+    obs = {
+        "observation/wrist_image_left": np.zeros((360, 640, 3), np.uint8),
+        "observation/exterior_image_1_left": np.zeros((360, 640, 3), np.uint8),
+        "observation/exterior_image_2_left": np.zeros((360, 640, 3), np.uint8),
+    }
+    for i in range(1, 8):
+        obs[f"joint{i}"] = 0.1 * i
+    obs["finger_joint1"] = 0.02
+    asyncio.run(p.get_actions(obs, "go"))
+    assert client.last_obs["observation/joint_position"].shape == (1, 7)
+    assert client.last_obs["observation/gripper_position"].shape == (1, 1)
+    assert abs(float(client.last_obs["observation/gripper_position"][0, 0]) - 0.02) < 1e-6

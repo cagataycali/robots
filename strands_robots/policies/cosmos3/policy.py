@@ -238,13 +238,25 @@ class Cosmos3Policy(Policy):
         state_keys = self.robot_state_keys or [
             k for k, v in robot_obs.items() if np.isscalar(v) or np.ndim(v) == 0
         ]
-        for k in state_keys:
-            if k not in robot_obs:
+        present = [k for k in state_keys if k in robot_obs]
+        # First pass: pull any explicitly gripper/finger-named key as the gripper.
+        gripper_keys = [k for k in present if ("gripper" in k.lower() or "finger" in k.lower())]
+        if gripper_keys:
+            gripper = float(np.asarray(robot_obs[gripper_keys[0]]).reshape(-1)[0])
+        # Joints = the first 7 non-gripper state keys.
+        for k in present:
+            if k in gripper_keys:
                 continue
-            if "gripper" in k.lower() and gripper is None:
-                gripper = float(np.asarray(robot_obs[k]).reshape(-1)[0])
-            elif len(joints) < 7:
+            if len(joints) < 7:
                 joints.append(float(np.asarray(robot_obs[k]).reshape(-1)[0]))
+        # Fallback: if no gripper-named key but we have an extra 8th joint-like
+        # key, use it as the gripper so the server's joint_pos space is complete.
+        if gripper is None:
+            non_gripper = [k for k in present if k not in gripper_keys]
+            if len(non_gripper) >= 8:
+                gripper = float(np.asarray(robot_obs[non_gripper[7]]).reshape(-1)[0])
+            else:
+                gripper = 0.0  # default open; server still needs the key present
 
         if len(joints) >= 7 and "observation/joint_position" not in obs:
             obs["observation/joint_position"] = np.asarray(joints[:7], dtype=np.float32).reshape(1, 7)
