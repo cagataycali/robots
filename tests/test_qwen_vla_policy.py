@@ -126,9 +126,20 @@ class TestActionUnpack:
         assert actions[0]["single_arm"] == [0, 1, 2, 3, 4, 5]
 
     def test_unpack_unified_chunk_split(self):
-        # Single "action" tensor split across two families evenly.
-        resp = {"action": np.tile(np.arange(8, dtype=np.float32), (16, 1))}  # (16, 8)
-        policy = _make_service_policy("aloha_bimanual", resp)
+        # Single "action" tensor split across families by EXPLICIT widths
+        # (post-PR#319 contract: no silent even-split). aloha layout
+        # left_arm 2 | left_gripper 1 | right_arm 2 | right_gripper 1 (K=6).
+        resp = {"action": np.tile(np.arange(6, dtype=np.float32), (16, 1))}  # (16, 6)
+        policy = _make_service_policy(
+            "aloha_bimanual",
+            resp,
+            action_mapping={
+                "action.left_arm": "left_arm:2",
+                "action.left_gripper": "left_gripper:1",
+                "action.right_arm": "right_arm:2",
+                "action.right_gripper": "right_gripper:1",
+            },
+        )
         actions = policy.get_actions_sync(
             {
                 "left_arm": np.zeros(2),
@@ -139,10 +150,11 @@ class TestActionUnpack:
             "fold",
         )
         assert len(actions) == 16
-        # 4 families, 8 channels => width 2 each
-        assert "left_arm" in actions[0]
-        assert actions[0]["left_arm"] == [0, 1]
-        assert actions[0]["right_arm"] == [2, 3]
+        # Exact split honoring declared widths, NOT an even 4x1.5 guess.
+        assert actions[0]["left_arm"] == [0.0, 1.0]
+        assert actions[0]["left_gripper"] == [2.0]
+        assert actions[0]["right_arm"] == [3.0, 4.0]
+        assert actions[0]["right_gripper"] == [5.0]
 
     def test_unpack_empty(self):
         policy = _make_service_policy("so100", {})
@@ -221,14 +233,24 @@ class TestFlattenToJoints:
         assert step["Jaw"] == 5.0  # 6th channel = single_arm[5] (gripper is the 7th, dropped at 6 joints)
 
     def test_flatten_takes_valid_prefix_of_padded_chunk(self):
-        # A unified K=32 chunk (zero-padded) -> first 6 valid channels to 6 joints.
+        # A unified K=32 chunk (zero-padded). With explicit widths the valid
+        # 7 leading channels (single_arm 6 + gripper 1) are split exactly, then
+        # flattened to the 6 robot joints (the gripper channel is the 7th and
+        # is dropped at 6 joints).
         resp = {"action": np.tile(np.arange(32, dtype=np.float32), (4, 1))}
-        policy = _make_service_policy("so100", resp)
+        policy = _make_service_policy(
+            "so100",
+            resp,
+            action_mapping={"action.single_arm": "single_arm:6", "action.gripper": "gripper:1"},
+        )
         joints = ["j0", "j1", "j2", "j3", "j4", "j5"]
         policy.set_robot_state_keys(joints)
         actions = policy.get_actions_sync({"single_arm": np.zeros(6), "gripper": np.zeros(1)}, "x")
         assert sorted(actions[0].keys()) == sorted(joints)
         assert all(isinstance(v, float) for v in actions[0].values())
+        # single_arm channels 0..5 land on the 6 joints in order.
+        assert actions[0]["j0"] == 0.0
+        assert actions[0]["j5"] == 5.0
 
     def test_sim_obs_bridge_uses_default_camera_and_joint_state(self):
         # When obs is keyed by joint names + a 'default' RGB cam (the MuJoCo
@@ -245,3 +267,99 @@ class TestFlattenToJoints:
         # The per-joint scalars were assembled into one state vector.
         assert len(built["state"]) == 1
         assert next(iter(built["state"].values())).shape[-1] == 6
+
+
+class TestUnifiedChunkSplit:
+    """Regression tests for the unified Y[H, K] split (PR #319 review, AGENTS.md #85).
+
+    The upstream Qwen-VLA server emits a single Y[H, K] tensor (paper §2.4).
+    Splitting it across action families of UNEQUAL width (e.g. so100:
+    single_arm 6 + gripper 1) requires explicit per-family widths; an even
+    split silently mis-routes channels (gripper command -> arm joints). These
+    tests pin the fix: raise without widths, exact split with them.
+    """
+
+    @staticmethod
+    def _unified_resp(h: int, k: int) -> dict:
+        # channel j carries the constant value j across all H timesteps.
+        return {"action": np.tile(np.arange(k, dtype=np.float32), (h, 1))}
+
+    def test_split_raises_without_widths_for_multi_family(self):
+        # An explicit multi-family mapping with NO widths -> a unified chunk
+        # MUST raise rather than silently even-split (data-corruption guard).
+        policy = _make_service_policy(
+            "so100",
+            self._unified_resp(16, 7),
+            action_mapping={"action.single_arm": "single_arm", "action.gripper": "gripper"},
+        )
+        assert policy._action_mapping.widths == {}
+        with pytest.raises(ValueError, match="without explicit"):
+            policy.get_actions_sync({"webcam": np.zeros((8, 8, 3), np.uint8)}, "x")
+
+    def test_so100_auto_mapping_splits_unified_chunk_exactly(self):
+        # The so100 data config declares action_dims, so the AUTO mapping
+        # carries widths and a unified chunk splits exactly out of the box.
+        policy = _make_service_policy("so100", self._unified_resp(16, 7))
+        assert policy._action_mapping.widths == {"single_arm": 6, "gripper": 1}
+        actions = policy.get_actions_sync({"webcam": np.zeros((8, 8, 3), np.uint8)}, "x")
+        assert actions[0]["single_arm"] == [0.0, 1.0, 2.0, 3.0, 4.0, 5.0]
+        assert actions[0]["gripper"] == [6.0]
+
+    def test_split_exact_with_widths(self):
+        # Provide explicit widths via the "robot_key:width" mapping syntax.
+        policy = _make_service_policy(
+            "so100",
+            self._unified_resp(16, 7),
+            action_mapping={"action.single_arm": "arm:6", "action.gripper": "grip:1"},
+        )
+        actions = policy.get_actions_sync({"webcam": np.zeros((8, 8, 3), np.uint8)}, "x")
+        assert len(actions) == 16
+        step = actions[0]
+        # single_arm gets channels [0..5], gripper gets channel [6] - NOT an
+        # even 3/4 split that would put channel 6 with the arm.
+        assert step["arm"] == [0.0, 1.0, 2.0, 3.0, 4.0, 5.0]
+        assert step["grip"] == [6.0]
+
+    def test_split_drops_zero_padding_tail(self):
+        # K=32 padded chunk: declared widths (6+1=7) consume the valid leading
+        # channels; the 25-channel tail is zero-padding and dropped (§2.4).
+        policy = _make_service_policy(
+            "so100",
+            self._unified_resp(8, 32),
+            action_mapping={"action.single_arm": "arm:6", "action.gripper": "grip:1"},
+        )
+        actions = policy.get_actions_sync({"webcam": np.zeros((8, 8, 3), np.uint8)}, "x")
+        assert actions[0]["arm"] == [0.0, 1.0, 2.0, 3.0, 4.0, 5.0]
+        assert actions[0]["grip"] == [6.0]
+
+    def test_split_raises_when_widths_exceed_channels(self):
+        policy = _make_service_policy(
+            "so100",
+            self._unified_resp(16, 5),  # only 5 channels
+            action_mapping={"action.single_arm": "arm:6", "action.gripper": "grip:1"},  # needs 7
+        )
+        with pytest.raises(ValueError, match="only has 5 channels"):
+            policy.get_actions_sync({"webcam": np.zeros((8, 8, 3), np.uint8)}, "x")
+
+    def test_parse_action_mapping_extracts_widths(self):
+        m = _parse_action_mapping({"action.single_arm": "arm:6", "action.gripper": "grip:1"})
+        assert m.actions == {"single_arm": "arm", "gripper": "grip"}
+        assert m.widths == {"single_arm": 6, "gripper": 1}
+
+    def test_parse_action_mapping_no_width_suffix(self):
+        # A plain value (no ":width") leaves widths empty and keeps the value.
+        m = _parse_action_mapping({"action.single_arm": "arm", "action.gripper": "grip"})
+        assert m.actions == {"single_arm": "arm", "gripper": "grip"}
+        assert m.widths == {}
+
+    def test_single_family_unified_chunk_needs_no_split(self):
+        # One family + one "action" key: no split path is taken, the whole
+        # chunk maps to the single family directly.
+        policy = _make_service_policy(
+            "widowx",
+            {"action": np.tile(np.arange(7, dtype=np.float32), (16, 1))},
+            action_mapping={"action.action": "all"},
+        )
+        actions = policy.get_actions_sync({"image": np.zeros((8, 8, 3), np.uint8)}, "x")
+        assert len(actions) == 16
+        assert actions[0]["all"] == [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0]

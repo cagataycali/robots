@@ -17,7 +17,7 @@ Security (PR #90/#92 lessons):
       an argv list (``shell=False``).
 """
 
-import re
+import shlex
 import shutil
 import socket
 import subprocess
@@ -27,15 +27,13 @@ from typing import Any
 from strands import tool
 
 from strands_robots.policies.qwen_vla.data_config import DATA_CONFIG_MAP
-from strands_robots.tools._path_validation import validate_save_path
+from strands_robots.tools._path_validation import _HOST_RE, validate_save_path
 
 # Default ZMQ port for Qwen-VLA (distinct from GR00T's 5555 so both can run).
 _DEFAULT_PORT = 5556
 # Loopback-only bind by default - explicit opt-out required to expose.
 _DEFAULT_HOST = "127.0.0.1"
-# Hostname/IP allowlist: letters, digits, dots, hyphens, colons (IPv6). No
-# shell metacharacters, spaces, slashes, or pipes.
-_HOST_RE = re.compile(r"^[A-Za-z0-9._:-]+$")
+# Hostname/IP allowlist (_HOST_RE) is shared with qwen_vla_train via _path_validation.
 # Hosts that are safe to bind a server to (loopback only).
 _SAFE_BIND_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
@@ -279,7 +277,8 @@ def _start_service(
         }
 
     # Tokenize the caller's entrypoint and append validated flags as argv.
-    base_argv = server_command.split()
+    # shlex.split is quote-aware (handles e.g. --prefix "with space").
+    base_argv = shlex.split(server_command)
     if not base_argv:
         return {"status": "error", "message": "server_command must not be empty"}
 

@@ -19,13 +19,14 @@ from pathlib import Path
 import pytest
 
 # Import strands_robots BEFORE mujoco. On headless hosts, strands_robots's
-# package init eagerly sets MUJOCO_GL=egl (GPU offscreen) / osmesa. MuJoCo
-# locks its GL backend at first ``import mujoco``; if mujoco is imported first
-# (as a bare ``importorskip`` would), it locks the GLFW backend and rendering
-# dies with a cryptic ``gladLoadGL error`` on headless GPU boxes. This import
-# ordering is the user-facing contract documented in strands_robots/__init__.py.
+# package init eagerly sets MUJOCO_GL=egl (GPU offscreen) / osmesa as an import
+# side effect. MuJoCo locks its GL backend at first ``import mujoco``; if mujoco
+# is imported first, it locks the GLFW backend and rendering dies with a cryptic
+# ``gladLoadGL error`` on headless GPU boxes. ``importorskip`` performs the
+# import (and thus the GL config side effect), so ordering it before the mujoco
+# importorskip honors the contract in strands_robots/__init__.py - no separate
+# bare import needed.
 pytest.importorskip("strands_robots", reason="strands-robots not importable")
-import strands_robots  # noqa: E402,F401  (eager GL backend config side effect)
 
 pytest.importorskip("torch", reason="qwen-vla-train extra (torch) not installed")
 pytest.importorskip("zmq", reason="qwen-vla-service extra (pyzmq) not installed")

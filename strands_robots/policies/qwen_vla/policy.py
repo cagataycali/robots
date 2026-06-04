@@ -84,9 +84,17 @@ class ActionMapping:
         actions: ``{model_action_key: robot_actuator}`` (bare, no prefix).
             Insertion order defines the channel layout for the unified
             ``Y[H x K]`` unpack: the first key occupies the leading channels.
+        widths: Optional ``{model_action_key: channel_width}`` giving the exact
+            number of channels each family occupies in a single unified
+            ``Y[H x K]`` chunk. Required (and the ONLY safe path) when a server
+            returns one ``{"action": Y}`` tensor that must be split across
+            multiple families of *unequal* width (e.g. so100's ``single_arm``
+            6 + ``gripper`` 1). Empty when the server already returns per-family
+            dicts (the common path), where no split is needed.
     """
 
     actions: dict[str, str] = field(default_factory=dict)
+    widths: dict[str, int] = field(default_factory=dict)
 
 
 def _parse_observation_mapping(flat: dict[str, str], language_key: str = "task") -> ObservationMapping:
@@ -104,8 +112,31 @@ def _parse_observation_mapping(flat: dict[str, str], language_key: str = "task")
 
 
 def _parse_action_mapping(flat: dict[str, str]) -> ActionMapping:
-    """Parse ``{"action.X": "robot_key"}`` -> ActionMapping (order preserved)."""
-    return ActionMapping(actions={k.removeprefix("action."): v for k, v in flat.items()})
+    """Parse ``{"action.X": "robot_key"}`` -> ActionMapping (order preserved).
+
+    A mapping value may optionally encode the family's channel width as
+    ``"robot_key:width"`` (e.g. ``{"action.single_arm": "arm:6",
+    "action.gripper": "grip:1"}``). Widths are collected into
+    ``ActionMapping.widths`` and used for an exact unified-``Y[H x K]`` split;
+    without them a multi-family unified chunk cannot be split safely and
+    :meth:`QwenVlaPolicy._split_unified_chunk` raises rather than guessing.
+    """
+    actions: dict[str, str] = {}
+    widths: dict[str, int] = {}
+    for k, v in flat.items():
+        bare = k.removeprefix("action.")
+        if ":" in v:
+            robot_key, _, width_str = v.rpartition(":")
+            try:
+                widths[bare] = int(width_str)
+                actions[bare] = robot_key
+                continue
+            except ValueError:
+                # Not a width suffix (e.g. an IPv6-ish robot name) - treat
+                # the whole value as the robot key.
+                pass
+        actions[bare] = v
+    return ActionMapping(actions=actions, widths=widths)
 
 
 def _auto_infer_observation_mapping(cfg: QwenVlaDataConfig, language_key: str) -> ObservationMapping:
@@ -116,8 +147,15 @@ def _auto_infer_observation_mapping(cfg: QwenVlaDataConfig, language_key: str) -
 
 
 def _auto_infer_action_mapping(cfg: QwenVlaDataConfig) -> ActionMapping:
-    """Auto-infer action mapping from the data config (identity on bare keys)."""
-    return ActionMapping(actions={k.removeprefix("action."): k.removeprefix("action.") for k in cfg.action_keys})
+    """Auto-infer action mapping from the data config (identity on bare keys).
+
+    Per-family channel widths are carried over from ``cfg.action_dims`` when the
+    embodiment declares them, so a single unified ``Y[H, K]`` chunk splits
+    exactly (paper §2.4) without the caller having to repeat the widths.
+    """
+    actions = {k.removeprefix("action."): k.removeprefix("action.") for k in cfg.action_keys}
+    widths = {k.removeprefix("action."): v for k, v in cfg.action_dims.items()}
+    return ActionMapping(actions=actions, widths=widths)
 
 
 def _to_video_batch(frame: Any) -> np.ndarray:
@@ -161,7 +199,7 @@ class QwenVlaPolicy(Policy):
     Examples::
 
         # SERVICE mode (no model deps needed on the client)
-        policy = QwenVlaPolicy(data_config="so100", host="localhost", port=5556)
+        policy = QwenVlaPolicy(data_config="so100", host="127.0.0.1", port=5556)
 
         # LOCAL mode (requires the qwen-vla package + GPU)
         policy = QwenVlaPolicy(
@@ -175,7 +213,7 @@ class QwenVlaPolicy(Policy):
     def __init__(
         self,
         data_config: str | QwenVlaDataConfig = "so100",
-        host: str = "localhost",
+        host: str = "127.0.0.1",
         port: int = 5556,
         model_path: str | None = None,
         device: str = "cuda",
@@ -332,6 +370,9 @@ class QwenVlaPolicy(Policy):
             _torch.backends.cudnn.deterministic = True
             _torch.backends.cudnn.benchmark = False
         except ImportError:
+            # torch is optional (only installed with the [qwen-vla] / [qwen-vla-train]
+            # extras); without it there is no torch RNG to reseed - the Python /
+            # NumPy reseeds above are sufficient for SERVICE mode.
             pass
         # Forward to the model if it exposes its own reset (sampler state).
         if self._local_model is not None and hasattr(self._local_model, "reset"):
@@ -456,29 +497,58 @@ class QwenVlaPolicy(Policy):
         return actions
 
     def _split_unified_chunk(self, chunk: np.ndarray) -> dict[str, np.ndarray]:
-        """Split a unified ``Y[H, K]`` chunk into per-action-family arrays.
+        """Split a single unified ``Y[H, K]`` chunk into per-action-family arrays.
 
-        Channel layout follows the action_mapping insertion order. Each
-        family's width is inferred from the data config's action_keys order;
-        when the model emits more channels than the sum of known widths the
-        tail is treated as zero-padding and dropped (section 2.4).
+        Channel layout follows the action_mapping insertion order. The split is
+        driven by explicit per-family widths (``ActionMapping.widths``); the
+        leading ``sum(widths)`` channels are the valid action dims and any
+        trailing channels are treated as zero-padding and dropped (section 2.4).
 
-        Because per-family widths are not encoded in the data config (only the
-        key names are), we split evenly across the mapped families as a
-        documented fallback. Deployments that need exact per-family widths
-        should pass an ``action_mapping`` whose families already match the
-        server's bare-key split (the common path), so this fallback only fires
-        for a single-tensor server returning ``{"action": Y}``.
+        **No guessing.** Per-family widths are NOT encoded in the data config
+        (only the key names are). Without explicit widths, an even split would
+        silently mis-route channels for any embodiment whose families have
+        unequal width (e.g. so100: ``single_arm`` 6 + ``gripper`` 1; an even
+        3/4 split routes gripper commands to arm joints). That is a data-
+        corruption class failure (AGENTS.md #85), so this raises instead.
+
+        Raises:
+            ValueError: when a multi-family unified chunk arrives without
+                ``ActionMapping.widths`` to split it exactly, or when the
+                declared widths exceed the available channels. Either pass an
+                ``action_mapping`` with ``"robot_key:width"`` values, or run a
+                server that returns per-family action dicts (no split needed).
         """
         families = list(self._action_mapping.actions.keys())
-        n = len(families)
         total = chunk.shape[1]
-        width = max(1, total // n)
+        widths = self._action_mapping.widths
+
+        if not widths:
+            raise ValueError(
+                f"Cannot split a unified Y[H, K={total}] chunk across "
+                f"{len(families)} action families {families} without explicit "
+                "per-family widths: an even split would silently mis-route "
+                "channels for unequal-width embodiments (data-corruption risk). "
+                "Pass action_mapping values as 'robot_key:width' (e.g. "
+                "{'action.single_arm': 'arm:6', 'action.gripper': 'grip:1'}), "
+                "or use a server that returns per-family action dicts."
+            )
+
+        missing = [f for f in families if f not in widths]
+        if missing:
+            raise ValueError(f"ActionMapping.widths missing entries for families {missing} (have {dict(widths)})")
+
+        declared = sum(widths[f] for f in families)
+        if declared > total:
+            raise ValueError(
+                f"declared action widths sum to {declared} but the unified chunk only has {total} channels"
+            )
+
         out: dict[str, np.ndarray] = {}
-        for i, fam in enumerate(families):
-            start = i * width
-            end = start + width if i < n - 1 else total
-            out[fam] = chunk[:, start:end]
+        start = 0
+        for fam in families:
+            w = widths[fam]
+            out[fam] = chunk[:, start : start + w]
+            start += w
         return out
 
     def _flatten_actions_to_joints(self, actions: list[dict[str, Any]]) -> list[dict[str, Any]]:

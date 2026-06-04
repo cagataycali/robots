@@ -21,7 +21,7 @@ from typing import Any
 
 from strands import tool
 
-from strands_robots.tools._path_validation import validate_save_path
+from strands_robots.tools._path_validation import validate_host, validate_save_path
 from strands_robots.training.qwen_vla.config import CPTConfig, RLConfig, SFTConfig, T2AConfig
 from strands_robots.training.qwen_vla.data.embodiment_tags import EMBODIMENT_TAGS, get_embodiment_tag
 
@@ -166,6 +166,16 @@ def qwen_vla_train(
 def _hotswap(*, checkpoint: str, host: str, port: int) -> dict[str, Any]:
     """Ask a running Qwen-VLA SERVICE policy to reload a new checkpoint."""
     import socket
+
+    # Validate the connect target against the same host allowlist the sibling
+    # qwen_vla_inference tool uses (PR #92 input-safety baseline). No shell
+    # surface here (argv-free), but reject metacharacters for symmetry.
+    try:
+        validate_host(host, label="server_host")
+    except ValueError as e:
+        return {"status": "error", "message": str(e)}
+    if not isinstance(port, int) or not (1 <= port <= 65535):
+        return {"status": "error", "message": f"server_port must be an integer in [1, 65535], got {port!r}"}
 
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:

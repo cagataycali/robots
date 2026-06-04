@@ -110,3 +110,31 @@ def validate_save_path(path: str, *, label: str = "path") -> str:
             raise ValueError(f"{label} resolves to a protected system directory ({prefix}): {resolved}")
 
     return resolved
+
+
+# Hostname / IP allowlist: letters, digits, dots, hyphens, colons (IPv6),
+# underscores. No shell metacharacters, spaces, slashes, or pipes. Shared by
+# the qwen_vla_inference / qwen_vla_train tools so connect-target validation is
+# consistent (PR #92 LLM-input-safety baseline).
+_HOST_RE = re.compile(r"^[A-Za-z0-9._:-]+$")
+
+
+def validate_host(host: str, *, label: str = "host") -> str:
+    """Validate a hostname / IP supplied by a tool caller.
+
+    Args:
+        host: The host string to validate.
+        label: Field name for error messages.
+
+    Returns:
+        The validated host unchanged.
+
+    Raises:
+        ValueError: If the host is empty or contains characters outside the
+            allowlist (letters, digits, '.', '-', ':', '_').
+    """
+    if not host:
+        raise ValueError(f"{label} must not be empty")
+    if not _HOST_RE.match(host):
+        raise ValueError(f"{label} {host!r} contains invalid characters (allowed: letters, digits, '.', '-', ':', '_')")
+    return host

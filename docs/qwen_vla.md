@@ -111,6 +111,33 @@ zero-padding (section 2.4). Helpers in `policies/qwen_vla/normalize.py`:
 `compute_quantile_stats`, `normalize` / `unnormalize`, `build_channel_mask`,
 `pad_to_width` / `unpad_from_width`.
 
+### Splitting a unified `Y[H, K]` chunk (per-family widths)
+
+When the inference server returns a **single** `Y[H, K]` tensor (the paper's
+unified layout, §2.4) rather than per-family arrays, the policy must split it
+back into action families. Splitting requires the **exact per-family channel
+widths** — an even split would silently mis-route channels for any embodiment
+whose families differ in width (e.g. so100: `single_arm` 6 + `gripper` 1; an
+even 3/4 split sends gripper commands to arm joints). To avoid that
+data-corruption class, the policy **never guesses**:
+
+- Seed embodiments declare widths in `data_configs.json` via `action_dims`
+  (e.g. so100 `{"single_arm": 6, "gripper": 1}`), so the auto-inferred mapping
+  splits correctly out of the box.
+- For a custom embodiment, pass widths through `action_mapping` using the
+  `"robot_key:width"` syntax, or `create_custom_data_config(..., action_dims=...)`:
+
+  ```python
+  policy = QwenVlaPolicy(
+      data_config="so100",
+      action_mapping={"action.single_arm": "arm:6", "action.gripper": "grip:1"},
+  )
+  ```
+
+- Without widths, a multi-family unified chunk raises `ValueError` rather than
+  mis-routing. Servers that already return per-family action dicts never hit
+  this path (no split needed).
+
 ## Managing a server (agent tool)
 
 ```python

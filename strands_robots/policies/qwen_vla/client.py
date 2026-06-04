@@ -114,6 +114,8 @@ class QwenVlaInferenceClient:
         try:
             self.socket.close()
         except Exception:
+            # Best-effort close: the socket may already be closed or in a bad
+            # state; we are about to recreate it in _init_socket() regardless.
             pass
         self._init_socket()
 

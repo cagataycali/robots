@@ -27,10 +27,12 @@ import torch
 
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
-from reference_model import ReferenceQwenVla  # noqa: E402
+import reference_model  # noqa: E402
 from sim_env import ReferenceSimEnv  # noqa: E402
 
 from strands_robots.policies.qwen_vla import QwenVlaPolicy, compute_quantile_stats  # noqa: E402
+
+ReferenceQwenVla = reference_model.ReferenceQwenVla
 from strands_robots.training.qwen_vla import (  # noqa: E402
     CPTConfig,
     RLConfig,
@@ -56,6 +58,7 @@ HOST = "127.0.0.1"
 
 def _free_port():
     import socket as _s
+
     with _s.socket() as s:
         s.bind((HOST, 0))
         return s.getsockname()[1]
@@ -153,7 +156,7 @@ def stage3_sft(model) -> dict:
 def stage4_rl(model) -> dict:
     banner("STAGE 4: Reinforcement Learning (PPO+GAE) on sim success")
     cfg = RLConfig(
-        rollout_steps=40,
+        num_iterations=40,
         num_envs=8,
         action_dim=model.action_dim,
         sft_checkpoint=str(CKPT_DIR / "qwen_vla_sft.pt"),
@@ -255,8 +258,6 @@ def service_inference() -> dict:
 def local_inference() -> dict:
     banner("INFERENCE: LOCAL mode via load_policy (in-proc)")
     # Route the policy's LOCAL loader to our reference load_policy.
-    import reference_model
-
     import strands_robots.policies.qwen_vla.policy as pol
 
     orig = pol._qwen_vla_installed

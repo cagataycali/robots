@@ -13,7 +13,8 @@
       "chunk_size": 16,
       "image_view_tags": {"video.webcam": "ego"},
       "observation_indices": [0],
-      "action_indices": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+      "action_indices": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+      "action_dims": {"single_arm": 6, "gripper": 1}
     },
     "so100_dualcam": {
       "_extends": "so100",
@@ -33,7 +34,8 @@
       "chunk_size": 16,
       "image_view_tags": {"video.cam_high": "ego", "video.cam_left_wrist": "cam_left_wrist", "video.cam_right_wrist": "cam_right_wrist"},
       "observation_indices": [0],
-      "action_indices": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+      "action_indices": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+      "action_dims": {"left_arm": 6, "right_arm": 6, "left_gripper": 1, "right_gripper": 1}
     },
     "widowx": {
       "video_keys": ["video.image_0"],
@@ -48,7 +50,8 @@
       "chunk_size": 16,
       "image_view_tags": {"video.image_0": "ego"},
       "observation_indices": [0],
-      "action_indices": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+      "action_indices": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+      "action_dims": {"x": 1, "y": 1, "z": 1, "roll": 1, "pitch": 1, "yaw": 1, "gripper": 1}
     },
     "unitree_g1": {
       "video_keys": ["video.ego_view"],
@@ -63,12 +66,14 @@
       "chunk_size": 16,
       "image_view_tags": {"video.ego_view": "ego"},
       "observation_indices": [0],
-      "action_indices": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+      "action_indices": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+      "action_dims": {"left_arm": 7, "right_arm": 7, "left_hand": 6, "right_hand": 6, "waist": 3}
     },
     "unitree_g1_mobile": {
       "_extends": "unitree_g1",
       "has_mobile_base": true,
-      "action_keys": ["action.left_arm", "action.right_arm", "action.left_hand", "action.right_hand", "action.waist", "action.base_velocity"]
+      "action_keys": ["action.left_arm", "action.right_arm", "action.left_hand", "action.right_hand", "action.waist", "action.base_velocity"],
+      "action_dims": {"left_arm": 7, "right_arm": 7, "left_hand": 6, "right_hand": 6, "waist": 3, "base_velocity": 3}
     },
     "franka_panda": {
       "video_keys": ["video.front", "video.wrist"],
@@ -83,7 +88,8 @@
       "chunk_size": 16,
       "image_view_tags": {"video.front": "ego", "video.wrist": "cam_right_wrist"},
       "observation_indices": [0],
-      "action_indices": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+      "action_indices": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+      "action_dims": {"joint_position": 7, "gripper": 1}
     },
     "libero_panda": {
       "video_keys": ["video.image", "video.wrist_image"],
@@ -98,7 +104,8 @@
       "chunk_size": 16,
       "image_view_tags": {"video.image": "ego", "video.wrist_image": "cam_right_wrist"},
       "observation_indices": [0],
-      "action_indices": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+      "action_indices": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+      "action_dims": {"x": 1, "y": 1, "z": 1, "roll": 1, "pitch": 1, "yaw": 1, "gripper": 1}
     }
   },
   "aliases": {

@@ -64,6 +64,12 @@ class QwenVlaDataConfig:
     quantile_stats_path: str | None = None
     observation_indices: list[int] = field(default_factory=lambda: [0])
     action_indices: list[int] = field(default_factory=lambda: list(range(16)))
+    # Per-family channel widths (bare action key -> width), e.g.
+    # {'single_arm': 6, 'gripper': 1}. Lets a single unified Y[H, K] chunk
+    # from an upstream server be split EXACTLY across families (paper §2.4);
+    # without it a multi-family unified chunk cannot be split safely and the
+    # policy raises rather than guessing widths. Empty = unknown widths.
+    action_dims: dict[str, int] = field(default_factory=dict)
 
     def embodiment_prompt(self, instruction: str) -> str:
         """Render this embodiment's section-2.3 prompt for *instruction*.
@@ -110,6 +116,7 @@ def _resolve_config(name: str, definitions: dict) -> QwenVlaDataConfig:
             "observation_indices": list(parent.observation_indices),
             "action_indices": list(parent.action_indices),
             "image_view_tags": dict(parent.image_view_tags),
+            "action_dims": dict(parent.action_dims),
         }
         for scalar in _SCALAR_INHERIT:
             merged[scalar] = getattr(parent, scalar)
@@ -181,6 +188,7 @@ def create_custom_data_config(
     language_keys: list[str] | None = None,
     observation_indices: list[int] | None = None,
     action_indices: list[int] | None = None,
+    action_dims: dict[str, int] | None = None,
 ) -> QwenVlaDataConfig:
     """Create and register a custom Qwen-VLA data config at runtime.
 
@@ -203,6 +211,7 @@ def create_custom_data_config(
         quantile_stats_path=quantile_stats_path,
         observation_indices=observation_indices or [0],
         action_indices=action_indices or list(range(chunk_size)),
+        action_dims=action_dims or {},
     )
     DATA_CONFIG_MAP[name] = config
     logger.info("Registered custom Qwen-VLA config '%s' (robot_tag=%s)", name, robot_tag)

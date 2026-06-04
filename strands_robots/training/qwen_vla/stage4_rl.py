@@ -84,9 +84,9 @@ def run_rl(config: RLConfig, *, model=None, env=None):
     if config.sft_checkpoint:
         model.load_checkpoint(config.sft_checkpoint)
     logger.info(
-        "RL start: envs=%d, rollout=%d, gamma=%.2f, lambda=%.2f, clip=%.2f, ppo_epochs=%d",
+        "RL start: envs=%d, iterations=%d, gamma=%.2f, lambda=%.2f, clip=%.2f, ppo_epochs=%d",
         config.num_envs,
-        config.rollout_steps,
+        config.num_iterations,
         config.gamma,
         config.gae_lambda,
         config.clip_epsilon,
@@ -95,7 +95,7 @@ def run_rl(config: RLConfig, *, model=None, env=None):
 
     buffer = RolloutBuffer()
     last_objective = float("nan")
-    for iteration in range(config.rollout_steps):
+    for iteration in range(config.num_iterations):
         buffer.clear()
         # Reproducible per-iteration seeding (the #187 reset contract).
         model.reset(seed=config.seed + iteration)
@@ -115,7 +115,7 @@ def run_rl(config: RLConfig, *, model=None, env=None):
 
     return {
         "stage": "rl",
-        "iterations": config.rollout_steps,
+        "iterations": config.num_iterations,
         "final_objective": last_objective,
         "output_dir": config.output_dir,
     }

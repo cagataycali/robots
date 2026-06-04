@@ -132,7 +132,7 @@ class RLConfig(_BaseStageConfig):
     clip_epsilon: float = 0.2
     ppo_epochs: int = 4
     value_lr_multiplier: float = 20.0
-    rollout_steps: int = 256
+    num_iterations: int = 256  # outer PPO iterations (each: rollout num_envs episodes -> GAE -> ppo_epochs updates)
 
     def validate(self) -> None:
         super().validate()
@@ -144,6 +144,8 @@ class RLConfig(_BaseStageConfig):
             raise ValueError(f"gae_lambda must be in (0,1], got {self.gae_lambda}")
         if self.clip_epsilon <= 0:
             raise ValueError(f"clip_epsilon must be positive, got {self.clip_epsilon}")
+        if self.num_iterations <= 0:
+            raise ValueError(f"num_iterations must be positive, got {self.num_iterations}")
 
 
 __all__ = ["TimestepDist", "T2AConfig", "CPTConfig", "SFTConfig", "RLConfig"]
