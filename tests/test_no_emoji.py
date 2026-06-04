@@ -134,7 +134,7 @@ def test_no_emoji_in_package_source() -> None:
             continue
 
         for lineno, line in enumerate(text.splitlines(), start=1):
-            for col, ch in enumerate(line, start=1):
+            for ch in line:
                 if ord(ch) <= 0x7F:
                     continue
                 if _is_disallowed(ch):
