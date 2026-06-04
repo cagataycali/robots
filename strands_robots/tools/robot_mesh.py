@@ -476,7 +476,7 @@ def robot_mesh(
             # error, lockout, etc.). Previously only ``success=True`` was
             # emitted, leaving a forensic gap on failure paths.
             _audit_tool_action(action, target, False, f"dispatch error: {type(exc).__name__}: {exc}")
-            raise
+            return _err(f"[tell -> {target}] dispatch error: {type(exc).__name__}: {exc}")
         _audit_tool_action(action, target, True, f"instruction={instruction[:200]}")
         return _ok(f"[tell -> {target}] {json.dumps(result, default=str)[:600]}")
 
@@ -505,7 +505,7 @@ def robot_mesh(
             result = mesh.send(target, cmd, timeout=timeout)
         except Exception as exc:  # noqa: BLE001
             _audit_tool_action(action, target, False, f"dispatch error: {type(exc).__name__}: {exc}")
-            raise
+            return _err(f"[send -> {target}] dispatch error: {type(exc).__name__}: {exc}")
         _audit_tool_action(action, target, True, f"action={cmd.get('action')}")
         return _ok(f"[send -> {target}] {json.dumps(result, default=str)[:600]}")
 
@@ -523,7 +523,7 @@ def robot_mesh(
             results = mesh.broadcast(cmd, timeout=timeout)
         except Exception as exc:  # noqa: BLE001
             _audit_tool_action(action, "*", False, f"dispatch error: {type(exc).__name__}: {exc}")
-            raise
+            return _err(f"[broadcast] dispatch error: {type(exc).__name__}: {exc}")
         _audit_tool_action(action, "*", True, f"action={cmd.get('action')} responses={len(results)}")
         text = f"[broadcast] {len(results)} responses\n"
         for r in results[:10]:
@@ -541,7 +541,7 @@ def robot_mesh(
             result = mesh.send(target, {"action": "stop"}, timeout=min(timeout, 5.0))
         except Exception as exc:  # noqa: BLE001
             _audit_tool_action(action, target, False, f"dispatch error: {type(exc).__name__}: {exc}")
-            raise
+            return _err(f"[stop -> {target}] dispatch error: {type(exc).__name__}: {exc}")
         _audit_tool_action(action, target, True, "")
         return _ok(f"[stop -> {target}] {json.dumps(result, default=str)[:600]}")
 
@@ -553,7 +553,7 @@ def robot_mesh(
             results = mesh.emergency_stop()
         except Exception as exc:  # noqa: BLE001
             _audit_tool_action(action, "*", False, f"dispatch error: {type(exc).__name__}: {exc}")
-            raise
+            return _err(f"[emergency_stop] dispatch error: {type(exc).__name__}: {exc}")
         _audit_tool_action(action, "*", True, f"responses={len(results)}")
         return _ok(f"[E-STOP] broadcast complete - {len(results)} responses (audit log written)")
 
