@@ -164,28 +164,25 @@ _ROBOT_POLICY_DOC: dict[str, Any] = {
             ],
         },
         {
-            # This wildcard middle segment is the OPERATOR'S thing-name
-            # (the recipient of the response). The robot legitimately
-            # needs to publish to the operator's own response inbox to
-            # complete the request/response RPC pattern. Scoping
-            # tighter (e.g. ``${iot:Connection.Thing.ThingName}/...``)
-            # would force the operator to know each robot's name to
-            # route responses, breaking the topic contract.
+            # F-15 / B-09: the response topic is
+            # ``strands/{operator}/response/{robot_thingname}/{turn}``.
+            # The first wildcard is the OPERATOR'S thing-name (the
+            # recipient inbox the robot must reach to complete the RPC).
+            # The ``${iot:Connection.Thing.ThingName}`` segment pins the
+            # RESPONDER to its own identity -- so robot-A can no longer
+            # forge a response that claims to come from robot-B. The
+            # trailing ``/*`` is the per-turn UUID.
             #
-            # The trailing ``/*`` is the per-turn id (UUID per
-            # call). The middle wildcard is the only legitimate broadening.
-            #
-            # Defence-in-depth: the operator-side ACL (``AllowOwnSubscriptions``
-            # at line 187) restricts each operator to subscribing only to
-            # ``strands/${ThingName}/...``, so a robot publishing to
-            # ``strands/<other-operator>/response/<turn>`` lands on a
-            # topic nobody is authorised to subscribe to (the message
-            # is silently dropped by the broker per the IoT Core contract).
+            # Defence-in-depth: the operator-side ACL
+            # (``OperatorReceiveResponses`` / ``AllowOwnSubscriptions``)
+            # already restricts each operator to its own response prefix;
+            # this statement closes the responder-identity surface on the
+            # publish side that the pentest (F-15) proved exploitable.
             "Sid": "AllowResponseToAnyOperator",
             "Effect": "Allow",
             "Action": "iot:Publish",
             "Resource": [
-                "arn:aws:iot:*:*:topic/strands/*/response/*",
+                "arn:aws:iot:*:*:topic/strands/*/response/${iot:Connection.Thing.ThingName}/*",
             ],
         },
         {
@@ -275,8 +272,13 @@ _OPERATOR_POLICY_DOC: dict[str, Any] = {
             "Effect": "Allow",
             "Action": ["iot:Subscribe", "iot:Receive"],
             "Resource": [
+                # F-15: response topic gained a ``{robot_thingname}``
+                # segment (strands/{op}/response/{robot}/{turn}); the
+                # multi-level ``#`` filter covers both the old and new
+                # depth so the operator still receives every response
+                # addressed to it.
                 "arn:aws:iot:*:*:topic/strands/${iot:Connection.Thing.ThingName}/response/*",
-                "arn:aws:iot:*:*:topicfilter/strands/${iot:Connection.Thing.ThingName}/response/*",
+                "arn:aws:iot:*:*:topicfilter/strands/${iot:Connection.Thing.ThingName}/response/#",
             ],
         },
         {
