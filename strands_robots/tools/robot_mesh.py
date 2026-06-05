@@ -92,6 +92,7 @@ def robot_mesh(
     timeout: float = 30.0,
     name: str = "",
     limit: int = 50,
+    tool_context: Any = None,
 ) -> dict[str, Any]:
     """Coordinate every robot, sim, and agent on the local Zenoh mesh.
 

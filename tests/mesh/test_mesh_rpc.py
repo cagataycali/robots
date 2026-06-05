@@ -89,7 +89,12 @@ def fake_session() -> Iterator[MagicMock]:
 
 @pytest.fixture
 def captured_puts() -> Iterator[list[tuple[str, dict[str, Any]]]]:
-    """Capture every mesh_mod.put() call as (key, data) tuples."""
+    """Capture every mesh.put() call as (key, payload) tuples.
+
+    Wire-level authentication is owned by the Zenoh transport in
+    production; ``put()`` itself just hands plain JSON to the
+    transport. The fixture records the payload as-is.
+    """
     seen: list[tuple[str, dict[str, Any]]] = []
 
     def _spy(key: str, data: dict[str, Any]) -> None:
@@ -156,7 +161,7 @@ def test_dispatch_reset() -> None:
 def test_dispatch_execute_calls_execute_task_sync() -> None:
     r = _FakeRobot()
     m = Mesh(r, peer_id="p")
-    out = m._dispatch({"action": "execute", "instruction": "go", "duration": 5.0})
+    out = m._dispatch({"action": "execute", "instruction": "go", "duration": 5.0, "policy_provider": "mock"})
     assert out == {"executed": "go"}
     assert ("execute", {"instruction": "go", "provider": "mock", "duration": 5.0}) in r.calls
 
@@ -164,7 +169,7 @@ def test_dispatch_execute_calls_execute_task_sync() -> None:
 def test_dispatch_start_calls_start_task() -> None:
     r = _FakeRobot()
     m = Mesh(r, peer_id="p")
-    out = m._dispatch({"action": "start", "instruction": "go"})
+    out = m._dispatch({"action": "start", "instruction": "go", "policy_provider": "mock"})
     assert out == {"started": "go"}
 
 
@@ -229,19 +234,49 @@ def test_exec_cmd_publishes_error_on_dispatch_exception(
     captured_puts: list[tuple[str, dict[str, Any]]],
 ) -> None:
     m = Mesh(_FakeRobot(), peer_id="me")
-    with patch.object(m, "_dispatch", side_effect=RuntimeError("boom")):
-        m._exec_cmd({"sender_id": "alice", "turn_id": "t2", "command": {"action": "x"}})
+    # Use a valid action (status) so we get past command validation and exercise
+    # the original dispatch-exception path that this test was written for.
+    with patch.object(m, "_dispatch", side_effect=RuntimeError("boom-with-internal-detail")):
+        m._exec_cmd({"sender_id": "alice", "turn_id": "t2", "command": {"action": "status"}})
     payload = next(d for k, d in captured_puts if k == "strands/alice/response/t2")
     assert payload["type"] == "error"
-    assert "boom" in payload["error"]
+    # internal exception detail MUST NOT leak onto the wire. The
+    # error string is sanitised to a static "dispatch error" so a remote
+    # caller cannot pivot on path / attribute / library-trace fragments.
+    assert payload["error"] == "dispatch error"
+    assert "boom-with-internal-detail" not in payload["error"]
 
 
-def test_exec_cmd_string_command_becomes_execute() -> None:
+def test_exec_cmd_rejects_unknown_action_with_validation_error(
+    captured_puts: list[tuple[str, dict[str, Any]]],
+) -> None:
+    """An unknown action is rejected at the validation gate, well before any
+    robot side-effect runs. The reply is a structured error envelope that
+    includes the offending action name."""
+    m = Mesh(_FakeRobot(), peer_id="me")
+    m._exec_cmd({"sender_id": "alice", "turn_id": "t3", "command": {"action": "rm_rf"}})
+    payload = next(d for k, d in captured_puts if k == "strands/alice/response/t3")
+    assert payload["type"] == "error"
+    assert "validation" in payload["error"]
+    assert "rm_rf" in payload["error"]
+
+
+def test_exec_cmd_string_command_rejected() -> None:
+    """bare-string commands on the wire bypass validate_command's dict-shape
+    contract. _exec_cmd must reject them, not silently coerce to {action:execute}.
+
+    Pre-the prior fix contract was auto-wrap (a peer publishing "hello" got a mock-policy
+    execute), which let any mTLS+ACL-authorised peer drive the robot at the mock
+    provider with arbitrary text.
+    """
     r = _FakeRobot()
     m = Mesh(r, peer_id="me")
     with patch.object(mesh_mod, "put"):
         m._exec_cmd({"sender_id": "alice", "turn_id": "t", "command": "do thing"})
-    assert any(name == "execute" and args["instruction"] == "do thing" for name, args in r.calls)
+    # No execute call; bare string was rejected at the wire boundary.
+    assert not any(name == "execute" for name, _ in r.calls), (
+        "_exec_cmd must NOT coerce bare-string commands into mock-policy executes"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -262,7 +297,11 @@ def test_send_returns_first_response(started_mesh: Mesh, captured_puts) -> None:
             time.sleep(0.01)
         else:  # pragma: no cover — defensive
             return
-        sample = _make_sample({"turn_id": turn, "result": {"ok": 1}})
+        # Phase-4 / D1: _on_response now requires responder_id to match the
+        # target the sender originally addressed (otherwise an
+        # authenticated peer that observes the turn_id can hijack the
+        # response). Include responder_id="peer-b" to match send target.
+        sample = _make_sample({"turn_id": turn, "responder_id": "peer-b", "result": {"ok": 1}})
         started_mesh._on_response(sample)
 
     threading.Thread(target=fake_responder, daemon=True).start()

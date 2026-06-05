@@ -83,7 +83,11 @@ def test_resolve_camera_hz_invalid_disables(fake_robot_with_camera, monkeypatch)
 
 
 def test_publish_cameras_once_calls_put(fake_robot_with_camera):
-    """One frame is read per camera and forwarded via mesh_session.put."""
+    """One frame is read per camera and forwarded via mesh_session.put.
+
+    Note: outgoing camera frames are wrapped in a signed envelope; we
+    unwrap them here so the rest of the assertions stay readable.
+    """
     from strands_robots.mesh import Mesh
 
     m = Mesh(fake_robot_with_camera, peer_id="test-cam-6")

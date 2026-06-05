@@ -2,10 +2,10 @@
 
 This subpackage owns the cloud-side concerns of the mesh:
 
-- :mod:`provision`      — single-Thing bootstrap (cert + policy + Thing).
-- :mod:`bootstrap`      — account-wide bootstrap (Rules + Lambda +
+- :mod:`provision`  — single-Thing bootstrap (cert + policy + Thing).
+- :mod:`bootstrap`  — account-wide bootstrap (Rules + Lambda +
   DynamoDB audit + Fleet Provisioning template).
-- :mod:`shadow`         — Device Shadow named-shadow mirror of presence.
+- :mod:`shadow`  — Device Shadow named-shadow mirror of presence.
 - :mod:`camera_offload` — S3-backed camera frame offload.
 
 The wire-level transport (:class:`IotMqttTransport`) lives in
@@ -20,14 +20,14 @@ For a customer's first integration, the canonical sequence is::
     from strands_robots.mesh.iot import bootstrap_account, provision_robot
 
     # 1. Once per AWS account/region: spin up Rules / Lambda / DynamoDB /
-    #    Fleet Provisioning template / etc.
+    #  Fleet Provisioning template / etc.
     bootstrap_account()
 
     # 2. Per robot: issue a cert + attach the strands-robot policy.
     p = provision_robot("so100-arm-01")
 
     # 3. Run the robot under the iot transport.
-    #    (export the env vars from p.env_vars() and `Robot()` Just Works.)
+    #  (export the env vars from p.env_vars() and `Robot()` Just Works.)
 
 For a single-robot dev setup, step 1 is optional — without it E-stop
 fan-out and DynamoDB audit just don't activate; everything else still
