@@ -408,3 +408,84 @@ class TestResumeCacheKeyNamespaceIsolation:
         assert "wire_zid is not None" in source or "wire_zid is None" in source, (
             "Domain tag conditional must use explicit None check, not truthy/falsy (empty string '' is falsy but valid)"
         )
+
+
+# ---------------------------------------------------------------------------
+# Issue #256: the three _resume_lockout rejection branches must publish a
+# single uniform resume_denied audit shape with an opaque reason_code over
+# the wire, so a remote prober cannot use event_type or payload-key shape
+# as a content-channel oracle. (Deferred from PR #225 R8.)
+# ---------------------------------------------------------------------------
+
+
+class TestResumeDeniedUniformAuditShape:
+    """All three rejection paths in ``_resume_lockout`` -- lockout not
+    engaged, override code unconfigured, wrong override code -- must emit
+    the same wire ``event_type`` and the same wire payload key set so the
+    audit broadcast cannot be used as a differential oracle.
+    """
+
+    @pytest.fixture
+    def recording_mesh(self):
+        import threading
+
+        m = core.Mesh.__new__(core.Mesh)
+        m.peer_id = "test-peer"
+        m._estop_lockout = threading.Event()
+        m._last_estop_ts = 0.0
+        m._wire_events = []
+        m.publish_safety_event = lambda **kw: m._wire_events.append(kw)
+        return m
+
+    def _trigger_branches(self, m, monkeypatch):
+        import strands_robots.mesh.core as core_mod
+
+        # Suppress the local file-backed audit so only wire events recorded.
+        monkeypatch.setattr(core_mod, "log_safety_event", lambda *a, **k: None)
+        events = []
+
+        # Branch 1: lockout not engaged.
+        m._estop_lockout.clear()
+        m._wire_events = []
+        m._resume_lockout("anything")
+        events.append(("no_lockout", list(m._wire_events)))
+
+        # Branch 2: lockout engaged, override code unconfigured.
+        monkeypatch.delenv("STRANDS_MESH_OVERRIDE_CODE", raising=False)
+        m._estop_lockout.set()
+        m._wire_events = []
+        m._resume_lockout("anything")
+        events.append(("no_code", list(m._wire_events)))
+
+        # Branch 3: lockout engaged, configured, wrong code.
+        monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret-32char-hex-1234567890abcd")
+        m._estop_lockout.set()
+        m._wire_events = []
+        m._resume_lockout("wrong-code")
+        events.append(("wrong_code", list(m._wire_events)))
+
+        return events
+
+    def test_resume_denied_uniform_event_type_across_branches(self, recording_mesh, monkeypatch):
+        events = self._trigger_branches(recording_mesh, monkeypatch)
+        for label, wire in events:
+            assert len(wire) == 1, f"branch {label} did not emit exactly one wire event"
+            assert wire[0]["event_type"] == "resume_denied", (
+                f"branch {label} wire event_type was {wire[0]['event_type']!r}, "
+                "expected uniform 'resume_denied'"
+            )
+
+    def test_resume_denied_payload_shape_uniform_across_branches(self, recording_mesh, monkeypatch):
+        events = self._trigger_branches(recording_mesh, monkeypatch)
+        key_sets = []
+        for label, wire in events:
+            payload = wire[0]["payload"]
+            key_sets.append(frozenset(payload.keys()))
+            # The wire reason_code must be opaque (not the internal reason).
+            assert payload["reason_code"] == "denied", (
+                f"branch {label} leaked a branch-specific reason_code: "
+                f"{payload['reason_code']!r}"
+            )
+        assert len(set(key_sets)) == 1, (
+            f"rejection branches emitted differing payload key sets: {key_sets}"
+        )
