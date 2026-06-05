@@ -382,8 +382,19 @@ def test_blacklist_warning_fires_with_rules(tmp_path: Path, caplog: pytest.LogCa
             }
         )
     )
-    with caplog.at_level(logging.WARNING, logger="strands_robots.mesh._acl_config"):
-        _acl_config._load_acl_file(p)
+    # B-08 / F-14: allow+rules now hard-refuses without an explicit ack.
+    # This test pins the (first-line) WARNING, so opt in to reach it.
+    import os as _os
+    _prev = _os.environ.get("STRANDS_MESH_ACCEPT_PERMISSIVE_ACL")
+    _os.environ["STRANDS_MESH_ACCEPT_PERMISSIVE_ACL"] = "1"
+    try:
+        with caplog.at_level(logging.WARNING, logger="strands_robots.mesh._acl_config"):
+            _acl_config._load_acl_file(p)
+    finally:
+        if _prev is None:
+            _os.environ.pop("STRANDS_MESH_ACCEPT_PERMISSIVE_ACL", None)
+        else:
+            _os.environ["STRANDS_MESH_ACCEPT_PERMISSIVE_ACL"] = _prev
     assert any("blacklist" in m and "1 rule(s)" in m for m in caplog.messages), (
         f"expected blacklist warning naming rule count, got: {caplog.messages}"
     )
