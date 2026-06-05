@@ -3,6 +3,64 @@
 All notable behavioural changes to `strands-robots` are logged here. Follows
 [Keep a Changelog](https://keepachangelog.com/) conventions.
 
+## Unreleased - #228 (AWS IoT provisioning hardening)
+
+### Changed: default presigned-URL TTL for camera offload
+
+``CameraOffloader.presign_ttl`` default is now **60 seconds** (was 3600s).
+A 1-hour ceiling (``MAX_PRESIGN_TTL_SECONDS``) is enforced; values above
+the cap are clamped with a ``WARNING``. The change shrinks the replay
+window for a captured ``strands/<thing>/camera/<cam>/ref`` MQTT message
+from one hour to one minute.
+
+Migration: deployments whose downstream consumers (review UIs,
+recording pipelines that fetch on a delay) need >60 seconds of validity
+should opt in explicitly:
+
+```bash
+export STRANDS_MESH_CAMERA_PRESIGN_TTL=3600   # legacy 1h
+```
+
+or pass ``presign_ttl=3600`` to ``CameraOffloader(...)`` / ``enable_for_mesh(...)``.
+
+### Added: AWS IoT provisioning hardening
+
+Applies to ``strands_robots.mesh.iot.provision`` and
+``strands_robots.mesh.iot.camera_offload``:
+
+- **CA pinning** — ``AmazonRootCA1.pem`` is verified against an
+  in-tree pin tuple (``_AMAZON_ROOT_CA1_PINS``) at download AND on
+  every on-disk re-use. Defeats CA-substitution MITM. Operators can
+  add additional pins via ``STRANDS_MESH_CA_PINS`` (comma-separated
+  64-char lowercase hex). The break-glass ``STRANDS_MESH_DISABLE_CA_PIN=true``
+  (case-insensitive) writes a ``.unverified`` sidecar marker (mode
+  ``0o600``) for audit traceability.
+- **Strict thing-name regex** (``^[a-zA-Z0-9_-]{1,128}$``,
+  ``re.fullmatch``) applied symmetrically across ``provision_robot``,
+  ``provision_operator``, and ``teardown_thing``. Rejects path
+  separators, dots, spaces, NUL, non-ASCII, and trailing
+  ``
+``/````/``	``. Pre-existing AWS IoT Things containing ``:``
+  must be renamed (we deliberately reject ``:`` due to NTFS / classic
+  Mac filesystem semantics).
+- **IoT policy scope** — robot/operator policies use explicit
+  per-thing topic prefixes; no ``Resource: '*'`` on Receive.
+  ``OperatorPublishToFleet``'s ``*/cmd`` wildcard is documented and
+  pinned as a deliberate design choice (``test_publish_to_fleet_wildcard_is_deliberate``).
+- **Per-recv TLS timeout bound** via custom ``HTTPSHandler`` (defeats
+  malicious-broker connection-stalling).
+- **``teardown_thing(cert_dir=...)`` kwarg** for parity with
+  ``provision_robot``/``provision_operator`` (closes stale-credential
+  leak on non-default ``cert_dir`` deployments).
+
+New env vars (documented in README Configuration matrix):
+``STRANDS_MESH_CA_PINS``, ``STRANDS_MESH_DISABLE_CA_PIN``,
+``STRANDS_MESH_CAMERA_PRESIGN_TTL``.
+
+Known follow-ups: #249 (camera privacy kill-switch + S3 ACL),
+#251 (chunked-read parity in ``_ensure_ca``), #259 (kwarg negative-TTL
+WARNING symmetry), #260 (warn on re-use of break-glass-written CA).
+
 ## Unreleased - #178 (LiberoOffScreenRenderEngine retired)
 
 ### Removed: ``LiberoOffScreenRenderEngine`` simulation backend (BREAKING)

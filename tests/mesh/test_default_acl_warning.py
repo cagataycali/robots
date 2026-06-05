@@ -11,6 +11,7 @@ suppressed when either condition does not hold.
 
 from __future__ import annotations
 
+import ast
 import logging
 from pathlib import Path
 from types import SimpleNamespace
@@ -149,23 +150,41 @@ class TestPermissiveACLWarningExceptNarrow:
     def test_unexpected_exception_surfaces_loudly(self):
         """A non-(ImportError|ValueError) raised inside the warning block
         should surface at WARNING (not DEBUG silent-swallow).
+
+        Scope: assertions target the ``_refuse_under_permissive_default_acl``
+        method body specifically (AST-scoped). Other helper methods in
+        ``core.py`` legitimately use ``except ImportError:`` to guard
+        soft imports of the ``strands_robots.mesh.session`` module
+        (e.g. ``_local_session_zid``, ``_safety_publisher_for``); those
+        are unrelated to the permissive-ACL warning block and must not
+        be flagged by this pin test.
         """
 
         # Static assertion -- start() does network I/O, so we verify the
         # narrowed except clause is in the source rather than triggering it.
-        # The previous version of this test constructed a Mesh and patched
-        # resolve_auth_mode, but that scaffolding never got exercised because
-        # start() was the entry point. Removed per CodeQL #257.
+        # AST-scope to the gate method so legitimate ImportError fallbacks
+        # in unrelated helper methods do not cause false positives.
         src = Path(core_mod.__file__).read_text()
+        tree = ast.parse(src)
+        gate_src: str | None = None
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == "_refuse_under_permissive_default_acl":
+                gate_src = ast.get_source_segment(src, node)
+                break
+        assert gate_src is not None, (
+            "expected _refuse_under_permissive_default_acl in core.py; "
+            "review thread core.py:121 (PR-3 + PR-6 review-feedback)."
+        )
+
         # PR-3 ships _acl_config + _zenoh_config in the same diff, so the
         # ImportError fallback was dead code (review thread core.py:121).
         # The gate now resolves snapshot_acl directly under a narrow
         # ValueError catch (fail-CLOSED on bad config).
-        assert "except ValueError as warn_exc:" in src
+        assert "except ValueError as warn_exc:" in gate_src
         # No bare `except Exception as warn_exc:` left in the start() block
-        assert "except Exception as warn_exc:" not in src
-        # And no dead ImportError fallback either.
-        assert "except ImportError:" not in src
+        assert "except Exception as warn_exc:" not in gate_src
+        # And no dead ImportError fallback in the gate method either.
+        assert "except ImportError:" not in gate_src
 
 
 # ---------------------------------------------------------------------
