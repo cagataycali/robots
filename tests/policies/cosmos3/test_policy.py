@@ -260,3 +260,34 @@ def test_unknown_robot_raises_at_construction():
     # rejected, listing the available built-in mappings in the error message.
     with pytest.raises(ValueError, match="Available built-in mappings"):
         Cosmos3Policy(embodiment="droid", client=client, robot="so100")
+
+
+def test_pretrained_name_or_path_stored_not_dropped():
+    """create_policy("nvidia/Cosmos3-Nano-Policy-DROID") passes
+    pretrained_name_or_path through the registry resolver; the policy must
+    store it for introspection rather than silently dropping it via **kwargs.
+    Pins AGENTS.md PR-#86 "Reject silently-dropped kwargs" and prevents the
+    one-way-door regression where the model-id smart-string surface is
+    advertised but the kwarg is silently discarded.
+    """
+    client = FakeClient(_droid_chunk())
+    policy = Cosmos3Policy(
+        embodiment="droid",
+        client=client,
+        pretrained_name_or_path="nvidia/Cosmos3-Nano-Policy-DROID",
+    )
+    assert policy.pretrained_name_or_path == "nvidia/Cosmos3-Nano-Policy-DROID"
+
+
+def test_unexpected_kwargs_rejected():
+    """Cosmos3Policy no longer accepts **kwargs — a typo'd kwarg like
+    actoin_mapping (note the typo) must raise TypeError instead of being
+    silently swallowed.
+    """
+    client = FakeClient(_droid_chunk())
+    with pytest.raises(TypeError):
+        Cosmos3Policy(
+            embodiment="droid",
+            client=client,
+            actoin_mapping={"joint_0": "shoulder_pan"},  # typo
+        )

@@ -139,11 +139,26 @@ class Cosmos3Policy(Policy):
         prompt: str = "",
         api_key: str | None = None,
         client: Cosmos3WebsocketClient | None = None,
-        **kwargs: Any,
+        pretrained_name_or_path: str | None = None,
     ) -> None:
         self.embodiment: Cosmos3Embodiment = get_embodiment(embodiment)
         self.host = host
         self.port = port
+        # ``pretrained_name_or_path`` is injected by the registry's model-id
+        # resolver (e.g. create_policy("nvidia/Cosmos3-Nano-Policy-DROID")).
+        # Cosmos 3 service mode picks the checkpoint server-side (via
+        # --checkpoint-path), so this kwarg is informational only. We store it
+        # for introspection and log a hint so the user knows the value isn't
+        # being silently dropped.
+        self.pretrained_name_or_path = pretrained_name_or_path
+        if pretrained_name_or_path is not None:
+            logger.info(
+                "Cosmos3Policy: pretrained_name_or_path=%r noted. "
+                "Service mode selects the checkpoint server-side "
+                "(--checkpoint-path). Ensure the server is running the "
+                "expected model.",
+                pretrained_name_or_path,
+            )
         self.action_space = action_space or self.embodiment.default_action_space
         if self.action_space not in self.embodiment.action_layouts:
             raise ValueError(
