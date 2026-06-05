@@ -408,6 +408,19 @@ class SpecBuilder:
             List of joint names belonging to the attached robot, in the order
             MuJoCo discovered them (no prefix - caller namespaces via
             ``robot.namespace`` when it resolves IDs post-compile).
+
+        Notes:
+            Any ``mjGEOM_PLANE`` geoms in the loaded ``robot_spec`` are
+            deleted before the attach to avoid coplanar Z-fight with the
+            world's ``ground`` plane (see #320). This currently strips every
+            plane geom by type, so a robot scene that uses ``<geom
+            type="plane">`` for a wall/divider/non-floor surface would lose
+            it too; today's ``robot_descriptions`` assets only use planes as
+            floors. If the robot scene is the only floor in your simulation,
+            build the world with ``SimWorld(ground_plane=False)`` -- note
+            that the strip is unconditional in v0.4.0, so the v0.4.1
+            conditional-strip work tracked on #320 is required to make that
+            path render a floor.
         """
         mujoco = _ensure_mujoco()
 
