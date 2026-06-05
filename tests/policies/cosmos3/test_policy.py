@@ -285,9 +285,9 @@ def test_unexpected_kwargs_rejected():
     silently swallowed.
     """
     client = FakeClient(_droid_chunk())
+    # Build the typo'd kwarg dynamically so static analysis doesn't flag the
+    # intentionally-misspelled parameter name; the runtime behavior (TypeError
+    # on an unsupported kwarg) is exactly what we're asserting.
+    bad_kwargs = {"actoin_mapping": {"joint_0": "shoulder_pan"}}  # typo on purpose
     with pytest.raises(TypeError):
-        Cosmos3Policy(
-            embodiment="droid",
-            client=client,
-            actoin_mapping={"joint_0": "shoulder_pan"},  # typo
-        )
+        Cosmos3Policy(embodiment="droid", client=client, **bad_kwargs)
