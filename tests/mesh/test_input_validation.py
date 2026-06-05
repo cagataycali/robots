@@ -15,7 +15,6 @@ import pytest
 from strands_robots.mesh import security
 from strands_robots.mesh.input import InputReceiver
 
-
 # --- validate_input_frame unit tests -------------------------------------
 
 
