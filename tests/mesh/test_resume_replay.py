@@ -379,3 +379,82 @@ def test_f18a_envelope_without_lockout_elapsed_s_rejected(monkeypatch):
     m._on_safety_resume(_sample(env))
 
     assert m._estop_lockout.is_set() is True
+
+
+def test_resume_cache_per_issuer_cap_enforced(monkeypatch):
+    """One issuer cannot exceed per_issuer_cap slots in the resume cache.
+
+    Mirrors the estop per-issuer fairness bound: with CACHE_MAX=8 the cap
+    is max(1, 8//4) == 2, so the third distinct-nonce resume from the same
+    issuer is refused with a resume_per_issuer_cap_exceeded audit and the
+    cache holds at most the cap for that issuer.
+    """
+    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret")
+    monkeypatch.setenv("STRANDS_MESH_RESUME_REPLAY_CACHE_MAX", "8")
+
+    m = _make_mesh()
+    m.publish_safety_event = MagicMock()
+
+    # cap = max(1, 8 // 4) == 2
+    for _ in range(3):
+        env = _make_envelope("secret", peer_id="op-flooder", proof_nonce=uuid.uuid4().hex)
+        m._estop_lockout.set()
+        m._on_safety_resume(_sample(env))
+
+    flooder_slots = sum(1 for k in m._resume_replay_cache if k[0] == ("body", "op-flooder"))
+    assert flooder_slots == 2
+
+    audit_types = [c.kwargs.get("event_type") for c in m.publish_safety_event.call_args_list]
+    assert "resume_per_issuer_cap_exceeded" in audit_types
+
+
+def test_resume_cache_other_issuer_entries_not_evicted(monkeypatch):
+    """A flooding issuer at cap cannot evict another issuer's cached slot.
+
+    Issuer A fills its cap, issuer B records one legitimate slot, then A
+    floods again (refused, no eviction). Replaying B's original envelope
+    is still detected as a replay -- B's slot survived A's churn.
+    """
+    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret")
+    monkeypatch.setenv("STRANDS_MESH_RESUME_REPLAY_CACHE_MAX", "8")
+
+    m = _make_mesh()
+    m.publish_safety_event = MagicMock()
+
+    # A fills its cap of 2.
+    for _ in range(2):
+        env_a = _make_envelope("secret", peer_id="op-A", proof_nonce=uuid.uuid4().hex)
+        m._estop_lockout.set()
+        m._on_safety_resume(_sample(env_a))
+
+    # B records one legitimate slot.
+    env_b = _make_envelope("secret", peer_id="op-B", proof_nonce=uuid.uuid4().hex)
+    m._estop_lockout.set()
+    m._on_safety_resume(_sample(env_b))
+    assert ("body", "op-B") in {k[0] for k in m._resume_replay_cache}
+
+    # A keeps flooding -- every attempt is refused, none evicts B.
+    for _ in range(5):
+        env_a = _make_envelope("secret", peer_id="op-A", proof_nonce=uuid.uuid4().hex)
+        m._estop_lockout.set()
+        m._on_safety_resume(_sample(env_a))
+
+    # B's slot survives: replay of B's exact envelope is still rejected.
+    m.publish_safety_event.reset_mock()
+    m._estop_lockout.set()
+    m._on_safety_resume(_sample(env_b))
+    audit_types = [c.kwargs.get("event_type") for c in m.publish_safety_event.call_args_list]
+    assert "resume_replay_rejected" in audit_types
+
+
+def test_resume_and_estop_per_issuer_cap_use_same_expression():
+    """Structural symmetry pin: both replay-cache handlers must derive
+    per_issuer_cap from the identical expression so the two fairness
+    defenses cannot silently diverge."""
+    import inspect
+
+    resume_src = inspect.getsource(Mesh._on_safety_resume)
+    estop_src = inspect.getsource(Mesh._on_safety_estop)
+    cap_expr = "per_issuer_cap = max(1, _resume_replay_cache_max() // 4)"
+    assert cap_expr in resume_src
+    assert cap_expr in estop_src

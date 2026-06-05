@@ -2123,6 +2123,48 @@ class Mesh(SensorLoopsMixin):
                 ttl_s=_resume_freshness_window_s() + _resume_forward_skew_s(),
                 now_mono=now_mono,
             )
+            # Per-issuer fairness bound -- mirror of the estop path
+            # (_on_safety_estop, search "per_issuer_cap"). Without this
+            # a single wire_zid (or body issuer_id on an attribution-less
+            # transport) holding the override code can fill all
+            # _resume_replay_cache_max() slots and then churn legitimate
+            # other-issuer entries out via the eviction 20%-oldest-drop
+            # branch, suppressing real replay-rejection signals. The cap
+            # is computed from the SAME expression as the estop site so
+            # the two replay-cache defenses stay symmetric.
+            per_issuer_cap = max(1, _resume_replay_cache_max() // 4)
+            issuer_slots = sum(1 for k in self._resume_replay_cache if k[0] == issuer_key)
+            if issuer_slots >= per_issuer_cap:
+                logger.warning(
+                    "[safety] %s: REFUSED resume cache slot -- issuer %r already at cap %d "
+                    "(per-issuer fairness bound; flood suspected)",
+                    self.peer_id,
+                    issuer_key,
+                    per_issuer_cap,
+                )
+                # Audit the over-cap rejection so an operator dashboard
+                # can alert. The cache slot is NOT added; the resume
+                # itself is refused (unlike estop, which still engages
+                # lockout, a refused resume must NOT clear lockout --
+                # returning here is the safe direction).
+                try:
+                    self.publish_safety_event(
+                        event_type="resume_per_issuer_cap_exceeded",
+                        severity="warning",
+                        payload={
+                            "issuer": issuer_id,
+                            "proof_nonce_prefix": proof_nonce[:16],
+                            "cap": per_issuer_cap,
+                        },
+                    )
+                except (TypeError, ValueError, OSError) as audit_exc:
+                    # Narrow per AGENTS.md > "Exception Clauses Must Be Narrow".
+                    logger.debug(
+                        "[mesh] %s: resume_per_issuer_cap_exceeded audit publish failed: %s",
+                        self.peer_id,
+                        audit_exc,
+                    )
+                return
             self._resume_replay_cache[cache_key] = now_mono
 
         sender = data.get("peer_id", "<remote>")
