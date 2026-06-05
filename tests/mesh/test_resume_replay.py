@@ -381,6 +381,7 @@ def test_f18a_envelope_without_lockout_elapsed_s_rejected(monkeypatch):
     assert m._estop_lockout.is_set() is True
 
 
+
 def test_resume_cache_per_issuer_cap_enforced(monkeypatch):
     """One issuer cannot exceed per_issuer_cap slots in the resume cache.
 
@@ -458,3 +459,111 @@ def test_resume_and_estop_per_issuer_cap_use_same_expression():
     cap_expr = "per_issuer_cap = max(1, _resume_replay_cache_max() // 4)"
     assert cap_expr in resume_src
     assert cap_expr in estop_src
+
+
+# ---------------------------------------------------------------------------
+# Issue #264: domain-tagged resume cache keys must prevent a wire_zid /
+# issuer_id namespace collision at runtime. A bridge-transport peer whose
+# body peer_id string equals a Zenoh peer's wire_zid string must NOT be
+# able to evict (or pre-occupy) the Zenoh peer's replay-cache slot.
+# ---------------------------------------------------------------------------
+
+
+def _zenoh_sample(payload_dict, wire_zid):
+    """Fake zenoh sample carrying a TLS-bound source zid.
+
+    Mirrors what _extract_sample_source_zid reads:
+    sample.source_info.source_id.zid stringified to a 1..32 hex digest.
+    """
+    s = MagicMock()
+    s.payload.to_bytes.return_value = json.dumps(payload_dict).encode()
+    s.source_info.source_id.zid = wire_zid
+    return s
+
+
+def _make_zenoh_envelope(override_code, *, wire_zid, t=None, peer_id="op-zenoh", proof_nonce=None, lockout_elapsed_s=1.0):
+    """Mint a resume envelope whose MAC binds the wire-level source_zid.
+
+    When a sample carries a wire_zid the receiver re-derives the MAC with
+    source_zid included and requires body source_zid == wire_zid, so the
+    issuing fixture mirrors both.
+    """
+    import json as _json
+
+    proof_nonce = proof_nonce or uuid.uuid4().hex
+    envelope_t = t if t is not None else time.time()
+    mac_fields = {
+        "peer_id": peer_id,
+        "t": envelope_t,
+        "lockout_elapsed_s": lockout_elapsed_s,
+        "proof_nonce": proof_nonce,
+        "source_zid": wire_zid,
+    }
+    mac_input = _json.dumps(mac_fields, sort_keys=True, separators=(",", ":")).encode()
+    proof = hmac.new(override_code.encode(), mac_input, "sha256").hexdigest()
+    return {
+        "peer_id": peer_id,
+        "t": envelope_t,
+        "lockout_elapsed_s": lockout_elapsed_s,
+        "proof_nonce": proof_nonce,
+        "source_zid": wire_zid,
+        "override_proof": proof,
+    }
+
+
+def test_bridge_peer_id_cannot_evict_zenoh_wire_zid_resume_slot(monkeypatch):
+    """A bridge peer with peer_id='f00b' and a Zenoh peer with
+    wire_zid='f00b' sharing the same proof_nonce must occupy DISTINCT
+    cache slots. Pre-fix (conflating 'wire_zid or issuer_id' key) the
+    bridge resume would pre-occupy the slot and the later Zenoh resume
+    would be rejected as a replay, leaving the lockout engaged. With the
+    domain-tagged key the Zenoh resume clears its lockout normally.
+    """
+    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret")
+    m = _make_mesh()
+    m.publish_safety_event = MagicMock()
+
+    shared_id = "f00b"
+    shared_nonce = uuid.uuid4().hex
+
+    # Bridge-transport resume (wire_zid absent, body peer_id == shared_id).
+    bridge_env = _make_envelope("secret", peer_id=shared_id, proof_nonce=shared_nonce)
+    m._estop_lockout.set()
+    m._on_safety_resume(_sample(bridge_env))
+    assert m._estop_lockout.is_set() is False
+    assert (("body", shared_id), shared_nonce) in m._resume_replay_cache
+
+    # Re-arm lockout and deliver the Zenoh-transport resume that shares
+    # the same string via the wire identity and the same proof_nonce.
+    m._estop_lockout.set()
+    zenoh_env = _make_zenoh_envelope("secret", wire_zid=shared_id, proof_nonce=shared_nonce)
+    m._on_safety_resume(_zenoh_sample(zenoh_env, shared_id))
+
+    # Fix proves out: the Zenoh resume is NOT seen as a replay of the
+    # bridge entry, so its lockout is cleared.
+    assert m._estop_lockout.is_set() is False
+    assert (("wire", shared_id), shared_nonce) in m._resume_replay_cache
+
+
+def test_zenoh_wire_zid_resume_replay_within_domain_still_rejected(monkeypatch):
+    """The domain tag must not weaken in-domain replay defence: a second
+    Zenoh resume reusing the same (wire_zid, proof_nonce) is still rejected.
+    """
+    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret")
+    m = _make_mesh()
+    m.publish_safety_event = MagicMock()
+
+    wire_zid = "abcd1234"
+    nonce = uuid.uuid4().hex
+    env = _make_zenoh_envelope("secret", wire_zid=wire_zid, proof_nonce=nonce)
+
+    m._estop_lockout.set()
+    m._on_safety_resume(_zenoh_sample(env, wire_zid))
+    assert m._estop_lockout.is_set() is False
+
+    # Replay the identical Zenoh envelope: must be rejected, lockout stays.
+    m._estop_lockout.set()
+    m._on_safety_resume(_zenoh_sample(env, wire_zid))
+    assert m._estop_lockout.is_set() is True
+    assert (("wire", wire_zid), nonce) in m._resume_replay_cache
+
