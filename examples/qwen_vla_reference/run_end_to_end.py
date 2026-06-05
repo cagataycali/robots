@@ -280,7 +280,7 @@ def local_inference() -> dict:
 
 def hotswap_test(server_proc) -> dict:
     banner("REDEPLOY: hot-swap a fresh checkpoint into the running server")
-    from strands_robots.tools import qwen_vla_train
+    from strands_robots.tools.qwen_vla_train import qwen_vla_train
 
     # Train a tiny fresh model + save, then hot-swap.
     fresh = ReferenceQwenVla(device="cuda", seed=99)
