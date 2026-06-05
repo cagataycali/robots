@@ -20,8 +20,24 @@ def test_shorthands_resolve_to_cosmos3():
 
 
 def test_cosmos3_url_pattern():
-    prov, _ = resolve_policy("cosmos3://localhost:8000")
+    # Pin host/port round-trip so a future regression cannot silently drop
+    # the URL kwargs and quietly route every cosmos3:// call to the default
+    # localhost:8000 (the failure mode reported on PR #317 R3).
+    prov, kwargs = resolve_policy("cosmos3://localhost:8000")
     assert prov == "cosmos3"
+    assert kwargs["host"] == "localhost"
+    assert kwargs["port"] == 8000
+
+    prov, kwargs = resolve_policy("cosmos3://prod-server:9000")
+    assert prov == "cosmos3"
+    assert kwargs["host"] == "prod-server"
+    assert kwargs["port"] == 9000
+
+    # Bare host (no port) defaults to 8000, mirroring the wss:// branch.
+    prov, kwargs = resolve_policy("cosmos3://otherhost")
+    assert prov == "cosmos3"
+    assert kwargs["host"] == "otherhost"
+    assert kwargs["port"] == 8000
 
 
 def test_model_id_override_disambiguates_from_groot():
