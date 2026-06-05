@@ -49,6 +49,7 @@ from __future__ import annotations
 
 import functools
 import ipaddress
+import json
 import logging
 import math
 import os
@@ -116,6 +117,19 @@ MAX_PASSTHROUGH_LEN: int = 128
 #: so a malformed payload cannot DoS the comparison via a multi-MB
 #: string.
 MAX_OVERRIDE_CODE_LEN: int = 256
+
+#: Bound on the number of joints accepted in a sim ``execute`` /
+#: ``start`` payload's ``target_joints`` dict (issue #300 well-known
+#: kwarg). 256 is well above any real humanoid (Asimov-V0 has ~30) and
+#: keeps a malicious payload from forcing an unbounded dict walk.
+MAX_TARGET_JOINTS: int = 256
+
+#: Bound on a sim ``execute`` / ``start`` payload's ``world_update``
+#: nested dict size, in JSON-encoded bytes. Mesh does not interpret the
+#: per-call collision-world refresh payload; it forwards it to the
+#: planner provider via ``policy_config``. The cap is purely DoS
+#: defence — 64 KiB fits any realistic obstacle list.
+MAX_WORLD_UPDATE_BYTES: int = 65536
 
 #: Charset for entries in ``STRANDS_MESH_HF_REPO_ALLOW``. Operator-supplied
 #: HuggingFace org / ``<org>/<repo>`` prefixes; rejects shell metacharacters,
@@ -638,6 +652,21 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
           No silent default -- a peer that omits this is rejected so it is
           never ambiguous whether ``mock`` was an explicit choice or a bug.
         - ``server_address`` (optional): in :func:`is_safe_server_address`.
+        - ``robot_name`` (optional): peer-id charset, used by sim peers
+          to disambiguate which robot in the world the policy targets.
+        - ``target_pose`` (optional): list of 7 floats
+          ``[x, y, z, qw, qx, qy, qz]`` for planner-style providers
+          (issue #300 well-known kwarg).
+        - ``target_joints`` (optional): dict of joint-name to float
+          (issue #300 well-known kwarg). Bounded by
+          :data:`MAX_TARGET_JOINTS`.
+        - ``world_update`` (optional): opaque dict forwarded to the
+          policy via ``policy_config``. Bounded by
+          :data:`MAX_WORLD_UPDATE_BYTES` JSON-encoded bytes.
+        - ``control_frequency`` (optional): float in ``[0.1, 2000]`` Hz.
+        - ``action_horizon`` (optional): integer in ``[1, 10_000]``.
+        - ``fast_mode`` (optional): boolean.
+        - ``n_steps`` (optional): integer in ``[1, 10_000_000]``.
     * ``step``: ``steps`` integer in ``[1, 10_000]``, defaults to 1.
     * ``teleop_receive``: ``source_peer_id`` non-empty str.
 
@@ -769,6 +798,99 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
                 )
             out["server_address"] = value
 
+        # Sim-targeted execute/start fields. These are admitted only for
+        # the ``execute`` / ``start`` actions and are inert when the
+        # receiving peer is a HardwareRobot — ``Mesh._dispatch`` ignores
+        # them on the hardware path. Validating them here keeps the wire
+        # schema honest end-to-end so a malicious peer cannot smuggle
+        # control-byte instruction strings in via ``robot_name`` or
+        # exhaust the dispatcher with a multi-MB ``world_update`` blob.
+        if "robot_name" in cmd:
+            value = cmd["robot_name"]
+            if not isinstance(value, str) or not value:
+                raise ValidationError("robot_name must be a non-empty string")
+            if len(value) > MAX_PEER_ID_LEN:
+                raise ValidationError(f"robot_name length {len(value)} > MAX_PEER_ID_LEN ({MAX_PEER_ID_LEN}).")
+            if not _PEER_ID_RE.fullmatch(value):
+                raise ValidationError(
+                    "robot_name must match [A-Za-z0-9_.-]+ (no whitespace, NULs, "
+                    "control chars, shell metacharacters, or '/')."
+                )
+            out["robot_name"] = value
+
+        # Issue #300 well-known per-call policy kwargs. Forwarded into
+        # ``policy_config`` by the dispatcher; planner-style providers
+        # (cuRobo, MoveIt2, MPC) consume them, VLA providers ignore them.
+        if "target_pose" in cmd:
+            value = cmd["target_pose"]
+            if not isinstance(value, list) or len(value) != 7:
+                raise ValidationError("target_pose must be a list of 7 floats [x, y, z, qw, qx, qy, qz]")
+            coerced_pose: list[float] = []
+            for i, component in enumerate(value):
+                coerced_pose.append(_coerce_float(f"target_pose[{i}]", component, lo=-1e6, hi=1e6, default=None))
+            out["target_pose"] = coerced_pose
+
+        if "target_joints" in cmd:
+            value = cmd["target_joints"]
+            if not isinstance(value, dict):
+                raise ValidationError("target_joints must be a dict mapping joint name -> float")
+            if len(value) > MAX_TARGET_JOINTS:
+                raise ValidationError(
+                    f"target_joints has {len(value)} entries > MAX_TARGET_JOINTS ({MAX_TARGET_JOINTS})."
+                )
+            coerced_joints: dict[str, float] = {}
+            for joint_name, joint_value in value.items():
+                if not isinstance(joint_name, str) or not joint_name:
+                    raise ValidationError("target_joints keys must be non-empty strings")
+                if len(joint_name) > MAX_PEER_ID_LEN:
+                    raise ValidationError(
+                        f"target_joints key length {len(joint_name)} > MAX_PEER_ID_LEN ({MAX_PEER_ID_LEN})."
+                    )
+                if not _PEER_ID_RE.fullmatch(joint_name):
+                    raise ValidationError(
+                        f"target_joints key {joint_name!r} must match [A-Za-z0-9_.-]+ "
+                        "(no whitespace, NULs, control chars, shell metacharacters, or '/')."
+                    )
+                coerced_joints[joint_name] = _coerce_float(
+                    f"target_joints[{joint_name}]", joint_value, lo=-1e6, hi=1e6, default=None
+                )
+            out["target_joints"] = coerced_joints
+
+        if "world_update" in cmd:
+            value = cmd["world_update"]
+            if value is not None and not isinstance(value, dict):
+                raise ValidationError("world_update must be a dict or null")
+            if isinstance(value, dict):
+                # Bound the encoded size — mesh treats world_update as
+                # opaque and forwards it to the planner provider; we
+                # only need to keep it from becoming a DoS vector.
+                try:
+                    encoded = json.dumps(value)
+                except (TypeError, ValueError) as exc:
+                    raise ValidationError(f"world_update is not JSON-serialisable: {exc}") from exc
+                if len(encoded.encode("utf-8")) > MAX_WORLD_UPDATE_BYTES:
+                    raise ValidationError(
+                        f"world_update encoded size > MAX_WORLD_UPDATE_BYTES ({MAX_WORLD_UPDATE_BYTES})."
+                    )
+            out["world_update"] = value
+
+        # Optional sim-side controls. Bounds match the SimEngine.run_policy
+        # surface so a wire-side ``tell()`` cannot drive the runner to
+        # absurd frequencies / step counts.
+        if "control_frequency" in cmd:
+            out["control_frequency"] = _coerce_float(
+                "control_frequency", cmd["control_frequency"], lo=0.1, hi=2000.0, default=None
+            )
+        if "action_horizon" in cmd:
+            out["action_horizon"] = _coerce_int("action_horizon", cmd["action_horizon"], lo=1, hi=10_000, default=None)
+        if "fast_mode" in cmd:
+            value = cmd["fast_mode"]
+            if not isinstance(value, bool):
+                raise ValidationError("fast_mode must be a boolean")
+            out["fast_mode"] = value
+        if "n_steps" in cmd:
+            out["n_steps"] = _coerce_int("n_steps", cmd["n_steps"], lo=1, hi=10_000_000, default=None)
+
     elif action == "step":
         out["steps"] = _coerce_int("steps", cmd.get("steps", 1), lo=1, hi=10_000, default=1)
 
@@ -850,6 +972,8 @@ __all__ = [
     "MAX_PASSTHROUGH_LEN",
     "MAX_PEER_ID_LEN",
     "MAX_SERVER_ADDRESS_LEN",
+    "MAX_TARGET_JOINTS",
+    "MAX_WORLD_UPDATE_BYTES",
     "SecurityError",
     "ValidationError",
     "is_safe_model_path",

@@ -1265,6 +1265,32 @@ class Mesh(SensorLoopsMixin):
                 for k in ("model_path", "server_address", "policy_type", "pretrained_name_or_path")
                 if k in cmd
             }
+            # Sim peer? Route to Simulation.start_policy / run_policy.
+            # Detected by the presence of the ``run_policy`` callable + a
+            # ``_world`` attribute (the SimEngine ABC contract). HardwareRobot
+            # has neither, so this is unambiguous.
+            #
+            # Forwards the well-known per-call kwargs from #300
+            # (``target_pose`` / ``target_joints`` / ``world_update``) plus
+            # the existing ``extra`` set (model_path / server_address / ...)
+            # via ``policy_config``. ``create_policy(provider, **policy_config)``
+            # passes them to the Policy constructor; per the #300 contract
+            # planner-style providers consume them and VLA providers ignore
+            # unknown kwargs without raising.
+            if (
+                action in ("execute", "start")
+                and hasattr(r, "run_policy")
+                and hasattr(r, "_world")
+                and hasattr(r, "list_robots")
+            ):
+                return self._dispatch_sim_policy(
+                    action=action,
+                    cmd=cmd,
+                    instruction=instruction,
+                    policy_provider=policy_provider,
+                    duration=duration,
+                    extra=extra,
+                )
             if action == "execute" and hasattr(r, "_execute_task_sync"):
                 return dict(
                     r._execute_task_sync(instruction, policy_provider, policy_port, policy_host, duration, **extra)
@@ -1293,6 +1319,109 @@ class Mesh(SensorLoopsMixin):
                 return dict(r.stop_teleop(dev))
             return {"error": "robot does not support stop_teleop"}
         return {"error": f"unknown action: {action}"}
+
+    # Well-known per-call policy kwargs from issue #300 — keys that planner-
+    # style providers (cuRobo, MoveIt2, MPC) consume to encode goals beyond
+    # natural-language ``instruction``. Forwarded from ``tell()`` payload
+    # into ``policy_config`` so a ``policy_provider="curobo"`` peer sees the
+    # ``target_pose`` it needs without the dispatch layer dropping it
+    # silently.
+    #
+    # See AGENTS.md > Public API Hygiene: "Forward all advertised kwargs
+    # end-to-end. Silent drops are bugs masquerading as features."
+    _SIM_WELL_KNOWN_POLICY_KWARGS: tuple[str, ...] = (
+        "target_pose",
+        "target_joints",
+        "world_update",
+    )
+
+    def _dispatch_sim_policy(
+        self,
+        *,
+        action: str,
+        cmd: dict[str, Any],
+        instruction: str,
+        policy_provider: str,
+        duration: float,
+        extra: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Dispatch ``execute`` / ``start`` to a sim peer's policy runner.
+
+        Sim peers expose :meth:`SimEngine.run_policy` (blocking) and
+        :meth:`SimEngine.start_policy` (async) instead of ``HardwareRobot``'s
+        ``_execute_task_sync`` / ``start_task``. This helper bridges the
+        ``tell()`` wire payload to those methods.
+
+        ``robot_name`` resolution:
+            * Use ``cmd["robot_name"]`` when present.
+            * Otherwise default to the only robot in the world if there is
+              exactly one.
+            * Otherwise return an error — ambiguous targets must be
+              explicit so the agent can't accidentally drive the wrong arm.
+
+        Forwards both the existing ``extra`` constructor kwargs
+        (``model_path``, ``server_address``, ``policy_type``,
+        ``pretrained_name_or_path``) and the issue #300 well-known per-call
+        kwargs (``target_pose``, ``target_joints``, ``world_update``) via
+        ``policy_config``. Per #300 the receiving Policy ignores unknown
+        kwargs rather than raising, so VLA providers stay compatible.
+        """
+        sim = self.robot
+
+        if sim._world is None:
+            return {"error": "sim peer has no world; call create_world first"}
+
+        try:
+            available = list(sim.list_robots())
+        except Exception as exc:  # noqa: BLE001 — surface as wire-level error
+            return {"error": f"sim list_robots failed: {exc}"}
+
+        robot_name = cmd.get("robot_name")
+        if not robot_name:
+            if len(available) == 1:
+                robot_name = available[0]
+            elif len(available) == 0:
+                return {"error": "sim peer has no robots; add_robot first"}
+            else:
+                return {
+                    "error": (
+                        f"sim peer has {len(available)} robots {available}; "
+                        "tell() must include robot_name to disambiguate"
+                    )
+                }
+        if robot_name not in available:
+            return {"error": f"robot_name={robot_name!r} not in sim (available: {available})"}
+
+        # Build policy_config: existing constructor kwargs + well-known
+        # per-call kwargs from #300. ``policy_config`` is the documented
+        # passthrough on SimEngine.run_policy/start_policy.
+        policy_config: dict[str, Any] = dict(extra)
+        for key in self._SIM_WELL_KNOWN_POLICY_KWARGS:
+            if key in cmd:
+                policy_config[key] = cmd[key]
+
+        # Optional sim-side controls. We expose only the fields that already
+        # have validator coverage in the wire schema — control_frequency,
+        # action_horizon, fast_mode, video — and that are safe to forward to
+        # an LLM-issued ``tell()``. Anything else stays on its server-side
+        # default to avoid surfacing internal knobs to untrusted agents.
+        run_kwargs: dict[str, Any] = {
+            "policy_provider": policy_provider,
+            "policy_config": policy_config,
+            "instruction": instruction,
+            "duration": duration,
+        }
+        for opt_key in ("control_frequency", "action_horizon", "fast_mode", "n_steps"):
+            if opt_key in cmd:
+                run_kwargs[opt_key] = cmd[opt_key]
+
+        # ``execute`` blocks until the rollout finishes (matches HardwareRobot
+        # ``_execute_task_sync`` semantics). ``start`` returns immediately
+        # with a future-tracking ack (matches ``start_task``).
+        if action == "execute":
+            return dict(sim.run_policy(robot_name, **run_kwargs))
+        # action == "start"
+        return dict(sim.start_policy(robot_name, **run_kwargs))
 
     def _on_response(self, sample: Any) -> None:
         """Inbound response handler.
