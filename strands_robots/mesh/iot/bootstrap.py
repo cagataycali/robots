@@ -58,6 +58,7 @@ RULE_ESTOP_FANOUT = "strands_estop_fanout"
 PROVISIONING_TEMPLATE = "strands-mesh-fleet-provisioning"
 PROVISIONING_ROLE = "strands-mesh-provisioning-role"
 PROVISIONING_HOOK_LAMBDA_NAME = "strands-mesh-provisioning-hook"
+PROVISIONING_HOOK_ROLE = "strands-mesh-provisioning-hook-role"
 #: Bump whenever _PROVISIONING_HOOK_SOURCE changes.
 _PROVISIONING_HOOK_VERSION = 1
 LOG_GROUP_NAME = "/aws/iot/strands-mesh"
@@ -552,6 +553,82 @@ def _ensure_log_group(logs: Any, account: BootstrappedAccount) -> str:
     return desc["logGroups"][0]["arn"]
 
 
+def _ensure_provisioning_hook_role(iam: Any, account: BootstrappedAccount) -> str:
+    """Dedicated IAM role for the PreProvisioningHook Lambda (F-19 / B-13).
+
+    The hook must call ``iot:DescribeThing`` (does the target Thing already
+    exist?) and ``ssm:GetParameter`` (is the serial on the allowlist?). The
+    E-stop Lambda role grants neither, so reusing it would make every
+    ``describe_thing`` / ``get_parameter`` raise ``AccessDenied``; those are
+    swallowed by the hook's deny-on-error envelope and *every* registration
+    — legitimate ones included — would be refused. This role grants exactly
+    those two read actions, least-privilege scoped:
+
+    * ``iot:DescribeThing`` on ``thing/*`` (the hook only reads existence;
+      it never mutates).
+    * ``ssm:GetParameter`` on ``parameter/strands-mesh/provisioning/allow/*``
+      (the allowlist namespace only — no broader Parameter Store access).
+    """
+    role_name = PROVISIONING_HOOK_ROLE
+    try:
+        role = iam.get_role(RoleName=role_name)
+        account.skipped.append(f"iam:{role_name}")
+        return role["Role"]["Arn"]
+    except iam.exceptions.NoSuchEntityException:
+        pass
+
+    trust = {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Effect": "Allow",
+                "Principal": {"Service": "lambda.amazonaws.com"},
+                "Action": "sts:AssumeRole",
+            }
+        ],
+    }
+    resp = iam.create_role(
+        RoleName=role_name,
+        AssumeRolePolicyDocument=json.dumps(trust),
+        Description="strands-mesh Fleet Provisioning PreProvisioningHook Lambda execution role",
+        Tags=[{"Key": "strands-mesh", "Value": "managed"}],
+    )
+    arn = resp["Role"]["Arn"]
+
+    iam.attach_role_policy(
+        RoleName=role_name,
+        PolicyArn="arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
+    )
+    iam.put_role_policy(
+        RoleName=role_name,
+        PolicyName="strands-mesh-provisioning-hook",
+        PolicyDocument=json.dumps(
+            {
+                "Version": "2012-10-17",
+                "Statement": [
+                    {
+                        "Effect": "Allow",
+                        "Action": ["iot:DescribeThing"],
+                        "Resource": [f"arn:aws:iot:{account.region}:{account.account_id}:thing/*"],
+                    },
+                    {
+                        "Effect": "Allow",
+                        "Action": ["ssm:GetParameter"],
+                        "Resource": [
+                            f"arn:aws:ssm:{account.region}:{account.account_id}"
+                            ":parameter/strands-mesh/provisioning/allow/*"
+                        ],
+                    },
+                ],
+            }
+        ),
+    )
+    # Lambda role propagation in IAM is eventually-consistent; small delay.
+    time.sleep(8)
+    account.created.append(f"iam:{role_name}")
+    return arn
+
+
 def _ensure_provisioning_hook_lambda(
     lam: Any, role_arn: str, account: BootstrappedAccount, *, force_update: bool = False
 ) -> str:
@@ -561,12 +638,24 @@ def _ensure_provisioning_hook_lambda(
     only updates its code when ``force_update`` is set.
     """
     name = PROVISIONING_HOOK_LAMBDA_NAME
+    version_tag = f"[v{_PROVISIONING_HOOK_VERSION}]"
+    description = f"strands-mesh: Fleet Provisioning PreProvisioningHook (deny-by-default) {version_tag}"
     zip_bytes = _build_provisioning_hook_zip()
     try:
         existing = lam.get_function(FunctionName=name)
         arn = existing["Configuration"]["FunctionArn"]
+        existing_desc = existing["Configuration"].get("Description", "")
+        if version_tag not in existing_desc:
+            logger.warning(
+                "Provisioning-hook Lambda exists but has stale version "
+                "(description=%r, expected %s). Pass force_update=True to "
+                "bootstrap_account() to upgrade.",
+                existing_desc,
+                version_tag,
+            )
         if force_update:
             lam.update_function_code(FunctionName=name, ZipFile=zip_bytes)
+            lam.update_function_configuration(FunctionName=name, Description=description)
             account.created.append(f"lambda:{name} (updated)")
         else:
             account.skipped.append(f"lambda:{name}")
@@ -584,7 +673,7 @@ def _ensure_provisioning_hook_lambda(
                 Role=role_arn,
                 Handler="lambda_function.lambda_handler",
                 Code={"ZipFile": zip_bytes},
-                Description="strands-mesh: Fleet Provisioning PreProvisioningHook (deny-by-default)",
+                Description=description,
                 Timeout=10,
                 Tags={"strands-mesh": "managed"},
             )
@@ -613,9 +702,7 @@ def _grant_iot_invoke_provisioning_hook(lam: Any, hook_arn: str, account: Bootst
         account.skipped.append("lambda-permission:provisioning-hook-invoke")
 
 
-def _ensure_provisioning_template(
-    iot: Any, account: BootstrappedAccount, *, hook_lambda_arn: str = ""
-) -> str:
+def _ensure_provisioning_template(iot: Any, account: BootstrappedAccount, *, hook_lambda_arn: str = "") -> str:
     """Fleet Provisioning template — claim cert → real cert + attach robot policy.
 
     F-19 / B-13: a ``PreProvisioningHook`` is wired so a leaked claim cert
@@ -807,6 +894,9 @@ def bootstrap_account(
             f"  - DynamoDB Table: strands-mesh-fleet\n"
             f"  - CloudWatch Log Group: /strands/mesh\n"
             f"  - IoT Topic Rule: strands_mesh_audit\n"
+            f"  - IAM Role: strands-mesh-provisioning-hook-role\n"
+            f"  - Lambda: strands-mesh-provisioning-hook (Fleet Provisioning gate)\n"
+            f"  - IoT Fleet Provisioning Template: strands-mesh-fleet-provisioning\n"
             f"\nPass dry_run=False, confirm=True to create.",
             file=sys.stderr,
         )
@@ -838,13 +928,14 @@ def bootstrap_account(
 
     # Fleet Provisioning PreProvisioningHook Lambda (F-19/B-13) — gate
     # registration so a leaked claim cert cannot self-register a Thing.
-    hook_arn = _ensure_provisioning_hook_lambda(lam, role_arn, out, force_update=force_update)
+    # The hook needs iot:DescribeThing + ssm:GetParameter, which the E-stop
+    # role does not grant, so it gets its own least-privilege role.
+    hook_role_arn = _ensure_provisioning_hook_role(iam, out)
+    hook_arn = _ensure_provisioning_hook_lambda(lam, hook_role_arn, out, force_update=force_update)
     out.provisioning_hook_lambda_arn = hook_arn
 
     # Fleet Provisioning template (wires the hook above)
-    out.provisioning_template_arn = _ensure_provisioning_template(
-        iot, out, hook_lambda_arn=hook_arn
-    )
+    out.provisioning_template_arn = _ensure_provisioning_template(iot, out, hook_lambda_arn=hook_arn)
     _grant_iot_invoke_provisioning_hook(lam, hook_arn, out)
 
     logger.info(

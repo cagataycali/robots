@@ -31,14 +31,10 @@ def test_template_wires_pre_provisioning_hook():
 def test_template_create_includes_hook_when_arn_supplied():
     """create_provisioning_template must receive preProvisioningHook."""
     iot = MagicMock()
-    iot.exceptions.ResourceNotFoundException = type(
-        "RNF", (Exception,), {}
-    )
+    iot.exceptions.ResourceNotFoundException = type("RNF", (Exception,), {})
     iot.exceptions.InvalidRequestException = type("IRE", (Exception,), {})
     # describe -> not found so it proceeds to create
-    iot.describe_provisioning_template.side_effect = (
-        iot.exceptions.ResourceNotFoundException()
-    )
+    iot.describe_provisioning_template.side_effect = iot.exceptions.ResourceNotFoundException()
     acct = b.BootstrappedAccount(region="us-east-1", account_id="123456789012")
 
     # stub the role helper to avoid IAM calls
@@ -62,9 +58,7 @@ def test_template_omits_hook_when_no_arn():
     iot = MagicMock()
     iot.exceptions.ResourceNotFoundException = type("RNF", (Exception,), {})
     iot.exceptions.InvalidRequestException = type("IRE", (Exception,), {})
-    iot.describe_provisioning_template.side_effect = (
-        iot.exceptions.ResourceNotFoundException()
-    )
+    iot.describe_provisioning_template.side_effect = iot.exceptions.ResourceNotFoundException()
     acct = b.BootstrappedAccount(region="us-east-1", account_id="123456789012")
 
     import strands_robots.mesh.iot.bootstrap as mod
@@ -160,3 +154,75 @@ def test_hook_denies_serial_not_in_allowlist():
         serial_allowed=False,
     )
     assert res == {"allowProvisioning": False}
+
+
+def test_hook_role_grants_describe_thing_and_ssm_getparameter():
+    """The hook role must permit the two reads the hook makes (F-19/B-13).
+
+    Regression for the review blocker: the hook was originally created with
+    the E-stop Lambda role, which grants neither iot:DescribeThing nor
+    ssm:GetParameter. Those calls would then AccessDenied, get swallowed by
+    the deny-on-error envelope, and refuse *every* registration.
+    """
+    iam = MagicMock()
+
+    class _NoSuchEntity(Exception):
+        pass
+
+    iam.exceptions.NoSuchEntityException = _NoSuchEntity
+    iam.get_role.side_effect = _NoSuchEntity()
+    iam.create_role.return_value = {
+        "Role": {"Arn": "arn:aws:iam::123456789012:role/strands-mesh-provisioning-hook-role"}
+    }
+    acct = b.BootstrappedAccount(region="us-east-1", account_id="123456789012")
+
+    import strands_robots.mesh.iot.bootstrap as mod
+
+    orig_sleep = mod.time.sleep
+    mod.time.sleep = lambda *_a, **_k: None
+    try:
+        arn = b._ensure_provisioning_hook_role(iam, acct)
+    finally:
+        mod.time.sleep = orig_sleep
+
+    assert arn.endswith(":role/strands-mesh-provisioning-hook-role")
+
+    # The inline policy must grant both actions the hook needs.
+    inline = iam.put_role_policy.call_args.kwargs
+    import json as _json
+
+    doc = _json.loads(inline["PolicyDocument"])
+    actions = {a for stmt in doc["Statement"] for a in stmt["Action"]}
+    assert "iot:DescribeThing" in actions
+    assert "ssm:GetParameter" in actions
+    # SSM read must be scoped to the allowlist namespace, not "*".
+    ssm_stmt = next(s for s in doc["Statement"] if "ssm:GetParameter" in s["Action"])
+    assert all("provisioning/allow/" in r for r in ssm_stmt["Resource"])
+    assert all(r != "*" for r in ssm_stmt["Resource"])
+
+
+def test_bootstrap_uses_dedicated_hook_role():
+    """bootstrap_account must wire the hook to its own role, not the E-stop role."""
+    src = inspect.getsource(b.bootstrap_account)
+    assert "_ensure_provisioning_hook_role" in src
+
+
+def test_hook_lambda_stamps_version_description():
+    """Create path stamps the version tag so drift can be detected later."""
+    lam = MagicMock()
+
+    class _RNF(Exception):
+        pass
+
+    lam.exceptions.ResourceNotFoundException = _RNF
+    lam.exceptions.InvalidParameterValueException = type("IPV", (Exception,), {})
+    lam.get_function.side_effect = _RNF()
+    lam.create_function.return_value = {
+        "FunctionArn": "arn:aws:lambda:us-east-1:123456789012:function:strands-mesh-provisioning-hook"
+    }
+    acct = b.BootstrappedAccount(region="us-east-1", account_id="123456789012")
+
+    b._ensure_provisioning_hook_lambda(lam, "arn:aws:iam::123456789012:role/hook", acct)
+
+    desc = lam.create_function.call_args.kwargs["Description"]
+    assert f"[v{b._PROVISIONING_HOOK_VERSION}]" in desc
