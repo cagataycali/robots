@@ -2116,7 +2116,50 @@ class Mesh(SensorLoopsMixin):
                 ttl_s=_resume_freshness_window_s() + _resume_forward_skew_s(),
                 now_mono=now_mono,
             )
-            self._resume_replay_cache[cache_key] = now_mono
+            # Per-issuer fairness bound mirrors the estop handler: one
+            # issuer (keyed on the TLS-bound wire zid when available,
+            # else the body issuer_id) may occupy at most
+            # ``per_issuer_cap`` slots so a single compromised-code
+            # attacker cannot fill the global cache and then evict
+            # legitimate other-issuer entries via the oldest-20-percent
+            # drop branch of _evict_replay_cache. The cap is derived
+            # from the SAME formula as _on_safety_estop so the two
+            # caches stay symmetric (see issue #266).
+            per_issuer_cap = max(1, _resume_replay_cache_max() // 4)
+            issuer_slots = sum(
+                1 for cached_issuer, _nonce in self._resume_replay_cache if cached_issuer == issuer_key
+            )
+            if issuer_slots >= per_issuer_cap:
+                logger.warning(
+                    "[safety] %s: REFUSED resume cache slot -- issuer %r already at cap %d "
+                    "(per-issuer fairness bound; flood suspected)",
+                    self.peer_id,
+                    issuer_id,
+                    per_issuer_cap,
+                )
+                # Audit the over-cap rejection. The replay-cache slot is
+                # NOT added, but the lockout below still clears -- a
+                # legitimate resume is preserved even when the cache
+                # itself cannot hold it, mirroring the estop branch.
+                try:
+                    self.publish_safety_event(
+                        event_type="resume_per_issuer_cap_exceeded",
+                        severity="warning",
+                        payload={
+                            "issuer": issuer_id,
+                            "cap": per_issuer_cap,
+                        },
+                    )
+                except (TypeError, ValueError, OSError) as audit_exc:
+                    # Narrow per AGENTS.md; audit publish is best-effort
+                    # and must never block the safety path.
+                    logger.debug(
+                        "[mesh] %s: resume_per_issuer_cap_exceeded audit publish failed: %s",
+                        self.peer_id,
+                        audit_exc,
+                    )
+            else:
+                self._resume_replay_cache[cache_key] = now_mono
 
         sender = data.get("peer_id", "<remote>")
         if self._estop_lockout.is_set():
