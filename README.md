@@ -419,6 +419,83 @@ policy = create_policy(
 policy = create_policy(provider="mock")
 ```
 
+### Non-VLA Policies (motion planners, MPC, scripted)
+
+The `Policy` ABC is intentionally agnostic about *how* actions are produced.
+The same interface fits VLA-style providers **and** classical motion
+planners (cuRobo, MoveIt2, OMPL), model-predictive controllers, and pure-IK
+or scripted trajectories — anything that maps `(observation, goal)` to a
+list of joint targets.
+
+`MockPolicy` (`strands_robots/policies/mock.py`) is the reference: it sets
+`requires_images = False` so the simulation skips camera rendering (~10x
+throughput at 500Hz), ignores the `instruction` string, and returns a list
+of joint-target dicts.
+
+Non-VLA providers should consume **well-known `**kwargs` keys** instead of
+JSON-encoding goals into the natural-language instruction:
+
+| Key             | Type                       | Meaning                                                                |
+| --------------- | -------------------------- | ---------------------------------------------------------------------- |
+| `target_pose`   | `list[float]`              | Cartesian goal `[x, y, z, qw, qx, qy, qz]` in the robot base frame     |
+| `target_joints` | `dict[str, float]`         | Joint-space goal keyed by joint name (radians / metres)                |
+| `world_update`  | `dict \| None`             | Per-call world refresh for collision-aware planners (depth, mesh, ...) |
+
+Providers MUST ignore unknown `**kwargs` rather than raising, so callers can
+pass shared keys across providers without coupling to a specific backend.
+
+Minimal example — register a planner-style provider at runtime:
+
+```python
+from typing import Any
+from strands_robots.policies import Policy, register_policy, create_policy
+
+
+class ReachPolicy(Policy):
+    """Linear interpolation from current joint state to target_joints."""
+
+    def __init__(self, steps: int = 32, **_: Any) -> None:
+        self._keys: list[str] = []
+        self._steps = steps
+
+    @property
+    def provider_name(self) -> str:
+        return "reach"
+
+    @property
+    def requires_images(self) -> bool:
+        return False  # joint-state only -- skip camera rendering
+
+    def set_robot_state_keys(self, robot_state_keys: list[str]) -> None:
+        self._keys = list(robot_state_keys)
+
+    async def get_actions(
+        self, observation_dict: dict[str, Any], instruction: str, **kwargs: Any
+    ) -> list[dict[str, Any]]:
+        target = kwargs.get("target_joints")
+        if target is None:
+            raise ValueError("ReachPolicy requires target_joints kwarg")
+
+        state = observation_dict.get("observation.state", [0.0] * len(self._keys))
+        out: list[dict[str, float]] = []
+        for s in range(1, self._steps + 1):
+            alpha = s / self._steps
+            out.append(
+                {k: (1 - alpha) * state[i] + alpha * target[k] for i, k in enumerate(self._keys)}
+            )
+        return out
+
+
+register_policy("reach", lambda: ReachPolicy, aliases=["lerp"])
+policy = create_policy("reach")
+```
+
+The same shape extends to cuRobo (call `MotionGen.plan_single` with the
+`target_pose` kwarg, cache the trajectory, yield `action_horizon` chunks)
+and MoveIt2 (forward `target_pose` + `joint_state` to a sidecar ROS 2
+service via ZMQ / gRPC).  Reference implementations are tracked separately
+on the [Strands Labs - Robots project board](https://github.com/orgs/strands-labs/projects/2).
+
 ## Project Structure
 
 ```
@@ -501,6 +578,9 @@ agent.tool.gr00t_inference(action="stop", port=8000)
 | `ZENOH_CONNECT` | Comma-separated list of remote Zenoh endpoints to connect to | - |
 | `ZENOH_LISTEN` | Comma-separated list of endpoints for the local Zenoh listener | - |
 | `STRANDS_MESH_AUDIT_DIR` | Directory for the safety audit log (`mesh_audit.jsonl`) | `~/.strands_robots/` |
+| `STRANDS_MESH_CA_PINS` | Comma-separated SHA-256 hex pins, **additive** to the bundled Amazon Root CA1 pin tuple. Operator break-glass for an AWS-side root rotation that arrives before the next `strands-robots` release ships the new pin. Must match `^[0-9a-fA-F]{64}$` per entry. | unset |
+| `STRANDS_MESH_DISABLE_CA_PIN` | Set to `true` (case-insensitive) to skip CA pin verification on the *download* path only. The on-disk re-use path always raw-checks the pin regardless. Last-resort break-glass; prefer `STRANDS_MESH_CA_PINS` for rotations. | `false` |
+| `STRANDS_MESH_CAMERA_PRESIGN_TTL` | Default TTL (seconds) for S3 presigned URLs emitted on the IoT camera-offload path. Capped at 3600s (1h); a `0` is clamped to 1s. Non-integer values fall back to the default with a WARNING. | `60` |
 | `GROOT_API_TOKEN` | API token for GR00T inference service | - |
 | `STRANDS_ROBOT_MODE` | Override `Robot()` factory mode detection (`sim`, `real`, `auto`) | `auto` |
 | `STRANDS_TRUST_REMOTE_CODE` | Set to `1` to opt into HuggingFace `trust_remote_code` for `lerobot_local` policies | unset |
@@ -529,9 +609,38 @@ sim_a.mesh.tell(sim_b.mesh.peer_id, "pick up the cube")
 sim_a.mesh.emergency_stop()     # broadcast E-STOP, audited to disk
 ```
 
+`tell()` works against both `HardwareRobot` and `Simulation` peers. The
+dispatcher detects the peer type and routes to
+`HardwareRobot._execute_task_sync` / `start_task` for hardware peers and to
+`Simulation.run_policy` / `start_policy` for sim peers. Issue [#300]'s
+well-known per-call policy kwargs (`target_pose`, `target_joints`,
+`world_update`) and the existing constructor extras (`model_path`,
+`server_address`, `policy_type`, `pretrained_name_or_path`) are forwarded
+end-to-end via `policy_config` so a planner-style policy on a sim peer
+sees the goal payload it needs:
+
+```python
+# Agent on peer A drives a cuRobo planner running on a sim peer B.
+sim_a.mesh.tell(
+    sim_b.mesh.peer_id,
+    "reach for the red block",
+    policy_provider="curobo",
+    target_pose=[0.3, 0.0, 0.4, 1.0, 0.0, 0.0, 0.0],
+    robot_name="arm_left",       # disambiguate in multi-robot sims
+    duration=10.0,
+    fast_mode=True,
+)
+```
+
+Per-robot mesh peers attach automatically inside a sim, so an LLM agent
+may also `tell()` a specific `SimRobot` peer (`<sim_peer_id>__<robot_name>`)
+when the simulation hosts more than one robot.
+
 Disable globally with `STRANDS_MESH=false` or per-robot with
 `Robot("so100", mesh=False)`.  Install the optional dependency with
 `pip install strands-robots[mesh]`.
+
+[#300]: https://github.com/strands-labs/robots/issues/300
 
 ### Cache Directory
 

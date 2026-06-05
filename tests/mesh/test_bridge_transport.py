@@ -225,8 +225,26 @@ class TestBridgeSubscribe:
         b.connect()
         handler = MagicMock()
         h = b.declare_subscriber("strands/+/presence", handler)
-        z.declare_subscriber.assert_called_once_with("strands/+/presence", handler)
-        i.declare_subscriber.assert_called_once_with("strands/+/presence", handler)
+        # The bridge wraps the handler with a dedup filter, so the *handler*
+        # passed downstream is not the literal mock -- assert the *topic* is
+        # correct on both sides and that a callable was passed.
+        assert z.declare_subscriber.call_count == 1
+        assert i.declare_subscriber.call_count == 1
+        z_topic, z_handler = z.declare_subscriber.call_args.args
+        i_topic, i_handler = i.declare_subscriber.call_args.args
+        assert z_topic == "strands/+/presence"
+        assert i_topic == "strands/+/presence"
+        assert callable(z_handler)
+        assert callable(i_handler)
+        # Verify the wrapper still delegates to the user handler. Drive it
+        # with a sample whose payload extracts to a unique nonce so dedup
+        # passes through on the first call.
+        from unittest.mock import MagicMock as _MM
+
+        sample = _MM()
+        sample.payload.to_bytes.return_value = b'{"nonce":"unique-once-test","payload":{}}'
+        z_handler(sample)
+        handler.assert_called_once_with(sample)
         # Undeclare should call both.
         h.undeclare()
         z_sub.undeclare.assert_called_once()

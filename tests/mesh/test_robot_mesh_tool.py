@@ -9,12 +9,30 @@ import pytest
 from strands_robots.tools.robot_mesh import robot_mesh
 
 
-def _strands_call(**kwargs):
-    """Strands @tool wraps the function — invoke via .original."""
+def _make_tool_context(*, interrupt_response: str = "y", interrupt_raises: bool = False) -> MagicMock:
+    """Build a stand-in ToolContext whose interrupt() returns *interrupt_response*.
+
+    Tests that DON'T hit the interrupt path can still call this -- interrupt()
+    will simply never be invoked. Tests that DO hit it (emergency_stop /
+    broadcast) can vary `interrupt_response` to simulate operator approval /
+    denial. Set `interrupt_raises=True` to model environments where interrupts
+    aren't available (the tool should fail-closed).
+    """
+    ctx = MagicMock(name="ToolContext")
+    if interrupt_raises:
+        ctx.interrupt.side_effect = RuntimeError("interrupts not supported here")
+    else:
+        ctx.interrupt.return_value = interrupt_response
+    return ctx
+
+
+def _strands_call(*, _ctx: MagicMock | None = None, **kwargs):
+    """Strands @tool wraps the function -- invoke via .original."""
     fn = getattr(robot_mesh, "original", None)
+    ctx = _ctx if _ctx is not None else _make_tool_context()
     if fn is None:
-        return robot_mesh(**kwargs)
-    return fn(**kwargs)
+        return robot_mesh(tool_context=ctx, **kwargs)
+    return fn(tool_context=ctx, **kwargs)
 
 
 @pytest.fixture
