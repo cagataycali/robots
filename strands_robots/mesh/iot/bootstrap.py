@@ -57,6 +57,9 @@ RULE_SAFETY_TO_DYNAMODB = "strands_safety_to_dynamodb"
 RULE_ESTOP_FANOUT = "strands_estop_fanout"
 PROVISIONING_TEMPLATE = "strands-mesh-fleet-provisioning"
 PROVISIONING_ROLE = "strands-mesh-provisioning-role"
+PROVISIONING_HOOK_LAMBDA_NAME = "strands-mesh-provisioning-hook"
+#: Bump whenever _PROVISIONING_HOOK_SOURCE changes.
+_PROVISIONING_HOOK_VERSION = 1
 LOG_GROUP_NAME = "/aws/iot/strands-mesh"
 
 
@@ -121,6 +124,71 @@ _ESTOP_LAMBDA_SOURCE = textwrap.dedent(
 )
 
 
+# F-19 / B-13: Fleet Provisioning PreProvisioningHook. Without a hook,
+# any holder of the (shared, long-lived) claim certificate can register
+# an ARBITRARY ThingName and receive a full robot identity + policy.
+# This hook is the gate AWS IoT calls *before* provisioning: it must
+# return {"allowProvisioning": True} or the registration is denied.
+#
+# Policy enforced here (deny-by-default):
+#   * SerialNumber must be present and match a strict format.
+#   * The Thing must NOT already exist (no claim-cert takeover of an
+#     existing robot's identity).
+#   * The serial must be pre-seeded by the operator in SSM Parameter
+#     Store at /strands-mesh/provisioning/allow/<serial>. Sites with a
+#     CMDB can swap this lookup for their own API.
+_PROVISIONING_HOOK_SOURCE = textwrap.dedent(
+    """
+    import logging
+    import re
+
+    import boto3
+
+    log = logging.getLogger()
+    log.setLevel(logging.INFO)
+
+    ssm = boto3.client("ssm")
+
+    _SERIAL_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+    _ALLOW_PREFIX = "/strands-mesh/provisioning/allow/"
+
+    def lambda_handler(event, context):
+        # AWS IoT Fleet Provisioning PreProvisioningHook.
+        # Must return {"allowProvisioning": bool}. Deny-by-default.
+        params = (event or {}).get("parameters", {}) or {}
+        serial = params.get("SerialNumber", "")
+        thing_name = params.get("ThingName", "")
+
+        if not isinstance(serial, str) or not _SERIAL_RE.fullmatch(serial):
+            log.warning("provisioning DENY: bad/missing SerialNumber %r", serial)
+            return {"allowProvisioning": False}
+
+        iot = boto3.client("iot")
+        try:
+            iot.describe_thing(thingName=thing_name)
+            log.warning("provisioning DENY: Thing %r already exists", thing_name)
+            return {"allowProvisioning": False}
+        except iot.exceptions.ResourceNotFoundException:
+            pass
+        except Exception as exc:
+            log.warning("provisioning DENY: describe_thing error: %s", exc)
+            return {"allowProvisioning": False}
+
+        try:
+            ssm.get_parameter(Name=_ALLOW_PREFIX + serial)
+        except ssm.exceptions.ParameterNotFound:
+            log.warning("provisioning DENY: serial %r not in allowlist", serial)
+            return {"allowProvisioning": False}
+        except Exception as exc:
+            log.warning("provisioning DENY: ssm error: %s", exc)
+            return {"allowProvisioning": False}
+
+        log.info("provisioning ALLOW: serial=%s thing=%s", serial, thing_name)
+        return {"allowProvisioning": True}
+    """
+)
+
+
 @dataclass
 class BootstrappedAccount:
     """Identifiers + ARNs of every resource :func:`bootstrap_account` ensured."""
@@ -133,6 +201,7 @@ class BootstrappedAccount:
     rule_estop_arn: str = ""
     log_group_arn: str = ""
     provisioning_template_arn: str = ""
+    provisioning_hook_lambda_arn: str = ""
     skipped: list[str] = field(default_factory=list)
     created: list[str] = field(default_factory=list)
 
@@ -155,6 +224,14 @@ def _build_lambda_zip() -> bytes:
     buf = BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("lambda_function.py", _ESTOP_LAMBDA_SOURCE)
+    return buf.getvalue()
+
+
+def _build_provisioning_hook_zip() -> bytes:
+    """Pack the PreProvisioningHook Lambda source into a deployable zip."""
+    buf = BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("lambda_function.py", _PROVISIONING_HOOK_SOURCE)
     return buf.getvalue()
 
 
@@ -475,12 +552,78 @@ def _ensure_log_group(logs: Any, account: BootstrappedAccount) -> str:
     return desc["logGroups"][0]["arn"]
 
 
-def _ensure_provisioning_template(iot: Any, account: BootstrappedAccount) -> str:
+def _ensure_provisioning_hook_lambda(
+    lam: Any, role_arn: str, account: BootstrappedAccount, *, force_update: bool = False
+) -> str:
+    """Create/Update the Fleet Provisioning PreProvisioningHook Lambda (F-19/B-13).
+
+    Returns the function ARN. Idempotent; reuses an existing function and
+    only updates its code when ``force_update`` is set.
+    """
+    name = PROVISIONING_HOOK_LAMBDA_NAME
+    zip_bytes = _build_provisioning_hook_zip()
+    try:
+        existing = lam.get_function(FunctionName=name)
+        arn = existing["Configuration"]["FunctionArn"]
+        if force_update:
+            lam.update_function_code(FunctionName=name, ZipFile=zip_bytes)
+            account.created.append(f"lambda:{name} (updated)")
+        else:
+            account.skipped.append(f"lambda:{name}")
+        return arn
+    except lam.exceptions.ResourceNotFoundException:
+        pass
+
+    # Lambda IAM role propagation can race; retry create with backoff.
+    last_exc: Exception | None = None
+    for attempt in range(6):
+        try:
+            resp = lam.create_function(
+                FunctionName=name,
+                Runtime="python3.12",
+                Role=role_arn,
+                Handler="lambda_function.lambda_handler",
+                Code={"ZipFile": zip_bytes},
+                Description="strands-mesh: Fleet Provisioning PreProvisioningHook (deny-by-default)",
+                Timeout=10,
+                Tags={"strands-mesh": "managed"},
+            )
+            account.created.append(f"lambda:{name}")
+            return resp["FunctionArn"]
+        except lam.exceptions.InvalidParameterValueException as exc:
+            last_exc = exc
+            if "role" not in str(exc).lower():
+                raise
+            time.sleep(5 * (attempt + 1))
+    raise RuntimeError(f"Provisioning-hook Lambda create failed after retries: {last_exc}")
+
+
+def _grant_iot_invoke_provisioning_hook(lam: Any, hook_arn: str, account: BootstrappedAccount) -> None:
+    """Allow the IoT service principal to invoke the PreProvisioningHook Lambda."""
+    try:
+        lam.add_permission(
+            FunctionName=PROVISIONING_HOOK_LAMBDA_NAME,
+            StatementId="strands-mesh-iot-provisioning-invoke",
+            Action="lambda:InvokeFunction",
+            Principal="iot.amazonaws.com",
+            SourceArn=f"arn:aws:iot:{account.region}:{account.account_id}:provisioningtemplate/{PROVISIONING_TEMPLATE}",
+        )
+        account.created.append("lambda-permission:provisioning-hook-invoke")
+    except lam.exceptions.ResourceConflictException:
+        account.skipped.append("lambda-permission:provisioning-hook-invoke")
+
+
+def _ensure_provisioning_template(
+    iot: Any, account: BootstrappedAccount, *, hook_lambda_arn: str = ""
+) -> str:
     """Fleet Provisioning template — claim cert → real cert + attach robot policy.
 
-    The template body is plain JSON; the registration "PreProvisioningHook"
-    is left unset for simplicity (sites that need policy decisions per
-    serial number can add a Lambda later).
+    F-19 / B-13: a ``PreProvisioningHook`` is wired so a leaked claim cert
+    cannot register an arbitrary Thing. ``hook_lambda_arn`` is the ARN of
+    the gating Lambda (see :func:`_ensure_provisioning_hook_lambda`); when
+    supplied it is attached via ``preProvisioningHook`` and AWS IoT calls
+    it before every registration, denying unless the Lambda returns
+    ``{"allowProvisioning": True}``.
     """
     name = PROVISIONING_TEMPLATE
     try:
@@ -525,14 +668,22 @@ def _ensure_provisioning_template(iot: Any, account: BootstrappedAccount) -> str
     last_exc: Exception | None = None
     for attempt in range(6):
         try:
-            iot.create_provisioning_template(
-                templateName=name,
-                description="strands-mesh: factory-provision robots from a claim cert",
-                templateBody=json.dumps(body),
-                provisioningRoleArn=role_arn,
-                enabled=True,
-                tags=[{"Key": "strands-mesh", "Value": "managed"}],
-            )
+            create_kwargs: dict[str, Any] = {
+                "templateName": name,
+                "description": "strands-mesh: factory-provision robots from a claim cert",
+                "templateBody": json.dumps(body),
+                "provisioningRoleArn": role_arn,
+                "enabled": True,
+                "tags": [{"Key": "strands-mesh", "Value": "managed"}],
+            }
+            # F-19 / B-13: gate registration on the PreProvisioningHook so a
+            # leaked claim cert cannot self-register an arbitrary Thing.
+            if hook_lambda_arn:
+                create_kwargs["preProvisioningHook"] = {
+                    "targetArn": hook_lambda_arn,
+                    "payloadVersion": "2020-04-01",
+                }
+            iot.create_provisioning_template(**create_kwargs)
             break
         except iot.exceptions.InvalidRequestException as exc:
             last_exc = exc
@@ -685,8 +836,16 @@ def bootstrap_account(
     out.rule_estop_arn = _ensure_estop_rule(iot, out.estop_lambda_arn, out)
     _grant_iot_invoke_lambda(lam, out.estop_lambda_arn, out)
 
-    # Fleet Provisioning template
-    out.provisioning_template_arn = _ensure_provisioning_template(iot, out)
+    # Fleet Provisioning PreProvisioningHook Lambda (F-19/B-13) — gate
+    # registration so a leaked claim cert cannot self-register a Thing.
+    hook_arn = _ensure_provisioning_hook_lambda(lam, role_arn, out, force_update=force_update)
+    out.provisioning_hook_lambda_arn = hook_arn
+
+    # Fleet Provisioning template (wires the hook above)
+    out.provisioning_template_arn = _ensure_provisioning_template(
+        iot, out, hook_lambda_arn=hook_arn
+    )
+    _grant_iot_invoke_provisioning_hook(lam, hook_arn, out)
 
     logger.info(
         "[bootstrap] account %s in %s — created %d, skipped %d",
