@@ -78,6 +78,7 @@ _TOPIC_POLICY: dict[str, tuple[int, bool]] = {
     "map/info": (0, True),
     "safety/event": (1, True),
     "safety/estop": (1, True),
+    "safety/resume": (1, True),  # paired with safety/estop; closes incident windows
     "stream": (0, False),
     "stream/meta": (0, False),
     # Camera frames are too big for MQTT — IotMqttTransport drops them.
@@ -150,10 +151,10 @@ def _zenoh_to_mqtt_filter(key_expr: str) -> str:
 
     Patterns we actually use in :class:`Mesh`::
 
-        strands/*/presence              -> strands/+/presence
-        strands/{peer}/response/**      -> strands/{peer}/response/#
-        strands/broadcast               -> strands/broadcast (unchanged)
-        strands/{peer}/cmd              -> strands/{peer}/cmd (unchanged)
+        strands/*/presence  -> strands/+/presence
+        strands/{peer}/response/**  -> strands/{peer}/response/#
+        strands/broadcast  -> strands/broadcast (unchanged)
+        strands/{peer}/cmd  -> strands/{peer}/cmd (unchanged)
 
     We do **not** support arbitrary Zenoh key-expression syntax here. Callers
     that pass anything we don't recognise get a faithful pass-through and a
@@ -183,9 +184,9 @@ def _qos_and_retain_for(topic: str) -> tuple[int, bool]:
     Resolves the suffix that follows the ``strands/...`` prefix and matches
     it against :data:`_TOPIC_POLICY`. Handles three layouts:
 
-    - ``strands/broadcast``               -> suffix ``broadcast``
-    - ``strands/safety/estop``            -> suffix ``safety/estop``
-    - ``strands/{peer}/{topic}/...``      -> suffix ``{topic}/...``
+    - ``strands/broadcast``  -> suffix ``broadcast``
+    - ``strands/safety/estop``  -> suffix ``safety/estop``
+    - ``strands/{peer}/{topic}/...``  -> suffix ``{topic}/...``
 
     Topics with no entry in the policy get ``(0, False)``. Topics flagged as
     ``"DROP"`` return ``(-1, False)`` so callers can short-circuit.
@@ -204,14 +205,14 @@ def _qos_and_retain_for(topic: str) -> tuple[int, bool]:
     # be tried as a fallback chain — a peer_id that happens to be named
     # "broadcast" or "safety" must NOT pick up the top-level policy entry.
     #
-    #   (a) Top-level system topics — first segment IS the kind:
-    #         strands/broadcast
-    #         strands/safety/estop
+    #  (a) Top-level system topics — first segment IS the kind:
+    #  strands/broadcast
+    #  strands/safety/estop
     #
-    #   (b) Per-peer topics — first segment is the peer_id, topic kind
-    #       starts at segment 1:
-    #         strands/{peer}/{kind}            (e.g. presence, state, cmd)
-    #         strands/{peer}/{kind}/{sub}      (e.g. lidar/summary, response/{turn})
+    #  (b) Per-peer topics — first segment is the peer_id, topic kind
+    #  starts at segment 1:
+    #  strands/{peer}/{kind}  (e.g. presence, state, cmd)
+    #  strands/{peer}/{kind}/{sub}  (e.g. lidar/summary, response/{turn})
     #
     # We resolve the layout by checking whether *first* is one of the
     # reserved top-level kinds. The set is small and closed — extending
