@@ -378,7 +378,7 @@ class TestFromSources:
 
 
 def test_attach_robot_strips_robot_scene_ground_plane(tmp_path):
-    """Robot-scene floor planes are stripped on attach to avoid z-fighting (#319).
+    """Robot-scene floor planes are stripped on attach to avoid z-fighting (#320).
 
     A robot MJCF that ships its own ground plane (e.g. the franka_emika_panda
     scene.xml) must NOT add a second coplanar plane at z=0 when attached into a
