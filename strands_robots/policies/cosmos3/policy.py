@@ -66,7 +66,12 @@ import numpy as np
 from strands_robots.policies.base import Policy
 
 from .client import Cosmos3WebsocketClient
-from .embodiments import Cosmos3Embodiment, get_embodiment, get_robot_action_mapping
+from .embodiments import (
+    Cosmos3Embodiment,
+    get_embodiment,
+    get_robot_action_mapping,
+    list_robot_action_mappings,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -149,9 +154,19 @@ class Cosmos3Policy(Policy):
         self._obs_mapping = observation_mapping or self._default_obs_mapping()
         # ``robot=`` sugar: apply a built-in DROID-layout -> actuator mapping
         # (e.g. robot="panda" -> joint_0..6->joint1..7, gripper->finger_joint1)
-        # unless the caller supplied an explicit action_mapping.
+        # unless the caller supplied an explicit action_mapping. Unknown robot
+        # values are rejected up-front so a typo'd or unsupported name cannot
+        # silently fall through to the raw DROID layout (whose keys the user's
+        # robot will then ignore in send_action). See AGENTS.md key convention
+        # #6 "No silent defaults on error".
         if action_mapping is None and robot is not None:
             action_mapping = get_robot_action_mapping(robot)
+            if action_mapping is None:
+                raise ValueError(
+                    f"Unknown robot {robot!r}. Available built-in mappings: "
+                    f"{list_robot_action_mappings()}. Pass an explicit "
+                    f"action_mapping= or omit robot=."
+                )
         self._action_mapping = action_mapping or {}
         # Validate action_mapping keys name real action-layout columns so a
         # typo'd rename can't silently emit a key the robot never consumes.

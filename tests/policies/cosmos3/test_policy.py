@@ -244,3 +244,19 @@ def test_explicit_action_mapping_overrides_robot_sugar():
         action_mapping={"gripper": "grip"},  # explicit wins
     )
     assert p._action_mapping == {"gripper": "grip"}
+
+
+def test_unknown_robot_raises_at_construction():
+    """robot= with an unknown / typo'd name fails fast instead of silently
+    keeping the raw DROID layout (which the user's robot would then ignore
+    in send_action). Pins AGENTS.md key convention #6 "No silent defaults on
+    error" and prevents a one-way-door regression in the public ``robot=``
+    constructor kwarg.
+    """
+    client = FakeClient(_droid_chunk())
+    with pytest.raises(ValueError, match="Unknown robot 'pannda'"):
+        Cosmos3Policy(embodiment="droid", client=client, robot="pannda")
+    # Also: a structurally-valid but unsupported robot name (e.g. so100) is
+    # rejected, listing the available built-in mappings in the error message.
+    with pytest.raises(ValueError, match="Available built-in mappings"):
+        Cosmos3Policy(embodiment="droid", client=client, robot="so100")
