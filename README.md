@@ -419,6 +419,52 @@ policy = create_policy(
 policy = create_policy(provider="mock")
 ```
 
+### Cosmos 3 (NVIDIA omnimodal VLA — service mode)
+
+[`nvidia/Cosmos3-Nano-Policy-DROID`](https://huggingface.co/nvidia/Cosmos3-Nano-Policy-DROID)
+served by the Cosmos Framework RoboLab WebSocket policy server. The policy is a
+thin OpenPI client (mirrors `Gr00tPolicy` service mode).
+
+**1. Start the server** (holds the GPU), from a Cosmos Framework checkout:
+
+```bash
+uv sync --all-extras --group=cu130-train --group=policy-server
+python -m cosmos_framework.scripts.action_policy_server_robolab \
+    --checkpoint-path nvidia/Cosmos3-Nano-Policy-DROID --port 8000
+curl http://localhost:8000/healthz   # -> 200 when ready (~4 min cold)
+```
+
+**2. Install the client** (the `cosmos3-service` extra ships `openpi-client`,
+which pins `numpy<2`; install it last on a client box):
+
+```bash
+pip install -e '.[sim-mujoco]'
+pip install 'strands-robots[cosmos3-service]'
+```
+
+**3. Use it** (`cosmos3`, `c3`, `cosmos3://host:port`, or the HF model-id all
+resolve to `Cosmos3Policy`):
+
+```python
+from strands_robots.policies import create_policy
+
+policy = create_policy("cosmos3", embodiment="droid", port=8000)
+policy.set_robot_state_keys([f"joint_{i}" for i in range(7)] + ["gripper"])
+chunk = policy.get_actions_sync(observation, "pick up the cube")
+# chunk == [{"joint_0": .., ..., "gripper": ..}, ...]  (one dict per timestep)
+```
+
+**4. Roll out in MuJoCo** — the `droid` embodiment drives a Franka/DROID-class
+arm, so use the `franka` (or `panda`) sim asset:
+
+```bash
+MUJOCO_GL=egl python examples/cosmos3_sim_rollout.py --record /tmp/c3.mp4
+```
+
+Embodiments: `droid` (10D, chunk 32, 15 fps), `umi`, `av`, `bridge`. If the
+server is not running, the policy raises a `ConnectionError` with the exact
+command to start it.
+
 ### Non-VLA Policies (motion planners, MPC, scripted)
 
 The `Policy` ABC is intentionally agnostic about *how* actions are produced.

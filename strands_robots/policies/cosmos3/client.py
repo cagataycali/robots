@@ -54,18 +54,36 @@ class Cosmos3WebsocketClient:
         self.api_key = api_key
         self._client: Any = None
 
+    def _server_hint(self) -> str:
+        """Actionable hint for starting the Cosmos 3 RoboLab policy server."""
+        return (
+            f"Could not reach the Cosmos 3 policy server at ws://{self.host}:{self.port}. "
+            "Start it first (holds the GPU) from a Cosmos Framework checkout:\n"
+            "  uv sync --all-extras --group=cu130-train --group=policy-server\n"
+            "  python -m cosmos_framework.scripts.action_policy_server_robolab \\\n"
+            "    --checkpoint-path nvidia/Cosmos3-Nano-Policy-DROID --port "
+            f"{self.port}\n"
+            f"Then confirm it is up:  curl http://{self.host}:{self.port}/healthz"
+        )
+
     def _ensure_client(self) -> Any:
         """Connect on first use (lazy)."""
         if self._client is None:
             mod = _load_openpi_client()
-            self._client = mod.WebsocketClientPolicy(host=self.host, port=self.port, api_key=self.api_key)
+            try:
+                self._client = mod.WebsocketClientPolicy(host=self.host, port=self.port, api_key=self.api_key)
+            except (ConnectionRefusedError, OSError) as e:
+                raise ConnectionError(self._server_hint()) from e
             logger.info("Cosmos3WebsocketClient connected to ws://%s:%s", self.host, self.port)
         return self._client
 
     def get_server_metadata(self) -> dict[str, Any]:
         """Return the metadata dict the server sends on connect."""
         client = self._ensure_client()
-        return client.get_server_metadata()
+        try:
+            return client.get_server_metadata()
+        except (ConnectionRefusedError, OSError) as e:
+            raise ConnectionError(self._server_hint()) from e
 
     def infer(self, observation: dict[str, Any]) -> dict[str, Any]:
         """Send an observation dict and return the server response.
@@ -80,7 +98,10 @@ class Cosmos3WebsocketClient:
             NumPy array) and optionally ``"video"`` / ``"server_timing"``.
         """
         client = self._ensure_client()
-        return client.infer(observation)
+        try:
+            return client.infer(observation)
+        except (ConnectionRefusedError, OSError) as e:
+            raise ConnectionError(self._server_hint()) from e
 
     def reset(self) -> None:
         """Best-effort per-episode reset hint to the server.

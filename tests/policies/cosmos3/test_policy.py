@@ -291,3 +291,18 @@ def test_unexpected_kwargs_rejected():
     bad_kwargs = {"actoin_mapping": {"joint_0": "shoulder_pan"}}  # typo on purpose
     with pytest.raises(TypeError):
         Cosmos3Policy(embodiment="droid", client=client, **bad_kwargs)
+
+
+def test_client_connection_error_has_actionable_hint():
+    """When the server is down, infer() raises ConnectionError naming the
+    server-start command (no cryptic Errno 111)."""
+    from strands_robots.policies.cosmos3.client import Cosmos3WebsocketClient
+
+    # Port 1 is reserved/unused -> connection refused on first lazy connect.
+    client = Cosmos3WebsocketClient(host="127.0.0.1", port=1)
+    with pytest.raises(ConnectionError) as ei:
+        client.infer({"prompt": "x"})
+    msg = str(ei.value)
+    assert "action_policy_server_robolab" in msg
+    assert "ws://127.0.0.1:1" in msg
+    assert "healthz" in msg
