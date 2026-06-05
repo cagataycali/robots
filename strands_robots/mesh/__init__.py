@@ -10,8 +10,8 @@ Typical usage::
 
     mesh = init_mesh(robot, peer_id="arm-001")
     if mesh is not None:
-        print(mesh.alive)   # True
-        print(mesh.peers)   # discovered peers
+        print(mesh.alive)  # True
+        print(mesh.peers)  # discovered peers
         mesh.stop()
 
 Submodules
