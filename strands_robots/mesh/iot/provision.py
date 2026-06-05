@@ -302,10 +302,20 @@ _OPERATOR_POLICY_DOC: dict[str, Any] = {
             ],
         },
         {
+            # F-20 / B-14: scope shadow access to strands-managed Things
+            # only. The bare ``thing/*`` resource let an operator cert
+            # GetThingShadow / UpdateThingShadow on EVERY Thing in the
+            # account (the attribute Condition does not restrict shadow
+            # APIs by resource name -- the pentest wrote shadow.reported
+            # on non-strands Things). AWS does not apply the attribute
+            # condition to the shadow data-plane resource, so the practical
+            # fix is a resource-name prefix: strands robots are provisioned
+            # with ``strands-`` ThingName prefixes (see PROVISIONING
+            # template + _validate_thing_name).
             "Sid": "OperatorShadow",
             "Effect": "Allow",
             "Action": ["iot:GetThingShadow", "iot:UpdateThingShadow"],
-            "Resource": ["arn:aws:iot:*:*:thing/*"],
+            "Resource": ["arn:aws:iot:*:*:thing/strands-*"],
             "Condition": {
                 "StringEquals": {
                     "iot:Connection.Thing.Attributes.strands-mesh-role": "robot",
