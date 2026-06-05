@@ -40,9 +40,13 @@ that :class:`Mesh` already follows for failed Zenoh sessions.
 
 from __future__ import annotations
 
+import hashlib
+import heapq
+import json
 import logging
 import os
 import threading
+import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
@@ -73,17 +77,19 @@ def _get_iot_transport_class() -> type[IotMqttTransport]:
 # Suffixes are matched against the part of the topic AFTER ``strands/``.
 #
 # Why this default:
-# - presence       — rare, retained on cloud, late operators need it
-# - health         — rare, retained, threshold alerts via Rules
-# - safety/event   — must hit cloud audit
-# - safety/estop   — defence-in-depth E-stop
-# - cmd            — operator-to-robot RPC (cloud → robot direction)
-# - response       — robot-to-operator RPC reply
-# - broadcast      — fan-out RPC
+# - presence  — rare, retained on cloud, late operators need it
+# - health  — rare, retained, threshold alerts via Rules
+# - safety/event  — must hit cloud audit
+# - safety/estop  — defence-in-depth E-stop
+# - safety/resume  — paired with safety/estop; cloud audit needs the
+#   resume edge to close the safety incident timeline
+# - cmd  — operator-to-robot RPC (cloud → robot direction)
+# - response  — robot-to-operator RPC reply
+# - broadcast  — fan-out RPC
 #
 # Explicitly NOT bridged by default (opt in via STRANDS_MESH_BRIDGE_TOPICS):
 # - state, pose, imu, odom, lidar — high volume, route via Basic Ingest if
-#   cloud needs them. See AWS_IOT_MESH_INTEGRATION.md §7.2 for the cost math.
+#  cloud needs them. See AWS_IOT_MESH_INTEGRATION.md §7.2 for the cost math.
 # - camera, input, hand — LAN-only by definition (size / latency).
 DEFAULT_BRIDGE_SUFFIXES: frozenset[str] = frozenset(
     {
@@ -91,15 +97,37 @@ DEFAULT_BRIDGE_SUFFIXES: frozenset[str] = frozenset(
         "health",
         "safety/event",
         "safety/estop",
+        "safety/resume",
         "cmd",
         "response",
         "broadcast",
     }
 )
 
+# Of the bridge filter entries, only ``response`` legitimately carries a
+# trailing ``/<turn-id>`` segment that the bridge must accept. Every other
+# entry is matched exactly. This is the post-Phase-4 hardening:
+#
+#  Pre-fix: a sloppy prefix-walk in _should_bridge meant that
+#  ``strands/<x>/cmd/anything-attacker-tacks-on`` matched the ``cmd``
+#  filter entry and was bridged to MQTT. An attacker could pollute the
+#  cloud audit table / spam CloudWatch / inflate broker billing by
+#  appending arbitrary suffixes to allowed prefixes
+#  (``strands/x/safety/event/<10kb-blob>`` is the worst case -- it ends
+#  up in the DDB audit table).
+#
+# Operators who need a bare-prefix match for a custom suffix can opt in
+# explicitly via ``STRANDS_MESH_BRIDGE_TOPICS_PREFIX``.
+_DEFAULT_BRIDGE_PREFIX_SUFFIXES: frozenset[str] = frozenset({"response"})
+
 
 def _resolve_bridge_filter() -> frozenset[str]:
-    """Read ``STRANDS_MESH_BRIDGE_TOPICS`` or fall back to the default."""
+    """Read ``STRANDS_MESH_BRIDGE_TOPICS`` or fall back to the default.
+
+    Returns the EXACT-match suffix set. Prefix-match suffixes (i.e.
+    those whose tail is part of the topic, like ``response/<turn>``)
+    are returned by :func:`_resolve_bridge_prefix_filter`.
+    """
     env = os.getenv("STRANDS_MESH_BRIDGE_TOPICS")
     if not env:
         return DEFAULT_BRIDGE_SUFFIXES
@@ -109,14 +137,32 @@ def _resolve_bridge_filter() -> frozenset[str]:
     return frozenset(parts)
 
 
+def _resolve_bridge_prefix_filter() -> frozenset[str]:
+    """Read ``STRANDS_MESH_BRIDGE_TOPICS_PREFIX`` or fall back to default.
+
+    Entries here are matched as a path prefix (``response`` matches
+    ``response/abc-123``). The default is just ``response`` because that
+    is the only RPC-shape topic with a per-turn tail. Operators who add
+    a new RPC-shape topic must extend this list explicitly -- extending
+    only ``STRANDS_MESH_BRIDGE_TOPICS`` will NOT bridge tails.
+    """
+    env = os.getenv("STRANDS_MESH_BRIDGE_TOPICS_PREFIX")
+    if not env:
+        return _DEFAULT_BRIDGE_PREFIX_SUFFIXES
+    parts = [p.strip() for p in env.split(",") if p.strip()]
+    if not parts:
+        return _DEFAULT_BRIDGE_PREFIX_SUFFIXES
+    return frozenset(parts)
+
+
 def _topic_suffix(topic: str) -> str:
     """Return the suffix following ``strands/`` from a Mesh topic.
 
     Handles three layouts:
 
-    - ``strands/broadcast``               -> ``broadcast``
-    - ``strands/safety/estop``            -> ``safety/estop``
-    - ``strands/{peer}/{kind}/...``       -> ``{kind}/...``
+    - ``strands/broadcast``  -> ``broadcast``
+    - ``strands/safety/estop``  -> ``safety/estop``
+    - ``strands/{peer}/{kind}/...``  -> ``{kind}/...``
     """
     if not topic.startswith("strands/"):
         return ""
@@ -132,23 +178,273 @@ def _topic_suffix(topic: str) -> str:
     return tail
 
 
-def _should_bridge(topic: str, allowed_suffixes: frozenset[str]) -> bool:
+def _should_bridge(
+    topic: str,
+    allowed_suffixes: frozenset[str],
+    allowed_prefixes: frozenset[str] | None = None,
+) -> bool:
     """True if *topic* should be republished to MQTT.
 
-    Match policy: a topic suffix matches an allowed entry if either is a
-    prefix of the other up to a ``/`` boundary. So ``response/abc123``
-    matches the allowed suffix ``response``, and ``safety/event`` matches
-    itself exactly.
+    Match policy (Phase-4 tightening):
+
+    * **Exact match**: ``allowed_suffixes`` entries match the topic
+      suffix character-for-character. ``cmd`` matches
+      ``strands/<peer>/cmd`` only -- NOT
+      ``strands/<peer>/cmd/<attacker-supplied-tail>``.
+    * **Prefix match**: only entries listed in ``allowed_prefixes``
+      (default: ``{"response"}`` -- the only RPC-shape topic with a
+      per-turn tail) accept a trailing path component. ``response``
+      matches ``response/<turn>``.
+
+    The exact / prefix split closes a cloud-pollution attack: without
+    it, an attacker could append arbitrary tails to any allowed prefix
+    and have the bridge republish the message to MQTT (e.g. a 10 KiB
+    blob on ``strands/<x>/safety/event/<blob>`` ending up in the DDB
+    audit table). Only ``response`` legitimately carries a per-turn
+    tail, so it is the sole prefix-walk default.
     """
+    if allowed_prefixes is None:
+        allowed_prefixes = _resolve_bridge_prefix_filter()
+
     suffix = _topic_suffix(topic)
     if not suffix:
         return False
-    suffix_parts = suffix.split("/")
-    for n in range(len(suffix_parts), 0, -1):
-        candidate = "/".join(suffix_parts[:n])
-        if candidate in allowed_suffixes:
-            return True
+
+    # Exact match -- fast path.
+    if suffix in allowed_suffixes:
+        return True
+
+    # Prefix match -- only legitimate for entries explicitly opted-in to
+    # tail-acceptance.
+    head = suffix.split("/", 1)[0]
+    # Reject path-traversal in the head segment too -- the previous
+    # check only rejected ``..`` in the tail. ``../foo`` would have
+    # head=".." and skip the rest-segment scan entirely. Belt-and-
+    # braces against operator misconfigurations of allowed_prefixes
+    # that include ``..`` literally.
+    if head == "..":
+        return False
+    if head in allowed_prefixes:
+        # Defence-in-depth: reject any tail containing path-traversal
+        # segments. Zenoh keys never legitimately contain ``..``.
+        rest = suffix[len(head) + 1 :] if "/" in suffix else ""
+        if rest and any(seg == ".." for seg in rest.split("/")):
+            return False
+        return True
+
     return False
+
+
+# Cross-transport command deduplication.
+#
+# In bridge mode the same command can be delivered twice -- once via Zenoh
+# and once via MQTT -- because subscriptions fan out on both sides. Without
+# dedup the receiver would dispatch the action twice (move twice, broadcast
+# twice, etc.).
+#
+# The deduplicator below caches a SHA-256 fingerprint of
+# (sender_id, turn_id, command) per topic and refuses to deliver a sample
+# whose identity it has seen recently. Tunable via
+# ``STRANDS_MESH_DEDUP_TTL`` (seconds; default 120).
+_DEFAULT_DEDUP_TTL_S = 120.0
+_MAX_DEDUP_ENTRIES = 10_000
+
+
+def _resolve_dedup_ttl() -> float:
+    """Read ``STRANDS_MESH_DEDUP_TTL`` env var (default: 120s).
+
+    NOTE: read once at ``BridgeTransport`` construction; mid-process
+    env-var changes require a bridge restart to take effect.
+    """
+    raw = os.getenv("STRANDS_MESH_DEDUP_TTL")
+    if raw is None:
+        return _DEFAULT_DEDUP_TTL_S
+    try:
+        v = float(raw)
+        return v if v > 0 else _DEFAULT_DEDUP_TTL_S
+    except ValueError:
+        logger.warning("[bridge] STRANDS_MESH_DEDUP_TTL=%r invalid -- using default", raw)
+        return _DEFAULT_DEDUP_TTL_S
+
+
+def _resolve_dedup_strict() -> bool:
+    """Read ``STRANDS_MESH_BRIDGE_DEDUP_STRICT`` env var (default: off).
+
+    Strict mode makes the deduplicator hash the full payload when no
+    canonical (sender_id, turn_id, command) tuple is present. Without it,
+    non-canonical payloads bypass dedup entirely (safe for heartbeats that
+    legitimately recur with the same content).
+
+    Bridge cross-transport needs strict mode to dedup heartbeat-style
+    payloads that arrive on both Zenoh and MQTT.
+
+    NOTE: read once at ``BridgeTransport`` construction; mid-process
+    env-var changes require a bridge restart to take effect.
+    """
+    raw = os.getenv("STRANDS_MESH_BRIDGE_DEDUP_STRICT", "").strip().lower()
+    if raw in ("", "0", "false", "no"):
+        return False
+    if raw in ("1", "true", "yes"):
+        return True
+    logger.warning(
+        "[bridge] STRANDS_MESH_BRIDGE_DEDUP_STRICT=%r invalid -- using default (off)",
+        raw,
+    )
+    return False
+
+
+class _CommandDeduplicator:
+    """TTL-bounded cache of (key, dedup-id) tuples seen in the recent past.
+
+    Thread-safe. Identity is a SHA-256 fingerprint over the canonical
+    RPC triple ``(sender_id, turn_id, command)`` -- callers must not
+    reuse that triple for distinct deliveries (the contract assumes
+    ``turn_id`` is monotonic per-sender). Payloads with an incomplete
+    canonical triple pass through in default mode or fall back to a
+    full-payload hash in strict mode. The cache key is *(topic_key,
+    dedup_id)* so two distinct topics with coincidentally matching
+    dedup_ids don't collide.
+    """
+
+    __slots__ = ("_seen", "_lock", "_ttl", "_strict")
+
+    def __init__(self, ttl_s: float | None = None, *, strict: bool = False) -> None:
+        self._seen: dict[tuple[str, str], float] = {}
+        self._lock = threading.Lock()
+        self._ttl = ttl_s if ttl_s is not None else _resolve_dedup_ttl()
+        # Strict mode: when True, _dedup_id falls back to full-payload hash
+        # for payloads with no canonical (sender_id, turn_id, command) tuple.
+        # Used by bridge cross-transport path to dedup heartbeats etc.
+        self._strict = strict
+
+    @property
+    def ttl(self) -> float:
+        return self._ttl
+
+    def _dedup_id(self, payload: dict[str, Any]) -> str | None:
+        """Return a content fingerprint identifying this message.
+
+        Identity is the canonical RPC triple ``(sender_id, turn_id,
+        command)``: callers must not reuse that triple for distinct
+        deliveries (the contract assumes ``turn_id`` is monotonic
+        per-sender). Two messages that share the triple but differ in
+        other top-level fields (timestamps, audit metadata, future-added
+        envelope fields) are treated as the same delivery -- this is the
+        intentional dedup contract for cross-transport bridge mode.
+
+        Returns ``None`` when the canonical triple is incomplete (any of
+        the three fields missing). In strict mode, an incomplete triple
+        falls through to a full-payload hash; in default mode it passes
+        through (the existing peer registry deduplicates by
+        ``peer_id``/``turn_id`` upstream).
+
+        The previous behaviour -- canonical path on *any* non-None field
+        -- aliased partial payloads (e.g. ``{"sender_id": "a"}`` would
+        dedup against ``{"sender_id": "a", "extra": 1}``). Pinned by
+        ``test_partial_canonical_does_not_alias``.
+
+        JSON-encodability contract: ``command`` payloads on the canonical
+        identity path MUST be pure-JSON-encodable (str/int/float/bool/None,
+        list, dict). The ``default=str`` argument to ``json.dumps`` is a
+        defensive coercion that prevents ``TypeError`` from non-JSON types
+        (datetime, bytes, custom objects), but the resulting fingerprint is
+        non-deterministic for objects whose ``str()`` includes their memory
+        address (e.g. instances without a ``__str__`` override). Producers
+        relying on dedup correctness for non-JSON ``command`` shapes are in
+        contract violation. Tracked for resolution (drop ``default=str`` and
+        let TypeError surface, vs. enforce JSON contract at producer side)
+        in #233.
+
+        The strict-mode full-payload hash (partial-canonical fallback at
+        lines below) shares the same ``default=str`` non-determinism risk;
+        #233 covers both paths.
+        """
+        if not isinstance(payload, dict):
+            return None
+
+        sender = payload.get("sender_id")
+        turn = payload.get("turn_id")
+        cmd = payload.get("command")
+
+        # Canonical path requires all three fields present AND non-blank;
+        # partial/empty canonical payloads fall through to the strict/pass-
+        # through branch so they do not alias against each other.
+        # Empty-string rejection aligns with R20 bridge-side counterpart.
+        def _is_blank(v: object) -> bool:
+            return v is None or (isinstance(v, str) and v.strip() == "")
+
+        if _is_blank(sender) or _is_blank(turn) or cmd is None:
+            if not self._strict:
+                # Default: pass through (preserves heartbeat semantics).
+                return None
+            # Strict mode: full-payload hash fallback.
+            try:
+                # Issue #233: dropped ``default=str`` from canonical-path
+                # encoders. Custom objects without ``__str__`` overrides
+                # produced address-suffixed strings (``<Foo object at 0x...>``)
+                # which made the fingerprint non-deterministic. Now we let
+                # TypeError fall through to pass-through (same semantics as
+                # missing-canonical-fields: dedup is bypassed, peer-registry
+                # upstream still bounds replays).
+                full = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            except (TypeError, ValueError):
+                return None
+            return "p:" + hashlib.sha256(full).hexdigest()
+
+        try:
+            # Issue #233: dropped ``default=str``. Non-JSON ``command``
+            # payloads now bypass dedup (return None) rather than producing
+            # a non-deterministic address-suffixed fingerprint that appears
+            # to dedup in tests but doesn't in production.
+            canonical = json.dumps(
+                {"sender": sender, "turn": turn, "cmd": cmd},
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        except (TypeError, ValueError):
+            return None
+        # Full 256-bit (64 hex chars) -- no birthday-attack truncation.
+        return "f:" + hashlib.sha256(canonical).hexdigest()
+
+    def is_duplicate(self, key: str, payload: dict[str, Any]) -> bool:
+        """Return True if this (key, payload) was seen within the TTL.
+
+        Records the entry when not a duplicate so the next call returns True.
+        """
+        ident = self._dedup_id(payload)
+        if ident is None:
+            return False  # nothing to dedup against -- pass through
+        cache_key = (key, ident)
+        now = time.monotonic()  # NTP-safe, snapshot-resume-safe
+        with self._lock:
+            # Cheap GC if oversized
+            if len(self._seen) > _MAX_DEDUP_ENTRIES:
+                cutoff = now - self._ttl
+                stale = [k for k, ts in self._seen.items() if ts < cutoff]
+                for k in stale:
+                    self._seen.pop(k, None)
+                if len(self._seen) > _MAX_DEDUP_ENTRIES:
+                    # Issue #231: replace O(n log n) full-sort + slice with
+                    # ``heapq.nsmallest`` partial-selection (O(n log k) where
+                    # k = drop count). For the typical k = n/5 case this is
+                    # ~5x faster on the lock-hold than a full sort. The
+                    # heapq impl uses an O(k) heap and an O(n) scan, which
+                    # is bounded by the cap (10k entries) -- a few ms at
+                    # most under the lock.
+                    drop = max(1, len(self._seen) // 5)
+                    oldest = heapq.nsmallest(drop, self._seen.items(), key=lambda kv: kv[1])
+                    for k, _ in oldest:
+                        self._seen.pop(k, None)
+
+            seen_ts = self._seen.get(cache_key)
+            if seen_ts is not None and (now - seen_ts) <= self._ttl:
+                return True
+            self._seen[cache_key] = now
+            return False
+
+    def clear(self) -> None:
+        with self._lock:
+            self._seen.clear()
 
 
 class _BridgeSubHandle:
@@ -175,7 +471,13 @@ class _BridgeSubHandle:
                 continue
             try:
                 sub.undeclare()
-            except Exception as exc:
+            except (RuntimeError, AttributeError, OSError) as exc:
+                # Narrow per AGENTS.md > Review Learnings: idempotent
+                # teardown should swallow the documented transport-failure
+                # surface (RuntimeError = already-closed handle;
+                # AttributeError = mock or partial-init handle;
+                # OSError = socket teardown race) and let unexpected
+                # exceptions propagate.
                 logger.debug("[bridge] sub.undeclare() failed: %s", exc)
 
 
@@ -202,9 +504,16 @@ class BridgeTransport:
         self._zenoh = zenoh or ZenohTransportCls()
         self._iot = iot or IotMqttTransportCls()
         self._bridge_suffixes = bridge_suffixes if bridge_suffixes is not None else _resolve_bridge_filter()
+        self._bridge_prefixes = _resolve_bridge_prefix_filter()
         self._zenoh_alive = False
         self._iot_alive = False
         self._lock = threading.Lock()
+
+        # Cross-transport command deduplicator. One instance per
+        # BridgeTransport, shared between the Zenoh and IoT subscriber
+        # wrappers -- whichever transport delivers a sample first wins,
+        # and the other side silently drops the duplicate.
+        self._dedup = _CommandDeduplicator(strict=_resolve_dedup_strict())
 
     # Lifecycle
 
@@ -231,15 +540,23 @@ class BridgeTransport:
             return True
 
     def close(self) -> None:
-        """Close both backends. Idempotent."""
+        """Close both backends. Idempotent.
+
+        Narrow exception surface per AGENTS.md > Review Learnings:
+        idempotent teardown swallows the documented transport-failure
+        surface (RuntimeError = already-closed session,
+        ConnectionError = connection drop racing with close,
+        OSError = socket teardown race) and lets unexpected exceptions
+        propagate.
+        """
         with self._lock:
             try:
                 self._zenoh.close()
-            except Exception as exc:
+            except (RuntimeError, ConnectionError, OSError) as exc:
                 logger.debug("[bridge] zenoh.close() failed: %s", exc)
             try:
                 self._iot.close()
-            except Exception as exc:
+            except (RuntimeError, ConnectionError, OSError) as exc:
                 logger.debug("[bridge] iot.close() failed: %s", exc)
             self._zenoh_alive = False
             self._iot_alive = False
@@ -276,37 +593,119 @@ class BridgeTransport:
     def put(self, key: str, data: dict[str, Any]) -> None:
         """Publish to Zenoh always; publish to IoT only if the topic bridges.
 
-        Failure of one side does not affect the other.
+        Failure of one side does not affect the other. Narrow exception
+        surface per AGENTS.md > Review Learnings: transport-level failures
+        (RuntimeError from closed session, ConnectionError from broker
+        drop, OSError from socket-level write) are absorbed; everything
+        else propagates.
         """
         # Always Zenoh (LAN is cheap; preserves existing behaviour).
         if self._zenoh.is_alive():
             try:
                 self._zenoh.put(key, data)
-            except Exception as exc:
+            except (RuntimeError, ConnectionError, OSError) as exc:
                 logger.debug("[bridge] zenoh.put error on %s: %s", key, exc)
 
         # Filtered IoT.
-        if self._iot.is_alive() and _should_bridge(key, self._bridge_suffixes):
+        if self._iot.is_alive() and _should_bridge(key, self._bridge_suffixes, self._bridge_prefixes):
             try:
                 self._iot.put(key, data)
-            except Exception as exc:
+            except (RuntimeError, ConnectionError, OSError) as exc:
                 logger.debug("[bridge] iot.put error on %s: %s", key, exc)
 
     def declare_subscriber(self, key_expr: str, handler: Callable[[Any], None]) -> _BridgeSubHandle:
-        """Subscribe on both sides. Inbound deduplication is the Mesh layer's job."""
+        """Subscribe on both transports with cross-transport deduplication.
+
+        The bridge fans subscriptions out to both Zenoh and IoT, but each
+        delivered sample is funnelled through the shared
+        :class:`_CommandDeduplicator`. *handler* is therefore called at most
+        once per logical message even when the same payload arrives on both
+        sides.
+
+        Identity is a SHA-256 fingerprint over the canonical
+        ``(sender_id, turn_id, command)`` tuple. Samples without any
+        canonical fields bypass dedup and are delivered as-is (default),
+        or fall back to a full-payload hash when
+        ``STRANDS_MESH_BRIDGE_DEDUP_STRICT=1`` (intended for heartbeats
+        that legitimately recur with identical content).
+        """
         zenoh_sub: Any | None = None
         iot_sub: Any | None = None
 
+        # One-shot warning gate shared across both transport sides (zenoh + iot).
+        # A missing key_expr is a per-subscription contract drift, not per-side.
+        _warned_missing_key_expr = [False]
+
+        def make_dedup_handler(transport_label: str) -> Callable[[Any], None]:
+
+            def _filtered(sample: Any) -> None:
+                # Extract payload for dedup. We do NOT json-decode if the
+                # sample doesn't expose a payload -- fall back to raw handler.
+                payload: dict[str, Any] | None = None
+                try:
+                    raw = sample.payload.to_bytes().decode()
+                    decoded = json.loads(raw)
+                    if isinstance(decoded, dict):
+                        payload = decoded
+                except (AttributeError, UnicodeDecodeError, json.JSONDecodeError):
+                    # narrow per AGENTS.md > Review
+                    # Learnings (#86) > "Exception Clauses Must Be Narrow".
+                    # Same tuple as the four wire handlers in core.py
+                    # (_on_cmd, _on_response, _on_safety_estop,
+                    # _on_safety_resume). Pinned by
+                    # ``test_wire_handler_narrow_except.py``.
+                    payload = None
+
+                # Use the actual delivered topic (sample.key_expr), not the
+                # subscription pattern (key_expr), for dedup-cache keying.
+                # A wildcard subscription like "strands/+/cmd" must not alias
+                # messages delivered on distinct topics (e.g. robot-a/cmd vs
+                # robot-b/cmd).  Per the _MqttSample / zenoh.Sample contracts
+                # key_expr is always present; a missing attribute is a bug
+                # (mock shape drift, transport refactor) so we fall back to the
+                # subscription pattern AND emit a warning so the regression is
+                # observable in operator logs (per AGENTS.md > Review Learnings
+                # (#85) > "No silent defaults on error"). Pinned by
+                # test_missing_key_expr_warns_and_falls_back.
+                _sentinel = object()
+                _delivered = getattr(sample, "key_expr", _sentinel)
+                if _delivered is _sentinel:
+                    if not _warned_missing_key_expr[0]:
+                        logger.warning(
+                            "[bridge] sample on subscription %r is missing"
+                            " key_expr; falling back to subscription pattern"
+                            " for dedup cache key (R5 contract drift -- this"
+                            " reintroduces wildcard-aliasing if it persists)",
+                            key_expr,
+                        )
+                        _warned_missing_key_expr[0] = True
+                    _delivered = key_expr
+                delivered_topic = str(_delivered)
+                if payload is not None and self._dedup.is_duplicate(delivered_topic, payload):
+                    logger.debug(
+                        "[bridge] dropped duplicate from %s on %s",
+                        transport_label,
+                        delivered_topic,
+                    )
+                    return
+                handler(sample)
+
+            return _filtered
+
         if self._zenoh.is_alive():
             try:
-                zenoh_sub = self._zenoh.declare_subscriber(key_expr, handler)
-            except Exception as exc:
+                zenoh_sub = self._zenoh.declare_subscriber(key_expr, make_dedup_handler("zenoh"))
+            except (RuntimeError, ConnectionError, OSError) as exc:
+                # Narrow per AGENTS.md > Review Learnings: subscribe-side
+                # transport failures (closed session, broker drop, socket
+                # error) degrade to the surviving side; unexpected errors
+                # propagate so genuine bugs aren't masked.
                 logger.debug("[bridge] zenoh.declare_subscriber(%s) failed: %s", key_expr, exc)
 
         if self._iot.is_alive():
             try:
-                iot_sub = self._iot.declare_subscriber(key_expr, handler)
-            except Exception as exc:
+                iot_sub = self._iot.declare_subscriber(key_expr, make_dedup_handler("iot"))
+            except (RuntimeError, ConnectionError, OSError) as exc:
                 logger.debug("[bridge] iot.declare_subscriber(%s) failed: %s", key_expr, exc)
 
         if zenoh_sub is None and iot_sub is None:
