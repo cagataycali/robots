@@ -81,8 +81,7 @@ def test_resume_cache_per_issuer_cap_enforced(monkeypatch):
     assert len(m._resume_replay_cache) == cap
 
     cap_audits = [
-        c for c in m.publish_safety_event.call_args_list
-        if c[1].get("event_type") == "resume_per_issuer_cap_exceeded"
+        c for c in m.publish_safety_event.call_args_list if c[1].get("event_type") == "resume_per_issuer_cap_exceeded"
     ]
     assert len(cap_audits) == 1
 
@@ -109,9 +108,7 @@ def test_resume_cache_cap_prevents_eviction_of_other_issuers(monkeypatch):
         m._estop_lockout.set()
         m._on_safety_resume(_sample(_make_envelope("secret", peer_id="attacker")))
 
-    attacker_slots = sum(
-        1 for issuer, _nonce in m._resume_replay_cache if issuer == ("body", "attacker")
-    )
+    attacker_slots = sum(1 for issuer, _nonce in m._resume_replay_cache if issuer == ("body", "attacker"))
     assert attacker_slots <= cap
     # The legitimate entry survived the attacker's churn.
     assert legit_key in m._resume_replay_cache

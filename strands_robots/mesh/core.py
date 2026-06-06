@@ -2126,9 +2126,7 @@ class Mesh(SensorLoopsMixin):
             # from the SAME formula as _on_safety_estop so the two
             # caches stay symmetric (see issue #266).
             per_issuer_cap = max(1, _resume_replay_cache_max() // 4)
-            issuer_slots = sum(
-                1 for cached_issuer, _nonce in self._resume_replay_cache if cached_issuer == issuer_key
-            )
+            issuer_slots = sum(1 for cached_issuer, _nonce in self._resume_replay_cache if cached_issuer == issuer_key)
             if issuer_slots >= per_issuer_cap:
                 logger.warning(
                     "[safety] %s: REFUSED resume cache slot -- issuer %r already at cap %d "
