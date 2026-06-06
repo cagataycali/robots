@@ -123,8 +123,7 @@ def _lock_acquired_without_env_reads(method) -> bool:
 
         def visit_With(self, node: ast.With):
             uses_estop_lock = any(
-                isinstance(item.context_expr, ast.Attribute)
-                and item.context_expr.attr == "_estop_replay_lock"
+                isinstance(item.context_expr, ast.Attribute) and item.context_expr.attr == "_estop_replay_lock"
                 for item in node.items
             )
             if uses_estop_lock:
