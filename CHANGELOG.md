@@ -58,9 +58,7 @@ Applies to ``strands_robots.mesh.iot.provision`` and
   ``re.fullmatch``) applied symmetrically across ``provision_robot``,
   ``provision_operator``, and ``teardown_thing``. Rejects path
   separators, dots, spaces, NUL, non-ASCII, and trailing
-  ``
-``/``
-``/``	``. Pre-existing AWS IoT Things containing ``:``
+  ``\n``/``\r``/``\t``. Pre-existing AWS IoT Things containing ``:``
   must be renamed (we deliberately reject ``:`` due to NTFS / classic
   Mac filesystem semantics).
 - **IoT policy scope** — robot/operator policies use explicit
