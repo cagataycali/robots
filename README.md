@@ -592,6 +592,45 @@ agent.tool.gr00t_inference(action="stop", port=8000)
 | `STRANDS_GROOT_WIRE_LOG` | Path to a directory where `Gr00tPolicy` will dump pre-inference observations + post-inference action chunks as pickle files (one per `get_actions` call, named `{local,service}_call{N:04d}.pkl`). Used by the #187 bisection plan to verify whether LOCAL and SERVICE inference paths send byte-identical observations to the model. Run an eval once with each mode into the same dir, then `np.allclose` matching files. | unset |
 | `STRANDS_GROOT_WIRE_LOG_MAX_CALLS` | Cap on number of wire-payload dumps per process when `STRANDS_GROOT_WIRE_LOG` is set. Prevents multi-GB pickle archives on long evals. The first few calls are enough to bisect a divergence. | `10` |
 
+### CA Pin Rotation Runbook
+
+The IoT provisioner downloads `AmazonRootCA1.pem` over HTTPS and pins its
+SHA-256 fingerprint (`strands_robots/mesh/iot/provision._AMAZON_ROOT_CA1_PINS`)
+before trusting the bytes. Because the pin is static, an AWS-side root CA
+rotation needs an operational plan. On-call at 3 AM should follow this runbook,
+not reverse-engineer it from a docstring.
+
+**Recompute the pin** (run when AWS publishes a new root, or to verify the
+current one):
+
+```bash
+python -c "import hashlib, urllib.request as u; \
+print(hashlib.sha256(u.urlopen( \
+'https://www.amazontrust.com/repository/AmazonRootCA1.pem' \
+).read()).hexdigest())"
+```
+
+**Grace-period strategy (dual-pin).** `_AMAZON_ROOT_CA1_PINS` is a tuple, so a
+rotation lands as two releases:
+
+1. Ship a release whose tuple contains **both** the new pin and the old pin.
+   `_resolve_ca_pins()` accepts any pin in the set, so fleets on the old root
+   and fleets that have already seen the new root both verify successfully.
+2. Wait for fleet uptake (track your own deploy rollout; there is no flag day).
+3. Ship a follow-up release that drops the old pin once every fleet member has
+   upgraded and AWS has retired the old root.
+
+**Monitor for upcoming rotations.** Subscribe to AWS security bulletins
+(https://aws.amazon.com/security/security-bulletins/) and the Amazon Trust
+Services repository; AWS publishes root CA deprecation timelines ahead of time.
+
+**Emergency override.** If a rotation lands faster than a code release can ship,
+operators stage the new pin out-of-band via `STRANDS_MESH_CA_PINS`
+(comma-separated 64-char lowercase hex). It is **additive** to the built-in
+tuple, so the old pin keeps working during the overlap. Prefer this over
+`STRANDS_MESH_DISABLE_CA_PIN`, which disables pinning entirely on the download
+path and should be a last resort.
+
 ### Mesh Networking
 
 Every `Robot()` and `Simulation()` constructed in a process is automatically a
