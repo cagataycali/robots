@@ -121,15 +121,11 @@ def test_mesh_start_reads_acl_file_once_end_to_end(tmp_path, monkeypatch, caplog
     from types import SimpleNamespace
     from unittest.mock import MagicMock, patch
 
-    from strands_robots.mesh import Mesh
+    from strands_robots.mesh import Mesh, _acl_config
     from strands_robots.mesh import core as mesh_core
-    from strands_robots.mesh import _acl_config
 
     acl = tmp_path / "ops.json5"
-    acl.write_text(
-        '{"rules": [], "subjects": [], "policies": [], '
-        '"enabled": true, "default_permission": "deny"}\n'
-    )
+    acl.write_text('{"rules": [], "subjects": [], "policies": [], "enabled": true, "default_permission": "deny"}\n')
     monkeypatch.setenv("STRANDS_MESH_AUTH_MODE", "mtls")
     monkeypatch.setenv("STRANDS_MESH_ACL_FILE", str(acl))
 
@@ -172,6 +168,5 @@ def test_mesh_start_reads_acl_file_once_end_to_end(tmp_path, monkeypatch, caplog
                 mesh.stop()
 
     assert call_count[0] <= 1, (
-        f"Mesh.start() read the ACL file {call_count[0]} times; "
-        "the TOCTOU defence requires exactly one read per start"
+        f"Mesh.start() read the ACL file {call_count[0]} times; the TOCTOU defence requires exactly one read per start"
     )
