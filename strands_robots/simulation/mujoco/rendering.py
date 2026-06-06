@@ -233,10 +233,10 @@ class RenderingMixin:
         specific ``robot_name`` so the same action dict routes to the right
         physical actuator when multiple same-config robots exist.
 
-        Action-controller hook (#168): when a benchmark adapter
+        Action-controller hook : when a benchmark adapter
         has installed a custom action controller via
         ``world._backend_state["action_controller"]`` (mirroring the
-        ``viz_option`` pattern from #168), dispatch to it
+        ``viz_option`` pattern from), dispatch to it
         instead of the actuator/joint-name lookup loop. Used by
         :class:`LiberoAdapter` to convert GR00T's task-space delta-EEF
         actions (7-dim ``{x, y, z, roll, pitch, yaw, gripper}``) into
@@ -251,7 +251,7 @@ class RenderingMixin:
         actuator/joint-name lookup path verbatim. Non-LIBERO callers
         and existing tests see zero behaviour change.
 
-        Owns-stepping flag (#168): controllers may declare
+        Owns-stepping flag : controllers may declare
         ``owns_stepping = True`` on the controller object to signal
         that ``apply()`` itself advances physics by the correct number
         of substeps for the policy step (LIBERO: 25 mj_step calls per
@@ -277,7 +277,7 @@ class RenderingMixin:
         if controller is not None:
             try:
                 controller.apply(action_dict, model, data, robot_name)
-                # #168: some controllers (e.g. LIBERO's
+                # some controllers (e.g. LIBERO's
                 # OSC_POSE wrapper) need to advance physics themselves
                 # at a controller-defined rate (e.g. 25 substeps per
                 # policy step at 20 Hz LIBERO control / 500 Hz physics).
@@ -733,7 +733,7 @@ class RenderingMixin:
         Returns:
             ``{"status", "content": [{"text": summary},
                                      {"text": "📸 cam1"}, {"image": {...}},
-                                     {"text": "📸 cam2"}, {"image": {...}}, ...]}``
+                                     {"text": "📸 cam2"}, {"image": {...}},...]}``
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
@@ -877,21 +877,11 @@ class RenderingMixin:
             # render calls per camera return the GL clear-colour
             # gradient before the context settles.
             #
-            # History: rounds 11/12/13 added thread-side warmup; round
-            # 14 reverted because the load-scene-without-mj_forward
-            # bug was bigger. #168 fixed mj_forward in load_scene,
-            # which made warmup unnecessary IN THE SLOW PATH. Round
-            # 17's prewarm-fresh-ep0 fast-path skips load_scene,
-            # leaving no per-recorder-thread render before capture.
-            # #168 tried main-thread warmup (thread-isolation
-            # made it ineffective). #168 re-applied the
-            # 2-pass thread-side warmup. #168 verification showed
-            # 2 passes was insufficient: image channel stayed cold for
-            # ~15 frames while wrist cleared at frame 3 - per-camera
-            # warmup latency varies across cameras (likely GPU
-            # command-buffer flush ordering).
-            #
-            # #168 (this code): replace fixed-pass warmup with an
+            # A fixed number of warmup passes is unreliable: per-camera
+            # warmup latency varies (the image channel can stay cold for
+            # ~15 frames while the wrist camera clears by frame 3),
+            # likely due to GPU command-buffer flush ordering. Instead,
+            # use an
             # adaptive warmup loop. Render each camera until it
             # produces output with column-stddev above the cold-
             # gradient threshold. The cold gradient artifact is uniform
@@ -930,7 +920,7 @@ class RenderingMixin:
                         continue
                     if arr is None:
                         continue
-                    # arr.std(axis=0) is per-column std-dev; .mean()
+                    # arr.std(axis=0) is per-column std-dev;.mean()
                     # collapses to a scalar. Cold gradients have
                     # near-zero values; real geometry > 5.
                     col_std = float(arr.std(axis=0).mean())
@@ -1101,13 +1091,13 @@ class RenderingMixin:
         Returns ``(on_frame, finalize)`` callables instead of spawning a
         daemon thread. The eval driver wires ``on_frame`` into
         :meth:`~strands_robots.simulation.SimEngine.evaluate_benchmark`'s
-        new ``on_frame=`` kwarg (#191), and rendering happens on the eval
+        ``on_frame=`` kwarg, and rendering happens on the eval
         thread — eliminating the cross-thread ``mjData`` race the daemon
         recorder hits under multi-threaded eval (Strands ``Agent`` tool
         dispatch under asyncio, where the eval runs on a worker thread
         distinct from the script main).
 
-        Symptoms of the daemon-thread bug this fixes (#191):
+        Symptoms of the daemon-thread bug this fixes :
         ``run_mujoco_agent.py --policy=groot`` measured 2-3% frame
         capture rate vs the programmatic single-thread driver, with
         visible greenish GL clear-colour gradient frames at episode
@@ -1150,14 +1140,14 @@ class RenderingMixin:
                 visible via :meth:`get_cameras_recording_status`).
 
         Returns:
-            On success: ``{"status": "success", "content": [{"text": ...},
+            On success: ``{"status": "success", "content": [{"text":...},
             {"json": {"on_frame": <callable>, "finalize": <callable>}}]}``.
             The closures aren't natively JSON-serializable; consumers in
             Python code unpack them via the JSON block. Tool-spec callers
             that can't reach Python closures can use the daemon-thread
             variant instead.
 
-            On error: ``{"status": "error", "content": [{"text": ...}]}``
+            On error: ``{"status": "error", "content": [{"text":...}]}``
             (no world, already-recording, unresolved camera names, etc.).
         """
         import os as _os

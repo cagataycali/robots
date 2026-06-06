@@ -1,6 +1,6 @@
 """MuJoCo Simulation backend - AgentTool orchestrator + shared state host.
 
-Architecture notes (honest version, see GH #118)
+Architecture notes (honest version)
 
 The ``Simulation`` class uses multiple-inheritance to compose four mixins
 (``PhysicsMixin``, ``RenderingMixin``, ``RecordingMixin``, ``RandomizationMixin``)
@@ -14,7 +14,7 @@ Every mixin reaches back into this class for the same shared state:
     self._world              - SimWorld handle (model + data + bookkeeping)
     self._lock               - RLock serializing ALL model/data access
     self._mj                 - cached ``mujoco`` module reference
-    self._policy_threads     - per-robot Future dict (GH #114)
+    self._policy_threads     - per-robot Future dict
     self._renderer_tls       - thread-local renderer cache (macOS CGL)
     self._executor           - ThreadPoolExecutor for async policies
 
@@ -378,10 +378,8 @@ class MuJoCoSimEngine(
             # (xpos / xquat / xmat / sensor data) is populated. Without
             # this, ``Renderer.update_scene`` finds the body transforms
             # unset and returns a skybox-only gradient on the first
-            # render call after load_scene - the bug-D pattern that
-            # rounds 11/12/13 in #168 chased through several wrong
-            # directions before #168 verification isolated it to
-            # this missing forward call (#168).
+            # render call after load_scene - this missing forward
+            # call was the root cause of a skybox-only-gradient bug.
             #
             # Cost: O(model.nbody) - negligible for typical scenes.
             # Failure here is genuinely a bug in the loaded MJCF
@@ -521,7 +519,7 @@ class MuJoCoSimEngine(
         self._world._data = mj.MjData(self._world._model)
         # Forward the freshly-allocated MjData so derived state
         # (xpos / xquat / xmat) is populated - same rationale as in
-        # ``load_scene`` (#168). Without this, the first
+        # ``load_scene``. Without this, the first
         # render after ``_compile_world`` returns the skybox-only
         # gradient because body transforms are zero-initialised.
         mj.mj_forward(self._world._model, self._world._data)
@@ -872,7 +870,7 @@ class MuJoCoSimEngine(
         with the same name (MuJoCo rejects duplicates on compile) and left
         stale bodies in the physics loop.
 
-        Concurrency (GH #114): this is a *global-scope* mutation - the XML
+        Concurrency : this is a *global-scope* mutation - the XML
         round-trip reallocates ``model``/``data`` and invalidates cached
         actuator/joint IDs held by every running PolicyRunner. We stop the
         target robot's own policy first (cooperatively), then require no
@@ -1133,7 +1131,7 @@ class MuJoCoSimEngine(
     ) -> dict[str, Any]:
         """Add a camera to the scene (MJCF ``<camera>`` injection).
 
-        Naming: ``add_object(name="X", ...)`` injects its geom as
+        Naming: ``add_object(name="X",...)`` injects its geom as
         ``"X_geom"`` in MJCF, so cameras share the name table only with
         other cameras and body names - not with object geoms. Duplicate
         camera names are rejected upfront.
@@ -1461,7 +1459,7 @@ class MuJoCoSimEngine(
         """validate urdf_path before handing it to the registry.
 
         The router already rejects missing required params, so the
-        no-args case produces a friendly 'requires parameter ...' message
+        no-args case produces a friendly 'requires parameter...' message
         without hitting this body.
         """
         if not urdf_path:
@@ -1620,7 +1618,7 @@ class MuJoCoSimEngine(
         """Drop completed Future refs from self._policy_threads.
 
         Without this, list_policies_running and stale-active checks see
-        historical entries forever (see GH #120).
+        historical entries forever.
         """
         done = [k for k, f in self._policy_threads.items() if f.done()]
         for k in done:
@@ -1638,7 +1636,7 @@ class MuJoCoSimEngine(
     def _require_no_running_policy(self, action_name: str, robot_name: str | None = None) -> dict[str, Any] | None:
         """Return an error dict if a disallowed policy is running, else None.
 
-        Two scopes (GH #114):
+        Two scopes :
 
         * ``robot_name=None`` (default) - **global scope**. Used by scene
           mutations that touch the whole XML / model pointer (``add_robot``,
@@ -1764,7 +1762,7 @@ class MuJoCoSimEngine(
         ``Simulation`` so agent tools can kick off long-running policies
         without blocking the event loop.
 
-        Concurrency (GH #114): multiple policies can run simultaneously on
+        Concurrency : multiple policies can run simultaneously on
         *different* robots. MuJoCo's ``mj_step`` and ``ctrl[]`` writes are
         still serialized via ``self._lock`` (MuJoCo ``model``/``data`` are
         not thread-safe for concurrent mutation), but each robot owns a
@@ -2116,7 +2114,7 @@ class MuJoCoSimEngine(
         """Return the names of robots currently running a policy.
 
         Useful for inspecting concurrent-policy state when running two or
-        more VLA arms in the same scene (GH #114). Always returns a
+        more VLA arms in the same scene. Always returns a
         success dict so the LLM can parse it uniformly. Prunes stale
         completed Future entries as a side effect.
         """
@@ -2144,7 +2142,7 @@ class MuJoCoSimEngine(
     def cleanup(self, policy_stop_timeout: float | None = None) -> None:
         """Release every resource owned by this Simulation instance.
 
-        Concurrency (GH #116): nulling ``self._world`` while a policy worker
+        Concurrency : nulling ``self._world`` while a policy worker
         thread is still inside ``mj_step(world._model, world._data)`` is a
         SIGSEGV waiting to happen. Previously cleanup called
         ``executor.shutdown(wait=False)`` right after setting
@@ -2177,7 +2175,7 @@ class MuJoCoSimEngine(
         # peer-visible state is torn down cleanly even if the policy
         # teardown below hits the fallback ``wait=False`` path.
         #
-        # PR #101 follow-up: each robot added via ``add_robot`` may have
+        # Each robot added via ``add_robot`` may have
         # its own per-peer mesh (see ``_attach_robot_to_mesh``). Stop those
         # FIRST so external peers see them leave before the sim container
         # itself goes down — leaving the inverse order ("sim drops, robots
@@ -2252,6 +2250,6 @@ class MuJoCoSimEngine(
             pass
 
 
-# Backward-compatible aliases (PR #85 shipped as ``Simulation``)
+# Backward-compatible aliases for the original ``Simulation`` name.
 Simulation = MuJoCoSimEngine
 MuJoCoSimulation = MuJoCoSimEngine

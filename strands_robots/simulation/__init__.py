@@ -164,4 +164,4 @@ def __getattr__(name: str) -> Any:
 
 # NOTE: MuJoCo GL backend configuration lives in the top-level
 # strands_robots/__init__.py to ensure it runs before any `import mujoco`.
-# Do NOT duplicate it here - see PR #86 for the canonical location.
+# Do NOT duplicate it here - that is the canonical location.

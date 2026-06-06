@@ -32,8 +32,8 @@ if TYPE_CHECKING:
 # the runtime cycle doesn't actually exist. Keep the imports at module level
 # to break the AST-visible cycle that static analysers flag.
 #
-# Note (#191): we deliberately do NOT import ``OnFrame`` here, even under
-# ``TYPE_CHECKING`` — CodeQL's ``py/unsafe-cyclic-import`` rule walks
+# Note: we deliberately do NOT import ``OnFrame`` here, even under
+# ``TYPE_CHECKING`` — some static analysers walk
 # ``TYPE_CHECKING`` blocks too and would flag the static cycle (
 # policy_runner.py imports SimEngine from base under TYPE_CHECKING,
 # so importing OnFrame from policy_runner here closes the loop in the
@@ -517,7 +517,7 @@ class SimEngine(ABC):
                 pattern and produces 2-3% frame-capture rates with
                 greenish GL clear-colour artifacts. Pair with
                 :meth:`~strands_robots.simulation.mujoco.simulation.Simulation.start_cameras_recording_synchronous`
-                for the recorder side. See #191.
+                for the recorder side.
 
         Returns:
             Standard status dict. On success, carries per-episode cumulative

@@ -132,7 +132,7 @@ class BenchmarkProtocol(ABC):
         Without it, language-conditioned policies (GR00T, OpenVLA, etc.)
         receive an empty string and produce off-task actions, manifesting
         as low ``success_rate`` on the same checkpoint that succeeds when
-        the instruction is provided. #187 GPU bisection isolated this
+        the instruction is provided. GPU bisection isolated this
         as the dominant cause of the LIBERO-10/SCENE5 ZMQ-vs-in-process
         gap (0.40 vs 1.00 \u2014 same model, same wire format, same engine,
         but ``policy_obs['annotation.human.action.task_description']=['']``

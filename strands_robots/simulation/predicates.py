@@ -90,7 +90,7 @@ def _body_position(sim: SimEngine, body: str) -> list[float] | None:
     ``env.objects_dict[name].root_body`` (see
     ``libero/libero/envs/bddl_base_domain.py``). We mirror that with a
     bounded fallback: try the bare name first, then ``<name>_main`` if
-    the bare lookup fails. #176 (sub-task 3d) — without this
+    the bare lookup fails. (sub-task 3d) — without this
     fallback, BDDL goal predicates like ``(On porcelain_mug_1
     plate_1)`` resolve to ``None`` (body not found) → predicate
     silently False even when the mug is physically on the plate.
@@ -376,7 +376,7 @@ def _body_on(
     ``get_contacts`` (e.g. test stubs, custom engines), the contact
     check is skipped and only the geometric check fires. This
     preserves backwards compatibility — engines without contact
-    support get the pre-#171 behaviour. LIBERO benchmarks running on
+    support get the geometric-only behaviour. LIBERO benchmarks running on
     ``MuJoCoSimEngine`` (which implements ``get_contacts``) get the
     strict upstream-matching semantics.
 
@@ -398,7 +398,7 @@ def _body_on(
         if require_contact:
             in_contact = _body_contact(sim, body_a, body_b)
             # ``None`` ⇒ engine doesn't support contacts; fall back to
-            # geometric-only verdict (preserves pre-#171 behaviour).
+            # geometric-only verdict (the fallback behaviour).
             # ``False`` ⇒ engine reports no contact ⇒ predicate False.
             # ``True`` ⇒ contact confirmed ⇒ predicate True (combined
             # with the passing geometric check above).
@@ -472,7 +472,7 @@ def _grasped(body: str, gripper_prefix: str) -> BoolPredicate:
     gripper geom is in contact with any geom matching the body name.
 
     Backends must implement ``get_contacts()`` returning the MuJoCo
-    ``{"contacts": [{"geom1", "geom2", ...}]}`` shape. Other backends are
+    ``{"contacts": [{"geom1", "geom2",...}]}`` shape. Other backends are
     treated as "cannot check" and return ``False``.
     """
 

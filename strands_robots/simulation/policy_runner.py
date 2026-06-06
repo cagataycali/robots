@@ -87,11 +87,11 @@ def set_eval_seed(seed: int) -> None:
       are scoped to torch (not the broader environment) so the side
       effect surface is acceptable.
 
-    Public since #179: standalone integration tests
+    Public: standalone integration tests
     (``tests_integ/.../test_libero_10_scene5_mujoco_engine_success_rate``)
     bypass :meth:`evaluate_benchmark` and need to call this directly to
     get reproducible policy rollouts. The leading ``_`` was an oversight
-    from #168 round 38; the function is the supported way to seed an
+    from an earlier diagnostic run; the function is the supported way to seed an
     eval and is part of the public API.
 
     NumPy / torch are imported lazily so this helper works on minimal
@@ -117,7 +117,7 @@ def set_eval_seed(seed: int) -> None:
         pass
 
 
-# Backward-compatibility alias for the pre-#179 private name. Internal
+# Backward-compatibility alias for the original private name. Internal
 # callers (this module's :class:`PolicyRunner`) still use it; the public
 # :func:`set_eval_seed` is the supported entry point.
 _set_eval_seed = set_eval_seed
@@ -217,7 +217,6 @@ class VideoConfig:
 # many *consecutive* failures, the runner raises and fails the episode loudly.
 #
 # Overridable via the ``max_onframe_failures`` kwarg on ``PolicyRunner.run``.
-# See GH #117.
 _MAX_CONSECUTIVE_ONFRAME_FAILURES = 5
 
 
@@ -284,11 +283,11 @@ class PolicyRunner:
                 the episode. ``None`` (default) uses
                 ``_MAX_CONSECUTIVE_ONFRAME_FAILURES`` (currently ``5``). A
                 broken recording hook otherwise silently produces empty
-                datasets - see GH #117. Non-consecutive failures reset the
+                datasets -. Non-consecutive failures reset the
                 counter.
 
         Returns:
-            ``{"status": "success"|"error", "content": [{"text": ...}]}``.
+            ``{"status": "success"|"error", "content": [{"text":...}]}``.
         """
         # Lazy optional import - only imageio is optional.
         writer = None
@@ -331,7 +330,7 @@ class PolicyRunner:
                                 f"{probe_text}\n"
                                 "Hint: robot cameras are namespaced, e.g. a "
                                 "camera named 'side' inside robot 'arm1' compiles "
-                                "as 'arm1/side'. Pass video={'camera': 'arm1/side', ...}."
+                                "as 'arm1/side'. Pass video={'camera': 'arm1/side',...}."
                             )
                         }
                     ],
@@ -389,7 +388,7 @@ class PolicyRunner:
                             # step episode completes "successfully" with zero
                             # frames recorded and the dataset is silently empty.
                             # Count consecutive failures and fail the episode
-                            # after ``onframe_failure_limit`` in a row. See GH #117.
+                            # after ``onframe_failure_limit`` in a row.
                             consecutive_onframe_failures += 1
                             logger.warning(
                                 "on_frame hook failed (%d/%d consecutive): %s",
@@ -597,7 +596,7 @@ class PolicyRunner:
           ``is_success`` / ``is_failure`` hooks, cumulative dense reward,
           robot-compatibility validation. ``max_steps`` from the spec wins.
         * **``success_fn=``**: legacy sparse-success path kept for
-          backwards compatibility with PR #85. Equivalent to a
+          backwards compatibility. Equivalent to a
           ``BenchmarkProtocol`` whose ``on_step`` always returns
           ``StepInfo(reward=0.0, done=False)``.
 
@@ -624,7 +623,7 @@ class PolicyRunner:
                 expose telemetry hooks). Use this for synchronous
                 recording when the eval runs on a thread distinct from
                 the script main (e.g. Strands ``Agent`` tool dispatch
-                under asyncio) — see #191 and
+                under asyncio) — and
                 :meth:`~strands_robots.simulation.mujoco.simulation.Simulation.start_cameras_recording_synchronous`.
 
         Returns:
@@ -742,7 +741,7 @@ class PolicyRunner:
         with the allowed list instead of silently running a mismatched
         evaluation.
 
-        ``on_frame`` (#191) fires per applied control step on the eval
+        ``on_frame`` fires per applied control step on the eval
         thread, after ``sim.send_action`` and after the spec's per-step
         bookkeeping (``on_step`` / success / failure checks). Use this
         for synchronous recording or telemetry that needs to read sim
@@ -759,7 +758,7 @@ class PolicyRunner:
 
         # T26: skip camera rendering when the policy does not need images.
         _skip_images = not getattr(policy, "requires_images", True)
-        # #168: seed Python / NumPy / torch / cuDNN once before
+        # seed Python / NumPy / torch / cuDNN once before
         # the episode loop so policy stochastic ops (e.g. attention
         # dropout, sampling temperature) are reproducible across re-runs
         # at the same ``seed``. Mirrors NVIDIA's upstream ``set_seed`` in
@@ -773,14 +772,14 @@ class PolicyRunner:
         max_steps = spec.max_steps
         results: list[dict[str, Any]] = []
 
-        # #191 — global step counter passed to ``on_frame``. Crosses
+        # global step counter passed to ``on_frame``. Crosses
         # episode boundaries so consumers that don't track ep ↔ step
         # mappings still get a monotonic index. Callers that need
         # per-episode buckets can read ``info["steps"]`` from the
         # returned per-episode results.
         global_step = 0
 
-        # #187 — fall back to ``spec.instruction`` (default ``""``) when
+        # fall back to ``spec.instruction`` (default ``""``) when
         # the user didn't pass an explicit instruction. Language-
         # conditioned policies (GR00T, OpenVLA) need the task description
         # or they produce off-task actions; LIBERO/Meta-World/etc. ship
@@ -810,7 +809,7 @@ class PolicyRunner:
             episode_seed = master_rng.randint(0, 2**31 - 1)
             episode_rng = random.Random(episode_seed)
 
-            # #179 — re-seed Python / NumPy / torch / cuDNN at the start
+            # re-seed Python / NumPy / torch / cuDNN at the start
             # of EACH episode (not just once before the loop). Without
             # the per-episode reseed, every torch op draws from a global
             # RNG state that mutates across episodes, so the diffusion
@@ -820,12 +819,12 @@ class PolicyRunner:
             # starts from the same RNG state regardless of what happened
             # in episodes 0..N-1.
             #
-            # Validated on libero-10/SCENE5: pre-#179 5-ep eval ranged
-            # 0.40-1.00 across runs; post-#179 the same eval is bit-stable
+            # Validated on libero-10/SCENE5: the earlier 5-ep eval ranged
+            # 0.40-1.00 across runs; the fixed eval is bit-stable
             # (same successes list every run).
             set_eval_seed(episode_seed)
 
-            # #187 — for SERVICE-mode policies (e.g. Gr00tPolicy over
+            # for SERVICE-mode policies (e.g. Gr00tPolicy over
             # ZMQ), set_eval_seed only seeds the client process. The
             # remote inference server has its own torch/CUDA RNG that
             # drifts across calls. Forward the per-episode seed via
@@ -892,7 +891,7 @@ class PolicyRunner:
                 coro_or_result = policy.get_actions(observation, effective_instruction)
                 actions = _resolve_coroutine(coro_or_result)
 
-                # #168: consume up to ``action_horizon`` actions
+                # consume up to ``action_horizon`` actions
                 # per inference. Default ``action_horizon=8`` matches NVIDIA's
                 # upstream GR00T LIBERO eval (``MultiStepWrapper`` with
                 # ``n_action_steps=8``) — the GR00T-N1.7-LIBERO checkpoints
@@ -915,7 +914,7 @@ class PolicyRunner:
                             break
                         action_applied = dict(action_in_chunk)
                         self.sim.send_action(action_applied, robot_name=robot_name)
-                        # #191 — synchronous on_frame hook fires on the
+                        # synchronous on_frame hook fires on the
                         # eval thread, after send_action + before
                         # on_step's reward bookkeeping. Use this for
                         # synchronous frame recording when the eval is

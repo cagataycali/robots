@@ -432,7 +432,7 @@ def replace_scene_mjcf(world: SimWorld, xml: str) -> bool:
     return True
 
 
-# Structured-op patching of the live spec (Stage 6, part 2 - GH #125)
+# Structured-op patching of the live spec (Stage 6, part 2 - )
 
 # Supported ops for patch_scene_mjcf. Kept narrow on purpose - adding unchecked
 # attribute setters would make the tool an arbitrary-code hole. Agents that
