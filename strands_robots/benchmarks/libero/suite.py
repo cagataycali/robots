@@ -37,7 +37,7 @@ forwards as ``init_states=`` into :meth:`LiberoAdapter.from_file`. Without
 this the robot starts at ``qpos=0`` (joint-default "stretched flat"
 pose), the policy issues actions calibrated for the canonical "ready"
 pose against a totally different body configuration, and the success
-rate collapses to 0 (#168 bug I). When ``libero`` isn't
+rate collapses to 0. When ``libero`` isn't
 importable (e.g. minimal CI), init_states loading no-ops and the
 adapter falls back to its snapshot-and-restore branch.
 
@@ -281,8 +281,8 @@ def load_libero_suite(
             ``ts.get_task_init_states(task_id)`` for every registered
             task. Required for ``success_rate > 0`` against
             ``nvidia/GR00T-N1.7-LIBERO`` - without it the robot starts
-            at ``qpos=0`` instead of LIBERO's canonical "ready" pose
-            (#168 bug I). Set to ``False`` to disable for unit
+            at ``qpos=0`` instead of LIBERO's canonical "ready" pose.
+            Set to ``False`` to disable for unit
             tests / minimal CI / when ``libero`` isn't installed (the
             loader silently no-ops in those cases anyway, but the flag
             documents intent). When ``True`` and libero loading fails,

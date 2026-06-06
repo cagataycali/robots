@@ -10,5 +10,4 @@ Currently shipped adapters:
 * ``strands_robots.benchmarks.libero`` - LIBERO (Panda-only, ~130 tasks).
   Install with ``pip install 'strands-robots[benchmark-libero]'``.
 
-Tracked follow-ups: Meta-World (#108), RoboSuite (#109).
 """

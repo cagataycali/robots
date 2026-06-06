@@ -28,7 +28,7 @@ a BDDL parse failure is always preferable to a misleading success rate.
 
 Scope of this parser (matches what LIBERO actually uses):
 
-* Top-level form: ``(define (problem <name>) ...)``
+* Top-level form: ``(define (problem <name>)...)``
 * Section markers: ``:domain``, ``:objects``, ``:init``, ``:goal``, ``:language``
 * Boolean combinators: ``and``, ``or``, ``not``
 * Predicate vocabulary: ``on``, ``near``, ``inside``, ``open``, ``closed``,
@@ -185,7 +185,7 @@ def _parse_sexp(tokens: list[str]) -> Any:
 def _on_kwargs(args: list[str]) -> dict[str, Any]:
     if len(args) != 2:
         raise BDDLParseError(f"(on ...) expects 2 args, got {len(args)}: {args}")
-    # #170: tighten thresholds to match upstream LIBERO's
+    # Tighten thresholds to match upstream LIBERO's
     # ``ObjectState.check_ontop`` semantics. The default ``_body_on``
     # uses ``z_offset=0.02 m`` and ``xy_tol=0.15 m`` (loose, intended for
     # coarse "is A on B" checks); upstream LIBERO requires
@@ -193,14 +193,14 @@ def _on_kwargs(args: list[str]) -> dict[str, Any]:
     # contact between A and B. The empirical at-success state on
     # ``libero-10/SCENE5`` has mug.z 4 mm above plate.z and mug.xy 1.2 cm
     # off plate.xy — the loose defaults rejected this as ``False`` while
-    # ``env.check_success()`` returned ``True`` (#170 diagnostic).
+    # ``env.check_success()`` returned ``True``.
     #
-    # #171 sub-task 3e: also require physics contact via
+    # Also require physics contact via
     # ``sim.get_contacts``. Without this, transient
     # "mug-suspended-above-plate" placement states produce BDDL false
     # positives (mug 5 cm above plate, xy-aligned, no contact yet).
     # Graceful degradation: engines without ``get_contacts`` skip the
-    # check (preserves pre-#171 behaviour).
+    # check (preserves the prior behaviour).
     return {
         "body_a": args[0],
         "body_b": args[1],
@@ -285,7 +285,7 @@ def parse_bddl(text: str) -> BDDLProblem:
         raise BDDLParseError(f"trailing tokens after top-level form: {tokens[:5]!r}")
 
     if not isinstance(sexp, list) or not sexp or sexp[0] != "define":
-        raise BDDLParseError("expected top-level (define ...) form")
+        raise BDDLParseError("expected top-level (define...) form")
 
     problem_name = ""
     domain: str | None = None
@@ -333,10 +333,10 @@ def parse_bddl(text: str) -> BDDLProblem:
                     # initial state", which the adapter may or may not
                     # enforce. Log and skip; the goal is the authoritative
                     # success criterion.
-                    logger.debug("skipping unsupported (:init ...) clause: %s", e)
+                    logger.debug("skipping unsupported (:init...) clause: %s", e)
         elif head == ":goal":
             if len(child) < 2:
-                raise BDDLParseError("(:goal ...) is empty")
+                raise BDDLParseError("(:goal...) is empty")
             goal_node = _compile_ast(child[1])
         # Other markers (:requirements, :constants, etc.) are silently ignored.
 
@@ -359,18 +359,18 @@ def _compile_ast(expr: Any) -> Node:
         raise BDDLParseError(f"expected symbol head, got {head!r}")
     # PDDL grammar is case-insensitive for predicates and connectives. Real
     # LIBERO BDDL files mix cases: every spatial / object / goal task uses
-    # ``(And (On ...))``  with capital initials in the goal, even though
+    # ``(And (On...))``  with capital initials in the goal, even though
     # ``PREDICATE_VOCABULARY`` and the connective branches below were
     # written in lowercase. Normalise once at the head; keep the original
     # ``head`` for error messages so debugging shows the source casing.
     head_norm = head.lower()
     if head_norm == "and":
         if len(expr) == 1:
-            raise BDDLParseError("(and ...) requires at least one clause")
+            raise BDDLParseError("(and...) requires at least one clause")
         return And(tuple(_compile_ast(c) for c in expr[1:]))
     if head_norm == "or":
         if len(expr) == 1:
-            raise BDDLParseError("(or ...) requires at least one clause")
+            raise BDDLParseError("(or...) requires at least one clause")
         return Or(tuple(_compile_ast(c) for c in expr[1:]))
     if head_norm == "not":
         if len(expr) != 2:
