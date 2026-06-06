@@ -120,9 +120,7 @@ class TestEnvPrefixFilter:
 
     def test_empty_env_falls_back_to_default(self, monkeypatch):
         monkeypatch.setenv("STRANDS_MESH_BRIDGE_TOPICS_PREFIX", "")
-        assert _resolve_bridge_prefix_filter() == _DEFAULT_BRIDGE_PREFIX_SUFFIXES, (
-            self._README_HINT
-        )
+        assert _resolve_bridge_prefix_filter() == _DEFAULT_BRIDGE_PREFIX_SUFFIXES, self._README_HINT
 
 
 # _should_bridge — the real fan-out gate
