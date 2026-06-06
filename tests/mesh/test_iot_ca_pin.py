@@ -276,9 +276,7 @@ class TestUnverifiedReuseWarning:
         with caplog.at_level("WARNING", logger="strands_robots.mesh.iot.provision"):
             provision._ensure_ca(ca_path)
         warnings = [
-            r.getMessage()
-            for r in caplog.records
-            if r.levelname == "WARNING" and "sidecar marker" in r.getMessage()
+            r.getMessage() for r in caplog.records if r.levelname == "WARNING" and "sidecar marker" in r.getMessage()
         ]
         assert len(warnings) == 1, (
             "re-using a CA written under the break-glass must emit one "
@@ -294,13 +292,10 @@ class TestUnverifiedReuseWarning:
             provision._ensure_ca(ca_path)
             provision._ensure_ca(ca_path)
         warnings = [
-            r.getMessage()
-            for r in caplog.records
-            if r.levelname == "WARNING" and "sidecar marker" in r.getMessage()
+            r.getMessage() for r in caplog.records if r.levelname == "WARNING" and "sidecar marker" in r.getMessage()
         ]
         assert len(warnings) == 1, (
-            "the unverified-origin WARNING must be gated to one emission "
-            f"per CA path per process; got {len(warnings)}"
+            f"the unverified-origin WARNING must be gated to one emission per CA path per process; got {len(warnings)}"
         )
 
     def test_reuse_without_marker_does_not_warn(self, tmp_path, monkeypatch, caplog):
@@ -315,11 +310,8 @@ class TestUnverifiedReuseWarning:
         with caplog.at_level("WARNING", logger="strands_robots.mesh.iot.provision"):
             provision._ensure_ca(ca_path)
         warnings = [
-            r.getMessage()
-            for r in caplog.records
-            if r.levelname == "WARNING" and "sidecar marker" in r.getMessage()
+            r.getMessage() for r in caplog.records if r.levelname == "WARNING" and "sidecar marker" in r.getMessage()
         ]
         assert warnings == [], (
-            "a canonically downloaded CA has no .unverified marker, so "
-            f"re-use must not WARN; got {warnings!r}"
+            f"a canonically downloaded CA has no .unverified marker, so re-use must not WARN; got {warnings!r}"
         )
