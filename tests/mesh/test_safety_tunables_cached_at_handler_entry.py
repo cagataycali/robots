@@ -20,7 +20,6 @@ import inspect
 import json
 import threading
 import time
-from pathlib import Path
 from types import SimpleNamespace
 
 from strands_robots.mesh import core
