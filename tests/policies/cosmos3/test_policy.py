@@ -315,3 +315,31 @@ def test_client_connection_error_has_actionable_hint():
     assert "action_policy_server_robolab" in msg
     assert "ws://127.0.0.1:1" in msg
     assert "healthz" in msg
+
+
+def test_raw_transport_no_openpi_client_dep():
+    """The 'raw' transport must construct WITHOUT openpi-client importable
+    (it uses the vendored _msgpack_numpy packer + websockets). This is the
+    numpy>=2 / lerobot escape hatch for the openpi-client numpy<2 pin."""
+    pytest.importorskip("websockets", reason="websockets needed for raw transport")
+    from strands_robots.policies.cosmos3.client import Cosmos3WebsocketClient
+
+    c = Cosmos3WebsocketClient(host="127.0.0.1", port=8000, transport="raw")
+    assert c.transport == "raw"
+    # The vendored packer round-trips numpy arrays (version-agnostic).
+    import numpy as np
+
+    from strands_robots.policies.cosmos3 import _msgpack_numpy as mnp
+
+    arr = np.arange(6, dtype=np.float32).reshape(2, 3)
+    back = mnp.unpackb(mnp.packb({"a": arr}))
+    assert back["a"].shape == (2, 3)
+    assert np.allclose(back["a"], arr)
+
+
+def test_cosmos3_policy_transport_param():
+    import inspect
+
+    from strands_robots.policies.cosmos3 import Cosmos3Policy
+
+    assert "transport" in inspect.signature(Cosmos3Policy.__init__).parameters

@@ -35,6 +35,53 @@ def _load_openpi_client() -> Any:
     )
 
 
+class _RawWebsocketTransport:
+    """openpi msgpack+NumPy wire client using only ``websockets`` + a vendored
+    packer — **no ``openpi-client`` dependency**.
+
+    ``openpi-client`` pins ``numpy<2.0``, which conflicts with ``lerobot``
+    (``numpy>=2.0``). This transport speaks the exact same wire protocol
+    (connect → recv msgpack metadata → send packed obs → recv packed action)
+    so a Cosmos 3 rollout can run in a ``numpy>=2`` environment (e.g. a
+    LeRobot dataset-recording venv) without the conflicting pin.
+
+    Requires ``websockets`` and ``msgpack`` (both numpy-version agnostic).
+    """
+
+    def __init__(self, host: str, port: int, api_key: str | None = None):
+        self.uri = f"ws://{host}:{port}"
+        self.api_key = api_key
+        self._ws: Any = None
+        from . import _msgpack_numpy as _mnp  # vendored, numpy-agnostic
+
+        self._mnp = _mnp
+        self._packer = _mnp.Packer()
+
+    def _ensure(self) -> Any:
+        if self._ws is None:
+            import websockets.sync.client as _wsc
+
+            headers = {"Authorization": f"Api-Key {self.api_key}"} if self.api_key else None
+            self._ws = _wsc.connect(self.uri, compression=None, max_size=None, additional_headers=headers)
+            self._mnp.unpackb(self._ws.recv())  # server metadata handshake
+        return self._ws
+
+    def get_server_metadata(self) -> dict[str, Any]:
+        self._ensure()
+        return {}
+
+    def infer(self, observation: dict[str, Any]) -> dict[str, Any]:
+        ws = self._ensure()
+        ws.send(self._packer.pack(observation))
+        resp = ws.recv()
+        if isinstance(resp, str):
+            raise RuntimeError(f"Error in inference server:\n{resp}")
+        return self._mnp.unpackb(resp)
+
+    def reset(self) -> None:
+        pass
+
+
 class Cosmos3WebsocketClient:
     """Thin OpenPI websocket client for the Cosmos 3 policy server.
 
@@ -48,10 +95,21 @@ class Cosmos3WebsocketClient:
     require the server to already be up — matching ``Gr00tInferenceClient``.
     """
 
-    def __init__(self, host: str = "localhost", port: int = 8000, api_key: str | None = None):
+    def __init__(
+        self,
+        host: str = "localhost",
+        port: int = 8000,
+        api_key: str | None = None,
+        transport: str = "auto",
+    ):
         self.host = host
         self.port = port
         self.api_key = api_key
+        # transport: "openpi" (use openpi-client), "raw" (vendored packer, no
+        # openpi-client / numpy<2 pin), or "auto" (prefer openpi-client, fall
+        # back to raw when it is not importable — e.g. in a numpy>=2 / lerobot
+        # recording env). See _RawWebsocketTransport for the conflict rationale.
+        self.transport = transport
         self._client: Any = None
 
     def _server_hint(self) -> str:
@@ -67,14 +125,38 @@ class Cosmos3WebsocketClient:
         )
 
     def _ensure_client(self) -> Any:
-        """Connect on first use (lazy)."""
-        if self._client is None:
-            mod = _load_openpi_client()
+        """Connect on first use (lazy).
+
+        Transport selection (see ``__init__``):
+          * ``"raw"``    -> vendored packer, no openpi-client (numpy>=2 safe).
+          * ``"openpi"`` -> require openpi-client.
+          * ``"auto"``   -> openpi-client if importable, else raw.
+        """
+        if self._client is not None:
+            return self._client
+
+        use_raw = self.transport == "raw"
+        if self.transport == "auto":
             try:
+                _load_openpi_client()
+                use_raw = False
+            except Exception:  # noqa: BLE001 - openpi-client not installed -> raw
+                use_raw = True
+
+        try:
+            if use_raw:
+                self._client = _RawWebsocketTransport(self.host, self.port, self.api_key)
+            else:
+                mod = _load_openpi_client()
                 self._client = mod.WebsocketClientPolicy(host=self.host, port=self.port, api_key=self.api_key)
-            except (ConnectionRefusedError, OSError) as e:
-                raise ConnectionError(self._server_hint()) from e
-            logger.info("Cosmos3WebsocketClient connected to ws://%s:%s", self.host, self.port)
+        except (ConnectionRefusedError, OSError) as e:
+            raise ConnectionError(self._server_hint()) from e
+        logger.info(
+            "Cosmos3WebsocketClient connected to ws://%s:%s (transport=%s)",
+            self.host,
+            self.port,
+            "raw" if use_raw else "openpi",
+        )
         return self._client
 
     def get_server_metadata(self) -> dict[str, Any]:

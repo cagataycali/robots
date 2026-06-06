@@ -139,6 +139,7 @@ class Cosmos3Policy(Policy):
         prompt: str = "",
         api_key: str | None = None,
         client: Cosmos3WebsocketClient | None = None,
+        transport: str = "auto",
         pretrained_name_or_path: str | None = None,
     ) -> None:
         self.embodiment: Cosmos3Embodiment = get_embodiment(embodiment)
@@ -193,7 +194,7 @@ class Cosmos3Policy(Policy):
                 f"{self.action_space!r} action layout. Valid columns: {sorted(layout_cols)}"
             )
         self.robot_state_keys: list[str] = []
-        self._client = client or Cosmos3WebsocketClient(host=host, port=port, api_key=api_key)
+        self._client = client or Cosmos3WebsocketClient(host=host, port=port, api_key=api_key, transport=transport)
         logger.info(
             "Cosmos3Policy ready [embodiment=%s domain=%s action_space=%s chunk=%d ws://%s:%d]",
             self.embodiment.name,

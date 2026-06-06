@@ -15,8 +15,9 @@ Prerequisites
      # robot_descriptions provides the Franka MJCF asset (part of sim-mujoco)
 
    NOTE: ``openpi-client`` pins ``numpy<2`` while ``lerobot`` wants ``numpy>=2``.
-   For a *client-only* rollout box, install ``cosmos3-service`` last and let it
-   hold numpy<2 (mujoco + imageio work fine with numpy 1.26).
+   To record LeRobotDatasets (numpy>=2) you do NOT need ``openpi-client`` — pass
+   ``transport="raw"`` (or leave the default ``"auto"``) and the policy speaks the
+   server's msgpack+NumPy wire protocol via a vendored packer, no numpy<2 pin.
 
 2. The policy server (holds the GPU) — from a Cosmos Framework checkout:
 
@@ -83,9 +84,13 @@ def main() -> int:
         "front": "observation/exterior_image_1_left",
         "side":  "observation/exterior_image_2_left",
     }
+    # transport="auto": use openpi-client if importable, else the vendored raw
+    # msgpack+websockets transport (numpy>=2 safe — needed alongside lerobot).
     policy = Cosmos3Policy(
         embodiment="droid", host=args.host, port=args.port,
+        robot=args.robot,                # map joint_0..6/gripper -> sim actuator names
         observation_mapping=obs_mapping,
+        transport="auto",
     )
 
     video = None
