@@ -344,6 +344,33 @@ classDiagram
     Policy <|-- YourPolicy
 ```
 
+<details>
+<summary><b>GR00T data configs (embodiment schemas)</b></summary>
+
+A `data_config` defines the video + state keys GR00T expects for an
+embodiment. 27 ship in
+[`policies/groot/data_configs.json`](strands_robots/policies/groot/data_configs.json);
+the common ones:
+
+| Config | Cameras | Description |
+|--------|---------|-------------|
+| `so100` / `so101` | 1 (`video.webcam`) | Single-arm, single camera |
+| `so100_dualcam` / `so101_dualcam` | 2 (front + wrist) | Single-arm, dual camera |
+| `so100_4cam` | 4 (front, wrist, top, side) | Single-arm, quad camera |
+| `so101_tricam` | 3 (front, wrist, side) | Single-arm, tri camera |
+| `fourier_gr1_arms_only` | 1 (ego) | Fourier GR-1 bimanual arms + hands |
+| `unitree_g1` | 1 (ego) | G1 upper body (arms + hands) |
+| `unitree_g1_full_body` / `_locomanip` | - | G1 legs + waist + arms + hands |
+| `bimanual_panda_gripper` | 3 | Dual Franka, EEF pose + gripper |
+| `libero_panda` | 2 (image + wrist) | LIBERO benchmark Panda |
+| `oxe_droid` / `oxe_google` / `oxe_widowx` | 1-2 | Open X-Embodiment schemas |
+| `agibot_*` / `galaxea_r1_pro` | 3 | AgiBot / Galaxea humanoids |
+
+Pick the config matching your robot's camera + state layout; pass it as
+`data_config=` to `Robot(...)`, `gr00t_inference(...)`, or `create_policy("groot", ...)`.
+
+</details>
+
 > **Security:** `lerobot_local` loads HuggingFace models with
 > `trust_remote_code=True` (arbitrary code execution). You must opt in with
 > `export STRANDS_TRUST_REMOTE_CODE=1`. Only load models you trust.
