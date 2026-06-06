@@ -8,9 +8,12 @@ review without spelunking PR history.
 
 from __future__ import annotations
 
+import threading
+
 import pytest
 
 from strands_robots.mesh import core
+from strands_robots.mesh.sensors import SensorLoopsMixin
 
 # ---------------------------------------------------------------------------
 # Thread 4: _resume_lockout HMAC compare is constant-time independent of
@@ -415,13 +418,6 @@ class TestResumeCacheKeyNamespaceIsolation:
 # so an MRO contract violation (Mesh.publish missing) crashes loud at runtime
 # instead of being swallowed by the catch-all and logged at DEBUG level.
 # ---------------------------------------------------------------------------
-
-
-import threading
-
-import pytest
-
-from strands_robots.mesh.sensors import SensorLoopsMixin
 
 
 class _PublishlessMesh(SensorLoopsMixin):
