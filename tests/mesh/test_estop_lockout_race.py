@@ -44,7 +44,7 @@ def _stub_mesh() -> core.Mesh:
     # publish_safety_event is gated on self._running; flip it on without
     # calling start() (which does network I/O).
     m._running = True
-    m.publish = lambda key, data: None
+    m.publish = lambda key, payload: None  # type: ignore[method-assign]
     return m
 
 
