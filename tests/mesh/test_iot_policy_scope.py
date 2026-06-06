@@ -70,10 +70,9 @@ class TestRobotPolicy:
             sub_actions = [sub_actions]
         assert "iot:Subscribe" in sub_actions
         # Subscribe covers the broad own-thing wildcard.
-        assert any(
-            r.endswith("topicfilter/strands/${iot:Connection.Thing.ThingName}/*")
-            for r in sub["Resource"]
-        ), "Subscribe should cover own ${ThingName}/* wildcard"
+        assert any(r.endswith("topicfilter/strands/${iot:Connection.Thing.ThingName}/*") for r in sub["Resource"]), (
+            "Subscribe should cover own ${ThingName}/* wildcard"
+        )
         # Receive must NOT grant the broad own-thing wildcard nor health/state.
         recv_joined = "\n".join(recv["Resource"])
         assert "${iot:Connection.Thing.ThingName}/*" not in recv_joined, (
