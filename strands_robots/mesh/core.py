@@ -207,7 +207,7 @@ def _evict_replay_cache[K](
     """
     # ALWAYS run the TTL purge -- on low-traffic meshes the cache may
     # never reach max_size but stale entries still accumulate
-    # indefinitely (issue #274). The TTL purge is O(n) and bounded by
+    # indefinitely. The TTL purge is O(n) and bounded by
     # the cache size, so it's cheap to run unconditionally.
     cutoff = now_mono - ttl_s
     stale = [k for k, ts in cache.items() if ts < cutoff]
@@ -382,7 +382,7 @@ class Mesh(SensorLoopsMixin):
         return f"Mesh(peer_id={self.peer_id!r}, type={self.peer_type!r}, {state})"
 
     def _refuse_under_permissive_default_acl(self) -> bool:
-        """Refuse-to-start gate per issue #218.
+        """Refuse-to-start gate.
 
         Returns True (refuse) when:
         - STRANDS_MESH_AUTH_MODE == "mtls" (ACL is the third line of defence)
@@ -414,7 +414,7 @@ class Mesh(SensorLoopsMixin):
             namespace = _zenoh_config.resolve_namespace()
             is_permissive, resolved = _acl_config.snapshot_acl(namespace)
         except ValueError as warn_exc:
-            # Narrow tuple per AGENTS.md > Review Learnings (#86):
+            # Narrow except tuple:
             # ValueError surfaces bad STRANDS_MESH_AUTH_MODE / unloadable
             # ACL. Fail-CLOSED (treat as permissive) so the gate refuses
             # to bring up the wire. Wider exception types (OSError, etc.)
@@ -430,7 +430,6 @@ class Mesh(SensorLoopsMixin):
         # Stash the snapshot AND auth_mode on a thread-local used by
         # ``session._build_config`` so the wire-config builder picks up
         # the SAME dict the gate inspected AND the SAME auth_mode value.
-        # Issue #218 + review threads session.py:296 / core.py:139.
         self._acl_snapshot = resolved
         _acl_config._set_thread_snapshot(resolved, auth_mode=auth_mode)
         if auth_mode != "mtls":
@@ -472,7 +471,7 @@ class Mesh(SensorLoopsMixin):
             if self._running:
                 return
 
-            # Issue #218 / R3: refuse-to-start gate when mtls is configured
+            # Refuse-to-start gate when mtls is configured
             # but the ACL is permissive-by-shape (built-in default OR
             # operator file with default_permission=allow). The gate
             # closes the "fleet thinks mTLS protects them, but ACL is
@@ -498,8 +497,7 @@ class Mesh(SensorLoopsMixin):
                 session = get_session()
             finally:
                 # Snapshot has been consumed by ``session._build_config``
-                # via the thread-local single-flight (issue #218 +
-                # review session.py:296), or we refused to start before
+                # via the thread-local single-flight, or we refused to start before
                 # ``get_session`` was reached -- either way, clear it so
                 # the next ``Mesh.start`` (different instance, same
                 # thread) or direct ``get_session()`` call sees fresh
@@ -1042,7 +1040,7 @@ class Mesh(SensorLoopsMixin):
         # {"action":"execute",...}. Outgoing send/broadcast/tell still accept
         # the ergonomic dict-or-string forms because tell() wraps internally.
         #
-        # F-15 / B-09: include the responder's own peer_id as a topic
+        # Include the responder's own peer_id as a topic
         # segment so the IoT robot policy can scope publish to
         # ``strands/+/response/${ThingName}/*`` -- a robot can only
         # publish responses tagged with its OWN ThingName, closing the
@@ -1116,8 +1114,7 @@ class Mesh(SensorLoopsMixin):
                     },
                 )
             except (TypeError, ValueError, OSError) as audit_exc:
-                # narrow per AGENTS.md > Review
-                # Learnings (#86). ``log_safety_event`` raises TypeError
+                # Narrow except tuple. ``log_safety_event`` raises TypeError
                 # / ValueError on payload shape, OSError on disk failure;
                 # the audit best-effort contract means we drop those, but
                 # an unexpected RuntimeError from a future audit-module
@@ -1173,8 +1170,8 @@ class Mesh(SensorLoopsMixin):
             OSError,
             TypeError,
         ) as exc:
-            # narrowed from bare ``except Exception``
-            # per AGENTS.md > Review Learnings (#86). The original goal
+            # narrowed from bare ``except Exception``.
+            # The original goal
             # ("any unhandled exception in a robot adapter would crash
             # the dispatch thread and silently kill the mesh") is
             # achievable with a narrow tuple: this catches every
@@ -1211,7 +1208,7 @@ class Mesh(SensorLoopsMixin):
                 )
             # Audit the dispatch-error path so a remote prober cannot
             # silently fish for adapter exceptions without leaving a
-            # forensic trail (issue #257). Reuses ``command_rejected``
+            # forensic trail. Reuses ``command_rejected``
             # event_type with reason="dispatch error" to keep the
             # operator audit-walker grep simple.
             try:
@@ -1277,11 +1274,11 @@ class Mesh(SensorLoopsMixin):
             # ``_world`` attribute (the SimEngine ABC contract). HardwareRobot
             # has neither, so this is unambiguous.
             #
-            # Forwards the well-known per-call kwargs from #300
+            # Forwards the well-known per-call kwargs from
             # (``target_pose`` / ``target_joints`` / ``world_update``) plus
-            # the existing ``extra`` set (model_path / server_address / ...)
+            # the existing ``extra`` set (model_path / server_address /...)
             # via ``policy_config``. ``create_policy(provider, **policy_config)``
-            # passes them to the Policy constructor; per the #300 contract
+            # passes them to the Policy constructor; per the contract
             # planner-style providers consume them and VLA providers ignore
             # unknown kwargs without raising.
             if (
@@ -1327,7 +1324,7 @@ class Mesh(SensorLoopsMixin):
             return {"error": "robot does not support stop_teleop"}
         return {"error": f"unknown action: {action}"}
 
-    # Well-known per-call policy kwargs from issue #300 — keys that planner-
+    # Well-known per-call policy kwargs from issue keys that planner-
     # style providers (cuRobo, MoveIt2, MPC) consume to encode goals beyond
     # natural-language ``instruction``. Forwarded from ``tell()`` payload
     # into ``policy_config`` so a ``policy_provider="curobo"`` peer sees the
@@ -1368,9 +1365,9 @@ class Mesh(SensorLoopsMixin):
 
         Forwards both the existing ``extra`` constructor kwargs
         (``model_path``, ``server_address``, ``policy_type``,
-        ``pretrained_name_or_path``) and the issue #300 well-known per-call
+        ``pretrained_name_or_path``) and the  well-known per-call
         kwargs (``target_pose``, ``target_joints``, ``world_update``) via
-        ``policy_config``. Per #300 the receiving Policy ignores unknown
+        ``policy_config``. Per the receiving Policy ignores unknown
         kwargs rather than raising, so VLA providers stay compatible.
         """
         sim = self.robot
@@ -1400,7 +1397,7 @@ class Mesh(SensorLoopsMixin):
             return {"error": f"robot_name={robot_name!r} not in sim (available: {available})"}
 
         # Build policy_config: existing constructor kwargs + well-known
-        # per-call kwargs from #300. ``policy_config`` is the documented
+        # per-call kwargs from. ``policy_config`` is the documented
         # passthrough on SimEngine.run_policy/start_policy.
         policy_config: dict[str, Any] = dict(extra)
         for key in self._SIM_WELL_KNOWN_POLICY_KWARGS:
@@ -1492,8 +1489,7 @@ class Mesh(SensorLoopsMixin):
                         },
                     )
                 except (TypeError, ValueError, OSError) as audit_exc:
-                    # narrow per AGENTS.md > Review
-                    # Learnings (#86). Same tuple as the other audit-publish
+                    # Narrow except tuple. Same tuple as the other audit-publish
                     # wrappers in this file. Audit best-effort still holds;
                     # MemoryError / RuntimeError / future programmer errors
                     # propagate to the test harness instead of being
@@ -1813,7 +1809,7 @@ class Mesh(SensorLoopsMixin):
                 self._estop_replay_cache[cache_key] = (issuer_id, now_mono, wire_zid)
 
             # Lockout state mutation must be inside _estop_replay_lock
-            # to close the concurrent-estops race (issue #273): two
+            # to close the concurrent-estops race : two
             # invocations from distinct issuers could both pass the
             # is_set() check before either calls set() and both would
             # publish remote_estop_engaged instead of one + one
@@ -2146,7 +2142,7 @@ class Mesh(SensorLoopsMixin):
             # Mirror the estop _redundant pattern: a successfully-validated
             # resume that arrives on an already-cleared lockout still
             # consumed a replay-cache slot, so forensics need the signal
-            # too (issue #271). Without this audit, a fleet audit-walker
+            # too. Without this audit, a fleet audit-walker
             # reconciling estop_engaged/resume_applied pairs has gaps for
             # the case where multiple operators legitimately hit resume
             # in close succession.
@@ -2515,7 +2511,7 @@ class Mesh(SensorLoopsMixin):
             _EXPECTED_HASH = hashlib.sha256(b"\x00" * 32).digest()
         compare_ok = hmac.compare_digest(_EXPECTED_HASH, _PROVIDED_HASH)
 
-        # Issue #272: the structured ``reason`` field used to be published
+        # the structured ``reason`` field used to be published
         # via ``publish_safety_event`` which fans out to
         # ``strands/{peer_id}/safety/event`` -- any peer subscribed to
         # ``strands/+/safety/event`` could read the rejection reason and
@@ -2524,7 +2520,7 @@ class Mesh(SensorLoopsMixin):
         # ``reason_code`` over the wire (uniform "denied" string) and
         # write the structured reason to the LOCAL audit log via
         # ``log_safety_event`` (file-backed; not broadcast).
-        # Issue #256: every rejection branch performs the same I/O
+        # every rejection branch performs the same I/O
         # work shape (one local audit + one wire publish) so the
         # latency oracle collapses too.
         def _emit_resume_denied(reason_text: str, severity: str) -> None:

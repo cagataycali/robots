@@ -171,7 +171,7 @@ _MAX_SEED_SEQ: int = 100_000_000
 # the same read-modify-compare path is exercised on every subsequent
 # write where one thread can land between ``_audit_psk()`` and the
 # ``snapshot != current_fp`` comparison and observe a stale view that
-# defeats the PSK-degrade defence . Hold this lock around
+# defeats the PSK-degrade defence. Hold this lock around
 # the entire fingerprint check so the compare-and-set is atomic.
 _PSK_STATE_LOCK = threading.Lock()
 
@@ -182,8 +182,8 @@ class _ProcessAuditState:
     Same rationale as ``mesh/security.py::_ProcessSecurityState``: we
     keep the one-shot ``loaded`` flag on an instance attribute so static
     analysers see a normal attribute read+write rather than a
-    ``global`` declaration on a module-level scalar (which CodeQL's
-    "unused global variable" rule mis-classifies -- alert #222).
+    ``global`` declaration on a module-level scalar (which some static
+    analysers mis-classify as an unused global variable).
 
     ``psk_fingerprint`` snapshots a fingerprint of the
     ``STRANDS_MESH_AUDIT_PSK`` value seen on the first record this
@@ -404,7 +404,7 @@ def _seq_flock() -> Iterator[None]:
     try:
         fd = os.open(str(lockfile), os.O_RDWR | os.O_CREAT | nofollow, 0o600)
     except OSError as exc:
-        # Issue #238: hard-fail on ELOOP rather than silently yielding
+        # hard-fail on ELOOP rather than silently yielding
         # without a lock. The previous behaviour silently downgraded the
         # cross-process flock to no-lock when an attacker pre-created
         # ``mesh_audit.seq.lock`` as a symlink, defeating the
@@ -494,8 +494,7 @@ def _load_seq_counters() -> None:
                 # dict (or a dict with no valid entries) must NOT flip
                 # sidecar_loaded=True, otherwise the audit-log fallback
                 # is skipped and an attacker writing ``{}`` gets every
-                # peer's seq reset. (R3 follow-up — review thread on
-                # PR#221 audit.py:531).
+                # peer's seq reset.
                 merged_any = False
                 for key, value in payload.items():
                     if not (isinstance(key, str) and isinstance(value, int) and value >= 0):
@@ -705,7 +704,7 @@ def _persist_seq_counters() -> None:
             # itself raises *before* adopting the fd (e.g. invalid mode
             # string, EMFILE while constructing the buffered wrapper).
             # On the common path this branch is unreachable: ``with
-            # os.fdopen(fd, "w", ...) as fh:`` transfers fd ownership
+            # os.fdopen(fd, "w",...) as fh:`` transfers fd ownership
             # to the file object, and the context manager's ``__exit__``
             # closes fd on any exception inside the with-block. Calling
             # ``os.close(fd)`` here would then hit EBADF; we suppress
@@ -807,7 +806,7 @@ def _canonical_bytes(record: dict[str, Any]) -> bytes:
 
 
 class SeqLockSymlinkError(RuntimeError):
-    """Raised when the audit seq lockfile is a symlink (issue #238).
+    """Raised when the audit seq lockfile is a symlink.
 
     An attacker with write access to ``STRANDS_MESH_AUDIT_DIR`` could
     pre-create ``mesh_audit.seq.lock`` as a symlink to e.g. ``/dev/null``
@@ -823,7 +822,7 @@ class AuditPSKDegradedError(RuntimeError):
     """Raised when STRANDS_MESH_AUDIT_PSK was set at first write but is
     no longer set at a subsequent write.
 
-    Round-4 / a process that briefly clears its env to write a run
+    A process that briefly clears its env to write a run
     of unsigned forgeries -- then re-sets the PSK -- would otherwise yield
     records that ``verify_audit_integrity`` reports as ``missing_sig``
     while ``ok`` (the boolean reader-helpers check) stays True. We snap
@@ -851,7 +850,7 @@ def _sign_record(record: dict[str, Any]) -> str | None:
     """Compute the per-record HMAC signature, or ``None`` when no PSK
     is configured.
 
-    Round-4 / snapshot a fingerprint of the PSK observed on
+    Snapshot a fingerprint of the PSK observed on
     the first call. If a subsequent call sees a different fingerprint
     (PSK unset, set, or rotated to a different value), raise
     ``AuditPSKDegradedError`` so the audit log cannot silently
@@ -1021,7 +1020,7 @@ def log_safety_event(event_type: str, peer_id: str, payload: dict[str, Any]) -> 
     try:
         seq = _next_seq(peer_id)
     except SeqLockSymlinkError as exc:
-        # PR#221 R3 (issue #238): the seq lockfile is a symlink. Raise
+        # The seq lockfile is a symlink (symlink-swap attack). Raise
         # the visible signal: write a poison record with
         # ``sig="SEQ_LOCK_DEGRADED"`` so verify_audit_integrity walkers
         # see a gap on this peer's stream. seq is unknown -- use 0 as

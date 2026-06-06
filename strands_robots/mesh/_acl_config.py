@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 class PermissiveACLError(RuntimeError):
     """Raised when an operator-supplied ACL uses the blacklist footgun
     (``default_permission='allow'`` with explicit rules) without opting
-    in via ``STRANDS_MESH_ACCEPT_PERMISSIVE_ACL``. Pentest B-08 / F-14.
+    in via ``STRANDS_MESH_ACCEPT_PERMISSIVE_ACL``.
 
     The built-in permissive default (allow + EMPTY rules) is exempt --
     it is gated separately by the ``Mesh.start`` refuse-to-start path
@@ -218,7 +218,7 @@ def _load_acl_file(path: Path) -> dict[str, Any]:
                 path,
                 len(data["rules"]),
             )
-            # B-08 / F-14: the warning above is the first-line signal; this
+            # The warning above is the first-line signal; this
             # is the hard gate. An operator-supplied blacklist ACL
             # (allow + explicit rules) is a load-bearing anti-pattern --
             # any gap in the rule set exposes the mesh. Refuse to load it
@@ -430,7 +430,7 @@ def default_acl(namespace: str) -> dict[str, Any]:
     # special-casing ``default_acl``. The built-in default ACL itself is
     # namespace-independent (Zenoh's namespace config does the routing
     # isolation; ACL key_exprs are RELATIVE to the active namespace and
-    # do not need a namespace prefix). Review thread PR#224 _acl_config.py:343.
+    # do not need a namespace prefix).
     _ = namespace  # noqa: F841 -- kept for API symmetry
     return {
         "enabled": True,
@@ -524,7 +524,7 @@ def _clear_acl_cache_for_test() -> None:
         _ACL_CACHE.clear()
 
 
-# Issue #218 / review session.py:296 -- thread-local single-flight ACL
+# Thread-local single-flight ACL
 # snapshot. ``Mesh.start`` calls ``snapshot_acl`` once at the gate, then
 # ``session._build_config`` runs inside the same call stack and would
 # call ``snapshot_acl`` AGAIN. The previous identity-tuple cache could
@@ -738,7 +738,7 @@ def resolve_acl(namespace: str) -> dict[str, Any]:
 def snapshot_acl(namespace: str = "strands") -> tuple[bool, dict[str, Any]]:
     """Atomically resolve the ACL and report its permissive-by-shape state.
 
-    Issue #218 + review thread session.py:296: closes the TOCTOU window
+    Closes the time-of-check/time-of-use window
     between the ``Mesh.start`` refuse-to-start gate and the
     ``session._build_config`` wire-config builder.
 
@@ -803,6 +803,6 @@ def acl_block(namespace: str) -> tuple[str, str]:
     .. note::
         Prefer :func:`snapshot_acl` + :func:`acl_block_from` in new code
         to avoid the TOCTOU window between gate-shape-check and
-        wire-config-build (issue #218).
+        wire-config-build.
     """
     return ("access_control", json.dumps(resolve_acl(namespace)))

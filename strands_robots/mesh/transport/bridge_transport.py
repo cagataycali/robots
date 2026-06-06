@@ -352,12 +352,11 @@ class _CommandDeduplicator:
         address (e.g. instances without a ``__str__`` override). Producers
         relying on dedup correctness for non-JSON ``command`` shapes are in
         contract violation. Tracked for resolution (drop ``default=str`` and
-        let TypeError surface, vs. enforce JSON contract at producer side)
-        in #233.
+        let TypeError surface, vs. enforce JSON contract at producer side).
 
         The strict-mode full-payload hash (partial-canonical fallback at
         lines below) shares the same ``default=str`` non-determinism risk;
-        #233 covers both paths.
+        covers both paths.
         """
         if not isinstance(payload, dict):
             return None
@@ -379,7 +378,7 @@ class _CommandDeduplicator:
                 return None
             # Strict mode: full-payload hash fallback.
             try:
-                # Issue #233: dropped ``default=str`` from canonical-path
+                # dropped ``default=str`` from canonical-path
                 # encoders. Custom objects without ``__str__`` overrides
                 # produced address-suffixed strings (``<Foo object at 0x...>``)
                 # which made the fingerprint non-deterministic. Now we let
@@ -392,7 +391,7 @@ class _CommandDeduplicator:
             return "p:" + hashlib.sha256(full).hexdigest()
 
         try:
-            # Issue #233: dropped ``default=str``. Non-JSON ``command``
+            # dropped ``default=str``. Non-JSON ``command``
             # payloads now bypass dedup (return None) rather than producing
             # a non-deterministic address-suffixed fingerprint that appears
             # to dedup in tests but doesn't in production.
@@ -424,7 +423,7 @@ class _CommandDeduplicator:
                 for k in stale:
                     self._seen.pop(k, None)
                 if len(self._seen) > _MAX_DEDUP_ENTRIES:
-                    # Issue #231: replace O(n log n) full-sort + slice with
+                    # replace O(n log n) full-sort + slice with
                     # ``heapq.nsmallest`` partial-selection (O(n log k) where
                     # k = drop count). For the typical k = n/5 case this is
                     # ~5x faster on the lock-hold than a full sort. The
@@ -649,7 +648,7 @@ class BridgeTransport:
                         payload = decoded
                 except (AttributeError, UnicodeDecodeError, json.JSONDecodeError):
                     # narrow per AGENTS.md > Review
-                    # Learnings (#86) > "Exception Clauses Must Be Narrow".
+                    # Learnings  > "Exception Clauses Must Be Narrow".
                     # Same tuple as the four wire handlers in core.py
                     # (_on_cmd, _on_response, _on_safety_estop,
                     # _on_safety_resume). Pinned by
@@ -665,7 +664,7 @@ class BridgeTransport:
                 # (mock shape drift, transport refactor) so we fall back to the
                 # subscription pattern AND emit a warning so the regression is
                 # observable in operator logs (per AGENTS.md > Review Learnings
-                # (#85) > "No silent defaults on error"). Pinned by
+                #  > "No silent defaults on error"). Pinned by
                 # test_missing_key_expr_warns_and_falls_back.
                 _sentinel = object()
                 _delivered = getattr(sample, "key_expr", _sentinel)

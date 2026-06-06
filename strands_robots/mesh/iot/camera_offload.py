@@ -53,7 +53,7 @@ that the operator configures it with object-ownership control
 ACLs); that enforcement is out of scope for this library because
 deployments differ on whether the bucket is shared with non-mesh
 producers. A future code-side ``ACL="private"`` + ``ChecksumAlgorithm``
-hardening is tracked in #249.
+hardening is tracked.
 """
 
 from __future__ import annotations
@@ -116,7 +116,7 @@ class CameraOffloader:
             )
             ttl_raw = MAX_PRESIGN_TTL_SECONDS
         if ttl_raw < 1:
-            # Issue #262: WARN on any sub-1 value EXCEPT exactly 0.
+            # WARN on any sub-1 value EXCEPT exactly 0.
             # ``presign_ttl=0`` is the documented kwarg-vs-env-precedence
             # sentinel pinned by ``test_presign_ttl_none_vs_zero.py`` (R1
             # fix). ``presign_ttl=-99`` is unambiguously a bug at the call

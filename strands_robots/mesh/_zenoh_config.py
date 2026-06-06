@@ -577,7 +577,7 @@ def _resolve_tls_paths() -> tuple[Path, Path, Path]:
     if not _is_posix():
         # Atomic check-and-set under lock so concurrent _build_config
         # calls (e.g. multi-threaded test harness) don't both fire the
-        # WARNING. Per review thread _zenoh_config.py:540, key the
+        # WARNING. Key the
         # one-shot on (key_path, mtime_ns) so rotating
         # ``STRANDS_MESH_TLS_KEY`` to a different file (or replacing
         # the file in-place) re-arms the warning.
