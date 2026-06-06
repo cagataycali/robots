@@ -338,7 +338,7 @@ class Gr00tPolicy(Policy):
             self.data_config_name,
         )
 
-        # #187 wire-payload diagnostic: per-instance call counter so
+        # wire-payload diagnostic: per-instance call counter so
         # ``_maybe_dump_wire_payload`` can cap dumps at
         # ``STRANDS_GROOT_WIRE_LOG_MAX_CALLS`` (default 10) without
         # filling the disk on long rollouts. Counter is shared across
@@ -553,7 +553,7 @@ class Gr00tPolicy(Policy):
         cuDNN benchmark state, etc.) can be re-initialised. Without this
         the server's RNG drifts across calls and produces different
         action chunks for byte-identical inputs across re-runs of the
-        same eval — the #187 success-rate gap.
+        same eval — the observed success-rate gap.
 
         The standard ``gr00t.eval.run_gr00t_server`` registers a ``reset``
         endpoint that maps to ``policy.reset(options=...)`` (see
@@ -645,7 +645,7 @@ class Gr00tPolicy(Policy):
         else:
             raise RuntimeError(f"Unknown GR00T version: {self._groot_version}")
 
-        # #187 wire-payload diagnostic: capture (nested_obs, actions_raw)
+        # wire-payload diagnostic: capture (nested_obs, actions_raw)
         # for offline diff against the SERVICE path. Zero overhead when
         # STRANDS_GROOT_WIRE_LOG is unset.
         self._maybe_dump_wire_payload("local", nested_obs, actions_raw)
@@ -709,9 +709,9 @@ class Gr00tPolicy(Policy):
         language_dict = {lang_key: [[instruction]]}
 
         # Match Isaac-GR00T training preprocessing for embodiments that need
-        # it (#169) - same rotation that ``_build_service_observation``
+        # it - same rotation that ``_build_service_observation``
         # applies, kept consistent so LOCAL and SERVICE inference modes
-        # see identical observations. Pre-#169 the rotation was service-
+        # see identical observations. The rotation used to be service-
         # only, which silently fed local-mode users upside-down or
         # reversed-direction images relative to training. The helper
         # operates on the 5D ``(1, 1, H, W, C)`` tensor directly via
@@ -767,7 +767,7 @@ class Gr00tPolicy(Policy):
             wire_obs = self._build_service_observation(robot_obs, instruction)
             action_chunk = self._client.get_action(wire_obs)
 
-        # #187 wire-payload diagnostic: capture (wire_obs, action_chunk)
+        # wire-payload diagnostic: capture (wire_obs, action_chunk)
         # for offline diff against the LOCAL path. Zero overhead when
         # STRANDS_GROOT_WIRE_LOG is unset. Run an eval once with each
         # mode into the same dump dir, then ``np.allclose`` matching
@@ -814,7 +814,7 @@ class Gr00tPolicy(Policy):
                 video_keys.append(vk)
         # Match Isaac-GR00T training preprocessing for embodiments that need
         # it - see :func:`_apply_image_rotation_180_inplace` for the algebra.
-        # #169 moved the inline implementation into the shared helper and
+        # moved the inline implementation into the shared helper and
         # added a parallel call in :meth:`_prepare_observation` so
         # local-mode inference applies the same rotation.
         if self.data_config.image_rotation_180:
@@ -921,7 +921,7 @@ class Gr00tPolicy(Policy):
                 "data_config_name": str,
             }
 
-        Used by the #187 bisection plan to verify whether LOCAL and
+        Used by the bisection plan to verify whether LOCAL and
         SERVICE paths send byte-identical observations to the model.
         Run an eval twice (once with each mode) into the same dump dir,
         then ``pickle.load`` the matching ``call0`` files and ``np.allclose``
@@ -1000,7 +1000,7 @@ class Gr00tPolicy(Policy):
             )
 
 
-# Wire-payload diagnostic (#187) - dump pre-inference observation +
+# Wire-payload diagnostic  - dump pre-inference observation +
 # post-inference action chunk to disk for offline diff between LOCAL
 # and SERVICE paths.
 
@@ -1025,7 +1025,7 @@ def _wire_log_max_calls() -> int:
     full LIBERO eval (5 episodes × 720 steps / 8 chunk = ~450 calls)
     doesn't fill the disk with multi-GB pickle archives.
 
-    The user's bisection plan from #187 only needs the first few calls
+    The user's bisection plan from only needs the first few calls
     to detect a divergence between LOCAL and SERVICE wire payloads.
     """
     raw = os.environ.get("STRANDS_GROOT_WIRE_LOG_MAX_CALLS", "10").strip()
@@ -1051,8 +1051,7 @@ def _apply_image_rotation_180_inplace(obs: dict[str, Any], video_keys: list[str]
     ``examples/Libero/eval/utils.py:get_libero_image()``. Without this
     rotation at eval time, every observation the policy sees is
     upside-down relative to its training distribution and the success
-    rate collapses to 0 (#168 bug H, re-broken in service mode
-    by #168, fixed by #169).
+    rate collapses to 0.
 
     Producers (``LiberoAdapter.augment_observation``) are expected to
     deliver images in OpenGL framebuffer convention (bottom-row-zero).
@@ -1072,8 +1071,8 @@ def _apply_image_rotation_180_inplace(obs: dict[str, Any], video_keys: list[str]
 
     Called from BOTH service-mode (``_build_service_observation``) and
     local-mode (``_prepare_observation``) paths so the rotation is
-    applied consistently regardless of inference transport. Pre-#169 it
-    was service-only, which made the LOCAL path silently OOD relative
+    applied consistently regardless of inference transport. It used to
+    be service-only, which made the LOCAL path silently OOD relative
     to training (engine outputs OpenGL convention, policy applies no
     rotation → upside-down input).
     """
@@ -1110,7 +1109,7 @@ def _to_state_batch(value) -> np.ndarray:
         # sees a proper (B, T, D) shape. Without this, NVIDIA's
         # _unbatch_observation crashes with `IndexError: too many indices
         # for array: array is 0-dimensional` on every scalar state key
-        # (#187 LOCAL-mode regression I caught while bisecting).
+        # (a LOCAL-mode regression I caught while bisecting).
         return arr[np.newaxis, np.newaxis, np.newaxis]
     if arr.ndim == 1:
         return arr[np.newaxis, np.newaxis, ...]

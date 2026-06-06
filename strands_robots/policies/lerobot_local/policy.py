@@ -5,9 +5,9 @@ this policy supports.
 
 Architecture:
     Observation (dict)
-        → ProcessorBridge.preprocess (normalize, device, crop, ...)
+        → ProcessorBridge.preprocess (normalize, device, crop,...)
         → LeRobot PreTrainedPolicy.select_action / predict_action_chunk (RTC)
-        → ProcessorBridge.postprocess (unnormalize, delta-action, ...)
+        → ProcessorBridge.postprocess (unnormalize, delta-action,...)
         → Action dict
 """
 
@@ -121,7 +121,7 @@ class LerobotLocalPolicy(Policy):
         history) to prevent cross-episode contamination.
 
         Args:
-            seed: Per-episode master seed (added in #187 for the
+            seed: Per-episode master seed (added for the
                 ``Policy.reset(seed=...)`` contract). Currently
                 unused — LeRobot policies don't expose RNG state via a
                 seed kwarg, and reproducibility is handled by
@@ -147,7 +147,7 @@ class LerobotLocalPolicy(Policy):
         Args:
             robot_state_keys: List of joint/motor names. If empty, auto-detects
                 from model output_features (action dim) or input_features (state dim).
-                Auto-detected keys are generic (joint_0, joint_1, ...).
+                Auto-detected keys are generic (joint_0, joint_1,...).
 
         Raises:
             ValueError: If keys are empty and no model features available for

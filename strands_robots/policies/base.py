@@ -124,7 +124,7 @@ class Policy(ABC):
         per-episode RNG state can be re-initialised — without this,
         ``set_eval_seed`` only seeds the client-side process, leaving
         the server's diffusion sampler RNG drifting across calls and
-        breaking reproducibility (#187).
+        breaking reproducibility.
 
         Args:
             seed: Optional master seed forwarded to the policy's

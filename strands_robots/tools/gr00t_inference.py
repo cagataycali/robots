@@ -8,7 +8,7 @@ Uses Isaac-GR00T's native inference service for proper ZMQ/HTTP communication.
 Container lifecycle (``build_image`` / ``download_checkpoint`` /
 ``start_container`` / ``lifecycle="full"``) wraps the four manual setup
 steps so an LLM driving the AgentTool can fully orchestrate a GR00T eval
-from a single prompt - see #148 for the motivation.
+from a single prompt - for the motivation.
 """
 
 import os
@@ -180,7 +180,7 @@ def gr00t_inference(
           - pass ``use_sim_policy_wrapper=True`` to enable.
 
         The default stays ``"n1.5"`` for back-compat. N1.7 users must opt in
-        explicitly: ``gr00t_inference(action="start", ..., protocol="n1.7")``.
+        explicitly: ``gr00t_inference(action="start",..., protocol="n1.7")``.
 
     Args:
         action: Action to perform (see Actions above).
@@ -796,7 +796,7 @@ def _start_service(
         return {"status": "error", "message": f"Unexpected error: {e}"}
 
 
-# Container lifecycle helpers (#148-F3 wider)
+# Container lifecycle helpers
 #
 # Each helper is idempotent and returns a structured status dict. They wrap
 # the manual four-step Isaac-GR00T setup (clone → docker build → hf
