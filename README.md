@@ -321,7 +321,7 @@ create_policy("lerobot/act_aloha_sim_transfer_cube")   # local HF inference
 | Provider | Backend | Notes |
 |----------|---------|-------|
 | `mock` | none | Sinusoidal trajectories; `requires_images=False` (~10x faster) |
-| `groot` | NVIDIA GR00T N1.5/N1.6/N1.7 | ZMQ or HTTP to a Docker inference service |
+| `groot` | NVIDIA GR00T N1.5/N1.6/N1.7 | Service mode (ZMQ to a Docker container) or local in-process (`model_path=`) |
 | `lerobot_local` | HuggingFace | Direct ACT / Pi0 / SmolVLA / Diffusion inference, no server |
 
 ```mermaid
@@ -619,6 +619,15 @@ hatch run format        # ruff check --fix + ruff format
 
 Python 3.12+ required. See [AGENTS.md](AGENTS.md) for conventions and the
 accumulated code-review learnings.
+
+## Security
+
+Found a vulnerability? **Do not** open a public issue. Follow the disclosure
+process in [SECURITY.md](SECURITY.md) (AWS VDP / HackerOne).
+
+Note the `trust_remote_code` gate on `lerobot_local` (see
+[Policy providers](#policy-providers)) and the mesh CA-pinning / thing-name
+validation controls in the [Configuration](#configuration) matrix.
 
 ## Contributing
 
