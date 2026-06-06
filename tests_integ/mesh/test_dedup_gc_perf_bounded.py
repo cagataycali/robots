@@ -12,7 +12,6 @@ import threading
 import time
 
 from strands_robots.mesh.transport.bridge_transport import (
-    _MAX_DEDUP_ENTRIES,
     _MAX_DEDUP_ENTRIES_HARD,
     _CommandDeduplicator,
 )
