@@ -12,10 +12,12 @@ from unittest.mock import MagicMock
 import pytest
 
 from strands_robots.mesh.transport.bridge_transport import (
+    _DEFAULT_BRIDGE_PREFIX_SUFFIXES,
     DEFAULT_BRIDGE_SUFFIXES,
     BridgeTransport,
     _BridgeSubHandle,
     _resolve_bridge_filter,
+    _resolve_bridge_prefix_filter,
     _should_bridge,
     _topic_suffix,
 )
@@ -77,6 +79,50 @@ class TestEnvFilter:
     def test_unset_env_uses_default(self, monkeypatch):
         monkeypatch.delenv("STRANDS_MESH_BRIDGE_TOPICS", raising=False)
         assert _resolve_bridge_filter() == DEFAULT_BRIDGE_SUFFIXES
+
+
+class TestEnvPrefixFilter:
+    """Pin STRANDS_MESH_BRIDGE_TOPICS_PREFIX reader against the README matrix.
+
+    Regression for issue #244: the env-var reader and its unset-default must
+    stay in lockstep with the README ``Mesh security configuration`` row that
+    documents STRANDS_MESH_BRIDGE_TOPICS_PREFIX with a default of ``response``.
+    """
+
+    _README_HINT = (
+        "README env-var matrix row STRANDS_MESH_BRIDGE_TOPICS_PREFIX "
+        "(Mesh security configuration section) is out of sync with the reader"
+    )
+
+    def test_env_var_name_parses_comma_separated_prefixes(self, monkeypatch):
+        monkeypatch.setenv("STRANDS_MESH_BRIDGE_TOPICS_PREFIX", "response, telemetry")
+        f = _resolve_bridge_prefix_filter()
+        assert "response" in f, self._README_HINT
+        assert "telemetry" in f, self._README_HINT
+
+    def test_unset_default_is_response_prefix(self, monkeypatch):
+        monkeypatch.delenv("STRANDS_MESH_BRIDGE_TOPICS_PREFIX", raising=False)
+        f = _resolve_bridge_prefix_filter()
+        assert f == _DEFAULT_BRIDGE_PREFIX_SUFFIXES, self._README_HINT
+        assert f == frozenset({"response"}), self._README_HINT
+
+    def test_unset_default_bridges_response_tail(self, monkeypatch):
+        monkeypatch.delenv("STRANDS_MESH_BRIDGE_TOPICS_PREFIX", raising=False)
+        prefixes = _resolve_bridge_prefix_filter()
+        assert (
+            _should_bridge(
+                "strands/peer1/response/turn-42",
+                DEFAULT_BRIDGE_SUFFIXES,
+                prefixes,
+            )
+            is True
+        ), self._README_HINT
+
+    def test_empty_env_falls_back_to_default(self, monkeypatch):
+        monkeypatch.setenv("STRANDS_MESH_BRIDGE_TOPICS_PREFIX", "")
+        assert _resolve_bridge_prefix_filter() == _DEFAULT_BRIDGE_PREFIX_SUFFIXES, (
+            self._README_HINT
+        )
 
 
 # _should_bridge — the real fan-out gate
