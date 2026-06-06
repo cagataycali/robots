@@ -580,6 +580,7 @@ agent.tool.gr00t_inference(action="stop", port=8000)
 | `STRANDS_MESH_AUDIT_DIR` | Directory for the safety audit log (`mesh_audit.jsonl`) | `~/.strands_robots/` |
 | `STRANDS_MESH_CA_PINS` | Comma-separated SHA-256 hex pins, **additive** to the bundled Amazon Root CA1 pin tuple. Operator break-glass for an AWS-side root rotation that arrives before the next `strands-robots` release ships the new pin. Must match `^[0-9a-fA-F]{64}$` per entry. | unset |
 | `STRANDS_MESH_DISABLE_CA_PIN` | Set to `true` (case-insensitive) to skip CA pin verification on the *download* path only. The on-disk re-use path always raw-checks the pin regardless. Last-resort break-glass; prefer `STRANDS_MESH_CA_PINS` for rotations. | `false` |
+| `STRANDS_MESH_CAMERA_DISABLED` | Privacy kill-switch. Set truthy (`true`/`1`/`yes`/`on`, case-insensitive) to short-circuit the mesh camera publish loop before any frame is collected, encoded, or uploaded. Invalid values raise `ValueError`. | `false` |
 | `STRANDS_MESH_CAMERA_PRESIGN_TTL` | Default TTL (seconds) for S3 presigned URLs emitted on the IoT camera-offload path. Capped at 3600s (1h); a `0` is clamped to 1s. Non-integer values fall back to the default with a WARNING. | `60` |
 | `GROOT_API_TOKEN` | API token for GR00T inference service | - |
 | `STRANDS_ROBOT_MODE` | Override `Robot()` factory mode detection (`sim`, `real`, `auto`) | `auto` |
