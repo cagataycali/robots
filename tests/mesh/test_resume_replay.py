@@ -381,7 +381,6 @@ def test_f18a_envelope_without_lockout_elapsed_s_rejected(monkeypatch):
     assert m._estop_lockout.is_set() is True
 
 
-
 def test_resume_cache_per_issuer_cap_enforced(monkeypatch):
     """One issuer cannot exceed per_issuer_cap slots in the resume cache.
 
@@ -481,7 +480,9 @@ def _zenoh_sample(payload_dict, wire_zid):
     return s
 
 
-def _make_zenoh_envelope(override_code, *, wire_zid, t=None, peer_id="op-zenoh", proof_nonce=None, lockout_elapsed_s=1.0):
+def _make_zenoh_envelope(
+    override_code, *, wire_zid, t=None, peer_id="op-zenoh", proof_nonce=None, lockout_elapsed_s=1.0
+):
     """Mint a resume envelope whose MAC binds the wire-level source_zid.
 
     When a sample carries a wire_zid the receiver re-derives the MAC with
@@ -566,4 +567,3 @@ def test_zenoh_wire_zid_resume_replay_within_domain_still_rejected(monkeypatch):
     m._on_safety_resume(_zenoh_sample(env, wire_zid))
     assert m._estop_lockout.is_set() is True
     assert (("wire", wire_zid), nonce) in m._resume_replay_cache
-
