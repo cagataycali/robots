@@ -102,6 +102,11 @@ class TestEstopLockoutRace:
                 try:
                     interleave.wait()
                 except threading.BrokenBarrierError:
+                    # Expected under the fix: the second reader is blocked on
+                    # _estop_replay_lock and never reaches this rendezvous, so
+                    # the 1.0s barrier times out and trips BrokenBarrierError.
+                    # That timeout IS the pass condition -- swallow it so the
+                    # winning thread proceeds to engage the lockout normally.
                     pass
             return result
 
