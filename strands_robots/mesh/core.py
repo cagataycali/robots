@@ -1543,6 +1543,16 @@ class Mesh(SensorLoopsMixin):
             return
         if not isinstance(data, dict):
             return
+        # Cache operator-tunable freshness/skew knobs once at handler entry
+        # (issue #265). Reading them per-use parsed os.getenv plus a regex
+        # validation on every reference (5-6 times per envelope) and could
+        # observe a mid-handler env mutation, creating an internal
+        # inconsistency window. The 0.2s estop corroboration window is
+        # timing-sensitive, so we also keep these reads out of the
+        # _estop_replay_lock critical section. The next envelope picks up a
+        # changed env value, preserving the operator-tunable contract.
+        forward_skew_s = _resume_forward_skew_s()
+        freshness_window_s = _resume_freshness_window_s()
 
         # Wire-level publisher attribution (cross-session forgery defence).
         # When the sample carries a ``source_info.source_id.zid`` set by
@@ -1601,21 +1611,21 @@ class Mesh(SensorLoopsMixin):
                 self.peer_id,
             )
             return
-        if envelope_t > now + _resume_forward_skew_s():
+        if envelope_t > now + forward_skew_s:
             logger.warning(
                 "[safety] %s: refusing remote estop -- ``t``=%s in future (forward_skew_s=%s, now=%s)",
                 self.peer_id,
                 envelope_t,
-                _resume_forward_skew_s(),
+                forward_skew_s,
                 now,
             )
             return
-        if (now - envelope_t) > _resume_freshness_window_s():
+        if (now - envelope_t) > freshness_window_s:
             logger.warning(
                 "[safety] %s: refusing remote estop -- ``t``=%s too old (freshness_window_s=%s, now=%s)",
                 self.peer_id,
                 envelope_t,
-                _resume_freshness_window_s(),
+                freshness_window_s,
                 now,
             )
             return
@@ -1761,7 +1771,7 @@ class Mesh(SensorLoopsMixin):
                 # include forward_skew so a forward-skewed envelope
                 # at t=now+skew stays cached for the full freshness window
                 # rather than the lesser ``freshness`` only.
-                ttl_s=_resume_freshness_window_s() + _resume_forward_skew_s(),
+                ttl_s=freshness_window_s + forward_skew_s,
                 now_mono=now_mono,
             )
             # Apply the eviction back to the real cache.
@@ -1899,6 +1909,16 @@ class Mesh(SensorLoopsMixin):
             return
         if not isinstance(data, dict):
             return
+        # Cache operator-tunable freshness/skew knobs once at handler entry
+        # (issue #265). Reading them per-use parsed os.getenv plus a regex
+        # validation on every reference (5-6 times per envelope) and could
+        # observe a mid-handler env mutation, creating an internal
+        # inconsistency window. The 0.2s estop corroboration window is
+        # timing-sensitive, so we also keep these reads out of the
+        # _estop_replay_lock critical section. The next envelope picks up a
+        # changed env value, preserving the operator-tunable contract.
+        forward_skew_s = _resume_forward_skew_s()
+        freshness_window_s = _resume_freshness_window_s()
 
         # Wire-level publisher attribution (cross-session forgery defence).
         # Mirrors the parallel block in ``_on_safety_estop``: extract the
@@ -1969,7 +1989,7 @@ class Mesh(SensorLoopsMixin):
         # captured envelope would still verify. Two cheap defences:
         #
         # 1. Freshness: reject envelopes whose ``t`` field is older
-        #  than _resume_freshness_window_s() or more than the forward
+        #  than freshness_window_s or more than the forward
         #  skew in the future. This matches the operator NTP
         #  requirement documented in CHANGELOG.
         # 2. Per-receiver replay cache: refuse a (issuer, proof_nonce)
@@ -1983,21 +2003,21 @@ class Mesh(SensorLoopsMixin):
                 self.peer_id,
             )
             return
-        if envelope_t > now + _resume_forward_skew_s():
+        if envelope_t > now + forward_skew_s:
             logger.warning(
                 "[safety] %s: refusing remote resume -- ``t``=%s in future (forward_skew_s=%s, now=%s)",
                 self.peer_id,
                 envelope_t,
-                _resume_forward_skew_s(),
+                forward_skew_s,
                 now,
             )
             return
-        if (now - envelope_t) > _resume_freshness_window_s():
+        if (now - envelope_t) > freshness_window_s:
             logger.warning(
                 "[safety] %s: refusing remote resume -- ``t``=%s too old (freshness_window_s=%s, now=%s)",
                 self.peer_id,
                 envelope_t,
-                _resume_freshness_window_s(),
+                freshness_window_s,
                 now,
             )
             return
@@ -2120,7 +2140,7 @@ class Mesh(SensorLoopsMixin):
                 self._resume_replay_cache,
                 max_size=_resume_replay_cache_max(),
                 # see _evict_replay_cache docstring.
-                ttl_s=_resume_freshness_window_s() + _resume_forward_skew_s(),
+                ttl_s=freshness_window_s + forward_skew_s,
                 now_mono=now_mono,
             )
             self._resume_replay_cache[cache_key] = now_mono
