@@ -3,6 +3,29 @@
 All notable behavioural changes to `strands-robots` are logged here. Follows
 [Keep a Changelog](https://keepachangelog.com/) conventions.
 
+## Unreleased - #318 (MuJoCo tendon-transmission actuators)
+
+### Fixed: tendon-gripper actuators (Franka/Panda) now actuate via joint name
+
+``MuJoCoSimEngine.send_action`` (``_apply_action_by_name``) previously
+resolved a joint-name action key only to **direct** joint-transmission
+actuators (``actuator_trnid[ai, 0] == jnt_id``). **Tendon-transmission**
+actuators - most notably the Franka/Panda gripper, whose ``split`` actuator
+drives ``finger_joint1`` / ``finger_joint2`` through a tendon - were silently
+dropped, so a gripper command keyed by the finger joint name never moved the
+fingers. Any VLA policy emitting a gripper channel (Cosmos 3 DROID
+``joint_pos``, GR00T, ...) recorded grasp commands that had no effect on the
+observed state, silently corrupting demonstrations.
+
+The joint→actuator fallback now also resolves tendon transmissions: when a
+joint key matches no direct-joint actuator, the engine finds the tendon whose
+``JOINT`` wrap entries include that joint, then the actuator driving that
+tendon. The incoming value is treated as a normalised ``[0, 1]`` open/close
+fraction and mapped onto the actuator's ctrlrange (the Panda gripper expects
+``[0, 255]`` tendon units, not a finger-joint position); a value clearly
+inside a wide ctrlrange is passed through verbatim. Direct JOINT actuators are
+unchanged - positions/torques pass through raw.
+
 ## Unreleased - #320 (MuJoCo robot-scene ground-plane z-fighting)
 
 ### Fixed: broken floor render when a robot asset ships its own ground plane
@@ -58,6 +81,10 @@ Applies to ``strands_robots.mesh.iot.provision`` and
   ``re.fullmatch``) applied symmetrically across ``provision_robot``,
   ``provision_operator``, and ``teardown_thing``. Rejects path
   separators, dots, spaces, NUL, non-ASCII, and trailing
+  ``
+``/``
+``/``	``. Pre-existing AWS IoT Things containing ``:``
+
   ``\n``/``\r``/``\t``. Pre-existing AWS IoT Things containing ``:``
   must be renamed (we deliberately reject ``:`` due to NTFS / classic
   Mac filesystem semantics).
