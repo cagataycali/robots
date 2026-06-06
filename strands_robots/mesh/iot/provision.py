@@ -194,6 +194,11 @@ _ROBOT_POLICY_DOC: dict[str, Any] = {
             ],
         },
         {
+            # Intentional asymmetry vs ``AllowReceiveScoped`` below:
+            # Subscribe covers all own-prefix topics, but Receive is narrow
+            # to topics the robot actually processes inbound (cmd,
+            # response/*). Outbound-only topics (state, health, safety/event)
+            # are published by the robot, never locally subscribed-and-received.
             "Sid": "AllowOwnSubscriptions",
             "Effect": "Allow",
             "Action": "iot:Subscribe",
