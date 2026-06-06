@@ -81,7 +81,7 @@ def test_gc_max_lock_hold_does_not_serialise_concurrent_caller():
     # Heap walk is outside the lock, so the contender's worst case is the
     # snapshot copy + eviction apply, not the O(n log k) compute.
     assert max_latency[0] < 0.05, (
-        f"contender single-call latency too high: {max_latency[0]*1000:.1f}ms "
+        f"contender single-call latency too high: {max_latency[0] * 1000:.1f}ms "
         "(GC likely holding the lock across the heap walk)"
     )
 
