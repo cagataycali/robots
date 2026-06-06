@@ -78,7 +78,7 @@ _AMAZON_ROOT_CA1_URL = "https://www.amazontrust.com/repository/AmazonRootCA1.pem
 # env var augments the built-in tuple; it does not replace it.
 _AMAZON_ROOT_CA1_PINS: tuple[str, ...] = ("2c43952ee9e000ff2acc4e2ed0897c0a72ad5fa72c3d934e81741cbd54f05bd1",)
 # The legacy ``_AMAZON_ROOT_CA1_SHA256`` alias was deleted.
-# CodeQL #229 flagged it as unused after every reader was wired
+# It was unused after every reader was wired
 # through ``_resolve_ca_pins`` / ``_AMAZON_ROOT_CA1_PINS``. Internal
 # code references the tuple directly; error messages now format the
 # full pin set via ``_resolve_ca_pins`` so operators see every
@@ -164,7 +164,7 @@ _ROBOT_POLICY_DOC: dict[str, Any] = {
             ],
         },
         {
-            # F-15 / B-09: the response topic is
+            # The response topic is
             # ``strands/{operator}/response/{robot_thingname}/{turn}``.
             # The first wildcard is the OPERATOR'S thing-name (the
             # recipient inbox the robot must reach to complete the RPC).
@@ -177,7 +177,7 @@ _ROBOT_POLICY_DOC: dict[str, Any] = {
             # (``OperatorReceiveResponses`` / ``AllowOwnSubscriptions``)
             # already restricts each operator to its own response prefix;
             # this statement closes the responder-identity surface on the
-            # publish side that the pentest (F-15) proved exploitable.
+            # publish side that the response-topic spoof made exploitable.
             "Sid": "AllowResponseToAnyOperator",
             "Effect": "Allow",
             "Action": "iot:Publish",
@@ -272,7 +272,7 @@ _OPERATOR_POLICY_DOC: dict[str, Any] = {
             "Effect": "Allow",
             "Action": ["iot:Subscribe", "iot:Receive"],
             "Resource": [
-                # F-15: response topic gained a ``{robot_thingname}``
+                # The response topic gained a ``{robot_thingname}``
                 # segment (strands/{op}/response/{robot}/{turn}); the
                 # multi-level ``#`` filter covers both the old and new
                 # depth so the operator still receives every response
@@ -304,7 +304,7 @@ _OPERATOR_POLICY_DOC: dict[str, Any] = {
             ],
         },
         {
-            # F-20 / B-14: scope shadow access to strands-managed Things
+            # Scope shadow access to strands-managed Things
             # only. The bare ``thing/*`` resource let an operator cert
             # GetThingShadow / UpdateThingShadow on EVERY Thing in the
             # account (the attribute Condition does not restrict shadow
@@ -728,7 +728,7 @@ def _create_cert(iot: Any, cert_path: Path, key_path: Path) -> tuple[str, str]:
     return cert_arn, cert_id
 
 
-# Issue #261: one-WARN-per-process gate for unverified-origin CA re-use.
+# one-WARN-per-process gate for unverified-origin CA re-use.
 _UNVERIFIED_CA_WARNED: set[Path] = set()
 
 
@@ -762,7 +762,7 @@ def _ensure_ca(ca_path: Path) -> None:
         # to refresh a re-encoded cert can delete the file and let
         # the download path run with the override set.
         # O_NOFOLLOW to prevent TOCTOU symlink-swap
-        # Issue #251: chunked-read loop (mirrors verify_ca_pin). Single
+        # chunked-read loop (mirrors verify_ca_pin). Single
         # ``os.read(fd, 10MB)`` returns *up to* the requested byte count
         # so on interrupted syscalls / unusual filesystems the read can
         # return short, in which case ``_hash_matches_pin(existing)``
@@ -798,7 +798,7 @@ def _ensure_ca(ca_path: Path) -> None:
             )
             accepted = ", ".join(sorted(_resolve_ca_pins()))
             raise RuntimeError(f"AmazonRootCA1 at {ca_path} failed pin check; accepted pins: {accepted}")
-        # Issue #261: WARN if this CA was originally downloaded under
+        # WARN if this CA was originally downloaded under
         # the STRANDS_MESH_DISABLE_CA_PIN break-glass. The pin check above
         # passed (so the bytes match a known good pin), but the operator
         # should be aware that an unverified-origin CA is being re-used
@@ -847,7 +847,7 @@ def _ensure_ca(ca_path: Path) -> None:
     except OSError:
         pass
 
-    # Issue #261: when the break-glass STRANDS_MESH_DISABLE_CA_PIN was
+    # when the break-glass STRANDS_MESH_DISABLE_CA_PIN was
     # active during this download, write a sidecar marker so future
     # _ensure_ca invocations can WARN about re-using an unverified CA
     # even when the env var is no longer set.
@@ -862,8 +862,8 @@ def _ensure_ca(ca_path: Path) -> None:
             )
             # Owner-only: marker is a local sentinel read only by this
             # process via _ensure_ca; no other user needs read access.
-            # Tightens CodeQL py/overly-permissive-file-permission alert
-            # vs the prior 0o644 default.
+            # Tighter than the prior 0o644 default so the marker is not
+            # world/group readable.
             os.chmod(marker, 0o600)
         except OSError:
             # Best-effort marker write: an unwritable cert_dir already

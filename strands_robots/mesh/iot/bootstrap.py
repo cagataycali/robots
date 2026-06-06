@@ -125,7 +125,7 @@ _ESTOP_LAMBDA_SOURCE = textwrap.dedent(
 )
 
 
-# F-19 / B-13: Fleet Provisioning PreProvisioningHook. Without a hook,
+# Fleet Provisioning PreProvisioningHook. Without a hook,
 # any holder of the (shared, long-lived) claim certificate can register
 # an ARBITRARY ThingName and receive a full robot identity + policy.
 # This hook is the gate AWS IoT calls *before* provisioning: it must
@@ -554,7 +554,7 @@ def _ensure_log_group(logs: Any, account: BootstrappedAccount) -> str:
 
 
 def _ensure_provisioning_hook_role(iam: Any, account: BootstrappedAccount) -> str:
-    """Dedicated IAM role for the PreProvisioningHook Lambda (F-19 / B-13).
+    """Dedicated IAM role for the PreProvisioningHook Lambda.
 
     The hook must call ``iot:DescribeThing`` (does the target Thing already
     exist?) and ``ssm:GetParameter`` (is the serial on the allowlist?). The
@@ -632,7 +632,7 @@ def _ensure_provisioning_hook_role(iam: Any, account: BootstrappedAccount) -> st
 def _ensure_provisioning_hook_lambda(
     lam: Any, role_arn: str, account: BootstrappedAccount, *, force_update: bool = False
 ) -> str:
-    """Create/Update the Fleet Provisioning PreProvisioningHook Lambda (F-19/B-13).
+    """Create/Update the Fleet Provisioning PreProvisioningHook Lambda.
 
     Returns the function ARN. Idempotent; reuses an existing function and
     only updates its code when ``force_update`` is set.
@@ -705,7 +705,7 @@ def _grant_iot_invoke_provisioning_hook(lam: Any, hook_arn: str, account: Bootst
 def _ensure_provisioning_template(iot: Any, account: BootstrappedAccount, *, hook_lambda_arn: str = "") -> str:
     """Fleet Provisioning template — claim cert → real cert + attach robot policy.
 
-    F-19 / B-13: a ``PreProvisioningHook`` is wired so a leaked claim cert
+    A ``PreProvisioningHook`` is wired so a leaked claim cert
     cannot register an arbitrary Thing. ``hook_lambda_arn`` is the ARN of
     the gating Lambda (see :func:`_ensure_provisioning_hook_lambda`); when
     supplied it is attached via ``preProvisioningHook`` and AWS IoT calls
@@ -763,7 +763,7 @@ def _ensure_provisioning_template(iot: Any, account: BootstrappedAccount, *, hoo
                 "enabled": True,
                 "tags": [{"Key": "strands-mesh", "Value": "managed"}],
             }
-            # F-19 / B-13: gate registration on the PreProvisioningHook so a
+            # Gate registration on the PreProvisioningHook so a
             # leaked claim cert cannot self-register an arbitrary Thing.
             if hook_lambda_arn:
                 create_kwargs["preProvisioningHook"] = {
@@ -926,7 +926,7 @@ def bootstrap_account(
     out.rule_estop_arn = _ensure_estop_rule(iot, out.estop_lambda_arn, out)
     _grant_iot_invoke_lambda(lam, out.estop_lambda_arn, out)
 
-    # Fleet Provisioning PreProvisioningHook Lambda (F-19/B-13) — gate
+    # Fleet Provisioning PreProvisioningHook Lambda — gate
     # registration so a leaked claim cert cannot self-register a Thing.
     # The hook needs iot:DescribeThing + ssm:GetParameter, which the E-stop
     # role does not grant, so it gets its own least-privilege role.

@@ -12,8 +12,8 @@ Topic schema for ``strands/{peer_id}/input/{device_name}``::
         "method": "arm" | "gamepad" | "keyboard" | "phone",
         "t": <unix-timestamp>,
         "seq": <monotonic-frame-counter>,
-        "action": {"motor.pos": float, ...},
-        "events": {"terminate_episode": bool, ...} | null
+        "action": {"motor.pos": float,...},
+        "events": {"terminate_episode": bool,...} | null
     }
 """
 
@@ -274,7 +274,7 @@ class InputReceiver:
             if self._last_seq >= 0 and seq > self._last_seq + 1:
                 self._drops += seq - self._last_seq - 1
             self._last_seq = seq
-            # B-04 / F-02: validate the teleop frame before it reaches
+            # Validate the teleop frame before it reaches
             # send_action(). A LAN-adjacent peer that discovers this
             # source peer_id could otherwise drive the follower's joints
             # directly with unbounded / non-finite values. validate_input_frame

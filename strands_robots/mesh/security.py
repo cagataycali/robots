@@ -42,7 +42,7 @@ Configuration env vars
     Comma-separated extra policy_type / policy_provider values.
     Note: this single env var extends both
     :func:`is_safe_policy_type` and :func:`is_safe_policy_provider`
-    (they share one allowlist by design, see #239 bucket C).
+    (they share one allowlist by design bucket C).
 """
 
 from __future__ import annotations
@@ -122,7 +122,7 @@ MAX_OVERRIDE_CODE_LEN: int = 256
 #: frame. A leader arm streams a fixed small set of motor positions
 #: (typically 6-16); 64 leaves generous headroom while bounding a peer
 #: that floods ``_on_input`` with a giant dict to exhaust CPU/memory in
-#: the apply path. See pentest finding B-04 / F-02.
+#: the apply path.
 MAX_INPUT_FRAME_KEYS: int = 64
 
 #: Absolute bound on any single joint/motor value in a teleop frame.
@@ -141,7 +141,7 @@ _INPUT_KEY_RE = re.compile(r"^[A-Za-z0-9_.\-]+$")
 MAX_INPUT_KEY_LEN: int = 64
 
 #: Bound on the number of joints accepted in a sim ``execute`` /
-#: ``start`` payload's ``target_joints`` dict (issue #300 well-known
+#: ``start`` payload's ``target_joints`` dict (a well-known
 #: kwarg). 256 is well above any real humanoid (Asimov-V0 has ~30) and
 #: keeps a malicious payload from forcing an unbounded dict walk.
 MAX_TARGET_JOINTS: int = 256
@@ -327,13 +327,13 @@ def is_safe_policy_host(host: str) -> bool:
     """
     if not isinstance(host, str) or not host:
         return False
-    # Charset gate before strip so external callers (PR-7 tools, PR-8
-    # iot) that import this function directly via ``__all__`` are also
+    # Charset gate before strip so external callers (other tools and
+    # the IoT layer) that import this function directly via ``__all__`` are also
     # protected from CRLF / NUL / C0 control bytes. ``str.strip()``
     # below otherwise silently drops ``\r\n\t\v\f``, letting
     # ``"localhost\r\n"`` pass membership while preserving the
     # injection-shaped bytes for any caller that bypasses
-    # :func:`validate_command`. AGENTS.md > Review Learnings (#92).
+    # :func:`validate_command`. AGENTS.md > Review Learnings.
     if not _SAFE_PASSTHROUGH_RE.fullmatch(host):
         return False
     host_lc = host.strip().lower()
@@ -678,9 +678,9 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
           to disambiguate which robot in the world the policy targets.
         - ``target_pose`` (optional): list of 7 floats
           ``[x, y, z, qw, qx, qy, qz]`` for planner-style providers
-          (issue #300 well-known kwarg).
+          ( well-known kwarg).
         - ``target_joints`` (optional): dict of joint-name to float
-          (issue #300 well-known kwarg). Bounded by
+          ( well-known kwarg). Bounded by
           :data:`MAX_TARGET_JOINTS`.
         - ``world_update`` (optional): opaque dict forwarded to the
           policy via ``policy_config``. Bounded by
@@ -840,7 +840,7 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
                 )
             out["robot_name"] = value
 
-        # Issue #300 well-known per-call policy kwargs. Forwarded into
+        # Well-known per-call policy kwargs. Forwarded into
         # ``policy_config`` by the dispatcher; planner-style providers
         # (cuRobo, MoveIt2, MPC) consume them, VLA providers ignore them.
         if "target_pose" in cmd:
@@ -996,7 +996,7 @@ def validate_input_frame(action: Any) -> dict[str, float]:
     a dispatch envelope -- it is raw actuator data -- so it gets its own
     bounded validator.
 
-    Pentest finding **B-04 / F-02**: ``InputReceiver._on_input`` applied
+    ``InputReceiver._on_input`` previously applied
     frames straight to ``send_action()`` with no validation, so any
     LAN-adjacent peer that discovered a source peer_id could drive the
     follower's joints directly, bypassing the action allowlist + rate
