@@ -107,16 +107,13 @@ packages = ["strands_robots"]
 
 [tool.hatch.envs.default]
 installer = "uv"
-features = ["all"]
+# Dev tooling (pytest, ruff, mypy, ...) is inherited from the "dev" extra and
+# runtime deps from "all"; nothing is re-pinned here to avoid the two-site
+# duplication tracked in issue #214. Only deps with no project-level home live
+# below.
+features = ["all", "dev"]
 dependencies = [
-    "pytest>=6.0,<9.0.0",
-    "pytest-cov>=4.0.0,<6.0.0",
-    "ruff>=0.4.0,<1.0.0",
-    "mypy>=1.0.0,<2.0.0",
-    "Pillow>=8.0.0,<12.0.0",
     "requests>=2.28.0,<3.0.0",
-    "msgpack>=1.0.0,<2.0.0",
-    "pyzmq>=27.0.0,<28.0.0",
 ]
 
 [tool.hatch.envs.default.scripts]

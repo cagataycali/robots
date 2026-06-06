@@ -22,6 +22,20 @@ world ``ground`` plane (configurable via ``create_world(ground_plane=...)``)
 is the single source of truth; robots contribute only their own
 bodies/joints/actuators/sensors.
 
+## Unreleased - #214 (dependency pin consolidation)
+
+### Changed: hatch default env inherits deps via extras
+
+The seven dev/runtime deps that were duplicated between the project metadata
+(`[project.dependencies]` / `[project.optional-dependencies]`) and
+`[tool.hatch.envs.default].dependencies` (Pillow, pytest, pytest-cov, mypy,
+msgpack, pyzmq, ruff) are no longer re-pinned in the hatch env. The default
+env now sets `features = ["all", "dev"]` and inherits them, so a Dependabot
+bump edits a single site. Only `requests` (which has no project-level home)
+remains pinned in the hatch env. A new regression test
+(`tests/test_dependency_pin_sites.py`) fails if a project-managed dep is
+re-introduced into the hatch env list.
+
 ## Unreleased - #228 (AWS IoT provisioning hardening)
 
 ### Changed: default presigned-URL TTL for camera offload
@@ -59,6 +73,10 @@ Applies to ``strands_robots.mesh.iot.provision`` and
   ``provision_operator``, and ``teardown_thing``. Rejects path
   separators, dots, spaces, NUL, non-ASCII, and trailing
   ``\n``/``\r``/``\t``. Pre-existing AWS IoT Things containing ``:``
+
+  ``
+``/``
+``/``	``. Pre-existing AWS IoT Things containing ``:``
   must be renamed (we deliberately reject ``:`` due to NTFS / classic
   Mac filesystem semantics).
 - **IoT policy scope** — robot/operator policies use explicit
