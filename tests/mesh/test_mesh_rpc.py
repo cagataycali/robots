@@ -579,18 +579,13 @@ class TestCommandDispatchErrorAudit:
     and an audit-sink failure on this path must not crash the handler.
     """
 
-    def test_command_dispatch_error_emits_audit_event(
-        self, captured_puts: list[tuple[str, dict[str, Any]]]
-    ) -> None:
+    def test_command_dispatch_error_emits_audit_event(self, captured_puts: list[tuple[str, dict[str, Any]]]) -> None:
         m = Mesh(_FakeRobot(), peer_id="me")
-        with patch.object(
-            mesh_core, "log_safety_event"
-        ) as mock_audit, patch.object(
-            m, "_dispatch", side_effect=RuntimeError("boom-with-internal-detail")
+        with (
+            patch.object(mesh_core, "log_safety_event") as mock_audit,
+            patch.object(m, "_dispatch", side_effect=RuntimeError("boom-with-internal-detail")),
         ):
-            m._exec_cmd(
-                {"sender_id": "alice", "turn_id": "t1", "command": {"action": "status"}}
-            )
+            m._exec_cmd({"sender_id": "alice", "turn_id": "t1", "command": {"action": "status"}})
         assert mock_audit.called
         event_type = mock_audit.call_args.args[0]
         payload = mock_audit.call_args.args[2]
@@ -601,14 +596,11 @@ class TestCommandDispatchErrorAudit:
         self, captured_puts: list[tuple[str, dict[str, Any]]]
     ) -> None:
         m = Mesh(_FakeRobot(), peer_id="me")
-        with patch.object(
-            mesh_core, "log_safety_event"
-        ) as mock_audit, patch.object(
-            m, "_dispatch", side_effect=RuntimeError("boom-with-internal-detail")
+        with (
+            patch.object(mesh_core, "log_safety_event") as mock_audit,
+            patch.object(m, "_dispatch", side_effect=RuntimeError("boom-with-internal-detail")),
         ):
-            m._exec_cmd(
-                {"sender_id": "alice", "turn_id": "t2", "command": {"action": "status"}}
-            )
+            m._exec_cmd({"sender_id": "alice", "turn_id": "t2", "command": {"action": "status"}})
         payload = mock_audit.call_args.args[2]
         assert "boom-with-internal-detail" not in str(payload)
 
@@ -616,14 +608,11 @@ class TestCommandDispatchErrorAudit:
         self, captured_puts: list[tuple[str, dict[str, Any]]]
     ) -> None:
         m = Mesh(_FakeRobot(), peer_id="me")
-        with patch.object(
-            mesh_core, "log_safety_event"
-        ) as mock_audit, patch.object(
-            m, "_dispatch", side_effect=RuntimeError("boom")
+        with (
+            patch.object(mesh_core, "log_safety_event") as mock_audit,
+            patch.object(m, "_dispatch", side_effect=RuntimeError("boom")),
         ):
-            m._exec_cmd(
-                {"sender_id": "alice", "turn_id": "t3", "command": {"action": "status"}}
-            )
+            m._exec_cmd({"sender_id": "alice", "turn_id": "t3", "command": {"action": "status"}})
         payload = mock_audit.call_args.args[2]
         assert payload["sender"] == "alice"
         assert payload["action"] == "status"
@@ -632,15 +621,12 @@ class TestCommandDispatchErrorAudit:
         self, captured_puts: list[tuple[str, dict[str, Any]]]
     ) -> None:
         m = Mesh(_FakeRobot(), peer_id="me")
-        with patch.object(
-            mesh_core, "log_safety_event", side_effect=OSError("audit disk full")
-        ), patch.object(m, "_dispatch", side_effect=RuntimeError("boom")):
+        with (
+            patch.object(mesh_core, "log_safety_event", side_effect=OSError("audit disk full")),
+            patch.object(m, "_dispatch", side_effect=RuntimeError("boom")),
+        ):
             # Must not raise despite the audit sink failing.
-            m._exec_cmd(
-                {"sender_id": "alice", "turn_id": "t4", "command": {"action": "status"}}
-            )
-        payload = next(
-            d for k, d in captured_puts if k == "strands/alice/response/me/t4"
-        )
+            m._exec_cmd({"sender_id": "alice", "turn_id": "t4", "command": {"action": "status"}})
+        payload = next(d for k, d in captured_puts if k == "strands/alice/response/me/t4")
         assert payload["type"] == "error"
         assert payload["error"] == "dispatch error"
