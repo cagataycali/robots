@@ -295,7 +295,16 @@ def test_unexpected_kwargs_rejected():
 
 def test_client_connection_error_has_actionable_hint():
     """When the server is down, infer() raises ConnectionError naming the
-    server-start command (no cryptic Errno 111)."""
+    server-start command (no cryptic Errno 111).
+
+    Gated on ``openpi-client`` (the ``cosmos3-service`` extra): the real
+    Cosmos3WebsocketClient lazily imports it, so without the extra the connect
+    path is unreachable and there is nothing to assert.
+    """
+    pytest.importorskip(
+        "openpi_client.websocket_client_policy",
+        reason="openpi-client not installed - pip install 'strands-robots[cosmos3-service]'",
+    )
     from strands_robots.policies.cosmos3.client import Cosmos3WebsocketClient
 
     # Port 1 is reserved/unused -> connection refused on first lazy connect.
