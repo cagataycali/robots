@@ -408,3 +408,115 @@ class TestResumeCacheKeyNamespaceIsolation:
         assert "wire_zid is not None" in source or "wire_zid is None" in source, (
             "Domain tag conditional must use explicit None check, not truthy/falsy (empty string '' is falsy but valid)"
         )
+
+
+# ---------------------------------------------------------------------------
+# Issue #256: _resume_lockout rejection branches must unify to a single
+# audit shape with an opaque reason_code so the post-compare I/O work is
+# identical across branches (residual latency oracle from #225 R8).
+# ---------------------------------------------------------------------------
+
+
+class TestResumeDeniedUniformAuditShape:
+    """Every rejection branch in ``_resume_lockout`` must emit the same
+    wire event_type (``resume_denied``) and the same wire payload key
+    set, carrying only an opaque ``reason_code`` rather than a
+    branch-specific event_type or reason string.
+
+    Pre-fix (per the issue sketch) each branch published a distinct
+    ``event_type`` (``resume_no_lockout`` / ``resume_no_code_configured``
+    / ``resume_wrong_code``) with a distinct payload shape, leaking the
+    internal rejection reason to any peer subscribed to the safety event
+    topic and creating a per-branch I/O-cost latency oracle.
+
+    Post-fix all three branches funnel through a single
+    ``_emit_resume_denied`` helper that performs identical work (one
+    local audit write plus one wire publish with payload key set
+    ``{sender_id, reason_code}``) and the wire ``reason_code`` is the
+    uniform opaque string ``denied``.
+    """
+
+    @pytest.fixture
+    def stub_mesh_capturing(self, monkeypatch):
+        import threading
+
+        m = core.Mesh.__new__(core.Mesh)
+        m.peer_id = "test-peer"
+        m._estop_lockout = threading.Event()
+        m._last_estop_ts = 0.0
+
+        captured: list[dict] = []
+
+        def _capture(**kw):
+            captured.append(kw)
+
+        m.publish_safety_event = _capture
+        m._captured = captured
+        # Silence the local file-backed audit so the test is hermetic.
+        monkeypatch.setattr(core, "log_safety_event", lambda *a, **k: None)
+        return m
+
+    def test_resume_denied_uniform_event_type_across_branches(self, stub_mesh_capturing, monkeypatch):
+        """All three rejection paths must publish event_type
+        ``resume_denied`` -- no branch-specific event types."""
+        m = stub_mesh_capturing
+
+        # Branch 1: lockout not engaged (event cleared).
+        m._estop_lockout.clear()
+        monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "code-aaaaaaaaaaaaaaaaaaaaaaaa")
+        m._captured.clear()
+        assert m._resume_lockout("anything") == {"status": "error", "error": "resume rejected"}
+        branch1_events = [e["event_type"] for e in m._captured]
+
+        # Branch 2: lockout engaged but no override code configured.
+        monkeypatch.delenv("STRANDS_MESH_OVERRIDE_CODE", raising=False)
+        m._estop_lockout.set()
+        m._captured.clear()
+        assert m._resume_lockout("anything") == {"status": "error", "error": "resume rejected"}
+        branch2_events = [e["event_type"] for e in m._captured]
+
+        # Branch 3: lockout engaged, code configured, wrong code given.
+        monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "code-aaaaaaaaaaaaaaaaaaaaaaaa")
+        m._estop_lockout.set()
+        m._captured.clear()
+        assert m._resume_lockout("wrong-code-zzzzzzzzzzzzzzzzzz") == {"status": "error", "error": "resume rejected"}
+        branch3_events = [e["event_type"] for e in m._captured]
+
+        assert branch1_events == ["resume_denied"], branch1_events
+        assert branch2_events == ["resume_denied"], branch2_events
+        assert branch3_events == ["resume_denied"], branch3_events
+
+    def test_resume_denied_payload_shape_uniform_across_branches(self, stub_mesh_capturing, monkeypatch):
+        """The wire payload key set must be identical across all three
+        rejection branches, and the ``reason_code`` value must be the
+        uniform opaque string ``denied`` (the structured reason stays in
+        the local audit log only)."""
+        m = stub_mesh_capturing
+
+        payloads = []
+
+        # Branch 1: lockout not engaged.
+        m._estop_lockout.clear()
+        monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "code-aaaaaaaaaaaaaaaaaaaaaaaa")
+        m._captured.clear()
+        m._resume_lockout("anything")
+        payloads.append(m._captured[0]["payload"])
+
+        # Branch 2: no override code configured.
+        monkeypatch.delenv("STRANDS_MESH_OVERRIDE_CODE", raising=False)
+        m._estop_lockout.set()
+        m._captured.clear()
+        m._resume_lockout("anything")
+        payloads.append(m._captured[0]["payload"])
+
+        # Branch 3: wrong code.
+        monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "code-aaaaaaaaaaaaaaaaaaaaaaaa")
+        m._estop_lockout.set()
+        m._captured.clear()
+        m._resume_lockout("wrong-code-zzzzzzzzzzzzzzzzzz")
+        payloads.append(m._captured[0]["payload"])
+
+        key_sets = [frozenset(p.keys()) for p in payloads]
+        assert key_sets[0] == key_sets[1] == key_sets[2], key_sets
+        for p in payloads:
+            assert p["reason_code"] == "denied", p
