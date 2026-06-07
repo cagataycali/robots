@@ -37,7 +37,23 @@ Configuration
 ``STRANDS_MESH_CAMERA_S3_PREFIX``
     Optional prefix inside the bucket (defaults to ``""``).
 ``STRANDS_MESH_CAMERA_PRESIGN_TTL``
-    Seconds the presigned GET URL stays valid (default 3600).
+    Seconds the presigned GET URL stays valid. Defaults to
+    :data:`DEFAULT_PRESIGN_TTL_SECONDS` (60s); clamped at
+    :data:`MAX_PRESIGN_TTL_SECONDS` (1 hour) to prevent accidental
+    day- or week-long URLs. Pass ``presign_ttl=N`` to override
+    explicitly; the env-var fallback only applies when the kwarg is
+    ``None``.
+
+Bucket-ownership threat model
+-----------------------------
+The S3 PutObject path in :meth:`CameraOffloader._upload_frame` does
+not pass an ``ACL=`` kwarg. The contract for the offload bucket is
+that the operator configures it with object-ownership control
+``BucketOwnerEnforced`` (and a bucket policy that denies public
+ACLs); that enforcement is out of scope for this library because
+deployments differ on whether the bucket is shared with non-mesh
+producers. A future code-side ``ACL="private"`` + ``ChecksumAlgorithm``
+hardening is tracked in #249.
 """
 
 from __future__ import annotations
@@ -50,7 +66,13 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-DEFAULT_PRESIGN_TTL_SECONDS = 3600
+# Lifetime of the presigned GET URL we hand out for each camera frame.
+# Kept deliberately short -- anyone who briefly captures a /ref MQTT message
+# can use the URL inside this window. ``STRANDS_MESH_CAMERA_PRESIGN_TTL``
+# overrides for higher-latency consumers, clamped to MAX_PRESIGN_TTL_SECONDS
+# (1 hour) to prevent accidental day- or week-long URLs.
+DEFAULT_PRESIGN_TTL_SECONDS = 60
+MAX_PRESIGN_TTL_SECONDS = 3600
 
 
 class CameraOffloader:
@@ -70,9 +92,46 @@ class CameraOffloader:
     ) -> None:
         self.bucket = bucket or os.getenv("STRANDS_MESH_CAMERA_S3_BUCKET", "")
         self.prefix = (prefix or os.getenv("STRANDS_MESH_CAMERA_S3_PREFIX") or "").strip("/")
-        self.presign_ttl = presign_ttl or int(
-            os.getenv("STRANDS_MESH_CAMERA_PRESIGN_TTL", str(DEFAULT_PRESIGN_TTL_SECONDS))
-        )
+        if presign_ttl is not None:
+            ttl_raw = presign_ttl
+        else:
+            raw_env = os.getenv("STRANDS_MESH_CAMERA_PRESIGN_TTL")
+            if raw_env is None or raw_env == "":
+                ttl_raw = DEFAULT_PRESIGN_TTL_SECONDS
+            else:
+                try:
+                    ttl_raw = int(raw_env)
+                except ValueError:
+                    logger.warning(
+                        "[camera_offload] STRANDS_MESH_CAMERA_PRESIGN_TTL=%r is not an integer; using default %ds",
+                        raw_env,
+                        DEFAULT_PRESIGN_TTL_SECONDS,
+                    )
+                    ttl_raw = DEFAULT_PRESIGN_TTL_SECONDS
+        if ttl_raw > MAX_PRESIGN_TTL_SECONDS:
+            logger.warning(
+                "[camera_offload] STRANDS_MESH_CAMERA_PRESIGN_TTL=%d > %d cap; clamping",
+                ttl_raw,
+                MAX_PRESIGN_TTL_SECONDS,
+            )
+            ttl_raw = MAX_PRESIGN_TTL_SECONDS
+        if ttl_raw < 1:
+            # Issue #262: WARN on any sub-1 value EXCEPT exactly 0.
+            # ``presign_ttl=0`` is the documented kwarg-vs-env-precedence
+            # sentinel pinned by ``test_presign_ttl_none_vs_zero.py`` (R1
+            # fix). ``presign_ttl=-99`` is unambiguously a bug at the call
+            # site -- no caller deliberately wants a negative TTL clamped
+            # to 1 -- and we surface it. The env-var path always WARNs
+            # (operator-side bug if STRANDS_MESH_CAMERA_PRESIGN_TTL=-99).
+            if presign_ttl is None or presign_ttl != 0:
+                source = "env" if presign_ttl is None else "kwarg"
+                logger.warning(
+                    "[camera_offload] presign_ttl=%d < 1 floor; clamping to 1s (source=%s)",
+                    ttl_raw,
+                    source,
+                )
+            ttl_raw = 1
+        self.presign_ttl = ttl_raw
         self.region = region or os.getenv("AWS_REGION", os.getenv("AWS_DEFAULT_REGION"))
         self._s3: Any | None = None
 
@@ -120,7 +179,7 @@ class CameraOffloader:
                 Body=jpeg_bytes,
                 ContentType="image/jpeg",
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- boto3 raises ClientError, EndpointConnectionError, NoCredentialsError, etc.; offload is best-effort
             logger.debug("[camera_offload] put_object %s failed: %s", key, exc)
             return None
 
@@ -130,7 +189,7 @@ class CameraOffloader:
                 Params={"Bucket": self.bucket, "Key": key},
                 ExpiresIn=self.presign_ttl,
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- boto3 ClientError / NoCredentialsError; presign is best-effort
             logger.debug("[camera_offload] presign %s failed: %s", key, exc)
             url = None
 
@@ -181,7 +240,7 @@ def enable_for_mesh(mesh: Any, offloader: CameraOffloader | None = None) -> Came
         # call it to preserve any user customisation that might have been added).
         try:
             original()
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- original is user-customised; offload must not block on user code
             logger.debug("[camera_offload] original _publish_cameras_once raised: %s", exc)
 
         # Now do the S3 offload + ref publish per camera.
@@ -195,13 +254,14 @@ def enable_for_mesh(mesh: Any, offloader: CameraOffloader | None = None) -> Came
 
         try:
             obs = inner.get_observation()
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 -- LeRobot get_observation() may raise hardware-specific errors
+            logger.debug("[camera_offload] get_observation failed: %s", exc)
             return
 
         try:
             import cv2
-        except Exception:
-            logger.debug("[camera_offload] cv2 unavailable — skipping S3 upload")
+        except ImportError:
+            logger.debug("[camera_offload] cv2 unavailable -- skipping S3 upload")
             return
 
         transport = current_transport()
@@ -231,8 +291,17 @@ def enable_for_mesh(mesh: Any, offloader: CameraOffloader | None = None) -> Came
                 if ref is None:
                     continue
                 ref["shape"] = list(shape)
+                # Publish the /ref topic via the transport layer.
+                # On ``iot`` the IoT Policy's AllowOwnTopics statement
+                # bounds writes to ``strands/<ThingName>/*`` (covers
+                # ``camera/*/ref`` via the trailing wildcard); on
+                # ``bridge`` the Zenoh ACL adds a LAN-side gate on top.
+                # ``enable_for_mesh`` early-returns unless the active
+                # backend is one of those two, so the publish reaches
+                # the wire only when at least one of these gates is in
+                # force.
                 transport.put(f"strands/{mesh.peer_id}/camera/{cam_name}/ref", ref)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 -- numpy / cv2 / transport.put can raise diverse errors per frame; offload is best-effort
                 logger.debug(
                     "[camera_offload] %s/%s offload failed: %s",
                     mesh.peer_id,
