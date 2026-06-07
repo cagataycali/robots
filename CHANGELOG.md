@@ -59,10 +59,6 @@ Applies to ``strands_robots.mesh.iot.provision`` and
   ``provision_operator``, and ``teardown_thing``. Rejects path
   separators, dots, spaces, NUL, non-ASCII, and trailing
   ``\n``/``\r``/``\t``. Pre-existing AWS IoT Things containing ``:``
-
-  ``
-``/``
-``/``	``. Pre-existing AWS IoT Things containing ``:``
   must be renamed (we deliberately reject ``:`` due to NTFS / classic
   Mac filesystem semantics).
 - **IoT policy scope** — robot/operator policies use explicit
@@ -147,8 +143,7 @@ WARNING symmetry), #260 (warn on re-use of break-glass-written CA).
   `unitree_g1` discovery, unknown-type clean error, kwarg filtering,
   and the cleanup AttributeError fix. All run with
   `pytest.importorskip("lerobot")`.
-  cleanup AttributeError fix, dataclass-field forwarding, and more. All
-  run with `pytest.importorskip("lerobot")`.
+
 ## Unreleased - #178 (LiberoOffScreenRenderEngine retired)
 
 ### Removed: ``LiberoOffScreenRenderEngine`` simulation backend (BREAKING)
