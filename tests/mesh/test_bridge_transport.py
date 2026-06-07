@@ -82,29 +82,35 @@ class TestEnvFilter:
 
 
 class TestEnvPrefixFilter:
-    """Pin STRANDS_MESH_BRIDGE_TOPICS_PREFIX reader against the README matrix.
+    """Pin STRANDS_MESH_BRIDGE_TOPICS_PREFIX reader and its unset-default.
 
-    Regression for issue #244: the env-var reader and its unset-default must
-    stay in lockstep with the README ``Mesh security configuration`` row that
-    documents STRANDS_MESH_BRIDGE_TOPICS_PREFIX with a default of ``response``.
+    Regression for issue #244: the env-var reader (_resolve_bridge_prefix_filter)
+    and its unset-default must stay consistent with the Phase-4 cloud-pollution
+    hardening documented in bridge_transport.py:107-121 and the
+    _DEFAULT_BRIDGE_PREFIX_SUFFIXES constant (bridge_transport.py:140-155).
     """
 
-    _README_HINT = (
-        "README env-var matrix row STRANDS_MESH_BRIDGE_TOPICS_PREFIX "
-        "(Mesh security configuration section) is out of sync with the reader"
+    _READER_HINT = (
+        "reader _resolve_bridge_prefix_filter() drifted from documented default; "
+        "cross-check bridge_transport.py _DEFAULT_BRIDGE_PREFIX_SUFFIXES "
+        "and the Phase-4 hardening comment at bridge_transport.py:107-121"
     )
 
     def test_env_var_name_parses_comma_separated_prefixes(self, monkeypatch):
         monkeypatch.setenv("STRANDS_MESH_BRIDGE_TOPICS_PREFIX", "response, telemetry")
         f = _resolve_bridge_prefix_filter()
-        assert "response" in f, self._README_HINT
-        assert "telemetry" in f, self._README_HINT
+        assert "response" in f, self._READER_HINT
+        assert "telemetry" in f, self._READER_HINT
+        # Verify whitespace is stripped (the reader calls .strip())
+        assert " telemetry" not in f, "reader must strip whitespace around entries"
 
     def test_unset_default_is_response_prefix(self, monkeypatch):
         monkeypatch.delenv("STRANDS_MESH_BRIDGE_TOPICS_PREFIX", raising=False)
         f = _resolve_bridge_prefix_filter()
-        assert f == _DEFAULT_BRIDGE_PREFIX_SUFFIXES, self._README_HINT
-        assert f == frozenset({"response"}), self._README_HINT
+        # Literal pin is the authoritative assertion; constant equality is a
+        # bonus sanity check that catches symbol renames.
+        assert f == frozenset({"response"}), self._READER_HINT
+        assert f == _DEFAULT_BRIDGE_PREFIX_SUFFIXES, self._READER_HINT
 
     def test_unset_default_bridges_response_tail(self, monkeypatch):
         monkeypatch.delenv("STRANDS_MESH_BRIDGE_TOPICS_PREFIX", raising=False)
@@ -116,11 +122,44 @@ class TestEnvPrefixFilter:
                 prefixes,
             )
             is True
-        ), self._README_HINT
+        ), self._READER_HINT
 
-    def test_empty_env_falls_back_to_default(self, monkeypatch):
+    def test_unset_default_blocks_cmd_tail(self, monkeypatch):
+        """Pin the Phase-4 security property: cmd is exact-match only.
+
+        A future refactor that widens _DEFAULT_BRIDGE_PREFIX_SUFFIXES to
+        include 'cmd' (or reverts the exact/prefix split) would let
+        strands/<peer>/cmd/<attacker-tail> bridge to MQTT -- the exact
+        regression #244 exists to prevent.
+        """
+        monkeypatch.delenv("STRANDS_MESH_BRIDGE_TOPICS_PREFIX", raising=False)
+        prefixes = _resolve_bridge_prefix_filter()
+        assert (
+            _should_bridge(
+                "strands/peer1/cmd/attacker-blob",
+                DEFAULT_BRIDGE_SUFFIXES,
+                prefixes,
+            )
+            is False
+        ), (
+            "cmd must be exact-match only; cmd/<tail> must NOT bridge. "
+            "See Phase-4 hardening in bridge_transport.py:107-121"
+        )
+
+    def test_empty_env_prefix_falls_back_to_default(self, monkeypatch):
         monkeypatch.setenv("STRANDS_MESH_BRIDGE_TOPICS_PREFIX", "")
-        assert _resolve_bridge_prefix_filter() == _DEFAULT_BRIDGE_PREFIX_SUFFIXES, self._README_HINT
+        assert _resolve_bridge_prefix_filter() == _DEFAULT_BRIDGE_PREFIX_SUFFIXES, self._READER_HINT
+
+    def test_whitespace_only_env_prefix_falls_back_to_default(self, monkeypatch):
+        """Covers the 'if not parts' branch when env is whitespace-only."""
+        monkeypatch.setenv("STRANDS_MESH_BRIDGE_TOPICS_PREFIX", "   ")
+        assert _resolve_bridge_prefix_filter() == _DEFAULT_BRIDGE_PREFIX_SUFFIXES, self._READER_HINT
+
+    def test_topics_env_does_not_leak_into_prefix_default(self, monkeypatch):
+        """Pin independence of STRANDS_MESH_BRIDGE_TOPICS vs _PREFIX."""
+        monkeypatch.setenv("STRANDS_MESH_BRIDGE_TOPICS", "foo,bar")
+        monkeypatch.delenv("STRANDS_MESH_BRIDGE_TOPICS_PREFIX", raising=False)
+        assert _resolve_bridge_prefix_filter() == frozenset({"response"})
 
 
 # _should_bridge — the real fan-out gate
