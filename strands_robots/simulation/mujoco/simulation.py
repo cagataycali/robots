@@ -1784,6 +1784,13 @@ class MuJoCoSimEngine(
         if err := self._require_no_running_policy("start_policy", robot_name=robot_name):
             return err
 
+        # Concurrent multi-robot policies run on disjoint ctrl slices (physics
+        # serialized by _lock). For SYNCHRONIZED multi-robot *recording* (both
+        # robots captured in one merged frame per step), use run_multi_policy
+        # instead — independent start_policy threads each step physics and write
+        # frames separately, which is correct for live control but interleaves
+        # for a shared recorder. start_policy while recording is left to the
+        # caller's intent (run_multi_policy is the recommended recording path).
         future = self._executor.submit(
             self.run_policy,
             robot_name,
@@ -1921,6 +1928,209 @@ class MuJoCoSimEngine(
         finally:
             if self._world is not None and robot_name in self._world.robots:
                 self._world.robots[robot_name].policy_running = False
+
+    def run_multi_policy(
+        self,
+        policies: dict[str, "Policy"],
+        instructions: dict[str, str] | str = "",
+        duration: float = 10.0,
+        control_frequency: float = 50.0,
+        action_horizon: int = 8,
+        n_steps: int | None = None,
+        max_steps: int | None = None,
+    ) -> dict[str, Any]:
+        """Drive MULTIPLE robots with their own policies in a SINGLE
+        synchronized control loop, recording ALL robots into ONE merged frame
+        per timestep.
+
+        This is the correct path for concurrent multi-robot data collection
+        (e.g. two SO-100 arms doing a handover, or a bimanual setup). Unlike
+        launching two independent ``start_policy`` threads — which each step
+        physics and call ``add_frame`` separately, so the shared recorder
+        receives interleaved single-robot frames (B4) — this loop:
+
+        1. Observes every robot (joints) and renders all cameras ONCE.
+        2. Queries each robot's policy for its action.
+        3. Applies every robot's ctrl writes, then steps physics ONCE.
+        4. Records ONE frame containing ALL robots' prefixed state/action
+           (``alice__shoulder_pan`` …) plus all camera images.
+
+        So a 2-robot dataset has both arms co-observed in every frame — usable
+        for bimanual / multi-agent policy training.
+
+        Args:
+            policies: Mapping ``{robot_name: Policy}``. Each robot must exist in
+                the scene. Order defines the state/action column order.
+            instructions: Either a single instruction string applied to all
+                robots, or a ``{robot_name: instruction}`` mapping. The frame's
+                recorded task is the first robot's instruction (LeRobot stores
+                one task per frame).
+            duration: Episode length in seconds (steps = duration × freq).
+            control_frequency: Target Hz for policy action queries / physics.
+            action_horizon: Max actions consumed from each policy's chunk per
+                query (mirrors ``run_policy``).
+            n_steps: Alternate horizon in steps (overrides duration when set).
+            max_steps: Legacy alias for ``n_steps``.
+
+        Returns:
+            Standard status dict with per-robot step counts.
+        """
+        import numpy as np
+
+        from strands_robots._async_utils import _resolve_coroutine
+
+        if self._world is None or self._world._model is None or self._world._data is None:
+            return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
+        if not policies:
+            return {"status": "error", "content": [{"text": "run_multi_policy: 'policies' is empty."}]}
+
+        # Validate every robot exists.
+        for rname in policies:
+            if rname not in self._world.robots:
+                return {"status": "error", "content": [{"text": f"Robot '{rname}' not found."}]}
+
+        # Reject if any of these robots already has a running async policy
+        # (would double-step physics on that robot).
+        self._prune_done_futures()
+        busy = [r for r in policies if (f := self._policy_threads.get(r)) is not None and not f.done()]
+        if busy:
+            names = ", ".join(f"'{n}'" for n in busy)
+            return {
+                "status": "error",
+                "content": [{"text": f"run_multi_policy: policy already running on {names}. Stop it first."}],
+            }
+
+        # Normalize instructions to a per-robot mapping.
+        if isinstance(instructions, str):
+            instr_map = {r: instructions for r in policies}
+        else:
+            instr_map = {r: instructions.get(r, "") for r in policies}
+
+        # Resolve horizon (n_steps / max_steps override duration).
+        if n_steps is None and max_steps is not None:
+            n_steps = int(max_steps)
+        if n_steps is not None:
+            if n_steps <= 0 or control_frequency <= 0:
+                return {"status": "error", "content": [{"text": "run_multi_policy: n_steps and control_frequency must be > 0."}]}
+            duration = float(n_steps) / float(control_frequency)
+
+        # Bind robot_state_keys for each policy (per-robot joint names).
+        for rname, pol in policies.items():
+            try:
+                pol.set_robot_state_keys(self.robot_joint_names(rname))
+            except Exception as exc:  # noqa: BLE001 - non-fatal, mirrors run_policy defensiveness
+                logger.debug("set_robot_state_keys(%s) failed: %s", rname, exc)
+
+        multi_robot = len(self._world.robots) > 1
+        recorder = self._world._backend_state.get("dataset_recorder")
+        recording = bool(self._world._backend_state.get("recording", False)) and recorder is not None
+
+        # Whether ANY policy needs images (renders are expensive; skip if none
+        # need them AND we're not recording — recording always needs frames).
+        any_needs_images = any(getattr(p, "requires_images", True) for p in policies.values())
+        skip_images = not (any_needs_images or recording)
+
+        total_steps = int(duration * control_frequency)
+        action_sleep = 1.0 / control_frequency if control_frequency > 0 else 0.0
+
+        # Mark all robots as running so stop_policy can interrupt the loop.
+        for rname in policies:
+            r = self._world.robots[rname]
+            r.policy_running = True
+            r.policy_instruction = instr_map[rname]
+            r.policy_steps = 0
+
+        step_count = 0
+        stopped_early = False
+        try:
+            while step_count < total_steps:
+                # --- 1. Observe every robot + render cameras ONCE (under lock).
+                # get_observation renders ALL cameras, so we only need to fetch
+                # the camera images once (from any robot's observation); per-robot
+                # we keep the scalar joint values.
+                per_robot_obs: dict[str, dict[str, Any]] = {}
+                camera_imgs: dict[str, Any] = {}
+                first = True
+                for rname in policies:
+                    obs = self.get_observation(robot_name=rname, skip_images=(skip_images or not first))
+                    # Split scalars (joints) from ndarrays (camera images).
+                    scal = {k: v for k, v in obs.items() if not isinstance(v, np.ndarray)}
+                    per_robot_obs[rname] = scal
+                    if first:
+                        camera_imgs = {k: v for k, v in obs.items() if isinstance(v, np.ndarray)}
+                        first = False
+
+                # --- 2. Query each policy for its action.
+                per_robot_action: dict[str, dict[str, Any]] = {}
+                for rname, pol in policies.items():
+                    # Cooperative stop check.
+                    if not self._world.robots[rname].policy_running:
+                        raise CooperativeStop(f"Policy stopped on '{rname}'")
+                    pol_obs = dict(per_robot_obs[rname])
+                    # Give the policy this robot's camera view(s) too.
+                    pol_obs.update(camera_imgs)
+                    coro = pol.get_actions(pol_obs, instr_map[rname])
+                    acts = _resolve_coroutine(coro)
+                    # Use first action of the chunk this step (synchronized loop
+                    # advances all robots one control step at a time).
+                    per_robot_action[rname] = acts[0] if acts else {}
+
+                # --- 3. Apply ALL robots' ctrl, then step physics ONCE.
+                with self._lock:
+                    mj = self._mj
+                    for rname, act in per_robot_action.items():
+                        # write ctrl only (no per-robot mj_step) — we step once
+                        # after every robot's ctrl is set.
+                        robot = self._world.robots[rname]
+                        pfx = robot.namespace or ""
+                        self._apply_action_by_name(self._world._model, self._world._data, act, pfx, mj)
+                    mj.mj_step(self._world._model, self._world._data)
+                    self._world.sim_time = self._world._data.time
+                    self._world.step_count += 1
+                    if hasattr(self, "_viewer_handle") and self._viewer_handle is not None:
+                        self._viewer_handle.sync()
+
+                # --- 4. Record ONE merged frame (all robots + all cameras).
+                if recording:
+                    merged_obs: dict[str, Any] = {}
+                    merged_act: dict[str, Any] = {}
+                    for rname in policies:
+                        if multi_robot:
+                            for k, v in per_robot_obs[rname].items():
+                                merged_obs[f"{rname}__{k}"] = v
+                            for k, v in per_robot_action[rname].items():
+                                merged_act[f"{rname}__{k}"] = v
+                        else:
+                            merged_obs.update(per_robot_obs[rname])
+                            merged_act.update(per_robot_action[rname])
+                    # Cameras are scene-global (already namespaced if injected
+                    # per-robot); keep ndarray keys as-is.
+                    merged_obs.update(camera_imgs)
+                    task = instr_map[next(iter(policies))]
+                    with self._lock:
+                        recorder.add_frame(observation=merged_obs, action=merged_act, task=task)
+
+                step_count += 1
+                for rname in policies:
+                    self._world.robots[rname].policy_steps = step_count
+
+                if action_sleep:
+                    time.sleep(action_sleep)
+
+        except CooperativeStop:
+            stopped_early = True
+        finally:
+            for rname in policies:
+                if rname in self._world.robots:
+                    self._world.robots[rname].policy_running = False
+
+        text = (
+            f"{'⏹ stopped early' if stopped_early else '✅ completed'}: "
+            f"run_multi_policy on {len(policies)} robots ({', '.join(policies)}) — "
+            f"{step_count} synchronized steps"
+            f"{' (recorded)' if recording else ''}"
+        )
+        return {"status": "success", "content": [{"text": text}], "steps": step_count}
 
     # Action name aliases (tool-action -> method-name)
     _ACTION_ALIASES = {

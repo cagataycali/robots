@@ -88,14 +88,26 @@ class RecordingMixin:
         self._world._backend_state["trajectory"] = []
         self._world._backend_state["push_to_hub"] = push_to_hub
 
+        # Resolve the on-disk dataset dir (shared by overwrite + resume logic).
+        if root:
+            dataset_dir = Path(root)
+        elif "/" not in repo_id or repo_id.startswith("/") or repo_id.startswith("./"):
+            dataset_dir = Path(repo_id)
+        else:
+            dataset_dir = Path.home() / ".cache" / "huggingface" / "lerobot" / repo_id
+
+        # Multi-episode append: when NOT overwriting and a dataset already
+        # exists on disk, resume it (append new episodes) instead of calling
+        # create() — which hard-fails with FileExistsError (B12). resume() is
+        # the only correct append path in LeRobot 0.5.2+ (the plain constructor
+        # is read-only). When overwrite=True, wipe and recreate from scratch.
+        resume_existing = (
+            not overwrite and dataset_dir.exists() and dataset_dir.is_dir()
+            and (dataset_dir / "meta").exists()
+        )
+
         try:
             if overwrite:
-                if root:
-                    dataset_dir = Path(root)
-                elif "/" not in repo_id or repo_id.startswith("/") or repo_id.startswith("./"):
-                    dataset_dir = Path(repo_id)
-                else:
-                    dataset_dir = Path.home() / ".cache" / "huggingface" / "lerobot" / repo_id
                 if dataset_dir.exists() and dataset_dir.is_dir():
                     shutil.rmtree(dataset_dir)
                     logger.info("Removed existing dataset dir: %s", dataset_dir)
@@ -143,19 +155,29 @@ class RecordingMixin:
                     camera_dims[safe_name] = (int(self.default_height), int(self.default_width))
 
             assert _DatasetRecorder is not None  # checked above
-            self._world._backend_state["dataset_recorder"] = _DatasetRecorder.create(
-                repo_id=repo_id,
-                fps=fps,
-                robot_type=robot_type,
-                joint_names=joint_names,
-                camera_keys=camera_keys,
-                camera_dims=camera_dims,
-                task=task,
-                root=root,
-                vcodec=vcodec,
-                video_width=self.default_width,
-                video_height=self.default_height,
-            )
+            if resume_existing:
+                # Append to the existing dataset (schema inherited from disk).
+                logger.info("Resuming existing dataset for append: %s", dataset_dir)
+                self._world._backend_state["dataset_recorder"] = _DatasetRecorder.resume(
+                    repo_id=repo_id,
+                    root=root,
+                    task=task,
+                    vcodec=vcodec,
+                )
+            else:
+                self._world._backend_state["dataset_recorder"] = _DatasetRecorder.create(
+                    repo_id=repo_id,
+                    fps=fps,
+                    robot_type=robot_type,
+                    joint_names=joint_names,
+                    camera_keys=camera_keys,
+                    camera_dims=camera_dims,
+                    task=task,
+                    root=root,
+                    vcodec=vcodec,
+                    video_width=self.default_width,
+                    video_height=self.default_height,
+                )
             return {
                 "status": "success",
                 "content": [

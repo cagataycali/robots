@@ -199,6 +199,92 @@ class DatasetRecorder:
         return recorder
 
     @classmethod
+    def resume(
+        cls,
+        repo_id: str,
+        root: str | None = None,
+        task: str = "",
+        vcodec: str = "libsvtav1",
+        streaming_encoding: bool = True,
+        image_writer_threads: int = 4,
+        video_backend: str = "auto",
+    ) -> "DatasetRecorder":
+        """Resume recording into an EXISTING LeRobotDataset (append episodes).
+
+        Unlike :meth:`create` (which calls ``LeRobotDataset.create`` and
+        hard-fails with ``FileExistsError`` if the dataset dir already
+        exists), this opens an on-disk dataset via ``LeRobotDataset.resume``
+        so further ``add_frame``/``save_episode`` calls append new episodes.
+
+        This is the multi-episode data-collection path: ``start_recording``
+        with ``overwrite=False`` on an existing dataset routes here instead of
+        crashing. The plain ``LeRobotDataset(repo_id, root=...)`` constructor
+        returns a READ-ONLY dataset (``add_frame`` raises), so ``resume()`` is
+        the only correct append entry point in LeRobot 0.5.2+.
+
+        Feature schema is inherited from the existing dataset on disk — the
+        caller's joint/camera layout must match what was originally recorded.
+
+        Args:
+            repo_id: HuggingFace dataset ID (same as the original recording).
+            root: Local dataset directory (same as the original recording).
+            task: Default task description for appended frames.
+            vcodec: Video codec (routed into ``camera_encoder`` on 0.5.2+).
+            streaming_encoding: Stream-encode video during capture.
+            image_writer_threads: Threads for writing image frames.
+            video_backend: Video backend for encoding.
+
+        Returns:
+            A DatasetRecorder wrapping the resumed dataset.
+        """
+        import inspect
+
+        LeRobotDatasetCls = _get_lerobot_dataset_class()
+
+        if not hasattr(LeRobotDatasetCls, "resume"):
+            # Older LeRobot (0.5.0/0.5.1) has no resume(); the append workflow
+            # is unsupported there. Surface a clear error rather than a cryptic
+            # read-only add_frame failure downstream.
+            raise RuntimeError(
+                "This LeRobot version has no LeRobotDataset.resume(); "
+                "multi-episode append requires lerobot>=0.5.2. "
+                "Use overwrite=True for a fresh single-session dataset."
+            )
+
+        resume_sig = inspect.signature(LeRobotDatasetCls.resume).parameters
+        resume_kwargs: dict[str, Any] = dict(repo_id=repo_id, root=root)
+        # Mirror create()'s version-tolerant codec routing.
+        if "vcodec" in resume_sig:
+            resume_kwargs["vcodec"] = vcodec
+        elif "camera_encoder" in resume_sig:
+            try:
+                from lerobot.configs.video import VideoEncoderConfig
+
+                resume_kwargs["camera_encoder"] = VideoEncoderConfig(vcodec=vcodec)
+            except (ImportError, Exception) as exc:  # noqa: BLE001
+                logger.warning("VideoEncoderConfig(vcodec=%r) unavailable on resume (%s)", vcodec, exc)
+        if "streaming_encoding" in resume_sig:
+            resume_kwargs["streaming_encoding"] = streaming_encoding
+        if "image_writer_threads" in resume_sig:
+            resume_kwargs["image_writer_threads"] = image_writer_threads
+        if "video_backend" in resume_sig:
+            resume_kwargs["video_backend"] = video_backend
+
+        dataset = LeRobotDatasetCls.resume(**resume_kwargs)
+        recorder = cls(dataset=dataset, task=task)
+        # Seed counters from the existing dataset so reporting reflects totals.
+        try:
+            recorder.episode_count = int(dataset.meta.total_episodes)
+            recorder.frame_count = int(dataset.meta.total_frames)
+        except Exception:  # noqa: BLE001 - counters are best-effort
+            pass
+        logger.info(
+            "DatasetRecorder resumed: %s (%d existing episodes)",
+            repo_id, recorder.episode_count,
+        )
+        return recorder
+
+    @classmethod
     def _build_features(
         cls,
         robot_features: dict | None = None,

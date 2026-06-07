@@ -642,3 +642,118 @@ get_actions(raw_obs) -> preprocess(raw_obs)   # rename + pack_state + batch + no
 - `robot_state_keys=` (non-generic) → auto-synthesises a trivial embodiment so
   existing callers get the clean pipeline path for free.
 - GR00T path untouched (already declarative).
+
+---
+
+## 🧪 SUMMIT 0.4 PRE-RELEASE E2E PASS (e2e_summit/harness.py)
+
+Systematic multi-robot × multi-camera × multi-res × concurrent matrix on
+lerobot 0.5.2 / mujoco 3.9.0 / MUJOCO_GL=egl (NVIDIA Thor box, torch CPU).
+
+| Test | Scenario | Verdict |
+|------|----------|---------|
+| T1 | single robot (so101) + cam, mock policy, record→readback | ✅ frames=20, state/action real |
+| T2 | 1 robot + 3 cams @ 256²/320×240/128² (B2 stress) | ✅ each cam declared+rendered at own res |
+| T3 | 2 robots (alice+bob so100), record alice (B1) | ✅ 12-dim prefixed schema, alice real / bob zero |
+| T4 | 2 robots + python cams, namespacing | ✅ no '/' leaks, cams `__`-collapsed |
+| T5 | **concurrent** policies on 2 robots while recording | 🔴 **B4 CONFIRMED** |
+| T6 | multi-episode append (3 eps, same dataset) | 🔴 **B12 NEW** |
+| T7 | embodiment map vs live sim joints (11 robots) | ✅ all state_keys ∈ sim joints |
+
+### 🔴 B4 — Concurrent multi-robot recording interleaves single-robot frames (CONFIRMED LIVE)
+**Severity: HIGH — concurrent dual-arm data collection is structurally broken.**
+T5 ran mock policies on alice+bob simultaneously (`start_policy` ×2) while
+recording. Result: 40 frames, but in **0/40** frames did both robots' action
+columns move together. Each `add_frame` carries ONE robot's state (the other's
+12-6 cols are zero), because both hooks write to the **shared**
+`_backend_state["trajectory"]` + single `dataset_recorder` with no per-frame
+sync/merge. Downstream: a "dual-arm" dataset where the two arms are never
+co-observed — useless for bimanual policy training.
+**Root cause:** `_make_run_policy_hook` (simulation.py:1833) — each robot's
+on_frame appends independently; no barrier that collects both robots' obs into
+one combined frame before `add_frame`.
+
+### 🔴 B12 — start_recording(overwrite=False) crashes on existing dir (NEW, CONFIRMED LIVE)
+**Severity: MED/HIGH — multi-episode append workflow is broken.**
+The canonical data-collection loop is: start_recording → run episode →
+stop_recording → start_recording(append) → run episode → … But the 2nd
+start_recording on the same dataset dir raises:
+```
+Dataset init failed: [Errno 17] File exists: '/tmp/t6_xxx'
+```
+**Root cause:** `RecordingMixin.start_recording` only deletes the dir when
+`overwrite=True`; otherwise it unconditionally calls `DatasetRecorder.create()`
+→ `LeRobotDataset.create()` which hard-fails on an existing dir. There is no
+"load existing dataset and append episodes" path. So you can EITHER wipe & write
+one session, OR crash. Multi-episode datasets (the whole point of LeRobot) can't
+be built across separate start/stop cycles.
+**Fix sketch:** when `overwrite=False` and the dir already holds a valid
+LeRobotDataset, `LeRobotDataset(repo_id, root=...)` (load) instead of `.create()`,
+and have DatasetRecorder wrap the loaded dataset for `add_frame`/`save_episode`.
+(Single start_recording with multiple run_policy + stop/save per episode also
+needs verifying as the alternative append model.)
+
+---
+
+## ✅✅ SUMMIT 0.4 FIXES LANDED (B4 + B12)
+
+Both bugs found in the 0.4 pre-release E2E pass are fixed on
+`fix/lerobot-052-recording`, with dedicated regression tests.
+
+### B12 fix — multi-episode append via LeRobotDataset.resume()
+**Files:** `dataset_recorder.py`, `simulation/mujoco/recording.py`
+- Added `DatasetRecorder.resume(repo_id, root, ...)` classmethod that opens an
+  existing dataset via `LeRobotDataset.resume()` (the ONLY append-capable entry
+  point in 0.5.2 — the plain constructor is read-only). Version-tolerant codec
+  routing mirrors `create()`. Seeds `episode_count`/`frame_count` from disk.
+- `start_recording` now resolves the dataset dir up front and, when
+  `overwrite=False` AND a dataset already exists (`<dir>/meta` present), routes
+  to `resume()` instead of `create()`. `overwrite=True` still wipes + recreates.
+- **Verified:** T6 — 3 episodes appended into one dataset (30 frames). Pre-fix
+  the 2nd `start_recording` crashed with `FileExistsError`.
+
+### B4 fix — SYNCHRONIZED multi-robot recording via run_multi_policy (REAL FEATURE)
+**File:** `simulation/mujoco/simulation.py` (`run_multi_policy`)
+The root cause: two independent `start_policy` threads each call `send_action`
+(own `mj_step`) AND `add_frame` separately → physics double-steps and the shared
+recorder receives interleaved single-robot frames (each frame has only one
+robot's state; the other's columns are zero). A fail-fast guard would only make
+the dataset *not corrupt* — but multi-robot data collection is a headline 0.4
+feature, so we built it properly.
+
+New `run_multi_policy(policies={robot: Policy}, ...)` drives N robots in ONE
+synchronized control loop:
+1. Observe every robot's joints + render all cameras ONCE per step.
+2. Query each robot's policy for its action.
+3. Apply ALL robots' ctrl writes, then step physics exactly ONCE (no
+   double-stepping; physics stays serialized under `_lock`).
+4. Record ONE merged frame: every robot's prefixed state/action
+   (`alice__shoulder_pan` …) + all camera images.
+
+Result: a 2-robot dataset co-observes BOTH arms in EVERY frame — directly
+usable for bimanual / multi-agent policy training. Handles `n_steps`/`duration`,
+per-robot or shared instructions, cooperative stop, and the
+single-robot-in-multi-robot-scene namespacing. The old fail-fast guard added to
+`start_policy` was REMOVED in favour of this.
+
+- **Verified:** T5 — `run_multi_policy` on 2× SO-100 + a scene camera, recorded
+  20 frames, BOTH robots' action columns non-zero in ALL 20 frames; both cameras
+  (`default` 480×640 + `scene` 128×128) present in the merged frame. 12-dim
+  `alice__*`/`bob__*` schema.
+
+### Regression tests added
+`tests/simulation/mujoco/test_recording_paths.py`:
+- `test_b12_multi_episode_resume_appends` — 2-episode resume → assert 2 episodes
+- `test_b4_synchronized_multi_robot_recording` — both robots co-observed in EVERY frame
+- `test_run_multi_policy_validates_robots` — rejects empty/unknown robot maps
+
+### Final E2E matrix (e2e_summit/harness.py) — ALL GREEN
+21 passes, 0 bugs across T1–T7 (single/multi robot × multi-cam × multi-res ×
+concurrent × multi-episode × embodiment). Full project suite: **588 passed,
+1 skipped** (sim+policy), plus 2 new recording regression tests = clean.
+
+### Open / deferred (NOT release blockers)
+- **B3** (`strict=True` dead drop-path) — resilience nicety.
+- `run_multi_policy` currently consumes one action per step from each policy's
+  chunk (synchronized 1-step advance). Per-robot action-horizon batching could
+  be added later for throughput, but 1-step keeps all robots phase-aligned.

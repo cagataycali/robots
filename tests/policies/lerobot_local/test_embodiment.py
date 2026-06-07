@@ -194,3 +194,42 @@ def test_pack_state_get_config_roundtrips():
     s = Step(state_keys=["a", "b"], expected_dim=2, dim_policy="pad")
     cfg = s.get_config()
     assert cfg == {"state_keys": ["a", "b"], "expected_dim": 2, "dim_policy": "pad"}
+
+
+# Full lerobot driver coverage guard
+
+
+def test_all_lerobot_drivers_have_embodiment():
+    """Every robot subclass registered in lerobot.robots must resolve to an
+    embodiment (directly or via alias). Guards against a new lerobot driver
+    silently lacking a key-mapping. Ground truth: the @RobotConfig
+    .register_subclass names in lerobot-src/src/lerobot/robots/*.
+    """
+    lerobot_drivers = [
+        "so100_follower", "so101_follower", "koch_follower", "omx_follower",
+        "openarm_follower", "bi_openarm_follower", "bi_so_follower",
+        "rebot_b601_follower", "bi_rebot_b601_follower", "lekiwi", "lekiwi_client",
+        "reachy2", "hope_jr_hand", "hope_jr_arm", "earthrover_mini_plus",
+        "unitree_g1",
+    ]
+    missing = []
+    for name in lerobot_drivers:
+        try:
+            load_embodiment(name)
+        except ValueError:
+            missing.append(name)
+    assert not missing, f"lerobot drivers without embodiment mapping: {missing}"
+
+
+def test_real_hardware_entries_use_pos_or_velocity_keys():
+    """All *_real arm/hand entries use '<motor>.pos' driver feature keys
+    (the lerobot _motors_ft convention). The mobile rover uses velocity cmds.
+    """
+    pos_robots = ["omx_real", "bi_so_real", "openarm_real", "bi_openarm_real",
+                  "rebot_b601_real", "bi_rebot_b601_real", "reachy2_real",
+                  "hope_jr_arm_real", "hope_jr_hand_real"]
+    for name in pos_robots:
+        em = load_embodiment(name)
+        assert all(k.endswith(".pos") for k in em.state_keys), f"{name} non-.pos keys"
+    rover = load_embodiment("earthrover_real")
+    assert rover.state_keys == ["linear_velocity", "angular_velocity"]
