@@ -494,7 +494,7 @@ class TestIotMqttTransportInternals:
         t._handlers["strands/+/state"] = [lambda s: seen.append(("a", s.key_expr))]
         t._handlers["strands/+/presence"] = [lambda s: seen.append(("b", s.key_expr))]
 
-        # Build a fake publish_packet — keep awscrt's actual shape (.topic, .payload bytes)
+        # Build a fake publish_packet — keep awscrt's actual shape (.topic,.payload bytes)
         data = MagicMock()
         data.publish_packet.topic = "strands/peer1/state"
         data.publish_packet.payload = b'{"k":1}'

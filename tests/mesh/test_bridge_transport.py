@@ -225,8 +225,26 @@ class TestBridgeSubscribe:
         b.connect()
         handler = MagicMock()
         h = b.declare_subscriber("strands/+/presence", handler)
-        z.declare_subscriber.assert_called_once_with("strands/+/presence", handler)
-        i.declare_subscriber.assert_called_once_with("strands/+/presence", handler)
+        # The bridge wraps the handler with a dedup filter, so the *handler*
+        # passed downstream is not the literal mock -- assert the *topic* is
+        # correct on both sides and that a callable was passed.
+        assert z.declare_subscriber.call_count == 1
+        assert i.declare_subscriber.call_count == 1
+        z_topic, z_handler = z.declare_subscriber.call_args.args
+        i_topic, i_handler = i.declare_subscriber.call_args.args
+        assert z_topic == "strands/+/presence"
+        assert i_topic == "strands/+/presence"
+        assert callable(z_handler)
+        assert callable(i_handler)
+        # Verify the wrapper still delegates to the user handler. Drive it
+        # with a sample whose payload extracts to a unique nonce so dedup
+        # passes through on the first call.
+        from unittest.mock import MagicMock as _MM
+
+        sample = _MM()
+        sample.payload.to_bytes.return_value = b'{"nonce":"unique-once-test","payload":{}}'
+        z_handler(sample)
+        handler.assert_called_once_with(sample)
         # Undeclare should call both.
         h.undeclare()
         z_sub.undeclare.assert_called_once()
@@ -269,3 +287,49 @@ class TestSubHandleIdempotence:
         h = _BridgeSubHandle(a, None)
         h.undeclare()
         a.undeclare.assert_called_once()
+
+
+class TestDefaultBridgeSuffixesPinned:
+    def test_default_bridge_suffixes_pinned_to_documented_set(self):
+        """Pin DEFAULT_BRIDGE_SUFFIXES against the documented bridge-by-default set.
+
+        These suffixes are documented in the module header and the mesh env-var
+        matrix as the unset-default for STRANDS_MESH_BRIDGE_TOPICS. A future edit
+        that adds or removes a suffix here must update that documentation in the
+        same diff or this test fails.
+        """
+        assert DEFAULT_BRIDGE_SUFFIXES == frozenset(
+            {
+                "presence",
+                "health",
+                "safety/event",
+                "safety/estop",
+                "safety/resume",
+                "cmd",
+                "response",
+                "broadcast",
+            }
+        )
+
+    def test_high_volume_telemetry_not_bridged_by_default(self):
+        """Pin the documented high-volume-telemetry not-bridged list.
+
+        state/pose/imu/odom/lidar are high volume and camera/input/hand are
+        LAN-only by definition. All are documented as not bridged by default;
+        if one leaks into DEFAULT_BRIDGE_SUFFIXES the documentation regresses.
+        """
+        not_bridged = (
+            "state",
+            "pose",
+            "imu",
+            "odom",
+            "lidar",
+            "camera",
+            "input",
+            "hand",
+        )
+        for suffix in not_bridged:
+            assert suffix not in DEFAULT_BRIDGE_SUFFIXES, (
+                f"{suffix!r} is documented as not bridged by default but is in "
+                f"DEFAULT_BRIDGE_SUFFIXES; remove it or update the documentation."
+            )
