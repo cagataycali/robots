@@ -2153,7 +2153,10 @@ class MuJoCoSimEngine(
                         self._viewer_handle.sync()
 
                 # --- 4. Record ONE merged frame (all robots + all cameras).
-                if recording:
+                # ``recording`` already implies ``recorder is not None`` (see its
+                # definition), but the explicit check narrows the Optional for the
+                # type checker at the add_frame call below.
+                if recording and recorder is not None:
                     merged_obs: dict[str, Any] = {}
                     merged_act: dict[str, Any] = {}
                     for rname in policies:
