@@ -78,6 +78,7 @@ New env vars (documented in README Configuration matrix):
 Known follow-ups: #249 (camera privacy kill-switch + S3 ACL),
 #251 (chunked-read parity in ``_ensure_ca``), #259 (kwarg negative-TTL
 WARNING symmetry), #260 (warn on re-use of break-glass-written CA).
+
 ## Unreleased — Policy registry: future-proof discovery for `lerobot.policies`
 
 ### Fixed
@@ -128,6 +129,7 @@ WARNING symmetry), #260 (warn on re-use of break-glass-written CA).
   drift-symptom case where the lerobot.policies stub is active, and
   the molmoact2 modeling-convention class lookup. All run with
   `pytest.importorskip("lerobot")`.
+
 ## Unreleased - #178 (LiberoOffScreenRenderEngine retired)
 
 ### Removed: ``LiberoOffScreenRenderEngine`` simulation backend (BREAKING)
