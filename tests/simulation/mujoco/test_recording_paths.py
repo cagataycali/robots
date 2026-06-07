@@ -187,21 +187,34 @@ def test_b12_multi_episode_resume_appends(sim_with_two_robots, tmp_path):
     # Episode 1 (fresh)
     r = sim.start_recording(repo_id="local/multiep", fps=20, root=root, overwrite=True)
     assert r["status"] == "success", r
-    sim.run_policy(robot_name="alpha", policy_provider="mock", instruction="ep0",
-                   duration=0.3, control_frequency=20.0, fast_mode=True)
+    sim.run_policy(
+        robot_name="alpha",
+        policy_provider="mock",
+        instruction="ep0",
+        duration=0.3,
+        control_frequency=20.0,
+        fast_mode=True,
+    )
     r = sim.stop_recording()
     assert r["status"] == "success", r
 
     # Episode 2 (append — overwrite=False on existing dir must NOT crash)
     r = sim.start_recording(repo_id="local/multiep", fps=20, root=root, overwrite=False)
     assert r["status"] == "success", f"B12 regression — resume failed: {r}"
-    sim.run_policy(robot_name="alpha", policy_provider="mock", instruction="ep1",
-                   duration=0.3, control_frequency=20.0, fast_mode=True)
+    sim.run_policy(
+        robot_name="alpha",
+        policy_provider="mock",
+        instruction="ep1",
+        duration=0.3,
+        control_frequency=20.0,
+        fast_mode=True,
+    )
     r = sim.stop_recording()
     assert r["status"] == "success", r
 
     # Readback: two episodes appended into one dataset.
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
     ds = LeRobotDataset(repo_id="local/multiep", root=root)
     assert ds.meta.total_episodes == 2, f"expected 2 episodes, got {ds.meta.total_episodes}"
 
@@ -222,6 +235,7 @@ def test_b4_synchronized_multi_robot_recording(sim_with_two_robots, tmp_path):
         pytest.skip("lerobot not installed")
 
     import numpy as np
+
     from strands_robots.policies import create_policy
 
     sim = sim_with_two_robots
@@ -230,14 +244,15 @@ def test_b4_synchronized_multi_robot_recording(sim_with_two_robots, tmp_path):
     assert r["status"] == "success", r
 
     pols = {"alpha": create_policy("mock"), "beta": create_policy("mock")}
-    r = sim.run_multi_policy(policies=pols,
-                             instructions={"alpha": "a", "beta": "b"},
-                             duration=0.5, control_frequency=20.0)
+    r = sim.run_multi_policy(
+        policies=pols, instructions={"alpha": "a", "beta": "b"}, duration=0.5, control_frequency=20.0
+    )
     assert r["status"] == "success", r
     assert r["steps"] > 0
     sim.stop_recording()
 
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
     ds = LeRobotDataset(repo_id="local/sync_multi", root=root)
 
     # Schema: 2 robots × 3 joints (the inline test arm) = 6-dim, prefixed.
@@ -256,9 +271,7 @@ def test_b4_synchronized_multi_robot_recording(sim_with_two_robots, tmp_path):
         if a > 1e-6 and b > 1e-6:
             both += 1
     # Every frame must co-observe both robots (synchronized recording).
-    assert both == len(ds) and len(ds) > 0, (
-        f"B4: only {both}/{len(ds)} frames had both robots co-observed"
-    )
+    assert both == len(ds) and len(ds) > 0, f"B4: only {both}/{len(ds)} frames had both robots co-observed"
 
 
 def test_run_multi_policy_validates_robots(sim_with_two_robots):
@@ -285,6 +298,7 @@ def test_run_multi_policy_action_horizon_batches_inference(sim_with_two_robots, 
         pytest.skip("lerobot not installed")
 
     import numpy as np
+
     from strands_robots.policies.base import Policy
 
     class _ChunkCounter(Policy):
@@ -313,8 +327,7 @@ def test_run_multi_policy_action_horizon_batches_inference(sim_with_two_robots, 
     r = sim.start_recording(repo_id="local/hz", fps=20, root=str(tmp_path / "hz"), overwrite=True)
     assert r["status"] == "success", r
     pa, pb = _ChunkCounter(chunk=10), _ChunkCounter(chunk=10)
-    r = sim.run_multi_policy(policies={"alpha": pa, "beta": pb},
-                             n_steps=20, control_frequency=20.0, action_horizon=10)
+    r = sim.run_multi_policy(policies={"alpha": pa, "beta": pb}, n_steps=20, control_frequency=20.0, action_horizon=10)
     assert r["status"] == "success", r
     assert pa.calls == 2, f"expected 2 inference calls (20 steps / horizon 10), got {pa.calls}"
     assert pb.calls == 2, f"expected 2, got {pb.calls}"
@@ -324,9 +337,12 @@ def test_run_multi_policy_action_horizon_batches_inference(sim_with_two_robots, 
     r = sim.start_recording(repo_id="local/hz2", fps=20, root=str(tmp_path / "hz2"), overwrite=True)
     assert r["status"] == "success", r
     pa2, pb2 = _ChunkCounter(chunk=10), _ChunkCounter(chunk=10)
-    r = sim.run_multi_policy(policies={"alpha": pa2, "beta": pb2},
-                             n_steps=20, control_frequency=20.0,
-                             action_horizon={"alpha": 1, "beta": 10})
+    r = sim.run_multi_policy(
+        policies={"alpha": pa2, "beta": pb2},
+        n_steps=20,
+        control_frequency=20.0,
+        action_horizon={"alpha": 1, "beta": 10},
+    )
     assert r["status"] == "success", r
     assert pa2.calls == 20, f"alpha horizon=1 → every step, expected 20, got {pa2.calls}"
     assert pb2.calls == 2, f"beta horizon=10 → expected 2, got {pb2.calls}"
@@ -334,6 +350,7 @@ def test_run_multi_policy_action_horizon_batches_inference(sim_with_two_robots, 
 
     # Batching must NOT break the co-observation invariant.
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
     ds = LeRobotDataset(repo_id="local/hz2", root=str(tmp_path / "hz2"))
     af = ds.features["action"]
     names = af["names"] if isinstance(af, dict) else getattr(af, "names", None)
@@ -343,3 +360,36 @@ def test_run_multi_policy_action_horizon_batches_inference(sim_with_two_robots, 
         assert float(np.abs(ac[:half]).sum()) > 1e-6 and float(np.abs(ac[half:]).sum()) > 1e-6, (
             f"frame {i}: a robot's action is zero — batching broke co-observation"
         )
+
+
+def test_run_multi_policy_raises_on_empty_action_chunk(sim_with_two_robots, tmp_path):
+    """A policy that returns an empty chunk must fail loudly, not silently record
+    all-zero ctrl. Pins the Key-Conventions-#6 fix (no silent zero-valued action
+    on failure): pre-fix, an empty deque popleft fell back to ``{}`` -> all-zero
+    ctrl -> dead frames in the dataset with no error.
+    """
+    from strands_robots.policies.base import Policy
+
+    class _EmptyChunkPolicy(Policy):
+        requires_images = False
+
+        def set_robot_state_keys(self, keys):
+            self._keys = list(keys)
+
+        @property
+        def provider_name(self):
+            return "empty_chunk"
+
+        async def get_actions(self, obs, instruction=""):
+            return []  # degenerate: no actions
+
+    sim = sim_with_two_robots
+    r = sim.start_recording(repo_id="local/empty", fps=20, root=str(tmp_path / "empty"), overwrite=True)
+    assert r["status"] == "success", r
+    with pytest.raises(RuntimeError, match="empty action chunk"):
+        sim.run_multi_policy(
+            policies={"alpha": _EmptyChunkPolicy(), "beta": _EmptyChunkPolicy()},
+            n_steps=5,
+            control_frequency=20.0,
+        )
+    sim.stop_recording()

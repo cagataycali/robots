@@ -420,7 +420,6 @@ class LerobotLocalPolicy(Policy):
         # Initialize RTC if supported by this policy
         self._init_rtc()
 
-
     # Embodiment configuration (declarative obs/action mapping)
 
     def _configure_embodiment(self) -> None:
@@ -446,9 +445,7 @@ class LerobotLocalPolicy(Policy):
             # so existing callers that only set joint names still get the clean
             # pipeline path (state composition + action naming), without any
             # camera renames (none are known in this case).
-            if self.robot_state_keys and not any(
-                k.startswith("joint_") for k in self.robot_state_keys
-            ):
+            if self.robot_state_keys and not any(k.startswith("joint_") for k in self.robot_state_keys):
                 spec = EmbodimentMap(
                     name="<from robot_state_keys>",
                     obs_rename={},
@@ -830,11 +827,7 @@ class LerobotLocalPolicy(Policy):
         declared_img_feats = [f for f in self._input_features if "image" in f]
 
         # 1) Map images. Prefer exact short-name match against declared features.
-        image_items = [
-            (k, v)
-            for k, v in observation_dict.items()
-            if isinstance(v, np.ndarray) and v.ndim >= 2
-        ]
+        image_items = [(k, v) for k, v in observation_dict.items() if isinstance(v, np.ndarray) and v.ndim >= 2]
         used_feats: set[str] = set()
         unmatched_imgs = []
         for k, v in image_items:
@@ -852,10 +845,7 @@ class LerobotLocalPolicy(Policy):
 
         # 2) Collect scalar joint values into observation.state.
         scalar_keys = [
-            k
-            for k, v in observation_dict.items()
-            if k != "task"
-            and not (isinstance(v, np.ndarray) and v.ndim >= 2)
+            k for k, v in observation_dict.items() if k != "task" and not (isinstance(v, np.ndarray) and v.ndim >= 2)
         ]
         # Prefer robot_state_keys ordering, but fall back to the actual scalar
         # keys present in the observation. robot_state_keys is often auto-filled
@@ -890,13 +880,15 @@ class LerobotLocalPolicy(Policy):
             if len(state_vals) > expected_dim:
                 logger.warning(
                     "State dim %d > model expects %d - truncating (preprocess path).",
-                    len(state_vals), expected_dim,
+                    len(state_vals),
+                    expected_dim,
                 )
                 state_vals = state_vals[:expected_dim]
             elif len(state_vals) < expected_dim:
                 logger.warning(
                     "State dim %d < model expects %d - zero-padding (preprocess path).",
-                    len(state_vals), expected_dim,
+                    len(state_vals),
+                    expected_dim,
                 )
                 state_vals = state_vals + [0.0] * (expected_dim - len(state_vals))
             out["observation.state"] = np.asarray(state_vals, dtype=np.float32)

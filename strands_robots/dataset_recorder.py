@@ -182,7 +182,7 @@ class DatasetRecorder:
                 from lerobot.configs.video import VideoEncoderConfig
 
                 create_kwargs["camera_encoder"] = VideoEncoderConfig(vcodec=vcodec)
-            except (ImportError, Exception) as exc:  # noqa: BLE001
+            except (ImportError, AttributeError, TypeError, ValueError) as exc:
                 # If VideoEncoderConfig can't be built (e.g. unknown codec on this
                 # platform), fall back to the codec default rather than crashing.
                 logger.warning("VideoEncoderConfig(vcodec=%r) unavailable (%s); using default encoder", vcodec, exc)
@@ -261,7 +261,7 @@ class DatasetRecorder:
                 from lerobot.configs.video import VideoEncoderConfig
 
                 resume_kwargs["camera_encoder"] = VideoEncoderConfig(vcodec=vcodec)
-            except (ImportError, Exception) as exc:  # noqa: BLE001
+            except (ImportError, AttributeError, TypeError, ValueError) as exc:
                 logger.warning("VideoEncoderConfig(vcodec=%r) unavailable on resume (%s)", vcodec, exc)
         if "streaming_encoding" in resume_sig:
             resume_kwargs["streaming_encoding"] = streaming_encoding
@@ -280,7 +280,8 @@ class DatasetRecorder:
             pass
         logger.info(
             "DatasetRecorder resumed: %s (%d existing episodes)",
-            repo_id, recorder.episode_count,
+            repo_id,
+            recorder.episode_count,
         )
         return recorder
 

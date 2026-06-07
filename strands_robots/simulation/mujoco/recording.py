@@ -102,8 +102,7 @@ class RecordingMixin:
         # the only correct append path in LeRobot 0.5.2+ (the plain constructor
         # is read-only). When overwrite=True, wipe and recreate from scratch.
         resume_existing = (
-            not overwrite and dataset_dir.exists() and dataset_dir.is_dir()
-            and (dataset_dir / "meta").exists()
+            not overwrite and dataset_dir.exists() and dataset_dir.is_dir() and (dataset_dir / "meta").exists()
         )
 
         try:

@@ -19,6 +19,7 @@ SMOLVLA = "lerobot/smolvla_base"
 
 def _load_bridge():
     """Load SmolVLA's real preprocessor; skip if unavailable/uncached."""
+    bridge = None
     try:
         bridge = ProcessorBridge.from_pretrained(
             SMOLVLA,
@@ -28,7 +29,7 @@ def _load_bridge():
         )
     except Exception as exc:  # noqa: BLE001
         pytest.skip(f"SmolVLA pipeline unavailable: {exc}")
-    if not bridge.has_preprocessor:
+    if bridge is None or not bridge.has_preprocessor:
         pytest.skip("SmolVLA preprocessor not loaded")
     return bridge
 
@@ -79,7 +80,12 @@ def test_raw_obs_transforms_through_injected_steps():
     raw = {
         "front": np.zeros((4, 4, 3), dtype=np.uint8),
         "wrist": np.zeros((4, 4, 3), dtype=np.uint8),
-        "1": 0.1, "2": 0.2, "3": 0.3, "4": 0.4, "5": 0.5, "6": 0.6,
+        "1": 0.1,
+        "2": 0.2,
+        "3": 0.3,
+        "4": 0.4,
+        "5": 0.5,
+        "6": 0.6,
     }
     t = create_transition(observation=raw, complementary_data={"task": "pick"})
     t = pre.steps[0](t)  # rename

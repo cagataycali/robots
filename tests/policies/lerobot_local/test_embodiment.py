@@ -206,10 +206,21 @@ def test_all_lerobot_drivers_have_embodiment():
     .register_subclass names in lerobot-src/src/lerobot/robots/*.
     """
     lerobot_drivers = [
-        "so100_follower", "so101_follower", "koch_follower", "omx_follower",
-        "openarm_follower", "bi_openarm_follower", "bi_so_follower",
-        "rebot_b601_follower", "bi_rebot_b601_follower", "lekiwi", "lekiwi_client",
-        "reachy2", "hope_jr_hand", "hope_jr_arm", "earthrover_mini_plus",
+        "so100_follower",
+        "so101_follower",
+        "koch_follower",
+        "omx_follower",
+        "openarm_follower",
+        "bi_openarm_follower",
+        "bi_so_follower",
+        "rebot_b601_follower",
+        "bi_rebot_b601_follower",
+        "lekiwi",
+        "lekiwi_client",
+        "reachy2",
+        "hope_jr_hand",
+        "hope_jr_arm",
+        "earthrover_mini_plus",
         "unitree_g1",
     ]
     missing = []
@@ -225,9 +236,17 @@ def test_real_hardware_entries_use_pos_or_velocity_keys():
     """All *_real arm/hand entries use '<motor>.pos' driver feature keys
     (the lerobot _motors_ft convention). The mobile rover uses velocity cmds.
     """
-    pos_robots = ["omx_real", "bi_so_real", "openarm_real", "bi_openarm_real",
-                  "rebot_b601_real", "bi_rebot_b601_real", "reachy2_real",
-                  "hope_jr_arm_real", "hope_jr_hand_real"]
+    pos_robots = [
+        "omx_real",
+        "bi_so_real",
+        "openarm_real",
+        "bi_openarm_real",
+        "rebot_b601_real",
+        "bi_rebot_b601_real",
+        "reachy2_real",
+        "hope_jr_arm_real",
+        "hope_jr_hand_real",
+    ]
     for name in pos_robots:
         em = load_embodiment(name)
         assert all(k.endswith(".pos") for k in em.state_keys), f"{name} non-.pos keys"

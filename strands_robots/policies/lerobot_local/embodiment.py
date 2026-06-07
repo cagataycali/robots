@@ -68,22 +68,17 @@ def reconcile_dim(values: list[float], expected_dim: int, dim_policy: str, *, la
         )
     if dim_policy == "truncate":
         if n < expected_dim:
-            raise ValueError(
-                f"{label} dim {n} < model expected {expected_dim}; cannot truncate. "
-                f"Use dim_policy='pad'."
-            )
+            raise ValueError(f"{label} dim {n} < model expected {expected_dim}; cannot truncate. Use dim_policy='pad'.")
         return values[:expected_dim]
     if dim_policy == "pad":
         if n > expected_dim:
-            raise ValueError(
-                f"{label} dim {n} > model expected {expected_dim}; cannot pad. "
-                f"Use dim_policy='truncate'."
-            )
+            raise ValueError(f"{label} dim {n} > model expected {expected_dim}; cannot pad. Use dim_policy='truncate'.")
         return values + [0.0] * (expected_dim - n)
     raise ValueError(f"Unknown dim_policy {dim_policy!r}; expected 'strict'|'pad'|'truncate'.")
 
 
 # Registered pipeline step: pack scalar joint obs -> observation.state
+
 
 # Imported lazily so this module is importable without lerobot (e.g. for unit
 # testing EmbodimentMap loading/validation in a minimal env).

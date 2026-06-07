@@ -158,6 +158,7 @@ def test_robot_descriptions_module_names_are_import_safe(registry: dict) -> None
     entries and the regex staying in sync.
     """
     import re
+
     pattern = re.compile(r"^[a-z0-9_+]+$")
     offenders = []
     for name, info in registry.items():

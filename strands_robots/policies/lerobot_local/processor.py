@@ -228,9 +228,10 @@ class ProcessorBridge:
         # 1. Find (or create) the rename step and set its rename_map.
         rename_idx = None
         for i, step in enumerate(steps):
-            if type(step).__name__ == "RenameObservationsProcessorStep" or getattr(
-                step, "_registry_name", None
-            ) == "rename_observations_processor":
+            if (
+                type(step).__name__ == "RenameObservationsProcessorStep"
+                or getattr(step, "_registry_name", None) == "rename_observations_processor"
+            ):
                 rename_idx = i
                 break
 
@@ -247,7 +248,6 @@ class ProcessorBridge:
                 from lerobot.processor.rename_processor import RenameObservationsProcessorStep
 
                 steps.insert(0, RenameObservationsProcessorStep(rename_map=dict(embodiment.obs_rename)))
-                rename_idx = 0
             except ImportError:
                 logger.warning("RenameObservationsProcessorStep unavailable; obs_rename not applied")
 
@@ -328,12 +328,12 @@ class ProcessorBridge:
         try:
             # Build a full transition so complementary_data (containing the
             # task instruction) is available to all pipeline steps.
-            from lerobot.processor.converters import create_transition
             # TransitionKey moved out of the (now-removed) lerobot.processor.core
             # submodule in LeRobot 0.5.2. It is re-exported from lerobot.processor
             # on 0.5.0/0.5.1/0.5.2 alike, so import from the package root for
             # version independence. (Canonical home is lerobot.types.)
             from lerobot.processor import TransitionKey
+            from lerobot.processor.converters import create_transition
 
             complementary: dict[str, Any] = {}
             if instruction:

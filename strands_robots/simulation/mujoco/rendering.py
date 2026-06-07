@@ -999,8 +999,7 @@ class RenderingMixin:
         _ready_timeout = 5.0 + 1.0 * len(names)
         if not state["ready"].wait(timeout=_ready_timeout):
             logger.warning(
-                "camera recorder '%s' not ready after %.1fs; returning anyway "
-                "(first frames may be delayed)",
+                "camera recorder '%s' not ready after %.1fs; returning anyway (first frames may be delayed)",
                 tag,
                 _ready_timeout,
             )

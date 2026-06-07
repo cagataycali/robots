@@ -282,7 +282,7 @@ class MuJoCoSimEngine(
         """Count available sim robot models (delegated to model_registry)."""
         try:
             return count_sim_robots()
-        except (ImportError, Exception) as e:
+        except (ImportError, OSError, AttributeError) as e:
             logger.warning("Could not count sim robots: %s", e)
             return 0
 
@@ -2014,12 +2014,32 @@ class MuJoCoSimEngine(
         else:
             instr_map = {r: instructions.get(r, "") for r in policies}
 
+        # LeRobot stores ONE task string per frame. If the caller supplied
+        # distinct per-robot instructions (e.g. {alice: 'pour', bob: 'catch'})
+        # only the first robot's task is recorded -- a downstream pipeline that
+        # splits by task string would mis-attribute the other robots' frames.
+        # Surface this as a known limitation rather than losing it silently.
+        _distinct_tasks = {t for t in instr_map.values() if t}
+        if len(_distinct_tasks) > 1:
+            logger.warning(
+                "run_multi_policy: %d distinct per-robot instructions supplied (%s) but "
+                "LeRobot records one task per frame; only '%s' (robot '%s') will be stored. "
+                "Per-robot task columns are not yet supported.",
+                len(_distinct_tasks),
+                sorted(_distinct_tasks),
+                instr_map[next(iter(policies))],
+                next(iter(policies)),
+            )
+
         # Resolve horizon (n_steps / max_steps override duration).
         if n_steps is None and max_steps is not None:
             n_steps = int(max_steps)
         if n_steps is not None:
             if n_steps <= 0 or control_frequency <= 0:
-                return {"status": "error", "content": [{"text": "run_multi_policy: n_steps and control_frequency must be > 0."}]}
+                return {
+                    "status": "error",
+                    "content": [{"text": "run_multi_policy: n_steps and control_frequency must be > 0."}],
+                }
             duration = float(n_steps) / float(control_frequency)
 
         # Normalize action_horizon to a per-robot mapping. >=1 actions are
@@ -2060,6 +2080,7 @@ class MuJoCoSimEngine(
         # A policy is only re-queried when its queue is empty, so expensive VLA
         # inference amortizes over up to ``horizon_map[robot]`` steps.
         from collections import deque
+
         action_queues: dict[str, deque] = {r: deque() for r in policies}
 
         step_count = 0
@@ -2103,9 +2124,18 @@ class MuJoCoSimEngine(
                         # Buffer up to this robot's horizon; re-query when drained.
                         for a in acts[: horizon_map[rname]]:
                             action_queues[rname].append(a)
-                    per_robot_action[rname] = (
-                        action_queues[rname].popleft() if action_queues[rname] else {}
-                    )
+                    if not action_queues[rname]:
+                        # A policy yielded no actions (empty chunk) -- emitting an
+                        # empty action dict here would remap downstream to all-zero
+                        # ctrl, silently corrupting the recording with dead frames.
+                        # Fail loudly instead (Key Conventions #6: no silent
+                        # zero-valued action on failure).
+                        raise RuntimeError(
+                            f"Policy for robot '{rname}' returned an empty action chunk; "
+                            "cannot advance the synchronized loop. Check the policy's "
+                            "get_actions() output."
+                        )
+                    per_robot_action[rname] = action_queues[rname].popleft()
 
                 # --- 3. Apply ALL robots' ctrl, then step physics ONCE.
                 with self._lock:
@@ -2157,7 +2187,7 @@ class MuJoCoSimEngine(
                     self._world.robots[rname].policy_running = False
 
         text = (
-            f"{'⏹ stopped early' if stopped_early else '✅ completed'}: "
+            f"{'stopped early' if stopped_early else 'completed'}: "
             f"run_multi_policy on {len(policies)} robots ({', '.join(policies)}) — "
             f"{step_count} synchronized steps"
             f"{' (recorded)' if recording else ''}"
