@@ -270,3 +270,76 @@ def test_run_multi_policy_validates_robots(sim_with_two_robots):
     r = sim.run_multi_policy(policies={"ghost": create_policy("mock")}, duration=0.1)
     assert r["status"] == "error"
     assert "not found" in r["content"][0]["text"].lower()
+
+
+def test_run_multi_policy_action_horizon_batches_inference(sim_with_two_robots, tmp_path):
+    """run_multi_policy re-queries a policy ONLY when its action queue drains,
+    so an N-action chunk with action_horizon=N runs inference once per N steps
+    (not every step). Critical for expensive VLAs. Also verifies per-robot
+    horizon mapping and that batching doesn't break the synchronized-frame
+    invariant (both robots still co-observed every frame).
+    """
+    from strands_robots.dataset_recorder import has_lerobot_dataset
+
+    if not has_lerobot_dataset():
+        pytest.skip("lerobot not installed")
+
+    import numpy as np
+    from strands_robots.policies.base import Policy
+
+    class _ChunkCounter(Policy):
+        requires_images = False
+
+        def __init__(self, chunk=10):
+            self.calls = 0
+            self.chunk = chunk
+            self._keys = None
+
+        def set_robot_state_keys(self, keys):
+            self._keys = list(keys)
+
+        @property
+        def provider_name(self):
+            return "chunk_counter"
+
+        async def get_actions(self, obs, instruction=""):
+            self.calls += 1
+            keys = self._keys or ["shoulder_pan", "shoulder_lift", "elbow"]
+            return [{k: 0.05 * (j + 1) for k in keys} for j in range(self.chunk)]
+
+    sim = sim_with_two_robots
+
+    # horizon=10 over 20 steps → ceil(20/10) = 2 inference calls per robot.
+    r = sim.start_recording(repo_id="local/hz", fps=20, root=str(tmp_path / "hz"), overwrite=True)
+    assert r["status"] == "success", r
+    pa, pb = _ChunkCounter(chunk=10), _ChunkCounter(chunk=10)
+    r = sim.run_multi_policy(policies={"alpha": pa, "beta": pb},
+                             n_steps=20, control_frequency=20.0, action_horizon=10)
+    assert r["status"] == "success", r
+    assert pa.calls == 2, f"expected 2 inference calls (20 steps / horizon 10), got {pa.calls}"
+    assert pb.calls == 2, f"expected 2, got {pb.calls}"
+    sim.stop_recording()
+
+    # Per-robot horizon: alpha closed-loop (every step), beta batched.
+    r = sim.start_recording(repo_id="local/hz2", fps=20, root=str(tmp_path / "hz2"), overwrite=True)
+    assert r["status"] == "success", r
+    pa2, pb2 = _ChunkCounter(chunk=10), _ChunkCounter(chunk=10)
+    r = sim.run_multi_policy(policies={"alpha": pa2, "beta": pb2},
+                             n_steps=20, control_frequency=20.0,
+                             action_horizon={"alpha": 1, "beta": 10})
+    assert r["status"] == "success", r
+    assert pa2.calls == 20, f"alpha horizon=1 → every step, expected 20, got {pa2.calls}"
+    assert pb2.calls == 2, f"beta horizon=10 → expected 2, got {pb2.calls}"
+    sim.stop_recording()
+
+    # Batching must NOT break the co-observation invariant.
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+    ds = LeRobotDataset(repo_id="local/hz2", root=str(tmp_path / "hz2"))
+    af = ds.features["action"]
+    names = af["names"] if isinstance(af, dict) else getattr(af, "names", None)
+    half = len(names) // 2
+    for i in range(len(ds)):
+        ac = np.asarray(ds[i]["action"])
+        assert float(np.abs(ac[:half]).sum()) > 1e-6 and float(np.abs(ac[half:]).sum()) > 1e-6, (
+            f"frame {i}: a robot's action is zero — batching broke co-observation"
+        )

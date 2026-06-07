@@ -1935,7 +1935,7 @@ class MuJoCoSimEngine(
         instructions: dict[str, str] | str = "",
         duration: float = 10.0,
         control_frequency: float = 50.0,
-        action_horizon: int = 8,
+        action_horizon: int | dict[str, int] = 8,
         n_steps: int | None = None,
         max_steps: int | None = None,
     ) -> dict[str, Any]:
@@ -1967,8 +1967,16 @@ class MuJoCoSimEngine(
                 one task per frame).
             duration: Episode length in seconds (steps = duration × freq).
             control_frequency: Target Hz for policy action queries / physics.
-            action_horizon: Max actions consumed from each policy's chunk per
-                query (mirrors ``run_policy``).
+            action_horizon: How many actions to consume from each policy's
+                returned chunk before re-querying it (open-loop chunk
+                execution, mirrors ``run_policy``). Either a single int applied
+                to all robots, or a ``{robot_name: horizon}`` mapping for
+                per-robot control. A robot's policy is only re-queried when its
+                action queue drains — so an expensive VLA emitting a 30-action
+                chunk with ``action_horizon=30`` runs inference ~once per 30
+                steps instead of every step. Physics still advances ONE step per
+                loop iteration, keeping all robots phase-aligned regardless of
+                their individual re-query cadence.
             n_steps: Alternate horizon in steps (overrides duration when set).
             max_steps: Legacy alias for ``n_steps``.
 
@@ -2014,6 +2022,14 @@ class MuJoCoSimEngine(
                 return {"status": "error", "content": [{"text": "run_multi_policy: n_steps and control_frequency must be > 0."}]}
             duration = float(n_steps) / float(control_frequency)
 
+        # Normalize action_horizon to a per-robot mapping. >=1 actions are
+        # consumed open-loop from each policy's chunk before re-querying.
+        if isinstance(action_horizon, dict):
+            horizon_map = {r: max(1, int(action_horizon.get(r, 8))) for r in policies}
+        else:
+            h = max(1, int(action_horizon))
+            horizon_map = {r: h for r in policies}
+
         # Bind robot_state_keys for each policy (per-robot joint names).
         for rname, pol in policies.items():
             try:
@@ -2040,6 +2056,12 @@ class MuJoCoSimEngine(
             r.policy_instruction = instr_map[rname]
             r.policy_steps = 0
 
+        # Per-robot action queue: actions remaining from the last chunk query.
+        # A policy is only re-queried when its queue is empty, so expensive VLA
+        # inference amortizes over up to ``horizon_map[robot]`` steps.
+        from collections import deque
+        action_queues: dict[str, deque] = {r: deque() for r in policies}
+
         step_count = 0
         stopped_early = False
         try:
@@ -2060,20 +2082,30 @@ class MuJoCoSimEngine(
                         camera_imgs = {k: v for k, v in obs.items() if isinstance(v, np.ndarray)}
                         first = False
 
-                # --- 2. Query each policy for its action.
+                # --- 2. Get each robot's action for THIS step.
+                # Re-query a policy ONLY when its action queue is empty (open-loop
+                # chunk execution). Between re-queries we replay the buffered
+                # chunk — so an expensive VLA runs inference once per horizon
+                # steps, not every step. Observation is still gathered every step
+                # (cheap) so recorded frames carry live state, and the chunk's
+                # first action is computed from a fresh observation.
                 per_robot_action: dict[str, dict[str, Any]] = {}
                 for rname, pol in policies.items():
                     # Cooperative stop check.
                     if not self._world.robots[rname].policy_running:
                         raise CooperativeStop(f"Policy stopped on '{rname}'")
-                    pol_obs = dict(per_robot_obs[rname])
-                    # Give the policy this robot's camera view(s) too.
-                    pol_obs.update(camera_imgs)
-                    coro = pol.get_actions(pol_obs, instr_map[rname])
-                    acts = _resolve_coroutine(coro)
-                    # Use first action of the chunk this step (synchronized loop
-                    # advances all robots one control step at a time).
-                    per_robot_action[rname] = acts[0] if acts else {}
+                    if not action_queues[rname]:
+                        pol_obs = dict(per_robot_obs[rname])
+                        # Give the policy this robot's camera view(s) too.
+                        pol_obs.update(camera_imgs)
+                        coro = pol.get_actions(pol_obs, instr_map[rname])
+                        acts = _resolve_coroutine(coro)
+                        # Buffer up to this robot's horizon; re-query when drained.
+                        for a in acts[: horizon_map[rname]]:
+                            action_queues[rname].append(a)
+                    per_robot_action[rname] = (
+                        action_queues[rname].popleft() if action_queues[rname] else {}
+                    )
 
                 # --- 3. Apply ALL robots' ctrl, then step physics ONCE.
                 with self._lock:
