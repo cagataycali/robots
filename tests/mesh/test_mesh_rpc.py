@@ -222,8 +222,8 @@ def test_exec_cmd_publishes_response(captured_puts: list[tuple[str, dict[str, An
             "command": {"action": "status"},
         }
     )
-    assert any(k == "strands/alice/response/t1" for k, _ in captured_puts)
-    response = next(d for k, d in captured_puts if k == "strands/alice/response/t1")
+    assert any(k == "strands/alice/response/me/t1" for k, _ in captured_puts)
+    response = next(d for k, d in captured_puts if k == "strands/alice/response/me/t1")
     assert response["type"] == "response"
     assert response["responder_id"] == "me"
     assert response["turn_id"] == "t1"
@@ -238,7 +238,7 @@ def test_exec_cmd_publishes_error_on_dispatch_exception(
     # the original dispatch-exception path that this test was written for.
     with patch.object(m, "_dispatch", side_effect=RuntimeError("boom-with-internal-detail")):
         m._exec_cmd({"sender_id": "alice", "turn_id": "t2", "command": {"action": "status"}})
-    payload = next(d for k, d in captured_puts if k == "strands/alice/response/t2")
+    payload = next(d for k, d in captured_puts if k == "strands/alice/response/me/t2")
     assert payload["type"] == "error"
     # internal exception detail MUST NOT leak onto the wire. The
     # error string is sanitised to a static "dispatch error" so a remote
@@ -255,7 +255,7 @@ def test_exec_cmd_rejects_unknown_action_with_validation_error(
     includes the offending action name."""
     m = Mesh(_FakeRobot(), peer_id="me")
     m._exec_cmd({"sender_id": "alice", "turn_id": "t3", "command": {"action": "rm_rf"}})
-    payload = next(d for k, d in captured_puts if k == "strands/alice/response/t3")
+    payload = next(d for k, d in captured_puts if k == "strands/alice/response/me/t3")
     assert payload["type"] == "error"
     assert "validation" in payload["error"]
     assert "rm_rf" in payload["error"]
