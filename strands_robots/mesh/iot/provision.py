@@ -194,6 +194,17 @@ _ROBOT_POLICY_DOC: dict[str, Any] = {
             ],
         },
         {
+            # Design note: Subscribe is intentionally broader than Receive.
+            # ``AllowOwnSubscriptions`` permits a robot to Subscribe to any of
+            # its own ``${ThingName}/*`` topics (e.g. health, state,
+            # safety/event), but ``AllowReceiveScoped`` below does NOT grant
+            # Receive on those. The broker therefore silently drops inbound
+            # messages on them. This is deliberate: health/state/safety-event
+            # are publish-only at the robot (the operator consumes them), so
+            # the robot never needs to Receive its own copy. Do NOT widen
+            # ``AllowReceiveScoped`` back to ``${ThingName}/*`` to "fix" this
+            # asymmetry -- that re-opens the fleet-eavesdrop surface the narrow
+            # Receive list closes. See issue #253 / PR #228 R5.
             "Sid": "AllowOwnSubscriptions",
             "Effect": "Allow",
             "Action": "iot:Subscribe",
