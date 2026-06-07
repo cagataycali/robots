@@ -1,0 +1,188 @@
+{
+  "__doc__": "Declarative robot/sim -> LeRobot-model key maps for the local policy. state_keys/action_keys MUST match the keys the runtime observation actually emits. Two key conventions exist: (1) SIM entries use the bare MuJoCo joint names from each robot's XML (what _get_sim_observation returns); (2) *_real entries use LeRobot driver motor-feature names with the '.pos' suffix (robot._motors_ft, see lerobot/robots/*). obs_rename maps the runtime camera key -> the model's declared observation.images.* feature. dim_policy: strict|pad|truncate. Ground truth: lerobot-src/src/lerobot/robots + robot_descriptions MuJoCo XMLs.",
+
+  "configs": {
+    "panda_libero": {
+      "__note__": "EEF/task-space schema for LIBERO-trained VLAs (MolmoAct2-LIBERO etc.). NOT joint-space. action_keys are 7-dof delta-EEF consumed by LiberoAdapter's OSC controller.",
+      "obs_rename": {
+        "image": "observation.images.image",
+        "wrist_image": "observation.images.wrist_image"
+      },
+      "state_keys": ["x", "y", "z", "roll", "pitch", "yaw", "gripper"],
+      "action_keys": ["x", "y", "z", "roll", "pitch", "yaw", "gripper"],
+      "dim_policy": "strict"
+    },
+
+    "so101": {
+      "__note__": "SIM: robotstudio_so101/so101_new_calib.xml joints are bare numerics 1..6.",
+      "obs_rename": {
+        "front": "observation.images.image",
+        "wrist": "observation.images.wrist_image"
+      },
+      "state_keys": ["1", "2", "3", "4", "5", "6"],
+      "action_keys": ["1", "2", "3", "4", "5", "6"],
+      "dim_policy": "pad"
+    },
+    "so100": {
+      "__note__": "SIM: trs_so_arm100/so_arm100.xml uses capitalized named joints (NOT 1..6 like so101).",
+      "obs_rename": {
+        "front": "observation.images.image",
+        "wrist": "observation.images.wrist_image"
+      },
+      "state_keys": ["Rotation", "Pitch", "Elbow", "Wrist_Pitch", "Wrist_Roll", "Jaw"],
+      "action_keys": ["Rotation", "Pitch", "Elbow", "Wrist_Pitch", "Wrist_Roll", "Jaw"],
+      "dim_policy": "pad"
+    },
+
+    "so_real": {
+      "__note__": "REAL hardware: lerobot SOFollower (so100_follower/so101_follower). _motors_ft -> '<motor>.pos'. Applies to both so100 & so101 physical arms (identical motor set).",
+      "obs_rename": {
+        "front": "observation.images.image",
+        "wrist": "observation.images.wrist_image"
+      },
+      "state_keys": ["shoulder_pan.pos", "shoulder_lift.pos", "elbow_flex.pos", "wrist_flex.pos", "wrist_roll.pos", "gripper.pos"],
+      "action_keys": ["shoulder_pan.pos", "shoulder_lift.pos", "elbow_flex.pos", "wrist_flex.pos", "wrist_roll.pos", "gripper.pos"],
+      "dim_policy": "pad"
+    },
+
+    "koch": {
+      "__note__": "SIM: low_cost_robot_arm.xml joint names.",
+      "obs_rename": {
+        "front": "observation.images.image",
+        "wrist": "observation.images.wrist_image"
+      },
+      "state_keys": ["base_rotation", "pitch", "elbow", "wrist_pitch", "wrist_roll", "gripper"],
+      "action_keys": ["base_rotation", "pitch", "elbow", "wrist_pitch", "wrist_roll", "gripper"],
+      "dim_policy": "pad"
+    },
+    "koch_real": {
+      "__note__": "REAL hardware: lerobot KochFollower _motors_ft -> '<motor>.pos' (same 6-dof set as SO arms).",
+      "obs_rename": {
+        "front": "observation.images.image",
+        "wrist": "observation.images.wrist_image"
+      },
+      "state_keys": ["shoulder_pan.pos", "shoulder_lift.pos", "elbow_flex.pos", "wrist_flex.pos", "wrist_roll.pos", "gripper.pos"],
+      "action_keys": ["shoulder_pan.pos", "shoulder_lift.pos", "elbow_flex.pos", "wrist_flex.pos", "wrist_roll.pos", "gripper.pos"],
+      "dim_policy": "pad"
+    },
+
+    "lekiwi_real": {
+      "__note__": "REAL hardware: lerobot LeKiwi (mobile SO arm). _motors_ft -> '<motor>.pos': 6 arm + 3 base wheels.",
+      "obs_rename": {
+        "front": "observation.images.image",
+        "wrist": "observation.images.wrist_image"
+      },
+      "state_keys": ["arm_shoulder_pan.pos", "arm_shoulder_lift.pos", "arm_elbow_flex.pos", "arm_wrist_flex.pos", "arm_wrist_roll.pos", "arm_gripper.pos", "base_left_wheel.pos", "base_back_wheel.pos", "base_right_wheel.pos"],
+      "action_keys": ["arm_shoulder_pan.pos", "arm_shoulder_lift.pos", "arm_elbow_flex.pos", "arm_wrist_flex.pos", "arm_wrist_roll.pos", "arm_gripper.pos", "base_left_wheel.pos", "base_back_wheel.pos", "base_right_wheel.pos"],
+      "dim_policy": "pad"
+    },
+
+    "panda": {
+      "__note__": "SIM: franka_emika_panda/panda.xml. 7 arm joints + 2 finger joints.",
+      "obs_rename": {
+        "image": "observation.images.image",
+        "wrist_image": "observation.images.wrist_image"
+      },
+      "state_keys": ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint7", "finger_joint1", "finger_joint2"],
+      "action_keys": ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint7", "finger_joint1", "finger_joint2"],
+      "dim_policy": "pad"
+    },
+    "fr3": {
+      "__note__": "SIM: franka_fr3/fr3.xml. 7 prefixed arm joints (no fingers in base xml).",
+      "obs_rename": {
+        "image": "observation.images.image",
+        "wrist_image": "observation.images.wrist_image"
+      },
+      "state_keys": ["fr3_joint1", "fr3_joint2", "fr3_joint3", "fr3_joint4", "fr3_joint5", "fr3_joint6", "fr3_joint7"],
+      "action_keys": ["fr3_joint1", "fr3_joint2", "fr3_joint3", "fr3_joint4", "fr3_joint5", "fr3_joint6", "fr3_joint7"],
+      "dim_policy": "pad"
+    },
+    "ur5e": {
+      "__note__": "SIM: universal_robots_ur5e/ur5e.xml. 6 named joints, no gripper in base xml.",
+      "obs_rename": {
+        "image": "observation.images.image",
+        "wrist_image": "observation.images.wrist_image"
+      },
+      "state_keys": ["shoulder_pan_joint", "shoulder_lift_joint", "elbow_joint", "wrist_1_joint", "wrist_2_joint", "wrist_3_joint"],
+      "action_keys": ["shoulder_pan_joint", "shoulder_lift_joint", "elbow_joint", "wrist_1_joint", "wrist_2_joint", "wrist_3_joint"],
+      "dim_policy": "pad"
+    },
+    "kinova_gen3": {
+      "__note__": "SIM: kinova_gen3/gen3.xml. 7 joints joint_1..joint_7.",
+      "obs_rename": {
+        "image": "observation.images.image",
+        "wrist_image": "observation.images.wrist_image"
+      },
+      "state_keys": ["joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6", "joint_7"],
+      "action_keys": ["joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6", "joint_7"],
+      "dim_policy": "pad"
+    },
+    "xarm7": {
+      "__note__": "SIM: ufactory_xarm7/xarm7.xml. 7 arm joints joint1..joint7 (gripper linkage joints omitted; pad covers model state dim).",
+      "obs_rename": {
+        "image": "observation.images.image",
+        "wrist_image": "observation.images.wrist_image"
+      },
+      "state_keys": ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint7"],
+      "action_keys": ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint7"],
+      "dim_policy": "pad"
+    },
+    "vx300s": {
+      "__note__": "SIM: trossen_vx300s/vx300s.xml. 6 arm joints + 2 fingers (ViperX 300s).",
+      "obs_rename": {
+        "image": "observation.images.image",
+        "wrist_image": "observation.images.wrist_image"
+      },
+      "state_keys": ["waist", "shoulder", "elbow", "forearm_roll", "wrist_angle", "wrist_rotate", "left_finger", "right_finger"],
+      "action_keys": ["waist", "shoulder", "elbow", "forearm_roll", "wrist_angle", "wrist_rotate", "left_finger", "right_finger"],
+      "dim_policy": "pad"
+    },
+    "wx250s": {
+      "__note__": "SIM: trossen_wx250s/wx250s.xml. Same joint topology as vx300s (WidowX 250s).",
+      "_extends": "vx300s"
+    },
+    "yam": {
+      "__note__": "SIM: i2rt_yam/yam.xml. 6 arm joints + 2 fingers.",
+      "obs_rename": {
+        "image": "observation.images.image",
+        "wrist_image": "observation.images.wrist_image"
+      },
+      "state_keys": ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "left_finger", "right_finger"],
+      "action_keys": ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "left_finger", "right_finger"],
+      "dim_policy": "pad"
+    },
+    "piper": {
+      "__note__": "SIM: agilex_piper/piper.xml. 6 arm joints + joint7/joint8 gripper fingers.",
+      "obs_rename": {
+        "image": "observation.images.image",
+        "wrist_image": "observation.images.wrist_image"
+      },
+      "state_keys": ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint7", "joint8"],
+      "action_keys": ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint7", "joint8"],
+      "dim_policy": "pad"
+    },
+
+    "aloha": {
+      "__note__": "SIM: mujoco_menagerie/aloha/aloha.xml. Bimanual: left/* + right/* (16 joints incl. 2 fingers/arm). Cameras vary by scene; default top cam mapped to observation.images.top. Previously this entry had EMPTY state_keys (no-op bug) - now fully populated.",
+      "obs_rename": {
+        "top": "observation.images.top"
+      },
+      "state_keys": ["left/waist", "left/shoulder", "left/elbow", "left/forearm_roll", "left/wrist_angle", "left/wrist_rotate", "left/left_finger", "left/right_finger", "right/waist", "right/shoulder", "right/elbow", "right/forearm_roll", "right/wrist_angle", "right/wrist_rotate", "right/left_finger", "right/right_finger"],
+      "action_keys": ["left/waist", "left/shoulder", "left/elbow", "left/forearm_roll", "left/wrist_angle", "left/wrist_rotate", "left/left_finger", "left/right_finger", "right/waist", "right/shoulder", "right/elbow", "right/forearm_roll", "right/wrist_angle", "right/wrist_rotate", "right/left_finger", "right/right_finger"],
+      "dim_policy": "pad"
+    }
+  },
+
+  "aliases": {
+    "franka_libero": "panda_libero",
+    "so100_real": "so_real",
+    "so101_real": "so_real",
+    "franka": "panda",
+    "franka_fr3": "fr3",
+    "gen3": "kinova_gen3",
+    "kinova": "kinova_gen3",
+    "viperx_300s": "vx300s",
+    "widowx_250s": "wx250s",
+    "lekiwi": "lekiwi_real"
+  }
+}

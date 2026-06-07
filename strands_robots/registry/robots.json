@@ -233,8 +233,8 @@
       "joints": 9,
       "asset": {
         "dir": "robotstudio_so101",
-        "model_xml": "so101.xml",
-        "scene_xml": "scene_box.xml",
+        "model_xml": "so101_new_calib.xml",
+        "scene_xml": "scene.xml",
         "robot_descriptions_module": "so_arm101_mj_description"
       },
       "hardware": {

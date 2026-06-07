@@ -89,6 +89,7 @@ class DatasetRecorder:
         self.dataset = dataset
         self.default_task = task
         self.frame_count = 0
+        self.episode_frame_count = 0  # frames in the CURRENT (unsaved) episode
         self.dropped_frame_count = 0
         self.strict = strict
         self.episode_count = 0
@@ -105,6 +106,7 @@ class DatasetRecorder:
         robot_features: dict[str, Any] | None = None,
         action_features: dict[str, Any] | None = None,
         camera_keys: list[str] | None = None,
+        camera_dims: dict[str, tuple[int, int]] | None = None,
         joint_names: list[str] | None = None,
         task: str = "",
         root: str | None = None,
@@ -143,6 +145,7 @@ class DatasetRecorder:
             robot_features=robot_features,
             action_features=action_features,
             camera_keys=camera_keys,
+            camera_dims=camera_dims,
             joint_names=joint_names,
             use_videos=use_videos,
             video_width=video_width,
@@ -151,7 +154,7 @@ class DatasetRecorder:
 
         logger.info(f"Creating LeRobotDataset: {repo_id} @ {fps}fps, {len(features)} features, robot_type={robot_type}")
 
-        # Build kwargs, skip unsupported params for this LeRobot version
+        # Build kwargs, skip unsupported params for this LeRobot version.
         create_kwargs = dict(
             repo_id=repo_id,
             fps=fps,
@@ -160,15 +163,34 @@ class DatasetRecorder:
             features=features,
             use_videos=use_videos,
             image_writer_threads=image_writer_threads,
-            vcodec=vcodec,
         )
-        # streaming_encoding only in newer LeRobot versions
         import inspect
 
         create_sig = inspect.signature(LeRobotDatasetCls.create)
-        if "streaming_encoding" in create_sig.parameters:
+        create_params = create_sig.parameters
+
+        # Video codec plumbing drifted across LeRobot versions:
+        #   * 0.5.0/0.5.1: create(..., vcodec="libsvtav1")
+        #   * 0.5.2+:      create(..., camera_encoder=VideoEncoderConfig(vcodec=...))
+        # The flat ``vcodec`` kwarg was removed in 0.5.2 (codec now lives inside
+        # VideoEncoderConfig). Detect which surface this LeRobot exposes and route
+        # accordingly so the recorder works on both old and new versions.
+        if "vcodec" in create_params:
+            create_kwargs["vcodec"] = vcodec
+        elif "camera_encoder" in create_params:
+            try:
+                from lerobot.configs.video import VideoEncoderConfig
+
+                create_kwargs["camera_encoder"] = VideoEncoderConfig(vcodec=vcodec)
+            except (ImportError, Exception) as exc:  # noqa: BLE001
+                # If VideoEncoderConfig can't be built (e.g. unknown codec on this
+                # platform), fall back to the codec default rather than crashing.
+                logger.warning("VideoEncoderConfig(vcodec=%r) unavailable (%s); using default encoder", vcodec, exc)
+
+        # streaming_encoding / video_backend only in newer LeRobot versions
+        if "streaming_encoding" in create_params:
             create_kwargs["streaming_encoding"] = streaming_encoding
-        if "video_backend" in create_sig.parameters:
+        if "video_backend" in create_params:
             create_kwargs["video_backend"] = video_backend
         dataset = LeRobotDatasetCls.create(**create_kwargs)
 
@@ -182,6 +204,7 @@ class DatasetRecorder:
         robot_features: dict | None = None,
         action_features: dict | None = None,
         camera_keys: list[str] | None = None,
+        camera_dims: dict[str, tuple[int, int]] | None = None,
         joint_names: list[str] | None = None,
         use_videos: bool = True,
         video_height: int = 480,
@@ -202,12 +225,17 @@ class DatasetRecorder:
 
         # Observation: cameras → video/image features
         if camera_keys:
+            camera_dims = camera_dims or {}
             for cam_name in camera_keys:
                 key = f"observation.images.{cam_name}"
                 dtype = "video" if use_videos else "image"
+                # Per-camera (height, width). Falls back to the global
+                # video_height/width when a camera has no explicit dims, so
+                # callers that don't pass camera_dims keep the old behaviour.
+                cam_h, cam_w = camera_dims.get(cam_name, (video_height, video_width))
                 features[key] = {
                     "dtype": dtype,
-                    "shape": (3, video_height, video_width),
+                    "shape": (3, cam_h, cam_w),
                     "names": ["channels", "height", "width"],
                 }
 
@@ -373,6 +401,7 @@ class DatasetRecorder:
         try:
             self.dataset.add_frame(frame)
             self.frame_count += 1
+            self.episode_frame_count += 1
         except Exception as e:
             if self.strict:
                 raise  # Fail-fast per AGENTS.md convention #5
@@ -402,12 +431,23 @@ class DatasetRecorder:
         try:
             self.dataset.save_episode()
             self.episode_count += 1
-            ep_frames = self.frame_count  # Total frames so far
-            logger.info(f"Episode {self.episode_count} saved: {ep_frames} total frames")
+            # Report frames in THIS episode, not the cumulative total.
+            # frame_count is monotonic across all episodes; episode_frame_count
+            # is the count since the last save. Reset it after reporting.
+            ep_frames = self.episode_frame_count
+            total_frames = self.frame_count
+            self.episode_frame_count = 0
+            logger.info(
+                "Episode %d saved: %d frames (%d total across dataset)",
+                self.episode_count,
+                ep_frames,
+                total_frames,
+            )
             return {
                 "status": "success",
                 "episode": self.episode_count,
-                "total_frames": ep_frames,
+                "episode_frames": ep_frames,
+                "total_frames": total_frames,
             }
         except Exception as e:
             logger.error("save_episode failed: %s", e)

@@ -117,6 +117,15 @@ class RecordingMixin:
                 robot_type = robot.data_config or rname
 
             mj = _ensure_mujoco()
+            # Declare each camera in the dataset schema at the SAME
+            # resolution it actually renders at. Cameras added via add_camera
+            # carry their own width/height (e.g. 256x256 for a LIBERO VLA),
+            # which can differ from the sim's default render size. Declaring
+            # everything at default_width/height made add_frame reject frames
+            # ("shape (256,256,3) != expected (3,480,640)") and, with strict
+            # recording, abort the whole episode. We map each safe camera name
+            # to its real (height, width) so _build_features sizes it correctly.
+            camera_dims: dict[str, tuple[int, int]] = {}
             for i in range(self._world._model.ncam):
                 cam_name = mj.mj_id2name(self._world._model, mj.mjtObj.mjOBJ_CAMERA, i)
                 if not cam_name:
@@ -127,6 +136,11 @@ class RecordingMixin:
                 # the separator to ``__`` for the dataset schema.
                 safe_name = cam_name.replace("/", "__")
                 camera_keys.append(safe_name)
+                cam_info = self._world.cameras.get(cam_name) or self._world.cameras.get(safe_name)
+                if cam_info is not None:
+                    camera_dims[safe_name] = (int(cam_info.height), int(cam_info.width))
+                else:
+                    camera_dims[safe_name] = (int(self.default_height), int(self.default_width))
 
             assert _DatasetRecorder is not None  # checked above
             self._world._backend_state["dataset_recorder"] = _DatasetRecorder.create(
@@ -135,6 +149,7 @@ class RecordingMixin:
                 robot_type=robot_type,
                 joint_names=joint_names,
                 camera_keys=camera_keys,
+                camera_dims=camera_dims,
                 task=task,
                 root=root,
                 vcodec=vcodec,

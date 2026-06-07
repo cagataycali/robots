@@ -1851,7 +1851,25 @@ class MuJoCoSimEngine(
                     )
                     rec = world._backend_state.get("dataset_recorder")
                     if rec is not None:
-                        rec.add_frame(observation=observation, action=action, task=instruction)
+                        # In multi-robot scenes start_recording() declares
+                        # the dataset schema with per-robot-prefixed joint ids
+                        # (``alice__shoulder_pan``) so each agent has unique state/
+                        # action columns. But _get_sim_observation() and the action
+                        # dict use SHORT joint names (``shoulder_pan``). Without
+                        # remapping here, add_frame() looks up the prefixed schema
+                        # keys, finds nothing, and writes all-zero state/action
+                        # vectors silently. Prefix scalar obs + action keys to match
+                        # the schema. Camera values (ndarray) keep their (already
+                        # namespaced) names — dataset_recorder normalizes '/'→'__'.
+                        if len(world.robots) > 1:
+                            obs_keyed = {
+                                (k if isinstance(v, np.ndarray) else f"{robot_name}__{k}"): v
+                                for k, v in observation.items()
+                            }
+                            act_keyed = {f"{robot_name}__{k}": v for k, v in action.items()}
+                            rec.add_frame(observation=obs_keyed, action=act_keyed, task=instruction)
+                        else:
+                            rec.add_frame(observation=observation, action=action, task=instruction)
 
         return _hook
 
