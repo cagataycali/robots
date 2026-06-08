@@ -2085,6 +2085,12 @@ class MuJoCoSimEngine(
 
         step_count = 0
         stopped_early = False
+        # Tracks whether the loop finished without an unexpected error. A normal
+        # completion and a cooperative stop both leave a VALID partial/complete
+        # episode the caller will save; any other exception (e.g. an empty action
+        # chunk) leaves a dangling partial episode we must discard so the next
+        # recording starts at frame 0 rather than appending to a half-episode.
+        completed_cleanly = False
         try:
             while step_count < total_steps:
                 # --- 1. Observe every robot + render cameras ONCE (under lock).
@@ -2187,12 +2193,21 @@ class MuJoCoSimEngine(
                 if action_sleep:
                     time.sleep(action_sleep)
 
+            completed_cleanly = True
         except CooperativeStop:
+            # A cooperative stop is a normal, user-requested halt: the frames
+            # captured so far are valid and the caller will save_episode them.
             stopped_early = True
+            completed_cleanly = True
         finally:
             for rname in policies:
                 if rname in self._world.robots:
                     self._world.robots[rname].policy_running = False
+            # Bailed mid-episode on an unexpected error (e.g. empty action
+            # chunk): drop the partially-recorded frames so the next episode
+            # begins at frame 0 instead of appending to a dangling half-episode.
+            if not completed_cleanly and recording and recorder is not None:
+                recorder.clear_episode_buffer()
 
         text = (
             f"{'stopped early' if stopped_early else 'completed'}: "

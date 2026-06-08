@@ -544,6 +544,52 @@ class DatasetRecorder:
             self._closed = True
             return {"status": "error", "message": f"save_episode failed (recorder closed): {e}"}
 
+    def clear_episode_buffer(self) -> bool:
+        """Discard frames buffered for the current (unsaved) episode.
+
+        After an aborted recording (e.g. a policy returned an empty action
+        chunk mid-loop) the open episode buffer still holds the frames written
+        so far. Without discarding them, the next ``add_frame`` appends to the
+        half-episode and the eventual ``save_episode`` flushes a Frankenstein
+        episode that mixes two runs. Call this to start the next episode at
+        frame 0.
+
+        LeRobot's buffer-reset surface drifted across 0.5.x, so this routes
+        version-tolerantly:
+          * ``LeRobotDataset.clear_episode_buffer()`` if exposed (preferred), else
+          * reset via ``create_episode_buffer()`` if exposed, else
+          * leave the buffer in place and warn (caller must ``stop_recording`` /
+            ``save_episode`` to drain it before recording again).
+
+        Returns:
+            True if the buffer was actively cleared; False if no clear surface
+            was available (a warning is logged in that case).
+        """
+        cleared = False
+        try:
+            if hasattr(self.dataset, "clear_episode_buffer"):
+                self.dataset.clear_episode_buffer()
+                cleared = True
+            elif hasattr(self.dataset, "create_episode_buffer"):
+                self.dataset.episode_buffer = self.dataset.create_episode_buffer()
+                cleared = True
+        except Exception as e:  # noqa: BLE001 - best-effort discard; never mask the original abort
+            logger.warning("clear_episode_buffer failed: %s", e)
+            cleared = False
+
+        # Reset the per-episode frame counter regardless: the next episode
+        # reports frames from 0. frame_count (cumulative) is left untouched
+        # since those frames were really written to disk only on save_episode.
+        self.episode_frame_count = 0
+
+        if not cleared:
+            logger.warning(
+                "Could not auto-discard the partial episode buffer on this "
+                "LeRobot version; call stop_recording()/save_episode() to drain "
+                "it before the next recording to avoid a mixed episode."
+            )
+        return cleared
+
     def finalize(self) -> None:
         """Finalize the dataset (close parquet writers, flush metadata)."""
         if self._closed:

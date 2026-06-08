@@ -393,3 +393,67 @@ def test_run_multi_policy_raises_on_empty_action_chunk(sim_with_two_robots, tmp_
             control_frequency=20.0,
         )
     sim.stop_recording()
+
+
+def test_run_multi_policy_discards_partial_episode_on_empty_chunk(sim_with_two_robots, tmp_path):
+    """An empty action chunk mid-loop must DISCARD the partial episode so the
+    next recording starts at frame 0, not mid-episode.
+
+    Pins the #366 follow-up: pre-fix, frames already add_frame'd before the
+    RuntimeError stayed in the open episode buffer, so the next
+    start_recording/run_multi_policy appended to that half-episode. A chunk
+    returning [] on step 5 of 30 should leave the recorder starting the next
+    episode at frame 0, not frame 5.
+    """
+    from strands_robots.dataset_recorder import has_lerobot_dataset
+
+    if not has_lerobot_dataset():
+        pytest.skip("lerobot not installed")
+
+    from strands_robots.policies.base import Policy
+
+    class _DiesAtStepFive(Policy):
+        """Yields a valid 1-action chunk per step, then an empty chunk at step 5."""
+
+        requires_images = False
+
+        def __init__(self):
+            self.calls = 0
+            self._keys = None
+
+        def set_robot_state_keys(self, keys):
+            self._keys = list(keys)
+
+        @property
+        def provider_name(self):
+            return "dies_at_five"
+
+        async def get_actions(self, obs, instruction=""):
+            self.calls += 1
+            if self.calls >= 5:
+                return []  # empty chunk -> RuntimeError mid-loop
+            keys = self._keys or ["shoulder_pan", "shoulder_lift", "elbow"]
+            return [{k: 0.05 for k in keys}]
+
+    sim = sim_with_two_robots
+    r = sim.start_recording(repo_id="local/partial", fps=20, root=str(tmp_path / "partial"), overwrite=True)
+    assert r["status"] == "success", r
+
+    # action_horizon=1 -> the policy is re-queried every step, so the empty
+    # chunk surfaces on step 5 after frames 0-3 were recorded.
+    with pytest.raises(RuntimeError, match="empty action chunk"):
+        sim.run_multi_policy(
+            policies={"alpha": _DiesAtStepFive(), "beta": _DiesAtStepFive()},
+            n_steps=30,
+            control_frequency=20.0,
+            action_horizon=1,
+        )
+
+    recorder = sim._world._backend_state.get("dataset_recorder")
+    assert recorder is not None
+    # The partial episode (frames recorded before the abort) was discarded:
+    # the next episode starts at frame 0.
+    assert recorder.episode_frame_count == 0, (
+        f"partial episode not discarded: {recorder.episode_frame_count} frames left in the open buffer"
+    )
+    sim.stop_recording()
