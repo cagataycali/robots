@@ -31,7 +31,7 @@
   </p>
 </div>
 
-`strands-robots` gives a [Strands Agent](https://github.com/strands-agents/sdk-python)
+`strands-robots` gives a [Strands Agent](https://github.com/strands-agents/harness-sdk)
 hands. One `Robot()` call returns either a **MuJoCo simulation** (default, no GPU,
 no hardware) or a **real hardware robot** — both drivable in natural language,
 both auto-joined to a peer-to-peer **mesh** so fleets coordinate out of the box.
