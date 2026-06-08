@@ -61,7 +61,7 @@ robot = Robot("so100", mode="real", port="/dev/ttyACM0")
   plus classical motion planners, MPC, and scripted controllers behind one ABC.
 - **Mesh networking built in.** Every robot is a Zenoh peer. `tell()` another
   robot what to do; broadcast an E-STOP; bridge to AWS IoT Core for fleets.
-- **64-action simulation tool.** World building, physics, rendering,
+- **60+ action simulation tool.** World building, physics, rendering,
   domain randomization, and LeRobotDataset recording — all agent-callable.
 - **One mental model.** Sim and hardware share the same policy interface,
   the same mesh, and the same natural-language control surface.
