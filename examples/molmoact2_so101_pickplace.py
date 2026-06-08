@@ -5,14 +5,27 @@ Uses strands_robots.policies.create_policy() (the PR-integrated path) — NOT a
 bespoke Policy subclass. Demonstrates the molmoact2 transformers-native
 checkpoint running through LerobotLocalPolicy end-to-end on real hardware.
 """
+
 from __future__ import annotations
-import argparse, asyncio, logging, time
+
+import argparse
+import asyncio
+import logging
+import time
+
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("molmoact2_so101_hw")
 
 REPO = "allenai/MolmoAct2-SO100_101"
-SO101_MOTORS = ["shoulder_pan.pos","shoulder_lift.pos","elbow_flex.pos",
-                "wrist_flex.pos","wrist_roll.pos","gripper.pos"]
+SO101_MOTORS = [
+    "shoulder_pan.pos",
+    "shoulder_lift.pos",
+    "elbow_flex.pos",
+    "wrist_flex.pos",
+    "wrist_roll.pos",
+    "gripper.pos",
+]
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -25,9 +38,10 @@ def main():
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
-    from strands_robots.policies import create_policy
-    from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
     from lerobot.cameras.opencv import OpenCVCameraConfig
+    from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
+
+    from strands_robots.policies import create_policy
 
     # 'front' matches the so_real embodiment's obs_rename -> observation.images.image
     cam_cfg = {"front": OpenCVCameraConfig(index_or_path=args.camera, width=640, height=480, fps=30)}
@@ -49,7 +63,7 @@ def main():
             actions = await policy.get_actions(obs, args.task)
             dt = time.time() - t
             a = actions[0]
-            log.info("step %d infer=%.2fs action=%s", step, dt, {k: round(v,1) for k,v in a.items()})
+            log.info("step %d infer=%.2fs action=%s", step, dt, {k: round(v, 1) for k, v in a.items()})
             if not args.dry_run:
                 robot.send_action(a)
             await asyncio.sleep(max(0, period - dt))
@@ -62,6 +76,7 @@ def main():
         except Exception as e:
             log.warning("disconnect: %s", str(e)[:80])
         log.info("Done.")
+
 
 if __name__ == "__main__":
     main()

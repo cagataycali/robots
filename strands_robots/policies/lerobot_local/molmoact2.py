@@ -140,8 +140,7 @@ def auto_norm_tag(pretrained_name_or_path: str, requested: str | None) -> str | 
             return tags[0]
         if len(tags) > 1:
             logger.warning(
-                "molmoact2: norm_stats.json has %d tags %s; pass norm_tag= explicitly. "
-                "Proceeding without one.",
+                "molmoact2: norm_stats.json has %d tags %s; pass norm_tag= explicitly. Proceeding without one.",
                 len(tags),
                 tags,
             )
@@ -252,9 +251,7 @@ def build_policy(
     resolved_tag = auto_norm_tag(pretrained_name_or_path, norm_tag)
     keys = derive_image_keys(image_keys, embodiment_spec)
 
-    input_features: dict[str, Any] = {
-        k: PolicyFeature(type=FeatureType.VISUAL, shape=(3, 224, 224)) for k in keys
-    }
+    input_features: dict[str, Any] = {k: PolicyFeature(type=FeatureType.VISUAL, shape=(3, 224, 224)) for k in keys}
     # observation.state / action are required by MolmoAct2Config.validate_features
     # (it raises without a VISUAL feature; state/action are auto-filled if absent
     # but we declare them explicitly to pin the SO-arm dims).
