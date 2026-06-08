@@ -329,6 +329,7 @@ def Robot(  # noqa: N802 — uppercase by design (factory mimicking a class cons
         except Exception as exc:  # noqa: BLE001 — mesh enrichment is best-effort
             logger.warning("Failed to initialise mesh for %r: %s", canonical, exc)
 
+        _attach_device_connect(sim, canonical, mode, peer_id)
         return sim
 
     # --- Real hardware (explicit opt-in) ---
@@ -366,10 +367,64 @@ def Robot(  # noqa: N802 — uppercase by design (factory mimicking a class cons
         except Exception as exc:  # noqa: BLE001 — mesh enrichment is best-effort
             logger.warning("Failed to initialise mesh for %r: %s", canonical, exc)
 
+        _attach_device_connect(hw, canonical, mode, peer_id)
         return hw
 
     else:
         raise ValueError(f"Invalid mode {mode!r}. Choose 'sim', 'real', or 'auto' (case-insensitive).")
+
+
+def _attach_device_connect(instance: Any, canonical: str, mode: str, peer_id: str | None) -> None:
+    """Attach a Device Connect ``.run()`` server hook to a robot/sim instance.
+
+    Mirrors the mesh attach above: stores peer metadata and binds ``.run()`` so
+    ``Robot("so100").run()`` brings the device online as a Device Connect device
+    (the primary networking layer), blocking until Ctrl+C.
+    """
+    instance._peer_id = (
+        peer_id or getattr(instance, "peer_id", None) or f"{canonical}-{os.urandom(3).hex()}"
+    )
+    instance._peer_type = "sim" if mode == "sim" else "robot"
+    instance._device_connect_runtime = None
+    instance.run = lambda: _run_device_connect_foreground(instance)
+
+
+def _run_device_connect_foreground(instance: Any) -> None:
+    """Start Device Connect and block — the robot listens for commands.
+
+    Device Connect is the primary networking layer in server mode, so the
+    auto-started built-in mesh (if any) is stopped first to avoid running two
+    Zenoh presence systems in one process.
+    """
+    import time
+
+    peer_id = getattr(instance, "_peer_id", None) or "robot"
+    peer_type = getattr(instance, "_peer_type", "robot")
+
+    # Device Connect supersedes the built-in mesh in run() mode.
+    mesh = getattr(instance, "mesh", None)
+    if mesh is not None:
+        with contextlib.suppress(Exception):
+            mesh.stop()
+        instance.mesh = None
+
+    try:
+        from strands_robots.device_connect import init_device_connect_sync
+
+        instance._device_connect_runtime = init_device_connect_sync(
+            instance, peer_id=peer_id, peer_type=peer_type,
+        )
+    except Exception as e:  # noqa: BLE001 — surface but keep the process alive
+        logger.warning("Device Connect init failed: %s", e)
+
+    print(f"🤖 {peer_id} is online. Ctrl+C to stop.")
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print(f"\n🛑 Shutting down {peer_id}...", flush=True)
+        print(f"👋 {peer_id} stopped.", flush=True)
+        os._exit(0)
 
 
 __all__ = ["Robot"]

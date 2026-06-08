@@ -17,6 +17,12 @@ import os
 # can override via the environment without conftest stomping on them.
 os.environ.setdefault("STRANDS_MESH", "false")
 
+# Disable the Device Connect dispatch path in robot_mesh by default so unit
+# tests exercise the built-in mesh deterministically, without opening real
+# Device Connect (Zenoh) connections. The GUIDE E2E demo runs outside pytest
+# and leaves this unset, so Device Connect remains the primary path at runtime.
+os.environ.setdefault("STRANDS_ROBOT_MESH_DC", "off")
+
 from tests.mocks.torch_mock import install_torch_mock
 
 # Must run before any test imports policy modules
