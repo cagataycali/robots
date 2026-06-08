@@ -56,7 +56,7 @@ robot = Robot("so100", mode="real", port="/dev/ttyACM0")
 - **Sim-first, safe by default.** `Robot("so100")` spins up a MuJoCo world. You
   never accidentally drive real servos — `mode="real"` is an explicit opt-in.
 - **50+ robots, 8 categories.** Arms, humanoids, quadrupeds, hands, drones,
-  bimanual rigs — resolved from a single registry with auto-download of assets.
+  bimanual rigs - resolved from a single registry with auto-download of assets.
 - **Any policy.** VLA models (NVIDIA GR00T, LeRobot ACT/Pi0/SmolVLA/Diffusion),
   plus classical motion planners, MPC, and scripted controllers behind one ABC.
 - **Mesh networking built in.** Every robot is a Zenoh peer. `tell()` another
