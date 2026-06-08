@@ -74,6 +74,11 @@
   .kv span:first-child { color: var(--dim); }
   .empty { color: var(--dim); font-style: italic; padding: 20px 0; text-align: center; }
   .cmdbar { display: flex; gap: 6px; margin-top: 10px; }
+  .view3d-wrap { margin-top: 4px; }
+  #view3d { width: 100%; height: 320px; background: #0b0e14; border: 1px solid var(--line);
+            border-radius: 8px; overflow: hidden; }
+  #view3d canvas { display: block; cursor: grab; }
+  #view3d canvas:active { cursor: grabbing; }
   .camgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px,1fr)); gap: 8px; }
   .cam { background: #000; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
   .cam img { width: 100%; display: block; image-rendering: auto; }
@@ -115,10 +120,16 @@
   </div>
 </main>
 
-<script>
+<script type="module">
+import { Viewer3D, decodeGeometry } from "./static/viewer3d.js";
+
 const peers = {};      // peer_id -> presence dict
 const states = {};     // peer_id -> last state dict
 const cameras = {};    // peer_id -> {cam_name: {data, t}}
+let viewer3d = null;       // Viewer3D instance for the selected peer
+let viewer3dPeer = null;   // which peer the viewer currently shows
+const sceneGeom = {};      // peer_id -> decoded geometry (cached)
+let pendingGeomDecode = {}; // peer_id -> bool (decode in flight)
 let selected = null;
 let ws = null;
 let reqSeq = 0;
@@ -169,6 +180,10 @@ function handle(msg) {
     ingestPeer(data); renderPeers();
   } else if (type === "event") {
     addEvent(data._topic || "event", JSON.stringify(data).slice(0, 120));
+  } else if (type === "scene_geom") {
+    handleSceneGeom(data);
+  } else if (type === "scene_pose") {
+    if (viewer3d && data.peer_id === viewer3dPeer) viewer3d.setPose(data);
   } else if (type === "camera") {
     const id = data.peer_id; if (!id) return;
     cameras[id] = cameras[id] || {};
@@ -210,6 +225,55 @@ function select(id) {
   buildDetailChrome();
   patchDetail();
   renderCameras();
+  setupViewer3D();
+}
+
+// Create (or recreate) the 3D viewer for the selected peer. If we already
+// have cached geometry for it, build immediately; otherwise the next
+// scene_geom message will populate it.
+function setupViewer3D() {
+  const host = document.getElementById("view3d");
+  if (!host) return;
+  if (viewer3d) { viewer3d.dispose(); viewer3d = null; }
+  viewer3dPeer = selected;
+  viewer3d = new Viewer3D(host);
+  const cached = sceneGeom[selected];
+  if (cached) {
+    viewer3d.setGeometry(cached);
+    setView3dHint("");
+  } else {
+    setView3dHint("(waiting for sim geometry…)");
+  }
+}
+
+function setView3dHint(txt) {
+  const h = document.getElementById("view3dHint");
+  if (h) h.textContent = txt;
+}
+
+// A scene_geom message arrived (gzip+b64). Decode once, cache, and if it is
+// for the currently-viewed peer, push it into the live viewer.
+async function handleSceneGeom(data) {
+  const id = data.peer_id;
+  if (!id) return;
+  if (sceneGeom[id] || pendingGeomDecode[id]) {
+    // Already have it (geometry is static + periodically re-sent). Ignore.
+    if (sceneGeom[id] && viewer3d && id === viewer3dPeer && !viewer3d.ready) {
+      viewer3d.setGeometry(sceneGeom[id]); setView3dHint("");
+    }
+    return;
+  }
+  pendingGeomDecode[id] = true;
+  try {
+    const geo = await decodeGeometry(data);
+    sceneGeom[id] = geo;
+    addEvent("scene", `geometry for ${id}: ${geo.meshes.length} meshes, ${geo.ngeom} geoms`);
+    if (viewer3d && id === viewer3dPeer) { viewer3d.setGeometry(geo); setView3dHint(""); }
+  } catch (e) {
+    addEvent("err", "geometry decode failed: " + e, "err");
+  } finally {
+    pendingGeomDecode[id] = false;
+  }
 }
 
 // Build the static skeleton once per selection. Live data (joints, kv,
@@ -223,6 +287,8 @@ function buildDetailChrome() {
   }
   el.innerHTML = `
     <div id="kv"></div>
+    <div class="view3d-wrap"><h2 style="margin-top:14px">3D View <span class="thint" id="view3dHint">(waiting for sim geometry…)</span></h2>
+      <div id="view3d"></div></div>
     <div id="joints"></div>
     <div id="cams"></div>
     <div class="teleop" id="teleop">
@@ -430,6 +496,12 @@ function addEvent(kind, text, cls) {
   el.insertBefore(div, el.firstChild);
   while (el.children.length > 200) el.removeChild(el.lastChild);
 }
+
+// Inline onclick= handlers run in global scope, but this is a module.
+// Bridge the functions the HTML references onto window.
+Object.assign(window, {
+  select, estop, tellPeer, sendAction, teleopToggle, teleopSlider,
+});
 
 connect();
 setInterval(renderPeers, 1000); // refresh ages

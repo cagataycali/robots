@@ -372,6 +372,40 @@ class MuJoCoSimEngine(
             "receivers": {k: r.stats for k, r in receivers.items()},
         }
 
+    # Browser 3D scene export -----------------------------------------
+    #
+    # The dashboard's WebGL view renders this sim without running physics
+    # client-side: the server stays the single source of truth. These two
+    # methods feed that view -- static geometry once, live geom poses per
+    # frame. See strands_robots.simulation.mujoco.scene_export for the wire
+    # schema rationale.
+
+    def export_scene_geometry(self) -> dict[str, Any]:
+        """Return baked geometry (meshes + geoms) for the browser 3D view.
+
+        Thread-safety: reads the compiled model under ``self._lock``. Returns
+        an empty scene when no world is loaded rather than raising.
+        """
+        if self._world is None or self._world._model is None:
+            return {"ngeom": 0, "meshes": [], "geoms": []}
+        from strands_robots.simulation.mujoco.scene_export import export_scene_geometry
+
+        with self._lock:
+            return export_scene_geometry(self._world._model)
+
+    def geom_pose_frame(self) -> dict[str, Any]:
+        """Return per-geom world poses (xpos/xmat) for one render frame.
+
+        Thread-safety: reads ``data`` under ``self._lock`` to avoid a torn
+        read while a concurrent mj_step mutates the arrays.
+        """
+        if self._world is None or self._world._model is None or self._world._data is None:
+            return {"xpos": [], "xmat": []}
+        from strands_robots.simulation.mujoco.scene_export import geom_pose_frame
+
+        with self._lock:
+            return geom_pose_frame(self._world._model, self._world._data)
+
 
     # World Management
 

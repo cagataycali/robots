@@ -585,6 +585,21 @@ class Mesh(SensorLoopsMixin):
                 cam_thread.start()
                 logger.info("[mesh] %s camera stream enabled @ %.1f Hz", self.peer_id, camera_hz)
 
+            # Optional 3D scene loop -- only for sim peers that expose
+            # geom_pose_frame (MuJoCoSimEngine). Publishes baked geometry once,
+            # then per-frame geom poses for the dashboard's WebGL viewer.
+            scene_hz = self._resolve_scene_hz()
+            if scene_hz > 0 and hasattr(self.robot, "geom_pose_frame"):
+                scene_thread = threading.Thread(
+                    target=self._scene_loop,
+                    args=(scene_hz,),
+                    name=f"mesh-scene-{self.peer_id}",
+                    daemon=True,
+                )
+                self._threads.append(scene_thread)
+                scene_thread.start()
+                logger.info("[mesh] %s scene stream enabled @ %.1f Hz", self.peer_id, scene_hz)
+
             # Extended sensor loops (from SensorLoopsMixin)
             extended_loops = [
                 ("pose", self._pose_loop),
@@ -862,6 +877,37 @@ class Mesh(SensorLoopsMixin):
                 world_robots = getattr(world, "robots", None)
                 if isinstance(world_robots, dict):
                     snapshot["robots"] = {name: {"active": True} for name in world_robots}
+                    # Sim joint state: the hardware branch above pulls joints
+                    # from r.robot.get_observation(), but a sim peer has no
+                    # r.robot -- its joints live on the engine itself via
+                    # get_observation(robot_name). Without this, the dashboard
+                    # shows no joint gauges and teleop has nothing to seed
+                    # from (the joints come back null on the wire). We merge
+                    # every robot's scalar joints, namespaced as robot.joint
+                    # only when there is more than one robot so the common
+                    # single-arm case keeps stable short keys.
+                    if "joints" not in snapshot and hasattr(r, "get_observation"):
+                        sim_joints: dict[str, Any] = {}
+                        multi = len(world_robots) > 1
+                        for rname in world_robots:
+                            try:
+                                obs = r.get_observation(rname, skip_images=True)
+                            except TypeError:
+                                obs = r.get_observation(rname)
+                            except Exception:
+                                continue
+                            if not isinstance(obs, dict):
+                                continue
+                            for key, value in obs.items():
+                                # Scalars only -- skip camera ndarrays.
+                                shape = getattr(value, "shape", None)
+                                if shape is not None and len(shape) >= 1:
+                                    continue
+                                if isinstance(value, (int, float)):
+                                    out_key = f"{rname}.{key}" if multi else key
+                                    sim_joints[out_key] = float(value)
+                        if sim_joints:
+                            snapshot["joints"] = sim_joints
         except Exception:
             pass
 
@@ -1042,6 +1088,76 @@ class Mesh(SensorLoopsMixin):
             return frames
 
         return {}
+
+    # 3D scene streaming (sim peers only) -----------------------------
+
+    def _resolve_scene_hz(self) -> float:
+        """Resolve scene-pose publish rate from STRANDS_MESH_SCENE_HZ.
+
+        Defaults to 0 (off). The dashboard 3D view is opt-in just like the
+        camera loop, so headless fleets pay nothing. A typical value is 20-30.
+        """
+        env = os.getenv("STRANDS_MESH_SCENE_HZ")
+        if env is None or env.strip() == "":
+            return 0.0
+        try:
+            hz = float(env)
+        except ValueError:
+            logger.warning("STRANDS_MESH_SCENE_HZ=%r invalid; scene loop disabled", env)
+            return 0.0
+        return hz if hz > 0 else 0.0
+
+    def _publish_scene_geometry(self) -> None:
+        """Publish the baked scene geometry once (gzipped) on the geom topic.
+
+        Geometry is large (~MBs raw) but static, so we gzip+base64 it and
+        publish on ``strands/{peer}/scene/geom``. Subscribers (the dashboard)
+        decompress once and build their scene graph. Republished whenever the
+        loop (re)starts so a late-joining dashboard still gets it via the next
+        tick boundary; the dashboard also explicitly requests it on connect.
+        """
+        try:
+            geom = self.robot.export_scene_geometry()
+        except Exception as exc:
+            logger.debug("[mesh] %s: export_scene_geometry failed: %s", self.peer_id, exc)
+            return
+        if not geom or not geom.get("geoms"):
+            return
+        import base64
+        import gzip
+
+        raw = json.dumps(geom).encode("utf-8")
+        packed = base64.b64encode(gzip.compress(raw, 5)).decode("ascii")
+        self.publish(
+            f"strands/{self.peer_id}/scene/geom",
+            {
+                "peer_id": self.peer_id,
+                "t": time.time(),
+                "encoding": "gzip+b64",
+                "ngeom": geom.get("ngeom", 0),
+                "data": packed,
+            },
+        )
+
+    def _scene_loop(self, hz: float) -> None:
+        period = 1.0 / hz
+        # Publish geometry once up front, then stream poses.
+        self._publish_scene_geometry()
+        geom_republish_every = max(1, int(hz * 5))  # re-send geometry ~every 5s
+        tick = 0
+        while self._running:
+            try:
+                frame = self.robot.geom_pose_frame()
+                if frame and frame.get("xpos"):
+                    payload = {"peer_id": self.peer_id, "t": time.time(), **frame}
+                    self.publish(f"strands/{self.peer_id}/scene/pose", payload)
+                tick += 1
+                if tick % geom_republish_every == 0:
+                    self._publish_scene_geometry()
+            except Exception as exc:
+                logger.debug("[mesh] %s: scene tick error: %s", self.peer_id, exc)
+            if self._stop_event.wait(period):
+                break
 
     # RPC — incoming
     def _on_cmd(self, sample: Any) -> None:

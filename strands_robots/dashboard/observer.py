@@ -116,6 +116,19 @@ class MeshObserver:
             name="dash-camera",
         )
 
+        # 3D scene streams (sim peers): baked geometry (once) + live geom
+        # poses (per frame). Wildcards catch every sim peer on the mesh.
+        self._mesh.subscribe(
+            "strands/*/scene/geom",
+            callback=self._make_handler("scene_geom"),
+            name="dash-scene-geom",
+        )
+        self._mesh.subscribe(
+            "strands/*/scene/pose",
+            callback=self._make_handler("scene_pose"),
+            name="dash-scene-pose",
+        )
+
         logger.info("dashboard observer joined mesh as %s", self._peer_id)
         return True
 
