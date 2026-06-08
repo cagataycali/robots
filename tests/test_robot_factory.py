@@ -782,6 +782,50 @@ class TestRealModeConfigDiscovery:
         assert cfg.port == "/dev/null"
         assert cfg.use_degrees is True
 
+    def test_real_mode_connects_bus_eagerly(self):
+        """Regression pin: ``Robot(mode='real')`` must connect the servo bus
+        at construction, not lazily on first policy run.
+
+        Before this fix the lerobot bus stayed disconnected until
+        ``_execute_task_async`` connected it on the first ``execute``. A real
+        arm joined to the dashboard therefore reported no joints and rejected
+        ``calibrate``/``teleop`` with "FeetechMotorsBus is not connected".
+
+        We patch lerobot's factory to return a fake whose ``is_connected``
+        flips False -> True once ``connect`` is called, and assert the factory
+        invoked ``connect(calibrate=False)`` so the arm is immediately usable.
+        """
+        pytest.importorskip("lerobot.robots.so_follower")
+
+        from unittest.mock import MagicMock, patch
+
+        from strands_robots import Robot
+
+        fake = MagicMock(name="lerobot_robot_instance")
+        fake.name = "so_follower"
+        fake.config = MagicMock()
+        fake.config.cameras = {}
+        # Start disconnected; connect() flips the flag (mirrors lerobot).
+        fake.is_connected = False
+
+        def _connect(calibrate=True):
+            fake.is_connected = True
+
+        fake.connect.side_effect = _connect
+
+        with patch(
+            "lerobot.robots.utils.make_robot_from_config",
+            return_value=fake,
+        ):
+            r = Robot("so101", mode="real", port="/dev/null", id="conn_test")
+
+        # The factory must have connected the bus, without forcing calibration
+        # (an uncalibrated arm must still be constructible so the operator can
+        # calibrate through the dashboard).
+        fake.connect.assert_called_once_with(calibrate=False)
+        assert fake.is_connected is True
+        assert r.robot is fake
+
     def test_id_kwarg_overrides_tool_name_directly(self):
         """Helper-level pin for the same advertised `id=` override
         behaviour, without going through `Robot()`. Belt-and-suspenders

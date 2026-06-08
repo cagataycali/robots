@@ -349,6 +349,28 @@ def Robot(  # noqa: N802 — uppercase by design (factory mimicking a class cons
             **kwargs,
         )
 
+        # Connect the servo bus eagerly so the robot is immediately usable on
+        # the mesh (state reads, calibration, teleop). Without this the
+        # underlying lerobot bus stays disconnected until the first policy run
+        # (_execute_task_async connects lazily), so a real arm joined to the
+        # dashboard would report no joints and reject calibrate/teleop with
+        # "FeetechMotorsBus is not connected". Best-effort: a connect failure
+        # (e.g. uncalibrated arm, busy port) must not kill construction -- the
+        # dashboard calibration flow still needs the object to exist so the
+        # operator can calibrate. We connect WITHOUT requiring calibration so
+        # an uncalibrated arm can still be driven through the web calibration
+        # state machine.
+        inner = getattr(hw, "robot", None)
+        if inner is not None and hasattr(inner, "connect") and not getattr(inner, "is_connected", False):
+            try:
+                inner.connect(calibrate=False)
+                logger.info("Connected hardware bus for %r on construction", canonical)
+            except Exception as exc:  # noqa: BLE001 — connect is best-effort
+                logger.warning(
+                    "Could not connect hardware bus for %r at construction "
+                    "(%s); it will connect lazily on first use", canonical, exc
+                )
+
         # Attach a Zenoh mesh so the hardware Robot auto-discovers peers.
         # Best-effort: a mesh failure must not kill a working hardware robot.
         try:
