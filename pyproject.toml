@@ -129,6 +129,12 @@ dependencies = [
     "requests>=2.28.0,<3.0.0",
     "msgpack>=1.0.0,<2.0.0",
     "pyzmq>=27.0.0,<28.0.0",
+    # torchvision 0.26 (from the aarch64 torch>=2.11 override below) removed
+    # torchvision.io.VideoReader, which lerobot 0.5.1's pyav fallback still calls,
+    # crashing dataset video read-back. lerobot's torchcodec dep marker EXCLUDES
+    # aarch64, so add torchcodec explicitly on linux+aarch64 -> lerobot uses its
+    # preferred (working) torchcodec decoder instead of the removed VideoReader.
+    "torchcodec>=0.7; platform_machine == 'aarch64' and sys_platform == 'linux'",
 ]
 
 # ---------------------------------------------------------------------------
