@@ -40,7 +40,7 @@ both auto-joined to a peer-to-peer **mesh** so fleets coordinate out of the box.
 from strands import Agent
 from strands_robots import Robot
 
-robot = Robot("so100") # MuJoCo sim by default — safe, no hardware
+robot = Robot("so100") # MuJoCo sim by default - no hardware needed
 agent = Agent(tools=[robot])
 agent("Pick up the red cube")
 ```
