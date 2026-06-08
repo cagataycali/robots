@@ -51,14 +51,19 @@
                 "pretrained_name_or_path",
                 "policy_type",
                 "device",
-                "actions_per_step"
+                "actions_per_step",
+                "norm_tag",
+                "image_keys",
+                "inference_action_mode",
+                "embodiment"
             ],
             "defaults": {},
             "aliases": [
                 "lerobot"
             ],
             "hf_orgs": [
-                "lerobot"
+                "lerobot",
+                "allenai"
             ],
             "is_hf_default": true
         }
