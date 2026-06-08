@@ -277,7 +277,7 @@ AgentTool returning `{"status", "content"}`.
 | `find_containers` | - | Find GR00T Docker containers |
 | `build_image` / `download_checkpoint` / `start_container` | - | Full container lifecycle orchestration |
 
-TensorRT acceleration:
+**TensorRT** acceleration:
 
 ```python
 agent.tool.gr00t_inference(
