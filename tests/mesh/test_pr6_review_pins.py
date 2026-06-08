@@ -8,9 +8,12 @@ review without spelunking PR history.
 
 from __future__ import annotations
 
+import threading
+
 import pytest
 
 from strands_robots.mesh import core
+from strands_robots.mesh.sensors import SensorLoopsMixin
 
 # ---------------------------------------------------------------------------
 # Thread 4: _resume_lockout HMAC compare is constant-time independent of
@@ -408,3 +411,87 @@ class TestResumeCacheKeyNamespaceIsolation:
         assert "wire_zid is not None" in source or "wire_zid is None" in source, (
             "Domain tag conditional must use explicit None check, not truthy/falsy (empty string '' is falsy but valid)"
         )
+
+
+# ---------------------------------------------------------------------------
+# Issue #258: sensor *_loop except clauses must re-raise NotImplementedError
+# so an MRO contract violation (Mesh.publish missing) crashes loud at runtime
+# instead of being swallowed by the catch-all and logged at DEBUG level.
+# ---------------------------------------------------------------------------
+
+
+class _PublishlessMesh(SensorLoopsMixin):
+    """Host class that omits ``publish``, so the mixin stub fires.
+
+    Every sensor read returns a truthy payload so each loop reaches the
+    ``self.publish(...)`` call, which raises ``NotImplementedError`` from
+    the mixin stub. A correctly-ordered ``except NotImplementedError: raise``
+    must let it propagate out of the loop.
+    """
+
+    def __init__(self) -> None:
+        self.peer_id = "test-peer"
+        self.robot = None
+        self._running = True
+        self._stop_event = threading.Event()
+
+    def _read_pose(self):
+        return {"x": 0.0}
+
+    def _read_health(self):
+        return {"ok": True}
+
+    def _read_imu(self):
+        return {"ax": 0.0}
+
+    def _read_odom(self):
+        return {"vx": 0.0}
+
+    def _read_lidar_summary(self):
+        return {"n": 1}
+
+    def _read_lidar_state(self):
+        return {"state": "ok"}
+
+    def _read_hands(self):
+        return {"left": {"open": True}}
+
+    def _read_map_info(self):
+        return {"w": 1}
+
+
+@pytest.mark.parametrize(
+    "loop_name",
+    [
+        "_pose_loop",
+        "_health_loop",
+        "_imu_loop",
+        "_odom_loop",
+        "_lidar_loop",
+        "_hand_loop",
+        "_map_info_loop",
+    ],
+)
+def test_sensor_loops_reraise_not_implemented_error(loop_name):
+    """Each sensor loop must let NotImplementedError propagate (issue #258).
+
+    The mixin ``publish`` stub raises ``NotImplementedError`` when no host
+    ``Mesh.publish`` shadows it. The loop's ``except NotImplementedError:
+    raise`` clause must surface this MRO contract violation loudly rather
+    than swallowing it in the catch-all ``except Exception`` and emitting a
+    DEBUG log per Hz tick. A guard ensures the test cannot hang if the
+    re-raise is removed (the catch-all would otherwise loop forever).
+    """
+    fake = _PublishlessMesh()
+
+    def _abort_if_swallowed():
+        fake._running = False
+        fake._stop_event.set()
+
+    watchdog = threading.Timer(5.0, _abort_if_swallowed)
+    watchdog.start()
+    try:
+        with pytest.raises(NotImplementedError):
+            getattr(fake, loop_name)()
+    finally:
+        watchdog.cancel()
