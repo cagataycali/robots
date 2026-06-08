@@ -134,7 +134,7 @@ pip install -e ".[all,dev]"
 from strands import Agent
 from strands_robots import Robot
 
-robot = Robot("so100")          # MuJoCo simulation
+robot = Robot("so100") # MuJoCo simulation
 agent = Agent(tools=[robot])
 agent("Wave the arm using the mock policy for 200 steps, then render a top-down view")
 ```
