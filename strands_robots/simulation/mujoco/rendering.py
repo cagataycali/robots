@@ -848,6 +848,11 @@ class RenderingMixin:
         buffers = {cam: [] for cam in names}
         paths = {cam: _os.path.join(out_dir, f"{tag}__{cam}.mp4") for cam in names}
 
+        # ``ready`` is set by the recorder thread once its GL context is warm
+        # and it has entered the capture loop. ``start`` blocks on it below so
+        # that "start returned success" guarantees frames are being captured —
+        # callers that stop after a short sleep (e.g. tests, brief clips) no
+        # longer race the ~0.5s fresh-thread EGL warmup and get an empty buffer.
         state = {
             "running": True,
             "name": tag,
@@ -862,6 +867,7 @@ class RenderingMixin:
             "started_at": _time.time(),
             "thread": None,
             "max_frames": max_frames_per_camera,
+            "ready": _threading.Event(),
         }
 
         def _loop():
@@ -952,6 +958,12 @@ class RenderingMixin:
                     cold,
                 )
 
+            # Warmup done (or capped) — capture loop is about to run. Unblock
+            # the caller waiting in start_cameras_recording so the success
+            # return coincides with the first captured frame, not the cold
+            # thread launch.
+            state["ready"].set()
+
             interval = 1.0 / fps
             while state["running"]:
                 t0 = _time.time()
@@ -977,6 +989,20 @@ class RenderingMixin:
         state["thread"] = _threading.Thread(target=_loop, daemon=True)
         state["thread"].start()
         self._cams_rec_state = state
+
+        # Wait for the recorder thread to warm its GL context and enter the
+        # capture loop before reporting success. Worst case is the 30-attempt
+        # warmup cap (~1s/cam at 64x48, more for larger frames) plus a small
+        # margin; the common case is ~0.5s. If warmup somehow stalls we still
+        # return after the timeout rather than blocking forever — the thread
+        # keeps trying and ``get_cameras_recording_status`` exposes errors.
+        _ready_timeout = 5.0 + 1.0 * len(names)
+        if not state["ready"].wait(timeout=_ready_timeout):
+            logger.warning(
+                "camera recorder '%s' not ready after %.1fs; returning anyway (first frames may be delayed)",
+                tag,
+                _ready_timeout,
+            )
 
         msg = (
             f"🎬 Recording {len(names)} camera(s) @ {fps} FPS → {out_dir}\n"

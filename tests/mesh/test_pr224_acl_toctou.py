@@ -103,3 +103,70 @@ def test_acl_block_from_uses_provided_dict():
     assert key == "access_control"
     assert json.loads(value) == custom
     assert json.loads(value)["marker"] == "from-snapshot"
+
+
+def test_mesh_start_reads_acl_file_once_end_to_end(tmp_path, monkeypatch, caplog):
+    """Issue #218 acceptance criterion: ONE read of STRANDS_MESH_ACL_FILE per
+    Mesh.start() call, measured end-to-end across the refuse-to-start gate and
+    the wire-config builder.
+
+    The prior pin (test_snapshot_acl_single_file_read) asserts a single
+    snapshot_acl() call reads once. This pins the issue's exact criterion: the
+    full Mesh.start() flow -- gate (_refuse_under_permissive_default_acl ->
+    snapshot_acl) plus session._build_config (snapshot_acl -> acl_block_from) --
+    performs at most ONE _load_acl_file call, so an attacker rewriting the file
+    between gate and build cannot make the wire observe a different snapshot.
+    """
+    import logging
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock, patch
+
+    from strands_robots.mesh import Mesh, _acl_config
+    from strands_robots.mesh import core as mesh_core
+
+    acl = tmp_path / "ops.json5"
+    acl.write_text('{"rules": [], "subjects": [], "policies": [], "enabled": true, "default_permission": "deny"}\n')
+    monkeypatch.setenv("STRANDS_MESH_AUTH_MODE", "mtls")
+    monkeypatch.setenv("STRANDS_MESH_ACL_FILE", str(acl))
+
+    _acl_config._clear_acl_cache_for_test()
+    _acl_config._clear_thread_snapshot()
+
+    call_count = [0]
+    real_load_acl_file = _acl_config._load_acl_file
+
+    def counted(path):
+        call_count[0] += 1
+        return real_load_acl_file(path)
+
+    monkeypatch.setattr(_acl_config, "_load_acl_file", counted)
+
+    robot = SimpleNamespace(
+        tool_name_str="r218",
+        robot=SimpleNamespace(
+            is_connected=True,
+            name="r218_test",
+            config=SimpleNamespace(cameras={}),
+            get_observation=MagicMock(return_value={}),
+        ),
+    )
+
+    class _StubDecl:
+        def undeclare(self) -> None:
+            pass
+
+    class _StubSession:
+        def declare_subscriber(self, *args, **kwargs):
+            return _StubDecl()
+
+    mesh = Mesh(robot, peer_id="test-218", peer_type="robot")
+    with patch.object(mesh_core, "get_session", return_value=_StubSession()):
+        with patch.object(mesh_core, "release_session"):
+            with patch.object(mesh, "_heartbeat_loop"), patch.object(mesh, "_state_loop"):
+                with caplog.at_level(logging.WARNING, logger="strands_robots.mesh.core"):
+                    mesh.start()
+                mesh.stop()
+
+    assert call_count[0] <= 1, (
+        f"Mesh.start() read the ACL file {call_count[0]} times; the TOCTOU defence requires exactly one read per start"
+    )
