@@ -86,6 +86,25 @@ class TestEnsureCA:
             provision._ensure_ca(ca_path)
             mock_url.assert_not_called()
 
+    def test_existing_clean_file_short_read_drains_correctly(self, tmp_path):
+        # Issue #251: os.read may return short on interrupted syscalls /
+        # unusual filesystems. The chunked-read loop in _ensure_ca must
+        # drain the whole file so a valid on-disk CA is re-used (skipping
+        # the download) rather than hashing a partial buffer and raising a
+        # misleading "failed pin check".
+        ca_path = tmp_path / "ca.pem"
+        ca_path.write_bytes(_REAL_CA)
+        real_os_read = provision.os.read
+
+        def chunked_read(fd, n):
+            # Force a one-byte-at-a-time short read to exercise the loop.
+            return real_os_read(fd, 1)
+
+        with patch("strands_robots.mesh.iot.provision.urllib.request.urlopen") as mock_url:
+            with patch("strands_robots.mesh.iot.provision.os.read", side_effect=chunked_read):
+                provision._ensure_ca(ca_path)
+            mock_url.assert_not_called()
+
     def test_existing_tampered_file_raises(self, tmp_path):
         ca_path = tmp_path / "ca.pem"
         ca_path.write_bytes(b"rogue cert content")
