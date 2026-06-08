@@ -56,4 +56,3 @@ def test_verify_ca_bytes_accepts_either_pin_during_dual_pin_overlap(
     # Once staged out-of-band, the same cert is accepted (grace-period overlap).
     monkeypatch.setenv("STRANDS_MESH_CA_PINS", staged)
     assert provision._verify_ca_bytes(rogue) is True
-
