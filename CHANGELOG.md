@@ -3,6 +3,64 @@
 All notable behavioural changes to `strands-robots` are logged here. Follows
 [Keep a Changelog](https://keepachangelog.com/) conventions.
 
+## Unreleased - LeRobot 0.5.2 recording + policy pipeline hardening
+
+### Changed (breaking): ``panda`` embodiment split into joint-space vs EEF
+
+The ``panda`` embodiment previously aliased to ``panda_libero``, conflating a
+joint-space configuration with an end-effector/task-space one. These are now
+two distinct entries:
+
+- ``data_config='panda'`` -> **joint-space** (7 arm joints + gripper).
+- ``data_config='panda_libero'`` -> **EEF/task-space** (LIBERO convention).
+
+**Migration:** any caller passing ``data_config='panda'`` that actually
+expected the EEF/task-space schema (the old aliased behaviour) must switch to
+``data_config='panda_libero'``. Left unchanged, such a policy now receives
+joint-space observations/actions and will silently misbehave. Callers wanting
+plain joint-space need no change.
+
+### Added: synchronized multi-robot recording (``run_multi_policy``)
+
+Drives N robots in one synchronized control loop and records all robots into a
+single merged frame per timestep (prefixed ``<robot>__<key>`` state/action +
+all cameras), stepping physics exactly once per loop iteration. Replaces the
+earlier two-thread approach that interleaved single-robot frames into a corrupt
+dataset. ``action_horizon`` accepts an ``int`` (all robots) or a
+``{robot: horizon}`` mapping; a policy is re-queried only when its per-robot
+action queue drains (open-loop chunk execution), so expensive VLA inference
+amortizes over the horizon instead of running every step.
+
+Note: LeRobot stores one task string per frame. Supplying distinct per-robot
+instructions logs a ``WARNING`` and records only the first robot's task;
+per-robot task columns are not yet supported.
+
+### Added: multi-episode recording append (``DatasetRecorder.resume``)
+
+``start_recording(overwrite=False)`` on an existing dataset previously crashed
+with ``FileExistsError`` (it always called ``LeRobotDataset.create()``). It now
+routes to a new append-capable ``DatasetRecorder.resume()`` so multiple
+episodes accumulate into one dataset. This replaces a hard crash, so no caller
+could have depended on the prior behaviour.
+
+### Fixed: camera recorder returned success before the first frame
+
+``start_cameras_recording`` now blocks until the recorder thread's
+(thread-bound) EGL context is warm and the capture loop has begun, so a
+caller that stops shortly after start no longer races the warmup and gets an
+empty buffer / no MP4.
+
+### Fixed: embodiment + registry correctness
+
+- Embodiment coverage 4 -> 33 configs grounded in lerobot drivers + MuJoCo XMLs.
+- ``aloha`` had empty state/action keys (silent no-op) -> 16 bimanual joints.
+- ``so100``/``so101`` decoupled (distinct sim joint names).
+- Registry: ``tiago_dual`` (``++`` module-name regex) and ``unitree_a1``
+  (``xml/`` asset subdir) now load; all 57 menagerie-asset robots resolve.
+- Policy-config registration walks every ``lerobot.policies`` subpackage
+  (incl. PEP-420 namespace packages), so newly shipped policies (e.g.
+  ``molmoact2``) register without a hand-maintained import list.
+
 ## Unreleased - #320 (MuJoCo robot-scene ground-plane z-fighting)
 
 ### Fixed: broken floor render when a robot asset ships its own ground plane
