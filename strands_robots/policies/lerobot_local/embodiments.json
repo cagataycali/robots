@@ -148,7 +148,7 @@
       "dim_policy": "pad"
     },
     "lekiwi_real": {
-      "__note__": "REAL hardware: lerobot LeKiwi (mobile SO arm). _motors_ft -> '<motor>.pos': 6 arm + 3 base wheels.",
+      "__note__": "REAL hardware: lerobot LeKiwi (mobile SO arm). _state_ft/action_features -> 6 arm '<motor>.pos' + body-frame base velocities x.vel/y.vel/theta.vel (LeKiwi converts wheel<->body internally; the model never sees wheel positions).",
       "obs_rename": {
         "front": "observation.images.image",
         "wrist": "observation.images.wrist_image"
@@ -160,9 +160,9 @@
         "arm_wrist_flex.pos",
         "arm_wrist_roll.pos",
         "arm_gripper.pos",
-        "base_left_wheel.pos",
-        "base_back_wheel.pos",
-        "base_right_wheel.pos"
+        "x.vel",
+        "y.vel",
+        "theta.vel"
       ],
       "action_keys": [
         "arm_shoulder_pan.pos",
@@ -171,9 +171,9 @@
         "arm_wrist_flex.pos",
         "arm_wrist_roll.pos",
         "arm_gripper.pos",
-        "base_left_wheel.pos",
-        "base_back_wheel.pos",
-        "base_right_wheel.pos"
+        "x.vel",
+        "y.vel",
+        "theta.vel"
       ],
       "dim_policy": "pad"
     },
@@ -1017,7 +1017,7 @@
       "dim_policy": "pad"
     },
     "reachy2_real": {
-      "__note__": "REAL: lerobot Reachy2 (bimanual + head + antennas). motors_features keys '<joint>.pos': neck(3)+antennas(2)+r_arm(7+gripper)+l_arm(7+gripper)=21. Mobile-base variant adds REACHY2_VEL keys.",
+      "__note__": "REAL: lerobot Reachy2 (bimanual + head + antennas). motors_features key order mirrors _generate_joints_dict: neck(3) + l_arm(7+gripper) + r_arm(7+gripper) + antennas(2) = 21. Mobile-base variant adds REACHY2_VEL keys.",
       "obs_rename": {
         "head": "observation.images.image"
       },
@@ -1025,8 +1025,14 @@
         "neck_yaw.pos",
         "neck_pitch.pos",
         "neck_roll.pos",
-        "l_antenna.pos",
-        "r_antenna.pos",
+        "l_shoulder_pitch.pos",
+        "l_shoulder_roll.pos",
+        "l_elbow_yaw.pos",
+        "l_elbow_pitch.pos",
+        "l_wrist_roll.pos",
+        "l_wrist_pitch.pos",
+        "l_wrist_yaw.pos",
+        "l_gripper.pos",
         "r_shoulder_pitch.pos",
         "r_shoulder_roll.pos",
         "r_elbow_yaw.pos",
@@ -1035,21 +1041,21 @@
         "r_wrist_pitch.pos",
         "r_wrist_yaw.pos",
         "r_gripper.pos",
-        "l_shoulder_pitch.pos",
-        "l_shoulder_roll.pos",
-        "l_elbow_yaw.pos",
-        "l_elbow_pitch.pos",
-        "l_wrist_roll.pos",
-        "l_wrist_pitch.pos",
-        "l_wrist_yaw.pos",
-        "l_gripper.pos"
+        "l_antenna.pos",
+        "r_antenna.pos"
       ],
       "action_keys": [
         "neck_yaw.pos",
         "neck_pitch.pos",
         "neck_roll.pos",
-        "l_antenna.pos",
-        "r_antenna.pos",
+        "l_shoulder_pitch.pos",
+        "l_shoulder_roll.pos",
+        "l_elbow_yaw.pos",
+        "l_elbow_pitch.pos",
+        "l_wrist_roll.pos",
+        "l_wrist_pitch.pos",
+        "l_wrist_yaw.pos",
+        "l_gripper.pos",
         "r_shoulder_pitch.pos",
         "r_shoulder_roll.pos",
         "r_elbow_yaw.pos",
@@ -1058,14 +1064,8 @@
         "r_wrist_pitch.pos",
         "r_wrist_yaw.pos",
         "r_gripper.pos",
-        "l_shoulder_pitch.pos",
-        "l_shoulder_roll.pos",
-        "l_elbow_yaw.pos",
-        "l_elbow_pitch.pos",
-        "l_wrist_roll.pos",
-        "l_wrist_pitch.pos",
-        "l_wrist_yaw.pos",
-        "l_gripper.pos"
+        "l_antenna.pos",
+        "r_antenna.pos"
       ],
       "dim_policy": "pad"
     },
