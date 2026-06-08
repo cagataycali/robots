@@ -8,7 +8,6 @@ All external dependencies (Zenoh, LeRobot, device_connect_edge, strands) are moc
 
 import asyncio
 import json
-import math
 import sys
 import unittest
 from dataclasses import dataclass
@@ -352,25 +351,25 @@ class TestSimulationDeviceDriver(unittest.TestCase):
     def test_get_status_rpc(self):
         sim = _make_mock_sim()
         driver = SimulationDeviceDriver(sim)
-        result = asyncio.run(driver.getStatus())
+        asyncio.run(driver.getStatus())
         sim.get_state.assert_called_once()
 
     def test_get_features_rpc(self):
         sim = _make_mock_sim()
         driver = SimulationDeviceDriver(sim)
-        result = asyncio.run(driver.getFeatures())
+        asyncio.run(driver.getFeatures())
         sim.get_features.assert_called_once()
 
     def test_step_rpc(self):
         sim = _make_mock_sim()
         driver = SimulationDeviceDriver(sim)
-        result = asyncio.run(driver.step(10))
+        asyncio.run(driver.step(10))
         sim.step.assert_called_once_with(10)
 
     def test_reset_rpc(self):
         sim = _make_mock_sim()
         driver = SimulationDeviceDriver(sim)
-        result = asyncio.run(driver.reset())
+        asyncio.run(driver.reset())
         sim.reset.assert_called_once()
 
     def test_emergency_stop_handler(self):
@@ -616,7 +615,7 @@ class TestInitDeviceConnect(unittest.TestCase):
 
         robot = _make_mock_robot()
         loop = asyncio.new_event_loop()
-        result = loop.run_until_complete(init_device_connect(robot, peer_id="test-1", peer_type="robot"))
+        loop.run_until_complete(init_device_connect(robot, peer_id="test-1", peer_type="robot"))
         loop.close()
 
         # Verify DeviceRuntime was created with a RobotDeviceDriver
@@ -636,7 +635,7 @@ class TestInitDeviceConnect(unittest.TestCase):
 
         sim = _make_mock_sim()
         loop = asyncio.new_event_loop()
-        result = loop.run_until_complete(init_device_connect(sim, peer_id="test-sim", peer_type="sim"))
+        loop.run_until_complete(init_device_connect(sim, peer_id="test-sim", peer_type="sim"))
         loop.close()
 
         call_kwargs = MockRuntime.call_args
@@ -653,7 +652,7 @@ class TestInitDeviceConnect(unittest.TestCase):
 
         robot = _make_mock_robot(tool_name="so100")
         loop = asyncio.new_event_loop()
-        result = loop.run_until_complete(init_device_connect(robot))
+        loop.run_until_complete(init_device_connect(robot))
         loop.close()
 
         call_kwargs = MockRuntime.call_args
@@ -670,7 +669,7 @@ class TestInitDeviceConnect(unittest.TestCase):
 
         robot = _make_mock_robot()
         loop = asyncio.new_event_loop()
-        result = loop.run_until_complete(init_device_connect(robot, peer_id="my-robot-42"))
+        loop.run_until_complete(init_device_connect(robot, peer_id="my-robot-42"))
         loop.close()
 
         call_kwargs = MockRuntime.call_args
@@ -687,7 +686,7 @@ class TestInitDeviceConnect(unittest.TestCase):
 
         robot = _make_mock_robot()
         loop = asyncio.new_event_loop()
-        result = loop.run_until_complete(init_device_connect(robot, peer_id="test-hb"))
+        loop.run_until_complete(init_device_connect(robot, peer_id="test-hb"))
         loop.close()
 
         mock_runtime.set_heartbeat_provider.assert_called_once()

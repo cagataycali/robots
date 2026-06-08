@@ -30,6 +30,13 @@ from typing import TYPE_CHECKING, Any
 # the lazy attributes below (the runtime __getattr__ resolves them to Any
 # from the static analyzer's perspective). PEP 562.
 if TYPE_CHECKING:
+    from strands_robots.device_connect import (
+        ReachyMiniDriver,
+        RobotDeviceDriver,
+        SimulationDeviceDriver,
+        init_device_connect,
+        init_device_connect_sync,
+    )
     from strands_robots.policies.groot import Gr00tPolicy
     from strands_robots.registry import list_robots
     from strands_robots.robot import Robot
@@ -48,6 +55,7 @@ if TYPE_CHECKING:
     from strands_robots.tools.lerobot_camera import lerobot_camera
     from strands_robots.tools.lerobot_teleoperate import lerobot_teleoperate
     from strands_robots.tools.pose_tool import pose_tool
+    from strands_robots.tools.robot_mesh import robot_mesh
     from strands_robots.tools.serial_tool import serial_tool
 
 # ------------------------------------------------------------------

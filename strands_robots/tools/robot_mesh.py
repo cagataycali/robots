@@ -256,7 +256,7 @@ def _resolve_mesh(target: str) -> Any | None:
 # audit. When DC is unavailable or has discovered no devices the helpers return
 # None and robot_mesh() falls through to the built-in mesh path.
 
-_dc_connected = False
+_dc_state = {"connected": False}
 
 
 class _DCResult(dict):
@@ -271,8 +271,7 @@ class _DCResult(dict):
 
 def _dc_ensure_connected() -> None:
     """Establish the Device Connect agent-side connection (idempotent)."""
-    global _dc_connected
-    if _dc_connected:
+    if _dc_state["connected"]:
         return
     os.environ.setdefault("MESSAGING_BACKEND", "zenoh")
     os.environ.setdefault("DEVICE_CONNECT_ALLOW_INSECURE", "true")
@@ -282,7 +281,7 @@ def _dc_ensure_connected() -> None:
         get_connection()
     except Exception:
         connect()
-    _dc_connected = True
+    _dc_state["connected"] = True
 
 
 def _try_device_connect(

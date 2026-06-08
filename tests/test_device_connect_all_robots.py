@@ -10,6 +10,7 @@ No Docker, GPU, or hardware required.
 """
 
 import asyncio
+import importlib.util
 import json
 import pathlib
 import sys
@@ -570,9 +571,7 @@ def _passthrough_tool(*args, **kwargs):
     return lambda fn: fn
 
 
-try:
-    import strands  # noqa: F401 — use the real package when installed
-except Exception:
+if importlib.util.find_spec("strands") is None:
     _m = MagicMock()
     _m.tool = _passthrough_tool
     _types_tools = MagicMock()
@@ -581,10 +580,7 @@ except Exception:
     sys.modules["strands.types"] = MagicMock()
     sys.modules["strands.types.tools"] = _types_tools
 
-try:
-    import device_connect_agent_tools  # noqa: F401
-    import device_connect_agent_tools.connection  # noqa: F401
-except Exception:
+if importlib.util.find_spec("device_connect_agent_tools") is None:
     sys.modules.setdefault("device_connect_agent_tools", MagicMock())
     sys.modules.setdefault("device_connect_agent_tools.connection", MagicMock())
 

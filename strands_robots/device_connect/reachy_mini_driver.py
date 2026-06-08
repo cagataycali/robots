@@ -8,7 +8,6 @@ REST API calls go through reachy_transport.api() for daemon/move operations.
 """
 
 import asyncio
-import json
 import logging
 import math
 from typing import Optional

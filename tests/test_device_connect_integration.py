@@ -139,7 +139,7 @@ class TestRobotDriverRegistration:
             try:
                 await task
             except (asyncio.CancelledError, Exception):
-                pass
+                pass  # teardown: listener task was cancelled, ignore its outcome
 
     async def test_robot_execute_rpc(self):
         """Discover robot and invoke execute RPC."""
@@ -176,7 +176,7 @@ class TestRobotDriverRegistration:
             try:
                 await task
             except (asyncio.CancelledError, Exception):
-                pass
+                pass  # teardown: listener task was cancelled, ignore its outcome
 
     async def test_robot_stop_rpc(self):
         """Invoke stop RPC on a registered robot."""
@@ -209,7 +209,7 @@ class TestRobotDriverRegistration:
             try:
                 await task
             except (asyncio.CancelledError, Exception):
-                pass
+                pass  # teardown: listener task was cancelled, ignore its outcome
 
 
 class TestSimDriverRegistration:
@@ -246,7 +246,7 @@ class TestSimDriverRegistration:
             try:
                 await task
             except (asyncio.CancelledError, Exception):
-                pass
+                pass  # teardown: listener task was cancelled, ignore its outcome
 
     async def test_sim_step_rpc(self):
         """Invoke step RPC on a registered simulation."""
@@ -279,7 +279,7 @@ class TestSimDriverRegistration:
             try:
                 await task
             except (asyncio.CancelledError, Exception):
-                pass
+                pass  # teardown: listener task was cancelled, ignore its outcome
 
 
 class TestMultipleDevices:

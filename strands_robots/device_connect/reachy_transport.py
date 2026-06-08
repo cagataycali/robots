@@ -94,13 +94,13 @@ class ZenohLink(HardwareLink):
             try:
                 on_joints(json.loads(data.decode()))
             except Exception:
-                pass
+                pass  # drop malformed/partial frame; keep the subscription alive
 
         async def _on_imu(data: bytes, _reply=None):
             try:
                 on_imu(json.loads(data.decode()))
             except Exception:
-                pass
+                pass  # drop malformed/partial frame; keep the subscription alive
 
         await self._transport.subscribe(f"{self._prefix}/joint_positions", _on_joints)
         await self._transport.subscribe(f"{self._prefix}/imu_data", _on_imu)
@@ -146,7 +146,7 @@ class WebSocketLink(HardwareLink):
                 elif t == "imu_data":
                     on_imu(msg)
             except Exception:
-                pass
+                pass  # skip malformed frame; keep reading
 
     async def stop(self) -> None:
         if self._read_task:
