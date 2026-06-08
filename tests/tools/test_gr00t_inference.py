@@ -909,7 +909,9 @@ class TestActionDispatch:
             "strands_robots.tools.gr00t_inference._build_image",
             return_value={"status": "success", "skipped": True, "message": "ok"},
         ) as mock:
-            result = gr00t_inference(action="build_image", image_name="gr00t:test")
+            # image_name is no longer an agent parameter; the default
+            # operator image (gr00t:latest) is allowlisted.
+            result = gr00t_inference(action="build_image")
         assert result["status"] == "success"
         mock.assert_called_once()
 

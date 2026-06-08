@@ -31,6 +31,122 @@ _DEFAULT_IMAGE_NAME = "gr00t:latest"
 _DEFAULT_CONTAINER_COMMAND = "tail -f /dev/null"
 
 
+# --- container hardening: image allowlist + dangerous-mount guard -------
+#
+# ``_start_container`` builds a ``docker run`` argv. The agent-facing
+# ``gr00t_inference`` tool deliberately does NOT expose ``volumes``,
+# ``image_name``, or ``container_command`` as parameters -- a prompt-
+# injected agent must never be able to mount the host filesystem, pick an
+# arbitrary image, or inject a container command. Container topology is
+# operator-config-driven (env vars below), not agent-driven.
+#
+# The image the container runs is resolved from the operator environment
+# (``STRANDS_GR00T_IMAGE``) and validated against an allowlist. The default
+# allowlist covers the canonical GR00T images; operators extend it via
+# ``STRANDS_GR00T_IMAGE_ALLOW`` (comma-separated; supports a trailing ``*``
+# tag wildcard, e.g. ``myregistry/gr00t:*``).
+
+# Built-in image-name allowlist patterns. A trailing ``*`` is a tag/suffix
+# wildcard (matches any characters); everything else is matched literally.
+_DEFAULT_IMAGE_ALLOW: tuple[str, ...] = (
+    "gr00t:*",
+    "nvcr.io/nvidia/isaac-gr00t:*",
+)
+
+# Host paths that must never be bind-mounted into a container. Mounting any
+# of these hands the container (and anything that can influence its command)
+# control over the host: root fs, the docker socket (daemon takeover),
+# credential/identity dirs, and kernel/proc/sys pseudo-filesystems.
+_BLOCKED_VOLUME_HOST_PATHS: tuple[str, ...] = (
+    "/",
+    "/etc",
+    "/root",
+    "/home",
+    "/boot",
+    "/dev",
+    "/proc",
+    "/sys",
+    "/usr",
+    "/bin",
+    "/sbin",
+    "/lib",
+    "/var",
+    "/var/run",
+    "/run",
+)
+# Exact-match files/sockets that must never be mounted regardless of dir rules.
+_BLOCKED_VOLUME_EXACT: tuple[str, ...] = (
+    "/var/run/docker.sock",
+    "/run/docker.sock",
+)
+
+
+def _image_allowlist() -> tuple[str, ...]:
+    """Return the configured image allowlist (defaults + env extras)."""
+    raw = os.getenv("STRANDS_GR00T_IMAGE_ALLOW", "")
+    extras = tuple(t.strip() for t in raw.split(",") if t.strip())
+    return _DEFAULT_IMAGE_ALLOW + extras
+
+
+def _is_allowed_image(image_name: str) -> bool:
+    """True iff *image_name* matches an allowlist pattern.
+
+    A pattern ending in ``*`` matches any image whose name starts with the
+    pattern prefix (tag wildcard). Other patterns match literally.
+    """
+    if not isinstance(image_name, str) or not image_name:
+        return False
+    for pattern in _image_allowlist():
+        if pattern.endswith("*"):
+            if image_name.startswith(pattern[:-1]):
+                return True
+        elif image_name == pattern:
+            return True
+    return False
+
+
+def _resolve_image_name() -> str:
+    """Resolve the container image from operator config.
+
+    The agent has no say in the image. Operators set ``STRANDS_GR00T_IMAGE``
+    (defaulting to the canonical ``gr00t:latest``); the value must pass the
+    allowlist or resolution fails closed.
+    """
+    return os.getenv("STRANDS_GR00T_IMAGE", _DEFAULT_IMAGE_NAME)
+
+
+def _normalize_host_path(host_path: str) -> str:
+    """Normalize a bind-mount host path for prefix comparison."""
+    # Expand ~ and collapse .. / . without touching the filesystem; the goal
+    # is to compare the INTENDED mount target against the blocklist, not to
+    # resolve symlinks (which could differ between check and docker run).
+    expanded = os.path.expanduser(host_path)
+    return os.path.normpath(expanded)
+
+
+def _check_volume_safety(volumes: dict[str, str] | None) -> str | None:
+    """Return None if all bind-mount host paths are safe, else a reason.
+
+    Defence in depth for the internal/operator/test entry point into
+    ``_start_container`` (the agent tool no longer supplies volumes at all).
+    Rejects mounts of the host root, system dirs, credential dirs, and the
+    docker socket.
+    """
+    if not volumes:
+        return None
+    blocked_dirs = {os.path.normpath(p) for p in _BLOCKED_VOLUME_HOST_PATHS}
+    blocked_exact = {os.path.normpath(p) for p in _BLOCKED_VOLUME_EXACT}
+    for host_path in volumes:
+        norm = _normalize_host_path(str(host_path))
+        if norm in blocked_exact:
+            return f"refusing to mount {host_path!r}: docker socket / sensitive path"
+        if norm in blocked_dirs:
+            return f"refusing to mount {host_path!r}: protected host path {norm!r}"
+        # Also block mounting a child of the docker socket dirs would be odd;
+        # the exact-match list already covers the socket files themselves.
+    return None
+
+
 def _isaac_gr00t_dir() -> Path:
     """Default clone destination for the Isaac-GR00T source tree."""
     return get_base_dir() / "Isaac-GR00T"
@@ -65,13 +181,10 @@ def gr00t_inference(
     repo_url: str = _DEFAULT_REPO_URL,
     repo_tag: str = _DEFAULT_REPO_TAG,
     source_dir: str | None = None,
-    image_name: str = _DEFAULT_IMAGE_NAME,
     hf_repo: str | None = None,
     hf_subfolder: str | None = None,
     hf_local_dir: str | None = None,
     hf_token: str | None = None,
-    volumes: dict[str, str] | None = None,
-    container_command: str = _DEFAULT_CONTAINER_COMMAND,
     lifecycle: str = "full",
     remove_volumes: bool = False,
     force: bool = False,
@@ -103,8 +216,9 @@ def gr00t_inference(
           ``hf_subfolder`` filters to a single sub-checkpoint (e.g.
           ``"libero_spatial"``). Idempotent - skips when the local directory is
           already populated unless ``force=True``.
-        - ``start_container``: ``docker run -d --gpus all --ipc=host`` on
-          ``image_name`` with ``container_name``, the volume mounts in ``volumes``,
+        - ``start_container``: ``docker run -d --gpus all --ipc=host`` on the
+          operator-configured image with ``container_name``, the default
+          checkpoint + HF-cache volume mounts,
           ``HF_TOKEN`` env passthrough, and ``-p {port}:{port}``. Idempotent -
           skips when a running container with the same name exists; reuses a
           stopped container when ``force=True``.
@@ -218,7 +332,9 @@ def gr00t_inference(
         repo_tag: Branch / tag / SHA to check out (default: ``"n1.7-release"``).
         source_dir: Where to clone the Isaac-GR00T source. Defaults to
             ``$STRANDS_BASE_DIR/Isaac-GR00T`` (typically ``~/.strands_robots/Isaac-GR00T``).
-        image_name: Docker image tag for the built / used container
+        (Container image, bind-mount volumes, and the container command are
+        operator-config-driven, not agent parameters -- see the
+        ``STRANDS_GR00T_IMAGE`` / ``STRANDS_GR00T_IMAGE_ALLOW`` env vars.)
             (default: ``"gr00t:latest"``).
         hf_repo: HuggingFace dataset/model id (e.g., ``"nvidia/GR00T-N1.7-LIBERO"``).
             Required for ``download_checkpoint``.
@@ -229,11 +345,8 @@ def gr00t_inference(
             ``$STRANDS_BASE_DIR/checkpoints/<basename(hf_repo)>``.
         hf_token: HuggingFace API token (gated repos). Falls back to
             ``HF_TOKEN`` / ``HUGGING_FACE_HUB_TOKEN`` env vars.
-        volumes: ``{host_path: container_path}`` mounts for ``start_container``.
             Defaults to mounting ``hf_local_dir`` → ``/data/checkpoints`` and
             ``~/.cache/huggingface`` → ``/root/.cache/huggingface``.
-        container_command: ``docker run`` command (default: ``"tail -f /dev/null"``,
-            so the container stays alive for ``docker exec``).
         lifecycle: ``"full"`` (default - chain build → download → start_container
             → start) or ``"teardown"`` (rm container + volumes).
         remove_volumes: When ``lifecycle="teardown"``, also remove docker volumes
@@ -316,6 +429,16 @@ def gr00t_inference(
     elif action == "stop":
         return _stop_service(port)
     elif action == "build_image":
+        image_name = _resolve_image_name()
+        if not _is_allowed_image(image_name):
+            return {
+                "status": "error",
+                "message": (
+                    f"configured image {image_name!r} is not in the allowlist "
+                    f"{list(_image_allowlist())}. Set STRANDS_GR00T_IMAGE to an "
+                    "allowed image or extend STRANDS_GR00T_IMAGE_ALLOW."
+                ),
+            }
         return _build_image(
             repo_url=repo_url,
             repo_tag=repo_tag,
@@ -334,17 +457,41 @@ def gr00t_inference(
             force=force,
         )
     elif action == "start_container":
+        image_name = _resolve_image_name()
+        if not _is_allowed_image(image_name):
+            return {
+                "status": "error",
+                "message": (
+                    f"configured image {image_name!r} is not in the allowlist "
+                    f"{list(_image_allowlist())}. Set STRANDS_GR00T_IMAGE to an "
+                    "allowed image or extend STRANDS_GR00T_IMAGE_ALLOW."
+                ),
+            }
+        # Container topology is not agent-controllable: the agent cannot
+        # supply bind-mount volumes or a container command. _start_container
+        # computes the default checkpoint + HF-cache mounts and runs the
+        # keep-alive command so subsequent ``start`` actions can docker exec.
         return _start_container(
             image_name=image_name,
             container_name=container_name,
             port=port,
-            volumes=volumes,
+            volumes=None,
             hf_token=hf_token,
-            container_command=container_command,
+            container_command=_DEFAULT_CONTAINER_COMMAND,
             hf_local_dir=hf_local_dir,
             force=force,
         )
     elif action == "lifecycle":
+        image_name = _resolve_image_name()
+        if not _is_allowed_image(image_name):
+            return {
+                "status": "error",
+                "message": (
+                    f"configured image {image_name!r} is not in the allowlist "
+                    f"{list(_image_allowlist())}. Set STRANDS_GR00T_IMAGE to an "
+                    "allowed image or extend STRANDS_GR00T_IMAGE_ALLOW."
+                ),
+            }
         return _lifecycle(
             phase=lifecycle,
             # Phase-specific kwargs (most reused from start/start_container).
@@ -357,8 +504,8 @@ def gr00t_inference(
             hf_local_dir=hf_local_dir,
             hf_token=hf_token,
             container_name=container_name,
-            volumes=volumes,
-            container_command=container_command,
+            volumes=None,
+            container_command=_DEFAULT_CONTAINER_COMMAND,
             remove_volumes=remove_volumes,
             force=force,
             # start kwargs - used at the tail of phase="full".
@@ -1038,7 +1185,26 @@ def _start_container(
     running, returns success without touching docker. When it exists but
     is stopped, ``force=True`` removes + recreates it (otherwise returns
     an error that names the recovery flag).
+
+    Defence in depth: although the agent-facing tool no longer lets a
+    caller supply ``image_name``, ``volumes``, or ``container_command``,
+    this private entry point is still reachable by operators and tests. We
+    validate the image against the allowlist and reject any bind-mount of a
+    protected host path (root fs, system dirs, credential dirs, docker
+    socket) before building the ``docker run`` argv. This closes the
+    host-mount / container-escape surface even for the internal path.
     """
+    if not _is_allowed_image(image_name):
+        return {
+            "status": "error",
+            "message": (
+                f"image {image_name!r} is not in the allowlist {list(_image_allowlist())}. "
+                "Set STRANDS_GR00T_IMAGE / STRANDS_GR00T_IMAGE_ALLOW to permit it."
+            ),
+        }
+    _vol_reason = _check_volume_safety(volumes)
+    if _vol_reason is not None:
+        return {"status": "error", "message": _vol_reason}
     name = container_name or "gr00t"
     state = _container_state(name)
     if state == "running" and not force:

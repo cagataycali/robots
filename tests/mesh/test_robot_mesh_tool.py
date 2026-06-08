@@ -160,10 +160,21 @@ def test_subscribe_requires_target(fake_local_mesh):
 
 
 def test_subscribe_calls_mesh_subscribe(fake_local_mesh):
+    # Use an allowlisted topic class -- subscribing to a low-impact shared
+    # class (presence) is permitted by the tool-layer allowlist.
     fake_local_mesh.subscribe.return_value = "topic-name"
-    out = _strands_call(action="subscribe", target="reachy/*", name="reachy")
+    out = _strands_call(action="subscribe", target="**/presence", name="presence")
     assert out["status"] == "success"
     fake_local_mesh.subscribe.assert_called_once()
+
+
+def test_subscribe_rejects_off_allowlist_target(fake_local_mesh):
+    # Subscribing to another peer's cmd stream is not in the default
+    # allowlist and subscribe is not gated by default -> rejected.
+    out = _strands_call(action="subscribe", target="reachy/cmd", name="reachy")
+    assert out["status"] == "error"
+    assert "allowed topic set" in out["content"][0]["text"]
+    fake_local_mesh.subscribe.assert_not_called()
 
 
 def test_watch_requires_target(fake_local_mesh):
