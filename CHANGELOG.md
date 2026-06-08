@@ -80,6 +80,20 @@ world ``ground`` plane (configurable via ``create_world(ground_plane=...)``)
 is the single source of truth; robots contribute only their own
 bodies/joints/actuators/sensors.
 
+## Unreleased - #273 (estop lockout concurrency pin)
+
+### Added (tests): concurrent-estop lockout race regression pins
+
+Pinned the issue #273 invariant that the e-stop lockout check-then-set
+(`_estop_lockout.set()` + `_last_estop_ts` / `_last_estop_mono` writes)
+stays inside `Mesh._estop_replay_lock`. Two concurrent e-stops from
+distinct issuers now provably yield exactly one `remote_estop_engaged`
+plus one `remote_estop_redundant` audit event (never two engages).
+`tests/mesh/test_estop_lockout_race.py` adds a deterministic forced-
+interleave race test plus source-text pins guarding lock containment
+and timestamp-pair atomicity against future refactors. Code already
+fixed on main; this locks it.
+
 ## Unreleased - #228 (AWS IoT provisioning hardening)
 
 ### Changed: default presigned-URL TTL for camera offload
