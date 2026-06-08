@@ -14,12 +14,22 @@ caller-supplied ``-v host:container`` mount straight into the docker argv.
 
 from __future__ import annotations
 
+import importlib
 import inspect
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-import strands_robots.tools.gr00t_inference as gi
+# ``from strands_robots.tools import gr00t_inference`` resolves via the package's
+# lazy __getattr__ (tools/__init__.py) to the *tool function* (a
+# DecoratedFunctionTool), not the module -- so it exposes no ``subprocess`` or
+# ``_is_allowed_image`` attribute. These tests need the module object itself for
+# the private helpers and ``patch.object(gi.subprocess, ...)``. import_module
+# returns the canonical sys.modules entry without a plain ``import a.b.c``
+# statement, which would otherwise trip CodeQL py/import-and-import-from against
+# the from-import of this module elsewhere in the package. import_module is the
+# package's own module-loading idiom (see both __init__.py files).
+gi = importlib.import_module("strands_robots.tools.gr00t_inference")
 
 # --- agent surface: dangerous params are gone --------------------------
 
