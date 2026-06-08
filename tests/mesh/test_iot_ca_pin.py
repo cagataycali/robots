@@ -243,3 +243,75 @@ class TestUnverifiedMarkerPermissions:
             "during the download; the canonical-CA path must not leak "
             "the sentinel."
         )
+
+
+class TestUnverifiedReuseWarning:
+    """Issue #261: re-using a CA whose origin was the break-glass must WARN.
+
+    AGENTS.md > 'No silent defaults on error' -- the audit trail must
+    survive past the single writing run. After a break-glass download
+    leaves a ``.unverified`` sidecar, every later ``_ensure_ca`` re-use
+    on a host where the env var is gone must emit exactly one WARNING
+    per process so an operator can refresh via the canonical pinned
+    path. These tests pin that the warning fires on re-use and that it
+    is gated to one emission per CA path per process.
+    """
+
+    def _seed_breakglass_ca(self, ca_path, monkeypatch):
+        monkeypatch.setenv("STRANDS_MESH_DISABLE_CA_PIN", "true")
+        with patch(
+            "strands_robots.mesh.iot.provision._download_with_per_socket_timeout",
+            return_value=_REAL_CA,
+        ):
+            provision._ensure_ca(ca_path)
+        monkeypatch.delenv("STRANDS_MESH_DISABLE_CA_PIN", raising=False)
+        marker = ca_path.with_suffix(ca_path.suffix + ".unverified")
+        assert marker.exists()
+
+    def test_reuse_of_breakglass_ca_emits_warning(self, tmp_path, monkeypatch, caplog):
+        ca_path = tmp_path / "ca.pem"
+        self._seed_breakglass_ca(ca_path, monkeypatch)
+        provision._UNVERIFIED_CA_WARNED.discard(ca_path)
+        caplog.clear()
+        with caplog.at_level("WARNING", logger="strands_robots.mesh.iot.provision"):
+            provision._ensure_ca(ca_path)
+        warnings = [
+            r.getMessage() for r in caplog.records if r.levelname == "WARNING" and "sidecar marker" in r.getMessage()
+        ]
+        assert len(warnings) == 1, (
+            "re-using a CA written under the break-glass must emit one "
+            f"WARNING about the unverified origin; got {warnings!r}"
+        )
+
+    def test_reuse_warning_fires_once_per_process(self, tmp_path, monkeypatch, caplog):
+        ca_path = tmp_path / "ca.pem"
+        self._seed_breakglass_ca(ca_path, monkeypatch)
+        provision._UNVERIFIED_CA_WARNED.discard(ca_path)
+        with caplog.at_level("WARNING", logger="strands_robots.mesh.iot.provision"):
+            provision._ensure_ca(ca_path)
+            provision._ensure_ca(ca_path)
+            provision._ensure_ca(ca_path)
+        warnings = [
+            r.getMessage() for r in caplog.records if r.levelname == "WARNING" and "sidecar marker" in r.getMessage()
+        ]
+        assert len(warnings) == 1, (
+            f"the unverified-origin WARNING must be gated to one emission per CA path per process; got {len(warnings)}"
+        )
+
+    def test_reuse_without_marker_does_not_warn(self, tmp_path, monkeypatch, caplog):
+        ca_path = tmp_path / "ca.pem"
+        monkeypatch.delenv("STRANDS_MESH_DISABLE_CA_PIN", raising=False)
+        with patch(
+            "strands_robots.mesh.iot.provision._download_with_per_socket_timeout",
+            return_value=_REAL_CA,
+        ):
+            provision._ensure_ca(ca_path)
+        provision._UNVERIFIED_CA_WARNED.discard(ca_path)
+        with caplog.at_level("WARNING", logger="strands_robots.mesh.iot.provision"):
+            provision._ensure_ca(ca_path)
+        warnings = [
+            r.getMessage() for r in caplog.records if r.levelname == "WARNING" and "sidecar marker" in r.getMessage()
+        ]
+        assert warnings == [], (
+            f"a canonically downloaded CA has no .unverified marker, so re-use must not WARN; got {warnings!r}"
+        )
