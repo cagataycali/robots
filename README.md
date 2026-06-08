@@ -263,7 +263,7 @@ AgentTool returning `{"status", "content"}`.
 | `start` | `instruction`, `policy_port`, `duration` | Non-blocking async start |
 | `status` | - | Current task status |
 | `stop` | - | Interrupt running task (emergency stop) |
-
+In sim mode the same tool exposes the 64 Simulation actions — see Simulation (MuJoCo).
 </details>
 
 <details>
