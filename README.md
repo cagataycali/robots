@@ -449,7 +449,7 @@ sim.add_object(name="cube", shape="box", position=[0.3, 0, 0.05])
 sim.add_camera(name="topdown", position=[0, 0, 1.5], target=[0, 0, 0])
 
 sim.run_policy(robot_name="arm", policy_provider="mock", n_steps=200,
-               control_frequency=50.0, fast_mode=True)
+               control_frequency=50.0)
 
 frame = sim.render(camera_name="topdown")   # {status, content:[text, image]}
 ```
