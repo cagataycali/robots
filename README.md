@@ -666,7 +666,7 @@ it is the source of truth for roadmap and follow-ups.
 
 ## License
 
-Apache-2.0 — see [LICENSE](LICENSE).
+Apache-2.0 - see [LICENSE](LICENSE).
 
 ## Links
 
