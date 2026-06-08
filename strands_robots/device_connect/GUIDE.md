@@ -76,7 +76,7 @@ No Docker needed. No env vars. Devices discover each other directly on the LAN v
 > `setup.sh` installs `uv`, Python 3.12, creates a venv, and installs all dependencies.
 
 ```bash
-git clone --branch feat/device-connect-on-main https://github.com/kavya-chennoju/robots.git
+git clone https://github.com/strands-labs/robots.git
 cd robots
 ./strands_robots/device_connect/setup.sh
 source .venv/bin/activate

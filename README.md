@@ -105,6 +105,7 @@ extras you need:
 | `groot-service` | pyzmq, msgpack | NVIDIA GR00T inference client |
 | `mesh` | eclipse-zenoh, json5 | Peer-to-peer robot mesh |
 | `mesh-iot` | awsiotsdk, awscrt, boto3 | AWS IoT Core mesh transport for fleets |
+| `device-connect` | device-connect-edge, device-connect-agent-tools | Device-aware networking — discovery, RPC, events, safety (falls back to the built-in mesh if absent) |
 | `benchmark-libero` | libero | LIBERO benchmark evaluation |
 | `all` | everything above | Kitchen sink |
 

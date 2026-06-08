@@ -42,7 +42,7 @@ fi
 
 # shellcheck disable=SC1091
 source "$REPO_ROOT/$VENV_DIR/bin/activate"
-uv pip install -e "$REPO_ROOT[sim]"
+uv pip install -e "$REPO_ROOT[sim,device-connect]"
 
 echo ""
 echo "============================================================"
