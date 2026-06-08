@@ -3,28 +3,63 @@
 All notable behavioural changes to `strands-robots` are logged here. Follows
 [Keep a Changelog](https://keepachangelog.com/) conventions.
 
-## Unreleased - #318 (MuJoCo tendon-transmission actuators)
+## Unreleased - LeRobot 0.5.2 recording + policy pipeline hardening
 
-### Fixed: tendon-gripper actuators (Franka/Panda) now actuate via joint name
+### Changed (breaking): ``panda`` embodiment split into joint-space vs EEF
 
-``MuJoCoSimEngine.send_action`` (``_apply_action_by_name``) previously
-resolved a joint-name action key only to **direct** joint-transmission
-actuators (``actuator_trnid[ai, 0] == jnt_id``). **Tendon-transmission**
-actuators - most notably the Franka/Panda gripper, whose ``split`` actuator
-drives ``finger_joint1`` / ``finger_joint2`` through a tendon - were silently
-dropped, so a gripper command keyed by the finger joint name never moved the
-fingers. Any VLA policy emitting a gripper channel (Cosmos 3 DROID
-``joint_pos``, GR00T, ...) recorded grasp commands that had no effect on the
-observed state, silently corrupting demonstrations.
+The ``panda`` embodiment previously aliased to ``panda_libero``, conflating a
+joint-space configuration with an end-effector/task-space one. These are now
+two distinct entries:
 
-The joint→actuator fallback now also resolves tendon transmissions: when a
-joint key matches no direct-joint actuator, the engine finds the tendon whose
-``JOINT`` wrap entries include that joint, then the actuator driving that
-tendon. The incoming value is treated as a normalised ``[0, 1]`` open/close
-fraction and mapped onto the actuator's ctrlrange (the Panda gripper expects
-``[0, 255]`` tendon units, not a finger-joint position); a value clearly
-inside a wide ctrlrange is passed through verbatim. Direct JOINT actuators are
-unchanged - positions/torques pass through raw.
+- ``data_config='panda'`` -> **joint-space** (7 arm joints + gripper).
+- ``data_config='panda_libero'`` -> **EEF/task-space** (LIBERO convention).
+
+**Migration:** any caller passing ``data_config='panda'`` that actually
+expected the EEF/task-space schema (the old aliased behaviour) must switch to
+``data_config='panda_libero'``. Left unchanged, such a policy now receives
+joint-space observations/actions and will silently misbehave. Callers wanting
+plain joint-space need no change.
+
+### Added: synchronized multi-robot recording (``run_multi_policy``)
+
+Drives N robots in one synchronized control loop and records all robots into a
+single merged frame per timestep (prefixed ``<robot>__<key>`` state/action +
+all cameras), stepping physics exactly once per loop iteration. Replaces the
+earlier two-thread approach that interleaved single-robot frames into a corrupt
+dataset. ``action_horizon`` accepts an ``int`` (all robots) or a
+``{robot: horizon}`` mapping; a policy is re-queried only when its per-robot
+action queue drains (open-loop chunk execution), so expensive VLA inference
+amortizes over the horizon instead of running every step.
+
+Note: LeRobot stores one task string per frame. Supplying distinct per-robot
+instructions logs a ``WARNING`` and records only the first robot's task;
+per-robot task columns are not yet supported.
+
+### Added: multi-episode recording append (``DatasetRecorder.resume``)
+
+``start_recording(overwrite=False)`` on an existing dataset previously crashed
+with ``FileExistsError`` (it always called ``LeRobotDataset.create()``). It now
+routes to a new append-capable ``DatasetRecorder.resume()`` so multiple
+episodes accumulate into one dataset. This replaces a hard crash, so no caller
+could have depended on the prior behaviour.
+
+### Fixed: camera recorder returned success before the first frame
+
+``start_cameras_recording`` now blocks until the recorder thread's
+(thread-bound) EGL context is warm and the capture loop has begun, so a
+caller that stops shortly after start no longer races the warmup and gets an
+empty buffer / no MP4.
+
+### Fixed: embodiment + registry correctness
+
+- Embodiment coverage 4 -> 33 configs grounded in lerobot drivers + MuJoCo XMLs.
+- ``aloha`` had empty state/action keys (silent no-op) -> 16 bimanual joints.
+- ``so100``/``so101`` decoupled (distinct sim joint names).
+- Registry: ``tiago_dual`` (``++`` module-name regex) and ``unitree_a1``
+  (``xml/`` asset subdir) now load; all 57 menagerie-asset robots resolve.
+- Policy-config registration walks every ``lerobot.policies`` subpackage
+  (incl. PEP-420 namespace packages), so newly shipped policies (e.g.
+  ``molmoact2``) register without a hand-maintained import list.
 
 ## Unreleased - #320 (MuJoCo robot-scene ground-plane z-fighting)
 
@@ -44,6 +79,20 @@ before attaching it, so exactly one world-owned ``ground`` plane survives. The
 world ``ground`` plane (configurable via ``create_world(ground_plane=...)``)
 is the single source of truth; robots contribute only their own
 bodies/joints/actuators/sensors.
+
+## Unreleased - #273 (estop lockout concurrency pin)
+
+### Added (tests): concurrent-estop lockout race regression pins
+
+Pinned the issue #273 invariant that the e-stop lockout check-then-set
+(`_estop_lockout.set()` + `_last_estop_ts` / `_last_estop_mono` writes)
+stays inside `Mesh._estop_replay_lock`. Two concurrent e-stops from
+distinct issuers now provably yield exactly one `remote_estop_engaged`
+plus one `remote_estop_redundant` audit event (never two engages).
+`tests/mesh/test_estop_lockout_race.py` adds a deterministic forced-
+interleave race test plus source-text pins guarding lock containment
+and timestamp-pair atomicity against future refactors. Code already
+fixed on main; this locks it.
 
 ## Unreleased - #228 (AWS IoT provisioning hardening)
 
