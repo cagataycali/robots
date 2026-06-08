@@ -235,12 +235,26 @@ function setupViewer3D() {
   const host = document.getElementById("view3d");
   if (!host) return;
   if (viewer3d) { viewer3d.dispose(); viewer3d = null; }
-  viewer3dPeer = selected;
+
+  // The selected peer drives the 3D view if it has geometry of its own
+  // (a sim). A real robot has no geometry, so we fall back to a "twin":
+  // any sim peer currently mirroring it. The pose stream is keyed by the
+  // peer that owns the geometry, so viewer3dPeer must be that geometry
+  // owner -- not necessarily the selected peer.
+  let geomPeer = sceneGeom[selected] ? selected : null;
+  if (!geomPeer) {
+    // Fallback: first peer that has geometry (the twin). With a single
+    // sim-twin on the mesh this "just works"; multi-twin disambiguation
+    // can come later via an explicit link.
+    geomPeer = Object.keys(sceneGeom)[0] || null;
+  }
+
+  viewer3dPeer = geomPeer;
   viewer3d = new Viewer3D(host);
-  const cached = sceneGeom[selected];
-  if (cached) {
-    viewer3d.setGeometry(cached);
-    setView3dHint("");
+  if (geomPeer && sceneGeom[geomPeer]) {
+    viewer3d.setGeometry(sceneGeom[geomPeer]);
+    const twinNote = geomPeer === selected ? "" : ` (twin: ${geomPeer})`;
+    setView3dHint(twinNote);
   } else {
     setView3dHint("(waiting for sim geometry…)");
   }
