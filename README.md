@@ -432,8 +432,6 @@ register_policy("reach", lambda: ReachPolicy, aliases=["lerp"])
 policy = create_policy("reach")
 ```
 
-Reference cuRobo / MoveIt2 implementations are tracked on the
-[project board](https://github.com/orgs/strands-labs/projects/2).
 
 ## Simulation (MuJoCo)
 
