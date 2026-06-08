@@ -45,6 +45,18 @@ groot-service = [
     "pyzmq>=27.0.0,<28.0.0",
     "msgpack>=1.0.0,<2.0.0",
 ]
+cosmos3-service = [
+    # Self-contained msgpack+NumPy WebSocket client for the Cosmos 3 RoboLab
+    # policy server (cosmos_framework.scripts.action_policy_server_robolab).
+    #
+    # No openpi-client dependency: the wire protocol is implemented directly
+    # via `websockets` + `msgpack` plus a vendored numpy packer
+    # (strands_robots/policies/cosmos3/_msgpack_numpy.py). This keeps the
+    # extra numpy-version agnostic so it composes cleanly with `lerobot`
+    # (numpy>=2) for dataset recording in the same env.
+    "msgpack>=1.0.0,<2.0.0",
+    "websockets>=12.0",
+]
 lerobot = [
     "lerobot>=0.5.0,<0.6.0",
 ]
@@ -157,7 +169,7 @@ ignore_missing_imports = false
 
 # Third-party libs without type stubs
 [[tool.mypy.overrides]]
-module = ["lerobot.*", "gr00t.*", "draccus.*", "msgpack.*", "zmq.*", "huggingface_hub.*", "serial.*", "psutil.*", "torch.*", "torchvision.*", "transformers.*", "einops.*", "robot_descriptions.*", "mujoco.*", "imageio.*", "libero.*", "zenoh.*", "boto3", "boto3.*", "awscrt", "awscrt.*", "awsiot", "awsiot.*", "botocore.*"]
+module = ["lerobot.*", "gr00t.*", "draccus.*", "msgpack.*", "websockets", "websockets.*", "zmq.*", "huggingface_hub.*", "serial.*", "psutil.*", "torch.*", "torchvision.*", "transformers.*", "einops.*", "robot_descriptions.*", "mujoco.*", "imageio.*", "libero.*", "zenoh.*", "boto3", "boto3.*", "awscrt", "awscrt.*", "awsiot", "awsiot.*", "botocore.*", "strands_robots.policies.cosmos3._msgpack_numpy", "openpi_client", "openpi_client.*", "openpi_server", "openpi_server.*", "openpi", "openpi.*"]
 ignore_missing_imports = true
 
 # @tool decorator injects runtime signatures mypy cannot check

@@ -1543,6 +1543,16 @@ class Mesh(SensorLoopsMixin):
             return
         if not isinstance(data, dict):
             return
+        # Cache operator-tunable freshness/skew knobs once at handler entry
+        # (issue #265). Reading them per-use parsed os.getenv plus a regex
+        # validation on every reference (5-6 times per envelope) and could
+        # observe a mid-handler env mutation, creating an internal
+        # inconsistency window. The 0.2s estop corroboration window is
+        # timing-sensitive, so we also keep these reads out of the
+        # _estop_replay_lock critical section. The next envelope picks up a
+        # changed env value, preserving the operator-tunable contract.
+        forward_skew_s = _resume_forward_skew_s()
+        freshness_window_s = _resume_freshness_window_s()
 
         # Wire-level publisher attribution (cross-session forgery defence).
         # When the sample carries a ``source_info.source_id.zid`` set by
@@ -1601,21 +1611,21 @@ class Mesh(SensorLoopsMixin):
                 self.peer_id,
             )
             return
-        if envelope_t > now + _resume_forward_skew_s():
+        if envelope_t > now + forward_skew_s:
             logger.warning(
                 "[safety] %s: refusing remote estop -- ``t``=%s in future (forward_skew_s=%s, now=%s)",
                 self.peer_id,
                 envelope_t,
-                _resume_forward_skew_s(),
+                forward_skew_s,
                 now,
             )
             return
-        if (now - envelope_t) > _resume_freshness_window_s():
+        if (now - envelope_t) > freshness_window_s:
             logger.warning(
                 "[safety] %s: refusing remote estop -- ``t``=%s too old (freshness_window_s=%s, now=%s)",
                 self.peer_id,
                 envelope_t,
-                _resume_freshness_window_s(),
+                freshness_window_s,
                 now,
             )
             return
@@ -1761,7 +1771,7 @@ class Mesh(SensorLoopsMixin):
                 # include forward_skew so a forward-skewed envelope
                 # at t=now+skew stays cached for the full freshness window
                 # rather than the lesser ``freshness`` only.
-                ttl_s=_resume_freshness_window_s() + _resume_forward_skew_s(),
+                ttl_s=freshness_window_s + forward_skew_s,
                 now_mono=now_mono,
             )
             # Apply the eviction back to the real cache.
@@ -1899,6 +1909,16 @@ class Mesh(SensorLoopsMixin):
             return
         if not isinstance(data, dict):
             return
+        # Cache operator-tunable freshness/skew knobs once at handler entry
+        # (issue #265). Reading them per-use parsed os.getenv plus a regex
+        # validation on every reference (5-6 times per envelope) and could
+        # observe a mid-handler env mutation, creating an internal
+        # inconsistency window. The 0.2s estop corroboration window is
+        # timing-sensitive, so we also keep these reads out of the
+        # _estop_replay_lock critical section. The next envelope picks up a
+        # changed env value, preserving the operator-tunable contract.
+        forward_skew_s = _resume_forward_skew_s()
+        freshness_window_s = _resume_freshness_window_s()
 
         # Wire-level publisher attribution (cross-session forgery defence).
         # Mirrors the parallel block in ``_on_safety_estop``: extract the
@@ -1969,7 +1989,7 @@ class Mesh(SensorLoopsMixin):
         # captured envelope would still verify. Two cheap defences:
         #
         # 1. Freshness: reject envelopes whose ``t`` field is older
-        #  than _resume_freshness_window_s() or more than the forward
+        #  than freshness_window_s or more than the forward
         #  skew in the future. This matches the operator NTP
         #  requirement documented in CHANGELOG.
         # 2. Per-receiver replay cache: refuse a (issuer, proof_nonce)
@@ -1983,21 +2003,21 @@ class Mesh(SensorLoopsMixin):
                 self.peer_id,
             )
             return
-        if envelope_t > now + _resume_forward_skew_s():
+        if envelope_t > now + forward_skew_s:
             logger.warning(
                 "[safety] %s: refusing remote resume -- ``t``=%s in future (forward_skew_s=%s, now=%s)",
                 self.peer_id,
                 envelope_t,
-                _resume_forward_skew_s(),
+                forward_skew_s,
                 now,
             )
             return
-        if (now - envelope_t) > _resume_freshness_window_s():
+        if (now - envelope_t) > freshness_window_s:
             logger.warning(
                 "[safety] %s: refusing remote resume -- ``t``=%s too old (freshness_window_s=%s, now=%s)",
                 self.peer_id,
                 envelope_t,
-                _resume_freshness_window_s(),
+                freshness_window_s,
                 now,
             )
             return
@@ -2120,9 +2140,51 @@ class Mesh(SensorLoopsMixin):
                 self._resume_replay_cache,
                 max_size=_resume_replay_cache_max(),
                 # see _evict_replay_cache docstring.
-                ttl_s=_resume_freshness_window_s() + _resume_forward_skew_s(),
+                ttl_s=freshness_window_s + forward_skew_s,
                 now_mono=now_mono,
             )
+            # Per-issuer fairness bound -- mirror of the estop path
+            # (_on_safety_estop, search "per_issuer_cap"). Without this
+            # a single wire_zid (or body issuer_id on an attribution-less
+            # transport) holding the override code can fill all
+            # _resume_replay_cache_max() slots and then churn legitimate
+            # other-issuer entries out via the eviction 20%-oldest-drop
+            # branch, suppressing real replay-rejection signals. The cap
+            # is computed from the SAME expression as the estop site so
+            # the two replay-cache defenses stay symmetric.
+            per_issuer_cap = max(1, _resume_replay_cache_max() // 4)
+            issuer_slots = sum(1 for k in self._resume_replay_cache if k[0] == issuer_key)
+            if issuer_slots >= per_issuer_cap:
+                logger.warning(
+                    "[safety] %s: REFUSED resume cache slot -- issuer %r already at cap %d "
+                    "(per-issuer fairness bound; flood suspected)",
+                    self.peer_id,
+                    issuer_key,
+                    per_issuer_cap,
+                )
+                # Audit the over-cap rejection so an operator dashboard
+                # can alert. The cache slot is NOT added; the resume
+                # itself is refused (unlike estop, which still engages
+                # lockout, a refused resume must NOT clear lockout --
+                # returning here is the safe direction).
+                try:
+                    self.publish_safety_event(
+                        event_type="resume_per_issuer_cap_exceeded",
+                        severity="warning",
+                        payload={
+                            "issuer": issuer_id,
+                            "proof_nonce_prefix": proof_nonce[:16],
+                            "cap": per_issuer_cap,
+                        },
+                    )
+                except (TypeError, ValueError, OSError) as audit_exc:
+                    # Narrow per AGENTS.md > "Exception Clauses Must Be Narrow".
+                    logger.debug(
+                        "[mesh] %s: resume_per_issuer_cap_exceeded audit publish failed: %s",
+                        self.peer_id,
+                        audit_exc,
+                    )
+                return
             self._resume_replay_cache[cache_key] = now_mono
 
         sender = data.get("peer_id", "<remote>")
