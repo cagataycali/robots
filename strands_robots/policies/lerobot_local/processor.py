@@ -221,7 +221,7 @@ class ProcessorBridge:
             logger.debug("apply_embodiment: no preprocessor loaded, nothing to configure")
             return
 
-        from .embodiment import _register_pack_state_step
+        from .embodiment import register_pack_state_step
 
         steps = list(self._preprocessor.steps)
 
@@ -252,7 +252,7 @@ class ProcessorBridge:
                 logger.warning("RenameObservationsProcessorStep unavailable; obs_rename not applied")
 
         # 2. Insert / refresh the pack-state step immediately after rename.
-        PackState = _register_pack_state_step()
+        PackState = register_pack_state_step()
         if PackState is not None and embodiment.state_keys:
             expected_dim = (
                 embodiment.expected_state_dim(input_features) if input_features else len(embodiment.state_keys)

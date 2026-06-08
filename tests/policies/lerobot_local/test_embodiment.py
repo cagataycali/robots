@@ -10,9 +10,9 @@ import pytest
 from strands_robots.policies.lerobot_local.embodiment import (
     EMBODIMENT_MAP,
     EmbodimentMap,
-    _register_pack_state_step,
     load_embodiment,
     reconcile_dim,
+    register_pack_state_step,
 )
 
 
@@ -163,9 +163,21 @@ def test_validate_action_dim_mismatch():
 # PackStateProcessorStep
 
 
+def _require_pack_state():
+    """Return the registered PackState step class, skipping if lerobot absent.
+
+    ``register_pack_state_step`` returns ``None`` when lerobot's processor
+    framework is not importable. Without this guard the tests below hard-fail
+    (``None`` is not callable) on a minimal env instead of skipping cleanly.
+    """
+    Step = register_pack_state_step()
+    if Step is None:
+        pytest.skip("lerobot processor framework unavailable")
+    return Step
+
+
 def test_pack_state_composes_in_order():
-    Step = _register_pack_state_step()
-    assert Step is not None
+    Step = _require_pack_state()
     s = Step(state_keys=["x", "y", "z"], expected_dim=3, dim_policy="strict")
     obs = {"x": 1.0, "y": 2.0, "z": 3.0, "observation.images.image": np.zeros((3, 4, 4))}
     out = s.observation(dict(obs))
@@ -175,7 +187,7 @@ def test_pack_state_composes_in_order():
 
 
 def test_pack_state_idempotent_when_already_packed():
-    Step = _register_pack_state_step()
+    Step = _require_pack_state()
     s = Step(state_keys=["x"], expected_dim=1, dim_policy="strict")
     pre = {"observation.state": np.array([9.0, 9.0])}
     out = s.observation(dict(pre))
@@ -183,14 +195,14 @@ def test_pack_state_idempotent_when_already_packed():
 
 
 def test_pack_state_pads():
-    Step = _register_pack_state_step()
+    Step = _require_pack_state()
     s = Step(state_keys=["a", "b"], expected_dim=4, dim_policy="pad")
     out = s.observation({"a": 1.0, "b": 2.0})
     assert list(out["observation.state"]) == [1.0, 2.0, 0.0, 0.0]
 
 
 def test_pack_state_get_config_roundtrips():
-    Step = _register_pack_state_step()
+    Step = _require_pack_state()
     s = Step(state_keys=["a", "b"], expected_dim=2, dim_policy="pad")
     cfg = s.get_config()
     assert cfg == {"state_keys": ["a", "b"], "expected_dim": 2, "dim_policy": "pad"}

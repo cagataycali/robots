@@ -82,7 +82,7 @@ def reconcile_dim(values: list[float], expected_dim: int, dim_policy: str, *, la
 
 # Imported lazily so this module is importable without lerobot (e.g. for unit
 # testing EmbodimentMap loading/validation in a minimal env).
-def _register_pack_state_step() -> type | None:
+def register_pack_state_step() -> type | None:
     """Define + register :class:`PackStateProcessorStep` against lerobot.
 
     Returns the step class, or ``None`` if lerobot's processor framework is
@@ -94,7 +94,17 @@ def _register_pack_state_step() -> type | None:
         logger.debug("lerobot processor framework unavailable; PackStateProcessorStep not registered")
         return None
 
-    existing = ProcessorStepRegistry._registry.get("strands_pack_state")
+    # Idempotent re-registration via the PUBLIC lookup. Reading the internal
+    # ``ProcessorStepRegistry._registry`` dict couples us to a private attribute
+    # LeRobot can rename/restructure any release (cf. TransitionKey moving
+    # between 0.5.1 and 0.5.2). ``get(name)`` is the documented lookup; it
+    # raises (KeyError/ValueError) or returns None when the name is unregistered
+    # depending on the LeRobot version, so treat any miss as "not yet registered"
+    # and fall through to the register decorator below.
+    try:
+        existing = ProcessorStepRegistry.get("strands_pack_state")
+    except (KeyError, ValueError, AttributeError):
+        existing = None
     if existing is not None:
         return existing
 
@@ -316,5 +326,5 @@ __all__ = [
     "EMBODIMENT_MAP",
     "load_embodiment",
     "reconcile_dim",
-    "_register_pack_state_step",
+    "register_pack_state_step",
 ]
