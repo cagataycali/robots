@@ -131,6 +131,17 @@ dependencies = [
     "pyzmq>=27.0.0,<28.0.0",
 ]
 
+# Auto-select the right PyTorch wheel for the host accelerator. On NVIDIA
+# Thor / Jetson (linux + aarch64) the plain-PyPI torch 2.10.0 wheel is
+# CPU-ONLY, so torch.cuda.is_available() is False and all inference silently
+# runs on CPU. UV_TORCH_BACKEND=auto makes uv probe the local driver/SoC and
+# resolve the matching build (e.g. torch==2.10.0+cu130 on Thor, the CPU wheel
+# on a machine with no GPU) WITHOUT changing the pinned version, so lerobot's
+# torch<2.11 bound is still satisfied. Verified on NVIDIA Thor (Tegra R38,
+# CUDA 13.0): cuda.is_available() == True, device "NVIDIA Thor".
+[tool.hatch.envs.default.env-vars]
+UV_TORCH_BACKEND = "auto"
+
 [tool.hatch.envs.default.scripts]
 test = "pytest {args:tests}"
 test-integ = "pytest tests_integ/ -v --timeout=300 {args}"
