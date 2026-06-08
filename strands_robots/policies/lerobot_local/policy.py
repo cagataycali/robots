@@ -73,6 +73,9 @@ class LerobotLocalPolicy(Policy):
         rtc_max_guidance_weight: float | None = None,
         inference_kwargs: dict | None = None,
         embodiment: str | dict | Any | None = None,
+        norm_tag: str | None = None,
+        image_keys: list[str] | None = None,
+        inference_action_mode: str = "continuous",
         **kwargs,
     ):
         self.pretrained_name_or_path = pretrained_name_or_path
@@ -96,6 +99,13 @@ class LerobotLocalPolicy(Policy):
         self._embodiment_spec = embodiment
         self._embodiment: Any | None = None
         self.robot_state_keys: list[str] = []
+        # MolmoAct2-specific knobs. MolmoAct2 SO-100/101 checkpoints are
+        # transformers-native (no lerobot draccus `type`), so they take a
+        # dedicated load path (see lerobot_local.molmoact2). These are inert
+        # for every other policy type.
+        self._molmoact2_norm_tag = norm_tag
+        self._molmoact2_image_keys = image_keys
+        self._molmoact2_inference_action_mode = inference_action_mode
 
         self._policy: Any | None = None
         self._device: torch.device | None = None
@@ -321,6 +331,17 @@ class LerobotLocalPolicy(Policy):
             ValueError: If model path is invalid or config cannot be parsed.
             RuntimeError: If model loading fails.
         """
+        # MolmoAct2 SO-100/101 checkpoints are transformers-native (config.json
+        # has model_type=molmoact2 and NO lerobot draccus `type`). The standard
+        # resolve→from_pretrained path raises ParsingError on them, so route to
+        # the dedicated wrapper that builds MolmoAct2Config(checkpoint_path=...)
+        # and the molmoact2 pre/post processor pipeline programmatically.
+        from . import molmoact2 as _molmoact2
+
+        if _molmoact2.is_molmoact2(self.pretrained_name_or_path, self.policy_type):
+            self._load_molmoact2_model()
+            return
+
         # XVLA compat: Florence2LanguageConfig.forced_bos_token_id missing
         # in transformers 5.x. Florence2 was originally built with an older
         # transformers that had this attribute. Without this patch, XVLA
@@ -418,6 +439,83 @@ class LerobotLocalPolicy(Policy):
                 self._processor_bridge = None
 
         # Initialize RTC if supported by this policy
+        self._init_rtc()
+
+    def _load_molmoact2_model(self) -> None:
+        """Load a transformers-native MolmoAct2 checkpoint via the lerobot wrapper.
+
+        Unlike the generic path, MolmoAct2 needs ``MolmoAct2Config(checkpoint_path=...)``
+        built explicitly and its pre/post processors created programmatically
+        (the repo ships no ``policy_preprocessor.json``). The resulting
+        ``ProcessorBridge`` is wrapped around those pipelines so the normal
+        ``get_actions`` flow (preprocess → select_action → postprocess) works
+        unchanged. The embodiment map (e.g. ``so_real``) still configures camera
+        renames + state packing on the preprocessor via ``_configure_embodiment``.
+        """
+        from . import molmoact2 as _molmoact2
+        from .processor import ProcessorBridge
+
+        self.policy_type = _molmoact2.MOLMOACT2_TYPE
+
+        # State/action dims come from the embodiment when known (SO arms = 6),
+        # else default to 6 (the SO-100/101 convention this checkpoint targets).
+        state_dim = action_dim = 6
+        if self.robot_state_keys:
+            state_dim = action_dim = len(self.robot_state_keys)
+
+        logger.info("Loading MolmoAct2 (transformers-native) from %s...", self.pretrained_name_or_path)
+        start = time.time()
+
+        policy, preprocessor, postprocessor, cfg = _molmoact2.build_policy(
+            self.pretrained_name_or_path,
+            device=self.requested_device,
+            norm_tag=self._molmoact2_norm_tag,
+            inference_action_mode=self._molmoact2_inference_action_mode,
+            image_keys=self._molmoact2_image_keys,
+            embodiment_spec=self._embodiment_spec,
+            state_dim=state_dim,
+            action_dim=action_dim,
+        )
+
+        self._policy = policy
+        self._device = next(policy.parameters()).device
+        self._input_features = dict(getattr(cfg, "input_features", {}) or {})
+        self._output_features = dict(getattr(cfg, "output_features", {}) or {})
+
+        # MolmoAct2.select_action requires inference_action_mode every call.
+        self.inference_kwargs.setdefault("inference_action_mode", self._molmoact2_inference_action_mode)
+
+        elapsed = time.time() - start
+        logger.info(
+            "Loaded MolmoAct2Policy (type='molmoact2') in %.1fs on %s",
+            elapsed,
+            self._device,
+        )
+        self._loaded = True
+
+        # Auto-detect generic state keys from action dim if not set.
+        if not self.robot_state_keys and self._output_features:
+            action_feat = self._output_features.get("action")
+            if action_feat is not None and getattr(action_feat, "shape", None):
+                adim = action_feat.shape[0]
+                self.robot_state_keys = [f"joint_{i}" for i in range(adim)]
+
+        # Wrap the programmatic processors in a ProcessorBridge so the standard
+        # preprocess/postprocess flow applies, then configure the embodiment
+        # (camera rename + state packing) onto the preprocessor pipeline.
+        if self.use_processor:
+            self._processor_bridge = ProcessorBridge(
+                preprocessor=preprocessor,
+                postprocessor=postprocessor,
+                device=str(self._device) if self._device else None,
+            )
+            if self._processor_bridge.is_active:
+                logger.info("MolmoAct2 processor bridge ready: %s", self._processor_bridge)
+                self._configure_embodiment()
+            else:
+                self._processor_bridge = None
+
+        # RTC never applies to MolmoAct2 (no rtc_config); init is a safe no-op.
         self._init_rtc()
 
     # Embodiment configuration (declarative obs/action mapping)
