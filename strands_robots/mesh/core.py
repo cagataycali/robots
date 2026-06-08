@@ -303,6 +303,16 @@ class Mesh(SensorLoopsMixin):
         self._subs_lock = threading.Lock()
         self._inbox_lock = threading.Lock()
         self._stop_event = threading.Event()
+        # Set while a calibration session is mutating the servo bus.
+        # The state loop honours this to avoid concurrent reads on the
+        # same serial bus (Feetech is half-duplex; a read racing a
+        # calibration write corrupts both -> 'Incorrect status packet').
+        self._state_paused = threading.Event()
+        # Serialises all servo-bus access between the state loop and a
+        # calibration session. The pause Event stops *new* reads; this
+        # lock ensures a read already in flight finishes before
+        # calibration starts writing (half-duplex bus safety).
+        self._bus_lock = threading.RLock()
 
         # RPC correlation state.
         #
@@ -822,7 +832,15 @@ class Mesh(SensorLoopsMixin):
         period = 1.0 / STATE_HZ
         while self._running:
             try:
-                state = self._read_state()
+                # Yield the bus entirely while calibration owns it. Publishing
+                # a stale snapshot is fine; corrupting the half-duplex serial
+                # bus with a concurrent read is not.
+                if self._state_paused.is_set():
+                    if self._stop_event.wait(period):
+                        break
+                    continue
+                with self._bus_lock:
+                    state = self._read_state()
                 if state:
                     self.publish(f"strands/{self.peer_id}/state", state)
             except Exception as exc:
@@ -1502,7 +1520,153 @@ class Mesh(SensorLoopsMixin):
             if hasattr(r, "stop_teleop"):
                 return dict(r.stop_teleop(dev))
             return {"error": "robot does not support stop_teleop"}
+        if action == "calibrate":
+            return self._dispatch_calibrate(cmd.get("step", "status"))
+        if action == "list_policies":
+            return self._dispatch_list_policies()
+        if action == "record_start":
+            return self._dispatch_record_start(cmd)
+        if action == "record_stop":
+            return self._dispatch_record_stop()
+        if action == "list_robots":
+            return self._dispatch_list_robots()
         return {"error": f"unknown action: {action}"}
+
+    def _dispatch_list_policies(self) -> dict[str, Any]:
+        """Return available policy providers + which robots are running one.
+
+        Read-only introspection for the dashboard's Policies panel. Works for
+        any peer; the provider list comes from the policy factory registry and
+        ``running`` is sim-only (hardware peers report an empty running set).
+        """
+        try:
+            from strands_robots.policies.factory import list_providers
+
+            providers = list(list_providers())
+        except Exception as exc:  # noqa: BLE001 -- surface as wire error
+            providers = []
+            logger.debug("list_providers failed: %s", exc)
+        running: list[str] = []
+        r = self.robot
+        if hasattr(r, "_active_policy_robots"):
+            try:
+                running = list(r._active_policy_robots())
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("active policy query failed: %s", exc)
+        return {"providers": providers, "running": running}
+
+    def _dispatch_list_robots(self) -> dict[str, Any]:
+        """Return the robot names this peer hosts (sim: scene robots).
+
+        Lets the dashboard target a specific arm for policy / recording on a
+        multi-robot sim peer. Hardware peers expose their single device id.
+        """
+        r = self.robot
+        if hasattr(r, "list_robots"):
+            try:
+                return {"robots": list(r.list_robots())}
+            except Exception as exc:  # noqa: BLE001
+                return {"error": f"list_robots failed: {exc}"}
+        return {"robots": []}
+
+    def _dispatch_record_start(self, cmd: dict[str, Any]) -> dict[str, Any]:
+        """Start LeRobot dataset recording on a sim peer.
+
+        Only sim peers (SimEngine, exposing ``start_recording``) support this.
+        The wire schema (validate_command) has already bounded repo_id / task /
+        fps, so here we just forward to the engine and return its status dict.
+        """
+        r = self.robot
+        if not hasattr(r, "start_recording"):
+            return {"error": "record_start: this peer cannot record (sim peers only)"}
+        kwargs: dict[str, Any] = {}
+        for key in ("repo_id", "task", "fps", "root", "overwrite", "push_to_hub"):
+            if key in cmd:
+                kwargs[key] = cmd[key]
+        try:
+            return dict(r.start_recording(**kwargs))
+        except Exception as exc:  # noqa: BLE001 -- recording is operator-facing
+            return {"error": f"record_start failed: {exc}"}
+
+    def _dispatch_record_stop(self) -> dict[str, Any]:
+        """Stop dataset recording on a sim peer and finalise the episode."""
+        r = self.robot
+        if not hasattr(r, "stop_recording"):
+            return {"error": "record_stop: this peer cannot record (sim peers only)"}
+        try:
+            return dict(r.stop_recording())
+        except Exception as exc:  # noqa: BLE001
+            return {"error": f"record_stop failed: {exc}"}
+
+    def _dispatch_calibrate(self, step: str) -> dict[str, Any]:
+        """Drive the web calibration state machine for this robot's arm bus.
+
+        Resolves the live ``FeetechMotorsBus`` from the robot (hardware:
+        ``r.robot.bus``) and lazily attaches a single
+        :class:`~strands_robots.mesh.calibration.CalibrationSession` to the
+        robot under ``_calib_session``. Each ``step`` maps to one phase
+        transition. ``record`` starts a background sampler so the operator can
+        sweep freely; ``finish`` also persists the JSON via the robot's
+        ``_save_calibration`` when available.
+
+        Returns a plain dict (wire response), never raises -- calibration is
+        operator-facing and must surface errors as structured text.
+        """
+        r = self.robot
+        inner = getattr(r, "robot", None)  # lerobot device (hardware path)
+        bus = getattr(inner, "bus", None)
+        if bus is None:
+            return {"error": "calibrate: this peer has no servo bus (sim peers are not calibratable)"}
+
+        motor_names = list(getattr(bus, "motors", {}).keys())
+        if not motor_names:
+            return {"error": "calibrate: bus exposes no motors"}
+
+        from strands_robots.mesh.calibration import CalibrationSession
+
+        sess = getattr(r, "_calib_session", None)
+        # 'begin' always starts a clean session; other steps reuse the live
+        # one (and lazily create if somehow missing, so a mis-ordered call
+        # gets a clear phase error rather than an AttributeError).
+        if step == "begin" or sess is None or getattr(sess, "_bus", None) is not bus:
+            sess = CalibrationSession(bus, motor_names, bus_lock=self._bus_lock)
+            r._calib_session = sess
+
+        if step == "status":
+            return {"phase": sess.phase}
+        if step == "begin":
+            # Calibration now owns the bus; silence the state loop until
+            # finish/cancel so its 10 Hz reads don't corrupt our writes.
+            # Acquire _bus_lock so any in-flight state read drains first.
+            self._state_paused.set()
+            with self._bus_lock:
+                return sess.begin()
+        if step == "home":
+            with self._bus_lock:
+                return sess.set_home()
+        if step == "record":
+            sess.start_background_sampler()
+            with self._bus_lock:
+                return sess.record_tick()
+        if step == "finish":
+            with self._bus_lock:
+                result = sess.finish()
+            self._state_paused.clear()
+            # Persist to the standard lerobot calibration path so it survives
+            # restarts. The device owns calibration_fpath + _save_calibration.
+            if result.get("phase") == "done" and inner is not None:
+                try:
+                    inner.calibration = sess.calibration
+                    if hasattr(inner, "_save_calibration"):
+                        inner._save_calibration()
+                        result["saved_to"] = str(getattr(inner, "calibration_fpath", "?"))
+                except Exception as exc:  # noqa: BLE001 — persistence is best-effort
+                    result["save_warning"] = str(exc)
+            return result
+        if step == "cancel":
+            self._state_paused.clear()
+            return sess.cancel()
+        return {"error": f"calibrate: unknown step {step!r}"}
 
     # Well-known per-call policy kwargs from issue #300 — keys that planner-
     # style providers (cuRobo, MoveIt2, MPC) consume to encode goals beyond

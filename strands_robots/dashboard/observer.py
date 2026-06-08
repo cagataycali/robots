@@ -227,6 +227,17 @@ class MeshObserver:
         self._teleop_seq += 1
         self._mesh.publish(topic, payload)
 
+    def calibrate(self, target: str, step: str, timeout: float = 15.0) -> dict[str, Any]:
+        """Drive the web calibration state machine on *target*.
+
+        ``step`` is one of begin/home/record/finish/cancel/status. The longer
+        default timeout accommodates set_half_turn_homings which does a bus
+        round-trip per motor.
+        """
+        if self._mesh is None:
+            return {"status": "error", "error": "mesh not running"}
+        return self._mesh.send(target, {"action": "calibrate", "step": step}, timeout=timeout)
+
     def stop_teleop(self, target: str, device_name: str | None = None) -> dict[str, Any]:
         """Tell *target* to stop following this dashboard's input stream."""
         if self._mesh is None:
@@ -237,6 +248,39 @@ class MeshObserver:
             {"action": "teleop_stop", "device_name": device},
             timeout=10.0,
         )
+
+    # -- policies + recording (dashboard introspection / data collection) ---
+
+    def list_policies(self, target: str, timeout: float = 10.0) -> dict[str, Any]:
+        """Ask *target* for its available policy providers + running set."""
+        if self._mesh is None:
+            return {"status": "error", "error": "mesh not running"}
+        return self._mesh.send(target, {"action": "list_policies"}, timeout=timeout)
+
+    def list_robots(self, target: str, timeout: float = 10.0) -> dict[str, Any]:
+        """Ask *target* for the robot names it hosts (sim scene robots)."""
+        if self._mesh is None:
+            return {"status": "error", "error": "mesh not running"}
+        return self._mesh.send(target, {"action": "list_robots"}, timeout=timeout)
+
+    def record_start(self, target: str, repo_id: str, task: str = "",
+                     fps: int = 30, overwrite: bool = True,
+                     timeout: float = 20.0) -> dict[str, Any]:
+        """Start LeRobot dataset recording on a sim *target*."""
+        if self._mesh is None:
+            return {"status": "error", "error": "mesh not running"}
+        return self._mesh.send(
+            target,
+            {"action": "record_start", "repo_id": repo_id, "task": task,
+             "fps": fps, "overwrite": overwrite},
+            timeout=timeout,
+        )
+
+    def record_stop(self, target: str, timeout: float = 30.0) -> dict[str, Any]:
+        """Stop dataset recording on a sim *target* and finalise the episode."""
+        if self._mesh is None:
+            return {"status": "error", "error": "mesh not running"}
+        return self._mesh.send(target, {"action": "record_stop"}, timeout=timeout)
 
     # -- internals ------------------------------------------------------
 

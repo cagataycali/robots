@@ -132,6 +132,16 @@ MAX_INPUT_FRAME_KEYS: int = 64
 #: integrator. Applied symmetrically.
 MAX_INPUT_VALUE_ABS: float = 1.0e6
 
+#: Dataset repo-id charset: ``<namespace>/<name>`` with a single slash.
+#: Mirrors HuggingFace dataset naming so the recorded dataset round-trips
+#: through ``LeRobotDataset``. Rejects path traversal (no ``..`` survives the
+#: single-slash + charset constraint) and shell metacharacters.
+import re as _re_record  # noqa: E402 -- local alias, avoid shadowing module re
+_DATASET_REPO_ID_RE = _re_record.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")
+
+#: Max length of a recording task description accepted from the wire.
+_MAX_TASK_LEN = 256
+
 #: Charset for teleop input-frame keys (motor/joint names like
 #: ``"motor.pos"``, ``"shoulder_pan"``, ``"j0"``). Printable, no
 #: whitespace, no shell metacharacters, no path separators.
@@ -202,6 +212,13 @@ ALLOWED_ACTIONS: frozenset[str] = frozenset(
         "teleop_status",
         "teleop_receive",
         "teleop_stop",
+        # Web-driven calibration state machine (see mesh/calibration.py).
+        "calibrate",
+        # Dashboard read-only introspection + sim dataset recording.
+        "list_policies",
+        "list_robots",
+        "record_start",
+        "record_stop",
         # ``resume`` clears the emergency-stop lockout; the only action
         # other than ``status`` permitted while the lockout is engaged.
         "resume",
@@ -981,6 +998,58 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
                 "resume.override_code contains control characters (CRLF/NUL/C0). Use printable ASCII only."
             )
         out["override_code"] = override_code
+
+    elif action == "calibrate":
+        # Web-driven calibration step. 'step' is an enum-like string selecting
+        # the phase transition; validated against the allowlist so a typo or
+        # injected value cannot reach the calibration state machine.
+        step = cmd.get("step", "status")
+        if not isinstance(step, str):
+            raise ValidationError("calibrate.step must be a string")
+        _CALIB_STEPS = {"begin", "home", "record", "finish", "cancel", "status"}
+        if step not in _CALIB_STEPS:
+            raise ValidationError(f"calibrate.step {step!r} not in {sorted(_CALIB_STEPS)}")
+        out["step"] = step
+
+    elif action == "record_start":
+        # Sim dataset recording. Bound the operator-supplied LeRobot dataset
+        # identifiers so a browser cannot inject path-traversal or shell
+        # metacharacters into the on-disk dataset root / repo id.
+        repo_id = cmd.get("repo_id", "local/sim_recording")
+        if not isinstance(repo_id, str) or not _DATASET_REPO_ID_RE.match(repo_id):
+            raise ValidationError(
+                "record_start.repo_id must match '<namespace>/<name>' "
+                "([a-zA-Z0-9._-], single slash)"
+            )
+        # Reject any '..' path component -- the charset permits dots, so
+        # '../x' or 'a/..' slip past the regex but must not reach a path join.
+        if any(part in ("", "..", ".") for part in repo_id.split("/")):
+            raise ValidationError("record_start.repo_id may not contain '.', '..' or empty path components")
+        out["repo_id"] = repo_id
+        task = cmd.get("task", "")
+        if not isinstance(task, str) or len(task) > _MAX_TASK_LEN:
+            raise ValidationError(f"record_start.task must be a string <= {_MAX_TASK_LEN} chars")
+        out["task"] = task
+        fps = cmd.get("fps", 30)
+        if not isinstance(fps, int) or isinstance(fps, bool) or not (1 <= fps <= 240):
+            raise ValidationError("record_start.fps must be an int in [1, 240]")
+        out["fps"] = fps
+        if "overwrite" in cmd:
+            if not isinstance(cmd["overwrite"], bool):
+                raise ValidationError("record_start.overwrite must be a bool")
+            out["overwrite"] = cmd["overwrite"]
+        # ``root`` is intentionally NOT accepted from the wire: the dataset
+        # location is a server-side policy decision, not a remote caller's.
+        # push_to_hub is likewise withheld (would exfiltrate to HF).
+
+    elif action == "record_stop":
+        pass  # no parameters
+
+    elif action == "list_policies":
+        pass  # read-only, no parameters
+
+    elif action == "list_robots":
+        pass  # read-only, no parameters
 
     return out
 

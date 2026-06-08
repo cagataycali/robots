@@ -83,6 +83,7 @@
   .cam { background: #000; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
   .cam img { width: 100%; display: block; image-rendering: auto; }
   .caml { font-size: 10px; color: var(--dim); padding: 3px 6px; }
+  .calib { border-top: 1px solid var(--line); margin-top: 8px; padding-top: 4px; }
   .tbtn { font-size: 11px; padding: 2px 8px; margin-left: 8px; }
   .tbtn.on { background: var(--accent); color: #000; border-color: var(--accent); }
   .thint { font-size: 10px; color: var(--dim); margin-left: 8px; }
@@ -192,7 +193,8 @@ function handle(msg) {
   } else if (type === "stream") {
     if (data.peer_id === selected) patchDetail();
   } else if (type === "ack") {
-    addEvent("ack:" + msg.action, JSON.stringify(data).slice(0, 160), "cmd");
+    if (msg.req_id && _pending[msg.req_id]) { _pending[msg.req_id](data); delete _pending[msg.req_id]; }
+    else addEvent("ack:" + msg.action, JSON.stringify(data).slice(0, 160), "cmd");
   }
 }
 
@@ -226,6 +228,7 @@ function select(id) {
   patchDetail();
   renderCameras();
   setupViewer3D();
+  refreshPolicies();
 }
 
 // Create (or recreate) the 3D viewer for the selected peer. If we already
@@ -311,6 +314,53 @@ function buildDetailChrome() {
         <span id="teleopHint" class="thint"></span>
       </h2>
       <div id="teleopJoints"></div>
+    </div>
+    <div class="calib" id="calib">
+      <h2 style="margin-top:14px">Calibrate
+        <span id="calibPhase" class="thint">idle</span>
+      </h2>
+      <div class="cmdbar">
+        <button onclick="calib('begin')">1. Begin (limp)</button>
+        <button onclick="calib('home')">2. Set Home</button>
+        <button onclick="calib('finish')">4. Finish</button>
+        <button onclick="calib('cancel')">Cancel</button>
+      </div>
+      <div id="calibMsg" class="thint" style="margin-top:6px"></div>
+    </div>
+    <div class="policies" id="policies">
+      <h2 style="margin-top:14px">Policies
+        <button class="tbtn" onclick="refreshPolicies()">refresh</button>
+        <span id="policyRunning" class="thint"></span>
+      </h2>
+      <div class="cmdbar">
+        <select id="policySelect" style="flex:1;background:var(--panel2);border:1px solid var(--line);color:var(--txt);border-radius:6px;padding:7px 10px;font:inherit"></select>
+      </div>
+      <div class="cmdbar">
+        <input id="policyInstr" placeholder="instruction (e.g. transfer cube)"/>
+      </div>
+      <div class="cmdbar">
+        <input id="policyDur" type="number" value="5" min="0.5" step="0.5" style="max-width:80px" title="duration (s)"/>
+        <button onclick="runPolicy()">Run policy</button>
+        <button onclick="stopPolicy()">stop</button>
+      </div>
+      <div id="policyMsg" class="thint" style="margin-top:6px"></div>
+    </div>
+    <div class="record" id="record">
+      <h2 style="margin-top:14px">Record dataset
+        <span id="recState" class="thint">idle</span>
+      </h2>
+      <div class="cmdbar">
+        <input id="recRepo" placeholder="repo_id (local/my_dataset)" value="local/dashboard_demo"/>
+      </div>
+      <div class="cmdbar">
+        <input id="recTask" placeholder="task description"/>
+        <input id="recFps" type="number" value="20" min="1" max="240" style="max-width:70px" title="fps"/>
+      </div>
+      <div class="cmdbar">
+        <button onclick="recordStart()">● Start recording</button>
+        <button onclick="recordStop()">■ Stop + save</button>
+      </div>
+      <div id="recMsg" class="thint" style="margin-top:6px"></div>
     </div>
     <div class="cmdbar">
       <input id="cmdInput" placeholder="tell ${selected}…" onkeydown="if(event.key==='Enter')tellPeer()"/>
@@ -416,6 +466,48 @@ function estop() {
   addEvent("cmd", "EMERGENCY STOP broadcast", "err");
 }
 
+// Calibration is request/response (not fire-and-forget): we await each ack so
+// the operator sees the phase + guidance message. 'begin' makes the arm limp,
+// 'home' sets the centre, then the server samples the sweep in the background
+// until 'finish'. A 'record' poll drives the live phase display during sweep.
+let calibRecordTimer = null;
+async function calib(step) {
+  if (!selected) return;
+  setCalibMsg(`${step}…`);
+  const resp = await rpcAwait({ action: "calibrate", target: selected, step });
+  const r = (resp && resp.response && resp.response.result) || resp.response || resp || {};
+  const phase = r.phase || "?";
+  document.getElementById("calibPhase").textContent = phase;
+  setCalibMsg(r.message || r.error || JSON.stringify(r).slice(0, 160));
+  addEvent("cmd", `calibrate ${step} -> ${phase}`, "cmd");
+  // While recording, poll record ticks so min/max accumulate + phase shows live.
+  if (phase === "recording" && !calibRecordTimer) {
+    calibRecordTimer = setInterval(() => calib("record"), 500);
+  }
+  if (step === "record") {
+    // Show live swept range count.
+    const mins = r.mins || {}; const n = Object.keys(mins).length;
+    setCalibMsg(`Recording sweep… move every joint. (${n} motors tracked)`);
+  }
+  if (phase === "done" || step === "finish" || step === "cancel") {
+    if (calibRecordTimer) { clearInterval(calibRecordTimer); calibRecordTimer = null; }
+    if (phase === "done") setCalibMsg("Calibration saved" + (r.saved_to ? ": " + r.saved_to : ""));
+  }
+}
+function setCalibMsg(m) { const e = document.getElementById("calibMsg"); if (e) e.textContent = m; }
+
+// Promise-based RPC: resolves with the ack payload for this req_id.
+const _pending = {};
+function rpcAwait(obj) {
+  return new Promise((resolve) => {
+    obj.req_id = ++reqSeq;
+    _pending[obj.req_id] = resolve;
+    if (!ws || ws.readyState !== 1) { resolve({ error: "ws not connected" }); return; }
+    ws.send(JSON.stringify(obj));
+    setTimeout(() => { if (_pending[obj.req_id]) { resolve({ error: "timeout" }); delete _pending[obj.req_id]; } }, 20000);
+  });
+}
+
 // -- Teleop client ---------------------------------------------------
 let teleop = { active: false, target: null, device: "dashboard", joints: {}, timer: null };
 
@@ -511,10 +603,90 @@ function addEvent(kind, text, cls) {
   while (el.children.length > 200) el.removeChild(el.lastChild);
 }
 
+// -- Policies panel --------------------------------------------------
+// Query the selected peer for its provider list + running set, populate the
+// dropdown. Running a policy reuses the existing 'execute'/'start' mesh action
+// (routed to SimEngine.run_policy for sim peers), so no new wire path here.
+async function refreshPolicies() {
+  if (!selected) return;
+  setPolicyMsg("loading providers…");
+  const resp = await rpcAwait({ action: "list_policies", target: selected });
+  const r = unwrap(resp);
+  const sel = document.getElementById("policySelect");
+  if (!sel) return;
+  const providers = r.providers || [];
+  if (!providers.length) { setPolicyMsg(r.error || "no providers reported"); return; }
+  sel.innerHTML = providers.map(p => `<option value="${p}">${p}</option>`).join("");
+  const running = r.running || [];
+  document.getElementById("policyRunning").textContent =
+    running.length ? `running: ${running.join(", ")}` : "";
+  setPolicyMsg(`${providers.length} providers available`);
+}
+async function runPolicy() {
+  if (!selected) return;
+  const provider = document.getElementById("policySelect").value;
+  const instr = document.getElementById("policyInstr").value.trim() || "run";
+  const dur = parseFloat(document.getElementById("policyDur").value) || 5;
+  setPolicyMsg(`starting ${provider}…`);
+  addEvent("cmd", `run_policy ${provider} -> ${selected}`, "cmd");
+  // 'start' is async (returns immediately); the policy runs server-side.
+  const resp = await rpcAwait({ action: "send", target: selected,
+    cmd: { action: "start", policy_provider: provider, instruction: instr, duration: dur } });
+  const r = unwrap(resp);
+  setPolicyMsg(r.error || extractText(r) || "policy started");
+  setTimeout(refreshPolicies, 800);
+}
+async function stopPolicy() {
+  if (!selected) return;
+  await rpcAwait({ action: "send", target: selected, cmd: { action: "stop" } });
+  addEvent("cmd", `stop policy -> ${selected}`, "cmd");
+  setPolicyMsg("stop sent");
+  setTimeout(refreshPolicies, 500);
+}
+function setPolicyMsg(m){ const e=document.getElementById("policyMsg"); if(e) e.textContent=m; }
+
+// -- Record panel ----------------------------------------------------
+async function recordStart() {
+  if (!selected) return;
+  const repo_id = document.getElementById("recRepo").value.trim();
+  const task = document.getElementById("recTask").value.trim();
+  const fps = parseInt(document.getElementById("recFps").value) || 20;
+  if (!repo_id) { setRecMsg("repo_id required"); return; }
+  setRecMsg("starting recorder…");
+  const resp = await rpcAwait({ action: "record_start", target: selected, repo_id, task, fps, overwrite: true });
+  const r = unwrap(resp);
+  if (r.error) { setRecMsg("error: " + r.error); return; }
+  document.getElementById("recState").textContent = "● recording";
+  setRecMsg(extractText(r) || "recording started");
+  addEvent("cmd", `record_start ${repo_id} -> ${selected}`, "cmd");
+}
+async function recordStop() {
+  if (!selected) return;
+  setRecMsg("finalising episode…");
+  const resp = await rpcAwait({ action: "record_stop", target: selected });
+  const r = unwrap(resp);
+  document.getElementById("recState").textContent = "idle";
+  setRecMsg(r.error ? ("error: " + r.error) : (extractText(r) || "saved"));
+  addEvent("cmd", `record_stop -> ${selected}`, "cmd");
+}
+function setRecMsg(m){ const e=document.getElementById("recMsg"); if(e) e.textContent=m; }
+
+// Unwrap the nested ack -> response -> (result) envelope from a mesh RPC.
+function unwrap(resp) {
+  return (resp && resp.response && resp.response.result) || (resp && resp.response) || resp || {};
+}
+// Pull a human-readable line out of a strands status dict ({content:[{text}]}).
+function extractText(r) {
+  if (r && Array.isArray(r.content) && r.content[0] && r.content[0].text)
+    return String(r.content[0].text).split("\n")[0].slice(0, 160);
+  return "";
+}
+
 // Inline onclick= handlers run in global scope, but this is a module.
 // Bridge the functions the HTML references onto window.
 Object.assign(window, {
-  select, estop, tellPeer, sendAction, teleopToggle, teleopSlider,
+  select, estop, tellPeer, sendAction, teleopToggle, teleopSlider, calib,
+  refreshPolicies, runPolicy, stopPolicy, recordStart, recordStop,
 });
 
 connect();

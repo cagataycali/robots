@@ -242,6 +242,35 @@ class DashboardServer:
                 if not target:
                     return {"error": "teleop_stop requires target"}
                 return {"response": self._observer.stop_teleop(target, msg.get("device"))}
+            if action == "calibrate":
+                target = msg.get("target", "")
+                step = msg.get("step", "status")
+                if not target:
+                    return {"error": "calibrate requires target"}
+                return {"response": self._observer.calibrate(target, step)}
+            if action == "list_policies":
+                target = msg.get("target", "")
+                if not target:
+                    return {"error": "list_policies requires target"}
+                return {"response": self._observer.list_policies(target)}
+            if action == "list_robots":
+                target = msg.get("target", "")
+                if not target:
+                    return {"error": "list_robots requires target"}
+                return {"response": self._observer.list_robots(target)}
+            if action == "record_start":
+                target = msg.get("target", "")
+                repo_id = msg.get("repo_id", "")
+                if not target or not repo_id:
+                    return {"error": "record_start requires target + repo_id"}
+                return {"response": self._observer.record_start(
+                    target, repo_id, task=msg.get("task", ""),
+                    fps=int(msg.get("fps", 30)), overwrite=bool(msg.get("overwrite", True)))}
+            if action == "record_stop":
+                target = msg.get("target", "")
+                if not target:
+                    return {"error": "record_stop requires target"}
+                return {"response": self._observer.record_stop(target)}
             return {"error": f"unknown action: {action}"}
 
         try:
