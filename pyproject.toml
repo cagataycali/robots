@@ -41,6 +41,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+dashboard = [
+    "aiohttp>=3.9.0,<4.0.0",
+    "strands-robots[mesh]",
+]
 groot-service = [
     "pyzmq>=27.0.0,<28.0.0",
     "msgpack>=1.0.0,<2.0.0",
@@ -83,6 +87,7 @@ all = [
     "strands-robots[sim-mujoco]",
     "strands-robots[mesh]",
     "strands-robots[mesh-iot]",
+    "strands-robots[dashboard]",
 ]
 dev = [
     "pytest>=6.0,<9.0.0",
@@ -98,6 +103,9 @@ Documentation = "https://github.com/strands-labs/robots#readme"
 Repository = "https://github.com/strands-labs/robots.git"
 Issues = "https://github.com/strands-labs/robots/issues"
 Changelog = "https://github.com/strands-labs/robots/releases"
+
+[project.scripts]
+strands-robots = "strands_robots.cli:main"
 
 [tool.hatch.version]
 source = "vcs"
