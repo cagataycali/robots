@@ -5,49 +5,49 @@ hide:
 
 # Strands Robots
 
-**Three lines from natural language to motion.**
+A robot library for [Strands agents](https://strandsagents.com). You name a robot, you get something you can drive — in simulation by default, or on real hardware when you ask for it.
 
 ```python
 from strands import Agent
 from strands_robots import Robot
 
-robot = Robot("so100")            # sim by default; mode="real" for hardware
-agent = Agent(tools=[robot])      # one tool, 60+ actions
+robot = Robot("so100")
+agent = Agent(tools=[robot])
 agent("Pick up the red cube")
 ```
 
-Same call, two worlds — MuJoCo sim (CPU, no GPU) or real servos. The agent doesn't care which.
+`Robot("so100")` gives you a MuJoCo simulation — no GPU, runs on a laptop. Add `mode="real"` and the same code drives a physical arm. The agent sees one tool with 60+ actions; it figures out which to call.
 
 ```mermaid
 graph LR
-    A["'pick up the cube'"] --> B[Agent] --> C[Robot] --> D{mode}
-    D -->|sim| E[Simulation·MuJoCo]
-    D -->|real| F[HardwareRobot·LeRobot]
-    E --> G[Policy] --> E
-    F --> G --> F
-    classDef a fill:#0969da,color:#fff
-    classDef h fill:#bf8700,color:#fff
-    classDef p fill:#8250df,color:#fff
-    class B,C,D a
-    class E,F h
-    class G p
+    A["pick up the cube"] --> B[Agent]
+    B --> C["Robot(...)"]
+    C -->|"mode=sim"| D["Simulation (MuJoCo)"]
+    C -->|"mode=real"| E["HardwareRobot (LeRobot)"]
+    D --> F[Policy]
+    E --> F
+    F --> D
+    F --> E
+    classDef agent fill:#0969da,stroke:#044289,color:#fff
+    classDef hw fill:#bf8700,stroke:#875e00,color:#fff
+    classDef policy fill:#8250df,stroke:#5a32a3,color:#fff
+    class B,C agent
+    class D,E hw
+    class F policy
 ```
 
-| | | |
-|---|---|---|
-| **[68 robots](robots/index.md)** · 8 categories | **[Simulation](simulation/overview.md)** · 60+ actions | **[4 policies](policies/overview.md)** · Mock / GR00T / LeRobot / [Cosmos 3](policies/cosmos3.md) |
-| `Robot("panda")`, `Robot("aloha")` | worlds, cameras, randomize, record | one ABC, drop-in |
+The agent decides *what* to do. The policy (Mock, GR00T, LeRobot, or Cosmos 3) decides *how*. The backend — physics or servos — does it.
+
+## Start here
+
+- **New?** [Quickstart](getting-started/quickstart.md) gets a robot moving in five minutes.
+- **Building something?** The [tutorial](tutorial/index.md) goes from one arm to a recorded dataset.
+- **Looking for a robot?** [68 of them](robots/index.md), every one addressable by name.
+- **Want the shape of it?** [Architecture](architecture.md) is one diagram and a table.
 
 ## Install
 
 ```bash
-pip install "strands-robots[sim-mujoco]"   # sim
-pip install "strands-robots[all]"          # everything
+pip install "strands-robots[sim-mujoco]"   # simulation
+pip install "strands-robots[all]"          # sim + hardware + every policy
 ```
-
-## Next
-
-[Quickstart](getting-started/quickstart.md) · [Tutorial](tutorial/index.md) · [Robot factory](getting-started/robot-factory.md) · [Architecture](architecture.md) · [Troubleshooting](troubleshooting.md)
-
-!!! tip "Recently shipped"
-    Cosmos 3 VLA (#317) · LeRobot 0.5.2 multi-robot recording (#366) · GR00T N1.7 (#149-155) · Mesh networking (#101) · Robot factory (#86)

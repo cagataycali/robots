@@ -1,5 +1,5 @@
 ---
-description: Wire a Robot() into a Strands Agent and drive it with English. The whole point of this library.
+description: Hand a Robot() to a Strands Agent and control it with plain English.
 ---
 
 # 4 — AI agents

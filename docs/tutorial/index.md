@@ -1,5 +1,5 @@
 ---
-description: Nine chapters from "hello world" to "fleet on the mesh". Each chapter is 10–20 minutes.
+description: Nine short chapters, one arm to a recorded multi-robot dataset.
 ---
 
 # Tutorial

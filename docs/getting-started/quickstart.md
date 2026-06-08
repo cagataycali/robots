@@ -1,5 +1,5 @@
 ---
-description: Five minutes from pip install to robot moving. Condensed version of tutorial chapters 1-4.
+description: Five minutes from pip install to a robot picking up a cube.
 ---
 
 # Quickstart
