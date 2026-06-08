@@ -46,13 +46,14 @@ groot-service = [
     "msgpack>=1.0.0,<2.0.0",
 ]
 cosmos3-service = [
-    # OpenPI msgpack+NumPy WebSocket client for the Cosmos 3 RoboLab policy
-    # server (cosmos_framework.scripts.action_policy_server_robolab).
+    # Self-contained msgpack+NumPy WebSocket client for the Cosmos 3 RoboLab
+    # policy server (cosmos_framework.scripts.action_policy_server_robolab).
     #
-    # NOT included in [all]: openpi-client pins numpy<2.0.0, which is mutually
-    # exclusive with lerobot (numpy>=2.0.0). Install on its own when you need
-    # Cosmos 3 service-mode inference:  pip install 'strands-robots[cosmos3-service]'
-    "openpi-client",
+    # No openpi-client dependency: the wire protocol is implemented directly
+    # via `websockets` + `msgpack` plus a vendored numpy packer
+    # (strands_robots/policies/cosmos3/_msgpack_numpy.py). This keeps the
+    # extra numpy-version agnostic so it composes cleanly with `lerobot`
+    # (numpy>=2) for dataset recording in the same env.
     "msgpack>=1.0.0,<2.0.0",
     "websockets>=12.0",
 ]
@@ -168,7 +169,7 @@ ignore_missing_imports = false
 
 # Third-party libs without type stubs
 [[tool.mypy.overrides]]
-module = ["lerobot.*", "gr00t.*", "draccus.*", "msgpack.*", "websockets", "websockets.*", "zmq.*", "huggingface_hub.*", "serial.*", "psutil.*", "torch.*", "torchvision.*", "transformers.*", "einops.*", "robot_descriptions.*", "mujoco.*", "imageio.*", "libero.*", "zenoh.*", "boto3", "boto3.*", "awscrt", "awscrt.*", "awsiot", "awsiot.*", "botocore.*", "openpi.*", "openpi_client.*", "openpi_server.*", "strands_robots.policies.cosmos3._msgpack_numpy"]
+module = ["lerobot.*", "gr00t.*", "draccus.*", "msgpack.*", "websockets", "websockets.*", "zmq.*", "huggingface_hub.*", "serial.*", "psutil.*", "torch.*", "torchvision.*", "transformers.*", "einops.*", "robot_descriptions.*", "mujoco.*", "imageio.*", "libero.*", "zenoh.*", "boto3", "boto3.*", "awscrt", "awscrt.*", "awsiot", "awsiot.*", "botocore.*", "strands_robots.policies.cosmos3._msgpack_numpy"]
 ignore_missing_imports = true
 
 # @tool decorator injects runtime signatures mypy cannot check

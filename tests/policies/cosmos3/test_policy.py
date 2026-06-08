@@ -297,14 +297,10 @@ def test_client_connection_error_has_actionable_hint():
     """When the server is down, infer() raises ConnectionError naming the
     server-start command (no cryptic Errno 111).
 
-    Gated on ``openpi-client`` (the ``cosmos3-service`` extra): the real
-    Cosmos3WebsocketClient lazily imports it, so without the extra the connect
-    path is unreachable and there is nothing to assert.
+    The Cosmos3WebsocketClient now uses a self-contained raw transport (no
+    ``openpi-client`` dependency), so this test only needs ``websockets``.
     """
-    pytest.importorskip(
-        "openpi_client.websocket_client_policy",
-        reason="openpi-client not installed - pip install 'strands-robots[cosmos3-service]'",
-    )
+    pytest.importorskip("websockets", reason="websockets needed for the raw transport")
     from strands_robots.policies.cosmos3.client import Cosmos3WebsocketClient
 
     # Port 1 is reserved/unused -> connection refused on first lazy connect.
@@ -317,15 +313,28 @@ def test_client_connection_error_has_actionable_hint():
     assert "healthz" in msg
 
 
-def test_raw_transport_no_openpi_client_dep():
-    """The 'raw' transport must construct WITHOUT openpi-client importable
-    (it uses the vendored _msgpack_numpy packer + websockets). This is the
-    numpy>=2 / lerobot escape hatch for the openpi-client numpy<2 pin."""
+def test_raw_transport_is_only_supported_transport():
+    """The vendored raw msgpack+websockets transport is the only supported
+    transport. Constructing the client never requires ``openpi-client``;
+    legacy ``transport='openpi'`` / ``'auto'`` values are accepted (with a
+    deprecation warning) and silently treated as ``'raw'`` so existing call
+    sites keep working through the cleanup window."""
     pytest.importorskip("websockets", reason="websockets needed for raw transport")
     from strands_robots.policies.cosmos3.client import Cosmos3WebsocketClient
 
+    # Default: raw.
+    c = Cosmos3WebsocketClient(host="127.0.0.1", port=8000)
+    assert c.transport == "raw"
+
+    # Explicit raw.
     c = Cosmos3WebsocketClient(host="127.0.0.1", port=8000, transport="raw")
     assert c.transport == "raw"
+
+    # Legacy values are coerced to raw (back-compat shim).
+    for legacy in ("openpi", "auto"):
+        c = Cosmos3WebsocketClient(host="127.0.0.1", port=8000, transport=legacy)
+        assert c.transport == "raw", f"transport={legacy!r} must be coerced to 'raw'"
+
     # The vendored packer round-trips numpy arrays (version-agnostic).
     import numpy as np
 
@@ -338,6 +347,8 @@ def test_raw_transport_no_openpi_client_dep():
 
 
 def test_cosmos3_policy_transport_param():
+    """The ``transport`` kwarg remains in the public signature as a
+    deprecated back-compat shim (any value is treated as 'raw')."""
     import inspect
 
     from strands_robots.policies.cosmos3 import Cosmos3Policy

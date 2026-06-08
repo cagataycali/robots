@@ -85,7 +85,6 @@
             },
             "shorthands": [
                 "cosmos3",
-                "cosmos",
                 "c3"
             ],
             "url_patterns": [

@@ -36,9 +36,9 @@ Usage::
 
 from strands_robots.policies.base import Policy
 
-# Cosmos3Policy is import-safe: it depends only on numpy; the optional
-# ``openpi-client`` dependency is imported lazily inside the WebSocket client.
-# Imported unconditionally, exactly like MockPolicy above.
+# Cosmos3Policy is import-safe: it depends only on numpy. The WebSocket
+# client uses a self-contained msgpack+websockets transport (no
+# ``openpi-client`` dependency).
 from strands_robots.policies.cosmos3 import Cosmos3Policy
 from strands_robots.policies.factory import (
     UntrustedRemoteCodeError,

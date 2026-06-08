@@ -422,8 +422,11 @@ policy = create_policy(provider="mock")
 ### Cosmos 3 (NVIDIA omnimodal VLA — service mode)
 
 [`nvidia/Cosmos3-Nano-Policy-DROID`](https://huggingface.co/nvidia/Cosmos3-Nano-Policy-DROID)
-served by the Cosmos Framework RoboLab WebSocket policy server. The policy is a
-thin OpenPI client (mirrors `Gr00tPolicy` service mode).
+served by the Cosmos Framework RoboLab WebSocket policy server. The policy
+client is **self-contained** — it speaks the server's msgpack+NumPy wire
+protocol directly via `websockets` + a vendored numpy packer (no
+`openpi-client` dependency, no `numpy<2` pin), so it composes cleanly with
+`lerobot` for dataset recording in the same env.
 
 **1. Start the server** (holds the GPU), from a Cosmos Framework checkout:
 
@@ -434,8 +437,8 @@ python -m cosmos_framework.scripts.action_policy_server_robolab \
 curl http://localhost:8000/healthz   # -> 200 when ready (~4 min cold)
 ```
 
-**2. Install the client** (the `cosmos3-service` extra ships `openpi-client`,
-which pins `numpy<2`; install it last on a client box):
+**2. Install the client** (the `cosmos3-service` extra ships only `msgpack`
++ `websockets` — numpy-version agnostic):
 
 ```bash
 pip install -e '.[sim-mujoco]'

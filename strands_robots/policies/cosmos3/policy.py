@@ -6,9 +6,10 @@ Implements :class:`~strands_robots.policies.base.Policy` for the Cosmos 3
 The Cosmos 3 ``policy`` action mode takes ``image + instruction`` and returns an
 ``[T, D]`` action chunk + rollout video — a 1:1 match for the robots policy
 contract. We talk to the Cosmos Framework RoboLab WebSocket policy server
-(``cosmos_framework.scripts.action_policy_server_robolab``) over OpenPI's
-msgpack+NumPy protocol, mirroring :class:`~strands_robots.policies.groot.Gr00tPolicy`
-service mode.
+(``cosmos_framework.scripts.action_policy_server_robolab``) over a
+self-contained msgpack+NumPy WebSocket protocol (no ``openpi-client``
+dependency — see ``client.py``), mirroring
+:class:`~strands_robots.policies.groot.Gr00tPolicy` service mode.
 
 Observation flow
 ----------------
@@ -139,7 +140,7 @@ class Cosmos3Policy(Policy):
         prompt: str = "",
         api_key: str | None = None,
         client: Cosmos3WebsocketClient | None = None,
-        transport: str = "auto",
+        transport: str = "raw",
         pretrained_name_or_path: str | None = None,
     ) -> None:
         self.embodiment: Cosmos3Embodiment = get_embodiment(embodiment)

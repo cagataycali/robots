@@ -11,13 +11,13 @@ Prerequisites
 1. Client deps (this package + the Cosmos 3 service extra + sim):
 
      pip install -e '.[sim-mujoco]'
-     pip install 'strands-robots[cosmos3-service]'   # openpi-client (pins numpy<2)
+     pip install 'strands-robots[cosmos3-service]'   # msgpack + websockets only
      # robot_descriptions provides the Franka MJCF asset (part of sim-mujoco)
 
-   NOTE: ``openpi-client`` pins ``numpy<2`` while ``lerobot`` wants ``numpy>=2``.
-   To record LeRobotDatasets (numpy>=2) you do NOT need ``openpi-client`` — pass
-   ``transport="raw"`` (or leave the default ``"auto"``) and the policy speaks the
-   server's msgpack+NumPy wire protocol via a vendored packer, no numpy<2 pin.
+   The ``cosmos3-service`` extra is intentionally **numpy-version agnostic**
+   (no ``openpi-client``): it ships only ``msgpack`` + ``websockets`` plus a
+   vendored numpy packer. That means it composes cleanly with ``lerobot``
+   (``numpy>=2``) for LeRobotDataset recording in the same env.
 
 2. The policy server (holds the GPU) — from a Cosmos Framework checkout:
 
@@ -84,13 +84,12 @@ def main() -> int:
         "front": "observation/exterior_image_1_left",
         "side":  "observation/exterior_image_2_left",
     }
-    # transport="auto": use openpi-client if importable, else the vendored raw
-    # msgpack+websockets transport (numpy>=2 safe — needed alongside lerobot).
+    # The Cosmos3 client uses a self-contained msgpack+websockets transport
+    # (numpy-version agnostic — composes with lerobot).
     policy = Cosmos3Policy(
         embodiment="droid", host=args.host, port=args.port,
         robot=args.robot,                # map joint_0..6/gripper -> sim actuator names
         observation_mapping=obs_mapping,
-        transport="auto",
     )
 
     video = None

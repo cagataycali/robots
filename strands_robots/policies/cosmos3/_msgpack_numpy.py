@@ -1,8 +1,7 @@
-# Vendored from openpi-client (openpi_client/msgpack_numpy.py), Apache-2.0.
-# Adds NumPy-array support to msgpack WITHOUT pulling in openpi-client, whose
-# `numpy<2.0` pin conflicts with lerobot (`numpy>=2.0`). This lets the Cosmos 3
-# policy client speak the RoboLab server's msgpack+NumPy wire protocol from a
-# numpy>=2 environment (e.g. a LeRobot dataset-recording venv).
+# Vendored from msgpack-numpy / openpi-client style packer, Apache-2.0.
+# Provides NumPy-array msgpack support without any openpi-client dependency,
+# so the Cosmos 3 policy client can speak the RoboLab server's msgpack+NumPy
+# wire protocol from a numpy>=2 environment (composes with lerobot).
 """Adds NumPy array support to msgpack.
 
 msgpack is good for (de)serializing data over a network for multiple reasons:

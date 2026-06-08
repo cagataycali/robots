@@ -1,16 +1,20 @@
-"""OpenPI WebSocket client for the Cosmos 3 RoboLab policy server.
+"""WebSocket client for the Cosmos 3 RoboLab policy server.
 
 Cosmos Framework ships a ready-made policy server
 (``cosmos_framework.scripts.action_policy_server_robolab``) that serves
-``nvidia/Cosmos3-Nano-Policy-DROID`` over OpenPI's ``WebsocketPolicyServer``
-(msgpack + NumPy protocol). This client is a thin wrapper over OpenPI's
-``WebsocketClientPolicy`` so :class:`~strands_robots.policies.cosmos3.policy.Cosmos3Policy`
-can speak to it in *service mode* — exactly mirroring how
-:class:`~strands_robots.policies.groot.Gr00tPolicy` uses a ZMQ client.
+``nvidia/Cosmos3-Nano-Policy-DROID`` over a msgpack + NumPy WebSocket
+protocol. This module ships a self-contained client — **no
+``openpi-client`` dependency** — using only ``websockets`` + ``msgpack``
+plus a vendored NumPy packer (``_msgpack_numpy``).
+
+Why no ``openpi-client``? It pins ``numpy<2.0``, which is mutually
+exclusive with ``lerobot`` (``numpy>=2.0``). Speaking the wire protocol
+directly lets a Cosmos 3 rollout run alongside LeRobot dataset recording
+in the same venv.
 
 Wire contract (verified against the server source):
 
-* request  = observation dict, keys in the OpenPI ``observation/...`` namespace
+* request  = observation dict, keys in the ``observation/...`` namespace
              plus a top-level ``prompt`` string.
 * response = ``{"action": np.ndarray[T, D], "video"?: np.ndarray, ...}``.
 """
@@ -20,32 +24,19 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from strands_robots.utils import require_optional
-
 logger = logging.getLogger(__name__)
 
 
-def _load_openpi_client() -> Any:
-    """Import OpenPI's websocket client policy module (optional dependency)."""
-    return require_optional(
-        "openpi_client.websocket_client_policy",
-        pip_install="openpi-client",
-        extra="cosmos3-service",
-        purpose="Cosmos 3 service-mode policy inference",
-    )
-
-
 class _RawWebsocketTransport:
-    """openpi msgpack+NumPy wire client using only ``websockets`` + a vendored
-    packer — **no ``openpi-client`` dependency**.
+    """msgpack + NumPy wire client using ``websockets`` + a vendored packer.
 
-    ``openpi-client`` pins ``numpy<2.0``, which conflicts with ``lerobot``
-    (``numpy>=2.0``). This transport speaks the exact same wire protocol
-    (connect → recv msgpack metadata → send packed obs → recv packed action)
-    so a Cosmos 3 rollout can run in a ``numpy>=2`` environment (e.g. a
-    LeRobot dataset-recording venv) without the conflicting pin.
+    This is the *only* transport. It speaks the exact same wire protocol the
+    Cosmos 3 / OpenPI ``WebsocketPolicyServer`` expects (connect → recv
+    msgpack metadata → send packed obs → recv packed action) and has zero
+    NumPy-version constraints, so it composes cleanly with ``lerobot``
+    (``numpy>=2``).
 
-    Requires ``websockets`` and ``msgpack`` (both numpy-version agnostic).
+    Requires only ``websockets`` and ``msgpack``.
     """
 
     def __init__(self, host: str, port: int, api_key: str | None = None):
@@ -83,12 +74,16 @@ class _RawWebsocketTransport:
 
 
 class Cosmos3WebsocketClient:
-    """Thin OpenPI websocket client for the Cosmos 3 policy server.
+    """Self-contained WebSocket client for the Cosmos 3 policy server.
 
     Args:
         host: Server hostname or IP.
         port: Server WebSocket port.
         api_key: Optional bearer token forwarded to the server, when set.
+        transport: Accepted for backwards compatibility. The only supported
+            transport is the vendored raw msgpack+websockets packer; any
+            value is treated as ``"raw"`` and a deprecation warning is
+            logged for the legacy ``"openpi"`` / ``"auto"`` selectors.
 
     The connection is established lazily on the first :meth:`infer` (or
     :meth:`get_server_metadata`) call so constructing a policy does not
@@ -100,16 +95,20 @@ class Cosmos3WebsocketClient:
         host: str = "localhost",
         port: int = 8000,
         api_key: str | None = None,
-        transport: str = "auto",
+        transport: str = "raw",
     ):
         self.host = host
         self.port = port
         self.api_key = api_key
-        # transport: "openpi" (use openpi-client), "raw" (vendored packer, no
-        # openpi-client / numpy<2 pin), or "auto" (prefer openpi-client, fall
-        # back to raw when it is not importable — e.g. in a numpy>=2 / lerobot
-        # recording env). See _RawWebsocketTransport for the conflict rationale.
-        self.transport = transport
+        if transport not in (None, "", "raw"):
+            logger.warning(
+                "Cosmos3WebsocketClient(transport=%r) is deprecated — the "
+                "openpi-client dependency has been removed and the only "
+                "supported transport is the vendored raw msgpack+websockets "
+                "packer. Treating as transport='raw'.",
+                transport,
+            )
+        self.transport = "raw"
         self._client: Any = None
 
     def _server_hint(self) -> str:
@@ -125,37 +124,17 @@ class Cosmos3WebsocketClient:
         )
 
     def _ensure_client(self) -> Any:
-        """Connect on first use (lazy).
-
-        Transport selection (see ``__init__``):
-          * ``"raw"``    -> vendored packer, no openpi-client (numpy>=2 safe).
-          * ``"openpi"`` -> require openpi-client.
-          * ``"auto"``   -> openpi-client if importable, else raw.
-        """
+        """Connect on first use (lazy)."""
         if self._client is not None:
             return self._client
-
-        use_raw = self.transport == "raw"
-        if self.transport == "auto":
-            try:
-                _load_openpi_client()
-                use_raw = False
-            except Exception:  # noqa: BLE001 - openpi-client not installed -> raw
-                use_raw = True
-
         try:
-            if use_raw:
-                self._client = _RawWebsocketTransport(self.host, self.port, self.api_key)
-            else:
-                mod = _load_openpi_client()
-                self._client = mod.WebsocketClientPolicy(host=self.host, port=self.port, api_key=self.api_key)
+            self._client = _RawWebsocketTransport(self.host, self.port, self.api_key)
         except (ConnectionRefusedError, OSError) as e:
             raise ConnectionError(self._server_hint()) from e
         logger.info(
-            "Cosmos3WebsocketClient connected to ws://%s:%s (transport=%s)",
+            "Cosmos3WebsocketClient ready for ws://%s:%s (transport=raw)",
             self.host,
             self.port,
-            "raw" if use_raw else "openpi",
         )
         return self._client
 
@@ -171,9 +150,9 @@ class Cosmos3WebsocketClient:
         """Send an observation dict and return the server response.
 
         Args:
-            observation: OpenPI-protocol observation. Must contain ``prompt``
-                and at least one image plus the required state keys for the
-                served action space.
+            observation: Observation dict in the Cosmos 3 / OpenPI-compatible
+                wire schema. Must contain ``prompt`` and at least one image
+                plus the required state keys for the served action space.
 
         Returns:
             Response dict containing at least ``"action"`` (an ``[T, D]``
@@ -188,9 +167,9 @@ class Cosmos3WebsocketClient:
     def reset(self) -> None:
         """Best-effort per-episode reset hint to the server.
 
-        OpenPI's ``WebsocketClientPolicy`` exposes ``reset()`` on newer
-        builds; older ones don't. Any failure is swallowed — reset is a soft
-        hint, never a correctness requirement (mirrors ``Gr00tPolicy.reset``).
+        The raw transport is stateless on the client side — reset is a
+        soft hint, never a correctness requirement (mirrors
+        ``Gr00tPolicy.reset``). Any failure is swallowed.
         """
         try:
             client = self._ensure_client()

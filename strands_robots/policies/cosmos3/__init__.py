@@ -2,8 +2,9 @@
 
 Wraps the Cosmos 3 Generator *action* surface (e.g.
 ``nvidia/Cosmos3-Nano-Policy-DROID``) as a robots :class:`Policy`. Service mode
-speaks to the Cosmos Framework RoboLab WebSocket policy server over OpenPI's
-msgpack+NumPy protocol.
+speaks to the Cosmos Framework RoboLab WebSocket policy server using a
+self-contained msgpack+NumPy wire client (no ``openpi-client`` dependency
+— see ``client.py`` for the rationale).
 
 Quickstart::
 
@@ -13,7 +14,7 @@ Quickstart::
     #        --checkpoint-path nvidia/Cosmos3-Nano-Policy-DROID --port 8000
     #    # wait for: curl http://localhost:8000/healthz  -> 200
     #
-    # 2. Client install (openpi-client pins numpy<2):
+    # 2. Client install (numpy-version agnostic — composes with lerobot):
     #    pip install 'strands-robots[cosmos3-service]'
 
     from strands_robots.policies import create_policy
