@@ -140,10 +140,18 @@ def _check_volume_safety(volumes: dict[str, str] | None) -> str | None:
         norm = _normalize_host_path(str(host_path))
         if norm in blocked_exact:
             return f"refusing to mount {host_path!r}: docker socket / sensitive path"
-        if norm in blocked_dirs:
-            return f"refusing to mount {host_path!r}: protected host path {norm!r}"
-        # Also block mounting a child of the docker socket dirs would be odd;
-        # the exact-match list already covers the socket files themselves.
+        # Prefix check: reject the protected dir itself AND any child of it, so
+        # mounting /etc/shadow, /root/.ssh/id_rsa, /home/<u>/.aws/credentials,
+        # /proc/1/environ, /var/run/docker.sock.bak, etc. is blocked too. Root
+        # ("/") is matched exactly only -- a prefix test on "/" would reject
+        # every absolute path, including legitimate operator mounts.
+        for blocked in blocked_dirs:
+            if blocked == os.sep:
+                if norm == os.sep:
+                    return f"refusing to mount {host_path!r}: host root filesystem"
+                continue
+            if norm == blocked or norm.startswith(blocked + os.sep):
+                return f"refusing to mount {host_path!r}: under protected host path {blocked!r}"
     return None
 
 

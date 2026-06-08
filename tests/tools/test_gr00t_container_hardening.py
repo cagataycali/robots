@@ -20,13 +20,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 import strands_robots.tools.gr00t_inference as gi
-from strands_robots.tools.gr00t_inference import _start_container, gr00t_inference
 
 # --- agent surface: dangerous params are gone --------------------------
 
 
 def _tool_params() -> set[str]:
-    fn = getattr(gr00t_inference, "__wrapped__", None) or gr00t_inference
+    fn = getattr(gi.gr00t_inference, "__wrapped__", None) or gi.gr00t_inference
     return set(inspect.signature(fn).parameters)
 
 
@@ -46,7 +45,7 @@ def test_tool_rejects_volumes_kwarg():
     # Passing the removed kwarg must raise (TypeError) rather than silently
     # mount anything.
     with pytest.raises(TypeError):
-        gr00t_inference(action="start_container", volumes={"/": "/host"})
+        gi.gr00t_inference(action="start_container", volumes={"/": "/host"})
 
 
 # --- image allowlist ---------------------------------------------------
@@ -84,7 +83,7 @@ def _no_run_patches():
 def test_start_container_rejects_host_root_mount():
     state_p, run_p = _no_run_patches()
     with state_p, run_p:
-        result = _start_container(
+        result = gi._start_container(
             image_name="alpine:latest",
             container_name="x",
             port=5555,
@@ -100,7 +99,7 @@ def test_start_container_rejects_host_root_mount():
 def test_start_container_rejects_docker_socket_mount():
     state_p, run_p = _no_run_patches()
     with state_p, run_p:
-        result = _start_container(
+        result = gi._start_container(
             image_name="gr00t:latest",
             container_name="x",
             port=5555,
@@ -117,7 +116,7 @@ def test_start_container_rejects_docker_socket_mount():
 def test_start_container_rejects_etc_mount():
     state_p, run_p = _no_run_patches()
     with state_p, run_p:
-        result = _start_container(
+        result = gi._start_container(
             image_name="gr00t:latest",
             container_name="x",
             port=5555,
@@ -130,10 +129,57 @@ def test_start_container_rejects_etc_mount():
     assert result["status"] == "error"
 
 
+# --- _check_volume_safety: child-of-protected-dir prefix coverage ------
+# Regression for the exact-match gap (PR #372 review): mounting a *child*
+# of a protected dir (e.g. /etc/shadow, /root/.ssh) must be rejected, not
+# just the bare dir. These fail on the pre-fix `norm in blocked_dirs` code.
+
+
+@pytest.mark.parametrize(
+    "host_path",
+    [
+        "/etc/shadow",
+        "/root/.ssh",
+        "/root/.ssh/id_rsa",
+        "/home/ubuntu/.aws/credentials",
+        "/proc/1/environ",
+        "/sys/kernel",
+        "/var/run/docker.sock.bak",
+        "/etc",
+        "/",
+    ],
+)
+def test_check_volume_safety_rejects_protected_paths(host_path):
+    assert gi._check_volume_safety({host_path: "/x"}) is not None
+
+
+@pytest.mark.parametrize(
+    "host_path",
+    ["/mnt/models", "/data/checkpoints", "/opt/gr00t", "/srv/data"],
+)
+def test_check_volume_safety_allows_legit_mounts(host_path):
+    # A prefix check must not over-block: legitimate non-protected mounts
+    # (and especially anything that merely starts with "/") still pass.
+    assert gi._check_volume_safety({host_path: "/x"}) is None
+
+
+def test_check_volume_safety_expands_user_home():
+    # ~ expansion lands under /home or the real HOME -> must be rejected when
+    # it resolves under a protected dir.
+    import os
+
+    reason = gi._check_volume_safety({"~/.ssh/id_rsa": "/x"})
+    home = os.path.expanduser("~")
+    if home.startswith(("/home", "/root", "/Users")):
+        # /Users is not in the Linux blocklist; only assert when protected.
+        if home.startswith(("/home", "/root")):
+            assert reason is not None
+
+
 def test_start_container_rejects_off_allowlist_image():
     state_p, run_p = _no_run_patches()
     with state_p, run_p:
-        result = _start_container(
+        result = gi._start_container(
             image_name="alpine:latest",
             container_name="x",
             port=5555,
@@ -160,7 +206,7 @@ def test_start_container_allows_safe_defaults():
         patch.object(gi, "_container_state", return_value="absent"),
         patch.object(gi.subprocess, "run", side_effect=fake_run),
     ):
-        result = _start_container(
+        result = gi._start_container(
             image_name="gr00t:latest",
             container_name="gr00t",
             port=5555,

@@ -144,7 +144,7 @@ def _resolve_interrupt_actions() -> frozenset[str]:
 
 # Tracks whether the "none" opt-out warning has already been emitted so we
 # log it once per process rather than on every gated call.
-_NONE_OPT_OUT_WARNED = False
+_NONE_OPT_OUT_WARNED: list[bool] = [False]  # one-element flag (avoids module-global reassignment)
 
 
 # --- subscribe topic allowlist (telemetry-leak defence in depth) --------
@@ -473,15 +473,14 @@ def robot_mesh(
 
     # One-time warning when the operator has explicitly disabled the gate.
     if not interrupt_actions and os.getenv("STRANDS_MESH_HITL_ACTIONS", "").strip().lower() == "none":
-        global _NONE_OPT_OUT_WARNED
-        if not _NONE_OPT_OUT_WARNED:
+        if not _NONE_OPT_OUT_WARNED[0]:
             logger.warning(
                 "[robot_mesh] STRANDS_MESH_HITL_ACTIONS=none -- human-in-the-loop "
                 "approval is DISABLED for all mesh actions. Physical-actuation "
                 "commands (tell/send/stop/broadcast/emergency_stop) will dispatch "
                 "without operator confirmation."
             )
-            _NONE_OPT_OUT_WARNED = True
+            _NONE_OPT_OUT_WARNED[0] = True
 
     # Check the per-action rate limit before doing any work — but
     # do NOT consume a slot until we know the action is going to run.
