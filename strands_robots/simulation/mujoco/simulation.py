@@ -2172,8 +2172,13 @@ class MuJoCoSimEngine(
                     # per-robot); keep ndarray keys as-is.
                     merged_obs.update(camera_imgs)
                     task = instr_map[next(iter(policies))]
-                    with self._lock:
-                        recorder.add_frame(observation=merged_obs, action=merged_act, task=task)
+                    # add_frame writes to LeRobot's image-writer queue and parquet
+                    # buffer; it does not touch MuJoCo model/data. The consistent
+                    # state snapshot was already taken under self._lock in steps 1
+                    # and 3, and merged_obs/merged_act are plain copies, so holding
+                    # the physics lock across frame writeout would needlessly starve
+                    # other lock holders (viewer sync, concurrent tool reads).
+                    recorder.add_frame(observation=merged_obs, action=merged_act, task=task)
 
                 step_count += 1
                 for rname in policies:
