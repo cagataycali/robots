@@ -26,10 +26,15 @@ print(sim.tool_name_str)   # 'so100_sim'
 
 ## Render a frame
 
+`render()` returns an image content block (PNG bytes inside `content[1]`).
+To get a NumPy array for use with imageio or your own loop, call
+`get_observation` instead:
+
 ```python
 import imageio.v3 as iio
 
-frame = sim.render(width=640, height=480)["frame"]
+obs = sim.get_observation("so100")
+frame = obs["default"]          # numpy uint8 array, HxWx3
 iio.imwrite("first_frame.png", frame)
 ```
 
@@ -40,11 +45,12 @@ If you're on a headless box, set `MUJOCO_GL=osmesa` before importing — see
 
 ```python
 sim.add_object(
-    name="cube", type="box", size=[0.025]*3,
-    pos=[0.3, 0.0, 0.025], rgba=[1, 0, 0, 1],
+    name="cube", shape="box", size=[0.025]*3,
+    position=[0.3, 0.0, 0.025], color=[1, 0, 0, 1],
 )
 
 sim.run_policy(
+    robot_name="so100",
     instruction="pick up the red cube",
     policy_provider="mock",      # try "groot" or "lerobot_local" with a real model
     duration=10.0,
@@ -70,7 +76,7 @@ agent = Agent(tools=[robot])
 agent("Add a red cube on the table and pick it up using the mock policy")
 ```
 
-The agent reads the simulation's 35+ actions from its tool spec and routes the user's
+The agent reads the simulation's 60+ actions from its tool spec and routes the user's
 instruction to the right ones.
 
 ## Where to next

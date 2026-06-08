@@ -88,7 +88,7 @@ What just happened:
    a ground plane plus default lighting.
 
 The returned object is a `strands_robots.simulation.Simulation` — a Strands `AgentTool`
-with 35+ actions. We'll use a few of them now.
+with 60+ actions. We'll use a few of them now.
 
 ## Step 3 — step physics
 
@@ -108,15 +108,23 @@ can override it via `Robot("so100", default_timestep=0.005)` or per-step via the
 
 ## Step 4 — render a frame
 
+`render()` returns a PNG image content block that the agent receives directly. To get a
+numpy array for your own processing loop, use `get_observation`:
+
 ```python
 import imageio.v3 as iio
 
-# Render a 640x480 RGB frame
-frame = robot.render(width=640, height=480)["frame"]
-print(frame.shape)        # (480, 640, 3)
+# get_observation returns a dict of numpy arrays (uint8, H×W×3) per camera
+obs = robot.get_observation("so100")
+frame = obs["default"]             # default top-down camera
+print(frame.shape)                 # (480, 640, 3)
 
 # Save to disk
 iio.imwrite("first_frame.png", frame)
+
+# render() returns PNG bytes as an image content block (useful for agents/display):
+result = robot.render(width=640, height=480)
+# result["content"][1] is {"image": {"format": "png", "source": {"bytes": <bytes>}}}
 ```
 
 If you're on a headless box (CI, Docker), set `MUJOCO_GL=osmesa` before the import — see
@@ -136,8 +144,8 @@ robot.destroy()
 
 - `pip install "strands-robots[sim-mujoco]"`
 - `Robot("name")` — name from the registry
-- `robot.step()`, `robot.render()`
-- 35+ actions on every `Simulation`; we used two
+- `robot.step()`, `robot.render()`, `robot.get_observation()`
+- 60+ actions on every `Simulation`; we used two
 
 ## What changed from the previous decade of robotics tutorials?
 

@@ -13,29 +13,31 @@ The dataset is parquet + MP4 video and is ready for the LeRobot training loop.
 from strands_robots import Robot
 
 sim = Robot("so100")
-sim.add_camera(name="wrist", attach_to="so100", pos=[0.05, 0, 0.1], fovy=60)
-sim.add_object(name="cube", type="box", size=[0.025]*3, pos=[0.3, 0, 0.025],
-               rgba=[1, 0, 0, 1])
+sim.add_camera(name="wrist", position=[0.05, 0, 0.1], target=[0.3, 0, 0.1], fov=60)
+sim.add_object(name="cube", shape="box", size=[0.025]*3,
+               position=[0.3, 0, 0.025], color=[1, 0, 0, 1])
 
-# Start recording — every step is captured
+# Requires [lerobot] extra — see Setup below
 sim.start_recording(repo_id="user/my_dataset", task="pick up the red cube", fps=30)
 
-sim.run_policy(instruction="pick up the cube", policy_provider="mock", duration=10.0)
+sim.run_policy(robot_name="so100", instruction="pick up the cube",
+               policy_provider="mock", duration=10.0)
 
 sim.stop_recording()
-# /tmp/my_dataset/   (LeRobot v3 layout)
+# LeRobot v3 dataset written to the repo directory
 ```
 
 ## Setup
 
-Recording requires `lerobot`. Install with the lerobot extra:
+`start_recording` requires the `[lerobot]` extra (LeRobot v3 = parquet + MP4).
+Install it with:
 
 ```bash
 pip install "strands-robots[lerobot]"
 ```
 
-Without `lerobot` installed, `start_recording` returns an error explaining the missing
-dependency.
+Without `lerobot` installed, `start_recording` returns a friendly error pointing you
+to `start_cameras_recording` (the plain-MP4 alternative — see below).
 
 ## What gets recorded
 
@@ -52,7 +54,7 @@ The schema is auto-derived from the simulation's `observation_features` and
 ## On-disk layout (LeRobot v3)
 
 ```
-/tmp/my_dataset/
+my_dataset/
 ├── meta/
 │   ├── info.json              — dataset metadata (fps, total_frames, total_episodes)
 │   ├── tasks.parquet          — task descriptions table
@@ -74,9 +76,14 @@ train. The chunk size and video codec are configurable through the recording act
 
 `Simulation` exposes three recording actions:
 
-- `start_recording(repo_id, task, fps=30, ...)` — begin a recording session.
+- `start_recording(repo_id, task, fps=30, overwrite=False, ...)` — begin a recording session.
 - `stop_recording()` — close the open episode, write meta files, return paths.
 - `get_recording_status()` — current episode id, frame count, target fps, output dir.
+
+`start_recording` and `stop_recording` manage a `DatasetRecorder` internally.
+Per-episode, you call `reset()` and `run_policy(robot_name=...)`; the recorder saves
+one episode automatically after each `run_policy` call completes, and `stop_recording`
+finalises all metadata.
 
 Behind the scenes these wrap `strands_robots.dataset_recorder.DatasetRecorder`. You can
 also instantiate the recorder directly for non-sim use cases — see
@@ -85,34 +92,68 @@ also instantiate the recorder directly for non-sim use cases — see
 ## Multi-episode recording
 
 ```python
-for episode_idx in range(10):
+sim.start_recording(
+    repo_id="user/my_dataset",
+    task="pick up the cube",
+    fps=30,
+    overwrite=True,   # create fresh dataset on first run
+)
+
+for _ in range(10):
     sim.reset()
-    sim.randomize(colors=True, lighting=True)
-
-    sim.start_recording(
-        repo_id="user/my_dataset",
-        task=f"episode {episode_idx}: pick up the cube",
-        fps=30,
-        episode_id=episode_idx,
+    sim.randomize(randomize_colors=True, randomize_lighting=True)
+    sim.run_policy(
+        robot_name="so100",
+        instruction="pick up the cube",
+        policy_provider="mock",
+        duration=10.0,
     )
-    sim.run_policy(instruction="pick up the cube", policy_provider="mock", duration=10.0)
-    sim.stop_recording()
+    # The internal DatasetRecorder saves one episode after each run_policy call.
 
-# 10 episodes appended to /tmp/my_dataset/data/chunk-000/
+sim.stop_recording()
+# 10 episodes appended to the dataset
 ```
 
-You can also use `eval_policy(num_episodes=N, record=True, ...)` which manages the
-episode loop for you.
+`start_recording`/`stop_recording` manage the `DatasetRecorder` internally.
+Call `start_recording` once before the loop; the recorder accumulates episodes
+until `stop_recording` finalises the metadata files.
+
+## Plain MP4 alternative (no lerobot required)
+
+If you only need raw video files and do not need the LeRobot parquet format,
+use `start_cameras_recording`. This works under the `[sim-mujoco]` extra alone —
+no `lerobot` installation required:
+
+```bash
+pip install "strands-robots[sim-mujoco]"
+```
+
+```python
+# Plain MP4 per camera — [sim-mujoco] only, no lerobot needed
+sim.start_cameras_recording(output_dir="my_recording", fps=30)
+
+sim.run_policy(
+    robot_name="so100",
+    instruction="pick up the cube",
+    policy_provider="mock",
+    duration=10.0,
+)
+
+sim.stop_cameras_recording()
+# my_recording/{camera_name}.mp4 written for each camera
+```
+
+Use `get_cameras_recording_status()` to inspect the current state.
 
 ## Pushing to the Hub
 
-After recording locally, push:
+After recording locally, push the LeRobot dataset to the Hugging Face Hub:
 
 ```python
-from lerobot.datasets import LeRobotDataset
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
 dataset = LeRobotDataset(repo_id="user/my_dataset",
-                         root="/tmp/my_dataset")
+                         root="my_dataset")
 dataset.push_to_hub()
 ```
 
@@ -127,7 +168,7 @@ LeRobotDataset(repo_id="user/my_dataset", local_files_only=False)
 Replay an episode back into the simulation to verify it captured correctly:
 
 ```python
-sim.replay_episode(repo_id="user/my_dataset", episode_id=0)
+sim.replay_episode(repo_id="user/my_dataset", robot_name="so100", episode=0)
 ```
 
 `replay_episode` reads the recorded actions from disk and re-runs them in the current
@@ -135,11 +176,12 @@ sim. Useful for debugging policy traces.
 
 ## Recap
 
-- `start_recording` → `run_policy` → `stop_recording`.
+- `start_recording` requires `[lerobot]`; `start_cameras_recording` is the plain-MP4
+  alternative and works under `[sim-mujoco]` alone.
+- `start_recording` → loop `reset()` + `run_policy(robot_name=...)` → `stop_recording`.
 - Output is LeRobot v3 (parquet + MP4) — train without conversion.
 - Schema is auto-derived from the sim's observation/action features.
-- `eval_policy` can drive the multi-episode loop for you.
-- `replay_episode` plays a recording back into sim.
+- `replay_episode(repo_id=..., robot_name=..., episode=0)` plays a recording back into sim.
 
 ## See also
 

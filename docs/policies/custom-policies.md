@@ -15,11 +15,14 @@ from strands_robots.policies import Policy, register_policy
 
 class MyPolicy(Policy):
     async def get_actions(self, observation_dict, instruction, **kwargs):
-        # whatever your model returns
         return [{"motor.0": 0.5, "motor.1": -0.2}]
 
     def set_robot_state_keys(self, robot_state_keys: list[str]) -> None:
         self._keys = robot_state_keys
+
+    @property
+    def provider_name(self) -> str:
+        return "my_provider"
 
     @property
     def requires_images(self) -> bool:
@@ -38,7 +41,6 @@ policy = create_policy("my_provider")
 ## Step 1 — subclass `Policy`
 
 ```python
-from abc import ABC
 from typing import Any
 from strands_robots.policies import Policy
 
@@ -61,12 +63,18 @@ class GreedyPolicy(Policy):
         self._keys = robot_state_keys
 
     @property
+    def provider_name(self) -> str:
+        return "greedy"
+
+    @property
     def requires_images(self) -> bool:
         return False
 ```
 
-Two abstract methods + one property. That's the contract. The synchronous wrapper
-(`get_actions_sync`) is provided by the base class.
+Three abstract methods (`get_actions`, `set_robot_state_keys`, `provider_name`) plus
+one overrideable property (`requires_images`, default `True`). `reset(seed=None)` is
+provided by the base class as a no-op — override it if your model carries episode
+state. The synchronous wrapper `get_actions_sync` is also provided by the base class.
 
 ## Step 2 — register
 
@@ -89,17 +97,17 @@ Add an entry to `strands_robots/registry/policies.json`:
 
 ```json
 {
-  "providers": {
-    "greedy": {
-      "class": "my_package.my_policy.GreedyPolicy",
-      "aliases": ["zero"],
-      "description": "Zero-action baseline."
-    }
+  "greedy": {
+    "module": "my_pkg.my_policy",
+    "class": "GreedyPolicy",
+    "shorthands": ["zero"],
+    "description": "Zero-action baseline."
   }
 }
 ```
 
-The factory imports the class lazily on first use.
+The factory imports the class from `module` lazily on first use. Use separate `module`
+and `class` keys — not a single dotted path.
 
 ## Step 3 — use it
 
@@ -109,7 +117,10 @@ from strands_robots.policies import create_policy
 
 policy = create_policy("greedy")        # or "zero"
 sim = Robot("so100")
-sim.run_policy(instruction="do nothing", policy=policy, duration=5.0)
+sim.run_policy(robot_name="so100",
+               instruction="do nothing",
+               policy_object=policy,
+               duration=5.0)
 ```
 
 ## What the simulation does for you
@@ -169,14 +180,18 @@ class MyTorchPolicy(Policy):
         self._keys = robot_state_keys
 
     @property
+    def provider_name(self) -> str:
+        return "my_torch"
+
+    @property
     def requires_images(self) -> bool:
         return True
 ```
 
 ### Talking to a custom inference server
 
-Look at `strands_robots/policies/groot/client.py` — it's a clean reference for ZMQ +
-HTTP wire-protocol handling, msgpack serialisation, request correlation.
+Look at `strands_robots/policies/groot/client.py` — it's a clean reference for ZMQ
+wire-protocol handling, msgpack serialisation, and request correlation.
 
 ## See also
 

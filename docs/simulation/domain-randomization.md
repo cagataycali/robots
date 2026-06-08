@@ -1,5 +1,5 @@
 ---
-description: What randomize() actually samples — colors, lighting, physics, cameras, asset textures.
+description: What randomize() actually samples — colors, lighting, physics, positions.
 ---
 
 # Domain randomization
@@ -11,33 +11,39 @@ documents the sampling distributions per category.
 
 ```python
 sim.randomize(
-    colors=True,
-    lighting=True,
-    physics=True,
-    cameras=True,
+    randomize_colors=True,
+    randomize_lighting=True,
+    randomize_physics=True,
+    randomize_positions=True,
+    position_noise=0.02,
+    color_range=(0.1, 1.0),
+    friction_range=(0.5, 1.5),
+    mass_range=(0.5, 2.0),
+    seed=42,
 )
 ```
 
-Each kwarg toggles a category. Each category samples independently from its
-distribution and applies in-place. Subsequent rollouts see the new world; reset to
-fixed values via `randomize(reset=True)` (or recreate the sim).
+Each kwarg toggles a category. Categories sample independently and apply in-place.
+`randomize` is **destructive** — it writes directly into MuJoCo's model arrays.
+To restore baseline values, recompile the scene (e.g. call `load_scene` again or
+recreate the sim).
 
 ## Categories
 
-### `colors=True`
+### `randomize_colors=True`
 
-Resamples object and floor RGB colours from a uniform distribution over the full RGB
-cube. Object alpha is fixed at 1.0. Affects:
+Resamples object and floor RGB colours from a uniform distribution over
+`color_range=(min, max)` (default `(0.1, 1.0)`). Object alpha is fixed at 1.0. Affects:
 
 - Every `add_object`-created object.
 - The ground-plane texture (when present).
 - Optionally robot link colours when the model exposes them.
 
 ```python
-sim.randomize(colors=True)
+sim.randomize(randomize_colors=True, color_range=(0.2, 0.9))
 ```
 
-### `lighting=True`
+### `randomize_lighting=True`
 
 Perturbs the ambient and directional light parameters:
 
@@ -48,51 +54,70 @@ Perturbs the ambient and directional light parameters:
 The aim is to robustify policies against shadows and contrast — not to model arbitrary
 camera-room lighting.
 
-### `physics=True`
+```python
+sim.randomize(randomize_lighting=True)
+```
 
-Perturbs material physical properties:
+### `randomize_physics=False`
 
-- Per-object mass (multiplicative, modest range around the registered mass).
-- Per-geom friction (scale around 1.0).
+Perturbs material physical properties using `friction_range` and `mass_range`:
+
+- Per-object mass (multiplicative within `mass_range=(0.5, 2.0)`).
+- Per-geom friction (scale within `friction_range=(0.5, 1.5)`).
 - Joint damping (scale around 1.0).
 
-Distributions are deliberately tight — the goal is policy robustness, not chaos.
+Distributions are deliberately configurable — the goal is policy robustness.
 
-### `cameras=True`
+```python
+sim.randomize(randomize_physics=True,
+              friction_range=(0.8, 1.2),
+              mass_range=(0.9, 1.1))
+```
 
-Adds small random perturbations to every camera's position and orientation:
+### `randomize_positions=False`
 
-- Position: uniform offset in a small cube.
-- Orientation: small random rotation.
+Adds small random offsets to every object's position using `position_noise` (metres,
+default `0.02`):
 
-Field-of-view (`fovy`) and resolution are not randomised — those are part of the
-camera's *type*.
+```python
+sim.randomize(randomize_positions=True, position_noise=0.05)
+```
 
-### `textures=True`
+## Reproducibility
 
-(Where supported by the loaded model.) Re-samples geom textures from a built-in
-texture atlas. Useful for visual policies trained on diverse backgrounds.
+Pass `seed=` to get a deterministic sequence:
+
+```python
+sim.randomize(randomize_colors=True, randomize_physics=True, seed=42)
+```
 
 ## When to use it
 
 - **Recording a dataset** (chapter 6): randomise between episodes so the dataset
   covers a distribution, not a single look.
-- **Eval** (`eval_policy(randomize=True, ...)`): each of the N episodes gets a fresh
-  world. Reported success rate is over the distribution.
+- **Eval** (`eval_policy(...)`): call `randomize` in `success_fn` or between episodes
+  to evaluate over a distribution. `eval_policy` has no `randomize=` kwarg — call
+  `sim.randomize(...)` yourself.
 - **Sim-to-real** (chapter 8): heavy randomisation while training; deterministic
   evaluation matching the real-world conditions.
 
-## Reset
+## Undoing randomization
+
+`randomize` writes directly into MuJoCo model arrays. There is no `reset=` kwarg.
+To restore baseline values, recompile the scene:
 
 ```python
-sim.randomize(reset=True)    # restore baseline values
-```
+# Option 1: reload from file
+sim.load_scene(scene_path="my_scene.xml")
 
-If you only randomised some categories, only those get reset.
+# Option 2: recreate the sim
+sim.destroy()
+sim = Robot("so100")
+```
 
 ## When it's not enough
 
-`randomize` covers the easy categories. If you need:
+`randomize` covers the common categories. If you need:
 
 - **Procedural object placement** — call `add_object` in a loop instead.
 - **Different scenes** — `load_scene` with multiple MJCF files.

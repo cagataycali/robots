@@ -31,7 +31,7 @@ robot = Robot(
 | `mode` | str | `"sim"` | One of `"sim"`, `"real"`, `"auto"`. Case-insensitive. |
 | `backend` | str | `"mujoco"` | Sim backend. Only `"mujoco"` today; `"isaac"` / `"newton"` are roadmap. Ignored when `mode="real"`. |
 | `urdf_path` | str | `None` | Explicit MJCF/URDF path. Bypasses the registry asset block. Required for unknown names. |
-| `cameras` | dict | `None` | Real-hardware camera config. Sim cameras: use `add_camera` after construction. |
+| `cameras` | dict | `None` | Real-hardware camera config. **Rejected in `mode="sim"`** — raises `ValueError`. Add cameras to a simulation with `add_camera()` after construction. |
 | `position` | list | `None` | Robot position `[x, y, z]` in the sim world. |
 | `data_config` | str | `None` | GR00T data_config name. Defaults to canonical robot name. |
 | `mesh` | bool | `True` | Auto-join the Zenoh mesh. |

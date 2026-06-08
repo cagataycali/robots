@@ -162,23 +162,35 @@ agent("E-STOP all peers")
 
 ## Step 7 — teleoperation across machines
 
-Stream a leader arm's joint positions to a follower on another box:
+Stream a leader arm's joint positions to a follower on another box using the
+`HardwareRobot` mesh-teleop methods:
 
 ```python
 from strands_robots import Robot
-from strands_robots.mesh import InputPublisher, InputReceiver
 
-# Machine A — leader publishes at 50 Hz
-leader = Robot("so100", mode="real")     # requires hardware
-pub = InputPublisher(leader.mesh, leader.teleoperator, device_name="leader")
-pub.start()
+# Machine A — leader publishes at 50 Hz  # requires hardware
+leader = Robot("so100", mode="real")
+leader.start_teleop_publish(
+    teleoperator=leader.teleoperator,
+    device_name="leader",
+    method="arm",
+    hz=50,
+)
 
-# Machine B — follower receives + applies actions
-follower = Robot("so100", mode="real")   # requires hardware
-rec = InputReceiver(follower.mesh, follower.robot,
-                     source_peer_id=leader.mesh.peer_id)
-rec.start()
+# Machine B — follower receives + applies actions  # requires hardware
+follower = Robot("so100", mode="real")
+follower.start_teleop_receive(
+    source_peer_id=leader.mesh.peer_id,
+    device_name="leader",
+    apply_fn=None,
+)
+
+# Stop teleop on either side when done
+leader.stop_teleop("leader")
+follower.stop_teleop("leader")
 ```
+
+Use `get_teleop_status()` on either robot to inspect the current teleop state.
 
 Topic schema for `strands/{peer_id}/input/{device}`:
 

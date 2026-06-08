@@ -19,12 +19,13 @@ sim = Robot("so100")                 # one arm on a flat ground plane
 sim.add_robot(robot_name="so100", position=[0.0, 0.5, 0.0])
 
 # Add a table by stacking a thin box object
-sim.add_object(name="table", type="box", size=[0.5, 0.5, 0.02],
-               pos=[0.0, 0.0, 0.0], rgba=[0.5, 0.3, 0.1, 1], mass=20.0)
+sim.add_object(name="table", shape="box", size=[0.5, 0.5, 0.02],
+               position=[0.0, 0.0, 0.0], color=[0.5, 0.3, 0.1, 1.0], mass=20.0)
 
-# A wrist camera per arm
-sim.add_camera(name="wrist_a", attach_to="so100", pos=[0.05, 0, 0.1])
-sim.add_camera(name="wrist_b", attach_to="so100_2", pos=[0.05, 0, 0.1])
+# Free overhead camera looking at the workspace
+sim.add_camera(name="overhead",
+               position=[0.0, 0.0, 1.5],
+               target=[0.0, 0.0, 0.0])
 ```
 
 ## Strategies
@@ -33,9 +34,10 @@ sim.add_camera(name="wrist_b", attach_to="so100_2", pos=[0.05, 0, 0.1])
 |------|----------|
 | Add a single robot to an existing world | `add_robot(...)` |
 | Add objects (cubes, balls, tables) | `add_object(...)` |
-| Replace the entire world with a hand-authored scene | `load_scene(xml_path=...)` |
+| Replace the entire world with a hand-authored scene | `load_scene(scene_path=...)` |
 | Generate scenes procedurally | Compose `add_robot` + `add_object` in a loop |
 | Reuse a Menagerie scene | Pass its MJCF path via `load_scene` |
+| Raw MJCF tweaks without recompile | `patch_scene_mjcf(ops)` |
 
 ## Procedural composition
 
@@ -48,12 +50,12 @@ sim = Robot("so100")
 for i in range(5):
     sim.add_object(
         name=f"cube_{i}",
-        type="box",
+        shape="box",
         size=[0.025, 0.025, 0.025],
-        pos=[random.uniform(0.2, 0.5),
-             random.uniform(-0.15, 0.15),
-             0.025],
-        rgba=[random.random(), random.random(), random.random(), 1],
+        position=[random.uniform(0.2, 0.5),
+                  random.uniform(-0.15, 0.15),
+                  0.025],
+        color=[random.random(), random.random(), random.random(), 1.0],
     )
 ```
 
@@ -66,7 +68,7 @@ If you've authored an MJCF in MuJoCo's editor or downloaded one from a benchmark
 
 ```python
 sim = Robot("so100")
-sim.load_scene(xml_path="/path/to/my_scene.xml")
+sim.load_scene(scene_path="my_scene.xml")
 ```
 
 `load_scene` tears down the current world and rebuilds from the XML. Robots referenced
@@ -83,27 +85,54 @@ sim.add_robot(robot_name="ur5e",   position=[0.0, 0.6, 0.0])
 sim.add_robot(robot_name="koch",   position=[0.0, -0.4, 0.0])
 ```
 
-The `position` is the robot's base in world coordinates. Orientation is identity
-unless you pass `quat=...`.
+The `position` is the robot's base in world coordinates. Pass `orientation=[w,x,y,z]`
+to rotate the base; identity orientation is assumed otherwise.
 
-## Cameras: free or attached
+## Cameras
+
+Cameras in `strands-robots` are always **free** — they look from a `position` toward
+a `target`. Robot-URDF cameras (e.g. wrist cameras declared in the URDF) are
+auto-discovered when `add_robot` runs; you do not need to call `add_camera` for them.
 
 ```python
-# Free camera looking at the origin
+# Overhead camera looking down at the workspace
 sim.add_camera(name="overhead",
-               pos=[0.0, 0.0, 1.0],
-               lookat=[0.0, 0.0, 0.0])
+               position=[0.0, 0.0, 1.5],
+               target=[0.0, 0.0, 0.0],
+               fov=60.0,
+               width=640,
+               height=480)
 
-# Attached camera (moves with the robot's body/site)
-sim.add_camera(name="wrist",
-               attach_to="so100",   # body or site name
-               pos=[0.05, 0.0, 0.1],  # offset in attach frame
-               quat=[1, 0, 0, 0],
-               fovy=60)
+# Side-view camera
+sim.add_camera(name="side",
+               position=[0.8, 0.0, 0.5],
+               target=[0.0, 0.0, 0.2])
 ```
 
-`attach_to` is resolved against the model's body and site names. Typical attach points
-are the gripper body (for wrist cams) or the base (for chest cams on humanoids).
+`position` and `target` must not be identical (that would produce a zero look-at
+direction). `fov`, `width`, and `height` default to `60.0`, `640`, and `480`.
+
+## Multi-robot policies
+
+When running multiple robots simultaneously, use `run_multi_policy` instead of
+separate `run_policy` calls. It keeps all robots synchronised to the same physics
+clock and produces one merged recorded frame per step:
+
+```python
+from strands_robots.policies import create_policy
+
+policy_a = create_policy("mock")
+policy_b = create_policy("mock")
+
+sim.run_multi_policy(
+    policies={"so100": policy_a, "panda": policy_b},
+    instructions={"so100": "pick cube", "panda": "hold tray"},
+    duration=10.0,
+)
+```
+
+Use `list_policies_running()` to inspect active policy threads started by
+`start_policy`.
 
 ## Tear-down
 

@@ -20,13 +20,14 @@ robot = Robot(
     cameras={"wrist": {"type": "opencv", "index_or_path": "/dev/video0", "fps": 30}},
 )
 
-# Same Simulation-style action surface — works with the agent
-robot.run_policy(
+# HardwareRobot has no run_policy — use start_task to connect to a policy server
+robot.start_task(
     instruction="pick up the cube",
-    policy_provider="lerobot_local",
-    pretrained_name_or_path="lerobot/pi0_so100",
+    policy_provider="groot",
+    policy_port=5555,       # ZMQ port where the Gr00t server is listening
     duration=15.0,
 )
+status = robot.get_task_status()  # IDLE | CONNECTING | RUNNING | COMPLETED | STOPPED | ERROR
 ```
 
 The arm must be powered, USB-connected, and calibrated.
@@ -81,8 +82,8 @@ It saves a JSON calibration file LeRobot will pick up on subsequent loads.
 
 ## Step 3 — wire up cameras
 
-Real-hardware cameras are passed through the `cameras` kwarg. Each entry is a
-`{name: config}` pair:
+Real-hardware cameras are passed through the `cameras` kwarg at construction time.
+Each entry is a `{name: config}` pair:
 
 ```python
 cameras = {
@@ -146,28 +147,70 @@ robot.set_joint_positions([0, 0, 0, 0, 0, 0], duration=3.0)  # home
 
 If the arm goes somewhere weird, the calibration is off — re-run step 2.
 
-## Step 6 — run a policy
+## Step 6 — run a task
+
+`HardwareRobot` does **not** have `run_policy`. Real hardware is controlled via
+`start_task` / `get_task_status` / `stop_task`, which connect to an external policy
+server. An agent can also drive the robot through the `execute` / `start` / `status` /
+`stop` AgentTool actions.
+
+### Connecting to a Gr00t inference server  # requires GPU
+
+Start the Gr00t server on a GPU host (see chapter 3), then connect the arm to it:
 
 ```python
-# A local LeRobot checkpoint
-robot.run_policy(
+import time
+
+robot.start_task(
     instruction="pick up the cube",
-    policy_provider="lerobot_local",
-    pretrained_name_or_path="lerobot/pi0_so100",
+    policy_provider="groot",
+    policy_host="localhost",
+    policy_port=5555,       # ZMQ port — NOT server_address
     duration=15.0,
 )
 
-# Or GR00T over the network
-robot.run_policy(
+# Poll for completion
+# TaskStatus: IDLE, CONNECTING, RUNNING, COMPLETED, STOPPED, ERROR
+while True:
+    s = robot.get_task_status()
+    print(s)
+    if s in ("COMPLETED", "STOPPED", "ERROR"):
+        break
+    time.sleep(0.5)
+
+robot.stop_task()   # safe to call even after COMPLETED
+```
+
+### Agent-driven control
+
+When the `HardwareRobot` instance is passed as an AgentTool, the agent calls the
+`execute` (blocking) or `start` / `status` / `stop` (async) actions.
+Both `execute` and `start` require `instruction` and `policy_port`:
+
+```python
+from strands import Agent
+from strands_robots import Robot
+
+robot = Robot("so100", mode="real", cameras=cameras)   # requires hardware
+agent = Agent(tools=[robot])
+
+agent("Pick up the cube using the groot policy on port 5555 for 15 seconds")
+# The agent calls: action="execute", instruction="...", policy_port=5555
+```
+
+### Using a local LeRobot checkpoint  # requires GPU
+
+To run a local checkpoint you must first serve it as a policy server, then connect:
+
+```python
+robot.start_task(
     instruction="pick up the cube",
-    policy_provider="groot",
-    server_address="localhost:5555",
+    policy_provider="lerobot_local",
+    policy_host="localhost",
+    policy_port=8000,
     duration=15.0,
 )
 ```
-
-The `Simulation`-style action surface is preserved on `HardwareRobot`; everything you
-learned in chapters 2–4 still applies.
 
 ## Step 7 — teleoperate
 
@@ -187,7 +230,35 @@ lerobot_teleoperate(
 
 **Mesh teleop** (leader on machine A, follower on machine B):
 
-See [Tutorial 5 — Multi-robot](05-multi-robot.md), step 7.
+Use the `HardwareRobot` mesh-teleop methods — `start_teleop_publish`,
+`start_teleop_receive`, `stop_teleop`, and `get_teleop_status`:
+
+```python
+from strands_robots import Robot
+
+# Machine A — leader publishes at 50 Hz  # requires hardware
+leader = Robot("so100", mode="real")
+leader.start_teleop_publish(
+    teleoperator=leader.teleoperator,
+    device_name="leader",
+    method="arm",
+    hz=50,
+)
+
+# Machine B — follower receives + applies actions  # requires hardware
+follower = Robot("so100", mode="real")
+follower.start_teleop_receive(
+    source_peer_id=leader.mesh.peer_id,
+    device_name="leader",
+    apply_fn=None,
+)
+
+# Stop when done
+leader.stop_teleop("leader")
+follower.stop_teleop("leader")
+```
+
+See [Tutorial 5 — Multi-robot](05-multi-robot.md) for the full mesh setup.
 
 ## Safety defaults
 
@@ -200,7 +271,7 @@ Real hardware has a few safety knobs the factory enforces:
 - **Watchdog.** A control-loop timeout (configurable via `control_frequency=`) returns
   the arm to a held pose if the policy stalls.
 - **`emergency_stop()`.** Available via the mesh and via `robot.stop_task()` directly.
-- **STRANDS_TRUST_REMOTE_CODE.** `LerobotLocalPolicy` won't run an HF model that
+- **`STRANDS_TRUST_REMOTE_CODE`.** `LerobotLocalPolicy` won't run an HF model that
   requires `trust_remote_code=True` until you set the env var. (Important on real
   hardware where the model can move servos.)
 
@@ -213,14 +284,19 @@ Real hardware has a few safety knobs the factory enforces:
 | Servo error mid-rollout | Velocity limit too tight | Bump `control_frequency` or relax limits in calibration |
 | Policy runs in sim, fails on real | Action spec mismatch | Confirm `data_config` matches between record + infer |
 | `PermissionError: /dev/ttyUSB0` | Linux permissions | Add user to `dialout` group |
+| `start_task` never reaches RUNNING | Policy server not up | Verify the server is listening on the specified port |
 
 ## Recap
 
 - `mode="real"` flips the factory to `HardwareRobot`. Same agent code works.
-- Calibration is one-time per arm; cameras are kwargs; safety is on by default.
-- Use `lerobot_calibrate`, `lerobot_camera`, `lerobot_teleoperate`, `serial_tool` for
-  bring-up.
-- Real-hardware policies are the same `create_policy(...)` calls as simulation.
+- `HardwareRobot` has **no** `run_policy`. Use `start_task(instruction, policy_port=,
+  policy_host=, policy_provider=, duration=)` → `get_task_status()` → `stop_task()`.
+- An agent drives hardware via the `execute` / `start` / `status` / `stop` actions.
+- TaskStatus values: `IDLE`, `CONNECTING`, `RUNNING`, `COMPLETED`, `STOPPED`, `ERROR`.
+- Cameras are passed as `cameras={...}` at construction; `policy_port=` connects to
+  the inference server (`server_address` is not a valid kwarg).
+- Calibration is one-time per arm; safety is on by default.
+- Use `start_teleop_publish` / `start_teleop_receive` / `stop_teleop` for mesh teleop.
 
 ## See also
 

@@ -54,11 +54,11 @@ Use `Simulation` directly inside your training loop:
 sim = Robot("so100")
 for episode in range(N):
     sim.reset()
-    sim.randomize(colors=True, lighting=True)
+    sim.randomize(randomize_colors=True, randomize_lighting=True)
     for step in range(T):
         action = my_policy(observation)
         # apply action via add_robot's controller
-        sim.step()
+        sim.step(n_steps=1)
 ```
 
 For benchmark suites, see the LIBERO adapter — it gives you a fixed task set, success

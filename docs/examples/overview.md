@@ -1,29 +1,22 @@
 ---
-description: Runnable example scripts — links to the repo's examples/ directory and the tutorial chapters.
+description: Runnable example scripts — links to the repo's examples/ directory.
 ---
 
 # Examples
 
-The repository's `examples/` directory hosts runnable scripts that mirror the tutorial
-chapters. Use them as copy-paste starting points.
+The repository's `examples/` directory contains runnable scripts. Use them as
+copy-paste starting points.
 
 ## In the repo
 
 Browse them on GitHub:
 [`strands-labs/robots/tree/main/examples`](https://github.com/strands-labs/robots/tree/main/examples)
 
-| Script | What it does |
-|--------|--------------|
-| `01_sim_quickstart.py` | The 5-line sim quickstart from the README. |
-| `02_sim_agent.py` | Wire `Robot()` into a Strands `Agent`. |
-| `03_sim_recording.py` | Record a LeRobot v3 dataset. |
-| `04_real_hardware.py` | Bring up a real arm with cameras. |
-| `05_real_groot_policy.py` | Drive a real arm with GR00T. |
-| `06_list_robots.py` | Walk the registry. |
-| `act_policy_simulation.py` | ACT in MuJoCo with video export. |
-| `physics_agent.py` | Natural-language physics introspection. |
-
-The exact set evolves; check the repo for the current list.
+| File | What it does |
+|------|--------------|
+| `cosmos3_sim_rollout.py` | Full Cosmos 3 sim rollout: spawn SO-100, connect to a Cosmos 3 action-policy server, run episodes, and save a LeRobot v3 recording. |
+| `molmoact2_so101_pickplace.py` | SO-101 pick-and-place using MolmoAct2 via `LerobotLocalPolicy` with `norm_tag` / `image_keys` / `inference_action_mode`. Requires hardware + GPU. |
+| `mesh_acl_example.json5` | Mesh ACL configuration example: per-peer allow/deny rules for the Zenoh mesh used by Robot mesh wiring. |
 
 ## Run them
 
@@ -31,33 +24,23 @@ The exact set evolves; check the repo for the current list.
 git clone https://github.com/strands-labs/robots
 cd robots
 pip install -e ".[all]"
-python examples/01_sim_quickstart.py
+
+# Cosmos 3 sim rollout (sim + cosmos3-service extras, Cosmos server running on :8000)
+python examples/cosmos3_sim_rollout.py
+
+# MolmoAct2 pick-and-place (requires hardware + GPU)    # requires hardware
+python examples/molmoact2_so101_pickplace.py            # requires GPU
+
+# Inspect the mesh ACL config
+cat examples/mesh_acl_example.json5
 ```
 
-Each script has a top-level docstring documenting its requirements (sim only, GPU,
-real hardware, etc.).
-
-## Tutorial alignment
-
-Most examples have a sibling tutorial chapter:
-
-| Tutorial chapter | Example |
-|------------------|---------|
-| [1 — Your first robot](../tutorial/01-your-first-robot.md) | `01_sim_quickstart.py` |
-| [4 — AI agents](../tutorial/04-agents.md) | `02_sim_agent.py` |
-| [6 — Recording](../tutorial/06-recording.md) | `03_sim_recording.py` |
-| [8 — Real hardware](../tutorial/08-real-hardware.md) | `04_real_hardware.py`, `05_real_groot_policy.py` |
-| [Robot catalog](../robots/index.md) | `06_list_robots.py` |
-
-## Beyond the examples
-
-For extended demos — full notebooks, third-party integrations — track the
-[GitHub Discussions board](https://github.com/strands-labs/robots/discussions). We
-don't bundle large notebook galleries in the repo to keep `pip install` lean.
+Each Python script has a top-level docstring documenting its requirements.
 
 ## See also
 
-- [Tutorial](../tutorial/index.md) — chapters 1–9 with concept commentary.
 - [Quickstart](../getting-started/quickstart.md) — minimal copy-paste starter.
+- [Cosmos3Policy](../policies/cosmos3.md) — Cosmos 3 provider details.
+- [LerobotLocalPolicy](../policies/lerobot-local.md) — MolmoAct2 and other local models.
 - [GitHub source](https://github.com/strands-labs/robots) — issues, discussions,
   releases.

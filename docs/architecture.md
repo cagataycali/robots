@@ -16,7 +16,7 @@ graph TB
         FACTORY["Robot('so100')"]
     end
 
-    subgraph factory_layer[Robot factory  ·  strands_robots/robot.py]
+    subgraph factory_layer[Robot factory  -  strands_robots/robot.py]
         ROBOT["Robot()"]
         REGISTRY["registry/robots.json<br/>68 robots, 8 categories"]
         ROBOT --> REGISTRY
@@ -29,15 +29,17 @@ graph TB
         SIM -.implements.-> SIM_ABC
     end
 
-    subgraph policies[Policy layer  ·  strands_robots/policies]
+    subgraph policies[Policy layer  -  strands_robots/policies]
         POLICY_ABC["Policy ABC<br/>policies/base.py"]
         MOCK["MockPolicy"]
         GROOT["Gr00tPolicy"]
         LEROBOT["LerobotLocalPolicy"]
+        COSMOS3["Cosmos3Policy"]
         FACTORY_FN["create_policy()"]
         MOCK -.implements.-> POLICY_ABC
         GROOT -.implements.-> POLICY_ABC
         LEROBOT -.implements.-> POLICY_ABC
+        COSMOS3 -.implements.-> POLICY_ABC
         FACTORY_FN --> POLICY_ABC
     end
 
@@ -68,7 +70,7 @@ graph TB
     class AGENT,FACTORY user
     class ROBOT,REGISTRY factory
     class SIM,HW,SIM_ABC backend
-    class POLICY_ABC,MOCK,GROOT,LEROBOT,FACTORY_FN policy
+    class POLICY_ABC,MOCK,GROOT,LEROBOT,COSMOS3,FACTORY_FN policy
     class TOOLS,RECORDER,BENCH cross
 ```
 
@@ -76,41 +78,56 @@ graph TB
 
 | Module | What it owns | Key types |
 |--------|--------------|-----------|
-| `strands_robots/robot.py` | The user-facing factory `Robot(name, mode=..., backend=..., **kwargs)`. Resolves robot name → registry entry, picks sim/real backend, validates inputs, attaches optional mesh. | `Robot()` (function, capitalised) |
+| `strands_robots/robot.py` | The user-facing factory `Robot(name, mode=..., backend=..., **kwargs)`. Resolves robot name -> registry entry, picks sim/real backend, validates inputs, attaches optional mesh. | `Robot()` (function, capitalised) |
 | `strands_robots/registry/` | Catalog of 68 robots. `robots.json` is the source of truth; `robots.py` exposes lookup helpers. | `list_robots()`, `resolve_name()`, `get_robot()` |
-| `strands_robots/simulation/` | MuJoCo-backed simulation as a Strands `AgentTool`. 35+ actions exposed for the agent. | `Simulation`, `SimWorld`, `SimRobot`, `SimObject`, `SimCamera` |
+| `strands_robots/simulation/` | MuJoCo-backed simulation as a Strands `AgentTool`. 60+ actions exposed for the agent. | `Simulation`, `SimWorld`, `SimRobot`, `SimObject`, `SimCamera` |
 | `strands_robots/simulation/base.py` | Backend-agnostic ABC. Future Isaac / Newton backends implement the same interface. | `SimEngine` |
-| `strands_robots/hardware_robot.py` | Real-servo path. Wraps a LeRobot `Robot` instance with async task execution + status reporting. | `Robot` (the hardware class — distinct from the factory function) |
-| `strands_robots/policies/` | Policy ABC + 3 implementations (`mock`, `groot`, `lerobot_local`) + factory + JSON registry. | `Policy`, `create_policy()`, `register_policy()` |
+| `strands_robots/hardware_robot.py` | Real-servo path. Wraps a LeRobot `Robot` instance with async task execution + status reporting. | `Robot` (the hardware class - distinct from the factory function) |
+| `strands_robots/policies/` | Policy ABC + 4 implementations (`mock`, `groot`, `lerobot_local`, `cosmos3`) + factory + JSON registry. | `Policy`, `create_policy()`, `register_policy()` |
 | `strands_robots/dataset_recorder.py` | LeRobot v3 dataset writer. Started/stopped via simulation actions. | `DatasetRecorder` |
-| `strands_robots/tools/` | `@tool`-decorated Strands tools: `gr00t_inference`, `lerobot_calibrate`, `lerobot_camera`, `lerobot_teleoperate`, `pose_tool`, `serial_tool`. | All importable from `strands_robots.tools` |
-| `strands_robots/benchmarks/libero/` | LIBERO benchmark adapter — BDDL parser, suite definitions. | `LiberoSuite`, BDDL parser |
+| `strands_robots/tools/` | `@tool`-decorated Strands tools: `download_assets`, `gr00t_inference`, `lerobot_calibrate`, `lerobot_camera`, `lerobot_teleoperate`, `pose_tool`, `robot_mesh`, `serial_tool`. | All importable from `strands_robots.tools` |
+| `strands_robots/benchmarks/libero/` | LIBERO benchmark adapter - BDDL parser, suite definitions. | `LiberoSuite`, BDDL parser |
 
 ## The three ABCs
 
 Every extension point in the library is an ABC. Subclass, register, ship.
 
-### `Policy` — *what action to take*
+### `Policy` - *what action to take*
 
 ```python
 # strands_robots/policies/base.py
 class Policy(ABC):
     @abstractmethod
-    def get_action(self, observation: dict) -> dict: ...
+    async def get_actions(
+        self, observation_dict: dict, instruction: str, **kwargs
+    ) -> list[dict]: ...
+
     @abstractmethod
-    def reset(self) -> None: ...
+    def set_robot_state_keys(self, keys: list[str]) -> None: ...
+
+    @property
+    @abstractmethod
+    def provider_name(self) -> str: ...
+
+    @property
+    def requires_images(self) -> bool:
+        return True  # default - override to False for state-only policies
+
+    def reset(self, seed: int | None = None) -> None:
+        pass  # default no-op; override if your policy has episode state
 ```
 
-Three implementations ship with the library:
+Four implementations ship with the library:
 
-- `MockPolicy` — zero-action / sinusoidal — for tests.
-- `Gr00tPolicy` — NVIDIA GR00T (N1.5/N1.6/N1.7) over ZMQ or HTTP.
-- `LerobotLocalPolicy` — direct HuggingFace LeRobot inference (ACT, Pi0, SmolVLA, etc.).
+- `MockPolicy` - zero-action / sinusoidal - for tests. `requires_images=False`.
+- `Gr00tPolicy` - NVIDIA GR00T (N1.5/N1.6/N1.7) via ZMQ (service) or local in-process.
+- `LerobotLocalPolicy` - direct HuggingFace LeRobot inference (ACT, Pi0, SmolVLA, etc.).
+- `Cosmos3Policy` - NVIDIA Cosmos 3 omnimodal VLA over WebSocket.
 
-See [Policy providers](policies/overview.md). To add a fourth, see
+See [Policy providers](policies/overview.md). To add a fifth, see
 [Custom policies](policies/custom-policies.md).
 
-### `SimEngine` — *how to step physics*
+### `SimEngine` - *how to step physics*
 
 ```python
 # strands_robots/simulation/base.py
@@ -123,13 +140,13 @@ class SimEngine(ABC):
 ```
 
 Today: MuJoCo CPU backend. Tomorrow: Isaac Sim, Newton (GPU). Same ABC, same `Simulation`
-public surface — the user code never changes.
+public surface - the user code never changes.
 
 ### Strands `AgentTool`
 
 `Simulation` and `HardwareRobot` are both Strands `AgentTool` subclasses. That's what
-makes `agent = Agent(tools=[robot])` work — the agent calls actions like `step`, `render`,
-`run_policy` directly through the tool dispatcher.
+makes `agent = Agent(tools=[robot])` work - the agent calls actions like `step`, `render`,
+`start_task` directly through the tool dispatcher.
 
 ## The one rule
 
@@ -147,10 +164,12 @@ The `pyproject.toml` exposes one extra per heavy backend so installs stay surgic
 
 | Extra | Pulls in | When you need it |
 |-------|----------|------------------|
-| `[sim-mujoco]` | `mujoco`, `numpy`, `imageio` | Any `Robot()` with default `mode="sim"` |
-| `[lerobot]` | `lerobot`, `torch` | Real hardware OR `LerobotLocalPolicy` |
+| `[sim-mujoco]` | `mujoco`, `numpy`, `imageio`, `imageio-ffmpeg` | Any `Robot()` with default `mode="sim"` |
+| `[lerobot]` | `lerobot>=0.5.0,<0.6.0`, `torch` | Real hardware OR `LerobotLocalPolicy` |
 | `[groot-service]` | `pyzmq`, `msgpack` | `Gr00tPolicy` (talks to a GR00T inference container) |
-| `[mesh]` | `eclipse-zenoh` | Multi-robot peer discovery + RPC over Zenoh |
+| `[cosmos3-service]` | `msgpack`, `websockets` | `Cosmos3Policy` (WebSocket inference server) |
+| `[mesh]` | `eclipse-zenoh`, `json5` | Multi-robot peer discovery + RPC over Zenoh |
+| `[mesh-iot]` | `eclipse-zenoh`, `json5`, `awsiotsdk`, `awscrt`, `boto3` | AWS IoT Core transport (MQTT5/mTLS) |
 | `[benchmark-libero]` | `libero`, eval deps | LIBERO benchmark suite |
 | `[all]` | union of everything above | Demos, CI, "I'll figure out what I need later" |
 | `[dev]` | `pytest`, `ruff`, `mypy`, `hatch` | Contributing |
@@ -160,15 +179,15 @@ The `pyproject.toml` exposes one extra per heavy backend so installs stay surgic
 1. **A factory not a class hierarchy.** `Robot()` returns concrete `Simulation` /
    `HardwareRobot` instances. Users never see a wrapper.
 2. **Composition over inheritance for cross-cutting concerns.** Recording, mesh
-   networking, dataset capture — these attach to a robot, they don't subclass it.
+   networking, dataset capture - these attach to a robot, they don't subclass it.
 3. **Registries are JSON.** Robots and policies are addressable by name from a JSON file.
    Adding either is a code-free PR most of the time.
 4. **Tests live next to the code.** `tests/` mirrors `strands_robots/` 1:1.
 
 ## See also
 
-- [Robot factory](getting-started/robot-factory.md) — every kwarg `Robot(...)` accepts.
-- [Custom policies](policies/custom-policies.md) — how to implement and register a new
+- [Robot factory](getting-started/robot-factory.md) - every kwarg `Robot(...)` accepts.
+- [Custom policies](policies/custom-policies.md) - how to implement and register a new
   `Policy`.
-- [Simulation overview](simulation/overview.md) — the 35+ action vocabulary.
-- [Contributing](contributing.md) — module conventions every PR has to satisfy.
+- [Simulation overview](simulation/overview.md) - the 60+ action vocabulary.
+- [Contributing](contributing.md) - module conventions every PR has to satisfy.

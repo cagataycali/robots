@@ -4,20 +4,24 @@ description: pip install strands-robots — extras matrix, platform notes, headl
 
 # Installation
 
-`strands-robots` is a single `pip install`. Pick the extras that match your use case.
+`strands-robots` requires **Python ≥ 3.12**. It is a single `pip install`. Pick the
+extras that match your use case.
 
 ## Extras matrix
 
 | Extra | Pulls in | When you need it |
 |-------|----------|------------------|
 | (none) | core only — Robot factory, registry, lazy imports | Inspect the catalog, write tools |
-| `[sim-mujoco]` | `mujoco`, `numpy`, `imageio` | Any `Robot()` with default `mode="sim"` |
-| `[lerobot]` | `lerobot`, `torch` | Real hardware OR `LerobotLocalPolicy` |
-| `[groot-service]` | `pyzmq`, `msgpack` | `Gr00tPolicy` (talks to a GR00T container) |
-| `[mesh]` | `eclipse-zenoh` | Multi-robot mesh discovery + RPC |
-| `[benchmark-libero]` | LIBERO eval deps | LIBERO benchmark suite |
-| `[all]` | everything above | Demos, CI, exploration |
-| `[dev]` | `pytest`, `ruff`, `mypy`, `hatch` | Contributing |
+| `[sim]` | `robot_descriptions` | Sim asset resolution without MuJoCo |
+| `[sim-mujoco]` | `sim` + `mujoco`, `imageio`, `imageio-ffmpeg` | Any `Robot()` with default `mode="sim"` |
+| `[lerobot]` | `lerobot>=0.5.0,<0.6.0` | `LerobotLocalPolicy` + dataset recording |
+| `[groot-service]` | `pyzmq`, `msgpack` | `Gr00tPolicy` (talks to a GR00T container over ZMQ) |
+| `[cosmos3-service]` | `msgpack`, `websockets` | `Cosmos3Policy` (talks to a Cosmos 3 server over WebSocket) |
+| `[mesh]` | `eclipse-zenoh`, `json5` | Multi-robot mesh discovery + RPC |
+| `[mesh-iot]` | `mesh` + `awsiotsdk`, `awscrt`, `boto3` | AWS IoT Core transport for mesh |
+| `[benchmark-libero]` | `libero` eval deps | LIBERO benchmark suite |
+| `[all]` | `groot-service` + `lerobot` + `sim-mujoco` + `mesh` + `mesh-iot` | Demos, CI, exploration |
+| `[dev]` | `pytest`, `pytest-cov`, `ruff`, `mypy`, `pytest-timeout` | Contributing |
 
 ## Common flavours
 
@@ -43,7 +47,16 @@ Sim + LeRobot + GR00T + mesh + benchmarks. Big install but no surprises.
 pip install "strands-robots[lerobot]"
 ```
 
-LeRobot + torch. Skip `[sim-mujoco]` if you'll never simulate.
+LeRobot + dataset recording. Skip `[sim-mujoco]` if you'll never simulate.
+
+### "Cosmos 3 inference"
+
+```bash
+pip install "strands-robots[sim-mujoco,cosmos3-service]"
+```
+
+Connects to an NVIDIA Cosmos 3 action-policy server over WebSocket. See
+[Cosmos3Policy](../policies/cosmos3.md).
 
 ### "Custom — pick what you need"
 
@@ -128,8 +141,13 @@ from strands_robots import Robot
 sim = Robot("so100")
 print(sim.tool_name_str)            # 'so100_sim'
 sim.step()                          # MuJoCo OK
-print(sim.render()["frame"].shape)  # rendering OK
+obs = sim.get_observation("so100")  # rendering OK — numpy arrays per camera
+print(list(obs.keys()))             # e.g. ['default']
 ```
+
+Note: `sim.render()` returns an image content block (PNG bytes in `content`), not a
+`["frame"]` key. Use `get_observation(robot_name)` to get raw NumPy arrays, or
+`sim.step()` to verify the physics engine runs without rendering.
 
 If any of those fail, see [Troubleshooting](../troubleshooting.md).
 
@@ -156,6 +174,7 @@ Override locations with environment variables:
 | `STRANDS_TRUST_REMOTE_CODE` | Allow HF `trust_remote_code=True` | `false` |
 | `STRANDS_ROBOT_MODE` | Default `Robot()` mode | `sim` |
 | `STRANDS_MESH` | Disable mesh globally | `true` |
+| `GROOT_API_TOKEN` | API token for GR00T service (falls back from `api_token=` kwarg) | unset |
 
 ## See also
 

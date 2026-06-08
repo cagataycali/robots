@@ -17,7 +17,7 @@ from strands import Agent
 from strands_robots import Robot
 
 robot = Robot("so100")            # default: simulation
-agent = Agent(tools=[robot])      # robot is registered as one tool with 35+ actions
+agent = Agent(tools=[robot])      # robot is registered as one tool with 60+ actions
 
 agent("Add a red cube on the table and pick it up")
 # → agent calls robot.add_object(...) and robot.run_policy(...)
@@ -58,14 +58,14 @@ agent("List the simulation actions you have available")
 # → agent calls robot.get_features() or similar discovery action
 
 agent("Add a red cube at position (0.3, 0, 0.025) with size 5cm")
-# → agent calls robot.add_object(name="cube", type="box", size=[0.025, 0.025, 0.025],
-#                                pos=[0.3, 0, 0.025], rgba=[1, 0, 0, 1])
+# → agent calls robot.add_object(name="cube", shape="box", size=[0.025, 0.025, 0.025],
+#                                position=[0.3, 0, 0.025], color=[1, 0, 0, 1])
 
 agent("Render a frame from the default camera and save it as scene.png")
 # → agent calls robot.render(...) and writes the frame to disk
 
 agent("Use the mock policy to try to pick up the cube for 10 seconds")
-# → agent calls robot.run_policy(instruction="pick up the cube",
+# → agent calls robot.run_policy(robot_name="so100", instruction="pick up the cube",
 #                                policy_provider="mock", duration=10.0)
 ```
 
@@ -100,11 +100,11 @@ turns to build up a scene:
 
 ```python
 agent("Set up a scene with a blue ball and a red cube in different corners of a table")
-agent("Now add a wrist camera to the robot")
+agent("Now add a side camera looking at the workspace")
 agent("Run the mock policy for 5 seconds and tell me what objects are still on the table")
 ```
 
-The agent remembers it added the ball and cube, knows about the wrist camera, and can
+The agent remembers it added the ball and cube, knows about the side camera, and can
 report the state after the rollout.
 
 ## Step 5 — sim → real with one kwarg
@@ -133,7 +133,7 @@ docstrings. The agent's LLM uses this to route the user's instruction to the rig
 action. You can preview it:
 
 ```python
-print(robot.tool_spec)   # JSON schema with all 35+ actions
+print(robot.tool_spec)   # JSON schema with all 60+ actions
 ```
 
 This is also why the system works without any prompt engineering on the user side:
@@ -145,17 +145,17 @@ the action vocabulary is rich enough that "pick up the cube" maps to `run_policy
 | Instruction | Action chain |
 |-------------|--------------|
 | "Reset the world" | `reset` |
-| "Add a 5cm red cube" | `add_object(type='box', size=[0.025, 0.025, 0.025], rgba=[1,0,0,1])` |
+| "Add a 5cm red cube" | `add_object(shape='box', size=[0.025, 0.025, 0.025], color=[1,0,0,1])` |
 | "Take a picture" | `render` → save to disk |
-| "Run the policy" | `run_policy(...)` |
+| "Run the policy" | `run_policy(robot_name='so100', ...)` |
 | "What's in the scene?" | `list_objects` + `list_robots` (sim) + `get_state` |
-| "Try 10 episodes and report success rate" | `eval_policy(num_episodes=10)` |
+| "Try 10 episodes and report success rate" | `eval_policy(robot_name='so100', n_episodes=10)` |
 | "Start recording, run the policy, stop recording" | `start_recording` → `run_policy` → `stop_recording` |
 
 ## Recap
 
 - `Agent(tools=[Robot()])` is the whole integration.
-- The agent sees Simulation's 35+ actions and routes user instructions to them.
+- The agent sees Simulation's 60+ actions and routes user instructions to them.
 - Mix in `tools/*.py` for non-sim work (camera bring-up, GR00T container management).
 - Sim → real is one `mode="real"` kwarg away.
 

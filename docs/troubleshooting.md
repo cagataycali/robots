@@ -47,13 +47,15 @@ table.
 | `Gr00tPolicy` connection refused | Container not running | Start it via `gr00t_inference(action="start_container", ...)` |
 | `Gr00tPolicy` returns garbage | `data_config` mismatch | Use the same `data_config` as training |
 | GR00T N1.7 wire errors | Old client expecting (K,...) | Library handles this — make sure you're on a current strands-robots install |
+| `Cosmos3Policy` connection refused | Service not running | `pip install 'strands-robots[cosmos3-service]'` then start `cosmos_framework.scripts.action_policy_server_robolab` |
 | Policy import is slow | Heavy dep loading | Move to `__init__` or `get_actions`; never at module top-level |
 
 ## Recording
 
 | Symptom | Likely cause | Fix |
 |---------|--------------|-----|
-| `start_recording` reports lerobot missing | `[lerobot]` extra not installed | `pip install "strands-robots[lerobot]"` |
+| `start_recording` reports lerobot missing | `[lerobot]` extra not installed | `pip install "strands-robots[lerobot]"` — required for LeRobot v3 parquet+MP4 datasets |
+| Need plain MP4 without LeRobot | lerobot not installed | Use `start_cameras_recording` / `stop_cameras_recording` instead — plain MP4 via imageio-ffmpeg, no lerobot needed |
 | Empty MP4 files | Recording stopped before any frame was added | Ensure `run_policy` actually executed steps; `get_recording_status` shows the frame count |
 | Datasets push fails | Not logged into HF | `huggingface-cli login` |
 

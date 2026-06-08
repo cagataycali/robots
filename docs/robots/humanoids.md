@@ -29,7 +29,7 @@ sim = Robot("reachy_mini")      # Pollen Reachy Mini (expressive)
 | `op3` | ROBOTIS OP3 Humanoid (20-DOF) | 21 | `robotis_op3` |
 | `open_duck_mini` | Open Duck Mini V2 (16-DOF expressive biped, Feetech servos) | 16 | `bdx`, `mini_bdx`, `open_duck` |
 | `rby1` | Rainbow Robotics RB-Y1A Mobile Manipulator (31-DOF) | 31 | `rby1a`, `rainbow_rby1` |
-| `reachy2` | Pollen Reachy 2 | ? | — |
+| `reachy2` | Pollen Reachy 2 _(hardware-only, no sim asset)_ | ? | — |
 | `reachy_mini` | Pollen Reachy Mini (6-DOF Stewart head + antennas, 9 actuators) | 21 | `pollen_reachy_mini`, `reachy`, `reachy-mini` |
 | `talos` | PAL Robotics TALOS Humanoid (32-DOF) | 45 | `pal_talos` |
 | `toddlerbot_2xc` | Toddlerbot 2xC Humanoid (45-DOF) | 45 | — |

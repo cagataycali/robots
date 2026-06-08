@@ -22,11 +22,11 @@ sim = Robot("so100")            # SO-ARM100 (low-cost Feetech)
 | `dynamixel_2r` | Dynamixel 2R Educational Arm (2-DOF) | 2 | — |
 | `fr3` | Franka Research 3 (7-DOF + gripper) | 8 | `franka_fr3` |
 | `fr3_v2` | Franka Research 3 v2 (7-DOF + gripper, updated) | 7 | `franka_fr3_v2` |
-| `hope_jr` | Hope Junior arm | ? | — |
+| `hope_jr` | Hope Junior arm _(hardware-only, no sim asset)_ | ? | — |
 | `kinova_gen3` | Kinova Gen3 (7-DOF lightweight) | 7 | — |
 | `koch` | Koch v1.1 Low Cost Robot Arm (6-DOF, Dynamixel) | 7 | `koch_follower`, `koch_v1.1`, `low_cost_robot_arm` |
 | `kuka_iiwa` | KUKA LBR iiwa 14 (7-DOF collaborative) | 11 | `kuka_iiwa_14` |
-| `omx` | OMX Robot Arm (ROBOTIS, CAN bus motors) | ? | `omx_follower`, `omx_robot`, `robotis_omx` |
+| `omx` | OMX Robot Arm (ROBOTIS, CAN bus motors) _(hardware-only, no sim asset)_ | ? | `omx_follower`, `omx_robot`, `robotis_omx` |
 | `openarm` | Enactic OpenArm (7-DOF, DAMIAO motors, CAN bus) | 9 | `enactic_openarm`, `open_arm`, `openarm_v10` |
 | `panda` | Franka Emika Panda (7-DOF + gripper) | 7 | `bimanual_panda_gripper`, `bimanual_panda_hand`, `franka` |
 | `piper` | AgileX Piper (6-DOF + gripper) | 11 | `agilex_piper` |
@@ -98,9 +98,10 @@ _AgileX Piper (6-DOF + gripper)_
 
 ## Compatibility notes
 
-- Every arm is loadable in MuJoCo via the registry's asset block. Most pull from
+- Most arms are loadable in MuJoCo via the registry's asset block and pull from
   [robot_descriptions.py](https://github.com/robot-descriptions/robot_descriptions.py)
-  on first use.
+  on first use. Exceptions: `hope_jr` and `omx` have no MuJoCo sim asset and require
+  physical hardware.
 - `panda`, `so100`, and `ur5e` are also supported on real hardware via LeRobot. The rest
   are simulation-only at the moment (real-hardware support is a per-robot effort that
   upstreams to LeRobot).

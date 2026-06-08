@@ -1,5 +1,5 @@
 ---
-description: Five Strands @tool helpers for hardware bring-up — calibrate, camera, teleop, pose, serial.
+description: Eight Strands @tool helpers for hardware bring-up and operation — calibrate, camera, teleop, pose, serial, gr00t inference, mesh, download assets.
 ---
 
 # Hardware tools
@@ -16,37 +16,47 @@ from strands_robots.tools import (
     lerobot_teleoperate,
     pose_tool,
     serial_tool,
-    gr00t_inference,        # (covered on the GR00T page)
-    robot_mesh,             # (covered on the multi-robot page)
+    gr00t_inference,       # covered on the GR00T page
+    robot_mesh,            # covered on the multi-robot page
+    download_assets,
 )
 
-ports = serial_tool(action="list")["ports"]
-cams  = lerobot_camera(action="list")["cameras"]
+# All tools return a Strands tool dict: {"status": ..., "content": [{"text": "..."}]}
+result = serial_tool(action="list")
+result = lerobot_camera(action="list", camera_type="opencv")
 ```
 
-Each function returns a Strands tool dict (`{"status": ..., "content": [...]}`),
-making them droppable into `Agent(tools=[...])`.
+Each function returns a Strands tool dict (`{"status": ..., "content": [{"text": "..."}]}`),
+making them droppable into `Agent(tools=[...])`. Do **not** index custom keys like
+`result["ports"]` or `result["cameras"]` - parse `result["content"][0]["text"]` instead.
 
 ## `lerobot_calibrate`
 
-Run the LeRobot calibration walkthrough for a real arm — joint zero, mid pose, limits.
+Run the LeRobot calibration walkthrough for a real arm - joint zero, mid pose, limits.
 Saves a JSON calibration file LeRobot picks up on subsequent loads.
 
 ```python
 from strands_robots.tools import lerobot_calibrate
 
-lerobot_calibrate(
-    robot_type="so100",
-    port="/dev/tty.usbserial-A50285BI",
-    calibration_dir="~/.cache/lerobot/calibration/so100",
+# List available devices
+result = lerobot_calibrate(action="list")
+# Parse result["content"][0]["text"] for the device list
+
+# Calibrate a specific device
+result = lerobot_calibrate(
+    action="calibrate",
+    device_type="robot",
+    device_model="so100",
 )
 ```
 
 | Param | What |
 |-------|------|
-| `robot_type` | LeRobot robot type string. |
-| `port` | Serial device path. |
-| `calibration_dir` | Where to save the JSON. Default `~/.cache/lerobot/calibration/{type}`. |
+| `action` | Operation: `"list"`, `"calibrate"`, etc. |
+| `device_type` | LeRobot device type (e.g. `"robot"`, `"teleoperator"`). |
+| `device_model` | Model string (e.g. `"so100"`, `"koch"`). |
+
+Returns `{"status": ..., "content": [{"text": "..."}]}`.
 
 ## `lerobot_camera`
 
@@ -56,36 +66,51 @@ Bring-up helper for cameras: list, test, and capture frames.
 from strands_robots.tools import lerobot_camera
 
 # List connected cameras across known backends
-cams = lerobot_camera(action="list")["cameras"]
+result = lerobot_camera(action="list", camera_type="opencv")
+# Parse result["content"][0]["text"] for the camera list
 
-# Capture a single frame to disk
-lerobot_camera(action="test", index=0, output="test_frame.png")
+# Test a specific camera
+result = lerobot_camera(action="test", camera_type="opencv", camera_id=0)
 
 # Stream for a few seconds
-lerobot_camera(action="stream", index=0, duration=5.0, fps=30)
+result = lerobot_camera(action="stream", camera_type="opencv", camera_id=0)
 ```
 
-The action surface is `list`, `test`, `stream`, plus per-backend specifics. Useful
-during the camera-mapping step of bring-up before `Robot(mode="real")`.
+| Param | What |
+|-------|------|
+| `action` | `"list"`, `"test"`, `"stream"`, or backend-specific. |
+| `camera_type` | Backend: `"opencv"` (default), `"realsense"`, etc. |
+| `camera_id` | Camera index or path. |
+
+Useful during the camera-mapping step of bring-up before `Robot(mode="real")`.
 
 ## `lerobot_teleoperate`
 
-Run a leader-follower teleoperation loop locally.
+Run a leader-follower teleoperation session.
 
 ```python
 from strands_robots.tools import lerobot_teleoperate
 
-lerobot_teleoperate(
-    leader_port="/dev/tty.usbserial-LEADER",
-    follower_port="/dev/tty.usbserial-FOLLOWER",
-    fps=30,
-    duration=60.0,    # seconds; omit for unbounded
+# Start a named session in the background
+result = lerobot_teleoperate(
+    action="start",
+    session_name="my_teleop",
+    background=True,
 )
+
+# Stop the session
+result = lerobot_teleoperate(action="stop", session_name="my_teleop")
 ```
 
+| Param | What |
+|-------|------|
+| `action` | `"start"`, `"stop"`, `"status"`, etc. |
+| `session_name` | Identifier for the teleop session. |
+| `background` | Run the loop in a background thread (default `True`). |
+
 For cross-machine teleop (leader and follower on different hosts), use
-`InputPublisher` / `InputReceiver` from `strands_robots.mesh` instead — see
-[Tutorial 5 — Multi-robot](../tutorial/05-multi-robot.md), step 7.
+`InputPublisher` / `InputReceiver` from `strands_robots.mesh` instead - see
+[Tutorial 5 - Multi-robot](../tutorial/05-multi-robot.md), step 7.
 
 ## `pose_tool`
 
@@ -94,15 +119,22 @@ End-effector pose helpers: forward / inverse kinematics, gripper open/close.
 ```python
 from strands_robots.tools import pose_tool
 
-# Forward kinematics — joints → end-effector pose
-pose = pose_tool(action="fk", joint_positions=[0.0]*6, robot_type="so100")["pose"]
+# Forward kinematics
+result = pose_tool(action="fk", robot_id="so101_follower", port="/dev/ttyACM0")
+# Parse result["content"][0]["text"] for the pose
 
-# Inverse kinematics — pose → joint positions
-joints = pose_tool(action="ik", pose=[0.3, 0.0, 0.2, 0, 0, 0, 1])["joint_positions"]
+# Inverse kinematics
+result = pose_tool(action="ik", robot_id="so101_follower", port="/dev/ttyACM0")
 
 # Gripper state
-pose_tool(action="set_gripper", state="open")
+result = pose_tool(action="set_gripper", robot_id="so101_follower", port="/dev/ttyACM0", state="open")
 ```
+
+| Param | What |
+|-------|------|
+| `action` | `"fk"`, `"ik"`, `"set_gripper"`, etc. |
+| `robot_id` | Robot identifier (default `"so101_follower"`). |
+| `port` | Serial port (default `"/dev/ttyACM0"`). |
 
 Useful for scripted interventions ("move to this exact pose") without a full policy.
 
@@ -114,12 +146,23 @@ Serial port enumeration and basic talk-to-device:
 from strands_robots.tools import serial_tool
 
 # Discover serial ports
-ports = serial_tool(action="list")["ports"]
+result = serial_tool(action="list")
+# Parse result["content"][0]["text"] for the port list
 
 # Send a command
-result = serial_tool(action="send", port="/dev/tty.usbserial-A50285BI",
-                     baud=1000000, command="ping\n")
+result = serial_tool(
+    action="send",
+    port="/dev/ttyACM0",
+    baudrate=1000000,
+    command="ping\n",
+)
 ```
+
+| Param | What |
+|-------|------|
+| `action` | `"list"`, `"send"`, etc. |
+| `port` | Serial device path. |
+| `baudrate` | Baud rate (default `9600`). |
 
 Mostly used during initial connection debugging.
 
@@ -156,7 +199,7 @@ agent("Find a connected so100 arm, calibrate it, list cameras, and teleop "
 
 ## See also
 
-- [Robot control](robot-control.md) — the `HardwareRobot` class these tools support.
-- [Tutorial 8 — Real hardware](../tutorial/08-real-hardware.md) — when each tool runs.
-- [GR00T](../policies/groot.md) — the `gr00t_inference` tool's container lifecycle.
-- [Multi-robot](../tutorial/05-multi-robot.md) — the `robot_mesh` tool.
+- [Robot control](robot-control.md) - the `HardwareRobot` class these tools support.
+- [Tutorial 8 - Real hardware](../tutorial/08-real-hardware.md) - when each tool runs.
+- [GR00T](../policies/groot.md) - the `gr00t_inference` tool's container lifecycle.
+- [Multi-robot](../tutorial/05-multi-robot.md) - the `robot_mesh` tool.

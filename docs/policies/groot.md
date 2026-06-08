@@ -1,21 +1,31 @@
 ---
-description: NVIDIA GR00T (N1.5 / N1.6 / N1.7) — ZMQ + HTTP transports, 25 embodiment data_configs, full container lifecycle.
+description: NVIDIA GR00T (N1.5 / N1.6 / N1.7) — ZMQ service or local inference, 27 embodiment data_configs, full container lifecycle.
 ---
 
 # GR00T
 
-`Gr00tPolicy` talks to an NVIDIA GR00T inference container. The container does the
-model load and forward pass; the policy is a thin client.
+`Gr00tPolicy` talks to an NVIDIA GR00T inference container over ZMQ, or loads the
+model in-process when you pass `model_path`. The container does the forward pass;
+the policy is a thin client.
 
 ## TL;DR
 
 ```python
 from strands_robots.policies import create_policy
 
+# Service mode (container running separately)
 policy = create_policy(
     "groot",
-    server_address="localhost:5555",   # GR00T inference server
-    data_config="so100_dualcam",       # which embodiment config
+    port=5555,                    # GR00T inference server port
+    data_config="so100_dualcam",  # embodiment config
+)
+
+# Local mode (load model in-process)  # requires GPU
+policy = create_policy(
+    "groot",
+    model_path="/path/to/checkpoint",
+    data_config="so100_dualcam",
+    device="cuda",
 )
 ```
 
@@ -30,51 +40,83 @@ container itself running — see [container lifecycle](#container-lifecycle).
 
 ## Supported model versions
 
-| Version | Transport | Wire format |
-|---------|-----------|-------------|
+| Version | Transport | Notes |
+|---------|-----------|-------|
 | GR00T N1.5 | ZMQ | observation: `(K, ...)` shape |
 | GR00T N1.6 | ZMQ | observation: `(K, ...)` shape |
-| GR00T N1.7 | HTTP | observation: `(B, T, ...)` shape, float32 state |
+| GR00T N1.7 | ZMQ | observation: `(B, T, ...)` float32; auto-detected |
 
-The policy auto-detects the wire format from the server. `data_config` selects the
-embodiment.
+All service communication is ZMQ. The N1.7 `(B, T, ...)` float32 wire format is
+handled automatically — the policy auto-detects the server version from the
+installed `gr00t` package, so you don't pass anything different at the call site.
 
 ## Constructor parameters
 
 ```python
 Gr00tPolicy(
-    server_address: str = "localhost:5555",
-    data_config: str = "...",         # required
-    transport: str = "auto",          # "zmq" | "http" | "auto"
-    timeout: float = 30.0,
-    chunk_size: int = 16,             # action chunk length
-    request_id_prefix: str | None = None,
+    data_config: str = "so100_dualcam",          # embodiment config (required)
+    host: str = "localhost",                      # service host
+    port: int = 5555,                            # service port
+    model_path: str | None = None,               # local mode: path to checkpoint
+    embodiment_tag: str = "NEW_EMBODIMENT",      # override embodiment tag
+    device: str = "cuda",                        # torch device (local mode)
+    groot_version: str | None = None,            # override auto-detection
+    strict: bool = False,                        # strict config checking
+    api_token: str | None = None,                # falls back to GROOT_API_TOKEN env
+    observation_mapping: dict | None = None,     # remap incoming obs keys
+    action_mapping: dict | None = None,          # remap outgoing action keys
+    language_key: str | None = None,             # custom instruction key
 )
 ```
 
-`server_address` is the host:port of the running GR00T inference container.
-`data_config` must match the embodiment GR00T was trained or fine-tuned on.
+**Service mode** (default): connect to a running GR00T container via ZMQ using
+`host` + `port`. `model_path` must be `None`.
 
-## The 25 embodiment data_configs
+**Local mode**: pass `model_path` to load the model in-process. Requires a GPU
+and the full GR00T Python package installed.
 
-GR00T ships with embodiment configurations covering common robots. The full list lives
+`api_token` is used for authenticated model pulls; if `None` the env var
+`GROOT_API_TOKEN` is read automatically.
+
+## The 27 embodiment data_configs
+
+GR00T ships with 27 embodiment configurations for common robots. The full list lives
 in `strands_robots/policies/groot/data_configs.json`. Highlights:
 
-| Config | Robot | Cameras |
-|--------|-------|---------|
-| `so100` | SO-ARM100 | 1 |
+| Config | Robot | Notes |
+|--------|-------|-------|
+| `so100` | SO-ARM100 | 1 camera |
 | `so100_dualcam` | SO-ARM100 | front + wrist |
 | `so100_4cam` | SO-ARM100 | front + wrist + top + side |
-| `bimanual_panda_gripper` | 2× Panda | 3 cams |
+| `so101` / `so101_dualcam` / `so101_tricam` | SO-ARM101 | 1/2/3 cameras |
+| `bimanual_panda_gripper` | 2× Panda | 3 cameras |
 | `fourier_gr1_arms_only` | Fourier GR-1 (arms only) | ego view |
 | `unitree_g1` | Unitree G1 | rs_view |
+| `galaxea_r1_pro` | Galaxea R1 Pro | — |
 
-For the full list:
+The full set (27 total):
+
+```
+so100               so100_dualcam          so100_4cam
+so101               so101_dualcam          so101_tricam
+bimanual_panda_gripper                     single_panda_gripper
+libero_panda        oxe_droid              oxe_widowx
+oxe_google          fourier_gr1_arms_only  fourier_gr1_arms_waist
+fourier_gr1_full_upper_body
+unitree_g1          unitree_g1_full_body   unitree_g1_locomanip
+unitree_g1_real     unitree_g1_sonic
+agibot_*            galaxea_r1_pro
+```
+
+To inspect them programmatically:
 
 ```python
 import json
-with open("strands_robots/policies/groot/data_configs.json") as f:
-    configs = json.load(f)
+from importlib.resources import files
+
+with open(files("strands_robots.policies.groot") / "data_configs.json") as f:
+    data = json.load(f)
+configs = data["configs"]
 print(list(configs.keys()))
 ```
 
@@ -122,39 +164,11 @@ agent("Start a GR00T N1.7 server with the so100_dualcam config "
 The agent will run `build_image` → `download_checkpoint` → `start_container` →
 `run_policy(policy_provider='groot', ...)` in order.
 
-## RTC — Real-Time Chunk
-
-For low-latency control, the policy supports RTC: the container streams overlapping
-action chunks as the policy thinks. The client smooths between chunks so the robot
-keeps moving while the next chunk arrives.
-
-```python
-policy = create_policy(
-    "groot",
-    server_address="localhost:5555",
-    data_config="so100_dualcam",
-    chunk_size=16,
-    rtc=True,         # enable RTC
-)
-```
-
-RTC matters most on real hardware where blocking on a 200ms inference round-trip
-between chunks would cause visible stutter.
-
-## N1.7 wire-format specifics
-
-GR00T N1.7 changed the observation shape from `(K, ...)` to `(B, T, ...)` with batch +
-time dimensions. State data must be `float32`. The policy handles this automatically —
-you don't pass anything different at the call site.
-
-If you're integrating with a custom server, the client logic is in
-`strands_robots/policies/groot/client.py` — open a PR if you find a wire-format
-divergence.
-
 ## See also
 
 - [Tutorial 3 — Policies](../tutorial/03-policies.md) — full walkthrough.
 - [Tutorial 8 — Real hardware](../tutorial/08-real-hardware.md) — drive a real arm
   with GR00T.
 - [LeRobot Local](lerobot-local.md) — HuggingFace alternative.
+- [Cosmos 3](cosmos3.md) — NVIDIA Cosmos 3 omnimodal VLA alternative.
 - [Isaac-GR00T project](https://github.com/NVIDIA/Isaac-GR00T) — upstream model + training.

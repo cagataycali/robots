@@ -54,7 +54,7 @@ graph LR
 | Step | Page | What you walk away with |
 |------|------|-------------------------|
 | 1 | [Robot factory](getting-started/robot-factory.md) | The full `Robot(...)` signature and every kwarg it forwards |
-| 2 | [Policy providers](policies/overview.md) → [GR00T](policies/groot.md) or [LeRobot](policies/lerobot-local.md) | A working VLA policy you can drop into any `Simulation` |
+| 2 | [Policy providers](policies/overview.md) → [GR00T](policies/groot.md), [LeRobot](policies/lerobot-local.md), or [Cosmos 3](policies/cosmos3.md) | A working VLA policy you can drop into any `Simulation` |
 | 3 | [Tutorial 6 — Recording](tutorial/06-recording.md) → [Recording reference](recording.md) | A LeRobot v3 dataset on disk |
 | 4 | [Tutorial 8 — Real hardware](tutorial/08-real-hardware.md) → [Hardware tools](hardware/tools.md) | A real arm calibrated, cameras streaming, teleop wired up |
 | 5 | [Tutorial 5 — Multi-robot](tutorial/05-multi-robot.md) | Two `Robot()` instances coordinating via the mesh |

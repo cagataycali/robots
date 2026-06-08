@@ -13,7 +13,7 @@ By the end, you will have:
 
 - Spawned a simulated arm and rendered a frame.
 - Loaded a real-world MJCF scene with two robots and a cube.
-- Plugged in three different VLA policies (Mock, GR00T, LeRobot) without changing user code.
+- Plugged in four VLA policies (Mock, GR00T, LeRobot, Cosmos3) without changing user code.
 - Wired a Strands `Agent` to control the robot via natural language.
 - Coordinated two robots over a Zenoh mesh.
 - Recorded a LeRobot v3 dataset.
@@ -25,7 +25,7 @@ By the end, you will have:
 |---|---------|----------------|------|
 | 1 | [Your first robot](01-your-first-robot.md) | `Robot("so100")`, `step`, `render`, `list_robots()`. | 10 min |
 | 2 | [Simulation](02-simulation.md) | `Simulation` actions: scenes, cameras, objects, randomization. | 15 min |
-| 3 | [Policies](03-policies.md) | The `Policy` ABC, `MockPolicy` / `Gr00tPolicy` / `LerobotLocalPolicy`, `create_policy()`. | 15 min |
+| 3 | [Policies](03-policies.md) | The `Policy` ABC, `MockPolicy` / `Gr00tPolicy` / `LerobotLocalPolicy` / `Cosmos3Policy`, `create_policy()`. | 15 min |
 | 4 | [AI agents](04-agents.md) | `Agent(tools=[robot])`, natural-language control, `agent("pick up the cube")`. | 15 min |
 | 5 | [Multi-robot](05-multi-robot.md) | Two `Robot()` instances on the Zenoh mesh, peer discovery, RPC. | 15 min |
 | 6 | [Recording data](06-recording.md) | `start_recording` / `stop_recording`, LeRobot v3 dataset structure. | 10 min |

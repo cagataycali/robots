@@ -16,9 +16,9 @@ python scripts/record.py --repo-id user/my_dataset --episodes 50
 
 # Push to the Hub
 huggingface-cli login
-python -c "from lerobot.datasets import LeRobotDataset; \
+python -c "from lerobot.datasets.lerobot_dataset import LeRobotDataset; \
            LeRobotDataset(repo_id='user/my_dataset', \
-                          root='/tmp/my_dataset').push_to_hub()"
+                          root='my_dataset').push_to_hub()"
 
 # Train upstream (LeRobot, GR00T, etc.)
 python -m lerobot.scripts.train policy=act dataset.repo_id=user/my_dataset
@@ -30,9 +30,9 @@ python -m lerobot.scripts.train policy=act dataset.repo_id=user/my_dataset
 |-------|----------------|
 | Robot control | `strands_robots` (this library) |
 | Simulation | `strands_robots.simulation` |
-| Policy inference | `strands_robots.policies` (Mock / GR00T / LeRobot Local) |
+| Policy inference | `strands_robots.policies` (Mock / GR00T / LeRobot Local / Cosmos 3) |
 | Dataset recording | `strands_robots.dataset_recorder` |
-| **Training** | **upstream** — `lerobot`, `Isaac-GR00T`, `cosmos`, your code |
+| **Training** | **upstream** — `lerobot`, `Isaac-GR00T`, [NVIDIA Cosmos Framework](../policies/cosmos3.md), your code |
 
 Why split? Training is heavy — multi-day runs on multi-GPU clusters, optimiser quirks,
 LR schedules per architecture. Each model family has its own train loop and we don't
@@ -49,7 +49,7 @@ pip install lerobot
 # Local dataset
 python -m lerobot.scripts.train \
     policy=act \
-    dataset.root=/tmp/my_dataset \
+    dataset.root=my_dataset \
     dataset.repo_id=user/my_dataset
 
 # Or pull from Hub
@@ -70,7 +70,12 @@ policy = create_policy(
 )
 
 sim = Robot("so100")
-sim.run_policy(instruction="pick up the cube", policy=policy, duration=15.0)
+sim.run_policy(
+    robot_name="so100",
+    instruction="pick up the cube",
+    policy_object=policy,
+    duration=15.0,
+)
 ```
 
 Same code, your weights.
@@ -88,7 +93,7 @@ cd Isaac-GR00T
 # Fine-tune with your dataset
 python scripts/finetune.py \
     --base-model nvidia/GR00T-N1.7-3B \
-    --dataset-path /tmp/my_dataset \
+    --dataset-path my_dataset \
     --data-config so100_dualcam
 ```
 
@@ -103,7 +108,7 @@ parquet directly:
 ```python
 import pyarrow.parquet as pq
 
-table = pq.read_table("/tmp/my_dataset/data/chunk-000/episode_000000.parquet")
+table = pq.read_table("my_dataset/data/chunk-000/episode_000000.parquet")
 df = table.to_pandas()
 # df has columns: observation.state, action, episode_index, frame_index, timestamp, ...
 ```
@@ -112,10 +117,26 @@ Or with `datasets`:
 
 ```python
 from datasets import load_dataset
-ds = load_dataset("/tmp/my_dataset")
+ds = load_dataset("my_dataset")
 ```
 
 Plug into PyTorch / JAX / your framework of choice.
+
+For inference after Cosmos training, see [Cosmos3Policy](../policies/cosmos3.md) —
+it connects to an NVIDIA Cosmos 3 action-policy server over WebSocket
+(`pip install "strands-robots[cosmos3-service]"`). # requires GPU
+
+```python
+from strands_robots.policies import create_policy
+
+policy = create_policy("cosmos3", embodiment="droid", port=8000)  # requires GPU
+sim.run_policy(
+    robot_name="panda",
+    policy_object=policy,
+    instruction="grasp the mug",
+    duration=20.0,
+)
+```
 
 ## Sim-to-real considerations
 
@@ -146,5 +167,6 @@ status.
 - [LerobotLocalPolicy](../policies/lerobot-local.md) — load LeRobot checkpoints back
   into a sim.
 - [Gr00tPolicy](../policies/groot.md) — load GR00T fine-tunes via the inference server.
+- [Cosmos3Policy](../policies/cosmos3.md) — NVIDIA Cosmos 3 omnimodal VLA inference.
 - [LeRobot training docs](https://huggingface.co/docs/lerobot) — upstream pipeline.
 - [Isaac-GR00T training](https://github.com/NVIDIA/Isaac-GR00T) — upstream fine-tuning.

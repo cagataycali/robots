@@ -9,14 +9,17 @@ Bug reports go to the issue tracker; code contributions go through pull requests
 
 ## Setup
 
+Requires **Python >=3.12**.
+
 ```bash
 git clone https://github.com/strands-labs/robots
 cd robots
-pip install -e ".[all,dev]"
+pip install -e '.[all,dev]'
 ```
 
 The `[dev]` extra installs `hatch`, `pytest`, `ruff`, `mypy`. Hatch is the build /
-env runner — we use it for lint, test, and release.
+env runner — we use it for lint, test, and release. Hatch is configured to use `uv`
+as its pip installer backend for faster dependency resolution.
 
 ## Common commands
 
@@ -27,8 +30,8 @@ hatch run test
 # Just the unit tests (fast)
 hatch run test --no-cov tests/
 
-# Lint
-hatch run lint                  # ruff + mypy
+# Lint (ruff check + ruff format --check + mypy)
+hatch run lint
 hatch run format                # ruff fix + format
 
 # Build the docs locally

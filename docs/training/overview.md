@@ -12,7 +12,7 @@ model families, and iterate fast.
 
 - Robot control (`Robot()` factory)
 - Simulation backend (MuJoCo)
-- Policy inference (Mock, GR00T, LeRobot Local)
+- Policy inference (Mock, GR00T, LeRobot Local, Cosmos 3)
 - Dataset recording (LeRobot v3 format)
 - Multi-robot mesh + safety
 
@@ -26,7 +26,7 @@ model families, and iterate fast.
 |------------------|-----|
 | ACT, Pi0, SmolVLA, Diffusion Policy | `lerobot` upstream — `python -m lerobot.scripts.train ...` |
 | GR00T fine-tune | `Isaac-GR00T` repo from NVIDIA |
-| Cosmos | `cosmos` upstream |
+| Cosmos | NVIDIA Cosmos Framework — see [Cosmos3Policy](../policies/cosmos3.md) |
 | Custom architecture | Read the LeRobot v3 dataset directly with `pyarrow` / `datasets` and plug into your framework |
 
 The recorded dataset is in LeRobot v3 format, which all of these accept (with or
@@ -41,9 +41,11 @@ sim = Robot("so100")
 sim.start_recording(repo_id="user/my_dataset", task="pick up the cube", fps=30)
 for episode in range(50):
     sim.reset()
-    sim.randomize(colors=True)
-    sim.run_policy(instruction="pick up the cube",
-                    policy_provider="mock", duration=10.0)
+    sim.randomize(randomize_colors=True)
+    sim.run_policy(robot_name="so100",
+                   instruction="pick up the cube",
+                   policy_provider="mock",
+                   duration=10.0)
 sim.stop_recording()
 
 # 2. Train upstream
@@ -54,16 +56,21 @@ sim.stop_recording()
 # 3. Infer with the trained checkpoint
 from strands_robots.policies import create_policy
 policy = create_policy("lerobot_local",
-                        pretrained_name_or_path="path/to/checkpoint")
-sim.run_policy(instruction="pick up the cube", policy=policy, duration=15.0)
+                       pretrained_name_or_path="path/to/checkpoint")
+sim.run_policy(robot_name="so100",
+               instruction="pick up the cube",
+               policy_object=policy,
+               duration=15.0)
 
 # 4. Deploy on real hardware (chapter 8)
+# HardwareRobot does not have run_policy — use start_task instead.
+# The policy must be running as a service (e.g. groot or lerobot_local server).
 from strands_robots import Robot
 real_robot = Robot("so100", mode="real", cameras={...})
-real_robot.run_policy(instruction="pick up the cube", policy=policy, duration=15.0)
+real_robot.start_task(instruction="pick up the cube", policy_port=5555)
+# poll: real_robot.get_task_status()
+# stop: real_robot.stop_task()
 ```
-
-Same code paths in steps 3 and 4. That's the point.
 
 ## Why split
 
@@ -83,3 +90,4 @@ track [the issue tracker](https://github.com/strands-labs/robots/issues).
 - [Recording](../recording.md) — produce the dataset.
 - [LerobotLocalPolicy](../policies/lerobot-local.md) — inference with a trained
   checkpoint.
+- [Cosmos3Policy](../policies/cosmos3.md) — NVIDIA Cosmos 3 omnimodal VLA.

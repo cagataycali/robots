@@ -8,10 +8,13 @@ hide:
 !!! tip "Recently shipped"
 
     - **Robot factory** — `Robot("name", mode=...)` returns a Simulation or HardwareRobot from the same call (PR #86).
-    - **MuJoCo simulation backend** — 35+ AgentTool actions, full sim/real parity (PR #85).
+    - **MuJoCo simulation backend** — 60+ AgentTool actions, full sim/real parity (PR #85).
     - **Mesh networking** — every `Robot()` auto-joins a Zenoh mesh; `mesh.tell` / `mesh.broadcast` / `emergency_stop` for fleet coordination (PR #101).
     - **LIBERO benchmark adapter** — BDDL parser + suite definitions in `strands_robots.benchmarks.libero` (PR #110, #130, #147).
     - **GR00T N1.7 support** — full container lifecycle helpers + (B,T,...) wire format (PR #149-#152, #155).
+    - **Cosmos 3 omnimodal VLA policy provider** — NVIDIA Cosmos 3 via WebSocket, four policy providers total (PR #317).
+    - **LeRobot 0.5.2 recording pipeline** — synchronized multi-robot recording, `run_multi_policy` (PR #366).
+    - **README rewrite** — cleaner onboarding (PR #371).
 
 **Robot control for Strands Agents — three lines from natural language to motion.**
 
@@ -19,8 +22,8 @@ hide:
 from strands import Agent
 from strands_robots import Robot
 
-robot = Robot("so100")            # auto-detects: USB connected → real, else simulation
-agent = Agent(tools=[robot])      # 35+ actions exposed as a single AgentTool
+robot = Robot("so100")            # default mode='sim' (safe); pass mode='real' or mode='auto' for hardware
+agent = Agent(tools=[robot])      # 60+ actions exposed as a single AgentTool
 agent("Pick up the red cube")     # the agent picks the policy, the policy moves the joints
 ```
 
@@ -47,7 +50,7 @@ required), real hardware when `mode="real"`. The agent doesn't care which.
 
     ---
 
-    35+ AgentTool actions: load worlds, add cameras, randomize physics, run
+    60+ AgentTool actions: load worlds, add cameras, randomize physics, run
     policies, record datasets — all as a single `Simulation` object the agent
     can drive directly.
 
@@ -57,11 +60,12 @@ required), real hardware when `mode="real"`. The agent doesn't care which.
 
     ---
 
-    `MockPolicy` for tests, `Gr00tPolicy` for NVIDIA GR00T (N1.5 / N1.6 / N1.7),
-    `LerobotLocalPolicy` for direct HuggingFace LeRobot inference. One ABC,
-    drop-in implementations.
+    Four providers: `MockPolicy` for tests, `Gr00tPolicy` for NVIDIA GR00T
+    (N1.5 / N1.6 / N1.7), `LerobotLocalPolicy` for HuggingFace LeRobot inference,
+    and `Cosmos3Policy` for NVIDIA Cosmos 3 omnimodal VLA. One ABC, drop-in
+    implementations.
 
-    [:octicons-arrow-right-24: Policy providers](policies/overview.md)
+    [:octicons-arrow-right-24: Policy providers](policies/overview.md) · [:octicons-arrow-right-24: Cosmos 3](policies/cosmos3.md)
 
 -   :material-record-circle:{ .lg .middle } **LeRobot v3 recording**
 

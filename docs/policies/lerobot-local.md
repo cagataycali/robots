@@ -1,11 +1,12 @@
 ---
-description: HuggingFace LeRobot direct inference — ACT, Pi0, SmolVLA, Diffusion Policy. RTC + processor bridge.
+description: HuggingFace LeRobot direct inference — ACT, Pi0, SmolVLA, Diffusion Policy, MolmoAct2. RTC + processor bridge.
 ---
 
 # LeRobot Local
 
 `LerobotLocalPolicy` runs a HuggingFace LeRobot policy in-process — no separate server.
-Supports the full LeRobot model zoo (ACT, Pi0, SmolVLA, Diffusion Policy, etc.).
+Supports the full LeRobot model zoo (ACT, Pi0, SmolVLA, Diffusion Policy, etc.) plus
+MolmoAct2.
 
 ## TL;DR
 
@@ -19,7 +20,7 @@ from strands_robots.policies import create_policy
 policy = create_policy(
     "lerobot_local",
     pretrained_name_or_path="lerobot/pi0_so100",   # any HF model_id or local path
-    device="cuda",                                 # "cuda" | "cpu" | "mps"
+    device="cuda",                                  # "cuda" | "cpu" | "mps"
 )
 ```
 
@@ -39,7 +40,7 @@ policy = create_policy("lerobot_local",
 
 ## Supported policies
 
-Anything LeRobot's `make_policy(...)` understands. As of LeRobot 0.5:
+Anything LeRobot's `make_policy(...)` understands, plus MolmoAct2. As of LeRobot 0.5:
 
 - **ACT** — Action Chunking Transformer
 - **Pi0** — VLA from Physical Intelligence
@@ -47,6 +48,8 @@ Anything LeRobot's `make_policy(...)` understands. As of LeRobot 0.5:
 - **SmolVLA** — small VLA from HuggingFace
 - **Diffusion Policy** — flow-matching alternative
 - **VQ-BeT** — discrete action tokenisation
+- **MolmoAct2** — transformers-native VLA for SO100/SO101; configured via
+  `norm_tag`, `image_keys`, and `inference_action_mode`
 
 The exact list depends on the LeRobot version installed. The policy auto-detects the
 class from the checkpoint's config.
@@ -55,12 +58,22 @@ class from the checkpoint's config.
 
 ```python
 LerobotLocalPolicy(
-    pretrained_name_or_path: str,    # HF model_id OR local checkpoint dir
-    device: str = "cuda",            # torch device
-    use_amp: bool = False,           # auto mixed precision
-    rtc: bool = False,               # Real-Time Chunk smoothing
-    processor_overrides: dict | None = None,
-    **kwargs,                        # passed to LeRobot's make_policy
+    pretrained_name_or_path: str = "",         # HF model_id or local checkpoint dir
+    policy_type: str | None = None,            # override auto-detected policy class
+    device: str | None = None,                 # torch device ("cuda", "cpu", "mps")
+    actions_per_step: int = 1,                 # actions to consume per control tick
+    use_processor: bool = True,                # enable observation processor bridge
+    processor_overrides: dict | None = None,   # override processor defaults
+    tokenizer_max_length: int = 48,            # instruction tokenization length
+    tokenizer_padding_side: str = "right",     # "left" | "right"
+    rtc_enabled: bool | None = None,           # enable Real-Time Chunk smoothing
+    rtc_execution_horizon: int | None = None,  # RTC execution horizon
+    rtc_max_guidance_weight: float | None = None,  # RTC max guidance weight
+    inference_kwargs: dict | None = None,      # extra kwargs for model.forward()
+    embodiment: str | None = None,             # embodiment tag override
+    norm_tag: str | None = None,               # normalisation tag (MolmoAct2)
+    image_keys: list[str] | None = None,       # camera key override (MolmoAct2)
+    inference_action_mode: str = "continuous", # "continuous" | "discrete"
 )
 ```
 
@@ -100,20 +113,39 @@ policy = create_policy(
 
 Most callers don't need this — the defaults match the model's training config.
 
+## MolmoAct2
+
+MolmoAct2 is a transformers-native VLA designed for SO100/SO101 setups. Configure it
+using `norm_tag`, `image_keys`, and `inference_action_mode`:
+
+```python
+policy = create_policy(
+    "lerobot_local",
+    pretrained_name_or_path="your-org/molmoact2-so101",
+    device="cuda",
+    norm_tag="so101",
+    image_keys=["wrist_camera", "front_camera"],
+    inference_action_mode="continuous",
+)
+```
+
+See `examples/molmoact2_so101_pickplace.py` for a full rollout example.
+
 ## RTC (Real-Time Chunk)
 
 ```python
 policy = create_policy(
     "lerobot_local",
     pretrained_name_or_path="lerobot/pi0_so100",
-    rtc=True,
-    chunk_size=16,
+    rtc_enabled=True,
+    rtc_execution_horizon=16,
+    rtc_max_guidance_weight=1.0,
 )
 ```
 
-Same idea as GR00T's RTC: overlapping action chunks smoothed between inference calls,
-so the robot doesn't stall between chunks. Especially useful for slower diffusion-based
-policies.
+RTC overlaps action-chunk generation so the robot keeps moving while the next chunk
+is being computed — especially useful for diffusion-based policies with ~200ms
+inference latency.
 
 ## Resolution: 0.4 vs 0.5
 
