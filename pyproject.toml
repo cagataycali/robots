@@ -131,6 +131,29 @@ dependencies = [
     "pyzmq>=27.0.0,<28.0.0",
 ]
 
+# ---------------------------------------------------------------------------
+# torch 2.11 override for NVIDIA Thor / Jetson (linux + aarch64).
+#
+# The PyPI torch 2.10.0 aarch64 build has a bug in its sm_110 (Thor, compute
+# capability 11.0) cuBLAS call path: every cublasSgemm returns
+# CUBLAS_STATUS_INVALID_VALUE, so real policy inference crashes even though
+# torch.cuda.is_available() is True. This is fixed in torch 2.11 (verified on
+# NVIDIA Thor: native cuBLAS matmul + lerobot ACTPolicy inference both work).
+#
+# lerobot 0.5.1 declares torch<2.11 / torchvision<0.26, but that cap is
+# conservative -- lerobot 0.5.1 imports and runs ACTPolicy fine on torch 2.11
+# (empirically verified). We override the cap ONLY on linux+aarch64 so x86_64
+# and macOS keep lerobot's resolved versions untouched.
+#
+# Paired with UV_TORCH_BACKEND=auto above, a Thor `hatch env` resolves
+# torch==2.11.x+cu130 / torchvision==0.26.x+cu130 and inference runs on GPU
+# with no shim or LD_PRELOAD workaround.
+[tool.uv]
+override-dependencies = [
+    "torch>=2.11,<2.12; platform_machine == 'aarch64' and sys_platform == 'linux'",
+    "torchvision>=0.26,<0.27; platform_machine == 'aarch64' and sys_platform == 'linux'",
+]
+
 # Auto-select the right PyTorch wheel for the host accelerator. On NVIDIA
 # Thor / Jetson (linux + aarch64) the plain-PyPI torch 2.10.0 wheel is
 # CPU-ONLY, so torch.cuda.is_available() is False and all inference silently
