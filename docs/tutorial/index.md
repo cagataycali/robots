@@ -4,63 +4,28 @@ description: Nine chapters from "hello world" to "fleet on the mesh". Each chapt
 
 # Tutorial
 
-A guided walk through everything `strands-robots` can do. Each chapter builds on the
-previous one. Skip ahead if a step is obvious — the chapters are self-contained.
-
-## What you'll build
-
-By the end, you will have:
-
-- Spawned a simulated arm and rendered a frame.
-- Loaded a real-world MJCF scene with two robots and a cube.
-- Plugged in four VLA policies (Mock, GR00T, LeRobot, Cosmos3) without changing user code.
-- Wired a Strands `Agent` to control the robot via natural language.
-- Coordinated two robots over a Zenoh mesh.
-- Recorded a LeRobot v3 dataset.
-- Opened a sim → real path with a calibrated SO-100 arm and live camera streams.
-
-## Chapters
-
-| # | Chapter | What it covers | Time |
-|---|---------|----------------|------|
-| 1 | [Your first robot](01-your-first-robot.md) | `Robot("so100")`, `step`, `render`, `list_robots()`. | 10 min |
-| 2 | [Simulation](02-simulation.md) | `Simulation` actions: scenes, cameras, objects, randomization. | 15 min |
-| 3 | [Policies](03-policies.md) | The `Policy` ABC, `MockPolicy` / `Gr00tPolicy` / `LerobotLocalPolicy` / `Cosmos3Policy`, `create_policy()`. | 15 min |
-| 4 | [AI agents](04-agents.md) | `Agent(tools=[robot])`, natural-language control, `agent("pick up the cube")`. | 15 min |
-| 5 | [Multi-robot](05-multi-robot.md) | Two `Robot()` instances on the Zenoh mesh, peer discovery, RPC. | 15 min |
-| 6 | [Recording data](06-recording.md) | `start_recording` / `stop_recording`, LeRobot v3 dataset structure. | 10 min |
-| 7 | [Training](07-training.md) | What ships, what doesn't, links to LeRobot/GR00T training pipelines. | 10 min |
-| 8 | [Real hardware](08-real-hardware.md) | `mode="real"`, calibration, camera mapping, teleop, safety defaults. | 20 min |
-| 9 | [Advanced](09-advanced.md) | Custom backends, custom data_configs, factory internals, lazy imports. | 15 min |
-
-## Conventions
-
-Every code block in this tutorial works against the current `main` branch. Where a step
-needs hardware or a GPU we'll mark it explicitly:
-
-- `# requires hardware` — needs a real servo controller plugged in
-- `# requires GPU` — needs CUDA + a model checkpoint
-- everything else runs on a laptop CPU
-
-## Setup before chapter 1
-
 ```bash
-# Minimum for the tutorial
-pip install "strands-robots[sim-mujoco]"
-
-# Optional but recommended
-pip install "strands-robots[all]"
+pip install "strands-robots[sim-mujoco]"   # chapters 1–6
+pip install "strands-robots[all]"          # all chapters
+pip install strands-agents                  # chapter 4
 ```
 
-You'll also want a Strands Agents install for chapter 4:
+| # | Chapter | Covers |
+|---|---------|--------|
+| 1 | [Your first robot](01-your-first-robot.md) | `Robot("so100")`, `step`, `render` |
+| 2 | [Simulation](02-simulation.md) | cameras, objects, randomize, physics |
+| 3 | [Policies](03-policies.md) | Mock / GR00T / LeRobot / Cosmos3, `create_policy` |
+| 4 | [AI agents](04-agents.md) | `Agent(tools=[robot])`, natural-language control |
+| 5 | [Multi-robot](05-multi-robot.md) | Zenoh mesh, peer RPC, emergency stop |
+| 6 | [Recording](06-recording.md) | LeRobot v3 dataset, `start_recording` / `stop_recording` |
+| 7 | [Training](07-training.md) | LeRobot / GR00T / Cosmos upstream pipelines |
+| 8 | [Real hardware](08-real-hardware.md) | `mode="real"`, calibration, cameras, teleop |
+| 9 | [Advanced](09-advanced.md) | factory internals, custom backends, lazy imports |
 
-```bash
-pip install strands-agents
-```
+Blocks marked `# requires hardware` need a servo controller; `# requires GPU` need CUDA + a checkpoint. Everything else runs on laptop CPU.
 
 ## See also
 
-- [Learning path](../learning-path.md) — pick the right track if you don't want to do the
-  tutorial in order.
-- [Quickstart](../getting-started/quickstart.md) — same idea, condensed to one page.
-- [Architecture](../architecture.md) — the module map you'll see referenced throughout.
+- [Learning path](../learning-path.md) — pick the right track.
+- [Quickstart](../getting-started/quickstart.md) — condensed to one page.
+- [Architecture](../architecture.md) — module map referenced throughout.

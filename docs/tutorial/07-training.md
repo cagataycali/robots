@@ -4,168 +4,73 @@ description: What ships in the box, what you bring yourself. Training pipelines 
 
 # 7 — Training
 
-`strands-robots` records data in LeRobot v3 format, but it does **not** ship a trainer.
-Training pipelines are intentionally external — they belong to the model author.
-This chapter shows how to wire your recorded dataset into the right upstream trainer.
+`strands-robots` records data; it does **not** ship a trainer. Use the upstream pipeline for whichever model you're targeting.
 
-## TL;DR
-
-```bash
-# Record locally (chapter 6)
-python scripts/record.py --repo-id user/my_dataset --episodes 50
-
-# Push to the Hub
-huggingface-cli login
-python -c "from lerobot.datasets.lerobot_dataset import LeRobotDataset; \
-           LeRobotDataset(repo_id='user/my_dataset', \
-                          root='my_dataset').push_to_hub()"
-
-# Train upstream (LeRobot, GR00T, etc.)
-python -m lerobot.scripts.train policy=act dataset.repo_id=user/my_dataset
-```
-
-## What ships, what doesn't
-
-| Stage | Where it lives |
-|-------|----------------|
-| Robot control | `strands_robots` (this library) |
-| Simulation | `strands_robots.simulation` |
-| Policy inference | `strands_robots.policies` (Mock / GR00T / LeRobot Local / Cosmos 3) |
+| Stage | Where |
+|-------|-------|
+| Robot control + simulation | `strands_robots` |
+| Policy inference | `strands_robots.policies` (Mock / GR00T / LeRobot / Cosmos 3) |
 | Dataset recording | `strands_robots.dataset_recorder` |
-| **Training** | **upstream** — `lerobot`, `Isaac-GR00T`, [NVIDIA Cosmos Framework](../policies/cosmos3.md), your code |
+| **Training** | **upstream** — `lerobot`, `Isaac-GR00T`, Cosmos Framework, your code |
 
-Why split? Training is heavy — multi-day runs on multi-GPU clusters, optimiser quirks,
-LR schedules per architecture. Each model family has its own train loop and we don't
-want to fork them.
-
-## Path 1 — LeRobot training
-
-The dataset format you recorded (LeRobot v3) is exactly what `lerobot` expects. Pick
-one of its policies (`act`, `pi0`, `smolvla`, `diffusion`, etc.) and train:
+## LeRobot training
 
 ```bash
 pip install lerobot
 
-# Local dataset
-python -m lerobot.scripts.train \
-    policy=act \
-    dataset.root=my_dataset \
-    dataset.repo_id=user/my_dataset
-
-# Or pull from Hub
-python -m lerobot.scripts.train \
-    policy=pi0 \
-    dataset.repo_id=user/my_dataset
+# Local dataset or pull from Hub — no conversion needed
+python -m lerobot.scripts.train policy=act dataset.repo_id=user/my_dataset
+python -m lerobot.scripts.train policy=pi0  dataset.repo_id=user/my_dataset
 ```
 
-After training, load the checkpoint via `LerobotLocalPolicy`:
+Load the checkpoint back into the sim:
 
 ```python
-from strands_robots import Robot
 from strands_robots.policies import create_policy
+from strands_robots import Robot
 
-policy = create_policy(
-    "lerobot_local",
-    pretrained_name_or_path="path/to/your/checkpoint",  # or HF model_id
-)
-
+policy = create_policy("lerobot_local",
+                       pretrained_name_or_path="path/to/checkpoint")  # requires GPU
 sim = Robot("so100")
-sim.run_policy(
-    robot_name="so100",
-    instruction="pick up the cube",
-    policy_object=policy,
-    duration=15.0,
-)
+sim.run_policy(robot_name="so100", instruction="pick up the cube",
+               policy_object=policy, duration=15.0)
 ```
 
-Same code, your weights.
-
-## Path 2 — GR00T fine-tuning
-
-GR00T training lives in [NVIDIA/Isaac-GR00T](https://github.com/NVIDIA/Isaac-GR00T).
-Convert the recorded dataset into GR00T's expected format (the data_config you used
-for recording determines the conversion):
+## GR00T fine-tuning
 
 ```bash
-git clone https://github.com/NVIDIA/Isaac-GR00T
-cd Isaac-GR00T
-
-# Fine-tune with your dataset
+git clone https://github.com/NVIDIA/Isaac-GR00T && cd Isaac-GR00T
 python scripts/finetune.py \
     --base-model nvidia/GR00T-N1.7-3B \
     --dataset-path my_dataset \
-    --data-config so100_dualcam
+    --data-config so100_dualcam   # requires GPU
 ```
 
-Once the checkpoint exists, mount it into your GR00T inference container and use
-`Gr00tPolicy` (chapter 3) as before.
+Mount the checkpoint into the GR00T inference container, then use `Gr00tPolicy` (chapter 3) as before.
 
-## Path 3 — Cosmos / your own trainer
+## Cosmos / custom trainer
 
-The recorded LeRobot v3 layout is friendly to most training frameworks. Read the
-parquet directly:
+The LeRobot v3 parquet is readable by any framework:
 
 ```python
 import pyarrow.parquet as pq
-
-table = pq.read_table("my_dataset/data/chunk-000/episode_000000.parquet")
-df = table.to_pandas()
-# df has columns: observation.state, action, episode_index, frame_index, timestamp, ...
+df = pq.read_table("my_dataset/data/chunk-000/episode_000000.parquet").to_pandas()
+# columns: observation.state, action, episode_index, frame_index, timestamp, ...
 ```
 
-Or with `datasets`:
+After Cosmos training: `create_policy("cosmos3", embodiment="droid", port=8000)` — see [Cosmos3Policy](../policies/cosmos3.md). # requires GPU
 
-```python
-from datasets import load_dataset
-ds = load_dataset("my_dataset")
-```
+## Sim-to-real checklist
 
-Plug into PyTorch / JAX / your framework of choice.
-
-For inference after Cosmos training, see [Cosmos3Policy](../policies/cosmos3.md) —
-it connects to an NVIDIA Cosmos 3 action-policy server over WebSocket
-(`pip install "strands-robots[cosmos3-service]"`). # requires GPU
-
-```python
-from strands_robots.policies import create_policy
-
-policy = create_policy("cosmos3", embodiment="droid", port=8000)  # requires GPU
-sim.run_policy(
-    robot_name="panda",
-    policy_object=policy,
-    instruction="grasp the mug",
-    duration=20.0,
-)
-```
-
-## Sim-to-real considerations
-
-If the policy you train is going on real hardware:
-
-1. **Calibrate the real arm** (chapter 8) before any rollout — joint zeros must match
-   what was recorded.
-2. **Match the camera resolution** — record and infer at the same `width × height` to
-   avoid silent shape mismatches.
-3. **Use domain randomization** while recording so the policy doesn't overfit to one
-   sim look.
-4. **Keep sim and real action specs identical** — `Robot()` does this automatically;
-   custom trainers need to verify.
-
-## Why not bundle a trainer?
-
-It would give us one trainer that works "okay" for a few architectures and quickly
-becomes stale as upstream model authors iterate. Better to be the data-quality and
-inference layer and let LeRobot / GR00T / Cosmos / your repo handle training.
-
-When the upstream trainers stabilise we may add `strands_robots.trainers` thin
-adapters — track [issue tracker](https://github.com/strands-labs/robots/issues) for
-status.
+1. Calibrate the real arm (chapter 8) — joint zeros must match recorded data.
+2. Match camera resolution — record and infer at the same `width × height`.
+3. Use `randomize()` while recording to avoid overfitting to one sim appearance.
+4. Confirm `data_config` matches between record and infer sessions.
 
 ## See also
 
 - [Tutorial 6 — Recording](06-recording.md) — produce the dataset.
-- [LerobotLocalPolicy](../policies/lerobot-local.md) — load LeRobot checkpoints back
-  into a sim.
+- [LerobotLocalPolicy](../policies/lerobot-local.md) — load LeRobot checkpoints.
 - [Gr00tPolicy](../policies/groot.md) — load GR00T fine-tunes via the inference server.
 - [Cosmos3Policy](../policies/cosmos3.md) — NVIDIA Cosmos 3 omnimodal VLA inference.
 - [LeRobot training docs](https://huggingface.co/docs/lerobot) — upstream pipeline.
