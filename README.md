@@ -510,7 +510,7 @@ them — so the agent learns the contract without crashing the process.
 ## Mesh networking
 
 Every `Robot()` and `Simulation()` is automatically a peer on a local Zenoh
-mesh — no setup. Peers on the same LAN discover each other via multicast
+mesh - no setup. Peers on the same LAN discover each other via multicast
 scouting, sharing a single ref-counted `zenoh.Session` per process.
 
 ```python
