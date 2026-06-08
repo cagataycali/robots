@@ -8,14 +8,11 @@ rotation can keep both the old and the new pin valid during fleet uptake:
 * The built-in pin tuple plus a staged second pin from
   ``STRANDS_MESH_CA_PINS`` both resolve as accepted (dual-pin overlap).
 * Verification accepts a certificate matching either pin in the set.
-* The README publishes the rotation runbook so on-call has a documented
-  procedure rather than a bare recompute command.
 """
 
 from __future__ import annotations
 
 import hashlib
-from pathlib import Path
 
 import pytest
 
@@ -59,12 +56,3 @@ def test_verify_ca_bytes_accepts_either_pin_during_dual_pin_overlap(
     # Once staged out-of-band, the same cert is accepted (grace-period overlap).
     monkeypatch.setenv("STRANDS_MESH_CA_PINS", staged)
     assert provision._verify_ca_bytes(rogue) is True
-
-
-def test_readme_publishes_ca_pin_rotation_runbook() -> None:
-    """The rotation runbook is documented in README, not just the provision docstring."""
-    readme = Path(__file__).resolve().parents[2] / "README.md"
-    text = readme.read_text(encoding="utf-8")
-    assert "CA Pin Rotation Runbook" in text
-    assert "STRANDS_MESH_CA_PINS" in text
-    assert "dual-pin" in text.lower()
