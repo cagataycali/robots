@@ -72,6 +72,8 @@ class MeshObserver:
         self._camera_subs: dict[str, Any] = {}
         self._lock = threading.Lock()
         self._known_peers: dict[str, float] = {}
+        self._teleop_seq: int = 0
+        self._teleop_device: str = "dashboard"
 
     # -- lifecycle ------------------------------------------------------
 
@@ -162,6 +164,66 @@ class MeshObserver:
     def emergency_stop(self) -> list[dict[str, Any]]:
         """Broadcast a stop to every peer. Audited by the mesh layer."""
         return self.broadcast({"action": "stop"}, timeout=3.0)
+
+    # -- teleop (dashboard as leader) -----------------------------------
+
+    def start_teleop(self, target: str, device_name: str | None = None) -> dict[str, Any]:
+        """Ask *target* to follow this dashboard's input stream.
+
+        The dashboard publishes input frames on
+        ``strands/{dashboard_peer}/input/{device}``; the target subscribes
+        via its ``teleop_receive`` action. After this returns success, call
+        :meth:`teleop_frame` to stream joint targets.
+        """
+        if self._mesh is None:
+            return {"status": "error", "error": "mesh not running"}
+        device = device_name or self._teleop_device
+        self._teleop_seq = 0
+        return self._mesh.send(
+            target,
+            {
+                "action": "teleop_receive",
+                "source_peer_id": self._mesh.peer_id,
+                "device_name": device,
+            },
+            timeout=10.0,
+        )
+
+    def teleop_frame(self, action: dict[str, float], device_name: str | None = None,
+                     events: dict[str, Any] | None = None) -> None:
+        """Publish a single teleop input frame on the dashboard's input topic.
+
+        ``action`` is a flat ``{joint_name: float}`` dict. The receiving peer
+        validates + clamps each frame (see ``validate_input_frame``) before
+        applying via ``send_action``, so an out-of-range value is dropped at
+        the follower, not actuated.
+        """
+        if self._mesh is None:
+            return
+        device = device_name or self._teleop_device
+        topic = f"strands/{self._mesh.peer_id}/input/{device}"
+        payload = {
+            "peer_id": self._mesh.peer_id,
+            "device": device,
+            "method": "keyboard",
+            "t": time.time(),
+            "seq": self._teleop_seq,
+            "action": {k: float(v) for k, v in action.items()},
+            "events": events,
+        }
+        self._teleop_seq += 1
+        self._mesh.publish(topic, payload)
+
+    def stop_teleop(self, target: str, device_name: str | None = None) -> dict[str, Any]:
+        """Tell *target* to stop following this dashboard's input stream."""
+        if self._mesh is None:
+            return {"status": "error", "error": "mesh not running"}
+        device = device_name or self._teleop_device
+        return self._mesh.send(
+            target,
+            {"action": "teleop_stop", "device_name": device},
+            timeout=10.0,
+        )
 
     # -- internals ------------------------------------------------------
 

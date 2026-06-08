@@ -276,6 +276,103 @@ class MuJoCoSimEngine(
         with self._lock:
             self._apply_sim_action(robot_name, action, n_substeps=n_substeps)
 
+    # Teleoperation (mesh follower) -----------------------------------
+    #
+    # A simulated robot can act as a teleop *follower* exactly like
+    # hardware: it subscribes to a remote peer's input stream and applies
+    # each frame via ``send_action``. The mesh ``_dispatch`` routes the
+    # ``teleop_receive`` / ``teleop_stop`` actions here, so the dashboard
+    # (or any peer) can drive a sim arm over Zenoh with no extra wiring.
+    #
+    # Parity note: ``HardwareRobot.start_teleop_receive`` applies to
+    # ``self.robot`` (the LeRobot device). The sim has no separate device
+    # layer -- ``send_action`` lives on the engine itself -- so the
+    # InputReceiver applies to ``self`` (its ``_default_apply`` calls
+    # ``robot.send_action``). This is the only intentional divergence.
+
+    def start_teleop_receive(
+        self,
+        source_peer_id: str,
+        device_name: str = "leader",
+        apply_fn: Any | None = None,
+    ) -> dict[str, Any]:
+        """Receive teleop frames from *source_peer_id* and apply to this sim.
+
+        Makes the simulation a teleop follower of the publishing peer. Each
+        validated input frame is applied via :meth:`send_action`, advancing
+        physics one control step per frame.
+
+        Returns a Strands-style status dict; never raises.
+        """
+        if not self.mesh or not getattr(self.mesh, "alive", False):
+            return {"status": "error", "content": [{"text": "Mesh not active. Cannot receive input."}]}
+
+        from strands_robots.mesh import InputReceiver
+
+        if not hasattr(self, "_input_receivers"):
+            self._input_receivers: dict[str, InputReceiver] = {}
+
+        key = f"{source_peer_id}/{device_name}"
+        existing = self._input_receivers.get(key)
+        if existing is not None:
+            existing.stop()
+
+        receiver = InputReceiver(
+            mesh=self.mesh,
+            robot=self,  # sim engine exposes send_action directly
+            source_peer_id=source_peer_id,
+            device_name=device_name,
+            apply_fn=apply_fn,
+        )
+        receiver.start()
+        self._input_receivers[key] = receiver
+
+        return {
+            "status": "success",
+            "content": [
+                {
+                    "text": (
+                        f"Sim input receiver started: listening to {source_peer_id}/{device_name}\n"
+                        f"Topic: {receiver.topic}\n"
+                        f"Actions will be applied to the simulation."
+                    )
+                }
+            ],
+        }
+
+    def stop_teleop(self, device_name: str | None = None) -> dict[str, Any]:
+        """Stop all or a specific sim teleop receiver.
+
+        Args:
+            device_name: If provided, stop only receivers whose device
+                matches; otherwise stop every receiver.
+
+        Returns:
+            Status dict with per-receiver stats.
+        """
+        results: list[dict[str, Any]] = []
+        receivers = getattr(self, "_input_receivers", None)
+        if receivers:
+            if device_name:
+                to_stop = [k for k in receivers if k.endswith(f"/{device_name}")]
+            else:
+                to_stop = list(receivers)
+            for k in to_stop:
+                rcv = receivers.pop(k, None)
+                if rcv is not None:
+                    results.append(rcv.stop())
+        return {"status": "success", "content": [{"text": f"Stopped {len(results)} receiver(s)."}], "stats": results}
+
+    def get_teleop_status(self) -> dict[str, Any]:
+        """Return teleop receiver stats for this sim (parity with hardware)."""
+        receivers = getattr(self, "_input_receivers", {})
+        return {
+            "inputs": [],
+            "publishers": {},
+            "receivers": {k: r.stats for k, r in receivers.items()},
+        }
+
+
     # World Management
 
     def _cheap_robot_count(self) -> int:

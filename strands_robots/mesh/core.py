@@ -904,35 +904,16 @@ class Mesh(SensorLoopsMixin):
 
         if _zc_bool_env("STRANDS_MESH_CAMERA_DISABLED", default=False):
             return
-        r = self.robot
-        inner = getattr(r, "robot", None)
-        if inner is None or not getattr(inner, "is_connected", False):
-            return
-        cam_cfg = getattr(getattr(inner, "config", None), "cameras", None)
-        if not isinstance(cam_cfg, dict) or not cam_cfg:
-            return
 
-        obs = None
-        try:
-            obs = inner.get_observation()
-        except Exception:
-            pass
-
-        if obs is None:
-            cameras_dict = getattr(inner, "cameras", None)
-            if not isinstance(cameras_dict, dict) or not cameras_dict:
-                return
-            obs = {}
-            for cam_name, cam_obj in cameras_dict.items():
-                try:
-                    if hasattr(cam_obj, "async_read"):
-                        obs[cam_name] = cam_obj.async_read()
-                    elif hasattr(cam_obj, "read"):
-                        obs[cam_name] = cam_obj.read()
-                except Exception:
-                    pass
-            if not obs:
-                return
+        # Two peer shapes carry cameras:
+        #   * HardwareRobot  -> self.robot.robot.get_observation() (LeRobot)
+        #   * SimEngine      -> self.robot.get_observation(name)   (MuJoCo)
+        # Gather {cam_name: frame_ndarray} from whichever applies, then run
+        # one shared encode+publish loop. Returning {} when neither path has
+        # frames keeps the no-camera peer silent.
+        frames = self._collect_camera_frames()
+        if not frames:
+            return
 
         try:
             import cv2
@@ -941,11 +922,8 @@ class Mesh(SensorLoopsMixin):
         except Exception:
             have_cv2 = False
 
-        for cam_name in cam_cfg:
+        for cam_name, frame in frames.items():
             try:
-                frame = obs.get(cam_name)
-                if frame is None:
-                    continue
                 shape = getattr(frame, "shape", None)
                 if shape is None or len(shape) < 2:
                     continue
@@ -958,7 +936,17 @@ class Mesh(SensorLoopsMixin):
                         frame = frame.astype(np.uint8)
 
                 if have_cv2:
-                    ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                    # Sim frames are RGB (MuJoCo); LeRobot frames are RGB too.
+                    # cv2.imencode expects BGR, so convert to keep colours
+                    # correct in the browser. Hardware path previously skipped
+                    # this -- a latent red/blue swap (pin: dashboard camera
+                    # colour test).
+                    import numpy as np
+
+                    enc_frame = frame
+                    if frame.ndim == 3 and frame.shape[2] == 3:
+                        enc_frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                    ok, buf = cv2.imencode(".jpg", enc_frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
                     if not ok:
                         continue
                     encoded = base64.b64encode(buf.tobytes()).decode("ascii")
@@ -981,6 +969,79 @@ class Mesh(SensorLoopsMixin):
                 )
             except Exception as exc:
                 logger.debug("[mesh] %s: camera %s publish failed: %s", self.peer_id, cam_name, exc)
+
+    def _collect_camera_frames(self) -> dict[str, Any]:
+        """Return ``{camera_name: frame_ndarray}`` for this peer, or ``{}``.
+
+        Handles both peer shapes:
+
+        * **Hardware** (:class:`HardwareRobot`): the LeRobot device lives at
+          ``self.robot.robot``; cameras come from its ``get_observation()``
+          (falling back to per-camera ``async_read``/``read``), filtered to the
+          camera keys declared in ``config.cameras``.
+        * **Simulation** (:class:`SimEngine`): frames come from
+          ``self.robot.get_observation(robot_name)`` whose schema interleaves
+          joint floats with ``(H, W, 3)`` uint8 camera arrays. We pick out the
+          ndarray-valued, >=2-D entries as camera frames.
+
+        Never raises -- a frame-collection failure degrades to "no frames"
+        so the camera loop stays alive for the next tick.
+        """
+        r = self.robot
+
+        # -- Hardware path --------------------------------------------
+        inner = getattr(r, "robot", None)
+        if inner is not None and getattr(inner, "is_connected", False):
+            cam_cfg = getattr(getattr(inner, "config", None), "cameras", None)
+            if isinstance(cam_cfg, dict) and cam_cfg:
+                obs = None
+                try:
+                    obs = inner.get_observation()
+                except Exception:
+                    obs = None
+                if obs is None:
+                    cameras_dict = getattr(inner, "cameras", None)
+                    if isinstance(cameras_dict, dict) and cameras_dict:
+                        obs = {}
+                        for cam_name, cam_obj in cameras_dict.items():
+                            try:
+                                if hasattr(cam_obj, "async_read"):
+                                    obs[cam_name] = cam_obj.async_read()
+                                elif hasattr(cam_obj, "read"):
+                                    obs[cam_name] = cam_obj.read()
+                            except Exception:
+                                pass
+                if obs:
+                    return {name: obs[name] for name in cam_cfg if obs.get(name) is not None}
+            return {}
+
+        # -- Simulation path ------------------------------------------
+        # SimEngine exposes get_observation + list_robots but has no
+        # ``robot`` (LeRobot device) attribute. Frames are the ndarray,
+        # >=2-D entries in the observation dict.
+        if hasattr(r, "get_observation") and hasattr(r, "list_robots"):
+            try:
+                robots = list(r.list_robots())
+            except Exception:
+                return {}
+            frames: dict[str, Any] = {}
+            for robot_name in robots:
+                try:
+                    obs = r.get_observation(robot_name)
+                except Exception:
+                    continue
+                if not isinstance(obs, dict):
+                    continue
+                for key, value in obs.items():
+                    shape = getattr(value, "shape", None)
+                    if shape is not None and len(shape) >= 2:
+                        # Namespace multi-robot sim cams as ``robot.cam`` so a
+                        # two-arm world does not collide on ``default``.
+                        cam_key = key if len(robots) == 1 else f"{robot_name}.{key}"
+                        frames[cam_key] = value
+            return frames
+
+        return {}
 
     # RPC — incoming
     def _on_cmd(self, sample: Any) -> None:

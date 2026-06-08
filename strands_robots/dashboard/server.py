@@ -191,6 +191,23 @@ class DashboardServer:
                 if not isinstance(cmd, dict):
                     return {"error": "broadcast requires cmd"}
                 return {"responses": self._observer.broadcast(cmd, timeout=msg.get("timeout", 5.0))}
+            if action == "teleop_start":
+                target = msg.get("target", "")
+                if not target:
+                    return {"error": "teleop_start requires target"}
+                return {"response": self._observer.start_teleop(target, msg.get("device"))}
+            if action == "teleop_frame":
+                target = msg.get("target", "")  # informational; frame goes on dashboard topic
+                frame = msg.get("frame", {})
+                if not isinstance(frame, dict):
+                    return {"error": "teleop_frame requires frame dict"}
+                self._observer.teleop_frame(frame, msg.get("device"), msg.get("events"))
+                return {"ok": True}
+            if action == "teleop_stop":
+                target = msg.get("target", "")
+                if not target:
+                    return {"error": "teleop_stop requires target"}
+                return {"response": self._observer.stop_teleop(target, msg.get("device"))}
             return {"error": f"unknown action: {action}"}
 
         try:

@@ -74,6 +74,17 @@
   .kv span:first-child { color: var(--dim); }
   .empty { color: var(--dim); font-style: italic; padding: 20px 0; text-align: center; }
   .cmdbar { display: flex; gap: 6px; margin-top: 10px; }
+  .camgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px,1fr)); gap: 8px; }
+  .cam { background: #000; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .cam img { width: 100%; display: block; image-rendering: auto; }
+  .caml { font-size: 10px; color: var(--dim); padding: 3px 6px; }
+  .tbtn { font-size: 11px; padding: 2px 8px; margin-left: 8px; }
+  .tbtn.on { background: var(--accent); color: #000; border-color: var(--accent); }
+  .thint { font-size: 10px; color: var(--dim); margin-left: 8px; }
+  .tj { margin: 6px 0; }
+  .tjl { display: flex; justify-content: space-between; font-size: 11px; color: var(--dim); }
+  .tjk { color: var(--warn); font-size: 10px; }
+  .tj input[type=range] { width: 100%; accent-color: var(--accent); }
   .cmdbar input {
     flex: 1; background: var(--panel2); border: 1px solid var(--line); color: var(--txt);
     border-radius: 6px; padding: 7px 10px; font: inherit;
@@ -107,6 +118,7 @@
 <script>
 const peers = {};      // peer_id -> presence dict
 const states = {};     // peer_id -> last state dict
+const cameras = {};    // peer_id -> {cam_name: {data, t}}
 let selected = null;
 let ws = null;
 let reqSeq = 0;
@@ -147,17 +159,23 @@ function handle(msg) {
     (data.peers || []).forEach(p => { ingestPeer(p); seen.add(p.peer_id || p.robot_id); });
     for (const id of Object.keys(peers)) if (!seen.has(id)) { delete peers[id]; delete states[id]; }
     renderPeers();
-    if (selected) renderDetail();
+    if (selected && !document.getElementById('kv')) buildDetailChrome();
+    if (selected) { patchDetail(); renderCameras(); }
   } else if (type === "state") {
     const id = data.peer_id; if (!id) return;
     states[id] = data;
-    if (id === selected) renderDetail();
+    if (id === selected) patchDetail();
   } else if (type === "presence") {
     ingestPeer(data); renderPeers();
   } else if (type === "event") {
     addEvent(data._topic || "event", JSON.stringify(data).slice(0, 120));
+  } else if (type === "camera") {
+    const id = data.peer_id; if (!id) return;
+    cameras[id] = cameras[id] || {};
+    cameras[id][data.cam] = { data: data.data, encoding: data.encoding, t: data.t };
+    if (id === selected) renderCameras();
   } else if (type === "stream") {
-    if (data.peer_id === selected) renderDetail();
+    if (data.peer_id === selected) patchDetail();
   } else if (type === "ack") {
     addEvent("ack:" + msg.action, JSON.stringify(data).slice(0, 160), "cmd");
   }
@@ -185,44 +203,116 @@ function renderPeers() {
   }).join("");
 }
 
-function select(id) { selected = id; renderPeers(); renderDetail(); }
+function select(id) {
+  selected = id;
+  teleopStop();                 // leave teleop when switching peers
+  renderPeers();
+  buildDetailChrome();
+  patchDetail();
+  renderCameras();
+}
 
-function renderDetail() {
+// Build the static skeleton once per selection. Live data (joints, kv,
+// cameras) is patched in place by patchDetail()/renderCameras() so a 10Hz
+// state stream never blows away a half-typed command or flickers the video.
+function buildDetailChrome() {
   const el = document.getElementById("detail");
-  if (!selected || !peers[selected]) { el.innerHTML = '<div class="empty">Select a peer.</div>'; return; }
-  const p = peers[selected], s = states[selected] || {};
-  let html = `<div class="kv"><span>peer_id</span><span>${selected}</span></div>`;
-  html += `<div class="kv"><span>type</span><span>${p.type || p.peer_type || p.robot_type || "?"}</span></div>`;
-  html += `<div class="kv"><span>host</span><span>${p.hostname || "?"}</span></div>`;
-  if (p.task_status) html += `<div class="kv"><span>task</span><span>${p.task_status}</span></div>`;
-  if (s.sim_time != null) html += `<div class="kv"><span>sim_time</span><span>${(+s.sim_time).toFixed(2)}s</span></div>`;
-  if (p.cameras) html += `<div class="kv"><span>cameras</span><span>${p.cameras.join(", ")}</span></div>`;
-
-  const joints = s.joints || {};
-  const jk = Object.keys(joints);
-  if (jk.length) {
-    html += `<div class="joints"><h2 style="margin-top:14px">Joints</h2>`;
-    for (const k of jk) {
-      let v = joints[k];
-      if (Array.isArray(v)) v = v.length === 1 ? v[0] : v[0];
-      const num = typeof v === "number" ? v : 0;
-      const pct = Math.max(0, Math.min(100, (num + 3.14) / 6.28 * 100));
-      html += `<div class="joint"><div class="jl"><span>${k}</span><span>${num.toFixed(3)}</span></div>
-        <div class="bar"><div style="width:${pct}%"></div></div></div>`;
-    }
-    html += `</div>`;
+  if (!selected || !peers[selected]) {
+    el.innerHTML = '<div class="empty">Select a peer.</div>';
+    return;
   }
+  el.innerHTML = `
+    <div id="kv"></div>
+    <div id="joints"></div>
+    <div id="cams"></div>
+    <div class="teleop" id="teleop">
+      <h2 style="margin-top:14px">Teleop
+        <button id="teleopBtn" class="tbtn" onclick="teleopToggle()">enable</button>
+        <span id="teleopHint" class="thint"></span>
+      </h2>
+      <div id="teleopJoints"></div>
+    </div>
+    <div class="cmdbar">
+      <input id="cmdInput" placeholder="tell ${selected}…" onkeydown="if(event.key==='Enter')tellPeer()"/>
+      <button onclick="tellPeer()">Send</button>
+    </div>
+    <div class="cmdbar">
+      <button onclick="sendAction('status')">status</button>
+      <button onclick="sendAction('stop')">stop</button>
+      <button onclick="sendAction('reset')">reset</button>
+      <button onclick="sendAction('state')">state</button>
+    </div>`;
+}
 
-  // Command bar — send a natural-language execute to this peer.
-  html += `<div class="cmdbar">
-    <input id="cmdInput" placeholder="tell ${selected}…" onkeydown="if(event.key==='Enter')tellPeer()"/>
-    <button onclick="tellPeer()">Send</button></div>`;
-  html += `<div class="cmdbar">
-    <button onclick="sendAction('status')">status</button>
-    <button onclick="sendAction('stop')">stop</button>
-    <button onclick="sendAction('reset')">reset</button>
-    <button onclick="sendAction('state')">state</button></div>`;
-  el.innerHTML = html;
+function patchDetail() {
+  if (!selected || !peers[selected]) return;
+  const p = peers[selected], s = states[selected] || {};
+  const kv = document.getElementById("kv");
+  if (kv) {
+    let h = `<div class="kv"><span>peer_id</span><span>${selected}</span></div>`;
+    h += `<div class="kv"><span>type</span><span>${p.type || p.peer_type || p.robot_type || "?"}</span></div>`;
+    h += `<div class="kv"><span>host</span><span>${p.hostname || "?"}</span></div>`;
+    if (p.task_status) h += `<div class="kv"><span>task</span><span>${p.task_status}</span></div>`;
+    if (s.sim_time != null) h += `<div class="kv"><span>sim_time</span><span>${(+s.sim_time).toFixed(2)}s</span></div>`;
+    kv.innerHTML = h;
+  }
+  patchJoints(s.joints || {});
+}
+
+function jointVal(v) {
+  if (Array.isArray(v)) return v.length ? +v[0] : 0;
+  return typeof v === "number" ? v : 0;
+}
+
+function patchJoints(joints) {
+  const el = document.getElementById("joints");
+  if (!el) return;
+  const jk = Object.keys(joints);
+  if (!jk.length) { el.innerHTML = ""; return; }
+  // Build rows once; thereafter only update widths/labels by id.
+  if (el.dataset.keys !== jk.join(",")) {
+    el.dataset.keys = jk.join(",");
+    let h = `<h2 style="margin-top:14px">Joints</h2>`;
+    for (const k of jk) {
+      h += `<div class="joint"><div class="jl"><span>${k}</span><span id="jv-${cssId(k)}">0</span></div>
+        <div class="bar"><div id="jb-${cssId(k)}"></div></div></div>`;
+    }
+    el.innerHTML = h;
+  }
+  for (const k of jk) {
+    const num = jointVal(joints[k]);
+    const pct = Math.max(0, Math.min(100, (num + 3.14) / 6.28 * 100));
+    const lbl = document.getElementById("jv-" + cssId(k));
+    const bar = document.getElementById("jb-" + cssId(k));
+    if (lbl) lbl.textContent = num.toFixed(3);
+    if (bar) bar.style.width = pct + "%";
+  }
+}
+
+function cssId(s) { return s.replace(/[^a-zA-Z0-9_-]/g, "_"); }
+
+function renderCameras() {
+  const wrap = document.getElementById("cams");
+  if (!wrap || !selected) return;
+  const cams = cameras[selected] || {};
+  const names = Object.keys(cams);
+  if (!names.length) { wrap.innerHTML = ""; wrap.dataset.keys = ""; return; }
+  // Build <img> elements once; thereafter only swap the src so the browser
+  // does not tear down/rebuild the decode pipeline at 10Hz.
+  if (wrap.dataset.keys !== names.join(",")) {
+    wrap.dataset.keys = names.join(",");
+    let h = `<h2 style="margin-top:14px">Cameras</h2><div class="camgrid">`;
+    for (const n of names) {
+      h += `<div class="cam"><img id="cam-${cssId(n)}" alt="${n}"/><div class="caml">${n}</div></div>`;
+    }
+    h += `</div>`;
+    wrap.innerHTML = h;
+  }
+  for (const n of names) {
+    const c = cams[n];
+    const img = document.getElementById("cam-" + cssId(n));
+    if (img && c.encoding === "jpeg") img.src = `data:image/jpeg;base64,${c.data}`;
+  }
 }
 
 function rpc(obj) {
@@ -244,6 +334,91 @@ function sendAction(a) {
 function estop() {
   rpc({ action: "emergency_stop" });
   addEvent("cmd", "EMERGENCY STOP broadcast", "err");
+}
+
+// -- Teleop client ---------------------------------------------------
+let teleop = { active: false, target: null, device: "dashboard", joints: {}, timer: null };
+
+function teleopToggle() {
+  if (teleop.active) { teleopStop(); return; }
+  if (!selected) return;
+  teleop.target = selected;
+  // Seed joint targets from the latest known state.
+  const s = states[selected] || {};
+  teleop.joints = {};
+  for (const [k, v] of Object.entries(s.joints || {})) teleop.joints[k] = jointVal(v);
+  rpc({ action: "teleop_start", target: selected, device: teleop.device });
+  teleop.active = true;
+  buildTeleopUI();
+  // Stream frames at ~20Hz.
+  teleop.timer = setInterval(sendTeleopFrame, 50);
+  const btn = document.getElementById("teleopBtn");
+  if (btn) { btn.textContent = "disable"; btn.classList.add("on"); }
+  document.getElementById("teleopHint").textContent = "WASD/QE-RF... per joint · keys grab focus";
+  window.addEventListener("keydown", teleopKey);
+  addEvent("cmd", `teleop START -> ${selected}`, "cmd");
+}
+
+function teleopStop() {
+  if (!teleop.active) return;
+  if (teleop.timer) clearInterval(teleop.timer);
+  teleop.timer = null;
+  window.removeEventListener("keydown", teleopKey);
+  if (teleop.target) rpc({ action: "teleop_stop", target: teleop.target, device: teleop.device });
+  addEvent("cmd", `teleop STOP -> ${teleop.target}`, "cmd");
+  teleop.active = false; teleop.target = null;
+  const btn = document.getElementById("teleopBtn");
+  if (btn) { btn.textContent = "enable"; btn.classList.remove("on"); }
+  const hint = document.getElementById("teleopHint"); if (hint) hint.textContent = "";
+  const tj = document.getElementById("teleopJoints"); if (tj) tj.innerHTML = "";
+}
+
+function sendTeleopFrame() {
+  if (!teleop.active || !teleop.target) return;
+  rpc({ action: "teleop_frame", target: teleop.target, device: teleop.device, frame: teleop.joints });
+}
+
+function buildTeleopUI() {
+  const wrap = document.getElementById("teleopJoints");
+  if (!wrap) return;
+  const keys = Object.keys(teleop.joints);
+  if (!keys.length) { wrap.innerHTML = '<div class="empty">No joints to drive.</div>'; return; }
+  // Map first 6 joints to keyboard pairs.
+  const pairs = [["w","s"],["e","d"],["r","f"],["u","j"],["i","k"],["o","l"]];
+  let h = "";
+  keys.forEach((k, idx) => {
+    const pair = pairs[idx] || ["",""];
+    h += `<div class="tj">
+      <div class="tjl"><span>${k}</span>
+        <span class="tjk">${pair[0]}/${pair[1]}</span>
+        <span id="tjv-${cssId(k)}">${teleop.joints[k].toFixed(2)}</span></div>
+      <input type="range" min="-3.14" max="3.14" step="0.01" value="${teleop.joints[k]}"
+        id="tjs-${cssId(k)}" oninput="teleopSlider('${k}', this.value)"/>
+    </div>`;
+  });
+  wrap.innerHTML = h;
+}
+
+function teleopSlider(k, v) {
+  teleop.joints[k] = parseFloat(v);
+  const lbl = document.getElementById("tjv-" + cssId(k));
+  if (lbl) lbl.textContent = parseFloat(v).toFixed(2);
+}
+
+function teleopKey(e) {
+  if (!teleop.active) return;
+  const keys = Object.keys(teleop.joints);
+  const map = {w:[0,+1],s:[0,-1],e:[1,+1],d:[1,-1],r:[2,+1],f:[2,-1],
+               u:[3,+1],j:[3,-1],i:[4,+1],k:[4,-1],o:[5,+1],l:[5,-1]};
+  const m = map[e.key.toLowerCase()];
+  if (!m) return;
+  const [idx, dir] = m;
+  if (idx >= keys.length) return;
+  e.preventDefault();
+  const k = keys[idx];
+  teleop.joints[k] = Math.max(-3.14, Math.min(3.14, teleop.joints[k] + dir * 0.05));
+  const sl = document.getElementById("tjs-" + cssId(k)); if (sl) sl.value = teleop.joints[k];
+  const lbl = document.getElementById("tjv-" + cssId(k)); if (lbl) lbl.textContent = teleop.joints[k].toFixed(2);
 }
 
 function addEvent(kind, text, cls) {
