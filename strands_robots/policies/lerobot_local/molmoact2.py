@@ -11,13 +11,27 @@ key, so the standard resolution path fails::
 and ``MolmoAct2Policy.from_pretrained(repo)`` cannot wrap it either (it routes
 through the same ``PreTrainedConfig`` machinery).
 
-The supported way to run these checkpoints is to build lerobot's
-``MolmoAct2Config(checkpoint_path=<repo>, ...)`` explicitly, instantiate
-``MolmoAct2Policy(cfg)`` (which downloads + loads the transformers weights via
-``checkpoint_path``), and build the pre/post processor pipeline with
-``make_molmoact2_pre_post_processors(cfg)``. The repo ships no
-``policy_preprocessor.json`` so the generic ``ProcessorBridge.from_pretrained``
-returns a passthrough — we must build the processors programmatically instead.
+The supported way to run these checkpoints is via lerobot's own public factory
+API (``lerobot.policies.factory``):
+
+* ``make_policy_config("molmoact2", checkpoint_path=<repo>, norm_tag=..., ...)``
+  builds the ``MolmoAct2Config``.
+* ``get_policy_class("molmoact2")(cfg)`` instantiates the policy. We construct it
+  directly rather than via ``PreTrainedPolicy.from_pretrained`` because the
+  SO-100/101 checkpoint is a *sharded* transformers-native ckpt with no
+  single-file safetensors (``from_pretrained``'s ``_load_as_safetensor`` path
+  fails). Direct construction is exactly what lerobot's ``make_policy()`` does in
+  its from-scratch branch; ``MolmoAct2Policy.__init__`` loads the HF weights via
+  ``checkpoint_path``.
+* ``make_pre_post_processors(cfg)`` dispatches to
+  ``make_molmoact2_pre_post_processors(cfg)`` internally and returns the
+  pre/post pipelines. The repo ships no ``policy_preprocessor.json``, so the
+  generic ``ProcessorBridge.from_pretrained`` would be a no-op passthrough —
+  hence we build the processors through the factory instead.
+
+We deliberately go through the factory (not the molmoact2 submodule classes
+directly) so upstream lerobot changes to the config/processor signatures are
+absorbed by lerobot's own dispatcher rather than breaking this wrapper.
 
 This module encapsulates that path so ``LerobotLocalPolicy._load_model`` can
 special-case ``policy_type == "molmoact2"`` cleanly.
@@ -214,9 +228,25 @@ def build_policy(
     """
     import torch
     from lerobot.configs import FeatureType, PolicyFeature
-    from lerobot.policies.molmoact2 import make_molmoact2_pre_post_processors
-    from lerobot.policies.molmoact2.configuration_molmoact2 import MolmoAct2Config
-    from lerobot.policies.molmoact2.modeling_molmoact2 import MolmoAct2Policy
+
+    # Use lerobot's PUBLIC factory API rather than importing the molmoact2
+    # config/processor classes directly:
+    #   * make_policy_config("molmoact2", ...)  -> MolmoAct2Config (blessed entry)
+    #   * make_pre_post_processors(cfg)          -> dispatches to
+    #       make_molmoact2_pre_post_processors(cfg, ...) internally
+    # This rides lerobot's own contract so signature/step changes upstream are
+    # absorbed by the factory rather than breaking this wrapper. get_policy_class
+    # resolves the concrete MolmoAct2Policy. The policy is instantiated directly
+    # (NOT via PreTrainedPolicy.from_pretrained): the SO-100/101 checkpoint is a
+    # sharded transformers-native ckpt with no single-file safetensors, so
+    # from_pretrained's _load_as_safetensor path fails -- direct construction is
+    # exactly what lerobot's own make_policy() does in its from-scratch branch
+    # (MolmoAct2Policy.__init__ loads the HF weights via checkpoint_path).
+    from lerobot.policies.factory import (
+        get_policy_class,
+        make_policy_config,
+        make_pre_post_processors,
+    )
 
     resolved_device = device or ("cuda" if torch.cuda.is_available() else "cpu")
     resolved_tag = auto_norm_tag(pretrained_name_or_path, norm_tag)
@@ -225,6 +255,9 @@ def build_policy(
     input_features: dict[str, Any] = {
         k: PolicyFeature(type=FeatureType.VISUAL, shape=(3, 224, 224)) for k in keys
     }
+    # observation.state / action are required by MolmoAct2Config.validate_features
+    # (it raises without a VISUAL feature; state/action are auto-filled if absent
+    # but we declare them explicitly to pin the SO-arm dims).
     input_features["observation.state"] = PolicyFeature(type=FeatureType.STATE, shape=(state_dim,))
     output_features = {"action": PolicyFeature(type=FeatureType.ACTION, shape=(action_dim,))}
 
@@ -239,7 +272,8 @@ def build_policy(
         action_dim,
         resolved_device,
     )
-    cfg = MolmoAct2Config(
+    cfg = make_policy_config(
+        MOLMOACT2_TYPE,
         checkpoint_path=pretrained_name_or_path,
         norm_tag=resolved_tag,
         inference_action_mode=inference_action_mode,
@@ -248,11 +282,13 @@ def build_policy(
         output_features=output_features,
     )
 
-    policy = MolmoAct2Policy(cfg)
+    policy_cls = get_policy_class(MOLMOACT2_TYPE)
+    policy = policy_cls(cfg)
     policy.to(resolved_device)
     policy.eval()
 
-    preprocessor, postprocessor = make_molmoact2_pre_post_processors(cfg)
+    # Public dispatcher -> make_molmoact2_pre_post_processors(cfg) under the hood.
+    preprocessor, postprocessor = make_pre_post_processors(cfg)
     logger.info("molmoact2: policy + processors ready on %s", resolved_device)
 
     return policy, preprocessor, postprocessor, cfg
