@@ -54,6 +54,11 @@ class DashboardServer:
         self._observer = MeshObserver(on_event=self._on_mesh_event)
         self._fanout_task: asyncio.Task[None] | None = None
         self._peer_poll_task: asyncio.Task[None] | None = None
+        # Latest scene geometry per peer (large, static, gzipped). Cached
+        # so it bypasses the lossy pose queue AND so a late-joining browser
+        # gets it immediately on connect instead of waiting up to 5s for
+        # the next periodic re-publish.
+        self._scene_geom: dict[str, dict[str, Any]] = {}
 
     # -- mesh callback (runs on a Zenoh thread) -------------------------
 
@@ -62,6 +67,26 @@ class DashboardServer:
         if self._loop is None or self._queue is None:
             return
         msg = {"type": kind, "data": payload, "ts": time.time()}
+
+        # scene_geom is large (~1 MB gzipped) and static. Routing it through
+        # the bounded pose queue means the 30 Hz pose flood evicts it before
+        # the fanout task drains it (observed: geom reaches the observer but
+        # never the browser). Cache the latest per peer and broadcast it
+        # directly off the loop instead.
+        if kind == "scene_geom":
+            pid = payload.get("peer_id")
+            if pid:
+                self._scene_geom[pid] = msg
+
+            def _send_geom() -> None:
+                if self._loop is not None:
+                    self._loop.create_task(self._broadcast(msg))
+
+            try:
+                self._loop.call_soon_threadsafe(_send_geom)
+            except RuntimeError:
+                pass
+            return
 
         def _enqueue() -> None:
             assert self._queue is not None
@@ -150,6 +175,15 @@ class DashboardServer:
                 }
             )
         )
+
+        # Replay any cached scene geometry so a freshly-connected browser can
+        # build its 3D view immediately rather than waiting for the next
+        # periodic geom re-publish from the sim.
+        for geom_msg in list(self._scene_geom.values()):
+            try:
+                await ws.send_str(json.dumps(geom_msg, default=str))
+            except Exception:  # noqa: BLE001
+                break
 
         try:
             async for raw in ws:
