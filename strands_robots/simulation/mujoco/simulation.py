@@ -2196,7 +2196,7 @@ class MuJoCoSimEngine(
 
         text = (
             f"{'stopped early' if stopped_early else 'completed'}: "
-            f"run_multi_policy on {len(policies)} robots ({', '.join(policies)}) — "
+            f"run_multi_policy on {len(policies)} robots ({', '.join(policies)}) - "
             f"{step_count} synchronized steps"
             f"{' (recorded)' if recording else ''}"
         )
