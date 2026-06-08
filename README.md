@@ -40,7 +40,7 @@ both auto-joined to a peer-to-peer **mesh** so fleets coordinate out of the box.
 from strands import Agent
 from strands_robots import Robot
 
-robot = Robot("so100")          # MuJoCo sim by default — safe, no hardware
+robot = Robot("so100") # MuJoCo sim by default — safe, no hardware
 agent = Agent(tools=[robot])
 agent("Pick up the red cube")
 ```
@@ -55,7 +55,7 @@ robot = Robot("so100", mode="real", port="/dev/ttyACM0")
 
 - **Sim-first, safe by default.** `Robot("so100")` spins up a MuJoCo world. You
   never accidentally drive real servos — `mode="real"` is an explicit opt-in.
-- **68 robots, 8 categories.** Arms, humanoids, quadrupeds, hands, drones,
+- **50+ robots, 8 categories.** Arms, humanoids, quadrupeds, hands, drones,
   bimanual rigs — resolved from a single registry with auto-download of assets.
 - **Any policy.** VLA models (NVIDIA GR00T, LeRobot ACT/Pi0/SmolVLA/Diffusion),
   plus classical motion planners, MPC, and scripted controllers behind one ABC.
@@ -215,7 +215,7 @@ Safety/validation rules:
 
 ## Supported robots
 
-68 robots across 8 categories, resolved from
+50+ robots across 8 categories, resolved from
 [`registry/robots.json`](strands_robots/registry/robots.json). Assets
 (MJCF + meshes) auto-download from
 [robot_descriptions](https://github.com/robot-descriptions/robot_descriptions.py)
@@ -235,7 +235,7 @@ first use. List them at runtime with `from strands_robots import list_robots; li
 
 **Hardware-capable** (drivable with `mode="real"` via LeRobot): `so100`,
 `so101`, `koch`, `omx`, `hope_jr`, `aloha`, `bi_openarm`, `reachy2`,
-`unitree_g1`, `lekiwi`, `earthrover`. All 68 are simulatable.
+`unitree_g1`, `lekiwi`, `earthrover`. All are simulatable.
 
 ## Tools reference
 
@@ -438,7 +438,7 @@ Reference cuRobo / MoveIt2 implementations are tracked on the
 ## Simulation (MuJoCo)
 
 `Robot("so100")` (sim mode) returns a `Simulation` — a MuJoCo-backed AgentTool
-exposing **64 actions** for world composition, physics, rendering, policy
+exposing **50+ actions** for world composition, physics, rendering, policy
 execution, and dataset recording. Build it directly when you want full control:
 
 ```python
@@ -457,7 +457,7 @@ frame = sim.render(camera_name="topdown")   # {status, content:[text, image]}
 ```
 
 <details>
-<summary><b>The 64 actions, grouped</b></summary>
+<summary><b>The actions, grouped</b></summary>
 
 - **World & scene**: `create_world`, `load_scene`, `replace_scene_mjcf`,
   `patch_scene_mjcf`, `reset`, `get_state`, `save_state`, `load_state`,
@@ -622,7 +622,7 @@ strands_robots/
 │   ├── mock.py            # MockPolicy (non-VLA reference)
 │   ├── groot/             # NVIDIA GR00T (ZMQ/HTTP client + data configs)
 │   └── lerobot_local/     # Direct HuggingFace inference (RTC, processors)
-├── registry/              # robots.json (68) + policies.json + loaders
+├── registry/              # robots.json (50+) + policies.json + loaders
 ├── simulation/
 │   ├── base.py            # SimEngine ABC
 │   ├── factory.py         # create_simulation() + backend registry
