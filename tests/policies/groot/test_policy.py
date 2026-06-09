@@ -33,22 +33,6 @@ from strands_robots.policies.groot.policy import (  # noqa: E402
 # (section)
 
 
-def _require_real_torch():
-    """Return the real ``torch`` module, or skip if it is unavailable.
-
-    ``tests/conftest.py`` installs a numpy-backed torch *mock* into
-    ``sys.modules`` when real PyTorch is not installed (CI without torch).
-    That mock satisfies ``pytest.importorskip("torch")`` but does NOT provide
-    real RNG semantics (``manual_seed`` is a no-op and ``MockTensor`` has no
-    ``.tolist()``). Tests that assert torch RNG reproducibility need the real
-    library, so detect the mock via the absence of ``__version__`` and skip.
-    """
-    torch = pytest.importorskip("torch", reason="torch not installed")
-    if not hasattr(torch, "__version__"):
-        pytest.skip("real torch required (numpy torch mock active); RNG reseed semantics unavailable")
-    return torch
-
-
 _KNOWN_DOF = {
     "single_arm": 5,
     "gripper": 1,
