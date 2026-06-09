@@ -32,6 +32,23 @@ from strands_robots.policies.groot.policy import (  # noqa: E402
 # Helpers
 # (section)
 
+
+def _require_real_torch():
+    """Return the real ``torch`` module, or skip if it is unavailable.
+
+    ``tests/conftest.py`` installs a numpy-backed torch *mock* into
+    ``sys.modules`` when real PyTorch is not installed (CI without torch).
+    That mock satisfies ``pytest.importorskip("torch")`` but does NOT provide
+    real RNG semantics (``manual_seed`` is a no-op and ``MockTensor`` has no
+    ``.tolist()``). Tests that assert torch RNG reproducibility need the real
+    library, so detect the mock via the absence of ``__version__`` and skip.
+    """
+    torch = pytest.importorskip("torch", reason="torch not installed")
+    if not hasattr(torch, "__version__"):
+        pytest.skip("real torch required (numpy torch mock active); RNG reseed semantics unavailable")
+    return torch
+
+
 _KNOWN_DOF = {
     "single_arm": 5,
     "gripper": 1,
@@ -669,7 +686,7 @@ class TestPolicyReset:
         the same way ``set_eval_seed`` does, so the in-process diffusion
         sampler is deterministic across reset boundaries.
         """
-        torch = pytest.importorskip("torch", reason="torch not installed")
+        torch = _require_real_torch()
 
         # Construct a LOCAL-mode Gr00tPolicy via the test's __new__-bypass
         # fixture to skip model loading. The reset path doesn't depend on
@@ -694,7 +711,7 @@ class TestPolicyReset:
         state untouched. Reset is a hint, not a hard reset; without an
         explicit seed there's nothing to apply.
         """
-        torch = pytest.importorskip("torch", reason="torch not installed")
+        torch = _require_real_torch()
         from strands_robots.policies.groot.policy import Gr00tPolicy
 
         p = Gr00tPolicy.__new__(Gr00tPolicy)
