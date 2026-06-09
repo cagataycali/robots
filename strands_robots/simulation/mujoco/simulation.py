@@ -1140,6 +1140,7 @@ class MuJoCoSimEngine(
         fov: float = 60.0,
         width: int = 640,
         height: int = 480,
+        parent_body: str | None = None,
     ) -> dict[str, Any]:
         """Add a camera to the scene (MJCF ``<camera>`` injection).
 
@@ -1151,6 +1152,14 @@ class MuJoCoSimEngine(
         Orientation: ``target`` is baked into the camera's ``xyaxes``
         attribute so the rendered view looks at that point (not just
         forward-facing). Degenerate cases (target == position) error.
+
+        Mounting (``parent_body``): when set to a body name (e.g. a robot's
+        gripper such as ``"so101/gripper"``), the camera is attached TO that
+        body and rides along with it -- this is how a realistic wrist/gripper
+        camera is modelled for SO101/SO100-style data collection. In this
+        mode ``position`` and ``target`` are in the body's LOCAL frame. Use
+        ``list_robots`` / ``get_robot_state`` to discover body names; robot
+        bodies are namespaced ``<robot>/<body>``.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
@@ -1190,6 +1199,31 @@ class MuJoCoSimEngine(
                 "content": [{"text": f"add_camera: camera '{name}' already exists. Remove it first."}],
             }
 
+        # Validate the mount target up front so the user gets a clear,
+        # actionable error (the names of available bodies) instead of the
+        # generic "spec recompile refused" that inject_camera_into_scene
+        # surfaces when SpecBuilder.add_camera raises deep inside the recompile.
+        if parent_body:
+            mj = self._mj
+            model = self._world._model
+            if mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, parent_body) < 0:
+                available = [
+                    mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, i)
+                    for i in range(model.nbody)
+                    if mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, i)
+                ]
+                return {
+                    "status": "error",
+                    "content": [
+                        {
+                            "text": (
+                                f"add_camera: parent_body '{parent_body}' not found. "
+                                f"Robot bodies are namespaced '<robot>/<body>'. Available bodies: {available}"
+                            )
+                        }
+                    ],
+                }
+
         cam = SimCamera(
             name=name,
             position=pos,
@@ -1197,6 +1231,7 @@ class MuJoCoSimEngine(
             fov=fov,
             width=width,
             height=height,
+            parent_body=parent_body or "",
         )
         self._world.cameras[name] = cam
 
@@ -1216,7 +1251,8 @@ class MuJoCoSimEngine(
                 "content": [{"text": f"Failed to inject camera '{name}' into live scene: {e}"}],
             }
 
-        return {"status": "success", "content": [{"text": f"📷 Camera '{name}' added at {cam.position}"}]}
+        mount_note = f" (mounted on '{parent_body}')" if parent_body else ""
+        return {"status": "success", "content": [{"text": f"📷 Camera '{name}' added at {cam.position}{mount_note}"}]}
 
     def remove_camera(self, name: str) -> dict[str, Any]:
         """Remove a named camera from the live scene.
@@ -1603,6 +1639,44 @@ class MuJoCoSimEngine(
         }
 
     # AgentTool Interface
+
+    def __call__(self, action: str = "", **kwargs: Any) -> dict[str, Any]:
+        """Dispatch an action directly: ``sim(action="render", camera_name="topdown")``.
+
+        This makes the Simulation usable as a plain callable in addition to
+        being a Strands ``AgentTool``. It mirrors the agent-facing dispatch
+        path (``_dispatch_action``): the same validation, field-aliasing, and
+        per-action method routing apply, and the return value is the standard
+        ``{"status", "content"}`` dict.
+
+        The README markets ``Robot("so100")`` as something you can drive with
+        ``robot(action="...")``; without this method that contract raised
+        ``TypeError: 'MuJoCoSimEngine' object is not callable``. Keyword
+        arguments are forwarded as the action's parameters.
+
+        Args:
+            action: The action name (e.g. ``"create_world"``, ``"add_robot"``,
+                ``"render"``). Required; an empty/blank action returns an
+                error dict rather than raising, to match the tool contract.
+            **kwargs: Parameters for the action (e.g. ``camera_name="top"``).
+
+        Returns:
+            ``{"status": "success"|"error", "content": [...]}``.
+        """
+        if not action or not isinstance(action, str) or not action.strip():
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            "Calling a Simulation requires action=. "
+                            "Example: sim(action='render', camera_name='topdown'). "
+                            "See tool_spec for the full action list."
+                        )
+                    }
+                ],
+            }
+        return self._dispatch_action(action.strip(), kwargs)
 
     @property
     def tool_name(self) -> str:
@@ -2238,6 +2312,12 @@ class MuJoCoSimEngine(
     _FIELD_ALIASES = {
         "checkpoint_name": "name",
         "torque_vec": "torque",
+        # Back-compat for README param names that predate the canonical
+        # signatures (GH #373 friction #5). Customers copy-pasting older docs
+        # passed ``camera_names=`` / ``joint_positions=``; accept them as
+        # aliases so the call doesn't raise "unexpected keyword argument".
+        "camera_names": "cameras",
+        "joint_positions": "positions",
     }
 
     # Params the router passes through but not every method declares.
