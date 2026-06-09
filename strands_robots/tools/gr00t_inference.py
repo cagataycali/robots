@@ -1259,6 +1259,20 @@ def _start_container(
         hf_cache = os.environ.get("HF_HOME") or os.path.expanduser("~/.cache/huggingface")
         effective_volumes[hf_cache] = "/root/.cache/huggingface"
 
+    # Defence in depth: validate agent-supplied paths in effective_volumes.
+    # The initial _check_volume_safety(volumes) above only sees the caller-
+    # supplied dict (None from the agent path). The hf_local_dir parameter
+    # is agent-supplied and flows into effective_volumes -- validate it
+    # before building the docker argv so a prompt-injected path like '/etc'
+    # is caught by the same prefix-match guard. We check only agent-supplied
+    # entries (hf_local_dir) rather than the full dict, because auto-derived
+    # paths (HF_HOME / ~/.cache/huggingface) are operator-controlled and may
+    # legitimately reside under /home.
+    if hf_local_dir:
+        _hf_dir_reason = _check_volume_safety({str(Path(hf_local_dir).expanduser()): "/data/checkpoints"})
+        if _hf_dir_reason is not None:
+            return {"status": "error", "message": _hf_dir_reason}
+
     for host_path, container_path in effective_volumes.items():
         cmd.extend(["-v", f"{host_path}:{container_path}"])
 

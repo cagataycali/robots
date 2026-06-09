@@ -233,3 +233,96 @@ def test_start_container_allows_safe_defaults():
     assert "-v /:/host" not in joined
     assert "/var/run/docker.sock" not in joined
     assert "/data/cp:/data/checkpoints" in joined
+
+
+# --- Pin: hf_local_dir flows through _check_volume_safety (R3 regression) ---
+
+
+class TestHfLocalDirVolumeSafety:
+    """Pin: agent-supplied hf_local_dir is validated against volume blocklist.
+
+    Before this fix, _start_container checked _check_volume_safety(volumes)
+    where volumes=None from the agent path, then built effective_volumes using
+    hf_local_dir WITHOUT re-checking. A prompt-injected agent could call
+    gr00t_inference(action="start_container", hf_local_dir="/etc") and mount
+    a protected host directory into the container.
+
+    The fix re-runs _check_volume_safety(effective_volumes) after the
+    effective_volumes dict is fully assembled, catching protected paths
+    introduced by hf_local_dir.
+    """
+
+    @pytest.mark.parametrize(
+        "bad_path",
+        [
+            "/etc",
+            "/etc/shadow",
+            "/root",
+            "/root/.ssh",
+            "/root/.ssh/id_rsa",
+            "/home",
+            "/home/ubuntu/.aws/credentials",
+            "/proc",
+            "/proc/1/environ",
+            "/sys",
+            "/sys/kernel",
+            "/var",
+            "/var/run/docker.sock",
+        ],
+    )
+    def test_start_container_rejects_hf_local_dir_under_protected_path(self, bad_path):
+        """hf_local_dir pointing at a protected host path must be rejected."""
+        gi = importlib.import_module("strands_robots.tools.gr00t_inference")
+
+        with patch.object(gi.subprocess, "run", side_effect=AssertionError("docker must not be called")):
+            with patch.object(gi, "_container_state", return_value="absent"):
+                result = gi._start_container(
+                    image_name="gr00t:latest",
+                    container_name="test",
+                    port=5555,
+                    hf_token=None,
+                    volumes=None,
+                    container_command="tail -f /dev/null",
+                    hf_local_dir=bad_path,
+                    force=False,
+                )
+        assert result["status"] == "error", f"Expected error for hf_local_dir={bad_path!r}, got: {result}"
+        # Confirm the error message references the protected path
+        assert "protected" in result["message"].lower() or "refusing" in result["message"].lower(), (
+            f"Error message should mention protection/refusal: {result['message']}"
+        )
+
+    @pytest.mark.parametrize(
+        "safe_path",
+        [
+            "/mnt/models/gr00t-checkpoints",
+            "/data/checkpoints",
+            "/opt/gr00t/weights",
+            "/srv/ml/gr00t",
+        ],
+    )
+    def test_start_container_allows_hf_local_dir_safe_paths(self, safe_path):
+        """Legitimate hf_local_dir paths must NOT be rejected."""
+        gi = importlib.import_module("strands_robots.tools.gr00t_inference")
+
+        mock_run = MagicMock()
+        mock_run.return_value = MagicMock(returncode=0)
+
+        with patch.object(gi.subprocess, "run", mock_run):
+            with patch.object(gi, "_container_state", return_value="absent"):
+                result = gi._start_container(
+                    image_name="gr00t:latest",
+                    container_name="test",
+                    port=5555,
+                    hf_token=None,
+                    volumes=None,
+                    container_command="tail -f /dev/null",
+                    hf_local_dir=safe_path,
+                    force=False,
+                )
+        assert result["status"] == "success", f"Expected success for hf_local_dir={safe_path!r}, got: {result}"
+        # Verify the path was mounted
+        call_args = mock_run.call_args[0][0]
+        assert "-v" in call_args
+        vol_str = f"{safe_path}:/data/checkpoints"
+        assert vol_str in " ".join(call_args), f"Expected volume mount {vol_str} in docker cmd"
