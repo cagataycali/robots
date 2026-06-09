@@ -248,6 +248,13 @@ def _should_bridge(
 # ``STRANDS_MESH_DEDUP_TTL`` (seconds; default 120).
 _DEFAULT_DEDUP_TTL_S = 120.0
 _MAX_DEDUP_ENTRIES = 10_000
+# Issue #231: hysteresis band on the sort-and-slice GC trigger. The cheap
+# stale-eviction sweep still runs at the soft boundary (_MAX), but the
+# heap-select-and-evict pass only runs once the cache exceeds this hard
+# boundary, so its O(n log k) cost amortises across many calls instead of
+# firing on every call while the cache hovers at the cap.
+_DEDUP_GC_HARD_RATIO = 1.1
+_MAX_DEDUP_ENTRIES_HARD = int(_MAX_DEDUP_ENTRIES * _DEDUP_GC_HARD_RATIO)
 
 
 def _resolve_dedup_ttl() -> float:
@@ -416,26 +423,62 @@ class _CommandDeduplicator:
             return False  # nothing to dedup against -- pass through
         cache_key = (key, ident)
         now = time.monotonic()  # NTP-safe, snapshot-resume-safe
+
+        # Issue #231: bound GC cost on two axes -- algorithmic and lock-hold.
+        #
+        # Axis 1 (algorithm): a hysteresis band defers the expensive
+        # heap-select pass until the cache exceeds the hard boundary
+        # (_MAX_DEDUP_ENTRIES_HARD), so it amortises across calls instead of
+        # firing every call while the cache hovers at the soft cap. The cheap
+        # stale-eviction sweep still runs at the soft boundary (_MAX).
+        #
+        # Axis 2 (lock-hold): the heap walk runs OUTSIDE self._lock via a
+        # snapshot-then-apply pattern. We snapshot self._seen.items() under
+        # the lock, release it, compute the eviction set with heapq.nsmallest
+        # (O(n log k), the only expensive step), then re-acquire to apply.
+        # The lock is held only for the snapshot copy and the eviction apply,
+        # never for the heap walk -- so concurrent is_duplicate() callers are
+        # not serialised behind the GC compute.
+        #
+        # Concurrency note: another thread may insert a new entry between the
+        # snapshot and the apply. We tolerate this by re-reading each entry's
+        # timestamp under the apply lock and only evicting it if it still
+        # matches the snapshot timestamp; a key re-inserted with a newer
+        # timestamp is kept (its newer identity is the live one). Dedup
+        # correctness is unaffected: identity semantics, TTL eviction, and the
+        # (topic_key, dedup_id) cache key shape are all unchanged.
         with self._lock:
-            # Cheap GC if oversized
-            if len(self._seen) > _MAX_DEDUP_ENTRIES:
+            size = len(self._seen)
+            run_stale = size > _MAX_DEDUP_ENTRIES
+            if run_stale:
                 cutoff = now - self._ttl
                 stale = [k for k, ts in self._seen.items() if ts < cutoff]
                 for k in stale:
                     self._seen.pop(k, None)
-                if len(self._seen) > _MAX_DEDUP_ENTRIES:
-                    # Issue #231: replace O(n log n) full-sort + slice with
-                    # ``heapq.nsmallest`` partial-selection (O(n log k) where
-                    # k = drop count). For the typical k = n/5 case this is
-                    # ~5x faster on the lock-hold than a full sort. The
-                    # heapq impl uses an O(k) heap and an O(n) scan, which
-                    # is bounded by the cap (10k entries) -- a few ms at
-                    # most under the lock.
-                    drop = max(1, len(self._seen) // 5)
-                    oldest = heapq.nsmallest(drop, self._seen.items(), key=lambda kv: kv[1])
-                    for k, _ in oldest:
+            run_select = len(self._seen) > _MAX_DEDUP_ENTRIES_HARD
+            snapshot = list(self._seen.items()) if run_select else None
+
+        if run_stale or run_select:
+            logger.debug(
+                "[bridge] dedup GC: stale-eviction=%s sort-and-slice=%s size=%d",
+                run_stale,
+                run_select,
+                size,
+            )
+
+        if run_select and snapshot is not None:
+            # Heap walk OUTSIDE the lock (axis 2). O(n log k), k = n // 5.
+            drop = max(1, len(snapshot) // 5)
+            oldest = heapq.nsmallest(drop, snapshot, key=lambda kv: kv[1])
+            with self._lock:
+                for k, ts in oldest:
+                    # Only evict if the live timestamp still matches the
+                    # snapshot -- a key re-inserted between snapshot and apply
+                    # carries a newer identity we must not drop.
+                    if self._seen.get(k) == ts:
                         self._seen.pop(k, None)
 
+        with self._lock:
             seen_ts = self._seen.get(cache_key)
             if seen_ts is not None and (now - seen_ts) <= self._ttl:
                 return True
