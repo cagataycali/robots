@@ -416,3 +416,132 @@ class TestHfLocalDirDownloadSafety:
         assert gi._check_hf_local_dir_safety("/data/checkpoints") is None
         assert gi._check_hf_local_dir_safety("/etc") is not None
         assert gi._check_hf_local_dir_safety("/root/.ssh") is not None
+
+
+# --- Pin: build source repo URL/tag/dir are NOT agent-controllable ----------
+#
+# ``build_image`` / ``lifecycle`` clone a git repo and ``bash docker/build.sh``
+# it -- host RCE if the source repo is agent-supplied. ``repo_url`` /
+# ``repo_tag`` / ``source_dir`` are therefore removed from the agent signature
+# and resolved from operator env (``STRANDS_GR00T_REPO_URL`` /
+# ``STRANDS_GR00T_REPO_TAG``), with the URL exact-matched against an allowlist
+# and the tag shape-validated, before any ``git`` / ``bash`` subprocess.
+
+
+class TestBuildSourceNotAgentControllable:
+    """The clone URL/tag/dir cannot be steered by the agent or a bad env."""
+
+    def test_tool_signature_drops_repo_params(self):
+        params = _tool_params()
+        assert "repo_url" not in params
+        assert "repo_tag" not in params
+        assert "source_dir" not in params
+
+    @pytest.mark.parametrize("kwarg", ["repo_url", "repo_tag", "source_dir"])
+    def test_tool_rejects_removed_repo_kwarg(self, kwarg):
+        # Passing a removed param must raise rather than silently clone.
+        with pytest.raises(TypeError):
+            gi.gr00t_inference(action="build_image", **{kwarg: "/x"})
+
+    @pytest.mark.parametrize(
+        "bad_url",
+        [
+            "https://github.com/attacker/evil-repo",
+            "https://github.com/NVIDIA/Isaac-GR00T-evil",
+            "https://github.com/NVIDIA/Isaac-GR00T.evil.com",
+            "--upload-pack=/bin/sh",
+            "file:///etc",
+        ],
+    )
+    def test_build_image_rejects_off_allowlist_url(self, monkeypatch, bad_url):
+        """A misconfigured operator URL fails closed before git runs."""
+        monkeypatch.setenv("STRANDS_GR00T_REPO_URL", bad_url)
+        with patch.object(gi.subprocess, "run", side_effect=AssertionError("git/bash must not run")):
+            result = gi.gr00t_inference(action="build_image")
+        assert result["status"] == "error"
+        assert "allowlist" in result["message"].lower()
+
+    def test_lifecycle_rejects_off_allowlist_url(self, monkeypatch):
+        monkeypatch.setenv("STRANDS_GR00T_REPO_URL", "https://github.com/attacker/evil")
+        with patch.object(gi.subprocess, "run", side_effect=AssertionError("git/bash must not run")):
+            result = gi.gr00t_inference(action="lifecycle", lifecycle="full", hf_repo="x/y")
+        assert result["status"] == "error"
+        assert "allowlist" in result["message"].lower()
+
+    @pytest.mark.parametrize("bad_tag", ["--upload-pack=x", "a; rm -rf /", "a b", "$(id)", "-x"])
+    def test_build_image_rejects_unsafe_tag(self, monkeypatch, bad_tag):
+        monkeypatch.setenv("STRANDS_GR00T_REPO_TAG", bad_tag)
+        with patch.object(gi.subprocess, "run", side_effect=AssertionError("git/bash must not run")):
+            result = gi.gr00t_inference(action="build_image")
+        assert result["status"] == "error"
+        assert "git ref" in result["message"].lower()
+
+    def test_build_image_internal_entry_guarded(self):
+        """Defence in depth: _build_image rejects an off-allowlist URL even when
+        called directly (operator/test entry), before any git/bash subprocess."""
+        with patch.object(gi.subprocess, "run", side_effect=AssertionError("git/bash must not run")):
+            result = gi._build_image(
+                repo_url="https://github.com/attacker/evil",
+                repo_tag="main",
+                image_name="gr00t:latest",
+                force=True,
+            )
+        assert result["status"] == "error"
+        assert "allowlist" in result["message"].lower()
+
+    def test_build_image_allows_default_clones_to_fixed_dir(self, monkeypatch, tmp_path):
+        """The allowlisted default URL clones to the operator-fixed dir
+        (_isaac_gr00t_dir), never a caller path, and uses the resolved URL."""
+        runs: list[list[str]] = []
+
+        def fake_run(cmd, *a, **kw):
+            runs.append(list(cmd))
+            return MagicMock(stdout="", stderr="", returncode=0)
+
+        fixed = tmp_path / "Isaac-GR00T"
+        with (
+            patch.object(gi, "_isaac_gr00t_dir", return_value=fixed),
+            patch.object(gi, "_image_exists", return_value=False),
+            patch("pathlib.Path.is_dir", return_value=False),
+            patch("pathlib.Path.is_file", return_value=True),
+            patch("pathlib.Path.mkdir"),
+            patch.object(gi.subprocess, "run", side_effect=fake_run),
+        ):
+            result = gi.gr00t_inference(action="build_image", force=True)
+        assert result["status"] == "success", result
+        clone = next(c for c in runs if c[:2] == ["git", "clone"])
+        # Resolved default URL is used; destination is the fixed dir.
+        assert gi._DEFAULT_REPO_URL in clone
+        assert str(fixed) in clone
+
+    def test_operator_extends_url_allowlist(self, monkeypatch):
+        mirror = "https://git.internal/mirror/Isaac-GR00T"
+        monkeypatch.setenv("STRANDS_GR00T_REPO_URL_ALLOW", mirror)
+        monkeypatch.setenv("STRANDS_GR00T_REPO_URL", mirror)
+        assert gi._is_allowed_repo_url(mirror) is True
+
+
+# --- Class invariant: NO agent-controlled string reaches a privileged sink ---
+#
+# This pins the *class* of vulnerability closed, not just one instance. The
+# gr00t_inference tool shells out to git/docker/bash and writes the host fs;
+# every parameter that could steer a host path, image, command, volume, or
+# clone source has been removed from the agent surface and moved to
+# operator-config + allowlist. If a future change re-introduces any of these
+# as an agent parameter, this test fails -- terminating the whack-a-mole.
+
+
+def test_no_agent_controlled_host_exec_or_path_params():
+    forbidden = {
+        "repo_url",
+        "repo_tag",
+        "source_dir",
+        "image_name",
+        "volumes",
+        "container_command",
+    }
+    leaked = forbidden & _tool_params()
+    assert not leaked, (
+        f"agent-facing params reintroduce a host-exec/mount surface: {sorted(leaked)}. "
+        "These must be operator-config + allowlist driven, not agent parameters."
+    )

@@ -12,6 +12,7 @@ from a single prompt - see #148 for the motivation.
 """
 
 import os
+import re
 import socket
 import subprocess
 import time
@@ -51,6 +52,17 @@ _DEFAULT_CONTAINER_COMMAND = "tail -f /dev/null"
 _DEFAULT_IMAGE_ALLOW: tuple[str, ...] = (
     "gr00t:*",
     "nvcr.io/nvidia/isaac-gr00t:*",
+)
+
+# Built-in repo-URL allowlist for ``build_image`` source clones. Unlike the
+# image allowlist (a tag wildcard), repo URLs are matched EXACTLY against the
+# canonical set (with/without the ``.git`` suffix): a trailing-``*`` wildcard
+# on a URL would let ``https://github.com/NVIDIA/Isaac-GR00T-evil`` slip past a
+# ``...Isaac-GR00T*`` pattern. Operators add private mirrors via
+# ``STRANDS_GR00T_REPO_URL_ALLOW`` (comma-separated, each entry exact-matched).
+_DEFAULT_REPO_URL_ALLOW: tuple[str, ...] = (
+    _DEFAULT_REPO_URL,
+    _DEFAULT_REPO_URL + ".git",
 )
 
 # Host paths that must never be bind-mounted into a container. Mounting any
@@ -113,6 +125,82 @@ def _resolve_image_name() -> str:
     allowlist or resolution fails closed.
     """
     return os.getenv("STRANDS_GR00T_IMAGE", _DEFAULT_IMAGE_NAME)
+
+
+def _repo_url_allowlist() -> tuple[str, ...]:
+    """Return the configured repo-URL allowlist (defaults + env extras)."""
+    raw = os.getenv("STRANDS_GR00T_REPO_URL_ALLOW", "")
+    extras = tuple(u.strip() for u in raw.split(",") if u.strip())
+    return _DEFAULT_REPO_URL_ALLOW + extras
+
+
+def _is_allowed_repo_url(repo_url: str) -> bool:
+    """True iff *repo_url* is an exact match for an allowlisted URL.
+
+    Exact match only (no wildcard): a substring/prefix test would let an
+    attacker-controlled host (``...Isaac-GR00T-evil``, ``...Isaac-GR00T.evil``)
+    slip past. A leading ``-`` is rejected outright so the value can never be
+    consumed as a ``git`` option (argument injection).
+    """
+    if not isinstance(repo_url, str) or not repo_url or repo_url.startswith("-"):
+        return False
+    return repo_url in _repo_url_allowlist()
+
+
+# git refs may legitimately contain letters, digits, and ``._/-``; anything
+# else (whitespace, shell metacharacters, a leading ``-`` that git would read
+# as an option) is rejected before the value reaches ``git --branch``/checkout.
+_REPO_TAG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
+
+
+def _is_allowed_repo_tag(repo_tag: str) -> bool:
+    """True iff *repo_tag* is a safe git ref (no option/metachar injection)."""
+    return isinstance(repo_tag, str) and bool(_REPO_TAG_RE.match(repo_tag))
+
+
+def _resolve_repo_url() -> str:
+    """Resolve the Isaac-GR00T clone URL from operator config.
+
+    The agent has no say in the source repo. Operators set
+    ``STRANDS_GR00T_REPO_URL`` (defaulting to the canonical NVIDIA repo); the
+    value must pass the allowlist or ``build_image`` fails closed.
+    """
+    return os.getenv("STRANDS_GR00T_REPO_URL", _DEFAULT_REPO_URL)
+
+
+def _resolve_repo_tag() -> str:
+    """Resolve the Isaac-GR00T clone tag/branch from operator config."""
+    return os.getenv("STRANDS_GR00T_REPO_TAG", _DEFAULT_REPO_TAG)
+
+
+def _resolve_build_source() -> tuple[str, str] | dict[str, Any]:
+    """Resolve+validate the operator-configured clone URL and tag.
+
+    Returns ``(repo_url, repo_tag)`` on success, or a structured error dict if
+    the configured URL is off-allowlist or the tag is not a safe git ref. The
+    agent cannot influence either value (both removed from the tool signature);
+    this guard catches a misconfigured operator env and fails closed.
+    """
+    repo_url = _resolve_repo_url()
+    repo_tag = _resolve_repo_tag()
+    if not _is_allowed_repo_url(repo_url):
+        return {
+            "status": "error",
+            "message": (
+                f"configured repo URL {repo_url!r} is not in the allowlist "
+                f"{list(_repo_url_allowlist())}. Set STRANDS_GR00T_REPO_URL to "
+                "an allowed URL or extend STRANDS_GR00T_REPO_URL_ALLOW."
+            ),
+        }
+    if not _is_allowed_repo_tag(repo_tag):
+        return {
+            "status": "error",
+            "message": (
+                f"configured repo tag {repo_tag!r} is not a valid git ref "
+                "(allowed: letters, digits, and '._/-', no leading '-')."
+            ),
+        }
+    return repo_url, repo_tag
 
 
 def _normalize_host_path(host_path: str) -> str:
@@ -203,9 +291,6 @@ def gr00t_inference(
     api_token: str | None = None,
     protocol: str = "n1.5",
     use_sim_policy_wrapper: bool = False,
-    repo_url: str = _DEFAULT_REPO_URL,
-    repo_tag: str = _DEFAULT_REPO_TAG,
-    source_dir: str | None = None,
     hf_repo: str | None = None,
     hf_subfolder: str | None = None,
     hf_local_dir: str | None = None,
@@ -353,14 +438,15 @@ def gr00t_inference(
 
     Container lifecycle args (used by ``build_image``, ``download_checkpoint``,
     ``start_container``, ``lifecycle``):
-        repo_url: Isaac-GR00T git URL (default: ``https://github.com/NVIDIA/Isaac-GR00T``).
-        repo_tag: Branch / tag / SHA to check out (default: ``"n1.7-release"``).
-        source_dir: Where to clone the Isaac-GR00T source. Defaults to
-            ``$STRANDS_BASE_DIR/Isaac-GR00T`` (typically ``~/.strands_robots/Isaac-GR00T``).
-        (Container image, bind-mount volumes, and the container command are
-        operator-config-driven, not agent parameters -- see the
-        ``STRANDS_GR00T_IMAGE`` / ``STRANDS_GR00T_IMAGE_ALLOW`` env vars.)
-            (default: ``"gr00t:latest"``).
+        (The build source repo/tag/clone-dir, the container image, bind-mount
+        volumes, and the container command are operator-config-driven, NOT
+        agent parameters: an agent-supplied git URL would clone an attacker
+        tree and ``bash docker/build.sh`` it (host RCE). ``build_image`` clones
+        ``$STRANDS_GR00T_REPO_URL`` (allowlisted; default the canonical NVIDIA
+        repo) at ``$STRANDS_GR00T_REPO_TAG`` into ``$STRANDS_BASE_DIR/Isaac-GR00T``;
+        the image is resolved from ``STRANDS_GR00T_IMAGE`` and validated against
+        ``STRANDS_GR00T_IMAGE_ALLOW``. Extend the URL allowlist for private
+        mirrors via ``STRANDS_GR00T_REPO_URL_ALLOW``.)
         hf_repo: HuggingFace dataset/model id (e.g., ``"nvidia/GR00T-N1.7-LIBERO"``).
             Required for ``download_checkpoint``.
         hf_subfolder: Subfolder pattern within the HF repo (e.g.,
@@ -473,10 +559,13 @@ def gr00t_inference(
                     "allowed image or extend STRANDS_GR00T_IMAGE_ALLOW."
                 ),
             }
+        _build_source = _resolve_build_source()
+        if isinstance(_build_source, dict):
+            return _build_source
+        _repo_url, _repo_tag = _build_source
         return _build_image(
-            repo_url=repo_url,
-            repo_tag=repo_tag,
-            source_dir=source_dir,
+            repo_url=_repo_url,
+            repo_tag=_repo_tag,
             image_name=image_name,
             force=force,
         )
@@ -526,12 +615,15 @@ def gr00t_inference(
                     "allowed image or extend STRANDS_GR00T_IMAGE_ALLOW."
                 ),
             }
+        _build_source = _resolve_build_source()
+        if isinstance(_build_source, dict):
+            return _build_source
+        _repo_url, _repo_tag = _build_source
         return _lifecycle(
             phase=lifecycle,
             # Phase-specific kwargs (most reused from start/start_container).
-            repo_url=repo_url,
-            repo_tag=repo_tag,
-            source_dir=source_dir,
+            repo_url=_repo_url,
+            repo_tag=_repo_tag,
             image_name=image_name,
             hf_repo=hf_repo,
             hf_subfolder=hf_subfolder,
@@ -1036,7 +1128,6 @@ def _build_image(
     *,
     repo_url: str,
     repo_tag: str,
-    source_dir: str | None,
     image_name: str,
     force: bool,
 ) -> dict[str, Any]:
@@ -1045,7 +1136,25 @@ def _build_image(
     Idempotent: when ``image_name`` is already in the local docker daemon
     AND ``force=False``, returns success without touching the filesystem
     or the docker daemon. Pass ``force=True`` to clean-rebuild.
+
+    Defence in depth: ``repo_url``/``repo_tag`` are resolved+validated at the
+    dispatch boundary (the agent cannot supply them), but this private entry
+    point is reachable by operators/tests, so it re-asserts the same URL
+    allowlist + tag-shape guard before any ``git``/``bash`` subprocess. The
+    clone destination is fixed (``_isaac_gr00t_dir()``), never caller-supplied.
     """
+    if not _is_allowed_repo_url(repo_url):
+        return {
+            "status": "error",
+            "message": (
+                f"refusing to clone {repo_url!r}: not in the repo-URL allowlist {list(_repo_url_allowlist())}."
+            ),
+        }
+    if not _is_allowed_repo_tag(repo_tag):
+        return {
+            "status": "error",
+            "message": f"refusing to clone tag {repo_tag!r}: not a valid git ref.",
+        }
     if not force and _image_exists(image_name):
         return {
             "status": "success",
@@ -1054,7 +1163,7 @@ def _build_image(
             "message": f"Docker image {image_name!r} already exists; skipping build (use force=True to rebuild)",
         }
 
-    dest = Path(source_dir).expanduser() if source_dir else _isaac_gr00t_dir()
+    dest = _isaac_gr00t_dir()
     dest.parent.mkdir(parents=True, exist_ok=True)
 
     try:
@@ -1376,7 +1485,6 @@ def _lifecycle(
     # build_image kwargs
     repo_url: str,
     repo_tag: str,
-    source_dir: str | None,
     image_name: str,
     # download_checkpoint kwargs
     hf_repo: str | None,
@@ -1445,7 +1553,6 @@ def _lifecycle(
     build_result = _build_image(
         repo_url=repo_url,
         repo_tag=repo_tag,
-        source_dir=source_dir,
         image_name=image_name,
         force=force,
     )
