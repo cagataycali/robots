@@ -142,8 +142,16 @@ agent("Wave the arm using the mock policy for 200 steps, then render a top-down 
 ```
 
 `Robot("so100")` returns a `Simulation` instance — the full 64-action
-simulation AgentTool. Drive it in natural language, or call its methods
-directly (see [Simulation](#simulation-mujoco)).
+simulation AgentTool. Drive it in natural language through an `Agent`, call its
+methods directly (`robot.render(camera_name="topdown")`), or dispatch an action
+by calling it (`robot(action="render", camera_name="topdown")`). See
+[Simulation](#simulation-mujoco).
+
+> **Note:** `Robot("so100")` already creates the world **and** adds the robot
+> for you. Do **not** call `create_world()` again on the returned instance —
+> it will error with *"World already exists."* The `create_world()` /
+> `add_robot()` sequence shown in [Simulation (MuJoCo)](#simulation-mujoco) is
+> for the low-level `Simulation(...)` constructor, which starts empty.
 
 ### Real hardware + GR00T
 
@@ -377,6 +385,55 @@ Pick the config matching your robot's camera + state layout; pass it as
 > `trust_remote_code=True` (arbitrary code execution). You must opt in with
 > `export STRANDS_TRUST_REMOTE_CODE=1`. Only load models you trust.
 
+### Cosmos 3 (NVIDIA omnimodal VLA — service mode)
+
+[`nvidia/Cosmos3-Nano-Policy-DROID`](https://huggingface.co/nvidia/Cosmos3-Nano-Policy-DROID)
+served by the Cosmos Framework RoboLab WebSocket policy server. The policy
+client is **self-contained** — it speaks the server's msgpack+NumPy wire
+protocol directly via `websockets` + a vendored numpy packer (no
+`openpi-client` dependency, no `numpy<2` pin), so it composes cleanly with
+`lerobot` for dataset recording in the same env.
+
+**1. Start the server** (holds the GPU), from a Cosmos Framework checkout:
+
+```bash
+uv sync --all-extras --group=cu130-train --group=policy-server
+python -m cosmos_framework.scripts.action_policy_server_robolab \
+    --checkpoint-path nvidia/Cosmos3-Nano-Policy-DROID --port 8000
+curl http://localhost:8000/healthz   # -> 200 when ready (~4 min cold)
+```
+
+**2. Install the client** (the `cosmos3-service` extra ships only `msgpack`
++ `websockets` — numpy-version agnostic):
+
+```bash
+pip install -e '.[sim-mujoco]'
+pip install 'strands-robots[cosmos3-service]'
+```
+
+**3. Use it** (`cosmos3`, `c3`, `cosmos3://host:port`, or the HF model-id all
+resolve to `Cosmos3Policy`):
+
+```python
+from strands_robots.policies import create_policy
+
+policy = create_policy("cosmos3", embodiment="droid", port=8000)
+policy.set_robot_state_keys([f"joint_{i}" for i in range(7)] + ["gripper"])
+chunk = policy.get_actions_sync(observation, "pick up the cube")
+# chunk == [{"joint_0": .., ..., "gripper": ..}, ...]  (one dict per timestep)
+```
+
+**4. Roll out in MuJoCo** — the `droid` embodiment drives a Franka/DROID-class
+arm, so use the `franka` (or `panda`) sim asset:
+
+```bash
+MUJOCO_GL=egl python examples/cosmos3_sim_rollout.py --record /tmp/c3.mp4
+```
+
+Embodiments: `droid` (10D, chunk 32, 15 fps), `umi`, `av`, `bridge`. If the
+server is not running, the policy raises a `ConnectionError` with the exact
+command to start it.
+
 ### Non-VLA policies (motion planners, MPC, scripted)
 
 The same interface fits cuRobo, MoveIt2, OMPL, MPC, and pure-IK / scripted
@@ -450,6 +507,12 @@ sim.add_robot(name="arm", data_config="so100")
 sim.add_object(name="cube", shape="box", position=[0.3, 0, 0.05])
 sim.add_camera(name="topdown", position=[0, 0, 1.5], target=[0, 0, 0])
 
+# Wrist camera: mount ON the gripper body so it tracks the arm like the real
+# SO101/SO100 hardware cam. position/target are in the body's LOCAL frame.
+# Body names are namespaced "<robot>/<body>" (e.g. "arm/gripper").
+sim.add_camera(name="wrist", position=[0, -0.05, 0], target=[0, -0.15, 0],
+               parent_body="arm/gripper")
+
 sim.run_policy(robot_name="arm", policy_provider="mock", n_steps=200,
                control_frequency=50.0)
 
@@ -491,6 +554,10 @@ frame = sim.render(camera_name="topdown")   # {status, content:[text, image]}
   `is_static=True`; passing `is_static=False` is a hard error.
 - **Aim cameras.** Pass `target=[x,y,z]` to look at a point; `target == position`
   errors.
+- **Wrist cameras mount on a body.** Pass `parent_body="<robot>/gripper"` to
+  `add_camera` so the camera rides with the arm (realistic SO101/SO100 wrist
+  cam). In that mode `position`/`target` are in the body's LOCAL frame, not
+  world coordinates. Omit `parent_body` for a world-fixed camera.
 - **MP4 vs dataset recording.** `start_cameras_recording` writes plain MP4
   (`[sim-mujoco]` only). `start_recording` writes a LeRobotDataset (parquet +
   MP4 + schema) and needs the `[lerobot]` extra.
@@ -520,7 +587,9 @@ from strands_robots import Robot
 
 a = Robot("so100")              # auto-joins the mesh
 b = Robot("so100")              # second peer (another process)
-print(a.mesh.peers)             # discovers b
+print(a.mesh.peers)             # list[dict] — discovers b
+print(a.mesh.peers_by_id[b.peer_id])   # dict[peer_id -> info] for O(1) lookup
+info = a.mesh.get_peer(b.peer_id)      # None-safe single lookup
 
 a.mesh.tell(b.peer_id, "pick up the cube")
 a.mesh.emergency_stop()         # broadcast E-STOP, audited to disk
@@ -547,6 +616,13 @@ Expose the mesh to an agent with the `robot_mesh` tool (`peers`, `status`,
 `inbox`). Disable globally with `STRANDS_MESH=false` or per-robot with
 `Robot("so100", mesh=False)`. Install with `pip install "strands-robots[mesh]"`.
 
+For frictionless single-machine experiments, set `STRANDS_MESH_LOCAL_DEV=1` —
+one env var that runs the mesh without mTLS/ACL on localhost. It defaults the
+auth mode to `none` **and** satisfies the insecure-acknowledgement second
+factor by itself, so you don't also need `STRANDS_MESH_I_KNOW_THIS_IS_INSECURE=1`.
+An explicit `STRANDS_MESH_AUTH_MODE=mtls` still wins. **Never** set
+`STRANDS_MESH_LOCAL_DEV` on a shared or production network.
+
 ### AWS IoT Core transport (fleets)
 
 For robots across networks, bridge the mesh to AWS IoT Core over MQTT5/mTLS,
@@ -568,6 +644,9 @@ Install with `pip install "strands-robots[mesh-iot]"`. See the
 | `MUJOCO_GL` | MuJoCo GL backend (`egl`, `osmesa`, `glfw`) | auto |
 | `GROOT_API_TOKEN` | API token for the GR00T inference service | unset |
 | `STRANDS_MESH` | Set `false` to disable Zenoh mesh globally | `true` |
+| `STRANDS_MESH_LOCAL_DEV` | Set `1` for a one-var localhost preset (auth `none`, no second factor needed) | unset |
+| `STRANDS_MESH_AUTH_MODE` | Wire auth: `mtls` or `none` (`none` needs a second factor) | `mtls` |
+| `STRANDS_MESH_I_KNOW_THIS_IS_INSECURE` | Second factor required to bring up `AUTH_MODE=none` | unset |
 | `STRANDS_MESH_PORT` | TCP port for the local Zenoh router | `7447` |
 | `ZENOH_CONNECT` | Comma-separated remote Zenoh endpoints to connect to | unset |
 | `ZENOH_LISTEN` | Comma-separated endpoints for the local Zenoh listener | unset |
