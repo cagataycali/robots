@@ -316,6 +316,10 @@ def install_torch_mock():
             ) as _fh:
                 _fh.write(_msg + "\n")
         except OSError:
+            # Sentinel-file write is best-effort diagnostics only (read-only or
+            # full /tmp, restricted CI sandbox, etc.). The stderr message above
+            # already conveys why the mock was installed, so a failed write must
+            # never abort mock installation or fail the test run.
             pass
 
     logger.info("Installing torch mock (real torch not available)")
