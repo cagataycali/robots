@@ -5,7 +5,7 @@ description: HuggingFace LeRobot direct inference — ACT, Pi0, SmolVLA, Diffusi
 # LeRobot Local
 
 ```bash
-pip install "strands-robots[lerobot]"
+uv pip install "strands-robots[lerobot]"
 export STRANDS_TRUST_REMOTE_CODE=1        # required; raises UntrustedRemoteCodeError otherwise
 ```
 

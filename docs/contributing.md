@@ -9,7 +9,7 @@ Repo: [`strands-labs/robots`](https://github.com/strands-labs/robots). Requires 
 ```bash
 git clone https://github.com/strands-labs/robots
 cd robots
-pip install -e '.[all,dev]'
+uv pip install -e '.[all,dev]'
 ```
 
 ## Commands

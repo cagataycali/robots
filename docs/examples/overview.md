@@ -15,7 +15,7 @@ Browse [`examples/`](https://github.com/strands-labs/robots/tree/main/examples):
 ```bash
 git clone https://github.com/strands-labs/robots
 cd robots
-pip install -e ".[all]"
+uv pip install -e ".[all]"
 
 python examples/cosmos3_sim_rollout.py           # needs cosmos3-service + server on :8000
 python examples/molmoact2_so101_pickplace.py     # requires hardware

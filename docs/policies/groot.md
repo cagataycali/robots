@@ -5,7 +5,7 @@ description: NVIDIA GR00T (N1.5 / N1.6 / N1.7) — ZMQ service or local inferenc
 # GR00T
 
 ```bash
-pip install "strands-robots[groot-service]"
+uv pip install "strands-robots[groot-service]"
 ```
 
 ```python

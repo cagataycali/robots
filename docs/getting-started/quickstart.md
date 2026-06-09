@@ -1,11 +1,11 @@
 ---
-description: Five minutes from pip install to a robot picking up a cube.
+description: Five minutes from install to a robot picking up a cube.
 ---
 
 # Quickstart
 
 ```bash
-pip install "strands-robots[sim-mujoco]"
+uv pip install "strands-robots[sim-mujoco]"
 ```
 
 ```python

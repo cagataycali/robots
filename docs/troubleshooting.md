@@ -8,11 +8,11 @@ description: Error → fix table for the most common gotchas across install, sim
 
 | Symptom | Likely cause | Fix |
 |---------|--------------|-----|
-| `ModuleNotFoundError: mujoco` | Missing `[sim-mujoco]` | `pip install "strands-robots[sim-mujoco]"` |
-| `ModuleNotFoundError: lerobot` | Missing `[lerobot]` | `pip install "strands-robots[lerobot]"` |
-| `ImportError: cannot import name '...' from 'lerobot'` | LeRobot version skew | `pip install "lerobot>=0.5.0,<0.6"` |
-| numpy ABI mismatch on Jetson | System pandas vs pip numpy | `pip install "numpy<2" "pandas==2.1.4"` then reinstall |
-| `pip install -e .` errors | Wrong cwd | `cd` to repo root first |
+| `ModuleNotFoundError: mujoco` | Missing `[sim-mujoco]` | `uv pip install "strands-robots[sim-mujoco]"` |
+| `ModuleNotFoundError: lerobot` | Missing `[lerobot]` | `uv pip install "strands-robots[lerobot]"` |
+| `ImportError: cannot import name '...' from 'lerobot'` | LeRobot version skew | `uv pip install "lerobot>=0.5.0,<0.6"` |
+| numpy ABI mismatch on Jetson | System pandas vs pip numpy | `uv pip install "numpy<2" "pandas==2.1.4"` then reinstall |
+| `uv pip install -e .` errors | Wrong cwd | `cd` to repo root first |
 
 ## Simulation
 
@@ -22,7 +22,7 @@ description: Error → fix table for the most common gotchas across install, sim
 | Black frames from `render(...)` | Headless, no GL backend | `export MUJOCO_GL=osmesa` (Linux) or `=egl` |
 | `Robot("foo")` raises ValueError | Unknown name | Check `list_robots("all")`; or pass `urdf_path=...` |
 | Sim hangs on `create_world` | Asset download | Wait — first call downloads MJCF, then cached |
-| `ModuleNotFoundError: trs_so_arm100_mj_description` | Auto-install failed | `pip install trs-so-arm100-mj-description` |
+| `ModuleNotFoundError: trs_so_arm100_mj_description` | Auto-install failed | `uv pip install trs-so-arm100-mj-description` |
 | `add_robot` raises after `load_scene` | Scene XML overrides world | Use `add_robot` before `load_scene` |
 
 ## Hardware
@@ -43,14 +43,14 @@ description: Error → fix table for the most common gotchas across install, sim
 | `UntrustedRemoteCodeError` | `lerobot_local` needs HF exec | `export STRANDS_TRUST_REMOTE_CODE=1` |
 | `Gr00tPolicy` connection refused | Container not running | `gr00t_inference(action="start_container", ...)` |
 | `Gr00tPolicy` returns garbage | `data_config` mismatch | Use same `data_config` as training |
-| `Cosmos3Policy` connection refused | Service not running | `pip install 'strands-robots[cosmos3-service]'` + start server |
+| `Cosmos3Policy` connection refused | Service not running | `uv pip install 'strands-robots[cosmos3-service]'` + start server |
 | Policy import slow | Heavy dep at module top | Defer to `__init__` or `get_actions` |
 
 ## Recording
 
 | Symptom | Likely cause | Fix |
 |---------|--------------|-----|
-| `start_recording` fails: lerobot missing | `[lerobot]` not installed | `pip install "strands-robots[lerobot]"` |
+| `start_recording` fails: lerobot missing | `[lerobot]` not installed | `uv pip install "strands-robots[lerobot]"` |
 | Need MP4 without LeRobot | — | Use `start_cameras_recording` / `stop_cameras_recording` |
 | Empty MP4 files | Stopped before any frames | Check `get_recording_status()` frame count |
 | Push fails | Not logged into HF | `huggingface-cli login` |
@@ -61,7 +61,7 @@ description: Error → fix table for the most common gotchas across install, sim
 |---------|--------------|-----|
 | `mesh.peers` empty | Other peer not running | Wait ~1s; verify `mesh.alive == True` on both |
 | Port already bound | Another zenoh process | Mesh auto falls back to client mode; or set `STRANDS_MESH_PORT` |
-| `init_mesh` raises | `eclipse-zenoh` missing | `pip install "strands-robots[mesh]"` |
+| `init_mesh` raises | `eclipse-zenoh` missing | `uv pip install "strands-robots[mesh]"` |
 | Want mesh off | — | `STRANDS_MESH=false` or `Robot(..., mesh=False)` |
 
 ## Agent integration
@@ -69,7 +69,7 @@ description: Error → fix table for the most common gotchas across install, sim
 | Symptom | Likely cause | Fix |
 |---------|--------------|-----|
 | Agent picks wrong action | Tool spec confusion | Rephrase instruction; check `robot.tool_spec` |
-| `Agent(tools=[robot])` errors | `strands-agents` missing | `pip install strands-agents` |
+| `Agent(tools=[robot])` errors | `strands-agents` missing | `uv pip install strands-agents` |
 | Agent hangs | Long-running action | Use `start_policy` instead of `run_policy` |
 | Bedrock/Anthropic auth fails | Provider credentials | See [Strands Agents docs](https://strandsagents.com/) |
 

@@ -29,7 +29,7 @@ for episode in range(50):
 sim.stop_recording()
 
 # 2. Train upstream
-# pip install lerobot
+# uv pip install lerobot
 # python -m lerobot.scripts.train policy=act dataset.root=/tmp/my_dataset
 
 # 3. Infer with checkpoint

@@ -19,7 +19,7 @@ sim_a.mesh.tell(sim_b.mesh.peer_id, "pick up the cube",
 ```
 
 ```bash
-pip install "strands-robots[mesh]"   # eclipse-zenoh; already in the default install
+uv pip install "strands-robots[mesh]"   # eclipse-zenoh; already in the default install
 ```
 
 ## Key mesh calls

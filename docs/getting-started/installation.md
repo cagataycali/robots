@@ -1,10 +1,10 @@
 ---
-description: pip install strands-robots — extras matrix, platform notes, headless rendering.
+description: Install strands-robots with uv — extras matrix, platform notes, headless rendering.
 ---
 
 # Installation
 
-Requires **Python ≥ 3.12**.
+Requires **Python ≥ 3.12**. Examples use [`uv`](https://docs.astral.sh/uv/) (`curl -LsSf https://astral.sh/uv/install.sh | sh`); plain `pip install` works too.
 
 ## Extras matrix
 
@@ -23,10 +23,10 @@ Requires **Python ≥ 3.12**.
 | `[dev]` | `pytest`, `pytest-cov`, `ruff`, `mypy`, `pytest-timeout` | Contributing |
 
 ```bash
-pip install "strands-robots[sim-mujoco]"                  # sim only
-pip install "strands-robots[all]"                         # everything
-pip install "strands-robots[sim-mujoco,cosmos3-service]"  # Cosmos 3
-pip install "strands-robots[sim-mujoco,lerobot,mesh]"     # pick and choose
+uv pip install "strands-robots[sim-mujoco]"                  # sim only
+uv pip install "strands-robots[all]"                         # everything
+uv pip install "strands-robots[sim-mujoco,cosmos3-service]"  # Cosmos 3
+uv pip install "strands-robots[sim-mujoco,lerobot,mesh]"     # pick and choose
 ```
 
 ## Platform notes
@@ -43,8 +43,8 @@ sudo usermod -aG dialout $USER   # USB serial access; re-login after
 
 **Jetson (JetPack):**
 ```bash
-pip install "numpy<2" "pandas==2.1.4"
-pip install "strands-robots[sim-mujoco,lerobot]"
+uv pip install "numpy<2" "pandas==2.1.4"
+uv pip install "strands-robots[sim-mujoco,lerobot]"
 ```
 
 ## Headless rendering

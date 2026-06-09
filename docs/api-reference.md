@@ -176,7 +176,7 @@ See [Multi-robot mesh](mesh.md).
 from strands_robots.benchmarks.libero import LiberoSuite
 ```
 
-LIBERO task suites, BDDL parser. Install: `pip install "strands-robots[benchmark-libero]"`.
+LIBERO task suites, BDDL parser. Install: `uv pip install "strands-robots[benchmark-libero]"`.
 
 ## Environment variables
 

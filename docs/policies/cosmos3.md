@@ -5,7 +5,7 @@ description: NVIDIA Cosmos 3 omnimodal VLA — WebSocket service, droid/umi/av/b
 # Cosmos 3
 
 ```bash
-pip install "strands-robots[cosmos3-service]"   # adds msgpack + websockets; no openpi-client needed
+uv pip install "strands-robots[cosmos3-service]"   # adds msgpack + websockets; no openpi-client needed
 ```
 
 ```python

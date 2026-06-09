@@ -48,6 +48,6 @@ The agent decides *what* to do. The policy (Mock, GR00T, LeRobot, or Cosmos 3) d
 ## Install
 
 ```bash
-pip install "strands-robots[sim-mujoco]"   # simulation
-pip install "strands-robots[all]"          # sim + hardware + every policy
+uv pip install "strands-robots[sim-mujoco]"   # simulation
+uv pip install "strands-robots[all]"          # sim + hardware + every policy
 ```

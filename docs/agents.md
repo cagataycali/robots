@@ -18,7 +18,7 @@ agent("Add a red cube on the table and pick it up")
 ```
 
 ```bash
-pip install strands-agents "strands-robots[sim-mujoco]"
+uv pip install strands-agents "strands-robots[sim-mujoco]"
 ```
 
 ## Add more tools
