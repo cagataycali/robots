@@ -46,7 +46,6 @@ real.start_task(instruction="pick up the cube", policy_port=5555)
 
 ## See also
 
-- [Tutorial 7 — Training](../tutorial/07-training.md) — guided walkthrough.
 - [Recording](../recording.md) — produce the dataset.
 - [LerobotLocalPolicy](../policies/lerobot-local.md) — inference with a trained checkpoint.
 - [Cosmos3Policy](../policies/cosmos3.md) — NVIDIA Cosmos 3 VLA.

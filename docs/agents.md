@@ -2,7 +2,9 @@
 description: Hand a Robot() to a Strands Agent and control it with plain English.
 ---
 
-# 4 — AI agents
+# AI agents
+
+A `Robot()` is a Strands tool. Hand it to an `Agent` and it drives the robot for you — picking actions from natural language.
 
 ```python
 from strands import Agent
@@ -29,7 +31,7 @@ agent("Start a GR00T server on port 5555 with so100_dualcam, "
       "then pick up the cube using groot")
 ```
 
-All files in `strands_robots/tools/` are `@tool`-decorated functions the agent uses directly.
+Everything in `strands_robots/tools/` is a `@tool` the agent can call directly.
 
 ## Multi-turn
 
@@ -39,7 +41,7 @@ agent("Add a side camera looking at the workspace")
 agent("Run the mock policy for 5 seconds and report which objects are still on the table")
 ```
 
-## Sim → real
+## Sim to real
 
 ```python
 robot = Robot("so100", mode="real",                                    # requires hardware
@@ -67,7 +69,7 @@ Inspect the full spec: `print(robot.tool_spec)` — JSON schema with all 60+ act
 
 ## See also
 
-- [Tutorial 5 — Multi-robot](05-multi-robot.md) — agent coordinates multiple robots.
-- [Tutorial 8 — Real hardware](08-real-hardware.md) — real-arm bring-up checklist.
-- [Hardware tools](../hardware/tools.md) — all `@tool` helpers.
+- [Multi-robot mesh](mesh.md) — the agent coordinates multiple robots.
+- [Hardware tools](hardware/tools.md) — the `@tool` helpers.
+- [Simulation overview](simulation/overview.md) — every action the agent can call.
 - [Strands Agents documentation](https://strandsagents.com/) — provider setup, advanced patterns.

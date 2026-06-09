@@ -79,6 +79,5 @@ print(len(ds), ds[0].keys())
 
 ## See also
 
-- [Tutorial 6 — Recording](tutorial/06-recording.md) — guided walkthrough.
-- [Tutorial 7 — Training](tutorial/07-training.md) — what to do with the data.
+- [Training](training/overview.md) — what to do with the data.
 - [LeRobot dataset docs](https://huggingface.co/docs/lerobot) — upstream spec.

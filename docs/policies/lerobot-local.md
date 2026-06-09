@@ -76,7 +76,7 @@ policy = create_policy("lerobot_local", pretrained_name_or_path="lerobot/pi0_so1
 
 ## See also
 
-- [Tutorial 3 — Policies](../tutorial/03-policies.md)
-- [Tutorial 7 — Training](../tutorial/07-training.md)
+- [Policy providers](../policies/overview.md)
+- [Training](../training/overview.md)
 - [GR00T](groot.md)
 - [LeRobot project](https://github.com/huggingface/lerobot)

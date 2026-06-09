@@ -76,8 +76,8 @@ gr00t_inference(action="remove_container")
 
 ## See also
 
-- [Tutorial 3 — Policies](../tutorial/03-policies.md)
-- [Tutorial 8 — Real hardware](../tutorial/08-real-hardware.md)
+- [Policy providers](../policies/overview.md)
+- [Real hardware](../hardware/robot-control.md)
 - [LeRobot Local](lerobot-local.md)
 - [Cosmos 3](cosmos3.md)
 - [Isaac-GR00T project](https://github.com/NVIDIA/Isaac-GR00T)

@@ -168,7 +168,7 @@ from strands_robots.mesh import init_mesh, Mesh, InputPublisher, InputReceiver
 | `InputPublisher` | Stream teleoperator actions over mesh. |
 | `InputReceiver` | Receive + apply remote teleoperator actions. |
 
-See [Tutorial 5 — Multi-robot](tutorial/05-multi-robot.md).
+See [Multi-robot mesh](mesh.md).
 
 ## `strands_robots.benchmarks.libero`
 
@@ -195,4 +195,4 @@ LIBERO task suites, BDDL parser. Install: `pip install "strands-robots[benchmark
 
 - [Architecture](architecture.md) — module map + ABC contracts.
 - [Robot factory](getting-started/robot-factory.md) — full factory signature.
-- [Tutorial](tutorial/index.md) — concept walkthroughs.
+- [Quickstart](getting-started/quickstart.md) — concept walkthroughs.

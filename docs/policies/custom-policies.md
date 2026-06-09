@@ -69,6 +69,6 @@ The factory imports lazily on first use.
 ## See also
 
 - [Policy overview](overview.md) — factory, providers.
-- [Tutorial 9 — Advanced](../tutorial/09-advanced.md)
+- [Architecture](../architecture.md)
 - [Architecture](../architecture.md)
 - `strands_robots/policies/mock.py` — minimal reference implementation.

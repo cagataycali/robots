@@ -46,5 +46,5 @@ for episode in range(N):
 
 - [Simulation overview](overview.md)
 - [World building](world-building.md)
-- [Tutorial 6 — Recording](../tutorial/06-recording.md)
-- [Tutorial 8 — Real hardware](../tutorial/08-real-hardware.md)
+- [Recording](../recording.md)
+- [Real hardware](../hardware/robot-control.md)

@@ -78,5 +78,5 @@ Bug reports: [GitHub issues](https://github.com/strands-labs/robots/issues) — 
 ## See also
 
 - [Installation](getting-started/installation.md) — extras matrix.
-- [Tutorial 8 — Real hardware](tutorial/08-real-hardware.md) — bring-up sequence.
+- [Real hardware](hardware/robot-control.md) — bring-up sequence.
 - [Contributing](contributing.md) — fix it yourself.

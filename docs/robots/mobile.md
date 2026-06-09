@@ -58,5 +58,5 @@ _Unitree Go2 Quadruped_
 ## See also
 
 - [Humanoids](humanoids.md) — bipedal alternatives.
-- [Tutorial 5 — Multi-robot](../tutorial/05-multi-robot.md) — coordinate a fleet via the mesh.
+- [Multi-robot mesh](../mesh.md) — coordinate a fleet via the mesh.
 - [Domain randomization](../simulation/domain-randomization.md) — terrain randomisation for legged robots.

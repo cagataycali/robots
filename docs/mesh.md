@@ -1,8 +1,10 @@
 ---
-description: Two Robot() instances coordinating over the Zenoh mesh — peer discovery, RPC, emergency stop.
+description: Two Robot() instances coordinating over the Zenoh mesh — peer discovery, RPC, emergency stop, teleop.
 ---
 
-# 5 — Multi-robot
+# Multi-robot mesh
+
+Every `Robot()` auto-joins a Zenoh mesh. Peers discover each other on the LAN and can query, command, and e-stop one another.
 
 ```python
 # process A
@@ -17,7 +19,7 @@ sim_a.mesh.tell(sim_b.mesh.peer_id, "pick up the cube",
 ```
 
 ```bash
-pip install "strands-robots[mesh]"   # eclipse-zenoh; already in default install
+pip install "strands-robots[mesh]"   # eclipse-zenoh; already in the default install
 ```
 
 ## Key mesh calls
@@ -29,7 +31,7 @@ result = sim_a.mesh.send(target_peer_id, {"action": "status"}, timeout=5.0)
 # Fan-out → list of responses collected within timeout
 results = sim_a.mesh.broadcast({"action": "status"}, timeout=2.0)
 
-# Safety primitive — writes tamper-evident audit log
+# Safety primitive — writes a tamper-evident audit log
 sim_a.mesh.emergency_stop()   # STRANDS_MESH_AUDIT_DIR overrides log location
 ```
 
@@ -63,12 +65,12 @@ agent("E-STOP all peers")
 ## Mesh teleop
 
 ```python
-# Machine A — leader publishes at 50 Hz  # requires hardware
+# Machine A - leader publishes at 50 Hz  # requires hardware
 leader = Robot("so100", mode="real")
 leader.start_teleop_publish(teleoperator=leader.teleoperator,
                             device_name="leader", method="arm", hz=50)
 
-# Machine B — follower applies incoming actions  # requires hardware
+# Machine B - follower applies incoming actions  # requires hardware
 follower = Robot("so100", mode="real")
 follower.start_teleop_receive(source_peer_id=leader.mesh.peer_id,
                               device_name="leader", apply_fn=None)
@@ -90,6 +92,6 @@ Mesh failures are non-fatal — `robot.mesh` becomes `None`; the sim/hardware in
 
 ## See also
 
-- [Tutorial 6 — Recording](06-recording.md) — record a distributed session.
-- [Architecture](../architecture.md) — where the mesh sits in the module map.
+- [AI agents](agents.md) — drive the mesh with natural language.
+- [Architecture](architecture.md) — where the mesh sits in the module map.
 - [Mesh source](https://github.com/strands-labs/robots/tree/main/strands_robots/mesh) — `core.py`, `session.py`, `audit.py`, `sensors.py`, `input.py`.

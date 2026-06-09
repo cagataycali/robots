@@ -74,4 +74,4 @@ Mesh failure is non-fatal; `.mesh = None` if Zenoh unavailable.
 
 - [Robot catalog](../robots/index.md) — 68 catalog names.
 - [Architecture](../architecture.md) — factory in the module map.
-- [Tutorial 5 — Multi-robot](../tutorial/05-multi-robot.md) — mesh peer discovery.
+- [Multi-robot mesh](../mesh.md) — mesh peer discovery.

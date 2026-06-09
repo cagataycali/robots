@@ -39,4 +39,4 @@ _Trossen WidowX AI Bimanual_
 
 - [Arms](arms.md) — single-arm manipulators.
 - [Hands](hands.md) — dexterous end-effectors to mount on each arm.
-- [Tutorial 5 — Multi-robot](../tutorial/05-multi-robot.md) — pair two single arms via the mesh as an alternative to a single bimanual rig.
+- [Multi-robot mesh](../mesh.md) — pair two single arms via the mesh as an alternative to a single bimanual rig.

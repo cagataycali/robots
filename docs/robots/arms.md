@@ -114,4 +114,4 @@ _AgileX Piper (6-DOF + gripper)_
   these names.
 - [Bimanual](bimanual.md) — two-arm setups (Aloha, Trossen WX-AI).
 - [Hands](hands.md) — pair an arm with a dexterous end-effector.
-- [Tutorial 1](../tutorial/01-your-first-robot.md) — spawn one of these arms in 3 lines.
+- [Quickstart](../getting-started/quickstart.md) — spawn one of these arms in 3 lines.

@@ -73,4 +73,4 @@ sim.run_policy(
 - [GR00T](groot.md)
 - [LeRobot Local](lerobot-local.md)
 - [Custom policies](custom-policies.md)
-- [Tutorial 3 — Policies](../tutorial/03-policies.md)
+- [Policy providers](../policies/overview.md)

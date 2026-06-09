@@ -9,7 +9,7 @@ from strands_robots import Robot
 sim = Robot("so100")   # preferred factory; 60+ actions as an AgentTool
 ```
 
-For walkthroughs see [Tutorial 2](../tutorial/02-simulation.md).
+For walkthroughs see [Simulation overview](../simulation/overview.md).
 
 ## World
 
@@ -125,5 +125,4 @@ Destructive — writes into model arrays. Recompile scene to undo.
 
 - [World building](world-building.md) — composing scenes.
 - [Domain randomization](domain-randomization.md) — `randomize` distributions.
-- [Tutorial 2 — Simulation](../tutorial/02-simulation.md)
 - [Architecture](../architecture.md)

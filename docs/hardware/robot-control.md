@@ -82,7 +82,6 @@ robot.stop_teleop()   # stop all sessions
 
 ## See also
 
-- [Tutorial 8 — Real hardware](../tutorial/08-real-hardware.md) — bring-up checklist.
 - [Hardware tools](tools.md) — calibrate / camera / teleop helpers.
 - [Robot factory](../getting-started/robot-factory.md) — every `Robot()` kwarg.
 - [Policy providers](../policies/overview.md) — available policy providers.
