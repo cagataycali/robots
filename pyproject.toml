@@ -162,15 +162,26 @@ override-dependencies = [
 ]
 
 # Auto-select the right PyTorch wheel for the host accelerator. On NVIDIA
-# Thor / Jetson (linux + aarch64) the plain-PyPI torch 2.10.0 wheel is
-# CPU-ONLY, so torch.cuda.is_available() is False and all inference silently
-# runs on CPU. UV_TORCH_BACKEND=auto makes uv probe the local driver/SoC and
-# resolve the matching build (e.g. torch==2.10.0+cu130 on Thor, the CPU wheel
-# on a machine with no GPU) WITHOUT changing the pinned version, so lerobot's
-# torch<2.11 bound is still satisfied. Verified on NVIDIA Thor (Tegra R38,
-# CUDA 13.0): cuda.is_available() == True, device "NVIDIA Thor".
+# Thor / Jetson (linux + aarch64) the plain-PyPI torch wheel is CPU-ONLY, so
+# torch.cuda.is_available() is False and all inference silently runs on CPU.
+# "auto" makes uv probe the local driver/SoC and resolve the matching build
+# (e.g. +cu130 on Thor) WITHOUT changing the pinned version.
+#
+# IMPORTANT: uv's "auto" detection is HOST-based, not target-platform based.
+# If "auto" is hardcoded here it contaminates EVERY resolution -- including
+# x86 CI -- with the build host's CUDA variant. On a Thor that means x86 CI
+# resolves +cu130 wheels (proven: `uv pip compile --python-platform
+# x86_64-unknown-linux-gnu` yields torchcodec==0.10.0+cu130), which cannot
+# import on the GPU-less runner, so tests/conftest.py silently falls back to
+# the numpy torch mock and torch-dependent tests break.
+#
+# So we INHERIT the value from the process env and only DEFAULT to "auto":
+#   - Thor/Jetson dev: nothing set -> "auto" -> GPU wheels.
+#   - x86 CI: workflow exports UV_TORCH_BACKEND=cpu -> CPU wheels, importable.
+# A hatch pyproject env-var normally OVERRIDES the process env; the
+# {env:VAR:default} form is what lets the process value win.
 [tool.hatch.envs.default.env-vars]
-UV_TORCH_BACKEND = "auto"
+UV_TORCH_BACKEND = "{env:UV_TORCH_BACKEND:auto}"
 
 [tool.hatch.envs.default.scripts]
 test = "pytest {args:tests}"
