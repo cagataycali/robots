@@ -129,9 +129,8 @@ def _parse_interrupt_actions(raw: str) -> frozenset[str]:
 
 def _reset_interrupt_actions_cache() -> None:
     """Test helper: clear the cached env parse and the once-warned flag."""
-    global _NONE_OPT_OUT_WARNED
     _parse_interrupt_actions.cache_clear()
-    _NONE_OPT_OUT_WARNED = False
+    _warn_none_opt_out_once.cache_clear()
 
 
 def _resolve_interrupt_actions() -> frozenset[str]:
@@ -144,25 +143,20 @@ def _resolve_interrupt_actions() -> frozenset[str]:
     return _parse_interrupt_actions(os.getenv("STRANDS_MESH_HITL_ACTIONS", ""))
 
 
-# Tracks whether the "none" opt-out warning has already been emitted so we
-# log it once per process rather than on every gated call.
-_NONE_OPT_OUT_WARNED = False
-
-
+@functools.lru_cache(maxsize=1)
 def _warn_none_opt_out_once() -> None:
     """Emit the HITL-disabled warning at most once per process.
 
-    Uses a module-level ``global`` flag rather than a one-element list so the
-    rebind is an explicit, statically-visible use of the name. The previous
-    list-hack only ever subscript-mutated the binding (never re-bound it),
-    which tripped CodeQL ``py/unused-global-variable``. The flag is
-    best-effort: a benign log-once race under concurrency is acceptable for a
-    one-shot warning, and the prior list form provided no atomicity either.
+    Implemented as an ``lru_cache`` nullary function: the first call runs
+    the body (emitting the warning) and memoizes ``None``; subsequent calls
+    return the cached result without re-logging. This avoids a module-level
+    mutable flag entirely -- the prior ``global`` bool tripped CodeQL
+    ``py/unused-global-variable`` (the rebind was not recognised as a use),
+    and the list-hack before it had the same problem. ``cache_clear()`` (via
+    :func:`_reset_interrupt_actions_cache`) restores the warn-once state for
+    test isolation. Warn-once under concurrency is best-effort, which is fine
+    for a one-shot operator notice.
     """
-    global _NONE_OPT_OUT_WARNED
-    if _NONE_OPT_OUT_WARNED:
-        return
-    _NONE_OPT_OUT_WARNED = True
     logger.warning(
         "[robot_mesh] STRANDS_MESH_HITL_ACTIONS=none -- human-in-the-loop "
         "approval is DISABLED for all mesh actions. Physical-actuation "
