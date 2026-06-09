@@ -157,8 +157,18 @@ dependencies = [
 # with no shim or LD_PRELOAD workaround.
 [tool.uv]
 override-dependencies = [
+    # On NVIDIA Thor/Jetson (linux+aarch64) bump torch past lerobot's <2.11 cap
+    # (2.11 fixes the sm_110 cuBLAS bug). On every OTHER platform, mirror
+    # lerobot's own bound so x86/macOS resolve the same torch they would
+    # WITHOUT this override. NOTE: a uv override-dependency for `torch` with
+    # ONLY an aarch64 marker REMOVES torch from non-aarch64 resolutions
+    # entirely (proven: x86 resolved no torch -> tests/conftest.py installed
+    # the numpy mock -> bfloat16 failures). The complementary marker is
+    # mandatory, not cosmetic.
     "torch>=2.11,<2.12; platform_machine == 'aarch64' and sys_platform == 'linux'",
+    "torch>=2.2,<2.11; platform_machine != 'aarch64' or sys_platform != 'linux'",
     "torchvision>=0.26,<0.27; platform_machine == 'aarch64' and sys_platform == 'linux'",
+    "torchvision<0.26; platform_machine != 'aarch64' or sys_platform != 'linux'",
 ]
 
 # Auto-select the right PyTorch wheel for the host accelerator. On NVIDIA
