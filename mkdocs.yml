@@ -26,7 +26,6 @@ nav:
   - Overview: simulation/overview.md
   - World Building: simulation/world-building.md
   - Domain Randomization: simulation/domain-randomization.md
-  - Gymnasium Env: simulation/gymnasium-env.md
 - Multi-robot Mesh: mesh.md
 - Policy Providers:
   - Overview: policies/overview.md
@@ -48,8 +47,8 @@ nav:
 - Troubleshooting: troubleshooting.md
 theme:
   name: material
-  logo: assets/strands-robots-logo.png
-  favicon: assets/strands-robots-logo.png
+  logo: assets/strands-logo.svg
+  favicon: assets/strands-logo.svg
   palette:
     - scheme: default
       primary: white
