@@ -76,6 +76,5 @@ sim.run_policy(robot_name="so100", instruction="pick up the cube",
 - [GR00T](groot.md) — ZMQ server, 27 embodiments, container lifecycle.
 - [LeRobot Local](lerobot-local.md) — in-process HF models, RTC.
 - [Cosmos 3](cosmos3.md) — NVIDIA Cosmos 3 omnimodal VLA.
-- [GEAR-SONIC](gear-sonic.md) — third-party (write a custom policy).
 - [Custom policies](custom-policies.md) — implement the ABC.
 - [Tutorial 3 — Policies](../tutorial/03-policies.md)
