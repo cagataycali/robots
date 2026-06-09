@@ -182,11 +182,19 @@ def test_watch_requires_target(fake_local_mesh):
     assert out["status"] == "error"
 
 
-def test_watch_calls_on_stream(fake_local_mesh):
+def test_watch_calls_on_stream(fake_local_mesh, monkeypatch):
+    # Extend the subscribe allowlist so the watch target passes the
+    # telemetry-leak defence-in-depth gate (watch validates against the
+    # equivalent Zenoh key strands/<target>/stream).
+    monkeypatch.setenv("STRANDS_MESH_SUBSCRIBE_ALLOW", "strands/*/stream")
+    from strands_robots.tools.robot_mesh import _reset_subscribe_allowlist_cache
+
+    _reset_subscribe_allowlist_cache()
     fake_local_mesh.on_stream.return_value = "stream:peer-b"
     out = _strands_call(action="watch", target="peer-b")
     assert out["status"] == "success"
     fake_local_mesh.on_stream.assert_called_once_with("peer-b")
+    _reset_subscribe_allowlist_cache()
 
 
 def test_inbox_returns_buffered_messages(fake_local_mesh):

@@ -124,3 +124,94 @@ def test_inbox_read_is_audited():
     assert inbox_audits, "inbox read was not audited"
     # detail string carries the read count
     assert any("read=2" in (c.args[3] if len(c.args) > 3 else "") for c in inbox_audits)
+
+
+# --- watch allowlist enforcement (parallel channel to subscribe) --------
+
+
+def test_watch_rejects_off_allowlist_peer():
+    """watch(target='peer-b') subscribes to strands/peer-b/stream which carries
+    observations + policy actions. Without the allowlist check it provides a
+    parallel telemetry-exfiltration channel bypassing the subscribe gate.
+    This test fails on pre-fix code (watch accepted any target unconditionally).
+    """
+    m = _stub_mesh()
+    m.on_stream.return_value = "stream-peer-b"
+    with patch("strands_robots.tools.robot_mesh._resolve_mesh", return_value=m):
+        r = _call("watch", target="peer-b")
+    assert r["status"] == "error"
+    assert "allowed topic set" in r["content"][0]["text"]
+    assert "strands/peer-b/stream" in r["content"][0]["text"]
+    m.on_stream.assert_not_called()
+
+
+def test_watch_rejects_arbitrary_peer_ids():
+    """Parametric: no peer ID passes by default (stream key never matches
+    **/presence, **/health, or **/safety/**)."""
+    m = _stub_mesh()
+    m.on_stream.return_value = "stream-x"
+    for peer in ("reachy", "arm-a", "robot_1", "attacker"):
+        with patch("strands_robots.tools.robot_mesh._resolve_mesh", return_value=m):
+            r = _call("watch", target=peer)
+        assert r["status"] == "error", f"watch should reject peer '{peer}'"
+    m.on_stream.assert_not_called()
+
+
+def test_watch_allowed_when_operator_extends_allowlist(monkeypatch):
+    """Operators who want watch access can extend STRANDS_MESH_SUBSCRIBE_ALLOW
+    to include the stream key pattern."""
+    monkeypatch.setenv("STRANDS_MESH_SUBSCRIBE_ALLOW", "strands/*/stream")
+    rmt._reset_subscribe_allowlist_cache()
+    m = _stub_mesh()
+    m.on_stream.return_value = "stream-peer-b"
+    with patch("strands_robots.tools.robot_mesh._resolve_mesh", return_value=m):
+        r = _call("watch", target="peer-b")
+    assert r["status"] == "success"
+    m.on_stream.assert_called_once_with("peer-b")
+
+
+def test_watch_allowed_when_in_hitl_set_and_approved(monkeypatch):
+    """If watch is in STRANDS_MESH_HITL_ACTIONS and the operator approved the
+    interrupt, the allowlist is bypassed (same semantics as subscribe)."""
+    monkeypatch.setenv("STRANDS_MESH_HITL_ACTIONS", "watch")
+    rmt._reset_interrupt_actions_cache()
+    m = _stub_mesh()
+    m.on_stream.return_value = "stream-peer-b"
+    ctx = _make_ctx("y")  # operator approves
+    with patch("strands_robots.tools.robot_mesh._resolve_mesh", return_value=m):
+        r = _call("watch", target="peer-b", ctx=ctx)
+    assert r["status"] == "success"
+    m.on_stream.assert_called_once_with("peer-b")
+
+
+def test_watch_blocked_when_in_hitl_set_and_declined(monkeypatch):
+    """If watch is in the HITL set but the operator declines, the call does
+    not proceed (interrupt rejection takes precedence over allowlist)."""
+    monkeypatch.setenv("STRANDS_MESH_HITL_ACTIONS", "watch")
+    rmt._reset_interrupt_actions_cache()
+    m = _stub_mesh()
+    m.on_stream.return_value = "stream-peer-b"
+    ctx = _make_ctx("n")  # operator declines
+    with patch("strands_robots.tools.robot_mesh._resolve_mesh", return_value=m):
+        r = _call("watch", target="peer-b", ctx=ctx)
+    assert r["status"] == "error"
+    m.on_stream.assert_not_called()
+
+
+# --- single-star segment wildcard matcher tests ─────────────────────────
+
+
+def test_ke_matches_single_star_segment():
+    """Single * matches exactly one segment."""
+    assert rmt._ke_matches("strands/*/stream", "strands/peer-b/stream") is True
+    assert rmt._ke_matches("strands/*/stream", "strands/robot_1/stream") is True
+
+
+def test_ke_matches_single_star_rejects_extra_segments():
+    """Single * does not match multiple segments."""
+    assert rmt._ke_matches("strands/*/stream", "strands/a/b/stream") is False
+
+
+def test_ke_matches_single_star_rejects_empty_segment():
+    """Single * does not match an empty segment (wrong segment count)."""
+    assert rmt._ke_matches("strands/*/stream", "strands//stream") is False

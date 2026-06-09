@@ -207,12 +207,14 @@ def _ke_matches(pattern: str, target: str) -> bool:
     We do NOT import a general glob engine: Zenoh's ``**`` (any number of
     segments) and ``*`` (one segment) semantics differ from fnmatch, and a
     mismatch here would either over- or under-block. We implement only the
-    two shapes the allowlist actually uses:
+    shapes the allowlist actually uses:
 
-    * exact equality (``"**/presence" == "**/presence"``), and
+    * exact equality (``"**/presence" == "**/presence"``),
     * a trailing ``/**`` wildcard on the pattern, which matches the prefix
       plus any deeper segments (``"**/safety/**"`` matches
-      ``"**/safety/event"`` and ``"**/safety/estop"``).
+      ``"**/safety/event"`` and ``"**/safety/estop"``), and
+    * segment-level ``*`` wildcard (one segment): ``"strands/*/stream"``
+      matches ``"strands/peer-b/stream"`` but not ``"strands/a/b/stream"``.
 
     Anything more exotic must be enumerated literally in the allowlist. A
     target the matcher cannot positively confirm is treated as NOT allowed
@@ -226,6 +228,14 @@ def _ke_matches(pattern: str, target: str) -> bool:
         prefix = pattern[:-3]  # strip trailing "/**"
         # Allow the prefix itself or anything one-or-more segments deeper.
         return target == prefix or target.startswith(prefix + "/")
+    # Segment-level single-star: split both by "/" and match segment-wise.
+    # A ``*`` segment matches exactly one non-empty segment in the target.
+    if "*" in pattern:
+        p_parts = pattern.split("/")
+        t_parts = target.split("/")
+        if len(p_parts) != len(t_parts):
+            return False
+        return all(pp == tp or (pp == "*" and tp != "") for pp, tp in zip(p_parts, t_parts))
     return False
 
 
@@ -806,6 +816,23 @@ def robot_mesh(
         if not target:
             _audit_tool_action(action, target, False, "missing target")
             return _err("watch requires target (peer id)")
+        # Telemetry-leak defence in depth: watch(target="peer-b") subscribes
+        # to strands/<peer-b>/stream which carries observations + policy
+        # actions -- the same cross-peer telemetry surface the subscribe
+        # allowlist was added to close. Apply the same allowlist check on
+        # the equivalent Zenoh key expression so watch cannot bypass the
+        # subscribe gate. If watch is in the HITL set and the operator
+        # already approved this call above, we honour that approval.
+        watch_key = f"strands/{target}/stream"
+        if not _is_allowed_subscribe_target(watch_key) and action not in interrupt_actions:
+            _audit_tool_action(action, target, False, "watch target not in subscribe allowlist")
+            return _err(
+                f"watch target '{target}' (Zenoh key 'strands/{target}/stream') is not "
+                f"in the allowed topic set {list(_subscribe_allowlist())}. Watching "
+                "another peer's stream exposes its observations and policy actions; "
+                "use action='tell' to request status from a peer instead. Operators "
+                "can extend the allowlist via STRANDS_MESH_SUBSCRIBE_ALLOW."
+            )
         out = mesh.on_stream(target)
         if out is None:
             _audit_tool_action(action, target, False, "watch returned None")
