@@ -155,6 +155,23 @@ def _check_volume_safety(volumes: dict[str, str] | None) -> str | None:
     return None
 
 
+def _check_hf_local_dir_safety(hf_local_dir: str | None) -> str | None:
+    """Return None if an agent-supplied ``hf_local_dir`` is safe, else a reason.
+
+    ``hf_local_dir`` is an untrusted agent string that reaches two host-fs
+    sinks: ``_download_checkpoint`` writes the snapshot to it directly on the
+    host (no docker mediation), and ``_start_container`` bind-mounts it into
+    the container. Both must reject a prompt-injected path like ``/etc`` or
+    ``/root/.ssh``. Validating once at the agent dispatch boundary closes every
+    sink (including ``lifecycle``, which downloads before it starts the
+    container) rather than guarding each call site. Reuses the same
+    expand + prefix-match blocklist as bind-mount validation.
+    """
+    if not hf_local_dir:
+        return None
+    return _check_volume_safety({str(Path(hf_local_dir).expanduser()): "/data/checkpoints"})
+
+
 def _isaac_gr00t_dir() -> Path:
     """Default clone destination for the Isaac-GR00T source tree."""
     return get_base_dir() / "Isaac-GR00T"
@@ -427,6 +444,15 @@ def gr00t_inference(
             "status": "error",
             "message": f"Unknown protocol {protocol!r}. Valid: {list(valid_protocols)}",
         }
+
+    # Boundary guard: hf_local_dir is an untrusted agent string that reaches
+    # two host-fs sinks (checkpoint download writes to it directly; container
+    # start bind-mounts it). Validate once here -- before any action branch
+    # forwards it -- so a prompt-injected path is rejected for download,
+    # start_container, AND lifecycle (which downloads before it starts).
+    _hf_local_dir_reason = _check_hf_local_dir_safety(hf_local_dir)
+    if _hf_local_dir_reason is not None:
+        return {"status": "error", "message": _hf_local_dir_reason}
 
     if action == "find_containers":
         return _find_gr00t_containers()
@@ -1129,6 +1155,14 @@ def _download_checkpoint(
         4. None - downloads continue for ungated repos; gated ones surface
            a clear ``snapshot_download`` error.
     """
+    # Defence in depth: hf_local_dir is written to directly on the host here
+    # (no docker mediation). The agent dispatch validates it, but guard the
+    # internal/operator/test entry point too so a future caller that reaches
+    # _download_checkpoint without going through the tool inherits the check.
+    _hf_dir_reason = _check_hf_local_dir_safety(hf_local_dir)
+    if _hf_dir_reason is not None:
+        return {"status": "error", "message": _hf_dir_reason}
+
     local_dir = Path(hf_local_dir).expanduser() if hf_local_dir else _checkpoints_dir() / hf_repo.replace("/", "__")
 
     if not force and local_dir.is_dir() and any(local_dir.iterdir()):
@@ -1268,10 +1302,9 @@ def _start_container(
     # entries (hf_local_dir) rather than the full dict, because auto-derived
     # paths (HF_HOME / ~/.cache/huggingface) are operator-controlled and may
     # legitimately reside under /home.
-    if hf_local_dir:
-        _hf_dir_reason = _check_volume_safety({str(Path(hf_local_dir).expanduser()): "/data/checkpoints"})
-        if _hf_dir_reason is not None:
-            return {"status": "error", "message": _hf_dir_reason}
+    _hf_dir_reason = _check_hf_local_dir_safety(hf_local_dir)
+    if _hf_dir_reason is not None:
+        return {"status": "error", "message": _hf_dir_reason}
 
     for host_path, container_path in effective_volumes.items():
         cmd.extend(["-v", f"{host_path}:{container_path}"])

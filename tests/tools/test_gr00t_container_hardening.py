@@ -326,3 +326,93 @@ class TestHfLocalDirVolumeSafety:
         assert "-v" in call_args
         vol_str = f"{safe_path}:/data/checkpoints"
         assert vol_str in " ".join(call_args), f"Expected volume mount {vol_str} in docker cmd"
+
+
+class TestHfLocalDirDownloadSafety:
+    """Pin: agent-supplied hf_local_dir is validated for the host-fs WRITE sinks.
+
+    hf_local_dir reaches a second host-fs surface beyond the bind mount:
+    _download_checkpoint writes the snapshot to it directly on the host (no
+    docker mediation), and lifecycle="full" downloads BEFORE it starts the
+    container -- so guarding only _start_container left an arbitrary host-fs
+    write primitive for action="download_checkpoint" / action="lifecycle".
+
+    The fix validates hf_local_dir once at the agent dispatch boundary (and
+    defence-in-depth at the top of _download_checkpoint), so every action
+    rejects a prompt-injected path before any mkdir / snapshot_download runs.
+    """
+
+    _BAD_PATHS = [
+        "/etc",
+        "/etc/cron.d",
+        "/root/.ssh",
+        "/home/ubuntu/.aws/credentials",
+        "/proc/1/environ",
+        "/sys/kernel",
+        "/var/run",
+    ]
+
+    @pytest.mark.parametrize("bad_path", _BAD_PATHS)
+    def test_download_checkpoint_rejects_protected_hf_local_dir(self, bad_path):
+        """action='download_checkpoint' with a protected hf_local_dir must
+        error before any host-fs write or network call."""
+        gi = importlib.import_module("strands_robots.tools.gr00t_inference")
+
+        with patch("pathlib.Path.mkdir", side_effect=AssertionError("mkdir must not be called")):
+            with patch.object(gi, "require_optional", side_effect=AssertionError("hub import must not be reached")):
+                result = gi.gr00t_inference(
+                    action="download_checkpoint",
+                    hf_repo="attacker/payload",
+                    hf_local_dir=bad_path,
+                )
+        assert result["status"] == "error", f"Expected error for hf_local_dir={bad_path!r}, got: {result}"
+        assert "protected" in result["message"].lower() or "refusing" in result["message"].lower(), (
+            f"Error message should mention protection/refusal: {result['message']}"
+        )
+
+    @pytest.mark.parametrize("bad_path", _BAD_PATHS)
+    def test_lifecycle_rejects_protected_hf_local_dir(self, bad_path):
+        """action='lifecycle' downloads before starting the container; a
+        protected hf_local_dir must be rejected at dispatch before download."""
+        gi = importlib.import_module("strands_robots.tools.gr00t_inference")
+
+        with patch("pathlib.Path.mkdir", side_effect=AssertionError("mkdir must not be called")):
+            with patch.object(gi.subprocess, "run", side_effect=AssertionError("docker must not be called")):
+                result = gi.gr00t_inference(
+                    action="lifecycle",
+                    lifecycle="full",
+                    hf_repo="attacker/payload",
+                    hf_local_dir=bad_path,
+                )
+        assert result["status"] == "error", f"Expected error for hf_local_dir={bad_path!r}, got: {result}"
+        assert "protected" in result["message"].lower() or "refusing" in result["message"].lower(), (
+            f"Error message should mention protection/refusal: {result['message']}"
+        )
+
+    def test_download_checkpoint_internal_entry_guarded(self):
+        """Defence in depth: _download_checkpoint itself rejects a protected
+        path even when reached directly (not via the tool dispatch)."""
+        gi = importlib.import_module("strands_robots.tools.gr00t_inference")
+
+        with patch("pathlib.Path.mkdir", side_effect=AssertionError("mkdir must not be called")):
+            with patch.object(gi, "require_optional", side_effect=AssertionError("hub import must not be reached")):
+                result = gi._download_checkpoint(
+                    hf_repo="attacker/payload",
+                    hf_subfolder=None,
+                    hf_local_dir="/etc/cron.d",
+                    hf_token=None,
+                    force=False,
+                )
+        assert result["status"] == "error"
+        assert "protected" in result["message"].lower() or "refusing" in result["message"].lower()
+
+    def test_check_hf_local_dir_safety_allows_safe_and_none(self):
+        """The shared helper passes legitimate paths and None through."""
+        gi = importlib.import_module("strands_robots.tools.gr00t_inference")
+
+        assert gi._check_hf_local_dir_safety(None) is None
+        assert gi._check_hf_local_dir_safety("") is None
+        assert gi._check_hf_local_dir_safety("/mnt/models/gr00t") is None
+        assert gi._check_hf_local_dir_safety("/data/checkpoints") is None
+        assert gi._check_hf_local_dir_safety("/etc") is not None
+        assert gi._check_hf_local_dir_safety("/root/.ssh") is not None
