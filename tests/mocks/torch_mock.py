@@ -293,8 +293,17 @@ def install_torch_mock():
 
         logger.info("Real torch is available (version=%s) - mock not installed", torch.__version__)
         return  # Real torch available - nothing to do
-    except ImportError:
-        pass
+    except Exception as exc:  # noqa: BLE001 - diagnostics: any import failure means we mock
+        # IMPORTANT: print to stderr (not just logging.info, which pytest captures
+        # and hides) so CI logs ALWAYS show WHY the mock was installed. A silent
+        # fallback here previously masked an env-resolution bug (a CUDA torch
+        # wheel that failed to import) for hours of log-archaeology.
+        print(
+            f"[torch_mock] real torch import FAILED ({type(exc).__name__}: {exc}); "
+            "installing numpy mock. If this is unexpected, the torch wheel in this "
+            "env is broken/unimportable (e.g. wrong CUDA build).",
+            file=sys.stderr,
+        )
 
     logger.info("Installing torch mock (real torch not available)")
 
