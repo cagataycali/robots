@@ -298,12 +298,25 @@ def install_torch_mock():
         # and hides) so CI logs ALWAYS show WHY the mock was installed. A silent
         # fallback here previously masked an env-resolution bug (a CUDA torch
         # wheel that failed to import) for hours of log-archaeology.
-        print(
+        _msg = (
             f"[torch_mock] real torch import FAILED ({type(exc).__name__}: {exc}); "
             "installing numpy mock. If this is unexpected, the torch wheel in this "
-            "env is broken/unimportable (e.g. wrong CUDA build).",
-            file=sys.stderr,
+            "env is broken/unimportable (e.g. wrong CUDA build)."
         )
+        # pytest captures stdout/stderr, so ALSO write to a sentinel file that
+        # CI can cat unconditionally -- this is what makes the diagnosis a
+        # one-line grep instead of log-archaeology.
+        print(_msg, file=sys.stderr)
+        try:
+            import os as _os
+
+            with open(
+                _os.environ.get("TORCH_MOCK_SENTINEL", "/tmp/torch_mock_active.txt"),
+                "w",
+            ) as _fh:
+                _fh.write(_msg + "\n")
+        except OSError:
+            pass
 
     logger.info("Installing torch mock (real torch not available)")
 
