@@ -93,6 +93,24 @@ def _make_policy(data_config="so100", version="n1.6", obs_mapping=None, action_m
     return p
 
 
+def _require_real_torch():
+    """Return real torch, or skip when the numpy-backed torch mock is active.
+
+    The RNG-reproducibility tests below assert that ``policy.reset(seed=...)``
+    reseeds torch deterministically. That contract is only observable against
+    real torch: the test-suite torch mock (tests/mocks/torch_mock.py) has a
+    no-op ``manual_seed`` and its tensors have no ``tolist``, so the assertion
+    is both meaningless and crash-prone under the mock. ``importorskip`` alone
+    is insufficient because the mock registers a ``torch`` module in
+    ``sys.modules`` (so the import succeeds); the mock never sets
+    ``__version__``, which is the discriminator used here.
+    """
+    torch = pytest.importorskip("torch", reason="torch not installed")
+    if not hasattr(torch, "__version__"):
+        pytest.skip("requires real torch (mock active); RNG reproducibility is real-torch-only")
+    return torch
+
+
 # (section)
 # Construction
 # (section)
@@ -669,7 +687,7 @@ class TestPolicyReset:
         the same way ``set_eval_seed`` does, so the in-process diffusion
         sampler is deterministic across reset boundaries.
         """
-        torch = pytest.importorskip("torch", reason="torch not installed")
+        torch = _require_real_torch()
 
         # Construct a LOCAL-mode Gr00tPolicy via the test's __new__-bypass
         # fixture to skip model loading. The reset path doesn't depend on
@@ -694,7 +712,7 @@ class TestPolicyReset:
         state untouched. Reset is a hint, not a hard reset; without an
         explicit seed there's nothing to apply.
         """
-        torch = pytest.importorskip("torch", reason="torch not installed")
+        torch = _require_real_torch()
         from strands_robots.policies.groot.policy import Gr00tPolicy
 
         p = Gr00tPolicy.__new__(Gr00tPolicy)
