@@ -208,6 +208,22 @@ ALLOWED_ACTIONS: frozenset[str] = frozenset(
     }
 )
 
+#: Device Connect native-RPC function names (e.g. the Reachy's ``nod`` /
+#: ``look`` / ``playMove``). These are device-defined, NOT members of
+#: :data:`ALLOWED_ACTIONS` -- the policy-robot action allowlist does not
+#: apply to a device's own advertised function surface. We still bound the
+#: name to a conservative identifier charset so a function name cannot carry
+#: control bytes / shell metacharacters into the device runtime or audit log.
+_DC_RPC_FUNC_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+#: Max length of a Device Connect RPC function name.
+MAX_DC_RPC_FUNC_LEN: int = 64
+
+#: Max JSON-encoded byte size of a Device Connect RPC params object. Keeps a
+#: native-function call from becoming a DoS vector, mirroring
+#: :data:`MAX_WORLD_UPDATE_BYTES`.
+MAX_DC_RPC_PARAMS_BYTES: int = 64 * 1024
+
 #: Default allowlist for VLA policy server targets (loopback only).
 _DEFAULT_POLICY_HOSTS: frozenset[str] = frozenset({"localhost", "127.0.0.1", "::1"})
 
@@ -985,6 +1001,74 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def validate_device_rpc(function: str, params: Any = None) -> tuple[str, dict[str, Any]]:
+    """Validate a Device Connect *native* RPC call and return a sanitised copy.
+
+    This is the validation path for device-defined functions invoked directly
+    over Device Connect (``conn.invoke(target, function, params)``) -- e.g. the
+    Reachy's ``nod`` / ``look`` / ``playMove``. Unlike :func:`validate_command`,
+    it deliberately does NOT enforce :data:`ALLOWED_ACTIONS`: that allowlist
+    describes the SO-100/SO-101 policy-robot dispatch surface, not an arbitrary
+    device's advertised function set. A Reachy legitimately exposes ``nod``;
+    rejecting it because it is not in the policy allowlist is the bug this
+    function closes.
+
+    What it DOES enforce (defence-in-depth, since the function name and params
+    flow into the device runtime, RPC subjects, and audit logs):
+
+    * ``function``: non-empty ``str`` matching :data:`_DC_RPC_FUNC_RE`
+      (``[A-Za-z_][A-Za-z0-9_]*``), at most :data:`MAX_DC_RPC_FUNC_LEN` chars.
+      No dots / slashes / whitespace / control bytes / shell metacharacters.
+    * ``params``: ``None`` or a JSON object (``dict``) whose keys are
+      identifier-safe strings and whose JSON-encoded size is bounded by
+      :data:`MAX_DC_RPC_PARAMS_BYTES`. Values are left opaque (the device
+      contract defines them) but the whole object must be JSON-serialisable.
+
+    Returns ``(function, params_dict)`` -- ``params_dict`` is ``{}`` when no
+    params were supplied. Raises :class:`ValidationError` on any violation.
+    """
+    if not isinstance(function, str) or not function:
+        raise ValidationError("device_rpc requires a non-empty function name (string)")
+    if len(function) > MAX_DC_RPC_FUNC_LEN:
+        raise ValidationError(
+            f"device_rpc function name length {len(function)} > MAX_DC_RPC_FUNC_LEN ({MAX_DC_RPC_FUNC_LEN})."
+        )
+    if not _DC_RPC_FUNC_RE.fullmatch(function):
+        raise ValidationError(
+            f"device_rpc function={function!r} must match [A-Za-z_][A-Za-z0-9_]* "
+            "(no dots, slashes, whitespace, control chars, or shell metacharacters)."
+        )
+
+    if params is None:
+        return function, {}
+    if not isinstance(params, dict):
+        raise ValidationError("device_rpc params must be a JSON object (dict) or null")
+
+    # Keys must be identifier-safe; the device defines what values mean, so we
+    # leave them opaque but require the whole object to be JSON-serialisable
+    # and size-bounded.
+    for key in params:
+        if not isinstance(key, str) or not key:
+            raise ValidationError("device_rpc params keys must be non-empty strings")
+        if len(key) > MAX_DC_RPC_FUNC_LEN:
+            raise ValidationError(
+                f"device_rpc params key length {len(key)} > MAX_DC_RPC_FUNC_LEN ({MAX_DC_RPC_FUNC_LEN})."
+            )
+        if not _DC_RPC_FUNC_RE.fullmatch(key):
+            raise ValidationError(
+                f"device_rpc params key {key!r} must match [A-Za-z_][A-Za-z0-9_]* "
+                "(no dots, slashes, whitespace, control chars, or shell metacharacters)."
+            )
+    try:
+        encoded = json.dumps(params)
+    except (TypeError, ValueError) as exc:
+        raise ValidationError(f"device_rpc params is not JSON-serialisable: {exc}") from exc
+    if len(encoded.encode("utf-8")) > MAX_DC_RPC_PARAMS_BYTES:
+        raise ValidationError(f"device_rpc params encoded size > MAX_DC_RPC_PARAMS_BYTES ({MAX_DC_RPC_PARAMS_BYTES}).")
+
+    return function, dict(params)
+
+
 def validate_input_frame(action: Any) -> dict[str, float]:
     """Validate and sanitise a teleop input frame, returning a clean copy.
 
@@ -1074,6 +1158,9 @@ __all__ = [
     "is_safe_policy_type",
     "is_safe_server_address",
     "validate_command",
+    "validate_device_rpc",
     "validate_input_frame",
+    "MAX_DC_RPC_FUNC_LEN",
+    "MAX_DC_RPC_PARAMS_BYTES",
     "LockoutError",
 ]
