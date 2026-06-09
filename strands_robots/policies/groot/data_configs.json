@@ -1,4 +1,5 @@
 {
+  "_note": "Action keys in every config are by-name only. This schema deliberately omits the upstream Isaac-GR00T ActionConfig metadata (rep / type / format) attached per action key. Downstream consumers must NOT assume joint-angle semantics for action keys: some keys are learned latents (for example unitree_g1_sonic action.motion_token is a 64-dim SONIC latent decoded by the SONIC controller, not a joint angle). Map and consume action keys by name. See issue strands-labs/robots#211.",
   "configs": {
     "so100": {
       "video_keys": [

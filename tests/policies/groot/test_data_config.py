@@ -349,3 +349,33 @@ class TestCreateCustomDataConfig:
         second = load_data_config("overwrite_test")
         assert second.video_keys == ["v2"]
         assert first is not second
+
+
+# (section)
+# Schema documentation of ActionConfig metadata elision (issue #211)
+# (section)
+
+
+class TestActionConfigElisionDocumented:
+    """Issue #211: the schema drops upstream ActionConfig (rep/type/format)
+    metadata; this must stay explicitly documented so downstream code does
+    not assume joint-angle semantics for action keys."""
+
+    def test_data_configs_json_has_top_level_note_about_action_key_semantics(self):
+        note = _RAW.get("_note", "")
+        assert note, "data_configs.json must carry a top-level _note documenting the schema"
+        lowered = note.lower()
+        assert "motion_token" in lowered
+        assert "by-name" in lowered
+        assert "joint-angle" in lowered
+        assert "211" in note
+
+    def test_top_level_note_is_not_treated_as_a_config_entry(self):
+        assert "_note" not in DATA_CONFIG_MAP
+        assert "_note" not in _RAW_CONFIGS
+
+    def test_gr00t_data_config_docstring_warns_against_joint_angle_assumption(self):
+        doc = Gr00tDataConfig.__doc__ or ""
+        lowered = doc.lower()
+        assert "joint-angle" in lowered
+        assert "motion_token" in lowered

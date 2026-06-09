@@ -5,6 +5,53 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## Unreleased - LeRobot 0.5.2 recording + policy pipeline hardening
 
+### Fixed: customer-mode E2E friction points (GH #373)
+
+Eight first-run paper cuts found during a fresh-clone SO101 customer workflow:
+
+- **`[lerobot]` extra now pulls `lerobot[feetech]`** so `scservo_sdk` installs
+  for every Feetech-based (SO100/SO101/Koch) customer's first `mode="real"`
+  run -- previously a `ModuleNotFoundError` blocker.
+- **`Robot("so100")` (the `Simulation`) is now callable**:
+  `robot(action="render", camera_name="topdown")` dispatches to the action
+  method instead of raising `TypeError: object is not callable`, matching the
+  README contract.
+- **Pre-0.5 SO-family calibration files auto-migrate.** lerobot 0.5.1 unified
+  `so100_follower/`/`so101_follower/` into `so_follower/`; `HardwareRobot`
+  now copies a single legacy calibration JSON to the new path at init so
+  existing calibrations Just Work (no more confusing `RuntimeError` on the
+  first `get_observation()`).
+- **README param-name aliases accepted.** The action dispatcher now treats
+  `camera_names=` -> `cameras=` and `joint_positions=` -> `positions=` as
+  aliases so copy-pasted older docs don't raise "unexpected keyword argument".
+- **`STRANDS_MESH_LOCAL_DEV=1`** is a one-variable localhost mesh preset:
+  defaults auth to `none` AND satisfies the insecure-acknowledgement second
+  factor by itself (no separate `STRANDS_MESH_I_KNOW_THIS_IS_INSECURE=1`).
+  An explicit `STRANDS_MESH_AUTH_MODE=mtls` still wins.
+- **`mesh.peers_by_id` dict + `mesh.get_peer(peer_id)` helper** added
+  alongside the existing `mesh.peers` list, so dict-style peer lookup
+  (`mesh.peers_by_id[peer_id]`) no longer raises `TypeError`.
+- **README sweep**: clarified `Robot()` auto-creates the world (don't call
+  `create_world()` again), fixed the callable usage example, and documented
+  the new mesh env vars in the Configuration table.
+
+### Fixed: realistic sim rendering + wrist cameras (GH #373 follow-up)
+
+- **Dimmed the MuJoCo headlight.** The default camera-tracking headlight
+  (diffuse 0.4, specular 0.5, always on) stacked additively on the two
+  explicit scene lights, washing out renders and flattening shadow contrast --
+  and looking nothing like real camera footage. `SpecBuilder.build` now sets
+  the headlight to a low, shadow-free term (diffuse 0.2, specular 0) so the
+  explicit directional lights do the work. More realistic sim data.
+- **Body-mounted (wrist/gripper) cameras.** `add_camera` gained a
+  `parent_body` parameter: pass a body name (e.g. `"so101/gripper"`) and the
+  camera mounts ON that body and tracks it as the arm moves -- matching the
+  physical wrist camera on a real SO101/SO100. `position`/`target` are then
+  interpreted in the body's local frame. Omitting `parent_body` keeps the
+  prior world-fixed behaviour. An unknown `parent_body` returns a structured
+  error listing the available (namespaced) body names.
+
+
 ### Changed (breaking): ``panda`` embodiment split into joint-space vs EEF
 
 The ``panda`` embodiment previously aliased to ``panda_libero``, conflating a

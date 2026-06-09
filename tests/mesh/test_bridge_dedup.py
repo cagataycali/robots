@@ -965,18 +965,23 @@ class TestGCPartialSelection:
     """
 
     def test_eviction_keeps_freshest_entries(self):
+        # Issue #231: the hysteresis band defers the heap-select eviction until
+        # the cache exceeds the hard boundary (_MAX_DEDUP_ENTRIES_HARD), so the
+        # cache must be driven past that boundary (not just the soft cap) to
+        # arm the sort-and-slice pass.
         from strands_robots.mesh.transport.bridge_transport import (
-            _MAX_DEDUP_ENTRIES,
+            _MAX_DEDUP_ENTRIES_HARD,
             _CommandDeduplicator,
         )
 
         dedup = _CommandDeduplicator(ttl_s=1000.0)  # long TTL so nothing is stale
-        # Fill past the cap
-        for i in range(_MAX_DEDUP_ENTRIES + 100):
+        # Fill past the hard boundary so the heap-select GC runs.
+        for i in range(_MAX_DEDUP_ENTRIES_HARD + 100):
             payload = {"sender_id": "robot-a", "turn_id": f"t{i}", "command": {"k": i}}
             dedup.is_duplicate(f"strands/robot-a/cmd/{i}", payload)
-        # Eviction triggered; ~20% dropped
-        assert len(dedup._seen) <= _MAX_DEDUP_ENTRIES
+        # Eviction triggered; ~20% dropped, so the cache drops back under the
+        # hard boundary.
+        assert len(dedup._seen) <= _MAX_DEDUP_ENTRIES_HARD
 
     def test_uses_heapq_not_sorted(self):
         """Source-grep pin: confirm heapq.nsmallest is in the GC path."""
