@@ -18,7 +18,9 @@ policy = create_policy("cosmos3", embodiment="droid", port=8000)
 ## Start the server
 
 ```bash
-python -m cosmos_framework.scripts.action_policy_server_robolab --embodiment droid --port 8000
+python -m cosmos_framework.scripts.action_policy_server_robolab \
+    --checkpoint-path nvidia/Cosmos3-Nano-Policy-DROID --port 8000
+# embodiment is selected client-side via create_policy(..., embodiment="droid")
 ```
 
 ## Parameters

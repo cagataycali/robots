@@ -68,7 +68,9 @@ from strands_robots import Robot
 
 sim = Robot("so100")
 sim.step()
-obs = sim.get_observation("so100")   # {'default': np.array ...}
+obs = sim.get_observation("so100")
+# obs is a flat dict mixing per-joint state floats and per-camera ndarrays:
+#   {'shoulder_pan.pos': 0.0, ..., 'gripper.pos': 0.0, 'default': <HxWx3 uint8>}
 print(list(obs.keys()))
 ```
 
@@ -83,7 +85,7 @@ Assets cache under `~/.strands_robots/assets/`.
 | `MUJOCO_GL` | GL backend | auto |
 | `STRANDS_TRUST_REMOTE_CODE` | Allow HF `trust_remote_code=True` | `false` |
 | `STRANDS_ROBOT_MODE` | Default `Robot()` mode | `sim` |
-| `STRANDS_MESH` | Disable mesh globally | `true` |
+| `STRANDS_MESH` | Mesh enabled by default; set to `false` to disable globally | `true` (enabled) |
 | `GROOT_API_TOKEN` | GR00T service API token (falls back from `api_token=` kwarg) | unset |
 
 ## See also

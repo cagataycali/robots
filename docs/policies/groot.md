@@ -70,8 +70,10 @@ gr00t_inference(action="start_container",     tag="gr00t-n1.7:latest",
                                               model_id="nvidia/GR00T-N1.7-3B",
                                               data_config="so100_dualcam")
 # ... run policy ...
-gr00t_inference(action="stop_container")
-gr00t_inference(action="remove_container")
+gr00t_inference(action="stop", container_name="gr00t-inference")  # stop only
+gr00t_inference(action="lifecycle", lifecycle="teardown",
+                container_name="gr00t-inference",
+                remove_volumes=True)  # stop + remove container (and volumes)
 ```
 
 ## See also

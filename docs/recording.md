@@ -33,8 +33,12 @@ recorder = DatasetRecorder.create(
     repo_id="user/my_dataset",
     fps=30,
     robot_type="so100",
-    robot_features=robot.observation_features,
-    action_features=robot.action_features,
+    # When recording from a real LeRobot hardware robot pass the schema dicts
+    # straight through:
+    #   robot_features=robot.observation_features,
+    #   action_features=robot.action_features,
+    # When recording from a sim Robot (no `observation_features` attr), pass
+    # `joint_names=[...]` instead — the recorder builds the schema for you.
     camera_keys=["default"],
     joint_names=["joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6"],
     task="pick up the red cube",

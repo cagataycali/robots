@@ -18,7 +18,7 @@ from strands_robots.tools import (
 
 | Tool | Key actions | What |
 |------|-------------|------|
-| `lerobot_calibrate` | `"list"`, `"calibrate"` | Joint zero, mid pose, limits — writes JSON calibration file |
+| `lerobot_calibrate` | `"list"`, `"info"`, `"search"`, `"compare"`, `"backup"` | Manage existing calibration JSONs under `~/.cache/huggingface/lerobot/calibration/` (this tool inspects/organizes — actual calibration is run via the LeRobot CLI) |
 | `lerobot_camera` | `"list"`, `"test"`, `"stream"` | Enumerate, test, stream connected cameras |
 | `lerobot_teleoperate` | `"start"`, `"stop"`, `"status"` | Leader-follower teleop session |
 | `pose_tool` | `"fk"`, `"ik"`, `"set_gripper"` | Forward/inverse kinematics, gripper control |
@@ -35,7 +35,7 @@ Parse results via `result["content"][0]["text"]`, not custom keys like `result["
 result = serial_tool(action="list")
 print(result["content"][0]["text"])
 
-result = lerobot_calibrate(action="calibrate", device_type="robot", device_model="so100")
+result = lerobot_calibrate(action="list", device_type="robots")
 result = lerobot_camera(action="list", camera_type="opencv")
 result = pose_tool(action="fk", robot_id="so101_follower", port="/dev/ttyACM0")
 ```

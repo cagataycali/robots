@@ -77,11 +77,14 @@ Robot-URDF cameras are auto-discovered on `add_robot`.
 | `set_gravity` | `gravity=[x,y,z]` |
 | `set_timestep` | `timestep` |
 | `get_contacts` / `get_contact_forces` | — |
-| `apply_force` | `body`, `force`, `torque` |
-| `get_jacobian` / `get_mass_matrix` | `robot_name`, `body` |
-| `inverse_dynamics` / `forward_kinematics` | `robot_name` |
+| `apply_force` | `body_name`, `force`, `torque`, `point` |
+| `get_jacobian` | `body_name` *or* `site_name` *or* `geom_name` |
+| `get_mass_matrix` | — |
+| `inverse_dynamics` | — |
+| `forward_kinematics` | `body_name` (optional) |
 | `save_state` / `load_state` | snapshot/restore full physics |
-| `get_energy` / `get_sensor_data` | `robot_name` |
+| `get_energy` | — |
+| `get_sensor_data` | `sensor_name` (optional) |
 
 ## Policy
 
@@ -89,7 +92,7 @@ Robot-URDF cameras are auto-discovered on `add_robot`.
 |--------|-----------|
 | `run_policy` | `robot_name` (required), `policy_provider="mock"`, `policy_config={}`, `policy_object=None`, `instruction=""`, `duration=10.0`, `control_frequency=50.0`, `action_horizon=8`, `n_steps=None` |
 | `start_policy` | same args, async/non-blocking |
-| `stop_policy` | `robot_name` (required) |
+| `stop_policy` | `robot_name` (optional, defaults to `""`) |
 | `list_policies_running` | — |
 | `run_multi_policy` | `policies={robot: Policy}`, `instructions`, `duration`, `n_steps` |
 | `eval_policy` | `robot_name` (required), `n_episodes=1`, `max_steps=300`, `success_fn=None` |
