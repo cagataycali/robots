@@ -91,8 +91,10 @@ graph LR
 
 ## Installation
 
+Examples use [`uv`](https://docs.astral.sh/uv/) (`curl -LsSf https://astral.sh/uv/install.sh | sh`); plain `pip` works too.
+
 ```bash
-pip install strands-robots
+uv pip install strands-robots
 ```
 
 The base install is light (numpy, opencv-headless, Pillow). Pull in only the
@@ -110,13 +112,13 @@ extras you need:
 
 ```bash
 # Most users start here:
-pip install "strands-robots[sim-mujoco]"
+uv pip install "strands-robots[sim-mujoco]"
 
 # Real hardware + local policies:
-pip install "strands-robots[sim-mujoco,lerobot]"
+uv pip install "strands-robots[sim-mujoco,lerobot]"
 
 # Everything:
-pip install "strands-robots[all]"
+uv pip install "strands-robots[all]"
 ```
 
 From source:
@@ -124,7 +126,7 @@ From source:
 ```bash
 git clone https://github.com/strands-labs/robots
 cd robots
-pip install -e ".[all,dev]"
+uv pip install -e ".[all,dev]"
 ```
 
 ## Quick starts
@@ -406,8 +408,8 @@ curl http://localhost:8000/healthz   # -> 200 when ready (~4 min cold)
 + `websockets` — numpy-version agnostic):
 
 ```bash
-pip install -e '.[sim-mujoco]'
-pip install 'strands-robots[cosmos3-service]'
+uv pip install -e '.[sim-mujoco]'
+uv pip install 'strands-robots[cosmos3-service]'
 ```
 
 **3. Use it** (`cosmos3`, `c3`, `cosmos3://host:port`, or the HF model-id all
@@ -613,7 +615,7 @@ a.mesh.tell(
 Expose the mesh to an agent with the `robot_mesh` tool (`peers`, `status`,
 `tell`, `send`, `broadcast`, `stop`, `emergency_stop`, `subscribe`, `watch`,
 `inbox`). Disable globally with `STRANDS_MESH=false` or per-robot with
-`Robot("so100", mesh=False)`. Install with `pip install "strands-robots[mesh]"`.
+`Robot("so100", mesh=False)`. Install with `uv pip install "strands-robots[mesh]"`.
 
 For frictionless single-machine experiments, set `STRANDS_MESH_LOCAL_DEV=1` —
 one env var that runs the mesh without mTLS/ACL on localhost. It defaults the
@@ -628,7 +630,7 @@ For robots across networks, bridge the mesh to AWS IoT Core over MQTT5/mTLS,
 with Device Shadow mirroring, S3 camera offload, and account-wide Fleet
 Provisioning. Hardened with CA pinning, strict thing-name validation,
 deny-by-default IoT policy scoping, and a safety audit log.
-Install with `pip install "strands-robots[mesh-iot]"`. See the
+Install with `uv pip install "strands-robots[mesh-iot]"`. See the
 [Configuration](#configuration) matrix for the `STRANDS_MESH_*` knobs.
 
 ## Configuration
@@ -691,7 +693,7 @@ benchmark integration on the MuJoCo backend — byte-equivalent to upstream
 LIBERO at the model level, reaching `success_rate >= 0.92` on libero-10/SCENE5.
 Register declarative benchmarks from file and evaluate policies via the
 `list_benchmarks`, `register_benchmark_from_file`, and `evaluate_benchmark`
-simulation actions. Install with `pip install "strands-robots[benchmark-libero]"`.
+simulation actions. Install with `uv pip install "strands-robots[benchmark-libero]"`.
 
 ## Project structure
 
@@ -720,7 +722,7 @@ strands_robots/
 ## Development
 
 ```bash
-pip install -e ".[all,dev]"
+uv pip install -e ".[all,dev]"
 
 hatch run test          # unit tests
 hatch run test-integ    # integration tests (GPU + model weights)
