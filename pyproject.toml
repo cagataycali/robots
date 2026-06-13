@@ -72,6 +72,18 @@ lerobot = [
     # README Installation section for the Thor/Jetson caveat.
     "torchcodec>=0.7; platform_machine == 'aarch64' and sys_platform == 'linux'",
 ]
+qwen-vla-service = [
+    "pyzmq>=27.0.0,<28.0.0",
+    "msgpack>=1.0.0,<2.0.0",
+]
+qwen-vla = [
+    "strands-robots[qwen-vla-service]",
+    "torch>=2.4.0,<3.0.0",
+    # transformers 5.x requires huggingface-hub>=1.3 (compatible with lerobot
+    # 0.5.x's hub>=1.0); 4.x requires hub<1.0. Allow both so the [all] extra
+    # (qwen-vla + lerobot) resolves to a 5.x line instead of conflicting.
+    "transformers>=4.46.0,<6.0.0",
+]
 sim = [
     "robot_descriptions>=1.11.0,<2.0.0",
 ]
@@ -103,6 +115,7 @@ mesh-iot = [
 ]
 all = [
     "strands-robots[groot-service]",
+    "strands-robots[qwen-vla]",
     "strands-robots[lerobot]",
     "strands-robots[sim-mujoco]",
     "strands-robots[mesh]",

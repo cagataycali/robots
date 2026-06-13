@@ -67,6 +67,37 @@
             ],
             "is_hf_default": true
         },
+        "qwen_vla": {
+            "module": "strands_robots.policies.qwen_vla",
+            "class": "QwenVlaPolicy",
+            "description": "Qwen-VLA unified VLA (Qwen3.5-4B + DiT flow-matching) via ZMQ or local",
+            "requires": [],
+            "config_keys": [
+                "port",
+                "host",
+                "data_config",
+                "model_path",
+                "device",
+                "denoising_steps"
+            ],
+            "defaults": {
+                "host": "127.0.0.1",
+                "port": 5556
+            },
+            "shorthands": [
+                "qwen",
+                "qwen-vla",
+                "qwenvla"
+            ],
+            "hf_orgs": [
+                "Qwen",
+                "QwenLM"
+            ],
+            "model_id_overrides": [
+                "qwen/qwen-vla",
+                "qwenlm/qwen-vla"
+            ]
+        },
         "cosmos3": {
             "module": "strands_robots.policies.cosmos3",
             "class": "Cosmos3Policy",
