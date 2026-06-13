@@ -23,6 +23,7 @@ policy = create_policy("cosmos3", embodiment="droid", port=8000)
 | `groot` | `Gr00tPolicy` | `groot-service` | NVIDIA GR00T N1.5/N1.6/N1.7 over ZMQ |
 | `lerobot_local` | `LerobotLocalPolicy` | `lerobot` | HF LeRobot in-process (ACT, Pi0, SmolVLA, …) |
 | `cosmos3` | `Cosmos3Policy` | `cosmos3-service` | NVIDIA Cosmos 3 VLA over WebSocket |
+| `qwen_vla` | `QwenVlaPolicy` | `qwen-vla-service` | Qwen-VLA unified VLA (Qwen3.5-4B + DiT) over ZMQ |
 
 ## Policy ABC
 
@@ -76,4 +77,5 @@ sim.run_policy(robot_name="so100", instruction="pick up the cube",
 - [GR00T](groot.md) — ZMQ server, 27 embodiments, container lifecycle.
 - [LeRobot Local](lerobot-local.md) — in-process HF models, RTC.
 - [Cosmos 3](cosmos3.md) — NVIDIA Cosmos 3 omnimodal VLA.
+- [Qwen-VLA](qwen-vla.md) — unified VLA over ZMQ or in-process.
 - [Custom policies](custom-policies.md) — implement the ABC.
