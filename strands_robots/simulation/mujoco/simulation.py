@@ -994,12 +994,13 @@ class MuJoCoSimEngine(
 
         return base
 
-    def get_robot_state(self, robot_name: str) -> dict[str, Any]:
+    def get_robot_state(self, robot_name: str | None = None) -> dict[str, Any]:
         """canonical name parameter is ``robot_name``. The router
         accepts ``name`` as an alias (bidirectional) so legacy LLM calls
         keep working, but new tool specs should document only robot_name."""
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
+        robot_name = self._resolve_single_robot(robot_name)
         if robot_name not in self._world.robots:
             return {"status": "error", "content": [{"text": f"Robot '{robot_name}' not found."}]}
 
@@ -1856,7 +1857,7 @@ class MuJoCoSimEngine(
 
     def start_policy(
         self,
-        robot_name: str,
+        robot_name: str | None = None,
         policy_provider: str = "mock",
         policy_config: dict[str, Any] | None = None,
         instruction: str = "",
@@ -1888,6 +1889,7 @@ class MuJoCoSimEngine(
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
+        robot_name = self._resolve_single_robot(robot_name)
         if robot_name not in self._world.robots:
             return {"status": "error", "content": [{"text": f"Robot '{robot_name}' not found."}]}
 
@@ -1993,7 +1995,7 @@ class MuJoCoSimEngine(
 
     def run_policy(
         self,
-        robot_name: str,
+        robot_name: str | None = None,
         policy_provider: str = "mock",
         policy_config: dict[str, Any] | None = None,
         instruction: str = "",
@@ -2020,6 +2022,8 @@ class MuJoCoSimEngine(
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
+
+        robot_name = self._resolve_single_robot(robot_name)
 
         try:
             return super().run_policy(
