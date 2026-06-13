@@ -164,7 +164,7 @@ _ROBOT_POLICY_DOC: dict[str, Any] = {
             ],
         },
         {
-            # F-15 / B-09: the response topic is
+            # Response topic is
             # ``strands/{operator}/response/{robot_thingname}/{turn}``.
             # The first wildcard is the OPERATOR'S thing-name (the
             # recipient inbox the robot must reach to complete the RPC).
@@ -172,12 +172,6 @@ _ROBOT_POLICY_DOC: dict[str, Any] = {
             # RESPONDER to its own identity -- so robot-A can no longer
             # forge a response that claims to come from robot-B. The
             # trailing ``/*`` is the per-turn UUID.
-            #
-            # Defence-in-depth: the operator-side ACL
-            # (``OperatorReceiveResponses`` / ``AllowOwnSubscriptions``)
-            # already restricts each operator to its own response prefix;
-            # this statement closes the responder-identity surface on the
-            # publish side that the pentest (F-15) proved exploitable.
             "Sid": "AllowResponseToAnyOperator",
             "Effect": "Allow",
             "Action": "iot:Publish",
@@ -244,6 +238,42 @@ _ROBOT_POLICY_DOC: dict[str, Any] = {
         },
     ],
 }
+
+
+#: Finding #15 (MQTT Last Will weaponized as dead-man switch). A robot cert
+#: that holds ``iot:Publish`` on ``strands/safety/estop`` can register an MQTT
+#: Last-Will-and-Testament on that topic at CONNECT time. When a defender
+#: kills the attacker's connection the broker fires the Will -> a fleet-wide
+#: estop -> the defender is "punished" for intervening. AWS IoT cannot filter
+#: the Will topic separately from normal publishes (the Will uses the
+#: connection's ``iot:Publish`` grant), so the only policy-level mitigation is
+#: to NOT grant estop-publish to that cert at all.
+#:
+#: ``provision_robot(..., allow_estop_publish=False)`` swaps the ``strands-
+#: robot`` policy for ``strands-robot-no-estop``: identical to the default
+#: except the ``AllowSafetyEstop`` publish statement is removed. The robot can
+#: STILL subscribe + receive ``strands/safety/estop`` and obey fleet stops --
+#: it simply cannot ORIGINATE one (and therefore cannot arm a Will on it).
+#: Use this for robots that should obey but never issue fleet-wide stops
+#: (the common case); keep the default for designated safety-authority robots.
+ROBOT_NO_ESTOP_POLICY_NAME = "strands-robot-no-estop"
+
+
+def _robot_policy_doc(*, allow_estop_publish: bool) -> dict[str, Any]:
+    """Build the robot IoT policy document.
+
+    When *allow_estop_publish* is False the ``AllowSafetyEstop`` publish
+    statement is omitted (finding #15) -- the cert cannot publish (or arm a
+    Will on) ``strands/safety/estop`` while retaining subscribe + receive.
+    """
+    import copy
+
+    doc = copy.deepcopy(_ROBOT_POLICY_DOC)
+    if not allow_estop_publish:
+        doc["Statement"] = [
+            st for st in doc["Statement"] if st.get("Sid") != "AllowSafetyEstop"
+        ]
+    return doc
 
 
 _OPERATOR_POLICY_DOC: dict[str, Any] = {
@@ -315,12 +345,7 @@ _OPERATOR_POLICY_DOC: dict[str, Any] = {
             ],
         },
         {
-            # F-20 / B-14: scope shadow access to strands-managed Things
-            # only. The bare ``thing/*`` resource let an operator cert
-            # GetThingShadow / UpdateThingShadow on EVERY Thing in the
-            # account (the attribute Condition does not restrict shadow
-            # APIs by resource name -- the pentest wrote shadow.reported
-            # on non-strands Things). AWS does not apply the attribute
+            # AWS does not apply the attribute
             # condition to the shadow data-plane resource, so the practical
             # fix is a resource-name prefix: strands robots are provisioned
             # with ``strands-`` ThingName prefixes (see PROVISIONING
@@ -385,6 +410,7 @@ def provision_robot(
     region: str | None = None,
     cert_dir: Path | str | None = None,
     attributes: dict[str, str] | None = None,
+    allow_estop_publish: bool = True,
 ) -> ProvisionedThing:
     """Provision a robot Thing and write its credentials to disk.
 
@@ -439,9 +465,13 @@ def provision_robot(
     # 1. Thing
     thing_arn = _ensure_thing(iot, thing_name, attributes)
 
-    # 2. Policy
-    policy_arn = _ensure_policy(iot, ROBOT_POLICY_NAME, _ROBOT_POLICY_DOC)
-    logger.info("[provision] %s: using policy %s", thing_name, policy_arn)
+    # 2. Policy. Finding #15: when estop-publish is disabled the robot gets a
+    # distinct policy name so the two postures never collide in IoT (policy
+    # docs are immutable-by-name in _ensure_policy).
+    policy_name = ROBOT_POLICY_NAME if allow_estop_publish else ROBOT_NO_ESTOP_POLICY_NAME
+    policy_doc = _robot_policy_doc(allow_estop_publish=allow_estop_publish)
+    policy_arn = _ensure_policy(iot, policy_name, policy_doc)
+    logger.info("[provision] %s: using policy %s (estop_publish=%s)", thing_name, policy_arn, allow_estop_publish)
 
     # 3. Cert + key
     # Clean up stale certs from prior provision_robot runs on the same Thing.
@@ -456,7 +486,7 @@ def provision_robot(
     cert_arn, cert_id = _create_cert(iot, cert_path, key_path)
 
     # 4. Attach policy → cert → thing
-    iot.attach_policy(policyName=ROBOT_POLICY_NAME, target=cert_arn)
+    iot.attach_policy(policyName=policy_name, target=cert_arn)
     iot.attach_thing_principal(thingName=thing_name, principal=cert_arn)
     logger.info("[provision] %s: cert %s attached", thing_name, cert_id)
 
@@ -475,7 +505,7 @@ def provision_robot(
         key_path=key_path,
         ca_path=ca_path,
         endpoint=endpoint,
-        policy_name=ROBOT_POLICY_NAME,
+        policy_name=policy_name,
         region=region,
     )
 
