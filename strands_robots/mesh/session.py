@@ -274,7 +274,14 @@ def clear_peers() -> None:
 # time. Validate the scheme up-front so the misconfig surfaces at the
 # same loud-on-misconfig boundary as ``_float_env`` / ``_load_acl_file``
 # / ``resolve_auth_mode``.
-_MTLS_OK_SCHEMES: tuple[str, ...] = ("tls", "quic")
+# #309: the predicate is "this scheme carries TLS bytes", so the constant is
+# named for that intent. Zenoh 1.x TLS-bearing transports are tls, quic,
+# wss (WebSocket-over-TLS, used in browser-bridge / ingress fleets) and
+# unixsock (local-only but TLS-bearing in the Zenoh transport taxonomy).
+# See https://zenoh.io/docs/manual/configuration/ (link protocols).
+_TLS_BEARING_SCHEMES: tuple[str, ...] = ("tls", "quic", "wss", "unixsock")
+# Backwards-compatible alias (the old name read as "valid under mtls").
+_MTLS_OK_SCHEMES: tuple[str, ...] = _TLS_BEARING_SCHEMES
 _NONE_OK_SCHEMES: tuple[str, ...] = ("tcp", "udp", "tls", "quic")
 
 
