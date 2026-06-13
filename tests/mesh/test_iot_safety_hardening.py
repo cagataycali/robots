@@ -9,8 +9,6 @@ from __future__ import annotations
 
 import ast
 
-import pytest
-
 
 # --------------------------------------------------------------------------- #15
 class TestNoEstopPolicyVariant:
@@ -119,8 +117,9 @@ class TestEstopLambdaDedup:
 
 class TestEstopLambdaRoleGrantsPutItem:
     def test_role_policy_includes_dynamodb_putitem(self, monkeypatch):
-        from unittest.mock import MagicMock
         import json
+        from unittest.mock import MagicMock
+
         from strands_robots.mesh.iot.bootstrap import (
             BootstrappedAccount,
             _ensure_lambda_role,
@@ -140,16 +139,20 @@ class TestEstopLambdaRoleGrantsPutItem:
         _ensure_lambda_role(iam, a)
 
         doc = json.loads(iam.put_role_policy.call_args.kwargs["PolicyDocument"])
-        actions = [act for st in doc["Statement"] for act in (st["Action"] if isinstance(st["Action"], list) else [st["Action"]])]
+        actions = [
+            act
+            for st in doc["Statement"]
+            for act in (st["Action"] if isinstance(st["Action"], list) else [st["Action"]])
+        ]
         assert "dynamodb:PutItem" in actions
 
 
 class TestEstopLambdaCreateConfig:
     def test_create_sets_env_and_reserved_concurrency(self, monkeypatch):
         from unittest.mock import MagicMock
+
         from strands_robots.mesh.iot.bootstrap import (
             BootstrappedAccount,
-            ESTOP_LAMBDA_NAME,
             _ensure_estop_lambda,
         )
 

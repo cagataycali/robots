@@ -172,8 +172,6 @@ _ESTOP_LAMBDA_SOURCE = textwrap.dedent(
 )
 
 
-
-
 # F-19 / B-13: Fleet Provisioning PreProvisioningHook. Without a hook,
 # any holder of the (shared, long-lived) claim certificate can register
 # an ARBITRARY ThingName and receive a full robot identity + policy.

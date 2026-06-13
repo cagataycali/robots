@@ -220,22 +220,26 @@ class TestH3CmdReplay:
     def test_distinct_turn_ids_each_dispatch(self):
         m = self._exec_stub()
         for i in range(3):
-            m._exec_cmd({
-                "sender_id": "operator",
-                "turn_id": f"turn-{i}",
-                "command": {"action": "execute", "instruction": "pick", "policy_provider": "mock"},
-            })
+            m._exec_cmd(
+                {
+                    "sender_id": "operator",
+                    "turn_id": f"turn-{i}",
+                    "command": {"action": "execute", "instruction": "pick", "policy_provider": "mock"},
+                }
+            )
         assert len(m.dispatched) == 3
 
     def test_readonly_action_not_deduped(self):
         m = self._exec_stub()
         # status is idempotent -> repeats allowed (operator polling).
         for _ in range(4):
-            m._exec_cmd({
-                "sender_id": "operator",
-                "turn_id": "same-turn",
-                "command": {"action": "status"},
-            })
+            m._exec_cmd(
+                {
+                    "sender_id": "operator",
+                    "turn_id": "same-turn",
+                    "command": {"action": "status"},
+                }
+            )
         assert len(m.dispatched) == 4
 
 
@@ -245,10 +249,8 @@ class TestM5SuccessAudit:
 
     def test_successful_command_is_audited(self, monkeypatch):
         events = []
-        import strands_robots.mesh.core as core
-
         monkeypatch.setattr(
-            core, "log_safety_event",
+            "strands_robots.mesh.core.log_safety_event",
             lambda et, pid, payload: events.append((et, payload)),
         )
         m = Mesh.__new__(Mesh)
@@ -259,19 +261,19 @@ class TestM5SuccessAudit:
         m._dispatch = lambda cmd: {"ok": True}
         m.publish = lambda *a, **k: None
 
-        m._exec_cmd({
-            "sender_id": "op",
-            "turn_id": "t1",
-            "command": {"action": "execute", "instruction": "pick", "policy_provider": "mock"},
-        })
+        m._exec_cmd(
+            {
+                "sender_id": "op",
+                "turn_id": "t1",
+                "command": {"action": "execute", "instruction": "pick", "policy_provider": "mock"},
+            }
+        )
         assert any(et == "command_executed" for et, _ in events)
 
     def test_readonly_command_not_audited_as_executed(self, monkeypatch):
         events = []
-        import strands_robots.mesh.core as core
-
         monkeypatch.setattr(
-            core, "log_safety_event",
+            "strands_robots.mesh.core.log_safety_event",
             lambda et, pid, payload: events.append((et, payload)),
         )
         m = Mesh.__new__(Mesh)

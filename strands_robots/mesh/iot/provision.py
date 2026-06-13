@@ -270,9 +270,7 @@ def _robot_policy_doc(*, allow_estop_publish: bool) -> dict[str, Any]:
 
     doc = copy.deepcopy(_ROBOT_POLICY_DOC)
     if not allow_estop_publish:
-        doc["Statement"] = [
-            st for st in doc["Statement"] if st.get("Sid") != "AllowSafetyEstop"
-        ]
+        doc["Statement"] = [st for st in doc["Statement"] if st.get("Sid") != "AllowSafetyEstop"]
     return doc
 
 

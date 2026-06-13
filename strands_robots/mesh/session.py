@@ -87,6 +87,8 @@ def _max_peers() -> int:
     except (TypeError, ValueError):
         return MAX_PEERS_DEFAULT
     return val if val > 0 else MAX_PEERS_DEFAULT
+
+
 #: Pose publishing frequency (Hz).  Publishes SE(3) pose when a pose
 #: provider (SLAM, odometry, VIO) is available on the robot.
 POSE_HZ: float = 10.0

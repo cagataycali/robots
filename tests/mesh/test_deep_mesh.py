@@ -829,6 +829,7 @@ class TestInputPublisherReceiver:
         # default 100Hz cap would (correctly) rate-limit. The cap has its own
         # dedicated coverage; here we only assert send_action plumbing.
         import os as _os
+
         _os.environ["STRANDS_MESH_INPUT_MAX_HZ"] = "0"
         try:
             # Simulate incoming data

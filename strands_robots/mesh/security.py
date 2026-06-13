@@ -125,6 +125,7 @@ MAX_OVERRIDE_CODE_LEN: int = 256
 #: the apply path.
 MAX_INPUT_FRAME_KEYS: int = 64
 
+
 def _env_pos_float(env_var: str, default: float) -> float:
     """Parse a positive float from *env_var*, falling back to *default*.
 
@@ -159,6 +160,7 @@ def _input_value_abs() -> float:
     :data:`MAX_INPUT_VALUE_ABS`). Re-reads env on every call so operators
     can tune the teleop safety envelope without a restart."""
     return _env_pos_float("STRANDS_MESH_INPUT_VALUE_ABS", DEFAULT_INPUT_VALUE_ABS)
+
 
 #: Charset for teleop input-frame keys (motor/joint names like
 #: ``"motor.pos"``, ``"shoulder_pan"``, ``"j0"``). Printable, no

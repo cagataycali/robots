@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Any
 from strands_robots.mesh.security import ValidationError, validate_input_frame
 from strands_robots.mesh.session import put
 
+_log_safety_event: Callable[..., None] | None
 try:  # audit is best-effort; never let an import issue break teleop apply
     from strands_robots.mesh.audit import log_safety_event as _log_safety_event
 except Exception:  # pragma: no cover - defensive
@@ -401,11 +402,7 @@ class InputReceiver:
             # M-5: sampled positive audit of the live teleop stream so a
             # successful remote actuation is not invisible to forensics.
             _audit_every = _input_audit_every()
-            if (
-                _log_safety_event is not None
-                and _audit_every > 0
-                and self._frame_count % _audit_every == 0
-            ):
+            if _log_safety_event is not None and _audit_every > 0 and self._frame_count % _audit_every == 0:
                 try:
                     _log_safety_event(
                         "input_stream_applied",
