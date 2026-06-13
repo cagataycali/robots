@@ -347,10 +347,14 @@ def test_send_action_no_world_is_noop():
     from strands_robots.simulation import Simulation
 
     s = Simulation()
-    # Should return None and not raise
-    assert s.send_action({"j": 0.1}) is None
+    # Should return error dict when no world exists
+    result = s.send_action({"j": 0.1})
+    assert result["status"] == "error"
+    assert "No world" in result["content"][0]["text"]
     s.destroy()
 
 
 def test_send_action_unknown_robot_is_noop(ready_sim):
-    assert ready_sim.send_action({"j": 0.1}, robot_name="__ghost__") is None
+    result = ready_sim.send_action({"j": 0.1}, robot_name="__ghost__")
+    assert result["status"] == "error"
+    assert "__ghost__" in result["content"][0]["text"]
