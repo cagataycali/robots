@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 class PermissiveACLError(RuntimeError):
     """Raised when an operator-supplied ACL uses the blacklist footgun
     (``default_permission='allow'`` with explicit rules) without opting
-    in via ``STRANDS_MESH_ACCEPT_PERMISSIVE_ACL``. Pentest B-08 / F-14.
+    in via ``STRANDS_MESH_ACCEPT_PERMISSIVE_ACL``.
 
     The built-in permissive default (allow + EMPTY rules) is exempt --
     it is gated separately by the ``Mesh.start`` refuse-to-start path

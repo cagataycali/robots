@@ -1,4 +1,6 @@
-"""Pin tests for PR #224 review-blocker batch (2026-06-02 sweep).
+"""ACL permissive-shape detection + cache-isolation pins.
+
+Origin: PR #224 review-blocker batch (2026-06-02 sweep).
 
 Covers:
 
