@@ -379,10 +379,16 @@ class RenderingMixin:
             # finger joint - see issue #318.
             jnt_id = _lookup(mj.mjtObj.mjOBJ_JOINT, key)
             if jnt_id < 0:
+                # #367: an action key that resolves to neither an actuator nor
+                # a joint is silently dropped today. Silent gripper drops are
+                # exactly the failure mode #318 was filed to fix, so surface it
+                # -- once per (prefix, key) to avoid per-step log spam at 50Hz.
+                self._warn_unresolved_action_key(pfx, key, "no actuator or joint")
                 continue
 
             ai = self._actuator_for_joint(model, jnt_id, mj)
             if ai < 0:
+                self._warn_unresolved_action_key(pfx, key, "joint has no driving actuator")
                 continue
 
             # Scale a logical command into the actuator's ctrlrange when the
@@ -390,6 +396,30 @@ class RenderingMixin:
             # tendon units, not a finger-joint position). Direct JOINT
             # actuators keep the raw value (positions/torques in joint units).
             data.ctrl[ai] = self._scale_ctrl_for_actuator(model, ai, float(value), mj)
+
+    def _warn_unresolved_action_key(self, pfx: str, key: str, reason: str) -> None:
+        """Warn once per (prefix, key) that an action key could not be applied.
+
+        #367: replaces the prior silent ``continue`` on unresolved action keys.
+        De-duplicated via a per-world set so a 50Hz control loop does not spam
+        the log -- the operator sees the missing key once and can act on it.
+        """
+        warned = getattr(self, "_warned_unresolved_keys", None)
+        if warned is None:
+            warned = set()
+            self._warned_unresolved_keys = warned
+        dedup = (pfx, key)
+        if dedup in warned:
+            return
+        warned.add(dedup)
+        logger.warning(
+            "[sim] action key %r (prefix=%r) could not be applied: %s. "
+            "The value was dropped. Check the action/joint naming against the "
+            "scene's actuators.",
+            key,
+            pfx,
+            reason,
+        )
 
     @staticmethod
     def _actuator_for_joint(model: Any, jnt_id: int, mj: Any) -> int:
@@ -448,6 +478,13 @@ class RenderingMixin:
         if not bool(model.actuator_ctrllimited[ai]) or hi <= lo:
             return value
         span = hi - lo
+        # #367 item 1a: a ctrlrange that spans zero (e.g. [-1, 1]) is itself the
+        # normalised command space -- the caller passes the command verbatim and
+        # we must NOT re-map it onto [lo, hi] (which would clip a symmetric
+        # -0.5 to 0.0 -> -1.0). Treat lo < 0 as "already normalised, pass
+        # through clamped to the range".
+        if lo < 0.0:
+            return min(hi, max(lo, value))
         # A normalised [0, 1] open/close fraction is the conventional gripper
         # command from VLA policies. When the actuator ctrlrange is much wider
         # than unit scale (e.g. the Panda tendon's [0, 255]), a value within
@@ -455,7 +492,12 @@ class RenderingMixin:
         # than a literal tendon-unit command, so we map it onto the full range.
         # If the caller already passes a clearly in-range value (> lo + 1 and
         # <= hi), we trust it verbatim.
-        if span > 1.0 and value > (lo + 1.0) and value <= hi:
+        #
+        # #367 item 1b: use a small epsilon on the boundary so a normalised
+        # 1.0 + FP-noise (from a quantised VLA head) is still treated as the
+        # fraction 1.0 (-> hi) rather than slipping into the verbatim branch and
+        # writing ~1.0 onto a [0, 255] range (a nearly-closed gripper).
+        if span > 1.0 and value > (lo + 1.0 + 1e-6) and value <= hi:
             return value
         # Treat the incoming value as a normalised [0, 1] open/close fraction.
         frac = min(1.0, max(0.0, value))
