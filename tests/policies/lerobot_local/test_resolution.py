@@ -566,6 +566,8 @@ def test_walk_continues_after_subpackage_decorator_failure_layout_independent(tm
 
         monkeypatch.setattr(_real_lerobot, "policies", fake_policies, raising=False)
     except ImportError:
+        # lerobot is an optional dependency; when it is not installed there is
+        # no real package to patch and the fake module in sys.modules suffices.
         pass
 
     resolution._ensure_policy_configs_registered.cache_clear()
@@ -646,6 +648,8 @@ def test_directory_scan_rejects_python_keyword_dirnames(tmp_path, monkeypatch):
 
         monkeypatch.setattr(_real_lerobot, "policies", fake_policies, raising=False)
     except ImportError:
+        # lerobot is an optional dependency; when it is not installed there is
+        # no real package to patch and the fake module in sys.modules suffices.
         pass
 
     resolution._ensure_policy_configs_registered.cache_clear()
