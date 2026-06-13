@@ -246,7 +246,7 @@ class SimEngine(ABC):
         ...
 
     @abstractmethod
-    def send_action(self, action: dict[str, Any], robot_name: str | None = None, n_substeps: int = 1) -> None:
+    def send_action(self, action: dict[str, Any], robot_name: str | None = None, n_substeps: int = 1) -> dict[str, Any]:
         """Apply action and advance physics by n_substeps.
 
         Contract: each call writes actuator/ctrl values and then runs
@@ -257,6 +257,11 @@ class SimEngine(ABC):
         Backends are responsible for internal thread-safety (e.g.
         MuJoCo acquires self._lock here). PolicyRunner does not manage
         locks.
+
+        Returns:
+            Dict with ``status`` and ``content``. When action keys cannot
+            be resolved, includes ``unresolved_keys`` so callers can
+            self-correct.
         """
         ...
 

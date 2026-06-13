@@ -93,8 +93,10 @@ def _make_dummy_engine_class() -> type[SimEngine]:
         def get_observation(self, robot_name: str | None = None, *, skip_images: bool = False) -> dict[str, Any]:
             return {}
 
-        def send_action(self, action: dict[str, Any], robot_name: str | None = None, n_substeps: int = 1) -> None:
-            return None
+        def send_action(
+            self, action: dict[str, Any], robot_name: str | None = None, n_substeps: int = 1
+        ) -> dict[str, Any]:
+            return {"status": "success", "content": [{"text": "ok"}]}
 
         def render(
             self, camera_name: str = "default", width: int | None = None, height: int | None = None
