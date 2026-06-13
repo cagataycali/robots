@@ -1069,7 +1069,7 @@ def log_safety_event(event_type: str, peer_id: str, payload: dict[str, Any]) -> 
         record["sig"] = "SEQ_LOCK_DEGRADED"
         record["seq_lock_degraded"] = seq_lock_degraded_reason
     sig: str | None = None
-    if seq_lock_degraded_reason is None:
+    if seq_lock_degraded_reason is None and next_seq_degraded_reason is None:
         try:
             sig = _sign_record(record)
         except AuditPSKDegradedError as exc:

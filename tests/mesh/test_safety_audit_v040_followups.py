@@ -69,3 +69,42 @@ def test_seqlock_symlink_still_writes_seq_lock_degraded(tmp_path, monkeypatch):
         f"SEQ_LOCK_DEGRADED path must be preserved; got {records}"
     )
     assert not any(r.get("sig") == "NEXT_SEQ_DEGRADED" for r in records)
+
+
+# --------------------------------------------------------------------------- #
+# #324 — NEXT_SEQ_DEGRADED poison survives PSK signing gate                    #
+# --------------------------------------------------------------------------- #
+def test_next_seq_degraded_poison_survives_psk_signing(tmp_path, monkeypatch, caplog):
+    """Regression pin: when STRANDS_MESH_AUDIT_PSK is configured, the
+    NEXT_SEQ_DEGRADED poison marker must NOT be overwritten by _sign_record.
+
+    The signing-skip gate must cover both seq_lock_degraded_reason AND
+    next_seq_degraded_reason. Without the fix, _sign_record runs on the
+    poison record and clobbers record['sig'] with a valid HMAC, making
+    the seq-counter integrity gap invisible to verifiers."""
+    import logging
+
+    # Configure a real PSK (32-byte hex = 64 hex chars).
+    psk_hex = "a" * 64
+    monkeypatch.setenv("STRANDS_MESH_AUDIT_PSK", psk_hex)
+
+    # Force a non-symlink _next_seq failure.
+    def _boom(_peer_id):
+        raise OSError("simulated seq sidecar permissions failure")
+
+    monkeypatch.setattr(audit, "_next_seq", _boom)
+
+    with caplog.at_level(logging.ERROR, logger="strands_robots.mesh.audit"):
+        audit.log_safety_event("emergency_stop", "peerC", {"reason": "psk_regression"})
+
+    # The poison marker must survive -- NOT be overwritten by a real HMAC.
+    log_path = Path(tmp_path) / "mesh_audit.jsonl"
+    assert log_path.exists(), "poison record must be written even with PSK configured"
+    records = [json.loads(line) for line in log_path.read_text().splitlines() if line.strip()]
+    poison = [r for r in records if r.get("peer_id") == "peerC"]
+    assert poison, f"expected a record for peerC; got {records}"
+    assert poison[0]["sig"] == "NEXT_SEQ_DEGRADED", (
+        f"NEXT_SEQ_DEGRADED poison must survive PSK signing gate; "
+        f"got sig={poison[0].get('sig')!r} (likely overwritten by HMAC)"
+    )
+    assert poison[0]["seq"] == 0
