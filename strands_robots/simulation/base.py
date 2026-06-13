@@ -26,20 +26,26 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from strands_robots.policies import Policy
 
-# PolicyRunner and VideoConfig are used by run_policy / replay / eval_policy.
-# We could defer these with inline lazy imports (and historically did), but
-# policy_runner.py only imports `SimEngine` from base under TYPE_CHECKING so
-# the runtime cycle doesn't actually exist. Keep the imports at module level
-# to break the AST-visible cycle that static analysers flag.
+# --- Import-cycle invariant (runtime) + CodeQL suppression (static) ---------
 #
-# Note (#191): we deliberately do NOT import ``OnFrame`` here, even under
-# ``TYPE_CHECKING`` — CodeQL's ``py/unsafe-cyclic-import`` rule walks
-# ``TYPE_CHECKING`` blocks too and would flag the static cycle (
-# policy_runner.py imports SimEngine from base under TYPE_CHECKING,
-# so importing OnFrame from policy_runner here closes the loop in the
-# AST). Instead, we reference ``OnFrame`` in the ``evaluate_benchmark``
-# signature as a *string* annotation; ``from __future__ import
-# annotations`` (already in effect) makes that a no-op at runtime.
+# RUNTIME: there is no import-time cycle between this module and
+# policy_runner.py. policy_runner.py imports ``SimEngine`` from base only under
+# ``TYPE_CHECKING``, so the only real runtime edge is the single module-level
+# import below (base -> policy_runner). The loop is never closed at import time.
+# This is pinned by tests/simulation/test_no_import_cycle.py.
+#
+# To keep that asymmetry, ``OnFrame`` is deliberately NOT imported here (not
+# even under ``TYPE_CHECKING``). It is referenced in the ``evaluate_benchmark``
+# signature as a *string* annotation; ``from __future__ import annotations``
+# (in effect above) makes that a no-op at runtime, so no base -> policy_runner
+# edge is added for it.
+#
+# STATIC: CodeQL's ``py/unsafe-cyclic-import`` walks ``TYPE_CHECKING`` blocks as
+# if they were runtime edges, so it reports the AST-visible loop on the
+# simulation triple (base.py, policy_runner.py, benchmark.py). That is a
+# documented false-positive, suppressed repository-wide in
+# ``.github/codeql/config.yml``; the rationale, the audit recipe, and the
+# CI narrowness guard are described in ``.github/codeql/README.md``.
 from strands_robots.simulation.policy_runner import PolicyRunner, VideoConfig
 
 logger = logging.getLogger(__name__)

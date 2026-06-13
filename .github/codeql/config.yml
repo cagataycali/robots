@@ -1,0 +1,26 @@
+# CodeQL configuration for strands-labs/robots.
+#
+# This config carries a single, narrowly-justified query suppression for
+# py/unsafe-cyclic-import on the simulation triple (base.py, policy_runner.py,
+# benchmark.py). See .github/codeql/README.md for the full runtime-safety
+# rationale and the audit recipe that keeps the suppression narrow.
+#
+# Schema is pin-tested by tests/test_codeql_config_schema.py and scope is
+# CI-enforced by the `codeql-suppression-narrowness` job in
+# .github/workflows/codeql.yml.
+name: "strands-robots CodeQL config"
+
+# Keep the default query suite; the workflow selects security-and-quality.
+disable-default-queries: false
+
+query-filters:
+  # py/unsafe-cyclic-import on the simulation triple is a documented
+  # false-positive. Under `from __future__ import annotations` every type hint
+  # is a string at runtime, and policy_runner.py only imports SimEngine from
+  # base under TYPE_CHECKING, so no runtime cycle exists. The companion
+  # regression tests (tests/simulation/test_no_import_cycle.py) pin runtime
+  # safety. CodeQL's query-filters do not support path scoping, so this exclude
+  # is repository-wide; the narrowness CI job asserts the simulation triple is
+  # still the ONLY shape that would fire the rule.
+  - exclude:
+      id: py/unsafe-cyclic-import
