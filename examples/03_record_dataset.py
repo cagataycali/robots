@@ -5,31 +5,49 @@ Goal: Show the recording lifecycle (start -> run policy -> stop) produces
 a training-ready LeRobotDataset with zero manual feature wrangling.
 
 Dependencies: pip install "strands-robots[sim-mujoco,lerobot]"
-Expected output: Dataset saved locally with 1 episode, 100 frames.
+Expected output: "Episode saved ... 100 frames, 1 episode(s)" under /tmp.
 Runtime: ~3 seconds.
 """
 
+import sys
+
 from strands_robots import MockPolicy, Robot
 
+# Robot("so100") already builds the world and adds the "so100" robot.
 sim = Robot("so100", mesh=False)
-sim.create_world()
-sim.add_robot(name="arm", data_config="so100")
 sim.add_camera(name="front", position=[0.5, 0.0, 0.4], target=[0.2, 0, 0.05])
 
-# Start recording — features are auto-inferred from the robot.
-sim.start_recording(repo_id="local/my_demo", fps=30, task="pick up the red cube")
+# Start recording. Pass an explicit local root= directory: without it lerobot
+# resolves repo_id into the read-only Hub snapshot cache, where DatasetWriter
+# cannot be created (recorder init fails). Features are auto-inferred from the
+# robot — no manual schema wrangling.
+start = sim.start_recording(
+    repo_id="local/my_demo",
+    root="/tmp/strands_demo_dataset",
+    fps=30,
+    task="pick up the red cube",
+    overwrite=True,
+)
+if start["status"] != "success":
+    # Surface the real failure instead of pretending the recording worked.
+    print(f"start_recording failed: {start['content'][0]['text']}", file=sys.stderr)
+    raise SystemExit(1)
 
 # Run the policy — each step is automatically captured.
 sim.run_policy(
-    robot_name="arm",
+    robot_name="so100",
     policy_object=MockPolicy(),
     instruction="pick up the red cube",
     n_steps=100,
 )
 
 # Finalize — writes parquet + video, ready for lerobot training scripts.
+# The response text reports the actual frame/episode count and on-disk path,
+# so you can confirm frames were captured rather than trusting a bare status.
 result = sim.stop_recording()
-print(f"Recording: {result['status']}")
+print(result["content"][0]["text"])
+if result["status"] != "success":
+    raise SystemExit(1)
 
 # To push to HF Hub instead: use repo_id="your_user/dataset_name"
 # and call sim.stop_recording(push_to_hub=True) with HF_TOKEN set.
