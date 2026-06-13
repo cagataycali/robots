@@ -560,7 +560,7 @@ def _clear_acl_cache_for_test() -> None:
 # bare-dict storage and dropping the auth_mode-snapshot symmetry that
 # closes the resolve_auth_mode() race at the _build_config boundaries.
 _Snapshot = tuple["dict[str, Any] | None", "str | None"]
-_THREAD_SNAPSHOT: threading.local = threading.local()  # value: _Snapshot | None
+_THREAD_SNAPSHOT: threading.local = threading.local()  # stores: _Snapshot | None
 
 
 def _set_thread_snapshot(
@@ -583,8 +583,12 @@ def _set_thread_snapshot(
     # #310: always store a 2-tuple, never a bare dict. ``auth_mode=None`` is a
     # valid element (callers that do not know the mode at stash time store None;
     # the accessor returns None and the consumer falls back -- same outcome,
-    # but the storage shape stays invariant).
-    _THREAD_SNAPSHOT.value = (resolved, auth_mode)
+    # but the storage shape stays invariant). The local is annotated with
+    # ``_Snapshot`` so the pinned shape is enforced at the storage site (not
+    # only in a comment) -- a future edit that stores a bare dict here fails
+    # mypy against the alias.
+    snapshot: _Snapshot = (resolved, auth_mode)
+    _THREAD_SNAPSHOT.value = snapshot
 
 
 def _get_thread_snapshot() -> dict[str, Any] | None:
