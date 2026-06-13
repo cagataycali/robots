@@ -85,8 +85,8 @@ jobs:
           # The CLI binaries are published as .zip (there is no .tar.gz asset);
           # the SHA-256 is pinned so a swapped/corrupt download fails loudly
           # rather than silently feeding a 404 body into the unpack step.
-          CODEQL_VERSION="v2.19.3"
-          CODEQL_SHA256="87b44267a0e5c8bd1771672705fef26d7226bb64a200cf56f119c697f14ccccc"
+          CODEQL_VERSION="v2.25.6"
+          CODEQL_SHA256="d7108fe3ab439267f2dbadd5462096aa190c6258e06d90004faef04d65bf4281"
           curl --fail -sSL -o codeql.zip \
             "https://github.com/github/codeql-cli-binaries/releases/download/${CODEQL_VERSION}/codeql-linux64.zip"
           echo "${CODEQL_SHA256}  codeql.zip" | sha256sum --check --strict
@@ -96,9 +96,15 @@ jobs:
       - name: Analyze with suppression dropped
         run: |
           set -euo pipefail
+          # The standalone CLI ships without query packs; fetch the published
+          # python-queries pack so the cyclic-import query resolves.
+          codeql pack download codeql/python-queries
           codeql database create db --language=python --source-root=. --overwrite
+          # py/unsafe-cyclic-import lives in ModuleLevelCyclicImport.ql (the
+          # query @id, not the filename). The exclude in config.yml is NOT
+          # applied here, so the simulation triple is expected to fire.
           codeql database analyze db \
-            codeql/python-queries:Imports/UnsafeCyclicImport.ql \
+            codeql/python-queries:Imports/ModuleLevelCyclicImport.ql \
             --format=sarif-latest --output=cyclic-import.sarif --threads=0
 
       - name: Assert violating file set is exactly the simulation triple
