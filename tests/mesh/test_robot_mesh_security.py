@@ -333,3 +333,24 @@ class TestRateLimitTOCTOU:
         assert rmt._rate_limit_check_and_record("broadcast") is not None
         # Verify no spurious extra slot was added.
         assert len(rmt._RATE_HISTORY["broadcast"]) == 1
+
+
+class TestDeclineSideChannel322:
+    """#322: a declined HITL response must not leak the operator's literal
+    reply back into the LLM context (the human-as-content-side-channel)."""
+
+    def test_declined_response_not_echoed_to_llm(self):
+        """The operator's literal interrupt reply must NOT appear in the
+        tool result returned to the model. A flat sentinel is returned; the
+        full reply is kept only in the local audit row."""
+        secret = "no-because-CEO-said-PROJECT-TITAN-ships-friday"
+        ctx = _make_ctx(response=secret)
+        m = _stub_mesh()
+        with patch("strands_robots.tools.robot_mesh._resolve_mesh", return_value=m):
+            r = _call("emergency_stop", ctx=ctx)
+        assert r["status"] == "error"
+        text = r["content"][0]["text"]
+        assert "declined" in text.lower()
+        # The operator's literal reply MUST NOT be echoed to the LLM.
+        assert secret not in text, "operator's literal decline reply leaked to the LLM result (#322 side-channel)"
+        m.emergency_stop.assert_not_called()
