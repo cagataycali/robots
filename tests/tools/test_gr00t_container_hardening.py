@@ -545,3 +545,36 @@ def test_no_agent_controlled_host_exec_or_path_params():
         f"agent-facing params reintroduce a host-exec/mount surface: {sorted(leaked)}. "
         "These must be operator-config + allowlist driven, not agent parameters."
     )
+
+
+# --------------------------------------------------------------------------- #
+# #384 item 2 — symlink (realpath) resolution in volume safety                 #
+# --------------------------------------------------------------------------- #
+def test_check_volume_safety_resolves_symlink_into_protected_dir(tmp_path):
+    """A host symlink whose target is a protected dir must be rejected.
+
+    Pre-fix (#384): ``_normalize_host_path`` ran ``normpath`` only, so a
+    pre-existing symlink ``/data/ckpt -> /etc`` passed the blocklist while
+    docker would mount the resolved ``/etc``. The realpath check closes this.
+    """
+    link = tmp_path / "sneaky_ckpt"
+    link.symlink_to("/etc")  # target is a protected dir
+    reason = gi._check_volume_safety({str(link): "/data/checkpoints"})
+    assert reason is not None, "symlink resolving to /etc must be rejected; the realpath guard is missing"
+    assert "/etc" in reason or "protected" in reason
+
+
+def test_check_volume_safety_allows_symlink_into_safe_dir(tmp_path):
+    """A symlink resolving to a non-protected dir must still be allowed."""
+    safe_target = tmp_path / "real_models"
+    safe_target.mkdir()
+    link = tmp_path / "models_link"
+    link.symlink_to(safe_target)
+    assert gi._check_volume_safety({str(link): "/data/checkpoints"}) is None
+
+
+def test_resolve_host_path_does_not_raise_on_missing_path():
+    """``_resolve_host_path`` must resolve best-effort on a not-yet-created
+    mount source (realpath resolves as far as it can, never raises)."""
+    out = gi._resolve_host_path("/does/not/exist/yet/ckpt")
+    assert isinstance(out, str) and out.startswith("/")
