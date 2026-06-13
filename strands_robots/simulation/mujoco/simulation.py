@@ -967,6 +967,37 @@ class MuJoCoSimEngine(
             )
         return {"status": "success", "content": [{"text": "\n".join(lines)}]}
 
+    def describe(self) -> dict[str, Any]:
+        """Return a machine-readable summary of this MuJoCo engine's live state.
+
+        Overrides :meth:`SimEngine.describe` to include MuJoCo-specific
+        camera names from the loaded world.
+
+        Agents should call this FIRST to discover what robots, cameras, and
+        methods are available without guessing.
+        """
+        base = super().describe()
+
+        # Enrich with live camera list from the MuJoCo model
+        cameras: list[str] = []
+        if self._world is not None and self._world._model is not None:
+            mj = self._mj
+            model = self._world._model
+            for i in range(model.ncam):
+                cam_name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_CAMERA, i)
+                if cam_name:
+                    cameras.append(cam_name)
+        base["cameras"] = cameras
+
+        # Add sim-time and world status for situational awareness
+        if self._world is not None:
+            base["sim_time"] = self._world.sim_time
+            base["world_created"] = True
+        else:
+            base["world_created"] = False
+
+        return base
+
     def get_robot_state(self, robot_name: str) -> dict[str, Any]:
         """canonical name parameter is ``robot_name``. The router
         accepts ``name`` as an alias (bidirectional) so legacy LLM calls

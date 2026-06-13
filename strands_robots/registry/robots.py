@@ -201,3 +201,13 @@ def format_robot_table(max_width: int = 100) -> str:
     lines.append("")
     lines.append(f"Total: {len(robots)} robots | Aliases: {len(list_aliases())}")
     return "\n".join(lines)
+
+
+# ------------------------------------------------------------------
+# AX-2: Alias for agent discoverability
+# ------------------------------------------------------------------
+
+# Agents intuitively reach for `get_robot_info` by analogy with
+# `get_robot_state`. Provide a thin alias so this import works:
+#   from strands_robots.registry import get_robot_info
+get_robot_info = get_robot
