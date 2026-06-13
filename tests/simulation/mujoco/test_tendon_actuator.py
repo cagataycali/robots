@@ -147,3 +147,83 @@ def test_apply_action_by_name_direct_joint_unscaled(model):
     mixin._apply_action_by_name(model, data, {"arm_joint": 0.5}, "", mujoco)
     arm = _aid(model, "arm_act")
     assert data.ctrl[arm] == pytest.approx(0.5)
+
+
+# --------------------------------------------------------------------------- #
+# #367 v0.4.1 polish bundle                                                    #
+# --------------------------------------------------------------------------- #
+# A tendon actuator whose ctrlrange spans zero ([-1, 1]) -- the #367 item-1a
+# case. The scale helper only special-cases TENDON transmissions, so the
+# symmetric-range pin must use a tendon actuator (not the direct arm joint).
+_XML_SYMMETRIC_TENDON = """
+<mujoco model="symmetric_tendon">
+  <worldbody>
+    <body name="hand">
+      <body name="f1" pos="0.03 0 0">
+        <joint name="fj1" type="slide" axis="1 0 0" range="-1 1"/>
+        <geom type="box" size="0.005 0.01 0.02"/>
+      </body>
+      <body name="f2" pos="-0.03 0 0">
+        <joint name="fj2" type="slide" axis="-1 0 0" range="-1 1"/>
+        <geom type="box" size="0.005 0.01 0.02"/>
+      </body>
+    </body>
+  </worldbody>
+  <tendon>
+    <fixed name="sym_split">
+      <joint joint="fj1" coef="1"/>
+      <joint joint="fj2" coef="1"/>
+    </fixed>
+  </tendon>
+  <actuator>
+    <position name="sym_act" tendon="sym_split" ctrlrange="-1 1" kp="1"/>
+  </actuator>
+</mujoco>
+"""
+
+
+def test_scale_symmetric_tendon_ctrlrange_passes_negative_verbatim():
+    """#367 item 1a: a TENDON ctrlrange spanning zero ([-1, 1]) is itself the
+    normalised command space -- a symmetric negative command must pass through
+    clamped, NOT be re-mapped onto [lo, hi]. Pre-fix (lo<0 with value<lo+1)
+    fell into the fraction branch and clipped -0.5 toward lo=-1.0."""
+    m = mujoco.MjModel.from_xml_string(_XML_SYMMETRIC_TENDON)
+    sym = _aid(m, "sym_act")
+    out_neg = RenderingMixin._scale_ctrl_for_actuator(m, sym, -0.5, mujoco)
+    assert out_neg == pytest.approx(-0.5), f"symmetric -0.5 must pass verbatim, got {out_neg}"
+    out_pos = RenderingMixin._scale_ctrl_for_actuator(m, sym, 0.5, mujoco)
+    assert out_pos == pytest.approx(0.5)
+    # Out-of-range clamps to the symmetric bounds.
+    assert RenderingMixin._scale_ctrl_for_actuator(m, sym, -5.0, mujoco) == pytest.approx(-1.0)
+    assert RenderingMixin._scale_ctrl_for_actuator(m, sym, 5.0, mujoco) == pytest.approx(1.0)
+
+
+def test_scale_epsilon_boundary_treats_one_plus_noise_as_fraction(model):
+    """#367 item 1b: a normalised 1.0 + FP noise must still map to hi (255),
+    not slip into the verbatim branch and write ~1.0 onto the [0, 255] range
+    (a nearly-closed gripper when fully-open was intended)."""
+    grip = _aid(model, "grip_act")
+    out = RenderingMixin._scale_ctrl_for_actuator(model, grip, 1.0 + 1e-9, mujoco)
+    assert out == pytest.approx(255.0), f"1.0+noise should map to hi, got {out}"
+
+
+def test_scale_clamps_above_hi(model):
+    """#367 item 3a: a value above hi clamps to hi (characterization pin)."""
+    grip = _aid(model, "grip_act")
+    out = RenderingMixin._scale_ctrl_for_actuator(model, grip, 300.0, mujoco)
+    assert out == pytest.approx(255.0)
+
+
+def test_apply_action_warns_once_on_unresolved_key(model, caplog):
+    """#367 item 2: an action key resolving to neither actuator nor joint is
+    no longer silently dropped -- it emits a WARNING (once per key)."""
+    import logging
+
+    data = mujoco.MjData(model)
+    mixin = RenderingMixin()
+    with caplog.at_level(logging.WARNING, logger="strands_robots.simulation.mujoco.rendering"):
+        mixin._apply_action_by_name(model, data, {"nonexistent_joint": 1.0}, "", mujoco)
+        # Second call with the same key must NOT add another warning.
+        mixin._apply_action_by_name(model, data, {"nonexistent_joint": 1.0}, "", mujoco)
+    warns = [r.getMessage() for r in caplog.records if "nonexistent_joint" in r.getMessage()]
+    assert len(warns) == 1, f"expected exactly one warn-once for the unresolved key, got {warns}"
