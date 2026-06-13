@@ -778,7 +778,7 @@ class SimEngine(ABC):
             "methods": {
                 "get_robot_state": "(robot_name: str) -> dict",
                 "get_observation": "(robot_name: str | None = None, *, skip_images: bool = False) -> dict",
-                "send_action": "(action: dict, robot_name: str | None = None, n_substeps: int = 1) -> None",
+                "send_action": "(action: dict, robot_name: str | None = None, n_substeps: int = 1) -> dict",
                 "run_policy": "(robot_name: str, policy_provider='mock', ...) -> dict",
                 "start_policy": "(robot_name: str, policy_provider='mock', ...) -> dict",
                 "list_robots": "() -> list[str]",
