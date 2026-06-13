@@ -25,10 +25,15 @@ def _make_minimal_engine():
     class MinimalEngine(SimEngine):
         """Smallest concrete engine to test describe()."""
 
-        def __init__(self):
-            self._robots = []
+        def __init__(self) -> None:
+            self._robots: list[str] = []
 
-        def create_world(self, **kw) -> dict[str, Any]:
+        def create_world(
+            self,
+            timestep: float | None = None,
+            gravity: list[float] | None = None,
+            ground_plane: bool = True,
+        ) -> dict[str, Any]:
             return {}
 
         def destroy(self) -> dict[str, Any]:
@@ -37,39 +42,71 @@ def _make_minimal_engine():
         def reset(self) -> dict[str, Any]:
             return {}
 
-        def step(self, n_steps=1) -> dict[str, Any]:
+        def step(self, n_steps: int = 1) -> dict[str, Any]:
             return {}
 
         def get_state(self) -> dict[str, Any]:
             return {}
 
-        def add_robot(self, name, **kw) -> dict[str, Any]:
+        def add_robot(
+            self,
+            name: str,
+            urdf_path: str | None = None,
+            data_config: str | None = None,
+            position: list[float] | None = None,
+            orientation: list[float] | None = None,
+            **kwargs: Any,
+        ) -> dict[str, Any]:
             self._robots.append(name)
             return {}
 
-        def remove_robot(self, name) -> dict[str, Any]:
+        def remove_robot(self, name: str) -> dict[str, Any]:
             self._robots.remove(name)
             return {}
 
         def list_robots(self) -> list[str]:
             return list(self._robots)
 
-        def robot_joint_names(self, robot_name) -> list[str]:
+        def robot_joint_names(self, robot_name: str) -> list[str]:
             return ["joint_0", "joint_1"]
 
-        def add_object(self, name, **kw) -> dict[str, Any]:
+        def add_object(
+            self,
+            name: str,
+            shape: str = "box",
+            position: list[float] | None = None,
+            orientation: list[float] | None = None,
+            size: list[float] | None = None,
+            color: list[float] | None = None,
+            mass: float = 1.0,
+            is_static: bool = False,
+            mesh_path: str | None = None,
+            **kwargs: Any,
+        ) -> dict[str, Any]:
             return {}
 
-        def remove_object(self, name) -> dict[str, Any]:
+        def remove_object(self, name: str) -> dict[str, Any]:
             return {}
 
-        def get_observation(self, robot_name=None, **kw) -> dict[str, Any]:
+        def get_observation(
+            self, robot_name: str | None = None, **kw: Any
+        ) -> dict[str, Any]:
             return {}
 
-        def send_action(self, action, robot_name=None, n_substeps=1) -> None:
+        def send_action(
+            self,
+            action: dict[str, Any],
+            robot_name: str | None = None,
+            n_substeps: int = 1,
+        ) -> None:
             pass
 
-        def render(self, camera_name="default", **kw) -> dict[str, Any]:
+        def render(
+            self,
+            camera_name: str = "default",
+            width: int | None = None,
+            height: int | None = None,
+        ) -> dict[str, Any]:
             return {}
 
     return MinimalEngine()
