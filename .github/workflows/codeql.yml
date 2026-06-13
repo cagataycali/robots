@@ -82,10 +82,15 @@ jobs:
       - name: Install CodeQL CLI
         run: |
           set -euo pipefail
+          # The CLI binaries are published as .zip (there is no .tar.gz asset);
+          # the SHA-256 is pinned so a swapped/corrupt download fails loudly
+          # rather than silently feeding a 404 body into the unpack step.
           CODEQL_VERSION="v2.19.3"
-          curl -sSL -o codeql.tar.gz \
-            "https://github.com/github/codeql-cli-binaries/releases/download/${CODEQL_VERSION}/codeql-linux64.tar.gz"
-          tar xzf codeql.tar.gz
+          CODEQL_SHA256="87b44267a0e5c8bd1771672705fef26d7226bb64a200cf56f119c697f14ccccc"
+          curl --fail -sSL -o codeql.zip \
+            "https://github.com/github/codeql-cli-binaries/releases/download/${CODEQL_VERSION}/codeql-linux64.zip"
+          echo "${CODEQL_SHA256}  codeql.zip" | sha256sum --check --strict
+          unzip -q codeql.zip
           echo "${PWD}/codeql" >> "${GITHUB_PATH}"
 
       - name: Analyze with suppression dropped
