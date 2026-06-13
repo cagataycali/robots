@@ -69,6 +69,15 @@ _DEFAULT_REPO_URL_ALLOW: tuple[str, ...] = (
 # of these hands the container (and anything that can influence its command)
 # control over the host: root fs, the docker socket (daemon takeover),
 # credential/identity dirs, and kernel/proc/sys pseudo-filesystems.
+# NOTE (#384, item 1): ``/home`` is blocked wholesale, not narrowed to the
+# sensitive subpaths (~/.ssh, ~/.aws, ~/.config). Rationale: this guard is
+# defence-in-depth for an untrusted/prompt-injected caller, and any home
+# directory may hold credentials, tokens, or dotfiles whose names we cannot
+# enumerate ahead of time. Operators who need a checkpoint bind-mount must
+# place it OUTSIDE ``/home`` (e.g. ``/data/checkpoints`` or ``/opt/...``); the
+# auto-derived default (``~/.cache/huggingface``) is never agent-controlled
+# and reaches docker only via the curated ``effective_volumes`` set. See the
+# README Configuration section for the operator-facing guidance.
 _BLOCKED_VOLUME_HOST_PATHS: tuple[str, ...] = (
     "/",
     "/etc",
@@ -231,6 +240,26 @@ def _normalize_host_path(host_path: str) -> str:
     return os.path.normpath(expanded)
 
 
+def _resolve_host_path(host_path: str) -> str:
+    """Resolve a bind-mount host path through symlinks for blocklist comparison.
+
+    NOTE (#384, item 2): ``_normalize_host_path`` only canonicalises slashes
+    and runs ``normpath`` -- it does NOT follow symlinks. A pre-existing host
+    symlink pointing at a protected dir (e.g. ``/data/ckpt -> /etc``) would
+    pass the blocklist while docker mounts the resolved target. We additionally
+    compare the ``realpath`` so the symlink target is also checked.
+
+    Residual TOCTOU: ``realpath`` resolves at check time; a symlink swapped
+    between check and ``docker run`` could still differ. That race is not
+    closable at this layer (it is a host-fs-mutation primitive the gr00t tool
+    does not expose to the agent), so we resolve best-effort and accept the
+    residual gap. ``os.path.realpath`` does not raise on missing paths -- it
+    resolves as far as it can -- so this is safe to call on not-yet-created
+    mount sources.
+    """
+    return os.path.realpath(os.path.expanduser(host_path))
+
+
 def _check_volume_safety(volumes: dict[str, str] | None) -> str | None:
     """Return None if all bind-mount host paths are safe, else a reason.
 
@@ -245,7 +274,11 @@ def _check_volume_safety(volumes: dict[str, str] | None) -> str | None:
     blocked_exact = {os.path.normpath(p) for p in _BLOCKED_VOLUME_EXACT}
     for host_path in volumes:
         norm = _normalize_host_path(str(host_path))
-        if norm in blocked_exact:
+        # #384 item 2: also evaluate the symlink-resolved path so a host symlink
+        # pointing into a protected dir cannot slip past the prefix check.
+        resolved = _resolve_host_path(str(host_path))
+        candidates = {norm, resolved}
+        if blocked_exact & candidates:
             return f"refusing to mount {host_path!r}: docker socket / sensitive path"
         # Prefix check: reject the protected dir itself AND any child of it, so
         # mounting /etc/shadow, /root/.ssh/id_rsa, /home/<u>/.aws/credentials,
@@ -254,11 +287,12 @@ def _check_volume_safety(volumes: dict[str, str] | None) -> str | None:
         # every absolute path, including legitimate operator mounts.
         for blocked in blocked_dirs:
             if blocked == os.sep:
-                if norm == os.sep:
+                if os.sep in candidates:
                     return f"refusing to mount {host_path!r}: host root filesystem"
                 continue
-            if norm == blocked or norm.startswith(blocked + os.sep):
-                return f"refusing to mount {host_path!r}: under protected host path {blocked!r}"
+            for cand in candidates:
+                if cand == blocked or cand.startswith(blocked + os.sep):
+                    return f"refusing to mount {host_path!r}: under protected host path {blocked!r}"
     return None
 
 
@@ -378,9 +412,15 @@ def gr00t_inference(
           ``fourier_gr1_full_upper_body``
 
         **Unitree G1 humanoid:**
-          ``unitree_g1``, ``unitree_g1_full_body``, ``unitree_g1_locomanip``,
-          ``unitree_g1_real`` (N1.7 REAL_G1 embodiment - locomotion + bimanual manipulation),
-          ``unitree_g1_sonic`` (SONIC whole-body controller - VLA action space is SONIC latents; requires a finetuned checkpoint, not the base nvidia/GR00T-N1.7-3B)
+          ``unitree_g1_real`` (N1.7 REAL_G1 embodiment - locomotion + bimanual
+          manipulation; PRETRAIN - works directly with the base model),
+          ``unitree_g1`` [posttrain], ``unitree_g1_full_body`` [posttrain],
+          ``unitree_g1_locomanip``,
+          ``unitree_g1_sonic`` [posttrain] (SONIC whole-body controller - the
+          VLA emits 64-dim SONIC motion-token latents, NOT executable joint
+          commands; they must be decoded by the SONIC runtime from
+          NVlabs/GR00T-WholeBodyControl. Requires a finetuned checkpoint, not
+          the base nvidia/GR00T-N1.7-3B)
 
         **Franka Panda manipulators:**
           ``single_panda_gripper``, ``bimanual_panda_gripper``, ``bimanual_panda_hand``
@@ -389,7 +429,8 @@ def gr00t_inference(
           ``oxe_droid``, ``oxe_google``, ``oxe_widowx``
 
         **Simulation:**
-          ``libero_panda``
+          ``libero_panda`` [posttrain], ``libero_sim`` [posttrain],
+          ``simpler_env_google`` [posttrain], ``simpler_env_widowx`` [posttrain]
 
         **AgiBOT:**
           ``agibot_genie1``, ``agibot_dual_arm_gripper`` (alias: ``agibot_dual_arm``),
@@ -397,6 +438,15 @@ def gr00t_inference(
 
         **Galaxea:**
           ``galaxea_r1_pro``
+
+        .. note::
+           Entries marked ``[posttrain]`` correspond to upstream
+           ``POSTTRAIN_TAGS`` (Isaac-GR00T ``gr00t/data/embodiment_tags.py``):
+           ``unitree_g1``, ``unitree_g1_sonic``, ``libero_panda`` / ``libero_sim``,
+           ``simpler_env_google``, ``simpler_env_widowx``. They REQUIRE a
+           finetuned checkpoint - pointing the base ``nvidia/GR00T-N1.7-3B`` at a
+           posttrain tag silently emits garbage actions. Unmarked entries are
+           pretrain tags baked into the base model and work directly.
 
     TensorRT acceleration:
         Set ``use_tensorrt=True`` to enable TensorRT inference. This compiles the model
