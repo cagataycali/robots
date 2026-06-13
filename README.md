@@ -91,8 +91,10 @@ graph LR
 
 ## Installation
 
+Examples use [`uv`](https://docs.astral.sh/uv/) (`curl -LsSf https://astral.sh/uv/install.sh | sh`); plain `pip` works too.
+
 ```bash
-pip install strands-robots
+uv pip install strands-robots
 ```
 
 The base install is light (numpy, opencv-headless, Pillow). Pull in only the
@@ -110,13 +112,13 @@ extras you need:
 
 ```bash
 # Most users start here:
-pip install "strands-robots[sim-mujoco]"
+uv pip install "strands-robots[sim-mujoco]"
 
 # Real hardware + local policies:
-pip install "strands-robots[sim-mujoco,lerobot]"
+uv pip install "strands-robots[sim-mujoco,lerobot]"
 
 # Everything:
-pip install "strands-robots[all]"
+uv pip install "strands-robots[all]"
 ```
 
 From source:
@@ -124,7 +126,7 @@ From source:
 ```bash
 git clone https://github.com/strands-labs/robots
 cd robots
-pip install -e ".[all,dev]"
+uv pip install -e ".[all,dev]"
 ```
 
 ## Quick starts
@@ -141,8 +143,16 @@ agent("Wave the arm using the mock policy for 200 steps, then render a top-down 
 ```
 
 `Robot("so100")` returns a `Simulation` instance — the full 64-action
-simulation AgentTool. Drive it in natural language, or call its methods
-directly (see [Simulation](#simulation-mujoco)).
+simulation AgentTool. Drive it in natural language through an `Agent`, call its
+methods directly (`robot.render(camera_name="topdown")`), or dispatch an action
+by calling it (`robot(action="render", camera_name="topdown")`). See
+[Simulation](#simulation-mujoco).
+
+> **Note:** `Robot("so100")` already creates the world **and** adds the robot
+> for you. Do **not** call `create_world()` again on the returned instance —
+> it will error with *"World already exists."* The `create_world()` /
+> `add_robot()` sequence shown in [Simulation (MuJoCo)](#simulation-mujoco) is
+> for the low-level `Simulation(...)` constructor, which starts empty.
 
 ### Real hardware + GR00T
 
@@ -398,8 +408,8 @@ curl http://localhost:8000/healthz   # -> 200 when ready (~4 min cold)
 + `websockets` — numpy-version agnostic):
 
 ```bash
-pip install -e '.[sim-mujoco]'
-pip install 'strands-robots[cosmos3-service]'
+uv pip install -e '.[sim-mujoco]'
+uv pip install 'strands-robots[cosmos3-service]'
 ```
 
 **3. Use it** (`cosmos3`, `c3`, `cosmos3://host:port`, or the HF model-id all
@@ -498,6 +508,12 @@ sim.add_robot(name="arm", data_config="so100")
 sim.add_object(name="cube", shape="box", position=[0.3, 0, 0.05])
 sim.add_camera(name="topdown", position=[0, 0, 1.5], target=[0, 0, 0])
 
+# Wrist camera: mount ON the gripper body so it tracks the arm like the real
+# SO101/SO100 hardware cam. position/target are in the body's LOCAL frame.
+# Body names are namespaced "<robot>/<body>" (e.g. "arm/gripper").
+sim.add_camera(name="wrist", position=[0, -0.05, 0], target=[0, -0.15, 0],
+               parent_body="arm/gripper")
+
 sim.run_policy(robot_name="arm", policy_provider="mock", n_steps=200,
                control_frequency=50.0)
 
@@ -539,6 +555,10 @@ frame = sim.render(camera_name="topdown")   # {status, content:[text, image]}
   `is_static=True`; passing `is_static=False` is a hard error.
 - **Aim cameras.** Pass `target=[x,y,z]` to look at a point; `target == position`
   errors.
+- **Wrist cameras mount on a body.** Pass `parent_body="<robot>/gripper"` to
+  `add_camera` so the camera rides with the arm (realistic SO101/SO100 wrist
+  cam). In that mode `position`/`target` are in the body's LOCAL frame, not
+  world coordinates. Omit `parent_body` for a world-fixed camera.
 - **MP4 vs dataset recording.** `start_cameras_recording` writes plain MP4
   (`[sim-mujoco]` only). `start_recording` writes a LeRobotDataset (parquet +
   MP4 + schema) and needs the `[lerobot]` extra.
@@ -568,7 +588,9 @@ from strands_robots import Robot
 
 a = Robot("so100")              # auto-joins the mesh
 b = Robot("so100")              # second peer (another process)
-print(a.mesh.peers)             # discovers b
+print(a.mesh.peers)             # list[dict] — discovers b
+print(a.mesh.peers_by_id[b.peer_id])   # dict[peer_id -> info] for O(1) lookup
+info = a.mesh.get_peer(b.peer_id)      # None-safe single lookup
 
 a.mesh.tell(b.peer_id, "pick up the cube")
 a.mesh.emergency_stop()         # broadcast E-STOP, audited to disk
@@ -593,7 +615,14 @@ a.mesh.tell(
 Expose the mesh to an agent with the `robot_mesh` tool (`peers`, `status`,
 `tell`, `send`, `broadcast`, `stop`, `emergency_stop`, `subscribe`, `watch`,
 `inbox`). Disable globally with `STRANDS_MESH=false` or per-robot with
-`Robot("so100", mesh=False)`. Install with `pip install "strands-robots[mesh]"`.
+`Robot("so100", mesh=False)`. Install with `uv pip install "strands-robots[mesh]"`.
+
+For frictionless single-machine experiments, set `STRANDS_MESH_LOCAL_DEV=1` —
+one env var that runs the mesh without mTLS/ACL on localhost. It defaults the
+auth mode to `none` **and** satisfies the insecure-acknowledgement second
+factor by itself, so you don't also need `STRANDS_MESH_I_KNOW_THIS_IS_INSECURE=1`.
+An explicit `STRANDS_MESH_AUTH_MODE=mtls` still wins. **Never** set
+`STRANDS_MESH_LOCAL_DEV` on a shared or production network.
 
 ### AWS IoT Core transport (fleets)
 
@@ -601,7 +630,7 @@ For robots across networks, bridge the mesh to AWS IoT Core over MQTT5/mTLS,
 with Device Shadow mirroring, S3 camera offload, and account-wide Fleet
 Provisioning. Hardened with CA pinning, strict thing-name validation,
 deny-by-default IoT policy scoping, and a safety audit log.
-Install with `pip install "strands-robots[mesh-iot]"`. See the
+Install with `uv pip install "strands-robots[mesh-iot]"`. See the
 [Configuration](#configuration) matrix for the `STRANDS_MESH_*` knobs.
 
 ## Configuration
@@ -616,6 +645,9 @@ Install with `pip install "strands-robots[mesh-iot]"`. See the
 | `MUJOCO_GL` | MuJoCo GL backend (`egl`, `osmesa`, `glfw`) | auto |
 | `GROOT_API_TOKEN` | API token for the GR00T inference service | unset |
 | `STRANDS_MESH` | Set `false` to disable Zenoh mesh globally | `true` |
+| `STRANDS_MESH_LOCAL_DEV` | Set `1` for a one-var localhost preset (auth `none`, no second factor needed) | unset |
+| `STRANDS_MESH_AUTH_MODE` | Wire auth: `mtls` or `none` (`none` needs a second factor) | `mtls` |
+| `STRANDS_MESH_I_KNOW_THIS_IS_INSECURE` | Second factor required to bring up `AUTH_MODE=none` | unset |
 | `STRANDS_MESH_PORT` | TCP port for the local Zenoh router | `7447` |
 | `ZENOH_CONNECT` | Comma-separated remote Zenoh endpoints to connect to | unset |
 | `ZENOH_LISTEN` | Comma-separated endpoints for the local Zenoh listener | unset |
@@ -623,6 +655,12 @@ Install with `pip install "strands-robots[mesh-iot]"`. See the
 | `STRANDS_MESH_CA_PINS` | Additional SHA-256 CA pins (comma-separated 64-char hex) | unset |
 | `STRANDS_MESH_DISABLE_CA_PIN` | Skip CA pin check on download path (break-glass) | `false` |
 | `STRANDS_MESH_CAMERA_PRESIGN_TTL` | TTL (s) for S3 presigned camera URLs; capped at 3600 | `60` |
+| `STRANDS_MESH_ACL_FILE` | Path to a JSON5 Zenoh ACL file; unset = permissive default. See `examples/mesh_acl_example.json5` (role-scoped) and `examples/mesh_acl_strict_per_peer.json5` (per-peer) | unset |
+| `STRANDS_MESH_POLICY_HOST_ALLOW` | Comma-separated allowlist of VLA policy-server hosts/CIDRs for inference | loopback only |
+| `STRANDS_MESH_HITL_ACTIONS` | `robot_mesh` actions needing a human-in-the-loop interrupt: `all` / `none` / subset of `emergency_stop,broadcast,tell,send,stop,subscribe,watch` | actuation default |
+| `STRANDS_MESH_SUBSCRIBE_ALLOW` | Extra Zenoh key-expr patterns the `robot_mesh` `subscribe` action may target, beyond the built-in low-impact set | shared classes only |
+| `STRANDS_GR00T_IMAGE` | Container image the `gr00t_inference` tool runs (must pass the image allowlist; agent cannot choose it) | `gr00t:latest` |
+| `STRANDS_GR00T_IMAGE_ALLOW` | Extra image-name patterns (trailing `*` = tag wildcard) added to the built-in allowlist (`gr00t:*`, `nvcr.io/nvidia/isaac-gr00t:*`) | built-in only |
 
 <details>
 <summary><b>Benchmark / diagnostic env vars (LIBERO, GR00T bisection)</b></summary>
@@ -655,7 +693,7 @@ benchmark integration on the MuJoCo backend — byte-equivalent to upstream
 LIBERO at the model level, reaching `success_rate >= 0.92` on libero-10/SCENE5.
 Register declarative benchmarks from file and evaluate policies via the
 `list_benchmarks`, `register_benchmark_from_file`, and `evaluate_benchmark`
-simulation actions. Install with `pip install "strands-robots[benchmark-libero]"`.
+simulation actions. Install with `uv pip install "strands-robots[benchmark-libero]"`.
 
 ## Project structure
 
@@ -684,7 +722,7 @@ strands_robots/
 ## Development
 
 ```bash
-pip install -e ".[all,dev]"
+uv pip install -e ".[all,dev]"
 
 hatch run test          # unit tests
 hatch run test-integ    # integration tests (GPU + model weights)

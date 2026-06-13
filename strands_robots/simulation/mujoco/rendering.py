@@ -366,15 +366,100 @@ class RenderingMixin:
             act_id = _lookup(mj.mjtObj.mjOBJ_ACTUATOR, key)
             if act_id >= 0:
                 data.ctrl[act_id] = float(value)
-            else:
-                # Fallback: key is a joint name - find the actuator that
-                # drives this joint via actuator_trnid (joint ID → actuator).
-                jnt_id = _lookup(mj.mjtObj.mjOBJ_JOINT, key)
-                if jnt_id >= 0:
-                    for ai in range(model.nu):
-                        if model.actuator_trnid[ai, 0] == jnt_id:
-                            data.ctrl[ai] = float(value)
-                            break
+                continue
+
+            # Fallback: key is a joint name. Find the actuator that drives
+            # this joint, handling BOTH transmission types:
+            #   * JOINT / JOINTINPARENT - actuator_trnid[ai, 0] == jnt_id
+            #   * TENDON               - the joint participates in a tendon
+            #     (via wrap entries) whose tendon id == actuator_trnid[ai, 0]
+            # Tendon grippers (e.g. the Franka/Panda ``split`` actuator that
+            # drives finger_joint1/2) were silently dropped before this branch
+            # because their actuator_trnid points at the *tendon*, not the
+            # finger joint - see issue #318.
+            jnt_id = _lookup(mj.mjtObj.mjOBJ_JOINT, key)
+            if jnt_id < 0:
+                continue
+
+            ai = self._actuator_for_joint(model, jnt_id, mj)
+            if ai < 0:
+                continue
+
+            # Scale a logical command into the actuator's ctrlrange when the
+            # transmission is a tendon (gripper ctrlrange is e.g. [0, 255]
+            # tendon units, not a finger-joint position). Direct JOINT
+            # actuators keep the raw value (positions/torques in joint units).
+            data.ctrl[ai] = self._scale_ctrl_for_actuator(model, ai, float(value), mj)
+
+    @staticmethod
+    def _actuator_for_joint(model: Any, jnt_id: int, mj: Any) -> int:
+        """Return the id of the actuator that drives ``jnt_id``, or -1.
+
+        Matches direct joint-transmission actuators first, then falls back to
+        tendon-transmission actuators whose tendon wraps ``jnt_id`` (the
+        Panda/Franka gripper case from issue #318).
+        """
+        # 1. Direct joint transmission (JOINT / JOINTINPARENT).
+        joint_trn = {int(mj.mjtTrn.mjTRN_JOINT)}
+        if hasattr(mj.mjtTrn, "mjTRN_JOINTINPARENT"):
+            joint_trn.add(int(mj.mjtTrn.mjTRN_JOINTINPARENT))
+        for ai in range(model.nu):
+            if int(model.actuator_trntype[ai]) in joint_trn and model.actuator_trnid[ai, 0] == jnt_id:
+                return ai
+
+        # 2. Tendon transmission: find tendons whose JOINT wrap entries
+        #    include jnt_id, then the actuator driving that tendon.
+        tendon_trn = int(mj.mjtTrn.mjTRN_TENDON)
+        wrap_joint = int(mj.mjtWrap.mjWRAP_JOINT)
+        tendons_with_joint: set[int] = set()
+        for t in range(int(model.ntendon)):
+            adr = int(model.tendon_adr[t])
+            num = int(model.tendon_num[t])
+            for w in range(adr, adr + num):
+                if int(model.wrap_type[w]) == wrap_joint and int(model.wrap_objid[w]) == jnt_id:
+                    tendons_with_joint.add(t)
+                    break
+        if tendons_with_joint:
+            for ai in range(model.nu):
+                if (
+                    int(model.actuator_trntype[ai]) == tendon_trn
+                    and int(model.actuator_trnid[ai, 0]) in tendons_with_joint
+                ):
+                    return ai
+        return -1
+
+    @staticmethod
+    def _scale_ctrl_for_actuator(model: Any, ai: int, value: float, mj: Any) -> float:
+        """Scale ``value`` into the actuator's ctrlrange for tendon drives.
+
+        Tendon-gripper actuators expose a ctrlrange in tendon units (e.g.
+        ``[0, 255]``) that does not match a finger-joint position. When the
+        caller passes a small logical value (a normalised ``[0, 1]`` open/close
+        fraction, or a finger position within the joint range), map it onto the
+        actuator ctrlrange so the gripper actually moves. A value already
+        inside the ctrlrange is passed through unchanged.
+
+        Direct JOINT actuators return ``value`` untouched (positions/torques
+        are already in the correct units).
+        """
+        if int(model.actuator_trntype[ai]) != int(mj.mjtTrn.mjTRN_TENDON):
+            return value
+        lo, hi = float(model.actuator_ctrlrange[ai, 0]), float(model.actuator_ctrlrange[ai, 1])
+        if not bool(model.actuator_ctrllimited[ai]) or hi <= lo:
+            return value
+        span = hi - lo
+        # A normalised [0, 1] open/close fraction is the conventional gripper
+        # command from VLA policies. When the actuator ctrlrange is much wider
+        # than unit scale (e.g. the Panda tendon's [0, 255]), a value within
+        # [lo, lo + 1] is overwhelmingly likely to be such a fraction rather
+        # than a literal tendon-unit command, so we map it onto the full range.
+        # If the caller already passes a clearly in-range value (> lo + 1 and
+        # <= hi), we trust it verbatim.
+        if span > 1.0 and value > (lo + 1.0) and value <= hi:
+            return value
+        # Treat the incoming value as a normalised [0, 1] open/close fraction.
+        frac = min(1.0, max(0.0, value))
+        return lo + frac * span
 
     def render(
         self, camera_name: str = "default", width: int | None = None, height: int | None = None
