@@ -725,6 +725,39 @@ class SimEngine(ABC):
         """Get contact information. Override per backend."""
         raise NotImplementedError("get_contacts not implemented by this backend")
 
+    # Discovery / introspection
+
+    def describe(self) -> dict[str, Any]:
+        """Return a machine-readable summary of this engine's live contract.
+
+        Agents should call this first to learn what robots exist, what cameras
+        are attached, and the signatures of the methods most commonly needed --
+        in a single call, instead of guessing method names.
+
+        Returns:
+            Plain dict with keys: robots, cameras, methods, note.
+        """
+        return {
+            "robots": self.list_robots(),
+            "cameras": [],  # backends override to list camera names
+            "methods": {
+                "get_robot_state": "(robot_name: str) -> dict",
+                "get_observation": "(robot_name: str | None = None, *, skip_images: bool = False) -> dict",
+                "send_action": "(action: dict, robot_name: str | None = None, n_substeps: int = 1) -> None",
+                "run_policy": "(robot_name: str, policy_provider='mock', ...) -> dict",
+                "start_policy": "(robot_name: str, policy_provider='mock', ...) -> dict",
+                "list_robots": "() -> list[str]",
+                "render": "(camera_name='default', width=None, height=None) -> dict",
+                "reset": "() -> dict",
+                "step": "(n_steps: int = 1) -> dict",
+            },
+            "note": (
+                "robot_name defaults to the sole robot when only one exists "
+                "for get_observation and send_action. For get_robot_state, "
+                "pass the robot name explicitly (from the 'robots' list)."
+            ),
+        }
+
     def cleanup(self) -> None:
         """Release all resources. Called on __del__ / context exit."""
         pass
