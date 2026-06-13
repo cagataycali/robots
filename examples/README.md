@@ -25,7 +25,7 @@ MUJOCO_GL=egl python examples/01_sim_hello_world.py
 
 | Task | Raw lerobot | strands-robots |
 |------|------------|----------------|
-| Sim setup | Manual MjSpec, XML parsing, actuator config | `Robot("so100")` + `add_robot()` |
+| Sim setup | Manual MjSpec, XML parsing, actuator config | `Robot("so100")` (world + robot in one call) |
 | Policy loading | Import provider, build config, handle embodiment mapping | `create_policy("mock")` or `create_policy("hf/repo")` |
 | Dataset recording | `LeRobotDataset.create(features={...}, ...)` + manual frame loop | `start_recording()` / `stop_recording()` |
 | Multi-robot networking | Custom pub/sub, IP management, serialization | `Mesh` auto-joins, `get_peers()` discovers |

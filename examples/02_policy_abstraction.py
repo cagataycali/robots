@@ -11,9 +11,8 @@ Runtime: ~1 second (mock provider, no GPU needed).
 
 from strands_robots import Robot, create_policy
 
+# Robot("so100") already builds the world and adds the "so100" robot.
 sim = Robot("so100", mesh=False)
-sim.create_world()
-sim.add_robot(name="arm", data_config="so100")
 sim.add_camera(name="front", position=[0.5, 0.0, 0.4], target=[0.2, 0, 0.05])
 
 # create_policy("mock") -> MockPolicy (sinusoidal test actions)
@@ -26,7 +25,7 @@ print(f"Policy: {type(policy).__name__}")
 print(f"Requires images: {getattr(policy, 'requires_images', True)}")
 
 result = sim.run_policy(
-    robot_name="arm",
+    robot_name="so100",
     policy_object=policy,
     instruction="pick up the red cube",
     n_steps=20,

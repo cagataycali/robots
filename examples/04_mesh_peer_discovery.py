@@ -22,12 +22,11 @@ os.environ.setdefault("MUJOCO_GL", "egl")
 from strands_robots import Robot
 from strands_robots.mesh import get_local_robots, get_peers
 
-# Robot with mesh=True (default) auto-joins the mesh on creation.
-# Use mesh=False in CI or when Zenoh is unavailable.
+# Robot with mesh=True (default) auto-joins the mesh on creation. The factory
+# also builds the world and adds the "so100" robot, so no create_world/add_robot
+# is needed. Use mesh=False in CI or when Zenoh is unavailable.
 use_mesh = os.environ.get("STRANDS_MESH", "true").lower() != "0"
 sim = Robot("so100", mesh=use_mesh, peer_id="example-arm-01")
-sim.create_world()
-sim.add_robot(name="arm", data_config="so100")
 
 # Query the mesh — see who is online.
 local = get_local_robots()
