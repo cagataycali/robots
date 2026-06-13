@@ -92,8 +92,8 @@ def _make_minimal_engine():
             action: dict[str, Any],
             robot_name: str | None = None,
             n_substeps: int = 1,
-        ) -> None:
-            pass
+        ) -> dict[str, Any]:
+            return {}
 
         def render(
             self,
