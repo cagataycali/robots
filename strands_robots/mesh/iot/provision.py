@@ -810,6 +810,18 @@ def _ensure_ca(ca_path: Path) -> None:
         # than the truthful "short read", which is hostile to the
         # operator triaging the issue. The chunked loop drains the file
         # or hits the 10 MiB cap, matching ``verify_ca_pin`` posture.
+        # #312: reject a symlinked CA path with an EXPLICIT, actionable
+        # message (mirrors verify_ca_pin's dedicated symlink branch) rather
+        # than folding it into the generic "unreadable or symlink" OSError
+        # text. O_NOFOLLOW below is the actual enforcement; this branch makes
+        # the common symlink-swap case legible to an operator triaging it.
+        if ca_path.is_symlink():
+            raise RuntimeError(
+                f"AmazonRootCA1 at {ca_path} is a SYMLINK (target={os.readlink(ca_path)!r}) "
+                "-- refusing to follow it. CA files must be regular files at the canonical "
+                "path; an attacker who can plant a symlink here could redirect the pin check "
+                "to attacker-controlled bytes. Delete the symlink and re-run to re-download."
+            )
         try:
             nofollow = getattr(os, "O_NOFOLLOW", 0)
             fd = os.open(ca_path, os.O_RDONLY | nofollow)
@@ -826,7 +838,10 @@ def _ensure_ca(ca_path: Path) -> None:
             finally:
                 os.close(fd)
         except OSError as exc:
-            raise RuntimeError(f"AmazonRootCA1 at {ca_path} unreadable or symlink: {exc}") from exc
+            # O_NOFOLLOW races (symlink planted between the is_symlink check
+            # and os.open) land here with ELOOP; keep the generic message as
+            # the catch-all for genuinely-unreadable files.
+            raise RuntimeError(f"AmazonRootCA1 at {ca_path} unreadable: {exc}") from exc
         if not _hash_matches_pin(existing):
             logger.warning(
                 "[provision] existing CA at %s does NOT match pinned SHA-256. "
@@ -892,17 +907,26 @@ def _ensure_ca(ca_path: Path) -> None:
     # even when the env var is no longer set.
     if os.getenv("STRANDS_MESH_DISABLE_CA_PIN", "").strip().lower() == "true":
         marker = ca_path.with_suffix(ca_path.suffix + ".unverified")
+        marker_body = (
+            "# This CA was downloaded with STRANDS_MESH_DISABLE_CA_PIN=true.\n"
+            "# Future _ensure_ca calls on this host will WARN until this\n"
+            "# marker is removed (e.g. by deleting the CA + re-running with\n"
+            "# the pin enforced).\n"
+        )
         try:
-            marker.write_text(
-                "# This CA was downloaded with STRANDS_MESH_DISABLE_CA_PIN=true.\n"
-                "# Future _ensure_ca calls on this host will WARN until this\n"
-                "# marker is removed (e.g. by deleting the CA + re-running with\n"
-                "# the pin enforced).\n"
-            )
-            # Owner-only: marker is a local sentinel read only by this
-            # process via _ensure_ca; no other user needs read access.
-            # Tightens CodeQL py/overly-permissive-file-permission alert
-            # vs the prior 0o644 default.
+            # #311: create the marker ATOMICALLY with mode 0o600 via os.open +
+            # O_CREAT so there is no create-then-chmod window in which the file
+            # exists world-readable. (The prior write_text + os.chmod sequence
+            # left the marker at the umask default until the chmod landed.)
+            # O_NOFOLLOW refuses to write through a pre-planted symlink.
+            nofollow = getattr(os, "O_NOFOLLOW", 0)
+            fd = os.open(str(marker), os.O_WRONLY | os.O_CREAT | os.O_TRUNC | nofollow, 0o600)
+            try:
+                os.write(fd, marker_body.encode("utf-8"))
+            finally:
+                os.close(fd)
+            # Re-assert mode in case an pre-existing file kept looser bits
+            # (O_CREAT does not apply the mode arg to an already-existing file).
             os.chmod(marker, 0o600)
         except OSError:
             # Best-effort marker write: an unwritable cert_dir already
