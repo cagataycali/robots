@@ -62,7 +62,9 @@ def main() -> int:
         from strands_robots import Simulation
         from strands_robots.policies.cosmos3 import Cosmos3Policy
     except ImportError as e:
-        print(f"Missing deps: {e}\nInstall: pip install -e '.[sim-mujoco]' && pip install 'strands-robots[cosmos3-service]'")
+        print(
+            f"Missing deps: {e}\nInstall: pip install -e '.[sim-mujoco]' && pip install 'strands-robots[cosmos3-service]'"
+        )
         return 2
 
     print(f"Building MuJoCo world with a '{args.robot}' arm + cube + 3 cameras ...")
@@ -71,24 +73,27 @@ def main() -> int:
     # DROID == Franka Emika Panda. The 'droid' Cosmos embodiment drives a
     # Franka/DROID-class arm; use the 'franka' (or 'panda') sim asset here.
     sim.add_robot(name="arm", data_config=args.robot)
-    sim.add_object(name="cube", shape="box", position=[0.4, 0.0, 0.05],
-                   size=[0.025, 0.025, 0.025], color=[1, 0, 0, 1], mass=0.1)
+    sim.add_object(
+        name="cube", shape="box", position=[0.4, 0.0, 0.05], size=[0.025, 0.025, 0.025], color=[1, 0, 0, 1], mass=0.1
+    )
     sim.add_camera(name="wrist", position=[0.3, 0.0, 0.5], target=[0.4, 0, 0.05])
     sim.add_camera(name="front", position=[0.9, 0.0, 0.4], target=[0.4, 0, 0.05])
-    sim.add_camera(name="side",  position=[0.4, 0.6, 0.4], target=[0.4, 0, 0.05])
+    sim.add_camera(name="side", position=[0.4, 0.6, 0.4], target=[0.4, 0, 0.05])
 
     # The DROID policy conditions on 3 cameras (wrist + 2 exterior) + 7-DOF
     # joints + gripper. Map our sim camera names onto the server's OpenPI keys.
     obs_mapping = {
         "wrist": "observation/wrist_image_left",
         "front": "observation/exterior_image_1_left",
-        "side":  "observation/exterior_image_2_left",
+        "side": "observation/exterior_image_2_left",
     }
     # The Cosmos3 client uses a self-contained msgpack+websockets transport
     # (numpy-version agnostic — composes with lerobot).
     policy = Cosmos3Policy(
-        embodiment="droid", host=args.host, port=args.port,
-        robot=args.robot,                # map joint_0..6/gripper -> sim actuator names
+        embodiment="droid",
+        host=args.host,
+        port=args.port,
+        robot=args.robot,  # map joint_0..6/gripper -> sim actuator names
         observation_mapping=obs_mapping,
     )
 
