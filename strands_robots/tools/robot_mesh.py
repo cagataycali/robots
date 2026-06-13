@@ -676,8 +676,15 @@ def robot_mesh(
         if not _interrupt_approves(response):
             # Declined approval does NOT consume a rate-limit slot —
             # see _rate_limit_check docstring for the safety rationale.
+            #
+            # #322: the operator's literal interrupt response is recorded in
+            # the LOCAL audit row (full fidelity for forensics) but MUST NOT be
+            # echoed back to the LLM. Echoing it turns the human operator into a
+            # content side-channel: a prompt-injected agent could phrase the
+            # approval reason so the operator's typed reply leaks data back into
+            # the model context. Return a flat, fixed sentinel instead.
             _audit_tool_action(action, target, False, f"operator declined: {response!r}")
-            return _err(f"action '{action}' was declined by the operator interrupt (response={response!r}).")
+            return _err(f"action '{action}' was declined by the operator interrupt.")
         # Approval granted. Re-check under the lock and consume the
         # slot atomically -- a concurrent invocation that ALSO passed
         # the pre-interrupt check (different operator thread, etc.)
@@ -725,10 +732,16 @@ def robot_mesh(
         elif not locals_:
             lines.append("")
             lines.append("No peers. Create a Robot() or Simulation() to auto-join the mesh.")
+        # #322: audit read-only observation actions too, so the audit log is a
+        # complete record of agent mesh access (not just actuation). Closes the
+        # forensic gap where peers/status/inbox/unsubscribe left no trail.
+        _audit_tool_action(action, target, True, f"local={len(locals_)} remote={len(peers)}")
         return _ok("\n".join(lines))
 
     # ── action: status ────────────────────────────────────────────────────
     if action == "status":
+        # #322: read-only status is audited too (see peers branch above).
+        _audit_tool_action(action, target, True, f"local={len(locals_)} remote={len(peers)}")
         return _ok(f"[mesh] local={len(locals_)} remote={len(peers)} peers={[p['peer_id'] for p in peers]}")
 
     # All remaining actions need an outbound mesh.
@@ -930,6 +943,9 @@ def robot_mesh(
         if not sub_name:
             return _err("unsubscribe requires name (or target)")
         mesh.unsubscribe(sub_name)
+        # #322: audit the unsubscribe so the read-only/observation action set
+        # (peers, status, inbox, unsubscribe) leaves a complete forensic trail.
+        _audit_tool_action(action, sub_name, True, "")
         return _ok(f"[unsub] unsubscribed from '{sub_name}'")
 
     return _err(
