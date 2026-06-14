@@ -100,6 +100,33 @@
                 "nvidia/cosmos3",
                 "nvidia/cosmos3-nano-policy"
             ]
+        },
+        "wbc": {
+            "module": "strands_robots.policies.wbc",
+            "class": "WBCPolicy",
+            "description": "GR00T Whole-Body-Control decoupled (RL lower body + IK upper) for humanoids",
+            "requires": [],
+            "config_keys": [
+                "checkpoint",
+                "variant",
+                "balance_onnx",
+                "walk_onnx",
+                "device"
+            ],
+            "defaults": {
+                "variant": "auto",
+                "device": "cpu"
+            },
+            "shorthands": [
+                "wbc",
+                "groot_wbc"
+            ],
+            "hf_orgs": [
+                "nvidia"
+            ],
+            "model_id_overrides": [
+                "nvidia/GR00T-WholeBodyControl"
+            ]
         }
     }
 }
