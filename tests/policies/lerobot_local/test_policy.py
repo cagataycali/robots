@@ -1022,3 +1022,124 @@ class TestRTCGetActionsIntegration:
 
         policy._policy.select_action.assert_called_once()
         assert isinstance(result, list)
+
+
+# (section)
+# Tests: _load_model device + postprocessor regressions
+# (section)
+
+
+def _load_model_with_mocks(policy, *, param_device="cpu", has_postprocessor=True, bridge_active=True):
+    """Drive the real LerobotLocalPolicy._load_model with the heavy load seams
+    mocked, so the device-move and postprocessor-warning branches execute.
+
+    Returns the mocked lerobot policy object (so tests can assert on .to(...)).
+    """
+    mock_lerobot_policy = MagicMock()
+    mock_param = torch.nn.Parameter(torch.zeros(1, device=param_device))
+    # parameters() is consumed via next(...) at multiple points in _load_model,
+    # so hand back a FRESH iterator on every call (a stored list breaks next()).
+    mock_lerobot_policy.parameters.side_effect = lambda: iter([mock_param])
+    mock_lerobot_policy.config = MagicMock(spec=[])  # no .device / .input_features
+
+    PolicyClass = MagicMock()
+    PolicyClass.from_pretrained.return_value = mock_lerobot_policy
+
+    bridge = None
+    if bridge_active:
+        bridge = MagicMock()
+        bridge.is_active = True
+        bridge.has_postprocessor = has_postprocessor
+
+    with (
+        patch.object(
+            LerobotLocalPolicy,
+            "_load_model",
+            LerobotLocalPolicy._load_model,
+        ),
+        patch(
+            "strands_robots.policies.lerobot_local.policy.resolve_policy_class_by_name",
+            return_value=PolicyClass,
+        ),
+        patch.object(LerobotLocalPolicy, "_configure_embodiment", lambda self: None),
+        patch.object(LerobotLocalPolicy, "_init_rtc", lambda self: None),
+        patch.object(ProcessorBridge, "from_pretrained", return_value=bridge),
+    ):
+        policy._load_model()
+    return mock_lerobot_policy
+
+
+class TestLoadModelDeviceMove:
+    """Regression: from_pretrained may place weights on a device that differs
+    from the resolved self._device. _load_model must move the model so weights
+    and inputs stay in lockstep (else the first conv2d raises 'input and weight
+    must be on the same device')."""
+
+    def test_moves_model_when_param_device_differs(self):
+        # requested cpu, but the checkpoint params land on 'meta' (stand-in for
+        # an mps/cuda baked into the checkpoint config that != requested).
+        policy = LerobotLocalPolicy.__new__(LerobotLocalPolicy)
+        policy.pretrained_name_or_path = "test/model"
+        policy.policy_type = "act"
+        policy.requested_device = "cpu"
+        policy.use_processor = False
+        policy.robot_state_keys = []
+        policy._processor_bridge = None
+        policy._output_features = {}
+        policy._input_features = {}
+        policy.processor_overrides = {}
+
+        mock_policy = _load_model_with_mocks(policy, param_device="meta", bridge_active=False)
+
+        mock_policy.to.assert_called_once()
+        assert policy._device == torch.device("cpu")
+
+    def test_no_move_when_param_device_matches(self):
+        policy = LerobotLocalPolicy.__new__(LerobotLocalPolicy)
+        policy.pretrained_name_or_path = "test/model"
+        policy.policy_type = "act"
+        policy.requested_device = "cpu"
+        policy.use_processor = False
+        policy.robot_state_keys = []
+        policy._processor_bridge = None
+        policy._output_features = {}
+        policy._input_features = {}
+        policy.processor_overrides = {}
+
+        mock_policy = _load_model_with_mocks(policy, param_device="cpu", bridge_active=False)
+
+        mock_policy.to.assert_not_called()
+
+
+class TestLoadModelPostprocessorWarning:
+    """Regression: a checkpoint without an action postprocessor emits RAW
+    normalized actions -> micro-motion. _load_model must warn once at load."""
+
+    def _base_policy(self):
+        policy = LerobotLocalPolicy.__new__(LerobotLocalPolicy)
+        policy.pretrained_name_or_path = "test/model"
+        policy.policy_type = "act"
+        policy.requested_device = "cpu"
+        policy.use_processor = True
+        policy.robot_state_keys = []
+        policy._processor_bridge = None
+        policy._output_features = {}
+        policy._input_features = {}
+        policy.processor_overrides = {}
+        return policy
+
+    def test_warns_without_postprocessor(self, caplog):
+        import logging
+
+        policy = self._base_policy()
+        with caplog.at_level(logging.WARNING, logger="strands_robots.policies.lerobot_local.policy"):
+            _load_model_with_mocks(policy, has_postprocessor=False)
+        assert any("WITHOUT an action postprocessor" in r.message for r in caplog.records)
+
+    def test_no_warn_with_postprocessor(self, caplog):
+        import logging
+
+        policy = self._base_policy()
+        with caplog.at_level(logging.WARNING, logger="strands_robots.policies.lerobot_local.policy"):
+            _load_model_with_mocks(policy, has_postprocessor=True)
+        assert not any("WITHOUT an action postprocessor" in r.message for r in caplog.records)

@@ -379,6 +379,20 @@ class LerobotLocalPolicy(Policy):
         else:
             self._device = next(self._policy.parameters()).device
 
+        # Move the model onto the resolved device. LeRobot's from_pretrained
+        # places weights on config.device (e.g. 'mps'/'cuda' baked into the
+        # checkpoint config), which may differ from the user's requested
+        # device. get_actions() moves every input tensor onto self._device,
+        # so without this the model weights and inputs land on different
+        # devices and the first conv2d raises "input and weight must be on
+        # the same device". Keep them in lockstep.
+        try:
+            current = next(self._policy.parameters()).device
+            if current != self._device:
+                self._policy.to(self._device)
+        except StopIteration:
+            pass  # parameterless policy - nothing to move
+
         if hasattr(self._policy, "config"):
             config = self._policy.config
             if hasattr(config, "input_features"):
@@ -437,6 +451,24 @@ class LerobotLocalPolicy(Policy):
                     ) from exc
                 logger.debug("Processor bridge not loaded: %s", exc)
                 self._processor_bridge = None
+
+        # Action unnormalization only happens when a postprocessor pipeline is
+        # present (get_actions: ``if self._processor_bridge.has_postprocessor``).
+        # A checkpoint shipped without a ``policy_postprocessor.json`` emits raw
+        # normalized actions (~[-1, 1] or z-scored) straight to the robot. Fed
+        # to a radian-joint sim those are micro-motions and the arm barely
+        # moves. Warn once at load so this isn't debugged as a frozen policy.
+        if self.use_processor and (self._processor_bridge is None or not self._processor_bridge.has_postprocessor):
+            logger.warning(
+                "lerobot_local: %s loaded WITHOUT an action postprocessor "
+                "(no policy_postprocessor.json). Actions are emitted in the "
+                "model's RAW/normalized space and are NOT unnormalized to robot "
+                "units -- if the arm barely moves, this is why. Provide the "
+                "checkpoint's postprocessor, or drive it through a provider with "
+                "explicit unit handling (e.g. the 'transformers' provider's "
+                "state_units/action_units/stats knobs).",
+                self.pretrained_name_or_path or "<model>",
+            )
 
         # Initialize RTC if supported by this policy
         self._init_rtc()
