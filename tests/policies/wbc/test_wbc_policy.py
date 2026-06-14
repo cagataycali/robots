@@ -6,9 +6,18 @@ Tests the WBC policy with mocked ONNX sessions to verify:
 - Balance vs Walk auto-switch logic
 - History buffer management and reset behaviour
 - Integration with the policy factory
+
+``onnxruntime`` is an optional, deploy-grade dependency that is not
+installed in the minimal unit-test environment. An autouse fixture stubs
+it in ``sys.modules`` when absent so the policy's import guard in
+``_load_models`` clears and the missing-model / factory logic under test
+runs. When the real wheel IS installed the stub is not injected and the
+genuine package is used. This mirrors the torch-mock doctrine in
+``tests/conftest.py``.
 """
 
 import asyncio
+import sys
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -25,6 +34,27 @@ from strands_robots.policies.wbc.wbc_policy import (
     _WALK_THRESHOLD,
     _quat_rotate_inverse,
 )
+
+
+@pytest.fixture(autouse=True)
+def _stub_onnxruntime():
+    """Stub ``onnxruntime`` so WBCPolicy's import guard clears in minimal CI.
+
+    Only injects the stub when the real package is unavailable; if the
+    wheel is installed the genuine module is used unchanged. Tests that
+    exercise the ``ImportError`` guard itself patch ``sys.modules``
+    explicitly and are unaffected by this absent-only stub.
+    """
+    if "onnxruntime" in sys.modules:
+        yield
+        return
+    try:
+        import onnxruntime  # noqa: F401
+
+        yield
+    except ImportError:
+        with patch.dict(sys.modules, {"onnxruntime": MagicMock()}):
+            yield
 
 
 def _make_mock_session(output_dim: int = _ACTION_DIM) -> MagicMock:
