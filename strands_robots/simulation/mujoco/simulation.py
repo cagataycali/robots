@@ -257,24 +257,50 @@ class MuJoCoSimEngine(
         with self._lock:
             return self._get_sim_observation(robot_name, skip_images=skip_images)
 
-    def send_action(self, action: dict[str, Any], robot_name: str | None = None, n_substeps: int = 1) -> None:
+    def send_action(self, action: dict[str, Any], robot_name: str | None = None, n_substeps: int = 1) -> dict[str, Any]:
         """Apply action to simulation (Robot ABC compatible).
 
         Thread-safety: acquires self._lock around ctrl writes + mj_step,
         as documented in base.py's SimEngine contract. Concurrent calls
         from the agent's dispatch thread and a PolicyRunner worker are
         serialized here.
+
+        Returns:
+            Dict with ``status`` ("success" or "error") and ``content``.
+            When some action keys could not be resolved to actuators/joints,
+            the ``content`` list includes a ``json`` block with an
+            ``unresolved_keys`` list (and ``applied``) so callers can
+            self-correct instead of silently losing commands.
         """
         if self._world is None or self._world._model is None:
-            return
+            return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
         if robot_name is None:
             if not self._world.robots:
-                return
+                return {"status": "error", "content": [{"text": "No robots in the world."}]}
             robot_name = next(iter(self._world.robots))
         if robot_name not in self._world.robots:
-            return
+            return {"status": "error", "content": [{"text": f"Robot '{robot_name}' not found."}]}
         with self._lock:
+            self._unresolved_action_keys: list[str] = []
             self._apply_sim_action(robot_name, action, n_substeps=n_substeps)
+            unresolved = self._unresolved_action_keys
+        applied = [k for k in action if k not in unresolved]
+        if unresolved:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            f"Action partially applied: keys {unresolved} could not be "
+                            f"resolved to actuators or joints on '{robot_name}'. "
+                            f"Applied: {applied}. Use individual joint/actuator names "
+                            f"(e.g. 'shoulder_pan', 'elbow_flex') as dict keys."
+                        )
+                    },
+                    {"json": {"unresolved_keys": unresolved, "applied": applied}},
+                ],
+            }
+        return {"status": "success", "content": [{"text": f"Action applied to '{robot_name}' ({len(applied)} keys)."}]}
 
     def physics_timestep(self) -> float | None:
         """Physics integration timestep (seconds) of the active world.
@@ -755,15 +781,18 @@ class MuJoCoSimEngine(
                 }
         elif not resolved_path and name:
             # deprecated fallback - try registry by instance name.
-            import warnings as _warnings
-
             resolved_path = resolve_model(name)
             if resolved_path:
-                _warnings.warn(
-                    f"add_robot: resolving model via instance name '{name}' is deprecated; "
-                    "pass data_config='<registry-key>' instead.",
-                    DeprecationWarning,
-                    stacklevel=2,
+                logger.info(
+                    "add_robot: resolved model via instance name '%s'. "
+                    "Prefer: add_robot(name='<instance_label>', data_config='%s')",
+                    name,
+                    name,
+                )
+                self._add_robot_deprecation_hint: str | None = (
+                    f"Hint: add_robot(name='{name}') resolved via deprecated "
+                    f"name-as-registry-key fallback. Prefer: "
+                    f"add_robot(name='<instance_label>', data_config='{name}')."
                 )
 
         if not resolved_path:
@@ -855,6 +884,9 @@ class MuJoCoSimEngine(
 
             source = f"data_config='{data_config}'" if data_config else os.path.basename(resolved_path)
             mesh_line = f"\n🌐 Mesh peer: {robot.peer_id}" if robot.peer_id else ""
+            hint = getattr(self, "_add_robot_deprecation_hint", None)
+            self._add_robot_deprecation_hint = None
+            hint_line = f"\n⚠️ {hint}" if hint else ""
             return {
                 "status": "success",
                 "content": [
@@ -868,6 +900,7 @@ class MuJoCoSimEngine(
                             f"📷 Cameras: {list(self._world.cameras.keys())}"
                             f"{mesh_line}\n"
                             f"💡 Run policy: action='run_policy', robot_name='{name}'"
+                            f"{hint_line}"
                         )
                     }
                 ],

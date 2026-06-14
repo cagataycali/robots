@@ -38,7 +38,7 @@ if TYPE_CHECKING:
         init_device_connect_sync,
     )
     from strands_robots.policies.groot import Gr00tPolicy
-    from strands_robots.registry import list_robots
+    from strands_robots.registry import get_robot, list_robots
     from strands_robots.robot import Robot
     from strands_robots.simulation import (
         SimCamera,
@@ -71,6 +71,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     # Hardware robot
     "Robot": ("strands_robots.robot", "Robot"),
     "list_robots": ("strands_robots.registry", "list_robots"),
+    "get_robot": ("strands_robots.registry", "get_robot"),
     # Policies
     "Gr00tPolicy": ("strands_robots.policies.groot", "Gr00tPolicy"),
     # Simulation (MuJoCo)
@@ -113,6 +114,7 @@ __all__ = [
     "SimObject",
     "SimCamera",
     "list_robots",
+    "get_robot",
     "create_simulation",
     "list_backends",
     "register_backend",

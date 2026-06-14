@@ -246,7 +246,7 @@ class SimEngine(ABC):
         ...
 
     @abstractmethod
-    def send_action(self, action: dict[str, Any], robot_name: str | None = None, n_substeps: int = 1) -> None:
+    def send_action(self, action: dict[str, Any], robot_name: str | None = None, n_substeps: int = 1) -> dict[str, Any]:
         """Apply action and advance physics by n_substeps.
 
         Contract: each call writes actuator/ctrl values and then runs
@@ -257,6 +257,11 @@ class SimEngine(ABC):
         Backends are responsible for internal thread-safety (e.g.
         MuJoCo acquires self._lock here). PolicyRunner does not manage
         locks.
+
+        Returns:
+            Dict with ``status`` and ``content``. When action keys cannot
+            be resolved, the ``content`` list includes a ``json`` block with
+            ``unresolved_keys`` so callers can self-correct.
         """
         ...
 
@@ -800,7 +805,7 @@ class SimEngine(ABC):
             "methods": {
                 "get_robot_state": "(robot_name: str) -> dict",
                 "get_observation": "(robot_name: str | None = None, *, skip_images: bool = False) -> dict",
-                "send_action": "(action: dict, robot_name: str | None = None, n_substeps: int = 1) -> None",
+                "send_action": "(action: dict, robot_name: str | None = None, n_substeps: int = 1) -> dict",
                 "run_policy": "(robot_name: str, policy_provider='mock', ...) -> dict",
                 "start_policy": "(robot_name: str, policy_provider='mock', ...) -> dict",
                 "list_robots": "() -> list[str]",

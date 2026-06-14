@@ -136,10 +136,11 @@ def _extract_frame_ndarray(render_result: dict) -> np.ndarray | None:
     """Decode the PNG bytes emitted by ``SimEngine.render`` into an ndarray.
 
     ``render()`` returns the image nested inside a content block as
-    ``{"image": {"format": "png", "source": {"bytes": <bytes>}}}``. This
-    helper walks that structure, decodes the PNG, and returns a (H, W, 3|4)
-    numpy array. Returns ``None`` if no image is found - the recorder then
-    skips the frame rather than aborting the rollout.
+    ``{"image": {"format": "png", "source": {"bytes": <str|bytes>}}}``.
+    The ``bytes`` field may contain raw bytes (legacy) or a base64-encoded
+    string (current). This helper walks that structure, decodes the PNG,
+    and returns a (H, W, 3|4) numpy array. Returns ``None`` if no image is
+    found - the recorder then skips the frame rather than aborting the rollout.
     """
     if not isinstance(render_result, dict):
         return None
@@ -157,6 +158,11 @@ def _extract_frame_ndarray(render_result: dict) -> np.ndarray | None:
             png_bytes = base64.b64decode(source["data"])
         if not png_bytes:
             continue
+        # Handle base64-encoded strings (current render() output)
+        if isinstance(png_bytes, str):
+            import base64
+
+            png_bytes = base64.b64decode(png_bytes)
         try:
             import io
 

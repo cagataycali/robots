@@ -366,9 +366,13 @@ def test_load_scene_render_returns_real_geometry_immediately(sim: Simulation, sc
         pytest.skip(f"render unavailable in this environment: {r}")
 
     # Decode the PNG and check column std.
+    import base64 as _b64
+
     image_block = next(c for c in r["content"] if isinstance(c, dict) and "image" in c)
-    png_bytes = image_block["image"]["source"]["bytes"]
-    img = np.asarray(Image.open(io.BytesIO(png_bytes)).convert("RGB"))
+    png_raw = image_block["image"]["source"]["bytes"]
+    if isinstance(png_raw, str):
+        png_raw = _b64.b64decode(png_raw)
+    img = np.asarray(Image.open(io.BytesIO(png_raw)).convert("RGB"))
     col_std = float(img.std(axis=0).mean())
     # Real geometry: col-std typically > 30 for our test scene's
     # mix of plane + colored bodies. Cold-start gradient: col-std ~0.6.

@@ -39,11 +39,16 @@ def _black_fraction(img: np.ndarray) -> float:
 
 
 def _render_np(sim: Simulation, camera: str, w: int = 240, h: int = 180) -> np.ndarray:
+    import base64
+
     r = sim.render(camera_name=camera, width=w, height=h)
     assert r["status"] == "success", r
     for block in r.get("content", []):
         if "image" in block:
-            return np.asarray(Image.open(BytesIO(block["image"]["source"]["bytes"])).convert("RGB"))
+            raw = block["image"]["source"]["bytes"]
+            if isinstance(raw, str):
+                raw = base64.b64decode(raw)
+            return np.asarray(Image.open(BytesIO(raw)).convert("RGB"))
     raise AssertionError("render returned no image")
 
 

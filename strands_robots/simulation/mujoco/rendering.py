@@ -294,9 +294,9 @@ class RenderingMixin:
                     "name-lookup path (action may be dropped)",
                     e,
                 )
-                self._apply_action_by_name(model, data, action_dict, pfx, mj)
+                self._unresolved_action_keys = self._apply_action_by_name(model, data, action_dict, pfx, mj)
         else:
-            self._apply_action_by_name(model, data, action_dict, pfx, mj)
+            self._unresolved_action_keys = self._apply_action_by_name(model, data, action_dict, pfx, mj)
 
         if not controller_handled_stepping:
             for _ in range(max(1, n_substeps)):
@@ -346,12 +346,16 @@ class RenderingMixin:
         action_dict: dict[str, Any],
         pfx: str,
         mj: Any,
-    ) -> None:
+    ) -> list[str]:
         """Default action-application: look up actuator / joint by name.
 
         Extracted from :meth:`_apply_sim_action` so the
         ``action_controller`` fast path can fall back to it on
         controller failure (the same path non-LIBERO callers use).
+
+        Returns:
+            List of action keys that could not be resolved to any
+            actuator or joint (empty list when all keys applied).
         """
 
         def _lookup(obj_type: Any, name: str) -> int:
@@ -362,6 +366,7 @@ class RenderingMixin:
                     return i
             return int(mj.mj_name2id(model, obj_type, name))
 
+        unresolved: list[str] = []
         for key, value in action_dict.items():
             act_id = _lookup(mj.mjtObj.mjOBJ_ACTUATOR, key)
             if act_id >= 0:
@@ -384,11 +389,13 @@ class RenderingMixin:
                 # exactly the failure mode #318 was filed to fix, so surface it
                 # -- once per (prefix, key) to avoid per-step log spam at 50Hz.
                 self._warn_unresolved_action_key(pfx, key, "no actuator or joint")
+                unresolved.append(key)
                 continue
 
             ai = self._actuator_for_joint(model, jnt_id, mj)
             if ai < 0:
                 self._warn_unresolved_action_key(pfx, key, "joint has no driving actuator")
+                unresolved.append(key)
                 continue
 
             # Scale a logical command into the actuator's ctrlrange when the
@@ -396,6 +403,8 @@ class RenderingMixin:
             # tendon units, not a finger-joint position). Direct JOINT
             # actuators keep the raw value (positions/torques in joint units).
             data.ctrl[ai] = self._scale_ctrl_for_actuator(model, ai, float(value), mj)
+
+        return unresolved
 
     def _warn_unresolved_action_key(self, pfx: str, key: str, reason: str) -> None:
         """Warn once per (prefix, key) that an action key could not be applied.
@@ -565,6 +574,13 @@ class RenderingMixin:
             pil_img.save(buffer, format="PNG")
             png_bytes = buffer.getvalue()
 
+            # base64-encode for transport through the Strands tool-response
+            # serializer (which expects strings, not raw bytes, for image
+            # content in the Bedrock/Anthropic multimodal format).
+            import base64 as _b64
+
+            png_b64 = _b64.b64encode(png_bytes).decode("ascii")
+
             # summary stats so render_all can flag empty-looking frames
             # without decoding the PNG a second time.
             import numpy as _np
@@ -576,7 +592,7 @@ class RenderingMixin:
                 "status": "success",
                 "content": [
                     {"text": f"📸 {w}x{h} from '{label}' at t={self._world.sim_time:.3f}s"},
-                    {"image": {"format": "png", "source": {"bytes": png_bytes}}},
+                    {"image": {"format": "png", "source": {"bytes": png_b64}}},
                     {"json": {"pixel_variance": pixel_var, "pixel_mean": pixel_mean, "camera": label}},
                 ],
             }
