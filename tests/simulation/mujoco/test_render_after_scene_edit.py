@@ -145,3 +145,26 @@ class TestRenderAfterSceneEdit:
         for i, img in enumerate(frames):
             bf = _black_fraction(img)
             assert bf < 0.5, f"frame after block_{i} is {bf:.1%} black"
+
+    def test_render_returns_raw_png_bytes_not_base64(self, sim: Simulation) -> None:
+        """Pin the image-content contract: render() must emit RAW PNG bytes in
+        ``source.bytes``, not a base64 str.
+
+        The boto3 Bedrock Converse client base64-encodes ``source.bytes`` on the
+        wire. Pre-encoding to a base64 str in render() double-encoded the image
+        and Bedrock rejected it ("ConverseStream: Could not process image"). The
+        other render tests defensively b64decode both str and bytes, so they
+        never pinned this contract and the double-encode shipped unnoticed.
+        """
+        _skip_if_no_gl()
+        sim.create_world()
+        r = sim.render(camera_name="default", width=320, height=240)
+        assert r["status"] == "success", r
+        block = next((c for c in r.get("content", []) if "image" in c), None)
+        assert block is not None, "render returned no image block"
+        raw = block["image"]["source"]["bytes"]
+        assert isinstance(raw, (bytes, bytearray)), (
+            "render() must return raw bytes in source.bytes; boto3 base64-encodes "
+            f"on the wire, so a str double-encodes. Got {type(raw).__name__}."
+        )
+        assert bytes(raw[:8]) == b"\x89PNG\r\n\x1a\n", "source.bytes is not a valid PNG payload"
