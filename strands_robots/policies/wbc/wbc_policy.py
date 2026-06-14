@@ -116,6 +116,10 @@ class WBCPolicy(Policy):
         device: ONNX execution provider - "cpu" (default) or "cuda".
         default_angles: Override default standing angles (15-dim).
         action_scale: Scale factor for ONNX output (default 0.25).
+        allow_missing_models: If True, allow construction without ONNX models
+            (returns default-pose actions). Default False - raises RuntimeError
+            when models cannot be loaded, preventing silent safety hazards on
+            bipedal humanoids.
     """
 
     def __init__(
@@ -127,12 +131,14 @@ class WBCPolicy(Policy):
         device: str = "cpu",
         default_angles: list[float] | np.ndarray | None = None,
         action_scale: float = _ACTION_SCALE,
+        allow_missing_models: bool = False,
         **kwargs: Any,
     ) -> None:
         self._checkpoint = checkpoint
         self._variant = variant
         self._device = device
         self._action_scale = action_scale
+        self._allow_missing_models = allow_missing_models
         self._robot_state_keys: list[str] = []
 
         # Default angles for the 15 controlled joints
@@ -190,13 +196,23 @@ class WBCPolicy(Policy):
             logger.info("Loaded walk ONNX: %s", walk_path)
 
         if self._balance_session is None and self._walk_session is None:
-            logger.warning(
-                "No ONNX models loaded from checkpoint '%s'. "
-                "Policy will return zero actions until models are available. "
-                "Download with: huggingface-cli download %s",
-                self._checkpoint,
-                self._checkpoint,
-            )
+            if self._allow_missing_models:
+                logger.warning(
+                    "No ONNX models loaded from checkpoint '%s'. "
+                    "allow_missing_models=True: policy will return default-pose actions. "
+                    "Download with: huggingface-cli download %s",
+                    self._checkpoint,
+                    self._checkpoint,
+                )
+            else:
+                raise RuntimeError(
+                    f"WBCPolicy failed to load any ONNX models from checkpoint "
+                    f"'{self._checkpoint}'. Both Balance and Walk models are unavailable. "
+                    f"Refusing to construct a policy that would silently command "
+                    f"default-pose targets on a bipedal humanoid. "
+                    f"Download models with: huggingface-cli download {self._checkpoint} "
+                    f"-- or pass allow_missing_models=True for offline testing."
+                )
 
     def _resolve_onnx_path(self, variant: str) -> Path | None:
         """Resolve path to an ONNX file for the given variant."""
@@ -238,7 +254,7 @@ class WBCPolicy(Policy):
                 local_dir=str(cache_dir),
             )
             return Path(path)
-        except Exception as e:
+        except (OSError, ImportError, ValueError, ConnectionError) as e:
             logger.debug("HuggingFace download failed for %s/%s: %s", self._checkpoint, filename, e)
 
         return None
@@ -408,6 +424,9 @@ class WBCPolicy(Policy):
 
         # Flatten history into 516-dim input
         obs_input = np.concatenate(list(self._obs_history), axis=0).astype(np.float32)
+        assert obs_input.shape[0] == _OBS_INPUT_DIM, (
+            f"Observation history flattened to {obs_input.shape[0]}-dim, expected {_OBS_INPUT_DIM}-dim (6 x 86)"
+        )
 
         # Select and run ONNX session
         session = self._select_session(target_velocity)
@@ -424,3 +443,50 @@ class WBCPolicy(Policy):
             action_dict[key] = float(action[i])
 
         return [action_dict]
+
+    # ------------------------------------------------------------------
+    # PD torque control helpers (for torque-actuated MuJoCo models)
+    # ------------------------------------------------------------------
+
+    # Default PD gains from the verified GR00T-WBC config (g1_gear_wbc.yaml).
+    # These are appropriate for the G1 humanoid with gear-ratio actuators.
+    _DEFAULT_KPS = np.array(
+        [150, 150, 150, 200, 40, 40, 150, 150, 150, 200, 40, 40, 250, 250, 250],
+        dtype=np.float32,
+    )
+    _DEFAULT_KDS = np.array(
+        [2.0, 2.0, 2.0, 4.0, 2.0, 2.0, 2.0, 2.0, 2.0, 4.0, 2.0, 2.0, 5.0, 5.0, 5.0],
+        dtype=np.float32,
+    )
+
+    def compute_torques(
+        self,
+        target_positions: np.ndarray,
+        current_positions: np.ndarray,
+        current_velocities: np.ndarray,
+        kps: np.ndarray | None = None,
+        kds: np.ndarray | None = None,
+    ) -> np.ndarray:
+        """Compute PD torques from target positions.
+
+        The WBC ONNX models output target joint positions. When driving
+        torque-actuated MuJoCo models (like `g1_gear_wbc.xml`), these must
+        be converted to torques via a PD controller:
+
+            tau = kp * (target - current_pos) - kd * current_vel
+
+        Args:
+            target_positions: 15-dim target joint positions from get_actions.
+            current_positions: 15-dim current joint positions from sim.
+            current_velocities: 15-dim current joint velocities from sim.
+            kps: 15-dim proportional gains (default: verified G1 gains).
+            kds: 15-dim derivative gains (default: verified G1 gains).
+
+        Returns:
+            15-dim torque commands for the MuJoCo actuators.
+        """
+        if kps is None:
+            kps = self._DEFAULT_KPS
+        if kds is None:
+            kds = self._DEFAULT_KDS
+        return kps * (target_positions - current_positions) - kds * current_velocities

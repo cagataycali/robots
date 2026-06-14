@@ -330,4 +330,5 @@ markers = [
     "gpu: requires CUDA GPU and real model weights (run with: pytest -m gpu)",
     "slow: long-running test (deselect with: pytest -m 'not slow')",
     "integration: requires live Device Connect infra (Zenoh router + etcd via Docker); skipped unless DEVICE_CONNECT_ALLOW_INSECURE is set (deselect with: pytest -m 'not integration')",
+    "wbc: requires WBC ONNX models and MuJoCo (run with: MUJOCO_GL=egl pytest -m wbc)",
 ]

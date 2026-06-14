@@ -12,6 +12,7 @@ import asyncio
 from unittest.mock import MagicMock, patch
 
 import numpy as np
+import pytest
 
 from strands_robots.policies.wbc import WBC_JOINT_NAMES, WBCPolicy
 from strands_robots.policies.wbc.wbc_policy import (
@@ -280,16 +281,21 @@ class TestWBCPolicyInference:
         for i, key in enumerate(WBC_JOINT_NAMES):
             np.testing.assert_allclose(actions[0][key], float(expected[i]), atol=1e-5, err_msg=f"Joint {key} mismatch")
 
-    def test_no_models_returns_zero_actions(self):
-        """When no ONNX models loaded, actions should be default angles."""
-        with patch("strands_robots.policies.wbc.wbc_policy.WBCPolicy._load_models"):
-            policy = WBCPolicy()
+    def test_no_models_returns_default_actions_when_allowed(self):
+        """With allow_missing_models=True, returns default standing angles."""
+        with patch("strands_robots.policies.wbc.wbc_policy.WBCPolicy._resolve_onnx_path", return_value=None):
+            policy = WBCPolicy(allow_missing_models=True)
         # Both sessions are None (no models loaded)
         obs = _make_obs()
         actions = asyncio.run(policy.get_actions(obs, "", target_velocity=[0.5, 0, 0]))
         # Should return default angles (zero raw action * scale + defaults)
         for i, key in enumerate(WBC_JOINT_NAMES):
             np.testing.assert_allclose(actions[0][key], float(_DEFAULT_ANGLES_15[i]), atol=1e-5)
+
+    def test_no_models_raises_by_default(self):
+        """Without allow_missing_models, raises RuntimeError."""
+        with pytest.raises(RuntimeError, match="failed to load any ONNX models"):
+            WBCPolicy(checkpoint="/nonexistent/path/to/models")
 
 
 class TestWBCObservationEncoding:
@@ -416,11 +422,18 @@ class TestWBCFactoryIntegration:
         """create_policy('wbc') should return a WBCPolicy instance."""
         from strands_robots.policies import create_policy
 
-        # This will try to load ONNX models and warn (no models available)
-        # but should not raise
-        policy = create_policy("wbc")
+        policy = create_policy("wbc", allow_missing_models=True)
         assert isinstance(policy, WBCPolicy)
         assert policy.provider_name == "wbc"
+
+    def test_create_wbc_raises_without_models(self):
+        """create_policy('wbc') raises RuntimeError when no ONNX models are available."""
+        import pytest
+
+        from strands_robots.policies import create_policy
+
+        with pytest.raises(RuntimeError, match="failed to load any ONNX models"):
+            create_policy("wbc", checkpoint="/nonexistent/path")
 
     def test_wbc_in_providers_list(self):
         """'wbc' should appear in list_providers()."""
@@ -433,5 +446,5 @@ class TestWBCFactoryIntegration:
         """'groot_wbc' shorthand should resolve to WBCPolicy."""
         from strands_robots.policies import create_policy
 
-        policy = create_policy("groot_wbc")
+        policy = create_policy("groot_wbc", allow_missing_models=True)
         assert isinstance(policy, WBCPolicy)
