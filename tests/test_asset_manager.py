@@ -22,14 +22,6 @@ from pathlib import Path
 import pytest
 
 import strands_robots.assets.manager as manager
-from strands_robots.assets.manager import (
-    _has_meshes,
-    get_robot_info,
-    is_robot_asset_present,
-    list_available_robots,
-    resolve_model_dir,
-    resolve_model_path,
-)
 from strands_robots.registry.user_registry import (
     _invalidate_cache,
     register_robot,
@@ -84,63 +76,63 @@ def _register_bot(
 class TestIsRobotAssetPresent:
     def test_true_when_xml_exists(self, tmp_path):
         _register_bot(tmp_path / "assets")
-        assert is_robot_asset_present("unitbot") is True
+        assert manager.is_robot_asset_present("unitbot") is True
 
     def test_false_for_unknown_robot(self):
-        assert is_robot_asset_present("no_such_robot_xyz") is False
+        assert manager.is_robot_asset_present("no_such_robot_xyz") is False
 
     def test_false_when_xml_missing_on_disk(self, tmp_path):
         robot_dir = _register_bot(tmp_path / "assets")
         (robot_dir / "unitbot.xml").unlink()
         _invalidate_cache()
-        assert is_robot_asset_present("unitbot") is False
+        assert manager.is_robot_asset_present("unitbot") is False
 
 
 class TestResolveModelPath:
     def test_resolves_registered_xml(self, tmp_path):
         robot_dir = _register_bot(tmp_path / "assets")
-        resolved = resolve_model_path("unitbot")
+        resolved = manager.resolve_model_path("unitbot")
         assert resolved == robot_dir / "unitbot.xml"
 
     def test_none_for_unknown_robot(self):
-        assert resolve_model_path("no_such_robot_xyz") is None
+        assert manager.resolve_model_path("no_such_robot_xyz") is None
 
     def test_prefer_scene_returns_scene_xml(self, tmp_path):
         robot_dir = _register_bot(tmp_path / "assets", scene_xml="scene.xml")
-        assert resolve_model_path("unitbot", prefer_scene=True) == robot_dir / "scene.xml"
+        assert manager.resolve_model_path("unitbot", prefer_scene=True) == robot_dir / "scene.xml"
 
     def test_prefers_candidate_dir_with_meshes(self, tmp_path):
         robot_dir = _register_bot(tmp_path / "assets", meshes=("arm.stl",))
         # resolution should succeed and point at the mesh-bearing dir
-        assert resolve_model_path("unitbot") == robot_dir / "unitbot.xml"
+        assert manager.resolve_model_path("unitbot") == robot_dir / "unitbot.xml"
 
 
 class TestResolveModelDir:
     def test_resolves_directory(self, tmp_path):
         robot_dir = _register_bot(tmp_path / "assets")
-        assert resolve_model_dir("unitbot") == robot_dir
+        assert manager.resolve_model_dir("unitbot") == robot_dir
 
     def test_none_for_unknown_robot(self):
-        assert resolve_model_dir("no_such_robot_xyz") is None
+        assert manager.resolve_model_dir("no_such_robot_xyz") is None
 
 
 class TestGetRobotInfo:
     def test_enriches_with_resolved_path_and_availability(self, tmp_path):
         robot_dir = _register_bot(tmp_path / "assets")
-        info = get_robot_info("unitbot")
+        info = manager.get_robot_info("unitbot")
         assert info is not None
         assert info["canonical_name"] == "unitbot"
         assert info["available"] is True
         assert info["resolved_path"] == str(robot_dir / "unitbot.xml")
 
     def test_none_for_unknown_robot(self):
-        assert get_robot_info("no_such_robot_xyz") is None
+        assert manager.get_robot_info("no_such_robot_xyz") is None
 
 
 class TestListAvailableRobots:
     def test_includes_registered_present_robot(self, tmp_path):
         _register_bot(tmp_path / "assets")
-        listed = {r["name"]: r for r in list_available_robots()}
+        listed = {r["name"]: r for r in manager.list_available_robots()}
         assert "unitbot" in listed
         entry = listed["unitbot"]
         assert entry["available"] is True
@@ -151,7 +143,7 @@ class TestListAvailableRobots:
         robot_dir = _register_bot(tmp_path / "assets")
         (robot_dir / "unitbot.xml").unlink()
         _invalidate_cache()
-        listed = {r["name"]: r for r in list_available_robots()}
+        listed = {r["name"]: r for r in manager.list_available_robots()}
         assert "unitbot" in listed
         assert listed["unitbot"]["available"] is False
         assert listed["unitbot"]["path"] is None
@@ -168,41 +160,41 @@ class TestPathTraversalProtection:
         monkeypatch.setattr(manager, "get_robot", fake_get_robot)
 
     def test_resolve_model_dir_blocks_traversal(self, _evil_robot):
-        assert resolve_model_dir("evil") is None
+        assert manager.resolve_model_dir("evil") is None
 
     def test_resolve_model_path_blocks_traversal(self, _evil_robot):
-        assert resolve_model_path("evil") is None
+        assert manager.resolve_model_path("evil") is None
 
     def test_is_present_blocks_traversal(self, _evil_robot):
-        assert is_robot_asset_present("evil") is False
+        assert manager.is_robot_asset_present("evil") is False
 
 
 class TestHasMeshes:
     def test_false_for_missing_directory(self, tmp_path):
-        assert _has_meshes(tmp_path / "does_not_exist") is False
+        assert manager._has_meshes(tmp_path / "does_not_exist") is False
 
     def test_false_when_no_mesh_files(self, tmp_path):
         d = tmp_path / "bare"
         d.mkdir()
         (d / "model.xml").write_text(_MINIMAL_MJCF)
-        assert _has_meshes(d) is False
+        assert manager._has_meshes(d) is False
 
     def test_true_for_nested_mesh(self, tmp_path):
         d = tmp_path / "withmesh"
         (d / "meshes").mkdir(parents=True)
         (d / "meshes" / "link.obj").write_bytes(b"o")
-        assert _has_meshes(d) is True
+        assert manager._has_meshes(d) is True
 
     def test_result_is_cached_per_directory(self, tmp_path):
         d = tmp_path / "cachedir"
         d.mkdir()
-        assert _has_meshes(d) is False
+        assert manager._has_meshes(d) is False
         key = (str(d), d.stat().st_mtime)
         assert manager._MESH_CACHE.get(key) is False
         # Adding a mesh without busting the cache still returns the cached value
         (d / "late.stl").write_bytes(b"m")
         os.utime(d, (d.stat().st_atime, key[1]))  # keep mtime stable
-        assert _has_meshes(d) is False
+        assert manager._has_meshes(d) is False
 
 
 class TestAutoDownloadFallback:
@@ -220,14 +212,14 @@ class TestAutoDownloadFallback:
             return True
 
         monkeypatch.setattr(manager, "_auto_download_robot", fake_download)
-        assert resolve_model_path("unitbot") == xml
+        assert manager.resolve_model_path("unitbot") == xml
 
     def test_returns_none_when_download_fails(self, tmp_path, monkeypatch):
         robot_dir = _register_bot(tmp_path / "assets")
         (robot_dir / "unitbot.xml").unlink()
         _invalidate_cache()
         monkeypatch.setattr(manager, "_auto_download_robot", lambda _n, _i: False)
-        assert resolve_model_path("unitbot") is None
+        assert manager.resolve_model_path("unitbot") is None
 
 
 class TestAutoDownloadUnavailable:
