@@ -268,7 +268,8 @@ class MuJoCoSimEngine(
         Returns:
             Dict with ``status`` ("success" or "error") and ``content``.
             When some action keys could not be resolved to actuators/joints,
-            the response includes an ``unresolved_keys`` list so callers can
+            the ``content`` list includes a ``json`` block with an
+            ``unresolved_keys`` list (and ``applied``) so callers can
             self-correct instead of silently losing commands.
         """
         if self._world is None or self._world._model is None:
@@ -295,9 +296,9 @@ class MuJoCoSimEngine(
                             f"Applied: {applied}. Use individual joint/actuator names "
                             f"(e.g. 'shoulder_pan', 'elbow_flex') as dict keys."
                         )
-                    }
+                    },
+                    {"json": {"unresolved_keys": unresolved, "applied": applied}},
                 ],
-                "unresolved_keys": unresolved,
             }
         return {"status": "success", "content": [{"text": f"Action applied to '{robot_name}' ({len(applied)} keys)."}]}
 

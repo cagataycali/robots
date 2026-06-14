@@ -382,6 +382,27 @@ class TestRobotManagement:
         # Verify physics advanced
         assert sim_with_robot._world.sim_time > 0
 
+    def test_send_action_unresolved_keys_in_json_content_block(self, sim_with_robot):
+        """Unresolved action keys must surface as a ``json`` content block
+        (not a top-level sibling of ``status``/``content``), so the result
+        conforms to the Strands tool-result schema and agents can read the
+        structured payload alongside the human-readable ``text`` block."""
+        result = sim_with_robot.send_action(
+            {"shoulder_pan_act": 0.3, "nonexistent_joint": 1.0},
+            robot_name="arm1",
+        )
+        assert result["status"] == "error"
+        # Must NOT leak the key at the top level.
+        assert "unresolved_keys" not in result
+        # Find the json content block.
+        json_blocks = [c["json"] for c in result["content"] if "json" in c]
+        assert len(json_blocks) == 1, f"expected one json block, got {result['content']}"
+        payload = json_blocks[0]
+        assert payload["unresolved_keys"] == ["nonexistent_joint"]
+        assert "shoulder_pan_act" in payload["applied"]
+        # A human-readable text block must still be present.
+        assert any("text" in c for c in result["content"])
+
 
 # Camera Management
 

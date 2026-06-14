@@ -260,8 +260,8 @@ class SimEngine(ABC):
 
         Returns:
             Dict with ``status`` and ``content``. When action keys cannot
-            be resolved, includes ``unresolved_keys`` so callers can
-            self-correct.
+            be resolved, the ``content`` list includes a ``json`` block with
+            ``unresolved_keys`` so callers can self-correct.
         """
         ...
 
