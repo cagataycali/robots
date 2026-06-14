@@ -2057,6 +2057,7 @@ class MuJoCoSimEngine(
         max_steps: int | None = None,
         max_onframe_failures: int | None = None,
         control_substeps: int | None = None,
+        target_velocity: list[float] | None = None,
     ) -> dict[str, Any]:
         """MuJoCo ``run_policy`` override: pre-flight world check + graceful stop.
 
@@ -2067,6 +2068,10 @@ class MuJoCoSimEngine(
 
         forwards ``n_steps`` / ``max_steps`` to the base so LLM callers
         can specify horizon in steps rather than wall-clock seconds.
+
+        WBC fast-path: when ``policy_provider="wbc"``, routes to the
+        dedicated WBC runner which handles torque control + native physics
+        stepping directly (bypasses the standard PolicyRunner loop).
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
@@ -2075,6 +2080,40 @@ class MuJoCoSimEngine(
             robot_name = self._resolve_single_robot(robot_name)
         except ValueError as e:
             return {"status": "error", "content": [{"text": str(e)}]}
+
+        # WBC fast-path: dedicated runner for whole-body control
+        if policy_provider == "wbc" or (
+            policy_object is not None and getattr(policy_object, "provider_name", "") == "wbc"
+        ):
+            from strands_robots.policies.wbc.runner import run_wbc_policy
+            from strands_robots.policies.wbc.wbc_policy import WBCPolicy
+
+            if policy_object is not None and isinstance(policy_object, WBCPolicy):
+                wbc_policy = policy_object
+            else:
+                from strands_robots.policies import create_policy
+
+                wbc_policy = create_policy("wbc", **(policy_config or {}))  # type: ignore[assignment]
+
+            # Extract target_velocity from policy_config if not passed directly
+            if target_velocity is None and policy_config:
+                target_velocity = policy_config.get("target_velocity")
+
+            on_frame = self._make_run_policy_hook(robot_name, instruction)
+            try:
+                return run_wbc_policy(
+                    sim=self,
+                    robot_name=robot_name,
+                    policy=wbc_policy,
+                    duration=duration,
+                    target_velocity=target_velocity,
+                    video=video,
+                    fast_mode=fast_mode,
+                    on_frame=on_frame,
+                )
+            finally:
+                if self._world is not None and robot_name in self._world.robots:
+                    self._world.robots[robot_name].policy_running = False
 
         try:
             return super().run_policy(

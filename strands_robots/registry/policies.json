@@ -100,6 +100,28 @@
                 "nvidia/cosmos3",
                 "nvidia/cosmos3-nano-policy"
             ]
+        },
+        "wbc": {
+            "module": "strands_robots.policies.wbc",
+            "class": "WBCPolicy",
+            "description": "NVIDIA GR00T Whole-Body Control (ONNX, Balance/Walk)",
+            "requires": [],
+            "config_keys": [
+                "checkpoint",
+                "target_velocity",
+                "config"
+            ],
+            "defaults": {
+                "checkpoint": "nvidia/GR00T-WholeBodyControl"
+            },
+            "shorthands": [
+                "wbc",
+                "whole_body_control"
+            ],
+            "hf_orgs": [],
+            "model_id_overrides": [
+                "nvidia/GR00T-WholeBodyControl"
+            ]
         }
     }
 }
