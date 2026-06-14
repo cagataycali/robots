@@ -144,3 +144,28 @@ class TestRunDoctor:
         exit_code = run_doctor()
         assert isinstance(exit_code, int)
         assert exit_code in (0, 1)
+
+    def test_run_doctor_returns_1_on_failure_without_color(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A failing check must yield exit 1 even when color is disabled.
+
+        Regression: ``run_doctor`` previously detected failures by looking for
+        the red ANSI escape code in each check's output. Under ``NO_COLOR`` /
+        ``TERM=dumb`` (typical in CI) the color helpers emit plain text with no
+        escape, so a genuine ``FAIL`` was silently ignored and the command
+        exited 0 while printing "All checks passed". This made ``doctor``
+        useless as a scripted setup gate. The exit code must reflect failures
+        regardless of color support.
+        """
+        from strands_robots import doctor
+
+        # Disable color the same way NO_COLOR / TERM=dumb would at import time.
+        monkeypatch.setattr(doctor, "_NO_COLOR", True)
+        # Force one check to fail deterministically, independent of host setup.
+        monkeypatch.setattr(doctor, "check_sim_smoke", lambda: doctor._fail("forced failure"))
+        # Sanity: with color disabled the failure line carries no ANSI escape.
+        failure_line = doctor.check_sim_smoke()
+        assert "\033[31m" not in failure_line
+        assert "  FAIL  " in failure_line
+
+        exit_code = doctor.run_doctor()
+        assert exit_code == 1

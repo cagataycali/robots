@@ -268,7 +268,11 @@ def run_doctor() -> int:
             result = check_fn()
         except Exception as e:
             result = _fail(f"{name}: unexpected error: {e}")
-        if "FAIL" in result and "\033[31m" in result:
+        # Detect failures via the stable text marker, not the ANSI color code:
+        # under NO_COLOR / TERM=dumb the red escape is absent, so gating on it
+        # silently swallowed failures and returned exit 0 in CI. The "  FAIL  "
+        # prefix is emitted by ``_fail`` in both colored and plain output.
+        if "  FAIL  " in result:
             has_fail = True
         print(result)
 
