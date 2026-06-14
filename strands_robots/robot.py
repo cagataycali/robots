@@ -276,7 +276,7 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
         from strands_robots.simulation import Simulation
 
         sim = Simulation(
-            tool_name=f"{canonical}_sim",
+            tool_name=f"{name}_sim",
             **kwargs,
         )
 
@@ -288,7 +288,7 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
                 raise RuntimeError(f"Failed to create sim world for {canonical!r}: {msg}")
 
             add_robot_params: dict[str, Any] = {
-                "robot_name": canonical,
+                "robot_name": name,
                 "data_config": data_config or canonical,
                 "position": position or [0.0, 0.0, 0.0],
             }

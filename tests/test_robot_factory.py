@@ -1035,3 +1035,82 @@ class TestHardwareConfigV040Followups:
         assert any("torchcodec" in dep and "aarch64" in dep for dep in lerobot_extra), (
             f"[lerobot] extra must pin torchcodec on linux+aarch64 (#378); got {lerobot_extra}"
         )
+
+
+class TestRobotNamePreservesUserInput:
+    """Robot('h1') should register the robot under the user's input name,
+    not the canonical resolved name (unitree_h1). The user should be able
+    to use the name they passed in all subsequent API calls."""
+
+    @pytest.fixture(autouse=True)
+    def _mujoco(self):
+        pytest.importorskip("mujoco")
+
+    def test_alias_preserved_as_instance_name(self):
+        """Robot('h1') registers robot as 'h1', not 'unitree_h1'."""
+        from strands_robots import Robot
+
+        sim = Robot("h1", mesh=False)
+        try:
+            robots = sim.list_robots()
+            assert "h1" in robots, f"Expected 'h1' in {robots}"
+            assert "unitree_h1" not in robots, f"Unexpected 'unitree_h1' in {robots}"
+        finally:
+            sim.destroy()
+
+    def test_get_robot_state_works_with_user_name(self):
+        """get_robot_state(robot_name='h1') succeeds after Robot('h1')."""
+        from strands_robots import Robot
+
+        sim = Robot("h1", mesh=False)
+        try:
+            state = sim.get_robot_state(robot_name="h1")
+            assert state["status"] == "success"
+        finally:
+            sim.destroy()
+
+    def test_robot_joint_names_works_with_user_name(self):
+        """robot_joint_names('g1') returns joints after Robot('g1')."""
+        from strands_robots import Robot
+
+        sim = Robot("g1", mesh=False)
+        try:
+            joints = sim.robot_joint_names("g1")
+            assert len(joints) > 0, "Expected non-empty joint list"
+        finally:
+            sim.destroy()
+
+    def test_canonical_name_still_resolves_model(self):
+        """The model is still loaded from the canonical asset directory."""
+        from strands_robots import Robot
+
+        sim = Robot("go2", mesh=False)
+        try:
+            robots = sim.list_robots()
+            assert "go2" in robots
+            joints = sim.robot_joint_names("go2")
+            assert len(joints) == 12, f"go2 should have 12 joints, got {len(joints)}"
+        finally:
+            sim.destroy()
+
+    def test_so100_unchanged(self):
+        """Robot('so100') still works identically (name == canonical)."""
+        from strands_robots import Robot
+
+        sim = Robot("so100", mesh=False)
+        try:
+            assert "so100" in sim.list_robots()
+            state = sim.get_robot_state(robot_name="so100")
+            assert state["status"] == "success"
+        finally:
+            sim.destroy()
+
+    def test_tool_name_uses_user_input(self):
+        """The tool_name should reflect the user's input, not canonical."""
+        from strands_robots import Robot
+
+        sim = Robot("h1", mesh=False)
+        try:
+            assert sim.tool_name == "h1_sim"
+        finally:
+            sim.destroy()
