@@ -602,12 +602,11 @@ class RenderingMixin:
             pil_img.save(buffer, format="PNG")
             png_bytes = buffer.getvalue()
 
-            # base64-encode for transport through the Strands tool-response
-            # serializer (which expects strings, not raw bytes, for image
-            # content in the Bedrock/Anthropic multimodal format).
-            import base64 as _b64
-
-            png_b64 = _b64.b64encode(png_bytes).decode("ascii")
+            # Pass raw PNG bytes in the image content block. The boto3 Bedrock
+            # Converse API (and the Strands serializer over it) expects raw
+            # bytes in ``source.bytes`` and base64-encodes them on the wire.
+            # Pre-encoding to a base64 string here double-encodes and Bedrock
+            # rejects it with "Could not process image".
 
             # summary stats so render_all can flag empty-looking frames
             # without decoding the PNG a second time.
@@ -620,7 +619,7 @@ class RenderingMixin:
                 "status": "success",
                 "content": [
                     {"text": f"📸 {w}x{h} from '{label}' at t={self._world.sim_time:.3f}s"},
-                    {"image": {"format": "png", "source": {"bytes": png_b64}}},
+                    {"image": {"format": "png", "source": {"bytes": png_bytes}}},
                     {"json": {"pixel_variance": pixel_var, "pixel_mean": pixel_mean, "camera": label}},
                 ],
             }
