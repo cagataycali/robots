@@ -466,6 +466,11 @@ class SimEngine(ABC):
         n_episodes: int = 1,
         max_steps: int = 300,
         success_fn: str | None = None,
+        policy_object: Policy | None = None,
+        control_frequency: float = 50.0,
+        control_substeps: int | None = None,
+        action_horizon: int = 8,
+        seed: int | None = None,
     ) -> dict[str, Any]:
         """Multi-episode policy evaluation via ``PolicyRunner.evaluate``.
 
@@ -473,9 +478,19 @@ class SimEngine(ABC):
         the first robot, which is surprising in multi-robot scenes.
         ``n_episodes`` default lowered from 10 to 1 (callers opt in to
         longer evals explicitly).
-        """
-        from strands_robots.policies import create_policy
 
+        ``policy_object`` mirrors :meth:`run_policy`: pass an already-built
+        ``Policy`` to skip the ``create_policy`` round-trip (e.g. a loaded
+        SmolVLA checkpoint you want to evaluate without re-instantiating).
+        When omitted, the policy is built from ``policy_provider`` /
+        ``policy_config``.
+
+        ``control_frequency`` / ``control_substeps`` flow through to
+        :meth:`PolicyRunner.evaluate` so the eval loop steps physics for the
+        full control period per action (same servo-tracking semantics as
+        :meth:`run_policy`). Without these the arm under-steps and the policy
+        looks like a no-op (the arm under-steps each control period).
+        """
         if not robot_name:
             return {
                 "status": "error",
@@ -491,7 +506,15 @@ class SimEngine(ABC):
             }
         resolved_robot = robot_name
 
-        policy = create_policy(policy_provider, **(policy_config or {}))
+        if policy_object is not None:
+            # Pre-built policy path - mirror run_policy. Caller may have already
+            # set robot_state_keys; we set defensively so semantics match the
+            # provider path.
+            policy = policy_object
+        else:
+            from strands_robots.policies import create_policy
+
+            policy = create_policy(policy_provider, **(policy_config or {}))
         policy.set_robot_state_keys(self.robot_joint_names(resolved_robot))
 
         return PolicyRunner(self).evaluate(
@@ -501,6 +524,10 @@ class SimEngine(ABC):
             n_episodes=n_episodes,
             max_steps=max_steps,
             success_fn=success_fn,
+            control_frequency=control_frequency,
+            control_substeps=control_substeps,
+            action_horizon=action_horizon,
+            seed=seed,
         )
 
     # Benchmark protocol facades

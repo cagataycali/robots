@@ -195,6 +195,25 @@ class Cosmos3Policy(Policy):
                 f"{self.action_space!r} action layout. Valid columns: {sorted(layout_cols)}"
             )
         self.robot_state_keys: list[str] = []
+        # Cartesian EE action spaces (e.g. DROID ``midtrain`` =
+        # [ee_x..ee_qw, gripper]) emit pose columns that match no joint or
+        # actuator in a MuJoCo arm. Driven through the direct joint-name
+        # send_action path they all drop and the arm freezes silently. Warn at
+        # construction so the caller installs an IK/OSC action_controller (see
+        # LiberoAdapter._install_action_controller) or selects joint_pos.
+        # Real hardware with its own EE-space servo is unaffected.
+        if self.embodiment.is_cartesian(self.action_space):
+            logger.warning(
+                "Cosmos3Policy(action_space=%r) emits CARTESIAN end-effector pose "
+                "(columns %s), not joint targets. Applied through a MuJoCo arm's "
+                "direct joint send_action these keys resolve to no actuator and the "
+                "arm stays frozen. For sim, either (a) use action_space='joint_pos', "
+                "or (b) install an IK/OSC action_controller that converts EE pose -> "
+                "joint ctrl (see LiberoAdapter._install_action_controller). On real "
+                "hardware with an EE-space servo this warning is harmless.",
+                self.action_space,
+                self.embodiment.action_layouts.get(self.action_space, []),
+            )
         self._client = client or Cosmos3WebsocketClient(host=host, port=port, api_key=api_key, transport=transport)
         logger.info(
             "Cosmos3Policy ready [embodiment=%s domain=%s action_space=%s chunk=%d ws://%s:%d]",

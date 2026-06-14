@@ -244,6 +244,29 @@ class PolicyRunner:
     def __init__(self, sim: SimEngine):
         self.sim = sim
 
+    def _control_substeps(self, control_frequency: float, override: int | None = None) -> int:
+        """Physics steps per applied action so a position-servo arm tracks the
+        full control period (1/control_frequency), not a single physics dt.
+
+        Identical derivation to :meth:`run` — extracted so the eval paths
+        (:meth:`evaluate` / :meth:`_evaluate_with_spec`) step physics for the
+        SAME wall-clock period per action. Without this, eval called
+        ``send_action`` with the default ``n_substeps=1`` (a single ~2 ms
+        ``mj_step``), so the arm integrated ~10% of the way toward each target
+        before the next action overwrote ``ctrl`` — rollouts looked like the
+        policy was a no-op even when commanding valid targets.
+        """
+        if override is not None:
+            return max(1, int(override))
+        dt = None
+        try:
+            dt = self.sim.physics_timestep()
+        except Exception:  # noqa: BLE001 - never fail a run on a probe
+            dt = None
+        if dt and dt > 0 and control_frequency > 0:
+            return max(1, round((1.0 / control_frequency) / dt))
+        return 1
+
     # run(): blocking policy execution
     def run(
         self,
@@ -614,6 +637,8 @@ class PolicyRunner:
         seed: int | None = None,
         action_horizon: int = 8,
         on_frame: OnFrame | None = None,
+        control_frequency: float = 50.0,
+        control_substeps: int | None = None,
     ) -> dict[str, Any]:
         """Evaluate ``policy`` for ``n_episodes`` episodes.
 
@@ -682,6 +707,8 @@ class PolicyRunner:
                 seed=seed,
                 action_horizon=action_horizon,
                 on_frame=on_frame,
+                control_frequency=control_frequency,
+                control_substeps=control_substeps,
             )
 
         try:
@@ -691,6 +718,9 @@ class PolicyRunner:
 
         # T26: skip camera rendering when the policy does not need images.
         _skip_images = not getattr(policy, "requires_images", True)
+        # Step physics for the full control period per action, same derivation
+        # as run(). The default n_substeps=1 made eval rollouts under-step.
+        n_substeps = self._control_substeps(control_frequency, control_substeps)
         results: list[dict[str, Any]] = []
         for ep in range(n_episodes):
             self.sim.reset()
@@ -703,7 +733,7 @@ class PolicyRunner:
                 actions = _resolve_coroutine(coro_or_result)
 
                 if actions:
-                    self.sim.send_action(actions[0], robot_name=robot_name)
+                    self.sim.send_action(actions[0], robot_name=robot_name, n_substeps=n_substeps)
                 else:
                     # Policy returned nothing - still advance one physics step
                     # so episodes don't hang on degenerate policies.
@@ -756,6 +786,8 @@ class PolicyRunner:
         seed: int | None,
         action_horizon: int = 8,
         on_frame: OnFrame | None = None,
+        control_frequency: float = 50.0,
+        control_substeps: int | None = None,
     ) -> dict[str, Any]:
         """Drive a :class:`BenchmarkProtocol` for ``n_episodes`` episodes.
 
@@ -786,6 +818,8 @@ class PolicyRunner:
 
         # T26: skip camera rendering when the policy does not need images.
         _skip_images = not getattr(policy, "requires_images", True)
+        # Full control-period substeps per action (see run() / evaluate()).
+        n_substeps = self._control_substeps(control_frequency, control_substeps)
         # #168: seed Python / NumPy / torch / cuDNN once before
         # the episode loop so policy stochastic ops (e.g. attention
         # dropout, sampling temperature) are reproducible across re-runs
@@ -941,7 +975,7 @@ class PolicyRunner:
                         if steps >= max_steps:
                             break
                         action_applied = dict(action_in_chunk)
-                        self.sim.send_action(action_applied, robot_name=robot_name)
+                        self.sim.send_action(action_applied, robot_name=robot_name, n_substeps=n_substeps)
                         # #191 — synchronous on_frame hook fires on the
                         # eval thread, after send_action + before
                         # on_step's reward bookkeeping. Use this for

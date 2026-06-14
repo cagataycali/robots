@@ -338,6 +338,25 @@ class Gr00tPolicy(Policy):
             self.data_config_name,
         )
 
+        # _unpack_actions passes the model's action array through with no unit
+        # conversion -- it trusts the model/normalizer to emit the embodiment's
+        # native action space. For SO-100/SO-101 data_configs that native space
+        # is FEETECH absolute joint pose in DEGREES. Fed raw to a MuJoCo SO arm
+        # (radians, joint limit ~1.9 rad) a 180 deg target becomes 3.1 rad and
+        # the joint clamps/freezes. GR00T has no unit escape hatch here; the
+        # consumer must convert deg->rad before send_action. Warn once for SO
+        # data_configs so this is not debugged as a frozen policy.
+        _cfg = str(self.data_config_name).lower()
+        if _cfg.startswith("so100") or _cfg.startswith("so101"):
+            logger.warning(
+                "GR00T data_config=%r emits actions in the SO-arm native space "
+                "(FEETECH absolute joint pose, DEGREES). _unpack_actions does NOT "
+                "convert units -- driving a MuJoCo SO arm (radians) directly will "
+                "clamp/freeze joints. Convert deg->rad before send_action, or use "
+                "an explicit deg->rad conversion before send_action.",
+                self.data_config_name,
+            )
+
         # #187 wire-payload diagnostic: per-instance call counter so
         # ``_maybe_dump_wire_payload`` can cap dumps at
         # ``STRANDS_GROOT_WIRE_LOG_MAX_CALLS`` (default 10) without

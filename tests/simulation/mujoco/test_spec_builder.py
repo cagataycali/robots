@@ -213,12 +213,17 @@ class TestBuild:
         assert np.allclose(hl.diffuse, [hl.diffuse[0]] * 3)
 
     def test_explicit_scene_lights_present(self):
-        """The two explicit directional lights survive build() — the dimmed
-        headlight relies on them for the actual scene illumination."""
+        """A single directional ``main_light`` survives build(), matching the
+        Menagerie SO101 scene.xml. The previous two-point-light setup
+        (main diffuse 1.0 + fill 0.5) over-lit the scene and blew the floor
+        to white."""
         model = SpecBuilder.build(SimWorld()).compile()
-        assert model.nlight >= 2
+        assert model.nlight >= 1
         names = {mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_LIGHT, i) for i in range(model.nlight)}
-        assert {"main_light", "fill_light"} <= names
+        assert "main_light" in names
+        # main_light must be directional (not a point light firing straight down).
+        mid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_LIGHT, "main_light")
+        assert int(model.light_type[mid]) == int(mujoco.mjtLightType.mjLIGHT_DIRECTIONAL)
 
 
 # Mutation helpers

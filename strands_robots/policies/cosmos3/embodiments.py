@@ -42,6 +42,17 @@ class Cosmos3Embodiment:
     camera_keys: list[str] = field(default_factory=list)
     action_layouts: dict[str, list[str]] = field(default_factory=dict)
     default_action_space: str = "joint_pos"
+    #: Action spaces whose columns are Cartesian end-effector pose / deltas
+    #: (e.g. ``midtrain`` = [ee_x, ee_y, ee_z, quat..., gripper]) rather than
+    #: per-joint targets. These CANNOT be applied through the sim's direct
+    #: joint-name ``send_action`` path — they need an IK / OSC controller
+    #: first, or the whole arm silently freezes (every EE key drops). The
+    #: Cosmos3Policy warns when one is selected without an action_controller.
+    cartesian_action_spaces: tuple[str, ...] = ("midtrain",)
+
+    def is_cartesian(self, action_space: str) -> bool:
+        """True if ``action_space`` emits Cartesian EE pose, not joint targets."""
+        return action_space in self.cartesian_action_spaces
 
 
 # Canonical 7-DOF Franka joint names (DROID/RoboMIND-Franka), matching the

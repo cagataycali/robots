@@ -351,3 +351,77 @@ class TestT26PerfBudget:
         assert captured, "get_observation was never called"
         # Mock policy has requires_images=False → every call skip_images=True.
         assert all(captured), f"skip_images should be True every step; got {captured}"
+
+
+class _ConstantTargetPolicy(MockPolicy):
+    """Commands every joint to a fixed target every step (no sinusoid).
+
+    A position-servo arm only tracks a constant target if
+    physics is stepped for the full control period per action. With the old
+    n_substeps=1 default, the eval paths integrated a single ~2 ms mj_step and
+    the arm crawled.
+    """
+
+    def __init__(self, target: float = 0.6) -> None:
+        super().__init__()
+        self._target = target
+
+    async def get_actions(self, observation_dict, instruction, **kwargs):
+        if not self.robot_state_keys:
+            self.robot_state_keys = list(observation_dict.keys())
+        return [{k: self._target for k in self.robot_state_keys}]
+
+
+class TestControlSubsteps:
+    """Eval paths must step physics for the full control period per action,
+    identical to run()."""
+
+    def test_control_substeps_derivation(self, sim_with_robot):
+        runner = PolicyRunner(sim_with_robot)
+        dt = sim_with_robot.physics_timestep()
+        assert dt and dt > 0
+        # 50 Hz control over a 2 ms physics dt -> 10 substeps per action.
+        assert runner._control_substeps(50.0) == round((1.0 / 50.0) / dt)
+        # Explicit override wins and is floored at 1.
+        assert runner._control_substeps(50.0, override=7) == 7
+        assert runner._control_substeps(50.0, override=0) == 1
+
+    def test_evaluate_steps_full_control_period(self, sim_with_robot):
+        """A constant-target policy must actually move the arm in evaluate().
+
+        Pre-fix (n_substeps=1) the arm integrated ~10% of the way to target;
+        this asserts a meaningful joint delta so the bug can't silently return.
+        """
+        joints = sim_with_robot.robot_joint_names("alice")
+        policy = _ConstantTargetPolicy(target=0.6)
+        policy.set_robot_state_keys(joints)
+        runner = PolicyRunner(sim_with_robot)
+
+        sim_with_robot.reset()
+        q0 = sim_with_robot.get_observation(robot_name="alice", skip_images=True)
+        runner.evaluate(
+            "alice",
+            policy,
+            n_episodes=1,
+            max_steps=80,
+            control_frequency=50.0,
+        )
+        q1 = sim_with_robot.get_observation(robot_name="alice", skip_images=True)
+        max_dq = max(abs(q1[k] - q0[k]) for k in joints)
+        assert max_dq > 0.1, f"arm barely moved in evaluate (max|dq|={max_dq:.4f})"
+
+    def test_evaluate_forwards_substeps_to_send_action(self, sim_with_robot, monkeypatch):
+        """evaluate() must pass n_substeps>1 (not the default 1) to send_action."""
+        seen: list[int] = []
+        orig = sim_with_robot.send_action
+
+        def spy(action, robot_name=None, n_substeps=1):
+            seen.append(n_substeps)
+            return orig(action, robot_name=robot_name, n_substeps=n_substeps)
+
+        monkeypatch.setattr(sim_with_robot, "send_action", spy)
+        policy = _ConstantTargetPolicy()
+        policy.set_robot_state_keys(sim_with_robot.robot_joint_names("alice"))
+        PolicyRunner(sim_with_robot).evaluate("alice", policy, n_episodes=1, max_steps=5, control_frequency=50.0)
+        assert seen, "send_action was never called"
+        assert all(n > 1 for n in seen), f"eval still under-stepping: n_substeps={seen}"

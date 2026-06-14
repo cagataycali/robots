@@ -354,3 +354,39 @@ def test_cosmos3_policy_transport_param():
     from strands_robots.policies.cosmos3 import Cosmos3Policy
 
     assert "transport" in inspect.signature(Cosmos3Policy.__init__).parameters
+
+
+class TestCartesianActionSpaceWarning:
+    """A Cartesian EE action_space
+    (e.g. DROID ``midtrain``) emits pose columns that match no MuJoCo arm
+    joint -> the arm silently freezes. The policy must warn loudly at
+    construction so the user wires IK or picks joint_pos."""
+
+    def test_midtrain_warns(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="strands_robots.policies.cosmos3.policy"):
+            Cosmos3Policy(
+                embodiment="droid",
+                action_space="midtrain",
+                client=FakeClient(_droid_chunk(32, 8)),
+            )
+        assert any("CARTESIAN" in r.message for r in caplog.records)
+
+    def test_joint_pos_does_not_warn(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="strands_robots.policies.cosmos3.policy"):
+            Cosmos3Policy(
+                embodiment="droid",
+                action_space="joint_pos",
+                client=FakeClient(_droid_chunk()),
+            )
+        assert not any("CARTESIAN" in r.message for r in caplog.records)
+
+    def test_embodiment_is_cartesian_flag(self):
+        from strands_robots.policies.cosmos3.embodiments import get_embodiment
+
+        e = get_embodiment("droid")
+        assert e.is_cartesian("midtrain") is True
+        assert e.is_cartesian("joint_pos") is False

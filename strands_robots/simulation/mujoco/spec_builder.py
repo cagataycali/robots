@@ -219,16 +219,21 @@ class SpecBuilder:
         spec.visual.headlight.specular = [0.0, 0.0, 0.0]
 
         # Ground texture + material - MuJoCo's built-in checkerboard.
+        # Dark blue-grey checker matching the Menagerie SO101 scene.xml
+        # groundplane (rgb1=0.2 0.3 0.4 / rgb2=0.1 0.2 0.3). The previous
+        # near-white grid (0.9/0.7) saturated to pure white under the scene
+        # lights below (measured 250/255 in rendered frames), washing out the
+        # floor and killing shadow contrast.
         grid_tex = spec.add_texture(
             name="grid_tex",
             type=mujoco.mjtTexture.mjTEXTURE_2D,
             builtin=mujoco.mjtBuiltin.mjBUILTIN_CHECKER,
             width=512,
             height=512,
-            rgb1=[0.9, 0.9, 0.9],
-            rgb2=[0.7, 0.7, 0.7],
+            rgb1=[0.2, 0.3, 0.4],
+            rgb2=[0.1, 0.2, 0.3],
         )
-        grid_mat = spec.add_material(name="grid_mat", texrepeat=[8, 8], reflectance=0.1)
+        grid_mat = spec.add_material(name="grid_mat", texrepeat=[8, 8], reflectance=0.2)
         grid_mat.textures[mujoco.mjtTextureRole.mjTEXROLE_RGB] = grid_tex.name
 
         # Mesh assets for objects that declare ``shape == "mesh"``.
@@ -236,20 +241,21 @@ class SpecBuilder:
             if obj.shape == "mesh" and obj.mesh_path:
                 spec.add_mesh(name=f"mesh_{obj.name}", file=obj.mesh_path)
 
-        # Lights.
-        spec.worldbody.add_light(
+        # Lights. A single directional light matching the Menagerie SO101
+        # scene.xml (``<light pos="0 0 3.5" dir="0 0 -1" directional="true"/>``).
+        # The previous setup stacked TWO bright point lights (main diffuse 1.0
+        # + fill 0.5) firing straight down, which over-lit the scene, blew out
+        # the floor to white, and flattened shadow contrast. A directional
+        # light is also more physically representative of overhead room
+        # lighting than a point light 3m above the origin.
+        main_light = spec.worldbody.add_light(
             name="main_light",
-            pos=[0.0, 0.0, 3.0],
+            pos=[0.0, 0.0, 3.5],
             dir=[0.0, 0.0, -1.0],
-            diffuse=[1.0, 1.0, 1.0],
-            specular=[0.3, 0.3, 0.3],
+            diffuse=[0.6, 0.6, 0.6],
+            specular=[0.2, 0.2, 0.2],
         )
-        spec.worldbody.add_light(
-            name="fill_light",
-            pos=[1.0, 1.0, 2.0],
-            dir=[-0.5, -0.5, -1.0],
-            diffuse=[0.5, 0.5, 0.5],
-        )
+        main_light.type = mujoco.mjtLightType.mjLIGHT_DIRECTIONAL
 
         # Ground plane.
         if world.ground_plane:

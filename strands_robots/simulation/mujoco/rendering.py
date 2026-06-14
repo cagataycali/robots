@@ -294,9 +294,11 @@ class RenderingMixin:
                     "name-lookup path (action may be dropped)",
                     e,
                 )
-                self._apply_action_by_name(model, data, action_dict, pfx, mj)
+                applied, dropped = self._apply_action_by_name(model, data, action_dict, pfx, mj)
+                self._check_action_drop(robot_name, action_dict, applied, dropped)
         else:
-            self._apply_action_by_name(model, data, action_dict, pfx, mj)
+            applied, dropped = self._apply_action_by_name(model, data, action_dict, pfx, mj)
+            self._check_action_drop(robot_name, action_dict, applied, dropped)
 
         if not controller_handled_stepping:
             for _ in range(max(1, n_substeps)):
@@ -316,6 +318,81 @@ class RenderingMixin:
 
         if hasattr(self, "_viewer_handle") and self._viewer_handle is not None:
             self._viewer_handle.sync()
+
+    def _check_action_drop(
+        self, robot_name: str, action_dict: dict[str, Any], applied: int, dropped: list[str]
+    ) -> None:
+        """Enforce a strict action-drop threshold (the whole-bug-class guard).
+
+        The silent failure mode behind every action-space bug we found
+        (so101 1..6 keys, cosmos3 Cartesian ``midtrain``, wrong-frame poses):
+        the policy emits an action dict, most/all keys resolve to no driveable
+        actuator, they are dropped, ``ctrl`` stays put, and the arm freezes —
+        with only warn-once log lines. This guard turns that into a loud,
+        actionable failure when the *fraction* of dropped keys crosses a
+        threshold, so a mis-wired policy/embodiment is caught at the first step
+        instead of after a wasted multi-minute rollout.
+
+        Behaviour is opt-in-strict via ``STRANDS_SIM_ACTION_DROP_MODE``:
+
+        * ``"warn"`` (default) — log a single WARNING per (robot, key-set) when
+          the drop fraction exceeds ``STRANDS_SIM_ACTION_DROP_THRESHOLD``
+          (default 0.5). Never raises; preserves backwards-compatible behaviour.
+        * ``"raise"`` — raise ``RuntimeError`` with the dropped keys + the
+          scene's available actuator names. Use in CI / eval harnesses to fail
+          fast on a mis-mapped policy.
+        * ``"off"`` — disable the check entirely.
+
+        An empty action dict (``applied == 0 and not dropped``) is a no-op, not
+        a drop — some controllers legitimately advance physics with no ctrl write.
+        """
+        import os
+
+        mode = os.environ.get("STRANDS_SIM_ACTION_DROP_MODE", "warn").strip().lower()
+        if mode == "off":
+            return
+        total = applied + len(dropped)
+        if total == 0 or not dropped:
+            return
+        try:
+            threshold = float(os.environ.get("STRANDS_SIM_ACTION_DROP_THRESHOLD", "0.5"))
+        except ValueError:
+            threshold = 0.5
+        frac = len(dropped) / total
+        if frac < threshold:
+            return
+
+        # Build an actionable message: what dropped + what the scene exposes.
+        avail = self._list_actuator_names() if hasattr(self, "_list_actuator_names") else []
+        msg = (
+            f"[sim] action-space mismatch on robot {robot_name!r}: "
+            f"{len(dropped)}/{total} action keys could not be applied "
+            f"({frac:.0%} >= {threshold:.0%} threshold). Dropped: {sorted(dropped)[:12]}. "
+            f"The arm will not track the policy (it stays frozen for these joints). "
+            f"This usually means the policy's action keys / coordinate space do not "
+            f"match the scene's actuators (e.g. Cartesian EE pose vs joint control, or "
+            f"wrong joint names). Available actuators: {avail[:16]}."
+        )
+        if mode == "raise":
+            raise RuntimeError(msg)
+        # warn mode: de-dupe per (robot, frozenset(dropped))
+        warned = getattr(self, "_warned_action_drop", None)
+        if warned is None:
+            warned = set()
+            self._warned_action_drop = warned
+        dedup = (robot_name, frozenset(dropped))
+        if dedup not in warned:
+            warned.add(dedup)
+            logger.warning(msg)
+
+    def _list_actuator_names(self) -> list[str]:
+        """Best-effort list of actuator names in the compiled model (for diagnostics)."""
+        if self._world is None or self._world._model is None:
+            return []
+        mj = _ensure_mujoco()
+        model = self._world._model
+        names = [mj.mj_id2name(model, mj.mjtObj.mjOBJ_ACTUATOR, i) for i in range(model.nu)]
+        return [n for n in names if n]
 
     def _get_action_controller(self) -> Any:
         """Return an installed action-controller or ``None``.
@@ -346,12 +423,21 @@ class RenderingMixin:
         action_dict: dict[str, Any],
         pfx: str,
         mj: Any,
-    ) -> None:
+    ) -> tuple[int, list[str]]:
         """Default action-application: look up actuator / joint by name.
 
         Extracted from :meth:`_apply_sim_action` so the
         ``action_controller`` fast path can fall back to it on
         controller failure (the same path non-LIBERO callers use).
+
+        Returns:
+            ``(applied_count, dropped_keys)`` so the caller can enforce a
+            strict drop threshold. ``applied_count`` is the number of action
+            keys that resolved to a driveable actuator; ``dropped_keys`` lists
+            every key that matched neither an actuator nor a driven joint.
+            This is the single choke-point that surfaces the whole class of
+            "wrong action space / wrong key names -> arm silently frozen" bugs
+            (so101 1..6, cosmos3 Cartesian midtrain, etc.).
         """
 
         def _lookup(obj_type: Any, name: str) -> int:
@@ -362,10 +448,13 @@ class RenderingMixin:
                     return i
             return int(mj.mj_name2id(model, obj_type, name))
 
+        applied = 0
+        dropped: list[str] = []
         for key, value in action_dict.items():
             act_id = _lookup(mj.mjtObj.mjOBJ_ACTUATOR, key)
             if act_id >= 0:
                 data.ctrl[act_id] = float(value)
+                applied += 1
                 continue
 
             # Fallback: key is a joint name. Find the actuator that drives
@@ -384,11 +473,13 @@ class RenderingMixin:
                 # exactly the failure mode #318 was filed to fix, so surface it
                 # -- once per (prefix, key) to avoid per-step log spam at 50Hz.
                 self._warn_unresolved_action_key(pfx, key, "no actuator or joint")
+                dropped.append(key)
                 continue
 
             ai = self._actuator_for_joint(model, jnt_id, mj)
             if ai < 0:
                 self._warn_unresolved_action_key(pfx, key, "joint has no driving actuator")
+                dropped.append(key)
                 continue
 
             # Scale a logical command into the actuator's ctrlrange when the
@@ -396,6 +487,9 @@ class RenderingMixin:
             # tendon units, not a finger-joint position). Direct JOINT
             # actuators keep the raw value (positions/torques in joint units).
             data.ctrl[ai] = self._scale_ctrl_for_actuator(model, ai, float(value), mj)
+            applied += 1
+
+        return applied, dropped
 
     def _warn_unresolved_action_key(self, pfx: str, key: str, reason: str) -> None:
         """Warn once per (prefix, key) that an action key could not be applied.
