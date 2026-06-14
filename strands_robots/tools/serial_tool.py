@@ -71,13 +71,6 @@ def serial_tool(
         packet.append(checksum)
         return bytes(packet)
 
-    def send_serial_data(ser: serial.Serial, data_to_send: str | bytes) -> None:
-        """Send data over serial connection."""
-        if isinstance(data_to_send, str):
-            ser.write(data_to_send.encode())
-        else:
-            ser.write(data_to_send)
-
     try:
         if action == "list_ports":
             ports = list_serial_ports()
@@ -85,8 +78,8 @@ def serial_tool(
                 "status": "success",
                 "content": [
                     {
-                        "text": f"📡 Found {len(ports)} serial ports:\n"
-                        + "\n".join([f"• {p['device']} - {p['description']}" for p in ports])
+                        "text": f"Found {len(ports)} serial ports:\n"
+                        + "\n".join([f"- {p['device']} - {p['description']}" for p in ports])
                     }
                 ],
                 "ports": ports,
@@ -124,7 +117,7 @@ def serial_tool(
 
             return {
                 "status": "success",
-                "content": [{"text": f"📥 Read {len(read_data)} bytes:\nHex: {hex_str}\nASCII: {ascii_str}"}],
+                "content": [{"text": f"Read {len(read_data)} bytes:\nHex: {hex_str}\nASCII: {ascii_str}"}],
                 "raw_data": read_data.hex(),
                 "length": len(read_data),
             }
@@ -152,9 +145,7 @@ def serial_tool(
 
             return {
                 "status": "success",
-                "content": [
-                    {"text": f"📤 {sent_text}\n📥 Read {len(read_data)} bytes:\nHex: {hex_str}\nASCII: {ascii_str}"}
-                ],
+                "content": [{"text": f"{sent_text}\nRead {len(read_data)} bytes:\nHex: {hex_str}\nASCII: {ascii_str}"}],
             }
 
         elif action == "feetech_position":
@@ -171,7 +162,7 @@ def serial_tool(
             return {
                 "status": "success",
                 "content": [
-                    {"text": f"🤖 Feetech Motor {motor_id} → Position {position} ({position / 4095 * 360:.1f}°)"}
+                    {"text": f"Feetech Motor {motor_id} -> Position {position} ({position / 4095 * 360:.1f} deg)"}
                 ],
             }
 
@@ -186,7 +177,7 @@ def serial_tool(
             ser.write(packet)
             ser.close()
 
-            return {"status": "success", "content": [{"text": f"🤖 Feetech Motor {motor_id} → Velocity {velocity}"}]}
+            return {"status": "success", "content": [{"text": f"Feetech Motor {motor_id} -> Velocity {velocity}"}]}
 
         elif action == "feetech_ping":
             if motor_id is None:
@@ -204,10 +195,10 @@ def serial_tool(
             if len(response) >= 6:
                 return {
                     "status": "success",
-                    "content": [{"text": f"🟢 Feetech Motor {motor_id} responded: {response.hex().upper()}"}],
+                    "content": [{"text": f"Feetech Motor {motor_id} responded: {response.hex().upper()}"}],
                 }
             else:
-                return {"status": "error", "content": [{"text": f"🔴 Feetech Motor {motor_id} no response"}]}
+                return {"status": "error", "content": [{"text": f"Feetech Motor {motor_id} no response"}]}
 
         elif action == "monitor":
             # Continuous monitoring (limited time for safety)
@@ -230,7 +221,7 @@ def serial_tool(
 
             return {
                 "status": "success",
-                "content": [{"text": f"📊 Monitored {len(monitor_data)} data chunks in 5 seconds"}],
+                "content": [{"text": f"Monitored {len(monitor_data)} data chunks in 5 seconds"}],
                 "monitor_data": monitor_data,
             }
 

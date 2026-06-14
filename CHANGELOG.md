@@ -3,6 +3,19 @@
 All notable behavioural changes to `strands-robots` are logged here. Follows
 [Keep a Changelog](https://keepachangelog.com/) conventions.
 
+## Unreleased - serial_tool ASCII output
+
+### Fixed: emojis in ``serial_tool`` result strings
+
+The ``serial_tool`` agent tool emitted emojis in its result ``text`` fields
+(port listings, read/send summaries, Feetech servo responses, monitor output),
+violating the project's "no emojis in user-facing strings" rule -- agents read
+these strings programmatically, so the glyphs are pure tokenizer noise. All
+result strings are now plain ASCII (``->`` instead of the arrow glyph, ``deg``
+instead of the degree sign). Also removed a dead unused inner helper
+(``send_serial_data``). Behavior tests cover every action branch and pin the
+ASCII-only contract.
+
 ## Unreleased - #385 (Mesh + IoT safety/control-surface hardening)
 
 ### Added: mesh control-surface hardening
