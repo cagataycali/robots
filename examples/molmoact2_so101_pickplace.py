@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""SO101 pick-and-place driven by MolmoAct2 — strands_robots simplified API.
+"""SO101 pick-and-place driven by MolmoAct2 - strands_robots simplified API.
 
 Demonstrates how strands_robots wraps the entire robot + policy lifecycle.
 The user never imports lerobot directly; all complexity is behind two calls:
 
-  1. ``Robot("so101", mode="real", ...)`` — creates a connected hardware robot
-  2. ``create_policy(REPO, embodiment="so_real", ...)`` — loads MolmoAct2 with
+  1. ``Robot("so101", mode="real", ...)`` - creates a connected hardware robot
+  2. ``create_policy(REPO, embodiment="so_real", ...)`` - loads MolmoAct2 with
      correct motor-key mapping, camera renames, normalization, and processors.
 
 Hardware requirements:

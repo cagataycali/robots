@@ -91,7 +91,7 @@ class TestSimulationIsCallable:
         try:
             result = sim(action="")
             assert result["status"] == "error"
-            # No raise — structured error per AgentTool contract.
+            # No raise - structured error per AgentTool contract.
             assert "action" in result["content"][0]["text"].lower()
         finally:
             sim.destroy()
@@ -127,7 +127,7 @@ class TestReadmeParamAliases:
         try:
             # README used camera_names=; canonical is cameras=. The alias must
             # not produce an "unknown parameter" error. (We don't assert the
-            # recording fully succeeds — just that the alias is routed.)
+            # recording fully succeeds - just that the alias is routed.)
             result = sim(action="start_cameras_recording", camera_names=["default"], output_dir=str(tmp_path))
             text = result["content"][0]["text"].lower()
             assert "unknown parameter" not in text, result
@@ -167,7 +167,7 @@ class TestCalibrationAutoMigration:
 
         assert new.is_file(), "legacy cal file should have been copied to new path"
         assert new.read_text() == '{"calib": true}'
-        # Copy, not move — old path still present for old lerobot installs.
+        # Copy, not move - old path still present for old lerobot installs.
         assert old.is_file()
 
     def test_noop_when_new_path_exists(self, tmp_path):

@@ -1,5 +1,5 @@
 ---
-description: Two Robot() instances coordinating over the Zenoh mesh — peer discovery, RPC, emergency stop, teleop.
+description: Two Robot() instances coordinating over the Zenoh mesh - peer discovery, RPC, emergency stop, teleop.
 ---
 
 # Multi-robot mesh
@@ -31,7 +31,7 @@ result = sim_a.mesh.send(target_peer_id, {"action": "status"}, timeout=5.0)
 # Fan-out → list of responses collected within timeout
 results = sim_a.mesh.broadcast({"action": "status"}, timeout=2.0)
 
-# Safety primitive — writes a tamper-evident audit log
+# Safety primitive - writes a tamper-evident audit log
 sim_a.mesh.emergency_stop()   # STRANDS_MESH_AUDIT_DIR overrides log location
 ```
 
@@ -88,10 +88,10 @@ follower.stop_teleop("leader")
 | `STRANDS_MESH=false` | process-wide kill switch |
 | `Robot("so100", mesh=False)` | per-robot opt-out |
 
-Mesh failures are non-fatal — `robot.mesh` becomes `None`; the sim/hardware instance still works.
+Mesh failures are non-fatal - `robot.mesh` becomes `None`; the sim/hardware instance still works.
 
 ## See also
 
-- [AI agents](agents.md) — drive the mesh with natural language.
-- [Architecture](architecture.md) — where the mesh sits in the module map.
-- [Mesh source](https://github.com/strands-labs/robots/tree/main/strands_robots/mesh) — `core.py`, `session.py`, `audit.py`, `sensors.py`, `input.py`.
+- [AI agents](agents.md) - drive the mesh with natural language.
+- [Architecture](architecture.md) - where the mesh sits in the module map.
+- [Mesh source](https://github.com/strands-labs/robots/tree/main/strands_robots/mesh) - `core.py`, `session.py`, `audit.py`, `sensors.py`, `input.py`.

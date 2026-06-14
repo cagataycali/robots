@@ -1,4 +1,4 @@
-/* Strands Robots — Minimal with glassmorphic dark mode */
+/* Strands Robots - Minimal with glassmorphic dark mode */
 
 /* ---- Light mode ---- */
 [data-md-color-scheme="default"] {
@@ -25,7 +25,7 @@
     --code-fg: #444;
 }
 
-/* ---- Dark mode — true black + glass ---- */
+/* ---- Dark mode - true black + glass ---- */
 [data-md-color-scheme="slate"] {
     --bg: #0a0a0a;
     --bg-surface: rgba(255, 255, 255, 0.04);
@@ -115,7 +115,7 @@ h1 {
     text-decoration-color: var(--link-underline-hover);
 }
 
-/* ---- Header — glass ---- */
+/* ---- Header - glass ---- */
 .md-header {
     background: var(--header-bg) !important;
     backdrop-filter: var(--glass-blur);
@@ -133,7 +133,7 @@ h1 {
     color: var(--fg) !important;
 }
 
-/* ---- Sidebar — glass ---- */
+/* ---- Sidebar - glass ---- */
 .md-sidebar {
     background: var(--sidebar-bg) !important;
     backdrop-filter: var(--glass-blur);
@@ -154,7 +154,7 @@ h1 {
     font-weight: 600;
 }
 
-/* ---- Code — glass card ---- */
+/* ---- Code - glass card ---- */
 .md-typeset pre {
     background: var(--glass-bg) !important;
     backdrop-filter: var(--glass-blur);
@@ -170,7 +170,7 @@ h1 {
     font-size: 0.85em;
 }
 
-/* ---- Admonitions — glass card ---- */
+/* ---- Admonitions - glass card ---- */
 .md-typeset .admonition,
 .md-typeset details {
     background: var(--glass-bg) !important;
@@ -181,7 +181,7 @@ h1 {
     box-shadow: none !important;
 }
 
-/* ---- Tables — glass ---- */
+/* ---- Tables - glass ---- */
 .md-typeset table:not([class]) {
     background: var(--glass-bg);
     border: 1px solid var(--glass-border);
@@ -207,7 +207,7 @@ h1 {
     color: var(--fg-muted) !important;
 }
 
-/* ---- Buttons — glass ---- */
+/* ---- Buttons - glass ---- */
 .md-button {
     background: var(--glass-bg) !important;
     backdrop-filter: var(--glass-blur);
@@ -223,7 +223,7 @@ h1 {
     background: var(--bg-elevated) !important;
 }
 
-/* ---- Search — glass ---- */
+/* ---- Search - glass ---- */
 .md-search__input {
     background: var(--glass-bg) !important;
     backdrop-filter: var(--glass-blur);
@@ -255,7 +255,7 @@ h1 {
     color: var(--fg);
 }
 
-/* ---- Content tabs — glass ---- */
+/* ---- Content tabs - glass ---- */
 .md-typeset .tabbed-content {
     background: var(--glass-bg);
     border: 1px solid var(--glass-border);
@@ -388,7 +388,7 @@ h1 {
     fill: var(--fg) !important;
 }
 
-/* ---- Mobile nav drawer — dark mode fix ---- */
+/* ---- Mobile nav drawer - dark mode fix ---- */
 [data-md-color-scheme="slate"] .md-nav__title {
     color: var(--fg-heading) !important;
     background: var(--bg) !important;

@@ -1,5 +1,5 @@
 ---
-description: Where training lives — upstream LeRobot, Isaac-GR00T, Cosmos. strands-robots ships data + inference.
+description: Where training lives - upstream LeRobot, Isaac-GR00T, Cosmos. strands-robots ships data + inference.
 ---
 
 # Training
@@ -8,9 +8,9 @@ description: Where training lives — upstream LeRobot, Isaac-GR00T, Cosmos. str
 
 | Want to train | Use |
 |---------------|-----|
-| ACT, Pi0, SmolVLA, Diffusion Policy | `lerobot` — `python -m lerobot.scripts.train` |
+| ACT, Pi0, SmolVLA, Diffusion Policy | `lerobot` - `python -m lerobot.scripts.train` |
 | GR00T fine-tune | `Isaac-GR00T` (NVIDIA) |
-| Cosmos | NVIDIA Cosmos Framework — see [Cosmos3Policy](../policies/cosmos3.md) |
+| Cosmos | NVIDIA Cosmos Framework - see [Cosmos3Policy](../policies/cosmos3.md) |
 | Custom architecture | Read LeRobot v3 dataset with `pyarrow` / `datasets` |
 
 ## Round-trip
@@ -39,13 +39,13 @@ policy = create_policy("lerobot_local", pretrained_name_or_path="path/to/checkpo
 sim.run_policy(robot_name="so100", instruction="pick up the cube",
                policy_object=policy, duration=15.0)
 
-# 4. Deploy (HardwareRobot has no run_policy — use start_task)
+# 4. Deploy (HardwareRobot has no run_policy - use start_task)
 real = Robot("so100", mode="real", cameras={...})
 real.start_task(instruction="pick up the cube", policy_port=5555)
 ```
 
 ## See also
 
-- [Recording](../recording.md) — produce the dataset.
-- [LerobotLocalPolicy](../policies/lerobot-local.md) — inference with a trained checkpoint.
-- [Cosmos3Policy](../policies/cosmos3.md) — NVIDIA Cosmos 3 VLA.
+- [Recording](../recording.md) - produce the dataset.
+- [LerobotLocalPolicy](../policies/lerobot-local.md) - inference with a trained checkpoint.
+- [Cosmos3Policy](../policies/cosmos3.md) - NVIDIA Cosmos 3 VLA.

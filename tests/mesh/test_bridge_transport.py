@@ -1,6 +1,6 @@
 """Unit tests for BridgeTransport (Zenoh + IoT fan-out).
 
-No real network — exercises the topic filter logic, suffix matching,
+No real network - exercises the topic filter logic, suffix matching,
 fan-out behaviour, subscription lifecycle, and graceful degradation when
 either side fails.
 """
@@ -162,7 +162,7 @@ class TestEnvPrefixFilter:
         assert _resolve_bridge_prefix_filter() == frozenset({"response"})
 
 
-# _should_bridge — the real fan-out gate
+# _should_bridge - the real fan-out gate
 
 
 class TestShouldBridge:
@@ -186,7 +186,7 @@ class TestShouldBridge:
             ("strands/peer1/camera/wrist", False),
             ("strands/peer1/input/leader", False),
             ("strands/peer1/hand/right/state", False),
-            # Outside the strands/ namespace — never bridges
+            # Outside the strands/ namespace - never bridges
             ("not-strands/foo", False),
         ],
     )
@@ -194,7 +194,7 @@ class TestShouldBridge:
         assert _should_bridge(topic, DEFAULT_BRIDGE_SUFFIXES) is allowed
 
 
-# BridgeTransport behaviour — both transports mocked
+# BridgeTransport behaviour - both transports mocked
 
 
 @pytest.fixture
@@ -252,7 +252,7 @@ class TestBridgeConnectAndClose:
 
 class TestBridgeFanOutPut:
     def test_state_publishes_only_to_zenoh(self, fake_transports):
-        """Default filter excludes ``state`` — must not bridge to MQTT."""
+        """Default filter excludes ``state`` - must not bridge to MQTT."""
         z, i = fake_transports
         b = BridgeTransport(zenoh=z, iot=i)
         b.connect()
@@ -365,7 +365,7 @@ class TestSubHandleIdempotence:
         b.undeclare.assert_called_once()
 
     def test_partial_handles(self):
-        """One side missing — only the present one is undeclared."""
+        """One side missing - only the present one is undeclared."""
         a = MagicMock()
         h = _BridgeSubHandle(a, None)
         h.undeclare()

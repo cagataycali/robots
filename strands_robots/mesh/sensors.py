@@ -4,15 +4,15 @@ These loops are started conditionally by Mesh.start() and only publish when
 the robot exposes the relevant attribute. Zero-cost when unused.
 
 Topics published:
-- strands/{peer_id}/pose — SE(3) from SLAM/odometry/VIO
-- strands/{peer_id}/health — Battery, CPU, memory, disk, temps
-- strands/{peer_id}/imu — Roll/pitch/yaw, gyro, accel
-- strands/{peer_id}/odom — Dead-reckoning odometry
-- strands/{peer_id}/lidar/summary — Point cloud stats
-- strands/{peer_id}/lidar/state — Sensor state
-- strands/{peer_id}/hand/{name}/state — End-effector joints/force
-- strands/{peer_id}/map/info — Map metadata
-- strands/{peer_id}/safety/event — On-demand safety events
+- strands/{peer_id}/pose - SE(3) from SLAM/odometry/VIO
+- strands/{peer_id}/health - Battery, CPU, memory, disk, temps
+- strands/{peer_id}/imu - Roll/pitch/yaw, gyro, accel
+- strands/{peer_id}/odom - Dead-reckoning odometry
+- strands/{peer_id}/lidar/summary - Point cloud stats
+- strands/{peer_id}/lidar/state - Sensor state
+- strands/{peer_id}/hand/{name}/state - End-effector joints/force
+- strands/{peer_id}/map/info - Map metadata
+- strands/{peer_id}/safety/event - On-demand safety events
 """
 
 from __future__ import annotations

@@ -1,5 +1,5 @@
 ---
-description: Compose non-trivial scenes — multiple robots, tables, obstacles, custom MJCF.
+description: Compose non-trivial scenes - multiple robots, tables, obstacles, custom MJCF.
 ---
 
 # World building
@@ -42,7 +42,7 @@ for i in range(5):
 
 ## Cameras
 
-Free cameras look from `position` toward `target` (`fov=60.0`, `width=640`, `height=480`). Robot-URDF cameras (wrist, etc.) are auto-discovered on `add_robot` — no `add_camera` needed.
+Free cameras look from `position` toward `target` (`fov=60.0`, `width=640`, `height=480`). Robot-URDF cameras (wrist, etc.) are auto-discovered on `add_robot` - no `add_camera` needed.
 
 ## Multi-robot policies
 

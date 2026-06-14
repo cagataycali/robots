@@ -1,4 +1,4 @@
-"""Bridge transport — Zenoh LAN + AWS IoT WAN behind one MeshTransport.
+"""Bridge transport - Zenoh LAN + AWS IoT WAN behind one MeshTransport.
 
 This is the **production** transport for fleets that have both LAN peers
 (robot + sim + leader arm in the same room) AND cloud connectivity
@@ -23,7 +23,7 @@ subscribes ``h`` on both Zenoh and MQTT. Inbound deduplication happens at
 the :class:`Mesh` layer (existing :meth:`_on_presence` / :meth:`_on_cmd` /
 :meth:`_on_response` already handle duplicate / self-loop dropouts via
 ``sender_id`` and ``turn_id`` correlation), so we don't try to be clever
-here — the fact that a presence might arrive twice is harmless and the
+here - the fact that a presence might arrive twice is harmless and the
 existing peer registry deduplicates by ``peer_id``.
 
 Failure isolation
@@ -71,26 +71,26 @@ def _get_iot_transport_class() -> type[IotMqttTransport]:
     return _IT
 
 
-# Default bridge filter — derived from cost / latency analysis.
+# Default bridge filter - derived from cost / latency analysis.
 #
 # Topics in this set bridge from Zenoh to MQTT. Everything else stays LAN.
 # Suffixes are matched against the part of the topic AFTER ``strands/``.
 #
 # Why this default:
-# - presence  — rare, retained on cloud, late operators need it
-# - health  — rare, retained, threshold alerts via Rules
-# - safety/event  — must hit cloud audit
-# - safety/estop  — defence-in-depth E-stop
-# - safety/resume  — paired with safety/estop; cloud audit needs the
+# - presence  - rare, retained on cloud, late operators need it
+# - health  - rare, retained, threshold alerts via Rules
+# - safety/event  - must hit cloud audit
+# - safety/estop  - defence-in-depth E-stop
+# - safety/resume  - paired with safety/estop; cloud audit needs the
 #   resume edge to close the safety incident timeline
-# - cmd  — operator-to-robot RPC (cloud → robot direction)
-# - response  — robot-to-operator RPC reply
-# - broadcast  — fan-out RPC
+# - cmd  - operator-to-robot RPC (cloud → robot direction)
+# - response  - robot-to-operator RPC reply
+# - broadcast  - fan-out RPC
 #
 # Explicitly NOT bridged by default (opt in via STRANDS_MESH_BRIDGE_TOPICS):
-# - state, pose, imu, odom, lidar — high volume, route via Basic Ingest if
+# - state, pose, imu, odom, lidar - high volume, route via Basic Ingest if
 #  cloud needs them. See AWS_IOT_MESH_INTEGRATION.md §7.2 for the cost math.
-# - camera, input, hand — LAN-only by definition (size / latency).
+# - camera, input, hand - LAN-only by definition (size / latency).
 DEFAULT_BRIDGE_SUFFIXES: frozenset[str] = frozenset(
     {
         "presence",
@@ -527,7 +527,7 @@ class _BridgeSubHandle:
 class BridgeTransport:
     """:class:`MeshTransport` that fans out to both Zenoh (LAN) and AWS IoT (WAN).
 
-    Construct with no arguments — the underlying :class:`ZenohTransport` and
+    Construct with no arguments - the underlying :class:`ZenohTransport` and
     :class:`IotMqttTransport` read their config from env vars exactly as
     they would on their own.
 
@@ -572,14 +572,14 @@ class BridgeTransport:
 
             if self._zenoh_alive and self._iot_alive:
                 logger.info(
-                    "[bridge] both transports up — bridging %d topic suffix(es): %s",
+                    "[bridge] both transports up - bridging %d topic suffix(es): %s",
                     len(self._bridge_suffixes),
                     sorted(self._bridge_suffixes),
                 )
             elif self._zenoh_alive:
-                logger.info("[bridge] only Zenoh up — running LAN-only")
+                logger.info("[bridge] only Zenoh up - running LAN-only")
             else:
-                logger.info("[bridge] only IoT up — running cloud-only")
+                logger.info("[bridge] only IoT up - running cloud-only")
             return True
 
     def close(self) -> None:

@@ -1,6 +1,6 @@
 """Unit tests for the MeshTransport abstraction layer.
 
-These tests do NOT touch real AWS or Zenoh — they verify protocol shape,
+These tests do NOT touch real AWS or Zenoh - they verify protocol shape,
 wildcard translation, QoS lookup, topic-filter matching, and ZenohTransport
 delegation. The real AWS-backed integration test lives in
 ``tests_integ/test_iot_transport.py``.
@@ -190,7 +190,7 @@ class TestMqttMatcher:
         assert _mqtt_topic_matches(filter_, topic) is expected
 
 
-# IotMqttTransport — no live broker
+# IotMqttTransport - no live broker
 
 
 class TestIotMqttTransportConfig:
@@ -241,7 +241,7 @@ class TestIotMqttTransportConfig:
         assert t.is_alive() is False
 
 
-# ZenohTransport — delegating to mesh.session
+# ZenohTransport - delegating to mesh.session
 
 
 class TestZenohTransportDelegation:
@@ -269,7 +269,7 @@ class TestZenohTransportDelegation:
                 sess_mod._SESSION = None
                 sess_mod._SESSION_REFS = 0
         t = ZenohTransport()
-        # Should be safe — delegates to session.put which is a no-op.
+        # Should be safe - delegates to session.put which is a no-op.
         t.put("strands/test/state", {"k": 1})
 
     def test_is_alive_false_when_no_session(self):
@@ -290,7 +290,7 @@ class TestZenohTransportDelegation:
         """When session is pre-seeded, connect() takes a ref; close() releases it."""
         from strands_robots.mesh import session as sess_mod
 
-        # Pre-seed: simulate "session already open with 0 refs" — this is
+        # Pre-seed: simulate "session already open with 0 refs" - this is
         # the state right after a get_session→release_session cycle would
         # leave it if it didn't auto-close. We construct it manually here
         # because we don't want this test to require zenoh as a hard dep.
@@ -365,7 +365,7 @@ class TestIotMqttTransportInternals:
         from strands_robots.mesh.transport.iot_transport import IotMqttTransport
 
         t = IotMqttTransport(thing_name="test-thing", endpoint="x.iot")
-        # Pretend connect() succeeded — directly install a fake client + flag.
+        # Pretend connect() succeeded - directly install a fake client + flag.
         t._client = MagicMock()
         t._connected.set()
         return t
@@ -410,7 +410,7 @@ class TestIotMqttTransportInternals:
         from strands_robots.mesh.transport.iot_transport import IotMqttTransport
 
         t = IotMqttTransport(thing_name="x", endpoint="y")
-        # _client is None, _connected not set — must early-return without raising
+        # _client is None, _connected not set - must early-return without raising
         t.put("strands/p/state", {"k": 1})
         # Also when only one of the two is missing
         t._client = MagicMock()
@@ -451,7 +451,7 @@ class TestIotMqttTransportInternals:
     def test_put_swallows_publish_errors(self):
         t = self._make_transport_with_fake_client()
         t._client.publish.side_effect = RuntimeError("network")
-        # Must not raise — preserves Mesh.put() fire-and-forget contract
+        # Must not raise - preserves Mesh.put() fire-and-forget contract
         t.put("strands/p/state", {"k": 1})
 
     def test_unsubscribe_removes_handler_then_unsubscribes_at_broker(self):
@@ -465,12 +465,12 @@ class TestIotMqttTransportInternals:
 
         t._handlers["strands/+/cmd"] = [h1, h2]
 
-        # Removing one handler — broker subscription stays
+        # Removing one handler - broker subscription stays
         t._unsubscribe("strands/+/cmd")
         assert len(t._handlers["strands/+/cmd"]) == 1
         t._client.unsubscribe.assert_not_called()
 
-        # Removing the last handler — broker unsubscribe is sent
+        # Removing the last handler - broker unsubscribe is sent
         t._unsubscribe("strands/+/cmd")
         assert "strands/+/cmd" not in t._handlers
         t._client.unsubscribe.assert_called_once()
@@ -494,7 +494,7 @@ class TestIotMqttTransportInternals:
         t._handlers["strands/+/state"] = [lambda s: seen.append(("a", s.key_expr))]
         t._handlers["strands/+/presence"] = [lambda s: seen.append(("b", s.key_expr))]
 
-        # Build a fake publish_packet — keep awscrt's actual shape (.topic,.payload bytes)
+        # Build a fake publish_packet - keep awscrt's actual shape (.topic,.payload bytes)
         data = MagicMock()
         data.publish_packet.topic = "strands/peer1/state"
         data.publish_packet.payload = b'{"k":1}'
@@ -540,7 +540,7 @@ class TestIotMqttTransportInternals:
         t._handlers["strands/+/cmd"] = [lambda s: None]
         h = _MqttSubHandle(t, "strands/+/cmd")
         h.undeclare()
-        # Second undeclare — guarded by _undeclared flag
+        # Second undeclare - guarded by _undeclared flag
         h.undeclare()
         # Broker unsubscribe should be called exactly once
         assert t._client.unsubscribe.call_count == 1

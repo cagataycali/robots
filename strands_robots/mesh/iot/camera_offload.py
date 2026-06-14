@@ -16,7 +16,7 @@ JPEG bytes in MQTT we:
 1. Upload the frame to S3 at ``s3://{bucket}/{peer_id}/{cam}/{ts_ns}.jpg``.
 2. Publish a tiny JSON ref on ``strands/{peer_id}/camera/{cam}/ref`` with
    ``{peer_id, cam, t, shape, encoding, s3_uri, presigned_url, expires_at}``.
-3. Subscribers GET the frame from the presigned URL directly — no MQTT
+3. Subscribers GET the frame from the presigned URL directly - no MQTT
    payload size pressure.
 
 The Zenoh path (LAN multicast) keeps publishing inline JPEG frames on
@@ -79,7 +79,7 @@ class CameraOffloader:
     """Pushes camera frames to S3 and publishes a thin MQTT reference.
 
     One instance per Mesh. Holds a lazily-initialised boto3 S3 client.
-    Failures are logged at DEBUG and silently dropped — camera offload is
+    Failures are logged at DEBUG and silently dropped - camera offload is
     enrichment, not a control-loop dependency.
     """
 
@@ -147,7 +147,7 @@ class CameraOffloader:
         try:
             import boto3
         except ImportError:
-            logger.debug("[camera_offload] boto3 missing — offload disabled")
+            logger.debug("[camera_offload] boto3 missing - offload disabled")
             return None
         self._s3 = boto3.client("s3", region_name=self.region)
         return self._s3
@@ -222,21 +222,21 @@ def enable_for_mesh(mesh: Any, offloader: CameraOffloader | None = None) -> Came
     backend = current_backend()
     if backend not in ("iot", "bridge"):
         logger.debug(
-            "[camera_offload] backend is %r — leaving _publish_cameras_once unchanged",
+            "[camera_offload] backend is %r - leaving _publish_cameras_once unchanged",
             backend,
         )
         return None
 
     off = offloader or CameraOffloader()
     if not off.enabled:
-        logger.debug("[camera_offload] STRANDS_MESH_CAMERA_S3_BUCKET unset — offload off")
+        logger.debug("[camera_offload] STRANDS_MESH_CAMERA_S3_BUCKET unset - offload off")
         return None
 
     original = mesh._publish_cameras_once
 
     def _publish_cameras_once_with_offload() -> None:
         # Run original (publishes inline-base64 to Zenoh; on iot-only it's a no-op
-        # because the IoT transport drops camera/* topics by default — we still
+        # because the IoT transport drops camera/* topics by default - we still
         # call it to preserve any user customisation that might have been added).
         try:
             original()

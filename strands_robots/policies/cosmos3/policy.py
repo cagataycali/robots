@@ -1,14 +1,14 @@
-"""Cosmos 3 policy — NVIDIA omnimodal VLA policy via Cosmos Framework.
+"""Cosmos 3 policy - NVIDIA omnimodal VLA policy via Cosmos Framework.
 
 Implements :class:`~strands_robots.policies.base.Policy` for the Cosmos 3
 **Generator action surface** (``nvidia/Cosmos3-Nano-Policy-DROID`` and friends).
 
 The Cosmos 3 ``policy`` action mode takes ``image + instruction`` and returns an
-``[T, D]`` action chunk + rollout video — a 1:1 match for the robots policy
+``[T, D]`` action chunk + rollout video - a 1:1 match for the robots policy
 contract. We talk to the Cosmos Framework RoboLab WebSocket policy server
 (``cosmos_framework.scripts.action_policy_server_robolab``) over a
 self-contained msgpack+NumPy WebSocket protocol (no ``openpi-client``
-dependency — see ``client.py``), mirroring
+dependency - see ``client.py``), mirroring
 :class:`~strands_robots.policies.groot.Gr00tPolicy` service mode.
 
 Observation flow
@@ -35,8 +35,8 @@ Action flow
 -----------
 The server returns ``{"action": np.ndarray(T, D)}``. Each of the ``D`` columns
 is named by the embodiment's ``action_layout`` (e.g. DROID joint_pos =
-``[joint_0..joint_6, gripper]``). We emit ``list[dict]`` — one dict per
-timestep — optionally remapping column names to robot actuator names via
+``[joint_0..joint_6, gripper]``). We emit ``list[dict]`` - one dict per
+timestep - optionally remapping column names to robot actuator names via
 ``action_mapping``.
 
 Example::
@@ -104,7 +104,7 @@ class Cosmos3Policy(Policy):
             ``"bridge"``). Selects domain, action layout, and defaults.
         host: Policy-server hostname.
         port: Policy-server WebSocket port.
-        action_space: ``"joint_pos"`` or ``"midtrain"`` — must match how the
+        action_space: ``"joint_pos"`` or ``"midtrain"`` - must match how the
             server was launched (DROID default = ``joint_pos``).
         observation_mapping: ``{robot_obs_key: "observation/<server_key>"}``.
             Maps robot camera + state keys onto the server's OpenPI keys.
@@ -113,7 +113,7 @@ class Cosmos3Policy(Policy):
             the embodiment's action-layout columns to robot actuator names.
             Keys are validated against the active layout at construction.
             When ``None``, columns keep their layout names.
-        robot: Convenience — name of a known robot (``"panda"``/``"franka"``)
+        robot: Convenience - name of a known robot (``"panda"``/``"franka"``)
             whose built-in DROID-layout action mapping is applied when
             ``action_mapping`` is not given. Explicit ``action_mapping`` wins.
         prompt: Default instruction used when ``get_actions`` is called with an
@@ -123,7 +123,7 @@ class Cosmos3Policy(Policy):
 
     Notes:
         * This policy needs camera frames **and** robot state in the
-          observation — ``requires_images`` is ``True``.
+          observation - ``requires_images`` is ``True``.
         * Latency is chunked (a diffusion policy), not 500 Hz servo. One
           inference returns a chunk of ~``action_chunk_size`` steps.
     """
@@ -212,7 +212,7 @@ class Cosmos3Policy(Policy):
 
     @property
     def requires_images(self) -> bool:
-        """Cosmos 3 conditions on camera frames — always needs images."""
+        """Cosmos 3 conditions on camera frames - always needs images."""
         return True
 
     def set_robot_state_keys(self, robot_state_keys: list[str]) -> None:
@@ -262,7 +262,7 @@ class Cosmos3Policy(Policy):
             instruction: Natural-language task instruction.
 
         Returns:
-            ``list[dict]`` — one action dict per predicted timestep.
+            ``list[dict]`` - one action dict per predicted timestep.
         """
         prompt = instruction or self.default_prompt
         obs = self._build_server_observation(observation_dict, prompt)
@@ -345,7 +345,7 @@ class Cosmos3Policy(Policy):
             if len(non_gripper) >= 8:
                 gripper = float(np.asarray(robot_obs[non_gripper[7]]).reshape(-1)[0])
 
-        # joint_pos requires BOTH joints(7) and gripper — the server applies
+        # joint_pos requires BOTH joints(7) and gripper - the server applies
         # `1 - gripper` and conditions on it. Never fabricate a silent default
         # (AGENTS.md key convention #6); surface a clear, actionable error.
         if "observation/joint_position" not in obs:

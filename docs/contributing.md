@@ -1,5 +1,5 @@
 ---
-description: How to land a PR — hatch envs, ruff/mypy, lazy-import discipline, JSON registries, test layout.
+description: How to land a PR - hatch envs, ruff/mypy, lazy-import discipline, JSON registries, test layout.
 ---
 
 # Contributing
@@ -27,13 +27,13 @@ CI runs `hatch run test -x --strict-markers`.
 
 ## Rules
 
-**Lazy imports** — heavy modules (`mujoco`, `lerobot`, `torch`, `zenoh`) must not load at top-level. Use PEP 562 `__getattr__`. Enforced by `tests/test_init.py`.
+**Lazy imports** - heavy modules (`mujoco`, `lerobot`, `torch`, `zenoh`) must not load at top-level. Use PEP 562 `__getattr__`. Enforced by `tests/test_init.py`.
 
-**Tests mirror source** — `tests/policies/test_groot.py` mirrors `strands_robots/policies/groot/`. Keep 1:1.
+**Tests mirror source** - `tests/policies/test_groot.py` mirrors `strands_robots/policies/groot/`. Keep 1:1.
 
-**No host paths** — `/Users/...` is CI-blocked. Use `tmp_path`, `~/.cache`, or env vars.
+**No host paths** - `/Users/...` is CI-blocked. Use `tmp_path`, `~/.cache`, or env vars.
 
-**JSON registries** — new robots and policies are JSON edits + tests. No hardcoded lookups in `.py` files.
+**JSON registries** - new robots and policies are JSON edits + tests. No hardcoded lookups in `.py` files.
 
 **Tool errors return, don't raise:**
 ```python
@@ -57,5 +57,5 @@ Releases: `hatch version` + GitHub release. Semver: minor for additive, patch fo
 
 ## See also
 
-- [Architecture](architecture.md) — module conventions.
-- [API reference](api-reference.md) — public symbols.
+- [Architecture](architecture.md) - module conventions.
+- [API reference](api-reference.md) - public symbols.

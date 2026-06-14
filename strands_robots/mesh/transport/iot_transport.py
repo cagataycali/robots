@@ -1,13 +1,13 @@
-"""AWS IoT Core MQTT5 transport — :class:`MeshTransport` over mTLS.
+"""AWS IoT Core MQTT5 transport - :class:`MeshTransport` over mTLS.
 
 Wraps an ``awscrt.mqtt5`` client behind the :class:`MeshTransport` Protocol so
 :class:`~strands_robots.mesh.core.Mesh` can publish presence, state, RPCs, and
 safety events to AWS IoT Core with X.509 mutual TLS.
 
-The strands-robots topic scheme is already MQTT-safe — every Zenoh key like
+The strands-robots topic scheme is already MQTT-safe - every Zenoh key like
 ``strands/{peer}/state`` translates verbatim. The only translations that
 happen here are wildcard mapping (``*`` → ``+``, ``**`` → ``#``) and the
-delivery shape — MQTT5's flat ``(topic_str, bytes)`` callback is wrapped in
+delivery shape - MQTT5's flat ``(topic_str, bytes)`` callback is wrapped in
 a tiny ``_MqttSample`` so existing :class:`Mesh` handlers work unmodified.
 
 Trust model
@@ -39,7 +39,7 @@ Failure mode
 If ``awsiotsdk`` is not installed, :meth:`connect` returns ``False`` and the
 transport behaves as a silent no-op (matching :class:`ZenohTransport` when
 Zenoh is missing). If the endpoint or cert files are missing, :meth:`connect`
-logs at ERROR and returns ``False`` — the mesh stays off rather than crash
+logs at ERROR and returns ``False`` - the mesh stays off rather than crash
 the host.
 """
 
@@ -81,7 +81,7 @@ _TOPIC_POLICY: dict[str, tuple[int, bool]] = {
     "safety/resume": (1, True),  # paired with safety/estop; closes incident windows
     "stream": (0, False),
     "stream/meta": (0, False),
-    # Camera frames are too big for MQTT — IotMqttTransport drops them.
+    # Camera frames are too big for MQTT - IotMqttTransport drops them.
     # See the design doc §4.2 for the S3 offload pattern.
     "camera": ("DROP", False),  # type: ignore[dict-item]
 }
@@ -89,9 +89,9 @@ _TOPIC_POLICY: dict[str, tuple[int, bool]] = {
 # Topics we strictly never publish over MQTT, regardless of caller intent.
 # Camera frames hit MQTT's 128 KB cap; teleop input has fatal latency over WAN.
 _NEVER_BRIDGE_PREFIXES: tuple[str, ...] = (
-    "camera/",  # JPEG frames — use S3 offload (Layer 3)
-    "input/",  # 50 Hz teleop — LAN-only
-    "hand/",  # 50 Hz hand control — LAN-only
+    "camera/",  # JPEG frames - use S3 offload (Layer 3)
+    "input/",  # 50 Hz teleop - LAN-only
+    "hand/",  # 50 Hz hand control - LAN-only
 )
 
 
@@ -167,9 +167,9 @@ def _zenoh_to_mqtt_filter(key_expr: str) -> str:
         if seg == "**":
             # Tail wildcard. Must be last segment in MQTT; if it isn't, log at
             # DEBUG (caller is using a Zenoh idiom that doesn't translate) and
-            # leave the rest verbatim — broker will reject.
+            # leave the rest verbatim - broker will reject.
             if i != len(segments) - 1:
-                logger.debug("Zenoh '**' is not in tail position in %r — MQTT may reject", key_expr)
+                logger.debug("Zenoh '**' is not in tail position in %r - MQTT may reject", key_expr)
             out.append("#")
         elif seg == "*":
             out.append("+")
@@ -202,25 +202,25 @@ def _qos_and_retain_for(topic: str) -> tuple[int, bool]:
     first = rest_segments[0]
 
     # Two distinct topic layouts in the strands-robots scheme. They MUST NOT
-    # be tried as a fallback chain — a peer_id that happens to be named
+    # be tried as a fallback chain - a peer_id that happens to be named
     # "broadcast" or "safety" must NOT pick up the top-level policy entry.
     #
-    #  (a) Top-level system topics — first segment IS the kind:
+    #  (a) Top-level system topics - first segment IS the kind:
     #  strands/broadcast
     #  strands/safety/estop
     #
-    #  (b) Per-peer topics — first segment is the peer_id, topic kind
+    #  (b) Per-peer topics - first segment is the peer_id, topic kind
     #  starts at segment 1:
     #  strands/{peer}/{kind}  (e.g. presence, state, cmd)
     #  strands/{peer}/{kind}/{sub}  (e.g. lidar/summary, response/{turn})
     #
     # We resolve the layout by checking whether *first* is one of the
-    # reserved top-level kinds. The set is small and closed — extending
+    # reserved top-level kinds. The set is small and closed - extending
     # the topic scheme means extending this set.
     _TOP_LEVEL_KINDS = {"broadcast", "safety"}
 
     if first in _TOP_LEVEL_KINDS:
-        # Layout (a) — match suffixes that include the first segment.
+        # Layout (a) - match suffixes that include the first segment.
         for n in range(len(rest_segments), 0, -1):
             candidate = "/".join(rest_segments[:n])
             entry = _TOPIC_POLICY.get(candidate)
@@ -231,7 +231,7 @@ def _qos_and_retain_for(topic: str) -> tuple[int, bool]:
                 return int(qos_or_drop), retain
         return 0, False
 
-    # Layout (b) — first segment is a peer_id; skip it.
+    # Layout (b) - first segment is a peer_id; skip it.
     if len(rest_segments) < 2:
         return 0, False
 
@@ -259,7 +259,7 @@ class IotMqttTransport:
     """Concrete :class:`MeshTransport` backed by AWS IoT Core MQTT5/mTLS.
 
     One instance manages exactly one ``awscrt.mqtt5.Client``. The client's
-    ``client_id`` MUST equal the Thing name attached to the cert — the
+    ``client_id`` MUST equal the Thing name attached to the cert - the
     constructor enforces this so policy variable substitution works.
 
     Subscriptions are tracked in a dict keyed by topic_filter so
@@ -308,7 +308,7 @@ class IotMqttTransport:
                 from awsiot import mqtt5_client_builder
             except ImportError:
                 logger.error(
-                    "awsiotsdk not installed — IoT transport disabled. "
+                    "awsiotsdk not installed - IoT transport disabled. "
                     "Install with: pip install 'strands-robots[mesh-iot]'"
                 )
                 return False
@@ -398,7 +398,7 @@ class IotMqttTransport:
 
         Per-topic QoS and retain flags come from :data:`_TOPIC_POLICY`.
         Topics in :data:`_NEVER_BRIDGE_PREFIXES` (camera/input/hand) are
-        silently dropped — they belong on Zenoh-LAN, not MQTT-WAN.
+        silently dropped - they belong on Zenoh-LAN, not MQTT-WAN.
         """
         if self._client is None or not self._connected.is_set():
             return
@@ -428,7 +428,7 @@ class IotMqttTransport:
     def declare_subscriber(self, key_expr: str, handler: Callable[[Any], None]) -> Any:
         """Subscribe to *key_expr* (Zenoh form) translated to an MQTT topic filter.
 
-        Multiple subscribers to the same filter are allowed — handlers are
+        Multiple subscribers to the same filter are allowed - handlers are
         appended to a per-filter list. Each :class:`_MqttSubHandle` only
         removes its own handler on undeclare.
         """
@@ -484,7 +484,7 @@ class IotMqttTransport:
                 return  # other subscribers still active
             self._handlers.pop(topic_filter, None)
 
-        # Last handler removed — unsubscribe at the broker.
+        # Last handler removed - unsubscribe at the broker.
         if self._client is None:
             return
         try:
@@ -514,7 +514,7 @@ class IotMqttTransport:
         payload = bytes(data.publish_packet.payload or b"")
 
         # Match topic against all registered filters. MQTT brokers route by
-        # filter, but our handler-dict is keyed by the original filter — so
+        # filter, but our handler-dict is keyed by the original filter - so
         # we need to test each registered filter for a topic match.
         with self._lock:
             matching = [(f, list(handlers)) for f, handlers in self._handlers.items() if _mqtt_topic_matches(f, topic)]
@@ -545,7 +545,7 @@ def _mqtt_topic_matches(filter_: str, topic: str) -> bool:
 
     for i, fp in enumerate(f_parts):
         if fp == "#":
-            # Tail wildcard — matches everything from here, including zero
+            # Tail wildcard - matches everything from here, including zero
             # remaining segments.
             return True
         if i >= len(t_parts):
@@ -555,5 +555,5 @@ def _mqtt_topic_matches(filter_: str, topic: str) -> bool:
         if fp != t_parts[i]:
             return False
 
-    # Filter exhausted — topic matches iff topic is also exhausted.
+    # Filter exhausted - topic matches iff topic is also exhausted.
     return len(t_parts) == len(f_parts)

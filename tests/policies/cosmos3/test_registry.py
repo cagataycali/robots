@@ -15,7 +15,7 @@ def test_cosmos3_in_registry():
 
 def test_shorthands_resolve_to_cosmos3():
     """The canonical short name is ``cosmos3`` (with ``c3`` alias). The
-    bare ``cosmos`` shorthand was intentionally dropped — it's ambiguous
+    bare ``cosmos`` shorthand was intentionally dropped - it's ambiguous
     against future NVIDIA Cosmos products (Predict, Reason, Transfer, etc.)
     and was a one-way-door if we'd kept it. Pinning the new contract here
     so a future copy-paste cannot silently re-introduce the collision."""
@@ -25,7 +25,7 @@ def test_shorthands_resolve_to_cosmos3():
 
 
 def test_bare_cosmos_shorthand_does_not_resolve_to_cosmos3():
-    """Bare ``cosmos`` must NOT resolve to the cosmos3 provider — it falls
+    """Bare ``cosmos`` must NOT resolve to the cosmos3 provider - it falls
     back to lerobot_local (the unrecognized-policy default) so a future
     NVIDIA Cosmos provider can claim that namespace cleanly."""
     prov, _ = resolve_policy("cosmos")

@@ -1,4 +1,4 @@
-"""Tests for strands_robots.mesh — Mesh component, presence + state loops.
+"""Tests for strands_robots.mesh - Mesh component, presence + state loops.
 
 All tests are 100% mocked.  No ``eclipse-zenoh`` install required: a
 ``MagicMock`` session is injected in place of the real Zenoh session by
@@ -113,7 +113,7 @@ def patch_no_session() -> Iterator[None]:
 
 
 class TestLifecycle:
-    """start() / stop() / alive — basic lifecycle invariants."""
+    """start() / stop() / alive - basic lifecycle invariants."""
 
     def test_starts_and_alive(self, patch_session: MagicMock) -> None:
         m = Mesh(_FakeRobot(), peer_id="bot-1")
@@ -181,7 +181,7 @@ class TestLifecycle:
                 assert m.alive is False
                 # release_session called exactly once during start() rollback
                 assert release_mock.call_count == 1
-                # stop() now is a no-op — must NOT call release_session again
+                # stop() now is a no-op - must NOT call release_session again
                 m.stop()
                 assert release_mock.call_count == 1
 
@@ -425,7 +425,7 @@ class TestLoops:
 
 
 # ---------------------------------------------------------------------------
-# init_mesh — the public constructor
+# init_mesh - the public constructor
 # ---------------------------------------------------------------------------
 
 
@@ -457,7 +457,7 @@ class TestInitMesh:
         m = init_mesh(_FakeRobot(tool_name="bot"), peer_id=None)
         assert m is not None
         assert m.peer_id.startswith("bot-")
-        # 8 hex chars (32 bits) — sized to avoid collisions on a busy mesh.
+        # 8 hex chars (32 bits) - sized to avoid collisions on a busy mesh.
         assert len(m.peer_id) == len("bot-") + 8
         # Suffix is hex.
         assert all(c in "0123456789abcdef" for c in m.peer_id.split("-")[-1])

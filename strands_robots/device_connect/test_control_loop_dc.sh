@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# test_control_loop_dc.sh — End-to-end test: control loop + Zenoh event listener
+# test_control_loop_dc.sh - End-to-end test: control loop + Zenoh event listener
 #
 # Verifies that Robot("so100") publishes Device Connect events over Zenoh
 # while a mock-policy control loop is running.
@@ -191,7 +191,7 @@ if [ "$PASS" = true ]; then
 else
     echo ""
     echo "============================================================"
-    echo "  SOME CHECKS FAILED — see logs above"
+    echo "  SOME CHECKS FAILED - see logs above"
     echo "============================================================"
     exit 1
 fi

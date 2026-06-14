@@ -209,7 +209,7 @@ class TestNoAlias:
         import strands_robots.registry as registry
 
         assert not hasattr(registry, "get_robot_info"), (
-            "registry must not export 'get_robot_info' — 'get_robot' is the "
+            "registry must not export 'get_robot_info' - 'get_robot' is the "
             "single canonical name. Agents learn it via the discovery surface, "
             "not by aliasing a wrong guess."
         )

@@ -222,7 +222,7 @@ class DatasetRecorder:
         returns a READ-ONLY dataset (``add_frame`` raises), so ``resume()`` is
         the only correct append entry point in LeRobot 0.5.2+.
 
-        Feature schema is inherited from the existing dataset on disk — the
+        Feature schema is inherited from the existing dataset on disk - the
         caller's joint/camera layout must match what was originally recorded.
 
         Args:
@@ -538,7 +538,7 @@ class DatasetRecorder:
             }
         except Exception as e:
             logger.error("save_episode failed: %s", e)
-            # Mark recorder as poisoned — the LeRobot episode buffer is in
+            # Mark recorder as poisoned - the LeRobot episode buffer is in
             # undefined state after a failed save. Subsequent add_frame calls
             # would silently corrupt the dataset. Close to prevent drift.
             self._closed = True

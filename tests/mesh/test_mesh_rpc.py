@@ -1,4 +1,4 @@
-"""Tests for strands_robots.mesh — RPC (PR3), streams (PR4), safety (PR5).
+"""Tests for strands_robots.mesh - RPC (PR3), streams (PR4), safety (PR5).
 
 All tests are 100% mocked.  No ``eclipse-zenoh`` install required: a
 ``MagicMock`` session is injected in place of the real Zenoh session by
@@ -124,7 +124,7 @@ def _make_sample(payload: dict[str, Any], key: str = "strands/x/cmd") -> Any:
 
 
 # ---------------------------------------------------------------------------
-# Dispatch — _dispatch routes correctly for every action
+# Dispatch - _dispatch routes correctly for every action
 # ---------------------------------------------------------------------------
 
 
@@ -193,7 +193,7 @@ def test_dispatch_state_falls_back_to_read_state() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Incoming command flow — _on_cmd → _exec_cmd → put(response)
+# Incoming command flow - _on_cmd → _exec_cmd → put(response)
 # ---------------------------------------------------------------------------
 
 
@@ -280,7 +280,7 @@ def test_exec_cmd_string_command_rejected() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Outgoing RPC — send / broadcast / tell
+# Outgoing RPC - send / broadcast / tell
 # ---------------------------------------------------------------------------
 
 
@@ -295,7 +295,7 @@ def test_send_returns_first_response(started_mesh: Mesh, captured_puts) -> None:
                     turn = next(iter(started_mesh._pending.keys()))
                     break
             time.sleep(0.01)
-        else:  # pragma: no cover — defensive
+        else:  # pragma: no cover - defensive
             return
         # Phase-4 / D1: _on_response now requires responder_id to match the
         # target the sender originally addressed (otherwise an
@@ -534,13 +534,13 @@ def test_emergency_stop_audit_log_failure_does_not_raise(started_mesh: Mesh) -> 
         patch.object(started_mesh, "broadcast", return_value=[]),
         patch.object(mesh_mod, "log_safety_event", side_effect=OSError("disk full")),
     ):
-        # Must not raise — audit log failure is non-fatal.
+        # Must not raise - audit log failure is non-fatal.
         out = started_mesh.emergency_stop()
     assert out == []
 
 
 # ---------------------------------------------------------------------------
-# Stop semantics — wakes blocked send/broadcast calls
+# Stop semantics - wakes blocked send/broadcast calls
 # ---------------------------------------------------------------------------
 
 

@@ -1,5 +1,5 @@
 ---
-description: HuggingFace LeRobot direct inference — ACT, Pi0, SmolVLA, Diffusion Policy, MolmoAct2. RTC + processor bridge.
+description: HuggingFace LeRobot direct inference - ACT, Pi0, SmolVLA, Diffusion Policy, MolmoAct2. RTC + processor bridge.
 ---
 
 # LeRobot Local
@@ -66,7 +66,7 @@ Install lerobot from source before using MolmoAct2:
 # Standard (x86_64, macOS):
 uv pip install "lerobot[feetech] @ git+https://github.com/huggingface/lerobot.git"
 
-# Jetson / aarch64 (pyav wheel may fail to build — skip it, lerobot uses torchcodec):
+# Jetson / aarch64 (pyav wheel may fail to build - skip it, lerobot uses torchcodec):
 uv pip install "lerobot[feetech] @ git+https://github.com/huggingface/lerobot.git" --no-build-isolation
 # If pyav still blocks the install, exclude it and add torchcodec manually:
 uv pip install torchcodec>=0.7

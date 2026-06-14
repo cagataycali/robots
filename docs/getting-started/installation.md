@@ -1,5 +1,5 @@
 ---
-description: Install strands-robots with uv — extras matrix, platform notes, headless rendering.
+description: Install strands-robots with uv - extras matrix, platform notes, headless rendering.
 ---
 
 # Installation
@@ -10,7 +10,7 @@ Requires **Python >= 3.12**. Examples use [`uv`](https://docs.astral.sh/uv/) (`c
 
 | Extra | Pulls in | When you need it |
 |-------|----------|------------------|
-| (none) | core only — Robot factory, registry, lazy imports | Inspect the catalog, write tools |
+| (none) | core only - Robot factory, registry, lazy imports | Inspect the catalog, write tools |
 | `[sim]` | `robot_descriptions` | Sim asset resolution without MuJoCo |
 | `[sim-mujoco]` | `sim` + `mujoco`, `imageio`, `imageio-ffmpeg` | Any `Robot()` with default `mode="sim"` |
 | `[lerobot]` | `lerobot>=0.5.0,<0.6.0` | `LerobotLocalPolicy` + dataset recording |
@@ -76,7 +76,7 @@ This will be unnecessary once lerobot >= 0.5.2 is published to PyPI.
 ## Headless rendering
 
 ```bash
-export MUJOCO_GL=osmesa     # software rendering — Linux
+export MUJOCO_GL=osmesa     # software rendering - Linux
 export MUJOCO_GL=egl        # hardware EGL
 ```
 
@@ -116,6 +116,6 @@ Assets cache under `~/.strands_robots/assets/`.
 
 ## See also
 
-- [Quickstart](quickstart.md) — five minutes after install.
-- [Robot factory](robot-factory.md) — every kwarg `Robot()` accepts.
-- [Troubleshooting](../troubleshooting.md) — install gotchas.
+- [Quickstart](quickstart.md) - five minutes after install.
+- [Robot factory](robot-factory.md) - every kwarg `Robot()` accepts.
+- [Troubleshooting](../troubleshooting.md) - install gotchas.

@@ -1,5 +1,5 @@
 ---
-description: DatasetRecorder — LeRobot v3 dataset writer used by both Simulation and HardwareRobot.
+description: DatasetRecorder - LeRobot v3 dataset writer used by both Simulation and HardwareRobot.
 ---
 
 # Recording & datasets
@@ -38,7 +38,7 @@ recorder = DatasetRecorder.create(
     #   robot_features=robot.observation_features,
     #   action_features=robot.action_features,
     # When recording from a sim Robot (no `observation_features` attr), pass
-    # `joint_names=[...]` instead — the recorder builds the schema for you.
+    # `joint_names=[...]` instead - the recorder builds the schema for you.
     camera_keys=["default"],
     joint_names=["joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6"],
     task="pick up the red cube",
@@ -83,5 +83,5 @@ print(len(ds), ds[0].keys())
 
 ## See also
 
-- [Training](training/overview.md) — what to do with the data.
-- [LeRobot dataset docs](https://huggingface.co/docs/lerobot) — upstream spec.
+- [Training](training/overview.md) - what to do with the data.
+- [LeRobot dataset docs](https://huggingface.co/docs/lerobot) - upstream spec.

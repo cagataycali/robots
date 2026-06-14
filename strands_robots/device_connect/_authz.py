@@ -9,11 +9,11 @@ simulated) hardware.
 Allowlists are sourced from environment variables so deployments opt in without
 code changes:
 
-* ``DEVICE_CONNECT_RPC_ALLOW`` — comma-separated device ids permitted to call
+* ``DEVICE_CONNECT_RPC_ALLOW`` - comma-separated device ids permitted to call
   state-mutating RPCs. ``*`` (or unset) means "allow all" but logs a warning so
   the permissive posture is visible. An explicit empty value (``""`` after
   stripping) is treated as unset.
-* ``DEVICE_CONNECT_ESTOP_ALLOW`` — comma-separated device ids permitted to
+* ``DEVICE_CONNECT_ESTOP_ALLOW`` - comma-separated device ids permitted to
   trigger emergency-stop handling. Falls back to ``DEVICE_CONNECT_RPC_ALLOW``
   when unset.
 
@@ -27,11 +27,11 @@ Caller-identity semantics (READ THIS before relying on the allowlist):
   anonymous client carries **none** (``caller=None``).
 * When an allowlist IS set, a missing/None caller cannot be authorized and is
   denied (fail-closed). So setting ``DEVICE_CONNECT_RPC_ALLOW`` will reject
-  every anonymous caller — configure an id on the caller side to allow it.
+  every anonymous caller - configure an id on the caller side to allow it.
 * The id is only as trustworthy as the transport. Under authenticated
   transport (mTLS) it is bound to the sender's certificate. Under insecure
-  transport (``DEVICE_CONNECT_ALLOW_INSECURE``) it is **self-asserted** — any
-  peer can claim any id — so the allowlist is advisory there, not a
+  transport (``DEVICE_CONNECT_ALLOW_INSECURE``) it is **self-asserted** - any
+  peer can claim any id - so the allowlist is advisory there, not a
   cryptographic boundary. A one-time warning is logged in that case.
 """
 
@@ -114,13 +114,13 @@ def is_authorized_caller(caller: str | None, *, scope: str = "rpc") -> bool:
 
     patterns = _parse_allowlist(raw)
     if patterns is None:
-        # No allowlist configured — preserve out-of-the-box dev usability but
+        # No allowlist configured - preserve out-of-the-box dev usability but
         # make the permissive posture loud so operators notice.
         _warn_permissive_once(env_scope)
         return True
 
     # An allowlist is configured. If the transport is insecure the caller id is
-    # self-asserted, so the allowlist is advisory — say so once, loudly.
+    # self-asserted, so the allowlist is advisory - say so once, loudly.
     if _insecure_transport_active():
         _warn_insecure_acl_once(env_scope)
 

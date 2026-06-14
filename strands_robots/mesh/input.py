@@ -1,4 +1,4 @@
-"""Input device streaming over the mesh — publish and receive teleoperator actions.
+"""Input device streaming over the mesh - publish and receive teleoperator actions.
 
 Enables remote teleoperation: a leader arm on machine A publishes its joint
 positions via :class:`InputPublisher`, and the follower arm on machine B

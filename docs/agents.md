@@ -4,7 +4,7 @@ description: Hand a Robot() to a Strands Agent and control it with plain English
 
 # AI agents
 
-A `Robot()` is a Strands tool. Hand it to an `Agent` and it drives the robot for you — picking actions from natural language.
+A `Robot()` is a Strands tool. Hand it to an `Agent` and it drives the robot for you - picking actions from natural language.
 
 ```python
 from strands import Agent
@@ -65,11 +65,11 @@ The agent sees the same tool spec in both modes; only the implementation changes
 | "Try 10 episodes, report success" | `eval_policy(robot_name='so100', n_episodes=10)` |
 | "Record a session" | `start_recording` → `run_policy` → `stop_recording` |
 
-Inspect the full spec: `print(robot.tool_spec)` — JSON schema with all 60+ actions.
+Inspect the full spec: `print(robot.tool_spec)` - JSON schema with all 60+ actions.
 
 ## See also
 
-- [Multi-robot mesh](mesh.md) — the agent coordinates multiple robots.
-- [Hardware tools](hardware/tools.md) — the `@tool` helpers.
-- [Simulation overview](simulation/overview.md) — every action the agent can call.
-- [Strands Agents documentation](https://strandsagents.com/) — provider setup, advanced patterns.
+- [Multi-robot mesh](mesh.md) - the agent coordinates multiple robots.
+- [Hardware tools](hardware/tools.md) - the `@tool` helpers.
+- [Simulation overview](simulation/overview.md) - every action the agent can call.
+- [Strands Agents documentation](https://strandsagents.com/) - provider setup, advanced patterns.

@@ -205,7 +205,7 @@ or pass ``presign_ttl=3600`` to ``CameraOffloader(...)`` / ``enable_for_mesh(...
 Applies to ``strands_robots.mesh.iot.provision`` and
 ``strands_robots.mesh.iot.camera_offload``:
 
-- **CA pinning** — ``AmazonRootCA1.pem`` is verified against an
+- **CA pinning** - ``AmazonRootCA1.pem`` is verified against an
   in-tree pin tuple (``_AMAZON_ROOT_CA1_PINS``) at download AND on
   every on-disk re-use. Defeats CA-substitution MITM. Operators can
   add additional pins via ``STRANDS_MESH_CA_PINS`` (comma-separated
@@ -219,7 +219,7 @@ Applies to ``strands_robots.mesh.iot.provision`` and
   ``\n``/``\r``/``\t``. Pre-existing AWS IoT Things containing ``:``
   must be renamed (we deliberately reject ``:`` due to NTFS / classic
   Mac filesystem semantics).
-- **IoT policy scope** — robot/operator policies use explicit
+- **IoT policy scope** - robot/operator policies use explicit
   per-thing topic prefixes; no ``Resource: '*'`` on Receive.
   ``OperatorPublishToFleet``'s ``*/cmd`` wildcard is documented and
   pinned as a deliberate design choice (``test_publish_to_fleet_wildcard_is_deliberate``).

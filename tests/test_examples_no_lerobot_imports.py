@@ -5,7 +5,7 @@ strands_robots abstraction, not bypass it. Any ``from lerobot`` or
 ``import lerobot`` at the top-level of an example file is a documentation
 failure: it teaches users to skip the SDK and wire lerobot manually.
 
-Internal helper directories (like examples/lerobot/) are excluded — only
+Internal helper directories (like examples/lerobot/) are excluded - only
 top-level example scripts are checked.
 """
 

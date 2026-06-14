@@ -4,11 +4,11 @@ The :class:`Policy` ABC is intentionally agnostic about *how* actions are
 produced.  Built-in providers (`mock`, `groot`, `lerobot_local`) are VLA-style,
 but the same interface is the right shape for:
 
-* **Classical motion planners** — cuRobo, MoveIt2, OMPL, RRT*: take a goal
+* **Classical motion planners** - cuRobo, MoveIt2, OMPL, RRT*: take a goal
   pose and joint state, return a collision-free trajectory.
-* **Model-predictive controllers** (MPC) — solve a finite-horizon optimal
+* **Model-predictive controllers** (MPC) - solve a finite-horizon optimal
   control problem each tick.
-* **Scripted / pure-IK trajectories** — analytic IK followed by interpolation;
+* **Scripted / pure-IK trajectories** - analytic IK followed by interpolation;
   zero learning involved.
 
 Non-VLA implementations typically set :attr:`Policy.requires_images` to
@@ -64,13 +64,13 @@ class Policy(ABC):
                 providers when present so callers don't have to JSON-encode
                 goals into the ``instruction`` string:
 
-                - ``target_pose: list[float]`` — Cartesian goal as
+                - ``target_pose: list[float]`` - Cartesian goal as
                   ``[x, y, z, qw, qx, qy, qz]`` (position in metres,
                   orientation as a unit quaternion in the robot base frame).
-                - ``target_joints: dict[str, float]`` — joint-space goal
+                - ``target_joints: dict[str, float]`` - joint-space goal
                   keyed by joint name; values are in radians (revolute) or
                   metres (prismatic).
-                - ``world_update: dict | None`` — per-call world refresh
+                - ``world_update: dict | None`` - per-call world refresh
                   for collision-aware planners (e.g. point cloud / depth
                   image / mesh updates).  ``None`` means "reuse the world
                   configured at init time".
@@ -121,7 +121,7 @@ class Policy(ABC):
 
         For SERVICE-mode policies (e.g. ``Gr00tPolicy(host=...)`` over
         ZMQ), the override forwards the call to the server so its
-        per-episode RNG state can be re-initialised — without this,
+        per-episode RNG state can be re-initialised - without this,
         ``set_eval_seed`` only seeds the client-side process, leaving
         the server's diffusion sampler RNG drifting across calls and
         breaking reproducibility (#187).
@@ -144,7 +144,7 @@ class Policy(ABC):
         consume joint state (e.g. ``MockPolicy``, classical motion planners
         such as cuRobo / MoveIt2, MPC, pure-IK controllers, scripted
         trajectories) can return ``False`` to let the simulation skip
-        expensive camera rendering — a ~10x throughput win at 500Hz when
+        expensive camera rendering - a ~10x throughput win at 500Hz when
         no cameras are needed.
         """
         return True

@@ -1,8 +1,8 @@
-"""Device Shadow mirror — reflects presence/state to AWS IoT named shadows.
+"""Device Shadow mirror - reflects presence/state to AWS IoT named shadows.
 
 When the robot is online, every presence heartbeat ALSO updates the named
 shadow ``presence`` for the Thing. When the robot is offline, the shadow
-stays as the last reported state — late-joining operators (Bedrock agents,
+stays as the last reported state - late-joining operators (Bedrock agents,
 fleet ops dashboards) read fleet state via ``GetThingShadow`` REST without
 subscribing to MQTT.
 
@@ -20,7 +20,7 @@ Hooking in
 ready-to-wire convenience :func:`enable_for_mesh` that binds it to the
 heartbeat path automatically. Today the heartbeat path is
 :meth:`Mesh._heartbeat_loop` which calls ``put(strands/{peer}/presence,...)``
-— we hook in by registering a publish-side observer that mirrors any
+- we hook in by registering a publish-side observer that mirrors any
 presence write to the shadow update topic.
 
 Failure mode
@@ -64,7 +64,7 @@ class ShadowMirror:
 
     The ``update`` call wraps your dict in the canonical
     ``{"state": {"reported":...}}`` envelope and publishes via the active
-    transport's ``put()``. No retain — shadows are stored server-side.
+    transport's ``put()``. No retain - shadows are stored server-side.
     """
 
     def __init__(self, thing_name: str, shadow_name: str = "presence") -> None:
@@ -76,7 +76,7 @@ class ShadowMirror:
         """Push *reported_state* into the named shadow's ``reported`` slot.
 
         Args:
-            transport: An object with ``.put(topic, dict)`` — typically the
+            transport: An object with ``.put(topic, dict)`` - typically the
                 singleton from :func:`current_transport`. Pass ``None`` to
                 make this a no-op (useful when the mesh is off).
             reported_state: The dict that becomes ``state.reported`` in the
@@ -96,12 +96,12 @@ def enable_for_mesh(mesh: Any) -> ShadowMirror | None:
 
     Replaces ``mesh._build_presence`` with a wrapper that, after the original
     builds the payload, also pushes it to the named shadow. The original
-    behaviour (publishing to ``strands/{peer}/presence``) is preserved —
+    behaviour (publishing to ``strands/{peer}/presence``) is preserved -
     this is purely additive.
 
     Returns the :class:`ShadowMirror` so callers can drive ad-hoc updates
     too. Returns ``None`` if the mesh is not running an IoT-capable
-    transport (i.e. plain Zenoh — shadows aren't relevant there).
+    transport (i.e. plain Zenoh - shadows aren't relevant there).
     """
     from strands_robots.mesh.transport.factory import current_backend, current_transport
 

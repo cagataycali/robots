@@ -63,13 +63,13 @@ export AWS_REGION=<your-region>     # e.g., us-east-1, us-west-2, eu-central-1
 
 Verify the exact model ID in your AWS Bedrock console (Model catalog → Anthropic). Cross-region inference profile IDs are prefixed with `us.`, `eu.`, etc.
 
-If `BedrockModel` init fails (model not enabled in your account, wrong region, stale ID), the script logs a warning and falls back to Strands' default model — the workflow still runs.
+If `BedrockModel` init fails (model not enabled in your account, wrong region, stale ID), the script logs a warning and falls back to Strands' default model - the workflow still runs.
 
 ### Policy provider
 
 | Flag | Requirements | When to use |
 |------|--------------|-------------|
-| `--policy mock` *(default)* | None | Workflow sanity-check. Random/placeholder actions — no real grasp behaviour. |
+| `--policy mock` *(default)* | None | Workflow sanity-check. Random/placeholder actions - no real grasp behaviour. |
 | `--policy groot --checkpoint <hf_repo>` | Docker + NVIDIA GPU | NVIDIA GR00T container; brings up a ZMQ inference service alongside the agent. |
 | `--policy lerobot_local --checkpoint <hf_repo>` | GPU + `STRANDS_TRUST_REMOTE_CODE=1` | In-process LeRobot policy (ACT, Pi0, SmolVLA, Diffusion). |
 
@@ -163,7 +163,7 @@ The same dataset is consumable by upstream LeRobot training scripts (`lerobot/sc
 
 ## Production patterns
 
-This example records one longer episode per run. That keeps the agent-driven story honest — you tell the agent in English to record a demonstration once and the tool sequence comes out in one shot.
+This example records one longer episode per run. That keeps the agent-driven story honest - you tell the agent in English to record a demonstration once and the tool sequence comes out in one shot.
 
 For production multi-episode collection, wrap the loop in Python and use direct tool dispatch for the per-iteration save:
 
@@ -195,7 +195,7 @@ for episode_idx in range(50):
 agent("Stop recording and push the dataset to the Hub.")
 ```
 
-The split — agent for setup and finalization, Python loop for the per-episode boundary — pairs the agent's strength (free-form composition) with the determinism a multi-step loop needs.
+The split - agent for setup and finalization, Python loop for the per-episode boundary - pairs the agent's strength (free-form composition) with the determinism a multi-step loop needs.
 
 ## Troubleshooting
 
@@ -209,15 +209,15 @@ Common causes: the model isn't enabled in your AWS account, the region doesn't h
 A prior run's dataset cache is on disk. Pass `--clean-cache` to wipe it, or pass a fresh `--dataset-name`.
 
 **SVT-AV1 encoder output spam**  
-The `Svt[info]:` lines come from the video codec inside LeRobot's `dataset_recorder` and aren't a Python logger we can silence cleanly. They're harmless — one block per camera per encoder init.
+The `Svt[info]:` lines come from the video codec inside LeRobot's `dataset_recorder` and aren't a Python logger we can silence cleanly. They're harmless - one block per camera per encoder init.
 
 **Agent's narration claims things that don't match the tool calls**  
-LLMs sometimes confabulate in narration. The dataset on disk is the ground truth — load it through `LeRobotDataset(...)` to check episode and frame counts. Pass `--verbose` to see the actual tool calls the agent made.
+LLMs sometimes confabulate in narration. The dataset on disk is the ground truth - load it through `LeRobotDataset(...)` to check episode and frame counts. Pass `--verbose` to see the actual tool calls the agent made.
 
 ## What's next
 
 - **Train a policy** on the recorded dataset using upstream LeRobot.
-- **Swap the Mock policy** for a real one — `groot` for the NVIDIA container, `lerobot_local` for ACT/Pi0/SmolVLA/Diffusion checkpoints.
+- **Swap the Mock policy** for a real one - `groot` for the NVIDIA container, `lerobot_local` for ACT/Pi0/SmolVLA/Diffusion checkpoints.
 - **Run on physical hardware** by flipping `--mode real`.
 - **Read the blog post** for the design background and the full architecture diagram: *From Hugging Face Hub to robot hardware with Strands Agents and LeRobot*.
 

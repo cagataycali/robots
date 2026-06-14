@@ -1,5 +1,5 @@
 ---
-description: The Simulation AgentTool — every action grouped by category, with parameters.
+description: The Simulation AgentTool - every action grouped by category, with parameters.
 ---
 
 # Simulation overview
@@ -17,10 +17,10 @@ For walkthroughs see [Simulation overview](../simulation/overview.md).
 |--------|-----------|-------|
 | `create_world` | `timestep=0.002`, `gravity=[0,0,-9.81]`, `ground_plane=True` | Implicit on `Robot()` |
 | `load_scene` | `scene_path` | Replace world with MJCF |
-| `reset` | — | State to t=0, keep model |
-| `get_state` | — | Sim time, joint positions, object poses |
-| `destroy` | — | Tear down model, data, executor |
-| `export_xml` | — | Serialise model to MJCF string |
+| `reset` | - | State to t=0, keep model |
+| `get_state` | - | Sim time, joint positions, object poses |
+| `destroy` | - | Tear down model, data, executor |
+| `export_xml` | - | Serialise model to MJCF string |
 
 ## Scene-MJCF
 
@@ -37,23 +37,23 @@ For walkthroughs see [Simulation overview](../simulation/overview.md).
 |--------|-----------|
 | `add_robot` | `robot_name`, `position=[0,0,0]`, `data_config=None`, `urdf_path=None` |
 | `remove_robot` | `name` |
-| `list_robots` | — |
+| `list_robots` | - |
 | `get_robot_state` | `name` → joint positions, velocities, torques |
 
 ## Objects
 
 | Action | Key params |
 |--------|-----------|
-| `add_object` | `name`, `shape="box"\|"sphere"\|"cylinder"\|"plane"\|"mesh"`, `size`, `position=[x,y,z]`, `color=[r,g,b,a]`, `orientation=[w,x,y,z]`, `mass=0.1`, `is_static=False`, `mesh_path=None` — `plane` requires `is_static=True` |
+| `add_object` | `name`, `shape="box"\|"sphere"\|"cylinder"\|"plane"\|"mesh"`, `size`, `position=[x,y,z]`, `color=[r,g,b,a]`, `orientation=[w,x,y,z]`, `mass=0.1`, `is_static=False`, `mesh_path=None` - `plane` requires `is_static=True` |
 | `remove_object` | `name` |
 | `move_object` | `name`, `position`, `orientation` (NOT `pos`/`quat`) |
-| `list_objects` | — |
+| `list_objects` | - |
 
 ## Cameras
 
 | Action | Key params |
 |--------|-----------|
-| `add_camera` | `name`, `position`, `target`, `fov=60.0`, `width=640`, `height=480` — no `attach_to`/`fovy`/`lookat` |
+| `add_camera` | `name`, `position`, `target`, `fov=60.0`, `width=640`, `height=480` - no `attach_to`/`fovy`/`lookat` |
 | `remove_camera` | `name` |
 
 Robot-URDF cameras are auto-discovered on `add_robot`.
@@ -76,14 +76,14 @@ Robot-URDF cameras are auto-discovered on `add_robot`.
 | `step` | `n_steps=1` (max 100 000/call) |
 | `set_gravity` | `gravity=[x,y,z]` |
 | `set_timestep` | `timestep` |
-| `get_contacts` / `get_contact_forces` | — |
+| `get_contacts` / `get_contact_forces` | - |
 | `apply_force` | `body_name`, `force`, `torque`, `point` |
 | `get_jacobian` | `body_name` *or* `site_name` *or* `geom_name` |
-| `get_mass_matrix` | — |
-| `inverse_dynamics` | — |
+| `get_mass_matrix` | - |
+| `inverse_dynamics` | - |
 | `forward_kinematics` | `body_name` (optional) |
 | `save_state` / `load_state` | snapshot/restore full physics |
-| `get_energy` | — |
+| `get_energy` | - |
 | `get_sensor_data` | `sensor_name` (optional) |
 
 ## Policy
@@ -93,7 +93,7 @@ Robot-URDF cameras are auto-discovered on `add_robot`.
 | `run_policy` | `robot_name` (required), `policy_provider="mock"`, `policy_config={}`, `policy_object=None`, `instruction=""`, `duration=10.0`, `control_frequency=50.0`, `action_horizon=8`, `n_steps=None` |
 | `start_policy` | same args, async/non-blocking |
 | `stop_policy` | `robot_name` (optional, defaults to `""`) |
-| `list_policies_running` | — |
+| `list_policies_running` | - |
 | `run_multi_policy` | `policies={robot: Policy}`, `instructions`, `duration`, `n_steps` |
 | `eval_policy` | `robot_name` (required), `n_episodes=1`, `max_steps=300`, `success_fn=None` |
 | `replay_episode` | `repo_id`, `robot_name=None`, `episode=0` |
@@ -106,7 +106,7 @@ Robot-URDF cameras are auto-discovered on `add_robot`.
 | `stop_recording(output_path=None)` | Finalise episode |
 | `get_recording_status` | Episode, frame count, output dir |
 | `start_cameras_recording(...)` | Plain MP4 via imageio-ffmpeg; `[sim-mujoco]` only, no lerobot |
-| `stop_cameras_recording` / `get_cameras_recording_status` | — |
+| `stop_cameras_recording` / `get_cameras_recording_status` | - |
 
 ## Randomize
 
@@ -114,7 +114,7 @@ Robot-URDF cameras are auto-discovered on `add_robot`.
 |--------|-----------|
 | `randomize` | `randomize_colors=True`, `randomize_lighting=True`, `randomize_physics=False`, `randomize_positions=False`, `position_noise=0.02`, `color_range=(0.1,1.0)`, `friction_range=(0.5,1.5)`, `mass_range=(0.5,2.0)`, `seed=None` |
 
-Destructive — writes into model arrays. Recompile scene to undo.
+Destructive - writes into model arrays. Recompile scene to undo.
 
 ## Registry
 
@@ -126,6 +126,6 @@ Destructive — writes into model arrays. Recompile scene to undo.
 
 ## See also
 
-- [World building](world-building.md) — composing scenes.
-- [Domain randomization](domain-randomization.md) — `randomize` distributions.
+- [World building](world-building.md) - composing scenes.
+- [Domain randomization](domain-randomization.md) - `randomize` distributions.
 - [Architecture](../architecture.md)

@@ -221,7 +221,7 @@ class TestZmqWireRoundTripLiberoPanda:
         # bottom-right (h-1, w-1) after the 180° rotation lands on H/W.
         np.testing.assert_array_equal(wire_image[0, 0, h - 1, w - 1], [123, 45, 67])
         # And NOT at the original top-left position (would mean axes
-        # B/T got flipped instead of H/W — the #169 / #172 bug).
+        # B/T got flipped instead of H/W - the #169 / #172 bug).
         assert not np.array_equal(wire_image[0, 0, 0, 0], [123, 45, 67])
 
     def test_action_chunk_unpacks_to_horizon_dicts_with_libero_keys(self):
@@ -376,13 +376,13 @@ class TestWirePayloadDiagnostic:
             payload = pickle.load(f)
 
         # Schema the bisection plan relies on. If any key here changes,
-        # the offline diff script breaks silently — pin it.
+        # the offline diff script breaks silently - pin it.
         assert payload["mode"] == "service"
         assert payload["call_index"] == 0
         assert payload["groot_version"] == "n1.7"
         assert payload["data_config_name"] == "libero_panda"
         # Observation must be the wire-format dict (flat keys, post
-        # newaxis fanout) — what the user wants to diff against the
+        # newaxis fanout) - what the user wants to diff against the
         # local-mode nested dict.
         assert "video.image" in payload["observation"]
         assert payload["observation"]["video.image"].shape == (1, 1, 64, 64, 3)
@@ -412,7 +412,7 @@ class TestWirePayloadDiagnostic:
         files = sorted(p.name for p in tmp_path.iterdir())
         # Only call0 and call1 should land; call2..call4 hit the cap.
         assert files == ["service_call0000.pkl", "service_call0001.pkl"]
-        # Counter sits exactly at the cap — pinned so a future "off-by-one"
+        # Counter sits exactly at the cap - pinned so a future "off-by-one"
         # refactor that drops one dump or writes one extra is caught.
         assert policy._wire_log_call_count == 2
 

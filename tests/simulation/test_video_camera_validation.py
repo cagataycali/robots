@@ -140,7 +140,7 @@ class TestCamerasRecordingSuffixResolution:
         assert "definitely_not_a_camera" in text
 
     def test_mixed_resolvable_and_bogus(self, sim_with_arm):
-        """If any input doesn't resolve, fail loudly — don't silently shrink."""
+        """If any input doesn't resolve, fail loudly - don't silently shrink."""
         r = sim_with_arm.start_cameras_recording(
             cameras=["side", "nope"],
             fps=5,

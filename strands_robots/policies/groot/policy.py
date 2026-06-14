@@ -553,7 +553,7 @@ class Gr00tPolicy(Policy):
         cuDNN benchmark state, etc.) can be re-initialised. Without this
         the server's RNG drifts across calls and produces different
         action chunks for byte-identical inputs across re-runs of the
-        same eval — the #187 success-rate gap.
+        same eval - the #187 success-rate gap.
 
         The standard ``gr00t.eval.run_gr00t_server`` registers a ``reset``
         endpoint that maps to ``policy.reset(options=...)`` (see
@@ -569,7 +569,7 @@ class Gr00tPolicy(Policy):
         runs in the same process as the client.
 
         Best-effort: any failure (server doesn't expose ``reset``,
-        endpoint raises, network timeout) is logged and swallowed —
+        endpoint raises, network timeout) is logged and swallowed -
         ``reset`` is a soft hint to the policy, not a hard requirement.
         Eval correctness is preserved even if reset is a no-op.
 

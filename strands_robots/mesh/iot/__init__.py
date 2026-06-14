@@ -2,15 +2,15 @@
 
 This subpackage owns the cloud-side concerns of the mesh:
 
-- :mod:`provision`  — single-Thing bootstrap (cert + policy + Thing).
-- :mod:`bootstrap`  — account-wide bootstrap (Rules + Lambda +
+- :mod:`provision`  - single-Thing bootstrap (cert + policy + Thing).
+- :mod:`bootstrap`  - account-wide bootstrap (Rules + Lambda +
   DynamoDB audit + Fleet Provisioning template).
-- :mod:`shadow`  — Device Shadow named-shadow mirror of presence.
-- :mod:`camera_offload` — S3-backed camera frame offload.
+- :mod:`shadow`  - Device Shadow named-shadow mirror of presence.
+- :mod:`camera_offload` - S3-backed camera frame offload.
 
 The wire-level transport (:class:`IotMqttTransport`) lives in
 :mod:`strands_robots.mesh.transport.iot_transport` and is independent of
-this package — you can use it without ever calling :mod:`provision` if you
+this package - you can use it without ever calling :mod:`provision` if you
 already have certs.
 
 Public OOBE
@@ -29,7 +29,7 @@ For a customer's first integration, the canonical sequence is::
     # 3. Run the robot under the iot transport.
     #  (export the env vars from p.env_vars() and `Robot()` Just Works.)
 
-For a single-robot dev setup, step 1 is optional — without it E-stop
+For a single-robot dev setup, step 1 is optional - without it E-stop
 fan-out and DynamoDB audit just don't activate; everything else still
 works.
 """

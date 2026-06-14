@@ -251,7 +251,7 @@ def _ke_matches(pattern: str, target: str) -> bool:
     if leading_dstar and trailing_dstar:
         middle = pattern[3:-3]  # strip "**/" and "/**"
         if not middle:
-            # pattern was "**/**" — match anything non-empty
+            # pattern was "**/**" - match anything non-empty
             return bool(target)
         # match if target == middle, target ends with /middle, target starts
         # with middle/, or target contains /middle/
@@ -266,7 +266,7 @@ def _ke_matches(pattern: str, target: str) -> bool:
         suffix = pattern[3:]  # strip leading "**/"
         # match suffix exactly (zero leading segments) OR any path ending
         # in /suffix (one or more leading segments). Suffix may itself
-        # contain segment-level wildcards — keep it simple: literal compare.
+        # contain segment-level wildcards - keep it simple: literal compare.
         return target == suffix or target.endswith("/" + suffix)
 
     if trailing_dstar:
@@ -300,7 +300,7 @@ def _interrupt_approves(response: object) -> bool:
 
     The interrupt mechanism returns whatever the operator submitted, which
     is normally a string but the contract is "JSON-serialisable any". We
-    accept the canonical short forms only — defence in depth against
+    accept the canonical short forms only - defence in depth against
     accidental approval from a typo.
     """
     if not isinstance(response, str):
@@ -317,7 +317,7 @@ def _rate_limit_check(action: str) -> str | None:
     that do not require approval).
 
     Splitting check from record means a *declined* HITL approval no
-    longer consumes a slot — without the split, three nuisance LLM
+    longer consumes a slot - without the split, three nuisance LLM
     prompts that an operator declined within a minute would lock the
     agent out of issuing a real ``emergency_stop``. That's the
     opposite of the intended safety property: the rate limit exists
@@ -408,7 +408,7 @@ def _audit_tool_action(action: str, target: str, success: bool, detail: str) -> 
     """Best-effort audit log of every safety-significant tool call.
 
     R7-5: a swallowed exception with no log line means a broken audit
-    path silently disappears. Match the ``core.py:_on_cmd`` pattern —
+    path silently disappears. Match the ``core.py:_on_cmd`` pattern -
     log at DEBUG so operators investigating "why don't I see my LLM
     tool actions in the audit log?" get a breadcrumb without flooding
     production. Audit failures must NEVER propagate up into the safety
@@ -429,7 +429,7 @@ def _audit_tool_action(action: str, target: str, success: bool, detail: str) -> 
                 "detail": detail[:500],
             },
         )
-    except Exception as audit_exc:  # noqa: BLE001 — see docstring
+    except Exception as audit_exc:  # noqa: BLE001 - see docstring
         logger.debug("[robot_mesh] audit log unavailable: %s", audit_exc)
 
 
@@ -452,7 +452,7 @@ def _resolve_mesh(target: str) -> Any | None:
     *different* local mesh as the gateway. Using the target as its own
     gateway triggers ``_on_cmd``'s self-loop drop (``sender_id == peer_id``)
     and the call silently times out. When the target IS the only local mesh,
-    we still return it — the caller will get a timeout, which is the
+    we still return it - the caller will get a timeout, which is the
     expected behaviour for "send to yourself".
     """
     from strands_robots.mesh import get_local_robots
@@ -466,7 +466,7 @@ def _resolve_mesh(target: str) -> Any | None:
         for pid, m in locals_.items():
             if pid != target:
                 return m
-    # Either no target was specified or every local mesh IS the target —
+    # Either no target was specified or every local mesh IS the target -
     # fall back to "any one" (matching the original behaviour for the
     # single-mesh case).
     return next(iter(locals_.values()))
@@ -486,14 +486,14 @@ def _agent_identity() -> str:
     """Return this agent's caller identity for Device Connect RPCs.
 
     Sourced from ``STRANDS_ROBOT_MESH_AGENT_ID`` (falling back to the generic
-    ``DEVICE_CONNECT_CLIENT_ID``). Empty string when unset — in which case the
+    ``DEVICE_CONNECT_CLIENT_ID``). Empty string when unset - in which case the
     agent is an anonymous caller and a device with ``DEVICE_CONNECT_RPC_ALLOW``
     set will (correctly) reject it.
 
     SECURITY: this identity is *self-asserted*. It lets an operator who has
     locked a device's RPC allowlist authorize this agent by id, but it is only
     a trustworthy control when the transport authenticates the sender (mTLS).
-    On an insecure/trusted-LAN D2D link it is advisory — any peer can claim any
+    On an insecure/trusted-LAN D2D link it is advisory - any peer can claim any
     id, so do not rely on it as the sole authorization boundary there.
     """
     return os.environ.get("STRANDS_ROBOT_MESH_AGENT_ID") or os.environ.get("DEVICE_CONNECT_CLIENT_ID") or ""
@@ -536,7 +536,7 @@ def _dc_ensure_connected() -> None:
     # the operator. If they have opted in, surface a warning so it is visible.
     if os.environ.get("DEVICE_CONNECT_ALLOW_INSECURE", "").lower() in ("true", "1", "yes"):
         logger.warning(
-            "DEVICE_CONNECT_ALLOW_INSECURE is enabled — agent-side Device "
+            "DEVICE_CONNECT_ALLOW_INSECURE is enabled - agent-side Device "
             "Connect traffic is unencrypted and unauthenticated. Use only on "
             "a trusted, isolated network."
         )
@@ -563,12 +563,12 @@ def _try_device_connect(
 ) -> dict[str, Any] | None:
     """Dispatch *action* through Device Connect, or return None to fall back.
 
-    Returns None — signalling robot_mesh() to use the built-in mesh — when
+    Returns None - signalling robot_mesh() to use the built-in mesh - when
     Device Connect is unavailable, has discovered no devices, or the action is
     one DC does not handle (subscribe / watch / inbox / unsubscribe).
     """
     if action in ("subscribe", "watch", "inbox", "unsubscribe"):
-        return None  # mesh-only actions — let the built-in mesh handle them
+        return None  # mesh-only actions - let the built-in mesh handle them
     if os.environ.get("STRANDS_ROBOT_MESH_DC", "on").strip().lower() in ("off", "0", "false", "no"):
         return None  # Device Connect dispatch disabled (e.g. hermetic unit tests)
     try:
@@ -577,7 +577,7 @@ def _try_device_connect(
 
         conn = get_connection()
         devices = conn.list_devices()
-    except Exception as exc:  # noqa: BLE001 — DC is optional; fall back to mesh
+    except Exception as exc:  # noqa: BLE001 - DC is optional; fall back to mesh
         logger.debug("Device Connect unavailable, using mesh fallback: %s", exc)
         return None
     # A well-formed connection returns a list of device dicts. Anything else
@@ -632,7 +632,7 @@ def _device_connect_dispatch(
                 icon = {"strands_robot": "robot", "strands_sim": "sim", "reachy_mini": "reachy"}.get(dtype, dtype)
                 status = d.get("status", {})
                 avail = status.get("availability", "?") if isinstance(status, dict) else "?"
-                text += f"  [{icon}] {d['device_id']} — {avail}\n"
+                text += f"  [{icon}] {d['device_id']} - {avail}\n"
                 if action == "peers":
                     funcs = d.get("functions", [])
                     if funcs:
@@ -725,14 +725,14 @@ def _device_connect_dispatch(
                 try:
                     conn.invoke(d["device_id"], "stop", _with_identity({}), timeout=3.0)
                     stopped += 1
-                except Exception:  # noqa: BLE001 — best-effort fan-out
+                except Exception:  # noqa: BLE001 - best-effort fan-out
                     pass
             _audit_tool_action(action, "*", True, f"stopped={stopped}/{len(devices)}")
             return _DCResult(_ok(f"E-STOP: {stopped}/{len(devices)} devices stopped"))
 
         if action == "broadcast":
             # Security hardening: dispatch the *validated* command that the
-            # operator approved at the HITL gate — never re-parse the raw
+            # operator approved at the HITL gate - never re-parse the raw
             # caller-supplied string here (that would allow a payload whose
             # validated form differs from what actually executes).
             if validated_command is None:
@@ -750,7 +750,7 @@ def _device_connect_dispatch(
 
         # subscribe / watch / inbox / unsubscribe → handled by the mesh path
         return None
-    except Exception as exc:  # noqa: BLE001 — never raise out of the dispatcher
+    except Exception as exc:  # noqa: BLE001 - never raise out of the dispatcher
         logger.debug("Device Connect dispatch error for %s: %s", action, exc)
         return _DCResult(_err(f"[{action}] Device Connect error: {exc}"))
 
@@ -839,7 +839,7 @@ def robot_mesh(
     if not interrupt_actions and os.getenv("STRANDS_MESH_HITL_ACTIONS", "").strip().lower() == "none":
         _warn_none_opt_out_once()
 
-    # Check the per-action rate limit before doing any work — but
+    # Check the per-action rate limit before doing any work - but
     # do NOT consume a slot until we know the action is going to run.
     # See _rate_limit_check / _rate_limit_record for rationale.
     rl_err = _rate_limit_check(action)
@@ -953,7 +953,7 @@ def robot_mesh(
             )
         except RuntimeError as exc:
             # ToolContext.interrupt raises RuntimeError when no agent
-            # instance is attached — i.e. the tool is being invoked
+            # instance is attached - i.e. the tool is being invoked
             # outside a Strands agent loop (a direct
             # ``agent.tool.robot_mesh(...)`` call, a unit test that did
             # not wire up the SDK, etc.). In those contexts there is no
@@ -961,7 +961,7 @@ def robot_mesh(
             #
             # NB: the SDK's ``InterruptException`` MUST propagate up to
             # pause the agent loop, so we deliberately do NOT catch
-            # ``Exception`` here — that would swallow the normal
+            # ``Exception`` here - that would swallow the normal
             # interrupt-pause flow and turn every approval into an
             # immediate "interrupt unavailable" error.
             _audit_tool_action(action, target, False, f"interrupt unavailable: {exc}")
@@ -970,7 +970,7 @@ def robot_mesh(
             )
 
         if not _interrupt_approves(response):
-            # Declined approval does NOT consume a rate-limit slot —
+            # Declined approval does NOT consume a rate-limit slot -
             # see _rate_limit_check docstring for the safety rationale.
             #
             # #322: the operator's literal interrupt response is recorded in
@@ -992,7 +992,7 @@ def robot_mesh(
             return _err(rl_race_err)
         _audit_tool_action(action, target, True, f"operator approved: {response!r}")
     else:
-        # No interrupt required for this action — consume the slot
+        # No interrupt required for this action - consume the slot
         # unconditionally (matches the pre-split behaviour for
         # non-fleet-wide actions like ``tell``, ``send``, ``stop``).
         _rate_limit_record(action)
@@ -1193,7 +1193,7 @@ def robot_mesh(
         # allowlist. If an operator extended the allowlist with a wildcard
         # pattern (e.g. ``strands/*/stream`` per the README example), then
         # ``target="*"`` / ``target="**"`` would pass the allowlist match by
-        # equality / trailing-`/**` and reach ``mesh.on_stream("*")`` —
+        # equality / trailing-`/**` and reach ``mesh.on_stream("*")`` -
         # subscribing to every peer's stream (the cross-peer telemetry-leak
         # this surface exists to close). Require a literal peer id BEFORE
         # interpolating, mirroring the ``_REPO_TAG_RE`` shape-validation

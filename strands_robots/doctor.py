@@ -1,4 +1,4 @@
-"""``strands-robots doctor`` — diagnose common setup issues in one command.
+"""``strands-robots doctor`` - diagnose common setup issues in one command.
 
 Checks: Python version, extras availability, GPU/CUDA, serial permissions,
 MuJoCo GL backend, HuggingFace auth, and a sim smoke test. Prints a colored
@@ -101,7 +101,7 @@ def check_mujoco_gl() -> str:
         return _pass(f"MUJOCO_GL={gl}")
     if gl == "glfw":
         return _warn("MUJOCO_GL=glfw (needs display)", note="Set MUJOCO_GL=egl or osmesa for headless")
-    # Not set — check if a display exists
+    # Not set - check if a display exists
     if os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"):
         return _pass("MUJOCO_GL unset (display detected, glfw will work)")
     return _fail(

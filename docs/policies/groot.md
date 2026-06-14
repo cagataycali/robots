@@ -1,5 +1,5 @@
 ---
-description: NVIDIA GR00T (N1.5 / N1.6 / N1.7) — ZMQ service or local inference, 27 embodiment data_configs, full container lifecycle.
+description: NVIDIA GR00T (N1.5 / N1.6 / N1.7) - ZMQ service or local inference, 27 embodiment data_configs, full container lifecycle.
 ---
 
 # GR00T

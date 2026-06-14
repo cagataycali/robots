@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "strands-robots"
 dynamic = ["version"]
-description = "AI-powered robot control, simulation, and training for Strands Agents — integrates with MuJoCo, Isaac Sim, Newton, and many more"
+description = "AI-powered robot control, simulation, and training for Strands Agents - integrates with MuJoCo, Isaac Sim, Newton, and many more"
 readme = "README.md"
 requires-python = ">=3.12"
 license = {text = "Apache-2.0"}
@@ -88,7 +88,7 @@ mesh = [
     "eclipse-zenoh>=1.0.0,<2.0.0",
     "json5>=0.9.0,<1.0.0",
 ]
-# AWS IoT Core integration for the mesh — MQTT5/mTLS transport, Device
+# AWS IoT Core integration for the mesh - MQTT5/mTLS transport, Device
 # Shadow mirror, S3 camera offload, account-wide bootstrap (Rules /
 # Lambda / DynamoDB / Fleet Provisioning template). Requires:
 #   * awsiotsdk (high-level MQTT5 + mTLS client builder)
@@ -101,7 +101,7 @@ mesh-iot = [
     "awscrt>=0.20.0,<1.0.0",
     "boto3>=1.34.0,<2.0.0",
 ]
-# Device Connect — device-aware networking layer (discovery, RPC, events,
+# Device Connect - device-aware networking layer (discovery, RPC, events,
 # safety). The primary transport in server mode; when this extra is not
 # installed, robot_mesh() falls back to the built-in Zenoh mesh.
 device-connect = [
@@ -235,7 +235,7 @@ select = [
     "UP",    # pyupgrade
 ]
 ignore = [
-    "E501",  # line too long — handled by formatter
+    "E501",  # line too long - handled by formatter
 ]
 
 [tool.ruff.lint.isort]
@@ -257,7 +257,7 @@ ignore_missing_imports = false
 module = ["lerobot.*", "gr00t.*", "draccus.*", "msgpack.*", "websockets", "websockets.*", "zmq.*", "huggingface_hub.*", "serial.*", "psutil.*", "torch.*", "torchvision.*", "transformers.*", "einops.*", "robot_descriptions.*", "mujoco.*", "imageio.*", "libero.*", "zenoh.*", "boto3", "boto3.*", "awscrt", "awscrt.*", "awsiot", "awsiot.*", "botocore.*", "strands_robots.policies.cosmos3._msgpack_numpy", "openpi_client", "openpi_client.*", "openpi_server", "openpi_server.*", "openpi", "openpi.*", "device_connect_edge", "device_connect_edge.*", "device_connect_agent_tools", "device_connect_agent_tools.*"]
 ignore_missing_imports = true
 
-# Device Connect drivers — thin wrappers over the untyped device_connect_edge
+# Device Connect drivers - thin wrappers over the untyped device_connect_edge
 # SDK; their RPC handlers return dicts that bubble Any (same posture as tools.*).
 [[tool.mypy.overrides]]
 module = ["strands_robots.device_connect.*"]
@@ -277,7 +277,7 @@ module = ["strands_robots.policies.*"]
 warn_return_any = false
 disallow_untyped_defs = false
 
-# Robot core — complex dynamic assembly, optional deps
+# Robot core - complex dynamic assembly, optional deps
 [[tool.mypy.overrides]]
 module = ["strands_robots.robot"]
 disallow_untyped_defs = false
@@ -288,20 +288,20 @@ warn_return_any = false
 module = ["strands_robots.__init__"]
 disallow_untyped_defs = false
 
-# AWS IoT bootstrap modules — boto3 always returns Any from API calls.
+# AWS IoT bootstrap modules - boto3 always returns Any from API calls.
 # We type the public surface explicitly (ProvisionedThing, BootstrappedAccount)
 # but the internal helpers naturally bubble Any from boto3.
 [[tool.mypy.overrides]]
 module = ["strands_robots.mesh.iot.*", "strands_robots.mesh.transport.iot_transport"]
 warn_return_any = false
 
-# Registry modules — dynamic JSON loading returns Any
+# Registry modules - dynamic JSON loading returns Any
 [[tool.mypy.overrides]]
 module = ["strands_robots.registry.*"]
 warn_return_any = false
 disallow_untyped_defs = false
 
-# MuJoCo simulation — mixins use cooperative self._world patterns
+# MuJoCo simulation - mixins use cooperative self._world patterns
 # attr-defined: Mixins access self._world/self._lock/etc. from Simulation (cooperative pattern)
 # assignment: PEP 484 implicit Optional (= None on typed params)
 # override: Subclass signatures extend base with extra params (orientation, mesh_path)
@@ -311,13 +311,13 @@ module = ["strands_robots.simulation.mujoco.*"]
 disallow_untyped_defs = false
 warn_return_any = false
 
-# Async utils and dataset recorder — thin wrappers with dynamic types
+# Async utils and dataset recorder - thin wrappers with dynamic types
 [[tool.mypy.overrides]]
 module = ["strands_robots._async_utils", "strands_robots.dataset_recorder"]
 disallow_untyped_defs = false
 warn_return_any = false
 
-# Test files — relaxed type checking for mocks, fixtures, and test utilities
+# Test files - relaxed type checking for mocks, fixtures, and test utilities
 [[tool.mypy.overrides]]
 module = ["tests.*", "tests_integ.*"]
 disallow_untyped_defs = false

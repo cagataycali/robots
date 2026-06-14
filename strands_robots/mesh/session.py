@@ -2,7 +2,7 @@
 
 This module provides a single, ref-counted :func:`zenoh.open` session per process
 and a thread-safe registry of discovered peers.  It is the lowest layer of the
-mesh stack — higher-level constructs (``Mesh``, presence, RPC) build on top.
+mesh stack - higher-level constructs (``Mesh``, presence, RPC) build on top.
 
 The Zenoh dependency is **lazy**: ``import strands_robots.mesh_session`` does not
 import ``zenoh`` at module level.  The first call to :func:`get_session` triggers
@@ -11,7 +11,7 @@ the real import.  If ``eclipse-zenoh`` is not installed the function returns
 
 Connection strategy (when no explicit endpoint is configured):
 
-1. Try to **listen** on ``tcp/127.0.0.1:{STRANDS_MESH_PORT}`` — this makes the
+1. Try to **listen** on ``tcp/127.0.0.1:{STRANDS_MESH_PORT}`` - this makes the
    first process the local router.
 2. If the port is already bound, fall back to **client** mode and connect to the
    same endpoint.
@@ -20,7 +20,7 @@ Connection strategy (when no explicit endpoint is configured):
 Environment variables
 ---------------------
 ``ZENOH_CONNECT``
-    Comma-separated remote endpoint(s) — e.g. ``tcp/10.0.0.1:7447``.
+    Comma-separated remote endpoint(s) - e.g. ``tcp/10.0.0.1:7447``.
 ``ZENOH_LISTEN``
     Comma-separated listen endpoint(s).
 ``STRANDS_MESH_PORT``
@@ -43,7 +43,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-# Session singleton — one ``zenoh.Session`` per process, ref-counted
+# Session singleton - one ``zenoh.Session`` per process, ref-counted
 
 
 _SESSION: Any | None = None  # zenoh.Session when open, else None
@@ -61,7 +61,7 @@ HEARTBEAT_HZ: float = 2.0
 STATE_HZ: float = 10.0
 
 #: Default camera-publishing frequency (Hz).  ``0`` disables the camera
-#: loop — opt-in via the ``STRANDS_MESH_CAMERA_HZ`` environment variable
+#: loop - opt-in via the ``STRANDS_MESH_CAMERA_HZ`` environment variable
 #: because frames are large and bandwidth-heavy.
 CAMERA_HZ: float = 0.0
 
@@ -115,7 +115,7 @@ HAND_HZ: float = 50.0
 MAP_INFO_HZ: float = 0.2
 
 
-# Backend selection helpers — when STRANDS_MESH_BACKEND is "iot" or "bridge",
+# Backend selection helpers - when STRANDS_MESH_BACKEND is "iot" or "bridge",
 # get_session() / put() / current_session() / session_alive() delegate to the
 # transport factory instead of opening a Zenoh session directly. The "zenoh"
 # default keeps the historical behaviour byte-for-byte so the 200+ existing
@@ -176,7 +176,7 @@ class PeerInfo:
         return f"PeerInfo(peer_id={self.peer_id!r}, type={self.peer_type!r}, age={self.age:.1f}s)"
 
 
-# Peer registry — shared across all Mesh instances in the same process
+# Peer registry - shared across all Mesh instances in the same process
 
 
 _PEERS: dict[str, PeerInfo] = {}
@@ -186,7 +186,7 @@ _PEERS_LOCK = threading.Lock()
 
 def update_peer(peer_id: str, peer_type: str, hostname: str, caps: dict[str, Any]) -> bool:
     """Insert or update a peer.  Returns ``True`` when the peer is new."""
-    global _PEERS_VERSION  # noqa: PLW0603 — module-level singleton by design
+    global _PEERS_VERSION  # noqa: PLW0603 - module-level singleton by design
     with _PEERS_LOCK:
         is_new = peer_id not in _PEERS
         # When a NEW peer would push us over the cap, evict the oldest
@@ -477,10 +477,10 @@ def get_session() -> Any | None:
 
     Backend selection comes from ``STRANDS_MESH_BACKEND``:
 
-    - ``zenoh`` (default) — open / reuse a ``zenoh.Session`` exactly as before.
+    - ``zenoh`` (default) - open / reuse a ``zenoh.Session`` exactly as before.
       Returned object is the raw session; callers can ``.declare_subscriber()``
       on it.
-    - ``iot`` / ``bridge`` — delegate to
+    - ``iot`` / ``bridge`` - delegate to
       :mod:`strands_robots.mesh.transport.factory`; the returned object is an
       :class:`~strands_robots.mesh.transport.IotMqttTransport` or
       :class:`~strands_robots.mesh.transport.BridgeTransport` which **also**
@@ -495,7 +495,7 @@ def get_session() -> Any | None:
 
     if _is_transport_backend():
         # Delegate to the transport factory. The factory holds its own
-        # refcount independently of _SESSION_REFS — that's fine, callers
+        # refcount independently of _SESSION_REFS - that's fine, callers
         # that release_session() will see the matching release_transport().
         from strands_robots.mesh.transport.factory import get_transport
 
@@ -507,14 +507,14 @@ def get_session() -> Any | None:
             return _SESSION
 
         try:
-            import zenoh  # noqa: F811 — lazy import
+            import zenoh  # noqa: F811 - lazy import
         except ImportError:
-            logger.debug("eclipse-zenoh not installed — mesh disabled")
+            logger.debug("eclipse-zenoh not installed - mesh disabled")
             return None
 
         # STRANDS_MESH_PORT is read at session-open time so a process can be
         # configured via env vars without re-importing.  Bad input falls back
-        # to the default and warns once — never raises (the default behaviour
+        # to the default and warns once - never raises (the default behaviour
         # is to keep the mesh quietly off rather than crash the host robot).
         port_env = os.getenv("STRANDS_MESH_PORT", "7447")
         try:
@@ -523,7 +523,7 @@ def get_session() -> Any | None:
                 raise ValueError(f"port {mesh_port} out of range")
         except ValueError as exc:
             logger.warning(
-                "Invalid STRANDS_MESH_PORT=%r (%s) — falling back to 7447",
+                "Invalid STRANDS_MESH_PORT=%r (%s) - falling back to 7447",
                 port_env,
                 exc,
             )
@@ -607,12 +607,12 @@ def get_session() -> Any | None:
                 # try anyway -- belt-and-braces).
                 # Port already bound (the most common case) is not an error.
                 logger.debug(
-                    "Zenoh listener on %s unavailable (%s) — trying client mode",
+                    "Zenoh listener on %s unavailable (%s) - trying client mode",
                     local_ep,
                     exc,
                 )
 
-            # Fall back to client mode — connect to the existing listener.
+            # Fall back to client mode - connect to the existing listener.
             # Build cfg OUTSIDE the try so a config-shape ValueError
             # (NaN env clamp, missing TLS file, bad ACL) propagates
             # loudly to Mesh.start instead of being silently downgraded
@@ -673,7 +673,7 @@ def _get_zenoh_session_directly() -> Any | None:
         try:
             import zenoh
         except ImportError:
-            logger.debug("eclipse-zenoh not installed — mesh disabled")
+            logger.debug("eclipse-zenoh not installed - mesh disabled")
             return None
 
         port_env = os.getenv("STRANDS_MESH_PORT", "7447")
@@ -683,7 +683,7 @@ def _get_zenoh_session_directly() -> Any | None:
                 raise ValueError(f"port {mesh_port} out of range")
         except ValueError as exc:
             logger.warning(
-                "Invalid STRANDS_MESH_PORT=%r (%s) — falling back to 7447",
+                "Invalid STRANDS_MESH_PORT=%r (%s) - falling back to 7447",
                 port_env,
                 exc,
             )
@@ -734,7 +734,7 @@ def _get_zenoh_session_directly() -> Any | None:
                 # narrowing applied in get_session() upstairs. Config-shape
                 # ValueError now propagates instead of being swallowed at DEBUG.
                 logger.debug(
-                    "Zenoh listener on %s unavailable (%s) — trying client mode",
+                    "Zenoh listener on %s unavailable (%s) - trying client mode",
                     local_ep,
                     exc,
                 )

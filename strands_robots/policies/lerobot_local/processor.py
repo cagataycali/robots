@@ -74,7 +74,7 @@ def _register_policy_processor_steps(policy_type: str | None) -> None:
     (MolmoAct2) need their module imported explicitly.
 
     Best-effort: failures (e.g. heavy optional deps) are logged at DEBUG and the
-    caller proceeds — the pipeline load will then raise a clear error itself.
+    caller proceeds - the pipeline load will then raise a clear error itself.
     """
     if not policy_type:
         return

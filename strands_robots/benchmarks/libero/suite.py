@@ -114,10 +114,10 @@ def _resolve_libero_root() -> Path:
 
     Handles two install layouts:
 
-    1. Regular package — ``libero.__file__`` points at
+    1. Regular package - ``libero.__file__`` points at
        ``.../site-packages/libero/__init__.py``; the parent directory is
        the package root.
-    2. Namespace package (PEP 420) — ``libero.__file__`` is ``None``;
+    2. Namespace package (PEP 420) - ``libero.__file__`` is ``None``;
        ``libero.__path__`` carries one or more directory entries (e.g.
        NVIDIA's ``setup_libero.sh`` installs LIBERO this way: a
        symlinked checkout where ``libero`` has no ``__init__.py``).

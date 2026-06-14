@@ -41,7 +41,7 @@ def fake_session(monkeypatch: pytest.MonkeyPatch) -> Iterator[MagicMock]:
 
 
 # ---------------------------------------------------------------------------
-# Issue #1 / #2 — _inbox_lock prevents concurrent-handler corruption.
+# Issue #1 / #2 - _inbox_lock prevents concurrent-handler corruption.
 # ---------------------------------------------------------------------------
 
 
@@ -87,7 +87,7 @@ def test_subscribe_inbox_concurrent_writes(fake_session: MagicMock) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Issue #7 — stop_event wakes the heartbeat / state loops promptly.
+# Issue #7 - stop_event wakes the heartbeat / state loops promptly.
 # ---------------------------------------------------------------------------
 
 
@@ -106,11 +106,11 @@ def test_stop_unblocks_heartbeat_loop_quickly(fake_session: MagicMock) -> None:
     assert not heartbeat.is_alive(), "heartbeat thread did not exit on stop()"
     # 0.5s would be the worst case under time.sleep(period); with the
     # stop_event we expect single-digit milliseconds.
-    assert elapsed < 0.4, f"stop() took {elapsed:.3f}s — stop_event regressed"
+    assert elapsed < 0.4, f"stop() took {elapsed:.3f}s - stop_event regressed"
 
 
 # ---------------------------------------------------------------------------
-# Issue #10 — partial-init failure tears down already-declared subscribers.
+# Issue #10 - partial-init failure tears down already-declared subscribers.
 # ---------------------------------------------------------------------------
 
 
@@ -148,20 +148,20 @@ def test_partial_init_failure_cleans_up_declared_subscribers(
     # Mesh must not be marked alive.
     assert m.alive is False
     # Both successfully-declared subscribers were undeclared.
-    assert all(sub.undeclare.called for sub in declared), "leaked subscribers — Issue #10 regressed"
+    assert all(sub.undeclare.called for sub in declared), "leaked subscribers - Issue #10 regressed"
     # Session reference released.
     assert release_mock.called
 
 
 # ---------------------------------------------------------------------------
-# Issue #5 — invalid STRANDS_MESH_PORT falls back gracefully (no exception).
+# Issue #5 - invalid STRANDS_MESH_PORT falls back gracefully (no exception).
 # ---------------------------------------------------------------------------
 
 
 def test_invalid_mesh_port_falls_back_to_default(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """Bad STRANDS_MESH_PORT must warn and fall back to 7447 — never raise."""
+    """Bad STRANDS_MESH_PORT must warn and fall back to 7447 - never raise."""
     # Reset module-level state so get_session re-runs the open path.
     import strands_robots.mesh.session as ms
 
@@ -171,7 +171,7 @@ def test_invalid_mesh_port_falls_back_to_default(
     monkeypatch.setattr(ms, "_SESSION", None)
     monkeypatch.setattr(ms, "_SESSION_REFS", 0)
 
-    # Patch zenoh.open to capture the local_ep that get_session computes —
+    # Patch zenoh.open to capture the local_ep that get_session computes -
     # we don't actually need a real router for this test.
     fake_zenoh = MagicMock()
     fake_zenoh.Config.return_value = MagicMock()
@@ -186,10 +186,10 @@ def test_invalid_mesh_port_falls_back_to_default(
     assert sess is not None or sess is None  # any outcome OK; no exception is the point
     # WARNING about the bad port made it into the log.
     assert any("STRANDS_MESH_PORT" in rec.message for rec in caplog.records), (
-        "expected WARNING about invalid STRANDS_MESH_PORT — Issue #5 regressed"
+        "expected WARNING about invalid STRANDS_MESH_PORT - Issue #5 regressed"
     )
 
-    # Cleanup — close any session we accidentally opened.
+    # Cleanup - close any session we accidentally opened.
     if ms._SESSION is not None:
         try:
             ms.release_session()
@@ -198,7 +198,7 @@ def test_invalid_mesh_port_falls_back_to_default(
 
 
 # ---------------------------------------------------------------------------
-# Issue #4 — current_session does NOT bump the refcount.
+# Issue #4 - current_session does NOT bump the refcount.
 # ---------------------------------------------------------------------------
 
 
@@ -220,18 +220,18 @@ def test_current_session_does_not_change_refcount(
 
 
 # ---------------------------------------------------------------------------
-# Issue #9 — HardwareRobot.cleanup() stops the mesh.
+# Issue #9 - HardwareRobot.cleanup() stops the mesh.
 # ---------------------------------------------------------------------------
 
 
 def test_hardware_robot_cleanup_stops_mesh() -> None:
     """A HardwareRobot with a mesh attached must stop it during cleanup()."""
-    # Import deferred — pulls in lerobot only when actually needed.  Skip
+    # Import deferred - pulls in lerobot only when actually needed.  Skip
     # if lerobot isn't installed.
     pytest.importorskip("lerobot.robots.config", reason="needs lerobot")
     from strands_robots import hardware_robot
 
-    # Build a HardwareRobot without going through the full robot() path —
+    # Build a HardwareRobot without going through the full robot() path -
     # we just need an instance with the .mesh attribute and a cleanup() that
     # works (no real hardware).
     hw = hardware_robot.Robot.__new__(hardware_robot.Robot)
@@ -248,30 +248,30 @@ def test_hardware_robot_cleanup_stops_mesh() -> None:
     hw.peer_id = "fakebot-deadbeef"
 
     hw.cleanup()
-    assert fake_mesh.stop.called, "HardwareRobot.cleanup() must call self.mesh.stop() — Issue #9 regressed"
+    assert fake_mesh.stop.called, "HardwareRobot.cleanup() must call self.mesh.stop() - Issue #9 regressed"
 
 
 # ---------------------------------------------------------------------------
-# Issue #11 — peer_id default has 8 hex chars of entropy.
+# Issue #11 - peer_id default has 8 hex chars of entropy.
 # ---------------------------------------------------------------------------
 
 
 def test_default_peer_id_has_32_bits_of_entropy(fake_session: MagicMock) -> None:
-    """8 hex chars = 32 bits — required for collision-free large meshes."""
+    """8 hex chars = 32 bits - required for collision-free large meshes."""
     seen: set[str] = set()
     for _ in range(256):
         m = init_mesh(_FakeRobot(), peer_id=None)
         assert m is not None
         suffix = m.peer_id.split("-")[-1]
-        assert len(suffix) == 8, f"got {len(suffix)} hex chars — Issue #11 regressed"
+        assert len(suffix) == 8, f"got {len(suffix)} hex chars - Issue #11 regressed"
         seen.add(suffix)
         m.stop()
-    # 256 ids in a 2**32 space — uniqueness is statistically guaranteed.
-    assert len(seen) == 256, "peer_id collisions across 256 ids — entropy regressed"
+    # 256 ids in a 2**32 space - uniqueness is statistically guaranteed.
+    assert len(seen) == 256, "peer_id collisions across 256 ids - entropy regressed"
 
 
 # ---------------------------------------------------------------------------
-# Issue #2 / #3 — concurrent subscribe/stop don't crash.
+# Issue #2 / #3 - concurrent subscribe/stop don't crash.
 # ---------------------------------------------------------------------------
 
 

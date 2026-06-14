@@ -1,5 +1,5 @@
 ---
-description: NVIDIA Cosmos 3 omnimodal VLA — WebSocket service, droid/umi/av/bridge embodiments, MuJoCo rollout.
+description: NVIDIA Cosmos 3 omnimodal VLA - WebSocket service, droid/umi/av/bridge embodiments, MuJoCo rollout.
 ---
 
 # Cosmos 3
@@ -46,9 +46,9 @@ Cosmos3Policy(
 | Embodiment | Robot hardware | Strands sim asset |
 |------------|----------------|-------------------|
 | `droid` | Franka / DROID dataset | `"panda"` or `"franka"` |
-| `umi` | UMI gripper | — |
-| `av` | Autonomous vehicle cameras | — |
-| `bridge` | Bridge dataset robots | — |
+| `umi` | UMI gripper | - |
+| `av` | Autonomous vehicle cameras | - |
+| `bridge` | Bridge dataset robots | - |
 
 ## Rollout
 

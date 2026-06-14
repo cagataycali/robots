@@ -230,7 +230,7 @@ def test_camera_topic_is_dropped_silently():
     sub = operator.declare_subscriber("strands/+/camera/+", on_msg)
     time.sleep(0.5)
 
-    # Robot tries to publish a camera frame — should be dropped client-side
+    # Robot tries to publish a camera frame - should be dropped client-side
     robot.put(
         f"strands/{_ROBOT_THING_A}/camera/wrist",
         {"v": 1, "data": "fake-jpeg-base64", "shape": [480, 640, 3]},

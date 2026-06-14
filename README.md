@@ -34,7 +34,7 @@
 
 `strands-robots` gives a [Strands Agent](https://github.com/strands-agents/harness-sdk)
 hands. One `Robot()` call returns either a **MuJoCo simulation** (default, no GPU,
-no hardware) or a **real hardware robot** — both drivable in natural language,
+no hardware) or a **real hardware robot** - both drivable in natural language,
 both auto-joined to a peer-to-peer **mesh** so fleets coordinate out of the box.
 
 ```python
@@ -46,7 +46,7 @@ agent = Agent(tools=[robot])
 agent("Pick up the red cube")
 ```
 
-Swap to physical hardware with one kwarg — the agent code is identical:
+Swap to physical hardware with one kwarg - the agent code is identical:
 
 ```python
 robot = Robot("so100", mode="real", port="/dev/ttyACM0")
@@ -55,7 +55,7 @@ robot = Robot("so100", mode="real", port="/dev/ttyACM0")
 ## Why strands-robots
 
 - **Sim-first, safe by default.** `Robot("so100")` spins up a MuJoCo world. You
-  never accidentally drive real servos — `mode="real"` is an explicit opt-in.
+  never accidentally drive real servos - `mode="real"` is an explicit opt-in.
 - **50+ robots, 8 categories.** Arms, humanoids, quadrupeds, hands, drones,
   bimanual rigs - resolved from a single registry with auto-download of assets.
 - **Any policy.** VLA models (NVIDIA GR00T, LeRobot ACT/Pi0/SmolVLA/Diffusion),
@@ -63,7 +63,7 @@ robot = Robot("so100", mode="real", port="/dev/ttyACM0")
 - **Mesh networking built in.** Every robot is a Zenoh peer. `tell()` another
   robot what to do; broadcast an E-STOP; bridge to AWS IoT Core for fleets.
 - **60+ action simulation tool.** World building, physics, rendering,
-  domain randomization, and LeRobotDataset recording — all agent-callable.
+  domain randomization, and LeRobotDataset recording - all agent-callable.
 - **One mental model.** Sim and hardware share the same policy interface,
   the same mesh, and the same natural-language control surface.
 
@@ -107,7 +107,7 @@ extras you need:
 | `groot-service` | pyzmq, msgpack | NVIDIA GR00T inference client |
 | `mesh` | eclipse-zenoh, json5 | Peer-to-peer robot mesh |
 | `mesh-iot` | awsiotsdk, awscrt, boto3 | AWS IoT Core mesh transport for fleets |
-| `device-connect` | device-connect-edge, device-connect-agent-tools | Device-aware networking — discovery, RPC, events, safety (falls back to the built-in mesh if absent) |
+| `device-connect` | device-connect-edge, device-connect-agent-tools | Device-aware networking - discovery, RPC, events, safety (falls back to the built-in mesh if absent) |
 | `benchmark-libero` | libero | LIBERO benchmark evaluation |
 | `all` | everything above | Kitchen sink |
 
@@ -143,14 +143,14 @@ agent = Agent(tools=[robot])
 agent("Wave the arm using the mock policy for 200 steps, then render a top-down view")
 ```
 
-`Robot("so100")` returns a `Simulation` instance — the full 64-action
+`Robot("so100")` returns a `Simulation` instance - the full 64-action
 simulation AgentTool. Drive it in natural language through an `Agent`, call its
 methods directly (`robot.render(camera_name="topdown")`), or dispatch an action
 by calling it (`robot(action="render", camera_name="topdown")`). See
 [Simulation](#simulation-mujoco).
 
 > **Note:** `Robot("so100")` already creates the world **and** adds the robot
-> for you. Do **not** call `create_world()` again on the returned instance —
+> for you. Do **not** call `create_world()` again on the returned instance -
 > it will error with *"World already exists."* The `create_world()` /
 > `add_robot()` sequence shown in [Simulation (MuJoCo)](#simulation-mujoco) is
 > for the low-level `Simulation(...)` constructor, which starts empty.
@@ -190,13 +190,13 @@ agent("Use so101 to pick up the red block with the GR00T policy on port 8000")
 ```python
 from strands_robots import create_policy
 
-# Direct HuggingFace inference — ACT, Pi0, SmolVLA, Diffusion, ...
+# Direct HuggingFace inference - ACT, Pi0, SmolVLA, Diffusion, ...
 policy = create_policy("lerobot/act_aloha_sim_transfer_cube_human")
 ```
 
 ## The `Robot()` factory
 
-`Robot()` is a factory, not a wrapper — you get the real backend instance back
+`Robot()` is a factory, not a wrapper - you get the real backend instance back
 with all its methods.
 
 ```python
@@ -219,7 +219,7 @@ Robot("my_arm", urdf_path="arm.xml") # bring your own MJCF/URDF
 
 Safety/validation rules:
 - **Defaults to sim.** Real hardware is always an explicit `mode="real"`.
-- **`cameras=` is rejected in sim mode** — add sim cameras via the `add_camera`
+- **`cameras=` is rejected in sim mode** - add sim cameras via the `add_camera`
   action after creation.
 - **Unknown robot names raise `ValueError`** unless you pass `urdf_path=`.
 - **`STRANDS_ROBOT_MODE`** overrides detection; a typo'd value logs a warning
@@ -256,7 +256,7 @@ AgentTool returning `{"status", "content"}`.
 
 | Tool | Purpose |
 |------|---------|
-| `Robot(...)` | Universal robot — sim or hardware, async control |
+| `Robot(...)` | Universal robot - sim or hardware, async control |
 | `gr00t_inference` | Manage NVIDIA GR00T inference services (Docker lifecycle) |
 | `lerobot_camera` | OpenCV / RealSense camera discovery, capture, record |
 | `lerobot_calibrate` | List, view, back up, restore LeRobot calibrations |
@@ -274,7 +274,7 @@ AgentTool returning `{"status", "content"}`.
 | `start` | `instruction`, `policy_port`, `duration` | Non-blocking async start |
 | `status` | - | Current task status |
 | `stop` | - | Interrupt running task (emergency stop) |
-In sim mode the same tool exposes the 64 Simulation actions — see Simulation (MuJoCo).
+In sim mode the same tool exposes the 64 Simulation actions - see Simulation (MuJoCo).
 </details>
 
 <details>
@@ -308,16 +308,16 @@ agent.tool.gr00t_inference(
 <details>
 <summary><b>Camera / serial / pose / teleop tool actions</b></summary>
 
-**Camera** — `discover`, `capture`, `capture_batch`, `record`, `preview`, `test`
-**Serial** — `list_ports`, `feetech_position`, `feetech_ping`, `send`, `monitor`
-**Pose** — `store_pose`, `load_pose`, `list_poses`, `move_motor`, `incremental_move`, `reset_to_home`
-**Teleop** — `start`, `stop`, `list`, `replay`
+**Camera** - `discover`, `capture`, `capture_batch`, `record`, `preview`, `test`
+**Serial** - `list_ports`, `feetech_position`, `feetech_ping`, `send`, `monitor`
+**Pose** - `store_pose`, `load_pose`, `list_poses`, `move_motor`, `incremental_move`, `reset_to_home`
+**Teleop** - `start`, `stop`, `list`, `replay`
 
 </details>
 
 ## Policy providers
 
-All policies implement one ABC — `async get_actions(observation, instruction, **kwargs)`.
+All policies implement one ABC - `async get_actions(observation, instruction, **kwargs)`.
 The interface is deliberately agnostic about *how* actions are produced, so it
 fits both VLA models and classical controllers.
 
@@ -387,11 +387,11 @@ Pick the config matching your robot's camera + state layout; pass it as
 > `trust_remote_code=True` (arbitrary code execution). You must opt in with
 > `export STRANDS_TRUST_REMOTE_CODE=1`. Only load models you trust.
 
-### Cosmos 3 (NVIDIA omnimodal VLA — service mode)
+### Cosmos 3 (NVIDIA omnimodal VLA - service mode)
 
 [`nvidia/Cosmos3-Nano-Policy-DROID`](https://huggingface.co/nvidia/Cosmos3-Nano-Policy-DROID)
 served by the Cosmos Framework RoboLab WebSocket policy server. The policy
-client is **self-contained** — it speaks the server's msgpack+NumPy wire
+client is **self-contained** - it speaks the server's msgpack+NumPy wire
 protocol directly via `websockets` + a vendored numpy packer (no
 `openpi-client` dependency, no `numpy<2` pin), so it composes cleanly with
 `lerobot` for dataset recording in the same env.
@@ -406,7 +406,7 @@ curl http://localhost:8000/healthz   # -> 200 when ready (~4 min cold)
 ```
 
 **2. Install the client** (the `cosmos3-service` extra ships only `msgpack`
-+ `websockets` — numpy-version agnostic):
++ `websockets` - numpy-version agnostic):
 
 ```bash
 uv pip install -e '.[sim-mujoco]'
@@ -425,7 +425,7 @@ chunk = policy.get_actions_sync(observation, "pick up the cube")
 # chunk == [{"joint_0": .., ..., "gripper": ..}, ...]  (one dict per timestep)
 ```
 
-**4. Roll out in MuJoCo** — the `droid` embodiment drives a Franka/DROID-class
+**4. Roll out in MuJoCo** - the `droid` embodiment drives a Franka/DROID-class
 arm, so use the `franka` (or `panda`) sim asset:
 
 ```bash
@@ -439,7 +439,7 @@ command to start it.
 ### Non-VLA policies (motion planners, MPC, scripted)
 
 The same interface fits cuRobo, MoveIt2, OMPL, MPC, and pure-IK / scripted
-trajectories — anything mapping `(observation, goal)` to joint targets.
+trajectories - anything mapping `(observation, goal)` to joint targets.
 Non-VLA providers set `requires_images = False` (skip camera rendering) and
 read their goal from **well-known `**kwargs` keys** instead of parsing the
 instruction string:
@@ -496,7 +496,7 @@ policy = create_policy("reach")
 
 ## Simulation (MuJoCo)
 
-`Robot("so100")` (sim mode) returns a `Simulation` — a MuJoCo-backed AgentTool
+`Robot("so100")` (sim mode) returns a `Simulation` - a MuJoCo-backed AgentTool
 exposing **50+ actions** for world composition, physics, rendering, policy
 execution, and dataset recording. Build it directly when you want full control:
 
@@ -576,7 +576,7 @@ frame = sim.render(camera_name="topdown")   # {status, content:[text, image]}
 **Self-healing:** unknown parameters are rejected with *"Unknown parameter X
 for action Y. Valid: [...]"*, missing required params produce *"Action X
 requires parameter Y."*, and vectors/dtypes are validated before MuJoCo sees
-them — so the agent learns the contract without crashing the process.
+them - so the agent learns the contract without crashing the process.
 
 ## Mesh networking
 
@@ -589,7 +589,7 @@ from strands_robots import Robot
 
 a = Robot("so100")              # auto-joins the mesh
 b = Robot("so100")              # second peer (another process)
-print(a.mesh.peers)             # list[dict] — discovers b
+print(a.mesh.peers)             # list[dict] - discovers b
 print(a.mesh.peers_by_id[b.peer_id])   # dict[peer_id -> info] for O(1) lookup
 info = a.mesh.get_peer(b.peer_id)      # None-safe single lookup
 
@@ -618,7 +618,7 @@ Expose the mesh to an agent with the `robot_mesh` tool (`peers`, `status`,
 `inbox`). Disable globally with `STRANDS_MESH=false` or per-robot with
 `Robot("so100", mesh=False)`. Install with `uv pip install "strands-robots[mesh]"`.
 
-For frictionless single-machine experiments, set `STRANDS_MESH_LOCAL_DEV=1` —
+For frictionless single-machine experiments, set `STRANDS_MESH_LOCAL_DEV=1` -
 one env var that runs the mesh without mTLS/ACL on localhost. It defaults the
 auth mode to `none` **and** satisfies the insecure-acknowledgement second
 factor by itself, so you don't also need `STRANDS_MESH_I_KNOW_THIS_IS_INSECURE=1`.
@@ -700,7 +700,7 @@ Clear with `rm -rf ~/.strands_robots/assets/`; relocate with
 ## Benchmarks
 
 `strands-robots` ships a [LIBERO](https://github.com/Lifelong-Robot-Learning/LIBERO)
-benchmark integration on the MuJoCo backend — byte-equivalent to upstream
+benchmark integration on the MuJoCo backend - byte-equivalent to upstream
 LIBERO at the model level, reaching `success_rate >= 0.92` on libero-10/SCENE5.
 Register declarative benchmarks from file and evaluate policies via the
 `list_benchmarks`, `register_benchmark_from_file`, and `evaluate_benchmark`
@@ -712,7 +712,7 @@ simulation actions. Install with `uv pip install "strands-robots[benchmark-liber
 strands_robots/
 ├── __init__.py            # Lazy-loaded public API (Robot, Simulation, policies)
 ├── robot.py               # Robot() factory (sim/real/auto dispatch)
-├── hardware_robot.py      # HardwareRobot — async LeRobot control
+├── hardware_robot.py      # HardwareRobot - async LeRobot control
 ├── policies/
 │   ├── base.py            # Policy ABC
 │   ├── factory.py         # create_policy() + runtime registration
@@ -756,7 +756,7 @@ validation controls in the [Configuration](#configuration) matrix.
 ## Contributing
 
 Issues and PRs welcome. Track work on the
-[Strands Labs — Robots project board](https://github.com/orgs/strands-labs/projects/2);
+[Strands Labs - Robots project board](https://github.com/orgs/strands-labs/projects/2);
 it is the source of truth for roadmap and follow-ups.
 
 - [GitHub Issues](https://github.com/strands-labs/robots/issues)

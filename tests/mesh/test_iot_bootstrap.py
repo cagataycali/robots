@@ -42,7 +42,7 @@ class TestLambdaZipBuild:
 
 
 class TestResourceNames:
-    """Lock in the canonical names — changing them is a breaking change."""
+    """Lock in the canonical names - changing them is a breaking change."""
 
     def test_safety_table_name(self):
         assert SAFETY_TABLE_NAME == "strands-mesh-safety-events"
@@ -102,7 +102,7 @@ class TestEnsureSafetyTable:
         assert result == "arn:new"
         ddb.create_table.assert_called_once()
         kwargs = ddb.create_table.call_args.kwargs
-        # Must request KMS encryption — safety audit is a security-sensitive table.
+        # Must request KMS encryption - safety audit is a security-sensitive table.
         assert kwargs["SSESpecification"]["Enabled"] is True
         assert kwargs["SSESpecification"]["SSEType"] == "KMS"
         # Pay-per-request (so test accounts don't get autoscaling surprises).
@@ -236,7 +236,7 @@ class TestGrantIotInvokeLambda:
 
 
 class TestBootstrappedAccountEnv:
-    """Sanity checks — names locked in."""
+    """Sanity checks - names locked in."""
 
     def test_lambda_zip_size_reasonable(self):
         from strands_robots.mesh.iot.bootstrap import _build_lambda_zip

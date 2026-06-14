@@ -669,7 +669,7 @@ class TestPublishCameraDimsToWorld:
         from strands_robots.simulation.models import SimCamera
 
         sim = FakeSim(data_config="panda")
-        # world.cameras starts empty — model-side rename hasn't put
+        # world.cameras starts empty - model-side rename hasn't put
         # anything in the registry yet.
         assert "image" not in sim._world.cameras
 
@@ -689,7 +689,7 @@ class TestPublishCameraDimsToWorld:
         """Round 40 (#168): when ``world.cameras[cam_name]`` is already
         populated (e.g. from a prior episode's publish call, or from
         the user's explicit ``add_camera``), the publish must NOT
-        overwrite it — preserves user-configured pose / FOV /
+        overwrite it - preserves user-configured pose / FOV /
         custom-dim overrides across episodes."""
         from strands_robots.simulation.models import SimCamera
 
@@ -739,7 +739,7 @@ class TestPublishCameraDimsToWorld:
 
         Pre-populate ``world.cameras["image"]`` AS A NON-SIMCAMERA
         VALUE (mimicking the FakeSim's ``add_camera`` adding a raw
-        dict — though real LIBERO would have a model-side rename
+        dict - though real LIBERO would have a model-side rename
         producing nothing in the registry initially). The publish
         path then fires from the skip branch and replaces nothing
         (idempotent), but for ``wrist_image`` (not pre-populated),
@@ -758,7 +758,7 @@ class TestPublishCameraDimsToWorld:
         adapter = LiberoAdapter.from_text(PICK_CUBE_BDDL, init_jitter=0.0)
         adapter.on_episode_start(sim, random.Random(0))
 
-        # 'image' already there — must NOT have been re-added.
+        # 'image' already there - must NOT have been re-added.
         added_names = {name for name, _ in sim._add_camera_calls}
         assert "image" not in added_names
         # The pre-existing 'image' entry stays untouched (idempotent).
@@ -1159,7 +1159,7 @@ class TestAugmentObservation:
         assert adapter.eef_state_site_name == "custom_grip_grip_site"
 
     def test_read_eef_pose_uses_site_when_available(self, libero_scene_xml):
-        """Round 32 (#168) — pin the split-source contract.
+        """Round 32 (#168) - pin the split-source contract.
 
         With a real LIBERO scene compiled into the sim,
         ``_read_eef_pose`` must:
@@ -1226,7 +1226,7 @@ class TestAugmentObservation:
         original bug, so the test is meaningful.
 
         Round 32: also asserts the position we get back matches the
-        site, NOT the body — the round-30 wrong-body bug regression
+        site, NOT the body - the round-30 wrong-body bug regression
         sentinel.
         """
         pytest.importorskip("mujoco")
@@ -1253,7 +1253,7 @@ class TestAugmentObservation:
         body_pos = np.array(sim._world._data.xpos[body_id])  # type: ignore[attr-defined]
         site_pos = np.array(sim._world._data.site_xpos[site_id])  # type: ignore[attr-defined]
 
-        # The two MUST differ — otherwise this scene doesn't exhibit
+        # The two MUST differ - otherwise this scene doesn't exhibit
         # the round-30 bug and the regression test isn't meaningful.
         delta = site_pos - body_pos
         assert np.linalg.norm(delta) > 0.05, (
@@ -1298,7 +1298,7 @@ class TestAugmentObservation:
         # Scene exists, so get_body_state would work for the canonical
         # body if it were resolvable. We rely on FakeSim's
         # get_body_state implementation (returns from self._bodies),
-        # which is empty here — so the fallback returns (None, None).
+        # which is empty here - so the fallback returns (None, None).
         # Round-31 contract: NOT raising, just gracefully degrading.
         pos, quat = adapter._read_eef_pose(sim)
         # FakeSim's get_body_state on a missing body returns "missing"
@@ -1364,11 +1364,11 @@ class TestAugmentObservation:
         assert out["pitch"] == pytest.approx(expected_pitch, abs=1e-6)
         assert out["yaw"] == pytest.approx(expected_yaw, abs=1e-6), (
             f"state.yaw {out['yaw']} != body-derived {expected_yaw}; "
-            f"orientation source may be wrong (site vs body — round-31 had this 90° off)."
+            f"orientation source may be wrong (site vs body - round-31 had this 90° off)."
         )
 
     def test_read_eef_pose_uses_body_xquat_not_site_xmat(self, libero_scene_xml):
-        """Round 32 (#168) — pin the orientation source explicitly.
+        """Round 32 (#168) - pin the orientation source explicitly.
 
         Round 31 read the quaternion from ``site_xmat`` (via
         ``mju_mat2Quat``); round 32 reads it from ``data.xquat[body_id]``.
@@ -1399,18 +1399,18 @@ class TestAugmentObservation:
         if site_id < 0 or body_id < 0:
             pytest.skip("scene XML missing 'gripper0_grip_site' or 'robot0_right_hand'")
 
-        # Body xquat (mujoco wxyz convention) — the round-32 source.
+        # Body xquat (mujoco wxyz convention) - the round-32 source.
         body_quat = np.array(sim._world._data.xquat[body_id])  # type: ignore[attr-defined]
 
         # Site xmat → quat (the round-31 source). Sanity-check the
-        # two are different — otherwise the test isn't meaningful.
+        # two are different - otherwise the test isn't meaningful.
         site_xmat = np.array(sim._world._data.site_xmat[site_id]).reshape(9)  # type: ignore[attr-defined]
         site_quat = np.zeros(4)
         mujoco.mju_mat2Quat(site_quat, site_xmat)
 
         # Round-30 verification observed a 90° yaw offset between
         # site_xmat-derived quat and body xquat. The two MUST differ
-        # by more than the FP tolerance — otherwise the test's
+        # by more than the FP tolerance - otherwise the test's
         # round-32 vs round-31 distinction is moot.
         # Note: quaternions q and -q represent the same rotation, so
         # we measure orientation difference via the dot product
@@ -1464,7 +1464,7 @@ class TestAugmentObservation:
         ]
 
     def test_read_gripper_qpos_returns_both_fingers_with_opposite_signs(self, libero_scene_xml):
-        """Round 33 (#168) — primary regression for the duplicated-finger bug.
+        """Round 33 (#168) - primary regression for the duplicated-finger bug.
 
         With a real LIBERO scene compiled into the sim,
         ``_read_gripper_qpos`` returns
@@ -1518,7 +1518,7 @@ class TestAugmentObservation:
         # Sentinel: round-33 fix means qpos[0] != qpos[1]. Pre-round-33's
         # duplicate packing would always have qpos[0] == qpos[1].
         assert qpos[0] != qpos[1], (
-            f"both fingers reported as {qpos[0]} — round-33 duplicate-packing bug may have regressed"
+            f"both fingers reported as {qpos[0]} - round-33 duplicate-packing bug may have regressed"
         )
 
     def test_read_gripper_qpos_returns_none_when_joints_missing(self, libero_scene_xml):
@@ -1587,14 +1587,14 @@ class TestAugmentObservation:
         assert "gripper" in out
         assert len(out["gripper"]) == 2
 
-        # The two values must be OPPOSITE in sign — that's the
+        # The two values must be OPPOSITE in sign - that's the
         # round-33 contract that distinguishes the fix from pre-fix
         # duplicate-packing. Use a tolerance because the two fingers
         # could be at slightly different magnitudes due to gravity.
         assert out["gripper"][0] == pytest.approx(0.0208, abs=1e-6)
         assert out["gripper"][1] == pytest.approx(-0.0208, abs=1e-6)
         assert out["gripper"][0] != out["gripper"][1], (
-            f"state.gripper {out['gripper']} has duplicated value — round-33 bug regressed"
+            f"state.gripper {out['gripper']} has duplicated value - round-33 bug regressed"
         )
 
 
@@ -1613,7 +1613,7 @@ class TestAugmentObservationImageFlip:
     training (round-39 ``diff_libero_obs.py`` measured
     ``mean |Δ| = 56/255`` raw vs upstream, ``5.40/255`` after V-flip).
 
-    Adapter-side flip means the policy stays generic — its
+    Adapter-side flip means the policy stays generic - its
     ``image_rotation_180`` flag retains its training-pipeline meaning.
     """
 
@@ -1689,7 +1689,7 @@ class TestAugmentObservationImageFlip:
     def test_skips_non_ndarray_values(self):
         """Round 39 (#168): if a backend supplies the image as something
         other than an ndarray (e.g. PIL Image, base64 string), the flip
-        skips silently rather than raising — preserves backend
+        skips silently rather than raising - preserves backend
         flexibility."""
         adapter = LiberoAdapter.from_text(PICK_CUBE_BDDL)
         sim = FakeSim(
@@ -1700,7 +1700,7 @@ class TestAugmentObservationImageFlip:
                 },
             }
         )
-        # Pass a string instead of an ndarray — should pass through unchanged.
+        # Pass a string instead of an ndarray - should pass through unchanged.
         obs = {"finger_joint1": 0.04, "image": "<base64-png-bytes>"}
         out = adapter.augment_observation(sim, obs)
         assert out["image"] == "<base64-png-bytes>"
@@ -1794,14 +1794,14 @@ class TestQuaternionToEuler:
         assert pitch == pytest.approx(math.pi / 2, abs=1e-6)
 
     def test_matches_robosuite_mat2euler_sxyz(self):
-        """Round 46 (#176 sub-task 3d) — pin byte-equivalence to
+        """Round 46 (#176 sub-task 3d) - pin byte-equivalence to
         robosuite's ``mat2euler(R, axes='sxyz')``.
 
         The pre-46 formula derived sin(pitch) = R[0,2] from
         ``R = R_x · R_y · R_z`` (intrinsic XYZ), which produced
         sign-flipped Euler angles for some quaternions vs robosuite.
         E.g. q=(0, 0.7071, 0.7071, 0) → robosuite returns (π, 0, π/2)
-        but pre-46 returned (-π, 0, -π/2) — different yaw direction
+        but pre-46 returned (-π, 0, -π/2) - different yaw direction
         (left vs right twist about z), genuinely different rotation.
 
         This test pins the post-46 formula against pre-computed
@@ -1846,7 +1846,7 @@ class TestQuaternionToEuler:
                 # because asin/atan2 numerical precision dominates.
                 diff = ((ours[axis_idx] - expected_rpy[axis_idx] + math.pi) % (2 * math.pi)) - math.pi
                 # Gimbal-lock case (90° about Y): the (0, π/2, 0)
-                # decomposition isn't unique — roll and yaw both
+                # decomposition isn't unique - roll and yaw both
                 # absorb into a single rotation. Skip the roll/yaw
                 # axis check at exactly pitch=π/2.
                 if abs(expected_rpy[1] - math.pi / 2) < 1e-9 and axis_name in ("roll", "yaw"):
@@ -1859,12 +1859,12 @@ class TestQuaternionToEuler:
                 )
 
     def test_pre_46_sign_flip_regression(self):
-        """Round 46 (#176 sub-task 3d) — explicit pin against the
+        """Round 46 (#176 sub-task 3d) - explicit pin against the
         sign-flip bug that the pre-46 formula introduced.
 
         For ``q = (0, sqrt(2)/2, sqrt(2)/2, 0)`` (180° about (1,1,0)
         axis), the correct sxyz Euler is ``(π, 0, π/2)``. The pre-46
-        formula returned ``(-π, 0, -π/2)`` — same roll modulo 2π but
+        formula returned ``(-π, 0, -π/2)`` - same roll modulo 2π but
         OPPOSITE yaw (which is genuinely a different rotation about
         the world Z axis at this orientation).
 
@@ -1885,7 +1885,7 @@ class TestQuaternionToEuler:
         assert abs(yaw - math.pi / 2) < 1e-5, (
             f"yaw={yaw:.6f}, expected +π/2 ≈ 1.5708. "
             f"Sign-flip bug from pre-46 ``_quat_wxyz_to_rpy_xyz`` may have "
-            f"regressed — would break state.yaw OOD on the policy."
+            f"regressed - would break state.yaw OOD on the policy."
         )
 
 
@@ -3056,8 +3056,8 @@ class TestInstallActionController:
         assert ctrl.eef_site_name == "gripper0_grip_site"
 
     def test_initial_joint_anchored_to_libero_home_pose_not_construction_state(self, libero_scene_xml):
-        """Round 45 (#176): the OSC controller's ``initial_joint`` —
-        the nullspace-bias target — must be the LIBERO-canonical Panda
+        """Round 45 (#176): the OSC controller's ``initial_joint`` -
+        the nullspace-bias target - must be the LIBERO-canonical Panda
         "ready" pose, NOT the joint angles at the moment the controller
         was constructed.
 
@@ -3069,7 +3069,7 @@ class TestInstallActionController:
         once at construction. Without the round-45 swap-and-restore
         around ``controller_factory``, ``initial_joint`` captures the
         perturbed canonical pose instead of the LIBERO
-        ``MountedPanda.init_qpos`` ready pose — the OSC's
+        ``MountedPanda.init_qpos`` ready pose - the OSC's
         ``nullspace_torques`` term ``(initial_joint - joint_pos)``
         then collapses to ~0 instead of producing the ~5 N·m bias
         upstream LIBERO produces (where upstream constructs the
@@ -3089,7 +3089,7 @@ class TestInstallActionController:
         when ``__init__`` ran.
 
         Also verify ``data.qpos`` is restored to the perturbed
-        values after install — the swap is around the
+        values after install - the swap is around the
         ``controller_factory`` call, so the sim's actual state must
         be the canonical state we passed in, not the home pose.
         """
@@ -3228,7 +3228,7 @@ class TestInstallActionController:
             perturbed_qpos,
             atol=1e-9,
             err_msg=(
-                f"data.qpos[arm] not restored after controller install — sim's "
+                f"data.qpos[arm] not restored after controller install - sim's "
                 f"actual state is now the home pose {restored_qpos.tolist()} instead "
                 f"of the canonical {perturbed_qpos.tolist()}. The swap-and-restore "
                 f"contract is broken."
@@ -3240,7 +3240,7 @@ class TestInstallActionController:
         # tolerance), the round-45 fix didn't run.
         assert not np.allclose(captured_init_joint, perturbed_qpos, atol=1e-3), (
             f"initial_joint={captured_init_joint.tolist()} equals perturbed qpos "
-            f"{perturbed_qpos.tolist()} — round-45 swap-and-restore didn't run."
+            f"{perturbed_qpos.tolist()} - round-45 swap-and-restore didn't run."
         )
 
     def test_apply_writes_nonzero_torques_to_data_ctrl(self, libero_scene_xml):
@@ -3550,7 +3550,7 @@ class TestInstallActionController:
 
     def test_controller_physics_substeps_matches_libero_20hz_500hz(self, libero_scene_xml):
         """Round 27 (#168): with the default 0.002s timestep (500 Hz
-        physics), ``physics_substeps_per_control`` should be 25 — i.e.
+        physics), ``physics_substeps_per_control`` should be 25 - i.e.
         ``int(round((1/20) / 0.002)) == 25``. Pin so a future change to
         the default timestep doesn't silently break LIBERO's 20 Hz
         training-data convention.
@@ -3596,7 +3596,7 @@ class TestInstallActionController:
         advances by ``model.opt.timestep`` = 0.002 s only. Post-fix:
         25 ``mj_step`` calls ⇒ 0.05 s. Anything < 0.04 s indicates the
         substep loop didn't run (substeps must be ≥ 20 to be plausible
-        — exact number depends on timestep, but 1 vs 25 is unmistakable).
+        - exact number depends on timestep, but 1 vs 25 is unmistakable).
         """
         pytest.importorskip("mujoco")
         pytest.importorskip("robosuite")
@@ -3665,7 +3665,7 @@ class TestInstallActionController:
 
         from strands_robots.simulation import Simulation
 
-        # Build a minimal Simulation. We don't need a robot — just a
+        # Build a minimal Simulation. We don't need a robot - just a
         # compiled model + data. We sidestep ``add_robot`` (which
         # requires asset downloads) by injecting a minimal robot stub
         # into ``world.robots`` directly. The stub only needs a
@@ -3737,7 +3737,7 @@ class TestInstallActionController:
             f"got {call_count[0]}. Outer mj_step loop in _apply_sim_action may not be skipping."
         )
         # step_count increments by physics_substeps_per_control (7),
-        # NOT by n_substeps (3) — because the controller declared its
+        # NOT by n_substeps (3) - because the controller declared its
         # own substep count.
         delta_step = sim._world.step_count - step_count_before
         assert delta_step == 7, (
@@ -3808,7 +3808,7 @@ class TestInstallActionController:
         finally:
             mujoco.mj_step = original  # type: ignore[assignment]
 
-        # Outer loop fires for n_substeps=3 — the legacy contract.
+        # Outer loop fires for n_substeps=3 - the legacy contract.
         assert call_count[0] == 3, (
             f"expected 3 mj_step calls (outer loop, n_substeps=3) for plain controller "
             f"without owns_stepping, got {call_count[0]}."
@@ -3948,7 +3948,7 @@ class TestInstallActionController:
 
         Pre-fix bug: writing the raw scalar to both fingers meant
         close and open commands didn't actually produce reversed
-        outputs — each had one finger going wrong, making the
+        outputs - each had one finger going wrong, making the
         gripper effectively un-actuable.
 
         Post-fix: opposite signs of (round-41-converted) input produce
@@ -4219,7 +4219,7 @@ class TestInstallActionController:
         ``gripper_current_pre/post``).
 
         Pin so a future refactor that drops the structured log line
-        fails loudly here — the field set is the diagnostic contract
+        fails loudly here - the field set is the diagnostic contract
         for PR #168 round-29."""
         pytest.importorskip("mujoco")
         pytest.importorskip("robosuite")
@@ -4266,7 +4266,7 @@ class TestInstallActionController:
         assert len(action_log_lines) == 1, f"expected exactly 1 ACTION_LOG line, got {len(action_log_lines)}"
 
         msg = action_log_lines[0].getMessage()
-        # Diagnostic-field contract — every name in this list must be
+        # Diagnostic-field contract - every name in this list must be
         # present in every emitted log line. Reviewers grep these.
         for field in [
             "step=0",
@@ -4411,7 +4411,7 @@ class TestInstallActionController:
         if ctrl is None:
             pytest.skip("action_controller install failed")
 
-        # Default fallback — 50.
+        # Default fallback - 50.
         assert ctrl._action_log_max == 50
         warnings = [
             r
@@ -5289,13 +5289,13 @@ class TestPreRegisterDefaultRobot:
     """``LiberoAdapter._register_default_robot`` scans the loaded MJCF for a
     scene-supplied Panda (bodies prefixed with ``robot0_`` per RoboSuite /
     LIBERO convention) and registers a :class:`SimRobot` wrapper directly
-    in ``world.robots`` — *without* recompiling.
+    in ``world.robots`` - *without* recompiling.
 
     Goal: make ``sim.list_robots()`` return ``["robot"]`` BEFORE
     ``super().on_episode_start`` runs, so the base BenchmarkProtocol
     skips its unconditional ``sim.add_robot`` call. That unconditional
     call would otherwise inject a SECOND Panda (the redundant-Panda bug
-    confirmed in #166 round 4 — the second Panda's plastic shells sit
+    confirmed in #166 round 4 - the second Panda's plastic shells sit
     right in front of the ``image`` camera and contaminate every
     real-render frame).
     """
@@ -5359,7 +5359,7 @@ class TestPreRegisterDefaultRobot:
     def test_scene_panda_detected_and_registered(self, tmp_path):
         """When the loaded model has bodies / joints / actuators with the
         canonical ``robot0_`` prefix, the adapter MUST construct a
-        SimRobot wrapper and register it under ``"robot"`` — no
+        SimRobot wrapper and register it under ``"robot"`` - no
         ``sim.add_robot`` call required."""
         adapter = self._scene_path_setup(tmp_path)
         model, mj = self._make_panda_model()
@@ -5438,7 +5438,7 @@ class TestPreRegisterDefaultRobot:
         sim = FakeSim(data_config="panda")
         sim._world.robots["robot"] = _FakeRobot("panda")
 
-        # Don't patch mujoco — if the scan ran, it would fail.
+        # Don't patch mujoco - if the scan ran, it would fail.
         adapter.on_episode_start(sim, random.Random(0))
 
         # Registration unchanged.

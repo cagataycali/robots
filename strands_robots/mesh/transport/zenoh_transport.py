@@ -1,4 +1,4 @@
-"""Eclipse Zenoh transport — thin :class:`MeshTransport` adapter over the
+"""Eclipse Zenoh transport - thin :class:`MeshTransport` adapter over the
 existing :mod:`strands_robots.mesh.session` singleton.
 
 This wrapper deliberately delegates to the legacy ``session.get_session()`` /
@@ -7,7 +7,7 @@ reimplementing them. That keeps:
 
 1. **Zero behaviour change for existing callers.** Every test in
    ``tests/mesh/test_mesh_session.py`` that pokes
-   ``session._SESSION`` / ``_SESSION_REFS`` keeps working — the legacy
+   ``session._SESSION`` / ``_SESSION_REFS`` keeps working - the legacy
    module is the single source of truth for Zenoh state.
 2. **A single connect/teardown path.** Multiple :class:`ZenohTransport`
    instances in the same process all funnel into the same ref-counted
@@ -41,7 +41,7 @@ class ZenohTransport:
 
     Thread safety: :meth:`connect` and :meth:`close` are guarded by an
     internal lock so concurrent ``Mesh.start()`` calls don't double-acquire.
-    The hot path (:meth:`put`) is lock-free in steady-state — 50 Hz teleop
+    The hot path (:meth:`put`) is lock-free in steady-state - 50 Hz teleop
     loops never serialise on the transport.
     """
 
@@ -55,7 +55,7 @@ class ZenohTransport:
         """Acquire (or reuse) the shared Zenoh session.
 
         Returns ``True`` on success, ``False`` if Zenoh is unavailable. Calling
-        :meth:`connect` twice on the same instance is a no-op — only one
+        :meth:`connect` twice on the same instance is a no-op - only one
         reference is held per :class:`ZenohTransport` instance regardless of
         how many times it's connected.
         """
@@ -102,7 +102,7 @@ class ZenohTransport:
 
         Exposed for callers that need to perform Zenoh-specific operations
         not yet abstracted into the :class:`MeshTransport` protocol. New
-        code should not depend on this — use :meth:`put` and
+        code should not depend on this - use :meth:`put` and
         :meth:`declare_subscriber`.
         """
         from strands_robots.mesh.session import _current_zenoh_session_directly
@@ -123,7 +123,7 @@ class ZenohTransport:
     def declare_subscriber(self, key_expr: str, handler: Callable[[Any], None]) -> Any:
         """Subscribe to *key_expr* and route inbound samples to *handler*.
 
-        Returns the raw ``zenoh.Subscriber`` directly — already exposes
+        Returns the raw ``zenoh.Subscriber`` directly - already exposes
         ``.undeclare()`` so it satisfies the :class:`SubHandle` protocol.
 
         Raises ``RuntimeError`` if the session is not open.

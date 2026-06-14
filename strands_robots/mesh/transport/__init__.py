@@ -1,4 +1,4 @@
-"""Mesh transport layer — pluggable backends behind a single Protocol.
+"""Mesh transport layer - pluggable backends behind a single Protocol.
 
 Exports the :class:`MeshTransport` Protocol, both concrete backends
 (:class:`ZenohTransport`, :class:`IotMqttTransport`), and the process-wide

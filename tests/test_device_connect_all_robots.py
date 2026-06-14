@@ -541,7 +541,7 @@ class TestEdgeCases:
             assert "metadata" not in result["joints"] or isinstance(result["joints"].get("metadata"), float)
 
     def test_max_joint_robot(self):
-        """unitree_g1 (46 joints) — all joints appear in getState."""
+        """unitree_g1 (46 joints) - all joints appear in getState."""
         info = _REGISTRY["unitree_g1"]
         robot = _make_mock_robot("unitree_g1", info, task_status="running")
         driver = RobotDeviceDriver(robot)
@@ -549,7 +549,7 @@ class TestEdgeCases:
         assert len(result["joints"]) == 46
 
     def test_min_joint_robot(self):
-        """koch (7 joints) — correct joint count."""
+        """koch (7 joints) - correct joint count."""
         info = _REGISTRY["koch"]
         robot = _make_mock_robot("koch", info, task_status="running")
         driver = RobotDeviceDriver(robot)

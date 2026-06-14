@@ -39,13 +39,13 @@ jobs:
             strands_robots/mesh/ 2>/dev/null || true)
 
           if [ -n "$MATCHES" ]; then
-            echo "::warning::Found subprocess call(s) with f-string interpolation in agent-callable code. Verify inputs are validated via an allowlist or regex before interpolation — see AGENTS.md PR #85/#90 review learnings."
+            echo "::warning::Found subprocess call(s) with f-string interpolation in agent-callable code. Verify inputs are validated via an allowlist or regex before interpolation - see AGENTS.md PR #85/#90 review learnings."
             echo ""
             echo "Locations:"
             echo "$MATCHES" | while IFS= read -r line; do
               file=$(echo "$line" | cut -d: -f1)
               lineno=$(echo "$line" | cut -d: -f2)
-              echo "::warning file=${file},line=${lineno}::subprocess + f-string — confirm LLM input is validated"
+              echo "::warning file=${file},line=${lineno}::subprocess + f-string - confirm LLM input is validated"
             done
           fi
 
@@ -54,7 +54,7 @@ jobs:
           set +e
 
           # MJCF/XML built via f-string or % formatting that includes a name-like
-          # variable. Heuristic — not exhaustive. Match the patterns surfaced
+          # variable. Heuristic - not exhaustive. Match the patterns surfaced
           # in PR #85 review.
           MATCHES=$(grep -rnE \
             '(\.format\([^)]*name|f["\047]<[a-z]+[^"]*\{[a-z_]*name)' \
@@ -62,11 +62,11 @@ jobs:
             strands_robots/simulation/ 2>/dev/null || true)
 
           if [ -n "$MATCHES" ]; then
-            echo "::warning::Found string interpolation of a name-like variable into XML/MJCF. Validate against ^[a-zA-Z0-9_-]+$ before interpolation — see AGENTS.md PR #85 review learning on sanitizing user inputs into XML."
+            echo "::warning::Found string interpolation of a name-like variable into XML/MJCF. Validate against ^[a-zA-Z0-9_-]+$ before interpolation - see AGENTS.md PR #85 review learning on sanitizing user inputs into XML."
             echo "$MATCHES" | while IFS= read -r line; do
               file=$(echo "$line" | cut -d: -f1)
               lineno=$(echo "$line" | cut -d: -f2)
-              echo "::warning file=${file},line=${lineno}::name-like variable interpolated into XML — confirm sanitization"
+              echo "::warning file=${file},line=${lineno}::name-like variable interpolated into XML - confirm sanitization"
             done
           fi
 
@@ -74,4 +74,4 @@ jobs:
         # This workflow does not fail PRs. Its purpose is reviewer attention
         # via inline annotations. The check itself always succeeds so it
         # appears green in the PR status list.
-        run: echo "LLM input safety scan complete — see annotations (if any)"
+        run: echo "LLM input safety scan complete - see annotations (if any)"

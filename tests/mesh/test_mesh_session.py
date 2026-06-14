@@ -1,4 +1,4 @@
-"""Tests for strands_robots.mesh.session — session singleton + peer registry.
+"""Tests for strands_robots.mesh.session - session singleton + peer registry.
 
 All tests mock zenoh so no network or real zenoh install is required.
 """
@@ -284,7 +284,7 @@ class TestSessionLifecycle:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                # First call (listener) fails — port taken
+                # First call (listener) fails - port taken
                 raise OSError("Address already in use")
             # Second call (client) succeeds
             return mock_session

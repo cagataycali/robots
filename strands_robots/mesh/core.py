@@ -1,4 +1,4 @@
-"""Core Mesh class — lifecycle, presence, state, cameras, RPC, and subscriptions.
+"""Core Mesh class - lifecycle, presence, state, cameras, RPC, and subscriptions.
 
 This is the primary component that a Robot or Simulation composes with.
 Extended sensor loops (pose, IMU, health, etc.) are provided by
@@ -745,7 +745,7 @@ class Mesh(SensorLoopsMixin):
         """
         return self.peers_by_id.get(peer_id)
 
-    # Presence — outgoing
+    # Presence - outgoing
     def _build_presence(self) -> dict[str, Any]:
         r = self.robot
         payload: dict[str, Any] = {
@@ -913,7 +913,7 @@ class Mesh(SensorLoopsMixin):
         if is_new:
             logger.info("[mesh] new peer: %s (%s)", peer_id, data.get("robot_type", "?"))
 
-    # State — outgoing
+    # State - outgoing
     def _state_loop(self) -> None:
         period = 1.0 / STATE_HZ
         while self._running:
@@ -1003,7 +1003,7 @@ class Mesh(SensorLoopsMixin):
 
         return snapshot if len(snapshot) > 2 else None
 
-    # Cameras — outgoing (opt-in)
+    # Cameras - outgoing (opt-in)
     def _resolve_camera_hz(self) -> float:
         env = os.getenv("STRANDS_MESH_CAMERA_HZ")
         if env is None or env.strip() == "":
@@ -1196,7 +1196,7 @@ class Mesh(SensorLoopsMixin):
             except Exception as exc:
                 logger.debug("[mesh] %s: camera %s publish failed: %s", self.peer_id, cam_name, exc)
 
-        # RPC — incoming
+        # RPC - incoming
 
     def _on_cmd(self, sample: Any) -> None:
         """Handle an inbound command sample.
@@ -1632,7 +1632,7 @@ class Mesh(SensorLoopsMixin):
             return {"error": "robot does not support stop_teleop"}
         return {"error": f"unknown action: {action}"}
 
-    # Well-known per-call policy kwargs from issue #300 — keys that planner-
+    # Well-known per-call policy kwargs from issue #300 - keys that planner-
     # style providers (cuRobo, MoveIt2, MPC) consume to encode goals beyond
     # natural-language ``instruction``. Forwarded from ``tell()`` payload
     # into ``policy_config`` so a ``policy_provider="curobo"`` peer sees the
@@ -1668,7 +1668,7 @@ class Mesh(SensorLoopsMixin):
             * Use ``cmd["robot_name"]`` when present.
             * Otherwise default to the only robot in the world if there is
               exactly one.
-            * Otherwise return an error — ambiguous targets must be
+            * Otherwise return an error - ambiguous targets must be
               explicit so the agent can't accidentally drive the wrong arm.
 
         Forwards both the existing ``extra`` constructor kwargs
@@ -1685,7 +1685,7 @@ class Mesh(SensorLoopsMixin):
 
         try:
             available = list(sim.list_robots())
-        except Exception as exc:  # noqa: BLE001 — surface as wire-level error
+        except Exception as exc:  # noqa: BLE001 - surface as wire-level error
             return {"error": f"sim list_robots failed: {exc}"}
 
         robot_name = cmd.get("robot_name")
@@ -1713,8 +1713,8 @@ class Mesh(SensorLoopsMixin):
                 policy_config[key] = cmd[key]
 
         # Optional sim-side controls. We expose only the fields that already
-        # have validator coverage in the wire schema — control_frequency,
-        # action_horizon, fast_mode, video — and that are safe to forward to
+        # have validator coverage in the wire schema - control_frequency,
+        # action_horizon, fast_mode, video - and that are safe to forward to
         # an LLM-issued ``tell()``. Anything else stays on its server-side
         # default to avoid surfacing internal knobs to untrusted agents.
         run_kwargs: dict[str, Any] = {
@@ -2749,7 +2749,7 @@ class Mesh(SensorLoopsMixin):
         """Subscribe to another peer's VLA execution stream."""
         return self.subscribe(f"strands/{peer_id}/stream", callback, name=f"stream:{peer_id}")
 
-    # Safety — emergency stop
+    # Safety - emergency stop
     def emergency_stop(self) -> list[dict[str, Any]]:
         """Broadcast a stop command to every peer and engage the local lockout.
 
@@ -3259,7 +3259,7 @@ def init_mesh(
         base = getattr(robot, "tool_name_str", None) or "robot"
         peer_id = f"{base}-{uuid.uuid4().hex[:8]}"
 
-    # Validate peer_id — reject reserved names and MQTT-unsafe characters.
+    # Validate peer_id - reject reserved names and MQTT-unsafe characters.
     _RESERVED_PEER_IDS = {"broadcast", "safety"}
     _PEER_ID_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._\-]{0,127}$")
     if peer_id in _RESERVED_PEER_IDS:
@@ -3270,7 +3270,7 @@ def init_mesh(
         raise ValueError(
             f"peer_id={peer_id!r} contains invalid characters. "
             "Must match [a-zA-Z0-9][a-zA-Z0-9._-]{{0,127}} "
-            "(no /, +, # — these break MQTT topic structure and AWS Thing-name rules)."
+            "(no /, +, # - these break MQTT topic structure and AWS Thing-name rules)."
         )
 
     instance = Mesh(robot, peer_id=peer_id, peer_type=peer_type)
@@ -3278,7 +3278,7 @@ def init_mesh(
 
     # Auto-wire IoT enrichments when the active transport supports them.
     # Both calls are no-ops when STRANDS_MESH_BACKEND=zenoh (the default),
-    # so this is purely additive — Zenoh-LAN behaviour is unchanged.
+    # so this is purely additive - Zenoh-LAN behaviour is unchanged.
     if instance.alive:
         try:
             from strands_robots.mesh.iot import (
@@ -3288,7 +3288,7 @@ def init_mesh(
 
             enable_shadow_for_mesh(instance)
             enable_camera_offload_for_mesh(instance)
-        except Exception as exc:  # noqa: BLE001 — IoT enrichment is best-effort
+        except Exception as exc:  # noqa: BLE001 - IoT enrichment is best-effort
             logger.debug("[mesh] IoT enrichment failed (continuing): %s", exc)
 
     return instance

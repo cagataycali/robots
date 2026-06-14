@@ -19,7 +19,7 @@ from strands_robots.mesh import _acl_config, _zenoh_config, session
 
 
 # --------------------------------------------------------------------------- #
-# #307 — eviction-order parity                                                 #
+# #307 - eviction-order parity                                                 #
 # --------------------------------------------------------------------------- #
 def test_non_posix_tls_warned_keys_is_ordered_fifo():
     """The TLS-warned bound cache must be an insertion-ordered mapping that
@@ -49,7 +49,7 @@ def test_non_posix_tls_warned_eviction_is_fifo(monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
-# #308 — symmetric total-deny warning                                          #
+# #308 - symmetric total-deny warning                                          #
 # --------------------------------------------------------------------------- #
 def _write_acl(tmp_path: Path, payload: dict) -> Path:
     p = tmp_path / "acl.json"
@@ -94,7 +94,7 @@ def test_deny_with_allow_rule_does_not_warn_total_deny(tmp_path, caplog):
 
 
 # --------------------------------------------------------------------------- #
-# #309 — TLS-bearing scheme allow-list                                         #
+# #309 - TLS-bearing scheme allow-list                                         #
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize("scheme", ["tls", "quic", "wss", "unixsock"])
 def test_tls_bearing_schemes_pass_under_mtls(scheme):
@@ -117,7 +117,7 @@ def test_tls_bearing_constant_contains_new_schemes():
 
 
 # --------------------------------------------------------------------------- #
-# #310 — thread snapshot is always None or a 2-tuple                           #
+# #310 - thread snapshot is always None or a 2-tuple                           #
 # --------------------------------------------------------------------------- #
 def test_thread_snapshot_is_always_2tuple_after_set():
     try:

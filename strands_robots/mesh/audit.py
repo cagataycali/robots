@@ -494,7 +494,7 @@ def _load_seq_counters() -> None:
                 # dict (or a dict with no valid entries) must NOT flip
                 # sidecar_loaded=True, otherwise the audit-log fallback
                 # is skipped and an attacker writing ``{}`` gets every
-                # peer's seq reset. (R3 follow-up — review thread on
+                # peer's seq reset. (R3 follow-up - review thread on
                 # PR#221 audit.py:531).
                 merged_any = False
                 for key, value in payload.items():
@@ -958,7 +958,7 @@ def _ensure_paths(path: Path) -> None:
     parent.mkdir(parents=True, exist_ok=True)
     try:
         os.chmod(parent, 0o700)
-    except OSError as exc:  # pragma: no cover — best-effort on exotic FS
+    except OSError as exc:  # pragma: no cover - best-effort on exotic FS
         logger.debug("[audit] could not chmod %s: %s", parent, exc)
 
     # Symlink check on the audit log itself. ``Path.is_symlink`` returns
@@ -1013,7 +1013,7 @@ def log_safety_event(event_type: str, peer_id: str, payload: dict[str, Any]) -> 
         payload: Event-specific fields.  Must be JSON-serialisable.
 
     Raises:
-        Nothing — write errors are logged at WARNING and swallowed because
+        Nothing - write errors are logged at WARNING and swallowed because
         an audit-log failure must never propagate up into the safety code
         path that called this function.
     """

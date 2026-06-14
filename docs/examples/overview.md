@@ -1,5 +1,5 @@
 ---
-description: Runnable example scripts — links to the repo's examples/ directory.
+description: Runnable example scripts - links to the repo's examples/ directory.
 ---
 
 # Examples
@@ -24,6 +24,6 @@ python examples/molmoact2_so101_pickplace.py     # requires hardware
 
 ## See also
 
-- [Quickstart](../getting-started/quickstart.md) — minimal starter.
-- [Cosmos3Policy](../policies/cosmos3.md) — Cosmos 3 details.
-- [LerobotLocalPolicy](../policies/lerobot-local.md) — MolmoAct2 and other local models.
+- [Quickstart](../getting-started/quickstart.md) - minimal starter.
+- [Cosmos3Policy](../policies/cosmos3.md) - Cosmos 3 details.
+- [LerobotLocalPolicy](../policies/lerobot-local.md) - MolmoAct2 and other local models.

@@ -32,7 +32,7 @@ def _write(tmp_path: Path, doc: dict) -> Path:
 
 
 def _valid_skeleton() -> dict:
-    """A minimal valid ACL — used as the base for negative-shape tests."""
+    """A minimal valid ACL - used as the base for negative-shape tests."""
     return {
         "enabled": True,
         "default_permission": "deny",

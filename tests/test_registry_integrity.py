@@ -1,4 +1,4 @@
-"""Registry integrity tests — catch silent regressions in robots.json.
+"""Registry integrity tests - catch silent regressions in robots.json.
 
 These tests enforce invariants on the robot registry that prevent classes
 of bugs like the one flagged by @awsarron on PR #84 review (2026-04-21):
@@ -33,9 +33,9 @@ def test_every_robot_declares_auto_download_strategy(registry: dict) -> None:
     """Every robot with an ``asset`` block must declare HOW it gets auto-downloaded.
 
     Valid options (exactly one required):
-        1. ``asset.robot_descriptions_module`` — the robot_descriptions pip module name.
-        2. ``asset.source`` with ``type: "github"`` — custom GitHub source block.
-        3. ``asset.auto_download: false`` — explicit opt-out (user must supply assets).
+        1. ``asset.robot_descriptions_module`` - the robot_descriptions pip module name.
+        2. ``asset.source`` with ``type: "github"`` - custom GitHub source block.
+        3. ``asset.auto_download: false`` - explicit opt-out (user must supply assets).
 
     Without one of these, auto-download silently falls through to the
     naming-convention heuristic, which fails for most robots and only
@@ -45,7 +45,7 @@ def test_every_robot_declares_auto_download_strategy(registry: dict) -> None:
     for name, info in registry.items():
         asset = info.get("asset")
         if not asset:
-            continue  # No asset block — nothing to auto-download.
+            continue  # No asset block - nothing to auto-download.
 
         has_rd = "robot_descriptions_module" in asset
         has_source = isinstance(asset.get("source"), dict) and asset["source"].get("type") == "github"
@@ -103,7 +103,7 @@ def _collect_aliases(registry: dict) -> dict[str, str]:
 
 
 def test_aliases_unique_across_registry(registry: dict) -> None:
-    """No two robots may declare the same alias — last-loaded would silently win."""
+    """No two robots may declare the same alias - last-loaded would silently win."""
     seen: dict[str, str] = {}
     collisions: list[str] = []
     for name, info in registry.items():
@@ -118,7 +118,7 @@ def test_no_alias_shadows_canonical_name(registry: dict) -> None:
     """An alias must not equal the canonical name of another robot.
 
     Shadowing causes resolution order to silently determine the winner, which
-    is fragile — a future reorder of robots.json could flip which robot a
+    is fragile - a future reorder of robots.json could flip which robot a
     name resolves to.
     """
     canonical = _all_canonical_names(registry)
@@ -133,7 +133,7 @@ def test_no_alias_shadows_canonical_name(registry: dict) -> None:
 def test_hardware_only_robots_declare_lerobot_type(registry: dict) -> None:
     """Robots without an ``asset`` block must still declare a LeRobot hardware type.
 
-    Prevents silent typos in ``hardware.lerobot_type`` — catches a misspelled
+    Prevents silent typos in ``hardware.lerobot_type`` - catches a misspelled
     type during registry expansion rather than at teleop time.
     """
     offenders: list[str] = []
@@ -153,7 +153,7 @@ def test_robot_descriptions_module_names_are_import_safe(registry: dict) -> None
 
     Regression: the downloader's validation regex originally was
     ``^[a-z0-9_]+$``, which rejected the legitimate upstream module
-    ``tiago++_mj_description`` ("skipped: invalid module name") — so tiago_dual
+    ``tiago++_mj_description`` ("skipped: invalid module name") - so tiago_dual
     never linked its assets. '+' is now allowed; this guards both the registry
     entries and the regex staying in sync.
     """

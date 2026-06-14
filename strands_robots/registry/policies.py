@@ -1,4 +1,4 @@
-"""Policy registry — resolve, import, and configure policy providers.
+"""Policy registry - resolve, import, and configure policy providers.
 
 All provider definitions live in policies.json.  This module provides
 the public read API for resolving smart policy strings, importing provider
@@ -63,7 +63,7 @@ def resolve_policy(policy: str, **extra_kwargs) -> tuple[str, dict[str, Any]]:
         5. Fallback to lerobot_local
 
     Args:
-        policy: Smart string — HF model ID, URL, or provider name.
+        policy: Smart string - HF model ID, URL, or provider name.
         **extra_kwargs: Additional kwargs merged into result.
 
     Returns:
@@ -84,7 +84,7 @@ def resolve_policy(policy: str, **extra_kwargs) -> tuple[str, dict[str, Any]]:
     policy = policy.strip()
     kwargs: dict[str, Any] = {}
 
-    # 1. URL pattern matching — check each provider's url_patterns
+    # 1. URL pattern matching - check each provider's url_patterns
     for prov_name, prov_info in providers.items():
         for pattern in prov_info.get("url_patterns", []):
             if re.match(pattern, policy):
@@ -114,7 +114,7 @@ def resolve_policy(policy: str, **extra_kwargs) -> tuple[str, dict[str, Any]]:
                 kwargs.update(extra_kwargs)
                 return prov_name, kwargs
 
-    # 2. Shorthand names — built from each provider's shorthands list
+    # 2. Shorthand names - built from each provider's shorthands list
     alias_map = _build_alias_map()
     if policy.lower() in alias_map:
         kwargs.update(extra_kwargs)

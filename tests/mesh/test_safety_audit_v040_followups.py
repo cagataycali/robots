@@ -27,7 +27,7 @@ def _isolate_audit_state(tmp_path, monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
-# #324 — NEXT_SEQ_DEGRADED poison record                                       #
+# #324 - NEXT_SEQ_DEGRADED poison record                                       #
 # --------------------------------------------------------------------------- #
 def test_next_seq_non_symlink_failure_writes_poison_record(tmp_path, monkeypatch, caplog):
     """A non-SeqLockSymlinkError failure inside _next_seq must NOT drop the
@@ -72,7 +72,7 @@ def test_seqlock_symlink_still_writes_seq_lock_degraded(tmp_path, monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
-# #324 — NEXT_SEQ_DEGRADED poison survives PSK signing gate                    #
+# #324 - NEXT_SEQ_DEGRADED poison survives PSK signing gate                    #
 # --------------------------------------------------------------------------- #
 def test_next_seq_degraded_poison_survives_psk_signing(tmp_path, monkeypatch, caplog):
     """Regression pin: when STRANDS_MESH_AUDIT_PSK is configured, the

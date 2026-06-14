@@ -1,4 +1,4 @@
-// strands-robots mesh ACL — STRICT per-peer isolation template.
+// strands-robots mesh ACL - STRICT per-peer isolation template.
 //
 // Use this template when you need hard cross-peer subscribe denial
 // equivalent to the AWS IoT transport's per-Thing policy isolation

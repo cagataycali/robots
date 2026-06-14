@@ -1,5 +1,5 @@
 ---
-description: Eight Strands @tool helpers for hardware bring-up — calibrate, camera, teleop, pose, serial, gr00t inference, mesh, download assets.
+description: Eight Strands @tool helpers for hardware bring-up - calibrate, camera, teleop, pose, serial, gr00t inference, mesh, download assets.
 ---
 
 # Hardware tools
@@ -18,14 +18,14 @@ from strands_robots.tools import (
 
 | Tool | Key actions | What |
 |------|-------------|------|
-| `lerobot_calibrate` | `"list"`, `"info"`, `"search"`, `"compare"`, `"backup"` | Manage existing calibration JSONs under `~/.cache/huggingface/lerobot/calibration/` (this tool inspects/organizes — actual calibration is run via the LeRobot CLI) |
+| `lerobot_calibrate` | `"list"`, `"info"`, `"search"`, `"compare"`, `"backup"` | Manage existing calibration JSONs under `~/.cache/huggingface/lerobot/calibration/` (this tool inspects/organizes - actual calibration is run via the LeRobot CLI) |
 | `lerobot_camera` | `"list"`, `"test"`, `"stream"` | Enumerate, test, stream connected cameras |
 | `lerobot_teleoperate` | `"start"`, `"stop"`, `"status"` | Leader-follower teleop session |
 | `pose_tool` | `"fk"`, `"ik"`, `"set_gripper"` | Forward/inverse kinematics, gripper control |
 | `serial_tool` | `"list"`, `"send"` | Enumerate serial ports, send raw commands |
-| `download_assets` | — | Pre-fetch MJCF assets to `~/.strands_robots/assets/` |
-| `gr00t_inference` | `"start_container"`, … | GR00T container lifecycle — see [GR00T](../policies/groot.md) |
-| `robot_mesh` | `"tell"`, `"broadcast"`, `"emergency_stop"` | Agent-driven mesh ops — see [Multi-robot](../mesh.md) |
+| `download_assets` | - | Pre-fetch MJCF assets to `~/.strands_robots/assets/` |
+| `gr00t_inference` | `"start_container"`, … | GR00T container lifecycle - see [GR00T](../policies/groot.md) |
+| `robot_mesh` | `"tell"`, `"broadcast"`, `"emergency_stop"` | Agent-driven mesh ops - see [Multi-robot](../mesh.md) |
 
 Parse results via `result["content"][0]["text"]`, not custom keys like `result["ports"]`.
 
@@ -56,6 +56,6 @@ agent("Find a connected so100, calibrate it, then stream the wrist camera for 10
 
 ## See also
 
-- [Robot control](robot-control.md) — the `HardwareRobot` class.
-- [Real hardware](../hardware/robot-control.md) — when each tool runs.
-- [GR00T](../policies/groot.md) — `gr00t_inference` container lifecycle.
+- [Robot control](robot-control.md) - the `HardwareRobot` class.
+- [Real hardware](../hardware/robot-control.md) - when each tool runs.
+- [GR00T](../policies/groot.md) - `gr00t_inference` container lifecycle.

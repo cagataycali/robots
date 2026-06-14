@@ -3,7 +3,7 @@
 Exercises the full sim dispatch path:
 
 * Stand up a real ``Simulation`` (MuJoCo backend) with a single robot.
-* Wrap it in a ``Mesh`` (no zenoh — we hand-call ``_dispatch`` so the
+* Wrap it in a ``Mesh`` (no zenoh - we hand-call ``_dispatch`` so the
   test stays a unit test, not a full Zenoh integration).
 * Drive ``execute`` via the dispatcher with ``policy_provider="mock"``
   and assert the mock policy actually ran.
@@ -28,7 +28,7 @@ def _build_sim_with_simple_robot():
 
     We avoid ``add_robot`` (which fetches assets from the model registry
     and is heavyweight) and instead hand-build a tiny MJCF with one
-    actuated hinge — enough to exercise ``run_policy`` end-to-end.
+    actuated hinge - enough to exercise ``run_policy`` end-to-end.
     """
     from strands_robots.simulation.mujoco.simulation import Simulation
 

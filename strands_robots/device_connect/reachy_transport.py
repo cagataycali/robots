@@ -131,7 +131,7 @@ class HardwareLink(ABC):
 
 
 class ZenohLink(HardwareLink):
-    """Wireless variant — real-time I/O via Device Connect's Zenoh transport."""
+    """Wireless variant - real-time I/O via Device Connect's Zenoh transport."""
 
     def __init__(self, transport, prefix: str):
         self._transport = transport
@@ -161,7 +161,7 @@ class ZenohLink(HardwareLink):
 
 
 class WebSocketLink(HardwareLink):
-    """Lite variant — real-time I/O via daemon's WebSocket."""
+    """Lite variant - real-time I/O via daemon's WebSocket."""
 
     _WS_CMD_MAP = {
         "head_pose": lambda c: {"type": "set_target", "head": [v for row in c["head_pose"] for v in row]},

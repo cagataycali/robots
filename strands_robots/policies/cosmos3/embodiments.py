@@ -1,4 +1,4 @@
-"""Cosmos 3 embodiment specs — data-driven action/observation layouts.
+"""Cosmos 3 embodiment specs - data-driven action/observation layouts.
 
 Each embodiment maps a Cosmos 3 ``domain_name`` (the world-model conditioning
 domain) to its raw action dimensionality, default action-chunk size, and the

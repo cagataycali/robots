@@ -1,6 +1,6 @@
 """Unit tests for the AWS IoT provisioning module.
 
-These tests use mocked boto3 clients — no real AWS calls are made.
+These tests use mocked boto3 clients - no real AWS calls are made.
 A full end-to-end provision + teardown happens in
 ``tests_integ/test_iot_transport.py`` and in the manually-validated
 ``/tmp/test_magic.py`` smoke run.
@@ -70,7 +70,7 @@ def fake_iot_client():
     iot = MagicMock()
     iot.meta.region_name = "us-west-2"
 
-    # ResourceNotFoundException — exposed at iot.exceptions
+    # ResourceNotFoundException - exposed at iot.exceptions
     class _NotFound(Exception):
         pass
 
@@ -112,7 +112,7 @@ def fake_iot_client():
     return iot
 
 
-# Policy documents — schema sanity checks
+# Policy documents - schema sanity checks
 
 
 class TestPolicyDocuments:
@@ -165,7 +165,7 @@ class TestEnsureThing:
         assert "thing/test-thing" in arn
 
     def test_skips_when_present(self, fake_iot_client):
-        """Existing thing is reused — no CreateThing call."""
+        """Existing thing is reused - no CreateThing call."""
         fake_iot_client.describe_thing.side_effect = None  # found
         fake_iot_client.describe_thing.return_value = {
             "thingArn": "arn:aws:iot:us-west-2:123456789012:thing/existing",
@@ -221,7 +221,7 @@ class TestProvisionRobot:
         assert result.endpoint == "fake-ats.iot.us-west-2.amazonaws.com"
         assert result.cert_path.exists()
         assert result.key_path.exists()
-        # Mode 0o600 — owner R/W only
+        # Mode 0o600 - owner R/W only
         assert oct(result.cert_path.stat().st_mode)[-3:] == "600"
         assert oct(result.key_path.stat().st_mode)[-3:] == "600"
 
@@ -358,7 +358,7 @@ class TestCleanupStaleCerts:
     Regression coverage for the security-relevant bug found in cycle 9 of
     the deep-test sweep: AWS IoT CreateKeysAndCertificate always returns a
     new cert (private keys aren't recoverable post-issuance), so without
-    explicit cleanup a Thing accumulates ACTIVE certs across re-runs —
+    explicit cleanup a Thing accumulates ACTIVE certs across re-runs -
     each one a potential impersonation credential.
     """
 
@@ -401,7 +401,7 @@ class TestCleanupStaleCerts:
         fake_iot_client.list_attached_policies.return_value = {"policies": []}
         fake_iot_client.delete_certificate.side_effect = RuntimeError("cannot delete")
 
-        # Must NOT raise — proceeds to create the new cert.
+        # Must NOT raise - proceeds to create the new cert.
         result = provision_robot("test-thing", cert_dir=tmp_cert_dir)
         assert result.thing_name == "test-thing"
         fake_iot_client.create_keys_and_certificate.assert_called_once()
@@ -483,7 +483,7 @@ class TestValidateThingNameFullmatch:
     ``re.match(r'^[a-zA-Z0-9_-]{1,128}$', s)`` accepts ``'robot\\n'``
     because in non-MULTILINE mode ``$`` matches *just before a trailing
     newline*. The PR description for #228 explicitly claims the regex
-    is "anchored, not just `match`" — these tests pin that contract.
+    is "anchored, not just `match`" - these tests pin that contract.
 
     A bypass surface exists wherever ``thing_name`` is interpolated
     into a filesystem path or an AWS API call (cert files under

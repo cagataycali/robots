@@ -1,4 +1,4 @@
-"""RobotDeviceDriver — Device Connect DeviceDriver adapter wrapping a strands-robots Robot.
+"""RobotDeviceDriver - Device Connect DeviceDriver adapter wrapping a strands-robots Robot.
 
 Exposes the Robot's task execution, status, and observation methods as
 structured RPCs and events via Device Connect's DeviceDriver interface.
@@ -51,11 +51,11 @@ class RobotDeviceDriver(DeviceDriver):
         )
 
     async def connect(self) -> None:
-        """No-op — the Robot manages its own hardware connection."""
+        """No-op - the Robot manages its own hardware connection."""
         pass
 
     async def disconnect(self) -> None:
-        """No-op — the Robot manages its own hardware shutdown."""
+        """No-op - the Robot manages its own hardware shutdown."""
         pass
 
     # ── RPCs ──────────────────────────────────────────────────
@@ -135,7 +135,7 @@ class RobotDeviceDriver(DeviceDriver):
         if inner and hasattr(inner, "get_observation"):
             try:
                 obs = await asyncio.to_thread(inner.get_observation)
-                # Filter out camera frames (numpy arrays) — only include scalars
+                # Filter out camera frames (numpy arrays) - only include scalars
                 result["joints"] = {k: float(v) for k, v in obs.items() if not hasattr(v, "shape")}
             except Exception as e:
                 logger.debug("Could not read observation: %s", e)
@@ -196,7 +196,7 @@ class RobotDeviceDriver(DeviceDriver):
         if not is_authorized_caller(device_id, scope="estop"):
             logger.warning("Ignoring emergencyStop from unauthorized source %s", device_id)
             return
-        logger.warning("Emergency stop received from %s — stopping task", device_id)
+        logger.warning("Emergency stop received from %s - stopping task", device_id)
         self._robot.stop_task()
 
     # ── Periodic state publishing ─────────────────────────────
