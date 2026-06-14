@@ -100,6 +100,47 @@
                 "nvidia/cosmos3",
                 "nvidia/cosmos3-nano-policy"
             ]
+        },
+        "kimodo": {
+            "module": "strands_robots.policies.kimodo",
+            "class": "KimodoPolicy",
+            "description": "NVlabs/kimodo text-to-motion diffusion (G1 kinematic trajectories)",
+            "requires": [
+                "prompt"
+            ],
+            "config_keys": [
+                "model",
+                "prompt",
+                "duration",
+                "diffusion_steps",
+                "cfg_weight",
+                "seed",
+                "text_encoder_device",
+                "fps",
+                "lazy"
+            ],
+            "defaults": {
+                "model": "nvidia/Kimodo-G1-RP-v1",
+                "duration": 5.0,
+                "diffusion_steps": 50,
+                "cfg_weight": 7.5,
+                "seed": 42,
+                "fps": 30
+            },
+            "shorthands": [
+                "kimodo",
+                "text2motion"
+            ],
+            "hf_orgs": [
+                "nvidia"
+            ],
+            "model_id_overrides": [
+                "nvidia/Kimodo-G1-RP-v1",
+                "nvidia/Kimodo-G1-SEED-v1"
+            ],
+            "supported_robots": [
+                "unitree_g1"
+            ]
         }
     }
 }
