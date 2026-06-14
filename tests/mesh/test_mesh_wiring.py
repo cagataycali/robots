@@ -16,7 +16,7 @@ from unittest.mock import patch
 
 import pytest
 
-# Skip the entire module if mujoco is not installed — the Robot()/Simulation
+# Skip the entire module if mujoco is not installed - the Robot()/Simulation
 # wiring depends on a working sim backend.
 pytest.importorskip("mujoco", reason="Robot()/Simulation wiring needs mujoco")
 
@@ -69,13 +69,13 @@ def test_robot_factory_mesh_false_skips_init_mesh(monkeypatch):
     """Robot(..., mesh=False) keeps the sim alive but does not create a mesh."""
     from strands_robots import Robot
 
-    # Make sure mesh would otherwise be enabled — tests run with
+    # Make sure mesh would otherwise be enabled - tests run with
     # STRANDS_MESH=false from conftest by default.
     monkeypatch.delenv("STRANDS_MESH", raising=False)
     # But we must keep init_mesh from spinning up a real zenoh session.
     with patch("strands_robots.mesh.init_mesh", return_value=None) as m:
         sim = Robot("so100", mode="sim", mesh=False)
-        # mesh=False short-circuits before init_mesh — but the factory may
+        # mesh=False short-circuits before init_mesh - but the factory may
         # still call init_mesh(... mesh=False) which returns None either way.
         if m.called:
             assert m.call_args.kwargs.get("mesh") is False
@@ -130,7 +130,7 @@ def test_robot_factory_mesh_init_failure_does_not_break_sim(monkeypatch):
 
     monkeypatch.setattr("strands_robots.mesh.init_mesh", boom)
 
-    # Should NOT raise — the user asked for a sim, mesh is best-effort.
+    # Should NOT raise - the user asked for a sim, mesh is best-effort.
     sim = Robot("so100", mode="sim")
     try:
         # mesh attribute remains the construction-time default (None / falsy).

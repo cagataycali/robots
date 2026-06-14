@@ -1,6 +1,6 @@
 # Device Connect Integration
 
-Strands Robots uses [Device Connect](https://github.com/arm/device-connect), a **device-aware runtime** by Arm — to handle discovery, presence, structured RPC, event routing, and safety — so you can focus on building cross-device experiences instead of re-implementing infrastructure.
+Strands Robots uses [Device Connect](https://github.com/arm/device-connect), a **device-aware runtime** by Arm - to handle discovery, presence, structured RPC, event routing, and safety - so you can focus on building cross-device experiences instead of re-implementing infrastructure.
 
 > **Fallback behavior:** If `device-connect-edge` is not installed, Strands Robots automatically falls back to a built-in Zenoh P2P mesh (`zenoh_mesh.py`) for basic peer discovery and coordination. Device Connect is the recommended and primary networking layer.
 
@@ -13,7 +13,7 @@ r = Robot("so100")
 r.run()  # starts listening for commands. Ctrl+C to stop.
 ```
 
-`Robot()` creates the robot. `.run()` starts Device Connect with D2D defaults (Zenoh multicast scouting, no broker) and blocks — the robot becomes discoverable on the LAN and listens for commands. Without `.run()`, the script exits and the robot is removed from the network.
+`Robot()` creates the robot. `.run()` starts Device Connect with D2D defaults (Zenoh multicast scouting, no broker) and blocks - the robot becomes discoverable on the LAN and listens for commands. Without `.run()`, the script exits and the robot is removed from the network.
 
 > **Secure by default:** Device Connect no longer enables unencrypted/unauthenticated transport implicitly. For a local, trusted-network D2D trial without a broker, explicitly opt in to insecure transport:
 > ```bash
@@ -27,8 +27,8 @@ You can optionally pass `peer_id="so100-lab-1"` for a stable address; otherwise 
 
 | Pattern | Behavior |
 |---|---|
-| `r = Robot("so100"); r.run()` | **Option A — Foreground server.** Process stays alive, listens for commands. Ctrl+C to stop. |
-| `r = Robot("so100")` | **Option B — Agent-controlled.** A Strands Agent discovers the robot via `robot_mesh` or `discover()` and invokes commands remotely. |
+| `r = Robot("so100"); r.run()` | **Option A - Foreground server.** Process stays alive, listens for commands. Ctrl+C to stop. |
+| `r = Robot("so100")` | **Option B - Agent-controlled.** A Strands Agent discovers the robot via `robot_mesh` or `discover()` and invokes commands remotely. |
 
 From another process, discover and invoke:
 
@@ -41,8 +41,8 @@ robot_mesh(action="tell", target="so100-lab-1",      # invoke (HITL-approved)
 robot_mesh(action="emergency_stop")                   # e-stop all (HITL-approved)
 ```
 
-> **Heads up:** the actuation actions — `tell`, `send`, `stop`, `broadcast`,
-> `emergency_stop`, and `rpc` — are gated behind a human-in-the-loop approval, so
+> **Heads up:** the actuation actions - `tell`, `send`, `stop`, `broadcast`,
+> `emergency_stop`, and `rpc` - are gated behind a human-in-the-loop approval, so
 > they run only from inside a Strands agent loop (where the operator approves).
 > Called from a bare script they **fail closed**. Read-only `peers` works
 > anywhere. The gated set is configurable via `STRANDS_MESH_HITL_ACTIONS`.
@@ -145,7 +145,7 @@ Expected output:
 
 ```
 Discovered 1 device(s):
-  [sim] <PEER_ID> — idle
+  [sim] <PEER_ID> - idle
     Functions: execute, getFeatures, getStatus, reset, step, stop
 ```
 
@@ -181,15 +181,15 @@ context."}]}
 
 **Emergency stop all devices:**
 
-> **Safety — human-in-the-loop.** Every physical-actuation action —
-> `emergency_stop`, `broadcast`, `tell`, `send`, `stop`, and `rpc` — is gated
+> **Safety - human-in-the-loop.** Every physical-actuation action -
+> `emergency_stop`, `broadcast`, `tell`, `send`, `stop`, and `rpc` - is gated
 > behind an operator approval interrupt (`tool_context.interrupt`), plus a
 > per-action rate limit and an audit log. They run only when invoked from inside
 > a Strands agent loop, where the operator approves the action out-of-band of the
 > LLM's tool arguments (so prompt-injection cannot smuggle approval). The gated
 > set is configurable via `STRANDS_MESH_HITL_ACTIONS`. Device Connect dispatch is
 > layered *under* this gate, so DC inherits the same safety. Called as a bare
-> script — with no operator to ask — these actions **fail closed**:
+> script - with no operator to ask - these actions **fail closed**:
 
 ```python
 python -c "
@@ -225,7 +225,7 @@ connect()
 found = discover('device(*)')
 print(f'Found {found[\"matched\"]} robot(s):')
 for d in found['results']:
-    print(f'  {d[\"device_id\"]} — {d.get(\"status\", {}).get(\"availability\", \"?\")}')
+    print(f'  {d[\"device_id\"]} - {d.get(\"status\", {}).get(\"availability\", \"?\")}')
 
 if found['results']:
     did = found['results'][0]['device_id']
@@ -241,7 +241,7 @@ if found['results']:
 ```
 
 > `device-connect-agent-tools` is the raw RPC layer, *below* the `robot_mesh`
-> tool, so it is not subject to `robot_mesh`'s human-in-the-loop gate — these
+> tool, so it is not subject to `robot_mesh`'s human-in-the-loop gate - these
 > calls invoke the device directly (the device's own per-caller allowlist still
 > applies; see *Per-caller RPC allowlist* below).
 
@@ -249,7 +249,7 @@ Expected output:
 
 ```
 Found 1 robot(s):
-  <PEER_ID> — idle
+  <PEER_ID> - idle
 Execute result: {'success': True, 'result': {'status': 'success', 'content': [...]}}
 Status: {'success': True, 'result': {...}}  # full sim state dict
 ```
@@ -286,13 +286,13 @@ export ZENOH_CONNECT=tcp/localhost:7447
 # Insecure mode is only for the local, broker-less D2D trial.
 ```
 
-All the options above (A–B) work identically with full infrastructure — the only difference is that devices register in etcd and discovery goes through the registry service instead of multicast scouting.
+All the options above (A–B) work identically with full infrastructure - the only difference is that devices register in etcd and discovery goes through the registry service instead of multicast scouting.
 
 > **What infrastructure adds over D2D:**
-> - **Persistent device registry** — devices register with TTL-based leases; stale devices are auto-cleaned. Agents can discover devices by type, location, or capability via `discover()`.
-> - **Distributed state & locks** — etcd-backed key-value store with atomic distributed locks for coordinating shared resources (e.g., preventing two agents from using the same robotic arm simultaneously).
-> - **Cross-network routing** — the Zenoh router (or NATS broker) enables communication across subnets and sites, not just the local LAN.
-> - **Authentication & authorization** — mTLS ensures only devices with certificates signed by the trusted CA can exchange data. Full authorization (per-device permissions, topic-level ACLs, certificate revocation) requires the router/registry infrastructure.
+> - **Persistent device registry** - devices register with TTL-based leases; stale devices are auto-cleaned. Agents can discover devices by type, location, or capability via `discover()`.
+> - **Distributed state & locks** - etcd-backed key-value store with atomic distributed locks for coordinating shared resources (e.g., preventing two agents from using the same robotic arm simultaneously).
+> - **Cross-network routing** - the Zenoh router (or NATS broker) enables communication across subnets and sites, not just the local LAN.
+> - **Authentication & authorization** - mTLS ensures only devices with certificates signed by the trusted CA can exchange data. Full authorization (per-device permissions, topic-level ACLs, certificate revocation) requires the router/registry infrastructure.
 
 > **Per-caller RPC allowlist (`DEVICE_CONNECT_RPC_ALLOW` / `DEVICE_CONNECT_ESTOP_ALLOW`).**
 > Devices can restrict which callers may invoke state-mutating RPCs (`execute` /
@@ -303,7 +303,7 @@ All the options above (A–B) work identically with full infrastructure — the 
 >   id automatically; an **agent** driving the robot via `robot_mesh` /
 >   `device-connect-agent-tools` is anonymous by default. Set
 >   `STRANDS_ROBOT_MESH_AGENT_ID=<id>` on the agent and add `<id>` to the
->   device's allowlist — otherwise, with an allowlist set, the device
+>   device's allowlist - otherwise, with an allowlist set, the device
 >   (correctly) **denies the anonymous agent** (fail-closed).
 > - **It is only a hard boundary under authenticated transport.** Over insecure
 >   D2D (`DEVICE_CONNECT_ALLOW_INSECURE=true`) the `source_device` is
@@ -339,7 +339,7 @@ It installs dependencies, starts a Zenoh event listener, runs `Robot("so100")` w
 
 ## Reachy Mini (Zenoh-Native Devices)
 
-Reachy Mini has built-in Zenoh support — it publishes joint positions, head pose, and IMU data natively over Zenoh topics. This makes it a special case: it can be bridged directly via `subscribe()` or wrapped as a Device Connect device for structured RPC.
+Reachy Mini has built-in Zenoh support - it publishes joint positions, head pose, and IMU data natively over Zenoh topics. This makes it a special case: it can be bridged directly via `subscribe()` or wrapped as a Device Connect device for structured RPC.
 
 ### Bridging via Subscribe
 
@@ -421,7 +421,7 @@ invoke('device(reachy-mini-1).function(nod)')
 
 | Variant | Connection | Setup |
 |---|---|---|
-| **Reachy Mini** (wireless) | Wi-Fi, onboard Pi | `host='reachy-mini.local'` — no extra install needed |
+| **Reachy Mini** (wireless) | Wi-Fi, onboard Pi | `host='reachy-mini.local'` - no extra install needed |
 | **Reachy Mini Lite** (USB) | USB, no Pi | `pip install reachy-mini` then run `reachy-mini` daemon locally. Use `host='localhost'` |
 
 **Start the Reachy Mini driver:**

@@ -7,7 +7,7 @@ object) routes ``execute`` -> ``run_policy`` and ``start`` -> ``start_policy``
 with the issue #300 well-known kwargs (``target_pose`` / ``target_joints`` /
 ``world_update``) forwarded into ``policy_config``.
 
-Tests are 100% mocked — no MuJoCo / Isaac install required. A
+Tests are 100% mocked - no MuJoCo / Isaac install required. A
 ``_FakeSim`` exposes the SimEngine surface duck-typed minimally to what
 ``_dispatch_sim_policy`` needs.
 """
@@ -31,7 +31,7 @@ class _FakeSim:
     def __init__(self, robots: list[str] | None = None) -> None:
         # The mesh dispatcher checks for a non-None ``_world`` to confirm
         # the sim has been initialised. Use a sentinel object, not just
-        # truthy — matches MuJoCoSimEngine's "_world is None" gate.
+        # truthy - matches MuJoCoSimEngine's "_world is None" gate.
         self._world: Any = object()
         self._robots = list(robots if robots is not None else ["so100"])
         self.run_policy_calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
@@ -147,7 +147,7 @@ def test_execute_forwards_constructor_extras_via_policy_config() -> None:
 
 
 def test_execute_requires_robot_name_when_multiple_robots() -> None:
-    """Ambiguous targets must be explicit — silent default to first robot is forbidden."""
+    """Ambiguous targets must be explicit - silent default to first robot is forbidden."""
     sim = _FakeSim(robots=["arm_left", "arm_right"])
     m = Mesh(sim, peer_id="sim-a")
     out = m._dispatch(
@@ -252,7 +252,7 @@ def test_execute_forwards_optional_run_kwargs() -> None:
 def test_hardware_path_unchanged_when_run_policy_absent() -> None:
     """A peer without ``run_policy`` / ``_world`` still hits the HardwareRobot branch.
 
-    Regression guard: the sim branch must be additive — existing
+    Regression guard: the sim branch must be additive - existing
     HardwareRobot peers see no behaviour change.
     """
 

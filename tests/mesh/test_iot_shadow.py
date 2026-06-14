@@ -1,6 +1,6 @@
 """Unit tests for ShadowMirror and presence-shadow auto-wiring.
 
-No real AWS — uses MagicMock-backed transports.
+No real AWS - uses MagicMock-backed transports.
 """
 
 from __future__ import annotations
@@ -58,11 +58,11 @@ class TestShadowMirrorUpdate:
         transport.is_alive = MagicMock(return_value=True)
         transport.put.side_effect = RuntimeError("network")
         m = ShadowMirror("so100-01")
-        # Should not raise — shadow updates are best-effort.
+        # Should not raise - shadow updates are best-effort.
         m.update(transport, {"k": 1})
 
 
-# enable_for_mesh — auto-wiring
+# enable_for_mesh - auto-wiring
 
 
 class TestEnableForMesh:

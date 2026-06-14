@@ -548,7 +548,7 @@ def test_no_agent_controlled_host_exec_or_path_params():
 
 
 # --------------------------------------------------------------------------- #
-# #384 item 2 — symlink (realpath) resolution in volume safety                 #
+# #384 item 2 - symlink (realpath) resolution in volume safety                 #
 # --------------------------------------------------------------------------- #
 def test_check_volume_safety_resolves_symlink_into_protected_dir(tmp_path):
     """A host symlink whose target is a protected dir must be rejected.

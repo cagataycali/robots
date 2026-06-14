@@ -326,7 +326,7 @@ class TestMonotonicClockR12:
 
 
 class TestStrictDedupModeR15:
-    """the prior fix pin tests — opt-in strict mode dedups payloads with no canonical fields.
+    """the prior fix pin tests - opt-in strict mode dedups payloads with no canonical fields.
 
     Default mode (strict=False): payloads without (sender_id, turn_id, command)
     pass through (preserves heartbeat-style semantics where the same payload

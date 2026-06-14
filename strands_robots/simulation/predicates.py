@@ -90,7 +90,7 @@ def _body_position(sim: SimEngine, body: str) -> list[float] | None:
     ``env.objects_dict[name].root_body`` (see
     ``libero/libero/envs/bddl_base_domain.py``). We mirror that with a
     bounded fallback: try the bare name first, then ``<name>_main`` if
-    the bare lookup fails. #176 (sub-task 3d) — without this
+    the bare lookup fails. #176 (sub-task 3d) - without this
     fallback, BDDL goal predicates like ``(On porcelain_mug_1
     plate_1)`` resolve to ``None`` (body not found) → predicate
     silently False even when the mug is physically on the plate.
@@ -364,7 +364,7 @@ def _body_on(
 
     True when ``A.z > B.z + z_offset`` AND horizontal distance ``|A.xy - B.xy|
     < xy_tol``. When ``require_contact=True``, ALSO requires physics
-    contact between A and B via ``sim.get_contacts()`` — matches
+    contact between A and B via ``sim.get_contacts()`` - matches
     upstream LIBERO's ``ObjectState.check_ontop`` which combines a
     geometric check with ``check_contact``. The z-offset parameter
     accounts for B's half-height + a small buffer; tune per scene.
@@ -375,7 +375,7 @@ def _body_on(
     ``require_contact=True`` but the sim engine doesn't expose
     ``get_contacts`` (e.g. test stubs, custom engines), the contact
     check is skipped and only the geometric check fires. This
-    preserves backwards compatibility — engines without contact
+    preserves backwards compatibility - engines without contact
     support get the pre-#171 behaviour. LIBERO benchmarks running on
     ``MuJoCoSimEngine`` (which implements ``get_contacts``) get the
     strict upstream-matching semantics.

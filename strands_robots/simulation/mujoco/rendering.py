@@ -282,7 +282,7 @@ class RenderingMixin:
                 # at a controller-defined rate (e.g. 25 substeps per
                 # policy step at 20 Hz LIBERO control / 500 Hz physics).
                 # When the controller declares ``owns_stepping = True``,
-                # skip the outer ``mj_step`` loop below — the controller
+                # skip the outer ``mj_step`` loop below - the controller
                 # has already advanced ``data.time`` by the full control
                 # timestep. Without this, we'd double-step (the outer
                 # loop would run an extra mj_step on top of the
@@ -678,7 +678,7 @@ class RenderingMixin:
                     self._depth_warn_text = (
                         "⚠️ Depth accuracy limited on this GPU (missing ARB_clip_control). "
                         "Linearized Min/Max are in meters but precision is degraded "
-                        "(especially for far-plane pixels) — treat as approximate."
+                        "(especially for far-plane pixels) - treat as approximate."
                     )
                 else:
                     self._depth_warn_text = ""
@@ -694,7 +694,7 @@ class RenderingMixin:
             #
             # On MuJoCo >= 3.0, `model.vis.map.{znear,zfar}` are fractions of
             # `model.stat.extent` (the model's bounding scale), NOT absolute
-            # meters — multiply by extent to get real clip-plane distances.
+            # meters - multiply by extent to get real clip-plane distances.
             # pyproject.toml pins mujoco>=3.2, so this convention is safe here.
             import numpy as _np
 
@@ -973,7 +973,7 @@ class RenderingMixin:
 
         names, unresolved = self._active_camera_list(cameras)
         # Strict validation: if user specified cameras, error on any unresolved names
-        # (same policy as render() and render_depth() — fail loudly, don't silently drop).
+        # (same policy as render() and render_depth() - fail loudly, don't silently drop).
         # NOTE: `unresolved` contains the raw user inputs that didn't map, so the
         # namespace-suffix resolution path (e.g. 'side' → 'arm0/side') is preserved.
         if cameras is not None and unresolved:
@@ -993,7 +993,7 @@ class RenderingMixin:
 
         # ``ready`` is set by the recorder thread once its GL context is warm
         # and it has entered the capture loop. ``start`` blocks on it below so
-        # that "start returned success" guarantees frames are being captured —
+        # that "start returned success" guarantees frames are being captured -
         # callers that stop after a short sleep (e.g. tests, brief clips) no
         # longer race the ~0.5s fresh-thread EGL warmup and get an empty buffer.
         state = {
@@ -1101,7 +1101,7 @@ class RenderingMixin:
                     cold,
                 )
 
-            # Warmup done (or capped) — capture loop is about to run. Unblock
+            # Warmup done (or capped) - capture loop is about to run. Unblock
             # the caller waiting in start_cameras_recording so the success
             # return coincides with the first captured frame, not the cold
             # thread launch.
@@ -1137,7 +1137,7 @@ class RenderingMixin:
         # capture loop before reporting success. Worst case is the 30-attempt
         # warmup cap (~1s/cam at 64x48, more for larger frames) plus a small
         # margin; the common case is ~0.5s. If warmup somehow stalls we still
-        # return after the timeout rather than blocking forever — the thread
+        # return after the timeout rather than blocking forever - the thread
         # keeps trying and ``get_cameras_recording_status`` exposes errors.
         _ready_timeout = 5.0 + 1.0 * len(names)
         if not state["ready"].wait(timeout=_ready_timeout):
@@ -1192,7 +1192,7 @@ class RenderingMixin:
         Shared by :meth:`stop_cameras_recording` (daemon-thread path) and
         the ``finalize`` callable returned by
         :meth:`start_cameras_recording_synchronous`. ``state`` is mutated
-        in place — ``running`` should already be ``False`` before this
+        in place - ``running`` should already be ``False`` before this
         runs, and the daemon thread (if any) already joined.
 
         Best-effort: per-camera flush failures are reported in the result
@@ -1271,7 +1271,7 @@ class RenderingMixin:
         daemon thread. The eval driver wires ``on_frame`` into
         :meth:`~strands_robots.simulation.SimEngine.evaluate_benchmark`'s
         new ``on_frame=`` kwarg (#191), and rendering happens on the eval
-        thread — eliminating the cross-thread ``mjData`` race the daemon
+        thread - eliminating the cross-thread ``mjData`` race the daemon
         recorder hits under multi-threaded eval (Strands ``Agent`` tool
         dispatch under asyncio, where the eval runs on a worker thread
         distinct from the script main).
@@ -1415,7 +1415,7 @@ class RenderingMixin:
             Returns the same standard result dict as
             :meth:`stop_cameras_recording` so callers can log artifacts
             uniformly. Calling ``finalize()`` after the first call is a
-            no-op success ("Was not recording cameras.") — matching the
+            no-op success ("Was not recording cameras.") - matching the
             ``stop_cameras_recording`` idempotency contract.
             """
             current = getattr(self, "_cams_rec_state", None)

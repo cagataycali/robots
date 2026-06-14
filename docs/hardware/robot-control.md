@@ -1,5 +1,5 @@
 ---
-description: HardwareRobot — async task execution, status reporting, the LeRobot bridge.
+description: HardwareRobot - async task execution, status reporting, the LeRobot bridge.
 ---
 
 # Robot control (real hardware)
@@ -58,8 +58,8 @@ robot.cleanup()
 |--------|-----------|-------|
 | `execute` | Yes | `instruction` + `policy_port` |
 | `start` | No | `instruction` + `policy_port` |
-| `status` | — | — |
-| `stop` | — | — |
+| `status` | - | - |
+| `stop` | - | - |
 
 ## Mesh teleop
 
@@ -82,6 +82,6 @@ robot.stop_teleop()   # stop all sessions
 
 ## See also
 
-- [Hardware tools](tools.md) — calibrate / camera / teleop helpers.
-- [Robot factory](../getting-started/robot-factory.md) — every `Robot()` kwarg.
-- [Policy providers](../policies/overview.md) — available policy providers.
+- [Hardware tools](tools.md) - calibrate / camera / teleop helpers.
+- [Robot factory](../getting-started/robot-factory.md) - every `Robot()` kwarg.
+- [Policy providers](../policies/overview.md) - available policy providers.

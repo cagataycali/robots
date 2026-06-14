@@ -51,7 +51,7 @@ Run on physical hardware (requires SO-101 follower + leader, calibrated):
 A note on recording shape: this example records ONE demonstration per run
 (a single LeRobotDataset episode of N steps). The dataset format also
 supports multi-episode shapes, but a single longer episode keeps the
-agent-driven story honest — you tell the agent in English to record a
+agent-driven story honest - you tell the agent in English to record a
 demonstration once, and the tool sequence comes out in one shot.
 Production multi-episode collection wraps the loop in Python; that
 pattern lives in this folder's README under "Production patterns."
@@ -86,12 +86,12 @@ diag_logger = logging.getLogger("hub_to_hardware.diag")
 # Model defaults
 # ---------------------------------------------------------------------------
 # Claude Opus 4.8 on Bedrock orchestrates the LeRobot tool surface cleanly
-# in one shot — lower-tier models work but issue more defensive state-
+# in one shot - lower-tier models work but issue more defensive state-
 # querying calls and are more likely to drift on multi-step loops.
 #
 # IMPORTANT: verify the exact model ID in your AWS Bedrock console
 # (Model catalog → Anthropic → Claude Opus 4.8). Cross-region inference
-# profile IDs are prefixed by ``us.``, ``eu.``, etc. — pick the one for
+# profile IDs are prefixed by ``us.``, ``eu.``, etc. - pick the one for
 # your region. Override at runtime via --model-id or STRANDS_BEDROCK_MODEL_ID
 # without editing this file.
 DEFAULT_MODEL_ID = "global.anthropic.claude-opus-4-8"  # ← verify in AWS console
@@ -118,10 +118,10 @@ def _read_dataset_state(repo_id: str) -> dict[str, Any]:
     layout your installed LeRobot version expects.
 
     Returns a dict with one of these statuses:
-      * ``missing``        — cache dir doesn't exist
-      * ``ready``          — dataset loaded, counts populated
-      * ``not_finalized``  — cache exists but isn't a complete dataset yet
-      * ``error``          — load failed for another reason
+      * ``missing``        - cache dir doesn't exist
+      * ``ready``          - dataset loaded, counts populated
+      * ``not_finalized``  - cache exists but isn't a complete dataset yet
+      * ``error``          - load failed for another reason
     """
     cache_root = _lerobot_cache_root(repo_id)
     result: dict[str, Any] = {"cache_path": str(cache_root)}
@@ -163,12 +163,12 @@ def _log_dataset_summary(repo_id: str) -> None:
         )
     elif status == "missing":
         logger.warning(
-            "❌ No dataset cache at %s — start_recording may have been skipped",
+            "❌ No dataset cache at %s - start_recording may have been skipped",
             state["cache_path"],
         )
     elif status == "not_finalized":
         logger.warning(
-            "❌ Cache at %s isn't a complete dataset (%s) — stop_recording may not have run",
+            "❌ Cache at %s isn't a complete dataset (%s) - stop_recording may not have run",
             state["cache_path"],
             state["error"],
         )
@@ -260,7 +260,7 @@ def _build_bedrock_model(model_id: str, region: str | None) -> Any | None:
 
     Returns the model on success, None on any failure (import error, auth
     error, model-not-enabled). The caller falls back to Strands' default
-    model on None — the workflow still runs, just on whatever Strands picks.
+    model on None - the workflow still runs, just on whatever Strands picks.
 
     ``region`` may be None, in which case boto3's standard resolution chain
     (env vars, ~/.aws/config, instance metadata) decides the region.
@@ -289,7 +289,7 @@ def _build_bedrock_model(model_id: str, region: str | None) -> Any | None:
         logger.warning(
             "BedrockModel(%s, region=%s) init failed: %s. Falling back to "
             "Strands' default. Common causes: model not enabled in this AWS "
-            "account, wrong region, or stale model ID — check the Bedrock console.",
+            "account, wrong region, or stale model ID - check the Bedrock console.",
             model_id,
             region or "<unset>",
             exc,
@@ -380,7 +380,7 @@ def record_demonstration(
     push_clause = (
         f"Push the result to {repo_id} when done."
         if push_to_hub
-        else "Keep the dataset local — do not push to the Hub."
+        else "Keep the dataset local - do not push to the Hub."
     )
 
     if mode == "sim":
@@ -514,7 +514,7 @@ def cleanup(agent: Any, *, policy: str) -> None:
 def parse_args(argv: list[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         prog="hub_to_hardware",
-        description="From Hugging Face Hub to robot hardware — the runnable example.",
+        description="From Hugging Face Hub to robot hardware - the runnable example.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 

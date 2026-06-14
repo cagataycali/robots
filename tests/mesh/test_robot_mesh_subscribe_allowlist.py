@@ -223,8 +223,8 @@ def test_ke_matches_single_star_rejects_empty_segment():
 @pytest.mark.parametrize(
     "target",
     [
-        "*",  # single Zenoh wildcard — matches strands/*/stream by equality
-        "**",  # double-star wildcard — matches via trailing /** branch
+        "*",  # single Zenoh wildcard - matches strands/*/stream by equality
+        "**",  # double-star wildcard - matches via trailing /** branch
         "*/state",  # embedded wildcard
         "peer-a/state",  # path separator (would broaden the keyexpr)
         "../etc",  # path traversal shape
@@ -254,7 +254,7 @@ def test_watch_rejects_wildcard_targets_even_with_permissive_allowlist(monkeypat
 
 
 def test_watch_rejects_wildcard_even_when_in_hitl_set_and_approved(monkeypatch):
-    """Even an HITL approval cannot legitimise a wildcard target — the HITL
+    """Even an HITL approval cannot legitimise a wildcard target - the HITL
     bypass is for the allowlist gate, not for shape validation. Otherwise the
     operator would be tricked into approving a single-peer-shaped reason
     string while the agent slipped a wildcard past."""

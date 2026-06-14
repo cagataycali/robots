@@ -180,7 +180,7 @@ MAX_TARGET_JOINTS: int = 256
 #: nested dict size, in JSON-encoded bytes. Mesh does not interpret the
 #: per-call collision-world refresh payload; it forwards it to the
 #: planner provider via ``policy_config``. The cap is purely DoS
-#: defence — 64 KiB fits any realistic obstacle list.
+#: defence - 64 KiB fits any realistic obstacle list.
 MAX_WORLD_UPDATE_BYTES: int = 65536
 
 #: Charset for entries in ``STRANDS_MESH_HF_REPO_ALLOW``. Operator-supplied
@@ -868,7 +868,7 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
 
         # Sim-targeted execute/start fields. These are admitted only for
         # the ``execute`` / ``start`` actions and are inert when the
-        # receiving peer is a HardwareRobot — ``Mesh._dispatch`` ignores
+        # receiving peer is a HardwareRobot - ``Mesh._dispatch`` ignores
         # them on the hardware path. Validating them here keeps the wire
         # schema honest end-to-end so a malicious peer cannot smuggle
         # control-byte instruction strings in via ``robot_name`` or
@@ -929,7 +929,7 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
             if value is not None and not isinstance(value, dict):
                 raise ValidationError("world_update must be a dict or null")
             if isinstance(value, dict):
-                # Bound the encoded size — mesh treats world_update as
+                # Bound the encoded size - mesh treats world_update as
                 # opaque and forwards it to the planner provider; we
                 # only need to keep it from becoming a DoS vector.
                 try:

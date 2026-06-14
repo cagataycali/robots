@@ -1,9 +1,9 @@
-"""#191 — Synchronous-mode camera recording tests.
+"""#191 - Synchronous-mode camera recording tests.
 
 The synchronous recorder (:meth:`Simulation.start_cameras_recording_synchronous`)
 returns ``(on_frame, finalize)`` callables instead of spawning a daemon
 thread. Tests here exercise the full lifecycle without requiring a real
-GL context — ``self.render(...)`` is monkey-patched on the Simulation
+GL context - ``self.render(...)`` is monkey-patched on the Simulation
 instance to return a synthetic PNG-encoded result (the same shape
 ``RenderingMixin.render`` produces). This lets the test run on
 CI/dev-box environments that lack X11/EGL while still hitting the buffer
@@ -64,7 +64,7 @@ def _make_render_result(width: int = 32, height: int = 24, fill: int = 128) -> d
 
     The recorder calls ``_extract_frame_ndarray`` on the result, which
     walks ``content[*]["image"]["source"]["bytes"]`` and PIL-decodes
-    the PNG. So the test fixture has to produce real PNG bytes — a
+    the PNG. So the test fixture has to produce real PNG bytes - a
     bare ``b"png"`` placeholder won't decode and the recorder would
     silently increment ``state["errors"][cam]`` instead of buffering
     a frame.
@@ -117,7 +117,7 @@ class TestStartCamerasRecordingSynchronous:
 
     Pinned so the daemon-thread regressions surfaced in #191
     (2-3% capture rate + greenish gradient artifacts under multi-threaded
-    eval) cannot recur silently — any drift in the synchronous-mode
+    eval) cannot recur silently - any drift in the synchronous-mode
     bookkeeping shows up here.
     """
 
@@ -198,7 +198,7 @@ class TestStartCamerasRecordingSynchronous:
             sim.destroy()
 
     def test_finalize_is_idempotent(self):
-        """Calling ``finalize()`` twice is safe — second call returns
+        """Calling ``finalize()`` twice is safe - second call returns
         ``"Was not recording cameras."`` instead of re-flushing or
         crashing. Matches ``stop_cameras_recording``'s contract.
         """
@@ -222,7 +222,7 @@ class TestStartCamerasRecordingSynchronous:
 
     def test_stop_cameras_recording_also_finalizes_sync_mode(self, tmp_path: Path):
         """``stop_cameras_recording`` works equivalently to ``finalize()``
-        for synchronous-mode recordings — useful for callers that don't
+        for synchronous-mode recordings - useful for callers that don't
         keep the closure handle around (e.g. tool-spec dispatch over
         an agent contract that can't return Python callables).
         """
@@ -248,7 +248,7 @@ class TestStartCamerasRecordingSynchronous:
 
     def test_on_frame_swallows_render_errors_into_state_errors(self):
         """A single failing render call should not crash the eval rollout.
-        It increments ``state["errors"][cam]`` instead — the same policy
+        It increments ``state["errors"][cam]`` instead - the same policy
         the daemon-thread recorder uses.
 
         Pinned so a refactor that promotes per-frame failures to
@@ -300,7 +300,7 @@ class TestStartCamerasRecordingSynchronous:
 
             state = sim._cams_rec_state
             assert len(state["buffers"]["cam_a"]) == 3, "buffer must cap at max_frames_per_camera"
-            # Errors stay zero — the cap is a deliberate skip, not a render failure.
+            # Errors stay zero - the cap is a deliberate skip, not a render failure.
             assert state["errors"]["cam_a"] == 0
         finally:
             sim.destroy()

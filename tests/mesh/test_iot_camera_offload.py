@@ -1,6 +1,6 @@
 """Unit tests for CameraOffloader and S3 camera offload auto-wiring.
 
-No real S3 — uses MagicMock-backed boto3 client and transport.
+No real S3 - uses MagicMock-backed boto3 client and transport.
 """
 
 from __future__ import annotations
@@ -154,12 +154,12 @@ class TestEnableForMesh:
 
 
 class TestEnableForMeshOffloadWrapper:
-    """White-box tests for camera_offload.enable_for_mesh — exercise the
+    """White-box tests for camera_offload.enable_for_mesh - exercise the
     wrapper that runs inside Mesh._publish_cameras_once when the bucket is set."""
 
     def test_wrapper_skips_when_robot_not_connected(self, monkeypatch):
         """If the underlying robot isn't connected, the offload path
-        returns silently — no S3 call, no exception."""
+        returns silently - no S3 call, no exception."""
         monkeypatch.setenv("STRANDS_MESH_CAMERA_S3_BUCKET", "frames")
         from strands_robots.mesh.iot.camera_offload import enable_for_mesh
 
@@ -189,7 +189,7 @@ class TestEnableForMeshOffloadWrapper:
         ):
             off = enable_for_mesh(mesh)
         assert off is not None
-        # Drive the wrapper — it should call original AND early-return on offload
+        # Drive the wrapper - it should call original AND early-return on offload
         mesh._publish_cameras_once()
         assert original_called == [1]
 
@@ -204,7 +204,7 @@ class TestEnableForMeshOffloadWrapper:
         inner = type("I", (), {})()
         inner.is_connected = True
         inner.config = type("C", (), {"cameras": {"front": {}}})()
-        # get_observation raises — wrapper should bail without raising
+        # get_observation raises - wrapper should bail without raising
         inner.get_observation = MagicMock(side_effect=RuntimeError("camera dead"))
         mesh.robot = type("R", (), {})()
         mesh.robot.robot = inner

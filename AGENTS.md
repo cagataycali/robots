@@ -143,13 +143,13 @@ Corrections from code review that apply to all future contributions:
 Corrections from code review that apply to all future contributions:
 
 ### Resource Cleanup on Partial Failure
-- **Always destroy on failure** - If `create_world()` succeeds but `add_robot()` fails, you MUST call `sim.destroy()` before raising. The `Simulation` object owns a `ThreadPoolExecutor`, MuJoCo world, and temp directory — leaking these is silent damage.
+- **Always destroy on failure** - If `create_world()` succeeds but `add_robot()` fails, you MUST call `sim.destroy()` before raising. The `Simulation` object owns a `ThreadPoolExecutor`, MuJoCo world, and temp directory - leaking these is silent damage.
 - **Pattern**: every `_dispatch_action(...)` call that could mutate persistent state needs `if result["status"] == "error": sim.destroy(); raise RuntimeError(...)`.
 - **Don't discard return values** - If a step returns `{"status": ...}`, check it. The compiler won't catch a silently-ignored failure.
 
 ### Exception Clauses Must Be Narrow
 - **`except Exception` is forbidden** for non-recovery code paths. Use the smallest superset of expected exception types.
-- **`except (ImportError, Exception)` is a bug** — `Exception` is a superclass of `ImportError`, so the tuple collapses to `except Exception`. Lint/review will catch this; don't write it.
+- **`except (ImportError, Exception)` is a bug** - `Exception` is a superclass of `ImportError`, so the tuple collapses to `except Exception`. Lint/review will catch this; don't write it.
 - **USB / hardware probing** - use `except (ImportError, OSError)`. `PermissionError` is an `OSError`, `FileNotFoundError` is an `OSError`, etc.
 
 ### Module-Level Side Effects
@@ -200,27 +200,27 @@ Corrections from code review that apply to all future contributions:
 Corrections from code review that apply to all future contributions:
 
 ### LLM Input Safety
-- **Validate before subprocess interpolation** — every parameter on an agent-callable
+- **Validate before subprocess interpolation** - every parameter on an agent-callable
   tool (`@tool` decorated function, `AgentTool.stream` dispatch handler) that flows
   into `subprocess.run`, `subprocess.Popen`, MJCF / XML interpolation, or filesystem
   path construction MUST be validated up front via regex allowlist, enum match, or
-  range check. Argv-style subprocess does not exempt you — defense-in-depth.
-- **Centralise validation in one function** — pattern: a `validate_inputs(...)` helper
+  range check. Argv-style subprocess does not exempt you - defense-in-depth.
+- **Centralise validation in one function** - pattern: a `validate_inputs(...)` helper
   at the top of the tool module that takes every user-supplied param as a keyword arg
   and raises `ValueError` with a clear message on any rejection. Single entry-point
   is independently testable. PR #90's `gr00t_inference.validate_inputs()` is the
   canonical example.
-- **Allowlist enumerable values** — `data_config`, `embodiment_tag`, dtype strings,
+- **Allowlist enumerable values** - `data_config`, `embodiment_tag`, dtype strings,
   container names: all match `^[a-z][a-z0-9_]+$` or an explicit `{"fp16", "fp8", ...}`
   set. Never accept arbitrary strings into enumerable surfaces.
-- **Reject shell metacharacters in paths** — `;`, `|`, `$`, backticks, `>`, `<`,
+- **Reject shell metacharacters in paths** - `;`, `|`, `$`, backticks, `>`, `<`,
   `\n`, `\r`, `\x00`. Also reject `..` path traversal components. Apply even when
   using argv-style subprocess.
 - **Bind to `127.0.0.1` by default**, not `0.0.0.0`. Users explicitly opt into
   network exposure.
 
 ### CI Security Baseline
-- **CodeQL findings are not PR-blocking but ARE actionable** — check the Security
+- **CodeQL findings are not PR-blocking but ARE actionable** - check the Security
   tab after pushing to a branch. False-positives get dismissed with a reason;
   real findings get fixed.
 - **Dependency Review hard-fails on high/critical CVEs in new deps.** If a PR
@@ -236,7 +236,7 @@ Corrections from code review that apply to all future contributions:
   with the version tag preserved as a trailing comment: `uses: actions/checkout@<sha>  # v4.2.2`.
 - **Dependabot keeps these fresh** via the `github-actions` ecosystem entry.
   Do not manually bump tags; merge the Dependabot PR.
-- **Especially `pypa/gh-action-pypi-publish`** — it uses a moving `release/v1`
+- **Especially `pypa/gh-action-pypi-publish`** - it uses a moving `release/v1`
   branch, which is exactly the supply-chain pattern that the `tj-actions/changed-files`
   incident exploited. This pin is non-negotiable.
 
@@ -266,7 +266,7 @@ apply to all future work on `strands_robots/mesh/{core,audit,security}.py`.
   window and a hot path never re-parses the environment per call.
 - **Lockout-engagement is decoupled from the per-issuer cache cap.** A bounded
   replay cache that is full (flood, or a tiny operator override) must still let a
-  legitimate peer ENGAGE a lockout — the cap bounds memory, not safety. Pin both
+  legitimate peer ENGAGE a lockout - the cap bounds memory, not safety. Pin both
   directions: `*_per_issuer_cap_exceeded_still_engages_lockout` and
   `*_low_cache_max_does_not_deny_safety`.
 - **Domain-tag trust-boundary cache keys.** A TLS-bound `wire_zid` and an
@@ -302,7 +302,7 @@ From the `robot_mesh` human-in-the-loop review trail (#227). Apply to the
 ### Audit completeness
 - **Audit read-only/observation actions too, not just actuation.** `peers`,
   `status`, `inbox`, and `unsubscribe` each leave a `_audit_tool_action(...)` row
-  so the audit log is a complete record of agent mesh access — operators get the
+  so the audit log is a complete record of agent mesh access - operators get the
   "agent read N frames from sub X at time T" trail that raw telemetry access
   otherwise lacks.
 
@@ -311,4 +311,4 @@ From the `robot_mesh` human-in-the-loop review trail (#227). Apply to the
   recorded only after approval is granted (or atomically via
   `_rate_limit_check_and_record` on the post-approval path). Otherwise nuisance
   prompts an operator declines would lock the agent out of issuing a genuine
-  `emergency_stop` — the inverse of the intended safety property.
+  `emergency_stop` - the inverse of the intended safety property.

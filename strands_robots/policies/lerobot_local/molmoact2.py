@@ -26,7 +26,7 @@ API (``lerobot.policies.factory``):
 * ``make_pre_post_processors(cfg)`` dispatches to
   ``make_molmoact2_pre_post_processors(cfg)`` internally and returns the
   pre/post pipelines. The repo ships no ``policy_preprocessor.json``, so the
-  generic ``ProcessorBridge.from_pretrained`` would be a no-op passthrough —
+  generic ``ProcessorBridge.from_pretrained`` would be a no-op passthrough -
   hence we build the processors through the factory instead.
 
 We deliberately go through the factory (not the molmoact2 submodule classes
@@ -156,7 +156,7 @@ def derive_image_keys(image_keys: list[str] | None, embodiment_spec: Any | None)
     input feature to exist BEFORE instantiation. Priority:
       1. Explicit ``image_keys`` argument.
       2. The embodiment spec's ``obs_rename`` *targets* that look like image
-         features (``observation.images.*``) — keeps config aligned with what
+         features (``observation.images.*``) - keeps config aligned with what
          the embodiment will actually feed.
       3. :data:`DEFAULT_IMAGE_KEYS`.
 

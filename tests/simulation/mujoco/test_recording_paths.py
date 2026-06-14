@@ -198,9 +198,9 @@ def test_b12_multi_episode_resume_appends(sim_with_two_robots, tmp_path):
     r = sim.stop_recording()
     assert r["status"] == "success", r
 
-    # Episode 2 (append — overwrite=False on existing dir must NOT crash)
+    # Episode 2 (append - overwrite=False on existing dir must NOT crash)
     r = sim.start_recording(repo_id="local/multiep", fps=20, root=root, overwrite=False)
-    assert r["status"] == "success", f"B12 regression — resume failed: {r}"
+    assert r["status"] == "success", f"B12 regression - resume failed: {r}"
     sim.run_policy(
         robot_name="alpha",
         policy_provider="mock",
@@ -221,7 +221,7 @@ def test_b12_multi_episode_resume_appends(sim_with_two_robots, tmp_path):
 
 def test_b4_synchronized_multi_robot_recording(sim_with_two_robots, tmp_path):
     """B4 fix: run_multi_policy drives BOTH robots in one synchronized loop and
-    records them into ONE merged frame per timestep — so every frame co-observes
+    records them into ONE merged frame per timestep - so every frame co-observes
     both arms (the whole point of a multi-robot dataset).
 
     Pre-fix, two independent start_policy threads shared the recorder and
@@ -358,7 +358,7 @@ def test_run_multi_policy_action_horizon_batches_inference(sim_with_two_robots, 
     for i in range(len(ds)):
         ac = np.asarray(ds[i]["action"])
         assert float(np.abs(ac[:half]).sum()) > 1e-6 and float(np.abs(ac[half:]).sum()) > 1e-6, (
-            f"frame {i}: a robot's action is zero — batching broke co-observation"
+            f"frame {i}: a robot's action is zero - batching broke co-observation"
         )
 
 

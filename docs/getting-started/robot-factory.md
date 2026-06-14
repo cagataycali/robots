@@ -1,5 +1,5 @@
 ---
-description: Robot(name, mode, backend, urdf_path, cameras, position, data_config, mesh, peer_id, **kwargs) — the full signature with every kwarg explained.
+description: Robot(name, mode, backend, urdf_path, cameras, position, data_config, mesh, peer_id, **kwargs) - the full signature with every kwarg explained.
 ---
 
 # Robot factory
@@ -21,8 +21,8 @@ robot = Robot("so100", mode="auto")  # probes USB, falls back to sim
 | `name` | str | required | Catalog name or alias. Resolved via `registry/robots.json`. |
 | `mode` | str | `"sim"` | `"sim"` / `"real"` / `"auto"`. Overridden by `STRANDS_ROBOT_MODE`. |
 | `backend` | str | `"mujoco"` | Sim backend. Ignored when `mode="real"`. |
-| `urdf_path` | str | `None` | Explicit MJCF/URDF path — bypasses registry. |
-| `cameras` | dict | `None` | Real-hardware camera config. **Rejected in `mode="sim"`** — raises `ValueError`. |
+| `urdf_path` | str | `None` | Explicit MJCF/URDF path - bypasses registry. |
+| `cameras` | dict | `None` | Real-hardware camera config. **Rejected in `mode="sim"`** - raises `ValueError`. |
 | `position` | list | `None` | Robot position `[x, y, z]` in sim world. |
 | `data_config` | str | `None` | GR00T data_config name. |
 | `mesh` | bool | `True` | Auto-join Zenoh mesh. |
@@ -72,6 +72,6 @@ Mesh failure is non-fatal; `.mesh = None` if Zenoh unavailable.
 
 ## See also
 
-- [Robot catalog](../robots/index.md) — 68 catalog names.
-- [Architecture](../architecture.md) — factory in the module map.
-- [Multi-robot mesh](../mesh.md) — mesh peer discovery.
+- [Robot catalog](../robots/index.md) - 68 catalog names.
+- [Architecture](../architecture.md) - factory in the module map.
+- [Multi-robot mesh](../mesh.md) - mesh peer discovery.

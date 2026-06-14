@@ -1,4 +1,4 @@
-"""Robot mesh networking — peer-to-peer presence, state, RPC, and teleoperation.
+"""Robot mesh networking - peer-to-peer presence, state, RPC, and teleoperation.
 
 This package provides the Zenoh-based mesh layer for strands-robots. Each robot
 (hardware or simulated) owns a :class:`Mesh` component that broadcasts its
@@ -16,11 +16,11 @@ Typical usage::
 
 Submodules
 ----------
-- ``session`` — Shared Zenoh session singleton and peer registry
-- ``audit`` — Append-only safety event audit log
-- ``core`` — The Mesh class (lifecycle, presence, state, RPC, subscribe)
-- ``sensors`` — Extended sensor topic loops (pose, health, IMU, odom, lidar, hand, map)
-- ``input`` — InputPublisher / InputReceiver for teleoperation over mesh
+- ``session`` - Shared Zenoh session singleton and peer registry
+- ``audit`` - Append-only safety event audit log
+- ``core`` - The Mesh class (lifecycle, presence, state, RPC, subscribe)
+- ``sensors`` - Extended sensor topic loops (pose, health, IMU, odom, lidar, hand, map)
+- ``input`` - InputPublisher / InputReceiver for teleoperation over mesh
 """
 
 from strands_robots.mesh.audit import log_safety_event

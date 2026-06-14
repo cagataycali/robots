@@ -51,7 +51,7 @@ class TestDoctorChecks:
         from strands_robots.doctor import check_cuda
 
         result = check_cuda()
-        # Should be one of PASS, WARN, or FAIL — never crash
+        # Should be one of PASS, WARN, or FAIL - never crash
         assert any(x in result for x in ("PASS", "WARN", "FAIL"))
 
     def test_check_hf_auth_with_token(self, monkeypatch: pytest.MonkeyPatch) -> None:

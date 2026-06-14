@@ -32,7 +32,7 @@ def test_simrobot_dataclass_has_mesh_and_peer_id_fields():
 
 
 def test_simrobot_mesh_fields_can_be_set():
-    """Round-trip the new fields — required by Simulation.add_robot."""
+    """Round-trip the new fields - required by Simulation.add_robot."""
     fake_mesh = MagicMock(name="Mesh", peer_id="parent-x:so100")
     r = SimRobot(
         name="so100",
@@ -45,7 +45,7 @@ def test_simrobot_mesh_fields_can_be_set():
 
 
 # ---------------------------------------------------------------------------
-# _attach_robot_to_mesh — direct unit tests via a stub Simulation
+# _attach_robot_to_mesh - direct unit tests via a stub Simulation
 # ---------------------------------------------------------------------------
 
 
@@ -68,7 +68,7 @@ class _StubSim:
 
 
 def test_attach_is_noop_when_sim_has_no_mesh():
-    """Off-mesh sims must not call init_mesh — keeps zenoh out of unit tests."""
+    """Off-mesh sims must not call init_mesh - keeps zenoh out of unit tests."""
     attach, _ = _StubSim._import_helpers()
     sim = _StubSim(mesh=None, peer_id="")
     robot = SimRobot(name="r1", urdf_path="/tmp/x.urdf")
@@ -104,7 +104,7 @@ def test_attach_creates_child_peer_when_sim_is_on_mesh():
 
 
 def test_attach_swallows_init_mesh_exceptions():
-    """A mesh failure must not bring down add_robot — best-effort enrichment."""
+    """A mesh failure must not bring down add_robot - best-effort enrichment."""
     attach, _ = _StubSim._import_helpers()
     sim = _StubSim(mesh=MagicMock(), peer_id="parent-x")
     robot = SimRobot(name="r1", urdf_path="/tmp/x.urdf")
@@ -120,7 +120,7 @@ def test_attach_swallows_init_mesh_exceptions():
 
 
 def test_attach_handles_init_mesh_returning_none():
-    """STRANDS_MESH=false case — init_mesh returns None, robot stays off-mesh."""
+    """STRANDS_MESH=false case - init_mesh returns None, robot stays off-mesh."""
     attach, _ = _StubSim._import_helpers()
     sim = _StubSim(mesh=MagicMock(), peer_id="parent-x")
     robot = SimRobot(name="r1", urdf_path="/tmp/x.urdf")

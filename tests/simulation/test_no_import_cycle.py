@@ -44,7 +44,7 @@ def _is_in_type_checking(tree: ast.AST, target: ast.AST) -> bool:
 def _is_inside_function(tree: ast.Module, target: ast.AST) -> bool:
     """True if target_node is inside a function or method body (lazy import).
 
-    Imports inside function/method bodies are deferred — they execute only
+    Imports inside function/method bodies are deferred - they execute only
     when the function is called, not at module import time. These cannot
     cause import-time cycles and should not be flagged.
     """

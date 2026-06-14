@@ -1,4 +1,4 @@
-"""Unified Robot factory — convenience layer over ``strands_robots.simulation``
+"""Unified Robot factory - convenience layer over ``strands_robots.simulation``
 and ``strands_robots.hardware_robot``.
 
 Provides:
@@ -13,7 +13,7 @@ Environment Variables:
 
 Examples::
 
-    # Default: simulation (safe — no physical hardware interaction)
+    # Default: simulation (safe - no physical hardware interaction)
     sim = Robot("so100")
 
     # Explicit real hardware
@@ -69,7 +69,7 @@ def _auto_detect_mode(canonical: str) -> str:
     Priority:
         1. ``STRANDS_ROBOT_MODE`` env var (explicit override)
         2. Robot-specific USB detection (Feetech/Dynamixel servo controllers)
-        3. Default to sim (safest — never accidentally send commands to hardware)
+        3. Default to sim (safest - never accidentally send commands to hardware)
     """
     env_mode = os.getenv("STRANDS_ROBOT_MODE", "").lower().strip()
     if env_mode in ("sim", "real"):
@@ -170,7 +170,7 @@ def Robot(
 ) -> Simulation | HardwareRobot: ...
 
 
-def Robot(  # noqa: N802 — uppercase by design (factory mimicking a class constructor)
+def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constructor)
     name: str,
     mode: str = "sim",
     backend: str = "mujoco",
@@ -182,10 +182,10 @@ def Robot(  # noqa: N802 — uppercase by design (factory mimicking a class cons
     peer_id: str | None = None,
     **kwargs: Any,
 ) -> Simulation | HardwareRobot:
-    """Create a robot — returns a Simulation or HardwareRobot instance.
+    """Create a robot - returns a Simulation or HardwareRobot instance.
 
     This is a convenience factory, NOT a wrapper class.  You get the real
-    backend instance back — with full access to all its methods.
+    backend instance back - with full access to all its methods.
 
     Defaults to simulation mode so that ``Robot("so100")`` never
     accidentally sends commands to physical hardware.  Use
@@ -194,10 +194,10 @@ def Robot(  # noqa: N802 — uppercase by design (factory mimicking a class cons
     Args:
         name: Robot name ("so100", "aloha", "unitree_g1", "panda", ...)
               Accepts any alias defined in ``registry/robots.json``.
-        mode: "sim" (default — safe), "real" (explicit hardware), or
+        mode: "sim" (default - safe), "real" (explicit hardware), or
               "auto" (probes USB for servo controllers, falls back to sim).
               Case-insensitive; surrounding whitespace ignored.
-        backend: Simulation backend — currently only "mujoco" (CPU).
+        backend: Simulation backend - currently only "mujoco" (CPU).
                  Future: "isaac" (GPU), "newton" (GPU).
                  Only applies to ``mode="sim"``; ignored for ``mode="real"``.
         urdf_path: Explicit path to URDF/MJCF file. If not provided,
@@ -230,7 +230,7 @@ def Robot(  # noqa: N802 — uppercase by design (factory mimicking a class cons
 
     Examples::
 
-        # Simulation (default — safe)
+        # Simulation (default - safe)
         sim = Robot("so100")
 
         # Explicit MJCF model path
@@ -242,7 +242,7 @@ def Robot(  # noqa: N802 — uppercase by design (factory mimicking a class cons
         # Auto-detect (probes USB, falls back to sim)
         robot = Robot("so100", mode="auto")
 
-        # The 5-line promise (defaults to sim — safe, no hardware needed)
+        # The 5-line promise (defaults to sim - safe, no hardware needed)
         from strands_robots import Robot
         from strands import Agent
         robot = Robot("so100")  # mode="sim" (default)
@@ -312,7 +312,7 @@ def Robot(  # noqa: N802 — uppercase by design (factory mimicking a class cons
             raise
 
         # Attach a Zenoh mesh so the Simulation auto-discovers other peers.
-        # Failure to start the mesh must NOT bring down the sim — the user
+        # Failure to start the mesh must NOT bring down the sim - the user
         # explicitly asked for a Simulation, mesh is an enrichment.
         try:
             from strands_robots.mesh import init_mesh
@@ -326,7 +326,7 @@ def Robot(  # noqa: N802 — uppercase by design (factory mimicking a class cons
             if sim_mesh is not None:
                 sim.mesh = sim_mesh
                 sim.peer_id = sim_mesh.peer_id
-        except Exception as exc:  # noqa: BLE001 — mesh enrichment is best-effort
+        except Exception as exc:  # noqa: BLE001 - mesh enrichment is best-effort
             logger.warning("Failed to initialise mesh for %r: %s", canonical, exc)
 
         _attach_device_connect(sim, canonical, mode, peer_id)
@@ -364,7 +364,7 @@ def Robot(  # noqa: N802 — uppercase by design (factory mimicking a class cons
             if hw_mesh is not None:
                 hw.mesh = hw_mesh
                 hw.peer_id = hw_mesh.peer_id
-        except Exception as exc:  # noqa: BLE001 — mesh enrichment is best-effort
+        except Exception as exc:  # noqa: BLE001 - mesh enrichment is best-effort
             logger.warning("Failed to initialise mesh for %r: %s", canonical, exc)
 
         _attach_device_connect(hw, canonical, mode, peer_id)
@@ -388,7 +388,7 @@ def _attach_device_connect(instance: Any, canonical: str, mode: str, peer_id: st
 
 
 def _run_device_connect_foreground(instance: Any) -> None:
-    """Start Device Connect and block — the robot listens for commands.
+    """Start Device Connect and block - the robot listens for commands.
 
     Device Connect is the primary networking layer in server mode, so the
     auto-started built-in mesh (if any) is stopped first to avoid running two
@@ -414,7 +414,7 @@ def _run_device_connect_foreground(instance: Any) -> None:
             peer_id=peer_id,
             peer_type=peer_type,
         )
-    except Exception as e:  # noqa: BLE001 — surface but keep the process alive
+    except Exception as e:  # noqa: BLE001 - surface but keep the process alive
         logger.warning("Device Connect init failed: %s", e)
 
     print(f"🤖 {peer_id} is online. Ctrl+C to stop.")

@@ -3,8 +3,8 @@
 Cosmos Framework ships a ready-made policy server
 (``cosmos_framework.scripts.action_policy_server_robolab``) that serves
 ``nvidia/Cosmos3-Nano-Policy-DROID`` over a msgpack + NumPy WebSocket
-protocol. This module ships a self-contained client — **no
-``openpi-client`` dependency** — using only ``websockets`` + ``msgpack``
+protocol. This module ships a self-contained client - **no
+``openpi-client`` dependency** - using only ``websockets`` + ``msgpack``
 plus a vendored NumPy packer (``_msgpack_numpy``).
 
 Why no ``openpi-client``? It pins ``numpy<2.0``, which is mutually
@@ -87,7 +87,7 @@ class Cosmos3WebsocketClient:
 
     The connection is established lazily on the first :meth:`infer` (or
     :meth:`get_server_metadata`) call so constructing a policy does not
-    require the server to already be up — matching ``Gr00tInferenceClient``.
+    require the server to already be up - matching ``Gr00tInferenceClient``.
     """
 
     def __init__(
@@ -102,7 +102,7 @@ class Cosmos3WebsocketClient:
         self.api_key = api_key
         if transport not in (None, "", "raw"):
             logger.warning(
-                "Cosmos3WebsocketClient(transport=%r) is deprecated — the "
+                "Cosmos3WebsocketClient(transport=%r) is deprecated - the "
                 "openpi-client dependency has been removed and the only "
                 "supported transport is the vendored raw msgpack+websockets "
                 "packer. Treating as transport='raw'.",
@@ -167,7 +167,7 @@ class Cosmos3WebsocketClient:
     def reset(self) -> None:
         """Best-effort per-episode reset hint to the server.
 
-        The raw transport is stateless on the client side — reset is a
+        The raw transport is stateless on the client side - reset is a
         soft hint, never a correctness requirement (mirrors
         ``Gr00tPolicy.reset``). Any failure is swallowed.
         """

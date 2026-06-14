@@ -25,9 +25,9 @@ sim = Robot("crazyflie")        # Bitcraze Crazyflie 2 quadcopter
 | `earthrover` | EarthRover Mini Plus (mobile outdoor navigation) _(hardware-only, no sim asset)_ | ? | `earth_rover`, `earthrover_mini_plus`, `frodobots` |
 | `go1` | Unitree Go1 Quadruped (12-DOF) | 13 | `unitree_go1` |
 | `google_robot` | Google Robot (mobile base + arm, RT-X) | 10 | `oxe_google` |
-| `lekiwi` | LeKiwi mobile robot _(hardware-only, no sim asset)_ | ? | — |
+| `lekiwi` | LeKiwi mobile robot _(hardware-only, no sim asset)_ | ? | - |
 | `robot_soccer_kit` | Robot Soccer Kit (multi-robot soccer, 65-DOF total) | 65 | `rsk` |
-| `skydio_x2` | Skydio X2 Autonomous Drone | 1 | — |
+| `skydio_x2` | Skydio X2 Autonomous Drone | 1 | - |
 | `spot` | Boston Dynamics Spot (with arm) | 20 | `boston_dynamics_spot` |
 | `stretch` | Hello Robot Stretch (original, mobile manipulator) | 18 | `hello_robot_stretch_original` |
 | `stretch3` | Hello Robot Stretch 3 (mobile manipulator) | 41 | `hello_robot_stretch`, `hello_robot_stretch_3` |
@@ -57,6 +57,6 @@ _Unitree Go2 Quadruped_
 
 ## See also
 
-- [Humanoids](humanoids.md) — bipedal alternatives.
-- [Multi-robot mesh](../mesh.md) — coordinate a fleet via the mesh.
-- [Domain randomization](../simulation/domain-randomization.md) — terrain randomisation for legged robots.
+- [Humanoids](humanoids.md) - bipedal alternatives.
+- [Multi-robot mesh](../mesh.md) - coordinate a fleet via the mesh.
+- [Domain randomization](../simulation/domain-randomization.md) - terrain randomisation for legged robots.

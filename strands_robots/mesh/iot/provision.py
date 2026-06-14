@@ -27,7 +27,7 @@ generates fresh credentials and keeps the file naming stable).
 Operator provisioning
 ---------------------
 :func:`provision_operator` is the analogue for fleet operators (Bedrock
-agents, ops consoles). The two policies differ — robots can publish to
+agents, ops consoles). The two policies differ - robots can publish to
 their own topic prefix and respond to any operator; operators can publish
 ``cmd`` / ``broadcast`` and observe the whole fleet.
 
@@ -144,7 +144,7 @@ class ProvisionedThing:
         return [f"export {k}={v}" for k, v in self.env_vars().items()]
 
 
-# Policy documents — verified working in the spike
+# Policy documents - verified working in the spike
 
 _ROBOT_POLICY_DOC: dict[str, Any] = {
     "Version": "2012-10-17",
@@ -421,7 +421,7 @@ def provision_robot(
     error message will direct them here.
 
     Args:
-        thing_name: The Thing name. MUST equal the intended Mesh peer_id —
+        thing_name: The Thing name. MUST equal the intended Mesh peer_id -
             the IoT Policy uses ``${iot:Connection.Thing.ThingName}`` for
             topic ACL substitution. Should be DNS-safe (alphanumeric + ``-_``).
         region: AWS region. Defaults to the default boto3 session region.
@@ -439,7 +439,7 @@ def provision_robot(
         - Thing creation: ``CreateThing`` is idempotent if the attributes match.
         - Policy creation: skipped if the policy name already exists.
         - Cert creation: a new cert is always issued (private keys aren't
-          recoverable). Old certs from prior runs remain on the Thing —
+          recoverable). Old certs from prior runs remain on the Thing -
           call :func:`teardown_thing` to clean them up.
     """
 
@@ -448,7 +448,7 @@ def provision_robot(
     iot = boto3.client("iot", region_name=region)
     region = iot.meta.region_name
 
-    # Inject strands-mesh-role attribute for ACL — the OperatorShadow policy
+    # Inject strands-mesh-role attribute for ACL - the OperatorShadow policy
     # uses an attribute condition to scope shadow access to robot Things only.
     attributes = dict(attributes) if attributes else {}
     attributes.setdefault("strands-mesh-role", "robot")
@@ -475,7 +475,7 @@ def provision_robot(
     # Clean up stale certs from prior provision_robot runs on the same Thing.
     # Each call to AWS IoT CreateKeysAndCertificate yields a brand-new cert
     # (private keys cannot be recovered after issuance), so without cleanup
-    # the Thing would accumulate certs across re-runs — every leftover is
+    # the Thing would accumulate certs across re-runs - every leftover is
     # an active credential that could impersonate the robot.
     _cleanup_stale_certs(iot, thing_name)
 
@@ -527,7 +527,7 @@ def provision_operator(
     iot = boto3.client("iot", region_name=region)
     region = iot.meta.region_name
 
-    # Inject strands-mesh-role attribute — operators get role=operator so the
+    # Inject strands-mesh-role attribute - operators get role=operator so the
     # OperatorShadow attribute condition (role=robot) excludes their shadows.
     attributes = dict(attributes) if attributes else {}
     attributes.setdefault("strands-mesh-role", "operator")
@@ -583,7 +583,7 @@ def teardown_thing(
     Cleans up the cert files under *cert_dir* (defaults to
     :data:`DEFAULT_CERT_DIR`) if they're named after this Thing.  Pass the
     same ``cert_dir`` you used at provision time so the on-disk cert and key
-    are removed instead of orphaned.  Does NOT delete the policies — those
+    are removed instead of orphaned.  Does NOT delete the policies - those
     are shared across all robots and removing them would break siblings.
 
     Idempotent: missing Thing or no certs is a silent success.
@@ -685,7 +685,7 @@ def _ensure_thing(iot: Any, thing_name: str, attributes: dict[str, str] | None) 
 
 
 def _ensure_policy(iot: Any, name: str, document: dict[str, Any]) -> str:
-    """Create the policy if absent. Idempotent — does not update an existing
+    """Create the policy if absent. Idempotent - does not update an existing
     policy; users who want to update should bump the policy version manually."""
     try:
         existing = iot.get_policy(policyName=name)
@@ -715,7 +715,7 @@ def _cleanup_stale_certs(iot: Any, thing_name: str) -> int:
     This helper detaches every existing principal, removes its policy
     attachments, marks the cert INACTIVE, and force-deletes it. Failures
     are logged at DEBUG and swallowed so a partial cleanup never blocks
-    the new cert issuance — the new cert is what users actually want.
+    the new cert issuance - the new cert is what users actually want.
 
     Returns the number of certs cleaned up (for logging in the caller).
     """

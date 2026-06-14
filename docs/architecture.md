@@ -75,7 +75,7 @@ graph TB
 |--------|--------------|-----------|
 | `strands_robots/robot.py` | Factory `Robot(name, mode, backend, **kwargs)`. Name resolution, sim/real dispatch, mesh attach. | `Robot()` function |
 | `strands_robots/registry/` | 68 robots, 106 aliases, 8 categories. `robots.json` is source of truth. | `list_robots()`, `resolve_name()`, `get_robot()` |
-| `strands_robots/simulation/` | MuJoCo `AgentTool` — 60+ actions. | `Simulation`, `SimWorld`, `SimRobot`, `SimObject`, `SimCamera` |
+| `strands_robots/simulation/` | MuJoCo `AgentTool` - 60+ actions. | `Simulation`, `SimWorld`, `SimRobot`, `SimObject`, `SimCamera` |
 | `strands_robots/simulation/base.py` | Backend ABC for future Isaac/Newton backends. | `SimEngine` |
 | `strands_robots/hardware_robot.py` | Real-servo path. Async task execution + status. | `Robot` (class), `TaskStatus`, `RobotTaskState` |
 | `strands_robots/policies/` | ABC + 4 providers + factory + JSON registry. | `Policy`, `create_policy()` |
@@ -85,11 +85,11 @@ graph TB
 
 ## ABCs
 
-**`Policy`** — `get_actions(observation_dict, instruction) -> list[dict]` (async), `set_robot_state_keys(keys)`, `provider_name` property, `requires_images` property (default `True`), `reset(seed)` (default no-op). Four implementations: `MockPolicy`, `Gr00tPolicy`, `LerobotLocalPolicy`, `Cosmos3Policy`.
+**`Policy`** - `get_actions(observation_dict, instruction) -> list[dict]` (async), `set_robot_state_keys(keys)`, `provider_name` property, `requires_images` property (default `True`), `reset(seed)` (default no-op). Four implementations: `MockPolicy`, `Gr00tPolicy`, `LerobotLocalPolicy`, `Cosmos3Policy`.
 
-**`SimEngine`** — `create_world()`, `step()`, 30+ abstract actions. Today: MuJoCo CPU. Roadmap: Isaac Sim, Newton.
+**`SimEngine`** - `create_world()`, `step()`, 30+ abstract actions. Today: MuJoCo CPU. Roadmap: Isaac Sim, Newton.
 
-**Strands `AgentTool`** — `Simulation` and `HardwareRobot` are both `AgentTool` subclasses. `Agent(tools=[robot])` calls actions through the tool dispatcher.
+**Strands `AgentTool`** - `Simulation` and `HardwareRobot` are both `AgentTool` subclasses. `Agent(tools=[robot])` calls actions through the tool dispatcher.
 
 ## The one rule
 
@@ -109,7 +109,7 @@ graph TB
 
 ## See also
 
-- [Robot factory](getting-started/robot-factory.md) — every `Robot(...)` kwarg.
-- [Custom policies](policies/custom-policies.md) — implement and register.
-- [Simulation overview](simulation/overview.md) — the 60+ action vocabulary.
-- [Contributing](contributing.md) — module conventions.
+- [Robot factory](getting-started/robot-factory.md) - every `Robot(...)` kwarg.
+- [Custom policies](policies/custom-policies.md) - implement and register.
+- [Simulation overview](simulation/overview.md) - the 60+ action vocabulary.
+- [Contributing](contributing.md) - module conventions.

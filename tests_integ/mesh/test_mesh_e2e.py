@@ -3,7 +3,7 @@
 Requires the ``[mesh]`` extra: ``pip install -e ".[mesh]"``.
 Skipped automatically when ``eclipse-zenoh`` is not installed.
 
-These tests run two ``Mesh`` instances inside the same process — the
+These tests run two ``Mesh`` instances inside the same process - the
 process-wide session refcounting in :mod:`strands_robots.mesh.session`
 already exercises the multi-process discovery path because both meshes
 publish + subscribe through the same Zenoh session.  Real two-process
@@ -27,7 +27,7 @@ def _enable_mesh(monkeypatch):
 
 
 class _FakeRobot:
-    """Tiny duck-typed robot — just exposes tool_name_str."""
+    """Tiny duck-typed robot - just exposes tool_name_str."""
 
     def __init__(self, name: str = "fakebot") -> None:
         self.tool_name_str = name
@@ -59,7 +59,7 @@ def test_two_meshes_discover_each_other():
         a.stop()
         b.stop()
         # Final ref count should be back to zero.
-        assert session_alive() is False or True  # noqa: E712 — defensive
+        assert session_alive() is False or True  # noqa: E712 - defensive
 
 
 def test_two_meshes_rpc_round_trip():

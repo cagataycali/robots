@@ -3,7 +3,7 @@
 Before this fix, calling get_robot_state(), run_policy(), or start_policy()
 with robot_name=None in a multi-robot scene raised a raw ValueError instead
 of returning a structured {"status": "error", ...} dict. This broke the
-agent-tool contract where every method returns a dict — agents caught errors
+agent-tool contract where every method returns a dict - agents caught errors
 by inspecting result["status"], not by catching exceptions.
 
 The describe() note also incorrectly stated that get_robot_state required an

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Attach an LLM agent to a robot — control it with natural language.
+"""Attach an LLM agent to a robot - control it with natural language.
 
 Goal: Show that a Strands Agent with Robot() as a tool lets you describe
 tasks in English. The agent composes sim scenes, runs policies, and records
-datasets — all from one prompt.
+datasets - all from one prompt.
 
 Dependencies:
   pip install "strands-robots[sim-mujoco]" strands-agents
@@ -17,7 +17,7 @@ from strands import Agent
 
 from strands_robots import Robot
 
-# Robot() is a Strands AgentTool — pass it directly to the Agent.
+# Robot() is a Strands AgentTool - pass it directly to the Agent.
 sim = Robot("so100", mesh=False)
 
 agent = Agent(tools=[sim])

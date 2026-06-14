@@ -1,4 +1,4 @@
-"""Tests for strands_robots.tools.robot_mesh — agent-facing dispatcher."""
+"""Tests for strands_robots.tools.robot_mesh - agent-facing dispatcher."""
 
 from __future__ import annotations
 
@@ -229,7 +229,7 @@ def test_actions_without_local_mesh_fail(fake_no_local):
 # Before this fix, when the agent issued ``send/tell/stop`` to a target that
 # matched a *local* peer_id, ``_resolve_mesh`` would return the target's own
 # Mesh as the gateway.  ``Mesh.send`` then published on
-# ``strands/{target}/cmd`` with ``sender_id == target`` — the receiving
+# ``strands/{target}/cmd`` with ``sender_id == target`` - the receiving
 # subscriber drops self-loops, so the call silently timed out.  The fix:
 # pick a *different* local mesh as the gateway whenever one exists.
 # ---------------------------------------------------------------------------
@@ -248,7 +248,7 @@ def test_resolve_mesh_avoids_self_loop_when_alternative_exists():
 
     with patch("strands_robots.mesh.get_local_robots", return_value=locals_):
         gateway = _resolve_mesh("robot-b")
-        # MUST be mesh_a (the OTHER local mesh) — never mesh_b itself,
+        # MUST be mesh_a (the OTHER local mesh) - never mesh_b itself,
         # which would self-loop.
         assert gateway is mesh_a, (
             f"_resolve_mesh returned {gateway.peer_id!r} but should have "
@@ -259,7 +259,7 @@ def test_resolve_mesh_avoids_self_loop_when_alternative_exists():
 def test_resolve_mesh_fallback_when_target_is_only_local():
     """When the target IS the only local mesh, fall back to it.
 
-    The caller will get a timeout (since the message self-drops) — that's
+    The caller will get a timeout (since the message self-drops) - that's
     the expected behaviour for "send to yourself" with no other local
     gateway available.
     """

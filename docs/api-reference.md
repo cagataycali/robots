@@ -1,5 +1,5 @@
 ---
-description: Every public symbol grouped by module — Robot, registry, simulation, policies, tools, dataset_recorder, mesh.
+description: Every public symbol grouped by module - Robot, registry, simulation, policies, tools, dataset_recorder, mesh.
 ---
 
 # API reference
@@ -63,7 +63,7 @@ from strands_robots.simulation.base import SimEngine
 
 | Symbol | What |
 |--------|------|
-| `Simulation` | MuJoCo backend — 60+ agent actions. |
+| `Simulation` | MuJoCo backend - 60+ agent actions. |
 | `SimWorld`, `SimRobot`, `SimObject`, `SimCamera` | Shared dataclasses. |
 | `create_simulation(backend='mujoco')` | Factory for non-`Robot()` construction. |
 | `list_backends()` / `register_backend(name, cls)` | Backend registry. |
@@ -193,6 +193,6 @@ LIBERO task suites, BDDL parser. Install: `uv pip install "strands-robots[benchm
 
 ## See also
 
-- [Architecture](architecture.md) — module map + ABC contracts.
-- [Robot factory](getting-started/robot-factory.md) — full factory signature.
-- [Quickstart](getting-started/quickstart.md) — concept walkthroughs.
+- [Architecture](architecture.md) - module map + ABC contracts.
+- [Robot factory](getting-started/robot-factory.md) - full factory signature.
+- [Quickstart](getting-started/quickstart.md) - concept walkthroughs.

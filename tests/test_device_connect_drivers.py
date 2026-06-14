@@ -94,7 +94,7 @@ _mock_keys = (
     "device_connect_edge.device",
 )
 # Also track strands_robots.device_connect submodules that will be imported
-# with the mocked base class — they need to be purged so later tests re-import
+# with the mocked base class - they need to be purged so later tests re-import
 # with the real base class.
 _strands_dc_keys = [k for k in sys.modules if k.startswith("strands_robots.device_connect")]
 for _key in list(_mock_keys) + _strands_dc_keys:
@@ -126,7 +126,7 @@ def teardown_module():
             sys.modules.pop(key, None)
         else:
             sys.modules[key] = original
-    # Purge ALL strands_robots.device_connect submodules — they were imported
+    # Purge ALL strands_robots.device_connect submodules - they were imported
     # with the mock DeviceDriver base class and must be re-imported fresh.
     for key in list(sys.modules):
         if key.startswith("strands_robots.device_connect"):
@@ -763,7 +763,7 @@ class TestRobotMeshToolDeviceConnect(unittest.TestCase):
         # picked up without a re-import. Deleting + re-importing robot_mesh would
         # create a second module object and break sibling test files
         # (test_robot_mesh_tool / _security / deep_mesh) that hold a reference to
-        # the original module — their _resolve_mesh patches would miss.
+        # the original module - their _resolve_mesh patches would miss.
 
     def tearDown(self):
         for mod, saved in self._saved_modules.items():

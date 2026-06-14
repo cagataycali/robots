@@ -1,4 +1,4 @@
-"""Deep autonomous test suite for strands_robots.mesh — PR #101.
+"""Deep autonomous test suite for strands_robots.mesh - PR #101.
 
 This test file exercises every corner of the mesh implementation:
 - Session lifecycle edge cases
@@ -13,7 +13,7 @@ This test file exercises every corner of the mesh implementation:
 - Subscribe/unsubscribe races
 - Emergency stop propagation
 
-NO CODE WILL BE PUSHED — this is a read-only test exploration.
+NO CODE WILL BE PUSHED - this is a read-only test exploration.
 """
 
 from __future__ import annotations
@@ -193,7 +193,7 @@ class TestImportPaths:
         assert hasattr(session, "PeerInfo")
 
     def test_mesh_core_has_put(self):
-        """core.py imports put from session — verify it's accessible."""
+        """core.py imports put from session - verify it's accessible."""
         from strands_robots.mesh import core
 
         assert callable(core.put)

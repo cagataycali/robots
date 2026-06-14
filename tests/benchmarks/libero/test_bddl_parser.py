@@ -298,16 +298,16 @@ class TestCompileGoal:
 
     def test_on_libero_tight_thresholds_real_success_state(self):
         """#170: The ``on`` predicate must accept LIBERO's actual at-success
-        geometry — empirically, mug.z is only ~4 mm above plate.z and
+        geometry - empirically, mug.z is only ~4 mm above plate.z and
         mug.xy is ~1 cm off plate.xy at the moment ``env.check_success()``
         returns True on ``libero-10/SCENE5``.
 
         Pre-#170 ``_on_kwargs`` left ``z_offset=0.02`` and ``xy_tol=0.15``
         as the ``_body_on`` defaults. Those tolerances are too LOOSE on
-        xy (15 cm — over-permissive) but too TIGHT on z (2 cm — rejects
+        xy (15 cm - over-permissive) but too TIGHT on z (2 cm - rejects
         a 4 mm gap). At the actual success state, ``z_offset=0.02``
         rejected the predicate as False even though ``env.check_success``
-        was True — the silent counter bug PR #168 round 44 found.
+        was True - the silent counter bug PR #168 round 44 found.
 
         #170 changes ``_on_kwargs`` to pass ``z_offset=0.0,
         xy_tol=0.03`` matching upstream LIBERO's ``ObjectState.check_ontop``
@@ -355,12 +355,12 @@ class TestCompileGoal:
             }
         )
         assert fn(off_to_side) is False, (
-            "5 cm off-center is outside the 3 cm xy tolerance — must reject. "
+            "5 cm off-center is outside the 3 cm xy tolerance - must reject. "
             "If this passes, _on_kwargs may have regressed to the pre-#170 "
             "loose 15 cm xy_tol."
         )
 
-        # Cube 2 cm to the side — should pass (within 3 cm).
+        # Cube 2 cm to the side - should pass (within 3 cm).
         slightly_off = _BodyStateSim(
             {
                 "cube_1": {"position": [0.02, 0.0, 0.10]},
@@ -371,7 +371,7 @@ class TestCompileGoal:
 
     def test_on_libero_z_above_required(self):
         """#170: ``on(A, B)`` requires A.z >= B.z (mug above or at plate
-        level). Pin the directional contract — a body BELOW the
+        level). Pin the directional contract - a body BELOW the
         reference body is not "on" it regardless of xy alignment."""
         text = "(define (problem p) (:goal (on cube_1 plate_1)))"
         problem = parse_bddl(text)
@@ -421,7 +421,7 @@ class TestCompileGoal:
         fn = compile_goal(problem.goal)  # type: ignore[arg-type]
 
         # Geometry passes (cube above plate, xy aligned within 3cm).
-        # But contacts list is EMPTY — engine reports no contact.
+        # But contacts list is EMPTY - engine reports no contact.
         no_contact = _CombinedSim(
             bodies={
                 "cube_1": {"position": [0.0, 0.0, 0.443]},
@@ -447,7 +447,7 @@ class TestCompileGoal:
 
     def test_on_libero_contact_check_matches_either_direction(self):
         """#171 sub-task 3e: contact records may list (cube_geom,
-        plate_geom) or (plate_geom, cube_geom) — both must match the
+        plate_geom) or (plate_geom, cube_geom) - both must match the
         same predicate. Pin the order-insensitivity so a robosuite
         contact-record convention change doesn't silently break us.
         """
@@ -476,7 +476,7 @@ class TestCompileGoal:
         """#171 sub-task 3e: when the sim engine doesn't expose
         ``get_contacts`` (e.g. a custom backend, test stub), the
         contact check is SKIPPED rather than failing. The geometric
-        check alone determines the verdict — preserves pre-#171
+        check alone determines the verdict - preserves pre-#171
         behaviour for engines without contact support.
 
         Without this graceful degradation, every non-mujoco backend

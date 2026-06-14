@@ -5,7 +5,7 @@ hide:
 
 # Strands Robots
 
-A robot library for [Strands agents](https://strandsagents.com). You name a robot, you get something you can drive — in simulation by default, or on real hardware when you ask for it.
+A robot library for [Strands agents](https://strandsagents.com). You name a robot, you get something you can drive - in simulation by default, or on real hardware when you ask for it.
 
 ```python
 from strands import Agent
@@ -16,7 +16,7 @@ agent = Agent(tools=[robot])
 agent("Pick up the red cube")
 ```
 
-`Robot("so100")` gives you a MuJoCo simulation — no GPU, runs on a laptop. Add `mode="real"` and the same code drives a physical arm. The agent sees one tool with 60+ actions; it figures out which to call.
+`Robot("so100")` gives you a MuJoCo simulation - no GPU, runs on a laptop. Add `mode="real"` and the same code drives a physical arm. The agent sees one tool with 60+ actions; it figures out which to call.
 
 ```mermaid
 graph LR
@@ -36,7 +36,7 @@ graph LR
     class F policy
 ```
 
-The agent decides *what* to do. The policy (Mock, GR00T, LeRobot, or Cosmos 3) decides *how*. The backend — physics or servos — does it.
+The agent decides *what* to do. The policy (Mock, GR00T, LeRobot, or Cosmos 3) decides *how*. The backend - physics or servos - does it.
 
 ## Start here
 

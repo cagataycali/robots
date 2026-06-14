@@ -192,7 +192,7 @@ def _on_kwargs(args: list[str]) -> dict[str, Any]:
     # ``a.z >= b.z`` (no offset) AND ``|a.xy - b.xy| < 0.03 m`` AND
     # contact between A and B. The empirical at-success state on
     # ``libero-10/SCENE5`` has mug.z 4 mm above plate.z and mug.xy 1.2 cm
-    # off plate.xy — the loose defaults rejected this as ``False`` while
+    # off plate.xy - the loose defaults rejected this as ``False`` while
     # ``env.check_success()`` returned ``True`` (#170 diagnostic).
     #
     # #171 sub-task 3e: also require physics contact via

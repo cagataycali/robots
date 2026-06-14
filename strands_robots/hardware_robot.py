@@ -246,7 +246,7 @@ class Robot(AgentTool):
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"{tool_name}_executor")
         self._shutdown_event = threading.Event()
 
-        # Mesh attributes — populated by the Robot() factory after init.
+        # Mesh attributes - populated by the Robot() factory after init.
         # Plain attributes (not properties) so test code can swap a fake mesh
         # in without going through the factory.
         # Set BEFORE _initialize_robot so cleanup()/__del__ never see an
@@ -443,7 +443,7 @@ class Robot(AgentTool):
         # ``Robot()`` calls are essentially free.
         _ensure_lerobot_robots_registered()
 
-        # Resolve the config class via lerobot's draccus ChoiceRegistry —
+        # Resolve the config class via lerobot's draccus ChoiceRegistry -
         # this is the source-of-truth lookup that ``make_robot_from_config``
         # uses; staying on it means we track upstream renames automatically.
         try:
@@ -505,7 +505,7 @@ class Robot(AgentTool):
 
         # Forward known robot-specific kwargs only if the target dataclass
         # declares them. The full set is union-of-all known lerobot robot
-        # configs — adding new ones here is safe because we filter against
+        # configs - adding new ones here is safe because we filter against
         # ``valid_fields`` before constructing.
         forwardable = _FORWARDABLE_KWARGS
         for key in forwardable:
@@ -1036,7 +1036,7 @@ class Robot(AgentTool):
 
             # Tear down the Zenoh mesh component if one was attached.
             # ``self.mesh`` is any object exposing ``.stop()``; falsy values
-            # (None — the construction-time default and what a hardware robot
+            # (None - the construction-time default and what a hardware robot
             # gets when ``mesh=False``) are skipped silently.
             if self.mesh:
                 try:
@@ -1124,7 +1124,7 @@ class Robot(AgentTool):
             logger.error(f"Error stopping robot: {e}")
 
     # ------------------------------------------------------------------
-    # Teleoperation over mesh — input publishing and receiving
+    # Teleoperation over mesh - input publishing and receiving
     # ------------------------------------------------------------------
 
     def start_teleop_publish(

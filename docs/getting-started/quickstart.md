@@ -50,6 +50,6 @@ agent("Add a red cube and pick it up using the mock policy")
 
 ## See also
 
-- [Policy providers](../policies/overview.md) — GR00T, LeRobot Local, Cosmos 3.
-- [Robot catalog](../robots/index.md) — all 68 robots.
-- [Real hardware](../hardware/robot-control.md) — same code, `mode="real"`.
+- [Policy providers](../policies/overview.md) - GR00T, LeRobot Local, Cosmos 3.
+- [Robot catalog](../robots/index.md) - all 68 robots.
+- [Real hardware](../hardware/robot-control.md) - same code, `mode="real"`.

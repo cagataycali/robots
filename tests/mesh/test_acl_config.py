@@ -252,7 +252,7 @@ class TestJSON5EndToEnd:
 
 
 class TestJSON5MalformedFailsLoudly:
-    """Operator-friendly diagnostics on malformed input — the json5 dep
+    """Operator-friendly diagnostics on malformed input - the json5 dep
     swap closes the silent-truncation surface the hand-rolled preprocessor
     had on unterminated `/*` blocks.
     """

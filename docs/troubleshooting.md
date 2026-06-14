@@ -23,7 +23,7 @@ description: Error → fix table for the most common gotchas across install, sim
 | `GLXBadFBConfig` (Linux) | Missing OSMesa | `sudo apt install libosmesa6-dev` + `export MUJOCO_GL=osmesa` |
 | Black frames from `render(...)` | Headless, no GL backend | `export MUJOCO_GL=osmesa` (Linux) or `=egl` |
 | `Robot("foo")` raises ValueError | Unknown name | Check `list_robots("all")`; or pass `urdf_path=...` |
-| Sim hangs on `create_world` | Asset download | Wait — first call downloads MJCF, then cached |
+| Sim hangs on `create_world` | Asset download | Wait - first call downloads MJCF, then cached |
 | `ModuleNotFoundError: trs_so_arm100_mj_description` | Auto-install failed | `uv pip install trs-so-arm100-mj-description` |
 | `add_robot` raises after `load_scene` | Scene XML overrides world | Use `add_robot` before `load_scene` |
 
@@ -53,7 +53,7 @@ description: Error → fix table for the most common gotchas across install, sim
 | Symptom | Likely cause | Fix |
 |---------|--------------|-----|
 | `start_recording` fails: lerobot missing | `[lerobot]` not installed | `uv pip install "strands-robots[lerobot]"` |
-| Need MP4 without LeRobot | — | Use `start_cameras_recording` / `stop_cameras_recording` |
+| Need MP4 without LeRobot | - | Use `start_cameras_recording` / `stop_cameras_recording` |
 | Empty MP4 files | Stopped before any frames | Check `get_recording_status()` frame count |
 | Push fails | Not logged into HF | `huggingface-cli login` |
 
@@ -64,7 +64,7 @@ description: Error → fix table for the most common gotchas across install, sim
 | `mesh.peers` empty | Other peer not running | Wait ~1s; verify `mesh.alive == True` on both |
 | Port already bound | Another zenoh process | Mesh auto falls back to client mode; or set `STRANDS_MESH_PORT` |
 | `init_mesh` raises | `eclipse-zenoh` missing | `uv pip install "strands-robots[mesh]"` |
-| Want mesh off | — | `STRANDS_MESH=false` or `Robot(..., mesh=False)` |
+| Want mesh off | - | `STRANDS_MESH=false` or `Robot(..., mesh=False)` |
 
 ## Agent integration
 
@@ -75,10 +75,10 @@ description: Error → fix table for the most common gotchas across install, sim
 | Agent hangs | Long-running action | Use `start_policy` instead of `run_policy` |
 | Bedrock/Anthropic auth fails | Provider credentials | See [Strands Agents docs](https://strandsagents.com/) |
 
-Bug reports: [GitHub issues](https://github.com/strands-labs/robots/issues) — include `pip show strands-robots`, Python + OS, minimal repro, full stack trace.
+Bug reports: [GitHub issues](https://github.com/strands-labs/robots/issues) - include `pip show strands-robots`, Python + OS, minimal repro, full stack trace.
 
 ## See also
 
-- [Installation](getting-started/installation.md) — extras matrix.
-- [Real hardware](hardware/robot-control.md) — bring-up sequence.
-- [Contributing](contributing.md) — fix it yourself.
+- [Installation](getting-started/installation.md) - extras matrix.
+- [Real hardware](hardware/robot-control.md) - bring-up sequence.
+- [Contributing](contributing.md) - fix it yourself.

@@ -59,7 +59,7 @@ if TYPE_CHECKING:
     from strands_robots.tools.serial_tool import serial_tool
 
 # ------------------------------------------------------------------
-# Light-weight imports — no torch / lerobot / mujoco dependency
+# Light-weight imports - no torch / lerobot / mujoco dependency
 # ------------------------------------------------------------------
 from strands_robots.policies import MockPolicy, Policy, create_policy  # noqa: F401
 
@@ -92,7 +92,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "serial_tool": ("strands_robots.tools.serial_tool", "serial_tool"),
     # Robot mesh coordination tool (Device Connect dispatch + mesh fallback)
     "robot_mesh": ("strands_robots.tools.robot_mesh", "robot_mesh"),
-    # Device Connect integration — wraps robots as Device Connect devices
+    # Device Connect integration - wraps robots as Device Connect devices
     "init_device_connect": ("strands_robots.device_connect", "init_device_connect"),
     "init_device_connect_sync": ("strands_robots.device_connect", "init_device_connect_sync"),
     "RobotDeviceDriver": ("strands_robots.device_connect", "RobotDeviceDriver"),
@@ -145,7 +145,7 @@ __all__ = [
 #
 # GUARD: Skip when mujoco is not installed so users without the [sim-mujoco]
 # extra do not pay import-attempt cost on every `import strands_robots`.
-# This is the canonical location — strands_robots/simulation/__init__.py
+# This is the canonical location - strands_robots/simulation/__init__.py
 # intentionally does NOT duplicate this call.
 import importlib.util as _importlib_util  # noqa: E402
 

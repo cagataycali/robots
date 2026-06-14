@@ -726,7 +726,7 @@ class TestEvalSeeding:
         """Round 38 (#168): ``_set_eval_seed`` no-ops the torch branch
         when torch isn't importable (mock-policy / minimal-CI installs).
 
-        Pin so the function works on installs without torch — the
+        Pin so the function works on installs without torch - the
         ``ImportError`` should be swallowed silently."""
         import builtins
         import sys
@@ -788,7 +788,7 @@ class TestEvalSeeding:
         assert spec_a.on_step_calls == spec_b.on_step_calls
 
     def test_set_eval_seed_is_public(self):
-        """#179 — ``set_eval_seed`` is part of the public API surface
+        """#179 - ``set_eval_seed`` is part of the public API surface
         (no leading underscore, exported via ``__all__``).
 
         Pre-#179 the function was named ``_set_eval_seed`` and only
@@ -813,7 +813,7 @@ class TestEvalSeeding:
         assert "set_eval_seed" in policy_runner.__all__
 
     def test_set_eval_seed_torch_reproducibility(self):
-        """#179 — ``set_eval_seed`` seeds torch's CPU + CUDA RNGs and
+        """#179 - ``set_eval_seed`` seeds torch's CPU + CUDA RNGs and
         cuDNN flags so the GR00T diffusion sampler (and any other
         ``torch.randn``-driven policy) draws identical sequences across
         runs.
@@ -836,11 +836,11 @@ class TestEvalSeeding:
         assert torch.backends.cudnn.benchmark is False
 
     def test_evaluate_benchmark_reseeds_per_episode(self):
-        """#179 — ``_evaluate_with_spec`` calls ``set_eval_seed`` at the
+        """#179 - ``_evaluate_with_spec`` calls ``set_eval_seed`` at the
         start of EACH episode, not just once before the loop.
 
         Without per-episode reseeding, every torch op draws from a
-        global RNG state that mutates across episodes — so a
+        global RNG state that mutates across episodes - so a
         diffusion-based policy produces different action chunks per
         re-run even at the same ``seed=42`` because torch's RNG state
         depends on the cumulative number of draws across all preceding
@@ -907,7 +907,7 @@ class TestEvalSeeding:
         # identical draws (they're seeded with different episode_seeds
         # derived from the master seed via ``master_rng.randint``).
         assert run_a_draws[0] != run_a_draws[1], (
-            "consecutive episodes drew identical random values — "
+            "consecutive episodes drew identical random values - "
             "per-episode seeding may have used a constant instead of "
             "the per-episode-derived seed"
         )
@@ -994,7 +994,7 @@ class TestPolicyResetIntegration:
     def test_reset_failure_is_swallowed(self, caplog):
         """If ``policy.reset`` raises (e.g. server timeout, client lost
         connection), the eval continues. The exception is logged as a
-        WARNING but the rollout proceeds — eval correctness is preserved
+        WARNING but the rollout proceeds - eval correctness is preserved
         even if per-episode reseed fails."""
         import logging as _logging
 
@@ -1024,7 +1024,7 @@ class TestSpecInstructionFallback:
     Without this, language-conditioned policies (GR00T, OpenVLA) receive
     an empty string as the task description and produce off-task actions.
     GPU bisection on libero-10/SCENE5 confirmed this was the dominant
-    cause of the success_rate gap (0.40 ZMQ vs 1.00 in-process — same
+    cause of the success_rate gap (0.40 ZMQ vs 1.00 in-process - same
     model, same wire format, same engine, but `policy_obs[\"annotation.\"]`
     was `[\"\"]` on the failing path because robots-sim passes
     `instruction=\"\"` to evaluate_benchmark).
@@ -1079,7 +1079,7 @@ class TestSpecInstructionFallback:
         sim = FakeSim()
         policy = _LangPolicy()
         policy.set_robot_state_keys(sim.robot_joint_names("fake_robot"))
-        # No instruction= argument — falls back to spec.instruction.
+        # No instruction= argument - falls back to spec.instruction.
         PolicyRunner(sim).evaluate("fake_robot", policy, spec=_SpecWithInstruction(), n_episodes=1, seed=42)
         assert captured
         assert all(c == "put the white mug on the left plate" for c in captured), f"got {captured!r}"
@@ -1148,7 +1148,7 @@ class TestOnFrameHookForSpec:
         max_steps=20 = 60 calls, indices run 0..59.
 
         Pinned so callers know they can't assume the counter resets per
-        episode — they must track ep boundaries via the per-episode
+        episode - they must track ep boundaries via the per-episode
         results dict if needed.
         """
         captured_steps: list[int] = []
@@ -1169,7 +1169,7 @@ class TestOnFrameHookForSpec:
 
     def test_on_frame_failures_logged_not_fatal(self, caplog):
         """A raising ``on_frame`` is logged WARNING but the rollout
-        continues. The hook is opt-in telemetry — a broken recorder
+        continues. The hook is opt-in telemetry - a broken recorder
         shouldn't crash a 5-episode eval.
 
         Pinned so a future refactor doesn't accidentally promote hook
@@ -1196,7 +1196,7 @@ class TestOnFrameHookForSpec:
         assert len(warnings) == 20, f"expected 20 warnings, got {len(warnings)}"
 
     def test_on_frame_default_none_is_noop(self):
-        """The default ``on_frame=None`` doesn't change behaviour — the
+        """The default ``on_frame=None`` doesn't change behaviour - the
         eval loop runs identically without the hook. Pinned so the
         plumbing addition is a strict superset.
         """

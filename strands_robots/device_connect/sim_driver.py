@@ -1,4 +1,4 @@
-"""SimulationDeviceDriver — Device Connect DeviceDriver adapter wrapping a strands-robots Simulation.
+"""SimulationDeviceDriver - Device Connect DeviceDriver adapter wrapping a strands-robots Simulation.
 
 Exposes the Simulation's physics stepping, policy execution, and world
 state as structured RPCs and events via Device Connect's DeviceDriver interface.
@@ -55,11 +55,11 @@ class SimulationDeviceDriver(DeviceDriver):
         )
 
     async def connect(self) -> None:
-        """No-op — the Simulation manages its own MuJoCo state."""
+        """No-op - the Simulation manages its own MuJoCo state."""
         pass
 
     async def disconnect(self) -> None:
-        """No-op — the Simulation manages its own cleanup."""
+        """No-op - the Simulation manages its own cleanup."""
         pass
 
     # ── RPCs ──────────────────────────────────────────────────
@@ -114,7 +114,7 @@ class SimulationDeviceDriver(DeviceDriver):
         caller = get_rpc_source_device()
         if not is_authorized_caller(caller, scope="rpc"):
             return authz_error(caller, "stop")
-        print("⏹ Stop command received — stopping all policies", flush=True)
+        print("⏹ Stop command received - stopping all policies", flush=True)
         world = getattr(self._sim, "_world", None)
         if world:
             for robot in world.robots.values():
@@ -197,7 +197,7 @@ class SimulationDeviceDriver(DeviceDriver):
         if not is_authorized_caller(device_id, scope="estop"):
             logger.warning("Ignoring emergencyStop from unauthorized source %s", device_id)
             return
-        print(f"🛑 Emergency stop received from {device_id} — stopping all policies", flush=True)
+        print(f"🛑 Emergency stop received from {device_id} - stopping all policies", flush=True)
         world = getattr(self._sim, "_world", None)
         if world:
             for robot in world.robots.values():

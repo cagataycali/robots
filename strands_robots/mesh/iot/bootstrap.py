@@ -1,4 +1,4 @@
-"""One-shot AWS account bootstrap — IoT Rules + Fleet Provisioning template.
+"""One-shot AWS account bootstrap - IoT Rules + Fleet Provisioning template.
 
 This module is the operator-side analogue of :mod:`provision`. Where
 :func:`provision_robot` configures one Thing, :func:`bootstrap_account`
@@ -8,18 +8,18 @@ configures the **account-wide infrastructure** that every robot relies on:
 2. **DynamoDB table** ``strands-mesh-safety-events`` (KMS-encrypted, PITR)
    so safety events have a durable cloud audit trail beyond local JSONL.
 3. **IoT Rules**:
-    - ``strands_safety_to_dynamodb`` — every ``strands/+/safety/event``
+    - ``strands_safety_to_dynamodb`` - every ``strands/+/safety/event``
       writes one row to the audit table.
-    - ``strands_estop_fanout`` — defence-in-depth: an E-stop also fires
+    - ``strands_estop_fanout`` - defence-in-depth: an E-stop also fires
       a Lambda that publishes individual stop commands per robot.
-    - ``strands_health_to_logs`` — health pings to CloudWatch Logs for
+    - ``strands_health_to_logs`` - health pings to CloudWatch Logs for
       grep-friendly debugging.
 4. **Fleet Provisioning template** so factory-fresh robots can claim a
    real cert from a bootstrap claim cert with no human in the loop.
 
 The function is **idempotent**: re-running it skips resources that
 already exist (matched by name) and only adds what's missing. It NEVER
-deletes — :func:`teardown_account` is the explicit reverse.
+deletes - :func:`teardown_account` is the explicit reverse.
 
 The Lambda code is deliberately tiny and shipped as a single-file source
 string. It does what a fleet-ops engineer would write by hand on day 1
@@ -31,7 +31,7 @@ Why bake all this into the library
 The whole point of the AWS IoT integration is "Robot('so100') joins the
 mesh, fleet ops gets durable audit + alerts for free." Forcing customers
 to wire CDK/Terraform on day 1 defeats that. They can replace this with
-their own IaC later — these resources are tagged ``strands-mesh=managed``
+their own IaC later - these resources are tagged ``strands-mesh=managed``
 so external tooling can see them clearly.
 """
 
@@ -501,7 +501,7 @@ def _ensure_safety_to_dynamodb_rule(iot: Any, table_arn: str, account: Bootstrap
         iot.exceptions.UnauthorizedException,
     ):
         # AWS IoT returns UnauthorizedException (not ResourceNotFound) when a
-        # rule of this name doesn't exist yet — confusing but documented.
+        # rule of this name doesn't exist yet - confusing but documented.
         pass
 
     role_arn = _ensure_iot_action_role(account)
@@ -654,13 +654,13 @@ def _ensure_provisioning_hook_role(iam: Any, account: BootstrappedAccount) -> st
     E-stop Lambda role grants neither, so reusing it would make every
     ``describe_thing`` / ``get_parameter`` raise ``AccessDenied``; those are
     swallowed by the hook's deny-on-error envelope and *every* registration
-    — legitimate ones included — would be refused. This role grants exactly
+    - legitimate ones included - would be refused. This role grants exactly
     those two read actions, least-privilege scoped:
 
     * ``iot:DescribeThing`` on ``thing/*`` (the hook only reads existence;
       it never mutates).
     * ``ssm:GetParameter`` on ``parameter/strands-mesh/provisioning/allow/*``
-      (the allowlist namespace only — no broader Parameter Store access).
+      (the allowlist namespace only - no broader Parameter Store access).
     """
     role_name = PROVISIONING_HOOK_ROLE
     try:
@@ -796,7 +796,7 @@ def _grant_iot_invoke_provisioning_hook(lam: Any, hook_arn: str, account: Bootst
 
 
 def _ensure_provisioning_template(iot: Any, account: BootstrappedAccount, *, hook_lambda_arn: str = "") -> str:
-    """Fleet Provisioning template — claim cert → real cert + attach robot policy.
+    """Fleet Provisioning template - claim cert → real cert + attach robot policy.
 
     F-19 / B-13: a ``PreProvisioningHook`` is wired so a leaked claim cert
     cannot register an arbitrary Thing. ``hook_lambda_arn`` is the ARN of
@@ -871,7 +871,7 @@ def _ensure_provisioning_template(iot: Any, account: BootstrappedAccount, *, hoo
                 raise
             time.sleep(5 * (attempt + 1))
     else:
-        # Exhausted retries — surface the last exception so users see it.
+        # Exhausted retries - surface the last exception so users see it.
         raise RuntimeError(f"Provisioning template create failed after retries: {last_exc}")
     account.created.append(f"iot-prov-template:{name}")
     return f"arn:aws:iot:{account.region}:{account.account_id}:provisioningtemplate/{name}"
@@ -909,7 +909,7 @@ def _ensure_provisioning_role(account: BootstrappedAccount) -> str:
     )
     # IAM role propagation is eventually-consistent (typically 5–10s, but can
     # take up to 15s under load). The provisioning template creation hits IoT
-    # which then tries to AssumeRole — without the propagation wait we get
+    # which then tries to AssumeRole - without the propagation wait we get
     # InvalidRequestException("provisioning role cannot be assumed").
     time.sleep(15)
     account.created.append(f"iam:{name}")
@@ -941,7 +941,7 @@ def bootstrap_account(
             created without making API calls. Set to False + confirm=True
             to actually provision.
         account_id_expected: If provided, abort if the resolved account ID
-            does not match — guards against wrong-account provisioning.
+            does not match - guards against wrong-account provisioning.
         profile: AWS profile name to use (passed to boto3.Session).
         force_update: If True, update existing E-stop Lambda even when it
             already exists (upgrades stale versions). Default False preserves
@@ -1019,7 +1019,7 @@ def bootstrap_account(
     out.rule_estop_arn = _ensure_estop_rule(iot, out.estop_lambda_arn, out)
     _grant_iot_invoke_lambda(lam, out.estop_lambda_arn, out)
 
-    # Fleet Provisioning PreProvisioningHook Lambda (F-19/B-13) — gate
+    # Fleet Provisioning PreProvisioningHook Lambda (F-19/B-13) - gate
     # registration so a leaked claim cert cannot self-register a Thing.
     # The hook needs iot:DescribeThing + ssm:GetParameter, which the E-stop
     # role does not grant, so it gets its own least-privilege role.
@@ -1032,7 +1032,7 @@ def bootstrap_account(
     _grant_iot_invoke_provisioning_hook(lam, hook_arn, out)
 
     logger.info(
-        "[bootstrap] account %s in %s — created %d, skipped %d",
+        "[bootstrap] account %s in %s - created %d, skipped %d",
         account_id,
         region,
         len(out.created),
@@ -1042,7 +1042,7 @@ def bootstrap_account(
 
 
 def teardown_account(*, region: str | None = None) -> None:
-    """Best-effort reverse of :func:`bootstrap_account`. Safe to skip — every
+    """Best-effort reverse of :func:`bootstrap_account`. Safe to skip - every
     deletion catches NotFound silently. Tags-managed resources are removed
     in dependency order: Rules → Lambda → Roles → DynamoDB → Logs →
     Provisioning template.

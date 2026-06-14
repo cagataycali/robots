@@ -1,5 +1,5 @@
 ---
-description: The Policy ABC and the four providers that ship — MockPolicy, Gr00tPolicy, LerobotLocalPolicy, Cosmos3Policy.
+description: The Policy ABC and the four providers that ship - MockPolicy, Gr00tPolicy, LerobotLocalPolicy, Cosmos3Policy.
 ---
 
 # Policy providers
@@ -30,7 +30,7 @@ policy = create_policy("cosmos3", embodiment="droid", port=8000)
 from strands_robots.policies import Policy   # strands_robots/policies/base.py
 
 class MyPolicy(Policy):
-    # three abstract methods — must implement all:
+    # three abstract methods - must implement all:
     async def get_actions(self, observation_dict: dict, instruction: str, **kw) -> list[dict]: ...
     def set_robot_state_keys(self, keys: list[str]) -> None: ...
     @property
@@ -73,7 +73,7 @@ sim.run_policy(robot_name="so100", instruction="pick up the cube",
 
 ## See also
 
-- [GR00T](groot.md) — ZMQ server, 27 embodiments, container lifecycle.
-- [LeRobot Local](lerobot-local.md) — in-process HF models, RTC.
-- [Cosmos 3](cosmos3.md) — NVIDIA Cosmos 3 omnimodal VLA.
-- [Custom policies](custom-policies.md) — implement the ABC.
+- [GR00T](groot.md) - ZMQ server, 27 embodiments, container lifecycle.
+- [LeRobot Local](lerobot-local.md) - in-process HF models, RTC.
+- [Cosmos 3](cosmos3.md) - NVIDIA Cosmos 3 omnimodal VLA.
+- [Custom policies](custom-policies.md) - implement the ABC.

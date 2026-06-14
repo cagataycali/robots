@@ -47,7 +47,7 @@ def resolve_allow_insecure(
     """Resolve the effective ``allow_insecure`` setting (secure by default).
 
     Precedence: explicit arg > ``DEVICE_CONNECT_ALLOW_INSECURE`` env var >
-    secure default (``False``). Insecure transport is never implicit — it
+    secure default (``False``). Insecure transport is never implicit - it
     must be opted into via the argument or the env var.
 
     Extracted as a pure function so the secure-by-default posture is unit
@@ -75,15 +75,15 @@ async def init_device_connect(
     and starts a DeviceRuntime in the background.
 
     When messaging_backend="zenoh" and messaging_url is None, the runtime
-    enters D2D mode — devices discover each other directly via Zenoh
+    enters D2D mode - devices discover each other directly via Zenoh
     multicast scouting on the LAN. No broker, no Docker, no env vars.
 
     Args:
         robot: A Robot or Simulation instance to wrap.
         peer_id: Device ID for registration (auto-generated if None).
-        peer_type: "robot" or "sim" — selects the appropriate driver.
+        peer_type: "robot" or "sim" - selects the appropriate driver.
         messaging_url: Explicit messaging URL (overrides env vars).
-        messaging_backend: Messaging backend — "zenoh" or "nats".
+        messaging_backend: Messaging backend - "zenoh" or "nats".
             None = auto-detect from MESSAGING_BACKEND env var (default "zenoh").
         tenant: Device Connect tenant namespace.
         allow_insecure: Allow insecure (unencrypted, unauthenticated)
@@ -110,9 +110,9 @@ async def init_device_connect(
 
     # Resolve allow_insecure: explicit arg > env var > secure default.
     # Security hardening: insecure (unencrypted, unauthenticated) transport is
-    # NO LONGER the default. It must be explicitly opted into — via the
+    # NO LONGER the default. It must be explicitly opted into - via the
     # ``allow_insecure=True`` argument or ``DEVICE_CONNECT_ALLOW_INSECURE`` env
-    # var — and we log a prominent warning whenever it is active so an insecure
+    # var - and we log a prominent warning whenever it is active so an insecure
     # deployment is never silent.
     allow_insecure = resolve_allow_insecure(allow_insecure, os.environ.get("DEVICE_CONNECT_ALLOW_INSECURE"))
 
@@ -157,7 +157,7 @@ def init_device_connect_sync(
     """Non-blocking sync wrapper around init_device_connect().
 
     Starts the DeviceRuntime on a dedicated daemon thread so the caller
-    returns immediately — matching the Zenoh mesh ``init_mesh()`` pattern.
+    returns immediately - matching the Zenoh mesh ``init_mesh()`` pattern.
     The runtime stays alive as long as the process (daemon thread).
 
     Same parameters as :func:`init_device_connect`.

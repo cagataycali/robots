@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Spawn a robot in MuJoCo and run a policy — zero hardware required.
+"""Spawn a robot in MuJoCo and run a policy - zero hardware required.
 
 Goal: Show that Robot("so100") gives you a fully configured MuJoCo simulation
-with one call — world created and the robot already added. You just add objects
+with one call - world created and the robot already added. You just add objects
 and cameras, then run a policy.
 
 Dependencies: pip install "strands-robots[sim-mujoco]"
@@ -12,7 +12,7 @@ Runtime: ~2 seconds on CPU.
 
 from strands_robots import MockPolicy, Robot
 
-# Robot("so100") defaults to mode="sim" — safe, no hardware interaction.
+# Robot("so100") defaults to mode="sim" - safe, no hardware interaction.
 # The factory already calls create_world() and adds the "so100" robot, so
 # the scene is ready to use immediately (no create_world/add_robot needed).
 sim = Robot("so100", mesh=False)
@@ -28,7 +28,7 @@ sim.add_object(
 )
 sim.add_camera(name="front", position=[0.5, 0.0, 0.4], target=[0.2, 0, 0.05])
 
-# Run a policy — MockPolicy produces sinusoidal test actions.
+# Run a policy - MockPolicy produces sinusoidal test actions.
 # robot_name="so100" is the robot the factory created.
 result = sim.run_policy(
     robot_name="so100",

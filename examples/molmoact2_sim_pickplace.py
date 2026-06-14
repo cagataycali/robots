@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""SO101 pick-and-place in MuJoCo simulation — same policy, sim robot.
+"""SO101 pick-and-place in MuJoCo simulation - same policy, sim robot.
 
 Identical to ``molmoact2_so101_pickplace.py`` but swaps the robot to sim mode.
 This demonstrates that the abstraction works: one line changes from real to sim,
@@ -38,7 +38,7 @@ def main():
     args = ap.parse_args()
 
     # Only difference from the real example: mode="sim" (the default).
-    # No serial port, no camera hardware — MuJoCo provides observations.
+    # No serial port, no camera hardware - MuJoCo provides observations.
     sim = Robot("so101")  # mode="sim" is the default
     log.info("Simulation world created: %s", sim.tool_name)
 
@@ -54,7 +54,7 @@ def main():
         },
     )
 
-    # Same create_policy call — the abstraction is identical.
+    # Same create_policy call - the abstraction is identical.
     policy = create_policy(REPO, embodiment="so_real", device=args.device)
     policy.reset()
 

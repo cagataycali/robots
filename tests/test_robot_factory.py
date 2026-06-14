@@ -1,4 +1,4 @@
-"""Tests for strands_robots.robot — Robot() factory and list_robots()."""
+"""Tests for strands_robots.robot - Robot() factory and list_robots()."""
 
 import importlib
 
@@ -121,7 +121,7 @@ class TestRobotFactory:
         assert not inspect.isclass(Robot)
 
     def test_default_mode_is_sim(self):
-        """Robot() defaults to sim mode — never accidentally sends to hardware."""
+        """Robot() defaults to sim mode - never accidentally sends to hardware."""
         import inspect
 
         sig = inspect.signature(Robot)
@@ -198,7 +198,7 @@ class TestRobotFactory:
 
 
 class TestRobotRealMode:
-    """Tests for mode='real' path (mocked — no physical hardware)."""
+    """Tests for mode='real' path (mocked - no physical hardware)."""
 
     def test_real_mode_requires_lerobot(self):
         """mode='real' imports lerobot hardware classes."""
@@ -212,7 +212,7 @@ class TestRobotRealMode:
                     Robot("so100", mode="real")
                     mock_hw.assert_called_once()
                 except ImportError:
-                    # lerobot not installed — acceptable in unit CI
+                    # lerobot not installed - acceptable in unit CI
                     pass
 
 
@@ -256,7 +256,7 @@ class TestAutoDetectUSB:
         """Robot without hardware support → skips USB scan."""
         from strands_robots.robot import _auto_detect_mode
 
-        # "panda" may not have hardware support — defaults to sim
+        # "panda" may not have hardware support - defaults to sim
         result = _auto_detect_mode("panda")
         assert result == "sim"
 
@@ -265,7 +265,7 @@ class TestModeNormalization:
     """Mode parameter and STRANDS_ROBOT_MODE env var should agree on case/whitespace."""
 
     def test_mode_param_uppercase_accepted(self):
-        """Robot('so100', mode='SIM') should work — env var path is case-insensitive,
+        """Robot('so100', mode='SIM') should work - env var path is case-insensitive,
         the direct param should be too."""
         pytest.importorskip("mujoco")
         sim = Robot("so100", mode="SIM")
@@ -296,7 +296,7 @@ class TestModeNormalization:
         assert _auto_detect_mode("so100") == "sim"
 
     def test_env_var_auto_is_no_op(self, monkeypatch):
-        """STRANDS_ROBOT_MODE=auto means 'do detection' — same as not setting it.
+        """STRANDS_ROBOT_MODE=auto means 'do detection' - same as not setting it.
         Should not warn."""
         from strands_robots.robot import _auto_detect_mode
 
@@ -327,7 +327,7 @@ class TestUnknownNameRejected:
             Robot("definitely_not_a_robot_xyz", mode="real")
 
     def test_unknown_name_with_urdf_path_does_not_raise(self):
-        """Explicit urdf_path bypasses the registry check — user knows what they
+        """Explicit urdf_path bypasses the registry check - user knows what they
         want, we don't second-guess."""
         pytest.importorskip("mujoco")
         # Use a clearly-bogus path so the underlying load fails (as RuntimeError),
@@ -434,7 +434,7 @@ class TestDashedNameAlias:
 
 class TestCameraErrorMessage:
     """The cameras-in-sim error must NOT recommend the private _dispatch_action
-    method — that's been a recurring review request."""
+    method - that's been a recurring review request."""
 
     def test_camera_error_does_not_leak_private_api(self):
         with pytest.raises(ValueError) as excinfo:
@@ -503,7 +503,7 @@ class TestRealModeConfigDiscovery:
         """Some lerobot subpackages register MULTIPLE robot_types (e.g.
         ``hope_jr/`` registers both ``hope_jr_arm`` and ``hope_jr_hand``;
         ``lekiwi/`` registers both ``lekiwi`` and ``lekiwi_client``).
-        pkgutil-walking handles this naturally — a hand-rolled
+        pkgutil-walking handles this naturally - a hand-rolled
         type→module map would have to special-case each."""
         pytest.importorskip("lerobot.robots.hope_jr")
         from lerobot.robots.config import RobotConfig
@@ -518,21 +518,21 @@ class TestRealModeConfigDiscovery:
 
     def test_so101_config_build_uses_RobotConfig_subclass(self):
         """Regression: lerobot 0.5.x's bare ``SOFollowerConfig`` has no
-        ``id`` field — discovery picks the registered ``SOFollowerRobotConfig``
+        ``id`` field - discovery picks the registered ``SOFollowerRobotConfig``
         subclass that does. (Original SO-100/SO-101 real-mode regression.)"""
         pytest.importorskip("lerobot.robots.so_follower")
         from strands_robots.hardware_robot import Robot as HwRobot
 
-        # Build the config directly via the helper — no hardware connect.
+        # Build the config directly via the helper - no hardware connect.
         hw = HwRobot.__new__(HwRobot)
         hw.tool_name_str = "so101_smoke"
         cfg = hw._create_minimal_config("so101_follower", cameras={}, port="/dev/null", use_degrees=True)
         # Must be the registered subclass (has ``id``), not the bare config.
-        assert hasattr(cfg, "id"), "config has no 'id' — used the wrong subclass"
+        assert hasattr(cfg, "id"), "config has no 'id' - used the wrong subclass"
         assert cfg.id == "so101_smoke"
         assert cfg.port == "/dev/null"
         # The registered subclass for so101 inherits both RobotConfig and
-        # SOFollowerConfig — its name typically ends with `RobotConfig`.
+        # SOFollowerConfig - its name typically ends with `RobotConfig`.
         assert "RobotConfig" in type(cfg).__name__
 
     def test_unitree_g1_config_build_via_discovery(self):
@@ -578,7 +578,7 @@ class TestRealModeConfigDiscovery:
 
         hw = HwRobot.__new__(HwRobot)
         hw.tool_name_str = "so101_smoke"
-        # `robot_ip` and `kp` are G1-only — must not raise on so101.
+        # `robot_ip` and `kp` are G1-only - must not raise on so101.
         cfg = hw._create_minimal_config(
             "so101_follower",
             cameras={},
@@ -978,7 +978,7 @@ class TestRealModeConfigDiscovery:
 
 
 class TestHardwareConfigV040Followups:
-    """v0.4.0 hardware_robot follow-up bundle (#389) — PR #276 review trail."""
+    """v0.4.0 hardware_robot follow-up bundle (#389) - PR #276 review trail."""
 
     def test_cross_robot_kwarg_drop_emits_debug_signal(self, caplog):
         """#294/#297: dropping a forwardable kwarg the target dataclass does

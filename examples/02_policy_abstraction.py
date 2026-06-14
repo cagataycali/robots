@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One function to load any policy — mock, GR00T, ACT, MolmoAct2, Cosmos3.
+"""One function to load any policy - mock, GR00T, ACT, MolmoAct2, Cosmos3.
 
 Goal: Demonstrate create_policy() as the universal entry point. The provider
 is auto-resolved from the string: "mock", an HF repo, or a ZMQ URL.

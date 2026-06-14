@@ -11,7 +11,7 @@ server (``state.x/y/z/roll/pitch/yaw/gripper``).
 These are end-to-end ground-truth tests: if any of the round-31/32/33
 fixes regresses (e.g., a refactor accidentally falls back to body
 xpos for position, or starts duplicating one finger qpos), upstream
-LIBERO won't change but our values will diverge — and these tests
+LIBERO won't change but our values will diverge - and these tests
 will fail loudly.
 
 Why ``tests_integ/`` and not ``tests/``: the upstream comparison
@@ -65,7 +65,7 @@ def _angle_diff_mod_2pi(a: float, b: float) -> float:
 def _build_upstream_env():
     """Build an upstream LIBERO OffScreenRenderEnv and its bddl file path.
 
-    Use ``libero_spatial/task_0`` — this is a goal-on-plate task whose
+    Use ``libero_spatial/task_0`` - this is a goal-on-plate task whose
     BDDL uses only ``And`` + ``On`` predicates which our BDDL parser
     fully supports. (``libero_object`` task 0 uses ``In`` which is an
     upstream alias for ``Inside`` not in our parser's vocabulary; not a
@@ -120,7 +120,7 @@ def _build_our_adapter_at_canonical(task_bddl: str, init_state: np.ndarray):
     adapter = LiberoAdapter.from_text(
         bddl_text,
         # The factory auto-resolves eef_body_name to robot0_right_hand
-        # via _register_default_robot — but only when on_episode_start
+        # via _register_default_robot - but only when on_episode_start
         # runs. For a direct state read we set it explicitly.
         eef_body_name="robot0_right_hand",
         # Auto-generate the scene from BDDL via libero (matches what
@@ -146,7 +146,7 @@ def _build_our_adapter_at_canonical(task_bddl: str, init_state: np.ndarray):
 
 @pytest.mark.timeout(180)
 def test_state_parity_at_canonical_init() -> None:
-    """Round 35 (#168) — primary regression test for the state pipeline.
+    """Round 35 (#168) - primary regression test for the state pipeline.
 
     With both upstream LIBERO and our adapter at the SAME canonical
     init state, ``state.x/y/z/roll/pitch/yaw/gripper`` must match
@@ -154,7 +154,7 @@ def test_state_parity_at_canonical_init() -> None:
 
     Tolerances per round-33 verification:
     - position: 5 mm per axis
-    - orientation: 50 mrad (mod 2π) per axis — extrinsic Euler can
+    - orientation: 50 mrad (mod 2π) per axis - extrinsic Euler can
       flip ±π for the same physical rotation
     - gripper: 1 mm per finger (the canonical at-rest values are
       ±0.0208 with millimeter-scale variation between resets)
@@ -180,7 +180,7 @@ def test_state_parity_at_canonical_init() -> None:
                 f"Round-31 site-source fix may have regressed."
             )
 
-        # Orientation — convert upstream's (xyzw) quat to (wxyz) for
+        # Orientation - convert upstream's (xyzw) quat to (wxyz) for
         # our `_quat_wxyz_to_rpy_xyz` helper, then compare per axis.
         ups_quat_xyzw = upstream_obs["robot0_eef_quat"]
         # robosuite returns xyzw; convert to wxyz.
@@ -215,7 +215,7 @@ def test_state_parity_at_canonical_init() -> None:
             f"Round-32 fix (orientation from body xquat, not site_xmat) may have regressed."
         )
 
-        # Gripper — both fingers must match upstream's per-finger qpos.
+        # Gripper - both fingers must match upstream's per-finger qpos.
         ups_gripper = upstream_obs["robot0_gripper_qpos"]
         ours_gripper = ours_state["gripper"]
         assert len(ours_gripper) == 2, f"state.gripper must be 2-element, got {ours_gripper}"
@@ -227,11 +227,11 @@ def test_state_parity_at_canonical_init() -> None:
                 f"Round-33 two-finger fix may have regressed (duplicate-packing bug)."
             )
 
-        # Sentinel — round 33: the two finger qpos values must have
+        # Sentinel - round 33: the two finger qpos values must have
         # OPPOSITE signs at the canonical at-rest pose. If they're the
         # same sign, the duplicate-packing bug is back.
         assert ours_gripper[0] * ours_gripper[1] < 0, (
-            f"state.gripper {ours_gripper} fingers have same sign — round-33 duplicate-packing bug may have regressed"
+            f"state.gripper {ours_gripper} fingers have same sign - round-33 duplicate-packing bug may have regressed"
         )
     finally:
         sim.destroy()
@@ -293,11 +293,11 @@ def test_state_gripper_joint_names_resolve_in_real_libero_scene() -> None:
 
 @pytest.mark.timeout(300)
 def test_state_parity_after_50_steps_zero_action() -> None:
-    """#171 sub-task 3c — Deep-rollout state parity test.
+    """#171 sub-task 3c - Deep-rollout state parity test.
 
     Drives both upstream ``OffScreenRenderEnv`` and our
     ``MuJoCoSimEngine``-backed adapter with the SAME action sequence
-    (50 steps of zero action — gravity + passive dynamics only) and
+    (50 steps of zero action - gravity + passive dynamics only) and
     asserts state stays within tolerance per step.
 
     The existing ``test_state_parity_at_canonical_init`` validates init
@@ -309,7 +309,7 @@ def test_state_parity_after_50_steps_zero_action() -> None:
 
     Uses zero actions because ANY non-trivial action would route
     through the upstream OSC controller (robosuite native) on one side
-    and our ``_LiberoOSCController`` on the other — a separate test
+    and our ``_LiberoOSCController`` on the other - a separate test
     surface (sub-task 3b). Zero-action drift isolates the
     physics-only path: same init state + same dt + (ideally) same
     model = same trajectory.
@@ -370,7 +370,7 @@ def test_state_parity_after_50_steps_zero_action() -> None:
                 f"state.{axis_name} drift after {n_steps} zero-action steps: "
                 f"{delta:.4f} m > 5 cm tolerance. "
                 f"ours={ours_v:.4f}, upstream={ups_v:.4f}. "
-                f"Trajectory diverges beyond physical-plausibility — "
+                f"Trajectory diverges beyond physical-plausibility - "
                 f"likely a scene XML or OSC controller divergence. "
                 f"See #171 sub-tasks 3a/3b."
             )
@@ -425,7 +425,7 @@ def test_osc_torque_parity_at_identical_state() -> None:
     5. Per-joint torque comparison: rel_err <= 5%.
 
     Without the round-45 swap, every joint's rel_err exceeds
-    100% — j5 in particular saw 4800% in pre-fix probe.
+    100% - j5 in particular saw 4800% in pre-fix probe.
     """
     upstream_env, task_bddl, init_state = _build_upstream_env()
     sim, adapter = _build_our_adapter_at_canonical(task_bddl, init_state)
@@ -465,7 +465,7 @@ def test_osc_torque_parity_at_identical_state() -> None:
             np.array(ups_ctrl.initial_joint),
             atol=1e-9,
             err_msg=(
-                "initial_joint diverges between upstream and ours — round-45 "
+                "initial_joint diverges between upstream and ours - round-45 "
                 "swap-and-restore in _LiberoOSCController.from_sim may have regressed."
             ),
         )
@@ -488,7 +488,7 @@ def test_osc_torque_parity_at_identical_state() -> None:
             np.array(ups_ctrl.goal_ori),
             atol=1e-6,
             err_msg=(
-                "goal_ori diverges after set_goal — likely a regression in "
+                "goal_ori diverges after set_goal - likely a regression in "
                 "the round-45 swap-and-restore that captures initial_ee_ori_mat "
                 "from data at home pose."
             ),
@@ -519,7 +519,7 @@ def test_osc_torque_parity_at_identical_state() -> None:
 
 @pytest.mark.timeout(300)
 def test_state_observation_byte_equivalent_at_canonical_init() -> None:
-    """#176 sub-task 3d — pin every state channel to be byte-equivalent
+    """#176 sub-task 3d - pin every state channel to be byte-equivalent
     (within float precision) between ``MuJoCoSimEngine`` and upstream
     ``OffScreenRenderEnv`` at canonical ``init_states[0]`` for
     libero-10/SCENE5.
@@ -568,7 +568,7 @@ def test_state_observation_byte_equivalent_at_canonical_init() -> None:
 
     import random as _random
 
-    # Upstream `OffScreenRenderEnv` — the ground truth.
+    # Upstream `OffScreenRenderEnv` - the ground truth.
     upstream_env = OffScreenRenderEnv(
         bddl_file_name=task_bddl,
         camera_names=["agentview"],
@@ -642,7 +642,7 @@ def test_state_observation_byte_equivalent_at_canonical_init() -> None:
 
 @pytest.mark.timeout(900)
 def test_libero_10_scene5_mujoco_engine_success_rate() -> None:
-    """Round 46 (#176 sub-task 3d) acceptance — MuJoCoSimEngine reaches
+    """Round 46 (#176 sub-task 3d) acceptance - MuJoCoSimEngine reaches
     success_rate > 0 on libero-10/SCENE5 with in-process Gr00tPolicy.
 
     This is the end-to-end integration test that closes out #176
@@ -746,7 +746,7 @@ def test_libero_10_scene5_mujoco_engine_success_rate() -> None:
     successes = []
     try:
         for ep in range(n_episodes):
-            # #179 — seed Python/NumPy/torch/cuDNN per episode so the
+            # #179 - seed Python/NumPy/torch/cuDNN per episode so the
             # GR00T diffusion sampler is reproducible. Without this,
             # ``success_rate`` varies wildly across runs of the same
             # eval (5-ep variance ranged 0.40-1.00 pre-fix). The
@@ -803,6 +803,6 @@ def test_libero_10_scene5_mujoco_engine_success_rate() -> None:
         f"``mj_saveLastXML``); post-#181 the cache uses the pre-compile MJCF which "
         f"preserves ``<compiler>`` attributes, restoring upstream's body inertias and "
         f"closing the parity gap. If this drops below 1.00, the fix may have "
-        f"regressed — re-check ``_extract_compiled_mjcf`` accessor order and "
+        f"regressed - re-check ``_extract_compiled_mjcf`` accessor order and "
         f"``_LIBERO_MJCF_TRANSFORM_VERSION``."
     )

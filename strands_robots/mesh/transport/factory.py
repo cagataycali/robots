@@ -9,15 +9,15 @@ Backend selection
 -----------------
 Selection is done at the first :func:`get_transport` call:
 
-- ``zenoh`` (default) — :class:`ZenohTransport`
-- ``iot``  — :class:`IotMqttTransport`
-- ``bridge``  — :class:`BridgeTransport` (Zenoh + IoT)
+- ``zenoh`` (default) - :class:`ZenohTransport`
+- ``iot``  - :class:`IotMqttTransport`
+- ``bridge``  - :class:`BridgeTransport` (Zenoh + IoT)
 
 Subsequent calls in the same process bump the refcount but do NOT switch
 backends. To change the backend, every consumer must release first
 (``release_transport`` until refcount is 0) and then a new selection is made.
 
-The factory is **not** consulted by :mod:`strands_robots.mesh.session` —
+The factory is **not** consulted by :mod:`strands_robots.mesh.session` -
 that module owns the legacy zenoh path independently. The factory is the
 new path used when :class:`Mesh` is configured for ``backend="iot"``.
 """
@@ -42,12 +42,12 @@ _LOCK = threading.Lock()
 def _select_backend() -> str:
     """Resolve ``STRANDS_MESH_BACKEND``. Defaults to ``zenoh``.
 
-    Unknown values fall back to ``zenoh`` with a warning — the policy is to
+    Unknown values fall back to ``zenoh`` with a warning - the policy is to
     keep the mesh running rather than crash the host on a typo.
     """
     raw = os.getenv("STRANDS_MESH_BACKEND", "zenoh").strip().lower()
     if raw not in ("zenoh", "iot", "bridge"):
-        logger.warning("Unknown STRANDS_MESH_BACKEND=%r — falling back to 'zenoh'", raw)
+        logger.warning("Unknown STRANDS_MESH_BACKEND=%r - falling back to 'zenoh'", raw)
         return "zenoh"
     return raw
 
@@ -77,7 +77,7 @@ def get_transport() -> MeshTransport | None:
 
     Increments the refcount each call. Returns ``None`` if the underlying
     backend's :meth:`connect` failed (Zenoh missing, certs missing, broker
-    unreachable, etc.) — callers MUST treat ``None`` the same way they
+    unreachable, etc.) - callers MUST treat ``None`` the same way they
     treated ``get_session() is None`` historically: skip mesh activity and
     move on without raising.
     """
@@ -94,7 +94,7 @@ def get_transport() -> MeshTransport | None:
         ok = transport.connect()  # type: ignore[attr-defined]
         if not ok:
             logger.debug(
-                "[mesh.transport] %s backend connect failed — staying off",
+                "[mesh.transport] %s backend connect failed - staying off",
                 backend,
             )
             return None

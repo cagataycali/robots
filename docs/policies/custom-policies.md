@@ -59,16 +59,16 @@ The factory imports lazily on first use.
 
 | Method / property | Abstract | Default |
 |---|---|---|
-| `async get_actions(obs, instruction, **kw) -> list[dict]` | yes | — |
-| `set_robot_state_keys(keys)` | yes | — |
-| `provider_name` (property) | yes | — |
+| `async get_actions(obs, instruction, **kw) -> list[dict]` | yes | - |
+| `set_robot_state_keys(keys)` | yes | - |
+| `provider_name` (property) | yes | - |
 | `requires_images` (property) | no | `True` |
 | `reset(seed=None)` | no | no-op |
 | `get_actions_sync(...)` | no | sync wrapper |
 
 ## See also
 
-- [Policy overview](overview.md) — factory, providers.
+- [Policy overview](overview.md) - factory, providers.
 - [Architecture](../architecture.md)
 - [Architecture](../architecture.md)
-- `strands_robots/policies/mock.py` — minimal reference implementation.
+- `strands_robots/policies/mock.py` - minimal reference implementation.

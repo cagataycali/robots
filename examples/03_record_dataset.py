@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Record a demonstration as a LeRobotDataset — from sim, push to HF Hub.
+"""Record a demonstration as a LeRobotDataset - from sim, push to HF Hub.
 
 Goal: Show the recording lifecycle (start -> run policy -> stop) produces
 a training-ready LeRobotDataset with zero manual feature wrangling.
@@ -20,7 +20,7 @@ sim.add_camera(name="front", position=[0.5, 0.0, 0.4], target=[0.2, 0, 0.05])
 # Start recording. Pass an explicit local root= directory: without it lerobot
 # resolves repo_id into the read-only Hub snapshot cache, where DatasetWriter
 # cannot be created (recorder init fails). Features are auto-inferred from the
-# robot — no manual schema wrangling.
+# robot - no manual schema wrangling.
 start = sim.start_recording(
     repo_id="local/my_demo",
     root="/tmp/strands_demo_dataset",
@@ -33,7 +33,7 @@ if start["status"] != "success":
     print(f"start_recording failed: {start['content'][0]['text']}", file=sys.stderr)
     raise SystemExit(1)
 
-# Run the policy — each step is automatically captured.
+# Run the policy - each step is automatically captured.
 sim.run_policy(
     robot_name="so100",
     policy_object=MockPolicy(),
@@ -41,7 +41,7 @@ sim.run_policy(
     n_steps=100,
 )
 
-# Finalize — writes parquet + video, ready for lerobot training scripts.
+# Finalize - writes parquet + video, ready for lerobot training scripts.
 # The response text reports the actual frame/episode count and on-disk path,
 # so you can confirm frames were captured rather than trusting a bare status.
 result = sim.stop_recording()

@@ -2,7 +2,7 @@
 """Join the robot mesh and discover peers on the local network.
 
 Goal: Show that Robot() with mesh=True gives automatic peer discovery via
-Zenoh. Every robot that joins the mesh is visible to every other — no DHCP,
+Zenoh. Every robot that joins the mesh is visible to every other - no DHCP,
 no config server, no manual IP lists.
 
 Dependencies: pip install "strands-robots[sim-mujoco,mesh]"
@@ -28,7 +28,7 @@ from strands_robots.mesh import get_local_robots, get_peers
 use_mesh = os.environ.get("STRANDS_MESH", "true").lower() != "0"
 sim = Robot("so100", mesh=use_mesh, peer_id="example-arm-01")
 
-# Query the mesh — see who is online.
+# Query the mesh - see who is online.
 local = get_local_robots()
 peers = get_peers()
 

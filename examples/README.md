@@ -1,7 +1,7 @@
 # Examples
 
 Each example demonstrates ONE strands-robots primitive in under 60 lines.
-No raw lerobot wrangling — the SDK handles configuration, feature schemas,
+No raw lerobot wrangling - the SDK handles configuration, feature schemas,
 and hardware abstraction internally.
 
 ## Quick start
@@ -41,8 +41,8 @@ MUJOCO_GL=egl python examples/01_sim_hello_world.py
 
 ## Environment variables
 
-- `MUJOCO_GL=egl` — headless rendering (required on servers without display)
-- `STRANDS_MESH_LOCAL_DEV=1` — skip TLS for mesh examples in local dev
-- `STRANDS_MESH=0` — disable mesh entirely
-- `HF_TOKEN` — push datasets to Hugging Face Hub
-- `STRANDS_TRUST_REMOTE_CODE=1` — required for some HF policy checkpoints
+- `MUJOCO_GL=egl` - headless rendering (required on servers without display)
+- `STRANDS_MESH_LOCAL_DEV=1` - skip TLS for mesh examples in local dev
+- `STRANDS_MESH=0` - disable mesh entirely
+- `HF_TOKEN` - push datasets to Hugging Face Hub
+- `STRANDS_TRUST_REMOTE_CODE=1` - required for some HF policy checkpoints

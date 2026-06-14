@@ -1,4 +1,4 @@
-"""Unit tests for Cosmos3Policy — no GPU, no server (mocked client)."""
+"""Unit tests for Cosmos3Policy - no GPU, no server (mocked client)."""
 
 import asyncio
 
@@ -11,7 +11,7 @@ from strands_robots.policies.cosmos3.policy import _to_image_uint8
 
 
 class FakeClient:
-    """Stand-in for Cosmos3WebsocketClient — records the obs, returns a chunk."""
+    """Stand-in for Cosmos3WebsocketClient - records the obs, returns a chunk."""
 
     def __init__(self, action: np.ndarray):
         self._action = action
@@ -280,7 +280,7 @@ def test_pretrained_name_or_path_stored_not_dropped():
 
 
 def test_unexpected_kwargs_rejected():
-    """Cosmos3Policy no longer accepts **kwargs — a typo'd kwarg like
+    """Cosmos3Policy no longer accepts **kwargs - a typo'd kwarg like
     actoin_mapping (note the typo) must raise TypeError instead of being
     silently swallowed.
     """

@@ -19,7 +19,7 @@ Prerequisites
    vendored numpy packer. That means it composes cleanly with ``lerobot``
    (``numpy>=2``) for LeRobotDataset recording in the same env.
 
-2. The policy server (holds the GPU) — from a Cosmos Framework checkout:
+2. The policy server (holds the GPU) - from a Cosmos Framework checkout:
 
      uv sync --all-extras --group=cu130-train --group=policy-server
      python -m cosmos_framework.scripts.action_policy_server_robolab \
@@ -52,7 +52,7 @@ def main() -> int:
     parser.add_argument("--control-frequency", type=float, default=15.0, help="Control Hz (match policy fps).")
     parser.add_argument("--action-horizon", type=int, default=8, help="Steps consumed per policy chunk.")
     parser.add_argument("--record", metavar="MP4_PATH", default=None, help="Record the rollout to this MP4.")
-    parser.add_argument("--robot", default="franka", help="Sim arm data_config (franka/panda — DROID = Franka).")
+    parser.add_argument("--robot", default="franka", help="Sim arm data_config (franka/panda - DROID = Franka).")
     args = parser.parse_args()
 
     # Headless GL default so the example runs on servers out of the box.
@@ -88,7 +88,7 @@ def main() -> int:
         "side": "observation/exterior_image_2_left",
     }
     # The Cosmos3 client uses a self-contained msgpack+websockets transport
-    # (numpy-version agnostic — composes with lerobot).
+    # (numpy-version agnostic - composes with lerobot).
     policy = Cosmos3Policy(
         embodiment="droid",
         host=args.host,
@@ -101,7 +101,7 @@ def main() -> int:
     if args.record:
         video = {"path": args.record, "camera": "front", "fps": int(args.control_frequency)}
 
-    print(f"Rolling out Cosmos 3 (ws://{args.host}:{args.port}) — {args.n_steps} steps ...")
+    print(f"Rolling out Cosmos 3 (ws://{args.host}:{args.port}) - {args.n_steps} steps ...")
     try:
         result = sim.run_policy(
             robot_name="arm",

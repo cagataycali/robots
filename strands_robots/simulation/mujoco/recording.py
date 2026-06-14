@@ -98,7 +98,7 @@ class RecordingMixin:
 
         # Multi-episode append: when NOT overwriting and a dataset already
         # exists on disk, resume it (append new episodes) instead of calling
-        # create() — which hard-fails with FileExistsError (B12). resume() is
+        # create() - which hard-fails with FileExistsError (B12). resume() is
         # the only correct append path in LeRobot 0.5.2+ (the plain constructor
         # is read-only). When overwrite=True, wipe and recreate from scratch.
         resume_existing = (

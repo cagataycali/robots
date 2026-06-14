@@ -199,7 +199,7 @@ class TestBodyPositionPredicates:
         assert pred(sim) is False
 
     def test_body_position_libero_main_suffix_fallback(self):
-        """Round 46 (#176 sub-task 3d) — LIBERO objects' BDDL names
+        """Round 46 (#176 sub-task 3d) - LIBERO objects' BDDL names
         (``porcelain_mug_1``) map to MJCF root bodies suffixed with
         ``_main`` (``porcelain_mug_1_main``). The predicate evaluator
         must transparently retry with the suffix when the bare name

@@ -624,7 +624,7 @@ class TestPolicyReset:
 
     Without this, ``set_eval_seed`` only seeds the client-side process,
     leaving the server's diffusion sampler RNG drifting across calls and
-    breaking reproducibility — same input gives different actions on
+    breaking reproducibility - same input gives different actions on
     successive calls. Pin the surface so future refactors can't silently
     drop the per-episode reset that the bisection plan in #187 confirmed
     is required.
@@ -660,14 +660,14 @@ class TestPolicyReset:
         p._client.call_endpoint.assert_called_once()
         endpoint, payload = p._client.call_endpoint.call_args.args
         assert endpoint == "reset"
-        # When no seed is provided we forward None — lets server use its
+        # When no seed is provided we forward None - lets server use its
         # initial seed (matches "no-op" semantics for servers that don't
         # implement seed-aware reset).
         assert payload is None
 
     def test_service_reset_swallows_server_errors(self, caplog):
         """A server that rejects ``reset`` (older NVIDIA images, wrappers
-        without the patch) must not crash the eval. Reset is best-effort —
+        without the patch) must not crash the eval. Reset is best-effort -
         log INFO and continue.
         """
         import logging as _logging
@@ -1021,7 +1021,7 @@ class TestLocalObsImageRotation180:
         This is the strongest test that the two paths can't drift again.
         Prior to #169, LOCAL skipped rotation while SERVICE applied it,
         so the same observation produced different model inputs depending
-        on transport — exactly the bug class issue #169 covers."""
+        on transport - exactly the bug class issue #169 covers."""
         p_local = self._libero_panda_local_policy()
         p_svc = Gr00tPolicy(data_config="libero_panda", host="localhost", port=19999)
         p_svc._groot_version = "n1.7"
@@ -1116,7 +1116,7 @@ class TestApplyImageRotation180Helper:
         assert obs["video.wrist"] == [1, 2, 3]
 
     def test_skips_dim_lt_3(self):
-        """``(H, W)`` shape (2D) without channel axis is skipped — the
+        """``(H, W)`` shape (2D) without channel axis is skipped - the
         helper only rotates when there are ≥3 dims so the H/W axes are
         unambiguous via negative indexing."""
         from strands_robots.policies.groot.policy import _apply_image_rotation_180_inplace

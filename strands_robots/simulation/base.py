@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 # to break the AST-visible cycle that static analysers flag.
 #
 # Note (#191): we deliberately do NOT import ``OnFrame`` here, even under
-# ``TYPE_CHECKING`` — CodeQL's ``py/unsafe-cyclic-import`` rule walks
+# ``TYPE_CHECKING`` - CodeQL's ``py/unsafe-cyclic-import`` rule walks
 # ``TYPE_CHECKING`` blocks too and would flag the static cycle (
 # policy_runner.py imports SimEngine from base under TYPE_CHECKING,
 # so importing OnFrame from policy_runner here closes the loop in the
@@ -251,7 +251,7 @@ class SimEngine(ABC):
 
         Contract: each call writes actuator/ctrl values and then runs
         ``n_substeps`` physics steps (e.g. mj_step). PolicyRunner.run()
-        relies on this — it calls send_action once per control step and
+        relies on this - it calls send_action once per control step and
         does NOT call sim.step() separately.
 
         Backends are responsible for internal thread-safety (e.g.
@@ -572,7 +572,7 @@ class SimEngine(ABC):
                 ``policy.get_actions(...)`` chunk before re-querying the
                 policy. Default ``8`` matches NVIDIA's upstream
                 GR00T LIBERO eval (``MultiStepWrapper`` with
-                ``n_action_steps=8``) — the policy commits to 8 actions
+                ``n_action_steps=8``) - the policy commits to 8 actions
                 before re-observing, which is what GR00T-N1.7-LIBERO
                 checkpoints were trained against. Set to ``1`` for
                 closed-loop receding-horizon control (re-observe every
@@ -586,7 +586,7 @@ class SimEngine(ABC):
                 immediately after ``sim.send_action``. Use this for
                 synchronous recording or telemetry when the eval is
                 dispatched from a thread distinct from the script main
-                (e.g. Strands ``Agent`` tool dispatch under asyncio) —
+                (e.g. Strands ``Agent`` tool dispatch under asyncio) -
                 the daemon-thread recorder
                 (:meth:`~strands_robots.simulation.mujoco.simulation.Simulation.start_cameras_recording`)
                 races ``mjData`` mutations on the eval thread under that

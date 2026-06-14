@@ -1,10 +1,10 @@
 ---
-description: Two-arm robots — Aloha, Trossen WX-AI, OpenArm bimanual.
+description: Two-arm robots - Aloha, Trossen WX-AI, OpenArm bimanual.
 ---
 
 # Bimanual rigs
 
-Two-arm robots — Aloha, Trossen WX-AI, OpenArm bimanual.
+Two-arm robots - Aloha, Trossen WX-AI, OpenArm bimanual.
 
 ```python
 from strands_robots import Robot
@@ -37,6 +37,6 @@ _Trossen WidowX AI Bimanual_
 
 ## See also
 
-- [Arms](arms.md) — single-arm manipulators.
-- [Hands](hands.md) — dexterous end-effectors to mount on each arm.
-- [Multi-robot mesh](../mesh.md) — pair two single arms via the mesh as an alternative to a single bimanual rig.
+- [Arms](arms.md) - single-arm manipulators.
+- [Hands](hands.md) - dexterous end-effectors to mount on each arm.
+- [Multi-robot mesh](../mesh.md) - pair two single arms via the mesh as an alternative to a single bimanual rig.

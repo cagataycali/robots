@@ -174,13 +174,13 @@ class MuJoCoSimEngine(
         self._policy_threads: dict[str, Future] = {}
         self._shutdown_event = threading.Event()
         # ``self._lock`` (RLock) serializes ALL access to MuJoCo
-        # ``model``/``data`` arrays — both reads and writes. MuJoCo arrays
+        # ``model``/``data`` arrays - both reads and writes. MuJoCo arrays
         # are NOT safe for concurrent reads during mutation (a racing
         # mj_step can produce torn/stale values). The lock is acquired:
         #
-        #   * In ``_dispatch_action`` — so every agent-dispatched action
+        #   * In ``_dispatch_action`` - so every agent-dispatched action
         #     (all 37 handlers) is automatically serialized.
-        #   * In ``send_action`` / ``get_observation`` — so the
+        #   * In ``send_action`` / ``get_observation`` - so the
         #     PolicyRunner worker thread is also serialized against the
         #     agent's dispatch thread.
         #   * RLock allows nested acquisition (methods that also acquire
@@ -201,7 +201,7 @@ class MuJoCoSimEngine(
         self._mj = _ensure_mujoco()
         logger.info("MuJoCo simulation tool '%s' initialized", tool_name)
 
-    # Public Properties — read-only introspection.
+    # Public Properties - read-only introspection.
     # WARNING: callers MUST NOT mutate the returned objects without holding
     # self._lock. Prefer using action methods which serialize automatically.
 
@@ -663,7 +663,7 @@ class MuJoCoSimEngine(
 
         When the parent ``Simulation`` is on a Zenoh mesh (``self.mesh`` set
         and ``self.peer_id`` populated), every robot added via ``add_robot``
-        becomes addressable on the mesh in its own right — the agent can
+        becomes addressable on the mesh in its own right - the agent can
         ``robot_mesh tell target=<robot.peer_id>`` instead of having to ask
         the sim container to route by ``robot_name``.
 
@@ -678,7 +678,7 @@ class MuJoCoSimEngine(
         ``remove_robot`` / ``cleanup`` can tear it down later.
         """
         if not self.mesh:
-            # Sim itself isn't on a mesh — nothing to attach to. Stays a
+            # Sim itself isn't on a mesh - nothing to attach to. Stays a
             # no-op so unit tests that construct a bare ``Simulation``
             # without zenoh keep working.
             return
@@ -710,9 +710,9 @@ class MuJoCoSimEngine(
                 # Bridge: give the SimRobot a _world reference so the child
                 # Mesh's _read_state() can extract per-robot joint positions
                 # from the MuJoCo world data (without this, the child mesh
-                # publishes only presence heartbeats — no state topic).
+                # publishes only presence heartbeats - no state topic).
                 robot._world = self._world
-        except Exception as exc:  # noqa: BLE001 — mesh enrichment is best-effort
+        except Exception as exc:  # noqa: BLE001 - mesh enrichment is best-effort
             logger.warning(
                 "Failed to attach robot %r to mesh (sim peer_id=%s): %s",
                 robot.name,
@@ -1448,7 +1448,7 @@ class MuJoCoSimEngine(
         """Destroy the world and release all resources.
 
         Delegates to cleanup() which properly joins running policy Futures
-        before nulling self._world — prevents SIGSEGV from workers holding
+        before nulling self._world - prevents SIGSEGV from workers holding
         stale model/data pointers.
         """
         if self._world is None:
@@ -1944,7 +1944,7 @@ class MuJoCoSimEngine(
         # Concurrent multi-robot policies run on disjoint ctrl slices (physics
         # serialized by _lock). For SYNCHRONIZED multi-robot *recording* (both
         # robots captured in one merged frame per step), use run_multi_policy
-        # instead — independent start_policy threads each step physics and write
+        # instead - independent start_policy threads each step physics and write
         # frames separately, which is correct for live control but interleaves
         # for a shared recorder. start_policy while recording is left to the
         # caller's intent (run_multi_policy is the recommended recording path).
@@ -2024,7 +2024,7 @@ class MuJoCoSimEngine(
                         # keys, finds nothing, and writes all-zero state/action
                         # vectors silently. Prefix scalar obs + action keys to match
                         # the schema. Camera values (ndarray) keep their (already
-                        # namespaced) names — dataset_recorder normalizes '/'→'__'.
+                        # namespaced) names - dataset_recorder normalizes '/'→'__'.
                         if len(world.robots) > 1:
                             obs_keyed = {
                                 (k if isinstance(v, np.ndarray) else f"{robot_name}__{k}"): v
@@ -2109,9 +2109,9 @@ class MuJoCoSimEngine(
 
         This is the correct path for concurrent multi-robot data collection
         (e.g. two SO-100 arms doing a handover, or a bimanual setup). Unlike
-        launching two independent ``start_policy`` threads — which each step
+        launching two independent ``start_policy`` threads - which each step
         physics and call ``add_frame`` separately, so the shared recorder
-        receives interleaved single-robot frames (B4) — this loop:
+        receives interleaved single-robot frames (B4) - this loop:
 
         1. Observes every robot (joints) and renders all cameras ONCE.
         2. Queries each robot's policy for its action.
@@ -2119,7 +2119,7 @@ class MuJoCoSimEngine(
         4. Records ONE frame containing ALL robots' prefixed state/action
            (``alice__shoulder_pan`` …) plus all camera images.
 
-        So a 2-robot dataset has both arms co-observed in every frame — usable
+        So a 2-robot dataset has both arms co-observed in every frame - usable
         for bimanual / multi-agent policy training.
 
         Args:
@@ -2136,7 +2136,7 @@ class MuJoCoSimEngine(
                 execution, mirrors ``run_policy``). Either a single int applied
                 to all robots, or a ``{robot_name: horizon}`` mapping for
                 per-robot control. A robot's policy is only re-queried when its
-                action queue drains — so an expensive VLA emitting a 30-action
+                action queue drains - so an expensive VLA emitting a 30-action
                 chunk with ``action_horizon=30`` runs inference ~once per 30
                 steps instead of every step. Physics still advances ONE step per
                 loop iteration, keeping all robots phase-aligned regardless of
@@ -2226,7 +2226,7 @@ class MuJoCoSimEngine(
         recording = bool(self._world._backend_state.get("recording", False)) and recorder is not None
 
         # Whether ANY policy needs images (renders are expensive; skip if none
-        # need them AND we're not recording — recording always needs frames).
+        # need them AND we're not recording - recording always needs frames).
         any_needs_images = any(getattr(p, "requires_images", True) for p in policies.values())
         skip_images = not (any_needs_images or recording)
 
@@ -2276,7 +2276,7 @@ class MuJoCoSimEngine(
                 # --- 2. Get each robot's action for THIS step.
                 # Re-query a policy ONLY when its action queue is empty (open-loop
                 # chunk execution). Between re-queries we replay the buffered
-                # chunk — so an expensive VLA runs inference once per horizon
+                # chunk - so an expensive VLA runs inference once per horizon
                 # steps, not every step. Observation is still gathered every step
                 # (cheap) so recorded frames carry live state, and the chunk's
                 # first action is computed from a fresh observation.
@@ -2311,7 +2311,7 @@ class MuJoCoSimEngine(
                 with self._lock:
                     mj = self._mj
                     for rname, act in per_robot_action.items():
-                        # write ctrl only (no per-robot mj_step) — we step once
+                        # write ctrl only (no per-robot mj_step) - we step once
                         # after every robot's ctrl is set.
                         robot = self._world.robots[rname]
                         pfx = robot.namespace or ""
@@ -2663,7 +2663,7 @@ class MuJoCoSimEngine(
         # PR #101 follow-up: each robot added via ``add_robot`` may have
         # its own per-peer mesh (see ``_attach_robot_to_mesh``). Stop those
         # FIRST so external peers see them leave before the sim container
-        # itself goes down — leaving the inverse order ("sim drops, robots
+        # itself goes down - leaving the inverse order ("sim drops, robots
         # linger") would create zombie peer entries in remote ``get_peers``
         # results until their heartbeats expire.
         if self._world is not None:

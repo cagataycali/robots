@@ -4,7 +4,7 @@ Defines the Protocol that :class:`~strands_robots.mesh.core.Mesh` uses to
 publish and subscribe. Every concrete backend (Zenoh, AWS IoT MQTT, Bridge)
 implements this protocol.
 
-The protocol is deliberately tiny — exactly what ``mesh.session`` already
+The protocol is deliberately tiny - exactly what ``mesh.session`` already
 exposed. Every behavioural enrichment (peer registry, RPC correlation, audit)
 lives at the Mesh layer and is transport-agnostic.
 
@@ -15,8 +15,8 @@ Zenoh callbacks receive a ``zenoh.Sample`` with ``.key_expr`` and
 ``bytes`` payload. Rather than pick a concrete type and force one transport
 to adapt, we declare the **structural protocol** all callers actually use:
 
-    sample.key_expr  # str  — the topic / key the message arrived on
-    sample.payload.to_bytes()  # bytes — the raw payload
+    sample.key_expr  # str  - the topic / key the message arrived on
+    sample.payload.to_bytes()  # bytes - the raw payload
 
 Concrete backends produce objects matching this shape. The MQTT backend ships
 a tiny ``_MqttSample`` wrapper; the Zenoh backend passes ``zenoh.Sample``
@@ -43,13 +43,13 @@ class Sample(Protocol):
     ``_on_cmd``, ``_on_response``) work unchanged regardless of transport.
     """
 
-    key_expr: Any  # zenoh: KeyExpr; mqtt: str — both stringify
+    key_expr: Any  # zenoh: KeyExpr; mqtt: str - both stringify
     payload: _PayloadLike
 
 
 @runtime_checkable
 class SubHandle(Protocol):
-    """Opaque subscription handle — must support ``undeclare()`` for teardown.
+    """Opaque subscription handle - must support ``undeclare()`` for teardown.
 
     Mirrors ``zenoh.Subscriber.undeclare()``. MQTT-backed implementations wrap
     the broker's ``unsubscribe`` packet behind the same name so Mesh teardown
@@ -78,7 +78,7 @@ class MeshTransport(Protocol):
     ------------
     A transport whose connection is dead returns ``False`` from
     :meth:`is_alive`. Callers (notably :func:`put`) treat a dead transport as
-    a no-op rather than raising — preserving the current Mesh contract that
+    a no-op rather than raising - preserving the current Mesh contract that
     publish failures never propagate up into hot control loops.
     """
 
@@ -90,7 +90,7 @@ class MeshTransport(Protocol):
 
         Args:
             key: The topic / Zenoh key expression. For MQTT-backed transports
-                this is the MQTT topic verbatim (no translation needed — our
+                this is the MQTT topic verbatim (no translation needed - our
                 topic scheme is already MQTT-safe).
             data: A JSON-serialisable dictionary. Implementations are expected
                 to encode it via ``json.dumps(...).encode()``.

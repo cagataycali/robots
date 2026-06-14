@@ -87,7 +87,7 @@ class LerobotLocalPolicy(Policy):
         # Extra keyword args forwarded verbatim to the underlying LeRobot
         # policy's select_action()/predict_action_chunk() on every inference
         # call. Required by policies that demand a runtime mode selector with
-        # no usable default — e.g. MolmoAct2 needs
+        # no usable default - e.g. MolmoAct2 needs
         # inference_kwargs={"inference_action_mode": "continuous"|"discrete"}
         # (its select_action raises ValueError otherwise). RTC kwargs are
         # handled separately and take precedence on the RTC path.
@@ -149,7 +149,7 @@ class LerobotLocalPolicy(Policy):
         Args:
             seed: Per-episode master seed (added in #187 for the
                 ``Policy.reset(seed=...)`` contract). Currently
-                unused — LeRobot policies don't expose RNG state via a
+                unused - LeRobot policies don't expose RNG state via a
                 seed kwarg, and reproducibility is handled by
                 ``set_eval_seed`` upstream of the call. Reserved for
                 future per-policy RNG plumbing.
@@ -584,7 +584,7 @@ class LerobotLocalPolicy(Policy):
                     dim_policy="pad",
                 )
             else:
-                # No usable declarative info — keep legacy heuristic path.
+                # No usable declarative info - keep legacy heuristic path.
                 self._embodiment = None
                 return
 
@@ -815,7 +815,7 @@ class LerobotLocalPolicy(Policy):
                 # SOLUTION.md bulletproof path: the embodiment map was injected
                 # into the pipeline at load time (rename_map + strands_pack_state
                 # step), so the pipeline itself renames cameras and composes
-                # observation.state. Feed RAW obs straight in — ZERO per-step
+                # observation.state. Feed RAW obs straight in - ZERO per-step
                 # strands-side remapping, no _fixup needed (AddBatchDimension +
                 # Device steps in the pipeline handle shape/device).
                 batch = self._processor_bridge.preprocess(observation, instruction=instruction)

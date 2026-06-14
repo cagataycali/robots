@@ -1,4 +1,4 @@
-"""Tests for strands_robots.mesh_audit — append-only safety audit log."""
+"""Tests for strands_robots.mesh_audit - append-only safety audit log."""
 
 from __future__ import annotations
 

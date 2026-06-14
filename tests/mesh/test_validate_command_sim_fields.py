@@ -3,11 +3,11 @@
 The validator at ``strands_robots.mesh.security.validate_command`` now
 admits a small set of sim-peer fields used by ``Mesh._dispatch_sim_policy``:
 
-* ``robot_name`` — disambiguates which robot in a multi-robot sim
-* ``target_pose`` / ``target_joints`` / ``world_update`` — issue #300
+* ``robot_name`` - disambiguates which robot in a multi-robot sim
+* ``target_pose`` / ``target_joints`` / ``world_update`` - issue #300
   well-known per-call kwargs forwarded to planner-style policies
 * ``control_frequency`` / ``action_horizon`` / ``fast_mode`` / ``n_steps``
-  — sim-side runner controls
+  - sim-side runner controls
 
 Each accepts a happy path and a representative rejection path so a
 malicious peer cannot smuggle control-byte robot names, multi-MB
@@ -49,7 +49,7 @@ class TestRobotName:
             sec.validate_command({**_base(), "robot_name": "arm; rm -rf /"})
 
     def test_slash_rejected(self) -> None:
-        # Mirrors the teleop_receive.source_peer_id rule — robot_name is
+        # Mirrors the teleop_receive.source_peer_id rule - robot_name is
         # not a path, so '/' is a wire-side red flag.
         with pytest.raises(sec.ValidationError, match="robot_name"):
             sec.validate_command({**_base(), "robot_name": "ns/arm"})

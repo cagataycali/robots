@@ -102,11 +102,11 @@ sim = Robot("aloha")
 ## Add a new robot
 
 Robots are JSON entries in `strands_robots/registry/robots.json`. No code change is
-needed for most additions — see [Architecture](../architecture.md)
+needed for most additions - see [Architecture](../architecture.md)
 for the JSON schema and asset-fetch strategies.
 
 ## See also
 
-- [Robot factory](../getting-started/robot-factory.md) — the `Robot()` signature.
-- [Quickstart](../getting-started/quickstart.md) — pick one,
+- [Robot factory](../getting-started/robot-factory.md) - the `Robot()` signature.
+- [Quickstart](../getting-started/quickstart.md) - pick one,
   spawn it.

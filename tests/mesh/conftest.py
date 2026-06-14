@@ -70,7 +70,7 @@ def _restore_real_zenoh_module():
     orderings a real ``zenoh`` reference can still be displaced by a
     ``unittest.mock.MagicMock`` that outlives its intended scope. When that
     happens, :func:`strands_robots.mesh.session._build_config` does a fresh
-    ``import zenoh`` and gets the mock — ``zenoh.Config().get_json(...)``
+    ``import zenoh`` and gets the mock - ``zenoh.Config().get_json(...)``
     then returns a ``MagicMock`` and ``json.loads(...)`` raises
     ``TypeError: the JSON object must be str, bytes or bytearray, not
     MagicMock``.

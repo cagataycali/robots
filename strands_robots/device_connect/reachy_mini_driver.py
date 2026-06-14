@@ -1,4 +1,4 @@
-"""ReachyMiniDriver — Device Connect DeviceDriver for Pollen Reachy Mini robots.
+"""ReachyMiniDriver - Device Connect DeviceDriver for Pollen Reachy Mini robots.
 
 Auto-detects hardware variant via the daemon's ``wireless_version`` flag:
 - **Wireless** (has onboard Pi): uses Zenoh transport for real-time I/O.
@@ -335,7 +335,7 @@ class ReachyMiniDriver(DeviceDriver):
 
     @on(event_name="emergencyStop")
     async def onEmergencyStop(self, device_id: str, event_name: str, payload: dict):
-        """React to emergencyStop — disable motors and stop motion."""
-        logger.warning("Emergency stop received from %s — disabling motors", device_id)
+        """React to emergencyStop - disable motors and stop motion."""
+        logger.warning("Emergency stop received from %s - disabling motors", device_id)
         await self.stopMotion()
         await self.disableMotors()

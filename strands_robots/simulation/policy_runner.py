@@ -62,9 +62,9 @@ def set_eval_seed(seed: int) -> None:
     minus two global side effects that would persist after the eval and
     affect unrelated callers in the same process:
 
-    * ``os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"`` — leaks into
+    * ``os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"`` - leaks into
       every subsequent torch op in the process.
-    * ``torch.use_deterministic_algorithms(True, warn_only=True)`` —
+    * ``torch.use_deterministic_algorithms(True, warn_only=True)`` -
       can break callers downstream that rely on non-deterministic CUDA
       kernels (e.g. some loss functions).
 
@@ -79,10 +79,10 @@ def set_eval_seed(seed: int) -> None:
     * Python ``random.seed``.
     * NumPy ``np.random.seed`` (the legacy global RNG; matches what
       most policies use under the hood).
-    * PyTorch CPU (``torch.manual_seed``) — if torch is importable.
-    * PyTorch CUDA all devices (``torch.cuda.manual_seed_all``) — if
+    * PyTorch CPU (``torch.manual_seed``) - if torch is importable.
+    * PyTorch CUDA all devices (``torch.cuda.manual_seed_all``) - if
       torch is importable AND CUDA is available.
-    * cuDNN ``deterministic=True`` / ``benchmark=False`` — if torch
+    * cuDNN ``deterministic=True`` / ``benchmark=False`` - if torch
       is importable. These are the standard reproducibility knobs and
       are scoped to torch (not the broader environment) so the side
       effect surface is acceptable.
@@ -254,12 +254,12 @@ class PolicyRunner:
         """Physics steps per applied action so a position-servo arm tracks the
         full control period (1/control_frequency), not a single physics dt.
 
-        Identical derivation to :meth:`run` — extracted so the eval paths
+        Identical derivation to :meth:`run` - extracted so the eval paths
         (:meth:`evaluate` / :meth:`_evaluate_with_spec`) step physics for the
         SAME wall-clock period per action. Without this, eval called
         ``send_action`` with the default ``n_substeps=1`` (a single ~2 ms
         ``mj_step``), so the arm integrated ~10% of the way toward each target
-        before the next action overwrote ``ctrl`` — rollouts looked like the
+        before the next action overwrote ``ctrl`` - rollouts looked like the
         policy was a no-op even when commanding valid targets.
         """
         if override is not None:
@@ -394,7 +394,7 @@ class PolicyRunner:
             # each action so the joints actually track the commanded target
             # before the next action overwrites ``ctrl``. With the default
             # 1 substep/action, the arm only integrates one physics dt (~2 ms)
-            # per action and barely moves — the policy looks like a no-op even
+            # per action and barely moves - the policy looks like a no-op even
             # though it is sending valid targets. Derive substeps from the
             # backend's physics timestep; fall back to 1 when unknown.
             if control_substeps is not None:
@@ -682,7 +682,7 @@ class PolicyRunner:
                 expose telemetry hooks). Use this for synchronous
                 recording when the eval runs on a thread distinct from
                 the script main (e.g. Strands ``Agent`` tool dispatch
-                under asyncio) — see #191 and
+                under asyncio) - see #191 and
                 :meth:`~strands_robots.simulation.mujoco.simulation.Simulation.start_cameras_recording_synchronous`.
 
         Returns:
@@ -840,14 +840,14 @@ class PolicyRunner:
         max_steps = spec.max_steps
         results: list[dict[str, Any]] = []
 
-        # #191 — global step counter passed to ``on_frame``. Crosses
+        # #191 - global step counter passed to ``on_frame``. Crosses
         # episode boundaries so consumers that don't track ep ↔ step
         # mappings still get a monotonic index. Callers that need
         # per-episode buckets can read ``info["steps"]`` from the
         # returned per-episode results.
         global_step = 0
 
-        # #187 — fall back to ``spec.instruction`` (default ``""``) when
+        # #187 - fall back to ``spec.instruction`` (default ``""``) when
         # the user didn't pass an explicit instruction. Language-
         # conditioned policies (GR00T, OpenVLA) need the task description
         # or they produce off-task actions; LIBERO/Meta-World/etc. ship
@@ -877,7 +877,7 @@ class PolicyRunner:
             episode_seed = master_rng.randint(0, 2**31 - 1)
             episode_rng = random.Random(episode_seed)
 
-            # #179 — re-seed Python / NumPy / torch / cuDNN at the start
+            # #179 - re-seed Python / NumPy / torch / cuDNN at the start
             # of EACH episode (not just once before the loop). Without
             # the per-episode reseed, every torch op draws from a global
             # RNG state that mutates across episodes, so the diffusion
@@ -892,7 +892,7 @@ class PolicyRunner:
             # (same successes list every run).
             set_eval_seed(episode_seed)
 
-            # #187 — for SERVICE-mode policies (e.g. Gr00tPolicy over
+            # #187 - for SERVICE-mode policies (e.g. Gr00tPolicy over
             # ZMQ), set_eval_seed only seeds the client process. The
             # remote inference server has its own torch/CUDA RNG that
             # drifts across calls. Forward the per-episode seed via
@@ -962,7 +962,7 @@ class PolicyRunner:
                 # #168: consume up to ``action_horizon`` actions
                 # per inference. Default ``action_horizon=8`` matches NVIDIA's
                 # upstream GR00T LIBERO eval (``MultiStepWrapper`` with
-                # ``n_action_steps=8``) — the GR00T-N1.7-LIBERO checkpoints
+                # ``n_action_steps=8``) - the GR00T-N1.7-LIBERO checkpoints
                 # were trained against an 8-step open-loop chunk replay.
                 # The earlier ``=1`` default (closed-loop OpenVLA
                 # convention) put eval out-of-distribution from training
@@ -982,7 +982,7 @@ class PolicyRunner:
                             break
                         action_applied = dict(action_in_chunk)
                         self.sim.send_action(action_applied, robot_name=robot_name, n_substeps=n_substeps)
-                        # #191 — synchronous on_frame hook fires on the
+                        # #191 - synchronous on_frame hook fires on the
                         # eval thread, after send_action + before
                         # on_step's reward bookkeeping. Use this for
                         # synchronous frame recording when the eval is

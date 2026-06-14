@@ -1,4 +1,4 @@
-// strands-robots mesh ACL — operator template (role-scoped subscribe).
+// strands-robots mesh ACL - operator template (role-scoped subscribe).
 //
 // Drop this at $STRANDS_MESH_ACL_FILE and edit the ENUMERATED CNs
 // below to match the cert Common Names of every robot and operator
@@ -10,14 +10,14 @@
 // ROLE rather than handing every authenticated peer a blanket
 // `declare_subscriber` on `**`:
 //
-//   * robot_peer  — may subscribe only to operationally low-impact,
+//   * robot_peer  - may subscribe only to operationally low-impact,
 //                   fleet-shared topic CLASSES (presence, broadcast,
 //                   safety) plus its OWN command/response. It cannot
 //                   declare a subscriber on another robot's cmd / state
 //                   / camera / input topics. This mirrors the IoT
 //                   transport's per-Thing subscribe isolation
 //                   (provision.py AllowOwnSubscriptions / AllowReceiveScoped).
-//   * operator_peer — retains broad observe privilege (`**`), because
+//   * operator_peer - retains broad observe privilege (`**`), because
 //                   operators legitimately monitor the whole fleet. This
 //                   is an INTENTIONAL operator-role grant, called out
 //                   explicitly below so it is never mistaken for a robot
@@ -31,7 +31,7 @@
 // the topic shape (there is no `${cn}` substitution like IoT's
 // `${iot:Connection.Thing.ThingName}`). For STRICT per-peer isolation
 // equivalent to the IoT policy, enumerate one rule + one subject per
-// robot CN — see examples/mesh_acl_strict_per_peer.json5. When in doubt,
+// robot CN - see examples/mesh_acl_strict_per_peer.json5. When in doubt,
 // prefer the IoT transport for fleets that require hard cross-peer
 // subscribe denial.
 //
@@ -41,7 +41,7 @@
 //  1. `enabled: true` is required. Without it the entire access_control
 //     block is a silent no-op.
 //
-//  2. `cert_common_names` matches LITERAL CNs only — `"robot-*"` and
+//  2. `cert_common_names` matches LITERAL CNs only - `"robot-*"` and
 //     `"robot-.*"` both match nothing. Enumerate every peer by exact
 //     CN below; there is no glob fallback.
 //
@@ -98,7 +98,7 @@
       // Robot subscribe is intentionally NARROW: only fleet-shared,
       // low-impact topic classes plus the robot's own cmd/response.
       // It deliberately does NOT include `**`, `**/state/**`,
-      // `**/camera/**`, or another peer's `**/cmd` — a robot has no
+      // `**/camera/**`, or another peer's `**/cmd` - a robot has no
       // operational need to observe another robot's control or sensor
       // streams. Operators that need the robot to read a specific peer
       // should route through `tell`/`send` RPC, not a raw subscribe.
@@ -117,7 +117,7 @@
     {
       // INTENTIONAL operator-role privilege: operators monitor the whole
       // fleet, so they keep a broad subscribe. Scoped to the
-      // operator_peer subject only (see policies below) — robots never
+      // operator_peer subject only (see policies below) - robots never
       // reference this rule.
       id: "operator_subscribe_all",
       messages: ["declare_subscriber"],

@@ -122,7 +122,7 @@ class TestBuildInferenceCommand:
     def test_shared_required_flags_present_on_all_protocols(self):
         for protocol in ("n1.5", "n1.6", "n1.7"):
             cmd = _build_inference_command(**_common_kwargs(protocol=protocol))
-            # ``--server`` is N1.5/N1.6-only — see test_n17_module_entrypoint
+            # ``--server`` is N1.5/N1.6-only - see test_n17_module_entrypoint
             # for the regression detail.
             if protocol in ("n1.5", "n1.6"):
                 assert "--server" in cmd, protocol
