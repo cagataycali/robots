@@ -68,6 +68,23 @@ def bridge(panda_model):
     return MinkIKBridge(panda_model, ee_frame_name="hand", ee_frame_type="body")
 
 
+def test_default_solver_is_installed_with_the_extra(bridge):
+    """Regression: MinkIKBridge's default solver must ship with cosmos3-sim.
+
+    ``mink`` declares ``qpsolvers[daqp]`` as its dependency, so ``daqp`` is the
+    only QP backend guaranteed by ``pip install strands-robots[cosmos3-sim]``.
+    A default of ``"quadprog"`` (not pulled by the extra) made every IK solve
+    raise ``qpsolvers.SolverNotFound`` on a clean install. Pin the default to a
+    solver the extra actually provides.
+    """
+    import qpsolvers
+
+    assert bridge.solver in qpsolvers.available_solvers, (
+        f"MinkIKBridge default solver {bridge.solver!r} is not installed by the "
+        f"cosmos3-sim extra (available: {qpsolvers.available_solvers})"
+    )
+
+
 def test_ee_pose_is_homogeneous_and_stable(bridge, q_init):
     pose = bridge.ee_pose(q_init)
     assert pose.shape == (4, 4)

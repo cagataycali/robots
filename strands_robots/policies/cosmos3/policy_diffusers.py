@@ -63,7 +63,8 @@ _DEFAULT_MODEL = "nvidia/Cosmos3-Nano"
 class _PipelineCallable(Protocol):
     """Minimal structural type for the injectable Cosmos3OmniPipeline."""
 
-    def __call__(self, **kwargs: Any) -> Any: ...
+    def __call__(self, **kwargs: Any) -> Any:
+        """Run one forward pass; returns a Cosmos3OmniPipelineOutput-like object."""
 
 
 def _install_hint() -> str:

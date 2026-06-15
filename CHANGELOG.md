@@ -67,8 +67,10 @@ conditioning, not kinematics):
   SE3 trajectory anchored at the robot's current EE pose.
 - **Inverse kinematics** (`sim_ik.MinkIKBridge`) - solves each Cartesian target
   to joint angles via `mink` differential IK on the same `mujoco.MjModel`
-  (`FrameTask` + `PostureTask`, warm-started). `decode_cosmos_chunk_to_targets`
-  composes all three into `{qpos, gripper, poses, tracking_error}`.
+  (`FrameTask` + `PostureTask`, warm-started). Defaults to the `daqp` QP solver
+  that `mink` ships via `qpsolvers[daqp]`, so the `cosmos3-sim` extra needs no
+  extra solver dependency. `decode_cosmos_chunk_to_targets` composes all three
+  into `{qpos, gripper, poses, tracking_error}`.
 - Verified on Thor against real `nvidia/Cosmos3-Nano` weights: a reachable EE
   trajectory tracks to **mean ~= 11.5 mm / max ~= 42.8 mm**, pinned by the
   `tests/policies/cosmos3/test_sim_ik.py` regression (off-GPU, synthetic-but-

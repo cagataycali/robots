@@ -62,7 +62,9 @@ class MinkIKBridge:
             near the current configuration so it stays smooth and avoids
             flipping between IK branches.
         solver: ``qpsolvers`` backend name passed to ``mink.solve_ik``
-            (``"quadprog"`` is a good dependency-light default).
+            (defaults to ``"daqp"``, the solver ``mink`` pins via
+            ``qpsolvers[daqp]`` - guaranteed present with the
+            ``cosmos3-sim`` extra; no extra dependency needed).
         damping: Levenberg-Marquardt damping for ``solve_ik``.
         max_iters: Max differential-IK iterations per target pose.
         dt: Integration timestep for each IK iteration (s).
@@ -83,7 +85,7 @@ class MinkIKBridge:
         position_cost: float = 1.0,
         orientation_cost: float = 1.0,
         posture_cost: float = 1e-2,
-        solver: str = "quadprog",
+        solver: str = "daqp",
         damping: float = 1e-3,
         max_iters: int = 20,
         dt: float = 1e-2,
