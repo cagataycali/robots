@@ -1,0 +1,19 @@
+{
+  "source": "REAL nvidia/Cosmos3-Nano action chunk",
+  "raw_action_shape": [
+    32,
+    10
+  ],
+  "raw_min": -0.2305,
+  "raw_max": 1.0391,
+  "qpos_shape": [
+    32,
+    9
+  ],
+  "ee_travel_m": 0.0626,
+  "tracking_error_mm": {
+    "mean_mm": 0.052,
+    "max_mm": 0.217
+  },
+  "joint_targets_within_limits_pct": 100.0
+}

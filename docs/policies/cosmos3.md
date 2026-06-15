@@ -198,6 +198,10 @@ concern, not an IK one.)
 > kinematics solve. Joint-space IK is this separate geometric layer applied
 > *after* Cosmos.
 
+![Cosmos 3 -> MuJoCo: Franka tracking the Cosmos action (left) beside the Cosmos predicted world (right)](../assets/cosmos3/cosmos3_mujoco_sidebyside.gif)
+
+*Left: MuJoCo Franka driven by a **real** `nvidia/Cosmos3-Nano` action chunk through de-normalize → decode → IK. Right: the Cosmos predicted world video from the same forward pass. Runnable: `examples/cosmos3_diffusers_mujoco_rollout.py --render out.mp4`.*
+
 > Install the sim bridge: `uv pip install "strands-robots[cosmos3-sim]"`
 > (pulls `mink` + `mujoco`; numpy>=2 compatible, co-installable with
 > `cosmos3-diffusers` / `cosmos3-service` / `sim-mujoco` / `lerobot`).
