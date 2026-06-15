@@ -46,6 +46,7 @@ nav:
   - Overview: examples/overview.md
 - Architecture: architecture.md
 - API Reference: api-reference.md
+- Security: security.md
 - Contributing: contributing.md
 - Troubleshooting: troubleshooting.md
 theme:

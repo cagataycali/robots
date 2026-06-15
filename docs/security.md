@@ -1,0 +1,127 @@
+---
+description: Security considerations for deploying Strands Robots past a trusted lab - prompt injection, mesh authentication, operator approval, remote-code policies, inference containers, hardware access, secrets, and telemetry exposure.
+---
+
+# Security considerations
+
+Strands Robots actuates machines in physical space, pulls models and datasets from the network, runs containers, and coordinates fleets. Before you move any configuration past a trusted lab and toward production, work through the considerations below.
+
+1. [Prompt injection](#prompt-injection)
+2. [Robot mesh authentication](#robot-mesh-authentication)
+3. [Operator approval for fleet-wide actions](#operator-approval-for-fleet-wide-actions)
+4. [HuggingFace policy code execution](#huggingface-policy-code-execution-trust_remote_code)
+5. [GR00T inference containers](#gr00t-inference-containers)
+6. [Hardware and serial access](#hardware-and-serial-access)
+7. [Credentials and secrets](#credentials-and-secrets)
+8. [Telemetry exposure to the agent context](#telemetry-exposure-to-the-agent-context)
+
+!!! danger "Do not report vulnerabilities here"
+    Do not open a public GitHub issue for security concerns. Report via the AWS Vulnerability Disclosure Program on [HackerOne](https://hackerone.com/aws_vdp) or email [aws-security@amazon.com](mailto:aws-security@amazon.com). See [SECURITY.md](https://github.com/strands-labs/robots/blob/main/SECURITY.md).
+
+## Prompt injection
+
+Supplying untrusted data into agents can lead to prompt injection, where untrustworthy context is treated as LLM instructions. Given the actuation of these robots in physical space, this is an important risk to track. To mitigate this behavior, developers should be careful to feed the robots only data that comes from a trusted source. If not all input data can be trusted, developers should restrict the tools available to the agent to prevent the robots from making safety-critical actions.
+
+In practice, untrusted content can reach the agent through more than the operator's prompt: task instructions broadcast over the mesh, camera/observation text surfaced back into context, dataset metadata, and model/checkpoint descriptions pulled from the Hub are all potential injection vectors. Treat every one of these as untrusted input.
+
+Defense-in-depth controls the SDK already provides, and which you should rely on rather than disable:
+
+- **Tool scoping.** The single most effective mitigation is to give the agent only the tools a task actually needs. An agent that never receives the `robot_mesh`, `serial_tool`, or `Robot(mode="real")` tools cannot be coerced into a fleet broadcast, a raw serial write, or a physical actuation no matter what the injected text says.
+- **Out-of-band human approval for physical actuation** (see [Operator approval](#operator-approval-for-fleet-wide-actions)) - the approval is delivered outside the LLM's tool-argument flow, so an injected prompt that tries to set an "approved" flag in the command body cannot bypass the gate.
+- **Payload validation** of every mesh command, so an injected instruction still cannot smuggle an out-of-bounds duration, an attacker-controlled inference host, or an arbitrary model path.
+
+## Robot mesh authentication
+
+Every `Robot()` and `Simulation()` automatically joins a Zenoh peer mesh, and the `robot_mesh` tool lets an agent enumerate, command, and broadcast to every peer on it. The security of that mesh is governed by `STRANDS_MESH_AUTH_MODE`.
+
+### Development posture (insecure)
+
+The example scripts run the mesh without authentication or access controls so they work out of the box. Any device on the same network can then send commands to the robot fleet. This is acceptable for trusted, isolated development environments, but is not suitable for untrusted networks or production.
+
+The development posture is selected one of two ways:
+
+- `STRANDS_MESH_LOCAL_DEV=1` - the developer preset. It defaults the auth mode to `none` and satisfies the insecure-acknowledgment second factor by itself.
+- `STRANDS_MESH_AUTH_MODE=none` together with `STRANDS_MESH_I_KNOW_THIS_IS_INSECURE=1` - the explicit form. `none` on its own is rejected; the second factor is required so you cannot disable wire security by setting a single variable.
+
+!!! warning "Wire security off is a loud signal"
+    When wire security is off, the SDK logs a loud error on every session open (`WIRE SECURITY DISABLED - STRANDS_MESH_AUTH_MODE=none`). Treat that line as a signal that the process must never be on a shared or hostile network.
+
+### Production posture (required off trusted networks)
+
+For untrusted networks or production fleets, `STRANDS_MESH_AUTH_MODE=mtls` is required (and is the default when neither dev flag is set). mTLS authenticates peers at the transport layer (`transport/link/tls`) before any command is dispatched.
+
+mTLS alone is not sufficient - pair it with an access-control list:
+
+- The built-in default ACL is permissive: any CA-signed peer may publish and subscribe on any key. If you forget to supply an ACL, the SDK warns on every session open.
+- Supply an operator ACL via `STRANDS_MESH_ACL_FILE` that enumerates each peer's certificate CN and the key expressions it may use. See [`examples/mesh_acl_example.json5`](https://github.com/strands-labs/robots/blob/main/examples/mesh_acl_example.json5) and [`examples/mesh_acl_strict_per_peer.json5`](https://github.com/strands-labs/robots/blob/main/examples/mesh_acl_strict_per_peer.json5).
+- `STRANDS_MESH_ACCEPT_PERMISSIVE_ACL=1` exists only to silence the permissive-ACL warning when you have deliberately accepted it (e.g. a closed lab). Do not set it in production - it does not make the mesh safer, it only quiets the reminder that it is not.
+
+### Cross-network fleets (AWS IoT Core)
+
+Adding the `[mesh-iot]` extra routes traffic through AWS IoT Core (MQTT5 with mTLS), and a `BridgeTransport` keeps high-rate topics local while bridging presence, health, and safety to the cloud. When you use this path, the IoT device certificates and provisioning material become production secrets - provision them per-device, scope their IoT policies to the minimum topic set, and rotate/revoke them like any other fleet credential.
+
+Reference: `strands_robots.mesh.session`, `strands_robots.mesh._acl_config`, `strands_robots.mesh.transport.iot_transport`.
+
+## Operator approval for fleet-wide actions
+
+The `broadcast` and `emergency_stop` actions on the `robot_mesh` tool affect every peer on the network. To prevent an agent from issuing fleet-wide commands autonomously (or under prompt injection), both actions are gated behind a human-in-the-loop interrupt. When the agent invokes either action, the Strands runtime pauses the agent loop and asks the operator to approve out-of-band of the LLM's tool arguments. Per-action rate limits, command validation, and an audit trail run alongside the interrupt. Outside an agent loop (a bare script or unit test), both actions fail closed.
+
+What this looks like in practice, and how to configure it:
+
+- **The default gate is broader than just fleet-wide actions.** Out of the box, every physical-actuation action is gated: `emergency_stop`, `broadcast`, `tell`, `send`, and `stop`. A prompt-injected agent therefore cannot drive any physical command - single-peer or fleet-wide - without an explicit operator approval.
+- **Approval is an explicit affirmative.** Only `y` / `yes` / `approve` / `approved` count as approval; anything else (including an empty response) is treated as a decline.
+- **`STRANDS_MESH_HITL_ACTIONS` tunes the gate.** You can widen it to `all` (also gates the read-only `subscribe` / `watch` telemetry actions), narrow it to a comma-separated subset, or set it to `none`. Setting `none` re-opens the entire physical-actuation surface to the LLM without confirmation - the SDK logs a one-time warning when this is in effect. Do not use `none` outside a fully trusted, non-networked test.
+- **Rate limits bound LLM-driven nuisance** independently of approval: `emergency_stop` is capped at 3/min, `broadcast` at 10/min, `tell`/`send` at 30/min. A declined approval does not consume a slot, so an operator declining nuisance prompts can never lock themselves out of issuing a genuine emergency stop.
+- **Audit trail.** Every `tell` / `send` / `broadcast` / `stop` / `emergency_stop` - and every approval, decline, validation rejection, and rate-limit rejection - is written to the safety audit log. Make sure your deployment actually captures and retains that log; it is your forensic record of what the fleet was told to do.
+
+Reference: `strands_robots.tools.robot_mesh`.
+
+## HuggingFace policy code execution (`trust_remote_code`)
+
+Some policy providers load models from the HuggingFace Hub with `trust_remote_code=True`. That flag instructs the HuggingFace libraries to download and execute Python code from the model repository on your machine, with the privileges of the process running the agent. A malicious or compromised model repository can therefore achieve arbitrary code execution - read your credentials, open a reverse shell, or command your robot directly - simply by being loaded.
+
+Because this is code execution, not just data loading, Strands Robots forces an explicit, deliberate opt-in before any such provider will load:
+
+- The provider `lerobot_local` (`LerobotLocalPolicy`) is on the remote-code list. Any provider that loads models with `trust_remote_code=True` must be listed in `_HF_REMOTE_CODE_PROVIDERS` so the opt-in is enforced.
+- Loading is blocked by default. Attempting to create a gated provider without opting in raises `UntrustedRemoteCodeError` with an explanation, rather than silently executing remote code.
+- To opt in, set `STRANDS_TRUST_REMOTE_CODE=1` (`1` / `true` / `yes` are accepted). The example CLI enforces the same gate before it will run `--policy lerobot_local`.
+
+Operator guidance:
+
+- Only set `STRANDS_TRUST_REMOTE_CODE=1` when you are loading checkpoints from organizations you trust - ideally your own org, or a small allowlist of vendors you have vetted (e.g. `lerobot/`, `nvidia/`). The opt-in is a per-process, whole-environment switch: once set, it trusts every model the process loads for the life of that process, not just the one you had in mind. Scope it tightly (set it on the specific command, not globally in a shell profile) and pin checkpoints to a known revision where the loader supports it.
+- Prefer providers that do not require remote code where you can. The default Mock policy, the GR00T container path, and many LeRobot policy families do not need this flag. Reach for `lerobot_local` with `trust_remote_code` only when a specific model genuinely requires it.
+- A mesh peer can request a model load too. When the mesh forwards a `pretrained_name_or_path` in an `execute`/`start` command, it is additionally constrained to an org allowlist (`STRANDS_MESH_HF_REPO_ALLOW`, default `nvidia,huggingface,lerobot`) so an authenticated peer cannot steer a robot into loading an arbitrary repo. Keep that allowlist as narrow as your fleet allows, and remember it is independent of the per-process `STRANDS_TRUST_REMOTE_CODE` opt-in - both gates apply.
+
+Reference: `strands_robots.policies.factory` (`_check_trust_remote_code`, `UntrustedRemoteCodeError`).
+
+## GR00T inference containers
+
+The `gr00t_inference` tool pulls a Docker image, downloads a checkpoint, and starts a container. The agent-facing surface is intentionally constrained, and you should keep it that way:
+
+- The agent cannot choose the image, bind-mount host paths, or inject a container command - those are operator-config-driven only. The image is resolved from `STRANDS_GR00T_IMAGE` and checked against an allowlist (`STRANDS_GR00T_IMAGE_ALLOW`), and a guard blocks dangerous bind mounts (`/`, `/etc`, the Docker socket, `/proc`, `/sys`, credential dirs, ...) that would amount to host takeover.
+- Keep `STRANDS_GR00T_IMAGE_ALLOW` and `STRANDS_GR00T_REPO_URL_ALLOW` narrow and exact; the SDK matches repo URLs exactly (no wildcard) specifically so a look-alike repo (`...Isaac-GR00T-evil`) cannot slip past.
+- Running the container still grants it a GPU and network. Run inference hosts with least privilege, on isolated networks where practical, and tear containers down when done (`gr00t_inference(action="stop", ...)` or `lifecycle="teardown"`).
+
+Reference: `strands_robots.tools.gr00t_inference`.
+
+## Hardware and serial access
+
+`Robot(mode="real")` and the `serial_tool` give the agent direct control of physical actuators over serial/USB devices. Three implications:
+
+- **Physical safety is in scope.** A wrong or malicious command moves a real arm. Maintain a physical e-stop, keep humans clear of the workspace during autonomous runs, and prefer validating any new task in simulation (the safe default) before switching the one keyword to `mode="real"`.
+- **Calibration files** under `~/.cache/huggingface/lerobot/calibration/` define how joint commands map to the physical device. Protect them as integrity-sensitive configuration - corrupted or swapped calibration can produce unexpected motion.
+- **The `serial_tool` is broad.** It can enumerate and write to any serial port the process can see, not just the intended robot. Scope it out of agents that do not need raw device access (see [Tool scoping](#prompt-injection)).
+
+## Credentials and secrets
+
+The product touches several classes of secret. Handle each per least-privilege:
+
+- `HF_TOKEN` is only needed to push datasets or pull gated checkpoints, and should be scoped to write only when you actually push. The default sim/Mock path needs no token at all - do not export one where it is not required.
+- AWS credentials drive the Bedrock model provider; scope them to the specific Bedrock model/region in use.
+- mTLS certificates and AWS IoT provisioning material (production mesh) are fleet-wide secrets - provision per device, store securely, and rotate/revoke on decommission.
+
+Avoid baking any of these into images, example scripts, or notebooks.
+
+## Telemetry exposure to the agent context
+
+The `subscribe` / `watch` actions can pull mesh telemetry into the LLM context. By default they are restricted to a narrow set of low-impact, fleet-shared topics (presence, health, safety); subscribing to another peer's command, state, camera, or input streams is blocked, with the transport ACL as the primary control and the tool-layer allowlist as defense in depth. If you extend `STRANDS_MESH_SUBSCRIBE_ALLOW`, avoid wildcard patterns that would let the agent observe (and exfiltrate into its context) another peer's control or sensor streams.
