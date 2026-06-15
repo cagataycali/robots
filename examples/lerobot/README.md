@@ -4,7 +4,7 @@ Runnable companion to *From Hugging Face Hub to robot hardware with Strands Agen
 
 |File                                              |What it is                                                       |
 |--------------------------------------------------|-----------------------------------------------------------------|
-|[`hub_to_hardware.py`](./hub_to_hardware.py)      |CLI script with argparse flags. The runnable artefact.           |
+|[`hub_to_hardware.py`](./hub_to_hardware.py)      |Agent-first script: a system prompt, a `Robot` tool, a few prompts.|
 |[`hub_to_hardware.ipynb`](./hub_to_hardware.ipynb)|Notebook walkthrough with the same workflow, cell by cell.       |
 |`README.md` (this file)                           |Quick start, configuration, troubleshooting, production patterns.|
 
@@ -222,7 +222,7 @@ A prior run's dataset cache is on disk. Pass `--clean-cache` to wipe it, or pass
 The `Svt[info]:` lines come from the video codec inside LeRobot's `dataset_recorder` and aren't a Python logger we can silence cleanly. They're harmless: one block per camera per encoder init.
 
 **Agent's narration claims things that don't match the tool calls**  
-LLMs sometimes confabulate in narration. The dataset on disk is the ground truth: load it through `LeRobotDataset(...)` to check episode and frame counts.
+LLMs sometimes confabulate in narration. The dataset on disk is the ground truth: load it through `LeRobotDataset(...)` to check episode and frame counts. Strands logs each tool call and its result, so the actual tool sequence the agent ran is in the console output.
 
 ## What's next
 
