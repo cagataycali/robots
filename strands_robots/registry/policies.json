@@ -81,7 +81,10 @@
                 "action_mapping",
                 "robot",
                 "prompt",
-                "api_key"
+                "api_key",
+                "backend",
+                "mode",
+                "model"
             ],
             "defaults": {
                 "host": "localhost",

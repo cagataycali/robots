@@ -38,6 +38,9 @@ Cosmos3Policy(
     api_key=None,
     client=None,
     transport="raw",
+    backend="service",          # "service" (default) | "diffusers" (in-process)
+    mode="policy",              # "policy" | "forward_dynamics" | "inverse_dynamics" (diffusers only)
+    model=None,                 # HF repo id / path for the diffusers backend
 )
 ```
 
@@ -49,6 +52,77 @@ Cosmos3Policy(
 | `umi` | UMI gripper | - |
 | `av` | Autonomous vehicle cameras | - |
 | `bridge` | Bridge dataset robots | - |
+
+## Backends
+
+Cosmos3Policy can run Cosmos 3 two ways. The default is unchanged.
+
+| backend | how it runs | install | extra outputs |
+|---------|-------------|---------|---------------|
+| `service` (default) | WebSocket to the Cosmos Framework RoboLab policy server (holds the GPU out-of-process) | `strands-robots[cosmos3-service]` (msgpack + websockets, numpy-agnostic) | none (server video discarded) |
+| `diffusers` | in-process via `strands-diffusers` (`Cosmos3OmniPipeline`) | `strands-robots[cosmos3-diffusers]` + diffusers-from-source | world video + sound on `last_rollout` |
+
+```bash
+# in-process backend (heavy GPU stack: diffusers + torch)
+uv pip install "strands-robots[cosmos3-diffusers]" \
+    'diffusers @ git+https://github.com/huggingface/diffusers'
+```
+
+The `cosmos3-diffusers` extra composes with `numpy>=2` (and therefore with
+`lerobot` dataset recording in the same env), so it is co-installable with
+`cosmos3-service`.
+
+### `backend="diffusers"` — world video alongside the action chunk
+
+One in-process forward pass returns the predicted world video, optional sound,
+**and** the robot action chunk. The action chunk is returned through the normal
+`get_actions` -> `list[dict]` contract; the world video/sound are surfaced on
+`policy.last_rollout` (the Policy ABC return type is unchanged).
+
+```python
+from strands_robots.policies import create_policy
+
+policy = create_policy(
+    "cosmos3",
+    embodiment="droid",
+    backend="diffusers",
+    robot="panda",
+    model="nvidia/Cosmos3-Nano",  # HF repo id or local path
+)
+policy.set_robot_state_keys([f"joint_{i}" for i in range(7)] + ["gripper"])
+
+steps = policy.get_actions_sync(observation, "pick up the red cube")
+# steps == [{"joint1": .., ..., "finger_joint1": ..}, ...]  (one per timestep)
+
+# the predicted world video Cosmos rolled out for that action chunk:
+print(policy.last_rollout["video"])   # path to an .mp4 / .gif
+print(policy.last_rollout["sound"])   # path to a .wav, or None
+```
+
+### Action modes (diffusers only)
+
+The diffusers backend exposes Cosmos 3's full physics loop via the `mode` kwarg
+(`CosmosActionCondition.mode`). These do **not** exist in service mode — passing
+a non-`policy` mode under `backend="service"` raises a clear error.
+
+| `mode` | conditioning | predicts | `get_actions` returns |
+|--------|--------------|----------|------------------------|
+| `policy` (default) | first frame + task prompt | future video **+ actions** | action chunk (`list[dict]`) |
+| `forward_dynamics` | first frame + given `raw_actions` | future video | `[]` (world video on `last_rollout`) |
+| `inverse_dynamics` | an observed video | the actions between frames | action chunk (`list[dict]`) |
+
+```python
+# forward dynamics: "what world results if I run these actions?"
+fd = create_policy("cosmos3", embodiment="droid", backend="diffusers", mode="forward_dynamics")
+fd.set_robot_state_keys([f"joint_{i}" for i in range(7)] + ["gripper"])
+fd.get_actions_sync(observation, "", raw_actions=my_action_chunk)
+print(fd.last_rollout["video"])   # predicted world rollout
+
+# inverse dynamics: "what actions produced this observed video?"
+inv = create_policy("cosmos3", embodiment="droid", backend="diffusers", mode="inverse_dynamics")
+inv.set_robot_state_keys([f"joint_{i}" for i in range(7)] + ["gripper"])
+steps = inv.get_actions_sync(observation, "", video="observed.mp4")
+```
 
 ## Rollout
 

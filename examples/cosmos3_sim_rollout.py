@@ -97,6 +97,25 @@ def main() -> int:
         observation_mapping=obs_mapping,
     )
 
+    # --- backend="diffusers" variant (in-process, no policy server) ---------
+    # Instead of the WebSocket service above, Cosmos 3 can run in-process via
+    # strands-diffusers (one forward pass returns the world video + sound +
+    # action chunk). The action chunk drives the arm exactly as the service
+    # path does; the predicted world video is surfaced on policy.last_rollout
+    # after each get_actions call. Install:
+    #   uv pip install "strands-robots[cosmos3-diffusers]" \
+    #       'diffusers @ git+https://github.com/huggingface/diffusers'
+    #
+    # policy = Cosmos3Policy(
+    #     embodiment="droid",
+    #     backend="diffusers",
+    #     model="nvidia/Cosmos3-Nano",   # HF repo id or local path
+    #     robot=args.robot,
+    #     observation_mapping=obs_mapping,
+    # )
+    # ... after sim.run_policy(...):  world_mp4 = policy.last_rollout["video"]
+    # ------------------------------------------------------------------------
+
     video = None
     if args.record:
         video = {"path": args.record, "camera": "front", "fps": int(args.control_frequency)}

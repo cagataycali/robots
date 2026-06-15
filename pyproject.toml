@@ -57,6 +57,23 @@ cosmos3-service = [
     "msgpack>=1.0.0,<2.0.0",
     "websockets>=12.0",
 ]
+# In-process Cosmos 3 backend (Cosmos3Policy(backend="diffusers")). Loads the
+# Cosmos3OmniPipeline directly via strands-diffusers + diffusers (no RoboLab
+# policy server, no GPU isolation) - one forward pass returns the predicted
+# world video + sound + action chunk. This is a HEAVY GPU stack (diffusers +
+# torch); the default backend stays "service", so a plain
+# `pip install strands-robots[cosmos3-service]` (msgpack + websockets only) is
+# unaffected. strands-diffusers + its diffusers pin compose with numpy>=2, so
+# this extra is co-installable with cosmos3-service and lerobot.
+#
+# Cosmos3OmniPipeline ships only in diffusers-from-source (>0.38); install the
+# git pin alongside this extra:
+#   uv pip install strands-robots[cosmos3-diffusers] \
+#       'diffusers @ git+https://github.com/huggingface/diffusers'
+cosmos3-diffusers = [
+    "strands-diffusers>=0.1.0",
+    "diffusers>=0.30",
+]
 # MoveIt2 sidecar client (ROS 2 / moveit_py runs out-of-process; the
 # client is a lightweight ZMQ + msgpack peer so users without ROS 2
 # sourced are unaffected). See policies/moveit2/server/ for the
@@ -283,7 +300,7 @@ ignore_missing_imports = false
 
 # Third-party libs without type stubs
 [[tool.mypy.overrides]]
-module = ["lerobot.*", "gr00t.*", "draccus.*", "msgpack.*", "websockets", "websockets.*", "zmq.*", "huggingface_hub.*", "serial.*", "psutil.*", "torch.*", "torchvision.*", "transformers.*", "einops.*", "robot_descriptions.*", "mujoco.*", "imageio.*", "libero.*", "zenoh.*", "boto3", "boto3.*", "awscrt", "awscrt.*", "awsiot", "awsiot.*", "botocore.*", "strands_robots.policies.cosmos3._msgpack_numpy", "openpi_client", "openpi_client.*", "openpi_server", "openpi_server.*", "openpi", "openpi.*", "device_connect_edge", "device_connect_edge.*", "device_connect_agent_tools", "device_connect_agent_tools.*", "rclpy", "rclpy.*", "moveit", "moveit.*", "moveit_configs_utils", "moveit_configs_utils.*", "geometry_msgs", "geometry_msgs.*"]
+module = ["lerobot.*", "gr00t.*", "draccus.*", "msgpack.*", "websockets", "websockets.*", "zmq.*", "huggingface_hub.*", "serial.*", "psutil.*", "torch.*", "torchvision.*", "transformers.*", "einops.*", "robot_descriptions.*", "mujoco.*", "imageio.*", "libero.*", "zenoh.*", "boto3", "boto3.*", "awscrt", "awscrt.*", "awsiot", "awsiot.*", "botocore.*", "strands_robots.policies.cosmos3._msgpack_numpy", "strands_diffusers", "strands_diffusers.*", "openpi_client", "openpi_client.*", "openpi_server", "openpi_server.*", "openpi", "openpi.*", "device_connect_edge", "device_connect_edge.*", "device_connect_agent_tools", "device_connect_agent_tools.*", "rclpy", "rclpy.*", "moveit", "moveit.*", "moveit_configs_utils", "moveit_configs_utils.*", "geometry_msgs", "geometry_msgs.*"]
 ignore_missing_imports = true
 
 # Device Connect drivers - thin wrappers over the untyped device_connect_edge

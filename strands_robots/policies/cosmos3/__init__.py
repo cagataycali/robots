@@ -50,9 +50,11 @@ from .embodiments import (
     list_robot_action_mappings,
 )
 from .policy import Cosmos3Policy
+from .policy_diffusers import Cosmos3DiffusersBackend
 
 __all__ = [
     "Cosmos3Policy",
+    "Cosmos3DiffusersBackend",
     "Cosmos3WebsocketClient",
     "Cosmos3Embodiment",
     "EMBODIMENTS",

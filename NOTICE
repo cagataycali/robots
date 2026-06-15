@@ -16,3 +16,22 @@ Licensed under the BSD License.
 You may obtain a copy of the Apache License at:
     http://www.apache.org/licenses/LICENSE-2.0
 --------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+Optional in-process Cosmos 3 backend (strands_robots/policies/cosmos3/policy_diffusers.py)
+
+The optional Cosmos3Policy(backend="diffusers") path loads NVIDIA Cosmos 3
+world-foundation models in-process via:
+
+  * strands-diffusers (https://github.com/cagataycali/strands-diffusers)
+    Apache License, Version 2.0.
+  * Hugging Face diffusers (https://github.com/huggingface/diffusers)
+    Apache License, Version 2.0.
+
+NVIDIA Cosmos models (e.g. nvidia/Cosmos3-Nano) are distributed by NVIDIA under
+their respective model licenses; consult the model card for terms. These are
+optional runtime dependencies and are not redistributed with this package.
+
+You may obtain a copy of the Apache License at:
+    http://www.apache.org/licenses/LICENSE-2.0
+--------------------------------------------------------------------------------
