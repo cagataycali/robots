@@ -89,6 +89,10 @@ cosmos3-diffusers = [
 cosmos3-sim = [
     "mink>=0.0.4",
     "mujoco>=3.2.0,<4.0.0",
+    # qpsolvers QP backend for mink.solve_ik. quadprog is the dependency-light
+    # default that is always available; the bridge auto-selects whatever
+    # qpsolvers reports (preferring daqp when present).
+    "qpsolvers[quadprog]>=4.0.0",
 ]
 # MoveIt2 sidecar client (ROS 2 / moveit_py runs out-of-process; the
 # client is a lightweight ZMQ + msgpack peer so users without ROS 2
@@ -220,6 +224,7 @@ dependencies = [
     # `features=all`, so pull it into the dev env explicitly. mujoco comes from
     # sim-mujoco (already in `all`).
     "mink>=0.0.4",
+    "qpsolvers[quadprog]>=4.0.0",
     # torchvision 0.26 (from the aarch64 torch>=2.11 override below) removed
     # torchvision.io.VideoReader, which lerobot 0.5.1's pyav fallback still calls,
     # crashing dataset video read-back. lerobot's torchcodec dep marker EXCLUDES

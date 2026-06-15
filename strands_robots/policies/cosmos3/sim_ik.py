@@ -47,6 +47,45 @@ def _install_hint() -> str:
     )
 
 
+_PREFERRED_QP_SOLVERS = ("daqp", "quadprog", "osqp", "proxqp", "cvxopt", "scs")
+
+
+def _resolve_qp_solver(requested: str | None) -> str:
+    """Pick an installed ``qpsolvers`` backend for ``mink.solve_ik``.
+
+    ``mink`` defaults to (and pins) ``daqp``, but environments commonly ship
+    only ``quadprog``. Auto-selecting from ``qpsolvers.available_solvers``
+    (preferring daqp, then quadprog) keeps the IK bridge working everywhere
+    without forcing an extra QP dependency. An explicit ``requested`` name is
+    honoured when installed; if it is not, we fail with an actionable error that
+    lists what *is* available (AGENTS.md #6 - no silent fallback to a solver the
+    caller did not ask for, but also no opaque KeyError deep in qpsolvers).
+    """
+    try:
+        from qpsolvers import available_solvers
+    except ImportError as e:
+        raise ImportError(_install_hint()) from e
+    available = list(available_solvers)
+    if not available:
+        raise RuntimeError(
+            "No qpsolvers backend is installed; the Cosmos 3 IK bridge needs one "
+            "(e.g. 'daqp' or 'quadprog'). Install the cosmos3-sim extra: "
+            "uv pip install 'strands-robots[cosmos3-sim]'."
+        )
+    if requested is not None:
+        if requested not in available:
+            raise ValueError(
+                f"Requested qpsolvers backend {requested!r} is not installed. "
+                f"Available: {available}. Install it (e.g. pip install "
+                f"'qpsolvers[{requested}]') or pass an available solver / None."
+            )
+        return requested
+    for name in _PREFERRED_QP_SOLVERS:
+        if name in available:
+            return name
+    return available[0]
+
+
 class MinkIKBridge:
     """Differential-IK bridge from EE poses to MuJoCo joint configurations.
 
@@ -61,10 +100,11 @@ class MinkIKBridge:
         posture_cost: Posture (joint-regularizer) task weight - keeps the solve
             near the current configuration so it stays smooth and avoids
             flipping between IK branches.
-        solver: ``qpsolvers`` backend name passed to ``mink.solve_ik``
-            (defaults to ``"daqp"``, the solver ``mink`` pins via
-            ``qpsolvers[daqp]`` - guaranteed present with the
-            ``cosmos3-sim`` extra; no extra dependency needed).
+        solver: ``qpsolvers`` backend name passed to ``mink.solve_ik``.
+            ``None`` (default) auto-selects an installed backend - preferring
+            ``"daqp"`` (what ``mink`` pins), then ``"quadprog"``, then whatever
+            ``qpsolvers.available_solvers`` reports - so the bridge runs whether
+            the env has daqp or only quadprog. Pass an explicit name to force one.
         damping: Levenberg-Marquardt damping for ``solve_ik``.
         max_iters: Max differential-IK iterations per target pose.
         dt: Integration timestep for each IK iteration (s).
@@ -85,7 +125,7 @@ class MinkIKBridge:
         position_cost: float = 1.0,
         orientation_cost: float = 1.0,
         posture_cost: float = 1e-2,
-        solver: str = "daqp",
+        solver: str | None = None,
         damping: float = 1e-3,
         max_iters: int = 20,
         dt: float = 1e-2,
@@ -101,7 +141,7 @@ class MinkIKBridge:
         self.model = model
         self.ee_frame_name = ee_frame_name
         self.ee_frame_type = ee_frame_type
-        self.solver = solver
+        self.solver = _resolve_qp_solver(solver)
         self.damping = damping
         self.max_iters = max_iters
         self.dt = dt

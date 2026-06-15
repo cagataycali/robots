@@ -169,3 +169,21 @@ def test_decode_rejects_non_quantile_normalization(bridge, q_init):
     chunk[:, 3:9] = np.tile([1, 0, 0, 0, 1, 0], (4, 1))
     with pytest.raises(ValueError, match="normalization='quantile'"):
         decode_cosmos_chunk_to_targets(chunk, emb, bridge, q_init)
+
+
+def test_solver_autoselects_installed_backend(panda_model):
+    """The bridge runs with whatever qpsolvers backend is installed.
+
+    Regression: the default used to hard-code ``solver="daqp"``, which raised
+    ``SolverNotFound`` in environments shipping only ``quadprog``. ``None`` now
+    auto-selects from ``qpsolvers.available_solvers`` (daqp preferred).
+    """
+    from qpsolvers import available_solvers
+
+    bridge = MinkIKBridge(panda_model, ee_frame_name="hand", ee_frame_type="body")
+    assert bridge.solver in available_solvers
+
+
+def test_explicit_unknown_solver_raises_actionable_error(panda_model):
+    with pytest.raises(ValueError, match="is not installed"):
+        MinkIKBridge(panda_model, ee_frame_name="hand", ee_frame_type="body", solver="not_a_solver")
