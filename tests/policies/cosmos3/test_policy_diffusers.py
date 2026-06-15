@@ -231,6 +231,27 @@ def test_inverse_dynamics_requires_video():
         asyncio.run(p.get_actions(_obs_with_state_and_images(), "go"))
 
 
+def test_inverse_dynamics_with_video_returns_action_chunk():
+    """inverse_dynamics recovers the actions between frames of an observed video.
+
+    Mirrors the live Thor run (a real Cosmos-predicted world video fed back
+    yields a 32-step [tx,ty,tz,r0..r5,grasp] chunk). With a video supplied the
+    mode returns the per-timestep actuator dicts, and the video the model was
+    conditioned on is threaded into the CosmosActionCondition.
+    """
+    pipe = FakePipeline(t=32, d=10)
+    p, _ = _make_diffusers_policy(pipeline=pipe, mode="inverse_dynamics")
+    p.set_robot_state_keys([f"joint_{i}" for i in range(7)] + ["gripper"])
+    observed = np.zeros((33, 360, 640, 3), dtype=np.uint8)
+    out = asyncio.run(p.get_actions(_obs_with_state_and_images(), "recover actions", video=observed))
+    assert len(out) == 32
+    assert set(out[0].keys()) == {"tx", "ty", "tz", "r0", "r1", "r2", "r3", "r4", "r5", "grasp"}
+    # The observed video must be threaded into the condition the pipeline saw.
+    assert pipe.calls, "pipeline was not called"
+    cond = pipe.calls[-1]["action"]
+    assert cond.kwargs.get("video") is not None
+
+
 def test_policy_mode_missing_action_raises():
     """A policy-mode run that returns no action field is surfaced, not silently
     swallowed (forward_dynamics is the only world-only mode)."""
