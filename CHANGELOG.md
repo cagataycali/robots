@@ -46,6 +46,39 @@ alongside the existing WebSocket `service` backend (the default, unchanged).
   (`TypeError: Got unsupported ScalarType BFloat16`); `_to_numpy` now up-casts
   half precision to `float32` before handing the chunk to NumPy.
 
+### Added: Cosmos 3 -> MuJoCo sim-loop bridge (de-normalize + inverse kinematics)
+
+The diffusers backend returns the model's raw unified action **quantile-
+normalized to `[-1, 1]`** and encoding a *relative end-effector pose delta* per
+step - **not joint radians**. Feeding it straight into MuJoCo joint actuators is
+physically meaningless (normalized columns land arbitrarily inside/outside real
+joint limits; MuJoCo silently clamps and the arm does not track). A new sim-loop
+bridge (`cosmos3-sim` extra: `mink` + `mujoco`) closes the loop in three honest
+geometric steps, applied *after* Cosmos (the Cosmos "modes" are world-model
+conditioning, not kinematics):
+
+- **De-normalize** (`action_decode.denormalize_quantile`) - inverts the quantile
+  transform with per-embodiment `q01`/`q99` stats bundled under
+  `policies/cosmos3/stats/` (`0.5 * (a + 1) * (q99 - q01) + q01`, mirroring
+  `cosmos_framework`'s `denormalize_action(method="quantile")`). New
+  `Cosmos3Embodiment.normalization` field (`"quantile"`).
+- **Decode poses** (`action_decode.decode_pose_trajectory`) - integrates the
+  per-step `[translation(3), rot6d(6)]` deltas into an absolute `(T+1, 4, 4)`
+  SE3 trajectory anchored at the robot's current EE pose.
+- **Inverse kinematics** (`sim_ik.MinkIKBridge`) - solves each Cartesian target
+  to joint angles via `mink` differential IK on the same `mujoco.MjModel`
+  (`FrameTask` + `PostureTask`, warm-started). `decode_cosmos_chunk_to_targets`
+  composes all three into `{qpos, gripper, poses, tracking_error}`.
+- Verified on Thor against real `nvidia/Cosmos3-Nano` weights: a reachable EE
+  trajectory tracks to **mean ~= 11.5 mm / max ~= 42.8 mm**, pinned by the
+  `tests/policies/cosmos3/test_sim_ik.py` regression (off-GPU, synthetic-but-
+  reachable) plus a GPU integration test exercising the path off real Cosmos
+  output.
+- New `[cosmos3-sim]` extra (`mink` + `mujoco`); `mink` added to the dev env.
+  numpy>=2 compatible (co-installable with `cosmos3-diffusers` /
+  `cosmos3-service` / `sim-mujoco` / `lerobot`). NOTICE attributes `mink` and
+  MuJoCo (Apache-2.0) and the cosmos_framework-derived quantile stats.
+
 ## Unreleased - serial_tool ASCII output
 
 ### Fixed: emojis in ``serial_tool`` result strings

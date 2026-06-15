@@ -39,6 +39,12 @@ class Cosmos3Embodiment:
             RoboLab server's joint_pos conversion. The ``diffusers`` backend
             names its columns from this layout (no fabricated IK to joints).
         default_action_space: The action space the server serves by default.
+        normalization: Action normalization method the model emits in
+            (``"quantile"`` for all current Cosmos 3 domains). The ``diffusers``
+            backend's raw action is in this normalized space; the de-normalize +
+            IK sim bridge (:mod:`action_decode` / :mod:`sim_ik`) inverts it with
+            the bundled per-domain ``q01``/``q99`` stats before solving joint
+            targets.
     """
 
     name: str
@@ -50,6 +56,7 @@ class Cosmos3Embodiment:
     action_layouts: dict[str, list[str]] = field(default_factory=dict)
     raw_action_layout: list[str] = field(default_factory=list)
     default_action_space: str = "joint_pos"
+    normalization: str = "quantile"
 
 
 # Canonical 7-DOF Franka joint names (DROID/RoboMIND-Franka), matching the

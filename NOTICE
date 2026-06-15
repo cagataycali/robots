@@ -16,6 +16,31 @@ Licensed under the BSD License.
 You may obtain a copy of the Apache License at:
     http://www.apache.org/licenses/LICENSE-2.0
 --------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+Optional Cosmos 3 -> MuJoCo sim-loop bridge (strands_robots/policies/cosmos3/sim_ik.py,
+strands_robots/policies/cosmos3/action_decode.py)
+
+The optional Cosmos3Policy(backend="diffusers") sim-loop bridge turns the model's
+raw unified action into MuJoCo joint targets (de-normalize -> EE-pose decode ->
+inverse kinematics) using:
+
+  * mink (https://github.com/kevinzakka/mink)
+    Apache License, Version 2.0. Differential inverse kinematics on the MuJoCo
+    model (FrameTask + PostureTask).
+  * MuJoCo (https://github.com/google-deepmind/mujoco)
+    Apache License, Version 2.0.
+
+The per-embodiment action-normalization quantiles bundled under
+strands_robots/policies/cosmos3/stats/ (q01/q99) are derived from NVIDIA's
+cosmos_framework (data/vfm/action/datasets/stats); the de-normalization formula
+mirrors cosmos_framework's denormalize_action(method="quantile"). NVIDIA Cosmos
+is distributed by NVIDIA under its respective licenses; consult the model card.
+These are optional runtime dependencies and are not redistributed with this
+package.
+
+You may obtain a copy of the Apache License at:
+    http://www.apache.org/licenses/LICENSE-2.0
+--------------------------------------------------------------------------------
 
 --------------------------------------------------------------------------------
 Optional in-process Cosmos 3 backend (strands_robots/policies/cosmos3/policy_diffusers.py)

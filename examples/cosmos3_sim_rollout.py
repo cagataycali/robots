@@ -115,6 +115,26 @@ def main() -> int:
     #     observation_mapping=obs_mapping,
     # )
     # ... after policy.get_actions_sync(...):  world = policy.last_rollout["video"]
+    #
+    # To actually drive the MuJoCo arm from the diffusers backend, the raw
+    # [-1, 1] unified action must be de-normalized + IK'd to joint targets
+    # (the cosmos3-sim extra: mink + mujoco). See docs/policies/cosmos3.md
+    # "Closing the sim loop":
+    #
+    #   import mujoco, numpy as np
+    #   from robot_descriptions import panda_mj_description
+    #   from strands_robots.policies.cosmos3 import (
+    #       MinkIKBridge, decode_cosmos_chunk_to_targets,
+    #   )
+    #   from strands_robots.policies.cosmos3.embodiments import get_embodiment
+    #
+    #   raw_chunk = policy.last_rollout["action"]            # [T, 10] raw [-1,1]
+    #   model = mujoco.MjModel.from_xml_path(panda_mj_description.MJCF_PATH)
+    #   bridge = MinkIKBridge(model, ee_frame_name="hand", ee_frame_type="body")
+    #   q0 = np.zeros(model.nq); q0[:7] = [0, -0.3, 0, -2.2, 0, 2.0, 0.79]
+    #   out = decode_cosmos_chunk_to_targets(raw_chunk, get_embodiment("droid"), bridge, q0)
+    #   out["qpos"]            # [T, nq] joint targets for MuJoCo
+    #   out["tracking_error"]  # {"mean_mm", "max_mm"}  (~11.5 / 42.8 mm on Thor)
     # ------------------------------------------------------------------------
 
     video = None

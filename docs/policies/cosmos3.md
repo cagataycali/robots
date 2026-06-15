@@ -141,6 +141,67 @@ inv.set_robot_state_keys([f"joint_{i}" for i in range(7)] + ["gripper"])
 steps = inv.get_actions_sync(observation, "", video="observed.mp4")
 ```
 
+### Closing the sim loop: de-normalize → IK → MuJoCo
+
+The `diffusers` backend returns the model's **raw unified action** — for the
+DROID/Franka domain that is `[tx, ty, tz, r0..r5, grasp]`, **quantile-normalized
+to `[-1, 1]`** and encoding a *relative end-effector pose delta* per step, **not
+joint radians**. Feeding it straight into MuJoCo joint actuators is physically
+meaningless (the normalized columns land arbitrarily inside/outside real joint
+limits; MuJoCo silently clamps and the arm doesn't track). Three honest
+geometric steps (`cosmos3-sim` extra) turn it into joint targets a MuJoCo arm
+actually follows:
+
+1. **De-normalize** — invert the quantile transform with the embodiment's
+   bundled `q01`/`q99` action stats:
+   `denorm = 0.5 * (a + 1) * (q99 - q01) + q01`
+   (`denormalize_quantile`; stats bundled under `policies/cosmos3/stats/`).
+2. **Decode poses** — integrate the per-step `[translation(3), rot6d(6)]` deltas
+   into an absolute `(T+1, 4, 4)` SE3 trajectory anchored at the robot's current
+   EE pose (`decode_pose_trajectory`).
+3. **Inverse kinematics** — solve each Cartesian target to joint angles with
+   [`mink`](https://github.com/kevinzakka/mink) differential IK on the *same*
+   `mujoco.MjModel` (a `FrameTask` on the EE body + a `PostureTask` regularizer),
+   warm-starting each step (`MinkIKBridge`).
+
+```python
+import mujoco, numpy as np
+from robot_descriptions import panda_mj_description
+from strands_robots.policies.cosmos3 import (
+    Cosmos3Policy, MinkIKBridge, decode_cosmos_chunk_to_targets,
+)
+from strands_robots.policies.cosmos3.embodiments import get_embodiment
+
+policy = Cosmos3Policy(embodiment="droid", backend="diffusers", model="nvidia/Cosmos3-Nano")
+policy.set_robot_state_keys([f"joint_{i}" for i in range(7)] + ["gripper"])
+chunk_dicts = policy.get_actions_sync(observation, "pick up the red cube")
+raw_chunk = policy.last_rollout["action"]          # [T, 10] raw [-1,1] action
+
+model = mujoco.MjModel.from_xml_path(panda_mj_description.MJCF_PATH)
+bridge = MinkIKBridge(model, ee_frame_name="hand", ee_frame_type="body")
+q_init = np.zeros(model.nq); q_init[:7] = [0, -0.3, 0, -2.2, 0, 2.0, 0.79]
+
+out = decode_cosmos_chunk_to_targets(raw_chunk, get_embodiment("droid"), bridge, q_init)
+out["qpos"]            # [T, nq] joint targets to send to MuJoCo
+out["gripper"]         # [T] grasp column (None for grasp-less embodiments)
+out["tracking_error"]  # {"mean_mm", "max_mm"} Cartesian tracking error
+```
+
+Verified on Thor against real `nvidia/Cosmos3-Nano` weights, a reachable EE
+trajectory tracks to **mean ≈ 11.5 mm / max ≈ 42.8 mm** — the bar pinned by the
+`tests/policies/cosmos3/test_sim_ik.py` regression. (Errors grow only when the
+de-normalized deltas are scaled past the ~0.85 m Franka reach — a workspace
+concern, not an IK one.)
+
+> **The Cosmos "modes" are not FK/IK.** `policy` / `forward_dynamics` /
+> `inverse_dynamics` are world-model *conditioning* modes (video↔action), not a
+> kinematics solve. Joint-space IK is this separate geometric layer applied
+> *after* Cosmos.
+
+> Install the sim bridge: `uv pip install "strands-robots[cosmos3-sim]"`
+> (pulls `mink` + `mujoco`; numpy>=2 compatible, co-installable with
+> `cosmos3-diffusers` / `cosmos3-service` / `sim-mujoco` / `lerobot`).
+
 ## Rollout
 
 ```python

@@ -77,6 +77,19 @@ cosmos3-diffusers = [
     "transformers>=4.40",
     "accelerate>=0.26",
 ]
+# Cosmos 3 -> MuJoCo sim-loop bridge. The diffusers backend emits the model's
+# raw unified action ([-1, 1] quantile-normalized relative end-effector pose,
+# not joint radians); turning that into joint targets a MuJoCo arm can track
+# needs de-normalization (bundled per-domain q01/q99 stats, pure NumPy) plus an
+# inverse-kinematics solve. This extra pulls `mink` (differential IK on the same
+# mujoco.MjModel) + `mujoco`. Install it to drive a sim arm with
+# Cosmos3Policy(backend="diffusers") via decode_cosmos_chunk_to_targets /
+# MinkIKBridge. numpy>=2 compatible (co-installable with cosmos3-diffusers,
+# cosmos3-service, sim-mujoco, and lerobot).
+cosmos3-sim = [
+    "mink>=0.0.4",
+    "mujoco>=3.2.0,<4.0.0",
+]
 # MoveIt2 sidecar client (ROS 2 / moveit_py runs out-of-process; the
 # client is a lightweight ZMQ + msgpack peer so users without ROS 2
 # sourced are unaffected). See policies/moveit2/server/ for the
@@ -202,6 +215,11 @@ dependencies = [
     "requests>=2.28.0,<3.0.0",
     "msgpack>=1.0.0,<2.0.0",
     "pyzmq>=27.0.0,<28.0.0",
+    # mink (differential IK) for the Cosmos 3 sim-loop bridge regression test
+    # (tests/policies/cosmos3/test_sim_ik.py); the cosmos3-sim extra is not in
+    # `features=all`, so pull it into the dev env explicitly. mujoco comes from
+    # sim-mujoco (already in `all`).
+    "mink>=0.0.4",
     # torchvision 0.26 (from the aarch64 torch>=2.11 override below) removed
     # torchvision.io.VideoReader, which lerobot 0.5.1's pyav fallback still calls,
     # crashing dataset video read-back. lerobot's torchcodec dep marker EXCLUDES
