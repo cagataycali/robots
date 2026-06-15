@@ -197,6 +197,11 @@ concern, not an IK one.)
 > `inverse_dynamics` are world-model *conditioning* modes (video↔action), not a
 > kinematics solve. Joint-space IK is this separate geometric layer applied
 > *after* Cosmos.
+>
+> The reverse map — joints → Cartesian pose — is **forward kinematics**, exposed
+> as `MinkIKBridge.ee_pose(qpos) -> (4, 4)`. Step 2 above anchors the decoded SE3
+> trajectory at the robot's current EE pose via exactly this FK call, and the IK
+> solver uses it internally to score each Cartesian target.
 
 ![Cosmos 3 -> MuJoCo: Franka tracking the Cosmos action (left) beside the Cosmos predicted world (right)](../assets/cosmos3/cosmos3_mujoco_sidebyside.gif)
 
