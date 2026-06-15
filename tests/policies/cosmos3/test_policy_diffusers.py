@@ -1,12 +1,15 @@
 """Unit tests for the Cosmos3Policy in-process diffusers backend.
 
-No GPU, no model weights, no policy server: ``use_diffusers`` is mocked via the
-``use_diffusers_fn`` dependency-injection seam on
+No GPU, no model weights, no policy server: the native
+:class:`diffusers.Cosmos3OmniPipeline` and :class:`diffusers.CosmosActionCondition`
+are injected via the ``pipeline=`` / ``condition_cls=`` dependency-injection
+seams on
 :class:`~strands_robots.policies.cosmos3.policy_diffusers.Cosmos3DiffusersBackend`
 (mirroring the ``client=`` injection the service-backend tests use).
 """
 
 import asyncio
+import types
 
 import numpy as np
 import pytest
@@ -16,53 +19,39 @@ from strands_robots.policies.cosmos3 import Cosmos3DiffusersBackend, Cosmos3Poli
 from strands_robots.policies.cosmos3.embodiments import get_embodiment
 
 
-def _droid_run_result(t=32, d=8, num_chunks=1, video="/tmp/world.mp4", sound=None):
-    """Mock the dict shape strands-diffusers' use_diffusers(action='run') returns.
+class FakeCondition:
+    """Stand-in for diffusers.CosmosActionCondition (records its kwargs)."""
 
-    The action field mirrors core.io._serialize_action: a nested-list chunk
-    set of shape ``[num_chunks, T, D]`` normalized to [-1, 1].
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+
+
+def _output(action=None, video="world", sound=None):
+    """Mimic a Cosmos3OmniPipelineOutput (a simple attribute bag)."""
+    return types.SimpleNamespace(action=action, video=video, sound=sound)
+
+
+class FakePipeline:
+    """Records pipeline calls; returns a canned Cosmos3OmniPipelineOutput.
+
+    The native pipeline returns ``action`` as a ``list[torch.Tensor]`` (one
+    ``[T, raw_action_dim]`` chunk). We emit a plain ``np.ndarray`` in a list -
+    ``Cosmos3DiffusersBackend._to_numpy`` handles both tensors and arrays.
     """
-    rng = np.random.default_rng(0)
-    chunks = [rng.uniform(-1.0, 1.0, (t, d)).astype(np.float32).tolist() for _ in range(num_chunks)]
-    artifacts = []
-    if video:
-        artifacts.append(video)
-    if sound:
-        artifacts.append(sound)
-    return {
-        "status": "success",
-        "content": [{"text": "ran Cosmos3OmniPipeline"}],
-        "data": {
-            "action": {"type": "action", "data": chunks, "chunk_shape": [t, d], "num_chunks": num_chunks},
-            "video": video,
-            "sound": sound,
-        },
-        "artifacts": artifacts,
-    }
 
-
-class FakeUseDiffusers:
-    """Records calls; returns a canned condition + run result."""
-
-    def __init__(self, run_result=None):
-        self.run_result = run_result if run_result is not None else _droid_run_result()
+    def __init__(self, t=32, d=10, video="world", sound=None, action_override="__default__"):
+        rng = np.random.default_rng(0)
+        if action_override == "__default__":
+            self._action = [rng.uniform(-1.0, 1.0, (t, d)).astype(np.float32)]
+        else:
+            self._action = action_override
+        self._video = video
+        self._sound = sound
         self.calls = []
 
     def __call__(self, **kwargs):
         self.calls.append(kwargs)
-        action = kwargs.get("action")
-        if action == "call":
-            # CosmosActionCondition build -> cached object handle.
-            return {
-                "status": "success",
-                "content": [{"text": "cond cached"}],
-                "data": {"cached": kwargs.get("cache_key")},
-            }
-        if action == "run":
-            return self.run_result
-        if action == "clear_cache":
-            return {"status": "success", "content": [{"text": "cleared"}]}
-        return {"status": "success", "content": [{"text": "noop"}]}
+        return _output(action=self._action, video=self._video, sound=self._sound)
 
 
 def _obs_with_state_and_images():
@@ -78,16 +67,17 @@ def _obs_with_state_and_images():
     return obs
 
 
-def _make_diffusers_policy(fake=None, robot="panda", mode="policy", **kw):
+def _make_diffusers_policy(pipeline=None, condition_cls=None, robot=None, mode="policy", **kw):
     """Build a Cosmos3Policy(backend='diffusers') with an injected fake backend."""
-    fake = fake or FakeUseDiffusers()
+    pipeline = pipeline or FakePipeline()
     backend = Cosmos3DiffusersBackend(
         embodiment=get_embodiment("droid"),
         mode=mode,
-        use_diffusers_fn=fake,
+        pipeline=pipeline,
+        condition_cls=condition_cls or FakeCondition,
     )
     p = Cosmos3Policy(embodiment="droid", backend="diffusers", diffusers_backend=backend, robot=robot, mode=mode, **kw)
-    return p, fake
+    return p, pipeline
 
 
 def test_diffusers_backend_is_a_policy():
@@ -97,26 +87,28 @@ def test_diffusers_backend_is_a_policy():
     assert p.backend == "diffusers"
 
 
-def test_diffusers_returns_chunk_of_dicts_with_panda_actuators():
-    """backend='diffusers' returns the same list[dict] shape with correct
-    actuator names for robot='panda' (reusing _unpack_actions)."""
-    p, fake = _make_diffusers_policy(robot="panda")
+def test_diffusers_returns_raw_unified_action_columns():
+    """backend='diffusers' returns the same list[dict] shape via the reused
+    _unpack_actions, named by the embodiment's raw_action_layout (the model's
+    native 10D unified action = 9D end-effector pose + 1D gripper)."""
+    p, pipe = _make_diffusers_policy()
     p.set_robot_state_keys([f"joint_{i}" for i in range(7)] + ["gripper"])
     out = asyncio.run(p.get_actions(_obs_with_state_and_images(), "pick up the cube"))
     assert isinstance(out, list)
     assert len(out) == 32
     step = out[0]
-    assert set(step.keys()) == {f"joint{i}" for i in range(1, 8)} | {"finger_joint1"}
+    # Raw unified action layout: 3D translation + 6D rotation + grasp.
+    assert set(step.keys()) == {"tx", "ty", "tz", "r0", "r1", "r2", "r3", "r4", "r5", "grasp"}
     assert all(isinstance(v, float) for v in step.values())
-    # use_diffusers was driven: a CosmosActionCondition 'call' then a 'run'.
-    actions = [c["action"] for c in fake.calls]
-    assert "call" in actions and "run" in actions
+    # The native pipeline was driven once with the CosmosActionCondition.
+    assert len(pipe.calls) == 1
+    assert isinstance(pipe.calls[0]["action"], FakeCondition)
 
 
 def test_last_rollout_carries_video_and_action():
     """The predicted world video/sound surface on last_rollout (non-breaking
     channel) - the get_actions return type stays list[dict]."""
-    p, _ = _make_diffusers_policy()
+    p, _ = _make_diffusers_policy(pipeline=FakePipeline(video="/tmp/world.mp4"))
     p.set_robot_state_keys([f"joint_{i}" for i in range(7)] + ["gripper"])
     assert p.last_rollout is None
     out = asyncio.run(p.get_actions(_obs_with_state_and_images(), "go"))
@@ -124,25 +116,24 @@ def test_last_rollout_carries_video_and_action():
     assert p.last_rollout is not None
     assert p.last_rollout["video"] == "/tmp/world.mp4"
     act = np.asarray(p.last_rollout["action"])
-    assert act.shape == (32, 8)
+    assert act.shape == (32, 10)
 
 
 def test_condition_params_use_embodiment_metadata():
-    """The CosmosActionCondition call threads domain_name + chunk_size from the
-    embodiment, and the run threads the cached condition + fps."""
-    p, fake = _make_diffusers_policy()
+    """The CosmosActionCondition is built with domain_name + chunk_size from the
+    embodiment, and the pipeline is called with the condition + fps."""
+    p, pipe = _make_diffusers_policy()
     p.set_robot_state_keys([f"joint_{i}" for i in range(7)] + ["gripper"])
     asyncio.run(p.get_actions(_obs_with_state_and_images(), "go"))
-    call = next(c for c in fake.calls if c["action"] == "call")
-    params = call["parameters"]
-    assert params["mode"] == "policy"
-    assert params["domain_name"] == "droid_lerobot"
-    assert params["chunk_size"] == 32
-    assert "image" in params  # policy mode conditions on the first frame
-    run = next(c for c in fake.calls if c["action"] == "run")
-    assert run["pipeline"] == "Cosmos3OmniPipeline"
-    assert run["parameters"]["action"].startswith("cached:")
-    assert run["parameters"]["fps"] == 15
+    call = pipe.calls[0]
+    cond = call["action"]
+    assert isinstance(cond, FakeCondition)
+    assert cond.kwargs["mode"] == "policy"
+    assert cond.kwargs["domain_name"] == "droid_lerobot"
+    assert cond.kwargs["chunk_size"] == 32
+    assert "image" in cond.kwargs  # policy mode conditions on the first frame
+    assert call["fps"] == 15
+    assert call["output_type"] == "np"
 
 
 def test_service_backend_byte_identical_regression():
@@ -174,20 +165,20 @@ def test_service_backend_byte_identical_regression():
     assert p.last_rollout is None
 
 
-def test_missing_strands_diffusers_raises_actionable_error(monkeypatch):
-    """When strands-diffusers is not importable, constructing the diffusers
-    backend raises an actionable install error (no silent default)."""
+def test_missing_diffusers_raises_actionable_error(monkeypatch):
+    """When native diffusers is not importable, constructing the diffusers
+    backend (without injection) raises an actionable install error."""
     import builtins
 
     real_import = builtins.__import__
 
     def fake_import(name, *args, **kwargs):
-        if name == "strands_diffusers" or name.startswith("strands_diffusers."):
-            raise ImportError("No module named 'strands_diffusers'")
+        if name == "diffusers" or name.startswith("diffusers."):
+            raise ImportError("No module named 'diffusers'")
         return real_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "__import__", fake_import)
-    with pytest.raises(ImportError, match="strands-diffusers"):
+    with pytest.raises(ImportError, match="diffusers"):
         Cosmos3DiffusersBackend(embodiment=get_embodiment("droid"))
 
 
@@ -206,19 +197,20 @@ def test_unknown_backend_raises():
 def test_unknown_mode_raises_in_backend():
     with pytest.raises(ValueError, match="Unknown Cosmos 3 action mode"):
         Cosmos3DiffusersBackend(
-            embodiment=get_embodiment("droid"), mode="teleport", use_diffusers_fn=FakeUseDiffusers()
+            embodiment=get_embodiment("droid"),
+            mode="teleport",
+            pipeline=FakePipeline(),
+            condition_cls=FakeCondition,
         )
 
 
 def test_forward_dynamics_world_only_returns_empty_but_keeps_video():
     """forward_dynamics predicts world video only (no action chunk). get_actions
     returns [] but the world video is still captured on last_rollout."""
-    fake = FakeUseDiffusers(run_result=_droid_run_result(video="/tmp/fd.mp4"))
-    # Strip the action field so the run looks world-only.
-    fake.run_result["data"]["action"] = None
-    p, _ = _make_diffusers_policy(fake=fake, mode="forward_dynamics")
+    pipe = FakePipeline(video="/tmp/fd.mp4", action_override=None)
+    p, _ = _make_diffusers_policy(pipeline=pipe, mode="forward_dynamics")
     p.set_robot_state_keys([f"joint_{i}" for i in range(7)] + ["gripper"])
-    raw = np.zeros((32, 8), dtype=np.float32)
+    raw = np.zeros((32, 10), dtype=np.float32)
     out = asyncio.run(p.get_actions(_obs_with_state_and_images(), "roll forward", raw_actions=raw))
     assert out == []
     assert p.last_rollout["video"] == "/tmp/fd.mp4"
@@ -239,17 +231,37 @@ def test_inverse_dynamics_requires_video():
         asyncio.run(p.get_actions(_obs_with_state_and_images(), "go"))
 
 
-def test_run_failure_raises_with_tool_text():
-    """A use_diffusers error result is surfaced, not silently swallowed."""
-    fake = FakeUseDiffusers(run_result={"status": "error", "content": [{"text": "CUDA OOM boom"}]})
-    p, _ = _make_diffusers_policy(fake=fake)
+def test_policy_mode_missing_action_raises():
+    """A policy-mode run that returns no action field is surfaced, not silently
+    swallowed (forward_dynamics is the only world-only mode)."""
+    pipe = FakePipeline(action_override=None)
+    p, _ = _make_diffusers_policy(pipeline=pipe)
     p.set_robot_state_keys([f"joint_{i}" for i in range(7)] + ["gripper"])
-    with pytest.raises(RuntimeError, match="CUDA OOM boom"):
+    with pytest.raises(RuntimeError, match="no action field"):
         asyncio.run(p.get_actions(_obs_with_state_and_images(), "go"))
 
 
-def test_reset_clears_cached_condition():
-    fake = FakeUseDiffusers()
-    p, _ = _make_diffusers_policy(fake=fake)
-    p.reset(seed=3)
-    assert any(c["action"] == "clear_cache" for c in fake.calls)
+def test_reset_is_safe_in_process():
+    """reset() is a no-op-safe hook for the in-process backend (no remote
+    state, no exception)."""
+    pipe = FakePipeline()
+    p, _ = _make_diffusers_policy(pipeline=pipe)
+    p.reset(seed=3)  # must not raise
+
+
+def test_action_mapping_validates_against_raw_layout():
+    """A diffusers-backend action_mapping is validated against raw_action_layout
+    (not the service joint_pos layout); a service-only key is rejected."""
+    backend = Cosmos3DiffusersBackend(
+        embodiment=get_embodiment("droid"),
+        pipeline=FakePipeline(),
+        condition_cls=FakeCondition,
+    )
+    # "joint_0" is a service joint_pos column, not a raw unified-action column.
+    with pytest.raises(ValueError, match="diffusers'-backend action layout"):
+        Cosmos3Policy(
+            embodiment="droid",
+            backend="diffusers",
+            diffusers_backend=backend,
+            action_mapping={"joint_0": "j1"},
+        )

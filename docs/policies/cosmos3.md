@@ -60,7 +60,7 @@ Cosmos3Policy can run Cosmos 3 two ways. The default is unchanged.
 | backend | how it runs | install | extra outputs |
 |---------|-------------|---------|---------------|
 | `service` (default) | WebSocket to the Cosmos Framework RoboLab policy server (holds the GPU out-of-process) | `strands-robots[cosmos3-service]` (msgpack + websockets, numpy-agnostic) | none (server video discarded) |
-| `diffusers` | in-process via `strands-diffusers` (`Cosmos3OmniPipeline`) | `strands-robots[cosmos3-diffusers]` + diffusers-from-source | world video + sound on `last_rollout` |
+| `diffusers` | in-process via native `diffusers` (`Cosmos3OmniPipeline`) | `strands-robots[cosmos3-diffusers]` + diffusers-from-source | world video + sound on `last_rollout` |
 
 ```bash
 # in-process backend (heavy GPU stack: diffusers + torch)
@@ -68,9 +68,16 @@ uv pip install "strands-robots[cosmos3-diffusers]" \
     'diffusers @ git+https://github.com/huggingface/diffusers'
 ```
 
-The `cosmos3-diffusers` extra composes with `numpy>=2` (and therefore with
+The `cosmos3-diffusers` extra is native `diffusers` + `torch` + `transformers`
+(no extra wrapper package). It composes with `numpy>=2` (and therefore with
 `lerobot` dataset recording in the same env), so it is co-installable with
 `cosmos3-service`.
+
+> **Action layout note.** The `diffusers` backend returns the model's **raw
+> unified action** (DROID = 9D end-effector pose `tx,ty,tz,r0..r5` + 1D `grasp`
+> = 10D), named by the embodiment `raw_action_layout`. This is the pipeline's
+> native output, *before* the RoboLab server's `joint_pos` (8D) conversion. Use
+> `backend="service"` when you need joint-position commands.
 
 ### `backend="diffusers"` — world video alongside the action chunk
 
@@ -86,13 +93,13 @@ policy = create_policy(
     "cosmos3",
     embodiment="droid",
     backend="diffusers",
-    robot="panda",
     model="nvidia/Cosmos3-Nano",  # HF repo id or local path
 )
 policy.set_robot_state_keys([f"joint_{i}" for i in range(7)] + ["gripper"])
 
 steps = policy.get_actions_sync(observation, "pick up the red cube")
-# steps == [{"joint1": .., ..., "finger_joint1": ..}, ...]  (one per timestep)
+# steps == [{"tx": .., "ty": .., ..., "r5": .., "grasp": ..}, ...]  (raw unified
+# action, one dict per timestep)
 
 # the predicted world video Cosmos rolled out for that action chunk:
 print(policy.last_rollout["video"])   # path to an .mp4 / .gif

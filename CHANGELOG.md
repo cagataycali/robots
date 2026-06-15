@@ -8,28 +8,33 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 ### Added: `Cosmos3Policy(backend="diffusers")`
 
 Cosmos3Policy gains a second backend that runs Cosmos 3 **in-process** via the
-optional `strands-diffusers` package (`Cosmos3OmniPipeline`), alongside the
-existing WebSocket `service` backend (the default, unchanged).
+optional native Hugging Face `diffusers` stack (the `Cosmos3OmniPipeline`),
+alongside the existing WebSocket `service` backend (the default, unchanged).
 
 - `backend="service"` (default) - WebSocket to the Cosmos Framework RoboLab
   policy server. Zero behavioural change; all existing service output is
   byte-identical.
-- `backend="diffusers"` - in-process load via `strands_diffusers.use_diffusers`.
-  One forward pass returns the predicted world video + sound + the robot action
+- `backend="diffusers"` - in-process load via native Hugging Face `diffusers`
+  (the upstream `Cosmos3OmniPipeline` driven by a `CosmosActionCondition`). One
+  forward pass returns the predicted world video + sound + the robot action
   chunk. The action chunk is returned through the unchanged Policy ABC contract
   (`get_actions -> list[dict]`, reusing the shared `_unpack_actions`); the world
   video/sound are surfaced on the new `Cosmos3Policy.last_rollout` attribute
-  (a non-breaking auxiliary channel - the ABC return type is not changed).
+  (a non-breaking auxiliary channel - the ABC return type is not changed). The
+  diffusers backend emits the model's raw unified action (DROID = 9D
+  end-effector pose + 1D gripper), named by the embodiment `raw_action_layout`,
+  rather than the service server's post-processed `joint_pos` (8D) layout.
 - Three Cosmos physics `mode`s thread through the diffusers backend: `policy`
   (default), `forward_dynamics`, `inverse_dynamics`. These do not exist in
   service mode - a non-`policy` mode under `backend="service"` raises a clear
   unsupported error (no silent no-op).
-- `strands-diffusers` is an optional dependency, imported lazily inside the
-  diffusers backend. When missing it raises an actionable install error (the
-  `cosmos3-diffusers` extra + the diffusers-from-source pin). The extra composes
+- Native `diffusers` (+ torch + transformers) is an optional dependency,
+  imported lazily inside the diffusers backend. When missing it raises an
+  actionable install error (the `cosmos3-diffusers` extra + the
+  diffusers-from-source pin that ships `Cosmos3OmniPipeline`). The extra composes
   with `numpy>=2`, so it is co-installable with `cosmos3-service` and `lerobot`.
 - New `[cosmos3-diffusers]` extra in `pyproject.toml`; NOTICE attributes
-  strands-diffusers + diffusers (Apache-2.0).
+  Hugging Face diffusers (Apache-2.0).
 
 ## Unreleased - serial_tool ASCII output
 

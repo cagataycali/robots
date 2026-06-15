@@ -1,18 +1,19 @@
-"""In-process Cosmos 3 backend via ``strands-diffusers`` (no policy server).
+"""In-process Cosmos 3 backend via native ``diffusers`` (no policy server).
 
 Parallel to :mod:`client` (the WebSocket *service* backend). Where
 :class:`~strands_robots.policies.cosmos3.client.Cosmos3WebsocketClient` talks
 msgpack+NumPy to a running ``cosmos_framework`` RoboLab policy server, this
-backend loads Cosmos 3 **in-process** through ``strands-diffusers``'
-``use_diffusers`` entry point (which wraps ``diffusers.from_pretrained`` for the
-``Cosmos3OmniPipeline``). One forward pass returns the predicted world video,
-optional sound, *and* the robot action chunk in a single call.
+backend loads Cosmos 3 **in-process** directly through Hugging Face
+``diffusers`` - the upstream :class:`diffusers.Cosmos3OmniPipeline` (loaded with
+``Cosmos3OmniPipeline.from_pretrained``) driven by a
+:class:`diffusers.CosmosActionCondition`. One forward pass returns the predicted
+world video, optional sound, *and* the robot action chunk in a single call.
 
 The backend exposes the same ``infer(observation) -> dict`` contract the service
 client does so :class:`~strands_robots.policies.cosmos3.policy.Cosmos3Policy` is
 backend-agnostic downstream::
 
-    {"action": np.ndarray[T, D], "video": str | np.ndarray | None, "sound": ...}
+    {"action": np.ndarray[T, D] | None, "video": np.ndarray | None, "sound": ...}
 
 Action modes (``CosmosActionCondition.mode``):
 
@@ -23,20 +24,26 @@ Action modes (``CosmosActionCondition.mode``):
   ``Cosmos3Policy.last_rollout``).
 * ``inverse_dynamics`` - an observed video -> the actions between frames.
 
-Why ``strands-diffusers`` is optional/lazy: it pulls ``diffusers`` + ``torch``
-(a heavy GPU stack). The service backend stays the default so a plain
-``pip install strands-robots[cosmos3-service]`` (msgpack + websockets only)
-keeps working. ``strands-diffusers`` + its ``diffusers`` pin compose with
-``numpy>=2`` (verified against lerobot 0.5.x in the same env), so the
-``cosmos3-diffusers`` extra is co-installable with ``cosmos3-service`` and
-``lerobot``.
+Action width: :class:`Cosmos3OmniPipeline` emits the model's **raw unified
+action** of width ``embodiment.raw_action_dim`` (e.g. ``droid_lerobot`` = 10 =
+9D end-effector pose + 1D gripper), NOT the service server's post-processed
+``joint_pos`` (8D) layout. The columns are named by
+``embodiment.raw_action_layout`` accordingly; no IK conversion to joint targets
+is fabricated (that is the RoboLab server's job - use ``backend="service"`` for
+joint commands).
+
+Why ``diffusers`` is optional/lazy: it pulls ``diffusers`` + ``torch`` +
+``transformers`` (a heavy GPU stack). The service backend stays the default so a
+plain ``pip install strands-robots[cosmos3-service]`` (msgpack + websockets
+only) keeps working. ``diffusers`` composes with ``numpy>=2`` (the same env as
+``lerobot`` dataset recording), so the ``cosmos3-diffusers`` extra is
+co-installable with ``cosmos3-service`` and ``lerobot``.
 """
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 import numpy as np
 
@@ -53,15 +60,21 @@ ALL_MODES = ("policy", "forward_dynamics", "inverse_dynamics")
 _DEFAULT_MODEL = "nvidia/Cosmos3-Nano"
 
 
+class _PipelineCallable(Protocol):
+    """Minimal structural type for the injectable Cosmos3OmniPipeline."""
+
+    def __call__(self, **kwargs: Any) -> Any: ...
+
+
 def _install_hint() -> str:
-    """Actionable message when ``strands-diffusers`` is not importable."""
+    """Actionable message when native ``diffusers`` is not importable."""
     return (
-        "Cosmos3Policy(backend='diffusers') needs the optional 'strands-diffusers' "
-        "package, which was not importable. Install it (and the diffusers-from-source "
-        "pin that ships Cosmos3OmniPipeline):\n"
-        "  uv pip install strands-robots[cosmos3-diffusers]\n"
-        "  # or directly:\n"
-        "  uv pip install strands-diffusers 'diffusers @ git+https://github.com/huggingface/diffusers'\n"
+        "Cosmos3Policy(backend='diffusers') needs the optional native 'diffusers' "
+        "stack (diffusers + torch + transformers), which was not importable. "
+        "Cosmos3OmniPipeline ships only in diffusers-from-source (>0.38), so install "
+        "the git pin alongside the extra:\n"
+        "  uv pip install strands-robots[cosmos3-diffusers] "
+        "'diffusers @ git+https://github.com/huggingface/diffusers'\n"
         "Then retry. Or use the service backend (no in-process GPU load): "
         "Cosmos3Policy(backend='service', host=..., port=...)."
     )
@@ -77,36 +90,49 @@ def _image_keys(server_key_iter: Any) -> list[str]:
     return out
 
 
+def _resolve_torch_dtype(torch_mod: Any, dtype: str) -> Any:
+    """Map a dtype string (``"bfloat16"``) to the matching ``torch`` dtype."""
+    resolved = getattr(torch_mod, dtype, None)
+    if resolved is None:
+        raise ValueError(f"Unknown torch dtype {dtype!r}. Use e.g. 'bfloat16', 'float16', or 'float32'.")
+    return resolved
+
+
 class Cosmos3DiffusersBackend:
-    """In-process Cosmos 3 inference via ``strands-diffusers``' ``use_diffusers``.
+    """In-process Cosmos 3 inference via native :class:`diffusers.Cosmos3OmniPipeline`.
 
     Args:
         embodiment: Active :class:`Cosmos3Embodiment` (provides ``domain_name``,
-            ``action_chunk_size``, ``fps``, ``camera_keys``).
+            ``action_chunk_size``, ``fps``, ``camera_keys``, ``raw_action_dim``).
         model: HF repo id or local path of the Cosmos 3 omni checkpoint
             (default ``"nvidia/Cosmos3-Nano"``).
         mode: One of :data:`ALL_MODES`. ``policy`` is the control default.
-        resolution_tier: Cosmos conditioning resolution tier (e.g. ``480``).
-        view_point: Optional Cosmos ``view_point`` tag (e.g. ``"ego_view"``).
-        device: ``"cuda"`` / ``"cpu"`` / ``"auto"`` (``None`` lets
-            ``use_diffusers`` pick).
+        resolution_tier: Cosmos conditioning resolution tier (256/480/704/720).
+        view_point: Cosmos ``view_point`` tag (``"ego_view"`` default;
+            ``"third_person_view"`` / ``"wrist_view"`` / ``"concat_view"``).
+        device: ``"cuda"`` / ``"cpu"`` (``None`` -> ``"cuda"`` when available,
+            else ``"cpu"``). Only used when loading the pipeline natively.
         dtype: Torch dtype string (default ``"bfloat16"``).
         num_inference_steps: Diffusion sampling steps for the pipeline run.
         guidance_scale: Classifier-free guidance scale.
-        use_diffusers_fn: Dependency injection for tests. When ``None`` the real
-            ``strands_diffusers.use_diffusers`` is imported lazily at
-            construction; a missing package raises :class:`ImportError` with an
-            actionable install hint (no silent default, per AGENTS.md #6).
+        enable_sound: Decode the audio waveform alongside the video.
+        pipeline: Pre-built / injected ``Cosmos3OmniPipeline`` callable
+            (dependency injection for tests). When ``None`` the real pipeline is
+            loaded lazily via ``Cosmos3OmniPipeline.from_pretrained``; a missing
+            ``diffusers`` raises :class:`ImportError` with an actionable install
+            hint (no silent default, per AGENTS.md #6).
+        condition_cls: Injected :class:`diffusers.CosmosActionCondition` factory
+            (dependency injection for tests). When ``None`` it is imported lazily
+            from ``diffusers``.
 
     Notes:
-        Cosmos3OmniPipeline emits an action tensor of shape
-        ``[num_chunks, T, action_dim]`` normalized to ``[-1, 1]``. :meth:`infer`
-        returns the **first** chunk reshaped to ``[T, D]`` so the policy's
-        ``_unpack_actions`` (shared with the service backend) consumes it
-        unchanged. The column order matches the embodiment ``action_layouts``
-        (DROID ``joint_pos`` = ``[joint_0..joint_6, gripper]``); the ``[-1, 1]``
-        normalization is preserved verbatim (the consumer denormalizes to its
-        actuator range, exactly as for the service action chunk).
+        :class:`Cosmos3OmniPipeline` returns a ``Cosmos3OmniPipelineOutput`` whose
+        ``action`` field is a ``list[torch.Tensor]`` (one ``[T, raw_action_dim]``
+        chunk). :meth:`infer` returns the first chunk as ``np.ndarray[T, D]`` so
+        the policy's ``_unpack_actions`` (shared with the service backend)
+        consumes it unchanged. The width is the embodiment's raw unified action
+        width (``raw_action_dim``), named by ``raw_action_layout`` - not the
+        service ``joint_pos`` layout.
     """
 
     def __init__(
@@ -115,12 +141,14 @@ class Cosmos3DiffusersBackend:
         model: str | None = None,
         mode: str = "policy",
         resolution_tier: int = 480,
-        view_point: str | None = None,
+        view_point: str = "ego_view",
         device: str | None = None,
         dtype: str = "bfloat16",
-        num_inference_steps: int = 30,
-        guidance_scale: float = 1.0,
-        use_diffusers_fn: Callable[..., dict[str, Any]] | None = None,
+        num_inference_steps: int = 35,
+        guidance_scale: float = 6.0,
+        enable_sound: bool = False,
+        pipeline: _PipelineCallable | None = None,
+        condition_cls: Any | None = None,
     ) -> None:
         if mode not in ALL_MODES:
             raise ValueError(f"Unknown Cosmos 3 action mode {mode!r}. Available: {list(ALL_MODES)}")
@@ -133,14 +161,12 @@ class Cosmos3DiffusersBackend:
         self.dtype = dtype
         self.num_inference_steps = num_inference_steps
         self.guidance_scale = guidance_scale
+        self.enable_sound = enable_sound
 
-        if use_diffusers_fn is None:
-            try:
-                from strands_diffusers import use_diffusers as _imported
-            except ImportError as e:
-                raise ImportError(_install_hint()) from e
-            use_diffusers_fn = _imported
-        self._use_diffusers: Callable[..., dict[str, Any]] = use_diffusers_fn
+        # Pipeline (callable) + CosmosActionCondition factory. Injected for
+        # tests; otherwise imported/loaded lazily from native diffusers.
+        self._pipeline: _PipelineCallable = pipeline if pipeline is not None else self._load_pipeline()
+        self._condition_cls: Any = condition_cls if condition_cls is not None else self._import_condition_cls()
         logger.info(
             "Cosmos3DiffusersBackend ready [model=%s domain=%s mode=%s tier=%d dtype=%s]",
             self.model,
@@ -149,6 +175,29 @@ class Cosmos3DiffusersBackend:
             self.resolution_tier,
             self.dtype,
         )
+
+    def _load_pipeline(self) -> _PipelineCallable:
+        """Load the native ``Cosmos3OmniPipeline`` (heavy GPU import, lazy)."""
+        try:
+            import torch
+            from diffusers import Cosmos3OmniPipeline  # type: ignore[attr-defined]
+        except ImportError as e:
+            raise ImportError(_install_hint()) from e
+        torch_dtype = _resolve_torch_dtype(torch, self.dtype)
+        device = self.device or ("cuda" if torch.cuda.is_available() else "cpu")
+        pipe = Cosmos3OmniPipeline.from_pretrained(self.model, torch_dtype=torch_dtype)
+        pipe = pipe.to(device)
+        self.device = device
+        return pipe
+
+    @staticmethod
+    def _import_condition_cls() -> Any:
+        """Import :class:`diffusers.CosmosActionCondition` (lazy)."""
+        try:
+            from diffusers import CosmosActionCondition  # type: ignore[attr-defined]
+        except ImportError as e:
+            raise ImportError(_install_hint()) from e
+        return CosmosActionCondition
 
     def _first_frame(self, observation: dict[str, Any]) -> np.ndarray:
         """Pick the first available camera frame from the OpenPI observation."""
@@ -167,42 +216,15 @@ class Cosmos3DiffusersBackend:
             f"Observation keys: {sorted(observation)}"
         )
 
-    def _check(self, result: dict[str, Any], stage: str) -> None:
-        """Raise with the tool error text when a use_diffusers call failed."""
-        if not isinstance(result, dict) or result.get("status") != "success":
-            text = ""
-            try:
-                text = result["content"][0]["text"]
-            except (KeyError, IndexError, TypeError):
-                text = str(result)
-            raise RuntimeError(f"Cosmos 3 diffusers {stage} failed: {text}")
-
-    def infer(self, observation: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
-        """Run Cosmos 3 in-process and return action + world video/sound.
-
-        Args:
-            observation: OpenPI-shaped observation dict (same one the service
-                backend sends): a ``prompt`` string plus ``observation/<cam>``
-                image arrays and state keys.
-            **kwargs: ``raw_actions`` (required for ``mode="forward_dynamics"``)
-                and ``video`` (an observed video for ``mode="inverse_dynamics"``)
-                may be passed through from the caller.
-
-        Returns:
-            ``{"action": np.ndarray[T, D] | None, "video": ..., "sound": ...}``.
-            ``action`` is ``None`` only for ``forward_dynamics`` (world-only).
-        """
-        prompt = observation.get("prompt", "")
-
+    def _build_condition(self, observation: dict[str, Any], **kwargs: Any) -> Any:
+        """Build a :class:`CosmosActionCondition` for the active mode."""
         cond_params: dict[str, Any] = {
             "mode": self.mode,
             "chunk_size": self.embodiment.action_chunk_size,
             "domain_name": self.embodiment.domain_name,
             "resolution_tier": self.resolution_tier,
+            "view_point": self.view_point,
         }
-        if self.view_point is not None:
-            cond_params["view_point"] = self.view_point
-
         if self.mode == "inverse_dynamics":
             video = kwargs.get("video")
             if video is None:
@@ -220,92 +242,88 @@ class Cosmos3DiffusersBackend:
                     "world forward; pass raw_actions=<array> to get_actions."
                 )
             cond_params["image"] = self._first_frame(observation)
-            cond_params["raw_actions"] = raw_actions
+            cond_params["raw_actions"] = self._as_action_tensor(raw_actions)
         else:  # policy
             cond_params["image"] = self._first_frame(observation)
+        return self._condition_cls(**cond_params)
 
-        cache_key = f"cosmos3_cond_{id(self):x}"
-        cond = self._use_diffusers(
-            action="call",
-            target="CosmosActionCondition",
-            parameters=cond_params,
-            cache_key=cache_key,
-            device=self.device,
-            dtype=self.dtype,
+    @staticmethod
+    def _as_action_tensor(raw_actions: Any) -> Any:
+        """Coerce ``raw_actions`` to a ``torch.Tensor[T, D]`` for the condition."""
+        try:
+            import torch
+        except ImportError as e:
+            raise ImportError(_install_hint()) from e
+        if isinstance(raw_actions, torch.Tensor):
+            return raw_actions.to(torch.float32)
+        return torch.as_tensor(np.asarray(raw_actions, dtype=np.float32))
+
+    def infer(self, observation: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+        """Run Cosmos 3 in-process and return action + world video/sound.
+
+        Args:
+            observation: OpenPI-shaped observation dict (same one the service
+                backend sends): a ``prompt`` string plus ``observation/<cam>``
+                image arrays and state keys.
+            **kwargs: ``raw_actions`` (required for ``mode="forward_dynamics"``)
+                and ``video`` (an observed video for ``mode="inverse_dynamics"``)
+                may be passed through from the caller.
+
+        Returns:
+            ``{"action": np.ndarray[T, D] | None, "video": ..., "sound": ...}``.
+            ``action`` is ``None`` only for ``forward_dynamics`` (world-only).
+            ``video`` is the predicted world video (``np.ndarray[T, H, W, C]``,
+            ``output_type="np"``); ``sound`` is the decoded waveform or ``None``.
+        """
+        prompt = observation.get("prompt", "")
+        cond = self._build_condition(observation, **kwargs)
+
+        output = self._pipeline(
+            prompt=prompt,
+            action=cond,
+            fps=self.embodiment.fps,
+            num_inference_steps=self.num_inference_steps,
+            guidance_scale=self.guidance_scale,
+            enable_sound=self.enable_sound,
+            output_type="np",
         )
-        self._check(cond, "CosmosActionCondition")
-
-        run = self._use_diffusers(
-            action="run",
-            pipeline="Cosmos3OmniPipeline",
-            model=self.model,
-            parameters={
-                "prompt": prompt,
-                "action": f"cached:{cache_key}",
-                "fps": self.embodiment.fps,
-                "num_inference_steps": self.num_inference_steps,
-                "guidance_scale": self.guidance_scale,
-            },
-            device=self.device,
-            dtype=self.dtype,
-        )
-        self._check(run, "Cosmos3OmniPipeline")
-
-        data = run.get("data") or {}
-        artifacts = run.get("artifacts") or []
         return {
-            "action": _extract_action(data, self.mode),
-            "video": _extract_video(data, artifacts),
-            "sound": _extract_sound(data, artifacts),
+            "action": _extract_action(getattr(output, "action", None), self.mode),
+            "video": getattr(output, "video", None),
+            "sound": getattr(output, "sound", None),
         }
 
     def reset(self) -> None:
-        """Per-episode reset - free the cached conditioning object, best-effort."""
-        try:
-            self._use_diffusers(action="clear_cache", cache_key=f"cosmos3_cond_{id(self):x}")
-        except Exception as e:  # noqa: BLE001 - reset is best-effort
-            logger.info("Cosmos3DiffusersBackend.reset best-effort clear failed: %s", e)
+        """Per-episode reset hook (no server-side cache to clear in-process)."""
+        logger.debug("Cosmos3DiffusersBackend.reset (in-process; no remote state)")
 
 
-def _extract_action(data: dict[str, Any], mode: str) -> np.ndarray | None:
-    """Pull the ``[T, D]`` first action chunk out of a serialized run result.
+def _to_numpy(value: Any) -> np.ndarray:
+    """Convert a torch tensor / array-like action chunk to ``np.ndarray``."""
+    detach = getattr(value, "detach", None)
+    if callable(detach):
+        value = detach().cpu()
+    return np.asarray(value, dtype=np.float32)
 
-    ``strands-diffusers`` serializes a ``Cosmos3OmniPipelineOutput`` action field
-    to ``{"type": "action", "data": [[...]], "chunk_shape": [T, D],
-    "num_chunks": N}`` (full nested lists, normalized to ``[-1, 1]``). We return
-    the first chunk as ``np.ndarray[T, D]``.
+
+def _extract_action(action_field: Any, mode: str) -> np.ndarray | None:
+    """Pull the ``[T, D]`` first action chunk out of a pipeline output.
+
+    :class:`Cosmos3OmniPipelineOutput.action` is a ``list[torch.Tensor]`` (one
+    ``[T, raw_action_dim]`` chunk) or ``None``. We return the first chunk as
+    ``np.ndarray[T, D]``. ``forward_dynamics`` predicts world video only and so
+    has no action chunk (returns ``None``).
     """
-    action_field = data.get("action") if isinstance(data, dict) else None
-    if not action_field:
+    if action_field is None or (isinstance(action_field, (list, tuple)) and not action_field):
         if mode == "forward_dynamics":
             return None  # world-only mode produces no action chunk
         raise RuntimeError(
             f"Cosmos 3 diffusers run (mode={mode!r}) returned no action field. "
-            "Expected a Cosmos3OmniPipelineOutput with an 'action' tensor."
+            "Expected a Cosmos3OmniPipelineOutput with a non-empty 'action' list."
         )
-    chunks = action_field["data"] if isinstance(action_field, dict) else action_field
-    arr = np.asarray(chunks, dtype=np.float32)
-    # Cosmos emits [num_chunks, T, D]; take the first chunk -> [T, D].
+    first = action_field[0] if isinstance(action_field, (list, tuple)) else action_field
+    arr = _to_numpy(first)
+    # Cosmos may emit [num_chunks, T, D]; take the first chunk -> [T, D].
     if arr.ndim == 3:
         arr = arr[0]
     return arr
-
-
-def _extract_video(data: dict[str, Any], artifacts: list[str]) -> str | None:
-    """Return the predicted world-video artifact path, if any."""
-    for a in artifacts:
-        if str(a).lower().endswith((".mp4", ".gif", ".webm")):
-            return a
-    if isinstance(data, dict) and data.get("video") is not None:
-        return data["video"]
-    return None
-
-
-def _extract_sound(data: dict[str, Any], artifacts: list[str]) -> str | None:
-    """Return the predicted sound artifact path, if any."""
-    for a in artifacts:
-        if str(a).lower().endswith((".wav", ".flac", ".mp3")):
-            return a
-    if isinstance(data, dict) and data.get("sound") is not None:
-        return data["sound"]
-    return None

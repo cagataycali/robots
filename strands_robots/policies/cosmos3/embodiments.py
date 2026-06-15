@@ -30,7 +30,14 @@ class Cosmos3Embodiment:
             output action column so :class:`Cosmos3Policy` can build
             per-actuator step dicts. The released DROID policy serves
             ``joint_pos`` (8D = 7 joints + gripper) and ``midtrain``
-            (10D = 3 pos + 4 quat + ... + gripper).
+            (10D = 3 pos + 4 quat + ... + gripper). Used by the ``service``
+            backend (the RoboLab server post-processes to these layouts).
+        raw_action_layout: Column names for the **raw unified action** that the
+            in-process ``diffusers`` :class:`Cosmos3OmniPipeline` emits directly
+            (width = :attr:`raw_action_dim`). This is the model's native action
+            (e.g. DROID = 9D end-effector pose + 1D gripper = 10D), *before* the
+            RoboLab server's joint_pos conversion. The ``diffusers`` backend
+            names its columns from this layout (no fabricated IK to joints).
         default_action_space: The action space the server serves by default.
     """
 
@@ -41,6 +48,7 @@ class Cosmos3Embodiment:
     fps: int
     camera_keys: list[str] = field(default_factory=list)
     action_layouts: dict[str, list[str]] = field(default_factory=dict)
+    raw_action_layout: list[str] = field(default_factory=list)
     default_action_space: str = "joint_pos"
 
 
@@ -52,6 +60,14 @@ _FRANKA_JOINTS = [f"joint_{i}" for i in range(7)]
 _DROID_JOINT_POS = _FRANKA_JOINTS + ["gripper"]
 # DROID midtrain action = [3 EE position, 4 quaternion (xyzw), gripper].
 _DROID_MIDTRAIN = ["ee_x", "ee_y", "ee_z", "ee_qx", "ee_qy", "ee_qz", "ee_qw", "gripper"]
+
+# Raw unified-action layouts: the native action the Cosmos3OmniPipeline emits
+# (diffusers backend), BEFORE the RoboLab server's joint_pos conversion. The
+# unified action composes a 9D effector pose (3D translation tx/ty/tz + 6D
+# rotation r0..r5, the over-parameterized rotation of Zhou et al. 2019) and a
+# 1D grasp state (Cosmos 3 paper Fig. 3). Width = raw_action_dim.
+_POSE9 = ["tx", "ty", "tz", "r0", "r1", "r2", "r3", "r4", "r5"]
+_RAW_POSE9_GRASP = _POSE9 + ["grasp"]  # 10D: one arm = 9D pose + 1D gripper
 
 
 EMBODIMENTS: dict[str, Cosmos3Embodiment] = {
@@ -70,6 +86,7 @@ EMBODIMENTS: dict[str, Cosmos3Embodiment] = {
             "joint_pos": _DROID_JOINT_POS,
             "midtrain": _DROID_MIDTRAIN,
         },
+        raw_action_layout=_RAW_POSE9_GRASP,
         default_action_space="joint_pos",
     ),
     "umi": Cosmos3Embodiment(
@@ -94,6 +111,7 @@ EMBODIMENTS: dict[str, Cosmos3Embodiment] = {
                 "grasp",
             ],
         },
+        raw_action_layout=_RAW_POSE9_GRASP,
         default_action_space="midtrain",
     ),
     "av": Cosmos3Embodiment(
@@ -107,6 +125,7 @@ EMBODIMENTS: dict[str, Cosmos3Embodiment] = {
             # Ego pose 9D (3D translation + 6D rotation), no gripper.
             "midtrain": ["tx", "ty", "tz", "r0", "r1", "r2", "r3", "r4", "r5"],
         },
+        raw_action_layout=_POSE9,
         default_action_space="midtrain",
     ),
     "bridge": Cosmos3Embodiment(
@@ -119,6 +138,7 @@ EMBODIMENTS: dict[str, Cosmos3Embodiment] = {
         action_layouts={
             "midtrain": ["tx", "ty", "tz", "r0", "r1", "r2", "r3", "r4", "r5", "grasp"],
         },
+        raw_action_layout=_RAW_POSE9_GRASP,
         default_action_space="midtrain",
     ),
 }

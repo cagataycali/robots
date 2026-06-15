@@ -125,10 +125,14 @@ class Cosmos3Policy(Policy):
         client: Pre-built client (dependency injection for tests).
         backend: ``"service"`` (default) talks to the Cosmos Framework RoboLab
             WebSocket policy server (unchanged behaviour). ``"diffusers"`` runs
-            Cosmos 3 **in-process** via the optional ``strands-diffusers``
-            package (one forward pass returns the predicted world video + sound
-            + action chunk). The diffusers backend imports ``strands-diffusers``
-            lazily and raises an actionable install error when it is missing.
+            Cosmos 3 **in-process** via native Hugging Face ``diffusers``
+            (the upstream ``Cosmos3OmniPipeline``); one forward pass returns the
+            predicted world video + sound + action chunk. The diffusers backend
+            imports ``diffusers`` + ``torch`` lazily and raises an actionable
+            install error when the stack is missing. NOTE: the diffusers backend
+            emits the model's raw unified action (e.g. DROID = 9D end-effector
+            pose + 1D gripper), not the service server's ``joint_pos`` (8D)
+            layout - use ``backend="service"`` when you need joint commands.
         mode: Cosmos 3 physics mode (``"policy"`` default, ``"forward_dynamics"``,
             ``"inverse_dynamics"``). Only the ``diffusers`` backend supports the
             non-default modes; a non-``"policy"`` mode under ``backend="service"``
@@ -211,15 +215,6 @@ class Cosmos3Policy(Policy):
                     f"action_mapping= or omit robot=."
                 )
         self._action_mapping = action_mapping or {}
-        # Validate action_mapping keys name real action-layout columns so a
-        # typo'd rename can't silently emit a key the robot never consumes.
-        layout_cols = set(self.embodiment.action_layouts[self.action_space])
-        bad = [k for k in self._action_mapping if k not in layout_cols]
-        if bad:
-            raise ValueError(
-                f"action_mapping keys {bad} are not in the {self.embodiment.name!r} "
-                f"{self.action_space!r} action layout. Valid columns: {sorted(layout_cols)}"
-            )
         self.robot_state_keys: list[str] = []
         # Auxiliary world outputs (predicted video / sound) from the last
         # get_actions call, surfaced WITHOUT changing the Policy ABC return
@@ -233,6 +228,19 @@ class Cosmos3Policy(Policy):
             raise ValueError(f"Unknown Cosmos 3 backend {backend!r}. Available: ['service', 'diffusers'].")
         self.backend = backend
         self.mode = mode
+        # Validate action_mapping keys name real columns of the ACTIVE layout so
+        # a typo'd rename can't silently emit a key the robot never consumes.
+        # The two backends emit different action layouts: ``service`` returns the
+        # RoboLab server's post-processed ``action_space`` layout (joint_pos /
+        # midtrain); ``diffusers`` returns the model's raw unified action named
+        # by ``raw_action_layout``. Validate against whichever is active.
+        layout_cols = set(self._active_action_layout())
+        bad = [k for k in self._action_mapping if k not in layout_cols]
+        if bad:
+            raise ValueError(
+                f"action_mapping keys {bad} are not in the {self.embodiment.name!r} "
+                f"{backend!r}-backend action layout. Valid columns: {sorted(layout_cols)}"
+            )
         # ``mode`` (policy / forward_dynamics / inverse_dynamics) is a diffusers-
         # only physics surface (CosmosActionCondition.mode). The service RoboLab
         # server only does the policy action surface, so a non-default mode under
@@ -246,8 +254,9 @@ class Cosmos3Policy(Policy):
             )
 
         if backend == "diffusers":
-            # In-process Cosmos 3 via strands-diffusers (lazy heavy import lives
-            # inside Cosmos3DiffusersBackend). The service client is not built.
+            # In-process Cosmos 3 via native diffusers (the heavy diffusers +
+            # torch import lives lazily inside Cosmos3DiffusersBackend, which
+            # loads Cosmos3OmniPipeline.from_pretrained). No service client.
             if diffusers_backend is not None:
                 self._diffusers = diffusers_backend
             else:
@@ -462,11 +471,25 @@ class Cosmos3Policy(Policy):
                 )
             obs["observation/gripper_position"] = np.asarray([[gripper]], dtype=np.float32)
 
+    def _active_action_layout(self) -> list[str]:
+        """Column names for the action layout the active backend emits.
+
+        The ``service`` backend returns the RoboLab server's post-processed
+        ``action_space`` layout (``joint_pos`` / ``midtrain``); the ``diffusers``
+        backend returns the model's raw unified action (``raw_action_layout``,
+        e.g. DROID = 9D end-effector pose + 1D gripper). Returning the matching
+        layout keeps ``_unpack_actions`` and ``action_mapping`` validation
+        correct for both backends without duplicating either.
+        """
+        if self.backend == "diffusers":
+            return list(self.embodiment.raw_action_layout)
+        return list(self.embodiment.action_layouts.get(self.action_space, []))
+
     def _action_column_names(self, width: int) -> list[str]:
-        """Resolve the per-column action names for the active action space."""
-        layout = self.embodiment.action_layouts.get(self.action_space, [])
+        """Resolve the per-column action names for the active backend's layout."""
+        layout = self._active_action_layout()
         names = list(layout[:width])
-        # Pad / fall back if the server returns a different width than expected.
+        # Pad / fall back if the run returns a different width than expected.
         for i in range(len(names), width):
             names.append(f"action_{i}")
         return names

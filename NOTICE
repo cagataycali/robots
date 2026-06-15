@@ -23,10 +23,9 @@ Optional in-process Cosmos 3 backend (strands_robots/policies/cosmos3/policy_dif
 The optional Cosmos3Policy(backend="diffusers") path loads NVIDIA Cosmos 3
 world-foundation models in-process via:
 
-  * strands-diffusers (https://github.com/cagataycali/strands-diffusers)
-    Apache License, Version 2.0.
   * Hugging Face diffusers (https://github.com/huggingface/diffusers)
-    Apache License, Version 2.0.
+    Apache License, Version 2.0. The Cosmos3OmniPipeline + CosmosActionCondition
+    used here ship in diffusers-from-source.
 
 NVIDIA Cosmos models (e.g. nvidia/Cosmos3-Nano) are distributed by NVIDIA under
 their respective model licenses; consult the model card for terms. These are

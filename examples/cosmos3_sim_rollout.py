@@ -99,10 +99,12 @@ def main() -> int:
 
     # --- backend="diffusers" variant (in-process, no policy server) ---------
     # Instead of the WebSocket service above, Cosmos 3 can run in-process via
-    # strands-diffusers (one forward pass returns the world video + sound +
-    # action chunk). The action chunk drives the arm exactly as the service
-    # path does; the predicted world video is surfaced on policy.last_rollout
-    # after each get_actions call. Install:
+    # native Hugging Face diffusers (the Cosmos3OmniPipeline; one forward pass
+    # returns the world video + sound + action chunk). The predicted world video
+    # is surfaced on policy.last_rollout after each get_actions call. NOTE: the
+    # diffusers backend emits the model's RAW unified action (DROID = 9D
+    # end-effector pose + 1D gripper), not joint positions - use the service
+    # backend above when you need joint commands for the MuJoCo arm. Install:
     #   uv pip install "strands-robots[cosmos3-diffusers]" \
     #       'diffusers @ git+https://github.com/huggingface/diffusers'
     #
@@ -110,10 +112,9 @@ def main() -> int:
     #     embodiment="droid",
     #     backend="diffusers",
     #     model="nvidia/Cosmos3-Nano",   # HF repo id or local path
-    #     robot=args.robot,
     #     observation_mapping=obs_mapping,
     # )
-    # ... after sim.run_policy(...):  world_mp4 = policy.last_rollout["video"]
+    # ... after policy.get_actions_sync(...):  world = policy.last_rollout["video"]
     # ------------------------------------------------------------------------
 
     video = None
