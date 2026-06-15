@@ -286,23 +286,42 @@ class TestGetPolicy:
         hw.cleanup()
 
 
+@pytest.mark.timeout(30)
 class TestExecuteTaskAsync:
     def test_full_loop_sends_actions_and_completes(self, monkeypatch):
+        """One observe->act iteration runs, then the loop terminates.
+
+        The control loop is bounded by ``while time.time() - start < duration``.
+        Driving that with a hand-counted finite iterator is fragile: it assumes
+        the code reads ``time.time()`` an exact number of times before the loop
+        (connect/policy-init logging, the Python/lerobot build, or any future
+        refactor that adds a clock read would desync the iterator, leave the
+        captured ``start`` pinned to the terminal value, and spin the loop
+        forever). Instead use a stateful clock that advances ONLY when the
+        policy emits its chunk: ``start`` is captured at t=0 regardless of how
+        many intervening reads occur, and the post-chunk jump trips the guard
+        deterministically after exactly one iteration.
+        """
         fake = _FakeLeRobot(connected=False)
         hw = _make_robot(fake, control_frequency=1000.0)
 
-        async def _fake_get_policy(*a, **k):
-            return _StubPolicy()
-
-        hw._get_policy = _fake_get_policy  # type: ignore[assignment]
-
-        # Bound the wall-clock loop: first call starts at 0, second exceeds
-        # the 0.05s duration so exactly one iteration of action chunks runs.
-        times = iter([0.0, 0.0, 0.0, 100.0, 100.0, 100.0, 100.0])
+        clock = {"now": 0.0}
         monkeypatch.setattr(
             "strands_robots.hardware_robot.time.time",
-            lambda: next(times, 100.0),
+            lambda: clock["now"],
         )
+
+        class _ClockAdvancingPolicy(_StubPolicy):
+            async def get_actions(self, observation, instruction):
+                actions = await super().get_actions(observation, instruction)
+                # Jump past the duration so the next guard check exits the loop.
+                clock["now"] += 100.0
+                return actions
+
+        async def _fake_get_policy(*a, **k):
+            return _ClockAdvancingPolicy()
+
+        hw._get_policy = _fake_get_policy  # type: ignore[assignment]
 
         asyncio.run(hw._execute_task_async("pick", policy_port=5555, duration=0.05))
         assert hw._task_state.status == TaskStatus.COMPLETED
