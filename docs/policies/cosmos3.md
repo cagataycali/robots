@@ -128,6 +128,8 @@ a non-`policy` mode under `backend="service"` raises a clear error.
 | `forward_dynamics` | first frame + given `raw_actions` | future video | `[]` (world video on `last_rollout`) |
 | `inverse_dynamics` | an observed video | the actions between frames | action chunk (`list[dict]`) |
 
+All three modes are verified live on real `nvidia/Cosmos3-Nano` weights (Thor, bf16/CUDA): `policy` → 32-step action chunk + world video; `forward_dynamics` → world video only (`get_actions` returns `[]`); `inverse_dynamics` → 32-step action chunk recovered from an observed video. See `docs/assets/cosmos3/live_modes_metrics.json`.
+
 ```python
 # forward dynamics: "what world results if I run these actions?"
 fd = create_policy("cosmos3", embodiment="droid", backend="diffusers", mode="forward_dynamics")
