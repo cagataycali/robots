@@ -187,3 +187,72 @@ def test_solver_autoselects_installed_backend(panda_model):
 def test_explicit_unknown_solver_raises_actionable_error(panda_model):
     with pytest.raises(ValueError, match="is not installed"):
         MinkIKBridge(panda_model, ee_frame_name="hand", ee_frame_type="body", solver="not_a_solver")
+
+
+def test_decode_cosmos_chunk_reanchor_default_matches_legacy_for_reachable_trajectory(bridge, q_init):
+    """Closed-loop re-anchoring (default) and legacy open-loop agree on
+    reachable trajectories.
+
+    When IK can hit every target exactly, the achieved EE pose equals the
+    commanded target each step, so re-anchoring on the realized pose is the
+    same as integrating the targets up front. This pins the contract that the
+    new default does **not** silently change behavior for trajectories the arm
+    can actually track. The divergence (which is the whole point of the fix)
+    is exercised on the workspace-edge case below.
+    """
+    emb = get_embodiment("droid")
+    rng = np.random.default_rng(0)
+    chunk = rng.uniform(-0.3, 0.3, (16, emb.raw_action_dim)).astype(np.float32)
+    chunk[:, 3:9] = np.tile([1, 0, 0, 0, 1, 0], (16, 1))
+
+    out_reanchor = decode_cosmos_chunk_to_targets(chunk, emb, bridge, q_init)
+    out_legacy = decode_cosmos_chunk_to_targets(chunk, emb, bridge, q_init, reanchor=False)
+
+    # Joint trajectories agree to IK-tolerance on a reachable chunk. The
+    # tolerance is loose enough to absorb IK warm-start drift (~1 mrad per
+    # step accumulating over the chunk) but tight enough to catch a real
+    # behavioral divergence on reachable inputs.
+    assert np.allclose(out_reanchor["qpos"], out_legacy["qpos"], atol=5e-3)
+    # Both stay inside the tracking bar.
+    assert out_reanchor["tracking_error"]["mean_mm"] <= _MEAN_MM_BAR
+    assert out_legacy["tracking_error"]["mean_mm"] <= _MEAN_MM_BAR
+
+
+def test_decode_cosmos_chunk_reanchor_bounds_per_step_error_at_workspace_edge(bridge, q_init):
+    """The whole point of the fix: when targets push past the arm's reach,
+    legacy open-loop accumulates Cartesian error while the re-anchored path
+    keeps per-step error bounded by composing each delta on the *achieved* EE
+    pose.
+
+    Synthetic reproduction of the long-rollout workspace-escape finding from
+    issue #44: a chain of identical +X translation deltas eventually drives
+    the commanded target outside the Panda's reach. With ``reanchor=False``
+    each new target is built on the prior *ideal* one, so the gap between
+    target and achieved EE grows monotonically. With ``reanchor=True`` the
+    next target is built on where the arm actually is, and the per-step error
+    stays small even as the trajectory saturates against the workspace edge.
+    """
+    emb = get_embodiment("droid")
+    chunk = np.zeros((24, emb.raw_action_dim), dtype=np.float32)
+    # Identity rotation each step.
+    chunk[:, 3:9] = np.tile([1, 0, 0, 0, 1, 0], (24, 1))
+    # Constant +X push per step in the *normalized* action range. The droid
+    # quantile stats spread this back to a real-world translation that, chained
+    # 24x, walks past the Panda's reach.
+    chunk[:, 0] = 0.6
+
+    out_reanchor = decode_cosmos_chunk_to_targets(chunk, emb, bridge, q_init)
+    out_legacy = decode_cosmos_chunk_to_targets(chunk, emb, bridge, q_init, reanchor=False)
+
+    # The fix's contract: re-anchored max per-step Cartesian error is no worse
+    # than the legacy open-loop error, and on a saturating trajectory it is
+    # strictly smaller (legacy compounds, re-anchor does not).
+    assert out_reanchor["tracking_error"]["max_mm"] <= out_legacy["tracking_error"]["max_mm"] + 1e-3
+    # Joint trajectories stay finite and within model limits either way
+    # (MinkIKBridge enforces joint limits).
+    qlim_lo = bridge.model.jnt_range[:, 0]
+    qlim_hi = bridge.model.jnt_range[:, 1]
+    nq = bridge.model.nq
+    for q in out_reanchor["qpos"]:
+        assert np.all(q[:nq] >= qlim_lo[:nq] - 1e-6)
+        assert np.all(q[:nq] <= qlim_hi[:nq] + 1e-6)

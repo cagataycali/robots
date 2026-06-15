@@ -131,6 +131,43 @@ def _project_to_so3(matrix: np.ndarray) -> np.ndarray:
     return proj.astype(np.float32)
 
 
+def decode_pose_delta(pose_step: np.ndarray, *, rotation_dim: int = 6) -> np.ndarray:
+    """Decode one de-normalized relative-pose action step into a ``(4, 4)`` delta.
+
+    A single row of the de-normalized pose block (``[translation(3),
+    rotation(rotation_dim)]``) becomes the homogeneous relative transform
+    ``delta_T`` that the ``backward_framewise`` convention composes onto the
+    running pose (``T_{i+1} = T_i @ delta_T``; see :func:`decode_pose_trajectory`
+    and ``cosmos_framework`` ``pose_utils._pose_vector_to_delta_transform``).
+
+    Exposed as a primitive so a closed-loop sim bridge can re-anchor each step on
+    the arm's *achieved* end-effector pose (the
+    :func:`~strands_robots.policies.cosmos3.sim_ik.decode_cosmos_chunk_to_targets`
+    fix for compounding Cartesian tracking error), rather than only as part of
+    the open-loop full-trajectory decode.
+
+    Args:
+        pose_step: A single de-normalized relative-pose action of shape
+            ``[3 + rotation_dim]`` (translation block + rotation block).
+        rotation_dim: Width of the rotation block (6 for ``rot6d``).
+
+    Returns:
+        The ``(4, 4)`` homogeneous relative transform (``float32``).
+
+    Raises:
+        ValueError: If ``pose_step`` is not 1-D of length ``3 + rotation_dim``.
+    """
+    pose_step = np.asarray(pose_step, dtype=np.float32)
+    if pose_step.ndim != 1 or pose_step.shape[0] != 3 + rotation_dim:
+        raise ValueError(
+            f"pose_step must be [{3 + rotation_dim}] (3 translation + {rotation_dim} rotation); got {pose_step.shape}"
+        )
+    delta = np.eye(4, dtype=np.float32)
+    delta[:3, 3] = pose_step[:3]
+    delta[:3, :3] = _project_to_so3(_rot6d_to_matrix(pose_step[3 : 3 + rotation_dim]))
+    return delta
+
+
 def decode_pose_trajectory(
     pose_chunk: np.ndarray,
     initial_pose: np.ndarray,
@@ -175,9 +212,7 @@ def decode_pose_trajectory(
     poses = [initial_pose]
     current = initial_pose
     for step in pose_chunk:
-        delta = np.eye(4, dtype=np.float32)
-        delta[:3, 3] = step[:3]
-        delta[:3, :3] = _project_to_so3(_rot6d_to_matrix(step[3 : 3 + rotation_dim]))
+        delta = decode_pose_delta(step, rotation_dim=rotation_dim)
         current = (current @ delta).astype(np.float32)
         poses.append(current)
     return np.stack(poses).astype(np.float32)

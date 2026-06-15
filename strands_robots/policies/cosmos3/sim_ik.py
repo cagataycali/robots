@@ -258,6 +258,7 @@ def decode_cosmos_chunk_to_targets(
     q_init: np.ndarray,
     *,
     stats: dict[str, np.ndarray] | None = None,
+    reanchor: bool = True,
 ) -> dict[str, Any]:
     """Turn a Cosmos 3 raw action chunk into MuJoCo joint targets via IK.
 
@@ -268,12 +269,20 @@ def decode_cosmos_chunk_to_targets(
     1. **De-normalize** the model's ``[-1, 1]`` quantile-normalized action back
        to physical units with the embodiment's bundled ``q01``/``q99`` stats
        (:func:`~strands_robots.policies.cosmos3.action_decode.denormalize_quantile`).
-    2. **Decode** the per-step ``[translation(3), rot6d(6)]`` pose block into an
-       absolute ``(T+1, 4, 4)`` EE-pose trajectory anchored at the robot's
-       current pose
-       (:func:`~strands_robots.policies.cosmos3.action_decode.decode_pose_trajectory`).
-    3. **Solve IK** for each Cartesian target via :class:`MinkIKBridge`, warm-
-       starting from ``q_init`` so the joint trajectory stays continuous.
+    2. **Decode + IK, step by step, re-anchored** (``reanchor=True``, default).
+       Each relative ``[translation(3), rot6d(6)]`` pose delta is composed onto
+       the arm's **achieved** end-effector pose (the forward kinematics of the
+       previous IK solution), not onto the previous *ideal* target, then solved
+       to joints. This mirrors how ``cosmos_framework``'s RoboLab server anchors
+       every decode on the observed ``eef_pos``/``eef_quat``
+       (``action_policy_server_robolab`` -> ``pose_rel_to_abs(initial_pose=
+       current_observed_pose)``). When IK under-tracks a step (workspace edge,
+       joint limit), the next target is built from where the arm *actually is*,
+       so Cartesian tracking error stays bounded per step instead of compounding
+       down the chunk. With ``reanchor=False`` the legacy open-loop decode is
+       used (full target trajectory integrated up front via
+       :func:`~strands_robots.policies.cosmos3.action_decode.decode_pose_trajectory`,
+       then IK each frame) - retained only for comparison/diagnostics.
 
     Args:
         action_chunk: Raw unified action ``[T, raw_action_dim]`` from the
@@ -288,17 +297,28 @@ def decode_cosmos_chunk_to_targets(
             kinematics and each IK solve warm-starts from the previous step.
         stats: Optional explicit ``{"q01", "q99"}`` stats override. When ``None``
             the bundled per-domain stats are loaded for ``embodiment.domain_name``.
+        reanchor: When ``True`` (default) re-anchor each decoded pose delta on
+            the arm's achieved EE pose (closed loop), bounding tracking error.
+            When ``False`` use the legacy open-loop decode (targets integrated
+            up front, then IK) - kept for diagnostics only.
 
     Returns:
         ``{"qpos": np.ndarray[T, nq], "gripper": np.ndarray[T] | None,
         "poses": np.ndarray[T, 4, 4], "tracking_error": {"mean_mm", "max_mm"}}``.
-        ``gripper`` is ``None`` for grasp-less embodiments.
+        ``gripper`` is ``None`` for grasp-less embodiments. ``poses`` is the
+        sequence of Cartesian targets actually commanded: when ``reanchor=True``
+        each is anchored on the realized EE pose of the prior step.
 
     Raises:
         ValueError: If ``embodiment.normalization`` is not ``"quantile"`` (the
             only method the current Cosmos 3 domains and bundled stats use).
     """
-    from .action_decode import decode_pose_trajectory, denormalize_quantile, load_action_stats
+    from .action_decode import (
+        decode_pose_delta,
+        decode_pose_trajectory,
+        denormalize_quantile,
+        load_action_stats,
+    )
 
     if embodiment.normalization != "quantile":
         raise ValueError(
@@ -320,10 +340,39 @@ def decode_cosmos_chunk_to_targets(
     gripper = denorm[:, -1] if has_grasp else None
 
     q0 = np.asarray(q_init, dtype=np.float64)
-    initial_pose = ik_bridge.ee_pose(q0).astype(np.float64)
-    abs_poses = decode_pose_trajectory(pose_block, initial_pose, rotation_dim=6)
-    target_poses = abs_poses[1:]  # drop the anchor frame
-    qpos = ik_bridge.solve_trajectory(target_poses, q0)
+
+    if not reanchor:
+        # Legacy open-loop: integrate the whole target trajectory up front, then
+        # solve IK per frame. Tracking error compounds when IK under-tracks.
+        initial_pose = ik_bridge.ee_pose(q0).astype(np.float64)
+        abs_poses = decode_pose_trajectory(pose_block, initial_pose, rotation_dim=6)
+        target_poses = abs_poses[1:]
+        qpos = ik_bridge.solve_trajectory(target_poses, q0)
+        return {
+            "qpos": qpos,
+            "gripper": gripper,
+            "poses": target_poses,
+            "tracking_error": ik_bridge.tracking_error(target_poses, qpos),
+        }
+
+    # Closed-loop re-anchoring: compose each pose delta onto the realized EE pose
+    # of the previous IK solve (not the prior ideal target), warm-starting the
+    # next solve from that joint config. Mirrors the RoboLab server's
+    # observed-pose anchoring so per-step error does not accumulate.
+    q = q0.copy()
+    achieved = ik_bridge.ee_pose(q).astype(np.float64)
+    qpos_list: list[np.ndarray] = []
+    target_list: list[np.ndarray] = []
+    for step in pose_block:
+        delta = decode_pose_delta(step, rotation_dim=6).astype(np.float64)
+        target = achieved @ delta
+        q = ik_bridge.solve(target, q)
+        achieved = ik_bridge.ee_pose(q).astype(np.float64)
+        qpos_list.append(q.copy())
+        target_list.append(target)
+    nq = ik_bridge.model.nq
+    qpos = np.stack(qpos_list) if qpos_list else np.empty((0, nq), dtype=np.float64)
+    target_poses = np.stack(target_list).astype(np.float32) if target_list else np.empty((0, 4, 4), dtype=np.float32)
     return {
         "qpos": qpos,
         "gripper": gripper,
