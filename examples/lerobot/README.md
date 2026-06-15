@@ -138,7 +138,6 @@ The calibration files land under `~/.cache/huggingface/lerobot/calibration/` and
 --instruction <text>               Task instruction (default: "pick up the red cube")
 --clean-cache                      Wipe local cache before recording
 --skip-record / --skip-mesh        Skip individual steps
---verbose / -v                     Show prompts, tool calls, dataset state
 ```
 
 Note: `--num-steps` (default 1000) controls the length of the recorded demonstration in Step 2. The Step 3 policy rollout is a fixed 200 steps; those are different knobs.
@@ -223,7 +222,7 @@ A prior run's dataset cache is on disk. Pass `--clean-cache` to wipe it, or pass
 The `Svt[info]:` lines come from the video codec inside LeRobot's `dataset_recorder` and aren't a Python logger we can silence cleanly. They're harmless: one block per camera per encoder init.
 
 **Agent's narration claims things that don't match the tool calls**  
-LLMs sometimes confabulate in narration. The dataset on disk is the ground truth: load it through `LeRobotDataset(...)` to check episode and frame counts. Pass `--verbose` to see the actual tool calls the agent made.
+LLMs sometimes confabulate in narration. The dataset on disk is the ground truth: load it through `LeRobotDataset(...)` to check episode and frame counts.
 
 ## What's next
 

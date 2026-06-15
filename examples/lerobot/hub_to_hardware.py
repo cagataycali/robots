@@ -64,12 +64,6 @@ demonstration once, and the tool sequence comes out in one shot.
 Production multi-episode collection wraps the loop in Python; that
 pattern lives in this folder's README under "Production patterns."
 
-Debugging: pass --verbose to surface the full prompt the agent receives,
-every tool call the agent makes (with arguments), and before/after
-dataset state. By default the script logs only step banners, the agent's
-natural-language responses, and a one-line dataset summary at the end of
-each phase.
-
 Repository: https://github.com/strands-labs/robots
 """
 
@@ -82,12 +76,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-# Two loggers: ``logger`` is always shown; ``diag_logger`` is gated by
-# --verbose (set to WARNING by default, INFO when verbose is on). This
-# keeps the default output focused on the agent's narration and the final
-# summary, with debug traces available on demand.
 logger = logging.getLogger("hub_to_hardware")
-diag_logger = logging.getLogger("hub_to_hardware.diag")
 
 
 # ---------------------------------------------------------------------------
@@ -106,150 +95,6 @@ DEFAULT_MODEL_ID = "global.anthropic.claude-opus-4-8"  # ← verify in AWS conso
 # Region is intentionally not defaulted in code. It resolves from the
 # --aws-region CLI flag, then AWS_REGION / AWS_DEFAULT_REGION env vars,
 # then boto3's standard chain (~/.aws/config, instance metadata).
-
-
-# ---------------------------------------------------------------------------
-# Dataset location + state helpers
-# ---------------------------------------------------------------------------
-
-def _lerobot_cache_root(repo_id: str) -> Path:
-    """Return the on-disk LeRobotDataset cache directory for ``repo_id``."""
-    return Path.home() / ".cache" / "huggingface" / "lerobot" / repo_id
-
-
-def _read_dataset_state(repo_id: str) -> dict[str, Any]:
-    """Read the LeRobotDataset's state via the LeRobot API.
-
-    Using ``LeRobotDataset(...)`` directly (rather than poking at specific
-    metadata files) keeps the diagnostic in sync with whatever metadata
-    layout your installed LeRobot version expects.
-
-    Returns a dict with one of these statuses:
-      * ``missing``        - cache dir doesn't exist
-      * ``ready``          - dataset loaded, counts populated
-      * ``not_finalized``  - cache exists but isn't a complete dataset yet
-      * ``error``          - load failed for another reason
-    """
-    cache_root = _lerobot_cache_root(repo_id)
-    result: dict[str, Any] = {"cache_path": str(cache_root)}
-
-    if not cache_root.exists():
-        result["status"] = "missing"
-        return result
-
-    try:
-        from lerobot.datasets.lerobot_dataset import LeRobotDataset
-        ds = LeRobotDataset(repo_id)
-        result["status"] = "ready"
-        result["num_episodes"] = int(getattr(ds, "num_episodes", 0))
-        result["total_frames"] = int(getattr(ds, "num_frames", 0))
-        result["fps"] = int(ds.fps) if getattr(ds, "fps", None) else None
-        return result
-    except FileNotFoundError as exc:
-        result["status"] = "not_finalized"
-        result["error"] = str(exc)
-        return result
-    except Exception as exc:  # noqa: BLE001 - want to capture any load failure
-        result["status"] = "error"
-        result["error"] = f"{type(exc).__name__}: {exc}"
-        return result
-
-
-def _log_dataset_summary(repo_id: str) -> None:
-    """Print a one-line, user-facing summary of the dataset's state."""
-    state = _read_dataset_state(repo_id)
-    status = state["status"]
-
-    if status == "ready":
-        logger.info(
-            "✅ Dataset ready: %d episode(s), %d frame(s) → %s",
-            state["num_episodes"], state["total_frames"], state["cache_path"],
-        )
-    elif status == "missing":
-        logger.warning(
-            "❌ No dataset cache at %s - start_recording may have been skipped",
-            state["cache_path"],
-        )
-    elif status == "not_finalized":
-        logger.warning(
-            "❌ Cache at %s isn't a complete dataset (%s) - "
-            "stop_recording may not have run",
-            state["cache_path"], state["error"],
-        )
-    else:
-        logger.warning("❌ Dataset check failed: %s", state["error"])
-
-
-# ---------------------------------------------------------------------------
-# Diagnostic tool-call capture (verbose mode only)
-# ---------------------------------------------------------------------------
-
-def _get(obj: Any, key: str, default: Any = None) -> Any:
-    """Return ``obj[key]`` for dicts, ``obj.key`` for objects, else ``default``.
-
-    Strands' ``agent.messages`` may return dicts (Anthropic native shape) or
-    model-shape objects depending on the model client. Falling back through
-    both lets the diagnostic capture see every tool call.
-    """
-    if isinstance(obj, dict):
-        return obj.get(key, default)
-    return getattr(obj, key, default)
-
-
-def _log_agent_tool_calls(agent: Any, label: str, *, since_index: int = 0) -> int:
-    """Dump every tool call the agent made (via ``agent.messages``).
-
-    Returns the new message-history length so callers can chain this across
-    phases. No-ops cleanly if the message history isn't iterable.
-    """
-    messages = getattr(agent, "messages", None)
-    if not isinstance(messages, list):
-        diag_logger.info("[%s] agent.messages not accessible", label)
-        return since_index
-
-    new_messages = messages[since_index:]
-    tool_calls: list[dict[str, Any]] = []
-    for msg in new_messages:
-        if _get(msg, "role") != "assistant":
-            continue
-        content = _get(msg, "content")
-        if not isinstance(content, list):
-            continue
-        for block in content:
-            block_type = _get(block, "type")
-            if block_type == "tool_use":
-                tool_calls.append({
-                    "name": _get(block, "name"),
-                    "input": _get(block, "input") or {},
-                })
-                continue
-            tool_use_inner = _get(block, "toolUse")
-            if tool_use_inner is not None:
-                tool_calls.append({
-                    "name": _get(tool_use_inner, "name"),
-                    "input": _get(tool_use_inner, "input") or {},
-                })
-
-    if not tool_calls:
-        diag_logger.info("[%s] no tool calls observed", label)
-        return len(messages)
-
-    diag_logger.info("[%s] %d tool call(s):", label, len(tool_calls))
-    for i, call in enumerate(tool_calls, 1):
-        inp = call["input"] or {}
-        compact = {
-            k: (v if not isinstance(v, str) or len(v) <= 80 else v[:77] + "...")
-            for k, v in inp.items()
-        }
-        diag_logger.info("  %2d. %s(%s)", i, call["name"], compact)
-    return len(messages)
-
-
-def _log_prompt(label: str, prompt: str) -> None:
-    """Echo a multi-line prompt to the diag logger (verbose mode only)."""
-    diag_logger.info("[%s] prompt sent to agent:", label)
-    for line in prompt.split("\n"):
-        diag_logger.info("  %s", line)
 
 
 # ---------------------------------------------------------------------------
@@ -383,8 +228,6 @@ def record_demonstration(
     so the agent doesn't waste calls destroying and recreating it. One
     prompt → one tool sequence → one episode.
     """
-    msg_idx = len(getattr(agent, "messages", []) or [])
-
     push_clause = (
         f"Push the result to {repo_id} when done."
         if push_to_hub
@@ -420,11 +263,7 @@ def record_demonstration(
             f"to {repo_id} at FPS 30. {push_clause}"
         )
 
-    _log_prompt("record", prompt)
-    result = agent(prompt)
-    _log_agent_tool_calls(agent, "record", since_index=msg_idx)
-    _log_dataset_summary(repo_id)
-    return result
+    return agent(prompt)
 
 
 # ---------------------------------------------------------------------------
@@ -482,11 +321,7 @@ def run_policy(
     else:
         raise SystemExit(f"Unknown policy: {policy!r}")
 
-    msg_idx = len(getattr(agent, "messages", []) or [])
-    _log_prompt("policy", prompt)
-    result = agent(prompt)
-    _log_agent_tool_calls(agent, "policy", since_index=msg_idx)
-    return result
+    return agent(prompt)
 
 
 # ---------------------------------------------------------------------------
@@ -500,11 +335,7 @@ def broadcast_to_mesh(agent: Any, instruction: str = "go to home pose") -> Any:
         f"broadcast the instruction '{instruction}' to each one with a "
         f"5-second timeout."
     )
-    msg_idx = len(getattr(agent, "messages", []) or [])
-    _log_prompt("mesh", prompt)
-    result = agent(prompt)
-    _log_agent_tool_calls(agent, "mesh", since_index=msg_idx)
-    return result
+    return agent(prompt)
 
 
 # ---------------------------------------------------------------------------
@@ -620,12 +451,6 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="Skip the mesh broadcast step (Step 5).",
     )
 
-    p.add_argument(
-        "--verbose", "-v", action="store_true",
-        help="Show the prompt the agent receives, every tool call (with "
-             "arguments), and detailed dataset state. Off by default.",
-    )
-
     return p.parse_args(argv)
 
 
@@ -645,10 +470,6 @@ def main(argv: list[str] | None = None) -> int:
         datefmt="%H:%M:%S",
     )
 
-    # Gate the diagnostic logger: by default suppress its INFO output,
-    # only show on --verbose.
-    diag_logger.setLevel(logging.INFO if args.verbose else logging.WARNING)
-
     push_to_hub = bool(args.hf_user)
     repo_id = (
         f"{args.hf_user}/{args.dataset_name}"
@@ -658,7 +479,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.clean_cache:
         import shutil
-        cache_dir = _lerobot_cache_root(repo_id)
+        cache_dir = Path.home() / ".cache" / "huggingface" / "lerobot" / repo_id
         if cache_dir.exists():
             logger.info("Removing cache at %s", cache_dir)
             shutil.rmtree(cache_dir)
