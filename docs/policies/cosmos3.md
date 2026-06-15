@@ -79,6 +79,16 @@ The `cosmos3-diffusers` extra is native `diffusers` + `torch` + `transformers`
 > native output, *before* the RoboLab server's `joint_pos` (8D) conversion. Use
 > `backend="service"` when you need joint-position commands.
 
+> **Safety checker / `cosmos_guardrail`.** `Cosmos3OmniPipeline` builds a
+> `CosmosSafetyChecker` at load time, which requires the heavy optional
+> `cosmos_guardrail` package and otherwise raises `ImportError: cosmos_guardrail
+> is not installed`. The diffusers backend disables it by default
+> (`enable_safety_checker=False`, passed through to `from_pretrained`) so the
+> pipeline loads without that extra. Install `cosmos_guardrail` and pass
+> `enable_safety_checker=True` to re-enable it. Note Cosmos runs in `bfloat16`,
+> so the backend up-casts the half-precision action tensor to `float32` before
+> returning the chunk.
+
 ### `backend="diffusers"` — world video alongside the action chunk
 
 One in-process forward pass returns the predicted world video, optional sound,

@@ -265,3 +265,95 @@ def test_action_mapping_validates_against_raw_layout():
             diffusers_backend=backend,
             action_mapping={"joint_0": "j1"},
         )
+
+
+# --- GPU-path regression tests ---------------------------------------------
+# Bug A (safety checker) and Bug B (bf16 -> numpy) only surface when the real
+# pipeline is loaded / when the pipeline returns the model's native bfloat16
+# action tensors. The mocked happy-path tests above never exercise either, so
+# these pin both against the unmocked code paths.
+
+
+def test_to_numpy_upcasts_bfloat16_action_chunk():
+    """Cosmos 3 runs in bfloat16; the output action tensor is bfloat16.
+
+    ``np.asarray(bf16_tensor)`` raises ``TypeError: Got unsupported ScalarType
+    BFloat16``. ``_to_numpy`` must up-cast half precision to float32 first so
+    the shared ``_unpack_actions`` consumes the chunk.
+    """
+    import torch
+
+    from strands_robots.policies.cosmos3.policy_diffusers import _to_numpy
+
+    chunk = torch.tensor([[0.25, -0.5], [1.0, 2.0]], dtype=torch.bfloat16)
+    arr = _to_numpy(chunk)
+    assert arr.dtype == np.float32
+    np.testing.assert_allclose(arr, [[0.25, -0.5], [1.0, 2.0]], rtol=0, atol=1e-2)
+
+
+def test_to_numpy_upcasts_float16_action_chunk():
+    """float16 tensors are also unreadable by ``np.asarray`` and must up-cast."""
+    import torch
+
+    from strands_robots.policies.cosmos3.policy_diffusers import _to_numpy
+
+    arr = _to_numpy(torch.tensor([1.5, -2.0], dtype=torch.float16))
+    assert arr.dtype == np.float32
+    np.testing.assert_allclose(arr, [1.5, -2.0])
+
+
+def test_load_pipeline_disables_safety_checker_by_default(monkeypatch):
+    """``Cosmos3OmniPipeline.__init__`` builds a ``CosmosSafetyChecker`` that
+    hard-raises ``ImportError: cosmos_guardrail is not installed`` unless the
+    heavy optional extra is present. The backend must pass
+    ``enable_safety_checker=False`` to ``from_pretrained`` by default so the
+    pipeline loads without ``cosmos_guardrail``.
+    """
+    import sys
+
+    captured = {}
+
+    class FakeOmniPipeline:
+        @classmethod
+        def from_pretrained(cls, model, **kwargs):
+            captured["model"] = model
+            captured["kwargs"] = kwargs
+            return cls()
+
+        def to(self, device):
+            captured["device"] = device
+            return self
+
+    fake_diffusers = types.ModuleType("diffusers")
+    fake_diffusers.Cosmos3OmniPipeline = FakeOmniPipeline
+    fake_diffusers.CosmosActionCondition = FakeCondition
+    monkeypatch.setitem(sys.modules, "diffusers", fake_diffusers)
+
+    # No injected pipeline -> exercises the real _load_pipeline path.
+    Cosmos3DiffusersBackend(embodiment=get_embodiment("droid"), device="cpu")
+    assert captured["kwargs"].get("enable_safety_checker") is False
+
+
+def test_load_pipeline_enables_safety_checker_when_requested(monkeypatch):
+    """With ``enable_safety_checker=True`` the flag is NOT forced off, so a
+    caller that installed ``cosmos_guardrail`` keeps the checker."""
+    import sys
+
+    captured = {}
+
+    class FakeOmniPipeline:
+        @classmethod
+        def from_pretrained(cls, model, **kwargs):
+            captured["kwargs"] = kwargs
+            return cls()
+
+        def to(self, device):
+            return self
+
+    fake_diffusers = types.ModuleType("diffusers")
+    fake_diffusers.Cosmos3OmniPipeline = FakeOmniPipeline
+    fake_diffusers.CosmosActionCondition = FakeCondition
+    monkeypatch.setitem(sys.modules, "diffusers", fake_diffusers)
+
+    Cosmos3DiffusersBackend(embodiment=get_embodiment("droid"), device="cpu", enable_safety_checker=True)
+    assert "enable_safety_checker" not in captured["kwargs"]

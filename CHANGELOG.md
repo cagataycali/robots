@@ -35,6 +35,16 @@ alongside the existing WebSocket `service` backend (the default, unchanged).
   with `numpy>=2`, so it is co-installable with `cosmos3-service` and `lerobot`.
 - New `[cosmos3-diffusers]` extra in `pyproject.toml`; NOTICE attributes
   Hugging Face diffusers (Apache-2.0).
+- GPU load path hardening (surfaces only on a real `from_pretrained` + run, not
+  the mocked unit tests): `Cosmos3OmniPipeline.__init__` builds a
+  `CosmosSafetyChecker` that hard-raises `ImportError: cosmos_guardrail is not
+  installed` unless the heavy optional `cosmos_guardrail` extra is present, so
+  the backend now passes `enable_safety_checker=False` to `from_pretrained` by
+  default (new `enable_safety_checker` arg opts back in when `cosmos_guardrail`
+  is installed). Cosmos runs in `bfloat16`, so the output action tensor is
+  `bfloat16` (or `float16`), which `np.asarray` cannot read
+  (`TypeError: Got unsupported ScalarType BFloat16`); `_to_numpy` now up-casts
+  half precision to `float32` before handing the chunk to NumPy.
 
 ## Unreleased - serial_tool ASCII output
 

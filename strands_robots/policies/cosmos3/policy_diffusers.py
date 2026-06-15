@@ -116,6 +116,11 @@ class Cosmos3DiffusersBackend:
         num_inference_steps: Diffusion sampling steps for the pipeline run.
         guidance_scale: Classifier-free guidance scale.
         enable_sound: Decode the audio waveform alongside the video.
+        enable_safety_checker: Build the pipeline's ``CosmosSafetyChecker``
+            (requires the heavy optional ``cosmos_guardrail`` extra). Default
+            ``False`` so the pipeline loads without that extra; the load passes
+            ``enable_safety_checker=False`` to ``from_pretrained`` to skip the
+            checker. Set ``True`` only when ``cosmos_guardrail`` is installed.
         pipeline: Pre-built / injected ``Cosmos3OmniPipeline`` callable
             (dependency injection for tests). When ``None`` the real pipeline is
             loaded lazily via ``Cosmos3OmniPipeline.from_pretrained``; a missing
@@ -147,6 +152,7 @@ class Cosmos3DiffusersBackend:
         num_inference_steps: int = 35,
         guidance_scale: float = 6.0,
         enable_sound: bool = False,
+        enable_safety_checker: bool = False,
         pipeline: _PipelineCallable | None = None,
         condition_cls: Any | None = None,
     ) -> None:
@@ -162,6 +168,7 @@ class Cosmos3DiffusersBackend:
         self.num_inference_steps = num_inference_steps
         self.guidance_scale = guidance_scale
         self.enable_sound = enable_sound
+        self.enable_safety_checker = enable_safety_checker
 
         # Pipeline (callable) + CosmosActionCondition factory. Injected for
         # tests; otherwise imported/loaded lazily from native diffusers.
@@ -185,7 +192,16 @@ class Cosmos3DiffusersBackend:
             raise ImportError(_install_hint()) from e
         torch_dtype = _resolve_torch_dtype(torch, self.dtype)
         device = self.device or ("cuda" if torch.cuda.is_available() else "cpu")
-        pipe = Cosmos3OmniPipeline.from_pretrained(self.model, torch_dtype=torch_dtype)
+        # ``Cosmos3OmniPipeline.__init__`` builds a ``CosmosSafetyChecker`` which
+        # hard-raises ``ImportError: cosmos_guardrail is not installed`` unless the
+        # heavy optional ``cosmos_guardrail`` extra is present. Disable it by
+        # default so the in-process backend loads without that extra; callers who
+        # installed ``cosmos_guardrail`` can opt back in via
+        # ``enable_safety_checker=True``.
+        from_pretrained_kwargs: dict[str, Any] = {"torch_dtype": torch_dtype}
+        if not self.enable_safety_checker:
+            from_pretrained_kwargs["enable_safety_checker"] = False
+        pipe = Cosmos3OmniPipeline.from_pretrained(self.model, **from_pretrained_kwargs)
         pipe = pipe.to(device)
         self.device = device
         return pipe
@@ -299,10 +315,24 @@ class Cosmos3DiffusersBackend:
 
 
 def _to_numpy(value: Any) -> np.ndarray:
-    """Convert a torch tensor / array-like action chunk to ``np.ndarray``."""
+    """Convert a torch tensor / array-like action chunk to ``np.ndarray``.
+
+    Cosmos 3 runs in ``bfloat16`` by default, so the pipeline output action
+    tensors are ``bfloat16`` (or ``float16``). ``np.asarray`` cannot read those
+    dtypes directly (``TypeError: Got unsupported ScalarType BFloat16``), so we
+    up-cast a half-precision tensor to ``float32`` on the torch side before
+    handing it to NumPy.
+    """
     detach = getattr(value, "detach", None)
     if callable(detach):
         value = detach().cpu()
+        try:
+            import torch
+        except ImportError:
+            pass
+        else:
+            if isinstance(value, torch.Tensor) and value.dtype in (torch.bfloat16, torch.float16):
+                value = value.to(torch.float32)
     return np.asarray(value, dtype=np.float32)
 
 
