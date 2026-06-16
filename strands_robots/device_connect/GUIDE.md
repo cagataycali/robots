@@ -294,6 +294,18 @@ All the options above (A–B) work identically with full infrastructure - the on
 > - **Cross-network routing** - the Zenoh router (or NATS broker) enables communication across subnets and sites, not just the local LAN.
 > - **Authentication & authorization** - mTLS ensures only devices with certificates signed by the trusted CA can exchange data. Full authorization (per-device permissions, topic-level ACLs, certificate revocation) requires the router/registry infrastructure.
 
+> ⚠️ **Security: an internet-facing Zenoh router MUST deploy a topic-level ACL.**
+> The brokered/cloud router gives you mTLS (device *identity*), but mTLS alone
+> does not restrict *which topics* a device may use. Without a topic-level ACL,
+> any authenticated device cert can subscribe to every device's state, camera,
+> and input streams and publish to any device's `cmd` topic — so one
+> compromised or stolen cert becomes full read/write control of the entire
+> fleet.
+> Adapt [`examples/mesh_acl_strict_per_peer.json5`](https://github.com/strands-labs/robots/blob/main/examples/mesh_acl_strict_per_peer.json5)
+> to your fleet and deploy it on the router. See the
+> [security considerations](https://github.com/strands-labs/robots/blob/main/docs/security.md#production-posture-required-off-trusted-networks)
+> page for details.
+
 > **Per-caller RPC allowlist (`DEVICE_CONNECT_RPC_ALLOW` / `DEVICE_CONNECT_ESTOP_ALLOW`).**
 > Devices can restrict which callers may invoke state-mutating RPCs (`execute` /
 > `stop` / `step` / `reset`) and `emergencyStop`, matched against the RPC's

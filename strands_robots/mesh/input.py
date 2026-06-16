@@ -354,6 +354,48 @@ class InputReceiver:
                     self.source_peer_id,
                 )
             return
+
+        # Cross-session teleop replay defence. The CMD path got
+        # (sender, turn_id) replay dedup and presence got freshness,
+        # but this streaming input path had NO freshness check: an attacker who
+        # eavesdrops a teleop stream can store frames and replay them hours/days
+        # later (different session/ZID, stale timestamps) and the follower
+        # repeats the captured motion -- the rate cap (100Hz) and value bound
+        # (4pi) still pass because the replayed frames are legitimate-shaped.
+        # Every frame already carries a wall-clock ``t`` (set by
+        # InputPublisher._publish_loop), so we just have to CHECK it. We reuse
+        # the same freshness/forward-skew env knobs as the resume/e-stop replay
+        # defence so operators tune one set of clock-drift bounds for the
+        # whole mesh. Frames with a missing/non-numeric ``t`` are rejected too
+        # (the publisher always sets it; absence means malformed or a
+        # hand-crafted replay envelope) -- identical posture to M-3. Dropped
+        # frames are counted + rate-limited-logged, never raised, because this
+        # is a 50Hz+ hot loop.
+        from strands_robots.mesh.core import (
+            _resume_forward_skew_s,
+            _resume_freshness_window_s,
+        )
+
+        _frame_t = data.get("t")
+        if not isinstance(_frame_t, (int, float)) or isinstance(_frame_t, bool):
+            self._rejected = getattr(self, "_rejected", 0) + 1
+            if self._rejected <= 5:
+                logger.warning(
+                    "[mesh] input frame rejected (missing/invalid timestamp) from %s",
+                    self.source_peer_id,
+                )
+            return
+        _age = time.time() - float(_frame_t)
+        if _age > _resume_freshness_window_s() or _age < -_resume_forward_skew_s():
+            self._rejected = getattr(self, "_rejected", 0) + 1
+            if self._rejected <= 5:
+                logger.warning(
+                    "[mesh] input frame rejected (stale/future t=%.1fs) from %s",
+                    _age,
+                    self.source_peer_id,
+                )
+            return
+
         try:
             action = data.get("action")
             if action is None:

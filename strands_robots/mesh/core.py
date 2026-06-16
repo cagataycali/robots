@@ -531,7 +531,35 @@ class Mesh(SensorLoopsMixin):
                     self.peer_id,
                 )
 
-            # Issue #218 / R3: refuse-to-start gate when mtls is configured
+            # Multicast-scouting fleet-takeover warning.
+            # Twin of the H-1 override-code warning above. STRANDS_MESH_MULTICAST
+            # defaults to false (gossip-only scouting). When an operator opts
+            # INTO multicast, any device on the LAN can attract the entire fleet
+            # in ~15s with zero credentials (unauthenticated UDP 224.0.0.224:7446
+            # -- it operates below the mTLS/ACL layer.
+            # This is a deliberate "operator opts into a
+            # dangerous posture" choice with fleet-level impact, so we emit a
+            # loud, logged WARNING that turns a silent footgun into an explicit
+            # decision. We read the flag through the SAME _bool_env helper that
+            # _scouting_config() uses so the warning can never disagree with the
+            # value actually applied to the Zenoh session.
+            from strands_robots.mesh._zenoh_config import (  # type: ignore[import-untyped]
+                _bool_env as _zc_bool_env,
+            )
+
+            if _zc_bool_env("STRANDS_MESH_MULTICAST", default=False):
+                logger.warning(
+                    "[safety] %s: STRANDS_MESH_MULTICAST=true -- multicast "
+                    "scouting is enabled. Any device on the LAN can attract "
+                    "fleet robots without credentials (unauthenticated UDP "
+                    "224.0.0.224:7446). This is a fleet-takeover risk on "
+                    "untrusted networks. Set STRANDS_MESH_MULTICAST=false "
+                    "(the default) unless operating on a physically isolated "
+                    "network.",
+                    self.peer_id,
+                )
+
+            # Refuse-to-start gate when mtls is configured
             # but the ACL is permissive-by-shape (built-in default OR
             # operator file with default_permission=allow). The gate
             # closes the "fleet thinks mTLS protects them, but ACL is
@@ -539,7 +567,7 @@ class Mesh(SensorLoopsMixin):
             # explicitly accept the dev/lab posture set
             # STRANDS_MESH_ACCEPT_PERMISSIVE_ACL=1.
             #
-            # Review thread core.py:189 -- the gate stashes a thread-local
+            # The gate stashes a thread-local
             # snapshot via ``_set_thread_snapshot`` (called inside
             # ``_refuse_under_permissive_default_acl``) BEFORE deciding
             # whether to refuse. Wrap both the gate and ``get_session()``

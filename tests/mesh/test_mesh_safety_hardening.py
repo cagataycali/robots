@@ -62,7 +62,7 @@ class TestC1InputLockout:
         robot = _RecordingRobot()
         rx = InputReceiver(mesh, robot, source_peer_id="leader")
         rx._running = True
-        rx._on_input(rx.topic, {"action": {"j0": 0.5}, "seq": 0})
+        rx._on_input(rx.topic, {"action": {"j0": 0.5}, "seq": 0, "t": time.time()})
         assert len(robot.actions) == 1
 
 
@@ -91,8 +91,8 @@ class TestH2TeleopBoundAndRate:
         rx = InputReceiver(mesh, robot, source_peer_id="leader")
         rx._running = True
         # Two synchronous frames microseconds apart: 2nd exceeds 50Hz.
-        rx._on_input(rx.topic, {"action": {"j0": 0.1}, "seq": 0})
-        rx._on_input(rx.topic, {"action": {"j0": 0.2}, "seq": 1})
+        rx._on_input(rx.topic, {"action": {"j0": 0.1}, "seq": 0, "t": time.time()})
+        rx._on_input(rx.topic, {"action": {"j0": 0.2}, "seq": 1, "t": time.time()})
         assert len(robot.actions) == 1
         assert rx.stats["rate_dropped"] >= 1
 
@@ -300,6 +300,6 @@ class TestM5SuccessAudit:
         rx = inp.InputReceiver(mesh, robot, source_peer_id="leader")
         rx._running = True
         for i in range(5):
-            rx._on_input(rx.topic, {"action": {"j0": 0.1 * i}, "seq": i})
+            rx._on_input(rx.topic, {"action": {"j0": 0.1 * i}, "seq": i, "t": time.time()})
         # 5th applied frame triggers one sampled audit.
         assert events.count("input_stream_applied") == 1

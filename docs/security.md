@@ -56,6 +56,24 @@ mTLS alone is not sufficient - pair it with an access-control list:
 - Supply an operator ACL via `STRANDS_MESH_ACL_FILE` that enumerates each peer's certificate CN and the key expressions it may use. See [`examples/mesh_acl_example.json5`](https://github.com/strands-labs/robots/blob/main/examples/mesh_acl_example.json5) and [`examples/mesh_acl_strict_per_peer.json5`](https://github.com/strands-labs/robots/blob/main/examples/mesh_acl_strict_per_peer.json5).
 - `STRANDS_MESH_ACCEPT_PERMISSIVE_ACL=1` exists only to silence the permissive-ACL warning when you have deliberately accepted it (e.g. a closed lab). Do not set it in production - it does not make the mesh safer, it only quiets the reminder that it is not.
 
+> ⚠️ **WAN/cloud Zenoh routers MUST deploy a topic-level ACL.**
+> mTLS authenticates *who* a device is; it does **not** restrict *what* topics
+> that device may touch. A cloud/WAN Zenoh router with mTLS but no topic-level
+> ACL grants every authenticated device cert ambient authority over the whole
+> fleet: any one cert can subscribe to `**` (all devices' state, camera, and
+> input streams) and publish to any device's `cmd` topic. A single
+> compromised or stolen device certificate then becomes full read/write
+> control of every robot: one cert can subscribe to and command the entire
+> fleet.
+>
+> mTLS gives you **identity**; the ACL gives you **least privilege**. You need
+> both. Adapt [`examples/mesh_acl_strict_per_peer.json5`](https://github.com/strands-labs/robots/blob/main/examples/mesh_acl_strict_per_peer.json5)
+> to your fleet (it pins each peer's certificate CN to the exact key
+> expressions it may publish/subscribe) and deploy it on **every
+> internet-facing router**, not just on LAN peers. Without it, an
+> internet-reachable router is an unauthorized-fleet-control surface even
+> with mTLS enforced.
+
 ### Cross-network fleets (AWS IoT Core)
 
 Adding the `[mesh-iot]` extra routes traffic through AWS IoT Core (MQTT5 with mTLS), and a `BridgeTransport` keeps high-rate topics local while bridging presence, health, and safety to the cloud. When you use this path, the IoT device certificates and provisioning material become production secrets - provision them per-device, scope their IoT policies to the minimum topic set, and rotate/revoke them like any other fleet credential.
