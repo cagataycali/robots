@@ -417,13 +417,13 @@ def _run_device_connect_foreground(instance: Any) -> None:
     except Exception as e:  # noqa: BLE001 - surface but keep the process alive
         logger.warning("Device Connect init failed: %s", e)
 
-    print(f"🤖 {peer_id} is online. Ctrl+C to stop.")
+    print(f"{peer_id} is online. Ctrl+C to stop.")
     try:
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
-        print(f"\n🛑 Shutting down {peer_id}...", flush=True)
-        print(f"👋 {peer_id} stopped.", flush=True)
+        print(f"\nShutting down {peer_id}...", flush=True)
+        print(f"{peer_id} stopped.", flush=True)
         os._exit(0)
 
 

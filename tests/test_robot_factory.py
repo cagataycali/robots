@@ -1,6 +1,8 @@
 """Tests for strands_robots.robot - Robot() factory and list_robots()."""
 
 import importlib
+import os
+import types
 
 import pytest
 
@@ -1114,3 +1116,116 @@ class TestRobotNamePreservesUserInput:
             assert sim.tool_name == "h1_sim"
         finally:
             sim.destroy()
+
+
+class TestRunDeviceConnectAsciiOutput:
+    """Regression: the foreground ``.run()`` device-connect loop must print
+    ASCII-only status lines.
+
+    ``Robot(...).run()`` brings the device online and prints lifecycle messages
+    straight to the operator's terminal. Those messages previously embedded
+    emoji ("robot", "stop", "wave"), which violates the project's ASCII-only
+    rule for logs and user-facing output (the same class of fix applied to
+    serial_tool, pose_tool, and lerobot_camera). Non-ASCII bytes on a terminal
+    or in a captured CI log can also raise UnicodeEncodeError under a non-UTF-8
+    locale (``LC_ALL=C``). These tests pin the output to ASCII and exercise the
+    otherwise-uncovered foreground loop without blocking.
+    """
+
+    def _drive_foreground(self, monkeypatch, capsys, peer_id="so100-test"):
+        """Run the blocking foreground loop once and capture its stdout.
+
+        ``time.sleep`` is patched to raise ``KeyboardInterrupt`` (the operator's
+        Ctrl+C) so the loop exits on the first tick, and ``os._exit`` is patched
+        to a sentinel raise so the test process survives.
+        """
+        import strands_robots.robot as robot_mod
+
+        instance = types.SimpleNamespace(
+            _peer_id=peer_id,
+            _peer_type="sim",
+            mesh=None,
+        )
+
+        # The device_connect import/init is wrapped in the function's own
+        # try/except, so a missing backend is logged and the loop still prints
+        # its lifecycle lines - exactly the path under test. No stubbing needed.
+        monkeypatch.setattr("time.sleep", lambda _s: (_ for _ in ()).throw(KeyboardInterrupt()))
+
+        class _ExitCalled(Exception):
+            pass
+
+        def _fake_exit(code):
+            raise _ExitCalled()
+
+        monkeypatch.setattr(os, "_exit", _fake_exit)
+
+        with pytest.raises(_ExitCalled):
+            robot_mod._run_device_connect_foreground(instance)
+        return capsys.readouterr().out
+
+    def test_foreground_output_is_ascii_only(self, monkeypatch, capsys):
+        out = self._drive_foreground(monkeypatch, capsys)
+        assert out, "foreground loop produced no output"
+        offenders = [
+            (i, ch, hex(ord(ch))) for i, line in enumerate(out.splitlines(), 1) for ch in line if ord(ch) > 0x7F
+        ]
+        assert not offenders, f"non-ASCII characters in run() output: {offenders}"
+        # Output encodes cleanly under a non-UTF-8 locale (no UnicodeEncodeError).
+        out.encode("ascii")
+
+    def test_foreground_output_reports_lifecycle(self, monkeypatch, capsys):
+        """The ASCII messages still convey online + shutdown + peer id."""
+        out = self._drive_foreground(monkeypatch, capsys, peer_id="franka-7")
+        assert "franka-7 is online" in out
+        assert "Shutting down franka-7" in out
+        assert "franka-7 stopped" in out
+
+    def test_built_in_mesh_is_stopped_before_device_connect(self, monkeypatch, capsys):
+        """Device Connect supersedes the auto-started mesh in run() mode.
+
+        A running built-in mesh must be stopped and detached so two Zenoh
+        presence systems do not run in one process.
+        """
+        import strands_robots.robot as robot_mod
+
+        stopped = []
+
+        class _Mesh:
+            def stop(self):
+                stopped.append(True)
+
+        instance = types.SimpleNamespace(_peer_id="m1", _peer_type="sim", mesh=_Mesh())
+        monkeypatch.setattr("time.sleep", lambda _s: (_ for _ in ()).throw(KeyboardInterrupt()))
+
+        class _ExitCalled(Exception):
+            pass
+
+        monkeypatch.setattr(os, "_exit", lambda code: (_ for _ in ()).throw(_ExitCalled()))
+        with pytest.raises(_ExitCalled):
+            robot_mod._run_device_connect_foreground(instance)
+
+        assert stopped == [True], "built-in mesh was not stopped"
+        assert instance.mesh is None, "mesh reference not detached"
+
+
+class TestAttachDeviceConnectBindsRun:
+    """``_attach_device_connect`` wires a callable ``.run()`` onto the instance."""
+
+    def test_run_is_bound_and_callable(self):
+        import strands_robots.robot as robot_mod
+
+        instance = types.SimpleNamespace()
+        robot_mod._attach_device_connect(instance, "so100", "sim", peer_id="p1")
+        assert callable(instance.run)
+        assert instance._peer_id == "p1"
+        assert instance._peer_type == "sim"
+
+    def test_real_mode_marks_peer_type_robot(self):
+        import strands_robots.robot as robot_mod
+
+        instance = types.SimpleNamespace()
+        robot_mod._attach_device_connect(instance, "so100", "real", peer_id=None)
+        assert instance._peer_type == "robot"
+        # A peer id is synthesized from the canonical name when none is given.
+        assert instance._peer_id.startswith("so100-")
