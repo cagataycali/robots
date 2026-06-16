@@ -453,3 +453,223 @@ class TestGrasped:
         sim = _NoHelpersSim()
         pred = make_predicate("grasped", body="cube", gripper_prefix="robot0_gripper")
         assert pred(sim) is False
+
+
+# Degradation / defensive contract
+#
+# The module docstring promises predicates "should never crash the eval loop"
+# and that they "degrade gracefully" when a backend method raises, returns an
+# error stub, or returns a malformed payload. These fakes exercise exactly
+# those failure modes - the happy paths above already cover well-formed
+# backends.
+
+
+class _RaisingBodyStateSim:
+    """Sim whose ``get_body_state`` always raises (e.g. backend died mid-eval)."""
+
+    def get_body_state(self, body_name: str) -> dict[str, Any]:
+        raise RuntimeError(f"backend exploded reading {body_name!r}")
+
+    def get_observation(self, *_, **__) -> dict[str, Any]:
+        raise RuntimeError("backend exploded reading observation")
+
+
+class _RaisingContactSim:
+    """Sim whose ``get_contacts`` always raises."""
+
+    def get_contacts(self) -> dict[str, Any]:
+        raise RuntimeError("contact solver crashed")
+
+
+class _MalformedBodyStateSim:
+    """Sim that returns success but with a malformed / wrong-shape payload."""
+
+    def __init__(self, payload: dict[str, Any]):
+        self._payload = payload
+
+    def get_body_state(self, body_name: str) -> dict[str, Any]:
+        return {"status": "success", "content": [{"json": self._payload}]}
+
+    def get_observation(self, *_, **__) -> dict[str, Any]:
+        return {}
+
+
+class _MalformedContactSim:
+    """Sim whose ``get_contacts`` returns a non-list ``contacts`` payload."""
+
+    def __init__(self, payload: dict[str, Any], status: str = "success"):
+        self._payload = payload
+        self._status = status
+
+    def get_contacts(self) -> dict[str, Any]:
+        return {"status": self._status, "content": [{"json": self._payload}]}
+
+
+class TestDegradationContract:
+    """A backend that raises / errors / returns garbage must yield a safe
+    verdict (``False`` for bool predicates, ``0.0`` for reward terms) rather
+    than propagating the exception up through the eval loop."""
+
+    def test_body_predicate_swallows_get_body_state_exception(self):
+        sim = _RaisingBodyStateSim()
+        pred = make_predicate("body_above_z", body="cube", z=0.1)
+        assert pred(sim) is False
+
+    def test_distance_predicate_swallows_get_body_state_exception(self):
+        sim = _RaisingBodyStateSim()
+        pred = make_predicate("distance_less_than", body_a="a", body_b="b", threshold=1.0)
+        assert pred(sim) is False
+
+    def test_body_upright_swallows_get_body_state_exception(self):
+        sim = _RaisingBodyStateSim()
+        pred = make_predicate("body_upright", body="cube")
+        assert pred(sim) is False
+
+    def test_joint_predicate_swallows_get_observation_exception(self):
+        sim = _RaisingBodyStateSim()  # get_observation raises here too
+        pred = make_predicate("joint_above", joint="elbow", value=0.0)
+        assert pred(sim) is False
+
+    def test_joint_progress_reward_zero_when_observation_raises(self):
+        sim = _RaisingBodyStateSim()
+        term = make_predicate("joint_progress", joint="elbow", target=1.0)
+        assert term(sim) == 0.0
+
+    def test_contact_between_swallows_get_contacts_exception(self):
+        sim = _RaisingContactSim()
+        pred = make_predicate("contact_between", geom_a="g1", geom_b="g2")
+        assert pred(sim) is False
+
+    def test_contact_any_swallows_get_contacts_exception(self):
+        sim = _RaisingContactSim()
+        pred = make_predicate("contact_any")
+        assert pred(sim) is False
+
+    def test_grasped_swallows_get_contacts_exception(self):
+        sim = _RaisingContactSim()
+        pred = make_predicate("grasped", body="cube", gripper_prefix="grip")
+        assert pred(sim) is False
+
+    def test_body_position_rejects_wrong_length_payload(self):
+        sim = _MalformedBodyStateSim({"position": [0.0, 1.0]})  # only 2 coords
+        pred = make_predicate("body_above_z", body="cube", z=-1.0)
+        assert pred(sim) is False
+
+    def test_body_position_rejects_non_numeric_payload(self):
+        sim = _MalformedBodyStateSim({"position": ["x", "y", "z"]})
+        pred = make_predicate("body_above_z", body="cube", z=-1.0)
+        assert pred(sim) is False
+
+    def test_body_upright_rejects_wrong_length_quaternion(self):
+        sim = _MalformedBodyStateSim({"quaternion": [1.0, 0.0, 0.0]})  # only 3
+        pred = make_predicate("body_upright", body="cube")
+        assert pred(sim) is False
+
+    def test_joint_position_rejects_bool_value(self):
+        # bool is a subclass of int; the lookup must NOT treat True as 1.0.
+        sim = _JointObsSim({})
+        sim._joints = {"gripper": True}  # type: ignore[dict-item]
+        pred = make_predicate("joint_above", joint="gripper", value=0.5)
+        assert pred(sim) is False
+
+    def test_contact_between_handles_non_list_contacts(self):
+        sim = _MalformedContactSim({"contacts": "not-a-list", "n_contacts": 0})
+        pred = make_predicate("contact_between", geom_a="g1", geom_b="g2")
+        assert pred(sim) is False
+
+    def test_grasped_handles_non_list_contacts(self):
+        sim = _MalformedContactSim({"contacts": 42})
+        pred = make_predicate("grasped", body="cube", gripper_prefix="grip")
+        assert pred(sim) is False
+
+
+class _GeomContactSim:
+    """Sim exposing both body positions and geom-prefix contacts, for the
+    ``body_on(require_contact=True)`` LIBERO-style combined check."""
+
+    def __init__(self, positions: dict[str, list[float]], contacts: list[dict[str, Any]], status: str = "success"):
+        self._pos = positions
+        self._contacts = contacts
+        self._status = status
+
+    def get_body_state(self, body_name: str) -> dict[str, Any]:
+        if body_name not in self._pos:
+            return {"status": "error", "content": [{"text": "missing"}]}
+        return {"status": "success", "content": [{"json": {"position": self._pos[body_name]}}]}
+
+    def get_contacts(self) -> dict[str, Any]:
+        return {
+            "status": self._status,
+            "content": [{"json": {"contacts": self._contacts, "n_contacts": len(self._contacts)}}],
+        }
+
+    def get_observation(self, *_, **__) -> dict[str, Any]:
+        return {}
+
+
+class TestBodyOnRequireContact:
+    """``body_on(require_contact=True)`` combines the geometric check with a
+    physics-contact check, degrading to geometric-only when the engine cannot
+    report contacts (pre-#171 behaviour)."""
+
+    _STACKED = {"cube": [0.0, 0.0, 0.10], "table": [0.0, 0.0, 0.0]}
+
+    def test_true_when_geometric_and_contact_agree(self):
+        sim = _GeomContactSim(
+            self._STACKED,
+            [{"geom1": "cube_g0", "geom2": "table_g1"}],
+        )
+        pred = make_predicate("body_on", body_a="cube", body_b="table", require_contact=True)
+        assert pred(sim) is True
+
+    def test_false_when_geometry_passes_but_no_contact(self):
+        sim = _GeomContactSim(self._STACKED, [])
+        pred = make_predicate("body_on", body_a="cube", body_b="table", require_contact=True)
+        assert pred(sim) is False
+
+    def test_geometric_only_when_engine_lacks_get_contacts(self):
+        # _BodyStateSim has no get_contacts -> _body_contact returns None ->
+        # body_on falls back to the geometric verdict (True here).
+        sim = _BodyStateSim(self._STACKED)
+        pred = make_predicate("body_on", body_a="cube", body_b="table", require_contact=True)
+        assert pred(sim) is True
+
+    def test_geometric_only_when_contacts_error_stub(self):
+        # Engine returns an error stub -> _body_contact returns None -> fall
+        # back to geometric-only verdict rather than a false negative.
+        sim = _GeomContactSim(self._STACKED, [], status="error")
+        pred = make_predicate("body_on", body_a="cube", body_b="table", require_contact=True)
+        assert pred(sim) is True
+
+
+class _RaisingContactGeomSim(_GeomContactSim):
+    """body_on(require_contact) target whose get_contacts raises -> degrade."""
+
+    def get_contacts(self) -> dict[str, Any]:
+        raise RuntimeError("contact solver crashed")
+
+
+class TestExtractJsonAndEntryGuards:
+    """Lower-level guards: malformed top-level results and non-dict contact
+    entries must be skipped, not crash."""
+
+    def test_body_on_require_contact_degrades_when_get_contacts_raises(self):
+        sim = _RaisingContactGeomSim({"cube": [0.0, 0.0, 0.10], "table": [0.0, 0.0, 0.0]}, [])
+        pred = make_predicate("body_on", body_a="cube", body_b="table", require_contact=True)
+        # get_contacts raises -> _body_contact returns None -> geometric-only True
+        assert pred(sim) is True
+
+    def test_contact_between_skips_non_dict_entries(self):
+        sim = _ContactSim(["not-a-dict", {"geom1": "g1", "geom2": "g2"}])  # type: ignore[list-item]
+        pred = make_predicate("contact_between", geom_a="g1", geom_b="g2")
+        assert pred(sim) is True
+
+    def test_grasped_skips_non_dict_entries(self):
+        sim = _ContactSim(["junk", {"geom1": "cube_geom", "geom2": "grip_l"}])  # type: ignore[list-item]
+        pred = make_predicate("grasped", body="cube", gripper_prefix="grip")
+        assert pred(sim) is True
+
+    def test_inside_region_missing_body_returns_false(self):
+        sim = _BodyStateSim({})  # cube absent
+        pred = make_predicate("inside_region", body="cube", min=[0, 0, 0], max=[1, 1, 1])
+        assert pred(sim) is False
