@@ -50,7 +50,7 @@ sim = Robot("aloha")
 
     [:octicons-arrow-right-24: Hands catalog](hands.md)
 
--   :material-car-sports:{ .lg .middle } **Mobile** · 13
+-   :material-car-sports:{ .lg .middle } **Mobile** · 10
 
     ---
 
@@ -58,7 +58,7 @@ sim = Robot("aloha")
 
     [:octicons-arrow-right-24: Mobile catalog](mobile.md)
 
--   :material-truck:{ .lg .middle } **Mobile manip** · 1
+-   :material-truck:{ .lg .middle } **Mobile manip** · 4
 
     ---
 
@@ -92,8 +92,8 @@ sim = Robot("aloha")
 | Bimanual | 3 | [bimanual](bimanual.md) |
 | Humanoids | 18 | [humanoids](humanoids.md) |
 | Hands | 8 | [hands](hands.md) |
-| Mobile | 13 | [mobile](mobile.md) |
-| Mobile manip | 1 | [mobile](mobile.md) |
+| Mobile | 10 | [mobile](mobile.md) |
+| Mobile manip | 4 | [mobile](mobile.md) |
 | Aerial | 2 | [mobile](mobile.md) |
 | Expressive | 1 | [humanoids](humanoids.md) |
 | **Total** | **68** | |

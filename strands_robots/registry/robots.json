@@ -880,7 +880,7 @@
     },
     "stretch": {
       "description": "Hello Robot Stretch (original, mobile manipulator)",
-      "category": "mobile",
+      "category": "mobile_manip",
       "joints": 18,
       "asset": {
         "dir": "hello_robot_stretch",
@@ -894,7 +894,7 @@
     },
     "stretch3": {
       "description": "Hello Robot Stretch 3 (mobile manipulator)",
-      "category": "mobile",
+      "category": "mobile_manip",
       "joints": 41,
       "asset": {
         "dir": "hello_robot_stretch_3",
@@ -909,7 +909,7 @@
     },
     "tiago_dual": {
       "description": "PAL Robotics TIAGo++ Dual-Arm Mobile (26-DOF)",
-      "category": "mobile",
+      "category": "mobile_manip",
       "joints": 26,
       "asset": {
         "dir": "pal_tiago_dual",
