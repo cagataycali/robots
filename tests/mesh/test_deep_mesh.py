@@ -833,8 +833,12 @@ class TestInputPublisherReceiver:
         _os.environ["STRANDS_MESH_INPUT_MAX_HZ"] = "0"
         try:
             # Simulate incoming data
-            recv._on_input("strands/leader-1/input/leader", {"action": {"j0": 0.5, "j1": 0.3}, "seq": 0})
-            recv._on_input("strands/leader-1/input/leader", {"action": {"j0": 0.6, "j1": 0.4}, "seq": 1})
+            recv._on_input(
+                "strands/leader-1/input/leader", {"action": {"j0": 0.5, "j1": 0.3}, "seq": 0, "t": time.time()}
+            )
+            recv._on_input(
+                "strands/leader-1/input/leader", {"action": {"j0": 0.6, "j1": 0.4}, "seq": 1, "t": time.time()}
+            )
         finally:
             _os.environ.pop("STRANDS_MESH_INPUT_MAX_HZ", None)
 
@@ -856,8 +860,8 @@ class TestInputPublisherReceiver:
         recv.start()
 
         # Seq 0 → 5 (skip 1,2,3,4)
-        recv._on_input("topic", {"action": {"j0": 0.1}, "seq": 0})
-        recv._on_input("topic", {"action": {"j0": 0.2}, "seq": 5})
+        recv._on_input("topic", {"action": {"j0": 0.1}, "seq": 0, "t": time.time()})
+        recv._on_input("topic", {"action": {"j0": 0.2}, "seq": 5, "t": time.time()})
 
         stats = recv.stop()
         assert stats["drops"] == 4
