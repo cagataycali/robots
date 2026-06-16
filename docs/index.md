@@ -1,5 +1,9 @@
 # Strands Robots
 
+<figure class="brand-figure" markdown="span">
+  ![Strands Robots: perceive, reason, act, world - the closed control loop around a Strands Agent core](assets/hero_loop.svg){ .brand-svg }
+</figure>
+
 A robot library for [Strands agents](https://strandsagents.com). You name a robot, you get something you can drive - in simulation by default, or on real hardware when you ask for it.
 
 ```python

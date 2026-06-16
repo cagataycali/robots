@@ -4,6 +4,10 @@ description: One diagram, one source of truth. Module boundaries, ABC contracts,
 
 # Architecture
 
+<figure class="brand-figure" markdown="span">
+  ![Four-layer stack - Agent, Policies, Backends, Robots - with green action signals flowing down and cyan observation signals flowing back up](assets/architecture_flow.svg){ .brand-svg }
+</figure>
+
 ```mermaid
 graph TB
     subgraph user[Your code]

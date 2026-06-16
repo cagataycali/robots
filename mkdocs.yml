@@ -4,7 +4,7 @@ site_description: "Robot control, simulation, and training for Strands Agents"
 repo_url: https://github.com/strands-labs/robots
 repo_name: strands-labs/robots
 extra_css:
-- stylesheets/extra.css?v=1
+- stylesheets/extra.css?v=2
 extra_javascript:
 - https://unpkg.com/mermaid@10/dist/mermaid.min.js
 - assets/mermaid-init.js

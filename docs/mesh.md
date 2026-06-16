@@ -4,6 +4,10 @@ description: Two Robot() instances coordinating over the Zenoh mesh - peer disco
 
 # Multi-robot mesh
 
+<figure class="brand-figure" markdown="span">
+  ![Robot peers discovering and coordinating over the Zenoh mesh](assets/mesh_network.svg){ .brand-svg }
+</figure>
+
 Every `Robot()` auto-joins a Zenoh mesh. Peers discover each other on the LAN and can query, command, and e-stop one another.
 
 !!! info "Device Connect is the recommended networking layer"

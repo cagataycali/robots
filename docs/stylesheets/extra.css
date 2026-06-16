@@ -446,3 +446,44 @@ h1 {
     border-radius: 8px;
     border: 1px solid var(--glass-border);
 }
+
+/* ---- Brand figures (animated SVG hero / architecture / mesh) ---- */
+.brand-figure {
+    margin: 1.5rem 0 2rem;
+    text-align: center;
+}
+
+.brand-figure .brand-svg,
+img.brand-svg {
+    width: 100%;
+    max-width: 980px;
+    height: auto;
+    border-radius: 14px;
+    border: 1px solid var(--glass-border);
+    background: #0a0a0a;
+    box-shadow: 0 8px 40px rgba(0, 0, 0, 0.35);
+}
+
+/* The SVGs are authored on true black; in dark mode let them blend into the
+   page with the brand-green edge glow instead of a hard frame. */
+[data-md-color-scheme="slate"] .brand-figure .brand-svg,
+[data-md-color-scheme="slate"] img.brand-svg {
+    border-color: rgba(0, 255, 119, 0.18);
+    box-shadow: 0 0 0 1px rgba(0, 255, 119, 0.06),
+        0 12px 48px rgba(0, 0, 0, 0.5);
+}
+
+.brand-figure figcaption {
+    margin-top: 0.5rem;
+    font-size: 0.82rem;
+    color: var(--fg-muted);
+}
+
+/* Respect reduced-motion: the SVGs use SMIL, which the OS pause cannot stop,
+   so at least keep the surrounding hover/transition still. */
+@media (prefers-reduced-motion: reduce) {
+    .brand-figure .brand-svg,
+    img.brand-svg {
+        transition: none;
+    }
+}

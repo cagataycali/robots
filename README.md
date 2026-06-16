@@ -32,6 +32,10 @@
   </p>
 </div>
 
+<p align="center">
+  <img src="docs/assets/hero_loop.svg" alt="Strands Robots - perceive, reason, act, world: the closed control loop around a Strands Agent core" width="100%">
+</p>
+
 `strands-robots` gives a [Strands Agent](https://github.com/strands-agents/harness-sdk)
 hands. One `Robot()` call returns either a **MuJoCo simulation** (default, no GPU,
 no hardware) or a **real hardware robot** - both drivable in natural language,
