@@ -20,11 +20,14 @@ from typing import Any
 import pytest
 
 import strands_robots.tools.lerobot_teleoperate as tele_mod
-from strands_robots.tools.lerobot_teleoperate import (
-    SessionManager,
-    build_lerobot_command,
-    lerobot_teleoperate,
-)
+
+# Bind the public names off the single module handle rather than a second
+# ``from ... import`` of the same module (CodeQL: import + import-from of one
+# module). ``tele_mod`` is still needed directly so monkeypatch can rebind
+# module globals (``subprocess``/``psutil``/``os``/``time``/``SESSION_DIR``).
+SessionManager = tele_mod.SessionManager
+build_lerobot_command = tele_mod.build_lerobot_command
+lerobot_teleoperate = tele_mod.lerobot_teleoperate
 
 
 def _texts(result: dict[str, Any]) -> str:
