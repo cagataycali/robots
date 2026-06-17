@@ -15,7 +15,6 @@ import pytest
 
 pytest.importorskip("websockets", reason="websockets needed for the raw transport")
 
-import strands_robots.policies.cosmos3.client as _client_mod  # noqa: E402
 from strands_robots.policies.cosmos3 import _msgpack_numpy as mnp  # noqa: E402
 from strands_robots.policies.cosmos3.client import (  # noqa: E402
     Cosmos3WebsocketClient,
@@ -222,7 +221,7 @@ def test_client_ensure_client_wraps_construction_failure(monkeypatch):
     def boom(*args, **kwargs):
         raise OSError("socket setup failed")
 
-    monkeypatch.setattr(_client_mod, "_RawWebsocketTransport", boom)
+    monkeypatch.setattr("strands_robots.policies.cosmos3.client._RawWebsocketTransport", boom)
     client = Cosmos3WebsocketClient(host="myhost", port=4321)
     with pytest.raises(ConnectionError) as ei:
         client._ensure_client()
@@ -242,7 +241,7 @@ def test_client_get_server_metadata_wraps_connection_error(monkeypatch):
         def get_server_metadata(self):
             raise ConnectionRefusedError("refused")
 
-    monkeypatch.setattr(_client_mod, "_RawWebsocketTransport", _DownTransport)
+    monkeypatch.setattr("strands_robots.policies.cosmos3.client._RawWebsocketTransport", _DownTransport)
     client = Cosmos3WebsocketClient(host="h", port=1)
     with pytest.raises(ConnectionError, match="healthz"):
         client.get_server_metadata()
@@ -270,7 +269,7 @@ def test_client_infer_wraps_connection_error(monkeypatch):
         def infer(self, observation):
             raise OSError("connection dropped")
 
-    monkeypatch.setattr(_client_mod, "_RawWebsocketTransport", _FlakyTransport)
+    monkeypatch.setattr("strands_robots.policies.cosmos3.client._RawWebsocketTransport", _FlakyTransport)
     client = Cosmos3WebsocketClient(host="h", port=1)
     with pytest.raises(ConnectionError, match="action_policy_server_robolab"):
         client.infer({"prompt": "x"})
