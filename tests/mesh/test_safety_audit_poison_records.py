@@ -1,7 +1,11 @@
-"""v0.4.0 mesh safety+audit follow-up pins (#386), from the #221/#225 R12 trail.
+"""Mesh audit poison-record behaviour on sequence-counter failures.
 
-- #324: a non-symlink _next_seq failure writes a NEXT_SEQ_DEGRADED poison
-  record (symmetry with SEQ_LOCK_DEGRADED) instead of dropping the record.
+Pins that audit-log sequence failures never silently drop a record:
+- A non-symlink failure inside ``_next_seq`` writes a NEXT_SEQ_DEGRADED poison
+  record (symmetric with the SEQ_LOCK_DEGRADED path) so a verifier can attribute
+  the resulting sequence gap.
+- The pre-existing SEQ_LOCK_DEGRADED symlink-failure path stays unchanged.
+- A NEXT_SEQ_DEGRADED poison record survives the PSK signing gate.
 """
 
 from __future__ import annotations

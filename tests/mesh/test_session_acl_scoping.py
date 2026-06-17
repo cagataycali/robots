@@ -1,10 +1,13 @@
-"""Regression pins for the v0.4.0 mesh session+ACL follow-up bundle (#387).
+"""Mesh session/ACL scoping and bounded-cache invariants.
 
-Covers PR #224 review follow-ups:
-- #307: eviction-order parity between _ACL_CACHE and _NON_POSIX_TLS_WARNED_KEYS.
-- #308: symmetric total-deny ACL warning.
-- #309: TLS-bearing scheme allow-list widened to wss + unixsock.
-- #310: thread-snapshot value is always None or a 2-tuple.
+Pins the behavioural contract of the Zenoh session ACL layer:
+- The TLS-warned key cache evicts FIFO, matching the ACL cache eviction order
+  so both bounded caches drop their oldest entry first under pressure.
+- A total-deny ACL shape warns, while a deny rule paired with an allow rule
+  does not trip the total-deny warning.
+- The TLS-bearing scheme allow-list accepts wss + unixsock under mTLS and
+  still rejects non-TLS schemes.
+- The per-thread session snapshot is always None or a 2-tuple, never a partial.
 """
 
 from __future__ import annotations
