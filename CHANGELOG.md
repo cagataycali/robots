@@ -3,9 +3,17 @@
 All notable behavioural changes to `strands-robots` are logged here. Follows
 [Keep a Changelog](https://keepachangelog.com/) conventions.
 
-## Unreleased - Cosmos 3 in-process diffusers backend
+## [Unreleased]
 
-### Added: `Cosmos3Policy(backend="diffusers")`
+_Nothing yet._
+
+## [0.4.0] - 2026-06-16
+
+First tagged release since v0.3.8. Collapses the full v0.3.9 (mesh security hardening) and v0.4.0 (docs, policies, motion planners, hardware compatibility, plus the coverage and API-ergonomics hardening pass) work that had accumulated under topic-scoped `Unreleased` sections. No code changed in this release-prep step; the version is derived from the git tag via `hatch-vcs`.
+
+### Cosmos 3 in-process diffusers backend
+
+#### Added: `Cosmos3Policy(backend="diffusers")`
 
 Cosmos3Policy gains a second backend that runs Cosmos 3 **in-process** via the
 optional native Hugging Face `diffusers` stack (the `Cosmos3OmniPipeline`),
@@ -46,7 +54,7 @@ alongside the existing WebSocket `service` backend (the default, unchanged).
   (`TypeError: Got unsupported ScalarType BFloat16`); `_to_numpy` now up-casts
   half precision to `float32` before handing the chunk to NumPy.
 
-### Added: Cosmos 3 -> MuJoCo sim-loop bridge (de-normalize + inverse kinematics)
+#### Added: Cosmos 3 -> MuJoCo sim-loop bridge (de-normalize + inverse kinematics)
 
 The diffusers backend returns the model's raw unified action **quantile-
 normalized to `[-1, 1]`** and encoding a *relative end-effector pose delta* per
@@ -81,9 +89,9 @@ conditioning, not kinematics):
   `cosmos3-service` / `sim-mujoco` / `lerobot`). NOTICE attributes `mink` and
   MuJoCo (Apache-2.0) and the cosmos_framework-derived quantile stats.
 
-## Unreleased - serial_tool ASCII output
+### serial_tool ASCII output
 
-### Fixed: emojis in ``serial_tool`` result strings
+#### Fixed: emojis in ``serial_tool`` result strings
 
 The ``serial_tool`` agent tool emitted emojis in its result ``text`` fields
 (port listings, read/send summaries, Feetech servo responses, monitor output),
@@ -94,9 +102,9 @@ instead of the degree sign). Also removed a dead unused inner helper
 (``send_serial_data``). Behavior tests cover every action branch and pin the
 ASCII-only contract.
 
-## Unreleased - #385 (Mesh + IoT safety/control-surface hardening)
+### #385 (Mesh + IoT safety/control-surface hardening)
 
-### Added: mesh control-surface hardening
+#### Added: mesh control-surface hardening
 
 Defence-in-depth for the Zenoh mesh teleop and command paths:
 
@@ -119,7 +127,7 @@ Defence-in-depth for the Zenoh mesh teleop and command paths:
 - **Positive-path audit (M-5)** -- `command_executed` and sampled
   `input_stream_applied` events (`STRANDS_MESH_INPUT_AUDIT_EVERY`).
 
-### Added: IoT provisioning hardening
+#### Added: IoT provisioning hardening
 
 - **MQTT Last Will dead-man policy** -- `provision_robot(...,
   allow_estop_publish=False)` creates a policy that drops the estop
@@ -133,9 +141,9 @@ New env vars: `STRANDS_MESH_OVERRIDE_CODE`, `STRANDS_MESH_INPUT_VALUE_ABS`,
 `STRANDS_MESH_RESUME_MAX_FAILS`, `STRANDS_MESH_RESUME_BACKOFF_S`,
 `STRANDS_MESH_INPUT_AUDIT_EVERY`, `STRANDS_ESTOP_DEDUP_TTL_S`.
 
-## Unreleased - LeRobot 0.5.2 recording + policy pipeline hardening
+### LeRobot 0.5.2 recording + policy pipeline hardening
 
-### Fixed: customer-mode E2E friction points (GH #373)
+#### Fixed: customer-mode E2E friction points (GH #373)
 
 Eight first-run paper cuts found during a fresh-clone SO101 customer workflow:
 
@@ -165,7 +173,7 @@ Eight first-run paper cuts found during a fresh-clone SO101 customer workflow:
   `create_world()` again), fixed the callable usage example, and documented
   the new mesh env vars in the Configuration table.
 
-### Fixed: realistic sim rendering + wrist cameras (GH #373 follow-up)
+#### Fixed: realistic sim rendering + wrist cameras (GH #373 follow-up)
 
 - **Dimmed the MuJoCo headlight.** The default camera-tracking headlight
   (diffuse 0.4, specular 0.5, always on) stacked additively on the two
@@ -182,7 +190,7 @@ Eight first-run paper cuts found during a fresh-clone SO101 customer workflow:
   error listing the available (namespaced) body names.
 
 
-### Changed (breaking): ``panda`` embodiment split into joint-space vs EEF
+#### Changed (breaking): ``panda`` embodiment split into joint-space vs EEF
 
 The ``panda`` embodiment previously aliased to ``panda_libero``, conflating a
 joint-space configuration with an end-effector/task-space one. These are now
@@ -197,7 +205,7 @@ expected the EEF/task-space schema (the old aliased behaviour) must switch to
 joint-space observations/actions and will silently misbehave. Callers wanting
 plain joint-space need no change.
 
-### Added: synchronized multi-robot recording (``run_multi_policy``)
+#### Added: synchronized multi-robot recording (``run_multi_policy``)
 
 Drives N robots in one synchronized control loop and records all robots into a
 single merged frame per timestep (prefixed ``<robot>__<key>`` state/action +
@@ -212,7 +220,7 @@ Note: LeRobot stores one task string per frame. Supplying distinct per-robot
 instructions logs a ``WARNING`` and records only the first robot's task;
 per-robot task columns are not yet supported.
 
-### Added: multi-episode recording append (``DatasetRecorder.resume``)
+#### Added: multi-episode recording append (``DatasetRecorder.resume``)
 
 ``start_recording(overwrite=False)`` on an existing dataset previously crashed
 with ``FileExistsError`` (it always called ``LeRobotDataset.create()``). It now
@@ -220,14 +228,14 @@ routes to a new append-capable ``DatasetRecorder.resume()`` so multiple
 episodes accumulate into one dataset. This replaces a hard crash, so no caller
 could have depended on the prior behaviour.
 
-### Fixed: camera recorder returned success before the first frame
+#### Fixed: camera recorder returned success before the first frame
 
 ``start_cameras_recording`` now blocks until the recorder thread's
 (thread-bound) EGL context is warm and the capture loop has begun, so a
 caller that stops shortly after start no longer races the warmup and gets an
 empty buffer / no MP4.
 
-### Fixed: embodiment + registry correctness
+#### Fixed: embodiment + registry correctness
 
 - Embodiment coverage 4 -> 33 configs grounded in lerobot drivers + MuJoCo XMLs.
 - ``aloha`` had empty state/action keys (silent no-op) -> 16 bimanual joints.
@@ -238,9 +246,9 @@ empty buffer / no MP4.
   (incl. PEP-420 namespace packages), so newly shipped policies (e.g.
   ``molmoact2``) register without a hand-maintained import list.
 
-## Unreleased - #320 (MuJoCo robot-scene ground-plane z-fighting)
+### #320 (MuJoCo robot-scene ground-plane z-fighting)
 
-### Fixed: broken floor render when a robot asset ships its own ground plane
+#### Fixed: broken floor render when a robot asset ships its own ground plane
 
 Robots whose asset MJCF includes its own ground/floor plane (e.g.
 ``franka_emika_panda/scene.xml`` ships ``<geom name="floor" type="plane"/>``)
@@ -257,9 +265,9 @@ world ``ground`` plane (configurable via ``create_world(ground_plane=...)``)
 is the single source of truth; robots contribute only their own
 bodies/joints/actuators/sensors.
 
-## Unreleased - #273 (estop lockout concurrency pin)
+### #273 (estop lockout concurrency pin)
 
-### Added (tests): concurrent-estop lockout race regression pins
+#### Added (tests): concurrent-estop lockout race regression pins
 
 Pinned the issue #273 invariant that the e-stop lockout check-then-set
 (`_estop_lockout.set()` + `_last_estop_ts` / `_last_estop_mono` writes)
@@ -271,9 +279,9 @@ interleave race test plus source-text pins guarding lock containment
 and timestamp-pair atomicity against future refactors. Code already
 fixed on main; this locks it.
 
-## Unreleased - #228 (AWS IoT provisioning hardening)
+### #228 (AWS IoT provisioning hardening)
 
-### Changed: default presigned-URL TTL for camera offload
+#### Changed: default presigned-URL TTL for camera offload
 
 ``CameraOffloader.presign_ttl`` default is now **60 seconds** (was 3600s).
 A 1-hour ceiling (``MAX_PRESIGN_TTL_SECONDS``) is enforced; values above
@@ -291,7 +299,7 @@ export STRANDS_MESH_CAMERA_PRESIGN_TTL=3600   # legacy 1h
 
 or pass ``presign_ttl=3600`` to ``CameraOffloader(...)`` / ``enable_for_mesh(...)``.
 
-### Added: AWS IoT provisioning hardening
+#### Added: AWS IoT provisioning hardening
 
 Applies to ``strands_robots.mesh.iot.provision`` and
 ``strands_robots.mesh.iot.camera_offload``:
@@ -328,9 +336,9 @@ Known follow-ups: #249 (camera privacy kill-switch + S3 ACL),
 #251 (chunked-read parity in ``_ensure_ca``), #259 (kwarg negative-TTL
 WARNING symmetry), #260 (warn on re-use of break-glass-written CA).
 
-## Unreleased - #178 (LiberoOffScreenRenderEngine retired)
+### #178 (LiberoOffScreenRenderEngine retired)
 
-### Removed: ``LiberoOffScreenRenderEngine`` simulation backend (BREAKING)
+#### Removed: ``LiberoOffScreenRenderEngine`` simulation backend (BREAKING)
 
 After PR #184 made ``MuJoCoSimEngine`` byte-equivalent to upstream LIBERO
 (model-level inertias, ``mj_step`` divergence 0 over 200+ substeps, mean
@@ -385,9 +393,9 @@ Out of scope: ``examples/libero_mujoco.py`` in
 ``strands-labs/robots-sim`` still has an ``--engine={mujoco,libero_offscreen_render}``
 switch. A follow-up issue tracks updating it once this PR lands.
 
-## Unreleased - PR #85 (MuJoCo backend remediation)
+### PR #85 (MuJoCo backend remediation)
 
-### MJCF builder refactor: string-concat -> MjSpec AST (closes #121, #122-#126)
+#### MJCF builder refactor: string-concat -> MjSpec AST (closes #121, #122-#126)
 
 The ``MJCFBuilder`` string-concat path and the ``scene_ops`` XML-round-trip
 machinery (~700 lines total) are replaced by direct manipulation of
@@ -445,7 +453,7 @@ attached bodies. This sidesteps a MuJoCo 3.8 double-free bug where
 ``spec.delete(attached_body)`` + interpreter shutdown crashes. Trade-off
 is documented in ``scene_ops.eject_robot_from_scene``.
 
-### Breaking
+#### Breaking
 
 These changes tighten the MuJoCo AgentTool contract. Legacy callers that
 silently worked by accident will now receive a clear error instead:
@@ -494,7 +502,7 @@ silently worked by accident will now receive a clear error instead:
 - **register_urdf** validates the path: file must exist, be a file, and
   be readable. Previously bad paths were cached and blew up later.
 
-### Recording backend split
+#### Recording backend split
 
 - ``start_recording`` (LeRobotDataset: parquet + per-camera MP4) still
   requires the ``[lerobot]`` extra. Its error message when lerobot is
@@ -502,7 +510,7 @@ silently worked by accident will now receive a clear error instead:
   MP4 (which runs under ``[sim-mujoco]`` alone via imageio-ffmpeg).
 - No API change - the fix is informational.
 
-### Resource hygiene
+#### Resource hygiene
 
 - ``destroy()`` and ``cleanup()`` now close renderers on the main thread
   and empty the TLS cache. Previously each ``create_world/destroy``
@@ -514,7 +522,7 @@ silently worked by accident will now receive a clear error instead:
   values are valid immediately after a ``reset`` or ``add_robot``
   (previously returned stale / uninitialised memory).
 
-### Concurrency guards
+#### Concurrency guards
 
 Write-mutations are now refused while a policy is running on any robot
 in the world. Previously these could race the policy worker thread and
@@ -528,7 +536,7 @@ The error now lists *which* robot(s) are active so the LLM can
 ``stop_policy`` on each without guessing: *"Cannot 'X' while a policy
 is running on 'armA', 'armB'. Stop it first: action='stop_policy'."*
 
-### Concurrent per-robot policies (GH #114)
+#### Concurrent per-robot policies (GH #114)
 
 Multiple ``start_policy`` calls on *different* robots now run
 concurrently. MuJoCo physics is still serialized via ``self._lock``
@@ -549,7 +557,7 @@ two VLA arms can operate in the same scene without semantic conflict.
 - Completed policy Futures are no longer retained forever in
   ``_policy_threads`` (GH #120 companion fix).
 
-### Policy-hook robustness (GH #117)
+#### Policy-hook robustness (GH #117)
 
 ``PolicyRunner.run`` previously caught *all* ``on_frame`` exceptions at
 WARN level and kept iterating. A recording hook with a typo'd observation
@@ -563,7 +571,7 @@ key would log 500 lines and produce an empty dataset. Now we count
   ``status='error'`` with a clear message, preventing silent dataset
   corruption.
 
-### Cleanup graceful shutdown (GH #116)
+#### Cleanup graceful shutdown (GH #116)
 
 ``Simulation.cleanup()`` no longer races the policy worker. Previously
 cleanup set ``self._world = None`` and called ``executor.shutdown(wait=False)``
@@ -579,7 +587,7 @@ freed arrays. Now cleanup:
 Wedged workers that don't stop in time get logged as a warning - cleanup
 proceeds rather than hanging the host process on exit.
 
-### Error message consistency
+#### Error message consistency
 
 - All "no world" paths return the same string:
   *"No world. Call create_world (or load_scene) first."*
@@ -592,7 +600,7 @@ proceeds rather than hanging the host process on exit.
 - ``get_recording_status`` returns success in every lifecycle state
   (no world / not recording / recording).
 
-### Deprecations
+#### Deprecations
 
 - **add_robot name-as-registry fallback**: passing ``name="my_bot"``
   without ``urdf_path`` or ``data_config`` used to resolve ``my_bot`` in
@@ -600,7 +608,7 @@ proceeds rather than hanging the host process on exit.
   ``add_robot(name="...", data_config="<registry_key>")`` instead. Will
   be removed next major release.
 
-### New / extended actions
+#### New / extended actions
 
 - ``forward_kinematics(body_name="X")`` filters to a single body.
 - ``get_features(robot_name="X")`` filters to a single robot's joints
@@ -632,7 +640,7 @@ proceeds rather than hanging the host process on exit.
   distinguishes *"Sensor 'X' not found. Model has no sensors."* from
   the generic "no sensors in model" success.
 
-### Tests
+#### Tests
 
 - New: ``tests/simulation/mujoco/test_agenttool_contract.py`` - ~50
   tests that lock in router validation, tool_spec ↔ method parity,
