@@ -670,3 +670,169 @@ def test_directory_scan_rejects_python_keyword_dirnames(tmp_path, monkeypatch):
         _purge_lerobot_modules(_snapshot_lerobot_modules())
         sys.modules.update(snapshot)
         resolution._ensure_policy_configs_registered.cache_clear()
+
+
+class TestResolvePolicyClassFromHub:
+    """Behavioral tests for the public ``resolve_policy_class_from_hub`` entry.
+
+    This is the function ``LerobotLocalPolicy`` calls to turn a HuggingFace
+    repo id into a ``(PolicyClass, policy_type)`` pair. It has two strategies:
+    a draccus ``PreTrainedConfig.from_pretrained`` path (preferred), and a
+    manual ``config.json`` fallback for third-party policies that draccus
+    cannot decode. The tests below assert the observable contract of each
+    branch -- what the function returns or raises -- not its internals.
+    """
+
+    def test_draccus_path_returns_class_and_type(self, monkeypatch):
+        """Strategy 1: a config whose ``type`` decodes via draccus yields the
+        matching policy class and the type string read off the config."""
+        from strands_robots.policies.lerobot_local import resolution
+
+        class _FakeConfig:
+            type = "act"
+
+        class _FakeACTPolicy:
+            pass
+
+        def _from_pretrained(_path):
+            return _FakeConfig()
+
+        monkeypatch.setattr(
+            "lerobot.configs.policies.PreTrainedConfig.from_pretrained",
+            staticmethod(_from_pretrained),
+        )
+        monkeypatch.setattr(resolution, "_ensure_policy_configs_registered", lambda: None)
+        monkeypatch.setattr(
+            resolution,
+            "resolve_policy_class_by_name",
+            lambda policy_type: _FakeACTPolicy if policy_type == "act" else None,
+        )
+
+        policy_class, policy_type = resolution.resolve_policy_class_from_hub("some/act-repo")
+
+        assert policy_class is _FakeACTPolicy
+        assert policy_type == "act"
+
+    def test_draccus_failure_falls_back_to_manual_config(self, monkeypatch):
+        """Strategy 2: when draccus raises a decode-style error, the function
+        falls through to reading ``config.json`` for the ``type`` field."""
+        from strands_robots.policies.lerobot_local import resolution
+
+        class _FakeCustomPolicy:
+            pass
+
+        def _boom(_path):
+            raise ValueError("draccus cannot decode this third-party config")
+
+        monkeypatch.setattr(
+            "lerobot.configs.policies.PreTrainedConfig.from_pretrained",
+            staticmethod(_boom),
+        )
+        monkeypatch.setattr(resolution, "_ensure_policy_configs_registered", lambda: None)
+        monkeypatch.setattr(resolution, "_read_policy_type_from_config", lambda _p: "custom_type")
+        monkeypatch.setattr(
+            resolution,
+            "resolve_policy_class_by_name",
+            lambda policy_type: _FakeCustomPolicy if policy_type == "custom_type" else None,
+        )
+
+        policy_class, policy_type = resolution.resolve_policy_class_from_hub("third/party-repo")
+
+        assert policy_class is _FakeCustomPolicy
+        assert policy_type == "custom_type"
+
+    def test_manual_fallback_without_type_raises_value_error(self, monkeypatch):
+        """When both draccus and ``config.json`` fail to yield a type, the
+        function raises ``ValueError`` telling the caller to pass it explicitly."""
+        from strands_robots.policies.lerobot_local import resolution
+
+        def _boom(_path):
+            raise ValueError("undecodable")
+
+        monkeypatch.setattr(
+            "lerobot.configs.policies.PreTrainedConfig.from_pretrained",
+            staticmethod(_boom),
+        )
+        monkeypatch.setattr(resolution, "_ensure_policy_configs_registered", lambda: None)
+        monkeypatch.setattr(resolution, "_read_policy_type_from_config", lambda _p: None)
+
+        with pytest.raises(ValueError, match="Could not determine policy type"):
+            resolution.resolve_policy_class_from_hub("mystery/repo")
+
+    def test_missing_lerobot_import_error_propagates(self, monkeypatch):
+        """An ``ImportError`` (lerobot absent) must NOT be swallowed -- it is a
+        real, terminal error, distinct from a config that simply fails to decode."""
+        import builtins
+
+        from strands_robots.policies.lerobot_local import resolution
+
+        real_import = builtins.__import__
+
+        def _fake_import(name, *args, **kwargs):
+            if name == "lerobot.configs.policies":
+                raise ImportError("no lerobot")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", _fake_import)
+
+        with pytest.raises(ImportError, match="no lerobot"):
+            resolution.resolve_policy_class_from_hub("any/repo")
+
+    def test_non_draccus_unexpected_exception_propagates(self, monkeypatch):
+        """A non-draccus, non-listed exception from ``from_pretrained`` must
+        propagate rather than being silently routed to the manual fallback."""
+        from strands_robots.policies.lerobot_local import resolution
+
+        class _WeirdError(Exception):
+            pass
+
+        def _boom(_path):
+            raise _WeirdError("not a draccus error and not in the handled tuple")
+
+        monkeypatch.setattr(
+            "lerobot.configs.policies.PreTrainedConfig.from_pretrained",
+            staticmethod(_boom),
+        )
+        monkeypatch.setattr(resolution, "_ensure_policy_configs_registered", lambda: None)
+
+        with pytest.raises(_WeirdError):
+            resolution.resolve_policy_class_from_hub("weird/repo")
+
+
+class TestReadPolicyTypeFromConfig:
+    """Behavioral tests for ``_read_policy_type_from_config`` -- the manual
+    ``config.json`` reader used as the third-party fallback. It checks a local
+    directory first, then attempts a HuggingFace Hub download."""
+
+    def test_reads_type_from_local_config_json(self, tmp_path):
+        """A local directory containing ``config.json`` with a ``type`` field
+        returns that type without touching the network."""
+        import json
+
+        from strands_robots.policies.lerobot_local import resolution
+
+        (tmp_path / "config.json").write_text(json.dumps({"type": "diffusion"}))
+
+        assert resolution._read_policy_type_from_config(str(tmp_path)) == "diffusion"
+
+    def test_local_config_without_type_returns_none(self, tmp_path):
+        """A local ``config.json`` lacking a ``type`` field returns ``None``."""
+        import json
+
+        from strands_robots.policies.lerobot_local import resolution
+
+        (tmp_path / "config.json").write_text(json.dumps({"foo": "bar"}))
+
+        assert resolution._read_policy_type_from_config(str(tmp_path)) is None
+
+    def test_hub_download_failure_returns_none(self, monkeypatch):
+        """When the path is not a local dir and the Hub download raises an
+        OSError, the reader logs a warning and returns ``None`` (no crash)."""
+        from strands_robots.policies.lerobot_local import resolution
+
+        def _boom(*_args, **_kwargs):
+            raise OSError("offline / repo not found")
+
+        monkeypatch.setattr("huggingface_hub.hf_hub_download", _boom)
+
+        assert resolution._read_policy_type_from_config("nonexistent/repo-id") is None
