@@ -15,6 +15,7 @@ import pytest
 
 pytest.importorskip("websockets", reason="websockets needed for the raw transport")
 
+import strands_robots.policies.cosmos3.client as _client_mod  # noqa: E402
 from strands_robots.policies.cosmos3 import _msgpack_numpy as mnp  # noqa: E402
 from strands_robots.policies.cosmos3.client import (  # noqa: E402
     Cosmos3WebsocketClient,
@@ -217,12 +218,11 @@ def test_client_reset_handles_transport_without_reset(monkeypatch):
 def test_client_ensure_client_wraps_construction_failure(monkeypatch):
     """If building the raw transport raises a connection/OS error, it surfaces
     as a ConnectionError carrying the actionable server-start hint."""
-    import strands_robots.policies.cosmos3.client as client_mod
 
     def boom(*args, **kwargs):
         raise OSError("socket setup failed")
 
-    monkeypatch.setattr(client_mod, "_RawWebsocketTransport", boom)
+    monkeypatch.setattr(_client_mod, "_RawWebsocketTransport", boom)
     client = Cosmos3WebsocketClient(host="myhost", port=4321)
     with pytest.raises(ConnectionError) as ei:
         client._ensure_client()
@@ -234,7 +234,6 @@ def test_client_ensure_client_wraps_construction_failure(monkeypatch):
 def test_client_get_server_metadata_wraps_connection_error(monkeypatch):
     """get_server_metadata raises ConnectionError with the hint when the
     transport cannot reach the server."""
-    import strands_robots.policies.cosmos3.client as client_mod
 
     class _DownTransport:
         def __init__(self, *args, **kwargs):
@@ -243,7 +242,7 @@ def test_client_get_server_metadata_wraps_connection_error(monkeypatch):
         def get_server_metadata(self):
             raise ConnectionRefusedError("refused")
 
-    monkeypatch.setattr(client_mod, "_RawWebsocketTransport", _DownTransport)
+    monkeypatch.setattr(_client_mod, "_RawWebsocketTransport", _DownTransport)
     client = Cosmos3WebsocketClient(host="h", port=1)
     with pytest.raises(ConnectionError, match="healthz"):
         client.get_server_metadata()
@@ -263,7 +262,6 @@ def test_client_transport_deprecation_warning_is_logged(monkeypatch, caplog):
 def test_client_infer_wraps_connection_error(monkeypatch):
     """infer raises ConnectionError with the actionable hint when the transport
     loses the connection mid-call."""
-    import strands_robots.policies.cosmos3.client as client_mod
 
     class _FlakyTransport:
         def __init__(self, *args, **kwargs):
@@ -272,7 +270,7 @@ def test_client_infer_wraps_connection_error(monkeypatch):
         def infer(self, observation):
             raise OSError("connection dropped")
 
-    monkeypatch.setattr(client_mod, "_RawWebsocketTransport", _FlakyTransport)
+    monkeypatch.setattr(_client_mod, "_RawWebsocketTransport", _FlakyTransport)
     client = Cosmos3WebsocketClient(host="h", port=1)
     with pytest.raises(ConnectionError, match="action_policy_server_robolab"):
         client.infer({"prompt": "x"})
