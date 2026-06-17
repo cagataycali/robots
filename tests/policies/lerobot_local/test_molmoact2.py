@@ -98,3 +98,82 @@ def test_derive_image_keys_from_embodiment():
     keys = molmoact2.derive_image_keys(None, "so_real")
     assert "observation.images.image" in keys
     assert all(k.startswith("observation.images.") for k in keys)
+
+
+class TestReadConfigJsonLocal:
+    """``_read_config_json`` / ``is_molmoact2`` reading a local ``config.json``
+    (no Hub call) — the on-disk checkpoint path."""
+
+    def test_reads_local_config_json(self, tmp_path):
+        """A local dir with a valid config.json is parsed without hitting the Hub."""
+        (tmp_path / "config.json").write_text(json.dumps({"model_type": "molmoact2", "hidden_size": 4096}))
+        assert molmoact2._read_config_json(str(tmp_path)) == {"model_type": "molmoact2", "hidden_size": 4096}
+
+    def test_is_molmoact2_unreadable_config_is_false(self, monkeypatch):
+        """A non-empty path whose config.json cannot be read → not molmoact2."""
+        monkeypatch.setattr(molmoact2, "_read_config_json", lambda _p: None)
+        assert molmoact2.is_molmoact2("some/unreachable-repo", None) is False
+
+    def test_is_molmoact2_end_to_end_from_local_dir(self, tmp_path):
+        """is_molmoact2 detects a transformers-native ckpt straight from a local dir."""
+        (tmp_path / "config.json").write_text(json.dumps({"model_type": "molmoact2"}))
+        assert molmoact2.is_molmoact2(str(tmp_path), None) is True
+
+    def test_malformed_local_config_returns_none(self, tmp_path):
+        """A corrupt config.json yields None (ValueError swallowed), not a crash."""
+        (tmp_path / "config.json").write_text("{not valid json")
+        assert molmoact2._read_config_json(str(tmp_path)) is None
+
+    def test_no_local_config_falls_through_to_hub(self, tmp_path, monkeypatch):
+        """A dir without config.json does not short-circuit; it tries the Hub."""
+        calls: list[tuple[str, str]] = []
+
+        def fake_download(repo, filename):
+            calls.append((repo, filename))
+            raise FileNotFoundError("offline")
+
+        monkeypatch.setattr("huggingface_hub.hf_hub_download", fake_download)
+        assert molmoact2._read_config_json(str(tmp_path)) is None
+        # The empty dir has no config.json so the hub branch ran with the dir path.
+        assert calls == [(str(tmp_path), "config.json")]
+
+
+class TestReadConfigJsonHub:
+    """``_read_config_json`` resolving a repo id via the HF Hub."""
+
+    def test_reads_config_from_hub(self, tmp_path, monkeypatch):
+        """A repo id with no local dir downloads + parses config.json from the Hub."""
+        cfg_file = tmp_path / "downloaded_config.json"
+        cfg_file.write_text(json.dumps({"model_type": "molmoact2", "type": "molmoact2"}))
+        monkeypatch.setattr("huggingface_hub.hf_hub_download", lambda repo, filename: str(cfg_file))
+        config = molmoact2._read_config_json("allenai/MolmoAct2-SO100_101")
+        assert config == {"model_type": "molmoact2", "type": "molmoact2"}
+
+    def test_hub_download_failure_returns_none(self, monkeypatch):
+        """Network/repo errors during Hub fetch are non-fatal → None."""
+
+        def boom(repo, filename):
+            raise OSError("network down")
+
+        monkeypatch.setattr("huggingface_hub.hf_hub_download", boom)
+        assert molmoact2._read_config_json("nonexistent/repo") is None
+
+
+class TestDeriveImageKeysEmbodimentFallback:
+    """``derive_image_keys`` falling back to defaults when the embodiment spec
+    cannot be resolved (the ``_embodiment_image_targets`` exception path)."""
+
+    def test_unknown_embodiment_falls_back_to_defaults(self):
+        """An unresolvable embodiment name does not raise; it yields the defaults."""
+        pytest.importorskip("lerobot")
+        keys = molmoact2.derive_image_keys(None, "definitely_not_a_real_embodiment_xyz")
+        assert keys == molmoact2.DEFAULT_IMAGE_KEYS
+
+    def test_embodiment_image_targets_returns_empty_on_bad_spec(self):
+        """_embodiment_image_targets swallows resolution errors and returns []."""
+        pytest.importorskip("lerobot")
+        assert molmoact2._embodiment_image_targets("definitely_not_a_real_embodiment_xyz") == []
+
+    def test_embodiment_image_targets_none_spec(self):
+        """A None spec short-circuits to [] before any import."""
+        assert molmoact2._embodiment_image_targets(None) == []
