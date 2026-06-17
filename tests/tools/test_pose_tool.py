@@ -351,3 +351,209 @@ def test_module_source_is_ascii() -> None:
     """Regression: the whole module must be ASCII-only (no emojis / degree sign)."""
     src = Path(pose_mod.__file__).read_text(encoding="utf-8")
     assert src.isascii(), "pose_tool.py contains non-ASCII characters"
+
+
+# --------------------------------------------------------------------------- #
+# pose_tool: live-motor read/write actions (serial mocked)                     #
+# --------------------------------------------------------------------------- #
+def _position_packet(raw: int = 0x0800) -> bytes:
+    """A Feetech read response encoding ``raw`` (low|high<<8) at bytes 5/6."""
+    return bytes([0xFF, 0xFF, 0x01, 0x04, 0x00, raw & 0xFF, (raw >> 8) & 0xFF, 0, 0, 0])
+
+
+class AlwaysReadingSerial(FakeSerial):
+    """A FakeSerial that always answers reads with a valid position packet.
+
+    The real controller is constructed *inside* the tool dispatch, so tests
+    cannot pre-seed its read queue. This stand-in always returns a decodable
+    position so the read/store success-formatting branches are exercised.
+    """
+
+    def read(self, n: int = 1) -> bytes:
+        return _position_packet()
+
+
+@pytest.fixture
+def reading_serial(monkeypatch):
+    """Patch ``serial.Serial`` with an always-answering position source."""
+    instances: list[AlwaysReadingSerial] = []
+
+    def _ctor(port: str, baudrate: int, timeout: float = 1.0) -> AlwaysReadingSerial:
+        fs = AlwaysReadingSerial(port, baudrate, timeout)
+        instances.append(fs)
+        return fs
+
+    monkeypatch.setattr(serial, "Serial", _ctor)
+    return instances
+
+
+def test_pose_tool_read_position_requires_motor_name(cwd_tmp, fake_serial) -> None:
+    """read_position without motor_name is a validation error, not a crash."""
+    result = pose_tool(action="read_position", robot_id="hw_arm", port="/dev/ttyTEST")
+    assert result["status"] == "error"
+    assert "motor_name required" in _texts(result)
+
+
+def test_pose_tool_read_position_decodes_and_returns_degrees(cwd_tmp, reading_serial) -> None:
+    """read_position decodes the servo response into degrees in the result."""
+    result = pose_tool(action="read_position", robot_id="hw_arm", port="/dev/ttyTEST", motor_name="shoulder_pan")
+    assert result["status"] == "success"
+    _assert_ascii(result)
+    assert result["position"] == pytest.approx(0.0, abs=1.0)
+
+
+def test_pose_tool_read_position_reports_failure_without_response(cwd_tmp, fake_serial) -> None:
+    """With no servo response, read_position reports an ASCII read failure."""
+    result = pose_tool(action="read_position", robot_id="hw_arm", port="/dev/ttyTEST", motor_name="shoulder_pan")
+    assert result["status"] == "error"
+    _assert_ascii(result)
+    assert "Failed to read" in _texts(result)
+
+
+def test_pose_tool_read_all_formats_every_motor(cwd_tmp, reading_serial) -> None:
+    """read_all returns one entry per configured motor with ASCII formatting."""
+    result = pose_tool(action="read_all", robot_id="hw_arm", port="/dev/ttyTEST")
+    assert result["status"] == "success"
+    _assert_ascii(result)
+    # All six SO-101 motors should be present in the positions payload.
+    assert set(result["positions"]) == {
+        "shoulder_pan",
+        "shoulder_lift",
+        "elbow_flex",
+        "wrist_flex",
+        "wrist_roll",
+        "gripper",
+    }
+
+
+def test_pose_tool_read_all_reports_failure_without_responses(cwd_tmp, fake_serial) -> None:
+    """read_all with no servo responses returns the ASCII 'Failed to read' error."""
+    result = pose_tool(action="read_all", robot_id="hw_arm", port="/dev/ttyTEST")
+    assert result["status"] == "error"
+    _assert_ascii(result)
+    assert "Failed to read positions" in _texts(result)
+
+
+def test_pose_tool_store_pose_requires_pose_name(cwd_tmp, fake_serial) -> None:
+    """store_pose without a pose_name is rejected before touching the bus."""
+    result = pose_tool(action="store_pose", robot_id="hw_arm", port="/dev/ttyTEST")
+    assert result["status"] == "error"
+    assert "pose_name required" in _texts(result)
+
+
+def test_pose_tool_store_pose_captures_current_positions(cwd_tmp, reading_serial) -> None:
+    """store_pose reads live positions and persists them under the given name."""
+    result = pose_tool(action="store_pose", robot_id="hw_arm", port="/dev/ttyTEST", pose_name="grasp")
+    assert result["status"] == "success"
+    _assert_ascii(result)
+    # The pose is now retrievable through the manager / show_pose action.
+    shown = pose_tool(action="show_pose", robot_id="hw_arm", pose_name="grasp")
+    assert shown["status"] == "success"
+
+
+def test_pose_tool_store_pose_failure_when_no_positions_read(cwd_tmp, fake_serial) -> None:
+    """store_pose surfaces a read failure when no servo positions come back."""
+    result = pose_tool(action="store_pose", robot_id="hw_arm", port="/dev/ttyTEST", pose_name="grasp")
+    assert result["status"] == "error"
+    _assert_ascii(result)
+    assert "Failed to read current positions" in _texts(result)
+
+
+def test_pose_tool_load_pose_moves_to_stored_positions(cwd_tmp, fake_serial) -> None:
+    """load_pose validates a stored pose and drives the motors (smooth=False)."""
+    mgr = PoseManager(robot_id="hw_arm")
+    mgr.store_pose("ready", {"shoulder_pan": 10.0, "gripper": 50.0}, "ready pose")
+
+    result = pose_tool(
+        action="load_pose",
+        robot_id="hw_arm",
+        port="/dev/ttyTEST",
+        pose_name="ready",
+        smooth=False,
+    )
+    assert result["status"] == "success"
+    _assert_ascii(result)
+    assert result["target_positions"] == {"shoulder_pan": 10.0, "gripper": 50.0}
+    assert fake_serial[0].writes
+
+
+def test_pose_tool_load_pose_validation_failure(cwd_tmp, fake_serial) -> None:
+    """load_pose refuses to move when a stored pose violates safety bounds."""
+    mgr = PoseManager(robot_id="hw_arm")
+    # The pose carries explicit safety bounds that its target violates.
+    mgr.store_pose(
+        "bad",
+        {"shoulder_pan": 999.0},
+        "unsafe",
+        safety_bounds={"shoulder_pan": (-180.0, 180.0)},
+    )
+
+    result = pose_tool(action="load_pose", robot_id="hw_arm", port="/dev/ttyTEST", pose_name="bad")
+    assert result["status"] == "error"
+    _assert_ascii(result)
+    assert "validation failed" in _texts(result).lower()
+
+
+def test_pose_tool_load_pose_missing_pose_errors(cwd_tmp, fake_serial) -> None:
+    """load_pose for an unknown pose name is an ASCII error, not a crash."""
+    result = pose_tool(action="load_pose", robot_id="hw_arm", port="/dev/ttyTEST", pose_name="ghost")
+    assert result["status"] == "error"
+    assert "not found" in _texts(result)
+
+
+def test_pose_tool_move_multiple_requires_positions(cwd_tmp, fake_serial) -> None:
+    """move_multiple without a positions dict is a validation error."""
+    result = pose_tool(action="move_multiple", robot_id="hw_arm", port="/dev/ttyTEST")
+    assert result["status"] == "error"
+    assert "positions dict required" in _texts(result)
+
+
+def test_pose_tool_move_multiple_success(cwd_tmp, fake_serial) -> None:
+    """move_multiple (smooth=False) drives every motor and echoes the targets."""
+    result = pose_tool(
+        action="move_multiple",
+        robot_id="hw_arm",
+        port="/dev/ttyTEST",
+        positions={"shoulder_pan": 5.0, "gripper": 25.0},
+        smooth=False,
+    )
+    assert result["status"] == "success"
+    _assert_ascii(result)
+    assert "shoulder_pan" in _texts(result)
+    assert fake_serial[0].writes
+
+
+def test_pose_tool_incremental_move_requires_args(cwd_tmp, fake_serial) -> None:
+    """incremental_move without motor_name/delta is a validation error."""
+    result = pose_tool(action="incremental_move", robot_id="hw_arm", port="/dev/ttyTEST")
+    assert result["status"] == "error"
+    assert "motor_name and delta required" in _texts(result)
+
+
+def test_pose_tool_incremental_move_success(cwd_tmp, reading_serial) -> None:
+    """incremental_move reads the current position, then commands a relative move."""
+    result = pose_tool(
+        action="incremental_move",
+        robot_id="hw_arm",
+        port="/dev/ttyTEST",
+        motor_name="shoulder_pan",
+        delta=5.0,
+    )
+    assert result["status"] == "success"
+    _assert_ascii(result)
+    # The sign of the delta is rendered explicitly for positive moves.
+    assert "+5" in _texts(result)
+
+
+def test_pose_tool_incremental_move_failure_without_current_position(cwd_tmp, fake_serial) -> None:
+    """incremental_move cannot proceed without a current-position reading."""
+    result = pose_tool(
+        action="incremental_move",
+        robot_id="hw_arm",
+        port="/dev/ttyTEST",
+        motor_name="shoulder_pan",
+        delta=5.0,
+    )
+    assert result["status"] == "error"
+    _assert_ascii(result)
+    assert "Failed to move" in _texts(result)
