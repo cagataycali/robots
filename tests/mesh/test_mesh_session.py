@@ -445,3 +445,172 @@ class TestAtexitCleanup:
             mod._SESSION_REFS = 0
 
         mod._atexit_cleanup()  # should not raise
+
+
+# ---------------------------------------------------------------------------
+# _get_zenoh_session_directly - raw Zenoh path used by ZenohTransport inside a
+# BridgeTransport, where get_session() would re-enter the factory lock and
+# deadlock. It shares the _SESSION singleton + _SESSION_LOCK but always takes
+# the raw Zenoh open path regardless of STRANDS_MESH_BACKEND.
+# ---------------------------------------------------------------------------
+
+
+class TestGetZenohSessionDirectly:
+    """_get_zenoh_session_directly opens/reuses the raw Zenoh session.
+
+    These exercise the behavioral contract (returned session, refcount, port
+    handling, listener->client fallback, explicit endpoints) with zenoh and
+    _build_config mocked so no real broker or zenoh install is needed -
+    mirroring the get_session() suite above.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _reset_session(self, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+        """Reset module session state and clear mesh env between tests."""
+        import strands_robots.mesh.session as mod
+
+        for var in ("ZENOH_CONNECT", "ZENOH_LISTEN", "STRANDS_MESH_PORT", "STRANDS_MESH_AUTH_MODE"):
+            monkeypatch.delenv(var, raising=False)
+        with mod._SESSION_LOCK:
+            mod._SESSION = None
+            mod._SESSION_REFS = 0
+        yield
+        with mod._SESSION_LOCK:
+            mod._SESSION = None
+            mod._SESSION_REFS = 0
+
+    def test_reuses_existing_session_and_bumps_refcount(self) -> None:
+        """An already-open session is returned without re-opening, refcount++."""
+        import strands_robots.mesh.session as mod
+
+        existing = MagicMock()
+        with mod._SESSION_LOCK:
+            mod._SESSION = existing
+            mod._SESSION_REFS = 1
+
+        result = mod._get_zenoh_session_directly()
+
+        assert result is existing
+        assert mod._SESSION_REFS == 2
+
+    def test_returns_none_when_zenoh_missing(self) -> None:
+        """No zenoh install -> None (mesh disabled), no crash."""
+        import strands_robots.mesh.session as mod
+
+        with patch.dict("sys.modules", {"zenoh": None}):
+            with patch("builtins.__import__", side_effect=ImportError("no zenoh")):
+                result = mod._get_zenoh_session_directly()
+
+        assert result is None
+        assert mod._SESSION is None
+
+    def test_auto_listener_opens_session(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """No explicit endpoints -> opens as listener, stores session, refs=1."""
+        import strands_robots.mesh.session as mod
+
+        mock_zenoh = MagicMock()
+        mock_session = MagicMock()
+        mock_zenoh.open.return_value = mock_session
+        monkeypatch.setattr(mod, "_build_config", lambda: MagicMock())
+
+        with patch.dict("sys.modules", {"zenoh": mock_zenoh}):
+            result = mod._get_zenoh_session_directly()
+
+        assert result is mock_session
+        assert mod._SESSION is mock_session
+        assert mod._SESSION_REFS == 1
+        mock_zenoh.open.assert_called_once()
+
+    def test_listener_falls_back_to_client(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Port already bound -> listener open raises, client open succeeds."""
+        import strands_robots.mesh.session as mod
+
+        mock_zenoh = MagicMock()
+        mock_session = MagicMock()
+        calls = {"n": 0}
+
+        def _open(_cfg: object) -> MagicMock:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise OSError("Address already in use")
+            return mock_session
+
+        mock_zenoh.open.side_effect = _open
+        monkeypatch.setattr(mod, "_build_config", lambda: MagicMock())
+
+        with patch.dict("sys.modules", {"zenoh": mock_zenoh}):
+            result = mod._get_zenoh_session_directly()
+
+        assert result is mock_session
+        assert calls["n"] == 2
+        assert mod._SESSION_REFS == 1
+
+    def test_returns_none_when_both_listener_and_client_fail(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Listener and client both fail -> None, session left unset."""
+        import strands_robots.mesh.session as mod
+
+        mock_zenoh = MagicMock()
+        mock_zenoh.open.side_effect = OSError("no broker")
+        monkeypatch.setattr(mod, "_build_config", lambda: MagicMock())
+
+        with patch.dict("sys.modules", {"zenoh": mock_zenoh}):
+            result = mod._get_zenoh_session_directly()
+
+        assert result is None
+        assert mock_zenoh.open.call_count == 2
+
+    def test_explicit_endpoints_skip_listener_branch(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """ZENOH_CONNECT set -> single direct open, no listener/client dance."""
+        import strands_robots.mesh.session as mod
+
+        monkeypatch.setenv("ZENOH_CONNECT", "tcp/10.0.0.5:7447")
+        mock_zenoh = MagicMock()
+        mock_session = MagicMock()
+        mock_zenoh.open.return_value = mock_session
+        monkeypatch.setattr(mod, "_build_config", lambda: MagicMock())
+
+        with patch.dict("sys.modules", {"zenoh": mock_zenoh}):
+            result = mod._get_zenoh_session_directly()
+
+        assert result is mock_session
+        mock_zenoh.open.assert_called_once()
+
+    def test_explicit_endpoint_open_failure_returns_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Explicit-endpoint open failure -> None (no silent listener retry)."""
+        import strands_robots.mesh.session as mod
+
+        monkeypatch.setenv("ZENOH_LISTEN", "tcp/0.0.0.0:7447")
+        mock_zenoh = MagicMock()
+        mock_zenoh.open.side_effect = RuntimeError("bind failed")
+        monkeypatch.setattr(mod, "_build_config", lambda: MagicMock())
+
+        with patch.dict("sys.modules", {"zenoh": mock_zenoh}):
+            result = mod._get_zenoh_session_directly()
+
+        assert result is None
+        mock_zenoh.open.assert_called_once()
+
+    @pytest.mark.parametrize("bad_port", ["not-a-port", "99999"])
+    def test_invalid_mesh_port_falls_back_to_default(self, monkeypatch: pytest.MonkeyPatch, bad_port: str) -> None:
+        """A non-integer or out-of-range STRANDS_MESH_PORT falls back to 7447."""
+        import strands_robots.mesh.session as mod
+
+        monkeypatch.setenv("STRANDS_MESH_PORT", bad_port)
+        mock_zenoh = MagicMock()
+        mock_session = MagicMock()
+        mock_zenoh.open.return_value = mock_session
+        captured: list[str] = []
+
+        def _build() -> MagicMock:
+            cfg = MagicMock()
+            cfg.insert_json5.side_effect = lambda key, val: captured.append(val)
+            return cfg
+
+        monkeypatch.setattr(mod, "_build_config", _build)
+
+        with patch.dict("sys.modules", {"zenoh": mock_zenoh}):
+            result = mod._get_zenoh_session_directly()
+
+        assert result is mock_session
+        # The local endpoint built from the fallback port must reference 7447.
+        assert any("7447" in v for v in captured), captured
