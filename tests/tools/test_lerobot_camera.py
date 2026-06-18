@@ -264,3 +264,105 @@ def test_module_source_is_ascii_only() -> None:
     source = inspect.getsource(cam_mod)
     offenders = sorted({hex(ord(c)) for c in source if ord(c) > 127})
     assert not offenders, f"non-ASCII characters in module source: {offenders}"
+
+
+# --- list (detailed camera info) per-type branches ------------------------
+
+
+@pytest.fixture
+def fake_opencv_detail_camera(monkeypatch: pytest.MonkeyPatch) -> FakeCamera:
+    """Patch the OpenCV class/config the ``list`` detail path builds directly.
+
+    ``_list_camera_details`` constructs ``OpenCVCamera(OpenCVCameraConfig(...))``
+    itself (it does not route through ``_create_camera``), so the detail path
+    needs its own hardware-free substitute.
+    """
+    camera = FakeCamera()
+    monkeypatch.setattr(cam_mod, "OpenCVCameraConfig", lambda **kwargs: SimpleNamespace(**kwargs))
+    monkeypatch.setattr(cam_mod, "OpenCVCamera", lambda config: camera)
+    return camera
+
+
+def test_list_opencv_details_with_camera_id_reports_actual_properties(
+    fake_opencv_detail_camera: FakeCamera,
+) -> None:
+    result = lerobot_camera(action="list", camera_type="opencv", camera_id=0)
+    assert result["status"] == "success"
+    body = _texts(result)
+    # The probed camera connects and reports its live geometry/FPS/color mode.
+    assert "Camera 0 Details:" in body
+    assert "Connection:" in body
+    assert f"{fake_opencv_detail_camera.width}x{fake_opencv_detail_camera.height}" in body
+    assert "Actual FPS:" in body
+    # Probing must release the device it opened.
+    assert fake_opencv_detail_camera.disconnect_calls == 1
+    _assert_ascii(body)
+
+
+def test_list_opencv_details_reports_connection_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cam_mod, "OpenCVCameraConfig", lambda **kwargs: SimpleNamespace(**kwargs))
+
+    class FailingCamera:
+        def connect(self, warmup: bool = True) -> None:
+            raise RuntimeError("device busy")
+
+    monkeypatch.setattr(cam_mod, "OpenCVCamera", lambda config: FailingCamera())
+    result = lerobot_camera(action="list", camera_type="opencv", camera_id=2)
+    # A probe failure is reported inline, not raised, and the action still succeeds.
+    assert result["status"] == "success"
+    body = _texts(result)
+    assert "Camera 2 Details:" in body
+    assert "Failed" in body
+    assert "device busy" in body
+    _assert_ascii(body)
+
+
+def test_list_realsense_details_when_sdk_available(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cam_mod, "REALSENSE_AVAILABLE", True)
+    result = lerobot_camera(action="list", camera_type="realsense")
+    assert result["status"] == "success"
+    body = _texts(result)
+    assert "RealSense Camera System:" in body
+    assert "Depth Support:" in body
+    _assert_ascii(body)
+
+
+def test_list_realsense_details_when_sdk_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cam_mod, "REALSENSE_AVAILABLE", False)
+    result = lerobot_camera(action="list", camera_type="realsense")
+    assert result["status"] == "success"
+    body = _texts(result)
+    # No silent success: the missing-SDK case points the user at the install.
+    assert "Not installed" in body
+    assert "pyrealsense2" in body
+    _assert_ascii(body)
+
+
+def test_list_unknown_camera_type_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cam_mod, "REALSENSE_AVAILABLE", False)
+    result = lerobot_camera(action="list", camera_type="thermal")
+    assert result["status"] == "success"
+    body = _texts(result)
+    assert "Unknown camera type: thermal" in body
+    _assert_ascii(body)
+
+
+# --- capture write-failure path -------------------------------------------
+
+
+def test_capture_single_reports_error_when_write_fails(
+    fake_camera: FakeCamera, tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # cv2.imwrite returning False (disk full / bad path) must surface as an error,
+    # never a false "success" with no file written.
+    monkeypatch.setattr(cam_mod.cv2, "imwrite", lambda *a, **k: False)
+    result = lerobot_camera(
+        action="capture",
+        camera_id=0,
+        save_path=str(tmp_path),
+        async_mode=False,
+    )
+    assert result["status"] == "error"
+    body = _texts(result)
+    assert "Failed to save image" in body
+    _assert_ascii(body)
