@@ -278,7 +278,7 @@ def fake_opencv_detail_camera(monkeypatch: pytest.MonkeyPatch) -> FakeCamera:
     needs its own hardware-free substitute.
     """
     camera = FakeCamera()
-    monkeypatch.setattr(cam_mod, "OpenCVCameraConfig", lambda **kwargs: SimpleNamespace(**kwargs))
+    monkeypatch.setattr(cam_mod, "OpenCVCameraConfig", SimpleNamespace)
     monkeypatch.setattr(cam_mod, "OpenCVCamera", lambda config: camera)
     return camera
 
@@ -300,7 +300,7 @@ def test_list_opencv_details_with_camera_id_reports_actual_properties(
 
 
 def test_list_opencv_details_reports_connection_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(cam_mod, "OpenCVCameraConfig", lambda **kwargs: SimpleNamespace(**kwargs))
+    monkeypatch.setattr(cam_mod, "OpenCVCameraConfig", SimpleNamespace)
 
     class FailingCamera:
         def connect(self, warmup: bool = True) -> None:
