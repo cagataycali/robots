@@ -725,3 +725,156 @@ def test_recorder_first_frame_is_real_geometry(tmp_path: Path) -> None:
     )
 
     sim.destroy()
+
+
+# render_all() aggregation logic - GL-free coverage.
+#
+# render_all() resolves cameras then delegates the actual pixel grab to
+# render() per camera, aggregating the results into a single multi-view
+# response. The aggregation branches (success vs. failure per camera, the
+# low-variance "empty frame" flag, and the all-failed -> status="error" rule)
+# are pure Python independent of OpenGL, so we drive them by stubbing
+# render() and _active_camera_list() instead of running a real renderer.
+# This keeps the contract pinned on CI, where the GL-backed render_all test
+# is skipped.
+
+
+class _FakeWorld:
+    """Minimal stand-in for SimWorld so render_all's guards and summary pass."""
+
+    def __init__(self) -> None:
+        self._model = object()
+        self._data = object()
+        self.sim_time = 1.5
+
+
+def _make_rendering_mixin(monkeypatch, cameras, render_results):
+    """Build a RenderingMixin bound to a fake world with a scripted render().
+
+    Args:
+        cameras: camera names _active_camera_list should report as resolved.
+        render_results: dict mapping camera name -> the dict render() returns.
+    """
+    from strands_robots.simulation.mujoco.rendering import RenderingMixin
+
+    mixin = RenderingMixin.__new__(RenderingMixin)
+    mixin._world = _FakeWorld()  # type: ignore[assignment]
+
+    monkeypatch.setattr(mixin, "_active_camera_list", lambda c: (list(cameras), []))
+
+    def fake_render(camera_name=None, width=None, height=None):
+        return render_results[camera_name]
+
+    monkeypatch.setattr(mixin, "render", fake_render)
+    return mixin
+
+
+def _image_block(camera_name):
+    return {"status": "success", "content": [{"text": camera_name}, {"image": {"data": b"x"}}]}
+
+
+def _image_block_with_variance(camera_name, variance):
+    return {
+        "status": "success",
+        "content": [{"image": {"data": b"x"}}, {"json": {"pixel_variance": variance}}],
+    }
+
+
+def test_render_all_aggregates_one_image_block_per_camera(monkeypatch) -> None:
+    """Every successfully rendered camera contributes a label + image block,
+    and the summary reports all of them as ok."""
+    cams = ["cam_a", "cam_b"]
+    mixin = _make_rendering_mixin(monkeypatch, cams, {c: _image_block(c) for c in cams})
+    r = mixin.render_all()
+    assert r["status"] == "success"
+    images = [b for b in r["content"] if isinstance(b, dict) and "image" in b]
+    assert len(images) == 2
+    summary = r["content"][0]["text"]
+    assert "2 ok, 0 failed, 2 requested" in summary
+
+
+def test_render_all_flags_low_variance_frame_as_empty(monkeypatch) -> None:
+    """A near-uniform frame (pixel_variance < 1) is flagged inline and counted
+    in the summary's low-variance suffix, without dropping the image."""
+    mixin = _make_rendering_mixin(
+        monkeypatch,
+        ["cam_a"],
+        {"cam_a": _image_block_with_variance("cam_a", 0.2)},
+    )
+    r = mixin.render_all()
+    assert r["status"] == "success"
+    label = next(b["text"] for b in r["content"][1:] if isinstance(b, dict) and "text" in b)
+    assert "image appears empty" in label
+    assert "1 low-variance" in r["content"][0]["text"]
+
+
+def test_render_all_high_variance_frame_not_flagged(monkeypatch) -> None:
+    """A frame with real geometry (pixel_variance >= 1) is not flagged and the
+    summary carries no low-variance suffix."""
+    mixin = _make_rendering_mixin(
+        monkeypatch,
+        ["cam_a"],
+        {"cam_a": _image_block_with_variance("cam_a", 42.0)},
+    )
+    r = mixin.render_all()
+    assert r["status"] == "success"
+    assert "low-variance" not in r["content"][0]["text"]
+
+
+def test_render_all_reports_per_camera_failure_and_succeeds_if_any_ok(monkeypatch) -> None:
+    """A mix of ok + failing cameras: the failing one surfaces its error text,
+    the ok one still ships its image, and overall status stays success."""
+    cams = ["good", "bad"]
+    results = {
+        "good": _image_block("good"),
+        "bad": {"status": "error", "content": [{"text": "render device lost"}]},
+    }
+    mixin = _make_rendering_mixin(monkeypatch, cams, results)
+    r = mixin.render_all()
+    assert r["status"] == "success"
+    texts = " ".join(b["text"] for b in r["content"] if isinstance(b, dict) and "text" in b)
+    assert "render device lost" in texts
+    assert "1 ok, 1 failed, 2 requested" in r["content"][0]["text"]
+
+
+def test_render_all_status_error_when_every_camera_fails(monkeypatch) -> None:
+    """If no camera renders successfully, render_all reports status='error'."""
+    cams = ["bad"]
+    results = {"bad": {"status": "error", "content": [{"text": "boom"}]}}
+    mixin = _make_rendering_mixin(monkeypatch, cams, results)
+    r = mixin.render_all()
+    assert r["status"] == "error"
+    assert "0 ok, 1 failed" in r["content"][0]["text"]
+
+
+def test_render_all_errors_when_no_world() -> None:
+    """Called before create_world (self._world is None) -> error, not a crash."""
+    from strands_robots.simulation.mujoco.rendering import RenderingMixin
+
+    mixin = RenderingMixin.__new__(RenderingMixin)
+    mixin._world = None
+    r = mixin.render_all()
+    assert r["status"] == "error"
+    assert "No world" in r["content"][0]["text"]
+
+
+def test_render_all_errors_when_no_cameras_in_scene(monkeypatch) -> None:
+    """A world with zero cameras -> error with an explanatory message."""
+    mixin = _make_rendering_mixin(monkeypatch, [], {})
+    r = mixin.render_all()
+    assert r["status"] == "error"
+    assert "No cameras in scene" in r["content"][0]["text"]
+
+
+def test_render_all_errors_on_unresolved_requested_cameras(monkeypatch) -> None:
+    """When the caller names cameras that don't resolve, render_all reports the
+    unresolved set rather than silently rendering a subset."""
+    from strands_robots.simulation.mujoco.rendering import RenderingMixin
+
+    mixin = RenderingMixin.__new__(RenderingMixin)
+    mixin._world = _FakeWorld()  # type: ignore[assignment]
+    monkeypatch.setattr(mixin, "_active_camera_list", lambda c: (["cam_a"], ["ghost"]))
+    monkeypatch.setattr(mixin, "_list_camera_names", lambda: ["cam_a"])
+    r = mixin.render_all(cameras=["cam_a", "ghost"])
+    assert r["status"] == "error"
+    assert "ghost" in r["content"][0]["text"]
