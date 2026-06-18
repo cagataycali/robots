@@ -575,3 +575,122 @@ def test_load_episode_scan_breaks_after_target_episode(monkeypatch):
 
     assert start == 0
     assert length == 3
+
+
+class TestBuildFeaturesSchema:
+    """Behavioral tests for ``DatasetRecorder._build_features`` -- the function
+    that turns robot/action feature descriptors into the LeRobot v3 ``features``
+    schema every recording is created with.
+
+    The contract under test is the *shape of the emitted schema dict*: which
+    keys appear, their ``dtype``/``shape``/``names``, and how the state and
+    action dimensions are derived from the several mutually-exclusive input
+    sources (explicit feature dicts, a flat ``joint_names`` list, or the
+    action-mirrors-state fallback). These are pure-logic assertions -- no
+    LeRobot install is required because ``_build_features`` is a classmethod
+    that only manipulates plain dicts.
+    """
+
+    def test_camera_keys_emit_video_features_with_default_dims(self):
+        """Each camera key becomes an ``observation.images.<name>`` video
+        feature; absent per-camera dims fall back to the global video size."""
+        features = DatasetRecorder._build_features(
+            camera_keys=["top", "wrist"],
+            video_height=480,
+            video_width=640,
+        )
+
+        assert features["observation.images.top"] == {
+            "dtype": "video",
+            "shape": (3, 480, 640),
+            "names": ["channels", "height", "width"],
+        }
+        assert features["observation.images.wrist"]["shape"] == (3, 480, 640)
+
+    def test_camera_dims_override_per_camera_resolution(self):
+        """A per-camera entry in ``camera_dims`` overrides the global size for
+        that camera only; others keep the fallback."""
+        features = DatasetRecorder._build_features(
+            camera_keys=["top", "wrist"],
+            camera_dims={"top": (240, 320)},
+            video_height=480,
+            video_width=640,
+        )
+
+        assert features["observation.images.top"]["shape"] == (3, 240, 320)
+        assert features["observation.images.wrist"]["shape"] == (3, 480, 640)
+
+    def test_use_videos_false_emits_image_dtype(self):
+        """``use_videos=False`` records still frames (``image`` dtype) rather
+        than encoded video."""
+        features = DatasetRecorder._build_features(camera_keys=["top"], use_videos=False)
+
+        assert features["observation.images.top"]["dtype"] == "image"
+
+    def test_robot_features_drive_state_excluding_cameras(self):
+        """Scalar entries in ``robot_features`` become the ``observation.state``
+        vector; image/video entries are excluded from the state count."""
+        features = DatasetRecorder._build_features(
+            robot_features={
+                "shoulder.pos": {"dtype": "float32"},
+                "elbow.pos": {"dtype": "float32"},
+                "front_cam": {"dtype": "video"},
+            },
+        )
+
+        state = features["observation.state"]
+        assert state["dtype"] == "float32"
+        assert state["shape"] == (2,)
+        assert state["names"] == ["shoulder.pos", "elbow.pos"]
+
+    def test_joint_names_drive_state_when_no_robot_features(self):
+        """With no ``robot_features``, a flat ``joint_names`` list defines the
+        state dimension and names."""
+        features = DatasetRecorder._build_features(joint_names=["j1", "j2", "j3"])
+
+        assert features["observation.state"]["shape"] == (3,)
+        assert features["observation.state"]["names"] == ["j1", "j2", "j3"]
+
+    def test_action_features_drive_action_excluding_cameras(self):
+        """Explicit ``action_features`` define the action vector, excluding any
+        image/video columns."""
+        features = DatasetRecorder._build_features(
+            action_features={
+                "shoulder.pos": {"dtype": "float32"},
+                "gripper.pos": {"dtype": "float32"},
+                "debug_cam": {"dtype": "image"},
+            },
+        )
+
+        action = features["action"]
+        assert action["shape"] == (2,)
+        assert action["names"] == ["shoulder.pos", "gripper.pos"]
+
+    def test_action_mirrors_state_when_only_robot_features_given(self):
+        """With state from ``robot_features`` but no action source, the action
+        feature mirrors the state dimension and names."""
+        features = DatasetRecorder._build_features(
+            robot_features={"a": {"dtype": "float32"}, "b": {"dtype": "float32"}},
+        )
+
+        assert features["action"]["shape"] == (2,)
+        assert features["action"]["names"] == ["a", "b"]
+        # The mirror is a copy, not an alias of the state names list.
+        assert features["action"]["names"] is not features["observation.state"]["names"]
+
+    def test_non_dict_feature_values_count_as_scalar_state(self):
+        """A feature whose value is not a dict (e.g. a bare descriptor) is
+        treated as a scalar state column, not skipped."""
+        features = DatasetRecorder._build_features(
+            robot_features={"raw_scalar": "float32", "cam": {"dtype": "video"}},
+        )
+
+        assert features["observation.state"]["shape"] == (1,)
+        assert features["observation.state"]["names"] == ["raw_scalar"]
+
+    def test_empty_inputs_emit_empty_schema(self):
+        """With no cameras, features, or joint names there is nothing to record
+        -- the schema is empty rather than carrying zero-dim entries."""
+        features = DatasetRecorder._build_features()
+
+        assert features == {}
