@@ -21,6 +21,36 @@ def sim():
     s.cleanup()
 
 
+# Minimal 2-joint arm with a named camera, used to exercise the per-robot
+# scoping branch of get_features (namespaced joint/actuator/camera pools).
+_SCOPING_ARM_XML = """<mujoco model="scoping_arm">
+  <worldbody>
+    <camera name="wrist" pos="1.5 0 1" xyaxes="0 1 0 -0.5 0 1"/>
+    <body name="base" pos="0 0 0.1">
+      <geom type="cylinder" size="0.05 0.05"/>
+      <joint name="pan" type="hinge" axis="0 0 1" range="-3.14 3.14"/>
+      <body name="link1" pos="0 0 0.1">
+        <geom type="capsule" size="0.03" fromto="0 0 0 0 0 0.2"/>
+        <joint name="lift" type="hinge" axis="0 1 0" range="-1.57 1.57"/>
+      </body>
+    </body>
+  </worldbody>
+  <actuator>
+    <position name="pan_act" joint="pan" kp="50"/>
+    <position name="lift_act" joint="lift" kp="50"/>
+  </actuator>
+</mujoco>
+"""
+
+
+@pytest.fixture
+def arm_xml(tmp_path):
+    """Write the scoping-arm MJCF to a temp file and return its path."""
+    path = tmp_path / "scoping_arm.xml"
+    path.write_text(_SCOPING_ARM_XML)
+    return str(path)
+
+
 class TestRouterRejectsUnknownKwargs:
     """T1 DoD: Unknown top-level params must be rejected with a clear message."""
 
@@ -374,6 +404,47 @@ class TestFeatureFilters:
     def test_get_features_no_filter_returns_all(self, sim):
         r = sim._dispatch_action("get_features", {})
         assert r["status"] == "success"
+
+    def test_get_features_scoped_to_robot_namespaces_pools(self, sim, arm_xml):
+        """With multiple robots loaded, get_features(robot_name=X) restricts the
+        actuator / camera pools to X's namespaced MuJoCo names and the robots
+        map to just X - it does not leak the sibling robot's entities."""
+        assert sim.add_robot("arm1", urdf_path=arm_xml, position=[0, 0, 0])["status"] == "success"
+        assert sim.add_robot("arm2", urdf_path=arm_xml, position=[0.5, 0, 0])["status"] == "success"
+
+        r = sim._dispatch_action("get_features", {"robot_name": "arm2"})
+        assert r["status"] == "success"
+        features = r["content"][-1]["json"]["features"]
+
+        # robots map is filtered to just the requested robot.
+        assert list(features["robots"].keys()) == ["arm2"]
+        info = features["robots"]["arm2"]
+        assert info["n_joints"] == 2
+        assert info["n_actuators"] == 2
+
+        # Actuator + camera pools are namespace-scoped to arm2 only - no arm1 leak.
+        assert features["actuator_names"] == ["arm2/pan_act", "arm2/lift_act"]
+        assert all(n.startswith("arm2/") for n in features["actuator_names"])
+        assert all(n.startswith("arm2/") for n in features["camera_names"])
+        assert "arm2/wrist" in features["camera_names"]
+        assert not any(n.startswith("arm1/") for n in features["actuator_names"])
+
+        # The robot's own (un-namespaced) joint names come straight from the robot.
+        assert features["joint_names"] == ["pan", "lift"]
+
+    def test_get_features_unscoped_lists_all_robots(self, sim, arm_xml):
+        """Without a robot_name filter, get_features reports every robot and the
+        full (cross-robot) actuator pool."""
+        sim.add_robot("arm1", urdf_path=arm_xml, position=[0, 0, 0])
+        sim.add_robot("arm2", urdf_path=arm_xml, position=[0.5, 0, 0])
+
+        r = sim._dispatch_action("get_features", {})
+        assert r["status"] == "success"
+        features = r["content"][-1]["json"]["features"]
+        assert set(features["robots"].keys()) == {"arm1", "arm2"}
+        # Full pool spans both robots' namespaced actuators.
+        assert "arm1/pan_act" in features["actuator_names"]
+        assert "arm2/pan_act" in features["actuator_names"]
 
 
 class TestRegisterUrdfValidation:
