@@ -8,10 +8,12 @@ All external dependencies (Zenoh, LeRobot, device_connect_edge, strands) are moc
 
 import asyncio
 import json
+import os
 import sys
 import unittest
 from dataclasses import dataclass
 from enum import Enum
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # ── Mock heavy dependencies before importing ──────────────────────
@@ -375,6 +377,173 @@ class TestSimulationDeviceDriver(unittest.TestCase):
         driver = SimulationDeviceDriver(sim)
         asyncio.run(driver.onEmergencyStop("other-device", "emergencyStop", {"reason": "test"}))
         self.assertFalse(sim._world.robots["so100"].policy_running)
+
+
+# ── TestSimulationDeviceDriver: lifecycle, publish loop, emit + authz ──
+
+
+class TestSimulationDriverLifecycleAndPublish(unittest.TestCase):
+    """Behavioral coverage for the SimulationDeviceDriver state-publishing loop,
+    lifecycle no-ops, event emitters, and caller-authorization denial paths."""
+
+    def test_connect_and_disconnect_are_noops(self):
+        driver = SimulationDeviceDriver(_make_mock_sim())
+        # Both are no-ops (the Simulation manages its own MuJoCo state); they
+        # must complete without touching the sim.
+        self.assertIsNone(asyncio.run(driver.connect()))
+        self.assertIsNone(asyncio.run(driver.disconnect()))
+
+    def test_get_status_falls_back_to_idle_without_get_state(self):
+        sim = _make_mock_sim()
+        del sim.get_state  # a sim that does not expose get_state()
+        driver = SimulationDeviceDriver(sim)
+        self.assertEqual(asyncio.run(driver.getStatus()), {"status": "idle"})
+
+    def test_event_emitters_run_their_bodies(self):
+        """The @emit-decorated declarations are callable no-op bodies; calling
+        them must not raise (they only build the event payload)."""
+        driver = SimulationDeviceDriver(_make_mock_sim())
+        asyncio.run(driver.policyStarted("so100", "pick", "mock"))
+        asyncio.run(driver.policyComplete("so100", "pick", 42))
+        asyncio.run(driver.emergencyStop("operator request"))
+        asyncio.run(driver.stateUpdate(sim_time=1.0, step_count=5, running_policies={}))
+        asyncio.run(driver.observationUpdate(robot_name="so100", joints={"j1": 0.1}))
+
+    def test_publish_state_no_world_is_silent(self):
+        sim = _make_mock_sim()
+        sim._world = None
+        driver = SimulationDeviceDriver(sim)
+        # No world -> early return, nothing emitted, no error.
+        self.assertIsNone(asyncio.run(driver._publishState()))
+
+    def test_publish_state_skips_when_no_policy_running(self):
+        """With no running policy the loop must emit nothing (the running dict
+        is empty, so the stateUpdate/observationUpdate block is skipped)."""
+        sim = _make_mock_sim()  # robot policy_running defaults to False
+        driver = SimulationDeviceDriver(sim)
+        driver.stateUpdate = AsyncMock()
+        driver.observationUpdate = AsyncMock()
+        asyncio.run(driver._publishState())
+        driver.stateUpdate.assert_not_called()
+        driver.observationUpdate.assert_not_called()
+
+    def test_publish_state_emits_running_policy_and_joint_observations(self):
+        """The 10Hz publisher emits a state update plus a per-robot joint
+        observation read from MuJoCo qpos for each running policy."""
+        import numpy as np
+
+        sim = _make_mock_sim()
+        robot = sim._world.robots["so100"]
+        robot.policy_running = True
+        robot.policy_steps = 7
+        robot.policy_instruction = "stack the cubes"
+        robot.joint_names = ["shoulder", "elbow"]
+        robot.joint_ids = [0, 2]
+        sim._world.sim_time = 1.5
+        sim._world.step_count = 30
+        sim._world._data = SimpleNamespace(qpos=np.array([0.25, 0.0, -0.5, 0.0]))
+
+        driver = SimulationDeviceDriver(sim)
+        driver.stateUpdate = AsyncMock()
+        driver.observationUpdate = AsyncMock()
+        asyncio.run(driver._publishState())
+
+        driver.stateUpdate.assert_awaited_once_with(
+            sim_time=1.5,
+            step_count=30,
+            running_policies={"so100": {"steps": 7, "instruction": "stack the cubes"}},
+        )
+        driver.observationUpdate.assert_awaited_once_with(
+            robot_name="so100",
+            sim_time=1.5,
+            step_count=30,
+            joints={"shoulder": 0.25, "elbow": -0.5},
+        )
+
+    def test_publish_state_handles_missing_qpos_gracefully(self):
+        """A running policy whose joint read fails (no _data) still emits the
+        state update and a joint-less observation - the per-robot read is
+        guarded so one bad robot does not break the publish loop."""
+        sim = _make_mock_sim()
+        robot = sim._world.robots["so100"]
+        robot.policy_running = True
+        robot.joint_names = ["shoulder"]
+        robot.joint_ids = [0]
+        sim._world._data = None  # no MuJoCo data -> joints stay empty
+
+        driver = SimulationDeviceDriver(sim)
+        driver.stateUpdate = AsyncMock()
+        driver.observationUpdate = AsyncMock()
+        asyncio.run(driver._publishState())
+
+        driver.stateUpdate.assert_awaited_once()
+        driver.observationUpdate.assert_awaited_once()
+        self.assertEqual(driver.observationUpdate.await_args.kwargs["joints"], {})
+
+    def test_publish_state_swallows_per_robot_read_errors(self):
+        """A per-robot joint read that raises (e.g. a bad qpos index) is caught
+        and logged, not propagated - one faulty robot must not break the 10Hz
+        publish loop for the rest of the fleet."""
+
+        class _BoomQpos:
+            def __getitem__(self, idx):
+                raise IndexError("qpos out of range")
+
+        sim = _make_mock_sim()
+        robot = sim._world.robots["so100"]
+        robot.policy_running = True
+        robot.joint_names = ["shoulder"]
+        robot.joint_ids = [99]
+        sim._world._data = SimpleNamespace(qpos=_BoomQpos())
+
+        driver = SimulationDeviceDriver(sim)
+        driver.stateUpdate = AsyncMock()
+        driver.observationUpdate = AsyncMock()
+        # Must not raise; the state update still fires, the bad observation is
+        # swallowed (no observationUpdate emitted for the failing robot).
+        asyncio.run(driver._publishState())
+        driver.stateUpdate.assert_awaited_once()
+        driver.observationUpdate.assert_not_called()
+
+    def test_execute_denied_for_unlisted_caller(self):
+        with (
+            patch(
+                "strands_robots.device_connect.sim_driver.get_rpc_source_device",
+                return_value="rogue",
+            ),
+            patch.dict(os.environ, {"DEVICE_CONNECT_RPC_ALLOW": "trusted"}),
+        ):
+            sim = _make_mock_sim()
+            driver = SimulationDeviceDriver(sim)
+            res = asyncio.run(driver.execute("pick", "mock", 10.0))
+        self.assertEqual(res["status"], "error")
+        self.assertIn("not authorized", res["reason"])
+        sim.start_policy.assert_not_called()
+
+    def test_stop_denied_for_unlisted_caller(self):
+        sim = _make_mock_sim()
+        sim._world.robots["so100"].policy_running = True
+        with (
+            patch(
+                "strands_robots.device_connect.sim_driver.get_rpc_source_device",
+                return_value="rogue",
+            ),
+            patch.dict(os.environ, {"DEVICE_CONNECT_RPC_ALLOW": "trusted"}),
+        ):
+            driver = SimulationDeviceDriver(sim)
+            res = asyncio.run(driver.stop())
+        self.assertEqual(res["status"], "error")
+        # The denied call must not have stopped the running policy.
+        self.assertTrue(sim._world.robots["so100"].policy_running)
+
+    def test_emergency_stop_ignores_unauthorized_source(self):
+        sim = _make_mock_sim()
+        sim._world.robots["so100"].policy_running = True
+        with patch.dict(os.environ, {"DEVICE_CONNECT_ESTOP_ALLOW": "safety-controller"}):
+            driver = SimulationDeviceDriver(sim)
+            asyncio.run(driver.onEmergencyStop("rogue-device", "emergencyStop", {"reason": "spoof"}))
+        # Unauthorized e-stop is ignored: the policy keeps running.
+        self.assertTrue(sim._world.robots["so100"].policy_running)
 
 
 # ── TestReachyMiniDriver ─────────────────────────────────────────
