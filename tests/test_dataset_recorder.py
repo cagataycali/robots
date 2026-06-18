@@ -450,10 +450,16 @@ class _FakeDatasetMetaLengths:
 
 
 class _RaisingIndex:
-    """Subscriptable that raises, simulating an index present but unusable."""
+    """Subscriptable that raises on lookup, simulating an unusable index.
+
+    Raises ``KeyError`` (the idiomatic ``LookupError`` for a failed
+    subscription) so the helper's broad ``except Exception`` still catches it
+    and falls through to the frame-scan path, mirroring a real dataset whose
+    ``episode_data_index`` is present but missing the expected columns.
+    """
 
     def __getitem__(self, key):
-        raise RuntimeError("index columns unavailable")
+        raise KeyError(key)
 
 
 class _FakeDatasetScan:
