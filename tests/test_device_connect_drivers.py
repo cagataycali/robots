@@ -116,6 +116,24 @@ from strands_robots.device_connect.robot_driver import RobotDeviceDriver  # noqa
 from strands_robots.device_connect.sim_driver import SimulationDeviceDriver  # noqa: E402
 
 
+# A sibling test module (test_device_connect_all_robots) mocks device_connect_edge
+# and, in its teardown_module, purges strands_robots.device_connect.* from
+# sys.modules. Pytest collects every test module before running any teardown, so
+# by the time these tests RUN, sim_driver may no longer be the object in
+# sys.modules: SimulationDeviceDriver.execute still closes over its original
+# (now-orphaned) module dict, while patch("...sim_driver.get_rpc_source_device")
+# re-imports a fresh module and patches a DIFFERENT object. The driver then calls
+# the unpatched original (an auto-child MagicMock), which is not a str and blows
+# up fnmatch. Patch the symbol in the namespace the driver code actually reads -
+# the function's own __globals__ - so the patch always binds regardless of
+# sys.modules churn.
+def _patch_sim_driver_caller(value):
+    return patch.dict(
+        SimulationDeviceDriver.execute.__globals__,
+        {"get_rpc_source_device": MagicMock(return_value=value)},
+    )
+
+
 def teardown_module():
     """Restore real device_connect_edge modules so other test files are not affected.
 
@@ -507,10 +525,7 @@ class TestSimulationDriverLifecycleAndPublish(unittest.TestCase):
 
     def test_execute_denied_for_unlisted_caller(self):
         with (
-            patch(
-                "strands_robots.device_connect.sim_driver.get_rpc_source_device",
-                return_value="rogue",
-            ),
+            _patch_sim_driver_caller("rogue"),
             patch.dict(os.environ, {"DEVICE_CONNECT_RPC_ALLOW": "trusted"}),
         ):
             sim = _make_mock_sim()
@@ -524,10 +539,7 @@ class TestSimulationDriverLifecycleAndPublish(unittest.TestCase):
         sim = _make_mock_sim()
         sim._world.robots["so100"].policy_running = True
         with (
-            patch(
-                "strands_robots.device_connect.sim_driver.get_rpc_source_device",
-                return_value="rogue",
-            ),
+            _patch_sim_driver_caller("rogue"),
             patch.dict(os.environ, {"DEVICE_CONNECT_RPC_ALLOW": "trusted"}),
         ):
             driver = SimulationDeviceDriver(sim)
