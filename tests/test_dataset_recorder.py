@@ -383,3 +383,189 @@ def test_repo_id_root_and_repr_properties():
     assert rec.root == "/tmp/local-fake"
     rep = repr(rec)
     assert "local/fake" in rep and "episodes=1" in rep and "frames=7" in rep
+
+
+# ---------------------------------------------------------------------------
+# load_lerobot_episode: frame-range resolution for replay
+# ---------------------------------------------------------------------------
+# load_lerobot_episode() resolves the [start, start+length) frame window for a
+# given episode index across three LeRobot dataset shapes:
+#   1. episode_data_index present (the fast path: from/to index tensors),
+#   2. no episode_data_index but meta.episodes carries per-episode lengths,
+#   3. neither usable -> last-resort frame scan keyed on episode_index.
+# It guards out-of-range and empty episodes with ValueError. These tests inject
+# a fake LeRobotDataset so the real body runs without lerobot installed.
+
+
+class _IndexCell:
+    """Mimics a tensor cell exposing ``.item()`` (as torch index tensors do)."""
+
+    def __init__(self, value: int) -> None:
+        self._value = value
+
+    def item(self) -> int:
+        return self._value
+
+
+class _IndexColumn:
+    """Indexable column of _IndexCell, mimicking dataset.episode_data_index['from']."""
+
+    def __init__(self, values: list[int]) -> None:
+        self._values = values
+
+    def __getitem__(self, idx: int) -> _IndexCell:
+        return _IndexCell(self._values[idx])
+
+
+class _FakeMeta:
+    def __init__(self, total_episodes=None, episodes=None) -> None:
+        if total_episodes is not None:
+            self.total_episodes = total_episodes
+        if episodes is not None:
+            self.episodes = episodes
+
+
+class _FakeDatasetWithIndex:
+    """Fast path: exposes episode_data_index with from/to columns."""
+
+    def __init__(self, repo_id, root=None) -> None:
+        self.repo_id = repo_id
+        self.root = root
+        self.meta = _FakeMeta(total_episodes=3)
+        self.episode_data_index = {
+            "from": _IndexColumn([0, 10, 25]),
+            "to": _IndexColumn([10, 25, 40]),
+        }
+
+
+class _FakeDatasetMetaLengths:
+    """No episode_data_index; lengths live in meta.episodes."""
+
+    def __init__(self, repo_id, root=None) -> None:
+        self.repo_id = repo_id
+        self.root = root
+        self.meta = _FakeMeta(
+            episodes=[{"length": 10}, {"length": 15}, {"length": 5}],
+        )
+
+
+class _RaisingIndex:
+    """Subscriptable that raises, simulating an index present but unusable."""
+
+    def __getitem__(self, key):
+        raise RuntimeError("index columns unavailable")
+
+
+class _FakeDatasetScan:
+    """Neither fast path usable: forces the frame-scan fallback.
+
+    episode_data_index access raises, so the helper falls through to scanning
+    frames by their episode_index field.
+    """
+
+    def __init__(self, repo_id, root=None) -> None:
+        self.repo_id = repo_id
+        self.root = root
+        self.meta = _FakeMeta(total_episodes=2)
+        # episode 0 -> frames [0,1,2]; episode 1 -> frames [3,4]
+        self._frames = [
+            {"episode_index": _IndexCell(0)},
+            {"episode_index": _IndexCell(0)},
+            {"episode_index": _IndexCell(0)},
+            {"episode_index": _IndexCell(1)},
+            {"episode_index": _IndexCell(1)},
+        ]
+
+        # episode_data_index exists (so hasattr passes) but subscripting it
+        # raises, forcing the helper into the frame-scan fallback.
+        self.episode_data_index = _RaisingIndex()
+
+    def __len__(self) -> int:
+        return len(self._frames)
+
+    def __getitem__(self, idx):
+        return self._frames[idx]
+
+
+def _patch_lerobot_dataset(monkeypatch, fake_cls) -> None:
+    """Inject a fake LeRobotDataset into the import target used by the helper."""
+    import sys
+    import types
+
+    module = types.ModuleType("lerobot.datasets.lerobot_dataset")
+    setattr(module, "LeRobotDataset", fake_cls)
+    monkeypatch.setitem(sys.modules, "lerobot.datasets.lerobot_dataset", module)
+
+
+def test_load_episode_uses_episode_data_index_fast_path(monkeypatch):
+    from strands_robots import dataset_recorder as dr
+
+    _patch_lerobot_dataset(monkeypatch, _FakeDatasetWithIndex)
+    ds, start, length = dr.load_lerobot_episode("user/data", episode=1)
+
+    assert start == 10
+    assert length == 15
+    assert ds.repo_id == "user/data"
+
+
+def test_load_episode_first_episode_window(monkeypatch):
+    from strands_robots import dataset_recorder as dr
+
+    _patch_lerobot_dataset(monkeypatch, _FakeDatasetWithIndex)
+    _, start, length = dr.load_lerobot_episode("user/data", episode=0)
+
+    assert start == 0
+    assert length == 10
+
+
+def test_load_episode_falls_back_to_meta_lengths(monkeypatch):
+    from strands_robots import dataset_recorder as dr
+
+    _patch_lerobot_dataset(monkeypatch, _FakeDatasetMetaLengths)
+    # episode 2 starts after episodes 0 (10) + 1 (15) = 25, with length 5.
+    _, start, length = dr.load_lerobot_episode("user/data", episode=2)
+
+    assert start == 25
+    assert length == 5
+
+
+def test_load_episode_scans_frames_as_last_resort(monkeypatch):
+    from strands_robots import dataset_recorder as dr
+
+    _patch_lerobot_dataset(monkeypatch, _FakeDatasetScan)
+    _, start, length = dr.load_lerobot_episode("user/data", episode=1)
+
+    # episode 1 occupies frames 3 and 4.
+    assert start == 3
+    assert length == 2
+
+
+def test_load_episode_rejects_out_of_range(monkeypatch):
+    from strands_robots import dataset_recorder as dr
+
+    _patch_lerobot_dataset(monkeypatch, _FakeDatasetWithIndex)
+    with pytest.raises(ValueError, match="out of range"):
+        dr.load_lerobot_episode("user/data", episode=3)
+
+
+def test_load_episode_rejects_empty_episode(monkeypatch):
+    from strands_robots import dataset_recorder as dr
+
+    class _EmptyEpisode:
+        def __init__(self, repo_id, root=None) -> None:
+            self.meta = _FakeMeta(episodes=[{"length": 0}])
+
+    _patch_lerobot_dataset(monkeypatch, _EmptyEpisode)
+    with pytest.raises(ValueError, match="no frames"):
+        dr.load_lerobot_episode("user/data", episode=0)
+
+
+def test_load_episode_scan_breaks_after_target_episode(monkeypatch):
+    from strands_robots import dataset_recorder as dr
+
+    _patch_lerobot_dataset(monkeypatch, _FakeDatasetScan)
+    # episode 0 occupies frames 0,1,2; the scan must stop at frame 3 (episode 1).
+    _, start, length = dr.load_lerobot_episode("user/data", episode=0)
+
+    assert start == 0
+    assert length == 3
