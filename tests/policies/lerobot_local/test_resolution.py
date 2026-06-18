@@ -836,3 +836,182 @@ class TestReadPolicyTypeFromConfig:
         monkeypatch.setattr("huggingface_hub.hf_hub_download", _boom)
 
         assert resolution._read_policy_type_from_config("nonexistent/repo-id") is None
+
+
+class TestResolvePolicyClassByNameFallbackLadder:
+    """Behavioral tests for the resolution ladder in
+    ``resolve_policy_class_by_name`` AFTER the LeRobot 0.5+ ``modeling_<type>``
+    convention (Strategy 1) misses.
+
+    Real LeRobot installs differ by version: some expose a concrete policy
+    class at the package level, older ones only ship the legacy
+    ``lerobot.policies.factory.get_policy_class`` factory, and the abstract
+    ``PreTrainedPolicy`` is the last resort. These fall-through strategies are
+    exactly what shields callers from LeRobot layout drift, so each rung -- and
+    the exhaustion error -- is pinned here. All run without importing real
+    lerobot: the package chain is faked in ``sys.modules`` and Strategy 1/2's
+    ``importlib.import_module`` is stubbed to miss.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _isolate_resolution(self, monkeypatch):
+        """Neutralize the stub installer and inject a minimal fake ``lerobot``
+        package chain so the ladder's ``from lerobot.policies...`` imports
+        resolve from ``sys.modules`` alone (no heavy real __init__ executes)."""
+        import sys
+        import types
+
+        from strands_robots.policies.lerobot_local import resolution
+
+        monkeypatch.setattr(resolution, "_ensure_lerobot_policies_importable", lambda: None)
+
+        lerobot_mod = types.ModuleType("lerobot")
+        lerobot_mod.__path__ = []  # mark as package
+        policies_mod = types.ModuleType("lerobot.policies")
+        policies_mod.__path__ = []
+        monkeypatch.setitem(sys.modules, "lerobot", lerobot_mod)
+        monkeypatch.setitem(sys.modules, "lerobot.policies", policies_mod)
+        return resolution
+
+    def test_strategy2_package_level_import_returns_policy_class(self, _isolate_resolution, monkeypatch):
+        """When ``modeling_<type>`` is absent but the package itself re-exports
+        a ``*Policy`` class with ``from_pretrained`` (an alternate LeRobot
+        layout), Strategy 2's package-level import returns that class."""
+        import types
+
+        resolution = _isolate_resolution
+
+        class FakeACTPolicy:
+            @classmethod
+            def from_pretrained(cls):
+                return cls()
+
+        pkg = types.ModuleType("lerobot.policies.act")
+        pkg.ACTPolicy = FakeACTPolicy
+
+        def fake_import(name):
+            if name == "lerobot.policies.act":
+                return pkg
+            raise ImportError(name)  # Strategy 1 modeling_* misses
+
+        monkeypatch.setattr(resolution.importlib, "import_module", fake_import)
+
+        assert resolution.resolve_policy_class_by_name("act") is FakeACTPolicy
+
+    def test_strategy2_skips_pretrained_policy_and_attrs_without_from_pretrained(
+        self, _isolate_resolution, monkeypatch
+    ):
+        """Strategy 2 must ignore the abstract ``PreTrainedPolicy`` base and any
+        ``*Policy``-named attribute lacking ``from_pretrained``, returning only a
+        genuine concrete checkpoint-loadable class."""
+        import types
+
+        resolution = _isolate_resolution
+
+        class PreTrainedPolicy:  # base class -- must be skipped by name guard
+            @classmethod
+            def from_pretrained(cls):
+                return cls()
+
+        class NotARealPolicy:  # ends with "Policy" but cannot load checkpoints
+            pass
+
+        class DiffusionPolicy:
+            @classmethod
+            def from_pretrained(cls):
+                return cls()
+
+        pkg = types.ModuleType("lerobot.policies.diffusion")
+        pkg.PreTrainedPolicy = PreTrainedPolicy
+        pkg.NotARealPolicy = NotARealPolicy
+        pkg.DiffusionPolicy = DiffusionPolicy
+
+        def fake_import(name):
+            if name == "lerobot.policies.diffusion":
+                return pkg
+            raise ImportError(name)
+
+        monkeypatch.setattr(resolution.importlib, "import_module", fake_import)
+
+        assert resolution.resolve_policy_class_by_name("diffusion") is DiffusionPolicy
+
+    def test_strategy3_legacy_factory_returns_policy_class(self, _isolate_resolution, monkeypatch):
+        """On LeRobot <0.4 layouts where neither the ``modeling_*`` submodule nor
+        a package-level class exists, Strategy 3 delegates to the legacy
+        ``lerobot.policies.factory.get_policy_class`` factory."""
+        import sys
+        import types
+
+        resolution = _isolate_resolution
+
+        class LegacyTDMPCPolicy:
+            pass
+
+        def fake_import(name):
+            raise ImportError(name)  # Strategy 1 + 2 both miss
+
+        monkeypatch.setattr(resolution.importlib, "import_module", fake_import)
+
+        factory_mod = types.ModuleType("lerobot.policies.factory")
+        factory_mod.get_policy_class = lambda policy_type: LegacyTDMPCPolicy
+        monkeypatch.setitem(sys.modules, "lerobot.policies.factory", factory_mod)
+
+        assert resolution.resolve_policy_class_by_name("tdmpc") is LegacyTDMPCPolicy
+
+    def test_strategy4_concrete_pretrained_policy_is_last_resort(self, _isolate_resolution, monkeypatch):
+        """When every type-specific path misses and the legacy factory is gone,
+        Strategy 4 returns ``PreTrainedPolicy`` itself -- but only because it is
+        concrete (not abstract) in this fake layout."""
+        import sys
+        import types
+
+        resolution = _isolate_resolution
+
+        def fake_import(name):
+            raise ImportError(name)
+
+        monkeypatch.setattr(resolution.importlib, "import_module", fake_import)
+
+        # Strategy 3: factory module present but without get_policy_class ->
+        # the ``from ... import get_policy_class`` raises ImportError (caught).
+        factory_mod = types.ModuleType("lerobot.policies.factory")
+        monkeypatch.setitem(sys.modules, "lerobot.policies.factory", factory_mod)
+
+        class PreTrainedPolicy:  # concrete in this fake -> usable fallback
+            pass
+
+        pretrained_mod = types.ModuleType("lerobot.policies.pretrained")
+        pretrained_mod.PreTrainedPolicy = PreTrainedPolicy
+        monkeypatch.setitem(sys.modules, "lerobot.policies.pretrained", pretrained_mod)
+
+        assert resolution.resolve_policy_class_by_name("mystery") is PreTrainedPolicy
+
+    def test_all_strategies_exhausted_raises_importerror_with_guidance(self, _isolate_resolution, monkeypatch):
+        """When no rung resolves a class -- including an abstract
+        ``PreTrainedPolicy`` that Strategy 4 must reject -- the function raises
+        ``ImportError`` naming the type and the strategies it tried, rather than
+        returning the abstract base or a silent ``None``."""
+        import abc
+        import sys
+        import types
+
+        resolution = _isolate_resolution
+
+        def fake_import(name):
+            raise ImportError(name)
+
+        monkeypatch.setattr(resolution.importlib, "import_module", fake_import)
+
+        factory_mod = types.ModuleType("lerobot.policies.factory")  # no get_policy_class
+        monkeypatch.setitem(sys.modules, "lerobot.policies.factory", factory_mod)
+
+        class AbstractPreTrainedPolicy(abc.ABC):
+            @abc.abstractmethod
+            def forward(self): ...
+
+        pretrained_mod = types.ModuleType("lerobot.policies.pretrained")
+        pretrained_mod.PreTrainedPolicy = AbstractPreTrainedPolicy
+        monkeypatch.setitem(sys.modules, "lerobot.policies.pretrained", pretrained_mod)
+
+        with pytest.raises(ImportError, match="ghost-policy"):
+            resolution.resolve_policy_class_by_name("ghost-policy")
