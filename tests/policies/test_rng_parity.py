@@ -65,3 +65,81 @@ def test_both_providers_route_reset_through_shared_helper():
     assert "np.random.seed(seed)" not in cosmos_src, (
         "Cosmos3Policy.reset must not reseed only the global NumPy RNG anymore (#331)"
     )
+
+
+def test_reseed_seeds_torch_cpu_and_cuda_when_available(monkeypatch):
+    """When torch is importable and reports CUDA, the helper must seed the CPU
+    and CUDA generators and pin cuDNN into deterministic mode -- the per-episode
+    reproducibility contract on GPU hosts (#331)."""
+    import sys
+    import types
+
+    calls: dict[str, object] = {}
+    fake_torch = types.ModuleType("torch")
+    fake_torch.manual_seed = lambda s: calls.__setitem__("manual_seed", s)
+    fake_cuda = types.SimpleNamespace(
+        is_available=lambda: True,
+        manual_seed_all=lambda s: calls.__setitem__("manual_seed_all", s),
+    )
+    fake_torch.cuda = fake_cuda
+    fake_torch.backends = types.SimpleNamespace(cudnn=types.SimpleNamespace(deterministic=False, benchmark=True))
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+
+    reseed_client_rngs(99)
+
+    assert calls["manual_seed"] == 99, "torch CPU generator must be seeded"
+    assert calls["manual_seed_all"] == 99, "CUDA generators must be seeded when CUDA is available"
+    assert fake_torch.backends.cudnn.deterministic is True, "cuDNN must be pinned deterministic"
+    assert fake_torch.backends.cudnn.benchmark is False, "cuDNN autotuner must be disabled for determinism"
+
+
+def test_reseed_skips_cuda_when_unavailable(monkeypatch):
+    """On a CPU-only host the CUDA reseed must be skipped, not attempted."""
+    import sys
+    import types
+
+    calls: dict[str, object] = {}
+    fake_torch = types.ModuleType("torch")
+    fake_torch.manual_seed = lambda s: calls.__setitem__("manual_seed", s)
+
+    def _boom(_s):
+        raise AssertionError("manual_seed_all must not be called when CUDA is unavailable")
+
+    fake_torch.cuda = types.SimpleNamespace(is_available=lambda: False, manual_seed_all=_boom)
+    fake_torch.backends = types.SimpleNamespace(cudnn=types.SimpleNamespace(deterministic=False, benchmark=True))
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+
+    reseed_client_rngs(5)
+
+    assert calls["manual_seed"] == 5
+    assert fake_torch.backends.cudnn.deterministic is True
+
+
+def test_reseed_tolerates_missing_torch(monkeypatch):
+    """torch is an optional dependency; a service-only / mock install without it
+    must reseed Python + NumPy and silently skip torch (no ImportError leak)."""
+    import sys
+
+    monkeypatch.setitem(sys.modules, "torch", None)  # makes `import torch` raise ImportError
+
+    reseed_client_rngs(11)
+    a = np.random.rand(3).tolist()
+    reseed_client_rngs(11)
+    b = np.random.rand(3).tolist()
+    assert a == b, "Python+NumPy reseed must still be deterministic without torch"
+
+
+def test_reseed_swallows_unexpected_failures(monkeypatch, caplog):
+    """reset() is a soft reproducibility hint: an unexpected reseed failure must
+    be logged and swallowed, never propagated to the caller."""
+    import logging
+
+    def _boom(_seed):
+        raise RuntimeError("rng backend exploded")
+
+    monkeypatch.setattr(np.random, "seed", _boom)
+
+    with caplog.at_level(logging.INFO, logger="strands_robots.policies._rng"):
+        reseed_client_rngs(3)  # must not raise
+
+    assert any("reseed failed" in r.message for r in caplog.records), "the swallowed failure must be logged"
