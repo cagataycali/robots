@@ -231,9 +231,11 @@ def build_policy(
         from lerobot.configs import FeatureType, PolicyFeature
     except ImportError as exc:
         raise ImportError(
-            "MolmoAct2 requires lerobot >= 0.5.2 (from source). The PyPI release "
-            "(0.5.1) does not include MolmoAct2Policy. Install from source:\n"
-            "  uv pip install 'lerobot[feetech] @ git+https://github.com/huggingface/lerobot.git'\n"
+            "MolmoAct2 requires lerobot >= 0.5.2 (PR #3604), which is not yet on "
+            "PyPI (latest release 0.5.1 lacks MolmoAct2Policy). Install the extra "
+            "plus lerobot from source:\n"
+            "  uv pip install 'strands-robots[molmoact2]' "
+            "'lerobot[feetech] @ git+https://github.com/huggingface/lerobot.git'\n"
             "On Jetson/aarch64, add --no-build-isolation if pyav fails to build."
         ) from exc
 
@@ -258,9 +260,11 @@ def build_policy(
         )
     except ImportError as exc:
         raise ImportError(
-            "MolmoAct2 requires lerobot >= 0.5.2 (from source). The PyPI release "
-            "(0.5.1) does not include MolmoAct2Policy. Install from source:\n"
-            "  uv pip install 'lerobot[feetech] @ git+https://github.com/huggingface/lerobot.git'\n"
+            "MolmoAct2 requires lerobot >= 0.5.2 (PR #3604), which is not yet on "
+            "PyPI (latest release 0.5.1 lacks MolmoAct2Policy). Install the extra "
+            "plus lerobot from source:\n"
+            "  uv pip install 'strands-robots[molmoact2]' "
+            "'lerobot[feetech] @ git+https://github.com/huggingface/lerobot.git'\n"
             "On Jetson/aarch64, add --no-build-isolation if pyav fails to build."
         ) from exc
 

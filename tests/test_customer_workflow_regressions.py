@@ -63,6 +63,44 @@ class TestLerobotExtraIncludesFeetech:
         assert "lerobot[feetech]" in joined, f"[lerobot] extra must request lerobot[feetech]; got {lerobot_extra!r}"
 
 
+class TestMolmoact2Extra:
+    """The ``[molmoact2]`` extra must layer MolmoAct2's auxiliary deps on lerobot.
+
+    MolmoAct2Policy shipped in lerobot AFTER the 0.5.1 PyPI release (lerobot
+    PR #3604), so a plain ``[lerobot]`` install cannot run it. The ``[molmoact2]``
+    extra exists to pull the transformers/peft/scipy stack MolmoAct2's modeling
+    and processor code imports, on top of lerobot core. PyPI rejects direct git
+    URLs in a published dependency table, so the lerobot-from-source pin lives in
+    the documented install command, not the extra (issue #52).
+    """
+
+    def _extras(self) -> dict:
+        with open(_REPO_ROOT / "pyproject.toml", "rb") as f:
+            data = tomllib.load(f)
+        return data["project"]["optional-dependencies"]
+
+    def test_molmoact2_extra_exists_and_layers_lerobot(self):
+        extras = self._extras()
+        assert "molmoact2" in extras, "pyproject must declare a [molmoact2] extra"
+        joined = " ".join(extras["molmoact2"])
+        # Builds on the [lerobot] extra (which carries lerobot[feetech]).
+        assert "strands-robots[lerobot]" in joined
+        # The auxiliary deps MolmoAct2 modeling/processor code imports.
+        assert "transformers" in joined
+        assert "peft" in joined
+        assert "scipy" in joined
+
+    def test_molmoact2_extra_has_no_git_url(self):
+        # PyPI rejects direct-reference (git+) deps in a published package's
+        # dependency table; the git-source pin must stay in docs/error hints.
+        joined = " ".join(self._extras()["molmoact2"])
+        assert "git+" not in joined and "@ git" not in joined
+
+    def test_molmoact2_in_all_extra(self):
+        extras = self._extras()
+        assert "strands-robots[molmoact2]" in extras["all"]
+
+
 class TestSimulationIsCallable:
     """The Simulation returned by ``Robot()`` must be callable and dispatch actions."""
 

@@ -355,7 +355,7 @@ class TestBuildPolicy:
             return real_import(name, *args, **kwargs)
 
         monkeypatch.setattr(builtins, "__import__", blocked_import)
-        with pytest.raises(ImportError, match="MolmoAct2 requires lerobot"):
+        with pytest.raises(ImportError, match="MolmoAct2 requires lerobot") as excinfo:
             molmoact2.build_policy(
                 "repo",
                 device="cpu",
@@ -364,6 +364,11 @@ class TestBuildPolicy:
                 image_keys=["observation.images.cam"],
                 embodiment_spec=None,
             )
+        # The hint must name the install extra and the upstream lerobot PR so an
+        # operator can act on it without spelunking (issue #52 fail-loud branch).
+        msg = str(excinfo.value)
+        assert "strands-robots[molmoact2]" in msg
+        assert "PR #3604" in msg
 
     def test_missing_lerobot_configs_raises_install_hint(self, monkeypatch):
         """If lerobot.configs is absent, the first import guard raises the hint."""
@@ -378,7 +383,7 @@ class TestBuildPolicy:
             return real_import(name, *args, **kwargs)
 
         monkeypatch.setattr(builtins, "__import__", blocked_import)
-        with pytest.raises(ImportError, match="MolmoAct2 requires lerobot"):
+        with pytest.raises(ImportError, match="MolmoAct2 requires lerobot") as excinfo:
             molmoact2.build_policy(
                 "repo",
                 device="cpu",
@@ -387,3 +392,6 @@ class TestBuildPolicy:
                 image_keys=["observation.images.cam"],
                 embodiment_spec=None,
             )
+        msg = str(excinfo.value)
+        assert "strands-robots[molmoact2]" in msg
+        assert "PR #3604" in msg

@@ -57,17 +57,23 @@ LerobotLocalPolicy(
 
 > **Important:** MolmoAct2 requires lerobot installed **from source** (git main).
 > The `MolmoAct2Policy` class was added after lerobot 0.5.1 (the latest PyPI
-> release as of June 2025). A plain `pip install strands-robots[lerobot]` resolves
-> lerobot 0.5.1, which does NOT include MolmoAct2.
+> release as of June 2025; merged in lerobot PR #3604). A plain
+> `pip install strands-robots[lerobot]` resolves lerobot 0.5.1, which does NOT
+> include MolmoAct2.
 
-Install lerobot from source before using MolmoAct2:
+The `[molmoact2]` extra layers the auxiliary deps MolmoAct2's modeling and
+processor code needs on top of lerobot core (`transformers`, `peft`, `scipy`),
+but PyPI rejects direct git URLs in a published package, so you still install
+lerobot itself from source in the same command:
 
 ```bash
 # Standard (x86_64, macOS):
-uv pip install "lerobot[feetech] @ git+https://github.com/huggingface/lerobot.git"
+uv pip install "strands-robots[molmoact2]" \
+    "lerobot[feetech] @ git+https://github.com/huggingface/lerobot.git"
 
 # Jetson / aarch64 (pyav wheel may fail to build - skip it, lerobot uses torchcodec):
-uv pip install "lerobot[feetech] @ git+https://github.com/huggingface/lerobot.git" --no-build-isolation
+uv pip install "strands-robots[molmoact2]" \
+    "lerobot[feetech] @ git+https://github.com/huggingface/lerobot.git" --no-build-isolation
 # If pyav still blocks the install, exclude it and add torchcodec manually:
 uv pip install torchcodec>=0.7
 uv pip install "lerobot[feetech] @ git+https://github.com/huggingface/lerobot.git" --no-deps
@@ -89,8 +95,9 @@ policy = create_policy(
 ```
 
 This requirement will go away once HuggingFace publishes lerobot >= 0.5.2 to PyPI
-(which will include MolmoAct2 natively). At that point the standard
-`pip install strands-robots[lerobot]` path will work.
+(which will include MolmoAct2 natively). At that point the `[molmoact2]` extra can
+pin `lerobot[feetech]>=0.5.2` directly and the git-source step drops away --
+`pip install strands-robots[molmoact2]` alone will suffice.
 
 ## RTC
 

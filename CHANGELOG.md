@@ -5,6 +5,29 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Added: `[molmoact2]` optional-dependency extra
+
+MolmoAct2 transformers-native VLA checkpoints (e.g. `allenai/MolmoAct2-SO100_101`)
+run through `MolmoAct2Policy`, which shipped in lerobot AFTER the 0.5.1 PyPI
+release (merged in lerobot PR #3604). A plain `pip install strands-robots[lerobot]`
+resolves lerobot 0.5.1, which lacks it.
+
+- New `[molmoact2]` extra layers MolmoAct2's auxiliary deps (`transformers`,
+  `peft`, `scipy`) on top of `[lerobot]`, mirroring lerobot's own `[molmoact2]`
+  extra. PyPI rejects direct git URLs in a published dependency table, so the
+  lerobot-from-source pin stays in the documented install command (same pattern
+  as `[cosmos3-diffusers]`):
+  `uv pip install strands-robots[molmoact2] "lerobot[feetech] @ git+https://github.com/huggingface/lerobot.git"`.
+  Added to `[all]`.
+- The fail-loud `ImportError` raised by the MolmoAct2 load path now names the
+  `strands-robots[molmoact2]` extra and lerobot PR #3604, so a missing lerobot
+  surfaces an actionable install hint instead of a bare import failure.
+- New `molmoact2` pytest marker; README + `docs/policies/lerobot-local.md` +
+  `docs/getting-started/installation.md` document the extra. Once a tagged
+  lerobot >= 0.5.2 is on PyPI the extra can pin `lerobot[feetech]>=0.5.2`
+  directly and the git-source step drops away.
+
+
 ### Added: `WBCPolicy` provider (`wbc`, shorthand `sonic`) - GR00T Whole-Body-Control (SONIC)
 
 A new non-VLA policy provider wrapping NVIDIA's GR00T Whole-Body-Control

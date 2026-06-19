@@ -66,8 +66,10 @@ MolmoAct2 checkpoints (e.g. `allenai/MolmoAct2-SO100_101`) require lerobot
 instructions. Quick path:
 
 ```bash
-# Install lerobot from source (skips pyav if it fails on aarch64):
-uv pip install "lerobot[feetech] @ git+https://github.com/huggingface/lerobot.git" --no-build-isolation
+# Install the [molmoact2] extra (transformers, peft, scipy on top of lerobot)
+# plus lerobot from source (skips pyav if it fails on aarch64):
+uv pip install "strands-robots[molmoact2]" \
+    "lerobot[feetech] @ git+https://github.com/huggingface/lerobot.git" --no-build-isolation
 uv pip install torchcodec>=0.7   # video decode backend for aarch64
 ```
 
