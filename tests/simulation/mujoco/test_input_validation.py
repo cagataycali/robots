@@ -160,7 +160,7 @@ class TestMassAndTimestepValidation:
     def test_set_timestep_large_warns_but_succeeds(self, sim_with_world):
         res = sim_with_world.set_timestep(0.5)
         assert res["status"] == "success"
-        assert "⚠️" in res["content"][0]["text"] or "unusually" in res["content"][0]["text"]
+        assert "Warning:" in res["content"][0]["text"] and "unusually" in res["content"][0]["text"]
 
     def test_set_timestep_nan_errors(self, sim_with_world):
         """NaN must not pass the positivity guard (nan <= 0 is False)."""

@@ -109,7 +109,7 @@ class MuJoCoSimEngine(
     """Programmatic MuJoCo simulation environment as a Strands AgentTool.
 
     Gives AI agents the ability to create, modify, and control MuJoCo
-    simulation environments through natural language → tool actions.
+    simulation environments through natural language -> tool actions.
 
     **Stateful session.** One MuJoCo world per instance; actions form an
     implicit state machine starting with ``create_world``. Tools that mutate
@@ -366,14 +366,14 @@ class MuJoCoSimEngine(
             "content": [
                 {
                     "text": (
-                        "🌍 Simulation world created\n"
-                        f"⚙️ Timestep: {self._world.timestep}s ({1 / self._world.timestep:.0f}Hz physics)\n"
-                        f"🌐 Gravity: {self._world.gravity}\n"
-                        f"📷 Default camera ready\n"
-                        f"🤖 Robot models: {self._cheap_robot_count()} available\n"
-                        "💡 Add robots: action='add_robot' (urdf_path or data_config)\n"
-                        "💡 Add objects: action='add_object'\n"
-                        "💡 List URDFs: action='list_urdfs'"
+                        "Simulation world created\n"
+                        f"Timestep: {self._world.timestep}s ({1 / self._world.timestep:.0f}Hz physics)\n"
+                        f"Gravity: {self._world.gravity}\n"
+                        f"Default camera ready\n"
+                        f"Robot models: {self._cheap_robot_count()} available\n"
+                        "Add robots: action='add_robot' (urdf_path or data_config)\n"
+                        "Add objects: action='add_object'\n"
+                        "List URDFs: action='list_urdfs'"
                     )
                 }
             ],
@@ -445,9 +445,9 @@ class MuJoCoSimEngine(
                 "content": [
                     {
                         "text": (
-                            f"🌍 Scene loaded from {os.path.basename(scene_path)}\n"
-                            f"🦴 Bodies: {self._world._model.nbody}, 🔩 Joints: {self._world._model.njnt}, ⚡ Actuators: {self._world._model.nu}\n"
-                            "💡 Use action='get_state' to inspect, action='step' to simulate"
+                            f"Scene loaded from {os.path.basename(scene_path)}\n"
+                            f"Bodies: {self._world._model.nbody}, Joints: {self._world._model.njnt}, Actuators: {self._world._model.nu}\n"
+                            "Use action='get_state' to inspect, action='step' to simulate"
                         )
                     }
                 ],
@@ -490,9 +490,9 @@ class MuJoCoSimEngine(
             "content": [
                 {
                     "text": (
-                        f"🔄 Scene replaced via raw MJCF\n"
-                        f"🦴 Bodies: {model.nbody}, 🔩 Joints: {model.njnt}, ⚡ Actuators: {model.nu}, 📷 Cameras: {model.ncam}\n"
-                        "⚠️ world.robots / world.objects / world.cameras registries were NOT updated - "
+                        f"Scene replaced via raw MJCF\n"
+                        f"Bodies: {model.nbody}, Joints: {model.njnt}, Actuators: {model.nu}, Cameras: {model.ncam}\n"
+                        "Warning: world.robots / world.objects / world.cameras registries were NOT updated - "
                         "they describe our previous Python-side view of the scene."
                     )
                 }
@@ -533,9 +533,9 @@ class MuJoCoSimEngine(
             "content": [
                 {
                     "text": (
-                        f"🩹 Patched scene: {applied} op(s) applied\n"
-                        f"🦴 Bodies: {model.nbody}, 🔩 Joints: {model.njnt}, ⚡ Actuators: {model.nu}, 📷 Cameras: {model.ncam}\n"
-                        "⚠️ world.robots / world.objects / world.cameras registries were NOT updated."
+                        f"Patched scene: {applied} op(s) applied\n"
+                        f"Bodies: {model.nbody}, Joints: {model.njnt}, Actuators: {model.nu}, Cameras: {model.ncam}\n"
+                        "Warning: world.robots / world.objects / world.cameras registries were NOT updated."
                     )
                 }
             ],
@@ -779,7 +779,7 @@ class MuJoCoSimEngine(
                     "status": "error",
                     "content": [
                         {
-                            "text": f"No model found for '{data_config}'.\n💡 Use action='list_urdfs' to see available robots"
+                            "text": f"No model found for '{data_config}'.\nUse action='list_urdfs' to see available robots"
                         }
                     ],
                 }
@@ -887,23 +887,23 @@ class MuJoCoSimEngine(
             self._attach_robot_to_mesh(robot)
 
             source = f"data_config='{data_config}'" if data_config else os.path.basename(resolved_path)
-            mesh_line = f"\n🌐 Mesh peer: {robot.peer_id}" if robot.peer_id else ""
+            mesh_line = f"\nMesh peer: {robot.peer_id}" if robot.peer_id else ""
             hint = getattr(self, "_add_robot_deprecation_hint", None)
             self._add_robot_deprecation_hint = None
-            hint_line = f"\n⚠️ {hint}" if hint else ""
+            hint_line = f"\nWarning: {hint}" if hint else ""
             return {
                 "status": "success",
                 "content": [
                     {
                         "text": (
-                            f"🤖 Robot '{name}' added to simulation\n"
-                            f"📁 Source: {source} → {os.path.basename(resolved_path)}\n"
-                            f"📍 Position: {robot.position}\n"
-                            f"🔩 Joints: {len(robot.joint_names)} ({', '.join(robot.joint_names[:8])}{'...' if len(robot.joint_names) > 8 else ''})\n"
-                            f"⚡ Actuators: {len(robot.actuator_ids)}\n"
-                            f"📷 Cameras: {list(self._world.cameras.keys())}"
+                            f"Robot '{name}' added to simulation\n"
+                            f"Source: {source} -> {os.path.basename(resolved_path)}\n"
+                            f"Position: {robot.position}\n"
+                            f"Joints: {len(robot.joint_names)} ({', '.join(robot.joint_names[:8])}{'...' if len(robot.joint_names) > 8 else ''})\n"
+                            f"Actuators: {len(robot.actuator_ids)}\n"
+                            f"Cameras: {list(self._world.cameras.keys())}"
                             f"{mesh_line}\n"
-                            f"💡 Run policy: action='run_policy', robot_name='{name}'"
+                            f"Run policy: action='run_policy', robot_name='{name}'"
                             f"{hint_line}"
                         )
                     }
@@ -968,7 +968,7 @@ class MuJoCoSimEngine(
                 "content": [{"text": f"Failed to eject robot '{name}' from scene."}],
             }
 
-        return {"status": "success", "content": [{"text": f"🗑️ Robot '{name}' removed."}]}
+        return {"status": "success", "content": [{"text": f"Robot '{name}' removed."}]}
 
     def list_robots(self) -> list[str]:
         """Return ordered robot names (SimEngine ABC).
@@ -999,11 +999,11 @@ class MuJoCoSimEngine(
         if not self._world.robots:
             return {"status": "success", "content": [{"text": "No robots. Use action='add_robot'."}]}
 
-        lines = ["🤖 Robots in simulation:\n"]
+        lines = ["Robots in simulation:\n"]
         for name, robot in self._world.robots.items():
-            status = "🟢 running" if robot.policy_running else "⚪ idle"
+            status = "running" if robot.policy_running else "idle"
             lines.append(
-                f"  • {name} ({os.path.basename(robot.urdf_path)})\n"
+                f"  - {name} ({os.path.basename(robot.urdf_path)})\n"
                 f"    Position: {robot.position}, Joints: {len(robot.joint_names)}, "
                 f"Config: {robot.data_config or 'direct'}, Status: {status}"
             )
@@ -1068,7 +1068,7 @@ class MuJoCoSimEngine(
                     "velocity": float(data.qvel[model.jnt_dofadr[jnt_id]]),
                 }
 
-        text = f"🤖 '{robot_name}' state (t={self._world.sim_time:.3f}s):\n"
+        text = f"'{robot_name}' state (t={self._world.sim_time:.3f}s):\n"
         for jnt, vals in state.items():
             text += f"{jnt}: pos={vals['position']:.4f}, vel={vals['velocity']:.4f}\n"
 
@@ -1149,7 +1149,7 @@ class MuJoCoSimEngine(
             "status": "success",
             "content": [
                 {
-                    "text": f"📦 '{name}' added: {shape} at {obj.position}, size={obj.size}, {'static' if is_static else f'{mass}kg'}"
+                    "text": f"'{name}' added: {shape} at {obj.position}, size={obj.size}, {'static' if is_static else f'{mass}kg'}"
                 }
             ],
         }
@@ -1163,7 +1163,7 @@ class MuJoCoSimEngine(
         # spec-based path: eject_body_from_scene looks up the body in the
         # live MjSpec, deletes it, and recompiles preserving remaining state.
         eject_body_from_scene(self._world, name)
-        return {"status": "success", "content": [{"text": f"🗑️ '{name}' removed."}]}
+        return {"status": "success", "content": [{"text": f"'{name}' removed."}]}
 
     def move_object(
         self, name: str, position: list[float] | None = None, orientation: list[float] | None = None
@@ -1190,7 +1190,7 @@ class MuJoCoSimEngine(
                 self._world.objects[name].orientation = orientation
             mj.mj_forward(model, data)
 
-        return {"status": "success", "content": [{"text": f"📍 '{name}' moved to {position or 'same'}"}]}
+        return {"status": "success", "content": [{"text": f"'{name}' moved to {position or 'same'}"}]}
 
     def list_objects(self) -> dict[str, Any]:
         if self._world is None or self._world._model is None or self._world._data is None:
@@ -1198,9 +1198,9 @@ class MuJoCoSimEngine(
         if not self._world.objects:
             return {"status": "success", "content": [{"text": "No objects."}]}
 
-        lines = ["📦 Objects:\n"]
+        lines = ["Objects:\n"]
         for name, obj in self._world.objects.items():
-            lines.append(f"  • {name}: {obj.shape} at {obj.position}, {'static' if obj.is_static else f'{obj.mass}kg'}")
+            lines.append(f"  - {name}: {obj.shape} at {obj.position}, {'static' if obj.is_static else f'{obj.mass}kg'}")
         return {"status": "success", "content": [{"text": "\n".join(lines)}]}
 
     # Camera Management
@@ -1325,7 +1325,7 @@ class MuJoCoSimEngine(
             }
 
         mount_note = f" (mounted on '{parent_body}')" if parent_body else ""
-        return {"status": "success", "content": [{"text": f"📷 Camera '{name}' added at {cam.position}{mount_note}"}]}
+        return {"status": "success", "content": [{"text": f"Camera '{name}' added at {cam.position}{mount_note}"}]}
 
     def remove_camera(self, name: str) -> dict[str, Any]:
         """Remove a named camera from the live scene.
@@ -1356,7 +1356,7 @@ class MuJoCoSimEngine(
             except (ValueError, RuntimeError) as e:
                 logger.warning("remove_camera recompile failed: %s", e)
 
-        return {"status": "success", "content": [{"text": f"🗑️ Camera '{name}' removed."}]}
+        return {"status": "success", "content": [{"text": f"Camera '{name}' removed."}]}
 
     # Simulation Control
 
@@ -1381,7 +1381,7 @@ class MuJoCoSimEngine(
             return {
                 "status": "success",
                 "content": [
-                    {"text": f"⏩ +0 steps (no-op) | t={self._world.sim_time:.4f}s | total={self._world.step_count}"}
+                    {"text": f"+0 steps (no-op) | t={self._world.sim_time:.4f}s | total={self._world.step_count}"}
                 ],
             }
         if n_steps > self._MAX_STEPS_PER_CALL:
@@ -1407,9 +1407,7 @@ class MuJoCoSimEngine(
             remaining -= batch
         return {
             "status": "success",
-            "content": [
-                {"text": f"⏩ +{n_steps} steps | t={self._world.sim_time:.4f}s | total={self._world.step_count}"}
-            ],
+            "content": [{"text": f"+{n_steps} steps | t={self._world.sim_time:.4f}s | total={self._world.step_count}"}],
         }
 
     def reset(self) -> dict[str, Any]:
@@ -1429,23 +1427,23 @@ class MuJoCoSimEngine(
             for r in self._world.robots.values():
                 r.policy_running = False
                 r.policy_steps = 0
-        return {"status": "success", "content": [{"text": "🔄 Reset to initial state."}]}
+        return {"status": "success", "content": [{"text": "Reset to initial state."}]}
 
     def get_state(self) -> dict[str, Any]:
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
         lines = [
-            "🌍 Simulation State",
-            f"🕐 t={self._world.sim_time:.4f}s (step {self._world.step_count})",
-            f"⚙️ dt={self._world.timestep}s | 🌐 g={self._world.gravity}",
-            f"🤖 Robots: {len(self._world.robots)} | 📦 Objects: {len(self._world.objects)} | 📷 Cameras: {len(self._world.cameras)}",
+            "Simulation State",
+            f"t={self._world.sim_time:.4f}s (step {self._world.step_count})",
+            f"dt={self._world.timestep}s | g={self._world.gravity}",
+            f"Robots: {len(self._world.robots)} | Objects: {len(self._world.objects)} | Cameras: {len(self._world.cameras)}",
         ]
         if self._world._model:
             lines.append(
-                f"🦴 Bodies: {self._world._model.nbody} | 🔩 Joints: {self._world._model.njnt} | ⚡ Actuators: {self._world._model.nu}"
+                f"Bodies: {self._world._model.nbody} | Joints: {self._world._model.njnt} | Actuators: {self._world._model.nu}"
             )
         if self._world._backend_state.get("recording", False):
-            lines.append(f"🔴 Recording: {len(self._world._backend_state['trajectory'])} steps")
+            lines.append(f"[recording] {len(self._world._backend_state['trajectory'])} steps")
         return {"status": "success", "content": [{"text": "\n".join(lines)}]}
 
     def destroy(self) -> dict[str, Any]:
@@ -1458,7 +1456,7 @@ class MuJoCoSimEngine(
         if self._world is None:
             return {"status": "success", "content": [{"text": "No world to destroy."}]}
         self.cleanup()
-        return {"status": "success", "content": [{"text": "🗑️ World destroyed."}]}
+        return {"status": "success", "content": [{"text": "World destroyed."}]}
 
     def _close_main_thread_renderers(self) -> None:
         """Close any renderers this thread owns and drop the TLS cache.
@@ -1514,7 +1512,7 @@ class MuJoCoSimEngine(
         with self._lock:
             self._world._model.opt.gravity[:] = gravity
             self._world.gravity = gravity
-        return {"status": "success", "content": [{"text": f"🌐 Gravity: {gravity}"}]}
+        return {"status": "success", "content": [{"text": f"Gravity: {gravity}"}]}
 
     def set_timestep(self, timestep: float) -> dict[str, Any]:
         if self._world is None or self._world._model is None or self._world._data is None:
@@ -1536,11 +1534,11 @@ class MuJoCoSimEngine(
             }
         warn = ""
         if timestep > 0.1:
-            warn = f" ⚠️ unusually large timestep (>{0.1}s); physics may be unstable"
+            warn = f" Warning: unusually large timestep (>{0.1}s); physics may be unstable"
         with self._lock:
             self._world._model.opt.timestep = timestep
             self._world.timestep = timestep
-        return {"status": "success", "content": [{"text": f"⏱️ Timestep: {timestep}s ({1 / timestep:.0f}Hz){warn}"}]}
+        return {"status": "success", "content": [{"text": f"Timestep: {timestep}s ({1 / timestep:.0f}Hz){warn}"}]}
 
     # Viewer
 
@@ -1552,10 +1550,10 @@ class MuJoCoSimEngine(
         if _mujoco_viewer is None:
             return {"status": "error", "content": [{"text": "mujoco.viewer not available."}]}
         if self._viewer_handle is not None:
-            return {"status": "success", "content": [{"text": "👁️ Viewer already open."}]}
+            return {"status": "success", "content": [{"text": "Viewer already open."}]}
         try:
             self._viewer_handle = _mujoco_viewer.launch_passive(self._world._model, self._world._data)
-            return {"status": "success", "content": [{"text": "👁️ Interactive viewer opened."}]}
+            return {"status": "success", "content": [{"text": "Interactive viewer opened."}]}
         except Exception as e:
             return {"status": "error", "content": [{"text": f"Viewer failed: {e}"}]}
 
@@ -1569,7 +1567,7 @@ class MuJoCoSimEngine(
 
     def close_viewer(self) -> dict[str, Any]:
         self._close_viewer()
-        return {"status": "success", "content": [{"text": "👁️ Viewer closed."}]}
+        return {"status": "success", "content": [{"text": "Viewer closed."}]}
 
     # URDF Registry
 
@@ -1614,7 +1612,7 @@ class MuJoCoSimEngine(
         resolved = resolve_model(data_config)
         return {
             "status": "success",
-            "content": [{"text": f"📋 Registered '{data_config}' → {urdf_path}\nResolved: {resolved or 'NOT FOUND'}"}],
+            "content": [{"text": f"Registered '{data_config}' -> {urdf_path}\nResolved: {resolved or 'NOT FOUND'}"}],
         }
 
     # Introspection
@@ -1695,16 +1693,14 @@ class MuJoCoSimEngine(
         }
 
         lines = [
-            "🔍 Simulation Features",
-            f"🦴 Joints ({model.njnt}): {', '.join(joint_names[:12])}{'...' if len(joint_names) > 12 else ''}",
-            f"⚡ Actuators ({model.nu}): {', '.join(actuator_names[:12])}{'...' if len(actuator_names) > 12 else ''}",
-            f"📷 Cameras ({model.ncam}): {', '.join(camera_names) if camera_names else 'none (free camera only)'}",
-            f"⏱️ Timestep: {model.opt.timestep}s ({1 / model.opt.timestep:.0f}Hz)",
+            "Simulation Features",
+            f"Joints ({model.njnt}): {', '.join(joint_names[:12])}{'...' if len(joint_names) > 12 else ''}",
+            f"Actuators ({model.nu}): {', '.join(actuator_names[:12])}{'...' if len(actuator_names) > 12 else ''}",
+            f"Cameras ({model.ncam}): {', '.join(camera_names) if camera_names else 'none (free camera only)'}",
+            f"Timestep: {model.opt.timestep}s ({1 / model.opt.timestep:.0f}Hz)",
         ]
         for rname, rinfo in robots_info.items():
-            lines.append(
-                f"🤖 {rname}: {rinfo['n_joints']} joints, {rinfo['n_actuators']} actuators ({rinfo['source']})"
-            )
+            lines.append(f"{rname}: {rinfo['n_joints']} joints, {rinfo['n_actuators']} actuators ({rinfo['source']})")
 
         return {
             "status": "success",
@@ -1859,7 +1855,7 @@ class MuJoCoSimEngine(
                 "is running - stop it first. Create worlds, add robots from URDF "
                 "(direct path or auto-resolve from data_config name), add objects, run VLA policies, "
                 "render cameras, record trajectories, domain randomize. "
-                "Same Policy ABC as real robot control - sim ↔ real with zero code changes. "
+                "Same Policy ABC as real robot control - sim and real with zero code changes. "
                 "Actions (61 total): "
                 "[World] create_world, load_scene, reset, get_state, destroy, export_xml; "
                 "[Robots] add_robot, remove_robot, list_robots, get_robot_state; "
@@ -1975,7 +1971,7 @@ class MuJoCoSimEngine(
 
         return {
             "status": "success",
-            "content": [{"text": f"🚀 Policy started on '{robot_name}' (async)"}],
+            "content": [{"text": f"Policy started on '{robot_name}' (async)"}],
         }
 
     def _make_run_policy_hook(self, robot_name: str, instruction: str):
@@ -2032,7 +2028,7 @@ class MuJoCoSimEngine(
                         # keys, finds nothing, and writes all-zero state/action
                         # vectors silently. Prefix scalar obs + action keys to match
                         # the schema. Camera values (ndarray) keep their (already
-                        # namespaced) names - dataset_recorder normalizes '/'→'__'.
+                        # namespaced) names - dataset_recorder normalizes '/'->'__'.
                         if len(world.robots) > 1:
                             obs_keyed = {
                                 (k if isinstance(v, np.ndarray) else f"{robot_name}__{k}"): v
@@ -2129,7 +2125,7 @@ class MuJoCoSimEngine(
         2. Queries each robot's policy for its action.
         3. Applies every robot's ctrl writes, then steps physics ONCE.
         4. Records ONE frame containing ALL robots' prefixed state/action
-           (``alice__shoulder_pan`` …) plus all camera images.
+           (``alice__shoulder_pan`` ...) plus all camera images.
 
         So a 2-robot dataset has both arms co-observed in every frame - usable
         for bimanual / multi-agent policy training.
@@ -2141,7 +2137,7 @@ class MuJoCoSimEngine(
                 robots, or a ``{robot_name: instruction}`` mapping. The frame's
                 recorded task is the first robot's instruction (LeRobot stores
                 one task per frame).
-            duration: Episode length in seconds (steps = duration × freq).
+            duration: Episode length in seconds (steps = duration x freq).
             control_frequency: Target Hz for policy action queries / physics.
             action_horizon: How many actions to consume from each policy's
                 returned chunk before re-querying it (open-loop chunk
@@ -2619,12 +2615,12 @@ class MuJoCoSimEngine(
         if not active:
             return {
                 "status": "success",
-                "content": [{"text": "⚪ No policies running."}],
+                "content": [{"text": "No policies running."}],
             }
-        robot_lines = "\n".join(f"  • 🟢 {n}" for n in active)
+        robot_lines = "\n".join(f"  - {n}" for n in active)
         return {
             "status": "success",
-            "content": [{"text": f"🟢 Active policies ({len(active)}):\n{robot_lines}"}],
+            "content": [{"text": f"Active policies ({len(active)}):\n{robot_lines}"}],
         }
 
     # Cleanup

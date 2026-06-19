@@ -564,7 +564,7 @@ class TestListRobotsPolicyStatus:
         r = sim._dispatch_action("list_robots", {})
         assert r["status"] == "success"
         # No robots added, so we just expect the "No robots" message.
-        assert "No robots" in r["content"][0]["text"] or "🤖" in r["content"][0]["text"]
+        assert "No robots" in r["content"][0]["text"]
 
 
 class TestPolicyHorizonUnification:

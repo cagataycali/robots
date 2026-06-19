@@ -1043,3 +1043,59 @@ class TestRecordingSafeCameraNames:
         assert r["status"] == "success", r
         # cleanup - don't leave a dangling recorder on the fixture
         sim_with_robot._dispatch_action("stop_recording", {})
+
+
+class TestSimulationOutputIsAscii:
+    """Tool output must be ASCII-only (AGENTS.md: no emojis in code/logs/errors).
+
+    Agent-tool ``text`` payloads are surfaced to the model and into logs;
+    decorative emoji (robot/world glyphs, status dots, bullets) break the
+    project's ASCII-only contract and render inconsistently across terminals.
+    These tests drive the common lifecycle, scene-mutation, physics and
+    policy-listing methods and assert every returned ``text`` is ``isascii()``.
+    """
+
+    @staticmethod
+    def _texts(result):
+        return "".join(item.get("text", "") for item in result.get("content", []))
+
+    def test_create_world_output_is_ascii(self, sim):
+        assert self._texts(sim.create_world()).isascii()
+
+    def test_get_state_output_is_ascii(self, sim_with_world):
+        assert self._texts(sim_with_world.get_state()).isascii()
+
+    def test_reset_output_is_ascii(self, sim_with_world):
+        assert self._texts(sim_with_world.reset()).isascii()
+
+    def test_set_gravity_and_timestep_output_is_ascii(self, sim_with_world):
+        assert self._texts(sim_with_world.set_gravity([0, 0, -3.0])).isascii()
+        # Large timestep takes the warning branch - it too must be ASCII.
+        large = sim_with_world.set_timestep(0.5)
+        text = self._texts(large)
+        assert text.isascii()
+        assert "Warning:" in text and "unusually" in text
+
+    def test_step_output_is_ascii(self, sim_with_world):
+        assert self._texts(sim_with_world.step(0)).isascii()
+        assert self._texts(sim_with_world.step(3)).isascii()
+
+    def test_destroy_output_is_ascii(self, sim_with_world):
+        assert self._texts(sim_with_world.destroy()).isascii()
+
+    def test_add_robot_and_listing_output_is_ascii(self, sim_with_robot):
+        # add_robot text was emitted by the fixture; re-exercise the
+        # introspection surfaces that format robot/joint/camera summaries.
+        assert self._texts(sim_with_robot.list_robots_info()).isascii()
+        assert self._texts(sim_with_robot.get_robot_state("arm1")).isascii()
+        assert self._texts(sim_with_robot.get_features()).isascii()
+
+    def test_object_lifecycle_output_is_ascii(self, sim_with_world):
+        added = sim_with_world.add_object("box1", shape="box", position=[0.3, 0, 0.1])
+        assert self._texts(added).isascii()
+        assert self._texts(sim_with_world.list_objects()).isascii()
+        assert self._texts(sim_with_world.move_object("box1", position=[0.4, 0, 0.1])).isascii()
+        assert self._texts(sim_with_world.remove_object("box1")).isascii()
+
+    def test_list_policies_running_output_is_ascii(self, sim_with_robot):
+        assert self._texts(sim_with_robot.list_policies_running()).isascii()
