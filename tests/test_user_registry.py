@@ -172,6 +172,53 @@ class TestRegisterRobotValidation:
         with pytest.raises(FileNotFoundError, match="Model XML not found"):
             register_robot(name="empty", model_xml="nope.xml", asset_dir=str(empty_dir))
 
+    def test_missing_asset_dir_raises_file_not_found(self, tmp_path):
+        """A non-existent asset_dir fails closed at registration with an actionable message.
+
+        Registration must not silently accept a dir that does not exist yet and
+        defer the failure to add_robot() time.
+        """
+        ghost_dir = tmp_path / "assets" / "ghost"  # never created
+        with pytest.raises(FileNotFoundError, match="Asset directory does not exist") as exc:
+            register_robot(name="ghost", model_xml="g.xml", asset_dir=str(ghost_dir))
+        # Message names the missing dir and the xml the user should place inside it.
+        assert str(ghost_dir) in str(exc.value)
+        assert "g.xml" in str(exc.value)
+        # Nothing should have been persisted.
+        assert get_user_robots().get("ghost") is None
+
+
+class TestRegisterRobotAliasCollision:
+    """register_robot warns (does not fail) when an alias shadows an existing name.
+
+    Collisions are surfaced at registration time as warnings so the user sees the
+    problem immediately rather than at silent resolution-order time. Registration
+    still succeeds.
+    """
+
+    def test_alias_shadowing_package_canonical_name_warns(self, tmp_path, caplog):
+        robot_dir = _make_robot(tmp_path / "assets", name="botA", xml_name="a.xml")
+        with caplog.at_level(logging.WARNING, logger="strands_robots.registry.user_registry"):
+            register_robot(name="botA", model_xml="a.xml", asset_dir=str(robot_dir), aliases=["so100"])
+        assert any("shadows an existing robot canonical name" in m for m in caplog.messages)
+        # Registration still succeeds despite the warning.
+        assert get_user_robots().get("bota") is not None
+
+    def test_alias_already_used_by_another_user_robot_warns(self, tmp_path, caplog):
+        first_dir = _make_robot(tmp_path / "assets", name="botB", xml_name="b.xml")
+        second_dir = _make_robot(tmp_path / "assets", name="botC", xml_name="c.xml")
+        register_robot(name="botB", model_xml="b.xml", asset_dir=str(first_dir), aliases=["grabber"])
+        with caplog.at_level(logging.WARNING, logger="strands_robots.registry.user_registry"):
+            register_robot(name="botC", model_xml="c.xml", asset_dir=str(second_dir), aliases=["grabber"])
+        assert any("is already used by another robot" in m for m in caplog.messages)
+        assert get_user_robots().get("botc") is not None
+
+    def test_unique_alias_emits_no_collision_warning(self, tmp_path, caplog):
+        robot_dir = _make_robot(tmp_path / "assets", name="botD", xml_name="d.xml")
+        with caplog.at_level(logging.WARNING, logger="strands_robots.registry.user_registry"):
+            register_robot(name="botD", model_xml="d.xml", asset_dir=str(robot_dir), aliases=["unique_grip_xyz"])
+        assert not any("shadows" in m or "already used" in m for m in caplog.messages)
+
 
 class TestRegisterRobotAssetDirResolution:
     """asset_dir is resolved relative to STRANDS_ASSETS_DIR."""
