@@ -844,11 +844,17 @@ class LerobotLocalPolicy(Policy):
                 # with prev_chunk for temporal blending. Used only for flow-matching
                 # policies that support rtc_config.
                 action_tensor = self._predict_with_rtc(batch)
-            elif self.actions_per_step > 1:
+            elif self.actions_per_step > 1 or self._requires_action_chunk():
                 # Multi-step path: call predict_action_chunk() directly to get the
                 # full action horizon, then slice in _tensor_to_action_dicts().
                 # select_action() uses an internal queue and returns only 1 action
                 # at a time, so it can't return multiple steps per call.
+                #
+                # Some policies (e.g. MolmoAct2) must ALWAYS take this path even at
+                # actions_per_step=1: their select_action() raises AssertionError
+                # when the checkpoint's rtc_config is enabled, and otherwise still
+                # serves only a single action per call. _requires_action_chunk()
+                # detects them so they never hit the crashing select_action() below.
                 action_tensor = self._policy.predict_action_chunk(batch, **self.inference_kwargs)
             else:
                 # Default single-step path: delegates to LeRobot's select_action()
@@ -1265,6 +1271,34 @@ class LerobotLocalPolicy(Policy):
         return batch
 
     # Action conversion
+
+    def _requires_action_chunk(self) -> bool:
+        """Whether the loaded policy must be driven via ``predict_action_chunk``.
+
+        Some LeRobot policies cannot serve single actions through
+        ``select_action``. MolmoAct2 is the canonical case: its
+        ``select_action`` raises ``AssertionError`` whenever the checkpoint's
+        ``rtc_config`` is enabled (it only supports RTC via
+        ``predict_action_chunk``), and even with RTC off it returns just one
+        action per call. Routing such policies through ``predict_action_chunk``
+        avoids the crash and lets ``actions_per_step`` slice the full chunk.
+
+        Detection is by policy name -- LeRobot sets
+        ``PreTrainedPolicy.name = "molmoact2"`` -- with a class-name fallback for
+        stubbed/mocked policies that do not set ``name``.
+
+        Returns:
+            True if the policy must use ``predict_action_chunk`` instead of
+            ``select_action``; False otherwise (including when no policy is
+            loaded).
+        """
+        policy = self._policy
+        if policy is None:
+            return False
+        name = getattr(policy, "name", None)
+        if isinstance(name, str) and name.lower() == "molmoact2":
+            return True
+        return type(policy).__name__ == "MolmoAct2Policy"
 
     def _tensor_to_action_dicts(self, action_tensor: torch.Tensor) -> list[dict[str, Any]]:
         """Convert action tensor to list of robot action dicts.

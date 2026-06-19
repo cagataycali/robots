@@ -457,6 +457,71 @@ class TestGetActions:
         policy._policy.select_action.assert_called_once()
         assert len(actions) == 1
 
+    def test_molmoact2_bypasses_select_action_at_single_step(self):
+        """MolmoAct2 must use predict_action_chunk even at actions_per_step=1.
+
+        Its select_action() raises AssertionError when the checkpoint's
+        rtc_config is enabled, so routing single-step inference through it would
+        crash. Detection is by the LeRobot policy ``name`` attribute.
+        """
+        policy = _make_loaded_policy(action_dim=3, include_images=False)
+        policy.set_robot_state_keys(["a", "b", "c"])
+        policy.actions_per_step = 1
+        # LeRobot sets PreTrainedPolicy.name = "molmoact2".
+        policy._policy.name = "molmoact2"
+        # If select_action were called it would crash, mirroring the real policy.
+        policy._policy.select_action.side_effect = AssertionError(
+            "RTC is not supported for select_action, use it with predict_action_chunk"
+        )
+        policy._policy.predict_action_chunk.return_value = torch.zeros(1, 8, 3)
+
+        actions = policy.get_actions_sync({}, "test")
+
+        policy._policy.predict_action_chunk.assert_called_once()
+        policy._policy.select_action.assert_not_called()
+        assert len(actions) == 1
+
+    def test_molmoact2_detected_by_class_name_fallback(self):
+        """A stub without a ``name`` attr is detected by its class name."""
+        policy = _make_loaded_policy(action_dim=3, include_images=False)
+        policy.set_robot_state_keys(["a", "b", "c"])
+        policy.actions_per_step = 1
+
+        class MolmoAct2Policy:
+            def __init__(self):
+                self.predict_action_chunk = MagicMock(return_value=torch.zeros(1, 8, 3))
+                self.select_action = MagicMock(side_effect=AssertionError("RTC is not supported for select_action"))
+
+            def eval(self):
+                return self
+
+        stub = MolmoAct2Policy()
+        policy._policy = stub
+
+        actions = policy.get_actions_sync({}, "test")
+
+        stub.predict_action_chunk.assert_called_once()
+        stub.select_action.assert_not_called()
+        assert len(actions) == 1
+
+    def test_requires_action_chunk_false_without_policy(self):
+        """No loaded policy -> not chunk-required (no crash)."""
+        policy = LerobotLocalPolicy()
+        assert policy._requires_action_chunk() is False
+
+    def test_non_molmoact2_single_step_still_uses_select_action(self):
+        """A regular policy at actions_per_step=1 keeps the select_action path."""
+        policy = _make_loaded_policy(action_dim=3, include_images=False)
+        policy.set_robot_state_keys(["a", "b", "c"])
+        policy.actions_per_step = 1
+        policy._policy.name = "act"
+
+        actions = policy.get_actions_sync({}, "test")
+
+        policy._policy.select_action.assert_called_once()
+        policy._policy.predict_action_chunk.assert_not_called()
+        assert len(actions) == 1
+
     def test_processor_bridge_preprocess_bypasses_batch_builder(self):
         policy = _make_loaded_policy(action_dim=3)
         policy.set_robot_state_keys(["a", "b", "c"])
