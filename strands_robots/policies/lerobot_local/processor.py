@@ -72,6 +72,8 @@ def _missing_config_errors() -> tuple[type[BaseException], ...]:
 
         errors = (*errors, ProcessorMigrationError)
     except ImportError:
+        # Older lerobot lacks ProcessorMigrationError; FileNotFoundError/ValueError
+        # already cover the missing-config case on those versions.
         pass
     return errors
 

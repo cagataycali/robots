@@ -250,8 +250,8 @@ class TestProcessorBridgeFallback:
         # bridge must classify it as "no standard config" so the fallback runs.
         from strands_robots.policies.lerobot_local.processor import _missing_config_errors
 
-        try:
-            from lerobot.processor.pipeline import ProcessorMigrationError
-        except ImportError:
+        pipeline = pytest.importorskip("lerobot.processor.pipeline")
+        migration_error = getattr(pipeline, "ProcessorMigrationError", None)
+        if migration_error is None:
             pytest.skip("installed lerobot has no ProcessorMigrationError")
-        assert ProcessorMigrationError in _missing_config_errors()
+        assert migration_error in _missing_config_errors()

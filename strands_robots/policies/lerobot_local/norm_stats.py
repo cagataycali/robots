@@ -46,9 +46,8 @@ logger = logging.getLogger(__name__)
 MOLMOACT2_NORM_STATS_FORMAT = "molmoact2_norm_stats.v1"
 # Default embodiment tag for SO-100 / SO-101 checkpoints.
 DEFAULT_SO_NORM_TAG = "so100_so101_molmoact2"
-# Observation / action keys (match LeRobot's lerobot.utils.constants).
+# Observation state key (matches LeRobot's lerobot.utils.constants).
 OBS_STATE = "observation.state"
-ACTION = "action"
 
 _EPS = 1e-6
 
@@ -70,6 +69,7 @@ def _to_array(value: Any) -> np.ndarray | None:
                 tensor = tensor.float()
             return tensor.cpu().numpy().astype(np.float32, copy=False)
     except ImportError:
+        # torch is optional; without it, fall through to the numpy coercion below.
         pass
     return np.asarray(value, dtype=np.float32)
 
@@ -233,6 +233,8 @@ class FeatureNormalizer:
             if torch.is_tensor(original):
                 return torch.as_tensor(result, device=original.device, dtype=original.dtype)
         except ImportError:
+            # torch is optional; without it the original was already an ndarray, so
+            # return the numpy result unchanged.
             pass
         return result
 
