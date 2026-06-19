@@ -38,6 +38,7 @@ from strands_robots.policies.wbc.control import (
     quat_rotate_inverse,
 )
 from strands_robots.policies.wbc.observation import ObservationHistory, build_single_frame
+from strands_robots.policies.wbc.policy import _MAIN_POLICY_FILENAME, _WALK_POLICY_FILENAME
 
 # ---------------------------------------------------------------------------
 # Stub ONNX session
@@ -599,6 +600,101 @@ class TestCheckpointResolution:
         assert not wbc_policy._looks_like_hf_repo_id("dir/policy.onnx")  # .onnx file
         assert not wbc_policy._looks_like_hf_repo_id("win\\path")  # backslash
 
+    def test_resolve_onnx_path_none_configured_no_checkpoint_returns_none(self) -> None:
+        # No configured path and no checkpoint: nothing to resolve against, so
+        # the resolver returns None (the caller then raises a clear not-found).
+        assert WBCPolicy._resolve_onnx_path(None, None, _MAIN_POLICY_FILENAME) is None
+
+    def test_resolve_onnx_path_default_filename_under_checkpoint_dir(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        # No configured path + a checkpoint directory: fall back to the
+        # conventional filename joined onto the checkpoint dir.
+        d = tmp_path / "ckpt"
+        d.mkdir()
+        resolved = WBCPolicy._resolve_onnx_path(None, str(d), _MAIN_POLICY_FILENAME)
+        assert resolved == str(d / _MAIN_POLICY_FILENAME)
+
+    def test_resolve_onnx_path_default_filename_beside_checkpoint_file(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        # Checkpoint pointing at a file (not a dir): the default walk filename is
+        # resolved beside it (in the parent dir), matching the main .onnx layout.
+        ckpt_file = tmp_path / "GEAR" / "policy.onnx"
+        ckpt_file.parent.mkdir()
+        ckpt_file.touch()
+        resolved = WBCPolicy._resolve_onnx_path(None, str(ckpt_file), _WALK_POLICY_FILENAME)
+        assert resolved == str(ckpt_file.parent / _WALK_POLICY_FILENAME)
+
+    def test_resolve_onnx_path_absolute_configured_used_verbatim(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        # An absolute configured path wins outright - the checkpoint dir is not
+        # prepended.
+        abs_path = str(tmp_path / "abs" / "main.onnx")
+        assert WBCPolicy._resolve_onnx_path(abs_path, str(tmp_path), _MAIN_POLICY_FILENAME) == abs_path
+
+    def test_resolve_onnx_path_relative_configured_joined_onto_checkpoint(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        # A relative configured path is resolved against the checkpoint dir.
+        d = tmp_path / "ckpt"
+        d.mkdir()
+        resolved = WBCPolicy._resolve_onnx_path("sub/p.onnx", str(d), _MAIN_POLICY_FILENAME)
+        assert resolved == str(d / "sub" / "p.onnx")
+
+    def test_resolve_onnx_path_relative_configured_no_checkpoint_returned_asis(self) -> None:
+        # Relative configured path with no checkpoint: nothing to join against,
+        # so it is returned as-is (the file check downstream surfaces any error).
+        assert WBCPolicy._resolve_onnx_path("rel.onnx", None, _MAIN_POLICY_FILENAME) == "rel.onnx"
+
+    def test_default_onnx_paths_no_checkpoint_returns_bare_filenames(self) -> None:
+        # With no checkpoint the defaults are the conventional bare filenames,
+        # which _resolve_onnx_path then resolves (or fails) downstream.
+        assert WBCPolicy._default_onnx_paths(None) == (_MAIN_POLICY_FILENAME, _WALK_POLICY_FILENAME)
+
+    def test_default_onnx_paths_checkpoint_dir_joins_filenames(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        d = tmp_path / "ckpt"
+        d.mkdir()
+        main, walk = WBCPolicy._default_onnx_paths(str(d))
+        assert main == str(d / _MAIN_POLICY_FILENAME)
+        assert walk == str(d / _WALK_POLICY_FILENAME)
+
+    def test_default_onnx_paths_checkpoint_file_pairs_walk_beside_it(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        # Checkpoint pointing directly at the main .onnx: the walk policy is
+        # expected beside it in the same directory.
+        ckpt_file = tmp_path / "GEAR" / "policy.onnx"
+        ckpt_file.parent.mkdir()
+        ckpt_file.touch()
+        main, walk = WBCPolicy._default_onnx_paths(str(ckpt_file))
+        assert main == str(ckpt_file)
+        assert walk == str(ckpt_file.parent / _WALK_POLICY_FILENAME)
+
+    def test_hf_id_download_success_returns_local_snapshot_dir(self, monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        # A bare org/repo id with huggingface_hub present downloads (cached) and
+        # the resolver returns the local snapshot directory, so downstream path
+        # logic sees ordinary files instead of a network id.
+        snapshot = tmp_path / "snapshot"
+        snapshot.mkdir()
+        (snapshot / "policy.onnx").touch()
+
+        class _FakeHub:
+            def __init__(self) -> None:
+                self.calls: list[str] = []
+
+            def snapshot_download(self, repo_id, allow_patterns=None):  # type: ignore[no-untyped-def]
+                self.calls.append(repo_id)
+                return str(snapshot)
+
+        fake = _FakeHub()
+        monkeypatch.setattr(wbc_policy, "require_optional", lambda *a, **k: fake)
+        result = WBCPolicy._maybe_download_checkpoint("nvidia/GEAR-SONIC")
+        assert result == str(snapshot)
+        assert fake.calls == ["nvidia/GEAR-SONIC"]
+
+    def test_hf_id_download_failure_raises_actionable_runtime_error(self, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+        # A hub download failure must surface as a RuntimeError with an
+        # actionable hint, never a silent unresolved-checkpoint pass-through.
+        class _BoomHub:
+            def snapshot_download(self, repo_id, allow_patterns=None):  # type: ignore[no-untyped-def]
+                raise OSError("network down")
+
+        monkeypatch.setattr(wbc_policy, "require_optional", lambda *a, **k: _BoomHub())
+        with pytest.raises(RuntimeError, match="failed to download checkpoint"):
+            WBCPolicy._maybe_download_checkpoint("nvidia/GEAR-SONIC")
+
 
 # ---------------------------------------------------------------------------
 # Regression tests for bugs found in exhaustive review (against real deps)
@@ -704,6 +800,88 @@ class TestRegressionFixes:
 
 # ---------------------------------------------------------------------------
 # Factory / registry resolution
+# ---------------------------------------------------------------------------
+# Config resolution: WBCConfig | dict | path | None+checkpoint | default
+# ---------------------------------------------------------------------------
+class TestConfigResolution:
+    """:meth:`WBCPolicy._resolve_config` resolves every supported config form."""
+
+    def _bare_policy(self) -> WBCPolicy:
+        # A bare instance is enough to call _resolve_config: it reads no other
+        # state, so we avoid the full constructor (and its session load seam).
+        return object.__new__(WBCPolicy)
+
+    def test_wbcconfig_instance_passed_through_unchanged(self) -> None:
+        cfg = WBCConfig(policy_path="z.onnx", num_actions=_N)
+        assert self._bare_policy()._resolve_config(cfg, None) is cfg
+
+    def test_dict_config_built_via_from_dict(self) -> None:
+        cfg = self._bare_policy()._resolve_config({"policy_path": "x.onnx", "num_actions": _N}, None)
+        assert isinstance(cfg, WBCConfig)
+        assert cfg.policy_path == "x.onnx"
+
+    def test_str_config_loaded_from_file(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        cfg_file = tmp_path / "cfg.json"
+        cfg_file.write_text(json.dumps({"policy_path": "p.onnx", "num_actions": _N}))
+        cfg = self._bare_policy()._resolve_config(str(cfg_file), None)
+        assert cfg.policy_path == "p.onnx"
+
+    def test_none_config_reads_config_json_from_checkpoint_dir(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        ckpt = tmp_path / "GEAR"
+        ckpt.mkdir()
+        (ckpt / "config.json").write_text(json.dumps({"policy_path": "in_ckpt.onnx", "num_actions": _N}))
+        cfg = self._bare_policy()._resolve_config(None, str(ckpt))
+        assert cfg.policy_path == "in_ckpt.onnx"
+
+    def test_none_config_no_checkpoint_falls_back_to_default_filenames(self) -> None:
+        cfg = self._bare_policy()._resolve_config(None, None)
+        assert cfg.policy_path == _MAIN_POLICY_FILENAME
+        assert cfg.walk_policy_path == _WALK_POLICY_FILENAME
+
+
+# ---------------------------------------------------------------------------
+# Session loading: fake onnxruntime, walk-missing fallback
+# ---------------------------------------------------------------------------
+class TestSessionLoading:
+    """:meth:`WBCPolicy._load_sessions` against a stub onnxruntime."""
+
+    def test_walk_policy_absent_falls_back_to_main_without_walk_session(self, monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        # Checkpoint dir has the main policy but no walk policy: the main session
+        # loads and walk_session stays None (the policy uses main for locomotion
+        # too), never a hard failure.
+        ckpt = tmp_path / "GEAR"
+        ckpt.mkdir()
+        (ckpt / _MAIN_POLICY_FILENAME).touch()  # main present, walk absent
+
+        class _FakeSession:
+            def __init__(self, path) -> None:  # type: ignore[no-untyped-def]
+                self.path = path
+
+        class _FakeORT:
+            InferenceSession = _FakeSession
+
+        policy = WBCPolicy(config=_make_config(), walk=True, allow_missing_models=True)
+        monkeypatch.setattr(wbc_policy, "require_optional", lambda *a, **k: _FakeORT())
+        policy._load_sessions(str(ckpt))
+        assert policy.policy_session.path == str(ckpt / _MAIN_POLICY_FILENAME)
+        assert policy.walk_session is None
+
+    def test_missing_onnxruntime_raises_runtime_error_with_extra_hint(self, monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        # onnxruntime absent must raise RuntimeError naming the [wbc] extra, not
+        # a silent no-session policy that would later emit zero torques.
+        ckpt = tmp_path / "GEAR"
+        ckpt.mkdir()
+        (ckpt / _MAIN_POLICY_FILENAME).touch()
+
+        def _no_ort(*a, **k):  # type: ignore[no-untyped-def]
+            raise ImportError("no onnxruntime")
+
+        policy = WBCPolicy(config=_make_config(), allow_missing_models=True)
+        monkeypatch.setattr(wbc_policy, "require_optional", _no_ort)
+        with pytest.raises(RuntimeError, match=r"onnxruntime.*\[wbc\] extra"):
+            policy._load_sessions(str(ckpt))
+
+
 # ---------------------------------------------------------------------------
 
 
