@@ -26,7 +26,7 @@ LerobotLocalPolicy(
     pretrained_name_or_path="",          # HF model_id or local checkpoint dir (required)
     policy_type=None,                    # override auto-detected class
     device=None,                         # "cuda" | "cpu" | "mps"
-    actions_per_step=1,
+    actions_per_step=1,                   # auto-set from config.n_action_steps if left at 1
     use_processor=True,                  # observation/action processor bridge
     processor_overrides=None,
     tokenizer_max_length=48,
@@ -84,8 +84,33 @@ policy = create_policy(
     norm_tag="so101",
     image_keys=["wrist_camera", "front_camera"],
     inference_action_mode="continuous",
+    # actions_per_step is auto-set from config.n_action_steps (30 for the
+    # SO-100/101 checkpoints) when left at the default 1 - so the full
+    # 30-step chunk the model was trained to replay open-loop is consumed
+    # before re-querying vision. Pass an explicit value to override.
 )
 # see examples/molmoact2_so101_pickplace.py
+```
+
+MolmoAct2 SO-100/101 was trained for **30-step open-loop chunk replay**
+(`n_action_steps = 30`). Run it through the sim with an `action_horizon` that
+does not truncate the chunk - the runner clamps the effective horizon up to the
+policy's `actions_per_step`, so passing `action_horizon=8` (or the default) is
+safe, but you can also pin it explicitly:
+
+```python
+sim.run_policy(
+    robot_name="so101_follower",
+    policy_provider="lerobot_local",
+    policy_config={
+        "pretrained_name_or_path": "your-org/molmoact2-so101",
+        "norm_tag": "so101",
+        "inference_action_mode": "continuous",
+        "actions_per_step": 30,   # explicit; matches the trained chunk size
+    },
+    instruction="pick up the cube",
+    action_horizon=30,            # do not truncate the 30-step chunk
+)
 ```
 
 This requirement will go away once HuggingFace publishes lerobot >= 0.5.2 to PyPI

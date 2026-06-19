@@ -649,3 +649,59 @@ def test_runner_falls_back_to_one_substep_when_dt_unknown():
 
     PolicyRunner(sim).run("fake_robot", policy, duration=0.2, control_frequency=15.0, fast_mode=True)
     assert all(s == 1 for s in sim.substeps_seen), sim.substeps_seen
+
+
+class TestChunkNotTruncatedBelowActionsPerStep:
+    """The runner must not drop a policy's intended open-loop action chunk.
+
+    Regression for the MolmoAct2 chunk-truncation bug: a policy trained for
+    30-step open-loop chunk replay sets ``actions_per_step = 30`` and returns
+    30 actions per ``get_actions`` call. With the default ``action_horizon=8``
+    the runner used to consume only ``actions[:8]`` and re-query vision -
+    dropping 22 of every 30 actions and forcing an out-of-distribution
+    re-query. The effective horizon must be
+    ``max(action_horizon, policy.actions_per_step)``.
+    """
+
+    class _ChunkPolicy(MockPolicy):
+        """Returns ``chunk_size`` identical actions per call; records call count."""
+
+        def __init__(self, joint_names, chunk_size):
+            super().__init__()
+            self.set_robot_state_keys(list(joint_names))
+            self.actions_per_step = chunk_size
+            self._chunk_size = chunk_size
+            self.get_actions_calls = 0
+            self._joint_names = list(joint_names)
+
+        def get_actions_sync(self, observation_dict, instruction, **kwargs):
+            self.get_actions_calls += 1
+            return [{n: 0.0 for n in self._joint_names} for _ in range(self._chunk_size)]
+
+        async def get_actions(self, observation_dict, instruction, **kwargs):
+            return self.get_actions_sync(observation_dict, instruction, **kwargs)
+
+    def test_full_30_step_chunk_consumed_before_requery(self):
+        """30 actions returned, action_horizon=8 -> all 30 sent in one query."""
+        sim = FakeSim()
+        policy = self._ChunkPolicy(sim.robot_joint_names("fake_robot"), chunk_size=30)
+
+        # 30 control steps total: with truncation to 8 this would need 4
+        # get_actions calls; clamped to actions_per_step=30 it needs exactly 1.
+        result = PolicyRunner(sim).run(
+            "fake_robot",
+            policy,
+            duration=0.6,
+            control_frequency=50.0,  # -> 30 total steps
+            action_horizon=8,
+            fast_mode=True,
+        )
+
+        assert result["status"] == "success"
+        send_actions = [c for c in sim.calls if c[0] == "send_action"]
+        assert len(send_actions) == 30, f"expected 30 actions applied, got {len(send_actions)}"
+        assert policy.get_actions_calls == 1, (
+            f"chunk was truncated below actions_per_step: get_actions called "
+            f"{policy.get_actions_calls}x (expected 1 - the whole 30-step chunk "
+            "should be consumed before re-querying)"
+        )

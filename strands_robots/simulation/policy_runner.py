@@ -302,7 +302,11 @@ class PolicyRunner:
                 via ``control_frequency``).
             control_frequency: Target Hz for ``policy.get_actions`` calls.
             action_horizon: Max actions consumed per policy call before
-                requerying observation.
+                requerying observation. Clamped up to the policy's own
+                ``actions_per_step`` so a model trained for N-step
+                open-loop chunk replay never has its chunk truncated
+                below N (the effective horizon is
+                ``max(action_horizon, policy.actions_per_step)``).
             fast_mode: If True, skip real-time ``time.sleep`` between steps.
             video: Optional :class:`VideoConfig` - set ``video.path`` to enable
                 MP4 recording via :meth:`SimEngine.render`.
@@ -440,7 +444,15 @@ class PolicyRunner:
                 coro_or_result = policy.get_actions(observation, instruction, **_policy_kwargs)
                 actions = _resolve_coroutine(coro_or_result)
 
-                for action_dict in actions[:action_horizon]:
+                # Never truncate below the policy's own intended chunk size.
+                # A model trained for N-step open-loop replay
+                # (policy.actions_per_step == N) must have its full chunk
+                # consumed; clamping to a smaller action_horizon drops the
+                # tail of every chunk and forces an out-of-distribution
+                # re-query (see LerobotLocalPolicy auto-detect of
+                # config.n_action_steps).
+                _chunk = max(action_horizon, getattr(policy, "actions_per_step", 1))
+                for action_dict in actions[:_chunk]:
                     if step_count >= total_steps:
                         break
 
@@ -1005,7 +1017,8 @@ class PolicyRunner:
                     # Degenerate policy - advance physics so loop terminates.
                     self.sim.step(n_steps=1)
                 else:
-                    for action_in_chunk in actions[:action_horizon]:
+                    _chunk = max(action_horizon, getattr(policy, "actions_per_step", 1))
+                    for action_in_chunk in actions[:_chunk]:
                         if steps >= max_steps:
                             break
                         action_applied = dict(action_in_chunk)

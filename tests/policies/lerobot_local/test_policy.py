@@ -98,6 +98,59 @@ class TestLerobotLocalInit:
         assert policy.actions_per_step == 5
 
 
+class TestAutoDetectActionsPerStep:
+    """`_auto_detect_actions_per_step` adopts the model's trained chunk size.
+
+    Regression for the MolmoAct2 chunk-truncation bug: the SO-100/101
+    checkpoints are trained for 30-step open-loop chunk replay
+    (config.n_action_steps == 30), but the default actions_per_step=1 dropped
+    29 of every 30 actions and re-queried vision out-of-distribution.
+    """
+
+    def _policy_with_config(self, n_action_steps):
+        policy = _make_policy()
+        mock_lerobot_policy = MagicMock()
+        mock_lerobot_policy.config = types.SimpleNamespace(n_action_steps=n_action_steps)
+        policy._policy = mock_lerobot_policy
+        return policy
+
+    def test_adopts_config_n_action_steps_when_default(self):
+        """Default actions_per_step=1 + config.n_action_steps=30 -> 30."""
+        policy = self._policy_with_config(30)
+        assert policy.actions_per_step == 1  # default before detection
+        policy._auto_detect_actions_per_step()
+        assert policy.actions_per_step == 30
+
+    def test_does_not_override_explicit_actions_per_step(self):
+        """An explicit actions_per_step > 1 is never overridden."""
+        policy = _make_policy(actions_per_step=4)
+        policy._policy = MagicMock()
+        policy._policy.config = types.SimpleNamespace(n_action_steps=30)
+        policy._auto_detect_actions_per_step()
+        assert policy.actions_per_step == 4
+
+    def test_no_change_when_config_missing_n_action_steps(self):
+        """A model without config.n_action_steps keeps the default 1."""
+        policy = _make_policy()
+        policy._policy = MagicMock()
+        policy._policy.config = types.SimpleNamespace()  # no n_action_steps
+        policy._auto_detect_actions_per_step()
+        assert policy.actions_per_step == 1
+
+    def test_no_change_when_n_action_steps_is_one(self):
+        """n_action_steps == 1 (closed-loop) leaves actions_per_step at 1."""
+        policy = self._policy_with_config(1)
+        policy._auto_detect_actions_per_step()
+        assert policy.actions_per_step == 1
+
+    def test_no_policy_loaded_is_safe(self):
+        """Calling with no loaded policy does not raise and keeps default."""
+        policy = _make_policy()
+        policy._policy = None
+        policy._auto_detect_actions_per_step()
+        assert policy.actions_per_step == 1
+
+
 # (section)
 # Tests: set_robot_state_keys
 # (section)
@@ -1088,6 +1141,7 @@ class TestLoadModelDeviceMove:
         policy._output_features = {}
         policy._input_features = {}
         policy.processor_overrides = {}
+        policy.actions_per_step = 1
 
         mock_policy = _load_model_with_mocks(policy, param_device="meta", bridge_active=False)
 
@@ -1105,6 +1159,7 @@ class TestLoadModelDeviceMove:
         policy._output_features = {}
         policy._input_features = {}
         policy.processor_overrides = {}
+        policy.actions_per_step = 1
 
         mock_policy = _load_model_with_mocks(policy, param_device="cpu", bridge_active=False)
 
@@ -1126,6 +1181,7 @@ class TestLoadModelPostprocessorWarning:
         policy._output_features = {}
         policy._input_features = {}
         policy.processor_overrides = {}
+        policy.actions_per_step = 1
         return policy
 
     def test_warns_without_postprocessor(self, caplog):

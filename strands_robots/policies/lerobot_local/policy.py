@@ -45,7 +45,11 @@ class LerobotLocalPolicy(Policy):
         policy_type: Explicit LeRobot policy type (e.g. "act", "diffusion").
             Auto-detected from config.json if not provided.
         device: Target device (e.g. "cuda", "cpu"). Auto-detected if None.
-        actions_per_step: Number of action steps to return per inference call.
+        actions_per_step: Number of action steps to return per inference
+            call. Defaults to 1 (closed-loop). When left at the default,
+            it is auto-set from the loaded model's ``config.n_action_steps``
+            (the model's trained open-loop chunk size) if that exceeds 1;
+            pass an explicit value > 1 to override the auto-detection.
         use_processor: Whether to load the model's processor pipeline.
         processor_overrides: Dict of overrides for processor pipeline steps.
         tokenizer_max_length: Max token length for VLA language tokenization.
@@ -409,6 +413,7 @@ class LerobotLocalPolicy(Policy):
             self._device,
         )
         self._loaded = True
+        self._auto_detect_actions_per_step()
 
         # Auto-detect robot_state_keys from model config if not set
         if not self.robot_state_keys and self._output_features:
@@ -473,6 +478,38 @@ class LerobotLocalPolicy(Policy):
         # Initialize RTC if supported by this policy
         self._init_rtc()
 
+    def _auto_detect_actions_per_step(self) -> None:
+        """Adopt the model's intended open-loop chunk size when left at default.
+
+        Many LeRobot policies declare ``config.n_action_steps`` - the number of
+        actions the model emits per inference call that it was trained to replay
+        open-loop before requerying observation (e.g. MolmoAct2 SO-100/101 = 30,
+        ACT = 100, Diffusion = 32). The default ``actions_per_step=1`` is a
+        closed-loop receding-horizon convention: it returns one action per call
+        and re-queries vision every step. For a model trained on N-step chunk
+        replay, that puts inference out of the training distribution - the policy
+        sees state where its training had it after 1 step, not N - and the
+        distribution shift compounds every chunk.
+
+        When ``actions_per_step`` is still at the default ``1`` and the loaded
+        model exposes ``config.n_action_steps > 1``, adopt that value so the
+        chunk is consumed as trained. An explicit ``actions_per_step > 1`` from
+        the caller is always respected. Logged at INFO so the change is visible.
+        """
+        if self.actions_per_step != 1:
+            return  # caller pinned an explicit horizon - never override it
+        config = getattr(self._policy, "config", None)
+        n_action_steps = getattr(config, "n_action_steps", None)
+        if isinstance(n_action_steps, int) and n_action_steps > 1:
+            self.actions_per_step = n_action_steps
+            logger.info(
+                "lerobot_local: auto-set actions_per_step=%d from "
+                "%s.config.n_action_steps (model's trained open-loop chunk "
+                "size). Pass actions_per_step explicitly to override.",
+                n_action_steps,
+                type(self._policy).__name__,
+            )
+
     def _load_molmoact2_model(self) -> None:
         """Load a transformers-native MolmoAct2 checkpoint via the lerobot wrapper.
 
@@ -524,6 +561,7 @@ class LerobotLocalPolicy(Policy):
             self._device,
         )
         self._loaded = True
+        self._auto_detect_actions_per_step()
 
         # Auto-detect generic state keys from action dim if not set.
         if not self.robot_state_keys and self._output_features:
