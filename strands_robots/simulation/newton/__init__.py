@@ -14,6 +14,14 @@ Usage::
     sim.add_robot("so100")
 """
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    # Import under TYPE_CHECKING only: keeps the runtime export lazy (no
+    # newton/warp import cost) while statically defining the name promised by
+    # ``__all__`` for type checkers and static analysis.
+    from strands_robots.simulation.newton.simulation import NewtonSimEngine
+
 __all__ = ["NewtonSimEngine"]
 
 

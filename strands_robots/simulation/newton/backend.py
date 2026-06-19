@@ -16,8 +16,10 @@ from strands_robots.utils import require_optional
 
 logger = logging.getLogger(__name__)
 
-_newton: Any = None
-_warp: Any = None
+# Memoized imports of the optional ``newton`` / ``warp`` modules. A single
+# dict cache keeps the lazy-import state in one place (subscript read +
+# write), so there are no module globals that are assigned but never read.
+_modules: dict[str, Any] = {}
 
 
 def ensure_newton() -> tuple[Any, Any]:
@@ -30,9 +32,9 @@ def ensure_newton() -> tuple[Any, Any]:
         ImportError: With an install hint pointing at the ``[sim-newton]``
             extra when Newton or Warp are not installed.
     """
-    global _newton, _warp
-    if _newton is not None and _warp is not None:
-        return _newton, _warp
+    cached = _modules.get("newton"), _modules.get("warp")
+    if all(m is not None for m in cached):
+        return cached
     wp = require_optional(
         "warp",
         pip_install="warp-lang",
@@ -44,7 +46,7 @@ def ensure_newton() -> tuple[Any, Any]:
         extra="sim-newton",
         purpose="the Newton simulation backend",
     )
-    _warp, _newton = wp, nt
+    _modules["newton"], _modules["warp"] = nt, wp
     return nt, wp
 
 
