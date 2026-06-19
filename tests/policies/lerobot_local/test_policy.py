@@ -713,6 +713,103 @@ class TestBuildBatchFromStrandsFormat:
 
 
 # (section)
+# Tests: camera-key routing (config.image_keys / camera_key_map)
+# (section)
+
+
+def _make_two_camera_policy():
+    """Loaded policy whose model declares two image inputs (top, wrist)."""
+    policy = _make_loaded_policy(state_dim=2, include_images=False)
+    policy.set_robot_state_keys(["a", "b"])
+    img = MagicMock(shape=(3, 480, 640))
+    # Declaration order: top before wrist.
+    policy._input_features["observation.images.top"] = img
+    policy._input_features["observation.images.wrist"] = img
+    return policy
+
+
+class TestCameraKeyRouting:
+    def test_exact_name_match_routes_by_name_not_position(self):
+        """A 'wrist' cam must land in the wrist slot even when iterated last."""
+        policy = _make_two_camera_policy()
+        top = np.zeros((480, 640, 3), dtype=np.uint8)
+        wrist = np.ones((480, 640, 3), dtype=np.uint8) * 255
+        # Insertion order deliberately reversed vs declaration order.
+        observation = {"a": 1.0, "b": 2.0, "wrist": wrist, "top": top}
+        batch = policy._build_batch_from_strands_format(observation, {})
+        # wrist (all-255 -> 1.0) must be in the wrist slot, top (zeros) in top.
+        assert float(batch["observation.images.wrist"].max()) == 1.0
+        assert float(batch["observation.images.top"].max()) == 0.0
+
+    def test_config_image_keys_preferred_over_input_features_order(self):
+        """config.image_keys ordering wins over _input_features declaration order."""
+        policy = _make_two_camera_policy()
+        # Reverse the model's declared ordering via config.image_keys.
+        policy._policy.config.image_keys = [
+            "observation.images.wrist",
+            "observation.images.top",
+        ]
+        keys = policy._policy_image_keys()
+        assert keys == ["observation.images.wrist", "observation.images.top"]
+
+    def test_explicit_camera_key_map_overrides_naming(self):
+        """camera_key_map binds a mismatched cam name to the intended slot."""
+        policy = _make_two_camera_policy()
+        policy.camera_key_map = {
+            "front": "observation.images.top",
+            "hand": "observation.images.wrist",
+        }
+        front = np.zeros((480, 640, 3), dtype=np.uint8)
+        hand = np.ones((480, 640, 3), dtype=np.uint8) * 255
+        observation = {"a": 1.0, "b": 2.0, "front": front, "hand": hand}
+        batch = policy._build_batch_from_strands_format(observation, {})
+        assert float(batch["observation.images.top"].max()) == 0.0
+        assert float(batch["observation.images.wrist"].max()) == 1.0
+
+    def test_positional_fallback_warns_on_name_mismatch(self, caplog):
+        """Mismatched cam names fall back positionally but log a WARNING."""
+        import logging
+
+        policy = _make_two_camera_policy()
+        side = np.zeros((480, 640, 3), dtype=np.uint8)
+        other = np.zeros((480, 640, 3), dtype=np.uint8)
+        observation = {"a": 1.0, "b": 2.0, "side": side, "other": other}
+        with caplog.at_level(logging.WARNING):
+            batch = policy._build_batch_from_strands_format(observation, {})
+        assert "observation.images.top" in batch
+        assert "observation.images.wrist" in batch
+        assert any("routing positionally" in r.message for r in caplog.records)
+
+    def test_camera_key_map_to_undeclared_key_raises(self):
+        policy = _make_two_camera_policy()
+        policy.camera_key_map = {"top": "observation.images.nonexistent"}
+        observation = {"a": 1.0, "b": 2.0, "top": np.zeros((480, 640, 3), dtype=np.uint8)}
+        with pytest.raises(ValueError, match="does not declare it"):
+            policy._build_batch_from_strands_format(observation, {})
+
+    def test_fewer_cameras_than_policy_needs_raises(self):
+        """One camera for a two-camera policy is a hard error, not silent."""
+        policy = _make_two_camera_policy()
+        observation = {"a": 1.0, "b": 2.0, "top": np.zeros((480, 640, 3), dtype=np.uint8)}
+        with pytest.raises(ValueError, match="requires image input"):
+            policy._build_batch_from_strands_format(observation, {})
+
+    def test_extra_cameras_are_dropped(self):
+        """A single-cam policy ignores extra cameras the robot provides."""
+        policy = _make_loaded_policy(state_dim=2)  # declares observation.images.top
+        policy.set_robot_state_keys(["a", "b"])
+        observation = {
+            "a": 1.0,
+            "b": 2.0,
+            "top": np.zeros((480, 640, 3), dtype=np.uint8),
+            "extra": np.ones((480, 640, 3), dtype=np.uint8),
+        }
+        batch = policy._build_batch_from_strands_format(observation, {})
+        assert "observation.images.top" in batch
+        assert len([k for k in batch if "image" in k]) == 1
+
+
+# (section)
 # Tests: _tensor_to_action_dicts
 # (section)
 

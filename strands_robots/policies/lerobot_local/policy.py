@@ -60,6 +60,11 @@ class LerobotLocalPolicy(Policy):
             guidance. Defaults to model config value or 10.
         rtc_max_guidance_weight: Maximum guidance weight for RTC correction.
             Defaults to model config value or 10.0.
+        camera_key_map: Optional explicit mapping of robot/sim camera name
+            (e.g. "top") to the policy's declared image feature key
+            (e.g. "observation.images.top"). When omitted, cameras are
+            routed by exact short-name match and then by declared order
+            with a warning on mismatch.
     """
 
     def __init__(
@@ -80,6 +85,7 @@ class LerobotLocalPolicy(Policy):
         norm_tag: str | None = None,
         image_keys: list[str] | None = None,
         inference_action_mode: str = "continuous",
+        camera_key_map: dict[str, str] | None = None,
         **kwargs,
     ):
         self.pretrained_name_or_path = pretrained_name_or_path
@@ -103,6 +109,10 @@ class LerobotLocalPolicy(Policy):
         self._embodiment_spec = embodiment
         self._embodiment: Any | None = None
         self.robot_state_keys: list[str] = []
+        # Optional explicit strands-camera-name -> policy-image-key routing.
+        # When None, cameras are matched by exact short name and then by
+        # declared order (see _resolve_camera_targets).
+        self.camera_key_map = dict(camera_key_map) if camera_key_map else None
         # MolmoAct2-specific knobs. MolmoAct2 SO-100/101 checkpoints are
         # transformers-native (no lerobot draccus `type`), so they take a
         # dedicated load path (see lerobot_local.molmoact2). These are inert
@@ -1218,6 +1228,101 @@ class LerobotLocalPolicy(Policy):
 
         return batch
 
+    def _policy_image_keys(self) -> list[str]:
+        """Return the policy's ordered image feature keys.
+
+        Prefers the model config's declared ``image_keys`` - an explicit ordered
+        list used by VLAs such as MolmoAct2 to bind each camera to a fixed model
+        slot. Falls back to the image entries of ``_input_features`` in
+        declaration order when no such list is declared.
+
+        Returns:
+            Ordered list of policy image feature keys (e.g.
+            ``["observation.images.top", "observation.images.wrist"]``).
+        """
+        cfg = getattr(self._policy, "config", None)
+        declared = getattr(cfg, "image_keys", None) if cfg is not None else None
+        if isinstance(declared, (list, tuple)) and declared:
+            return [str(k) for k in declared]
+        return [feat for feat in self._input_features if "image" in feat]
+
+    def _resolve_camera_targets(self, cam_names: list[str]) -> dict[str, str]:
+        """Map robot/sim camera names to the policy's declared image feature keys.
+
+        Routing precedence:
+          1. Explicit ``camera_key_map`` ctor param wins for any name it lists.
+          2. Exact name match: ``top`` -> ``observation.images.top`` (or a
+             directly-declared ``top``) when the policy declares that key.
+          3. Positional fallback: remaining cameras fill the remaining declared
+             image slots in declaration order, with a WARN that the names did
+             not match (so a wrong wiring is loud, not silent).
+
+        Args:
+            cam_names: Camera names present in the observation.
+
+        Returns:
+            Mapping of camera name -> policy image feature key. Cameras beyond
+            what the policy consumes are omitted.
+
+        Raises:
+            ValueError: If an explicit mapping targets an undeclared image key,
+                or the robot supplies fewer cameras than the policy requires.
+        """
+        targets = self._policy_image_keys()
+        result: dict[str, str] = {}
+        used: set[str] = set()
+
+        # 1) Explicit camera_key_map wins.
+        if self.camera_key_map:
+            for cam, feat in self.camera_key_map.items():
+                if targets and feat not in targets:
+                    raise ValueError(
+                        f"camera_key_map routes camera '{cam}' to image key '{feat}', "
+                        f"but the policy does not declare it. Declared image keys: {targets}."
+                    )
+                if cam in cam_names:
+                    result[cam] = feat
+                    used.add(feat)
+
+        # 2) Exact name match for the cameras still needing a target.
+        unmatched: list[str] = []
+        for cam in cam_names:
+            if cam in result:
+                continue
+            short = f"observation.images.{cam}"
+            if short in targets and short not in used:
+                result[cam] = short
+                used.add(short)
+            elif cam in targets and cam not in used:
+                result[cam] = cam
+                used.add(cam)
+            else:
+                unmatched.append(cam)
+
+        # 3) Positional fallback into the remaining declared slots (loud).
+        free = [feat for feat in targets if feat not in used]
+        for cam, feat in zip(unmatched, free):
+            logger.warning(
+                "Camera '%s' does not match any declared policy image key by name; "
+                "routing positionally to '%s'. Pass camera_key_map to bind cameras "
+                "explicitly and silence this warning.",
+                cam,
+                feat,
+            )
+            result[cam] = feat
+            used.add(feat)
+
+        # 4) Hard error if the policy still has image slots the robot cannot fill.
+        unfilled = [feat for feat in targets if feat not in used]
+        if unfilled:
+            raise ValueError(
+                f"Robot supplies {len(cam_names)} camera(s) {cam_names} but the policy "
+                f"requires image input(s) {targets}; unmatched policy keys: {unfilled}. "
+                f"Add the missing camera(s) to the observation or pass camera_key_map."
+            )
+
+        return result
+
     def _build_batch_from_strands_format(
         self, observation_dict: dict[str, Any], batch: dict[str, Any]
     ) -> dict[str, Any]:
@@ -1285,14 +1390,26 @@ class LerobotLocalPolicy(Policy):
                     state_values.extend([0.0] * (expected_dim - len(state_values)))
             batch["observation.state"] = torch.tensor(state_values, dtype=torch.float32).unsqueeze(0).to(self._device)
 
-        # Map camera images to model's image input features.
-        # Non-state ndarray values with ndim >= 2 are assumed to be images.
-        # Each image is matched to the first unoccupied image feature slot
-        # from the model's input_features config.
-        for key, value in observation_dict.items():
-            if key in self.robot_state_keys:
-                continue
-            if isinstance(value, np.ndarray) and value.ndim >= 2:
+        # Map camera images to the model's declared image input features.
+        # Non-state ndarray values with ndim >= 2 are treated as images. Their
+        # routing to policy image keys respects config.image_keys / the explicit
+        # camera_key_map rather than blind positional assignment, so a "side"
+        # camera is never silently fed into the slot a model reserves for a
+        # "wrist" view (see _resolve_camera_targets).
+        cam_items = [
+            (key, value)
+            for key, value in observation_dict.items()
+            if key not in self.robot_state_keys and isinstance(value, np.ndarray) and value.ndim >= 2
+        ]
+        if cam_items:
+            targets = self._resolve_camera_targets([key for key, _ in cam_items])
+            for key, value in cam_items:
+                feat_name = targets.get(key)
+                if feat_name is None:
+                    # Robot supplied more cameras than the policy consumes; the
+                    # extras are intentionally dropped (resolve already errored
+                    # if the policy was instead under-supplied).
+                    continue
                 image_tensor = torch.from_numpy(value.copy()).float()
                 # HWC → CHW: convert from camera output format to model input format
                 if image_tensor.dim() == 3 and image_tensor.shape[-1] in (1, 3, 4):
@@ -1300,11 +1417,7 @@ class LerobotLocalPolicy(Policy):
                 # uint8 [0, 255] → float32 [0, 1]
                 if value.dtype == np.uint8:
                     image_tensor = image_tensor / 255.0
-                # Assign to first available image feature slot
-                for feat_name in self._input_features:
-                    if "image" in feat_name and feat_name not in batch:
-                        batch[feat_name] = image_tensor.unsqueeze(0).to(self._device)
-                        break
+                batch[feat_name] = image_tensor.unsqueeze(0).to(self._device)
 
         return batch
 

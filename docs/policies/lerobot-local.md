@@ -39,6 +39,7 @@ LerobotLocalPolicy(
     norm_tag=None,                       # MolmoAct2 normalisation tag
     image_keys=None,                     # MolmoAct2 camera key override
     inference_action_mode="continuous",  # "continuous" | "discrete"
+    camera_key_map=None,                 # {robot_cam_name: policy_image_key}
 )
 ```
 
@@ -154,6 +155,30 @@ action_unnorm = (clip(action, -1, 1) + 1) * (q99 - q01) / 2 + q01
 
 When a stats file declares multiple embodiment tags, pass `norm_tag=` to select
 one; a single-tag file is auto-detected.
+
+## Camera routing
+
+Robot/sim observations use bare camera names (`top`, `wrist`, `side`); the policy
+declares image inputs under its own keys (`observation.images.top`, ...). The
+policy routes each camera to a declared image slot by, in order:
+
+1. an explicit `camera_key_map` (`{robot_cam: policy_image_key}`) when provided;
+2. exact name match (`top` -> `observation.images.top`);
+3. positional fallback into remaining slots, with a WARNING so a mismatched
+   wiring is loud rather than silent.
+
+The declared order follows the model config's `image_keys` list when present
+(e.g. MolmoAct2), otherwise the order of the model's image input features. If
+the robot supplies fewer cameras than the policy requires, a `ValueError` is
+raised instead of feeding the model a missing or wrong view.
+
+```python
+policy = create_policy(
+    "lerobot_local",
+    pretrained_name_or_path="your-org/molmoact2-so101",
+    camera_key_map={"front": "observation.images.top", "hand": "observation.images.wrist"},
+)
+```
 
 ## RTC
 
