@@ -346,3 +346,110 @@ class TestUpstreamLerobotParity:
         got = fn.unnormalize(a)
         want = up({types.TransitionKey.ACTION: torch.from_numpy(a)})[types.TransitionKey.ACTION].numpy()
         assert np.max(np.abs(got - want)) < 1e-6
+
+
+class TestContainerTypePreservation:
+    """``FeatureNormalizer`` preserves the input container (numpy vs torch).
+
+    The normalizer is wired into LeRobot processor steps that hand it whatever
+    the policy/runtime uses -- numpy arrays in sim, torch tensors on the GPU
+    path. Returning the wrong container (e.g. a numpy array where a tensor with a
+    specific device/dtype was expected) breaks the downstream pipeline silently.
+    """
+
+    def test_torch_tensor_in_tensor_out_same_dtype_device(self):
+        torch = pytest.importorskip("torch")
+        fn = ns.FeatureNormalizer.from_stats({"q01": [0.0, 0.0], "q99": [10.0, 10.0]}, "q01_q99")
+
+        t = torch.tensor([5.0, 5.0], dtype=torch.bfloat16)
+        out = fn.normalize(t)
+        assert torch.is_tensor(out)
+        assert out.dtype == torch.bfloat16
+        assert out.device == t.device
+        # 5.0 maps to the midpoint of [-1, 1] -> 0.0.
+        assert torch.allclose(out.float(), torch.zeros(2), atol=1e-2)
+
+    def test_torch_round_trip_returns_tensor(self):
+        torch = pytest.importorskip("torch")
+        fn = ns.FeatureNormalizer.from_stats({"min": [0.0, 0.0], "max": [10.0, 10.0]}, "min_max")
+        a = torch.tensor([0.2, -0.4], dtype=torch.float32)
+        out = fn.unnormalize(a)
+        assert torch.is_tensor(out)
+        assert out.dtype == torch.float32
+
+
+class TestNoneMode:
+    """``norm_mode='none'`` is an explicit identity transform (no passthrough bug)."""
+
+    def test_none_mode_is_identity(self):
+        fn = ns.FeatureNormalizer.from_stats({"mean": [1.0, 2.0]}, "none")
+        x = np.array([9.0, -3.0], dtype=np.float32)
+        assert np.allclose(fn.normalize(x), x)
+        assert np.allclose(fn.unnormalize(x), x)
+
+    def test_none_mode_from_empty_stats_still_builds(self):
+        # No usable stat keys: fallback stays None, mask is None, identity holds.
+        fn = ns.FeatureNormalizer.from_stats({}, "none")
+        assert fn is not None
+        assert fn.mask is None
+        x = np.array([1.0, 2.0, 3.0], dtype=np.float32)
+        assert np.allclose(fn.normalize(x), x)
+
+    def test_from_stats_none_payload_returns_none(self):
+        assert ns.FeatureNormalizer.from_stats(None, "q01_q99") is None
+
+
+class TestMaskAndZeroMask:
+    """Selective per-feature mask and degenerate (min==max) handling."""
+
+    def test_mask_keeps_unmasked_features_unchanged(self):
+        # mask=[True, False]: feature 0 normalized, feature 1 passes through raw.
+        fn = ns.FeatureNormalizer.from_stats({"min": [0.0, 0.0], "max": [10.0, 10.0], "mask": [True, False]}, "min_max")
+        out = fn.normalize(np.array([5.0, 5.0], dtype=np.float32))
+        # 5.0 over [0,10] -> 0.0 where masked-in; raw 5.0 where masked-out.
+        assert np.allclose(out, [0.0, 5.0])
+
+    def test_mask_applies_to_unnormalize_too(self):
+        fn = ns.FeatureNormalizer.from_stats({"min": [0.0, 0.0], "max": [10.0, 10.0], "mask": [True, False]}, "min_max")
+        out = fn.unnormalize(np.array([0.0, 0.0], dtype=np.float32))
+        # 0.0 normalized -> 5.0 where masked-in; raw 0.0 where masked-out.
+        assert np.allclose(out, [5.0, 0.0])
+
+    def test_zero_mask_when_min_equals_max(self):
+        # Degenerate feature (min==max) must map to 0.0, never divide-by-zero.
+        fn = ns.FeatureNormalizer.from_stats({"min": [0.0, 5.0], "max": [10.0, 5.0]}, "min_max")
+        out = fn.normalize(np.array([5.0, 5.0], dtype=np.float32))
+        assert np.allclose(out, [0.0, 0.0])
+
+    def test_scalar_mask_broadcasts_to_feature_shape(self):
+        # A scalar mask must broadcast to the per-feature stat shape.
+        fn = ns.FeatureNormalizer.from_stats(
+            {"q01": [0.0, 0.0, 0.0], "q99": [10.0, 10.0, 10.0], "mask": True}, "q01_q99"
+        )
+        assert fn.mask is not None
+        assert fn.mask.shape == (3,)
+        assert bool(fn.mask.all())
+
+
+class TestMinMaxUnnormalize:
+    """min_max unnormalize is the exact inverse of normalize in-range."""
+
+    def test_min_max_round_trip(self):
+        fn = ns.FeatureNormalizer.from_stats({"min": [-2.0, 0.0], "max": [2.0, 10.0]}, "min_max")
+        x = np.array([1.0, 7.5], dtype=np.float32)
+        assert np.allclose(fn.unnormalize(fn.normalize(x)), x, atol=1e-5)
+
+
+class TestBuildProcessorsGuards:
+    """build_norm_stats_processors refuses malformed metadata (no silent build)."""
+
+    def test_non_dict_metadata_returns_none_pair(self):
+        payload = {"format": ns.MOLMOACT2_NORM_STATS_FORMAT, "metadata_by_tag": {"t": "not-a-dict"}}
+        assert ns.build_norm_stats_processors(payload, "t") == (None, None)
+
+    def test_missing_state_or_action_stats_returns_none_pair(self):
+        payload = {
+            "format": ns.MOLMOACT2_NORM_STATS_FORMAT,
+            "metadata_by_tag": {"t": {"state_stats": {"q01": [0.0], "q99": [1.0]}, "action_stats": "bad"}},
+        }
+        assert ns.build_norm_stats_processors(payload, "t") == (None, None)
