@@ -557,3 +557,245 @@ def test_pose_tool_incremental_move_failure_without_current_position(cwd_tmp, fa
     assert result["status"] == "error"
     _assert_ascii(result)
     assert "Failed to move" in _texts(result)
+
+
+# --------------------------------------------------------------------------- #
+# pose_tool: hardware fault paths (arm unplugged / servo write fails)          #
+#                                                                              #
+# These pin the agent-facing contract that every motor action surfaces an      #
+# error result -- never a false success or an escaped exception -- when the    #
+# bus cannot be opened or a write fails. This is exactly the situation a        #
+# headless agent hits when the arm is unplugged, so the contract must hold.    #
+# --------------------------------------------------------------------------- #
+class WriteFailsSerial(AlwaysReadingSerial):
+    """A serial port that opens and answers reads but fails every write.
+
+    Models a servo bus that connects yet rejects goal-position writes (loose
+    cable, powered-down servo). ``MotorController.move_motor`` /
+    ``read_motor_position`` catch the error and report failure rather than
+    raising, and the tool must turn that into an error result.
+    """
+
+    def write(self, data: bytes) -> None:
+        raise OSError("bus write rejected")
+
+
+@pytest.fixture
+def write_fails_serial(monkeypatch):
+    """Patch ``serial.Serial`` with a port whose writes always fail."""
+    instances: list[WriteFailsSerial] = []
+
+    def _ctor(port: str, baudrate: int, timeout: float = 1.0) -> WriteFailsSerial:
+        fs = WriteFailsSerial(port, baudrate, timeout)
+        instances.append(fs)
+        return fs
+
+    monkeypatch.setattr(serial, "Serial", _ctor)
+    return instances
+
+
+# Every action that needs a live bus, with the minimal args to reach connect().
+_MOTOR_ACTIONS = [
+    ("read_position", {"motor_name": "shoulder_pan"}),
+    ("read_all", {}),
+    ("store_pose", {"pose_name": "grasp"}),
+    ("move_motor", {"motor_name": "shoulder_pan", "position": 10.0}),
+    ("move_multiple", {"positions": {"shoulder_pan": 5.0}}),
+    ("incremental_move", {"motor_name": "shoulder_pan", "delta": 5.0}),
+    ("reset_to_home", {}),
+]
+
+
+@pytest.mark.parametrize("action, kwargs", _MOTOR_ACTIONS)
+def test_pose_tool_motor_action_reports_connection_failure(cwd_tmp, monkeypatch, action, kwargs) -> None:
+    """When the serial bus cannot be opened, every motor action returns an
+    ASCII error result naming the failed port -- not a crash or false success."""
+
+    def _boom(*a, **k):
+        raise OSError("no device on /dev/ttyTEST")
+
+    monkeypatch.setattr(serial, "Serial", _boom)
+    result = pose_tool(action=action, robot_id="hw_arm", port="/dev/ttyTEST", **kwargs)
+    assert result["status"] == "error"
+    _assert_ascii(result)
+    assert "Failed to connect" in _texts(result)
+
+
+def test_pose_tool_load_pose_reports_connection_failure(cwd_tmp, monkeypatch) -> None:
+    """load_pose validates the stored pose first, then fails on a dead bus."""
+    mgr = PoseManager(robot_id="hw_arm")
+    mgr.store_pose("ready", {"shoulder_pan": 10.0}, "ready pose")
+
+    def _boom(*a, **k):
+        raise OSError("no device")
+
+    monkeypatch.setattr(serial, "Serial", _boom)
+    result = pose_tool(action="load_pose", robot_id="hw_arm", port="/dev/ttyTEST", pose_name="ready")
+    assert result["status"] == "error"
+    _assert_ascii(result)
+    assert "Failed to connect" in _texts(result)
+
+
+def test_pose_tool_move_motor_reports_write_failure(cwd_tmp, write_fails_serial) -> None:
+    """A rejected servo write surfaces as an error, never a false 'Moved'."""
+    result = pose_tool(
+        action="move_motor",
+        robot_id="hw_arm",
+        port="/dev/ttyTEST",
+        motor_name="shoulder_pan",
+        position=10.0,
+    )
+    assert result["status"] == "error"
+    _assert_ascii(result)
+    assert "Failed to move shoulder_pan" in _texts(result)
+
+
+def test_pose_tool_move_multiple_reports_write_failure(cwd_tmp, write_fails_serial) -> None:
+    """move_multiple (smooth=False) reports failure when a write is rejected."""
+    result = pose_tool(
+        action="move_multiple",
+        robot_id="hw_arm",
+        port="/dev/ttyTEST",
+        positions={"shoulder_pan": 5.0, "gripper": 25.0},
+        smooth=False,
+    )
+    assert result["status"] == "error"
+    _assert_ascii(result)
+    assert "Failed to move motors" in _texts(result)
+
+
+def test_pose_tool_load_pose_reports_move_failure(cwd_tmp, write_fails_serial) -> None:
+    """load_pose (smooth=False) surfaces a move failure with the pose name."""
+    mgr = PoseManager(robot_id="hw_arm")
+    mgr.store_pose("ready", {"shoulder_pan": 10.0, "gripper": 50.0}, "ready pose")
+    result = pose_tool(
+        action="load_pose",
+        robot_id="hw_arm",
+        port="/dev/ttyTEST",
+        pose_name="ready",
+        smooth=False,
+    )
+    assert result["status"] == "error"
+    _assert_ascii(result)
+    assert "Failed to move to pose 'ready'" in _texts(result)
+
+
+def test_pose_tool_reset_to_home_reports_move_failure(cwd_tmp, monkeypatch) -> None:
+    """reset_to_home surfaces an error if the underlying motor move fails.
+
+    The home move is fault-injected at the controller boundary (the bus accepts
+    the connection but the grouped move reports failure), pinning that the tool
+    does not claim the arm reached home when it did not.
+    """
+    monkeypatch.setattr(serial, "Serial", lambda *a, **k: AlwaysReadingSerial(*a, **k))
+    monkeypatch.setattr(pose_mod.MotorController, "move_multiple_motors", lambda self, positions, smooth=True: False)
+    result = pose_tool(action="reset_to_home", robot_id="hw_arm", port="/dev/ttyTEST")
+    assert result["status"] == "error"
+    _assert_ascii(result)
+    assert "Failed to move to home position" in _texts(result)
+
+
+def test_pose_tool_smooth_move_interpolates_from_current_positions(cwd_tmp, reading_serial) -> None:
+    """move_multiple with smooth=True reads current positions and interpolates.
+
+    Drives the smooth-move path (read current -> compute per-step increments ->
+    step toward the target), which is the default trajectory mode and was
+    otherwise unexercised. The bus answers reads, so increments are computed
+    against real positions and many goal-position writes are emitted."""
+    result = pose_tool(
+        action="move_multiple",
+        robot_id="hw_arm",
+        port="/dev/ttyTEST",
+        positions={"shoulder_pan": 30.0, "gripper": 40.0},
+        smooth=True,
+    )
+    assert result["status"] == "success"
+    _assert_ascii(result)
+    # Smooth move steps 0..20 inclusive over multiple motors -> many writes.
+    assert len(reading_serial[0].writes) > 20
+
+
+def test_pose_tool_delete_pose_requires_pose_name(cwd_tmp) -> None:
+    """delete_pose without a pose_name is a validation error, not a no-op."""
+    result = pose_tool(action="delete_pose", robot_id="hw_arm")
+    assert result["status"] == "error"
+    assert "pose_name required" in _texts(result)
+
+
+def test_pose_tool_load_pose_requires_pose_name(cwd_tmp) -> None:
+    """load_pose without a pose_name is rejected before touching the bus."""
+    result = pose_tool(action="load_pose", robot_id="hw_arm", port="/dev/ttyTEST")
+    assert result["status"] == "error"
+    assert "pose_name required" in _texts(result)
+
+
+def test_pose_tool_list_poses_skips_pose_removed_mid_listing(cwd_tmp, monkeypatch) -> None:
+    """list_poses tolerates a pose vanishing between enumeration and detail read.
+
+    The detailed listing re-fetches each pose by name; if one is deleted in
+    between (a concurrent edit), the listing skips it rather than crashing."""
+    mgr = PoseManager(robot_id="race_arm")
+    mgr.store_pose("keep", {"shoulder_pan": 0.0}, "stays")
+    mgr.store_pose("gone", {"shoulder_pan": 1.0}, "vanishes")
+
+    real_get = PoseManager.get_pose
+
+    def _get(self, name):
+        return None if name == "gone" else real_get(self, name)
+
+    monkeypatch.setattr(pose_mod.PoseManager, "get_pose", _get)
+    result = pose_tool(action="list_poses", robot_id="race_arm")
+    assert result["status"] == "success"
+    _assert_ascii(result)
+    names = [p["name"] for p in result.get("poses", [])]
+    assert "keep" in names
+    assert "gone" not in names
+
+
+def test_pose_manager_save_failure_is_logged_not_raised(cwd_tmp, monkeypatch) -> None:
+    """A write error while persisting poses is logged, never raised to the caller.
+
+    Storing a pose must not crash the agent if the pose file is unwritable; the
+    in-memory pose is still registered."""
+    mgr = PoseManager(robot_id="ro_arm")
+
+    def _no_write(*a, **k):
+        raise OSError("read-only filesystem")
+
+    monkeypatch.setattr("builtins.open", _no_write)
+    # Should not raise despite the save failing.
+    mgr.store_pose("home", {"shoulder_pan": 0.0}, "rest")
+    assert mgr.get_pose("home") is not None
+
+
+def test_pose_tool_surfaces_unexpected_internal_error(cwd_tmp, monkeypatch) -> None:
+    """An unexpected error inside dispatch is caught and returned as an error
+    result (the tool never raises past its dispatcher)."""
+
+    def _boom(*a, **k):
+        raise RuntimeError("controller blew up")
+
+    monkeypatch.setattr(pose_mod, "MotorController", _boom)
+    result = pose_tool(action="connect", robot_id="hw_arm", port="/dev/ttyTEST")
+    assert result["status"] == "error"
+    _assert_ascii(result)
+    assert "Error:" in _texts(result)
+    assert "controller blew up" in _texts(result)
+
+
+def test_read_motor_position_returns_none_on_serial_read_error(fake_serial) -> None:
+    """A serial read that raises is caught: read_motor_position returns None.
+
+    Models a mid-transfer bus fault (cable yanked while reading). The error is
+    logged and swallowed so the higher-level read loop degrades to 'no reading'
+    rather than crashing the whole pose operation."""
+    ctrl = MotorController("/dev/ttyTEST")
+    connected, _ = ctrl.connect()
+    assert connected
+
+    def _boom_read(n: int = 1) -> bytes:
+        raise OSError("read interrupted")
+
+    assert ctrl.serial_conn is not None
+    ctrl.serial_conn.read = _boom_read  # type: ignore[method-assign]
+    assert ctrl.read_motor_position("shoulder_pan") is None
