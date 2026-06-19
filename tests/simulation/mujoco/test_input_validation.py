@@ -252,6 +252,86 @@ class TestSetJointPositionsForms:
         assert "does not match" in res["content"][0]["text"]
 
 
+# set_joint_velocities list/dict support
+
+
+class TestSetJointVelocitiesForms:
+    """List/dict dispatch parity with set_joint_positions.
+
+    set_joint_velocities accepts the same dict and positional-list forms as
+    set_joint_positions (it documents "see set_joint_positions for list
+    semantics"). These pin the list-form dispatch branches: count match, count
+    mismatch, multi-robot ambiguity, an empty world, robot_name selection, the
+    non-dict/list type guard, and unknown-joint skipping.
+    """
+
+    def test_dict_form_sets_qvel(self, sim_with_robot):
+        joint_names = list(sim_with_robot._world.robots.values())[0].joint_names or []
+        if not joint_names:
+            pytest.skip("robot has no named joints")
+        res = sim_with_robot.set_joint_velocities(velocities={joint_names[0]: 0.5})
+        assert res["status"] == "success"
+        assert "1/1" in res["content"][0]["text"]
+
+    def test_list_form_matches_count(self, sim_with_robot):
+        joint_names = list(sim_with_robot._world.robots.values())[0].joint_names or []
+        if not joint_names:
+            pytest.skip("robot has no named joints")
+        res = sim_with_robot.set_joint_velocities(velocities=[0.1] * len(joint_names))
+        assert res["status"] == "success", res["content"][0]["text"]
+        assert f"{len(joint_names)}/{len(joint_names)}" in res["content"][0]["text"]
+
+    def test_list_form_wrong_length_errors(self, sim_with_robot):
+        res = sim_with_robot.set_joint_velocities(velocities=[0.1] * 999)
+        assert res["status"] == "error"
+        assert "does not match" in res["content"][0]["text"]
+
+    def test_list_form_with_no_robot_errors(self, sim_with_world):
+        """List form needs a robot to map positions onto joint names."""
+        res = sim_with_world.set_joint_velocities(velocities=[0.1])
+        assert res["status"] == "error"
+        assert "requires a robot" in res["content"][0]["text"]
+
+    def test_list_form_multi_robot_is_ambiguous(self, sim_with_world):
+        """With >1 robot and no robot_name, the list form refuses to guess."""
+        if sim_with_world.add_robot(name="panda", data_config="panda")["status"] != "success":
+            pytest.skip("panda not available")
+        if sim_with_world.add_robot(name="so100", data_config="so100", position=[1, 0, 0])["status"] != "success":
+            pytest.skip("so100 not available")
+        sim_with_world.reset()
+        res = sim_with_world.set_joint_velocities(velocities=[0.1] * 9)
+        assert res["status"] == "error"
+        assert "ambiguous" in res["content"][0]["text"]
+
+    def test_list_form_robot_name_selects_target(self, sim_with_world):
+        """robot_name disambiguates which robot the list maps onto."""
+        if sim_with_world.add_robot(name="panda", data_config="panda")["status"] != "success":
+            pytest.skip("panda not available")
+        if sim_with_world.add_robot(name="so100", data_config="so100", position=[1, 0, 0])["status"] != "success":
+            pytest.skip("so100 not available")
+        sim_with_world.reset()
+        panda_joints = sim_with_world._world.robots["panda"].joint_names
+        res = sim_with_world.set_joint_velocities(velocities=[0.1] * len(panda_joints), robot_name="panda")
+        assert res["status"] == "success", res["content"][0]["text"]
+
+    def test_list_form_unknown_robot_name_errors(self, sim_with_robot):
+        res = sim_with_robot.set_joint_velocities(velocities=[0.1], robot_name="ghost")
+        assert res["status"] == "error"
+        assert "not found" in res["content"][0]["text"]
+
+    def test_non_dict_or_list_type_rejected(self, sim_with_robot):
+        res = sim_with_robot.set_joint_velocities(velocities=5)
+        assert res["status"] == "error"
+        assert "must be a dict or list" in res["content"][0]["text"]
+
+    def test_dict_form_unknown_joint_is_skipped_not_fatal(self, sim_with_robot):
+        """Unknown joint names are reported as ignored, not raised."""
+        res = sim_with_robot.set_joint_velocities(velocities={"nope": 1.0})
+        assert res["status"] == "success"
+        assert "0/1" in res["content"][0]["text"]
+        assert "nope" in res["content"][0]["text"]
+
+
 # Policy-running guards
 
 
