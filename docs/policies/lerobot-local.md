@@ -92,6 +92,37 @@ This requirement will go away once HuggingFace publishes lerobot >= 0.5.2 to PyP
 (which will include MolmoAct2 natively). At that point the standard
 `pip install strands-robots[lerobot]` path will work.
 
+## Processor bridge and normalization
+
+`use_processor=True` (default) wraps the policy in a processor bridge that
+normalizes observations going into the model and unnormalizes actions coming
+back out, so the robot sees commands in physical joint units.
+
+The bridge loads the model's own pipeline configs in priority order:
+
+1. `policy_preprocessor.json` / `policy_postprocessor.json` - LeRobot's standard
+   saved pipelines (most lerobot-native checkpoints).
+2. **`norm_stats.json` fallback** - checkpoints that ship only a stats file (no
+   standard pipeline configs), such as the MolmoAct2 SO-100/101 family. The
+   bridge detects the `molmoact2_norm_stats.v1` schema and builds the
+   normalizers itself.
+
+Without the fallback in (2), a stats-only checkpoint would silently pass data
+through un-normalized: state reaches the policy in raw degrees and predicted
+actions reach the motors still in the model's normalized space, producing
+off-policy / micro-motion trajectories.
+
+The fallback supports the `q01_q99`, `q10_q90`, `min_max` and `mean_std`
+normalization modes declared by `norm_mode`. For `q01_q99`:
+
+```
+state_norm  = clip(2 * (state - q01) / (q99 - q01) - 1, -1, 1)
+action_unnorm = (clip(action, -1, 1) + 1) * (q99 - q01) / 2 + q01
+```
+
+When a stats file declares multiple embodiment tags, pass `norm_tag=` to select
+one; a single-tag file is auto-detected.
+
 ## RTC
 
 ```python

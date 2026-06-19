@@ -57,6 +57,25 @@ def _try_import_processor() -> Any | None:
         return None
 
 
+def _missing_config_errors() -> tuple[type[BaseException], ...]:
+    """Exception types meaning a standard processor config is absent.
+
+    LeRobot 0.5.2 raises ``ProcessorMigrationError`` (not ``FileNotFoundError``)
+    when a checkpoint ships no ``policy_preprocessor.json`` /
+    ``policy_postprocessor.json`` and instead carries legacy/normalization
+    stats. Treating that as "no standard config" lets the bridge fall back to
+    the ``norm_stats.json`` path rather than crashing.
+    """
+    errors: tuple[type[BaseException], ...] = (FileNotFoundError, ValueError)
+    try:
+        from lerobot.processor.pipeline import ProcessorMigrationError
+
+        errors = (*errors, ProcessorMigrationError)
+    except ImportError:
+        pass
+    return errors
+
+
 def _register_policy_processor_steps(policy_type: str | None) -> None:
     """Import a policy's processor module so its custom pipeline steps register.
 
@@ -129,6 +148,7 @@ class ProcessorBridge:
         postprocessor_config: str = POSTPROCESSOR_CONFIG,
         overrides: dict[str, Any] | None = None,
         policy_type: str | None = None,
+        norm_tag: str | None = None,
     ) -> "ProcessorBridge":
         """Load processor pipelines from a pretrained model.
 
@@ -142,9 +162,21 @@ class ProcessorBridge:
             preprocessor_config: Filename for preprocessor config.
             postprocessor_config: Filename for postprocessor config.
             overrides: Dict of step overrides (passed to both pipelines).
+            policy_type: Policy type name, used to register policy-specific
+                processor steps before loading the standard pipeline configs.
+            norm_tag: Embodiment tag selecting which stats to apply from a
+                ``norm_stats.json`` fallback (auto-resolved when None).
 
         Returns:
             ProcessorBridge instance with loaded pipelines.
+
+        Notes:
+            When a checkpoint ships neither ``policy_preprocessor.json`` nor
+            ``policy_postprocessor.json`` but DOES ship a recognized
+            ``norm_stats.json`` (e.g. the MolmoAct2 SO-100/101 family), the
+            bridge falls back to building quantile/min-max/mean-std normalizers
+            from those stats instead of silently passing data through
+            un-normalized. See :mod:`.norm_stats`.
         """
         DataProcessorPipeline = _try_import_processor()
         if DataProcessorPipeline is None:
@@ -169,7 +201,7 @@ class ProcessorBridge:
                 overrides=overrides or {},
             )
             logger.info("Loaded preprocessor from %s: %d steps", pretrained_name_or_path, len(preprocessor))
-        except (FileNotFoundError, ValueError) as exc:
+        except _missing_config_errors() as exc:
             # No config file found - model doesn't ship a preprocessor. This is normal.
             logger.debug("No preprocessor found: %s", exc)
 
@@ -181,15 +213,53 @@ class ProcessorBridge:
                 overrides=overrides or {},
             )
             logger.info("Loaded postprocessor from %s: %d steps", pretrained_name_or_path, len(postprocessor))
-        except (FileNotFoundError, ValueError) as exc:
+        except _missing_config_errors() as exc:
             # No config file found - model doesn't ship a postprocessor. This is normal.
             logger.debug("No postprocessor found: %s", exc)
+
+        # Fallback: a checkpoint may ship NEITHER standard pipeline config but a
+        # recognized norm_stats.json (e.g. MolmoAct2 SO-100/101). Without this,
+        # both pipelines are None and the bridge silently passes data through
+        # un-normalized -- the single biggest cause of off-policy arm motion on
+        # such checkpoints. Build quantile/min-max/mean-std normalizers instead.
+        if preprocessor is None and postprocessor is None:
+            preprocessor, postprocessor = cls._load_norm_stats_fallback(pretrained_name_or_path, norm_tag=norm_tag)
 
         return cls(
             preprocessor=preprocessor,
             postprocessor=postprocessor,
             device=device,
         )
+
+    @staticmethod
+    def _load_norm_stats_fallback(
+        pretrained_name_or_path: str,
+        norm_tag: str | None = None,
+    ) -> tuple[Any | None, Any | None]:
+        """Build pre/post pipelines from a ``norm_stats.json`` when present.
+
+        Returns ``(None, None)`` if no recognized norm-stats file is found, so
+        the bridge stays a passthrough only when there is genuinely nothing to
+        apply.
+
+        Args:
+            pretrained_name_or_path: HF model ID or local checkpoint path.
+            norm_tag: Explicit embodiment tag (auto-resolved when None).
+
+        Returns:
+            ``(preprocessor, postprocessor)`` pipelines or ``(None, None)``.
+        """
+        from . import norm_stats as _norm_stats
+
+        payload = _norm_stats.load_norm_stats(pretrained_name_or_path)
+        if not _norm_stats.is_norm_stats_payload(payload):
+            return None, None
+        assert payload is not None  # narrowed by is_norm_stats_payload
+        logger.info(
+            "No standard processor configs for %s; falling back to norm_stats.json",
+            pretrained_name_or_path,
+        )
+        return _norm_stats.build_norm_stats_processors(payload, norm_tag=norm_tag)
 
     def apply_embodiment(self, embodiment, input_features: dict | None = None) -> None:
         """Inject a declarative :class:`EmbodimentMap` into the loaded pipeline.
