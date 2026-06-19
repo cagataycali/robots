@@ -310,6 +310,7 @@ class SimEngine(ABC):
         max_onframe_failures: int | None = None,
         control_substeps: int | None = None,
         policy_kwargs: dict[str, Any] | None = None,
+        seed: int | None = None,
     ) -> dict[str, Any]:
         """Run a policy loop in the simulation (blocking).
 
@@ -342,6 +343,13 @@ class SimEngine(ABC):
                 dataset recording), backends plug into
                 ``PolicyRunner.run``'s ``on_frame`` hook via
                 :meth:`_make_run_policy_hook`.
+            seed: Optional master RNG seed for a reproducible single rollout.
+                When set, reseeds Python / NumPy / torch / cuDNN and forwards
+                ``policy.reset(seed=...)`` so a stochastic policy (VLA action-
+                chunk sampling, diffusion noise) produces the same trajectory
+                on re-run of the same scene. ``None`` (default) leaves RNG
+                state untouched. Mirrors the per-episode reseed in
+                :meth:`eval_policy`.
             policy_kwargs: Optional per-call goal payload forwarded verbatim to
                 every ``policy.get_actions(obs, instruction, **policy_kwargs)``
                 call. Carries the well-known #300 goal keys
@@ -407,6 +415,7 @@ class SimEngine(ABC):
             max_onframe_failures=max_onframe_failures,
             control_substeps=control_substeps,
             policy_kwargs=policy_kwargs,
+            seed=seed,
         )
 
     def start_policy(
@@ -424,6 +433,7 @@ class SimEngine(ABC):
         n_steps: int | None = None,
         max_steps: int | None = None,
         policy_kwargs: dict[str, Any] | None = None,
+        seed: int | None = None,
     ) -> dict[str, Any]:
         """Start policy execution in a background thread (non-blocking).
 
@@ -451,6 +461,7 @@ class SimEngine(ABC):
             n_steps=n_steps,
             max_steps=max_steps,
             policy_kwargs=policy_kwargs,
+            seed=seed,
         )
 
     def replay_episode(

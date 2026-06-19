@@ -90,12 +90,14 @@ Robot-URDF cameras are auto-discovered on `add_robot`.
 
 | Action | Key params |
 |--------|-----------|
-| `run_policy` | `robot_name` (required), `policy_provider="mock"`, `policy_config={}`, `policy_object=None`, `instruction=""`, `duration=10.0`, `control_frequency=50.0`, `action_horizon=8`, `n_steps=None` |
+| `run_policy` | `robot_name` (required), `policy_provider="mock"`, `policy_config={}`, `policy_object=None`, `instruction=""`, `duration=10.0`, `control_frequency=50.0`, `action_horizon=8`, `n_steps=None`, `seed=None` |
 | `start_policy` | same args, async/non-blocking |
 | `stop_policy` | `robot_name` (optional, defaults to `""`) |
 | `list_policies_running` | - |
 | `run_multi_policy` | `policies={robot: Policy}`, `instructions`, `duration`, `n_steps` |
 | `eval_policy` | `robot_name` (required), `n_episodes=1`, `max_steps=300`, `success_fn=None` |
+
+Pass `seed=` to `run_policy` / `start_policy` for a reproducible single rollout: it reseeds Python / NumPy / torch / cuDNN and forwards `policy.reset(seed=...)`, so a stochastic policy (VLA action-chunk sampling, diffusion noise) produces the same trajectory on re-run of the same scene. Without a seed the rollout draws from the process-global RNG and can differ run to run. `eval_policy` already seeds per episode via the same mechanism.
 | `replay_episode` | `repo_id`, `robot_name=None`, `episode=0` |
 
 ## Recording

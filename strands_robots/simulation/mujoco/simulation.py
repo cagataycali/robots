@@ -1915,6 +1915,7 @@ class MuJoCoSimEngine(
         n_steps: int | None = None,
         max_steps: int | None = None,
         policy_kwargs: dict[str, Any] | None = None,
+        seed: int | None = None,
     ) -> dict[str, Any]:
         """Start policy execution on a background thread (non-blocking).
 
@@ -1968,6 +1969,7 @@ class MuJoCoSimEngine(
             n_steps=n_steps,
             max_steps=max_steps,
             policy_kwargs=policy_kwargs,
+            seed=seed,
         )
         self._policy_threads[robot_name] = future
 
@@ -2060,6 +2062,7 @@ class MuJoCoSimEngine(
         max_onframe_failures: int | None = None,
         control_substeps: int | None = None,
         policy_kwargs: dict[str, Any] | None = None,
+        seed: int | None = None,
     ) -> dict[str, Any]:
         """MuJoCo ``run_policy`` override: pre-flight world check + graceful stop.
 
@@ -2096,6 +2099,7 @@ class MuJoCoSimEngine(
                 max_onframe_failures=max_onframe_failures,
                 control_substeps=control_substeps,
                 policy_kwargs=policy_kwargs,
+                seed=seed,
             )
         finally:
             if self._world is not None and robot_name in self._world.robots:

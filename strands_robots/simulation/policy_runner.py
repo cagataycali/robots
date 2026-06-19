@@ -289,6 +289,7 @@ class PolicyRunner:
         max_onframe_failures: int | None = None,
         control_substeps: int | None = None,
         policy_kwargs: dict[str, Any] | None = None,
+        seed: int | None = None,
     ) -> dict[str, Any]:
         """Run ``policy`` on ``robot_name`` for ``duration`` seconds.
 
@@ -327,10 +328,37 @@ class PolicyRunner:
                 broken recording hook otherwise silently produces empty
                 datasets - see GH #117. Non-consecutive failures reset the
                 counter.
+            seed: Optional master RNG seed for a reproducible single rollout.
+                When set, ``set_eval_seed`` reseeds Python / NumPy / torch /
+                cuDNN and ``policy.reset(seed=...)`` is forwarded so the
+                policy's stochastic ops (VLA action-chunk sampling, diffusion
+                noise, attention dropout) draw from a deterministic state.
+                Without this, a single ``run`` draws from the unmanaged global
+                RNG, so the same scene + policy can grasp on one run and miss
+                on the next. ``None`` (default) leaves RNG state untouched,
+                preserving historical behaviour. Multi-episode reproducibility
+                already flows through :meth:`evaluate`'s per-episode reseed.
 
         Returns:
             ``{"status": "success"|"error", "content": [{"text": ...}]}``.
         """
+        # A single rollout draws the policy's stochastic ops (VLA action-
+        # chunk sampling, diffusion noise) from the unmanaged global RNG, so the
+        # same scene + policy grasps on one run and misses on the next. When a
+        # seed is given, reseed the client RNGs once and forward it to the policy
+        # (mirrors the per-episode reseed in evaluate()). Default None leaves RNG
+        # state untouched, preserving historical behaviour.
+        if seed is not None:
+            set_eval_seed(seed)
+            try:
+                policy.reset(seed=seed)
+            except Exception as e:  # noqa: BLE001 - reset is best-effort
+                logger.warning(
+                    "policy.reset(seed=%d) raised %s; continuing without policy-side reseed",
+                    seed,
+                    e,
+                )
+
         # Lazy optional import - only imageio is optional.
         writer = None
         frame_count = 0
