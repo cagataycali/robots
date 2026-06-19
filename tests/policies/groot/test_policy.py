@@ -1183,3 +1183,185 @@ class TestExports:
 
         for name in mod.__all__:
             assert hasattr(mod, name)
+
+
+# (section)
+# Model state DOF discovery
+# (section)
+
+
+class _Stat:
+    """Minimal normalizer stat with a discoverable ``shape``."""
+
+    def __init__(self, dof: int) -> None:
+        self.shape = (1, dof)
+
+
+class _Normalizer:
+    """Stand-in for an N1.6 normalizer keyed by ``state.<key>``."""
+
+    def __init__(self, dof_by_key: dict[str, int]) -> None:
+        self._stats = {f"state.{k}": _Stat(v) for k, v in dof_by_key.items()}
+
+    def get_stat(self, key: str):
+        return self._stats.get(key)
+
+
+class _Dim:
+    """Tensor-like scalar exposing ``.item()`` (mirrors a torch 0-d tensor)."""
+
+    def __init__(self, value: int) -> None:
+        self._value = value
+
+    def item(self) -> int:
+        return self._value
+
+
+class _StateActionProcessor:
+    def __init__(self, norm_params: dict) -> None:
+        self.norm_params = norm_params
+
+
+class _Processor:
+    def __init__(self, norm_params: dict) -> None:
+        self.state_action_processor = _StateActionProcessor(norm_params)
+
+
+class _EmbodimentTag:
+    def __init__(self, value: str) -> None:
+        self.value = value
+
+
+class _DiscoverPolicy:
+    """Plain stub local-policy for ``_discover_model_state_dof``.
+
+    Attribute presence is controlled precisely (unlike MagicMock, which
+    auto-creates every attribute) so each discovery source can be exercised
+    or suppressed independently.
+    """
+
+    def __init__(self, normalizer=None, processor=None, embodiment_tag=None, wrapped=False):
+        if wrapped:
+            inner = _DiscoverPolicy(normalizer=normalizer)
+            self.policy = inner
+        if normalizer is not None and not wrapped:
+            self.normalizer = normalizer
+        if processor is not None:
+            self.processor = processor
+        if embodiment_tag is not None:
+            self.embodiment_tag = embodiment_tag
+
+
+def _discover_policy(version="n1.6", local_policy=None):
+    p = Gr00tPolicy.__new__(Gr00tPolicy)
+    p._groot_version = version
+    p._local_policy = local_policy
+    return p
+
+
+class TestDiscoverModelStateDof:
+    """Exercise :meth:`Gr00tPolicy._discover_model_state_dof` hermetically.
+
+    Discovers DOF per state key from the loaded model via (1) the normalizer
+    stats and (2) the processor ``norm_params``, with the normalizer winning
+    when both expose a key. No Isaac-GR00T install required.
+    """
+
+    def test_normalizer_source_direct(self):
+        """Direct (unwrapped) policy: DOF comes from normalizer stat shapes."""
+        norm = _Normalizer({"single_arm": 5, "gripper": 1})
+        lp = _DiscoverPolicy(normalizer=norm)
+        p = _discover_policy(local_policy=lp)
+        p._discover_model_state_dof(SO100_MMC)
+        assert p._model_state_dof == {"single_arm": 5, "gripper": 1}
+
+    def test_normalizer_source_wrapped(self):
+        """Wrapped policy: normalizer is read through ``.policy`` inner object."""
+        norm = _Normalizer({"single_arm": 5, "gripper": 1})
+        lp = _DiscoverPolicy(normalizer=norm, wrapped=True)
+        p = _discover_policy(local_policy=lp)
+        p._discover_model_state_dof(SO100_MMC)
+        assert p._model_state_dof == {"single_arm": 5, "gripper": 1}
+
+    def test_processor_source_fills_remaining_keys(self):
+        """Processor norm_params supplies DOF when the normalizer is absent."""
+        params = {"so100": {"state": {"single_arm": {"dim": 5}, "gripper": {"dim": 1}}}}
+        lp = _DiscoverPolicy(
+            processor=_Processor(params),
+            embodiment_tag=_EmbodimentTag("so100"),
+        )
+        p = _discover_policy(local_policy=lp)
+        p._discover_model_state_dof(SO100_MMC)
+        assert p._model_state_dof == {"single_arm": 5, "gripper": 1}
+
+    def test_processor_dim_tensor_item(self):
+        """A tensor-like ``dim`` is coerced via ``.item()``."""
+        params = {"so100": {"state": {"single_arm": {"dim": _Dim(5)}}}}
+        lp = _DiscoverPolicy(
+            processor=_Processor(params),
+            embodiment_tag=_EmbodimentTag("so100"),
+        )
+        p = _discover_policy(local_policy=lp)
+        p._discover_model_state_dof(SO100_MMC)
+        assert p._model_state_dof["single_arm"] == 5
+        assert isinstance(p._model_state_dof["single_arm"], int)
+
+    def test_normalizer_wins_over_processor(self):
+        """Keys already discovered from the normalizer are not overwritten."""
+        norm = _Normalizer({"single_arm": 5})
+        params = {"so100": {"state": {"single_arm": {"dim": 99}, "gripper": {"dim": 1}}}}
+        lp = _DiscoverPolicy(
+            normalizer=norm,
+            processor=_Processor(params),
+            embodiment_tag=_EmbodimentTag("so100"),
+        )
+        p = _discover_policy(local_policy=lp)
+        p._discover_model_state_dof(SO100_MMC)
+        assert p._model_state_dof == {"single_arm": 5, "gripper": 1}
+
+    def test_missing_keys_warn_and_omit(self, caplog):
+        """Undiscoverable keys are omitted and surfaced in a warning."""
+        norm = _Normalizer({"single_arm": 5})  # gripper not discoverable
+        lp = _DiscoverPolicy(normalizer=norm)
+        p = _discover_policy(local_policy=lp)
+        with caplog.at_level("WARNING"):
+            p._discover_model_state_dof(SO100_MMC)
+        assert p._model_state_dof == {"single_arm": 5}
+        assert "gripper" in caplog.text
+
+    def test_no_sources_all_keys_missing(self):
+        """No normalizer and no processor -> empty DOF map (all keys omitted)."""
+        lp = _DiscoverPolicy()
+        p = _discover_policy(local_policy=lp)
+        p._discover_model_state_dof(SO100_MMC)
+        assert p._model_state_dof == {}
+
+    def test_normalizer_typeerror_is_swallowed(self):
+        """A normalizer raising TypeError falls through to the processor source."""
+
+        class _BadNormalizer:
+            def get_stat(self, key):
+                raise TypeError("malformed key")
+
+        params = {"so100": {"state": {"single_arm": {"dim": 5}, "gripper": {"dim": 1}}}}
+        lp = _DiscoverPolicy(processor=_Processor(params), embodiment_tag=_EmbodimentTag("so100"))
+        lp.normalizer = _BadNormalizer()
+        p = _discover_policy(local_policy=lp)
+        p._discover_model_state_dof(SO100_MMC)
+        assert p._model_state_dof == {"single_arm": 5, "gripper": 1}
+
+    def test_processor_typeerror_is_swallowed(self):
+        """A processor with non-dict norm_params raises TypeError, swallowed cleanly."""
+
+        class _BadParams:
+            def get(self, *a, **k):
+                raise TypeError("not a mapping")
+
+        lp = _DiscoverPolicy(
+            processor=_Processor(_BadParams()),
+            embodiment_tag=_EmbodimentTag("so100"),
+        )
+        p = _discover_policy(local_policy=lp)
+        p._discover_model_state_dof(SO100_MMC)
+        # Neither source produced anything; no exception escaped.
+        assert p._model_state_dof == {}
