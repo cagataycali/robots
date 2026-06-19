@@ -687,7 +687,7 @@ def test_pose_tool_reset_to_home_reports_move_failure(cwd_tmp, monkeypatch) -> N
     the connection but the grouped move reports failure), pinning that the tool
     does not claim the arm reached home when it did not.
     """
-    monkeypatch.setattr(serial, "Serial", lambda *a, **k: AlwaysReadingSerial(*a, **k))
+    monkeypatch.setattr(serial, "Serial", AlwaysReadingSerial)
     monkeypatch.setattr(pose_mod.MotorController, "move_multiple_motors", lambda self, positions, smooth=True: False)
     result = pose_tool(action="reset_to_home", robot_id="hw_arm", port="/dev/ttyTEST")
     assert result["status"] == "error"
