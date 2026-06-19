@@ -328,7 +328,7 @@ class TestRobotRegistry:
         robot = get_robot("so100")
         assert robot is not None
         assert robot["category"] == "arm"
-        assert robot["joints"] == 13
+        assert robot["joints"] == 6  # so100 is a 6-DOF arm (5 joints + gripper)
         assert "asset" in robot
         assert "hardware" in robot
 

@@ -145,3 +145,52 @@ def test_hardware_only_robots_declare_lerobot_type(registry: dict) -> None:
         if not isinstance(lerobot_type, str) or not lerobot_type.strip():
             offenders.append(name)
     assert not offenders, "Hardware-only robots missing 'hardware.lerobot_type': " + ", ".join(offenders)
+
+
+def test_so101_joint_count_matches_canonical_dof(registry: dict) -> None:
+    """``so101`` must declare ``joints: 6`` - its true controllable DOF.
+
+    The SO-101 is a 6-DOF arm (5 body joints + gripper). Both ground-truth
+    sources agree on 6:
+
+    * The MuJoCo asset ``so101_new_calib.xml`` exposes 6 hinge joints / 6
+      position actuators (``njnt == nu == 6``).
+    * The LeRobot ``so101_follower`` driver defines exactly 6 motors
+      (shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll,
+      gripper).
+
+    The value had drifted to 9 by miscounting raw ``<joint>`` XML tags - three
+    of which live inside ``<default>`` class blocks and are not real DOF. That
+    contradicted the entry's own ``description`` ("6-DOF") and any consumer that
+    reads ``joints`` for a SO-101 (e.g. ``format_robot_table``) reported a wrong
+    count. Pin the canonical value so the drift cannot silently return.
+    """
+    assert registry["so101"]["joints"] == 6
+
+
+def test_arm_joint_counts_match_embodiment_state_keys(registry: dict) -> None:
+    """For single-arm robots, ``joints`` must equal the embodiment state dim.
+
+    ``embodiments.json`` is the single source of truth for the ordered joint
+    keys a LeRobot policy reads (``observation.state``). When a robot declares
+    BOTH a registry ``joints`` count AND an embodiment with ``state_keys``, the
+    two must agree for the simple single-arm category - a mismatch means the
+    informational ``joints`` metadata lies about the robot's controllable DOF.
+
+    Scoped to the SO-arm family (``so100``/``so101``), whose registry counts and
+    embodiment ``state_keys`` are both expected to be the 6 controllable DOF.
+    Bi-manual / humanoid / mobile robots intentionally count differently
+    (scene/helper joints, base velocities) and are out of scope here.
+    """
+    from strands_robots.policies.lerobot_local.embodiment import EMBODIMENT_MAP
+
+    mismatches: list[str] = []
+    for name in ("so100", "so101"):
+        info = registry.get(name)
+        emb = EMBODIMENT_MAP.get(name)
+        if info is None or emb is None or not emb.state_keys:
+            continue
+        declared = info.get("joints")
+        if declared != len(emb.state_keys):
+            mismatches.append(f"{name}: registry joints={declared} != embodiment state_keys={len(emb.state_keys)}")
+    assert not mismatches, "Registry joints disagree with embodiment state dim:\n  " + "\n  ".join(mismatches)

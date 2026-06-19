@@ -31,8 +31,8 @@ sim = Robot("so100")            # SO-ARM100 (low-cost Feetech)
 | `panda` | Franka Emika Panda (7-DOF + gripper) | 7 | `bimanual_panda_gripper`, `bimanual_panda_hand`, `franka` |
 | `piper` | AgileX Piper (6-DOF + gripper) | 11 | `agilex_piper` |
 | `sawyer` | Rethink Robotics Sawyer (7-DOF) | 7 | `rethink_sawyer` |
-| `so100` | TrossenRobotics SO-ARM100 (6-DOF, Feetech servos) | 13 | `so100_4cam`, `so100_dualcam`, `so100_follower` |
-| `so101` | RobotStudio SO-101 (6-DOF, upgraded SO-100) | 9 | `robotstudio_so101`, `so101_dualcam`, `so101_follower` |
+| `so100` | TrossenRobotics SO-ARM100 (6-DOF, Feetech servos) | 6 | `so100_4cam`, `so100_dualcam`, `so100_follower` |
+| `so101` | RobotStudio SO-101 (6-DOF, upgraded SO-100) | 6 | `robotstudio_so101`, `so101_dualcam`, `so101_follower` |
 | `ur10e` | Universal Robots UR10e (6-DOF industrial) | 6 | - |
 | `ur5e` | Universal Robots UR5e (6-DOF industrial) | 8 | - |
 | `vx300s` | Trossen ViperX 300s (6-DOF + gripper) | 19 | `oxe_widowx`, `trossen_vx300s`, `viper_x300s` |

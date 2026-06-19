@@ -208,7 +208,7 @@
     "so100": {
       "description": "TrossenRobotics SO-ARM100 (6-DOF, Feetech servos)",
       "category": "arm",
-      "joints": 13,
+      "joints": 6,
       "asset": {
         "dir": "trs_so_arm100",
         "model_xml": "so_arm100.xml",
@@ -230,7 +230,7 @@
     "so101": {
       "description": "RobotStudio SO-101 (6-DOF, upgraded SO-100)",
       "category": "arm",
-      "joints": 9,
+      "joints": 6,
       "asset": {
         "dir": "robotstudio_so101",
         "model_xml": "so101_new_calib.xml",

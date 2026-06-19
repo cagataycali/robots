@@ -424,7 +424,7 @@ class TestMultiRobotSimulation:
         return robot_data
 
     def test_mixed_joint_counts(self):
-        """so100 (13 joints) + unitree_g1 (46 joints) in one world."""
+        """so100 (6 joints) + unitree_g1 (46 joints) in one world."""
         robots_in_world = {
             "so100": self._make_robot_data(),
             "unitree_g1": self._make_robot_data(),
