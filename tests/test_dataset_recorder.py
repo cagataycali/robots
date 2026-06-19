@@ -694,3 +694,198 @@ class TestBuildFeaturesSchema:
         features = DatasetRecorder._build_features()
 
         assert features == {}
+
+
+# ---------------------------------------------------------------------------
+# DatasetRecorder.resume() -- the multi-episode append entry point.
+#
+# resume() opens an EXISTING on-disk LeRobotDataset for appending (the plain
+# constructor returns a read-only dataset). Its body must:
+#   1. hard-fail with a clear RuntimeError on LeRobot versions lacking resume(),
+#   2. route the requested vcodec version-tolerantly -- pass ``vcodec=`` when the
+#      installed resume() takes it, else wrap it in a ``VideoEncoderConfig`` for
+#      the ``camera_encoder=`` kwarg (0.5.2+), warning if that config is absent,
+#   3. forward the optional streaming/threads/backend kwargs only when supported,
+#   4. seed episode/frame counters from the existing dataset so totals report
+#      correctly, swallowing a malformed meta rather than crashing.
+# These tests inject fake LeRobotDataset classes whose ``resume`` classmethods
+# expose different signatures, so the real body runs without lerobot installed.
+
+
+class _ResumeMeta:
+    def __init__(self, total_episodes, total_frames) -> None:
+        self.total_episodes = total_episodes
+        self.total_frames = total_frames
+
+
+class _FakeDatasetVcodecResume:
+    """resume() accepts the legacy ``vcodec=`` kwarg directly."""
+
+    last_resume_kwargs: dict = {}
+
+    def __init__(self, repo_id, root=None, meta=None) -> None:
+        self.repo_id = repo_id
+        self.root = root
+        self.meta = meta or _ResumeMeta(total_episodes=2, total_frames=40)
+
+    @classmethod
+    def resume(cls, repo_id, root=None, vcodec="libsvtav1", streaming_encoding=True):
+        cls.last_resume_kwargs = {
+            "repo_id": repo_id,
+            "root": root,
+            "vcodec": vcodec,
+            "streaming_encoding": streaming_encoding,
+        }
+        return cls(repo_id, root=root)
+
+
+class _FakeDatasetCameraEncoderResume:
+    """resume() takes ``camera_encoder=`` (0.5.2+) plus thread/backend kwargs."""
+
+    last_resume_kwargs: dict = {}
+
+    def __init__(self, repo_id, root=None, meta=None) -> None:
+        self.repo_id = repo_id
+        self.root = root
+        self.meta = meta or _ResumeMeta(total_episodes=5, total_frames=123)
+
+    @classmethod
+    def resume(
+        cls,
+        repo_id,
+        root=None,
+        camera_encoder=None,
+        image_writer_threads=4,
+        video_backend="auto",
+    ):
+        cls.last_resume_kwargs = {
+            "repo_id": repo_id,
+            "root": root,
+            "camera_encoder": camera_encoder,
+            "image_writer_threads": image_writer_threads,
+            "video_backend": video_backend,
+        }
+        return cls(repo_id, root=root)
+
+
+def _install_video_encoder_config(monkeypatch):
+    """Provide a stub ``lerobot.configs.video.VideoEncoderConfig`` and return a
+    list that captures each instance constructed, so a test can assert the
+    recorder wrapped its vcodec into the config."""
+    import sys
+    import types
+
+    constructed = []
+
+    class _VideoEncoderConfig:
+        def __init__(self, vcodec) -> None:
+            self.vcodec = vcodec
+            constructed.append(self)
+
+    module = types.ModuleType("lerobot.configs.video")
+    module.VideoEncoderConfig = _VideoEncoderConfig
+    monkeypatch.setitem(sys.modules, "lerobot.configs.video", module)
+    return constructed
+
+
+def test_resume_raises_clear_error_when_lerobot_lacks_resume(monkeypatch):
+    """Pre-0.5.2 LeRobot has no resume(); the recorder must say so explicitly."""
+    from strands_robots import dataset_recorder as dr
+
+    class _NoResumeDataset:
+        def __init__(self, repo_id, root=None) -> None:
+            self.repo_id = repo_id
+
+    _patch_lerobot_dataset(monkeypatch, _NoResumeDataset)
+    with pytest.raises(RuntimeError, match="no LeRobotDataset.resume"):
+        dr.DatasetRecorder.resume("user/data")
+
+
+def test_resume_passes_vcodec_directly_when_supported(monkeypatch):
+    """When resume() takes ``vcodec=``, the recorder forwards it as-is and only
+    adds the optional kwargs the signature actually declares."""
+    from strands_robots import dataset_recorder as dr
+
+    _patch_lerobot_dataset(monkeypatch, _FakeDatasetVcodecResume)
+    recorder = dr.DatasetRecorder.resume("user/data", root="/tmp/ds", vcodec="libx264", task="pick")
+
+    sent = _FakeDatasetVcodecResume.last_resume_kwargs
+    assert sent["vcodec"] == "libx264"
+    assert sent["repo_id"] == "user/data"
+    assert sent["root"] == "/tmp/ds"
+    assert sent["streaming_encoding"] is True
+    # video_backend / image_writer_threads are NOT in this signature -> not sent.
+    assert "video_backend" not in sent
+    assert "image_writer_threads" not in sent
+    assert recorder.default_task == "pick"
+
+
+def test_resume_wraps_vcodec_in_camera_encoder_on_052(monkeypatch):
+    """On 0.5.2+ (camera_encoder= kwarg), the vcodec is wrapped in a
+    VideoEncoderConfig, and thread/backend kwargs are forwarded."""
+    from strands_robots import dataset_recorder as dr
+
+    constructed = _install_video_encoder_config(monkeypatch)
+    _patch_lerobot_dataset(monkeypatch, _FakeDatasetCameraEncoderResume)
+    dr.DatasetRecorder.resume("user/data", vcodec="libsvtav1", video_backend="pyav")
+
+    sent = _FakeDatasetCameraEncoderResume.last_resume_kwargs
+    assert sent["video_backend"] == "pyav"
+    assert sent["image_writer_threads"] == 4
+    # vcodec must have been wrapped, not passed raw.
+    assert "vcodec" not in sent
+    assert len(constructed) == 1
+    assert sent["camera_encoder"] is constructed[0]
+    assert constructed[0].vcodec == "libsvtav1"
+
+
+def test_resume_warns_when_video_encoder_config_missing(monkeypatch, caplog):
+    """If resume() wants camera_encoder= but VideoEncoderConfig can't be
+    imported, the recorder warns and proceeds with camera_encoder unset."""
+    import sys
+
+    from strands_robots import dataset_recorder as dr
+
+    # Ensure the import target is absent so the import raises ImportError.
+    monkeypatch.setitem(sys.modules, "lerobot.configs.video", None)
+    _patch_lerobot_dataset(monkeypatch, _FakeDatasetCameraEncoderResume)
+
+    with caplog.at_level("WARNING"):
+        dr.DatasetRecorder.resume("user/data", vcodec="libsvtav1")
+
+    sent = _FakeDatasetCameraEncoderResume.last_resume_kwargs
+    assert sent["camera_encoder"] is None
+    assert any("VideoEncoderConfig" in rec.message for rec in caplog.records)
+
+
+def test_resume_seeds_counters_from_existing_dataset(monkeypatch):
+    """Counters are seeded from the dataset meta so reported totals include the
+    episodes/frames already on disk."""
+    from strands_robots import dataset_recorder as dr
+
+    _patch_lerobot_dataset(monkeypatch, _FakeDatasetVcodecResume)
+    recorder = dr.DatasetRecorder.resume("user/data")
+
+    assert recorder.episode_count == 2
+    assert recorder.frame_count == 40
+
+
+def test_resume_tolerates_unreadable_meta_counters(monkeypatch):
+    """A dataset whose meta lacks numeric totals must not crash resume(); the
+    counters simply stay at their zero defaults."""
+    from strands_robots import dataset_recorder as dr
+
+    class _BadMeta:
+        @property
+        def total_episodes(self):
+            raise AttributeError("no totals on this meta")
+
+    class _FakeDatasetBadMeta(_FakeDatasetVcodecResume):
+        def __init__(self, repo_id, root=None, meta=None) -> None:
+            super().__init__(repo_id, root=root, meta=_BadMeta())
+
+    _patch_lerobot_dataset(monkeypatch, _FakeDatasetBadMeta)
+    recorder = dr.DatasetRecorder.resume("user/data")
+
+    assert recorder.episode_count == 0
+    assert recorder.frame_count == 0
