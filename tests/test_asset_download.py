@@ -431,3 +431,150 @@ def test_download_robots_retries_rd_failures_with_git(monkeypatch: pytest.Monkey
     git.assert_called_once()
     assert result["downloaded"] == 1
     assert result["method"] == "robot_descriptions"
+
+
+# Recovery and error-path branches
+
+
+def test_needs_download_true_when_xml_unreadable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A model path that exists but cannot be read is treated as needing download.
+
+    The mesh-presence check reads the XML; if that read raises (here the path is
+    a directory, not a file), the function must fail safe to ``True`` rather than
+    propagate the error.
+    """
+    robot_dir = tmp_path / "so100"
+    robot_dir.mkdir()
+    # model.xml is a directory: exists() is True but read_text() raises.
+    (robot_dir / "model.xml").mkdir()
+    monkeypatch.setattr(f"{_MOD}.get_search_paths", lambda: [tmp_path])
+    assert dl._needs_download("so100", _entry("so100")) is True
+
+
+def test_download_helpers_return_empty_for_no_robots(tmp_path: Path) -> None:
+    """Both download strategies short-circuit to an empty result for no input."""
+    assert dl._download_via_robot_descriptions({}, tmp_path) == {}
+    assert dl._download_via_git({}, tmp_path) == {}
+
+
+def test_rd_download_reports_stale_symlink_missing_xml(tmp_path: Path) -> None:
+    """An existing symlink that points at PACKAGE_PATH but lacks the expected XML
+    is removed and reported as stale (not silently reused)."""
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()  # PACKAGE_PATH exists but has no model.xml
+    dest = tmp_path / "cache"
+    dest.mkdir()
+    (dest / "so100").symlink_to(pkg)
+    info = _entry("so100", robot_descriptions_module="so100_mj_description")
+    with patch(f"{_MOD}.importlib.import_module", return_value=SimpleNamespace(PACKAGE_PATH=str(pkg))):
+        results = dl._download_via_robot_descriptions({"so100": info}, dest)
+    assert results["so100"].startswith("failed: stale symlink")
+    assert not (dest / "so100").exists()  # stale link removed
+
+
+def test_rd_download_copytree_fallback_validates_xml(tmp_path: Path) -> None:
+    """When the OS rejects symlinks, the package is copied; a copy missing the
+    expected XML is cleaned up and reported as a mismatch.
+
+    Exercises the ``symlink_to`` -> ``copytree`` fallback and the directory
+    (non-symlink) cleanup branch of the XML-mismatch path.
+    """
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()  # no model.xml -> copied dir will fail validation
+    dest = tmp_path / "cache"
+    dest.mkdir()
+    info = _entry("so100", robot_descriptions_module="so100_mj_description")
+    with (
+        patch("pathlib.Path.symlink_to", side_effect=OSError("symlinks unsupported")),
+        patch(f"{_MOD}.importlib.import_module", return_value=SimpleNamespace(PACKAGE_PATH=str(pkg))),
+    ):
+        results = dl._download_via_robot_descriptions({"so100": info}, dest)
+    assert results["so100"].startswith("failed: XML mismatch")
+    assert not (dest / "so100").exists()  # copied dir removed, not left behind
+
+
+def test_rd_download_reports_unexpected_import_error(tmp_path: Path) -> None:
+    """An unexpected error during import is caught and surfaced as a failure
+    string rather than crashing the batch."""
+    info = _entry("so100", robot_descriptions_module="so100_mj_description")
+    with patch(f"{_MOD}.importlib.import_module", side_effect=RuntimeError("boom")):
+        results = dl._download_via_robot_descriptions({"so100": info}, tmp_path)
+    assert results["so100"] == "failed: boom"
+
+
+def test_git_download_reports_copy_failure(tmp_path: Path) -> None:
+    """A successful clone but failed copy is reported per-robot, not raised."""
+    info = _entry("panda")
+
+    def _fake_clone(repo_url: str, clone_dir: str, **kw: object) -> None:
+        (Path(clone_dir) / "panda").mkdir(parents=True)
+
+    with (
+        patch(f"{_MOD}._shallow_clone", side_effect=_fake_clone),
+        patch(f"{_MOD}._copy_and_clean", side_effect=OSError("disk full")),
+    ):
+        results = dl._download_via_git({"panda": info}, tmp_path)
+    assert results["panda"].startswith("failed:")
+    assert "disk full" in results["panda"]
+
+
+def test_github_download_reports_clone_timeout(tmp_path: Path) -> None:
+    """A custom-source clone that times out is reported as a clone failure."""
+    info = _entry("x", source={"type": "github", "repo": "owner/repo"})
+    with patch(f"{_MOD}._shallow_clone", side_effect=subprocess.TimeoutExpired("git", 120)):
+        result = dl._download_from_github("x", info, tmp_path)
+    assert result.startswith("failed: git clone timeout")
+
+
+def test_github_download_reports_copy_failure(tmp_path: Path) -> None:
+    """A custom-source clone that copies into a bad dest is reported, not raised."""
+    info = _entry("myrobot", source={"type": "github", "repo": "owner/repo"})
+
+    def _fake_clone(repo_url: str, clone_dir: str, **kw: object) -> None:
+        Path(clone_dir).mkdir(parents=True, exist_ok=True)
+        (Path(clone_dir) / "model.xml").write_text("<mujoco/>")
+
+    with (
+        patch(f"{_MOD}._shallow_clone", side_effect=_fake_clone),
+        patch(f"{_MOD}._copy_and_clean", side_effect=OSError("permission denied")),
+    ):
+        result = dl._download_from_github("myrobot", info, tmp_path)
+    assert result.startswith("failed:")
+    assert "permission denied" in result
+
+
+def test_rd_download_replaces_existing_plain_directory(tmp_path: Path) -> None:
+    """A pre-existing non-symlink directory at the destination is removed and
+    replaced with a fresh symlink to PACKAGE_PATH."""
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "model.xml").write_text("<mujoco/>")
+    dest = tmp_path / "cache"
+    dest.mkdir()
+    # Stale plain directory (not a symlink) occupying the destination.
+    stale = dest / "so100"
+    stale.mkdir()
+    (stale / "old.txt").write_text("stale")
+    info = _entry("so100", robot_descriptions_module="so100_mj_description")
+    with patch(f"{_MOD}.importlib.import_module", return_value=SimpleNamespace(PACKAGE_PATH=str(pkg))):
+        results = dl._download_via_robot_descriptions({"so100": info}, dest)
+    assert results["so100"] == "downloaded"
+    linked = dest / "so100"
+    assert linked.is_symlink()
+    assert (linked / "model.xml").exists()
+    assert not (linked / "old.txt").exists()  # stale dir was replaced, not merged
+
+
+def test_download_robots_resolves_named_robot(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """An explicit, resolvable robot name is selected for download (not skipped)."""
+    monkeypatch.setattr(f"{_MOD}.get_user_assets_dir", lambda: tmp_path)
+    monkeypatch.setattr(f"{_MOD}.registry_list_robots", lambda mode: [{"name": "so100"}])
+    monkeypatch.setattr(f"{_MOD}.get_robot", lambda n: _entry("so100"))
+    monkeypatch.setattr(f"{_MOD}.resolve_robot_name", lambda n: "so100")
+    monkeypatch.setattr(f"{_MOD}._needs_download", lambda *a, **k: True)
+    monkeypatch.setattr(f"{_MOD}._robot_descriptions_available", lambda: False)
+    with patch(f"{_MOD}._download_via_git", return_value={"so100": "downloaded"}) as git:
+        result = dl.download_robots(names=["so-100-alias"])
+    git.assert_called_once()
+    assert result["downloaded"] == 1
+    assert result["downloaded_names"] == ["so100"]
