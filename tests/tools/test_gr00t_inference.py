@@ -947,3 +947,148 @@ class TestActionDispatch:
         # The wrapper must forward the lifecycle phase as `phase=`.
         kwargs = mock.call_args.kwargs
         assert kwargs["phase"] == "full"
+
+
+class TestServiceDiscovery:
+    """Cover the docker/socket service-management helpers and their dispatch.
+
+    These helpers (`_find_gr00t_containers`, `_list_running_services`,
+    `_check_service_status`, `_stop_service`) and the corresponding tool actions
+    drive container/process lifecycle off `docker`, `lsof`, and raw sockets.
+    All external calls are mocked so the behavior - which containers count as
+    GR00T, how ports map to protocols, the kill escalation, and the structured
+    error contract - is verified without Docker or a live service.
+    """
+
+    def test_find_containers_filters_to_gr00t_images(self):
+        """Only Isaac-GR00T images (or isaac+jetson hosts) are reported."""
+        docker_out = "\n".join(
+            [
+                "groot-zmq\tnvcr.io/nvidia/isaac-gr00t:latest\tUp 2 hours\t0.0.0.0:5555->5555/tcp",
+                "web\tnginx:latest\tUp 1 day\t0.0.0.0:80->80/tcp",
+                "jetson-box\tnvcr.io/nvidia/isaac:base\tExited (0) 5 min ago\t",
+                "short-line\timage-only",
+            ]
+        )
+        with patch(
+            "strands_robots.tools.gr00t_inference.subprocess.run",
+            return_value=subprocess.CompletedProcess(args=[], returncode=0, stdout=docker_out, stderr=""),
+        ):
+            result = gr00t_inference(action="find_containers")
+        assert result["status"] == "success"
+        names = {c["name"] for c in result["containers"]}
+        # isaac-gr00t image and the isaac+jetson host both qualify; nginx + the
+        # malformed (<3 field) line are dropped.
+        assert names == {"groot-zmq", "jetson-box"}
+        assert "Found 2 GR00T containers" in result["message"]
+        # Ports survive only when present (4th field).
+        groot = next(c for c in result["containers"] if c["name"] == "groot-zmq")
+        assert "5555" in groot["ports"]
+        jetson = next(c for c in result["containers"] if c["name"] == "jetson-box")
+        assert jetson["ports"] == ""
+
+    def test_find_containers_surfaces_docker_failure(self):
+        """A failing `docker ps` returns a structured error, not a raise."""
+        with patch(
+            "strands_robots.tools.gr00t_inference.subprocess.run",
+            side_effect=subprocess.CalledProcessError(1, ["docker", "ps"], stderr="daemon down"),
+        ):
+            result = gr00t_inference(action="find_containers")
+        assert result["status"] == "error"
+        assert "Failed to find containers" in result["message"]
+
+    def test_list_reports_running_ports_with_protocol(self):
+        """`list` maps low ports to ZMQ, >=8000 to HTTP, only when running."""
+        # Report 5555 (ZMQ) and 8000 (HTTP) up, everything else down.
+        running = {5555, 8000}
+        with patch(
+            "strands_robots.tools.gr00t_inference._is_service_running",
+            side_effect=lambda port: port in running,
+        ):
+            result = gr00t_inference(action="list")
+        assert result["status"] == "success"
+        services = {s["port"]: s["protocol"] for s in result["services"]}
+        assert services == {5555: "ZMQ", 8000: "HTTP"}
+        assert "Found 2 running services" in result["message"]
+
+    def test_status_running_maps_port_to_protocol(self):
+        """`status` reports running + the protocol implied by the port."""
+        with patch("strands_robots.tools.gr00t_inference._is_service_running", return_value=True):
+            zmq = gr00t_inference(action="status", port=5556)
+            http = gr00t_inference(action="status", port=8001)
+        assert zmq["service_status"] == "running" and zmq["protocol"] == "ZMQ"
+        assert http["service_status"] == "running" and http["protocol"] == "HTTP"
+
+    def test_status_not_running_is_structured_error(self):
+        """A dead port yields a not_running structured error (no raise)."""
+        with patch("strands_robots.tools.gr00t_inference._is_service_running", return_value=False):
+            result = gr00t_inference(action="status", port=5555)
+        assert result["status"] == "error"
+        assert result["service_status"] == "not_running"
+        assert "No service running on port 5555" in result["message"]
+
+    def test_stop_kills_process_inside_running_container(self):
+        """`stop` finds the inference PID in an Up container and TERMs it."""
+        containers = {
+            "status": "success",
+            "containers": [{"name": "groot", "image": "isaac-gr00t", "status": "Up 3 hours", "ports": ""}],
+        }
+
+        calls: list[list[str]] = []
+
+        def fake_run(cmd, *args, **kwargs):
+            calls.append(cmd)
+            # First pgrep finds a PID; after the TERM kill the second pgrep is empty.
+            if "pgrep" in cmd:
+                already_killed = any("kill" in c and "-TERM" in c for c in calls)
+                stdout = "" if already_killed else "4242\n"
+                return subprocess.CompletedProcess(args=cmd, returncode=0 if stdout else 1, stdout=stdout, stderr="")
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+        with (
+            patch("strands_robots.tools.gr00t_inference._find_gr00t_containers", return_value=containers),
+            patch("strands_robots.tools.gr00t_inference.subprocess.run", side_effect=fake_run),
+            patch("strands_robots.tools.gr00t_inference.time.sleep"),
+        ):
+            result = gr00t_inference(action="stop", port=5555)
+        assert result["status"] == "success"
+        assert result["container"] == "groot"
+        # The TERM signal was sent to the discovered PID.
+        assert any("kill" in c and "-TERM" in c and "4242" in c for c in calls)
+
+    def test_stop_falls_back_to_host_lsof_when_no_container_match(self):
+        """With no running container, `stop` kills the host process via lsof."""
+        containers = {"status": "success", "containers": []}
+
+        def fake_run(cmd, *args, **kwargs):
+            if "lsof" in cmd:
+                # First lsof finds a host PID, the post-kill lsof finds none.
+                fake_run.lsof_calls += 1
+                stdout = "9999\n" if fake_run.lsof_calls == 1 else ""
+                return subprocess.CompletedProcess(args=cmd, returncode=0 if stdout else 1, stdout=stdout, stderr="")
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+        fake_run.lsof_calls = 0
+        with (
+            patch("strands_robots.tools.gr00t_inference._find_gr00t_containers", return_value=containers),
+            patch("strands_robots.tools.gr00t_inference.subprocess.run", side_effect=fake_run),
+            patch("strands_robots.tools.gr00t_inference.time.sleep"),
+        ):
+            result = gr00t_inference(action="stop", port=5555)
+        assert result["status"] == "success"
+        assert "Service on port 5555 stopped" in result["message"]
+
+    def test_stop_reports_no_service_when_nothing_listening(self):
+        """No container and no host listener -> idempotent success message."""
+        containers = {"status": "success", "containers": []}
+        with (
+            patch("strands_robots.tools.gr00t_inference._find_gr00t_containers", return_value=containers),
+            patch(
+                "strands_robots.tools.gr00t_inference.subprocess.run",
+                return_value=subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr=""),
+            ),
+            patch("strands_robots.tools.gr00t_inference.time.sleep"),
+        ):
+            result = gr00t_inference(action="stop", port=5555)
+        assert result["status"] == "success"
+        assert "No service running on port 5555" in result["message"]
