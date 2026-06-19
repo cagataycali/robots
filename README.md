@@ -107,6 +107,7 @@ extras you need:
 | Extra | Installs | Use for |
 |-------|----------|---------|
 | `sim-mujoco` | MuJoCo, robot_descriptions, imageio | Simulation (recommended starting point) |
+| `sim-newton` | Newton, Warp, MuJoCo-Warp, trimesh | GPU-native simulation (NVIDIA GPU; batched envs, headless ray-traced render) |
 | `lerobot` | LeRobot | Real hardware, local VLA inference, dataset recording |
 | `molmoact2` | LeRobot + transformers, peft, scipy | MolmoAct2 transformers-native VLA (needs lerobot from source until PyPI >= 0.5.2) |
 | `groot-service` | pyzmq, msgpack | NVIDIA GR00T inference client |

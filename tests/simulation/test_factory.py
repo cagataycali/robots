@@ -145,3 +145,30 @@ class TestCreateSimulation:
 class TestDefaultBackendConstant:
     def test_default_is_documented(self):
         assert DEFAULT_BACKEND == "mujoco"
+
+
+class TestNewtonBackendRegistration:
+    """Newton backend is wired into the built-in registry (no GPU needed)."""
+
+    def test_newton_in_builtin_backends(self):
+        assert "newton" in factory._BUILTIN_BACKENDS
+        module_path, class_name = factory._BUILTIN_BACKENDS["newton"]
+        assert module_path == "strands_robots.simulation.newton.simulation"
+        assert class_name == "NewtonSimEngine"
+
+    def test_newton_listed(self):
+        assert "newton" in list_backends()
+
+    def test_nt_alias_resolves_to_newton(self):
+        assert factory._resolve_name("nt") == "newton"
+        assert "nt" in list_backends()
+
+    def test_missing_newton_module_error_names_sim_newton_extra(self, monkeypatch):
+        """A missing backend module yields an ImportError naming its pip extra."""
+        monkeypatch.setitem(
+            factory._BUILTIN_BACKENDS,
+            "newton",
+            ("strands_robots.simulation.newton._absent_module", "NewtonSimEngine"),
+        )
+        with pytest.raises(ImportError, match="sim-newton"):
+            create_simulation("newton")
