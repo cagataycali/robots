@@ -263,7 +263,8 @@ def resolve_policy_class_from_hub(pretrained_name_or_path: str) -> tuple[type[An
     if not policy_type:
         raise ValueError(
             f"Could not determine policy type from '{pretrained_name_or_path}'. "
-            f"No 'type' field found in config.json. "
+            f"config.json had no usable 'type', 'model_type', or recognized "
+            f"'auto_map' entry (checked against the known third-party policy map). "
             f"Pass policy_type= explicitly."
         )
 
@@ -404,8 +405,74 @@ def resolve_policy_class_by_name(policy_type: str) -> type[Any]:
     )
 
 
+# Explicit overrides mapping a HuggingFace ``model_type`` (or an
+# ``auto_map`` class name) to the strands_robots/lerobot policy type used
+# for class resolution. Third-party checkpoints distributed in the
+# transformers layout often set ``model_type`` / ``auto_map`` but leave the
+# lerobot ``type`` field unset (``None``); this table bridges that gap.
+# Keyed by lowercase token so both ``model_type`` values and ``auto_map``
+# class-name stems resolve through the same lookup. Grows as new
+# third-party policies land.
+_KNOWN_MODEL_TYPE_MAP: dict[str, str] = {
+    "molmoact2": "molmoact2",
+    "molmoact2forconditionalgeneration": "molmoact2",
+}
+
+
+def _policy_type_from_config(config: dict[str, Any]) -> str | None:
+    """Derive a policy type string from a parsed ``config.json`` mapping.
+
+    Resolution order:
+        1. The lerobot-native ``type`` field (canonical).
+        2. The transformers-native ``model_type`` field, mapped through
+           ``_KNOWN_MODEL_TYPE_MAP`` when a known override exists, otherwise
+           used verbatim.
+        3. ``auto_map`` values (e.g. ``AutoModelForImageTextToText`` ->
+           ``modeling_molmoact2.MolmoAct2ForConditionalGeneration``): both the
+           module stem (``molmoact2``) and the class name are checked against
+           ``_KNOWN_MODEL_TYPE_MAP``.
+
+    Args:
+        config: Parsed ``config.json`` contents.
+
+    Returns:
+        The resolved policy type string, or ``None`` if none could be derived.
+    """
+    # Strategy 1: canonical lerobot ``type`` field.
+    type_field = config.get("type")
+    if type_field:
+        return str(type_field)
+
+    # Strategy 2: transformers-native ``model_type``.
+    model_type = config.get("model_type")
+    if model_type:
+        key = str(model_type).lower()
+        return _KNOWN_MODEL_TYPE_MAP.get(key, str(model_type))
+
+    # Strategy 3: ``auto_map`` class references.
+    auto_map = config.get("auto_map")
+    if isinstance(auto_map, dict):
+        for value in auto_map.values():
+            if not isinstance(value, str):
+                continue
+            # value looks like "modeling_molmoact2.MolmoAct2ForConditionalGeneration"
+            module_part, _, class_name = value.rpartition(".")
+            module_stem = module_part.split(".")[-1].removeprefix("modeling_")
+            for candidate in (module_stem.lower(), class_name.lower()):
+                if candidate in _KNOWN_MODEL_TYPE_MAP:
+                    return _KNOWN_MODEL_TYPE_MAP[candidate]
+
+    return None
+
+
 def _read_policy_type_from_config(pretrained_name_or_path: str) -> str | None:
     """Read policy type from config.json (local or HF Hub).
+
+    Tries the lerobot-native ``type`` field first, then falls back to the
+    transformers-native ``model_type`` and ``auto_map`` fields so that
+    third-party checkpoints (e.g. ``allenai/MolmoAct2-SO100_101``, which sets
+    ``model_type: "molmoact2"`` and an ``auto_map`` but leaves ``type`` unset)
+    resolve without an explicit ``policy_type=``. See ``_policy_type_from_config``.
 
     Args:
         pretrained_name_or_path: Local path or HF model ID.
@@ -418,7 +485,7 @@ def _read_policy_type_from_config(pretrained_name_or_path: str) -> str | None:
     if local_path.is_dir() and (local_path / "config.json").exists():
         with open(local_path / "config.json") as config_file:
             config = json.load(config_file)
-        return config.get("type")
+        return _policy_type_from_config(config)
 
     # Try downloading from HuggingFace Hub
     try:
@@ -427,7 +494,7 @@ def _read_policy_type_from_config(pretrained_name_or_path: str) -> str | None:
         config_path = hf_hub_download(pretrained_name_or_path, "config.json")
         with open(config_path) as config_file:
             config = json.load(config_file)
-        return config.get("type")
+        return _policy_type_from_config(config)
     except (ImportError, OSError, ValueError, KeyError) as exc:
         logger.warning("Could not download config.json: %s", exc)
 

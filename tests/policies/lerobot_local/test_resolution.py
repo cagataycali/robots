@@ -837,6 +837,86 @@ class TestReadPolicyTypeFromConfig:
 
         assert resolution._read_policy_type_from_config("nonexistent/repo-id") is None
 
+    def test_model_type_known_override_resolves(self, tmp_path):
+        """A config with no ``type`` but a known ``model_type`` (``molmoact2``)
+        resolves through ``_KNOWN_MODEL_TYPE_MAP`` rather than raising."""
+        import json
+
+        from strands_robots.policies.lerobot_local import resolution
+
+        (tmp_path / "config.json").write_text(json.dumps({"model_type": "molmoact2"}))
+
+        assert resolution._read_policy_type_from_config(str(tmp_path)) == "molmoact2"
+
+    def test_model_type_unknown_used_verbatim(self, tmp_path):
+        """An unknown ``model_type`` (no override) is returned as-is so callers
+        can still attempt class resolution by that name."""
+        import json
+
+        from strands_robots.policies.lerobot_local import resolution
+
+        (tmp_path / "config.json").write_text(json.dumps({"model_type": "act"}))
+
+        assert resolution._read_policy_type_from_config(str(tmp_path)) == "act"
+
+    def test_auto_map_class_name_resolves(self, tmp_path):
+        """When only an ``auto_map`` is present, a recognized modeling class
+        (``MolmoAct2ForConditionalGeneration``) maps to its policy type."""
+        import json
+
+        from strands_robots.policies.lerobot_local import resolution
+
+        (tmp_path / "config.json").write_text(
+            json.dumps(
+                {
+                    "auto_map": {
+                        "AutoConfig": "configuration_molmoact2.MolmoAct2Config",
+                        "AutoModelForImageTextToText": ("modeling_molmoact2.MolmoAct2ForConditionalGeneration"),
+                    }
+                }
+            )
+        )
+
+        assert resolution._read_policy_type_from_config(str(tmp_path)) == "molmoact2"
+
+    def test_type_field_wins_over_model_type(self, tmp_path):
+        """The canonical lerobot ``type`` field takes precedence over
+        ``model_type`` when both are present."""
+        import json
+
+        from strands_robots.policies.lerobot_local import resolution
+
+        (tmp_path / "config.json").write_text(json.dumps({"type": "diffusion", "model_type": "molmoact2"}))
+
+        assert resolution._read_policy_type_from_config(str(tmp_path)) == "diffusion"
+
+    def test_no_type_model_type_or_known_auto_map_returns_none(self, tmp_path):
+        """A config with none of ``type``/``model_type`` and only unrecognized
+        ``auto_map`` entries returns ``None`` (caller raises a clear error)."""
+        import json
+
+        from strands_robots.policies.lerobot_local import resolution
+
+        (tmp_path / "config.json").write_text(
+            json.dumps({"auto_map": {"AutoModel": "modeling_unknownthing.UnknownThingModel"}})
+        )
+
+        assert resolution._read_policy_type_from_config(str(tmp_path)) is None
+
+    @pytest.mark.slow
+    def test_real_molmoact2_repo_resolves_model_type(self):
+        """End-to-end against the live HF repo: ``allenai/MolmoAct2-SO100_101``
+        sets ``model_type: molmoact2`` with ``type`` unset, and must resolve.
+
+        Skipped offline (network failure surfaces as ``None`` from the reader's
+        ``OSError`` guard, which would make this a flaky false-negative)."""
+        from strands_robots.policies.lerobot_local import resolution
+
+        result = resolution._read_policy_type_from_config("allenai/MolmoAct2-SO100_101")
+        if result is None:
+            pytest.skip("HF Hub unreachable; cannot exercise live repo")
+        assert result == "molmoact2"
+
 
 class TestResolvePolicyClassByNameFallbackLadder:
     """Behavioral tests for the resolution ladder in
