@@ -9,9 +9,11 @@ MolmoAct2 SO-100/101 family) used to produce a passthrough bridge -- state
 reached the policy un-normalized and predicted actions reached the motors
 un-unnormalized, the single biggest cause of off-policy arm motion.
 
-The numeric transform is validated bit-for-bit against the q01_q99 reference
-formula used by lerobot's MolmoAct2 normalizer
-(``modeling_molmoact2._FeatureNormalizer``).
+The numeric transform is validated two ways: against a local q01_q99 reference
+formula, and -- as a per-formula audit -- bit-for-bit against the *installed*
+upstream lerobot ``NormalizerProcessorStep`` / ``UnnormalizerProcessorStep`` in
+``NormalizationMode.QUANTILES`` (see ``TestUpstreamLerobotParity``, max-abs-diff
+< 1e-6). The latter guards against silent drift between this port and lerobot.
 """
 
 from __future__ import annotations
@@ -255,3 +257,92 @@ class TestProcessorBridgeFallback:
         if migration_error is None:
             pytest.skip("installed lerobot has no ProcessorMigrationError")
         assert migration_error in _missing_config_errors()
+
+
+class TestUpstreamLerobotParity:
+    """Bit-equality audit vs the real upstream lerobot normalizer.
+
+    The other ``TestFeatureNormalizer`` cases compare against a local reference
+    reimplementation of the formula, which cannot catch drift between this port
+    and lerobot itself. These tests run the SAME data through the installed
+    ``lerobot.processor.NormalizerProcessorStep`` /
+    ``UnnormalizerProcessorStep`` with ``NormalizationMode.QUANTILES`` (q01/q99)
+    and assert max-abs-diff < 1e-6 against ``FeatureNormalizer``.
+
+    Upstream's bare QUANTILES step does NOT clamp to [-1, 1] (the MolmoAct2
+    pipeline clamps in a separate ``MolmoAct2ClampNormalizedProcessorStep``),
+    so for the forward direction we feed values strictly inside [q01, q99]
+    where ``FeatureNormalizer``'s built-in clip is a no-op and the cores match.
+    """
+
+    @staticmethod
+    def _require_upstream():
+        pytest.importorskip("lerobot")
+        processor = pytest.importorskip("lerobot.processor")
+        configs = pytest.importorskip("lerobot.configs")
+        types = pytest.importorskip("lerobot.types")
+        for name in ("NormalizerProcessorStep", "UnnormalizerProcessorStep"):
+            if not hasattr(processor, name):
+                pytest.skip(f"installed lerobot lacks {name}")
+        for name in ("FeatureType", "NormalizationMode", "PolicyFeature"):
+            if not hasattr(configs, name):
+                pytest.skip("installed lerobot.configs lacks typed-feature API (needs >= 0.5.2)")
+        if not hasattr(configs.NormalizationMode, "QUANTILES"):
+            pytest.skip("installed lerobot has no NormalizationMode.QUANTILES")
+        if not hasattr(types, "TransitionKey"):
+            pytest.skip("installed lerobot.types lacks TransitionKey")
+        return processor, configs, types
+
+    def _stats(self):
+        fix = _load_fixture()
+        stats = fix["metadata_by_tag"]["so100_so101_molmoact2"]["state_stats"]
+        q01 = np.asarray(stats["q01"], dtype=np.float32)
+        q99 = np.asarray(stats["q99"], dtype=np.float32)
+        return stats, q01, q99
+
+    def test_normalize_bit_equal_to_upstream_quantiles(self):
+        processor, configs, types = self._require_upstream()
+        import torch
+
+        stats, q01, q99 = self._stats()
+        key = "observation.state"
+        fn = ns.FeatureNormalizer.from_stats(stats, "q01_q99")
+
+        up = processor.NormalizerProcessorStep(
+            features={key: configs.PolicyFeature(type=configs.FeatureType.STATE, shape=q01.shape)},
+            norm_map={configs.FeatureType.STATE: configs.NormalizationMode.QUANTILES},
+            stats={key: {"q01": torch.from_numpy(q01), "q99": torch.from_numpy(q99)}},
+            eps=ns._EPS,
+        )
+
+        rng = np.random.default_rng(58)
+        # Strictly inside [q01, q99] so FeatureNormalizer's [-1, 1] clip is inert
+        # and we exercise the raw affine core both implementations share.
+        x = rng.uniform(q01, q99, (8, q01.shape[0])).astype(np.float32)
+        got = fn.normalize(x)
+        want = up({types.TransitionKey.OBSERVATION: {key: torch.from_numpy(x)}})[types.TransitionKey.OBSERVATION][
+            key
+        ].numpy()
+        assert np.max(np.abs(got - want)) < 1e-6
+
+    def test_unnormalize_bit_equal_to_upstream_quantiles(self):
+        processor, configs, types = self._require_upstream()
+        import torch
+
+        stats, q01, q99 = self._stats()
+        key = "action"
+        fn = ns.FeatureNormalizer.from_stats(stats, "q01_q99")
+
+        up = processor.UnnormalizerProcessorStep(
+            features={key: configs.PolicyFeature(type=configs.FeatureType.ACTION, shape=q01.shape)},
+            norm_map={configs.FeatureType.ACTION: configs.NormalizationMode.QUANTILES},
+            stats={key: {"q01": torch.from_numpy(q01), "q99": torch.from_numpy(q99)}},
+            eps=ns._EPS,
+        )
+
+        rng = np.random.default_rng(99)
+        # Normalized actions live in [-1, 1]; both sides clamp there identically.
+        a = rng.uniform(-1.0, 1.0, (8, q01.shape[0])).astype(np.float32)
+        got = fn.unnormalize(a)
+        want = up({types.TransitionKey.ACTION: torch.from_numpy(a)})[types.TransitionKey.ACTION].numpy()
+        assert np.max(np.abs(got - want)) < 1e-6
