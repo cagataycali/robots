@@ -62,7 +62,7 @@ class _FakeProc:
         self.returncode = returncode
         self.stdout = stdout
         self.stderr = stderr
-        self.stdin = None
+        self.stdin: Any = None
 
 
 # ---------------------------------------------------------------------------
@@ -282,3 +282,172 @@ def test_list_with_active_session_is_ascii(monkeypatch: pytest.MonkeyPatch) -> N
     assert "live" in body
     assert "Running" in body
     _assert_ascii(body)
+
+
+# ---------------------------------------------------------------------------
+# auto_accept_calibration - background start auto-answers calibration prompts
+# ---------------------------------------------------------------------------
+class _CapturingStdin:
+    """Stand-in for ``Popen.stdin`` that records what the auto-responder writes."""
+
+    def __init__(self) -> None:
+        self.writes: list[str] = []
+        self.closed = False
+
+    def write(self, data: str) -> None:
+        self.writes.append(data)
+
+    def flush(self) -> None:
+        pass
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _SyncThread:
+    """Run a thread target inline on ``start`` so the daemon body is covered."""
+
+    def __init__(self, target=None, daemon=None, **_: Any) -> None:
+        self._target = target
+
+    def start(self) -> None:
+        if self._target is not None:
+            self._target()
+
+
+def test_start_auto_accept_calibration_sends_enter_keys(monkeypatch: pytest.MonkeyPatch) -> None:
+    """With auto_accept_calibration, the tool spawns a thread that writes two
+    ENTER keystrokes to the child stdin and closes it, accepting calibration
+    prompts without blocking."""
+    stdin = _CapturingStdin()
+    proc = _FakeProc(pid=os.getpid())
+    proc.stdin = stdin
+    monkeypatch.setattr(tele_mod.subprocess, "Popen", lambda *a, **k: proc)
+    monkeypatch.setattr(tele_mod.time, "sleep", lambda s: None)
+    monkeypatch.setattr("threading.Thread", _SyncThread)
+
+    result = lerobot_teleoperate(
+        action="start",
+        session_name="autocal",
+        robot_type="so101_follower",
+        teleop_type="so101_leader",
+        auto_accept_calibration=True,
+    )
+
+    assert result["status"] == "success"
+    assert result["background"] is True
+    # Two ENTER presses were sent and stdin was closed afterwards.
+    assert stdin.writes == ["\n", "\n"]
+    assert stdin.closed
+    _assert_ascii(_texts(result))
+
+
+def test_start_record_action_label_when_dataset_given(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A background start with a dataset repo records the session as a 'record'
+    session (not plain teleoperate)."""
+    monkeypatch.setattr(tele_mod.subprocess, "Popen", lambda *a, **k: _FakeProc(pid=os.getpid()))
+
+    result = lerobot_teleoperate(
+        action="start",
+        session_name="rec",
+        robot_type="so101_follower",
+        teleop_type="so101_leader",
+        dataset_repo_id="user/cubes",
+        dataset_single_task="pick the cube",
+        auto_accept_calibration=False,
+    )
+
+    assert result["status"] == "success"
+    session = SessionManager().get_session("rec")
+    assert session is not None
+    assert session["action"] == "record"
+
+
+# ---------------------------------------------------------------------------
+# stop - dead-process and generic-failure branches
+# ---------------------------------------------------------------------------
+def test_stop_already_dead_process_is_cleaned_up(monkeypatch: pytest.MonkeyPatch) -> None:
+    """If the OS reports the process is already gone, the session is still
+    removed and the call succeeds."""
+    # Use a live PID so the session survives the load-time liveness prune,
+    # then have the kill report the process is already gone.
+    SessionManager().add_session("ghost", {"pid": os.getpid(), "start_time": 0.0})
+
+    def _raise_lookup(pid: int, sig: int) -> None:
+        # sig 0 is psutil's liveness probe during session load; only the real
+        # termination signals should report the process is already gone.
+        if sig != 0:
+            raise ProcessLookupError
+
+    monkeypatch.setattr(tele_mod.os, "kill", _raise_lookup)
+    monkeypatch.setattr(tele_mod.time, "sleep", lambda s: None)
+
+    result = lerobot_teleoperate(action="stop", session_name="ghost")
+    assert result["status"] == "success"
+    assert "already stopped" in _texts(result)
+    assert SessionManager().get_session("ghost") is None
+
+
+def test_stop_kill_failure_reports_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An unexpected kill failure surfaces as an error result, not an exception."""
+    SessionManager().add_session("stuck", {"pid": os.getpid(), "start_time": 0.0})
+
+    def _raise_perm(pid: int, sig: int) -> None:
+        if sig != 0:
+            raise PermissionError("operation not permitted")
+
+    monkeypatch.setattr(tele_mod.os, "kill", _raise_perm)
+    monkeypatch.setattr(tele_mod.time, "sleep", lambda s: None)
+
+    result = lerobot_teleoperate(action="stop", session_name="stuck")
+    assert result["status"] == "error"
+    assert "Failed to stop" in _texts(result)
+    _assert_ascii(_texts(result))
+
+
+# ---------------------------------------------------------------------------
+# status - log tail rendering
+# ---------------------------------------------------------------------------
+def test_status_includes_log_tail(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """When a session has a readable log file, status echoes its last lines
+    inside a fenced block and stays ASCII."""
+    log_file = tmp_path / "sess.log"
+    log_file.write_text("\n".join(f"line {i}" for i in range(20)), encoding="utf-8")
+    SessionManager().add_session(
+        "withlog",
+        {"pid": os.getpid(), "start_time": 0.0, "log_file": str(log_file), "robot_type": "so101_follower"},
+    )
+
+    result = lerobot_teleoperate(action="status", session_name="withlog")
+    assert result["status"] == "success"
+    body = _texts(result)
+    assert "Recent Log Output" in body
+    assert "line 19" in body
+    # Only the tail (last 10 lines) is shown, not the head.
+    assert "line 0" not in body
+    _assert_ascii(body)
+
+
+# ---------------------------------------------------------------------------
+# replay / foreground - non-zero return codes map to error status
+# ---------------------------------------------------------------------------
+def test_replay_nonzero_return_code_is_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(tele_mod.subprocess, "run", lambda *a, **k: _FakeProc(returncode=1, stdout="", stderr="boom"))
+    result = lerobot_teleoperate(action="replay", dataset_repo_id="user/cubes", replay_episode=0)
+    assert result["status"] == "error"
+    assert result["return_code"] == 1
+    _assert_ascii(_texts(result))
+
+
+def test_start_foreground_nonzero_return_code_is_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(tele_mod.subprocess, "run", lambda *a, **k: _FakeProc(returncode=2, stdout="", stderr="nope"))
+    result = lerobot_teleoperate(
+        action="start",
+        session_name="fgfail",
+        robot_type="so101_follower",
+        teleop_type="so101_leader",
+        background=False,
+    )
+    assert result["status"] == "error"
+    assert result["return_code"] == 2
+    _assert_ascii(_texts(result))
