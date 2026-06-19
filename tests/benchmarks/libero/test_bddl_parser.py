@@ -653,3 +653,117 @@ class TestCaseInsensitivity:
         problem = parse_bddl(text)
         callable_ = compile_goal(problem.goal)
         assert callable(callable_)
+
+
+# Malformed-input rejection and lenient-section skipping
+#
+# The error-path branches below pin the parser's two distinct failure modes:
+# a hard ``BDDLParseError`` for grammar the parser cannot represent (bad arity,
+# empty connectives, non-symbol heads, stray parens), versus silent skipping of
+# tokens inside lenient sections (a bare atom in the ``(define ...)`` body, a
+# non-predicate ``(:init ...)`` clause). The goal is the authoritative success
+# criterion, so a malformed *init* clause is logged and dropped rather than
+# failing the whole parse, while a malformed *goal* must raise.
+
+
+class TestArityRejection:
+    """Each leaf predicate fails fast with an actionable arity error."""
+
+    @pytest.mark.parametrize(
+        "expr,token",
+        [
+            ("(near cube_1)", "near"),
+            ("(inside cube_1)", "inside"),
+            ("(open drawer_joint extra)", "open"),
+            ("(closed drawer_joint extra)", "closed"),
+        ],
+    )
+    def test_predicate_arity_errors_name_the_predicate(self, expr: str, token: str):
+        with pytest.raises(BDDLParseError, match=token):
+            parse_bddl(f"(define (problem p) (:goal {expr}))")
+
+
+class TestConnectiveAndGoalRejection:
+    def test_empty_and_rejected(self):
+        with pytest.raises(BDDLParseError, match="at least one clause"):
+            parse_bddl("(define (problem p) (:goal (and)))")
+
+    def test_empty_or_rejected(self):
+        with pytest.raises(BDDLParseError, match="at least one clause"):
+            parse_bddl("(define (problem p) (:goal (or)))")
+
+    def test_empty_goal_rejected(self):
+        with pytest.raises(BDDLParseError, match="empty"):
+            parse_bddl("(define (problem p) (:goal))")
+
+    def test_goal_atom_instead_of_sexp_rejected(self):
+        """A bare atom where a predicate s-expression is required must raise."""
+        with pytest.raises(BDDLParseError, match="predicate s-expression"):
+            parse_bddl("(define (problem p) (:goal bare_atom))")
+
+    def test_goal_with_non_symbol_head_rejected(self):
+        """A nested list as the predicate head (no symbol) must raise."""
+        with pytest.raises(BDDLParseError, match="symbol head"):
+            parse_bddl("(define (problem p) (:goal ((on a b))))")
+
+    def test_predicate_with_non_string_arg_rejected(self):
+        """Predicate args must be flat symbols, not nested s-expressions."""
+        with pytest.raises(BDDLParseError, match="expected string args"):
+            parse_bddl("(define (problem p) (:goal (on (a) b)))")
+
+
+class TestSexpStructureErrors:
+    def test_unexpected_end_of_input(self):
+        from strands_robots.benchmarks.libero.bddl_parser import _parse_sexp
+
+        with pytest.raises(BDDLParseError, match="unexpected end of input"):
+            _parse_sexp([])
+
+    def test_stray_close_paren(self):
+        from strands_robots.benchmarks.libero.bddl_parser import _parse_sexp
+
+        with pytest.raises(BDDLParseError, match="unexpected '\\)'"):
+            _parse_sexp([")"])
+
+
+class TestLenientSectionSkipping:
+    """Non-fatal sections silently skip tokens the parser can't model."""
+
+    def test_bare_atom_in_define_body_is_skipped(self):
+        """A non-list child of ``(define ...)`` (e.g. a stray symbol) is
+        ignored, not fatal - only recognised section heads are processed."""
+        problem = parse_bddl("(define (problem p) stray_atom (:goal (grasped cube_1)))")
+        assert problem.name == "p"
+        assert isinstance(problem.goal, Pred)
+
+    def test_unquoted_language_pieces_are_joined(self):
+        """A ``:language`` section without surrounding quotes still yields a
+        joined string rather than being dropped."""
+        problem = parse_bddl("(define (problem p) (:language pick the cube) (:goal (grasped cube_1)))")
+        assert problem.language == "pick the cube"
+
+    def test_non_list_init_clause_is_skipped(self):
+        """A bare atom inside ``(:init ...)`` is skipped; valid clauses survive."""
+        problem = parse_bddl("(define (problem p) (:init bare_token (on a b)) (:goal (grasped cube_1)))")
+        assert len(problem.init) == 1
+        assert isinstance(problem.init[0], Pred)
+
+    def test_unsupported_init_clause_is_dropped_not_fatal(self):
+        """An unparseable ``(:init ...)`` clause is logged and dropped - the
+        goal stays authoritative - while the supported clause is kept."""
+        problem = parse_bddl("(define (problem p) (:init (telekinesis x) (on a b)) (:goal (grasped cube_1)))")
+        # The unsupported predicate is dropped; only the valid (on ...) remains.
+        assert len(problem.init) == 1
+        assert isinstance(problem.init[0], Pred)
+        assert problem.init[0].name == "on"
+
+
+class TestCompileGoalUnsupportedNode:
+    def test_unknown_ast_node_rejected(self):
+        """compile_goal must reject an AST node type it does not recognise."""
+
+        class _BogusNode:
+            pass
+
+        with pytest.raises(BDDLParseError, match="unsupported AST node"):
+            compile_goal(_BogusNode())  # type: ignore[arg-type]
