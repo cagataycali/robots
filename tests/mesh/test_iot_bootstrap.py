@@ -534,3 +534,159 @@ class TestEnsureProvisioningRoleCreate:
         assert arn == "arn:iam:provisioning"
         # Managed policy attachment for fleet provisioning
         iam.attach_role_policy.assert_called()
+
+
+class TestBootstrapAccountGuards:
+    """The public bootstrap_account() refuses to create resources without
+    explicit confirmation, and aborts on a wrong-account mismatch."""
+
+    def test_requires_confirm_when_not_dry_run(self):
+        with pytest.raises(ValueError, match="confirm=True"):
+            boot_mod.bootstrap_account(dry_run=False, confirm=False)
+
+    def test_dry_run_previews_without_creating(self, monkeypatch, capsys):
+        sts = MagicMock()
+        sts.get_caller_identity.return_value = {"Account": "111122223333"}
+        sts.meta.region_name = "us-west-2"
+        boto3_mock = MagicMock()
+        boto3_mock.client.return_value = sts
+        monkeypatch.setattr(boot_mod, "_require_boto3", lambda: boto3_mock)
+
+        result = boot_mod.bootstrap_account(region="us-west-2")
+
+        assert isinstance(result, BootstrappedAccount)
+        assert result.account_id == "111122223333"
+        assert result.region == "us-west-2"
+        # Dry run touches only STS - never any mutating client.
+        assert {c.args[0] for c in boto3_mock.client.call_args_list} == {"sts"}
+        assert result.created == []
+        # The preview lists the resources it would create, on stderr.
+        err = capsys.readouterr().err
+        assert "strands-mesh-fleet-provisioning" in err
+        assert "dry_run=False, confirm=True" in err
+
+    def test_aborts_on_account_id_mismatch(self, monkeypatch):
+        sts = MagicMock()
+        sts.get_caller_identity.return_value = {"Account": "999988887777"}
+        sts.meta.region_name = "us-west-2"
+        boto3_mock = MagicMock()
+        boto3_mock.client.return_value = sts
+        monkeypatch.setattr(boot_mod, "_require_boto3", lambda: boto3_mock)
+
+        with pytest.raises(ValueError, match="does not match"):
+            boot_mod.bootstrap_account(confirm=True, dry_run=False, account_id_expected="111122223333")
+
+
+class TestBootstrapAccountProvisioning:
+    """Full bootstrap orchestration (confirm=True, dry_run=False). The
+    per-resource _ensure_* helpers have their own tests, so here we stub them
+    and assert bootstrap_account wires their ARNs into the returned record
+    and invokes them in dependency order."""
+
+    def test_provisions_and_collects_arns(self, monkeypatch):
+        sts = MagicMock()
+        sts.get_caller_identity.return_value = {"Account": "111122223333"}
+        sts.meta.region_name = "eu-central-1"
+        boto3_mock = MagicMock()
+        boto3_mock.client.return_value = sts
+        monkeypatch.setattr(boot_mod, "_require_boto3", lambda: boto3_mock)
+
+        calls: list[str] = []
+
+        def _stub(name, ret):
+            def _fn(*args, **kwargs):
+                calls.append(name)
+                return ret
+
+            return _fn
+
+        monkeypatch.setattr(boot_mod, "_ensure_log_group", _stub("log", "arn:logs"))
+        monkeypatch.setattr(boot_mod, "_ensure_safety_table", _stub("ddb", "arn:ddb"))
+        monkeypatch.setattr(boot_mod, "_ensure_lambda_role", _stub("lam_role", "arn:lam-role"))
+        monkeypatch.setattr(boot_mod, "_ensure_estop_lambda", _stub("estop", "arn:estop"))
+        monkeypatch.setattr(boot_mod, "_ensure_safety_to_dynamodb_rule", _stub("rule_safety", "arn:rule-safety"))
+        monkeypatch.setattr(boot_mod, "_ensure_estop_rule", _stub("rule_estop", "arn:rule-estop"))
+        monkeypatch.setattr(boot_mod, "_grant_iot_invoke_lambda", _stub("grant_estop", None))
+        monkeypatch.setattr(boot_mod, "_ensure_provisioning_hook_role", _stub("hook_role", "arn:hook-role"))
+        monkeypatch.setattr(boot_mod, "_ensure_provisioning_hook_lambda", _stub("hook", "arn:hook"))
+        monkeypatch.setattr(boot_mod, "_ensure_provisioning_template", _stub("template", "arn:template"))
+        monkeypatch.setattr(boot_mod, "_grant_iot_invoke_provisioning_hook", _stub("grant_hook", None))
+
+        out = boot_mod.bootstrap_account(confirm=True, dry_run=False)
+
+        assert out.account_id == "111122223333"
+        assert out.region == "eu-central-1"
+        assert out.log_group_arn == "arn:logs"
+        assert out.safety_table_arn == "arn:ddb"
+        assert out.estop_lambda_arn == "arn:estop"
+        assert out.rule_safety_arn == "arn:rule-safety"
+        assert out.rule_estop_arn == "arn:rule-estop"
+        assert out.provisioning_hook_lambda_arn == "arn:hook"
+        assert out.provisioning_template_arn == "arn:template"
+        # Logs/table come before the Lambda that depends on the table ARN;
+        # the hook role precedes the hook Lambda it grants.
+        assert calls.index("log") < calls.index("estop")
+        assert calls.index("ddb") < calls.index("rule_safety")
+        assert calls.index("hook_role") < calls.index("hook")
+        assert calls.index("hook") < calls.index("template")
+
+
+class TestTeardownAccount:
+    """teardown_account() is best-effort: it deletes every managed resource
+    in dependency order and swallows per-resource failures so a partially
+    provisioned account can still be cleaned up."""
+
+    def test_deletes_resources_in_order(self, monkeypatch):
+        iot = MagicMock()
+        iam = MagicMock()
+        lam = MagicMock()
+        ddb = MagicMock()
+        logs = MagicMock()
+        iam.list_role_policies.return_value = {"PolicyNames": []}
+        iam.list_attached_role_policies.return_value = {"AttachedPolicies": []}
+
+        clients = {"iot": iot, "iam": iam, "lambda": lam, "dynamodb": ddb, "logs": logs}
+        boto3_mock = MagicMock()
+        boto3_mock.client.side_effect = lambda svc, **kw: clients[svc]
+        monkeypatch.setattr(boot_mod, "_require_boto3", lambda: boto3_mock)
+
+        boot_mod.teardown_account(region="us-west-2")
+
+        # Both topic rules removed.
+        deleted_rules = {c.kwargs["ruleName"] for c in iot.delete_topic_rule.call_args_list}
+        assert deleted_rules == {RULE_SAFETY_TO_DYNAMODB, RULE_ESTOP_FANOUT}
+        # E-stop Lambda and DynamoDB table and log group and template all removed.
+        lam.delete_function.assert_called_once()
+        ddb.delete_table.assert_called_once_with(TableName=SAFETY_TABLE_NAME)
+        logs.delete_log_group.assert_called_once_with(logGroupName=LOG_GROUP_NAME)
+        iot.delete_provisioning_template.assert_called_once_with(templateName=PROVISIONING_TEMPLATE)
+        # All three managed roles cleaned up.
+        torn_roles = {c.kwargs["RoleName"] for c in iam.delete_role.call_args_list}
+        assert torn_roles == {
+            boot_mod.ESTOP_LAMBDA_ROLE,
+            "strands-mesh-iot-action-role",
+            boot_mod.PROVISIONING_ROLE,
+        }
+
+    def test_swallows_per_resource_failures(self, monkeypatch):
+        iot = MagicMock()
+        iam = MagicMock()
+        lam = MagicMock()
+        ddb = MagicMock()
+        logs = MagicMock()
+        # Every deletion raises - teardown must not propagate.
+        iot.delete_topic_rule.side_effect = RuntimeError("boom")
+        iot.delete_provisioning_template.side_effect = RuntimeError("boom")
+        lam.delete_function.side_effect = RuntimeError("boom")
+        ddb.delete_table.side_effect = RuntimeError("boom")
+        logs.delete_log_group.side_effect = RuntimeError("boom")
+        iam.list_role_policies.side_effect = RuntimeError("boom")
+
+        clients = {"iot": iot, "iam": iam, "lambda": lam, "dynamodb": ddb, "logs": logs}
+        boto3_mock = MagicMock()
+        boto3_mock.client.side_effect = lambda svc, **kw: clients[svc]
+        monkeypatch.setattr(boot_mod, "_require_boto3", lambda: boto3_mock)
+
+        # Must complete without raising despite every call failing.
+        boot_mod.teardown_account()
+        ddb.delete_table.assert_called_once()
