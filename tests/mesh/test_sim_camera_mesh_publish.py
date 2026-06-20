@@ -255,3 +255,108 @@ class TestEncodeAndPublishFrames:
         mesh._encode_and_publish_frames({"cam0": frame}, ["cam0"])
         assert len(published) == 1
         assert published[0][1]["dtype"] == "uint8"
+
+
+class TestHardwareCameraPublish:
+    """Unit tests for the _publish_hardware_cameras path.
+
+    A hardware mesh peer wraps a lerobot ``Robot`` (``self.robot.robot``).
+    Camera frames are sourced from ``inner.get_observation()`` when available,
+    and otherwise read directly from the per-camera objects in
+    ``inner.cameras`` (``async_read``/``read``). Either way the configured
+    cameras (``inner.config.cameras``) determine which keys are published.
+    """
+
+    @staticmethod
+    def _mesh_with_capture():
+        from strands_robots.mesh.core import Mesh
+
+        mesh = Mesh.__new__(Mesh)
+        mesh.peer_id = "hw-peer"
+        mesh._running = True
+        published: list[tuple[str, dict]] = []
+        mesh.publish = lambda k, p: published.append((k, p))
+        return mesh, published
+
+    def test_publishes_frames_from_get_observation(self):
+        """Configured cameras present in get_observation() are published."""
+        mesh, published = self._mesh_with_capture()
+        frame = np.zeros((4, 4, 3), dtype=np.uint8)
+        inner = MagicMock()
+        inner.config.cameras = {"wrist": object(), "top": object()}
+        inner.get_observation.return_value = {"wrist": frame, "top": frame}
+
+        mesh._publish_hardware_cameras(inner)
+
+        topics = {k for k, _ in published}
+        assert topics == {"strands/hw-peer/camera/wrist", "strands/hw-peer/camera/top"}
+
+    def test_noop_when_no_cameras_configured(self):
+        """An inner robot with no camera config publishes nothing."""
+        mesh, published = self._mesh_with_capture()
+        inner = MagicMock()
+        inner.config.cameras = {}
+
+        mesh._publish_hardware_cameras(inner)
+
+        assert published == []
+        # The camera-config gate short-circuits before reading observations.
+        inner.get_observation.assert_not_called()
+
+    def test_falls_back_to_camera_objects_when_observation_unavailable(self):
+        """When get_observation() raises, frames are read from inner.cameras.
+
+        The per-camera objects expose ``async_read`` (preferred) or ``read``;
+        the fallback path must still publish a frame per configured camera.
+        """
+        mesh, published = self._mesh_with_capture()
+        frame = np.zeros((4, 4, 3), dtype=np.uint8)
+
+        async_cam = MagicMock(spec=["async_read"])
+        async_cam.async_read.return_value = frame
+        read_cam = MagicMock(spec=["read"])
+        read_cam.read.return_value = frame
+
+        inner = MagicMock()
+        inner.config.cameras = {"wrist": object(), "top": object()}
+        inner.get_observation.side_effect = RuntimeError("device busy")
+        inner.cameras = {"wrist": async_cam, "top": read_cam}
+
+        mesh._publish_hardware_cameras(inner)
+
+        async_cam.async_read.assert_called_once()
+        read_cam.read.assert_called_once()
+        topics = {k for k, _ in published}
+        assert topics == {"strands/hw-peer/camera/wrist", "strands/hw-peer/camera/top"}
+
+    def test_noop_when_fallback_has_no_camera_objects(self):
+        """get_observation() unavailable AND no inner.cameras -> nothing published."""
+        mesh, published = self._mesh_with_capture()
+        inner = MagicMock()
+        inner.config.cameras = {"wrist": object()}
+        inner.get_observation.side_effect = RuntimeError("device busy")
+        inner.cameras = {}
+
+        mesh._publish_hardware_cameras(inner)
+
+        assert published == []
+
+    def test_noop_when_every_fallback_camera_read_fails(self):
+        """Fallback cameras present but each read raises -> obs stays empty.
+
+        Per-camera read errors are swallowed so one flaky device cannot crash
+        the publish loop; when no frame is recovered nothing is published.
+        """
+        mesh, published = self._mesh_with_capture()
+        flaky_cam = MagicMock(spec=["async_read"])
+        flaky_cam.async_read.side_effect = OSError("frame grab failed")
+
+        inner = MagicMock()
+        inner.config.cameras = {"wrist": object()}
+        inner.get_observation.side_effect = RuntimeError("device busy")
+        inner.cameras = {"wrist": flaky_cam}
+
+        mesh._publish_hardware_cameras(inner)
+
+        flaky_cam.async_read.assert_called_once()
+        assert published == []
