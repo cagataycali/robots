@@ -453,3 +453,87 @@ class TestBuildProcessorsGuards:
             "metadata_by_tag": {"t": {"state_stats": {"q01": [0.0], "q99": [1.0]}, "action_stats": "bad"}},
         }
         assert ns.build_norm_stats_processors(payload, "t") == (None, None)
+
+
+class TestHubLoader:
+    """load_norm_stats Hub path: config.json filename override + fetch."""
+
+    def test_hub_load_honors_config_filename_override(self, tmp_path, monkeypatch):
+        # A non-local repo id forces the Hub branch. hf_hub_download is patched to
+        # return local fixture files: config.json points at a custom stats name,
+        # and that custom file carries the real payload.
+        (tmp_path / "config.json").write_text(json.dumps({"norm_stats_filename": "custom.json"}))
+        (tmp_path / "custom.json").write_text(FIXTURE.read_text())
+
+        def fake_download(repo_id, filename, *args, **kwargs):
+            return str(tmp_path / filename)
+
+        monkeypatch.setattr("huggingface_hub.hf_hub_download", fake_download)
+        payload = ns.load_norm_stats("acme/molmoact2-so101")
+        assert ns.is_norm_stats_payload(payload)
+
+    def test_hub_load_without_config_uses_default_filename(self, tmp_path, monkeypatch):
+        # No config.json on the Hub: the config fetch raises, the default
+        # norm_stats.json is fetched instead (the except-and-continue path).
+        (tmp_path / "norm_stats.json").write_text(FIXTURE.read_text())
+
+        def fake_download(repo_id, filename, *args, **kwargs):
+            if filename == "config.json":
+                raise FileNotFoundError("no config on hub")
+            return str(tmp_path / filename)
+
+        monkeypatch.setattr("huggingface_hub.hf_hub_download", fake_download)
+        payload = ns.load_norm_stats("acme/molmoact2-so101")
+        assert ns.is_norm_stats_payload(payload)
+
+    def test_hub_fetch_failure_returns_none(self, monkeypatch):
+        # Network/repo errors fetching the stats file are non-fatal: None, no raise.
+        def fake_download(repo_id, filename, *args, **kwargs):
+            raise OSError("connection reset")
+
+        monkeypatch.setattr("huggingface_hub.hf_hub_download", fake_download)
+        assert ns.load_norm_stats("acme/does-not-exist") is None
+
+
+class TestFromStatsModeGuards:
+    """from_stats raises (never silently passes through) on missing mode stats."""
+
+    def test_mean_std_missing_std_raises(self):
+        with pytest.raises(ValueError, match="requires mean and std"):
+            ns.FeatureNormalizer.from_stats({"mean": [0.0]}, "mean_std")
+
+    def test_min_max_missing_max_raises(self):
+        with pytest.raises(ValueError, match="requires min and max"):
+            ns.FeatureNormalizer.from_stats({"min": [0.0]}, "min_max")
+
+
+class TestSelectTagMalformedMetadata:
+    """select_norm_tag rejects payloads with no usable metadata_by_tag mapping."""
+
+    def test_empty_tag_mapping_returns_none(self):
+        assert ns.select_norm_tag({"metadata_by_tag": {}}) is None
+
+    def test_non_dict_tag_mapping_returns_none(self):
+        assert ns.select_norm_tag({"metadata_by_tag": "not-a-dict"}) is None
+
+    def test_missing_tag_key_returns_none(self):
+        assert ns.select_norm_tag({}) is None
+
+
+class TestProcessorStepEdgeCases:
+    """Pre/post ProcessorStep helpers: identity transform_features + None action."""
+
+    def test_transform_features_is_identity_on_both_steps(self):
+        pre, post = ns.build_norm_stats_processors(_load_fixture())
+        sentinel = object()
+        assert pre.steps[0].transform_features(sentinel) is sentinel
+        assert post.steps[0].transform_features(sentinel) is sentinel
+
+    def test_postprocessor_passes_through_none_action(self):
+        _, post = ns.build_norm_stats_processors(_load_fixture())
+        assert post.steps[0].action(None) is None
+
+    def test_preprocessor_leaves_observation_without_state_unchanged(self):
+        pre, _ = ns.build_norm_stats_processors(_load_fixture())
+        obs = {"observation.images.top": "frame"}
+        assert pre.steps[0].observation(obs) == obs
