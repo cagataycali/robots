@@ -7,7 +7,9 @@ Covers:
 * ``replay()`` with actions that have ``.numpy()`` and ``.tolist()`` methods
   (tensor-backed dataset frames)
 * ``_extract_frame_ndarray`` handles render blocks without images
-* ``_resolve_success_fn`` "contact" with backend that raises NotImplementedError
+* ``_resolve_success_fn`` "contact" - raise, missing-hook, and positive
+  (n_contacts / contacts-list) detection paths
+* ``_maybe_sim_time`` get_state() fallback (nested ``content[].json.sim_time``)
 * ``evaluate()`` "never-succeeds" default path (no success_fn)
 """
 
@@ -225,3 +227,78 @@ def test_evaluate_none_success_fn_gives_zero_success_rate():
         if isinstance(c, dict) and "json" in c:
             assert c["json"]["success_rate"] == 0.0
             break
+
+
+# ── _maybe_sim_time get_state() fallback ─────────────────────────────
+
+
+def test_maybe_sim_time_reads_from_get_state_content_json():
+    """Backends with no structured ``_world`` expose sim time via the
+    status-dict ``content[].json.sim_time`` shape. ``_maybe_sim_time`` must
+    dig it out of that nested block.
+    """
+
+    class _StatusDictSim(_MinimalSim):
+        # No ``_world`` attr → forces the get_state() fallback path.
+        _world = None
+
+        def get_state(self):
+            return {"content": [{"text": "ok"}, {"json": {"sim_time": 1.25}}]}
+
+    t = PolicyRunner(_StatusDictSim(robots=["r0"]))._maybe_sim_time()
+    assert t == 1.25
+
+
+def test_maybe_sim_time_get_state_without_sim_time_returns_none():
+    """A status dict with no ``sim_time`` anywhere yields None (not a crash)."""
+
+    class _NoTimeSim(_MinimalSim):
+        _world = None
+
+        def get_state(self):
+            return {"content": [{"json": {"step_count": 3}}]}
+
+    assert PolicyRunner(_NoTimeSim(robots=["r0"]))._maybe_sim_time() is None
+
+
+# ── _resolve_success_fn "contact" positive detection ─────────────────
+
+
+def test_contact_success_fn_true_on_n_contacts():
+    """``success_fn="contact"`` reports success when the backend's
+    ``get_contacts`` returns a positive ``n_contacts`` count.
+    """
+
+    class _ContactSim(_MinimalSim):
+        def get_contacts(self):
+            return {"n_contacts": 2}
+
+    sim = _ContactSim(robots=["r0"])
+    fn = PolicyRunner(sim)._resolve_success_fn("contact")
+    assert fn is not None
+    assert fn({}) is True
+
+
+def test_contact_success_fn_true_on_contacts_list():
+    """``success_fn="contact"`` also accepts the ``{"contacts": [...]}`` shape."""
+
+    class _ContactListSim(_MinimalSim):
+        def get_contacts(self):
+            return {"contacts": [{"a": "hand", "b": "cube"}]}
+
+    sim = _ContactListSim(robots=["r0"])
+    fn = PolicyRunner(sim)._resolve_success_fn("contact")
+    assert fn({}) is True
+
+
+def test_contact_success_fn_false_when_no_get_contacts():
+    """When the backend has no ``get_contacts`` at all, contact detection is
+    a safe no-op returning False (rather than AttributeError).
+    """
+
+    class _NoContactsSim(_MinimalSim):
+        get_contacts = None
+
+    sim = _NoContactsSim(robots=["r0"])
+    fn = PolicyRunner(sim)._resolve_success_fn("contact")
+    assert fn({}) is False

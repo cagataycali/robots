@@ -1236,3 +1236,150 @@ class TestOnFrameHookForSpec:
         )
         assert result["status"] == "success", result
         assert len(captured) == 20, f"expected 20 calls via evaluate_benchmark plumbing, got {len(captured)}"
+
+
+# Degenerate (empty-actions) policy in the spec-driven eval loop
+
+
+class _EmptyActionsPolicy(MockPolicy):
+    """Policy that returns no actions - models a planner that fails to find a
+    plan or a VLA that emits an empty chunk. The eval loop must still advance
+    physics (``sim.step``) and run the spec's per-step bookkeeping so the
+    episode terminates instead of hanging.
+    """
+
+    async def get_actions(self, observation_dict, instruction, **kwargs):
+        return []
+
+
+class _DegenerateOutcomeBenchmark(BenchmarkProtocol):
+    """Counting benchmark whose success/failure/done can be tripped at a given
+    step. Used to exercise every sub-branch of the empty-actions path.
+    """
+
+    max_steps = 8
+
+    def __init__(self, *, success_after=10**9, fail_after=10**9, done_after=10**9):
+        self.success_after = success_after
+        self.fail_after = fail_after
+        self.done_after = done_after
+        self.on_step_calls = 0
+
+    @property
+    def supported_robots(self) -> list[str]:
+        return []  # empty → compatible with any robot
+
+    @property
+    def default_robot(self) -> str:
+        return "fake_robot"
+
+    def on_step(self, sim, obs, action):
+        self.on_step_calls += 1
+        return StepInfo(reward=1.0, done=self.on_step_calls >= self.done_after)
+
+    def is_success(self, sim):
+        return self.on_step_calls >= self.success_after
+
+    def is_failure(self, sim):
+        return self.on_step_calls >= self.fail_after
+
+
+class TestDegeneratePolicyInBenchmarkLoop:
+    """A policy returning empty actions must not stall the spec eval loop.
+
+    Covers the ``if not actions:`` branch in ``_evaluate_with_spec``: physics
+    is advanced once per step, ``on_step`` still runs, cumulative reward
+    accrues, and success / failure / done all terminate the episode.
+    """
+
+    def test_empty_actions_still_advance_and_run_on_step(self):
+        """No actions → loop runs to max_steps, on_step fires every step, the
+        empty-action path's ``action_applied`` (empty dict) reaches on_step.
+        """
+        sim = FakeSim()
+        policy = _EmptyActionsPolicy()
+        policy.set_robot_state_keys(sim.robot_joint_names("fake_robot"))
+        spec = _DegenerateOutcomeBenchmark()
+
+        result = PolicyRunner(sim).evaluate("fake_robot", policy, spec=spec, n_episodes=1, seed=7)
+
+        assert result["status"] == "success"
+        payload = next(c["json"] for c in result["content"] if "json" in c)
+        ep = payload["episodes"][0]
+        # max_steps=8, +1 reward/step, no early termination → 8 steps, reward 8.
+        assert ep["steps"] == 8
+        assert ep["cumulative_reward"] == pytest.approx(8.0)
+        assert ep["success"] is False
+        assert ep["failure"] is False
+        assert spec.on_step_calls == 8
+
+    def test_empty_actions_success_terminates_episode(self):
+        """``is_success`` tripping inside the empty-action path ends the episode
+        early and marks it successful.
+        """
+        sim = FakeSim()
+        policy = _EmptyActionsPolicy()
+        policy.set_robot_state_keys(sim.robot_joint_names("fake_robot"))
+        spec = _DegenerateOutcomeBenchmark(success_after=3)
+
+        result = PolicyRunner(sim).evaluate("fake_robot", policy, spec=spec, n_episodes=1, seed=7)
+
+        payload = next(c["json"] for c in result["content"] if "json" in c)
+        ep = payload["episodes"][0]
+        assert ep["success"] is True
+        assert ep["failure"] is False
+        assert ep["steps"] == 3
+
+    def test_empty_actions_failure_terminates_episode(self):
+        """``is_failure`` tripping inside the empty-action path ends the episode
+        early and marks it failed.
+        """
+        sim = FakeSim()
+        policy = _EmptyActionsPolicy()
+        policy.set_robot_state_keys(sim.robot_joint_names("fake_robot"))
+        spec = _DegenerateOutcomeBenchmark(fail_after=2)
+
+        result = PolicyRunner(sim).evaluate("fake_robot", policy, spec=spec, n_episodes=1, seed=7)
+
+        payload = next(c["json"] for c in result["content"] if "json" in c)
+        ep = payload["episodes"][0]
+        assert ep["failure"] is True
+        assert ep["success"] is False
+        assert ep["steps"] == 2
+
+    def test_empty_actions_done_terminates_episode(self):
+        """``StepInfo.done`` returned inside the empty-action path breaks the
+        loop without flagging success or failure.
+        """
+        sim = FakeSim()
+        policy = _EmptyActionsPolicy()
+        policy.set_robot_state_keys(sim.robot_joint_names("fake_robot"))
+        spec = _DegenerateOutcomeBenchmark(done_after=4)
+
+        result = PolicyRunner(sim).evaluate("fake_robot", policy, spec=spec, n_episodes=1, seed=7)
+
+        payload = next(c["json"] for c in result["content"] if "json" in c)
+        ep = payload["episodes"][0]
+        assert ep["steps"] == 4
+        assert ep["success"] is False
+        assert ep["failure"] is False
+
+    def test_empty_actions_on_step_error_surfaces_structured(self):
+        """If the spec's ``on_step`` raises in the empty-action path, the run
+        returns a structured error dict (never raises past the loop).
+        """
+
+        class _BoomOnStep(_DegenerateOutcomeBenchmark):
+            def on_step(self, sim, obs, action):
+                raise RuntimeError("on_step boom")
+
+        sim = FakeSim()
+        policy = _EmptyActionsPolicy()
+        policy.set_robot_state_keys(sim.robot_joint_names("fake_robot"))
+        spec = _BoomOnStep()
+
+        result = PolicyRunner(sim).evaluate("fake_robot", policy, spec=spec, n_episodes=1, seed=7)
+
+        assert result["status"] == "error"
+        assert "on_step failed" in result["content"][0]["text"]
+        assert "on_step boom" in result["content"][0]["text"]
