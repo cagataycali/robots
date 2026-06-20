@@ -1092,3 +1092,132 @@ class TestServiceDiscovery:
             result = gr00t_inference(action="stop", port=5555)
         assert result["status"] == "success"
         assert "No service running on port 5555" in result["message"]
+
+
+class TestStartRestartDispatch:
+    """Cover the ``start`` / ``restart`` / unknown-action branches of the tool.
+
+    These dispatcher arms forward roughly twenty inference parameters straight
+    through to ``_start_service`` (and, for ``restart``, first tear down the old
+    service via ``_stop_service``). A wiring slip - a dropped or misnamed kwarg,
+    a missing checkpoint guard, or the HTTP default-port coercion firing on the
+    wrong condition - silently launches the wrong server, so the contract is
+    pinned here without invoking docker.
+    """
+
+    def test_start_requires_checkpoint_path(self):
+        """``start`` without a checkpoint is a structured error, not a raise."""
+        result = gr00t_inference(action="start", checkpoint_path=None)
+        assert result["status"] == "error"
+        assert "Checkpoint path required to start service" in result["message"]
+
+    def test_start_forwards_all_parameters_to_start_service(self):
+        """Every inference parameter reaches ``_start_service`` under its own
+        keyword (no positional drift, no dropped flags)."""
+        with patch(
+            "strands_robots.tools.gr00t_inference._start_service",
+            return_value={"status": "success", "message": "up"},
+        ) as mock:
+            result = gr00t_inference(
+                action="start",
+                checkpoint_path="/data/ckpt",
+                policy_name="my-policy",
+                port=5557,
+                data_config="libero_panda",
+                embodiment_tag="libero_sim",
+                denoising_steps=8,
+                host="127.0.0.1",
+                container_name="groot",
+                timeout=90,
+                use_tensorrt=True,
+                trt_engine_path="engine.plan",
+                vit_dtype="fp16",
+                llm_dtype="bf16",
+                dit_dtype="fp16",
+                protocol="n1.7",
+                use_sim_policy_wrapper=True,
+            )
+        assert result["status"] == "success"
+        kwargs = mock.call_args.kwargs
+        assert kwargs["checkpoint_path"] == "/data/ckpt"
+        assert kwargs["policy_name"] == "my-policy"
+        assert kwargs["port"] == 5557
+        assert kwargs["data_config"] == "libero_panda"
+        assert kwargs["embodiment_tag"] == "libero_sim"
+        assert kwargs["denoising_steps"] == 8
+        assert kwargs["host"] == "127.0.0.1"
+        assert kwargs["container_name"] == "groot"
+        assert kwargs["timeout"] == 90
+        assert kwargs["use_tensorrt"] is True
+        assert kwargs["trt_engine_path"] == "engine.plan"
+        assert kwargs["vit_dtype"] == "fp16"
+        assert kwargs["llm_dtype"] == "bf16"
+        assert kwargs["dit_dtype"] == "fp16"
+        assert kwargs["protocol"] == "n1.7"
+        assert kwargs["use_sim_policy_wrapper"] is True
+
+    def test_start_http_server_coerces_default_zmq_port_to_8000(self):
+        """An HTTP server left on the ZMQ default (5555) is moved to 8000 so it
+        does not collide with the ZMQ port convention."""
+        with patch(
+            "strands_robots.tools.gr00t_inference._start_service",
+            return_value={"status": "success", "message": "up"},
+        ) as mock:
+            gr00t_inference(action="start", checkpoint_path="/cp", http_server=True, port=5555)
+        assert mock.call_args.kwargs["port"] == 8000
+        assert mock.call_args.kwargs["http_server"] is True
+
+    def test_start_http_server_respects_explicit_non_default_port(self):
+        """When the caller picks an explicit HTTP port it is left untouched -
+        only the 5555 default is coerced."""
+        with patch(
+            "strands_robots.tools.gr00t_inference._start_service",
+            return_value={"status": "success", "message": "up"},
+        ) as mock:
+            gr00t_inference(action="start", checkpoint_path="/cp", http_server=True, port=8123)
+        assert mock.call_args.kwargs["port"] == 8123
+
+    def test_start_zmq_keeps_default_port(self):
+        """Without ``http_server`` the default 5555 ZMQ port is preserved."""
+        with patch(
+            "strands_robots.tools.gr00t_inference._start_service",
+            return_value={"status": "success", "message": "up"},
+        ) as mock:
+            gr00t_inference(action="start", checkpoint_path="/cp", http_server=False, port=5555)
+        assert mock.call_args.kwargs["port"] == 5555
+
+    def test_restart_requires_checkpoint_path(self):
+        """``restart`` without a checkpoint is a structured error and never
+        tears the running service down."""
+        with patch("strands_robots.tools.gr00t_inference._stop_service") as stop:
+            result = gr00t_inference(action="restart", checkpoint_path=None)
+        assert result["status"] == "error"
+        assert "Checkpoint path required for restart" in result["message"]
+        stop.assert_not_called()
+
+    def test_restart_stops_then_starts_in_order(self):
+        """``restart`` tears down the existing service before starting the new
+        one, with a pause in between, and returns the start result."""
+        calls: list[str] = []
+        with (
+            patch(
+                "strands_robots.tools.gr00t_inference._stop_service",
+                side_effect=lambda port: calls.append("stop"),
+            ),
+            patch(
+                "strands_robots.tools.gr00t_inference._start_service",
+                side_effect=lambda **kw: calls.append("start") or {"status": "success", "message": "up"},
+            ) as start,
+            patch("strands_robots.tools.gr00t_inference.time.sleep", side_effect=lambda s: calls.append("sleep")),
+        ):
+            result = gr00t_inference(action="restart", checkpoint_path="/cp", port=5560)
+        assert result["status"] == "success"
+        assert calls == ["stop", "sleep", "start"]
+        assert start.call_args.kwargs["port"] == 5560
+
+    def test_unknown_action_is_structured_error(self):
+        """An unrecognized action name returns a structured error naming it,
+        rather than raising past the dispatcher."""
+        result = gr00t_inference(action="teleport")
+        assert result["status"] == "error"
+        assert "Unknown action: teleport" in result["message"]
