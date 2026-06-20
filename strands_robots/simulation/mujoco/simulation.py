@@ -1943,6 +1943,15 @@ class MuJoCoSimEngine(
         if err := self._require_no_running_policy("start_policy", robot_name=robot_name):
             return err
 
+        # Validate the step horizon synchronously, before submitting to the
+        # executor. run_policy runs on a background thread, so a malformed
+        # horizon (n_steps <= 0, control_frequency <= 0) would otherwise be
+        # reported only inside the future - the caller would receive a false
+        # "started" success and the robot would be left marked as running.
+        _, _, horizon_error = self._resolve_horizon(n_steps, max_steps, control_frequency, duration)
+        if horizon_error is not None:
+            return horizon_error
+
         # Concurrent multi-robot policies run on disjoint ctrl slices (physics
         # serialized by _lock). For SYNCHRONIZED multi-robot *recording* (both
         # robots captured in one merged frame per step), use run_multi_policy

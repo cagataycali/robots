@@ -293,6 +293,61 @@ class SimEngine(ABC):
 
     # Policy orchestration (concrete facade, not abstract)
 
+    @staticmethod
+    def _resolve_horizon(
+        n_steps: int | None,
+        max_steps: int | None,
+        control_frequency: float,
+        duration: float,
+    ) -> tuple[float, int | None, dict[str, Any] | None]:
+        """Resolve a step horizon into a wall-clock duration.
+
+        ``n_steps`` (primary) or the legacy ``max_steps`` alias specify the
+        rollout length as a step count; ``duration = n_steps / control_frequency``.
+        ``n_steps`` wins when both are passed. The inputs are validated before
+        the division so a non-positive horizon or frequency is reported as a
+        caller error rather than silently producing a no-op, a negative
+        duration, or a ``ZeroDivisionError``.
+
+        Args:
+            n_steps: Primary step-count horizon, or ``None``.
+            max_steps: Legacy alias, normalized to ``n_steps`` when ``n_steps``
+                is ``None``.
+            control_frequency: Target control-loop frequency in Hz.
+            duration: Fallback wall-clock duration used when no step horizon
+                is given.
+
+        Returns:
+            A ``(duration, n_steps, error)`` tuple. When ``error`` is non-None
+            it is a structured ``{"status": "error", ...}`` dict and the other
+            fields must be ignored. Otherwise ``duration`` is the resolved
+            wall-clock duration (recomputed from the horizon when one was
+            given) and ``n_steps`` is the normalized step count (or ``None``).
+        """
+        if n_steps is None and max_steps is not None:
+            n_steps = int(max_steps)
+        if n_steps is not None:
+            if n_steps <= 0:
+                return (
+                    duration,
+                    n_steps,
+                    {
+                        "status": "error",
+                        "content": [{"text": f"run_policy: n_steps must be > 0, got {n_steps}."}],
+                    },
+                )
+            if control_frequency <= 0:
+                return (
+                    duration,
+                    n_steps,
+                    {
+                        "status": "error",
+                        "content": [{"text": "run_policy: control_frequency must be > 0 when n_steps is used."}],
+                    },
+                )
+            duration = float(n_steps) / float(control_frequency)
+        return duration, n_steps, None
+
     def run_policy(
         self,
         robot_name: str | None = None,
@@ -370,20 +425,9 @@ class SimEngine(ABC):
         # accept n_steps (or legacy max_steps) as an alternate horizon
         # specification. duration = n_steps / control_frequency. If both
         # are passed, n_steps wins (primary per DoD).
-        if n_steps is None and max_steps is not None:
-            n_steps = int(max_steps)
-        if n_steps is not None:
-            if n_steps <= 0:
-                return {
-                    "status": "error",
-                    "content": [{"text": f"run_policy: n_steps must be > 0, got {n_steps}."}],
-                }
-            if control_frequency <= 0:
-                return {
-                    "status": "error",
-                    "content": [{"text": "run_policy: control_frequency must be > 0 when n_steps is used."}],
-                }
-            duration = float(n_steps) / float(control_frequency)
+        duration, n_steps, horizon_error = self._resolve_horizon(n_steps, max_steps, control_frequency, duration)
+        if horizon_error is not None:
+            return horizon_error
 
         if robot_name not in self.list_robots():
             return {

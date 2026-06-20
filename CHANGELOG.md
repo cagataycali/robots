@@ -28,6 +28,22 @@ resolves lerobot 0.5.1, which lacks it.
   directly and the git-source step drops away.
 
 
+### Fixed: `start_policy` validates the step horizon synchronously
+
+`start_policy` runs the rollout on a background thread. A malformed step
+horizon (`n_steps <= 0` or `control_frequency <= 0`) was only caught inside
+`run_policy` once the future executed, so the caller received a false
+`status="success"` ("Policy started") while the rollout immediately errored in
+the background - and the robot was left registered as having a running policy,
+wrongly gating the next `start_policy` on that robot as "already running".
+
+- The horizon validation (`n_steps`/legacy `max_steps` -> `duration`, with the
+  non-positive guards) is now a shared `SimEngine._resolve_horizon` helper used
+  by both `run_policy` and the MuJoCo `start_policy` override. `start_policy`
+  calls it synchronously before submitting to the executor, returning the same
+  structured `status="error"` dict and leaving no future registered, so a
+  subsequent well-formed `start_policy` on the same robot succeeds.
+
 ### Added: `WBCPolicy` provider (`wbc`, shorthand `sonic`) - GR00T Whole-Body-Control (SONIC)
 
 A new non-VLA policy provider wrapping NVIDIA's GR00T Whole-Body-Control
