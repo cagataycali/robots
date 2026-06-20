@@ -279,3 +279,109 @@ class TestFindBodyScansAttachedRobotBodies:
         bid = mj.mj_name2id(world._model, mj.mjtObj.mjOBJ_BODY, "arm1/link0")
         assert bid >= 0
         assert pytest.approx(list(world._model.body_pos[bid]), abs=1e-6) == [0.0, 0.0, 0.2]
+
+
+# A scene with one joint of every variable-width type so the per-name snapshot/
+# restore logic exercises its free (7/6), ball (4/3) and hinge (1/1) branches.
+_MIXED_JOINT_XML = """
+<mujoco model="mixed_joints">
+  <compiler angle="radian"/>
+  <worldbody>
+    <body name="floater" pos="0 0 1">
+      <freejoint name="free_j"/>
+      <geom type="box" size="0.05 0.05 0.05"/>
+    </body>
+    <body name="baller" pos="0.3 0 1">
+      <joint name="ball_j" type="ball"/>
+      <geom type="sphere" size="0.05"/>
+    </body>
+    <body name="hinger" pos="0.6 0 0.2">
+      <joint name="hinge_j" type="hinge" axis="0 0 1"/>
+      <geom type="cylinder" size="0.05 0.05"/>
+    </body>
+  </worldbody>
+</mujoco>
+"""
+
+
+class TestSnapshotRestoreJointWidths:
+    """``_snapshot_joint_state`` / ``_restore_joint_state`` slice each joint at
+    the width MuJoCo actually uses (free 7/6, ball 4/3, hinge/slide 1/1).
+
+    ``eject_robot_from_scene`` relies on this to carry surviving robots and
+    object freejoints across a scene rebuild by *name* - a width bug would
+    silently mis-assign DOFs (the exact failure mode the per-name approach
+    exists to prevent), so the per-type widths are pinned here end to end.
+    """
+
+    @pytest.fixture
+    def mixed_world(self, sim: Simulation) -> SimWorld:
+        sim.create_world()
+        result = sim.replace_scene_mjcf(_MIXED_JOINT_XML)
+        assert result["status"] == "success", result
+        world = sim._world
+        assert world is not None
+        return world
+
+    def test_snapshot_uses_per_joint_type_widths(self, mixed_world: SimWorld) -> None:
+        """Each joint is captured at its type-correct qpos/qvel width."""
+        snap = scene_ops._snapshot_joint_state(mixed_world)
+        assert (len(snap["free_j"][0]), len(snap["free_j"][1])) == (7, 6)
+        assert (len(snap["ball_j"][0]), len(snap["ball_j"][1])) == (4, 3)
+        assert (len(snap["hinge_j"][0]), len(snap["hinge_j"][1])) == (1, 1)
+
+    def test_snapshot_restore_round_trips_all_joint_types(self, mixed_world: SimWorld) -> None:
+        """A snapshot restored back into the same model touches every joint and
+        leaves the recorded values byte-for-byte intact across all widths."""
+        # Seed distinctive state so a width mis-slice would corrupt values.
+        data = mixed_world._data
+        data.qpos[:] = [float(i) * 0.01 for i in range(len(data.qpos))]
+        data.qvel[:] = [float(i) * 0.02 for i in range(len(data.qvel))]
+        snap = scene_ops._snapshot_joint_state(mixed_world)
+
+        # Clobber state, then restore from the snapshot by name.
+        data.qpos[:] = 0.0
+        data.qvel[:] = 0.0
+        restored = scene_ops._restore_joint_state(mixed_world, snap)
+
+        assert restored == 3, "free + ball + hinge all restored"
+        re_snap = scene_ops._snapshot_joint_state(mixed_world)
+        for name in ("free_j", "ball_j", "hinge_j"):
+            assert re_snap[name] == snap[name]
+
+    def test_restore_skips_width_mismatched_joint(self, mixed_world: SimWorld) -> None:
+        """A snapshot entry whose width no longer matches the joint type (e.g.
+        a same-named joint changed type across a rebuild) is skipped, not
+        force-written - corrupt DOFs are never silently injected."""
+        snap = scene_ops._snapshot_joint_state(mixed_world)
+        # Forge a free-joint-width payload under the hinge joint's name.
+        snap["hinge_j"] = ([0.0] * 7, [0.0] * 6)
+        restored = scene_ops._restore_joint_state(mixed_world, snap)
+        # free + ball restored; the mismatched hinge entry is dropped.
+        assert restored == 2
+
+
+class TestInjectCameraFailureReturnsFalse:
+    """A camera whose mount point cannot be resolved makes
+    ``inject_camera_into_scene`` return ``False`` (caught ``ValueError``)
+    while leaving the already-compiled model untouched."""
+
+    def test_inject_camera_unknown_parent_body_returns_false(self, sim: Simulation) -> None:
+        sim.create_world()
+        world = sim._world
+        assert world is not None
+        nbody_before = world._model.nbody
+        cam = SimCamera(name="wrist", parent_body="no_such_body")
+        assert scene_ops.inject_camera_into_scene(world, cam) is False
+        # The failed add must not have grown or mutated the compiled model.
+        assert world._model.nbody == nbody_before
+
+
+class TestPatchSceneRequiresCompiledWorld:
+    """``patch_scene_mjcf`` raises before touching any op when the world was
+    never compiled - the agent edited the scene before ``create_world``."""
+
+    def test_patch_without_spec_raises_runtime_error(self) -> None:
+        world = SimWorld()
+        with pytest.raises(RuntimeError, match="no spec"):
+            scene_ops.patch_scene_mjcf(world, [{"op": "add_body", "name": "x"}])
