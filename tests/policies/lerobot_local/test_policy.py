@@ -1361,3 +1361,150 @@ class TestLoadModelPostprocessorWarning:
         with caplog.at_level(logging.WARNING, logger="strands_robots.policies.lerobot_local.policy"):
             _load_model_with_mocks(policy, has_postprocessor=True)
         assert not any("WITHOUT an action postprocessor" in r.message for r in caplog.records)
+
+
+# (section)
+# Tests: _to_lerobot_observation (strands-native obs -> LeRobot feature keys)
+# (section)
+
+
+class TestToLerobotObservation:
+    """Remap of bare strands observations to the model's declared feature keys.
+
+    Exercises the legacy heuristic bridge used when no embodiment map is
+    declared: image short-name matching, positional image fill, scalar-state
+    collection with dim adaptation, and the LeRobot-formatted passthrough.
+    """
+
+    def test_already_lerobot_formatted_passthrough(self):
+        """An observation that already has observation.* keys is returned as-is."""
+        policy = _make_loaded_policy(state_dim=2, include_images=False)
+        obs = {"observation.state": np.zeros(2, dtype=np.float32), "task": "pick"}
+        out = policy._to_lerobot_observation(obs)
+        assert out == obs
+        # A copy is returned (mutating result must not touch the input).
+        out["new"] = 1
+        assert "new" not in obs
+
+    def test_exact_camera_name_match(self):
+        """A bare cam name matching a declared short name maps to that slot."""
+        policy = _make_loaded_policy(state_dim=2, include_images=False)
+        policy._input_features["observation.images.top"] = MagicMock(shape=(3, 480, 640))
+        img = np.zeros((480, 640, 3), dtype=np.uint8)
+        out = policy._to_lerobot_observation({"top": img})
+        assert "observation.images.top" in out
+        assert out["observation.images.top"] is img
+
+    def test_unmatched_camera_fills_declared_slot_positionally(self):
+        """A cam whose name does not match fills a free declared image slot."""
+        policy = _make_loaded_policy(state_dim=2, include_images=False)
+        policy._input_features["observation.images.top"] = MagicMock(shape=(3, 480, 640))
+        img = np.ones((480, 640, 3), dtype=np.uint8)
+        # 'front' has no exact match -> fills the only declared slot 'top'.
+        out = policy._to_lerobot_observation({"front": img})
+        assert "observation.images.top" in out
+        assert out["observation.images.top"] is img
+
+    def test_scalar_state_collected_in_robot_state_keys_order(self):
+        """Scalar joints are packed into observation.state in declared order."""
+        policy = _make_loaded_policy(state_dim=3, include_images=False)
+        policy.set_robot_state_keys(["a", "b", "c"])
+        # Insertion order deliberately differs from robot_state_keys order.
+        out = policy._to_lerobot_observation({"c": 3.0, "a": 1.0, "b": 2.0})
+        np.testing.assert_allclose(out["observation.state"], [1.0, 2.0, 3.0])
+        assert out["observation.state"].dtype == np.float32
+
+    def test_state_falls_back_to_observation_keys_when_names_mismatch(self):
+        """If no robot_state_keys are present in obs, use the obs's own scalars."""
+        policy = _make_loaded_policy(state_dim=3, include_images=False)
+        # Auto-filled generic names that the real obs does not use.
+        policy.set_robot_state_keys(["joint_0", "joint_1", "joint_2"])
+        out = policy._to_lerobot_observation({"shoulder": 1.0, "elbow": 2.0, "wrist": 3.0})
+        np.testing.assert_allclose(sorted(out["observation.state"]), [1.0, 2.0, 3.0])
+
+    def test_state_zero_padded_to_model_dim(self):
+        """A short state vector is zero-padded to the model's declared dim."""
+        policy = _make_loaded_policy(state_dim=4, include_images=False)
+        policy.set_robot_state_keys(["a", "b"])
+        out = policy._to_lerobot_observation({"a": 1.0, "b": 2.0})
+        assert out["observation.state"].shape == (4,)
+        np.testing.assert_allclose(out["observation.state"], [1.0, 2.0, 0.0, 0.0])
+
+    def test_state_truncated_to_model_dim(self):
+        """A long state vector is truncated to the model's declared dim."""
+        policy = _make_loaded_policy(state_dim=2, include_images=False)
+        policy.set_robot_state_keys(["a", "b", "c"])
+        out = policy._to_lerobot_observation({"a": 1.0, "b": 2.0, "c": 3.0})
+        assert out["observation.state"].shape == (2,)
+        np.testing.assert_allclose(out["observation.state"], [1.0, 2.0])
+
+    def test_zero_dim_ndarray_scalar_collected(self):
+        """A 0-d numpy array counts as a scalar joint value."""
+        policy = _make_loaded_policy(state_dim=2, include_images=False)
+        policy.set_robot_state_keys(["a", "b"])
+        out = policy._to_lerobot_observation({"a": np.array(1.5), "b": 2.0})
+        np.testing.assert_allclose(out["observation.state"], [1.5, 2.0])
+
+    def test_task_passthrough(self):
+        """A 'task' key is preserved verbatim and not packed into state."""
+        policy = _make_loaded_policy(state_dim=2, include_images=False)
+        policy.set_robot_state_keys(["a", "b"])
+        out = policy._to_lerobot_observation({"a": 1.0, "b": 2.0, "task": "stack blocks"})
+        assert out["task"] == "stack blocks"
+        assert out["observation.state"].shape == (2,)
+
+
+# (section)
+# Tests: _fixup_preprocessed_batch (raw arrays/tensors -> batched device tensors)
+# (section)
+
+
+class TestFixupPreprocessedBatch:
+    """Shape/dtype normalization of entries the preprocessor left unconverted."""
+
+    def test_numpy_image_hwc_to_bchw(self):
+        """An HWC uint8 numpy image becomes a (1,C,H,W) float tensor."""
+        policy = _make_loaded_policy(state_dim=2, include_images=False)
+        batch = {"observation.images.top": np.zeros((480, 640, 3), dtype=np.uint8)}
+        out = policy._fixup_preprocessed_batch(batch)
+        t = out["observation.images.top"]
+        assert isinstance(t, torch.Tensor)
+        assert t.shape == (1, 3, 480, 640)
+        assert t.dtype == torch.float32
+
+    def test_numpy_state_1d_gets_batch_dim(self):
+        """A 1-D numpy state vector gains a leading batch dim."""
+        policy = _make_loaded_policy(state_dim=3, include_images=False)
+        out = policy._fixup_preprocessed_batch({"observation.state": np.array([1.0, 2.0, 3.0])})
+        t = out["observation.state"]
+        assert t.shape == (1, 3)
+        assert t.dtype == torch.float32
+
+    def test_tensor_float64_state_autocast_and_batched(self):
+        """A 1-D float64 tensor is cast to float32 and gains a batch dim."""
+        policy = _make_loaded_policy(state_dim=2, include_images=False)
+        val = torch.tensor([1.0, 2.0], dtype=torch.float64)
+        out = policy._fixup_preprocessed_batch({"observation.state": val})
+        t = out["observation.state"]
+        assert t.shape == (1, 2)
+        assert t.dtype == torch.float32
+
+    def test_tensor_image_hwc_permuted_and_batched(self):
+        """A 3-D HWC tensor image is permuted to CHW and batched."""
+        policy = _make_loaded_policy(state_dim=2, include_images=False)
+        val = torch.zeros((480, 640, 3))
+        out = policy._fixup_preprocessed_batch({"observation.images.top": val})
+        assert out["observation.images.top"].shape == (1, 3, 480, 640)
+
+    def test_non_array_values_pass_through(self):
+        """Strings and other non-array values are passed through untouched."""
+        policy = _make_loaded_policy(state_dim=2, include_images=False)
+        out = policy._fixup_preprocessed_batch({"task": "pick up the cube"})
+        assert out["task"] == "pick up the cube"
+
+    def test_already_batched_tensor_unchanged_shape(self):
+        """An already-(B,D) tensor keeps its shape (no spurious batch dim)."""
+        policy = _make_loaded_policy(state_dim=2, include_images=False)
+        val = torch.zeros((1, 2), dtype=torch.float32)
+        out = policy._fixup_preprocessed_batch({"observation.state": val})
+        assert out["observation.state"].shape == (1, 2)
