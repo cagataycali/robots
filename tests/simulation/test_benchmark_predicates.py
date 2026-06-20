@@ -14,6 +14,7 @@ import pytest
 
 from strands_robots.simulation.predicates import (
     PREDICATE_REGISTRY,
+    _extract_json,
     make_predicate,
     register_predicate,
 )
@@ -673,3 +674,100 @@ class TestExtractJsonAndEntryGuards:
         sim = _BodyStateSim({})  # cube absent
         pred = make_predicate("inside_region", body="cube", min=[0, 0, 0], max=[1, 1, 1])
         assert pred(sim) is False
+
+
+# Remaining degradation guards
+#
+# The module docstring promises predicates "should never crash the eval loop"
+# and "degrade gracefully" against malformed backend payloads. The cases below
+# pin the last few guards that the happy-path and exception-path suites above do
+# not exercise: a success result that carries no ``json`` content block, a
+# ``get_observation`` that returns a non-dict, a quaternion lookup on a backend
+# without ``get_body_state``, contact payloads whose ``contacts`` is not a list
+# or contains non-dict entries, and a containment check against an absent body.
+
+
+class _NoJsonBlockSim:
+    """``get_body_state`` succeeds but its content carries no ``json`` block.
+
+    A backend could legitimately return only a human-readable ``text`` block;
+    the position lookup must then resolve to ``None`` (predicate ``False``)
+    rather than crash hunting for a missing payload.
+    """
+
+    def get_body_state(self, body_name: str) -> dict[str, Any]:
+        return {"status": "success", "content": [{"text": f"body {body_name}"}]}
+
+    def get_observation(self, *_, **__) -> dict[str, Any]:
+        return {}
+
+
+class _NonDictObsSim:
+    """``get_observation`` returns a non-dict (e.g. a bare list)."""
+
+    def get_observation(self, *_, **__) -> Any:
+        return ["not", "a", "dict"]
+
+    def get_body_state(self, body_name: str) -> dict[str, Any]:  # pragma: no cover
+        return {"status": "error", "content": [{"text": "no bodies"}]}
+
+
+class TestPayloadShapeGuards:
+    """Malformed-but-non-raising backend payloads still yield safe verdicts."""
+
+    def test_body_predicate_false_when_success_result_has_no_json_block(self):
+        # _body_position: status == success but _extract_json finds no json
+        # block -> {} -> position absent -> predicate False (not a crash).
+        sim = _NoJsonBlockSim()
+        pred = make_predicate("body_above_z", body="cube", z=0.1)
+        assert pred(sim) is False
+
+    def test_joint_predicate_false_when_observation_is_not_a_dict(self):
+        # _joint_position: get_observation returns a list -> guarded to None ->
+        # joint predicate False.
+        sim = _NonDictObsSim()
+        pred = make_predicate("joint_above", joint="elbow", value=0.0)
+        assert pred(sim) is False
+
+    def test_body_upright_false_when_backend_lacks_get_body_state(self):
+        # _body_quaternion: backend exposes no get_body_state -> None -> the
+        # uprightness check degrades to False instead of raising AttributeError.
+        sim = _NoHelpersSim()
+        pred = make_predicate("body_upright", body="bottle")
+        assert pred(sim) is False
+
+    def test_body_on_require_contact_geometric_only_when_contacts_not_a_list(self):
+        # _body_contact: contacts payload is a dict, not a list -> None ->
+        # body_on falls back to the geometric-only verdict (True here).
+        stacked = {"cube": [0.0, 0.0, 0.10], "table": [0.0, 0.0, 0.0]}
+        sim = _GeomContactSim(stacked, {"unexpected": "shape"})  # type: ignore[arg-type]
+        pred = make_predicate("body_on", body_a="cube", body_b="table", require_contact=True)
+        assert pred(sim) is True
+
+    def test_body_on_require_contact_skips_non_dict_contact_entries(self):
+        # _body_contact: a non-dict entry in the contacts list is skipped, and a
+        # later well-formed matching entry still confirms the contact.
+        stacked = {"cube": [0.0, 0.0, 0.10], "table": [0.0, 0.0, 0.0]}
+        sim = _GeomContactSim(
+            stacked,
+            ["junk", {"geom1": "cube_g0", "geom2": "table_g1"}],  # type: ignore[list-item]
+        )
+        pred = make_predicate("body_on", body_a="cube", body_b="table", require_contact=True)
+        assert pred(sim) is True
+
+    def test_body_inside_false_when_body_absent(self):
+        # _body_inside: target body missing -> position None -> False.
+        sim = _BodyStateSim({"basket": [0.0, 0.0, 0.0]})  # 'cube' absent
+        pred = make_predicate("body_inside", body="cube", container="basket")
+        assert pred(sim) is False
+
+
+class TestExtractJsonHelperGuard:
+    """``_extract_json`` is the shared content-block reader behind every
+    body/contact lookup; its non-dict guard is the innermost line of the
+    "never crash" contract and is unreachable through the public predicates
+    (which only ever hand it a dict), so it is pinned directly here."""
+
+    def test_extract_json_returns_empty_for_non_dict_result(self):
+        assert _extract_json(None) == {}
+        assert _extract_json("not a dict") == {}  # type: ignore[arg-type]
