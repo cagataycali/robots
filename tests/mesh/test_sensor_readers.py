@@ -303,3 +303,88 @@ def test_publish_safety_event_survives_audit_failure(monkeypatch: pytest.MonkeyP
     # Audit failure must not propagate past the publish.
     host.publish_safety_event("estop", severity="warning")
     assert len(host.published) == 1
+
+
+# sensor loop lifecycle -----------------------------------------------------
+#
+# Each ``_*_loop`` is a threaded publish loop with two contract behaviours the
+# direct ``_read_*`` tests above do not touch:
+#   1. a non-positive rate (``hz <= 0``) disables the loop -- it must return
+#      immediately and never publish, so an operator can switch a topic off via
+#      ``STRANDS_MESH_*_HZ=0`` without spawning an idle thread.
+#   2. a failure inside one tick (e.g. a flaky ``_read_*`` or transport
+#      ``publish``) must be swallowed so a single bad tick cannot kill the loop
+#      and silently stop every future sample on that topic.
+#
+# ``(loop, hz_env, reader)`` covers every published sensor topic.
+_SENSOR_LOOPS = [
+    ("_pose_loop", "STRANDS_MESH_POSE_HZ", "_read_pose"),
+    ("_health_loop", "STRANDS_MESH_HEALTH_HZ", "_read_health"),
+    ("_imu_loop", "STRANDS_MESH_IMU_HZ", "_read_imu"),
+    ("_odom_loop", "STRANDS_MESH_ODOM_HZ", "_read_odom"),
+    ("_lidar_loop", "STRANDS_MESH_LIDAR_SUMMARY_HZ", "_read_lidar_summary"),
+    ("_hand_loop", "STRANDS_MESH_HAND_HZ", "_read_hands"),
+    ("_map_info_loop", "STRANDS_MESH_MAP_INFO_HZ", "_read_map_info"),
+]
+
+
+@pytest.mark.parametrize(("loop_name", "hz_env", "_reader"), _SENSOR_LOOPS)
+def test_sensor_loop_disabled_rate_returns_without_publishing(
+    monkeypatch: pytest.MonkeyPatch,
+    loop_name: str,
+    hz_env: str,
+    _reader: str,
+) -> None:
+    """A non-positive rate disables the loop: it returns and publishes nothing."""
+    monkeypatch.setenv(hz_env, "0")
+    host = _host()
+    # Would otherwise spin forever; the early return must fire before the loop.
+    getattr(host, loop_name)()
+    assert host.published == []
+
+
+@pytest.mark.parametrize(("loop_name", "hz_env", "reader"), _SENSOR_LOOPS)
+def test_sensor_loop_swallows_tick_error_and_exits_cleanly(
+    monkeypatch: pytest.MonkeyPatch,
+    loop_name: str,
+    hz_env: str,
+    reader: str,
+) -> None:
+    """A raising reader is caught per tick; the loop exits via the stop event
+    instead of propagating, so one flaky sample cannot kill the topic."""
+    monkeypatch.setenv(hz_env, "50")  # positive rate -> loop body runs
+    host = _host()
+
+    def _boom() -> dict[str, Any]:
+        raise RuntimeError("transient sensor read failure")
+
+    monkeypatch.setattr(host, reader, _boom)
+    # Pre-set the stop event so the single error tick is the last iteration:
+    # ``_stop_event.wait(period)`` returns True immediately and the loop breaks.
+    host._stop_event.set()
+
+    # Must not raise despite the reader blowing up on the only tick.
+    getattr(host, loop_name)()
+    assert host.published == []
+
+
+@pytest.mark.parametrize(("loop_name", "hz_env", "reader"), _SENSOR_LOOPS)
+def test_sensor_loop_reraises_not_implemented(
+    monkeypatch: pytest.MonkeyPatch,
+    loop_name: str,
+    hz_env: str,
+    reader: str,
+) -> None:
+    """A ``NotImplementedError`` (MRO contract violation, issue #258) is the one
+    failure that must surface immediately rather than be swallowed per tick."""
+    monkeypatch.setenv(hz_env, "50")
+    host = _host()
+
+    def _mro_violation() -> dict[str, Any]:
+        raise NotImplementedError("mixin used without a host class")
+
+    monkeypatch.setattr(host, reader, _mro_violation)
+    host._stop_event.set()
+
+    with pytest.raises(NotImplementedError):
+        getattr(host, loop_name)()
