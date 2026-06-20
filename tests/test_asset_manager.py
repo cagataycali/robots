@@ -234,3 +234,97 @@ class TestAutoDownloadUnavailable:
         monkeypatch.setattr(manager, "_auto_download_robot_impl", lambda n, i: calls.append((n, i)) or True)
         assert manager._auto_download_robot("unitbot", {"k": 1}) is True
         assert calls == [("unitbot", {"k": 1})]
+
+
+class TestHasMeshesScandirError:
+    """A non-walkable path (not a directory / unreadable) degrades to False."""
+
+    def test_false_when_scandir_raises(self, tmp_path):
+        # A regular file passes ``Path.exists()`` and ``stat()`` but scandir
+        # raises NotADirectoryError (an OSError subclass) during the walk.
+        not_a_dir = tmp_path / "model.xml"
+        not_a_dir.write_text(_MINIMAL_MJCF)
+        assert manager._has_meshes(not_a_dir) is False
+
+
+class TestIsRobotAssetPresentEdges:
+    """Standard-search-path resolution and user-path traversal fall-through."""
+
+    def test_present_via_standard_search_path(self, tmp_path, monkeypatch):
+        # No ``_user_asset_path`` in the entry: presence must be detected via
+        # the standard search paths (STRANDS_ASSETS_DIR) instead.
+        assets_dir = tmp_path / "assets"
+        (assets_dir / "bot").mkdir(parents=True)
+        (assets_dir / "bot" / "bot.xml").write_text(_MINIMAL_MJCF)
+        monkeypatch.setattr(
+            manager,
+            "get_robot",
+            lambda _name: {"asset": {"dir": "bot", "model_xml": "bot.xml"}},
+        )
+        assert manager.is_robot_asset_present("bot") is True
+
+    def test_user_path_traversal_falls_through_to_false(self, tmp_path, monkeypatch):
+        # A traversal-bearing model_xml in the user-path branch is rejected by
+        # safe_join; resolution falls through to the (also-blocked) standard
+        # search and ultimately reports the asset as absent.
+        monkeypatch.setattr(
+            manager,
+            "get_robot",
+            lambda _name: {
+                "asset": {"dir": "bot", "model_xml": "../../evil.xml"},
+                "_user_asset_path": str(tmp_path),
+            },
+        )
+        assert manager.is_robot_asset_present("bot") is False
+
+
+class TestResolveModelPathEdges:
+    """Mesh-aware auto-download retry and user-path traversal protection."""
+
+    def test_user_path_traversal_blocked_returns_none(self, tmp_path, monkeypatch):
+        # safe_join rejects the traversal in the user-path branch (logged, then
+        # user_model=None); with no standard candidate and a failed download,
+        # resolution returns None rather than escaping the asset root.
+        monkeypatch.setattr(
+            manager,
+            "get_robot",
+            lambda _name: {
+                "asset": {
+                    "dir": "bot",
+                    "model_xml": "../../evil.xml",
+                    "scene_xml": "../../evil.xml",
+                },
+                "_user_asset_path": str(tmp_path),
+            },
+        )
+        monkeypatch.setattr(manager, "_auto_download_robot", lambda _n, _i: False)
+        assert manager.resolve_model_path("bot") is None
+
+    def test_auto_download_supplies_missing_meshes(self, tmp_path, monkeypatch):
+        # XML is present but the directory has no meshes, so the first pass
+        # finds no mesh-bearing candidate. A successful auto-download drops a
+        # mesh in; the post-download re-scan then resolves to the XML.
+        assets_dir = tmp_path / "assets"
+        robot_dir = _register_bot(assets_dir)  # no meshes by default
+        xml = robot_dir / "unitbot.xml"
+
+        def fake_download(_name, _info):
+            (robot_dir / "link.stl").write_bytes(b"meshbytes")
+            # A real download writes new files; invalidate the stale mtime-keyed
+            # mesh cache so the post-download re-scan observes them.
+            manager._MESH_CACHE.clear()
+            return True
+
+        monkeypatch.setattr(manager, "_auto_download_robot", fake_download)
+        assert manager.resolve_model_path("unitbot") == xml
+
+
+class TestResolveModelDirEdges:
+    def test_none_when_asset_dir_absent_on_disk(self, monkeypatch):
+        # Known robot whose asset directory does not exist on any search path.
+        monkeypatch.setattr(
+            manager,
+            "get_robot",
+            lambda _name: {"asset": {"dir": "ghostbot", "model_xml": "ghost.xml"}},
+        )
+        assert manager.resolve_model_dir("ghost") is None
