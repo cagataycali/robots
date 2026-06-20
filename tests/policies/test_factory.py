@@ -146,6 +146,79 @@ class TestTrustRemoteCodeGate:
         assert isinstance(p, MockPolicy)
 
 
+class TestSmartResolutionFallThrough:
+    """When smart-string resolution fails, create_policy must fall through to
+    the standard policies.json lookup rather than aborting on the resolver.
+
+    A smart string (HF id, ws://, grpc://, zmq:// ...) first goes through
+    ``resolve_policy``. Two failure modes are contractually swallowed so a
+    resolver hiccup never masks a provider that the static registry can still
+    serve:
+
+    * ``ImportError`` -- an optional resolver backend is missing; resolution is
+      skipped silently and the provider is tried as a plain registry name.
+    * any other ``Exception`` -- logged as a warning, then the same fall-through.
+
+    These paths are pure error-handling glue with no happy-path test, so a
+    regression (e.g. letting the resolver error escape) would silently break
+    provider creation for everyone whose provider is resolvable only via the
+    static registry. The tests below pin both fall-through branches by forcing
+    ``resolve_policy`` to raise and asserting the static lookup still wins.
+    """
+
+    def test_resolution_importerror_is_swallowed_not_propagated(self, monkeypatch):
+        """An ImportError from resolve_policy must not escape: create_policy
+        falls through to the static lookup, which raises its own (different)
+        error for an unknown provider. The surfaced error therefore comes from
+        the static lookup, proving the resolver ImportError was swallowed."""
+
+        def boom(provider, **kwargs):
+            raise ImportError("optional resolver backend missing -- do not surface")
+
+        monkeypatch.setattr("strands_robots.policies.factory.resolve_policy", boom)
+        # "/" trips _needs_resolution; resolver raises ImportError; fall-through
+        # hits the static lookup for an unknown provider and raises from there.
+        with pytest.raises(Exception) as ei:
+            create_policy("unknownorg/doesnotexist")
+        assert "do not surface" not in str(ei.value), "resolver ImportError leaked instead of falling through to lookup"
+
+    def test_resolution_generic_error_falls_through_and_warns(self, monkeypatch, caplog):
+        """A non-ImportError from resolve_policy is logged at WARNING and then
+        swallowed, after which the static registry lookup proceeds."""
+        import logging
+
+        def boom(provider, **kwargs):
+            raise RuntimeError("resolver exploded")
+
+        monkeypatch.setattr("strands_robots.policies.factory.resolve_policy", boom)
+        with caplog.at_level(logging.WARNING, logger="strands_robots.policies.factory"):
+            with pytest.raises(Exception):
+                # "/" triggers resolution; resolver raises; fall-through then
+                # fails to find an unknown provider -> raises from static lookup,
+                # proving the resolver error itself did not escape.
+                create_policy("unknownorg/doesnotexist")
+        assert any(
+            "resolution failed" in r.getMessage().lower() or "resolver exploded" in r.getMessage()
+            for r in caplog.records
+        ), "expected a WARNING log for the swallowed resolver error"
+
+    def test_resolution_importerror_does_not_warn(self, monkeypatch, caplog):
+        """The ImportError branch is silent (optional backend absent is normal):
+        it must NOT emit the generic 'resolution failed' warning."""
+        import logging
+
+        def boom(provider, **kwargs):
+            raise ImportError("backend absent")
+
+        monkeypatch.setattr("strands_robots.policies.factory.resolve_policy", boom)
+        with caplog.at_level(logging.WARNING, logger="strands_robots.policies.factory"):
+            with pytest.raises(Exception):
+                create_policy("unknownorg/doesnotexist")
+        assert not any("resolution failed" in r.getMessage().lower() for r in caplog.records), (
+            "ImportError branch must stay silent, not log 'resolution failed'"
+        )
+
+
 class _KwargCapture(Policy):
     """Test helper -- captures kwargs for verification."""
 
