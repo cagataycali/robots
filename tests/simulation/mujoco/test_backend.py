@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import builtins
 import importlib.util
 import os
+import subprocess
 import sys
 from unittest.mock import patch
 
@@ -144,3 +146,137 @@ class TestEnsureMujoco:
         first = backend_mod._ensure_mujoco()
         second = backend_mod._ensure_mujoco()
         assert first is second
+
+
+class TestCanRenderProbeOutcomes:
+    """``_can_render`` interprets the subprocess probe result correctly.
+
+    Thor's EGL probe always succeeds, so the failure/timeout branches are
+    never exercised by integration runs. These tests drive each branch by
+    faking ``subprocess.run`` while keeping MUJOCO_GL set so the headless
+    short-circuit does not fire.
+    """
+
+    def _clear_cache(self):
+        backend_mod._rendering_available = None
+
+    def test_probe_success_marks_available(self, restore_env):
+        self._clear_cache()
+        restore_env.setenv("MUJOCO_GL", "egl")
+        completed = subprocess.CompletedProcess(args=[], returncode=0, stdout=b"", stderr=b"")
+        with patch.object(backend_mod.subprocess, "run", return_value=completed) as run:
+            assert backend_mod._can_render() is True
+            run.assert_called_once()
+        # Result is cached so a second call does not re-probe.
+        with patch.object(backend_mod.subprocess, "run") as run2:
+            assert backend_mod._can_render() is True
+            run2.assert_not_called()
+        self._clear_cache()
+
+    def test_probe_failure_marks_unavailable(self, restore_env, caplog):
+        import logging
+
+        self._clear_cache()
+        restore_env.setenv("MUJOCO_GL", "egl")
+        completed = subprocess.CompletedProcess(
+            args=[], returncode=1, stdout=b"", stderr=b"libEGL: failed to load driver"
+        )
+        with patch.object(backend_mod.subprocess, "run", return_value=completed):
+            with caplog.at_level(logging.WARNING, logger="strands_robots.simulation.mujoco.backend"):
+                assert backend_mod._can_render() is False
+        assert any("probe failed" in rec.message for rec in caplog.records)
+        self._clear_cache()
+
+    def test_probe_failure_truncates_long_stderr(self, restore_env, caplog):
+        import logging
+
+        self._clear_cache()
+        restore_env.setenv("MUJOCO_GL", "egl")
+        long_err = ("E" * 500).encode()
+        completed = subprocess.CompletedProcess(args=[], returncode=2, stdout=b"", stderr=long_err)
+        with patch.object(backend_mod.subprocess, "run", return_value=completed):
+            with caplog.at_level(logging.WARNING, logger="strands_robots.simulation.mujoco.backend"):
+                assert backend_mod._can_render() is False
+        # The truncation marker is appended once stderr exceeds 200 chars.
+        assert any("..." in rec.message for rec in caplog.records)
+        self._clear_cache()
+
+    def test_probe_timeout_marks_unavailable(self, restore_env, caplog):
+        import logging
+
+        self._clear_cache()
+        restore_env.setenv("MUJOCO_GL", "egl")
+        with patch.object(
+            backend_mod.subprocess, "run", side_effect=subprocess.TimeoutExpired(cmd="probe", timeout=10)
+        ):
+            with caplog.at_level(logging.WARNING, logger="strands_robots.simulation.mujoco.backend"):
+                assert backend_mod._can_render() is False
+        assert any("timed out" in rec.message for rec in caplog.records)
+        self._clear_cache()
+
+    def test_probe_oserror_marks_unavailable(self, restore_env):
+        self._clear_cache()
+        restore_env.setenv("MUJOCO_GL", "egl")
+        with patch.object(backend_mod.subprocess, "run", side_effect=OSError("exec failed")):
+            assert backend_mod._can_render() is False
+        assert backend_mod._rendering_available is False
+        self._clear_cache()
+
+
+class TestEnsureMujocoViewer:
+    """``_ensure_mujoco`` loads the interactive viewer only when not headless.
+
+    Headless CI/Thor runs skip the viewer; the viewer import branch is only
+    reached on a desktop session. These tests drive both the success and the
+    ImportError fallback without depending on a display server.
+    """
+
+    def _save_globals(self):
+        return backend_mod._mujoco, backend_mod._mujoco_viewer
+
+    def _restore_globals(self, saved):
+        backend_mod._mujoco, backend_mod._mujoco_viewer = saved
+
+    @pytest.mark.skipif(
+        not importlib.util.find_spec("mujoco"),
+        reason="mujoco not installed",
+    )
+    def test_viewer_loaded_when_not_headless(self):
+        # _mujoco preset so the module import is skipped; only the viewer
+        # branch runs. Forcing not-headless lets the real mujoco.viewer load.
+        saved = self._save_globals()
+        try:
+            sentinel_mj = object()
+            backend_mod._mujoco = sentinel_mj
+            backend_mod._mujoco_viewer = None
+            with patch.object(backend_mod, "_is_headless", return_value=False):
+                result = backend_mod._ensure_mujoco()
+            assert result is sentinel_mj
+            # The interactive viewer submodule was bound.
+            assert backend_mod._mujoco_viewer is not None
+        finally:
+            self._restore_globals(saved)
+
+    def test_viewer_import_error_is_swallowed(self):
+        saved = self._save_globals()
+        try:
+            sentinel_mj = object()
+            backend_mod._mujoco = sentinel_mj
+            backend_mod._mujoco_viewer = None
+            real_import = builtins.__import__
+
+            def fake_import(name, *args, **kwargs):
+                if name == "mujoco.viewer":
+                    raise ImportError("no viewer (headless build)")
+                return real_import(name, *args, **kwargs)
+
+            with (
+                patch.object(backend_mod, "_is_headless", return_value=False),
+                patch.object(builtins, "__import__", side_effect=fake_import),
+            ):
+                result = backend_mod._ensure_mujoco()
+            # Import failure must not propagate; viewer stays unset.
+            assert result is sentinel_mj
+            assert backend_mod._mujoco_viewer is None
+        finally:
+            self._restore_globals(saved)
