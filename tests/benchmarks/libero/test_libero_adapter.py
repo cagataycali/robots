@@ -6684,3 +6684,247 @@ class TestEvaluateBenchmarkIntegration:
         payload = next(c["json"] for c in result["content"] if "json" in c)
         assert payload["n_success"] == 1
         assert payload["episodes"][0]["steps"] == 1  # terminated on first step
+
+
+class TestWriteLiberoArmHomeQpos:
+    """`_write_libero_arm_home_qpos` writes the LIBERO-canonical Panda
+    ready pose (and gripper open pose) into ``data.qpos`` before the
+    snapshot branch captures it, and is best-effort - any structural
+    mismatch or write failure degrades silently rather than aborting an
+    eval. These paths run without robosuite/libero installed by
+    substituting the home-pose resolvers, so the contract is pinned on
+    any host.
+    """
+
+    # A model carrying 7 arm joints (robot0_joint0..6) plus two gripper
+    # finger joints (gripper0_finger_joint1/2), each mapped to a distinct
+    # qpos address. Mirrors the canonical RoboSuite/LIBERO Panda layout
+    # the production scan in _write_libero_arm_home_qpos walks.
+    @staticmethod
+    def _panda_model_and_mj(
+        arm_prefix: str = "robot0_",
+        gripper_prefix: str = "gripper0_",
+        n_arm: int = 7,
+    ):
+        joint_names: list[str] = [f"{arm_prefix}joint{i}" for i in range(n_arm)]
+        joint_names += [f"{gripper_prefix}finger_joint1", f"{gripper_prefix}finger_joint2"]
+        # Distinct qpos address per joint so writes are observable.
+        qposadr = list(range(len(joint_names)))
+
+        class _Enum:
+            mjOBJ_JOINT = 3
+
+        class _Model:
+            njnt = len(joint_names)
+            jnt_qposadr = qposadr
+
+        class _Mj:
+            mjtObj = _Enum()
+
+            @staticmethod
+            def mj_id2name(model, obj_type, idx):  # noqa: ARG004
+                return joint_names[idx] if 0 <= idx < len(joint_names) else None
+
+            forward_calls: list[tuple] = []
+
+            @classmethod
+            def mj_forward(cls, model, data):
+                cls.forward_calls.append((model, data))
+
+        return _Model(), _Mj()
+
+    class _Data:
+        def __init__(self, n: int):
+            self.qpos = [0.0] * n
+
+    def test_writes_arm_and_gripper_home_pose(self):
+        """With resolvers returning canonical values, the 7 arm
+        addresses receive the home pose, the 2 gripper finger addresses
+        receive the open pose, and a single ``mj_forward`` re-derives
+        kinematics."""
+        adapter = LiberoAdapter.from_text(PICK_CUBE_BDDL, init_jitter=0.0)
+        model, mj = self._panda_model_and_mj()
+        data = self._Data(len(model.jnt_qposadr))
+        home = np.array([0.0, -0.161, 0.0, -2.4446, 0.0, 2.2268, 0.7854])
+        gripper = np.array([0.020833, -0.020833])
+
+        with (
+            patch(
+                "strands_robots.benchmarks.libero.adapter._resolve_libero_arm_home_qpos",
+                return_value=home,
+            ),
+            patch(
+                "strands_robots.benchmarks.libero.adapter._resolve_panda_gripper_init_qpos",
+                return_value=gripper,
+            ),
+        ):
+            adapter._write_libero_arm_home_qpos(model, data, mj, lock=None)
+
+        # Arm addresses 0..6 hold the home pose.
+        assert data.qpos[0:7] == list(home)
+        # Gripper finger addresses 7,8 hold the open pose.
+        assert data.qpos[7] == gripper[0]
+        assert data.qpos[8] == gripper[1]
+        # Exactly one forward pass derived site/jacobian state.
+        assert len(mj.forward_calls) == 1
+
+    def test_gripper_left_untouched_when_resolver_returns_none(self):
+        """If the gripper init pose is unavailable, the arm pose is still
+        written but the gripper finger addresses keep their default - the
+        write must not crash on a missing gripper pose."""
+        adapter = LiberoAdapter.from_text(PICK_CUBE_BDDL, init_jitter=0.0)
+        model, mj = self._panda_model_and_mj()
+        data = self._Data(len(model.jnt_qposadr))
+        home = np.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7])
+
+        with (
+            patch(
+                "strands_robots.benchmarks.libero.adapter._resolve_libero_arm_home_qpos",
+                return_value=home,
+            ),
+            patch(
+                "strands_robots.benchmarks.libero.adapter._resolve_panda_gripper_init_qpos",
+                return_value=None,
+            ),
+        ):
+            adapter._write_libero_arm_home_qpos(model, data, mj, lock=None)
+
+        assert data.qpos[0:7] == list(home)
+        assert data.qpos[7] == 0.0
+        assert data.qpos[8] == 0.0
+        assert len(mj.forward_calls) == 1
+
+    def test_skips_when_arm_joint_count_is_not_seven(self):
+        """A scene whose ``robot0_`` prefix matches a non-Panda arm (not
+        exactly 7 joints) is a 'controller not applicable' degrade: no
+        qpos is written and ``mj_forward`` is never called."""
+        adapter = LiberoAdapter.from_text(PICK_CUBE_BDDL, init_jitter=0.0)
+        model, mj = self._panda_model_and_mj(n_arm=6)
+        data = self._Data(len(model.jnt_qposadr))
+
+        with patch(
+            "strands_robots.benchmarks.libero.adapter._resolve_libero_arm_home_qpos",
+        ) as resolve_home:
+            adapter._write_libero_arm_home_qpos(model, data, mj, lock=None)
+            # Short-circuited before resolving any home pose.
+            resolve_home.assert_not_called()
+
+        assert data.qpos == [0.0] * len(model.jnt_qposadr)
+        assert mj.forward_calls == []
+
+    def test_skips_when_home_pose_unavailable(self):
+        """Without robosuite/libero (resolver returns ``None``) there is
+        no canonical pose to write, so the method returns before mutating
+        ``data.qpos`` - exactly the dependency-free host behaviour."""
+        adapter = LiberoAdapter.from_text(PICK_CUBE_BDDL, init_jitter=0.0)
+        model, mj = self._panda_model_and_mj()
+        data = self._Data(len(model.jnt_qposadr))
+
+        with patch(
+            "strands_robots.benchmarks.libero.adapter._resolve_libero_arm_home_qpos",
+            return_value=None,
+        ):
+            adapter._write_libero_arm_home_qpos(model, data, mj, lock=None)
+
+        assert data.qpos == [0.0] * len(model.jnt_qposadr)
+        assert mj.forward_calls == []
+
+    def test_write_failure_is_swallowed(self):
+        """A failure inside the write (e.g. ``mj_forward`` raising) is
+        logged and swallowed - a transient write failure must never abort
+        the eval; the snapshot branch then captures the pre-write qpos."""
+        adapter = LiberoAdapter.from_text(PICK_CUBE_BDDL, init_jitter=0.0)
+        model, mj = self._panda_model_and_mj()
+        data = self._Data(len(model.jnt_qposadr))
+        home = np.array([0.0, -0.161, 0.0, -2.4446, 0.0, 2.2268, 0.7854])
+
+        def _boom(model, data):
+            raise RuntimeError("forward exploded")
+
+        mj.mj_forward = _boom  # type: ignore[assignment]
+
+        with (
+            patch(
+                "strands_robots.benchmarks.libero.adapter._resolve_libero_arm_home_qpos",
+                return_value=home,
+            ),
+            patch(
+                "strands_robots.benchmarks.libero.adapter._resolve_panda_gripper_init_qpos",
+                return_value=None,
+            ),
+        ):
+            # Must not raise.
+            adapter._write_libero_arm_home_qpos(model, data, mj, lock=None)
+
+    def test_write_runs_under_lock_when_provided(self):
+        """When a lock is supplied (the MuJoCo thread-safety contract),
+        the model/data mutation happens inside it - the lock is entered
+        exactly once around the write."""
+        import threading
+
+        adapter = LiberoAdapter.from_text(PICK_CUBE_BDDL, init_jitter=0.0)
+        model, mj = self._panda_model_and_mj()
+        data = self._Data(len(model.jnt_qposadr))
+        home = np.array([0.0, -0.161, 0.0, -2.4446, 0.0, 2.2268, 0.7854])
+
+        real_lock = threading.Lock()
+        enter_count = {"n": 0}
+
+        class _CountingLock:
+            def __enter__(self):
+                enter_count["n"] += 1
+                real_lock.acquire()
+                return self
+
+            def __exit__(self, *exc):
+                real_lock.release()
+                return False
+
+        with (
+            patch(
+                "strands_robots.benchmarks.libero.adapter._resolve_libero_arm_home_qpos",
+                return_value=home,
+            ),
+            patch(
+                "strands_robots.benchmarks.libero.adapter._resolve_panda_gripper_init_qpos",
+                return_value=None,
+            ),
+        ):
+            adapter._write_libero_arm_home_qpos(model, data, mj, lock=_CountingLock())
+
+        assert enter_count["n"] == 1
+        assert data.qpos[0:7] == list(home)
+
+    def test_non_string_joint_names_are_skipped(self):
+        """Joints whose ``mj_id2name`` returns a non-string (unnamed
+        joints) are skipped during the scan rather than crashing - the
+        7-arm-joint count is still reached from the named joints."""
+        adapter = LiberoAdapter.from_text(PICK_CUBE_BDDL, init_jitter=0.0)
+        model, mj = self._panda_model_and_mj()
+        # Append one extra unnamed joint (mj_id2name -> None) at index 9.
+        model.njnt = model.njnt + 1
+        original = mj.mj_id2name
+
+        def _id2name(m, obj_type, idx):  # noqa: ARG001
+            if idx == 9:
+                return None
+            return original(m, obj_type, idx)
+
+        mj.mj_id2name = _id2name  # type: ignore[assignment]
+        data = self._Data(len(model.jnt_qposadr) + 1)
+        home = np.array([0.0, -0.161, 0.0, -2.4446, 0.0, 2.2268, 0.7854])
+
+        with (
+            patch(
+                "strands_robots.benchmarks.libero.adapter._resolve_libero_arm_home_qpos",
+                return_value=home,
+            ),
+            patch(
+                "strands_robots.benchmarks.libero.adapter._resolve_panda_gripper_init_qpos",
+                return_value=None,
+            ),
+        ):
+            adapter._write_libero_arm_home_qpos(model, data, mj, lock=None)
+
+        # Arm home pose still landed despite the unnamed joint.
+        assert data.qpos[0:7] == list(home)
