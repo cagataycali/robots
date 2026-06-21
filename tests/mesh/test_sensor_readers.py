@@ -388,3 +388,80 @@ def test_sensor_loop_reraises_not_implemented(
 
     with pytest.raises(NotImplementedError):
         getattr(host, loop_name)()
+
+
+# reader fault resilience ---------------------------------------------------
+#
+# Each ``_read_*`` wraps its provider access in a fail-soft ``try/except`` so a
+# robot whose sensor accessor raises (e.g. a driver probing a disconnected
+# bus, a property that throws mid-read) degrades to "no sample this tick"
+# rather than propagating. This is distinct from the loop-level swallowing
+# above: here the *provider attribute access itself* raises, exercising the
+# inner guard inside each reader. Without it a single faulty sensor accessor
+# would crash the publish loop and silence the topic.
+
+
+class _FaultyRobot:
+    """Robot whose every attribute access raises, simulating a driver/bus
+    fault on sensor read. Stands in for a property or ``__getattr__`` provider
+    that throws mid-tick."""
+
+    def __getattr__(self, name: str) -> Any:
+        raise RuntimeError(f"sensor bus fault reading {name!r}")
+
+
+def _faulty_host() -> _Host:
+    return _Host(_FaultyRobot())
+
+
+@pytest.mark.parametrize(
+    "reader",
+    [
+        "_read_pose",
+        "_read_imu",
+        "_read_odom",
+        "_read_lidar_summary",
+        "_read_lidar_state",
+        "_read_hands",
+        "_read_map_info",
+    ],
+)
+def test_reader_returns_none_when_provider_access_raises(reader: str) -> None:
+    """A provider whose attribute access throws yields ``None`` (no sample),
+    never a propagated exception, so the publish loop survives the fault."""
+    host = _faulty_host()
+    assert getattr(host, reader)() is None
+
+
+def test_read_health_degrades_when_robot_and_system_sources_fail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the robot's battery/temps accessors raise AND every system-stat
+    source (loadavg, disk, /proc) is unavailable, ``_read_health`` collects no
+    data and returns ``None`` instead of an empty-but-truthy payload or a
+    crash."""
+    import builtins
+    import os
+    import shutil
+
+    def _raise_os(*_a: Any, **_k: Any) -> Any:
+        raise OSError("source unavailable")
+
+    monkeypatch.setattr(os, "getloadavg", _raise_os)
+    monkeypatch.setattr(shutil, "disk_usage", _raise_os)
+    monkeypatch.setattr(builtins, "open", _raise_os)  # blocks /proc/meminfo + /proc/uptime
+
+    assert _faulty_host()._read_health() is None
+
+
+def test_read_health_aggregates_system_stats_despite_faulty_robot() -> None:
+    """Even when the robot's own providers (battery/temps) raise, the
+    system-stat sources still populate health: the per-source guards isolate
+    the robot fault from the host metrics so partial data is published."""
+    health = _faulty_host()._read_health()
+    # On a normal host at least one of loadavg / disk / meminfo / uptime
+    # resolves, so health is a populated payload (not None) and carries no
+    # robot-provided battery field (that source faulted).
+    assert health is not None
+    assert "battery_pct" not in health
+    assert health["peer_id"] == "peer-1"
