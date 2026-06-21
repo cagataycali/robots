@@ -303,6 +303,56 @@ class TestRobotDeviceDriver(unittest.TestCase):
         asyncio.run(driver.onEmergencyStop("other-robot", "emergencyStop", {"reason": "test"}))
         robot.stop_task.assert_called_once()
 
+    def test_get_features_falls_back_when_robot_lacks_get_features(self):
+        """Main's HardwareRobot does not expose get_features(); the driver must
+        degrade to an empty-features payload with a note rather than raise."""
+        robot = _make_mock_robot()
+        # Remove the get_features attribute entirely so getattr returns None.
+        del robot.get_features
+        driver = RobotDeviceDriver(robot)
+        result = asyncio.run(driver.getFeatures())
+        self.assertEqual(result["features"], {})
+        self.assertIn("get_features unavailable", result["note"])
+
+    def test_get_features_falls_back_when_get_features_not_callable(self):
+        """A non-callable get_features attribute must also trigger the fallback."""
+        robot = _make_mock_robot()
+        robot.get_features = "not-callable"
+        driver = RobotDeviceDriver(robot)
+        result = asyncio.run(driver.getFeatures())
+        self.assertEqual(result["features"], {})
+
+    def test_event_emitters_run_their_bodies(self):
+        """The @emit-decorated declarations are callable no-op bodies; invoking
+        them must not raise (they only declare the event payload shape)."""
+        driver = RobotDeviceDriver(_make_mock_robot())
+        asyncio.run(driver.taskStarted("pick up cube", "mock"))
+        asyncio.run(driver.taskComplete("pick up cube", 42, 3.5))
+        asyncio.run(driver.streamStep(1, {"j1": 0.1}, {"j1": 0.2}))
+        asyncio.run(driver.emergencyStop("operator request"))
+        asyncio.run(driver.stateUpdate(task_status="running", instruction="pick", step_count=5))
+
+    def test_publish_state_emits_when_task_running(self):
+        """The 10Hz publisher emits a state update for a running task, carrying
+        the task status, instruction, and step count."""
+        robot = _make_mock_robot(task_status="running")
+        driver = RobotDeviceDriver(robot)
+        driver.stateUpdate = AsyncMock()
+        asyncio.run(driver._publishState())
+        driver.stateUpdate.assert_awaited_once_with(
+            task_status="running",
+            instruction="pick up the cube",
+            step_count=42,
+        )
+
+    def test_publish_state_silent_when_no_task_running(self):
+        """An idle task (or no task) must emit nothing from the periodic publisher."""
+        robot = _make_mock_robot(task_status="idle")
+        driver = RobotDeviceDriver(robot)
+        driver.stateUpdate = AsyncMock()
+        asyncio.run(driver._publishState())
+        driver.stateUpdate.assert_not_called()
+
 
 # ── TestSimulationDeviceDriver ────────────────────────────────────
 
