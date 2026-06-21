@@ -363,3 +363,129 @@ class TestDeclarativeBenchmarkLifecycle:
         with pytest.raises(RuntimeError) as exc:
             bench.on_episode_start(sim, random.Random(0))  # type: ignore[arg-type]
         assert "load_scene" in str(exc.value)
+
+
+# Malformed-shape rejection (defensive validation paths)
+
+
+class TestSpecShapeRejection:
+    """Cover the error branches that guard against malformed spec dicts.
+
+    These reject bad input at compile time with a clear ValueError rather than
+    letting a wrong-typed field reach the runtime evaluation loop.
+    """
+
+    def _base_spec(self, **overrides: Any) -> dict[str, Any]:
+        spec = {"name": "t", "default_robot": "so100", "supported_robots": ["so100"]}
+        spec.update(overrides)
+        return spec
+
+    def test_rejects_non_dict_success_clause(self):
+        """A success clause must be an {'all'/'any'} dict, not a bare list."""
+        with pytest.raises(ValueError) as exc:
+            DeclarativeBenchmark.from_dict(self._base_spec(success=["body_above_z"]))
+        assert "expected a dict" in str(exc.value)
+
+    def test_rejects_non_list_dense_reward(self):
+        """dense_reward must be a list of predicate entries, not a dict."""
+        with pytest.raises(ValueError) as exc:
+            DeclarativeBenchmark.from_dict(self._base_spec(dense_reward={"predicate": "constant", "value": 1.0}))
+        assert "dense_reward" in str(exc.value)
+        assert "expected a list" in str(exc.value)
+
+    def test_rejects_supported_robots_with_non_string_entry(self):
+        with pytest.raises(ValueError) as exc:
+            DeclarativeBenchmark.from_dict(self._base_spec(supported_robots=["so100", 123]))
+        assert "supported_robots" in str(exc.value)
+
+    def test_rejects_supported_robots_not_a_list(self):
+        with pytest.raises(ValueError) as exc:
+            DeclarativeBenchmark.from_dict(self._base_spec(supported_robots="so100"))
+        assert "supported_robots" in str(exc.value)
+
+    def test_rejects_non_string_scene(self):
+        with pytest.raises(ValueError) as exc:
+            DeclarativeBenchmark.from_dict(self._base_spec(scene=42))
+        assert "scene" in str(exc.value)
+
+
+# Defensive runtime behaviour (one bad term / missing capability must not crash)
+
+
+class TestDeclarativeBenchmarkResilience:
+    def test_reward_term_failure_is_swallowed(self, caplog):
+        """A reward term that raises is logged and skipped; sibling terms still sum."""
+        import logging
+
+        def boom(_sim):
+            raise RuntimeError("term exploded")
+
+        def good(_sim):
+            return 2.0
+
+        bench = DeclarativeBenchmark(
+            name="resilient",
+            supported_robots=["so100"],
+            default_robot="so100",
+            max_steps=10,
+            success_fn=lambda _s: False,
+            failure_fn=lambda _s: False,
+            reward_terms=[boom, good],
+        )
+        with caplog.at_level(logging.WARNING):
+            info = bench.on_step(_BodyStateSim({}), {}, {})  # type: ignore[arg-type]
+        # The good term still contributes; the broken one contributes nothing.
+        assert info.reward == pytest.approx(2.0)
+        assert info.done is False
+        assert any("reward term failed" in r.message for r in caplog.records)
+
+    def test_scene_declared_but_sim_lacks_load_scene_warns(self, caplog):
+        """A scene-declared benchmark on a sim without load_scene() warns and
+        falls through to the base episode setup rather than raising."""
+        import logging
+
+        spec = {
+            "name": "scene-task",
+            "default_robot": "so100",
+            "supported_robots": ["so100"],
+            "scene": "some/scene.xml",
+        }
+        bench = DeclarativeBenchmark.from_dict(spec)
+
+        class NoSceneSim:
+            def __init__(self):
+                self.added: list[dict[str, Any]] = []
+
+            def list_robots(self):
+                return []
+
+            def add_robot(self, *, name, data_config):
+                self.added.append({"name": name, "data_config": data_config})
+
+        sim = NoSceneSim()
+        with caplog.at_level(logging.WARNING):
+            bench.on_episode_start(sim, random.Random(0))  # type: ignore[arg-type]
+        assert any("no load_scene" in r.message for r in caplog.records)
+        # Base setup still ran: the default robot was added.
+        assert sim.added and sim.added[0]["data_config"] == "so100"
+
+
+# File-loader edge cases
+
+
+class TestSpecFileLoaderEdges:
+    def test_directory_path_rejected(self, tmp_path):
+        """A path that exists but is a directory (not a file) is rejected."""
+        d = tmp_path / "a.json"
+        d.mkdir()
+        with pytest.raises(ValueError) as exc:
+            register_benchmark_from_file("x", str(d))
+        assert "not a file" in str(exc.value)
+
+    def test_non_dict_json_payload_rejected(self, tmp_path):
+        """A JSON file that parses to a list (not a dict) is rejected."""
+        p = tmp_path / "list.json"
+        p.write_text(json.dumps(["not", "a", "dict"]))
+        with pytest.raises(ValueError) as exc:
+            register_benchmark_from_file("x", str(p))
+        assert "must parse to a dict" in str(exc.value)
