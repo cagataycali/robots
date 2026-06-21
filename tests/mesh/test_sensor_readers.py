@@ -402,12 +402,59 @@ def test_sensor_loop_reraises_not_implemented(
 
 
 class _FaultyRobot:
-    """Robot whose every attribute access raises, simulating a driver/bus
-    fault on sensor read. Stands in for a property or ``__getattr__`` provider
-    that throws mid-tick."""
+    """Robot whose sensor-provider accessors raise, simulating a driver/bus
+    fault on sensor read (a property that throws mid-tick).
 
-    def __getattr__(self, name: str) -> Any:
-        raise RuntimeError(f"sensor bus fault reading {name!r}")
+    Each provider attribute the readers consult (``_pose``, ``_battery``,
+    ``_temps``, ``_imu``, ``robot``, ``_odom``, ``_lidar_summary``,
+    ``_lidar_state``, ``_hands``, ``_map_info``) is a property that raises
+    ``RuntimeError`` -- a non-``AttributeError`` fault. This is deliberate:
+    the readers fetch providers via ``getattr(r, name, None)``, which would
+    *silently swallow* an ``AttributeError`` (returning the default before the
+    reader's own ``try/except`` runs), so an ``AttributeError`` fixture would
+    never exercise the inner fail-soft guard. A ``RuntimeError`` is not
+    suppressed by ``getattr``'s default and therefore propagates into the
+    guard under test."""
+
+    @property
+    def _pose(self) -> Any:
+        raise RuntimeError("sensor bus fault reading '_pose'")
+
+    @property
+    def _battery(self) -> Any:
+        raise RuntimeError("sensor bus fault reading '_battery'")
+
+    @property
+    def _temps(self) -> Any:
+        raise RuntimeError("sensor bus fault reading '_temps'")
+
+    @property
+    def _imu(self) -> Any:
+        raise RuntimeError("sensor bus fault reading '_imu'")
+
+    @property
+    def robot(self) -> Any:
+        raise RuntimeError("sensor bus fault reading 'robot'")
+
+    @property
+    def _odom(self) -> Any:
+        raise RuntimeError("sensor bus fault reading '_odom'")
+
+    @property
+    def _lidar_summary(self) -> Any:
+        raise RuntimeError("sensor bus fault reading '_lidar_summary'")
+
+    @property
+    def _lidar_state(self) -> Any:
+        raise RuntimeError("sensor bus fault reading '_lidar_state'")
+
+    @property
+    def _hands(self) -> Any:
+        raise RuntimeError("sensor bus fault reading '_hands'")
+
+    @property
+    def _map_info(self) -> Any:
+        raise RuntimeError("sensor bus fault reading '_map_info'")
 
 
 def _faulty_host() -> _Host:
