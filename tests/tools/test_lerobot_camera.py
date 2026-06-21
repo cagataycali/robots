@@ -264,3 +264,248 @@ def test_module_source_is_ascii_only() -> None:
     source = inspect.getsource(cam_mod)
     offenders = sorted({hex(ord(c)) for c in source if ord(c) > 127})
     assert not offenders, f"non-ASCII characters in module source: {offenders}"
+
+
+# --- discovery aggregation (cameras present + RealSense failure tolerance) --
+
+
+def test_discover_aggregates_opencv_and_realsense(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``discover`` formats found OpenCV + RealSense cameras and reports a total
+    that sums both backends."""
+    opencv_found = [
+        {
+            "name": "Logitech C920",
+            "id": "/dev/video0",
+            "backend_api": "V4L2",
+            "default_stream_profile": {"width": 1280, "height": 720, "fps": 30, "format": "MJPG"},
+        }
+    ]
+    realsense_found = [{"name": "Intel D435", "serial_number": "abc123", "type": "depth"}]
+    monkeypatch.setattr(cam_mod.OpenCVCamera, "find_cameras", staticmethod(lambda: opencv_found))
+    monkeypatch.setattr(cam_mod, "REALSENSE_AVAILABLE", True)
+    monkeypatch.setattr(cam_mod, "RealSenseCamera", SimpleNamespace(find_cameras=staticmethod(lambda: realsense_found)))
+
+    result = lerobot_camera(action="discover")
+    assert result["status"] == "success"
+    body = _texts(result)
+    assert "Logitech C920" in body
+    assert "1280x720" in body
+    assert "Intel D435" in body
+    assert "Total: 2 cameras found" in body
+    _assert_ascii(body)
+
+
+def test_discover_tolerates_realsense_probe_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A RealSense discovery error is swallowed (logged) and OpenCV results still
+    surface - the tool never crashes on one backend failing."""
+
+    def boom() -> list:
+        raise RuntimeError("rs2 backend offline")
+
+    monkeypatch.setattr(cam_mod.OpenCVCamera, "find_cameras", staticmethod(lambda: []))
+    monkeypatch.setattr(cam_mod, "REALSENSE_AVAILABLE", True)
+    monkeypatch.setattr(cam_mod, "RealSenseCamera", SimpleNamespace(find_cameras=staticmethod(boom)))
+
+    result = lerobot_camera(action="discover")
+    assert result["status"] == "success"
+    body = _texts(result)
+    assert "No cameras detected" in body
+    _assert_ascii(body)
+
+
+# --- list per-camera probe (success + failure branches) --------------------
+
+
+def test_list_probes_specific_camera_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``list`` with a camera_id connects to that camera and reports its actual
+    resolution / fps / color mode."""
+    probe = FakeCamera(width=1920, height=1080, fps=60)
+    monkeypatch.setattr(cam_mod, "OpenCVCameraConfig", lambda **k: SimpleNamespace(**k))
+    monkeypatch.setattr(cam_mod, "OpenCVCamera", lambda config: probe)
+
+    result = lerobot_camera(action="list", camera_id=2)
+    assert result["status"] == "success"
+    body = _texts(result)
+    assert "Camera 2 Details" in body
+    assert "Connection:  Success" in body
+    assert "1920x1080" in body
+    assert probe.disconnect_calls == 1
+    _assert_ascii(body)
+
+
+def test_list_probes_specific_camera_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A camera that fails to connect is reported as a failed probe, not a crash,
+    and the overall tool call still succeeds."""
+
+    class _DeadCamera:
+        def __init__(self, config: Any) -> None:
+            pass
+
+        def connect(self, warmup: bool = True) -> None:
+            raise OSError("device busy")
+
+    monkeypatch.setattr(cam_mod, "OpenCVCameraConfig", lambda **k: SimpleNamespace(**k))
+    monkeypatch.setattr(cam_mod, "OpenCVCamera", _DeadCamera)
+
+    result = lerobot_camera(action="list", camera_id=9)
+    assert result["status"] == "success"
+    body = _texts(result)
+    assert "Connection:  Failed (device busy)" in body
+    _assert_ascii(body)
+
+
+def test_list_realsense_when_sdk_missing_gives_install_hint(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Listing a RealSense camera without the SDK reports the install hint
+    instead of pretending the camera type is unknown."""
+    monkeypatch.setattr(cam_mod, "REALSENSE_AVAILABLE", False)
+    result = lerobot_camera(action="list", camera_type="realsense")
+    assert result["status"] == "success"
+    body = _texts(result)
+    assert "Not installed" in body
+    assert "pip install pyrealsense2" in body
+    _assert_ascii(body)
+
+
+def test_list_unknown_camera_type_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An unrecognised camera_type produces an explicit 'Unknown camera type'
+    line rather than silently succeeding with empty details."""
+    monkeypatch.setattr(cam_mod, "REALSENSE_AVAILABLE", True)
+    result = lerobot_camera(action="list", camera_type="thermal")
+    assert result["status"] == "success"
+    body = _texts(result)
+    assert "Unknown camera type: thermal" in body
+    _assert_ascii(body)
+
+
+# --- capture / batch save-failure paths ------------------------------------
+
+
+def test_capture_reports_save_failure(fake_camera: FakeCamera, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """When cv2.imwrite returns False the capture is reported as an error with
+    the target path, not a false success."""
+    monkeypatch.setattr(cam_mod.cv2, "imwrite", lambda *a, **k: False)
+    result = lerobot_camera(action="capture", camera_id=0, save_path=str(tmp_path))
+    assert result["status"] == "error"
+    body = _texts(result)
+    assert "Failed to save image" in body
+    # Camera is still released even on the save-failure path.
+    assert fake_camera.disconnect_calls == 1
+
+
+def test_capture_batch_all_fail_returns_error_status(
+    fake_camera: FakeCamera, tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If every camera fails to save, the batch reports overall error status and
+    a 0/N success summary."""
+    monkeypatch.setattr(cam_mod.cv2, "imwrite", lambda *a, **k: False)
+    result = lerobot_camera(action="capture_batch", camera_ids=[0, 1], save_path=str(tmp_path))
+    assert result["status"] == "error"
+    body = _texts(result)
+    assert "Success: 0/2 cameras" in body
+    _assert_ascii(body)
+
+
+def test_capture_batch_defaults_camera_ids_when_omitted(
+    fake_camera: FakeCamera, tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Omitting camera_ids falls back to the default robot camera set rather
+    than failing."""
+    captured: dict[str, Any] = {}
+    real_batch = cam_mod._capture_batch_images
+
+    def spy(camera_type, camera_ids, *args, **kwargs):
+        captured["ids"] = camera_ids
+        return real_batch(camera_type, camera_ids, *args, **kwargs)
+
+    monkeypatch.setattr(cam_mod, "_capture_batch_images", spy)
+    result = lerobot_camera(action="capture_batch", save_path=str(tmp_path))
+    assert result["status"] == "success"
+    assert captured["ids"] == [0, "/dev/video4"]
+
+
+# --- performance test async branch -----------------------------------------
+
+
+def test_performance_async_branch_reports_speedup(fake_camera: FakeCamera) -> None:
+    """With async_mode the performance test also measures async capture and
+    reports a sync/async speedup figure."""
+    result = lerobot_camera(action="test", camera_id=0, async_mode=True)
+    assert result["status"] == "success"
+    body = _texts(result)
+    assert "Async Capture (10 frames)" in body
+    assert "Speedup:" in body
+    _assert_ascii(body)
+
+
+# --- _create_camera backend selection --------------------------------------
+
+
+def test_create_camera_builds_realsense_when_available(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When the RealSense SDK is present, _create_camera routes a 'realsense'
+    request to the RealSense config + camera classes with the serial number."""
+    seen: dict[str, Any] = {}
+
+    def fake_config(serial_number, fps, width, height):
+        seen["serial"] = serial_number
+        return SimpleNamespace(serial_number=serial_number)
+
+    monkeypatch.setattr(cam_mod, "REALSENSE_AVAILABLE", True)
+    monkeypatch.setattr(cam_mod, "RealSenseCameraConfig", fake_config)
+    monkeypatch.setattr(cam_mod, "RealSenseCamera", lambda config: SimpleNamespace(config=config))
+
+    cam = cam_mod._create_camera("realsense", "0123", 640, 480, 30, "RGB", "NO_ROTATION")
+    assert seen["serial"] == "0123"
+    assert cam.config.serial_number == "0123"
+
+
+def test_create_camera_realsense_without_sdk_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Requesting a RealSense camera without the SDK raises a clear
+    unsupported-type error (no silent fallback to OpenCV)."""
+    monkeypatch.setattr(cam_mod, "REALSENSE_AVAILABLE", False)
+    with pytest.raises(ValueError, match="Unsupported camera type: realsense"):
+        cam_mod._create_camera("realsense", "0", 640, 480, 30, "RGB", "NO_ROTATION")
+
+
+# --- frame encoding failure -------------------------------------------------
+
+
+def test_frame_to_image_content_unknown_format_defaults_to_jpeg() -> None:
+    """An unrecognised format string falls back to JPEG encoding rather than
+    erroring."""
+    frame = np.zeros((4, 4, 3), dtype=np.uint8)
+    content = cam_mod._frame_to_image_content(frame, "tiff")
+    assert content["image"]["format"] == "jpeg"
+
+
+def test_create_camera_opencv_maps_color_mode_and_rotation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """_create_camera translates the string color_mode / rotation selectors into
+    the LeRobot enum config it hands to OpenCVCamera."""
+    seen: dict[str, Any] = {}
+
+    def fake_config(index_or_path, fps, width, height, color_mode, rotation):
+        seen.update(
+            index_or_path=index_or_path,
+            color_mode=color_mode,
+            rotation=rotation,
+        )
+        return SimpleNamespace()
+
+    monkeypatch.setattr(cam_mod, "OpenCVCameraConfig", fake_config)
+    monkeypatch.setattr(cam_mod, "OpenCVCamera", lambda config: SimpleNamespace(config=config))
+
+    cam_mod._create_camera("opencv", "/dev/video2", 640, 480, 30, "BGR", "ROTATE_180")
+    assert seen["index_or_path"] == "/dev/video2"
+    assert seen["color_mode"] == cam_mod.ColorMode.BGR
+    assert seen["rotation"] == cam_mod.Cv2Rotation.ROTATE_180
+
+
+def test_list_realsense_available_reports_capabilities(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When the RealSense SDK is present, listing a realsense camera advertises
+    its depth + multi-stream capabilities."""
+    monkeypatch.setattr(cam_mod, "REALSENSE_AVAILABLE", True)
+    result = lerobot_camera(action="list", camera_type="realsense")
+    assert result["status"] == "success"
+    body = _texts(result)
+    assert "Depth Support" in body
+    assert "Color, Depth, Infrared" in body
+    _assert_ascii(body)
