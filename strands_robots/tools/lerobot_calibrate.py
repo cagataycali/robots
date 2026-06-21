@@ -398,7 +398,7 @@ def lerobot_calibrate(
                     "status": "success",
                     "content": [
                         {
-                            "text": f"ℹ️ **No calibration files found.**\n\nCalibrations are stored in: `{manager.base_path}`"
+                            "text": f"**No calibration files found.**\n\nCalibrations are stored in: `{manager.base_path}`"
                         }
                     ],
                     "calibrations": structure,
@@ -474,7 +474,7 @@ def lerobot_calibrate(
                     if isinstance(motor_data, dict):
                         content_lines.extend(
                             [
-                                f"### ️ **{motor_name}**",
+                                f"### **{motor_name}**",
                                 f"  - **ID:** {motor_data.get('id', 'N/A')}",
                                 f"  - **Drive Mode:** {motor_data.get('drive_mode', 'N/A')}",
                                 f"  - **Homing Offset:** {motor_data.get('homing_offset', 'N/A')}",
@@ -587,7 +587,7 @@ def lerobot_calibrate(
             if success:
                 return {
                     "status": "success",
-                    "content": [{"text": f"️ **Successfully deleted:** `{device_type}/{device_model}/{device_id}`"}],
+                    "content": [{"text": f"**Successfully deleted:** `{device_type}/{device_model}/{device_id}`"}],
                 }
             else:
                 return {

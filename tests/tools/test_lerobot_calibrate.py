@@ -381,3 +381,57 @@ def test_tool_surfaces_validation_errors(tmp_path: Path) -> None:
     result = lerobot_calibrate(action="backup", output_dir="../escape", base_path=str(tmp_path))
     assert result["status"] == "error"
     assert "failed" in result["content"][0]["text"].lower()
+
+
+# --- ASCII-only output contract -------------------------------------------
+# AGENTS.md forbids emojis (and orphan U+FE0F variation selectors left over
+# from emoji sweeps) anywhere in code/logs/error strings. These tests pin the
+# user-facing text of every action that previously carried such characters:
+# the empty-list notice, the per-motor view header, and the delete-success
+# message. They assert the rendered text is pure ASCII so the violation cannot
+# silently reappear.
+
+
+def _assert_ascii(text: str) -> None:
+    """Fail with the offending code points if ``text`` is not pure ASCII."""
+    offenders = [(i, hex(ord(c))) for i, c in enumerate(text) if ord(c) > 127]
+    assert not offenders, f"non-ASCII in tool output at {offenders}: {text!r}"
+
+
+def test_list_empty_notice_is_ascii(tmp_path: Path) -> None:
+    """The empty-tree ``list`` notice carries no emoji/variation-selector."""
+    result = lerobot_calibrate(action="list", base_path=str(tmp_path))
+    assert result["status"] == "success"
+    text = result["content"][0]["text"]
+    _assert_ascii(text)
+    assert "No calibration files found." in text
+
+
+def test_view_motor_header_is_ascii(populated: Path) -> None:
+    """The per-motor ``view`` header carries no orphan variation selector."""
+    result = lerobot_calibrate(
+        action="view",
+        device_type="robots",
+        device_model="so101_follower",
+        device_id="orange_arm",
+        base_path=str(populated),
+    )
+    assert result["status"] == "success"
+    text = result["content"][0]["text"]
+    _assert_ascii(text)
+    assert "shoulder" in text
+
+
+def test_delete_success_message_is_ascii(populated: Path) -> None:
+    """The ``delete`` success message carries no orphan variation selector."""
+    result = lerobot_calibrate(
+        action="delete",
+        device_type="robots",
+        device_model="so101_follower",
+        device_id="green_arm",
+        base_path=str(populated),
+    )
+    assert result["status"] == "success"
+    text = result["content"][0]["text"]
+    _assert_ascii(text)
+    assert "Successfully deleted:" in text
