@@ -320,7 +320,7 @@ def test_list_probes_specific_camera_success(monkeypatch: pytest.MonkeyPatch) ->
     """``list`` with a camera_id connects to that camera and reports its actual
     resolution / fps / color mode."""
     probe = FakeCamera(width=1920, height=1080, fps=60)
-    monkeypatch.setattr(cam_mod, "OpenCVCameraConfig", lambda **k: SimpleNamespace(**k))
+    monkeypatch.setattr(cam_mod, "OpenCVCameraConfig", SimpleNamespace)
     monkeypatch.setattr(cam_mod, "OpenCVCamera", lambda config: probe)
 
     result = lerobot_camera(action="list", camera_id=2)
@@ -344,7 +344,7 @@ def test_list_probes_specific_camera_failure(monkeypatch: pytest.MonkeyPatch) ->
         def connect(self, warmup: bool = True) -> None:
             raise OSError("device busy")
 
-    monkeypatch.setattr(cam_mod, "OpenCVCameraConfig", lambda **k: SimpleNamespace(**k))
+    monkeypatch.setattr(cam_mod, "OpenCVCameraConfig", SimpleNamespace)
     monkeypatch.setattr(cam_mod, "OpenCVCamera", _DeadCamera)
 
     result = lerobot_camera(action="list", camera_id=9)
