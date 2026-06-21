@@ -331,6 +331,49 @@ class TestPeersProperty:
 # ---------------------------------------------------------------------------
 
 
+class _SimWorldOwner:
+    """A SimRobot-shaped owner backed by a real MuJoCo world.
+
+    Mirrors the wiring that ``Simulation.add_robot`` sets up for a per-robot
+    mesh peer: a back-reference ``_world`` (carrying ``_model`` / ``_data``),
+    a ``joint_names`` list, and a ``namespace`` prefix. ``_read_state`` reads
+    live qpos/qvel for those joints out of the world data.
+    """
+
+    def __init__(self, mujoco: Any, namespace: str) -> None:
+        prefix = namespace
+        xml = f"""
+        <mujoco>
+          <worldbody>
+            <body name="{prefix}link1" pos="0 0 0">
+              <joint name="{prefix}j1" type="hinge" axis="0 0 1"/>
+              <geom type="box" size="0.1 0.1 0.1"/>
+              <body name="{prefix}link2" pos="0 0 0.2">
+                <joint name="{prefix}j2" type="hinge" axis="0 1 0"/>
+                <geom type="box" size="0.05 0.05 0.05"/>
+              </body>
+            </body>
+          </worldbody>
+        </mujoco>
+        """
+        model = mujoco.MjModel.from_xml_string(xml)
+        data = mujoco.MjData(model)
+        j1 = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, f"{prefix}j1")
+        j2 = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, f"{prefix}j2")
+        data.qpos[model.jnt_qposadr[j1]] = 0.3
+        data.qpos[model.jnt_qposadr[j2]] = -0.7
+        data.qvel[model.jnt_dofadr[j1]] = 1.1
+        data.qvel[model.jnt_dofadr[j2]] = -2.2
+
+        world = MagicMock()
+        world._model = model
+        world._data = data
+        world.robots = {"arm0": object()}
+        self._world = world
+        self.joint_names = ["j1", "j2"]
+        self.namespace = namespace
+
+
 class TestReadState:
     """_read_state filters out images, surfaces joint and sim data."""
 
@@ -367,6 +410,37 @@ class TestReadState:
         assert s["sim_time"] == 12.5
         assert "robots" in s
         assert sorted(s["robots"].keys()) == ["arm0", "arm1"]
+
+    def test_extracts_simrobot_joints_from_namespaced_mujoco_world(self) -> None:
+        """When a SimRobot is attached to a MuJoCo world (the per-robot mesh
+        peer wiring in Simulation.add_robot), _read_state must read live
+        qpos/qvel for each of the robot's joints out of the world data,
+        resolving them through the robot's namespace prefix first.
+        """
+        mujoco = pytest.importorskip("mujoco", reason="needs mujoco for live qpos/qvel read")
+        owner = _SimWorldOwner(mujoco, namespace="arm0/")
+        m = Mesh(owner, peer_id="sim__arm0", peer_type="robot")
+        s = m._read_state()
+        assert s is not None
+        assert s["joints"] == {
+            "j1": {"position": 0.3, "velocity": 1.1},
+            "j2": {"position": -0.7, "velocity": -2.2},
+        }
+        # The world clock travels alongside the joint snapshot.
+        assert s["sim_time"] == 0.0
+
+    def test_extracts_simrobot_joints_without_namespace(self) -> None:
+        """A robot whose joints live at the top level (empty namespace) is
+        resolved by the bare joint name - the namespace-prefixed lookup is
+        skipped and the fallback by plain name still finds them.
+        """
+        mujoco = pytest.importorskip("mujoco", reason="needs mujoco for live qpos/qvel read")
+        owner = _SimWorldOwner(mujoco, namespace="")
+        m = Mesh(owner, peer_id="sim__bare", peer_type="robot")
+        s = m._read_state()
+        assert s is not None
+        assert set(s["joints"]) == {"j1", "j2"}
+        assert s["joints"]["j1"]["position"] == 0.3
 
 
 # ---------------------------------------------------------------------------
