@@ -533,3 +533,136 @@ class TestPolicyContractParity:
         if isinstance(p, MoveIt2Policy):
             p._client.socket.send = MagicMock(side_effect=Exception("offline"))
         p.reset(seed=0)
+
+
+# ---------------------------------------------------------------------------
+# Goal-validation and trajectory-decode edge cases
+#
+# These drive the remaining defence-in-depth branches in get_actions through
+# the public API: the joint-state extraction fail-soft paths, malformed goal
+# rejection (non-iterable / non-numeric / wrong-type), and the empty-row skip
+# in trajectory unpacking. They assert on the observable contract (raised
+# error, forwarded payload, returned actions), not on internal state.
+# ---------------------------------------------------------------------------
+
+
+class TestMoveIt2JointStateExtraction:
+    def _make_policy(self) -> MoveIt2Policy:
+        return MoveIt2Policy(host="127.0.0.1", port=19999, planning_group="arm")
+
+    def test_missing_state_forwards_none_joint_state(self):
+        """No ``observation.state`` -> ``joint_state`` omitted so the sidecar
+        falls back to its own state estimate (not a fabricated zero pose)."""
+        p = self._make_policy()
+        sent = _capture_send_decode_recv(p, _ok_trajectory_response())
+        asyncio.run(p.get_actions({}, "", target_joints={"j0": 0.5}))
+        assert sent[0]["data"]["joint_state"] is None
+
+    def test_numpy_state_is_serialised_to_plain_floats(self):
+        """A numpy ``observation.state`` is converted via ``tolist`` so the
+        msgpack payload carries plain Python floats (no numpy on the wire)."""
+        import numpy as np
+
+        p = self._make_policy()
+        sent = _capture_send_decode_recv(p, _ok_trajectory_response())
+        asyncio.run(
+            p.get_actions(
+                {"observation.state": np.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6])},
+                "",
+                target_joints={"j0": 0.5},
+            )
+        )
+        joint_state = sent[0]["data"]["joint_state"]
+        assert joint_state == pytest.approx([0.1, 0.2, 0.3, 0.4, 0.5, 0.6])
+        assert all(isinstance(x, float) for x in joint_state)
+
+    def test_non_numeric_state_degrades_to_none(self, caplog):
+        """A non-numeric ``observation.state`` is fail-soft: the start config
+        is dropped (sidecar uses its own estimate) rather than crashing the
+        plan call, and the failure is logged."""
+        p = self._make_policy()
+        sent = _capture_send_decode_recv(p, _ok_trajectory_response())
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            asyncio.run(
+                p.get_actions(
+                    {"observation.state": ["not", "a", "number"]},
+                    "",
+                    target_joints={"j0": 0.5},
+                )
+            )
+        assert sent[0]["data"]["joint_state"] is None
+        assert "failed to extract joint_state" in caplog.text
+
+
+class TestMoveIt2GoalTypeRejection:
+    def _make_policy(self) -> MoveIt2Policy:
+        return MoveIt2Policy(host="127.0.0.1", port=19999, planning_group="arm")
+
+    def test_non_iterable_target_pose_rejected(self):
+        """A scalar ``target_pose`` (can't be list()-ed) is rejected with a
+        type-named message rather than a downstream TypeError."""
+        p = self._make_policy()
+        with pytest.raises(ValueError, match="7-element list, got int"):
+            asyncio.run(p.get_actions({"observation.state": [0.0] * 6}, "", target_pose=7))
+
+    def test_non_numeric_target_pose_element_rejected(self):
+        """A non-numeric pose element is rejected up-front (not float()-ed at
+        the sidecar)."""
+        p = self._make_policy()
+        with pytest.raises(ValueError, match=r"target_pose\[6\] must be a number, got NoneType"):
+            asyncio.run(
+                p.get_actions(
+                    {"observation.state": [0.0] * 6},
+                    "",
+                    target_pose=[0.3, 0.0, 0.4, 1.0, 0.0, 0.0, None],
+                )
+            )
+
+    def test_non_numeric_target_joints_value_rejected(self):
+        """A non-numeric joint value is rejected with the joint name in the
+        message."""
+        p = self._make_policy()
+        with pytest.raises(ValueError, match="must be a number"):
+            asyncio.run(
+                p.get_actions(
+                    {"observation.state": [0.0] * 6},
+                    "",
+                    target_joints={"j0": None},
+                )
+            )
+
+    def test_non_string_planning_group_rejected(self):
+        """A non-string ``planning_group`` is rejected before it reaches the
+        sidecar's parameter interpolation."""
+        p = self._make_policy()
+        with pytest.raises(ValueError, match="planning_group must be a str, got int"):
+            asyncio.run(
+                p.get_actions(
+                    {"observation.state": [0.0] * 6},
+                    "",
+                    target_joints={"j0": 0.5},
+                    planning_group=123,
+                )
+            )
+
+
+class TestMoveIt2TrajectoryDecode:
+    def _make_policy(self) -> MoveIt2Policy:
+        return MoveIt2Policy(host="127.0.0.1", port=19999, planning_group="arm")
+
+    def test_empty_trajectory_row_is_skipped(self):
+        """An empty waypoint row from the sidecar is skipped, not emitted as
+        an empty action dict that the runner would have to special-case."""
+        p = self._make_policy()
+        response = {
+            "trajectory": [[0.0, 0.1, 0.2], [], [0.1, 0.3, 0.4]],
+            "success": True,
+            "status": "ok",
+        }
+        _capture_send_decode_recv(p, response)
+        actions = asyncio.run(p.get_actions({"observation.state": [0.0, 0.0]}, "", target_joints={"j0": 0.5}))
+        # Two non-empty rows -> two actions; the empty row produced nothing.
+        assert len(actions) == 2
+        assert all(set(step.keys()) == {"joint_0", "joint_1"} for step in actions)
