@@ -678,6 +678,72 @@ class TestBuildObservationBatch:
         assert batch["observation.state"].dtype == torch.float32
 
 
+class TestBuildBatchFromLerobotFormat:
+    """LeRobot-native (observation.*) batch building: image/list edge cases.
+
+    These pin the conversion contract of ``_build_batch_from_lerobot_format``
+    for inputs that arrive already prefixed with ``observation.`` but are not
+    explicitly declared as image features - the builder must still detect
+    channel-last images by shape, lay them out channel-first with a batch
+    dimension, normalize uint8 to [0, 1], and route Python lists/tuples
+    (numeric to tensors, non-numeric skipped) without raising.
+    """
+
+    def test_unlabeled_torch_image_detected_by_shape(self):
+        """A 3D channel-last tensor on a non-image key is treated as an image."""
+        policy = _make_loaded_policy(state_dim=6, include_images=False)
+        # Key has no "image" substring and is not a declared image feature.
+        observation = {"observation.cam0": torch.zeros(48, 64, 3)}
+        batch = policy._build_batch_from_lerobot_format(observation, {})
+        # HWC -> CHW + batch dim.
+        assert batch["observation.cam0"].shape == (1, 3, 48, 64)
+
+    def test_unlabeled_numpy_uint8_image_normalized(self):
+        """A uint8 channel-last numpy array is detected and scaled to [0, 1]."""
+        policy = _make_loaded_policy(state_dim=6, include_images=False)
+        img = np.full((48, 64, 3), 255, dtype=np.uint8)
+        observation = {"observation.cam1": img}
+        batch = policy._build_batch_from_lerobot_format(observation, {})
+        assert batch["observation.cam1"].shape == (1, 3, 48, 64)
+        assert float(batch["observation.cam1"].max()) == 1.0
+
+    def test_numeric_list_state_becomes_batched_tensor(self):
+        """A 1D numeric list gains a batch dimension."""
+        policy = _make_loaded_policy(state_dim=6, include_images=False)
+        observation = {"observation.state": [1.0, 2.0, 3.0]}
+        batch = policy._build_batch_from_lerobot_format(observation, {})
+        assert batch["observation.state"].shape == (1, 3)
+        np.testing.assert_allclose(batch["observation.state"][0].numpy(), [1.0, 2.0, 3.0], atol=1e-6)
+
+    def test_numeric_nested_list_image_laid_out_channel_first(self):
+        """A nested numeric list shaped HWC is permuted to CHW with a batch dim."""
+        policy = _make_loaded_policy(state_dim=6, include_images=False)
+        # Shape (2, 2, 3) channel-last -> (1, 3, 2, 2).
+        observation = {"observation.images.x": [[[1, 2, 3], [4, 5, 6]], [[7, 8, 9], [10, 11, 12]]]}
+        batch = policy._build_batch_from_lerobot_format(observation, {})
+        assert batch["observation.images.x"].shape == (1, 3, 2, 2)
+
+    def test_non_numeric_list_is_skipped_not_raised(self):
+        """A list of strings (e.g. task names) is dropped, never crashes the build."""
+        policy = _make_loaded_policy(state_dim=6, include_images=False)
+        observation = {
+            "observation.state": torch.zeros(6),
+            "observation.task_names": ["pick", "place"],
+        }
+        batch = policy._build_batch_from_lerobot_format(observation, {})
+        assert "observation.task_names" not in batch
+        assert "observation.state" in batch
+
+    def test_instruction_fills_declared_task_feature(self):
+        """When the model declares a 'task' input, the instruction is injected."""
+        policy = _make_loaded_policy(state_dim=6, include_images=False)
+        task_feat = MagicMock()
+        policy._input_features["task"] = task_feat
+        observation = {"observation.state": torch.zeros(6)}
+        batch = policy._build_observation_batch(observation, "pick up the cube")
+        assert batch["task"] == "pick up the cube"
+
+
 # (section)
 # Tests: _build_batch_from_strands_format
 # (section)
