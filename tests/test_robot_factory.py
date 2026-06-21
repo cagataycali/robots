@@ -594,6 +594,68 @@ class TestRealModeConfigDiscovery:
         assert not hasattr(cfg, "robot_ip")
         assert not hasattr(cfg, "kp")
 
+    def test_cameras_dict_converted_to_opencv_config_with_defaults(self):
+        """Camera dicts are converted to lerobot ``OpenCVCameraConfig`` objects.
+
+        ``_create_minimal_config`` accepts a plain ``cameras`` dict (the shape an
+        agent/tool passes) and must turn each ``opencv`` entry into a real
+        ``lerobot.cameras.opencv.OpenCVCameraConfig`` on the resolved robot
+        config. Only ``index_or_path`` is required; ``fps``/``width``/``height``/
+        ``rotation``/``color_mode`` default. Pre-fix this conversion branch was
+        never exercised (every config test passed ``cameras={}``), so a
+        regression in the dict->config mapping would go unnoticed.
+        """
+        pytest.importorskip("lerobot.robots.so_follower")
+        from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
+
+        from strands_robots.hardware_robot import Robot as HwRobot
+
+        hw = HwRobot.__new__(HwRobot)
+        hw.tool_name_str = "so101_cam"
+        cfg = hw._create_minimal_config(
+            "so101_follower",
+            cameras={
+                "wrist": {"type": "opencv", "index_or_path": 0},
+                "front": {
+                    "index_or_path": "/dev/video2",
+                    "fps": 60,
+                    "width": 1280,
+                    "height": 720,
+                },
+            },
+            port="/dev/null",
+        )
+        assert set(cfg.cameras) == {"wrist", "front"}
+        wrist = cfg.cameras["wrist"]
+        assert isinstance(wrist, OpenCVCameraConfig)
+        assert wrist.index_or_path == 0
+        # Unspecified fields fall back to the documented defaults.
+        assert (wrist.fps, wrist.width, wrist.height) == (30, 640, 480)
+        # Explicit overrides are forwarded verbatim.
+        front = cfg.cameras["front"]
+        assert front.index_or_path == "/dev/video2"
+        assert (front.fps, front.width, front.height) == (60, 1280, 720)
+
+    def test_unsupported_camera_type_raises_value_error(self):
+        """A non-opencv camera ``type`` is rejected with an actionable error.
+
+        ``opencv`` is the only backend ``_create_minimal_config`` knows how to
+        build; any other ``type`` (e.g. a typo or an unimplemented backend) must
+        fail loudly at config-build time rather than be silently dropped, so the
+        operator learns immediately the camera will not be wired up.
+        """
+        pytest.importorskip("lerobot.robots.so_follower")
+        from strands_robots.hardware_robot import Robot as HwRobot
+
+        hw = HwRobot.__new__(HwRobot)
+        hw.tool_name_str = "so101_badcam"
+        with pytest.raises(ValueError, match="Unsupported camera type: realsense"):
+            hw._create_minimal_config(
+                "so101_follower",
+                cameras={"depth": {"type": "realsense", "index_or_path": 0}},
+                port="/dev/null",
+            )
+
     def test_mesh_attrs_set_before_initialize_robot_no_attribute_error_in_cleanup(self, caplog):
         """Pin the cleanup-AttributeError fix with the actual symptom.
 
