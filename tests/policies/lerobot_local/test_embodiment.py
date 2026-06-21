@@ -264,3 +264,103 @@ def test_real_hardware_entries_use_pos_or_velocity_keys():
         assert all(k.endswith(".pos") for k in em.state_keys), f"{name} non-.pos keys"
     rover = load_embodiment("earthrover_real")
     assert rover.state_keys == ["linear_velocity", "angular_velocity"]
+
+
+# reconcile_dim truncate guard
+
+
+def test_reconcile_dim_truncate_cannot_grow():
+    # truncate cannot lengthen a too-short vector -> directs caller to 'pad'
+    with pytest.raises(ValueError, match="cannot truncate"):
+        reconcile_dim([1.0, 2.0], 4, "truncate")
+
+
+# PackStateProcessorStep value-coercion branches
+
+
+def test_pack_state_coerces_array_and_list_values():
+    Step = _require_pack_state()
+    s = Step(state_keys=["scalar", "vec", "lst"], expected_dim=5, dim_policy="pad")
+    obs = {
+        "scalar": np.array(1.0),  # 0-dim ndarray -> single float
+        "vec": np.array([2.0, 3.0]),  # multi-dim ndarray -> ravel/extend
+        "lst": [4.0, 5.0],  # list -> extend
+    }
+    out = s.observation(obs)
+    # 1 + 2 + 2 = 5 collected values, exact target -> no padding
+    assert list(out["observation.state"]) == [1.0, 2.0, 3.0, 4.0, 5.0]
+
+
+def test_pack_state_passthrough_when_no_state_keys_present():
+    # None of the declared state keys are in the obs -> leave obs untouched
+    # so a clearer downstream error can surface (never fabricate state).
+    Step = _require_pack_state()
+    s = Step(state_keys=["a", "b"], expected_dim=2, dim_policy="strict")
+    obs = {"observation.images.image": np.zeros((3, 4, 4))}
+    out = s.observation(dict(obs))
+    assert "observation.state" not in out
+    assert "observation.images.image" in out
+
+
+def test_pack_state_transform_features_is_passthrough():
+    # State composition reshapes runtime obs only; the model's declared feature
+    # set is unchanged, so transform_features returns its input unchanged.
+    Step = _require_pack_state()
+    s = Step(state_keys=["a"], expected_dim=1, dim_policy="strict")
+    sentinel = {"observation.state": object()}
+    assert s.transform_features(sentinel) is sentinel
+
+
+# expected_state_dim
+
+
+def test_expected_state_dim_prefers_model_feature():
+    em = EmbodimentMap(name="x", state_keys=["a", "b"])
+    assert em.expected_state_dim({"observation.state": _Feat((7,))}) == 7
+
+
+def test_expected_state_dim_falls_back_to_state_keys():
+    # No declared observation.state feature -> use len(state_keys).
+    em = EmbodimentMap(name="x", state_keys=["a", "b", "c"])
+    assert em.expected_state_dim({}) == 3
+
+
+# JSON loader internals (_extends inheritance + missing config file)
+
+
+def test_resolve_extends_merges_child_overrides():
+    from strands_robots.policies.lerobot_local.embodiment import _resolve
+
+    definitions = {
+        "base": {
+            "obs_rename": {"image": "observation.images.image"},
+            "state_keys": ["a", "b"],
+            "action_keys": ["a", "b"],
+            "dim_policy": "strict",
+        },
+        "child": {
+            "_extends": "base",
+            "__note__": "doc metadata is stripped",
+            "dim_policy": "pad",  # child override wins over inherited value
+        },
+    }
+    child = _resolve("child", definitions)
+    assert child.name == "child"
+    assert child.dim_policy == "pad"  # overridden
+    assert child.state_keys == ["a", "b"]  # inherited
+    assert child.obs_rename == {"image": "observation.images.image"}  # inherited
+
+
+def test_load_defs_returns_empty_when_config_missing(monkeypatch, tmp_path):
+    from strands_robots.policies.lerobot_local import embodiment as emb
+
+    monkeypatch.setattr(emb, "_CONFIG_FILE", tmp_path / "does_not_exist.json")
+    assert emb._load_defs() == ({}, {})
+
+
+# load_embodiment type rejection
+
+
+def test_load_embodiment_rejects_unsupported_type():
+    with pytest.raises(ValueError, match="must be str"):
+        load_embodiment(42)  # type: ignore[arg-type]
