@@ -681,6 +681,20 @@ def test_get_session_skips_resolve_auth_mode_when_thread_local_set(
 
     monkeypatch.setattr(_session, "_build_config", _short_circuit_build)
 
+    # ``get_session`` does a lazy ``import zenoh`` (session.py:510) and returns
+    # ``None`` early when the wheel is absent, short-circuiting BEFORE the
+    # scheme-selection block this test pins. Inject an importable stub so the
+    # block is reached deterministically whether or not the eclipse-zenoh wheel
+    # is installed in this env -- otherwise the assertion either hard-fails
+    # (no calls observed) or passes by accident (0 == 0). A bare ModuleType is
+    # sufficient and honest: ``_build_config`` is short-circuited above, so no
+    # ``zenoh.*`` attribute is ever touched. monkeypatch restores sys.modules
+    # on teardown.
+    import sys
+    import types
+
+    monkeypatch.setitem(sys.modules, "zenoh", types.ModuleType("zenoh"))
+
     _acl_config._set_thread_snapshot(None, auth_mode="none")
     try:
         try:
@@ -736,6 +750,20 @@ def test_get_session_falls_back_to_resolve_auth_mode_without_thread_local(
         raise sentinel_exc
 
     monkeypatch.setattr(_session, "_build_config", _short_circuit_build)
+
+    # ``get_session`` does a lazy ``import zenoh`` (session.py:510) and returns
+    # ``None`` early when the wheel is absent, short-circuiting BEFORE the
+    # scheme-selection block this test pins. Inject an importable stub so the
+    # block is reached deterministically whether or not the eclipse-zenoh wheel
+    # is installed in this env -- otherwise the assertion either hard-fails
+    # (no calls observed) or passes by accident (0 == 0). A bare ModuleType is
+    # sufficient and honest: ``_build_config`` is short-circuited above, so no
+    # ``zenoh.*`` attribute is ever touched. monkeypatch restores sys.modules
+    # on teardown.
+    import sys
+    import types
+
+    monkeypatch.setitem(sys.modules, "zenoh", types.ModuleType("zenoh"))
 
     try:
         try:
