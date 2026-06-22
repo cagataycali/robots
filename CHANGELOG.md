@@ -5,6 +5,26 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: simulation render output is ASCII-only (no emoji)
+
+The MuJoCo rendering tool methods embedded emoji and non-ASCII symbols in their
+agent-facing text payloads: `render` / `render_depth` prefixed summaries with a
+camera emoji, `render_depth` raised a degraded-accuracy warning with a warning
+emoji, `render_all` labelled each camera and its empty-frame warning with the
+same emoji, and `get_contacts` used a burst emoji plus `bullet`/`<->` arrow
+symbols in its per-pair lines. Emoji in tool output corrupts logs and trips
+downstream ASCII parsers, and the project contract is ASCII-only for code,
+logs, and tool text.
+
+- `render`, `render_depth`, `render_all`, and `get_contacts` now emit plain
+  ASCII text. Image/JSON blocks and all numeric values are unchanged; only the
+  decorative text prefixes/separators changed (e.g. the contact list now reads
+  `ground <-> cube_geom`, the depth warning starts with `Warning:`).
+- Regression tests render real frames headlessly and assert every text block of
+  `render`, `render_depth` (including the ARB_clip_control warning branch),
+  `render_all`, and `get_contacts` (with active contacts) is ASCII-only.
+
+
 ### Fixed: `get_mass_matrix` works across MuJoCo `mj_fullM` signature changes
 
 `PhysicsMixin.get_mass_matrix()` called `mj.mj_fullM(model, M, data.qM)`, the

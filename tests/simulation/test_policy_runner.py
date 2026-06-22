@@ -327,7 +327,7 @@ def test_extract_frame_ndarray_handles_render_shape() -> None:
     result_bytes = {
         "status": "success",
         "content": [
-            {"text": "📸 8x8 from 'cam'"},
+            {"text": "8x8 from 'cam'"},
             {"image": {"format": "png", "source": {"bytes": png_bytes}}},
         ],
     }

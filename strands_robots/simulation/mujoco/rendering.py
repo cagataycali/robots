@@ -618,7 +618,7 @@ class RenderingMixin:
             return {
                 "status": "success",
                 "content": [
-                    {"text": f"📸 {w}x{h} from '{label}' at t={self._world.sim_time:.3f}s"},
+                    {"text": f"{w}x{h} from '{label}' at t={self._world.sim_time:.3f}s"},
                     {"image": {"format": "png", "source": {"bytes": png_bytes}}},
                     {"json": {"pixel_variance": pixel_var, "pixel_mean": pixel_mean, "camera": label}},
                 ],
@@ -696,14 +696,14 @@ class RenderingMixin:
                     except Exception:
                         pass
                 if "ARB_clip_control" in captured:
-                    # ARB_clip_control missing → OpenGL depth buffer uses
+                    # ARB_clip_control missing -> OpenGL depth buffer uses
                     # default [0,1] range with compressed far-plane precision.
                     # After linearization below, Min/Max are still in meters,
                     # but their precision (especially for distant pixels) is
                     # degraded vs. a GPU with ARB_clip_control. Downstream
                     # consumers should treat these values as approximate.
                     self._depth_warn_text = (
-                        "⚠️ Depth accuracy limited on this GPU (missing ARB_clip_control). "
+                        "Warning: Depth accuracy limited on this GPU (missing ARB_clip_control). "
                         "Linearized Min/Max are in meters but precision is degraded "
                         "(especially for far-plane pixels) - treat as approximate."
                     )
@@ -732,12 +732,10 @@ class RenderingMixin:
             denom = zfar - depth * (zfar - znear)
             denom = _np.where(denom == 0, 1e-10, denom)
             depth_m = znear * zfar / denom
-            # Clamp: pixels at far plane (depth==1) → zfar
+            # Clamp: pixels at far plane (depth==1) -> zfar
             depth_m = _np.clip(depth_m, znear, zfar)
 
-            text = (
-                f"📸 Depth {w}x{h} from '{label}'\nMin: {float(depth_m.min()):.4f}m, Max: {float(depth_m.max()):.4f}m"
-            )
+            text = f"Depth {w}x{h} from '{label}'\nMin: {float(depth_m.min()):.4f}m, Max: {float(depth_m.max()):.4f}m"
             if clip_warn:
                 text += f"\n{clip_warn}"
             return {
@@ -818,10 +816,10 @@ class RenderingMixin:
             g2 = _resolve_geom(c["geom2"])
             contacts.append({"geom1": g1, "geom2": g2, "dist": c["dist"], "pos": c["pos"]})
 
-        text = f"💥 {len(contacts)} contacts" if contacts else "No contacts."
+        text = f"{len(contacts)} contacts" if contacts else "No contacts."
         if contacts:
             for c in contacts[:10]:
-                text += f"\n  • {c['geom1']} ↔ {c['geom2']} (d={c['dist']:.4f})"
+                text += f"\n  - {c['geom1']} <-> {c['geom2']} (d={c['dist']:.4f})"
 
         return {
             "status": "success",
@@ -874,7 +872,7 @@ class RenderingMixin:
             if c in all_cams:
                 resolved.append(c)
             else:
-                # Try suffix match: 'side' → 'arm0/side'
+                # Try suffix match: 'side' -> 'arm0/side'
                 matches = [ac for ac in all_cams if ac.endswith("/" + c)]
                 if len(matches) == 1:
                     resolved.append(matches[0])
@@ -902,8 +900,8 @@ class RenderingMixin:
 
         Returns:
             ``{"status", "content": [{"text": summary},
-                                     {"text": "📸 cam1"}, {"image": {...}},
-                                     {"text": "📸 cam2"}, {"image": {...}}, ...]}``
+                                     {"text": "cam1"}, {"image": {...}},
+                                     {"text": "cam2"}, {"image": {...}}, ...]}``
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
@@ -931,10 +929,10 @@ class RenderingMixin:
                         if "json" in block and stats is None:
                             stats = block["json"]
                 if img_block is not None:
-                    label = f"📸 {cam_name}"
+                    label = cam_name
                     # flag near-uniform frames (all black / all clear).
                     if stats and float(stats.get("pixel_variance", 99)) < 1.0:
-                        warn = f"⚠️ camera '{cam_name}': image appears empty (variance < 1)"
+                        warn = f"Warning: camera '{cam_name}': image appears empty (variance < 1)"
                         label = f"{label}  {warn}"
                         low_var_warnings.append(warn)
                     content.append({"text": label})
@@ -945,7 +943,7 @@ class RenderingMixin:
                 content.append({"text": f"{cam_name}: {err}"})
         warn_suffix = f", {len(low_var_warnings)} low-variance" if low_var_warnings else ""
         summary = (
-            f"📸 Multi-camera snapshot at t={self._world.sim_time:.3f}s: "
+            f"Multi-camera snapshot at t={self._world.sim_time:.3f}s: "
             f"{ok} ok, {failed} failed, {len(names)} requested{warn_suffix}"
         )
         return {
@@ -1002,7 +1000,7 @@ class RenderingMixin:
         # Strict validation: if user specified cameras, error on any unresolved names
         # (same policy as render() and render_depth() - fail loudly, don't silently drop).
         # NOTE: `unresolved` contains the raw user inputs that didn't map, so the
-        # namespace-suffix resolution path (e.g. 'side' → 'arm0/side') is preserved.
+        # namespace-suffix resolution path (e.g. 'side' -> 'arm0/side') is preserved.
         if cameras is not None and unresolved:
             return {
                 "status": "error",
@@ -1189,9 +1187,9 @@ class RenderingMixin:
         Idempotent and safe whichever ``start_cameras_recording*`` variant
         was used:
 
-        * Daemon-thread (``start_cameras_recording``) → flips
+        * Daemon-thread (``start_cameras_recording``) -> flips
           ``state["running"] = False``, joins the thread, then flushes.
-        * Synchronous (``start_cameras_recording_synchronous``) → no
+        * Synchronous (``start_cameras_recording_synchronous``) -> no
           thread to join; the ``finalize`` callable returned alongside
           ``on_frame`` is the preferred entry point but
           ``stop_cameras_recording`` works equivalently for callers that

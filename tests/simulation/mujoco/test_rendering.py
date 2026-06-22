@@ -1052,3 +1052,87 @@ def test_render_depth_no_renderer_returns_opengl_hint(monkeypatch) -> None:
         assert "OpenGL" in r["content"][0]["text"]
     finally:
         sim.destroy()
+
+
+def _iter_text_blocks(result):
+    """Yield every user-facing text string in a tool result's content list."""
+    for block in result.get("content", []):
+        if isinstance(block, dict) and "text" in block:
+            yield block["text"]
+
+
+def test_get_contacts_output_is_ascii_only() -> None:
+    """get_contacts() summary + per-pair lines must be ASCII (no emoji/symbols).
+
+    Agent-facing tool output is ASCII-only: emoji and orphan variation
+    selectors corrupt logs and downstream parsers. A box is dropped onto the
+    ground plane so active contacts exist, exercising the count summary and
+    per-pair "geom1 <-> geom2" lines that previously embedded emoji/arrows.
+    """
+    from strands_robots.simulation import Simulation
+
+    sim = Simulation()
+    sim.create_world()
+    sim.add_object("cube", shape="box", position=[0.0, 0.0, 0.02], size=[0.02, 0.02, 0.02], mass=0.1)
+    sim.step(n_steps=300)
+    try:
+        r = sim.get_contacts()
+        assert r["status"] == "success", r
+        assert r["content"][1]["json"]["contacts"], "expected active contacts for this regression"
+        for text in _iter_text_blocks(r):
+            assert text.isascii(), f"non-ASCII in get_contacts output: {text!r}"
+    finally:
+        sim.destroy()
+
+
+def test_render_depth_output_is_ascii_only(monkeypatch) -> None:
+    """render_depth() summary + ARB_clip_control warning must be ASCII.
+
+    Drives the GPU-warning branch (enable_depth_rendering emits the
+    ARB_clip_control stderr marker) so the warning text is included and
+    asserted ASCII-only - that path previously carried a warning emoji.
+    """
+    np = pytest.importorskip("numpy")
+    sim = _depth_world()
+    try:
+        depth = np.full((2, 2), 0.5, dtype=np.float32)
+        fake = _FakeDepthRenderer(depth, stderr_text="ARB_clip_control not available\n")
+        monkeypatch.setattr(sim, "_get_renderer", lambda w, h: fake)
+        r = sim.render_depth(camera_name="cam_a", width=2, height=2)
+        assert r["status"] == "success", r
+        texts = list(_iter_text_blocks(r))
+        assert any("Depth" in t for t in texts)
+        for text in texts:
+            assert text.isascii(), f"non-ASCII in render_depth output: {text!r}"
+    finally:
+        sim.destroy()
+
+
+@_requires_mujoco
+def test_render_and_render_all_output_is_ascii_only() -> None:
+    """render() + render_all() summaries (incl. low-variance warning) are ASCII.
+
+    Renders real frames headlessly so the camera labels, snapshot summary,
+    and the empty-frame "Warning:" branch are exercised and asserted
+    ASCII-only - these strings previously embedded camera/warning emoji.
+    """
+    os.environ.setdefault("MUJOCO_GL", "glfw")
+    from strands_robots.simulation import Simulation
+
+    sim = Simulation()
+    sim.create_world()
+    sim.add_robot("arm", data_config="so101", position=[0.0, 0.0, 0.0])
+    sim.add_camera("cam_a", position=[-0.3, -0.3, 0.4], target=[0.0, 0.0, 0.1])
+    sim.step(n_steps=2)
+    try:
+        single = sim.render(camera_name="cam_a", width=64, height=48)
+        assert single["status"] == "success", single
+        for text in _iter_text_blocks(single):
+            assert text.isascii(), f"non-ASCII in render output: {text!r}"
+
+        multi = sim.render_all(width=64, height=48)
+        assert multi["status"] == "success", multi
+        for text in _iter_text_blocks(multi):
+            assert text.isascii(), f"non-ASCII in render_all output: {text!r}"
+    finally:
+        sim.destroy()

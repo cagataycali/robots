@@ -75,7 +75,7 @@ def _make_render_result(width: int = 32, height: int = 24, fill: int = 128) -> d
     return {
         "status": "success",
         "content": [
-            {"text": f"📸 {width}x{height}"},
+            {"text": f"{width}x{height}"},
             {"image": {"format": "png", "source": {"bytes": _png_bytes(arr)}}},
         ],
     }
