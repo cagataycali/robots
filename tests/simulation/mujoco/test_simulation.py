@@ -427,6 +427,37 @@ class TestCameraManagement:
         result = sim_with_world.remove_camera("ghost")
         assert result["status"] == "error"
 
+    def test_add_camera_unknown_parent_body_lists_available_bodies(self, sim_with_robot):
+        """Mounting a camera on a non-existent body must fail with a discovery
+        error that names the bodies actually present, so an agent can correct
+        the call without guessing. Robot bodies are namespaced ``<robot>/<body>``.
+        """
+        result = sim_with_robot.add_camera(
+            "wrist",
+            position=[0.2, -0.2, 0.3],
+            target=[0, 0, 0],
+            parent_body="no_such_body",
+        )
+        assert result["status"] == "error"
+        text = result["content"][0]["text"]
+        assert "no_such_body" in text
+        assert "arm1/base" in text
+        # The failed mount must not leave a dangling registry entry behind.
+        assert "wrist" not in sim_with_robot._world.cameras
+
+    def test_add_camera_valid_parent_body_mounts_and_reports(self, sim_with_robot):
+        """A camera mounted on an existing namespaced body succeeds and the
+        success message names the mount target."""
+        result = sim_with_robot.add_camera(
+            "wrist",
+            position=[0.2, -0.2, 0.3],
+            target=[0, 0, 0],
+            parent_body="arm1/base",
+        )
+        assert result["status"] == "success"
+        assert "arm1/base" in result["content"][0]["text"]
+        assert sim_with_robot._world.cameras["wrist"].parent_body == "arm1/base"
+
 
 # Scene Injection (XML round-trip)
 
