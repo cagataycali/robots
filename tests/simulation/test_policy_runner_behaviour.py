@@ -425,3 +425,97 @@ class TestControlSubsteps:
         PolicyRunner(sim_with_robot).evaluate("alice", policy, n_episodes=1, max_steps=5, control_frequency=50.0)
         assert seen, "send_action was never called"
         assert all(n > 1 for n in seen), f"eval still under-stepping: n_substeps={seen}"
+
+
+class TestVideoFinalization:
+    """PolicyRunner.run() video-writer finalization: the success summary when
+    frames are captured vs. the loud 0-frame warning when they are not.
+
+    Both branches live in the post-loop ``writer is not None`` block and depend
+    only on whether ``_extract_frame_ndarray`` decoded at least one frame from
+    ``sim.render()``. We stub ``sim.render`` so the up-front camera probe passes
+    (status="success") while controlling whether in-loop frames decode - this
+    exercises the finalization logic without an OpenGL context, so it runs on
+    headless CI where the GL-backed video test is skipped.
+    """
+
+    @staticmethod
+    def _png_render_result() -> dict:
+        """A render() success dict whose image block decodes to a real ndarray."""
+        import base64
+        import io
+
+        import numpy as np
+        from PIL import Image
+
+        arr = np.random.default_rng(0).integers(0, 255, (16, 16, 3), dtype=np.uint8)
+        buf = io.BytesIO()
+        Image.fromarray(arr).save(buf, format="PNG")
+        encoded = base64.b64encode(buf.getvalue()).decode()
+        return {
+            "status": "success",
+            "content": [
+                {"text": "frame"},
+                {"image": {"format": "png", "source": {"bytes": encoded}}},
+            ],
+        }
+
+    def test_zero_frames_captured_warns_and_stays_success(self, sim_with_robot, tmp_path, monkeypatch):
+        """Camera passes the up-front probe but every in-loop frame fails to
+        decode (e.g. camera removed mid-rollout): run() must NOT crash, must
+        flag the empty recording in the result text, and must not leave a
+        non-empty MP4 behind."""
+        policy = MockPolicy()
+        policy.set_robot_state_keys(sim_with_robot.robot_joint_names("alice"))
+
+        # render() returns success (probe passes) but carries no image block,
+        # so _extract_frame_ndarray() returns None for every in-loop frame.
+        monkeypatch.setattr(
+            sim_with_robot,
+            "render",
+            lambda *a, **k: {"status": "success", "content": [{"text": "no image block"}]},
+        )
+
+        video_path = tmp_path / "empty.mp4"
+        runner = PolicyRunner(sim_with_robot)
+        result = runner.run(
+            "alice",
+            policy,
+            duration=0.1,
+            control_frequency=50,
+            fast_mode=True,
+            video=VideoConfig(path=str(video_path), fps=30),
+        )
+        # Rollout still completes - a dead camera doesn't kill the run.
+        assert result["status"] == "success", result
+        text = result["content"][0]["text"]
+        assert "0 frames captured" in text
+        assert str(video_path) in text
+        # No real video content was produced.
+        assert not video_path.exists() or video_path.stat().st_size == 0
+
+    def test_captured_frames_report_video_summary(self, sim_with_robot, tmp_path, monkeypatch):
+        """When frames decode, run() finalizes the writer and reports the video
+        path, frame count, fps and resolution in the result text - and the MP4
+        actually exists on disk with content."""
+        policy = MockPolicy()
+        policy.set_robot_state_keys(sim_with_robot.robot_joint_names("alice"))
+
+        monkeypatch.setattr(sim_with_robot, "render", lambda *a, **k: self._png_render_result())
+
+        video_path = tmp_path / "ok.mp4"
+        runner = PolicyRunner(sim_with_robot)
+        result = runner.run(
+            "alice",
+            policy,
+            duration=0.2,
+            control_frequency=50,
+            fast_mode=True,
+            video=VideoConfig(path=str(video_path), fps=30, width=16, height=16),
+        )
+        assert result["status"] == "success", result
+        text = result["content"][0]["text"]
+        assert "Video:" in text
+        assert "frames" in text
+        assert "30fps" in text
+        assert video_path.exists() and video_path.stat().st_size > 0
