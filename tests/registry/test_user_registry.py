@@ -124,6 +124,46 @@ class TestRegisterRobot:
         assert entry["hardware"] == hw
 
 
+class TestRegisterRobotAliasCollisionFailSoft:
+    """Alias-collision detection must degrade gracefully, never block a
+    registration.
+
+    ``register_robot(aliases=...)`` enumerates the package registry to warn
+    when a user alias shadows a canonical name or another alias. That
+    enumeration is best-effort diagnostics, not a precondition: if listing
+    the package registry raises (corrupt/partial install, import-time error
+    in a downstream ``robots.py`` consumer), registration must still succeed
+    with the aliases intact rather than propagating the failure to the
+    caller. This pins the ``except Exception`` fallback that resets the
+    package canonical/alias sets to empty.
+    """
+
+    def test_register_with_aliases_survives_package_enumeration_failure(self, tmp_path):
+        """When list_robots() raises during alias-collision detection, the
+        robot is still registered and its aliases resolve."""
+        robot_dir = _make_robot(tmp_path / "assets")
+
+        # The collision-detection block does a function-local
+        # ``from .robots import list_robots`` then calls it; patch the name
+        # on the robots module so the call raises at enumeration time.
+        with mock.patch(
+            "strands_robots.registry.robots.list_robots",
+            side_effect=RuntimeError("package registry enumeration failed"),
+        ):
+            entry = register_robot(
+                name="failsoft_bot",
+                model_xml="bot.xml",
+                asset_dir=str(robot_dir),
+                aliases=["failsoft_alias"],
+            )
+
+        # Registration succeeded despite the enumeration failure ...
+        assert entry["aliases"] == ["failsoft_alias"]
+        # ... and the robot + its alias are actually persisted/resolvable.
+        assert resolve_name("failsoft_alias") == "failsoft_bot"
+        assert get_user_robots().get("failsoft_bot") is not None
+
+
 class TestRegisterRobotNameNormalization:
     """Names are lower-cased, stripped, and hyphens become underscores."""
 
