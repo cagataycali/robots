@@ -138,3 +138,61 @@ class TestPolicyRunnerActionErrors:
         # run_policy calls set_robot_state_keys before the loop, so MockPolicy
         # gets the correct keys. This must succeed.
         assert result["status"] == "success"
+
+
+class _PartiallyResolvedPolicy(Policy):
+    """A policy that emits a mix of valid and unresolved actuator keys.
+
+    Models a policy whose output is mostly correct but includes one or more
+    keys that don't map to any actuator (e.g. an extra DOF the robot lacks,
+    or a typo in one joint name). Unlike ``_StubbornPolicy``, some steps
+    DO move the robot, so the run is operational and must report success -
+    with a non-fatal warning - rather than a hard error.
+    """
+
+    @property
+    def provider_name(self) -> str:
+        return "partial_test"
+
+    @property
+    def requires_images(self) -> bool:
+        return False
+
+    def set_robot_state_keys(self, robot_state_keys: list[str]) -> None:
+        # Intentionally ignore - this policy hardcodes its own key mix.
+        pass
+
+    async def get_actions(
+        self, observation_dict: dict[str, Any], instruction: str, **kwargs: Any
+    ) -> list[dict[str, Any]]:
+        # First action resolves (real so100 actuator), second does not.
+        return [{"Rotation": 0.1}, {"not_an_actuator": 0.2}]
+
+
+class TestPolicyRunnerPartialActionErrors:
+    """run_policy must distinguish a partially-misconfigured policy (some steps
+    move the robot) from a fully-broken one (no step moves the robot).
+
+    A fully-unresolved policy returns status='error' (covered by
+    ``TestPolicyRunnerActionErrors.test_stubborn_policy_wrong_keys_reports_error``).
+    A partially-unresolved policy is still operational, so it must return
+    status='success' while surfacing a non-fatal 'N/M steps unresolved' warning.
+    """
+
+    def test_partial_unresolved_keys_succeeds_with_warning(self, sim):
+        policy = _PartiallyResolvedPolicy()
+        result = sim.run_policy(
+            policy_object=policy,
+            n_steps=2,
+            control_frequency=10.0,
+        )
+        # Some steps moved the robot, so the run is operational -> success.
+        assert result["status"] == "success"
+        text = result["content"][0]["text"]
+        # The non-fatal partial-failure warning must be surfaced, enumerating
+        # how many of the total steps had unresolved keys.
+        assert "unresolved keys" in text
+        assert "1/2" in text
+        # The fully-broken phrasing ("ALL ... the robot did not move") must NOT
+        # appear - the robot did move on the resolved steps.
+        assert "did not move" not in text
