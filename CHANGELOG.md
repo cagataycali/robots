@@ -5,6 +5,27 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: numpy scalars no longer dropped from recorded state/action vectors
+
+`DatasetRecorder.add_frame` flattens each observation/action value into the
+LeRobot `observation.state` / `action` vectors. The value-type dispatch handled
+Python `int`/`float`, 0-dim `np.ndarray`, and list/array sequences, but NOT
+numpy scalar types (`np.float32`, `np.int32`, ...). These are the element type
+you get from indexing a MuJoCo `qpos`/`ctrl` array (`np.asarray(qpos)[i]`) and
+from many policy action paths, so they are extremely common in real recording
+loops. They are neither Python `float` nor `np.ndarray`, so they fell through
+every branch and were silently omitted from the vector.
+
+The result was a corrupted dataset with no error at write time: a column
+dropped to the wrong length (or vanished entirely). On reopen, LeRobot raised a
+confusing downstream `Feature mismatch` error far from the cause.
+
+- `add_frame` now treats `np.generic` scalars (alongside 0-dim `np.ndarray`)
+  as scalar values for both state and action flattening.
+- Regression test feeds `np.float32`/`np.float64`/`np.int32` values and asserts
+  the flattened vectors are present, correctly ordered, and full-length.
+
+
 ### Added: `[molmoact2]` optional-dependency extra
 
 MolmoAct2 transformers-native VLA checkpoints (e.g. `allenai/MolmoAct2-SO100_101`)

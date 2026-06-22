@@ -213,6 +213,33 @@ def test_add_frame_flattens_vector_valued_entries():
     assert np.allclose(frame["action"], [0.1, 0.2])
 
 
+def test_add_frame_records_numpy_scalar_state_and_action():
+    """numpy scalars (np.float32 from indexing a qpos/ctrl array) are recorded
+    as scalar columns, not silently dropped.
+
+    MuJoCo observations and policy actions routinely hand back numpy scalar
+    types (the element type you get from ``np.asarray(qpos)[i]``), which are
+    neither Python ``float`` nor 0-dim ``np.ndarray``. They must still land in
+    the flattened state/action vectors - dropping them would record
+    wrong-length (or entirely missing) vectors with no error raised.
+    """
+    ds = _CapturingDataset(_state_action_features(["j1", "j2", "j3"], ["j1", "j2", "j3"]))
+    rec = DatasetRecorder(dataset=ds, task="pick")
+
+    rec.add_frame(
+        observation={"j1": np.float32(1.0), "j2": np.float64(2.0), "j3": np.int32(3)},
+        action={"j1": np.float32(0.1), "j2": np.float32(0.2), "j3": np.float32(0.3)},
+    )
+
+    frame = ds.frames[0]
+    assert "observation.state" in frame, "numpy-scalar state was dropped"
+    assert "action" in frame, "numpy-scalar action was dropped"
+    assert np.allclose(frame["observation.state"], [1.0, 2.0, 3.0])
+    assert np.allclose(frame["action"], [0.1, 0.2, 0.3])
+    assert frame["observation.state"].dtype == np.float32
+    assert frame["action"].dtype == np.float32
+
+
 def test_add_frame_converts_float_images_to_uint8():
     """A float image in [0, 1] is scaled to uint8 HWC for LeRobot."""
     feats = {"observation.images.cam": {"dtype": "video"}}

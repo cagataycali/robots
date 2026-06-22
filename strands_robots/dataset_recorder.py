@@ -429,7 +429,9 @@ class DatasetRecorder:
                     state_vals.append(0.0)
                 elif isinstance(v, (int, float)):
                     state_vals.append(float(v))
-                elif isinstance(v, np.ndarray) and v.ndim == 0:
+                elif isinstance(v, (np.generic, np.ndarray)) and v.ndim == 0:
+                    # numpy scalars (np.float32/np.int32 from indexing a MuJoCo
+                    # qpos/ctrl array) and 0-dim arrays are scalar state values.
                     state_vals.append(float(v))
                 elif isinstance(v, (list, np.ndarray)):
                     arr = np.asarray(v, dtype=np.float32).flatten()
@@ -452,7 +454,9 @@ class DatasetRecorder:
                     action_vals.append(0.0)
                 elif isinstance(v, (int, float)):
                     action_vals.append(float(v))
-                elif isinstance(v, np.ndarray) and v.ndim == 0:
+                elif isinstance(v, (np.generic, np.ndarray)) and v.ndim == 0:
+                    # numpy scalars (np.float32/np.int32) and 0-dim arrays are
+                    # scalar action values - see state branch above.
                     action_vals.append(float(v))
                 elif isinstance(v, (list, np.ndarray)):
                     arr = np.asarray(v, dtype=np.float32).flatten()
