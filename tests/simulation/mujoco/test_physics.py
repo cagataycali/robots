@@ -365,5 +365,151 @@ class TestExportXML:
         assert "<mujoco" in content
 
 
+class TestDirectJointControlListForm:
+    """List-form input contract for set_joint_positions / set_joint_velocities.
+
+    The ordered-positional form normalises to a dict using a single robot's
+    joint ordering. These cover the documented error contract (no robot,
+    ambiguous multi-robot, unknown robot_name, length mismatch, wrong type)
+    plus the happy path and the namespace-enumeration fallback.
+    """
+
+    @staticmethod
+    def _add_robot(sim, name, joint_names, namespace=""):
+        from strands_robots.simulation.models import SimRobot
+
+        robot = SimRobot(name=name, urdf_path="", joint_names=list(joint_names), namespace=namespace)
+        sim._world.robots[name] = robot
+        return robot
+
+    def test_positions_required(self, sim):
+        result = sim.set_joint_positions(positions=None)
+        assert result["status"] == "error"
+        assert "required" in result["content"][0]["text"]
+
+    def test_positions_wrong_type(self, sim):
+        result = sim.set_joint_positions(positions=42)
+        assert result["status"] == "error"
+        assert "must be a dict or list" in result["content"][0]["text"]
+
+    def test_list_form_no_robot(self, sim):
+        result = sim.set_joint_positions(positions=[0.1, 0.2])
+        assert result["status"] == "error"
+        assert "requires a robot" in result["content"][0]["text"]
+
+    def test_list_form_unknown_robot_name(self, sim):
+        self._add_robot(sim, "arm", ["shoulder", "elbow"])
+        result = sim.set_joint_positions(positions=[0.1, 0.2], robot_name="ghost")
+        assert result["status"] == "error"
+        assert "not found" in result["content"][0]["text"]
+
+    def test_list_form_ambiguous_multi_robot(self, sim):
+        self._add_robot(sim, "arm_a", ["shoulder"])
+        self._add_robot(sim, "arm_b", ["elbow"])
+        result = sim.set_joint_positions(positions=[0.1])
+        assert result["status"] == "error"
+        assert "ambiguous" in result["content"][0]["text"]
+
+    def test_list_form_length_mismatch(self, sim):
+        self._add_robot(sim, "arm", ["shoulder", "elbow"])
+        result = sim.set_joint_positions(positions=[0.1])
+        assert result["status"] == "error"
+        assert "does not match" in result["content"][0]["text"]
+
+    def test_list_form_success_sets_qpos(self, sim):
+        self._add_robot(sim, "arm", ["shoulder", "elbow"])
+        result = sim.set_joint_positions(positions=[0.4, -0.2])
+        assert result["status"] == "success"
+        assert "2/2" in result["content"][0]["text"]
+        model, data = sim._world._model, sim._world._data
+        sid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, "shoulder")
+        eid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, "elbow")
+        assert data.qpos[model.jnt_qposadr[sid]] == pytest.approx(0.4)
+        assert data.qpos[model.jnt_qposadr[eid]] == pytest.approx(-0.2)
+
+    def test_list_form_namespace_fallback(self, sim):
+        # Robot with no explicit joint_names falls back to enumerating model
+        # joints under its namespace ("" matches all joints in the scene).
+        self._add_robot(sim, "arm", [], namespace="")
+        njnt = sim._world._model.njnt
+        result = sim.set_joint_positions(positions=[0.0] * njnt, robot_name="arm")
+        assert result["status"] == "success"
+
+    def test_velocities_list_form_success(self, sim):
+        self._add_robot(sim, "arm", ["shoulder", "elbow"])
+        result = sim.set_joint_velocities(velocities=[1.0, -0.5])
+        assert result["status"] == "success"
+        model, data = sim._world._model, sim._world._data
+        sid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, "shoulder")
+        assert data.qvel[model.jnt_dofadr[sid]] == pytest.approx(1.0)
+
+    def test_velocities_required(self, sim):
+        result = sim.set_joint_velocities(velocities=None)
+        assert result["status"] == "error"
+        assert "required" in result["content"][0]["text"]
+
+    def test_velocities_wrong_type(self, sim):
+        result = sim.set_joint_velocities(velocities="fast")
+        assert result["status"] == "error"
+        assert "must be a dict or list" in result["content"][0]["text"]
+
+    def test_velocities_list_form_ambiguous(self, sim):
+        self._add_robot(sim, "arm_a", ["shoulder"])
+        self._add_robot(sim, "arm_b", ["elbow"])
+        result = sim.set_joint_velocities(velocities=[1.0])
+        assert result["status"] == "error"
+        assert "ambiguous" in result["content"][0]["text"]
+
+    def test_velocities_list_form_length_mismatch(self, sim):
+        self._add_robot(sim, "arm", ["shoulder", "elbow"])
+        result = sim.set_joint_velocities(velocities=[1.0], robot_name="arm")
+        assert result["status"] == "error"
+        assert "does not match" in result["content"][0]["text"]
+
+
+class TestMultiRaycast:
+    """Batch raycasting: origin validation plus per-ray fail-soft contract.
+
+    A single malformed ray must not abort the whole batch; it produces a
+    per-ray error entry while valid rays still resolve.
+    """
+
+    def test_multi_raycast_origin_wrong_length(self, sim):
+        result = sim.multi_raycast(origin=[0.0, 0.0], directions=[[0, 0, -1]])
+        assert result["status"] == "error"
+        assert "must be 3 elements" in result["content"][0]["text"]
+
+    def test_multi_raycast_origin_not_iterable(self, sim):
+        result = sim.multi_raycast(origin=5, directions=[[0, 0, -1]])
+        assert result["status"] == "error"
+        assert "list of 3 numbers" in result["content"][0]["text"]
+
+    def test_multi_raycast_per_ray_bad_direction_length(self, sim):
+        result = sim.multi_raycast(origin=[0, 0, 2], directions=[[0, 0, -1], [0, 1]])
+        assert result["status"] == "success"
+        rays = _extract_json_block(result, 1)["rays"]
+        assert "must have 3 elements" in rays[1]["error"]
+
+    def test_multi_raycast_per_ray_zero_direction(self, sim):
+        result = sim.multi_raycast(origin=[0, 0, 2], directions=[[0, 0, 0]])
+        assert result["status"] == "success"
+        rays = _extract_json_block(result, 1)["rays"]
+        assert "zero-length" in rays[0]["error"]
+
+    def test_multi_raycast_per_ray_direction_not_iterable(self, sim):
+        result = sim.multi_raycast(origin=[0, 0, 2], directions=[7])
+        assert result["status"] == "success"
+        rays = _extract_json_block(result, 1)["rays"]
+        assert "list of 3 numbers" in rays[0]["error"]
+
+    def test_multi_raycast_hit_from_above(self, sim):
+        # Cast straight down from above the ground plane: expect a hit.
+        result = sim.multi_raycast(origin=[0, 0, 2.0], directions=[[0, 0, -1]])
+        assert result["status"] == "success"
+        rays = _extract_json_block(result, 1)["rays"]
+        assert rays[0]["distance"] is not None
+        assert "1/1 hits" in result["content"][0]["text"]
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
