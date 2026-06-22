@@ -5,6 +5,25 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: `get_mass_matrix` works across MuJoCo `mj_fullM` signature changes
+
+`PhysicsMixin.get_mass_matrix()` called `mj.mj_fullM(model, M, data.qM)`, the
+pre-3.10 argument order. MuJoCo 3.10 reordered the binding to
+`mj_fullM(model, data, dst)` (the sparse inertia is read from `data` directly),
+so the old call raised `TypeError: mj_fullM(): incompatible function arguments`
+on newer MuJoCo. Because the project pins MuJoCo loosely (`>=3.2.0,<4.0.0`),
+this surfaced as a hard failure once the resolver picked up 3.10+.
+
+- A new module-level helper `_full_mass_matrix(mj, model, data)` probes the
+  modern `(model, data, dst)` signature first, then falls back to the legacy
+  `(model, dst, qM)` orders (1D and `[m, 1]` column variants). The `dst` buffer
+  is always allocated C-contiguous/writeable to satisfy the binding contract.
+- `get_mass_matrix` delegates to the helper; behaviour and JSON payload are
+  unchanged on every supported MuJoCo version. Empty-DoF scenes still return a
+  well-typed `(0, 0)` matrix.
+- Regression tests assert the matrix is symmetric positive-definite, exercise
+  the legacy-signature fallback path, and cover the zero-DoF case.
+
 ### Fixed: numpy scalars no longer dropped from recorded state/action vectors
 
 `DatasetRecorder.add_frame` flattens each observation/action value into the

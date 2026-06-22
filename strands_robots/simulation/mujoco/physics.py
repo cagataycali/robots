@@ -25,6 +25,52 @@ from strands_robots.simulation.mujoco.backend import _ensure_mujoco
 logger = logging.getLogger(__name__)
 
 
+def _full_mass_matrix(mj: Any, model: Any, data: Any) -> np.ndarray:
+    """Return the dense ``nv x nv`` mass matrix M(q), robust to MuJoCo drift.
+
+    ``mj_fullM`` changed its binding signature across MuJoCo releases:
+
+    - MuJoCo >= 3.10: ``mj_fullM(model, data, dst)`` - the sparse buffer is
+      read from ``data`` internally; ``dst`` must be writeable + C-contiguous.
+    - Older builds: ``mj_fullM(model, dst, qM)`` where ``qM`` is the sparse
+      inertia buffer, accepted either as a 1D array or a 2D ``[m, 1]`` column.
+
+    Probe the modern signature first, then fall back to the legacy orders so
+    the call works regardless of the installed MuJoCo version. ``dst`` is
+    always allocated C-contiguous to satisfy the binding's buffer contract.
+
+    Args:
+        mj: The imported ``mujoco`` module.
+        model: The ``MjModel`` whose DoF count defines the matrix size.
+        data: The ``MjData`` holding the sparse inertia (after a forward pass).
+
+    Returns:
+        A C-contiguous ``(nv, nv)`` float64 array. Empty (``(0, 0)``) when the
+        model has no DoFs.
+
+    Raises:
+        TypeError: If no known ``mj_fullM`` signature accepts the arguments.
+    """
+    nv = model.nv
+    dst = np.zeros((nv, nv), dtype=np.float64, order="C")
+    if nv == 0:
+        return dst
+    try:
+        # MuJoCo >= 3.10: dst is the third positional argument.
+        mj.mj_fullM(model, data, dst)
+        return dst
+    except TypeError:
+        pass
+    # Legacy signature: mj_fullM(model, dst, qM). Some builds require the
+    # sparse buffer as a 2D [m, 1] column; others accept the raw 1D buffer.
+    qm = np.ascontiguousarray(data.qM, dtype=np.float64)
+    try:
+        mj.mj_fullM(model, dst, qm.reshape(-1, 1))
+    except TypeError:
+        mj.mj_fullM(model, dst, qm)
+    return dst
+
+
 class PhysicsMixin:
     """Advanced MuJoCo physics capabilities mixed into ``Simulation``.
 
@@ -437,9 +483,8 @@ class PhysicsMixin:
         with self._lock:
             mj.mj_forward(model, data)
             nv = model.nv
-            M = np.zeros((nv, nv))
+            M = _full_mass_matrix(mj, model, data)
             if nv > 0:
-                mj.mj_fullM(model, M, data.qM)
                 rank = int(np.linalg.matrix_rank(M))
                 cond = float(np.linalg.cond(M)) if rank > 0 else float("inf")
             else:

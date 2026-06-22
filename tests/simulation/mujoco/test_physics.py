@@ -14,6 +14,7 @@ import pytest
 
 mj = pytest.importorskip("mujoco")
 
+from strands_robots.simulation.mujoco.physics import _full_mass_matrix  # noqa: E402
 from strands_robots.simulation.mujoco.simulation import Simulation  # noqa: E402
 
 ROBOT_XML = """
@@ -198,6 +199,81 @@ class TestMassMatrix:
         result = sim.get_mass_matrix()
         diag = _extract_json_block(result, 1)["diagonal"]
         assert all(d >= 0 for d in diag)
+
+    def test_mass_matrix_is_symmetric_positive_definite(self, sim):
+        # M(q) is symmetric PD for any well-formed model; verifying the actual
+        # numbers (not just the shape) guards against a signature fix that
+        # silently returns a wrong/zero matrix.
+        result = sim.get_mass_matrix()
+        data = _extract_json_block(result, 1)
+        nv = data["shape"][0]
+        M = _full_mass_matrix(mj, sim._world._model, sim._world._data)
+        assert M.shape == (nv, nv)
+        assert np.allclose(M, M.T), "mass matrix must be symmetric"
+        eigvals = np.linalg.eigvalsh(M)
+        assert np.all(eigvals > 0), f"mass matrix must be PD, got eigvals {eigvals}"
+
+
+class TestFullMassMatrixSignatureDrift:
+    """Regression: ``mj_fullM`` changed its binding signature across MuJoCo
+    releases. ``_full_mass_matrix`` must work against every variant rather than
+    hard-coding one call order (which crashed the suite under newer MuJoCo).
+    """
+
+    def test_helper_matches_native_call(self, sim):
+        model, data = sim._world._model, sim._world._data
+        mj.mj_forward(model, data)
+        M = _full_mass_matrix(mj, model, data)
+        assert M.flags["C_CONTIGUOUS"]
+        assert M.dtype == np.float64
+        # Cross-check against the diagonal MuJoCo reports for this model.
+        assert M.shape == (model.nv, model.nv)
+        assert np.all(np.diag(M) > 0)
+
+    def test_helper_falls_back_to_legacy_signatures(self, sim):
+        # Simulate an older MuJoCo binding whose mj_fullM rejects the modern
+        # (model, data, dst) order and expects (model, dst, qM). The helper
+        # must transparently fall back and still produce the correct matrix.
+        model, data = sim._world._model, sim._world._data
+        mj.mj_forward(model, data)
+        reference = _full_mass_matrix(mj, model, data)
+
+        real_fullm = mj.mj_fullM
+
+        class _LegacyShim:
+            """Proxy mujoco module exposing only a legacy mj_fullM."""
+
+            def __getattr__(self, attr):
+                return getattr(mj, attr)
+
+            @staticmethod
+            def mj_fullM(m, a, b):
+                # Reject the modern call where the 3rd arg is the dst buffer
+                # (i.e. the 2nd arg is MjData), forcing the legacy path.
+                import mujoco as _mj
+
+                if isinstance(a, _mj.MjData):
+                    raise TypeError("legacy binding: expected (model, dst, qM)")
+                # a is dst, b is qM (1D or [m, 1]) - emulate via the real call.
+                tmp = np.zeros_like(a, order="C")
+                real_fullm(m, data, tmp)
+                a[...] = tmp
+
+        shim = _LegacyShim()
+        M = _full_mass_matrix(shim, model, data)
+        assert np.allclose(M, reference)
+
+    def test_helper_returns_empty_for_zero_dof(self):
+        # A model with no DoFs must return a well-typed (0, 0) array, never
+        # crash in numpy on the empty buffer.
+        model = mj.MjModel.from_xml_string(
+            '<mujoco><worldbody><geom type="plane" size="1 1 0.1"/></worldbody></mujoco>'
+        )
+        mdata = mj.MjData(model)
+        mj.mj_forward(model, mdata)
+        assert model.nv == 0
+        M = _full_mass_matrix(mj, model, mdata)
+        assert M.shape == (0, 0)
 
 
 class TestStateCheckpointing:
