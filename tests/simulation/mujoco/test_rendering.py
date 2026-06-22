@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import time
 from pathlib import Path
 from unittest.mock import patch
@@ -878,3 +879,176 @@ def test_render_all_errors_on_unresolved_requested_cameras(monkeypatch) -> None:
     r = mixin.render_all(cameras=["cam_a", "ghost"])
     assert r["status"] == "error"
     assert "ghost" in r["content"][0]["text"]
+
+
+# render_depth() metric-depth linearization - GL-free coverage.
+#
+# render_depth() resolves a camera, asks _get_renderer() for an offscreen
+# renderer, grabs a normalized [0, 1] OpenGL depth buffer, and linearizes it
+# to metric depth (meters) using the model's znear/zfar clip planes scaled by
+# stat.extent. The linearization math, the one-time ARB_clip_control warning
+# capture, the cached-warning fast path, and the failure handler are all pure
+# Python that only needs a compiled model (no live GL), so we drive them with
+# a real world plus a scripted fake renderer. This pins the metric conversion
+# and the warning contract on every platform, including GL-less CI.
+
+
+def _depth_world():
+    """Build a Simulation with a compiled model + one named camera (no GL)."""
+    from strands_robots.simulation import Simulation
+
+    sim = Simulation()
+    sim.create_world()
+    sim.add_robot("arm", data_config="so101", position=[0.0, 0.0, 0.0])
+    sim.add_camera("cam_a", position=[-0.3, -0.3, 0.4], target=[0.0, 0.0, 0.1])
+    sim.step(n_steps=2)
+    return sim
+
+
+class _FakeDepthRenderer:
+    """Scripted offscreen renderer: returns a fixed normalized depth buffer.
+
+    Args:
+        depth: the [0, 1] normalized depth array render() should return.
+        stderr_text: text to emit on enable_depth_rendering(), used to drive
+            the ARB_clip_control warning-capture branch.
+        raise_on_render: when set, render() raises it (failure-path coverage).
+    """
+
+    def __init__(self, depth, stderr_text="", raise_on_render=None):
+        self._depth = depth
+        self._stderr_text = stderr_text
+        self._raise = raise_on_render
+        self.scene_updates = []
+
+    def update_scene(self, data, camera=None, scene_option=None):
+        self.scene_updates.append(camera)
+
+    def enable_depth_rendering(self):
+        if self._stderr_text:
+            sys.stderr.write(self._stderr_text)
+
+    def disable_depth_rendering(self):
+        pass
+
+    def render(self):
+        if self._raise is not None:
+            raise self._raise
+        return self._depth
+
+
+def test_render_depth_linearizes_normalized_buffer_to_meters(monkeypatch) -> None:
+    """A normalized [0,1] depth buffer is converted to metric depth bounded by
+    the model's znear/zfar clip planes; near pixel -> znear, far pixel -> zfar."""
+    np = pytest.importorskip("numpy")
+    sim = _depth_world()
+    try:
+        extent = float(sim._world._model.stat.extent)
+        znear = float(sim._world._model.vis.map.znear) * extent
+        zfar = float(sim._world._model.vis.map.zfar) * extent
+        # 0.0 -> near plane, 1.0 -> far plane, plus a mid value.
+        buf = np.array([[0.0, 1.0], [0.5, 0.5]], dtype=np.float32)
+        monkeypatch.setattr(sim, "_get_renderer", lambda w, h: _FakeDepthRenderer(buf))
+
+        r = sim.render_depth(camera_name="cam_a", width=2, height=2)
+        assert r["status"] == "success", r
+        payload = r["content"][1]["json"]
+        assert payload["depth_min"] == pytest.approx(znear, rel=1e-4)
+        assert payload["depth_max"] == pytest.approx(zfar, rel=1e-4)
+        assert "Depth 2x2 from 'cam_a'" in r["content"][0]["text"]
+    finally:
+        sim.destroy()
+
+
+def test_render_depth_free_camera_updates_scene_without_camera_id(monkeypatch) -> None:
+    """With no named camera, render_depth uses the free camera: update_scene is
+    called without a camera id and the label reads 'free (default)'."""
+    np = pytest.importorskip("numpy")
+    sim = _depth_world()
+    try:
+        fake = _FakeDepthRenderer(np.full((2, 2), 0.3, dtype=np.float32))
+        monkeypatch.setattr(sim, "_get_renderer", lambda w, h: fake)
+
+        r = sim.render_depth(width=2, height=2)
+        assert r["status"] == "success", r
+        assert "free (default)" in r["content"][0]["text"]
+        assert fake.scene_updates == [None]
+    finally:
+        sim.destroy()
+
+
+def test_render_depth_captures_and_caches_arb_clip_control_warning(monkeypatch) -> None:
+    """The first depth render captures an ARB_clip_control stderr warning and
+    surfaces it in the response text; a second render reuses the cached text
+    without re-capturing (the warning still appears)."""
+    np = pytest.importorskip("numpy")
+    sim = _depth_world()
+    try:
+        warn = _FakeDepthRenderer(
+            np.full((2, 2), 0.4, dtype=np.float32),
+            stderr_text="WARNING: ARB_clip_control not supported\n",
+        )
+        monkeypatch.setattr(sim, "_get_renderer", lambda w, h: warn)
+
+        r1 = sim.render_depth(width=2, height=2)
+        assert r1["status"] == "success"
+        assert "ARB_clip_control" in r1["content"][0]["text"]
+        assert sim._depth_warn_text  # cached non-empty for next call
+
+        # Second call hits the cached-warning branch (clip_warn is not None).
+        clean = _FakeDepthRenderer(np.full((2, 2), 0.4, dtype=np.float32))
+        monkeypatch.setattr(sim, "_get_renderer", lambda w, h: clean)
+        r2 = sim.render_depth(width=2, height=2)
+        assert r2["status"] == "success"
+        assert "ARB_clip_control" in r2["content"][0]["text"]
+    finally:
+        sim.destroy()
+
+
+def test_render_depth_without_clip_warning_caches_empty(monkeypatch) -> None:
+    """When the first render emits no ARB warning, the cached warning text is
+    empty and the response carries no warning suffix."""
+    np = pytest.importorskip("numpy")
+    sim = _depth_world()
+    try:
+        quiet = _FakeDepthRenderer(np.full((2, 2), 0.2, dtype=np.float32))
+        monkeypatch.setattr(sim, "_get_renderer", lambda w, h: quiet)
+
+        r = sim.render_depth(width=2, height=2)
+        assert r["status"] == "success"
+        assert sim._depth_warn_text == ""
+        assert "ARB_clip_control" not in r["content"][0]["text"]
+    finally:
+        sim.destroy()
+
+
+def test_render_depth_renderer_failure_returns_error(monkeypatch) -> None:
+    """A renderer that raises during render() surfaces a structured error dict
+    rather than propagating the exception."""
+    np = pytest.importorskip("numpy")
+    sim = _depth_world()
+    try:
+        boom = _FakeDepthRenderer(
+            np.zeros((2, 2), dtype=np.float32),
+            raise_on_render=RuntimeError("offscreen context lost"),
+        )
+        monkeypatch.setattr(sim, "_get_renderer", lambda w, h: boom)
+
+        r = sim.render_depth(camera_name="cam_a", width=2, height=2)
+        assert r["status"] == "error"
+        assert "offscreen context lost" in r["content"][0]["text"]
+    finally:
+        sim.destroy()
+
+
+def test_render_depth_no_renderer_returns_opengl_hint(monkeypatch) -> None:
+    """When _get_renderer returns None (no GL context), render_depth returns an
+    actionable error pointing at the EGL/OSMesa install path."""
+    sim = _depth_world()
+    try:
+        monkeypatch.setattr(sim, "_get_renderer", lambda w, h: None)
+        r = sim.render_depth(camera_name="cam_a", width=2, height=2)
+        assert r["status"] == "error"
+        assert "OpenGL" in r["content"][0]["text"]
+    finally:
+        sim.destroy()
