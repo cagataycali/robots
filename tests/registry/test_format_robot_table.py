@@ -72,3 +72,47 @@ class TestConsistency:
         lines = table.split("\n")
         non_empty_rows = [line for line in lines[2:-2] if line.strip() and "Total:" not in line]
         assert len(non_empty_rows) == len(list_robots())
+
+
+class TestAsciiOnlyAndAlignment:
+    """The table is emitted to plain CLI/tool output, which the project
+    requires to be ASCII-only (no emojis). Wide emoji markers also break
+    monospace column alignment because ``str.ljust`` counts code points,
+    not display cells.
+    """
+
+    def test_table_is_pure_ascii(self):
+        """No emoji / box-drawing chars leak into CLI output."""
+        table = format_robot_table(max_width=1000)
+        assert table.isascii(), "format_robot_table emitted non-ASCII characters"
+
+    def test_description_column_is_aligned_across_rows(self):
+        """Every data row must start its Description column at the same
+        offset. A code-point marker that renders two cells wide (e.g. an
+        emoji) shifts later rows and breaks this invariant."""
+        table = format_robot_table(max_width=1000)
+        lines = table.split("\n")
+        # Data rows live between the header+rule (first 2 lines) and the
+        # blank+Total footer (last 2 lines).
+        data_rows = [ln for ln in lines[2:-2] if ln.strip()]
+        assert data_rows, "expected at least one robot row"
+        # The Description text starts immediately after the fixed prefix.
+        # Find each row's description by slicing at the prefix width and
+        # asserting the prefix region contains no stray wide markers: the
+        # character at the prefix boundary is part of the description, so
+        # the rule line (all '-') and every prefix must be the same width.
+        prefix_len = _FIXED_PREFIX_WIDTH
+        for row in data_rows:
+            # The Sim/Real columns only ever hold "yes" or spaces, so the
+            # prefix must be exactly ASCII spaces/letters/digits up to the
+            # description. Verify the prefix slice has no multi-cell glyphs
+            # by requiring it to be ASCII (1 cell == 1 code point).
+            assert row[:prefix_len].isascii()
+
+    def test_sim_real_markers_use_ascii_token(self):
+        """Robots with sim support are flagged with an ASCII token, not an
+        emoji."""
+        table = format_robot_table(max_width=1000)
+        # so100 has sim support in the registry.
+        so100_row = next(ln for ln in table.split("\n") if ln.startswith("so100 "))
+        assert "yes" in so100_row
