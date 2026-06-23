@@ -21,6 +21,7 @@ from strands_robots.policies.groot.policy import (  # noqa: E402
     _auto_infer_action_mapping,
     _auto_infer_observation_mapping,
     _detect_groot_version,
+    _match_keys,
     _parse_action_mapping,
     _parse_observation_mapping,
     _reference_video_shape,
@@ -403,6 +404,57 @@ class TestAutoInfer:
     def test_action_exact(self):
         m = _auto_infer_action_mapping(DATA_CONFIG_MAP["so100"], SO100_MMC)
         assert m.actions["single_arm"] == "single_arm"
+
+
+class TestStrictKeys:
+    """strict_keys=True raises instead of positional-guessing on name mismatch.
+
+    Covers _match_keys (obs video/state) and _auto_infer_action_mapping. The
+    "so100" data config declares a single "webcam" video key; GR1_MMC declares
+    a differently-named video key, so exact matching fails and the default path
+    falls back positionally. strict_keys=True must raise instead.
+    """
+
+    def test_obs_strict_raises_on_mismatch(self):
+        with pytest.raises(ValueError, match="strict_keys=True: cannot resolve video keys"):
+            _auto_infer_observation_mapping(DATA_CONFIG_MAP["so100"], GR1_MMC, strict_keys=True)
+
+    def test_obs_strict_error_lists_keys(self):
+        with pytest.raises(ValueError) as exc:
+            _auto_infer_observation_mapping(DATA_CONFIG_MAP["so100"], GR1_MMC, strict_keys=True)
+        msg = str(exc.value)
+        assert "webcam" in msg  # unmatched robot key
+        assert "ego_view_bg_crop_pad_res256_freq20" in msg  # available model key
+
+    def test_action_strict_raises_on_mismatch(self):
+        # so100 action keys (single_arm, gripper) vs GR1 action keys -> mismatch.
+        with pytest.raises(ValueError, match="strict_keys=True: cannot resolve action keys"):
+            _auto_infer_action_mapping(DATA_CONFIG_MAP["so100"], GR1_MMC, strict_keys=True)
+
+    def test_obs_nonstrict_maps_positionally_and_warns(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.INFO):
+            m = _auto_infer_observation_mapping(DATA_CONFIG_MAP["so100"], GR1_MMC, strict_keys=False)
+        assert m.video.get("webcam") == "ego_view_bg_crop_pad_res256_freq20"
+        assert any("positional" in r.message for r in caplog.records)
+
+    def test_obs_exact_match_never_raises_in_strict_mode(self):
+        # so100 <-> SO100_MMC matches by exact name, so strict_keys=True is a no-op.
+        m = _auto_infer_observation_mapping(DATA_CONFIG_MAP["so100"], SO100_MMC, strict_keys=True)
+        assert m.video == {"webcam": "webcam"}
+        assert m.state["single_arm"] == "single_arm"
+
+    def test_action_exact_match_never_raises_in_strict_mode(self):
+        m = _auto_infer_action_mapping(DATA_CONFIG_MAP["so100"], SO100_MMC, strict_keys=True)
+        assert m.actions["single_arm"] == "single_arm"
+
+    def test_match_keys_strict_raises(self):
+        with pytest.raises(ValueError, match="cannot resolve color keys"):
+            _match_keys(["a"], ["b"], "color", strict_keys=True)
+
+    def test_match_keys_strict_exact_ok(self):
+        assert _match_keys(["a"], ["a"], "color", strict_keys=True) == {"a": "a"}
 
 
 # (section)

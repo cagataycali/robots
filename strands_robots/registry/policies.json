@@ -23,7 +23,8 @@
             "config_keys": [
                 "port",
                 "host",
-                "data_config"
+                "data_config",
+                "strict_keys"
             ],
             "defaults": {
                 "host": "localhost"
@@ -55,7 +56,8 @@
                 "norm_tag",
                 "image_keys",
                 "inference_action_mode",
-                "embodiment"
+                "embodiment",
+                "strict_keys"
             ],
             "defaults": {},
             "aliases": [

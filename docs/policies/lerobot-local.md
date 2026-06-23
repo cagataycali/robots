@@ -40,6 +40,7 @@ LerobotLocalPolicy(
     image_keys=None,                     # MolmoAct2 camera key override
     inference_action_mode="continuous",  # "continuous" | "discrete"
     camera_key_map=None,                 # {robot_cam_name: policy_image_key}
+    strict_keys=False,                   # raise instead of positional camera fallback
 )
 ```
 
@@ -165,7 +166,10 @@ policy routes each camera to a declared image slot by, in order:
 1. an explicit `camera_key_map` (`{robot_cam: policy_image_key}`) when provided;
 2. exact name match (`top` -> `observation.images.top`);
 3. positional fallback into remaining slots, with a WARNING so a mismatched
-   wiring is loud rather than silent.
+   wiring is loud rather than silent. Pass `strict_keys=True` to raise a
+   `ValueError` (listing the unmatched cameras vs available image keys)
+   instead of falling back positionally; it defaults to `False` and is a
+   no-op when `camera_key_map` or exact names already resolve every camera.
 
 The declared order follows the model config's `image_keys` list when present
 (e.g. MolmoAct2), otherwise the order of the model's image input features. If

@@ -34,8 +34,27 @@ Gr00tPolicy(
     observation_mapping=None,
     action_mapping=None,
     language_key=None,
+    strict_keys=False,             # raise instead of positional key-guessing
 )
 ```
+
+## Strict key matching
+
+When no explicit `observation_mapping`/`action_mapping` is given, GR00T
+auto-infers the robot<->model key mapping: exact name matches first, then
+positional fallback for any leftover keys (with a log line). On a
+multi-camera or multi-DOF rig, positional fallback can silently bind the
+wrong camera or action column. Pass `strict_keys=True` to raise a
+`ValueError` (listing the unmatched robot keys vs available model keys)
+instead of guessing:
+
+```python
+policy = create_policy("groot", data_config="so100_dualcam",
+                       model_path="nvidia/GR00T-N1.6-3B", strict_keys=True)
+```
+
+`strict_keys` defaults to `False` (positional fallback preserved) and is a
+no-op when an explicit mapping is supplied.
 
 ## Versions
 

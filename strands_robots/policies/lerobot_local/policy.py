@@ -65,6 +65,10 @@ class LerobotLocalPolicy(Policy):
             (e.g. "observation.images.top"). When omitted, cameras are
             routed by exact short-name match and then by declared order
             with a warning on mismatch.
+        strict_keys: When True, raise (instead of warning + positional
+            fallback) if any camera name cannot be matched to a declared
+            policy image key by exact name and no ``camera_key_map`` covers
+            it. Defaults to False (positional fallback).
     """
 
     def __init__(
@@ -86,6 +90,7 @@ class LerobotLocalPolicy(Policy):
         image_keys: list[str] | None = None,
         inference_action_mode: str = "continuous",
         camera_key_map: dict[str, str] | None = None,
+        strict_keys: bool = False,
         **kwargs,
     ):
         self.pretrained_name_or_path = pretrained_name_or_path
@@ -113,6 +118,11 @@ class LerobotLocalPolicy(Policy):
         # When None, cameras are matched by exact short name and then by
         # declared order (see _resolve_camera_targets).
         self.camera_key_map = dict(camera_key_map) if camera_key_map else None
+        # When True, raise instead of routing cameras positionally if their
+        # names cannot be matched to the policy's declared image keys (and no
+        # camera_key_map covers them). Defaults to False (positional fallback
+        # with a warning), preserving zero-config ergonomics.
+        self.strict_keys = strict_keys
         # MolmoAct2-specific knobs. MolmoAct2 SO-100/101 checkpoints are
         # transformers-native (no lerobot draccus `type`), so they take a
         # dedicated load path (see lerobot_local.molmoact2). These are inert
@@ -1023,6 +1033,14 @@ class LerobotLocalPolicy(Policy):
                 unmatched_imgs.append((k, v))
         # Fill any remaining declared image slots, in declaration order.
         free_feats = [f for f in declared_img_feats if f not in used_feats]
+        if self.strict_keys and unmatched_imgs and free_feats:
+            raise ValueError(
+                "strict_keys=True: cannot resolve camera keys by exact name. "
+                f"Unmatched robot keys: {sorted(k for k, _ in unmatched_imgs)}; "
+                f"available model keys: {sorted(free_feats)}. "
+                "Provide an explicit mapping (camera_key_map) "
+                "or set strict_keys=False to allow positional fallback."
+            )
         for (k, v), feat in zip(unmatched_imgs, free_feats):
             out[feat] = v
             used_feats.add(feat)
@@ -1301,6 +1319,14 @@ class LerobotLocalPolicy(Policy):
 
         # 3) Positional fallback into the remaining declared slots (loud).
         free = [feat for feat in targets if feat not in used]
+        if self.strict_keys and unmatched and free:
+            raise ValueError(
+                "strict_keys=True: cannot resolve camera keys by exact name. "
+                f"Unmatched robot keys: {sorted(unmatched)}; "
+                f"available model keys: {sorted(free)}. "
+                "Provide an explicit mapping (camera_key_map) "
+                "or set strict_keys=False to allow positional fallback."
+            )
         for cam, feat in zip(unmatched, free):
             logger.warning(
                 "Camera '%s' does not match any declared policy image key by name; "

@@ -154,15 +154,27 @@ class ActionMapping:
 def _auto_infer_observation_mapping(
     data_config: Gr00tDataConfig,
     modality_configs: dict,
+    strict_keys: bool = False,
 ) -> ObservationMapping:
-    """Auto-infer observation mapping from data_config + model config."""
+    """Auto-infer observation mapping from data_config + model config.
+
+    Args:
+        data_config: The robot/sim data configuration.
+        modality_configs: The model's per-modality key configs.
+        strict_keys: When True, raise instead of falling back to positional
+            matching if any key cannot be resolved by exact name.
+
+    Raises:
+        ValueError: If ``strict_keys`` is True and any video/state key needs
+            positional fallback.
+    """
     ours_v = [k.removeprefix("video.") for k in data_config.video_keys]
     model_v = list(modality_configs["video"].modality_keys)
-    video_map = _match_keys(ours_v, model_v, "video")
+    video_map = _match_keys(ours_v, model_v, "video", strict_keys=strict_keys)
 
     ours_s = [k.removeprefix("state.") for k in data_config.state_keys]
     model_s = list(modality_configs["state"].modality_keys)
-    state_map = _match_keys(ours_s, model_s, "state")
+    state_map = _match_keys(ours_s, model_s, "state", strict_keys=strict_keys)
 
     lang = modality_configs["language"].modality_keys[0]
     return ObservationMapping(video=video_map, state=state_map, language_key=lang)
@@ -171,8 +183,20 @@ def _auto_infer_observation_mapping(
 def _auto_infer_action_mapping(
     data_config: Gr00tDataConfig,
     modality_configs: dict,
+    strict_keys: bool = False,
 ) -> ActionMapping:
-    """Auto-infer action mapping from data_config + model config."""
+    """Auto-infer action mapping from data_config + model config.
+
+    Args:
+        data_config: The robot/sim data configuration.
+        modality_configs: The model's per-modality key configs.
+        strict_keys: When True, raise instead of falling back to positional
+            matching if any action key cannot be resolved by exact name.
+
+    Raises:
+        ValueError: If ``strict_keys`` is True and any action key needs
+            positional fallback.
+    """
     ours = [k.removeprefix("action.") for k in data_config.action_keys]
     model = list(modality_configs["action"].modality_keys)
     model_set = set(model)
@@ -185,14 +209,34 @@ def _auto_infer_action_mapping(
             used.add(k)
     remaining_ours = [k for k in ours if k not in actions.values()]
     remaining_model = [k for k in model if k not in used]
+    if strict_keys and remaining_ours and remaining_model:
+        raise ValueError(
+            "strict_keys=True: cannot resolve action keys by exact name. "
+            f"Unmatched robot keys: {sorted(remaining_ours)}; "
+            f"available model keys: {sorted(remaining_model)}. "
+            "Provide an explicit mapping (action_mapping) "
+            "or set strict_keys=False to allow positional fallback."
+        )
     for mdl, our in zip(remaining_model, remaining_ours):
         actions[mdl] = our
         logger.info("Auto-mapped action: model '%s' → robot '%s' (positional)", mdl, our)
     return ActionMapping(actions=actions)
 
 
-def _match_keys(ours: list[str], model: list[str], label: str) -> dict[str, str]:
-    """Match our keys to model keys: exact first, positional fallback."""
+def _match_keys(ours: list[str], model: list[str], label: str, strict_keys: bool = False) -> dict[str, str]:
+    """Match our keys to model keys: exact first, positional fallback.
+
+    Args:
+        ours: Robot/sim key names to map.
+        model: The model's declared key names.
+        label: Human-readable label for logs/errors (e.g. ``"video"``).
+        strict_keys: When True, raise instead of falling back to positional
+            matching if any key cannot be resolved by exact name.
+
+    Raises:
+        ValueError: If ``strict_keys`` is True and any key needs positional
+            fallback.
+    """
     model_set = set(model)
     mapping: dict[str, str] = {}
     used: set = set()
@@ -202,6 +246,14 @@ def _match_keys(ours: list[str], model: list[str], label: str) -> dict[str, str]
             used.add(k)
     remaining_ours = [k for k in ours if k not in mapping]
     remaining_model = [k for k in model if k not in used]
+    if strict_keys and remaining_ours and remaining_model:
+        raise ValueError(
+            f"strict_keys=True: cannot resolve {label} keys by exact name. "
+            f"Unmatched robot keys: {sorted(remaining_ours)}; "
+            f"available model keys: {sorted(remaining_model)}. "
+            "Provide an explicit mapping (observation_mapping/action_mapping) "
+            "or set strict_keys=False to allow positional fallback."
+        )
     for our, mdl in zip(remaining_ours, remaining_model):
         mapping[our] = mdl
         logger.info("Auto-mapped %s: '%s' → '%s' (positional)", label, our, mdl)
@@ -284,6 +336,10 @@ class Gr00tPolicy(Policy):
         observation_mapping: ``{robot_key: "video.X" | "state.X"}``.
         action_mapping: ``{"action.X": "robot_key"}``.
         language_key: Override the model's language key.
+        strict_keys: When True, raise (instead of warning + positional fallback)
+            if auto-inferred observation/action keys cannot be matched to the
+            model by exact name. Defaults to False (positional fallback). Ignored
+            when explicit ``observation_mapping``/``action_mapping`` are provided.
 
     Examples::
 
@@ -318,6 +374,7 @@ class Gr00tPolicy(Policy):
         observation_mapping: dict[str, str] | None = None,
         action_mapping: dict[str, str] | None = None,
         language_key: str | None = None,
+        strict_keys: bool = False,
         **kwargs,
     ):
         self.data_config = load_data_config(data_config)
@@ -335,6 +392,7 @@ class Gr00tPolicy(Policy):
         self._raw_obs_mapping = observation_mapping
         self._raw_action_mapping = action_mapping
         self._language_key_override = language_key
+        self._strict_keys = strict_keys
 
         # Resolved mappings
         self._obs_mapping: ObservationMapping | None = None
@@ -390,7 +448,7 @@ class Gr00tPolicy(Policy):
         if self._raw_obs_mapping is not None:
             self._obs_mapping = _parse_observation_mapping(self._raw_obs_mapping, mmc)
         else:
-            self._obs_mapping = _auto_infer_observation_mapping(self.data_config, mmc)
+            self._obs_mapping = _auto_infer_observation_mapping(self.data_config, mmc, strict_keys=self._strict_keys)
 
         if self._language_key_override:
             self._obs_mapping = ObservationMapping(
@@ -405,7 +463,7 @@ class Gr00tPolicy(Policy):
         if self._raw_action_mapping is not None:
             self._action_mapping = _parse_action_mapping(self._raw_action_mapping)
         else:
-            self._action_mapping = _auto_infer_action_mapping(self.data_config, mmc)
+            self._action_mapping = _auto_infer_action_mapping(self.data_config, mmc, strict_keys=self._strict_keys)
 
         self._action_mapping.validate(mmc)
 

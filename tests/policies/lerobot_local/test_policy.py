@@ -875,6 +875,80 @@ class TestCameraKeyRouting:
         assert len([k for k in batch if "image" in k]) == 1
 
 
+class TestStrictKeysCameraRouting:
+    """strict_keys=True raises instead of routing cameras positionally.
+
+    Default (strict_keys=False) keeps the positional-fallback-with-warning
+    behavior unchanged; strict_keys=True turns an unresolved camera name into
+    a hard ValueError naming the unmatched vs available keys.
+    """
+
+    def test_strict_raises_on_name_mismatch(self):
+        policy = _make_two_camera_policy()
+        policy.strict_keys = True
+        side = np.zeros((480, 640, 3), dtype=np.uint8)
+        other = np.zeros((480, 640, 3), dtype=np.uint8)
+        observation = {"a": 1.0, "b": 2.0, "side": side, "other": other}
+        with pytest.raises(ValueError, match="strict_keys=True: cannot resolve camera keys"):
+            policy._build_batch_from_strands_format(observation, {})
+
+    def test_strict_error_lists_keys(self):
+        policy = _make_two_camera_policy()
+        policy.strict_keys = True
+        observation = {
+            "a": 1.0,
+            "b": 2.0,
+            "side": np.zeros((480, 640, 3), dtype=np.uint8),
+            "other": np.zeros((480, 640, 3), dtype=np.uint8),
+        }
+        with pytest.raises(ValueError) as exc:
+            policy._build_batch_from_strands_format(observation, {})
+        msg = str(exc.value)
+        assert "side" in msg and "other" in msg  # unmatched robot keys
+        assert "observation.images.top" in msg  # available model key
+
+    def test_nonstrict_default_still_maps_positionally_and_warns(self, caplog):
+        import logging
+
+        policy = _make_two_camera_policy()
+        assert policy.strict_keys is False  # default
+        observation = {
+            "a": 1.0,
+            "b": 2.0,
+            "side": np.zeros((480, 640, 3), dtype=np.uint8),
+            "other": np.zeros((480, 640, 3), dtype=np.uint8),
+        }
+        with caplog.at_level(logging.WARNING):
+            batch = policy._build_batch_from_strands_format(observation, {})
+        assert "observation.images.top" in batch
+        assert "observation.images.wrist" in batch
+        assert any("routing positionally" in r.message for r in caplog.records)
+
+    def test_strict_exact_name_match_never_raises(self):
+        policy = _make_two_camera_policy()
+        policy.strict_keys = True
+        top = np.zeros((480, 640, 3), dtype=np.uint8)
+        wrist = np.ones((480, 640, 3), dtype=np.uint8) * 255
+        observation = {"a": 1.0, "b": 2.0, "top": top, "wrist": wrist}
+        batch = policy._build_batch_from_strands_format(observation, {})
+        assert float(batch["observation.images.wrist"].max()) == 1.0
+        assert float(batch["observation.images.top"].max()) == 0.0
+
+    def test_strict_camera_key_map_satisfies_routing(self):
+        policy = _make_two_camera_policy()
+        policy.strict_keys = True
+        policy.camera_key_map = {
+            "front": "observation.images.top",
+            "hand": "observation.images.wrist",
+        }
+        front = np.zeros((480, 640, 3), dtype=np.uint8)
+        hand = np.ones((480, 640, 3), dtype=np.uint8) * 255
+        observation = {"a": 1.0, "b": 2.0, "front": front, "hand": hand}
+        batch = policy._build_batch_from_strands_format(observation, {})
+        assert float(batch["observation.images.top"].max()) == 0.0
+        assert float(batch["observation.images.wrist"].max()) == 1.0
+
+
 # (section)
 # Tests: _tensor_to_action_dicts
 # (section)
