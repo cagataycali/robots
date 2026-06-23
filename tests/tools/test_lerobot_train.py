@@ -7,12 +7,17 @@ the pure command builder directly and by substituting fakes for ``subprocess``
 and ``psutil`` in the session lifecycle. They pin:
 
 1. The command builder maps each arg set to the correct ``lerobot-train`` argv
-   (single-GPU, multi-GPU accelerate, LoRA, held-out val split, resume).
+   (single-GPU, multi-GPU accelerate, LoRA, optional tuning flags, held-out val
+   split, resume) and coerces numeric extra_flags to plain decimals.
 2. The mutual-exclusion / preflight guards fail with clear errors instead of
-   launching a doomed run.
+   launching a doomed run (missing lerobot, duplicate session, build failure).
 3. The session lifecycle (start -> list -> status -> stop) round-trips through
-   the persisted session store.
-4. Every user-facing ``text`` field is plain ASCII (the project's no-emoji rule).
+   the persisted session store, including stop's SIGTERM->SIGKILL escalation,
+   the already-dead and missing-PID branches, and the status log tail.
+4. The on-disk session store degrades gracefully on corrupt/unwritable files and
+   the dispatcher wraps unexpected errors as structured results rather than
+   raising past dispatch.
+5. Every user-facing ``text`` field is plain ASCII (the project's no-emoji rule).
 """
 
 from __future__ import annotations
@@ -325,3 +330,301 @@ def test_unknown_action_errors(tmp_path: Path) -> None:
     result = lerobot_train(action="frobnicate", dataset_root=str(root))
     assert result["status"] == "error"
     assert "Unknown action" in _texts(result)
+
+
+# ---------------------------------------------------------------------------
+# build_train_command - optional flag pass-through
+# ---------------------------------------------------------------------------
+def test_build_command_emits_optional_tuning_flags() -> None:
+    """Optional steps/batch/save_freq/dtype/grad-ckpt/pretrained flags all appear."""
+    cmd = build_train_command(
+        dataset_root="/data/ds",
+        policy_type="act",
+        pretrained_path="lerobot/act_base",
+        output_dir="/out",
+        steps=500,
+        batch_size=16,
+        save_freq=100,
+        dtype="float32",
+        gradient_checkpointing=True,
+    )
+    assert "--steps=500" in cmd
+    assert "--batch_size=16" in cmd
+    assert "--save_freq=100" in cmd
+    assert "--policy.dtype=float32" in cmd
+    assert "--policy.gradient_checkpointing=true" in cmd
+    assert "--policy.pretrained_path=lerobot/act_base" in cmd
+    assert "--output_dir=/out" in cmd
+
+
+def test_build_command_extra_flags_coerce_floats_without_scientific_notation() -> None:
+    """Numeric extra_flags render as plain decimals lerobot's parser accepts."""
+    cmd = build_train_command(
+        dataset_root="/data/ds",
+        extra_flags={"policy.optimizer_lr": 1e-4},
+    )
+    assert "--policy.optimizer_lr=0.0001" in cmd
+    assert not any("e-" in tok for tok in cmd)
+
+
+# ---------------------------------------------------------------------------
+# SessionManager - on-disk store resilience
+# ---------------------------------------------------------------------------
+def test_session_manager_recovers_from_corrupt_store(tmp_path: Path) -> None:
+    """A truncated/garbage sessions file degrades to empty, never raises."""
+    mgr = SessionManager()
+    mgr.sessions_file.parent.mkdir(parents=True, exist_ok=True)
+    mgr.sessions_file.write_text("{not json")
+    assert mgr.list_sessions() == {}
+
+
+def test_session_manager_retains_finished_session_with_dead_pid(tmp_path: Path) -> None:
+    """A session whose PID is gone is kept (so status can report the final log)."""
+    mgr = SessionManager()
+    mgr.add_session("done", {"pid": 1, "action": "train"})
+    # PID 1 is not one of ours; _load_sessions keeps it but it is not "running".
+    sessions = mgr.list_sessions()
+    assert "done" in sessions
+
+
+def test_session_manager_get_and_remove_round_trip(tmp_path: Path) -> None:
+    mgr = SessionManager()
+    mgr.add_session("s", {"pid": 4242})
+    assert mgr.get_session("s") == {"pid": 4242}
+    mgr.remove_session("s")
+    assert mgr.get_session("s") is None
+    # Removing a non-existent session is a no-op, not an error.
+    mgr.remove_session("s")
+
+
+# ---------------------------------------------------------------------------
+# dispatcher - preflight + guard error paths
+# ---------------------------------------------------------------------------
+def test_start_errors_when_lerobot_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Start preflight fails cleanly (no Popen) when lerobot is not importable."""
+    root = _write_dataset(tmp_path / "ds")
+    monkeypatch.setitem(__import__("sys").modules, "lerobot", None)
+
+    def _boom_popen(*a: Any, **k: Any):  # noqa: ANN401
+        raise AssertionError("Popen must not run when lerobot is missing")
+
+    monkeypatch.setattr(train_mod.subprocess, "Popen", _boom_popen)
+    result = lerobot_train(action="start", dataset_root=str(root), policy_type="act")
+    assert result["status"] == "error"
+    assert "lerobot is not importable" in _texts(result)
+
+
+def test_start_rejects_duplicate_session_name(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A second start with the same name is refused instead of clobbering the first."""
+    root = _write_dataset(tmp_path / "ds")
+    SessionManager().add_session("dup", {"pid": 4242})
+
+    def _boom_popen(*a: Any, **k: Any):  # noqa: ANN401
+        raise AssertionError("Popen must not run for a duplicate session")
+
+    monkeypatch.setattr(train_mod.subprocess, "Popen", _boom_popen)
+    result = lerobot_train(action="start", dataset_root=str(root), policy_type="act", session_name="dup")
+    assert result["status"] == "error"
+    assert "already exists" in _texts(result)
+
+
+def test_start_surfaces_command_build_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A bad arg combo is reported as a build error, not a crash, and no Popen runs."""
+    root = _write_dataset(tmp_path / "ds")
+
+    def _boom_popen(*a: Any, **k: Any):  # noqa: ANN401
+        raise AssertionError("Popen must not run when command build fails")
+
+    monkeypatch.setattr(train_mod.subprocess, "Popen", _boom_popen)
+    # lora + train_expert_only are mutually exclusive -> ValueError inside builder.
+    result = lerobot_train(
+        action="start",
+        dataset_root=str(root),
+        policy_type="smolvla",
+        lora=True,
+        train_expert_only=True,
+        session_name="bad",
+    )
+    assert result["status"] == "error"
+    assert "Command build failed" in _texts(result)
+
+
+def test_stop_without_session_name_errors(tmp_path: Path) -> None:
+    result = lerobot_train(action="stop", dataset_root=str(_write_dataset(tmp_path / "ds")))
+    assert result["status"] == "error"
+    assert "Session name required" in _texts(result)
+
+
+def test_stop_unknown_session_errors(tmp_path: Path) -> None:
+    result = lerobot_train(action="stop", dataset_root=str(_write_dataset(tmp_path / "ds")), session_name="ghost")
+    assert result["status"] == "error"
+    assert "not found" in _texts(result)
+
+
+def test_stop_already_dead_process_clears_session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """When the PID is already gone, stop reports success and drops the session."""
+    SessionManager().add_session("gone", {"pid": 5555, "action": "train"})
+
+    def _raise_no_such(pid: int, sig: int) -> None:
+        raise ProcessLookupError
+
+    monkeypatch.setattr(train_mod.os, "kill", _raise_no_such)
+    result = lerobot_train(action="stop", dataset_root="/x", session_name="gone")
+    assert result["status"] == "success"
+    assert "already stopped" in _texts(result)
+    assert SessionManager().get_session("gone") is None
+
+
+def test_status_reports_log_tail(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """status surfaces the recent log tail for a tracked session."""
+    log = tmp_path / "run.log"
+    log.write_text("epoch 1\nepoch 2\nloss 0.01\n")
+    SessionManager().add_session("live", {"pid": 7777, "action": "train", "start_time": 0.0, "log_file": str(log)})
+    monkeypatch.setattr(train_mod.psutil, "pid_exists", lambda pid: True)
+
+    class _RunningProcess:
+        def __init__(self, pid: int) -> None:
+            self.pid = pid
+
+        def is_running(self) -> bool:
+            return True
+
+    monkeypatch.setattr(train_mod.psutil, "Process", _RunningProcess)
+    result = lerobot_train(action="status", dataset_root="/x", session_name="live")
+    assert result["status"] == "success"
+    assert result["is_running"] is True
+    assert "loss 0.01" in _texts(result)
+    assert "Recent Log Output" in _texts(result)
+
+
+def test_list_reports_no_active_sessions_when_empty(tmp_path: Path) -> None:
+    result = lerobot_train(action="list", dataset_root="/x")
+    assert result["status"] == "success"
+    assert result["count"] == 0
+    assert "No active sessions" in _texts(result)
+
+
+def test_build_command_rejects_nonpositive_val_episodes(tmp_path: Path) -> None:
+    """val_episodes <= 0 is rejected before the dataset is even read."""
+    with pytest.raises(ValueError, match="val_episodes must be positive"):
+        build_train_command(dataset_root=str(_write_dataset(tmp_path / "ds")), val_episodes=0)
+
+
+def test_read_total_episodes_raises_on_missing_and_bad_metadata(tmp_path: Path) -> None:
+    """_read_total_episodes guards both a missing file and a non-positive count."""
+    missing = tmp_path / "nope"
+    with pytest.raises(FileNotFoundError):
+        train_mod._read_total_episodes(str(missing))
+
+    bad = tmp_path / "bad"
+    (bad / "meta").mkdir(parents=True)
+    (bad / "meta" / "info.json").write_text(json.dumps({"total_episodes": 0}))
+    with pytest.raises(ValueError, match="total_episodes"):
+        train_mod._read_total_episodes(str(bad))
+
+
+def test_start_autogenerates_session_name_and_clears_stale_empty_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No session_name -> auto name; a stale EMPTY output_dir is removed first."""
+    root = _write_dataset(tmp_path / "ds")
+    out = tmp_path / "out"
+    out.mkdir()  # stale, empty, no checkpoints -> should be cleared
+    monkeypatch.setattr(train_mod.subprocess, "Popen", lambda *a, **k: _FakeProc(pid=321))
+    monkeypatch.setattr(train_mod.psutil, "pid_exists", lambda pid: True)
+
+    rmtree_calls: list[str] = []
+    real_rmtree = train_mod.shutil.rmtree
+
+    def _spy_rmtree(path, **kwargs):  # noqa: ANN001
+        rmtree_calls.append(str(path))
+        return real_rmtree(path, **kwargs)
+
+    monkeypatch.setattr(train_mod.shutil, "rmtree", _spy_rmtree)
+    result = lerobot_train(action="start", dataset_root=str(root), policy_type="act", output_dir=str(out))
+    assert result["status"] == "success"
+    assert result["session_name"].startswith("train_")
+    assert str(out) in rmtree_calls
+
+
+def test_stop_escalates_to_sigkill_when_sigterm_ignored(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A process still alive after SIGTERM gets SIGKILL, then the session clears."""
+    SessionManager().add_session("stubborn", {"pid": 8888, "action": "train"})
+    monkeypatch.setattr(train_mod.psutil, "pid_exists", lambda pid: True)
+
+    class _RunningProcess:
+        def __init__(self, pid: int) -> None:
+            self.pid = pid
+
+        def is_running(self) -> bool:
+            return True
+
+    monkeypatch.setattr(train_mod.psutil, "Process", _RunningProcess)
+    monkeypatch.setattr(train_mod.time, "sleep", lambda s: None)
+    signals: list[int] = []
+    monkeypatch.setattr(train_mod.os, "kill", lambda pid, sig: signals.append(sig))
+    result = lerobot_train(action="stop", dataset_root="/x", session_name="stubborn")
+    assert result["status"] == "success"
+    assert train_mod.signal.SIGTERM in signals
+    assert train_mod.signal.SIGKILL in signals
+
+
+def test_stop_session_without_pid_errors(tmp_path: Path) -> None:
+    """A tracked session missing its PID reports an error instead of crashing."""
+    SessionManager().add_session("nopid", {"action": "train"})
+    result = lerobot_train(action="stop", dataset_root="/x", session_name="nopid")
+    assert result["status"] == "error"
+    assert "No PID found" in _texts(result)
+
+
+def test_status_handles_unreadable_log_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An OSError reading the log tail is reported inline, not raised."""
+    log = tmp_path / "run.log"
+    log.write_text("x\n")
+    SessionManager().add_session("live", {"pid": 7777, "action": "train", "start_time": 0.0, "log_file": str(log)})
+    monkeypatch.setattr(train_mod.psutil, "pid_exists", lambda pid: True)
+
+    class _RunningProcess:
+        def __init__(self, pid: int) -> None:
+            self.pid = pid
+
+        def is_running(self) -> bool:
+            return True
+
+    monkeypatch.setattr(train_mod.psutil, "Process", _RunningProcess)
+
+    real_open = open
+
+    def _boom_open(path, *a, **k):  # noqa: ANN001
+        if str(path) == str(log):
+            raise OSError("permission denied")
+        return real_open(path, *a, **k)
+
+    monkeypatch.setattr("builtins.open", _boom_open)
+    result = lerobot_train(action="status", dataset_root="/x", session_name="live")
+    assert result["status"] == "success"
+    assert "Error reading log" in _texts(result)
+
+
+def test_session_manager_save_error_is_swallowed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A failed write to the session store logs but does not raise."""
+    mgr = SessionManager()
+
+    def _boom_open(*a: Any, **k: Any):  # noqa: ANN401
+        raise OSError("read-only filesystem")
+
+    monkeypatch.setattr("builtins.open", _boom_open)
+    # Should not raise despite the unwritable store.
+    mgr._save_sessions({"x": {"pid": 1}})
+
+
+def test_dispatcher_wraps_unexpected_errors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An unexpected internal failure is returned as a structured error, never raised."""
+
+    def _boom(self):  # noqa: ANN001
+        raise RuntimeError("disk exploded")
+
+    monkeypatch.setattr(train_mod.SessionManager, "list_sessions", _boom)
+    result = lerobot_train(action="list", dataset_root="/x")
+    assert result["status"] == "error"
+    assert "Tool execution failed" in _texts(result)
