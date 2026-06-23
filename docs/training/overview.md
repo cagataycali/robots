@@ -1,14 +1,16 @@
 ---
-description: Where training lives - upstream LeRobot, Isaac-GR00T, Cosmos. strands-robots ships data + inference.
+description: Train policies locally via the lerobot_train tool, or upstream with Isaac-GR00T and Cosmos. strands-robots ships data + inference + local fine-tuning.
 ---
 
 # Training
 
-`strands-robots` ships data collection and policy inference. Training runs upstream.
+`strands-robots` ships data collection and policy inference. ACT/diffusion/pi/SmolVLA
+fine-tuning runs locally through the `lerobot_train` tool (a thin wrapper over
+`lerobot-train`); GR00T and Cosmos training run in their upstream frameworks.
 
 | Want to train | Use |
 |---------------|-----|
-| ACT, Pi0, SmolVLA, Diffusion Policy | `lerobot` - `python -m lerobot.scripts.train` |
+| ACT, Pi0, SmolVLA, Diffusion Policy | `lerobot_train` tool (wraps `lerobot-train`) or `lerobot` directly |
 | GR00T fine-tune | `Isaac-GR00T` (NVIDIA) |
 | Cosmos | NVIDIA Cosmos Framework - see [Cosmos3Policy](../policies/cosmos3.md) |
 | Custom architecture | Read LeRobot v3 dataset with `pyarrow` / `datasets` |
@@ -28,14 +30,26 @@ for episode in range(50):
                    policy_provider="mock", duration=10.0)
 sim.stop_recording()
 
-# 2. Train upstream
-# uv pip install lerobot
-# python -m lerobot.scripts.train policy=act dataset.root=/tmp/my_dataset
+# 2. Train locally on the recorded dataset (closes record -> train -> deploy)
+from strands_robots.tools import lerobot_train
 
-# 3. Infer with checkpoint
+# dataset_root is the directory holding meta/info.json
+out = lerobot_train(
+    dataset_root="~/.cache/huggingface/lerobot/user/my_dataset",
+    policy_type="act",
+    steps=20000,
+    batch_size=8,
+    val_episodes=5,        # hold out the last 5 episodes for evaluation
+    output_dir="/tmp/train_out/act_cube",
+)
+# Background session: poll progress, then stop or let it finish.
+lerobot_train(action="status", session_name=out["session_name"])
+
+# 3. Infer with the trained checkpoint
 from strands_robots.policies import create_policy
 
-policy = create_policy("lerobot_local", pretrained_name_or_path="path/to/checkpoint")
+ckpt = "/tmp/train_out/act_cube/checkpoints/last/pretrained_model"
+policy = create_policy("lerobot_local", pretrained_name_or_path=ckpt)
 sim.run_policy(robot_name="so100", instruction="pick up the cube",
                policy_object=policy, duration=15.0)
 

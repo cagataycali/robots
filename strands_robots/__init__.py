@@ -54,6 +54,7 @@ if TYPE_CHECKING:
     from strands_robots.tools.lerobot_calibrate import lerobot_calibrate
     from strands_robots.tools.lerobot_camera import lerobot_camera
     from strands_robots.tools.lerobot_teleoperate import lerobot_teleoperate
+    from strands_robots.tools.lerobot_train import lerobot_train
     from strands_robots.tools.pose_tool import pose_tool
     from strands_robots.tools.robot_mesh import robot_mesh
     from strands_robots.tools.serial_tool import serial_tool
@@ -88,6 +89,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "lerobot_calibrate": ("strands_robots.tools.lerobot_calibrate", "lerobot_calibrate"),
     "lerobot_camera": ("strands_robots.tools.lerobot_camera", "lerobot_camera"),
     "lerobot_teleoperate": ("strands_robots.tools.lerobot_teleoperate", "lerobot_teleoperate"),
+    "lerobot_train": ("strands_robots.tools.lerobot_train", "lerobot_train"),
     "pose_tool": ("strands_robots.tools.pose_tool", "pose_tool"),
     "serial_tool": ("strands_robots.tools.serial_tool", "serial_tool"),
     # Robot mesh coordination tool (Device Connect dispatch + mesh fallback)
@@ -121,6 +123,7 @@ __all__ = [
     "gr00t_inference",
     "lerobot_camera",
     "lerobot_teleoperate",
+    "lerobot_train",
     "lerobot_calibrate",
     "serial_tool",
     "pose_tool",

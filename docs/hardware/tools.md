@@ -1,12 +1,12 @@
 ---
-description: Eight Strands @tool helpers for hardware bring-up - calibrate, camera, teleop, pose, serial, gr00t inference, mesh, download assets.
+description: Strands @tool helpers for hardware bring-up - calibrate, camera, teleop, train, pose, serial, gr00t inference, mesh, download assets.
 ---
 
 # Hardware tools
 
 ```python
 from strands_robots.tools import (
-    lerobot_calibrate, lerobot_camera, lerobot_teleoperate,
+    lerobot_calibrate, lerobot_camera, lerobot_teleoperate, lerobot_train,
     pose_tool, serial_tool, download_assets,
     gr00t_inference,   # see GR00T page
     robot_mesh,        # see multi-robot page
@@ -21,6 +21,7 @@ from strands_robots.tools import (
 | `lerobot_calibrate` | `"list"`, `"info"`, `"search"`, `"compare"`, `"backup"` | Manage existing calibration JSONs under `~/.cache/huggingface/lerobot/calibration/` (this tool inspects/organizes - actual calibration is run via the LeRobot CLI) |
 | `lerobot_camera` | `"list"`, `"test"`, `"stream"` | Enumerate, test, stream connected cameras |
 | `lerobot_teleoperate` | `"start"`, `"stop"`, `"status"` | Leader-follower teleop session |
+| `lerobot_train` | `"start"`, `"status"`, `"stop"`, `"list"` | Fine-tune a policy on a local dataset via `lerobot-train` |
 | `pose_tool` | `"fk"`, `"ik"`, `"set_gripper"` | Forward/inverse kinematics, gripper control |
 | `serial_tool` | `"list"`, `"send"` | Enumerate serial ports, send raw commands |
 | `download_assets` | - | Pre-fetch MJCF assets to `~/.strands_robots/assets/` |

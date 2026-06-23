@@ -129,7 +129,7 @@ from strands_robots.policies.cosmos3 import Cosmos3Policy
 ```python
 from strands_robots.tools import (
     download_assets, gr00t_inference, lerobot_calibrate, lerobot_camera,
-    lerobot_teleoperate, pose_tool, serial_tool, robot_mesh,
+    lerobot_teleoperate, lerobot_train, pose_tool, serial_tool, robot_mesh,
 )
 # All return {"status": "...", "content": [{"text": "..."}]}
 ```
