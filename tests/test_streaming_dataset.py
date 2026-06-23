@@ -333,3 +333,139 @@ def test_dyld_shim_noop_when_already_set(monkeypatch, tmp_path):
     monkeypatch.setattr(_dyld.os, "execv", lambda *a: called.__setitem__("execv", True))
     assert _dyld.ensure_ffmpeg_on_dyld_path() is True
     assert called["execv"] is False
+
+
+# ── import-resolution branches (has_streaming_dataset / _get_streaming_cls) ─
+#
+# These exercise the real ``from lerobot.datasets import StreamingLeRobotDataset``
+# path. lerobot itself is import-order fragile in some envs, so we inject a
+# stand-in ``lerobot.datasets`` module rather than depend on the real package —
+# the code under test only cares that the symbol resolves (or doesn't).
+
+
+def _install_fake_lerobot_datasets(monkeypatch, *, with_streaming):
+    """Put a fake ``lerobot.datasets`` in sys.modules; optionally expose
+    StreamingLeRobotDataset on it. Returns the fake class (or None)."""
+    import sys as _sys
+
+    mod = type(_sys)("lerobot.datasets")
+    cls = _FakeStreaming if with_streaming else None
+    if with_streaming:
+        mod.StreamingLeRobotDataset = _FakeStreaming
+    monkeypatch.setitem(_sys.modules, "lerobot.datasets", mod)
+    return cls
+
+
+def test_has_streaming_dataset_true_when_importable(monkeypatch):
+    """The cached probe reports True when the streaming symbol resolves
+    (exercises the real import branch, not the fakes-only path)."""
+    _install_fake_lerobot_datasets(monkeypatch, with_streaming=True)
+    sd.has_streaming_dataset.cache_clear()
+    assert sd.has_streaming_dataset() is True
+    sd.has_streaming_dataset.cache_clear()
+
+
+def test_has_streaming_dataset_false_when_import_breaks(monkeypatch):
+    """If the streaming class cannot be imported, the probe returns False and
+    swallows the error (offline / partial-install resilience)."""
+    _install_fake_lerobot_datasets(monkeypatch, with_streaming=False)
+    sd.has_streaming_dataset.cache_clear()
+    assert sd.has_streaming_dataset() is False
+    sd.has_streaming_dataset.cache_clear()
+
+
+def test_get_streaming_cls_resolves_via_import(monkeypatch):
+    """With no test-injected attribute override, _get_streaming_cls falls
+    through to the real import and returns the resolved class."""
+    monkeypatch.delattr(sd, "StreamingLeRobotDataset", raising=False)
+    cls = _install_fake_lerobot_datasets(monkeypatch, with_streaming=True)
+    assert sd._get_streaming_cls() is cls
+
+
+def test_get_streaming_cls_raises_actionable_error_when_unavailable(monkeypatch):
+    """When neither an override nor an import is available, the resolver raises
+    ImportError with install guidance (never a bare AttributeError)."""
+    monkeypatch.delattr(sd, "StreamingLeRobotDataset", raising=False)
+    _install_fake_lerobot_datasets(monkeypatch, with_streaming=False)
+    with pytest.raises(ImportError, match="StreamingLeRobotDataset unavailable"):
+        sd._get_streaming_cls()
+
+
+# ── delta-grid validation parity (check_delta_timestamps) ──────────────────
+
+
+def _install_fake_checker(monkeypatch):
+    """Inject a fake lerobot.datasets.feature_utils.check_delta_timestamps that
+    enforces the on-grid rule (multiples of 1/fps within tolerance)."""
+    import sys as _sys
+
+    def check_delta_timestamps(delta_timestamps, fps, tolerance_s, raise_value_error=True):
+        for key, deltas in delta_timestamps.items():
+            for ts in deltas:
+                if abs(ts * fps - round(ts * fps)) / fps > tolerance_s:
+                    if raise_value_error:
+                        raise ValueError(f"{key} delta {ts} off the 1/{fps} grid")
+                    return False
+        return True
+
+    mod = type(_sys)("lerobot.datasets.feature_utils")
+    mod.check_delta_timestamps = check_delta_timestamps
+    monkeypatch.setitem(_sys.modules, "lerobot.datasets.feature_utils", mod)
+
+
+def test_open_validates_aligned_deltas(monkeypatch):
+    """Deltas that are integer multiples of 1/fps pass the parity grid-check
+    (validate_deltas defaults on) and the reader is returned."""
+    monkeypatch.setattr(sd, "StreamingLeRobotDataset", _FakeStreaming, raising=False)
+    _install_fake_checker(monkeypatch)
+    # _FakeStreaming.fps == 30 → 0.0, 1/30, 2/30 are all on-grid.
+    r = sd.StreamingDatasetReader.open(
+        "org/ds",
+        delta_timestamps={"observation.state": [0.0, 1 / 30, 2 / 30]},
+    )
+    assert r.dataset.kw["delta_timestamps"]["observation.state"] == [0.0, 1 / 30, 2 / 30]
+
+
+def test_open_rejects_misaligned_deltas(monkeypatch):
+    """Deltas off the 1/fps grid raise ValueError, matching the materialized
+    dataset's check (the streaming path otherwise skips it)."""
+    monkeypatch.setattr(sd, "StreamingLeRobotDataset", _FakeStreaming, raising=False)
+    _install_fake_checker(monkeypatch)
+    with pytest.raises(ValueError, match="grid"):
+        sd.StreamingDatasetReader.open(
+            "org/ds",
+            delta_timestamps={"observation.state": [0.017]},  # 0.017*30 = 0.51, off-grid
+        )
+
+
+def test_open_skips_validation_when_checker_unavailable(monkeypatch):
+    """If check_delta_timestamps cannot be imported, validation is skipped
+    silently and open still succeeds (validation is best-effort parity)."""
+    import sys as _sys
+
+    monkeypatch.setattr(sd, "StreamingLeRobotDataset", _FakeStreaming, raising=False)
+    broken = type(_sys)("lerobot.datasets.feature_utils")  # lacks check_delta_timestamps
+    monkeypatch.setitem(_sys.modules, "lerobot.datasets.feature_utils", broken)
+    r = sd.StreamingDatasetReader.open(
+        "org/ds",
+        delta_timestamps={"observation.state": [0.017]},  # off-grid but unchecked
+    )
+    assert r.dataset.kw["delta_timestamps"]["observation.state"] == [0.017]
+
+
+# ── reader metadata + iteration passthrough ────────────────────────────────
+
+
+def test_reader_exposes_metadata_and_iterates(monkeypatch):
+    """num_frames / meta proxy the wrapped dataset and iteration yields its
+    frames unchanged."""
+
+    class _WithMeta(_FakeStreaming):
+        meta = {"stats": {"action": {"mean": [0.0]}}}
+
+    monkeypatch.setattr(sd, "StreamingLeRobotDataset", _WithMeta, raising=False)
+    r = sd.StreamingDatasetReader.open("org/ds", validate_deltas=False)
+    assert r.num_frames == 1000
+    assert r.meta == {"stats": {"action": {"mean": [0.0]}}}
+    frames = list(r)
+    assert frames == [{"observation.state": [0.0], "action": [0.0], "task": "t"}]
