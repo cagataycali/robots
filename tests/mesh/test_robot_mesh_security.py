@@ -354,3 +354,83 @@ class TestDeclineSideChannel322:
         # The operator's literal reply MUST NOT be echoed to the LLM.
         assert secret not in text, "operator's literal decline reply leaked to the LLM result (#322 side-channel)"
         m.emergency_stop.assert_not_called()
+
+
+# --- rate-limit sliding-window expiry -----------------------------------
+
+
+class _FakeClock:
+    """Deterministic stand-in for ``time.monotonic`` used to drive the
+    rate-limit sliding window without sleeping. ``advance`` moves the
+    virtual clock forward so stale bucket entries fall outside the
+    window and get pruned.
+    """
+
+    def __init__(self, start: float = 1000.0) -> None:
+        self._now = start
+
+    def __call__(self) -> float:
+        return self._now
+
+    def advance(self, seconds: float) -> None:
+        self._now += seconds
+
+
+class TestRateLimitWindowExpiry:
+    """The sliding window must *forget* calls older than the configured
+    window. Without expiry, three ``emergency_stop`` calls issued long
+    ago would permanently lock the agent out of ever issuing another -
+    the opposite of the safety property (bound nuisance, never inhibit a
+    genuine emergency). These pin the stale-entry pruning in all three
+    rate-limit helpers.
+    """
+
+    def test_check_clears_after_window_elapses(self, monkeypatch):
+        clock = _FakeClock()
+        monkeypatch.setattr(rmt.time, "monotonic", clock)
+        rmt._reset_rate_limits()
+
+        # Fill emergency_stop (cap 3 / 60s window) at t=0.
+        for _ in range(3):
+            assert rmt._rate_limit_record("emergency_stop") is None
+        # Bucket full: a check (which does not consume) reports rejection.
+        assert rmt._rate_limit_check("emergency_stop") is not None
+
+        # Just before the window closes the slots are still held.
+        clock.advance(59.0)
+        assert rmt._rate_limit_check("emergency_stop") is not None
+
+        # Past the window the stale entries are pruned and a slot frees up.
+        clock.advance(2.0)
+        assert rmt._rate_limit_check("emergency_stop") is None
+
+    def test_record_prunes_stale_entries(self, monkeypatch):
+        clock = _FakeClock()
+        monkeypatch.setattr(rmt.time, "monotonic", clock)
+        rmt._reset_rate_limits()
+
+        for _ in range(3):
+            rmt._rate_limit_record("emergency_stop")
+        assert len(rmt._RATE_HISTORY["emergency_stop"]) == 3
+
+        # After the window elapses, the next record prunes the three stale
+        # timestamps before appending its own, so the bucket holds one entry.
+        clock.advance(61.0)
+        rmt._rate_limit_record("emergency_stop")
+        assert len(rmt._RATE_HISTORY["emergency_stop"]) == 1
+
+    def test_check_and_record_frees_slot_after_window(self, monkeypatch):
+        clock = _FakeClock()
+        monkeypatch.setattr(rmt.time, "monotonic", clock)
+        rmt._reset_rate_limits()
+
+        # Atomically reserve all 3 slots at t=0; the 4th is rejected.
+        for _ in range(3):
+            assert rmt._rate_limit_check_and_record("emergency_stop") is None
+        assert rmt._rate_limit_check_and_record("emergency_stop") is not None
+
+        # Once the window elapses the stale entries are pruned and the
+        # atomic check+record reserves a fresh slot.
+        clock.advance(61.0)
+        assert rmt._rate_limit_check_and_record("emergency_stop") is None
+        assert len(rmt._RATE_HISTORY["emergency_stop"]) == 1
