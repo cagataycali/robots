@@ -1,0 +1,139 @@
+"""Tests for the Trainer abstraction: ABC contract, factory, mock lifecycle."""
+
+import json
+import os
+
+import pytest
+
+from strands_robots.training import (
+    Trainer,
+    TrainResult,
+    TrainSpec,
+    create_trainer,
+    import_trainer_class,
+    list_trainers,
+    register_trainer,
+)
+from strands_robots.training.mock import MockTrainer
+
+
+@pytest.fixture
+def dataset_root(tmp_path):
+    """A minimal LeRobotDataset v3 root (just meta/info.json)."""
+    meta = tmp_path / "meta"
+    meta.mkdir()
+    (meta / "info.json").write_text(json.dumps({"total_episodes": 5}))
+    return str(tmp_path)
+
+
+@pytest.fixture
+def spec(dataset_root, tmp_path):
+    out = tmp_path / "ft_out"
+    return TrainSpec(
+        dataset_root=dataset_root,
+        base_model="mock/base",
+        output_dir=str(out),
+        steps=100,
+    )
+
+
+class TestFactory:
+    def test_create_from_registry(self):
+        """`mock` resolves via its policies.json trainer block."""
+        t = create_trainer("mock")
+        assert isinstance(t, MockTrainer)
+        assert t.provider_name == "mock"
+
+    def test_list_trainers_includes_mock(self):
+        assert "mock" in list_trainers()
+
+    def test_import_trainer_class(self):
+        assert import_trainer_class("mock") is MockTrainer
+
+    def test_unknown_provider_raises(self):
+        with pytest.raises(ValueError, match="No trainer registered"):
+            create_trainer("does_not_exist_xyz")
+
+    def test_runtime_register_and_alias(self):
+        register_trainer("custom_x", lambda: MockTrainer, aliases=["cx"])
+        assert isinstance(create_trainer("custom_x"), MockTrainer)
+        assert isinstance(create_trainer("cx"), MockTrainer)
+        assert "custom_x" in list_trainers()
+
+    def test_trainer_is_subclass(self):
+        assert issubclass(MockTrainer, Trainer)
+
+
+class TestValidate:
+    def test_clean_spec_has_no_problems(self, spec):
+        assert create_trainer("mock").validate(spec) == []
+
+    def test_missing_dataset_reported(self, tmp_path):
+        t = create_trainer("mock")
+        s = TrainSpec(
+            dataset_root=str(tmp_path / "nope"),
+            base_model="m",
+            output_dir=str(tmp_path / "o"),
+        )
+        problems = t.validate(s)
+        assert any("LeRobotDataset v3" in p for p in problems)
+
+    def test_bad_method_reported(self, spec):
+        spec.method = "banana"
+        problems = create_trainer("mock").validate(spec)
+        assert any("unsupported method" in p for p in problems)
+
+    def test_lora_expert_only_mutually_exclusive(self, spec):
+        spec.method = "lora"
+        spec.tune = {"expert_only": True}
+        problems = create_trainer("mock").validate(spec)
+        assert any("mutually exclusive" in p for p in problems)
+
+    def test_nonpositive_steps_reported(self, spec):
+        spec.steps = 0
+        problems = create_trainer("mock").validate(spec)
+        assert any("steps must be > 0" in p for p in problems)
+
+
+class TestLifecycle:
+    def test_train_writes_checkpoint_and_succeeds(self, spec):
+        t = create_trainer("mock")
+        res = t.train(spec)
+        assert isinstance(res, TrainResult)
+        assert res.status == "success"
+        assert res.job_id
+        assert res.checkpoint_dir and os.path.isfile(
+            os.path.join(res.checkpoint_dir, "config.json")
+        )
+        assert res.metrics["learning"] is True
+
+    def test_train_refuses_invalid_spec(self, tmp_path):
+        t = create_trainer("mock")
+        bad = TrainSpec(dataset_root="/nope", base_model="", output_dir="", steps=0)
+        res = t.train(bad)
+        assert res.status == "error"
+        assert "validation failed" in res.message
+
+    def test_export_default_is_passthrough(self, spec):
+        t = create_trainer("mock")
+        res = t.train(spec)
+        assert t.export(spec, res.checkpoint_dir) == res.checkpoint_dir
+
+    def test_status_reports_learning(self, spec):
+        t = create_trainer("mock")
+        res = t.train(spec)
+        st = t.status(res.job_id)
+        assert st.status == "success"
+        assert st.metrics["learning"] is True
+
+    def test_hardware_floor_default(self):
+        floor = create_trainer("mock").hardware_floor
+        assert floor["min_gpus"] == 1
+        assert floor["multinode"] is False
+
+
+class TestSpecTolerance:
+    def test_unknown_extra_keys_do_not_break_validate(self, spec):
+        """The **kwargs-style tolerance rule: unknown extras are ignored."""
+        spec.extra = {"some_future_flag": "value", "another": 123}
+        assert create_trainer("mock").validate(spec) == []
