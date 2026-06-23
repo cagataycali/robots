@@ -11,7 +11,11 @@
                 "mock",
                 "random",
                 "test"
-            ]
+            ],
+            "trainer": {
+                "module": "strands_robots.training.mock",
+                "class": "MockTrainer"
+            }
         },
         "groot": {
             "module": "strands_robots.policies.groot",
