@@ -44,7 +44,11 @@
             "model_id_overrides": [
                 "nvidia/gr00t",
                 "nvidia/groot"
-            ]
+            ],
+            "trainer": {
+                "module": "strands_robots.training.groot",
+                "class": "Gr00tTrainer"
+            }
         },
         "lerobot_local": {
             "module": "strands_robots.policies.lerobot_local",
@@ -110,7 +114,11 @@
             "model_id_overrides": [
                 "nvidia/cosmos3",
                 "nvidia/cosmos3-nano-policy"
-            ]
+            ],
+            "trainer": {
+                "module": "strands_robots.training.cosmos3",
+                "class": "Cosmos3Trainer"
+            }
         },
         "moveit2": {
             "module": "strands_robots.policies.moveit2",
