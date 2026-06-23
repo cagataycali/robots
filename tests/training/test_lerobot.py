@@ -122,3 +122,47 @@ class TestBuildCommand:
         # consumed keys must NOT leak as flags
         assert not any(c.startswith("--policy_type=") for c in cmd)
         assert not any(c.startswith("--job_name=strands_ft") for c in cmd)
+
+
+class TestParseLog:
+    """_parse_log against lerobot's real MetricsTracker line format."""
+
+    def test_expand_big_number(self):
+        from strands_robots.training.lerobot import _expand_big_number
+        assert _expand_big_number("1.2K") == 1200.0
+        assert _expand_big_number("2") == 2.0
+        assert _expand_big_number("3M") == 3_000_000.0
+        assert _expand_big_number("1.5B") == 1.5e9
+        assert _expand_big_number("nope") is None
+        assert _expand_big_number("") is None
+
+    def test_parses_real_metricstracker_line(self, tmp_path):
+        log = tmp_path / "run.log"
+        log.write_text(
+            "INFO 2026-06-23 ot_train.py:419 Start offline training\n"
+            "step:1.2K smpl:4.9K ep:8 epch:2.00 loss:0.123\n"
+            "step:1.3K smpl:5.0K ep:9 epch:2.10 loss:0.087\n"
+        )
+        m = LerobotTrainer(device="cpu")._parse_log(str(log))
+        assert m["latest_step"] == 1300  # newest, K-expanded
+        assert abs(m["latest_loss"] - 0.087) < 1e-9
+        assert m["latest_epoch"] == 2.10
+        assert m["learning"] is True
+        assert m["liveness_ok"] is True
+
+    def test_plain_integer_step(self, tmp_path):
+        log = tmp_path / "run.log"
+        log.write_text("step:2 smpl:4 ep:1 epch:1.00 loss:0.5\n")
+        m = LerobotTrainer(device="cpu")._parse_log(str(log))
+        assert m["latest_step"] == 2
+        assert m["latest_loss"] == 0.5
+
+    def test_no_metrics_line_means_not_live(self, tmp_path):
+        log = tmp_path / "run.log"
+        log.write_text("INFO booting...\nCreating dataset\n")
+        m = LerobotTrainer(device="cpu")._parse_log(str(log))
+        assert m["liveness_ok"] is False
+        assert "latest_step" not in m
+
+    def test_unreadable_log_returns_empty(self):
+        assert LerobotTrainer(device="cpu")._parse_log("/no/such/log") == {}
