@@ -47,11 +47,16 @@ from strands_robots.policies.factory import (
     register_policy,
 )
 from strands_robots.policies.mock import MockPolicy
+# VeraPolicy is import-safe: it depends only on numpy + (lazily) websockets.
+# Like Cosmos3Policy, it speaks a self-contained msgpack+websockets wire
+# protocol — no ``vera``, no ``openpi-client``, no torch on the client side.
+from strands_robots.policies.vera import VeraPolicy
 
 __all__ = [
     "Policy",
     "MockPolicy",
     "Cosmos3Policy",
+    "VeraPolicy",
     "create_policy",
     "register_policy",
     "list_providers",

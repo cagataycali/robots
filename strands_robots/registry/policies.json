@@ -171,6 +171,42 @@
                 "wbc",
                 "sonic"
             ]
+        },
+        "vera": {
+            "module": "strands_robots.policies.vera",
+            "class": "VeraPolicy",
+            "description": "MIT VERA — two-stage video-planner + Jacobian IDM, via WebSocket (pusht/mimicgen/droid/allegro)",
+            "requires": [],
+            "config_keys": [
+                "embodiment",
+                "host",
+                "port",
+                "observation_mapping",
+                "action_mapping",
+                "robot",
+                "prompt",
+                "api_key",
+                "context_frames",
+                "verbose"
+            ],
+            "defaults": {
+                "host": "localhost",
+                "embodiment": "pusht"
+            },
+            "shorthands": [
+                "vera",
+                "vera_policy",
+                "video2action"
+            ],
+            "url_patterns": [
+                "^vera://"
+            ],
+            "hf_orgs": [
+                "sizhe-lester-li"
+            ],
+            "model_id_overrides": [
+                "sizhe-lester-li/vera"
+            ]
         }
     }
 }
