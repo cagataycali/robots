@@ -303,6 +303,72 @@ class TestSessionLifecycle:
         assert session is mock_session
         assert mock_zenoh.open.call_count == 2
 
+    def test_listener_and_client_both_fail_returns_none(self) -> None:
+        """Auto-listener path: when both the listener open AND the client
+        fallback open raise transport errors, get_session returns None and
+        leaves no session cached (mesh quietly stays off)."""
+        import strands_robots.mesh.session as mod
+
+        mock_zenoh = MagicMock()
+        mock_zenoh.open.side_effect = OSError("no broker reachable")
+        mock_zenoh.Config.return_value = MagicMock()
+
+        with patch.dict("sys.modules", {"zenoh": mock_zenoh}), patch.dict("os.environ", {}, clear=False):
+            import os
+
+            os.environ.pop("ZENOH_CONNECT", None)
+            os.environ.pop("ZENOH_LISTEN", None)
+
+            session = mod.get_session()
+
+        assert session is None
+        # Listener attempt + client fallback attempt = two open() calls.
+        assert mock_zenoh.open.call_count == 2
+        assert mod._SESSION is None
+        assert mod._SESSION_REFS == 0
+
+    def test_explicit_endpoints_open_succeeds(self) -> None:
+        """ZENOH_CONNECT set: get_session opens directly (no listener/client
+        dance), caches the session, and sets the refcount to one."""
+        import strands_robots.mesh.session as mod
+
+        mock_zenoh = MagicMock()
+        mock_session = MagicMock()
+        mock_zenoh.open.return_value = mock_session
+        mock_zenoh.Config.return_value = MagicMock()
+
+        with (
+            patch.dict("sys.modules", {"zenoh": mock_zenoh}),
+            patch.dict("os.environ", {"ZENOH_CONNECT": "tcp/10.0.0.5:7447"}, clear=False),
+        ):
+            session = mod.get_session()
+
+        assert session is mock_session
+        mock_zenoh.open.assert_called_once()
+        assert mod._SESSION is mock_session
+        assert mod._SESSION_REFS == 1
+
+    def test_explicit_endpoints_open_failure_returns_none(self) -> None:
+        """ZENOH_LISTEN set: a transport error on the single explicit open
+        returns None without retrying as listener/client (loud-on-misconfig
+        contract: no silent downgrade)."""
+        import strands_robots.mesh.session as mod
+
+        mock_zenoh = MagicMock()
+        mock_zenoh.open.side_effect = RuntimeError("bind failed")
+        mock_zenoh.Config.return_value = MagicMock()
+
+        with (
+            patch.dict("sys.modules", {"zenoh": mock_zenoh}),
+            patch.dict("os.environ", {"ZENOH_LISTEN": "tcp/0.0.0.0:7447"}, clear=False),
+        ):
+            session = mod.get_session()
+
+        assert session is None
+        mock_zenoh.open.assert_called_once()
+        assert mod._SESSION is None
+        assert mod._SESSION_REFS == 0
+
 
 # ---------------------------------------------------------------------------
 # put() helper
