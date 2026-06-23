@@ -444,3 +444,46 @@ class TestDoctorSerialPermissions:
         result = check_serial_permissions()
         # User is a listed member, so this still passes despite the probe error.
         assert "  PASS  " in result
+
+
+class TestDoctorVersionResolution:
+    """Version checks must report the real installed version, not a placeholder.
+
+    Regression: ``check_strands_robots_version``/``check_strands_agents`` read a
+    module-level ``__version__`` that neither package defines, so they emitted
+    ``strands-robots unknown`` / ``strands-agents ?`` even when the package was
+    correctly installed - making the first diagnostic a new user runs useless.
+    """
+
+    def test_strands_robots_version_matches_metadata(self) -> None:
+        from importlib.metadata import version
+
+        from strands_robots.doctor import check_strands_robots_version
+
+        result = check_strands_robots_version()
+        assert "PASS" in result
+        assert version("strands-robots") in result
+        assert "unknown" not in result
+
+    def test_strands_agents_version_matches_metadata(self) -> None:
+        from importlib.metadata import version
+
+        from strands_robots.doctor import check_strands_agents
+
+        result = check_strands_agents()
+        assert "PASS" in result
+        assert version("strands-agents") in result
+        assert "strands-agents ?" not in result
+
+    def test_resolve_version_prefers_distribution_metadata(self) -> None:
+        from importlib.metadata import version
+
+        from strands_robots.doctor import _resolve_version
+
+        assert _resolve_version("strands_robots", "strands-robots") == version("strands-robots")
+
+    def test_resolve_version_unknown_when_absent(self) -> None:
+        from strands_robots.doctor import _resolve_version
+
+        # Neither an installed distribution nor an importable module exists.
+        assert _resolve_version("strands_robots_nope_xyz", "strands-robots-nope-xyz") == "unknown"
