@@ -234,11 +234,16 @@ class TestFullMassMatrixSignatureDrift:
         # Simulate an older MuJoCo binding whose mj_fullM rejects the modern
         # (model, data, dst) order and expects (model, dst, qM). The helper
         # must transparently fall back and still produce the correct matrix.
+        #
+        # The legacy emulation must not delegate to the installed mj_fullM in a
+        # fixed argument order: the installed binding may itself be the legacy
+        # one (mujoco < 3.10), so a hard-coded modern call would raise and make
+        # this drift test non-portable across the very signatures it covers.
+        # Instead it fills dst from the precomputed reference, asserting only
+        # the legacy (model, dst, qM) call contract.
         model, data = sim._world._model, sim._world._data
         mj.mj_forward(model, data)
         reference = _full_mass_matrix(mj, model, data)
-
-        real_fullm = mj.mj_fullM
 
         class _LegacyShim:
             """Proxy mujoco module exposing only a legacy mj_fullM."""
@@ -254,10 +259,15 @@ class TestFullMassMatrixSignatureDrift:
 
                 if isinstance(a, _mj.MjData):
                     raise TypeError("legacy binding: expected (model, dst, qM)")
-                # a is dst, b is qM (1D or [m, 1]) - emulate via the real call.
-                tmp = np.zeros_like(a, order="C")
-                real_fullm(m, data, tmp)
-                a[...] = tmp
+                # Legacy contract: a is the dense dst buffer, b is the sparse
+                # inertia qM (1D or [m, 1]). Validate that contract, then fill
+                # dst from the known-correct reference (version-independent, so
+                # the emulation works whatever signature the installed mujoco
+                # binding actually uses).
+                assert isinstance(a, np.ndarray) and a.flags["WRITEABLE"]
+                qm = np.asarray(b).reshape(-1)
+                assert qm.shape[0] == data.qM.shape[0]
+                a[...] = reference
 
         shim = _LegacyShim()
         M = _full_mass_matrix(shim, model, data)
