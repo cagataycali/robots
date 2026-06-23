@@ -66,6 +66,23 @@ The factory imports lazily on first use.
 | `reset(seed=None)` | no | no-op |
 | `get_actions_sync(...)` | no | sync wrapper |
 
+## Action value convention
+
+`get_actions` returns a `list[dict]` -- one dict per control tick, each mapping a
+robot state key (joint/actuator name) to its **target value** for that tick. The
+value MUST be **JSON / python-native**:
+
+- a python `float` for a single-DOF actuator, or
+- a `list[float]` for a multi-DOF actuator group.
+
+Do **not** return raw `np.ndarray` objects. If your policy computes actions with
+numpy / torch, coerce before returning (`float(v)` for scalars, `v.tolist()` for
+arrays). This lets downstream consumers treat every provider's output uniformly
+(`float(v)` on a scalar, `len(v)` on a group) regardless of the policy's internal
+compute backend. The list length is the action-chunk horizon; consumers execute
+it at a fixed control rate (e.g. 50Hz). See `strands_robots/policies/mock.py` for
+the canonical reference.
+
 ## See also
 
 - [Policy overview](overview.md) - factory, providers.

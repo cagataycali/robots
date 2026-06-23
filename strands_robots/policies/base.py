@@ -40,6 +40,13 @@ class Policy(ABC):
     Non-VLA providers typically set :attr:`requires_images` to ``False``
     and read their goal from the well-known ``**kwargs`` keys documented
     on :meth:`get_actions`.
+
+    All providers MUST honour the per-tick **action value convention**
+    documented on :meth:`get_actions`: each action value is a python
+    ``float`` (single-DOF) or ``list[float]`` (multi-DOF group), never a
+    raw ``np.ndarray``, so downstream consumers handle every provider's
+    output uniformly regardless of its internal compute backend. See
+    ``MockPolicy`` for the canonical reference.
     """
 
     @abstractmethod
@@ -79,10 +86,21 @@ class Policy(ABC):
                 raising, so callers can pass shared keys across providers.
 
         Returns:
-            List of action dicts for robot execution.  Each dict maps
-            robot state key (joint name) to the target value for that
-            tick; consumers typically execute the list at a fixed
-            control rate (e.g. 50Hz).
+            List of action dicts for robot execution.  Each dict maps a
+            robot state key (joint/actuator name) to its **target value**
+            for that tick.
+
+            Values MUST be **JSON / python-native**: a python ``float`` for
+            a single-DOF actuator, or a ``list[float]`` for a multi-DOF
+            actuator group.  Implementations MUST NOT return raw
+            ``np.ndarray`` objects -- coerce with ``.tolist()`` /
+            ``float(...)`` before returning -- so downstream consumers can
+            treat every provider's output uniformly (e.g. ``float(v)`` on a
+            scalar, ``len(v)`` on a group) regardless of the policy's
+            internal compute backend.
+
+            The list length is the action-chunk horizon; consumers execute
+            it at a fixed control rate (e.g. 50Hz).
         """
         pass
 

@@ -32,7 +32,12 @@ class MockPolicy(Policy):
     async def get_actions(
         self, observation_dict: dict[str, Any], instruction: str, **kwargs: Any
     ) -> list[dict[str, Any]]:
-        """Return smooth sinusoidal actions."""
+        """Return smooth sinusoidal actions.
+
+        Canonical reference for the per-tick action value convention
+        documented on :meth:`Policy.get_actions`: every value is a python
+        ``float`` (single-DOF joint target), never a raw ``np.ndarray``.
+        """
         if not self.robot_state_keys:
             if "observation.state" in observation_dict:
                 state = observation_dict["observation.state"]

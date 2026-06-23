@@ -7,6 +7,8 @@ fast path and the 'already-in-event-loop' ThreadPoolExecutor fallback.
 from __future__ import annotations
 
 import asyncio
+import inspect
+import json
 from typing import Any
 
 import pytest
@@ -142,3 +144,49 @@ def test_unknown_kwargs_are_silently_ignored(provider_factory):
         "Policy must return a non-empty action list even when passed an "
         "unknown kwarg; the contract is to ignore, not raise."
     )
+
+
+def test_get_actions_docstring_pins_value_convention():
+    """The Policy.get_actions ``Returns:`` docstring MUST pin the per-tick
+    action value convention: python ``float`` / ``list[float]``, never a raw
+    ``np.ndarray``. This is the contract C2 makes explicit so providers and
+    consumers agree on the value type regardless of compute backend.
+
+    Fails on the pre-C2 docstring, which only described the dict *shape* and
+    left the value type unspecified -- the ambiguity that let providers leak
+    ``np.ndarray`` into action dicts."""
+    doc = inspect.getdoc(Policy.get_actions) or ""
+    assert "float" in doc and "list[float]" in doc, (
+        "get_actions docstring must state values are python float or list[float]"
+    )
+    assert "np.ndarray" in doc, "get_actions docstring must explicitly forbid returning raw np.ndarray"
+
+
+def test_policy_class_docstring_references_value_convention():
+    """The Policy class docstring MUST reference the action value convention
+    so implementers see it before reading the method, satisfying C2's
+    class-level note acceptance criterion."""
+    doc = inspect.getdoc(Policy) or ""
+    assert "value convention" in doc.lower() and "np.ndarray" in doc, (
+        "Policy class docstring must reference the per-tick action value "
+        "convention and that values are not raw np.ndarray"
+    )
+
+
+def test_mock_policy_action_values_are_json_native_floats():
+    """MockPolicy is the canonical reference for the value convention: every
+    action value must be a python ``float`` (not ``np.ndarray`` / numpy
+    scalar), so the action list is JSON-serializable as-is. Pins the
+    behavioural half of the C2 contract against the documented reference."""
+    p = MockPolicy()
+    p.set_robot_state_keys(["j0", "j1", "j2"])
+    actions = p.get_actions_sync({"observation.state": [0.0, 0.0, 0.0]}, instruction="")
+    assert actions, "MockPolicy must return a non-empty action list"
+    for tick in actions:
+        for key, value in tick.items():
+            assert type(value) is float, (
+                f"action value for {key!r} must be a python float per the "
+                f"documented convention, got {type(value).__name__}"
+            )
+    # JSON round-trip is the canonical proof of native-value compliance.
+    json.dumps(actions)
