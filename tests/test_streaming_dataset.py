@@ -181,3 +181,33 @@ def test_sync_to_bucket_missing_hf_cli(tmp_path, monkeypatch):
     res = rec.sync_to_bucket("my-org/robot-fave")
     assert res["status"] == "error"
     assert "hf` CLI" in res["message"] or "hf CLI" in res["message"]
+
+
+# ── stream_dataset facade ──────────────────────────────────────────────────
+
+
+def test_recording_mixin_stream_dataset_delegates(monkeypatch):
+    """sim.stream_dataset(...) must delegate to StreamingDatasetReader.open,
+    keeping streaming a native facade method (not user-side plumbing)."""
+    from strands_robots.simulation.mujoco.recording import RecordingMixin
+
+    captured = {}
+
+    def fake_open(repo_id, **kw):
+        captured["repo_id"] = repo_id
+        captured["kw"] = kw
+        return "READER"
+
+    monkeypatch.setattr(
+        sd.StreamingDatasetReader, "open", staticmethod(fake_open), raising=True
+    )
+
+    mixin = RecordingMixin()
+    out = mixin.stream_dataset(
+        "org/ds", root="/tmp/x", shuffle=False, drop_videos=True
+    )
+    assert out == "READER"
+    assert captured["repo_id"] == "org/ds"
+    assert captured["kw"]["root"] == "/tmp/x"
+    assert captured["kw"]["shuffle"] is False
+    assert captured["kw"]["drop_videos"] is True

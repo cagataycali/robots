@@ -143,7 +143,26 @@ wbc = [
     "huggingface_hub>=0.20.0,<2.0.0",
 ]
 lerobot = [
-    "lerobot[feetech]>=0.5.0,<0.6.0",
+    # [dataset] bundles the read-back stack the streaming data loop needs:
+    # datasets + pandas + pyarrow (parquet streaming) + av + torchcodec
+    # (remote video decode for StreamingLeRobotDataset / StreamingDatasetReader).
+    # Declaring it here makes `sim.stream_dataset(...)` work out of the box
+    # instead of pushing torchcodec/av plumbing onto user code. See
+    # reports/STREAMING_DATA_LOOP_DEEP_DIVE.md Appendix C.
+    "lerobot[feetech,dataset]>=0.5.0,<0.6.0",
+    # torchcodec wheels are built against a specific torch C++ ABI, so the
+    # version MUST track the resolved torch:
+    #   torch 2.9  -> torchcodec 0.7
+    #   torch 2.10 -> torchcodec 0.10  (verified working on macOS arm64 +
+    #                 system ffmpeg via /opt/homebrew/lib; 0.10 == "system-wide
+    #                 ffmpeg support" per lerobot's matrix note)
+    #   torch 2.11 -> torchcodec 0.11   torch 2.12 -> torchcodec 0.12
+    # lerobot's own marker only special-cases aarch64; on macOS arm64 a plain
+    # `pip install strands-robots[lerobot]` resolves torch 2.10, which needs
+    # torchcodec 0.10 (0.7/0.8 mismatch the c10 ABI -> dlopen "Symbol not found:
+    # c10::MessageLogger"). Pin the matching minor on darwin arm64 so video
+    # streaming read-back works without manual intervention.
+    "torchcodec>=0.10,<0.11; sys_platform == 'darwin' and platform_machine == 'arm64'",
     # #378: lerobot 0.5.1's pyav video fallback calls torchvision.io.VideoReader,
     # which torchvision 0.26 (resolved on linux+aarch64 via the torch 2.11 Thor
     # override below) removed -- crashing dataset video read-back. lerobot's own
@@ -155,7 +174,7 @@ lerobot = [
     # NOTE: torchcodec ships as +cuXXX wheels resolved by UV_TORCH_BACKEND; a
     # plain `pip install` on Thor may need the matching CUDA index -- see the
     # README Installation section for the Thor/Jetson caveat.
-    "torchcodec>=0.7; platform_machine == 'aarch64' and sys_platform == 'linux'",
+    "torchcodec>=0.11; platform_machine == 'aarch64' and sys_platform == 'linux'",
 ]
 # MolmoAct2 transformers-native VLA (e.g. allenai/MolmoAct2-SO100_101). The
 # MolmoAct2Policy class shipped in lerobot AFTER the 0.5.1 PyPI release (merged
