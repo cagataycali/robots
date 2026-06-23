@@ -219,6 +219,7 @@ def test_start_policy_resolves_single_robot_when_unspecified():
 
 def test_del_swallows_cleanup_errors(caplog):
     """A failing cleanup during GC is logged, not raised (CPython __del__)."""
+    import gc
     import logging
 
     class Exploding(FakeSim):
@@ -227,5 +228,10 @@ def test_del_swallows_cleanup_errors(caplog):
 
     sim = Exploding()
     with caplog.at_level(logging.WARNING):
-        sim.__del__()
+        # Drive finalization through real garbage collection rather than an
+        # explicit dunder call: dropping the last reference triggers prompt
+        # refcount-based finalization under CPython, with gc.collect() covering
+        # any reference-cycle case. This exercises the genuine destructor path.
+        del sim
+        gc.collect()
     assert any("Cleanup error during __del__" in rec.message for rec in caplog.records)
