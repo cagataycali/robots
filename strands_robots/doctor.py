@@ -108,7 +108,7 @@ def check_python_version() -> str:
 def check_strands_robots_version() -> str:
     """strands-robots importable and version."""
     try:
-        import strands_robots  # noqa: F401
+        importlib.import_module("strands_robots")
     except ImportError as e:
         return _fail(f"strands-robots not importable: {e}", fix='uv pip install "strands-robots[sim-mujoco]"')
     return _pass(f"strands-robots {_resolve_version('strands_robots', 'strands-robots')}")

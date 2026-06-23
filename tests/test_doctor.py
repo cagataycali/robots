@@ -181,8 +181,16 @@ class TestDoctorDegradedPaths:
 
     @staticmethod
     def _block_imports(monkeypatch: pytest.MonkeyPatch, *blocked: str) -> None:
-        """Make ``import <name>`` raise ImportError for the named modules."""
+        """Simulate the named modules being uninstalled.
+
+        Blocks both ``import <name>`` and ``importlib.import_module(<name>)``:
+        the ``__import__`` hook covers the statement form, while evicting any
+        cached entry from ``sys.modules`` forces ``import_module`` (which
+        returns a live cached module without re-invoking ``__import__``) to
+        re-import and hit the hook too.
+        """
         import builtins
+        import sys
 
         real_import = builtins.__import__
 
@@ -190,6 +198,10 @@ class TestDoctorDegradedPaths:
             if name in blocked or any(name.startswith(f"{b}.") for b in blocked):
                 raise ImportError(f"blocked for test: {name}")
             return real_import(name, *args, **kwargs)  # type: ignore[arg-type]
+
+        for name in list(sys.modules):
+            if name in blocked or any(name.startswith(f"{b}.") for b in blocked):
+                monkeypatch.delitem(sys.modules, name, raising=False)
 
         monkeypatch.setattr(builtins, "__import__", fake_import)
 
