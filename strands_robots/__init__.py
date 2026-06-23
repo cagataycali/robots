@@ -50,6 +50,7 @@ if TYPE_CHECKING:
         list_backends,
         register_backend,
     )
+    from strands_robots.streaming_dataset import StreamingDatasetReader
     from strands_robots.tools.gr00t_inference import gr00t_inference
     from strands_robots.tools.lerobot_calibrate import lerobot_calibrate
     from strands_robots.tools.lerobot_camera import lerobot_camera
@@ -98,6 +99,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "RobotDeviceDriver": ("strands_robots.device_connect", "RobotDeviceDriver"),
     "SimulationDeviceDriver": ("strands_robots.device_connect", "SimulationDeviceDriver"),
     "ReachyMiniDriver": ("strands_robots.device_connect", "ReachyMiniDriver"),
+    "StreamingDatasetReader": ("strands_robots.streaming_dataset", "StreamingDatasetReader"),
 }
 
 __all__ = [
@@ -130,6 +132,7 @@ __all__ = [
     "RobotDeviceDriver",
     "SimulationDeviceDriver",
     "ReachyMiniDriver",
+    "StreamingDatasetReader",
 ]
 
 
@@ -156,6 +159,19 @@ if _importlib_util.find_spec("mujoco") is not None:
         _configure_gl_backend()
     except (ImportError, AttributeError, OSError):
         pass
+
+
+# Auto-configure the macOS dyld search path so torchcodec can find Homebrew's
+# ffmpeg with zero user setup — making ``sim.stream_dataset(...)`` video decode
+# work out of the box. No-op off macOS, without torchcodec, or when already set.
+# May re-exec the interpreter ONCE on a plain script run (guarded; never in
+# Jupyter/REPL/pytest). Opt out with STRANDS_ROBOTS_NO_DYLD_SHIM=1. See _dyld.py.
+try:
+    from strands_robots._dyld import ensure_ffmpeg_on_dyld_path
+
+    ensure_ffmpeg_on_dyld_path()
+except Exception:  # noqa: BLE001 - never let the shim block import
+    pass
 
 
 def __getattr__(name: str) -> Any:  # noqa: N807

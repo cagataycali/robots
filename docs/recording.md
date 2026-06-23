@@ -70,9 +70,12 @@ recorder.finalize()
 | `save_episode()` | Flush buffer as a new episode |
 | `clear_episode_buffer()` | Discard current episode |
 | `finalize()` | Write metadata, stats, close writers |
-| `push_to_hub(tags=None, private=False)` | Upload to HuggingFace Hub |
+| `push_to_hub(tags=None, private=False)` | Upload to a versioned HF dataset repo |
+| `sync_to_bucket(bucket, run_id=None, private=True)` | Sync to a mutable HF Storage Bucket (`hf://buckets/...`) — Xet-deduped collection target; needs the `hf` CLI. `bucket` (`name` or `org/name`) and `run_id` (single segment) are allowlist-validated (`[A-Za-z0-9._-]`, no traversal) before the sync |
 
 ## Read back
+
+Fully materialized (downloads everything):
 
 ```python
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
@@ -80,6 +83,55 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 ds = LeRobotDataset(repo_id="user/my_dataset", root="/tmp/my_dataset")
 print(len(ds), ds[0].keys())
 ```
+
+## Stream back (no full download)
+
+`sim.stream_dataset()` is the in-process counterpart to `start_recording` /
+`stop_recording` — it reads frames lazily from the Hub (or a local `root`) via
+LeRobot's `StreamingLeRobotDataset`. Camera frames are decoded on the fly from
+the MP4 shards; state/action come from the parquet shards.
+
+```python
+from strands_robots import Robot
+
+sim = Robot("so100")
+reader = sim.stream_dataset(
+    "user/my_dataset",                 # or a local repo_id + root=
+    root="/tmp/my_dataset",
+    delta_timestamps={                 # optional: stacked time windows + *_is_pad masks
+        "observation.state": [-0.0667, -0.0333, 0.0],
+        "action": [0.0, 0.0333, 0.0667],
+    },
+    shuffle=False,                     # chronological for replay/eval
+)
+print(reader.num_episodes, reader.num_frames, reader.fps)
+for frame in reader:
+    ...
+
+# torch DataLoader (shuffles INTERNALLY — do not pass shuffle=True):
+for batch in reader.dataloader(batch_size=64, num_workers=4):
+    ...
+```
+
+Equivalently, the standalone reader: `from strands_robots import StreamingDatasetReader`.
+
+Useful kwargs (forwarded to `StreamingLeRobotDataset`, version-tolerant):
+`episodes=[...]` (subset without download), `buffer_size`, `max_num_shards`,
+`return_uint8=True` (default; halves frame bandwidth), and
+`drop_videos=True` (proprio-only — skips video decode entirely, so it works on
+edge devices without a torchcodec wheel).
+
+For **training**, the upstream trainer uses the same engine:
+
+```bash
+python -m lerobot.scripts.train policy=act \
+  dataset.repo_id=user/my_dataset dataset.streaming=true num_workers=4
+```
+
+> **macOS:** video streaming needs Homebrew ffmpeg on the dyld path. `import
+> strands_robots` auto-fixes this (zero-touch); disable with
+> `STRANDS_ROBOTS_NO_DYLD_SHIM=1`. See the README "Recording & streaming
+> datasets" section.
 
 ## See also
 

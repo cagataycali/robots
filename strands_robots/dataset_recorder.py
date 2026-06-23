@@ -22,12 +22,24 @@ Usage:
 
 import functools
 import logging
+import re
 import sys
 from typing import Any
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+# Allowlist patterns for HF Storage Bucket sync targets. Both `bucket` and
+# `run_id` reach the `hf` CLI argv and the `hf://buckets/...` URI; they are
+# agent-reachable via stop_recording(bucket=, run_id=) dispatched through the
+# simulation action layer, so they MUST be validated before any subprocess /
+# URI interpolation (AGENTS.md > LLM Input Safety). `bucket` is "name" or
+# "org/name"; `run_id` is a single path segment. Neither may contain shell
+# metacharacters, path-traversal (".."), or separators beyond the one allowed
+# bucket "org/name" slash.
+_BUCKET_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)?$")
+_RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 # Lazy check for LeRobot availability
 # We must NOT import lerobot at module level because it pulls in
@@ -630,6 +642,101 @@ class DatasetRecorder:
         except Exception as e:
             logger.error("push_to_hub failed: %s", e)
             return {"status": "error", "message": str(e)}
+
+    def sync_to_bucket(
+        self,
+        bucket: str,  # "my-org/robot-fave"
+        run_id: str | None = None,  # subpath; defaults to dataset name
+        *,
+        create: bool = True,
+        private: bool = True,
+        delete: bool = False,
+    ) -> dict[str, Any]:
+        """Sync the on-disk LeRobotDataset into an HF Storage Bucket (Phase 1/2).
+
+        Mutable, Xet-deduplicated dump target for COLLECTION — avoids git-LFS
+        history bloat of push_to_hub during recording. Daily re-sync uploads
+        only changed chunks (content-defined chunking). Requires the ``hf`` CLI
+        (huggingface_hub>=1.x) and ``hf auth login``.
+
+        ``bucket`` and ``run_id`` are validated against an allowlist before any
+        subprocess or URI interpolation: ``bucket`` must be ``"name"`` or
+        ``"org/name"`` and ``run_id`` a single path segment, both restricted to
+        ``[A-Za-z0-9._-]`` (no path traversal or shell metacharacters). This
+        path is agent-reachable via ``stop_recording(bucket=, run_id=)``. A
+        rejected value returns ``{"status": "error", ...}`` without running ``hf``.
+
+        See reports/STREAMING_DATA_LOOP_DEEP_DIVE.md Appendix A.1 (shard layout
+        is already Xet/bucket-friendly at the 100 MB default) and F.2 (meta/
+        MUST ship or downstream loses normalization stats).
+        """
+        import shutil
+        import subprocess
+        from pathlib import Path
+
+        if shutil.which("hf") is None:
+            return {
+                "status": "error",
+                "message": "`hf` CLI not found. pip install -U huggingface_hub (>=1.x) and run `hf auth login`.",
+            }
+
+        if not _BUCKET_RE.match(bucket):
+            return {
+                "status": "error",
+                "message": f"invalid bucket {bucket!r}: must match "
+                "'name' or 'org/name' using [A-Za-z0-9._-] (no path traversal "
+                "or shell metacharacters).",
+            }
+
+        local_root = str(self.dataset.root)
+        # meta/ must ship or downstream loses normalization stats (App. F.2).
+        if not (Path(local_root) / "meta").exists():
+            return {
+                "status": "error",
+                "message": f"No meta/ under {local_root}; call finalize() before "
+                "sync_to_bucket (stats/info required for streaming/training).",
+            }
+
+        run_id = run_id or self.dataset.repo_id.split("/")[-1]
+        if not _RUN_ID_RE.match(run_id):
+            return {
+                "status": "error",
+                "message": f"invalid run_id {run_id!r}: must be a single path "
+                "segment using [A-Za-z0-9._-] (no '/', path traversal, or shell "
+                "metacharacters).",
+            }
+        dest = f"hf://buckets/{bucket}/{run_id}"
+
+        if create:
+            cp = subprocess.run(
+                ["hf", "buckets", "create", bucket] + (["--private"] if private else []),
+                capture_output=True,
+                text=True,
+            )
+            blob = (cp.stderr + cp.stdout).lower()
+            if cp.returncode != 0 and "exist" not in blob:
+                return {
+                    "status": "error",
+                    "message": f"bucket create failed: {cp.stderr.strip()}",
+                }
+
+        cmd = ["hf", "sync", local_root, dest]
+        if delete:
+            cmd.append("--delete")
+        logger.info("Syncing %s -> %s", local_root, dest)
+        proc = subprocess.run(cmd, capture_output=True, text=True)
+        if proc.returncode != 0:
+            return {
+                "status": "error",
+                "message": proc.stderr.strip() or proc.stdout.strip(),
+            }
+
+        return {
+            "status": "success",
+            "bucket_uri": dest,
+            "episodes": self.episode_count,
+            "frames": self.frame_count,
+        }
 
     @property
     def repo_id(self) -> str:

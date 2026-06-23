@@ -210,6 +210,68 @@ from strands_robots import create_policy
 policy = create_policy("lerobot/act_aloha_sim_transfer_cube_human")
 ```
 
+## Recording & streaming datasets
+
+The physical-AI data loop, end to end: **record** a LeRobotDataset from sim or
+hardware, **stream** it straight back for eval/training (no full download), and
+optionally **dump** it to a mutable Hugging Face Storage Bucket. Needs the
+`lerobot` extra (which bundles `datasets` + `av` + `torchcodec`).
+
+```python
+from strands import Agent
+from strands_robots import Robot
+
+sim = Robot("so100", mesh=False)
+agent = Agent(tools=[sim])
+
+# 1. COLLECT — one natural-language prompt drives scene + cameras + policy + record.
+agent(
+    "Create a world with the so100 robot, add a red cube and a front camera, "
+    "start recording (repo_id='local/demo', root='/tmp/demo', fps=30, "
+    "overwrite=True, task='pick up the red cube'), run the mock policy for "
+    "60 steps, then stop recording."
+)
+
+# 2. STREAM — read it back lazily; camera frames decode on the fly from the MP4
+#    shards, state/action from parquet. Nothing is re-materialized to disk.
+reader = sim.stream_dataset("local/demo", root="/tmp/demo", shuffle=False)
+for frame in reader:
+    frame["observation.images.front"]   # (3, H, W) tensor, decoded from video
+    frame["observation.state"]          # joint vector
+    frame["action"]
+    break
+```
+
+`stream_dataset()` is the in-process read counterpart to
+`start_recording`/`stop_recording`. For full training, the upstream trainer uses
+the same engine — `python -m lerobot.scripts.train dataset.repo_id=... dataset.streaming=true`.
+
+**Dump to a Storage Bucket** during collection (mutable, Xet-deduplicated — the
+Phase 1/2 collection target that avoids git-LFS history bloat) with one kwarg:
+
+```python
+sim.stop_recording(bucket="your-org/robot-fave")   # → hf://buckets/your-org/robot-fave/demo
+```
+
+Requires the `hf` CLI (`pip install -U huggingface_hub` + `hf auth login`).
+
+**Proprio-only / no video** (e.g. edge devices without a torchcodec wheel):
+`sim.stream_dataset(repo_id, drop_videos=True)` streams state/action only and
+never touches the video decoder.
+
+> **macOS note (zero-touch).** torchcodec links ffmpeg via `@rpath`, and
+> Homebrew's ffmpeg (`/opt/homebrew/lib`) is not on the default dyld search
+> path — so video decode would normally fail with
+> `Library not loaded: @rpath/libavutil.NN.dylib`. On `import strands_robots`
+> we auto-detect this and put Homebrew's ffmpeg on `DYLD_FALLBACK_LIBRARY_PATH`
+> (re-exec'ing the interpreter once for a plain script run; never inside
+> Jupyter/REPL/pytest, where it just prints the one-line `export` to run). It's
+> a no-op off macOS, without torchcodec, or when the var is already set. Disable
+> with `STRANDS_ROBOTS_NO_DYLD_SHIM=1`. See `examples/06_agent_collect_and_stream.py`.
+
+See also [Recording & datasets](docs/recording.md) for the `DatasetRecorder`
+direct API and append/resume workflow.
+
 ## The `Robot()` factory
 
 `Robot()` is a factory, not a wrapper - you get the real backend instance back
@@ -792,6 +854,7 @@ Install with `uv pip install "strands-robots[mesh-iot]"`. See the
 | `STRANDS_ROBOT_MODE` | `Robot()` factory mode: `sim` / `real` / `auto` | `sim` |
 | `STRANDS_ASSETS_DIR` | Robot model asset cache directory | `~/.strands_robots/assets/` |
 | `STRANDS_TRUST_REMOTE_CODE` | Set `1` to allow HF `trust_remote_code` for `lerobot_local` | unset |
+| `STRANDS_ROBOTS_NO_DYLD_SHIM` | Set `1` to disable the macOS auto-fix that puts Homebrew ffmpeg on the dyld path for torchcodec video streaming (see [Recording & streaming datasets](#recording--streaming-datasets)) | unset |
 | `MUJOCO_GL` | MuJoCo GL backend (`egl`, `osmesa`, `glfw`) | auto |
 | `GROOT_API_TOKEN` | API token for the GR00T inference service | unset |
 | `STRANDS_MESH` | Set `false` to disable Zenoh mesh globally | `true` |

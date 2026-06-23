@@ -271,11 +271,28 @@ class RecordingMixin:
                 + "\n  - ".join(diffs)
             )
 
-    def stop_recording(self, output_path: str | None = None) -> dict[str, Any]:
+    def stop_recording(
+        self,
+        output_path: str | None = None,
+        *,
+        push_to_hub: bool = False,
+        bucket: str | None = None,
+        run_id: str | None = None,
+    ) -> dict[str, Any]:
         """Stop recording and save episode to LeRobotDataset.
 
         idempotent - calling when not recording succeeds with a
         'Was not recording' message so callers can safely call it unconditionally.
+
+        Args:
+            output_path: Unused legacy arg (kept for back-compat).
+            push_to_hub: Publish to a versioned HF *dataset* repo (the finished
+                artifact). Overrides the ``push_to_hub`` set at start_recording.
+            bucket: If set (e.g. ``"my-org/robot-fave"``), sync the dataset into
+                a mutable HF Storage Bucket instead of/in addition to the dataset
+                repo — the Phase 1/2 collection target (Xet-deduped, overwrite in
+                place). See reports/STREAMING_DATA_LOOP_DEEP_DIVE.md §2.4 / App. A.
+            run_id: Optional subpath inside the bucket (defaults to dataset name).
         """
         if self._world is None or not self._world._backend_state.get("recording", False):
             return {"status": "success", "content": [{"text": "Was not recording."}]}
@@ -287,28 +304,78 @@ class RecordingMixin:
             return {"status": "error", "content": [{"text": "No dataset recorder active."}]}
 
         recorder.save_episode()
-        push_result = None
-        if self._world._backend_state.get("push_to_hub", False):
-            push_result = recorder.push_to_hub(tags=["strands-robots", "sim"])
 
         repo_id = recorder.repo_id
         frame_count = recorder.frame_count
         episode_count = recorder.episode_count
         root = recorder.root
 
+        # Finalize FIRST so meta/ (stats/info) is written before any bucket sync
+        # — streaming/training downstream needs it (App. F.2).
         recorder.finalize()
+
+        extra = ""
+        # Bucket sync (Phase 1/2): mutable, Xet-deduped collection dump.
+        if bucket:
+            sync_result = recorder.sync_to_bucket(bucket, run_id=run_id)
+            if sync_result.get("status") == "success":
+                extra += f"\nSynced to bucket: {sync_result['bucket_uri']}"
+            else:
+                extra += f"\nBucket sync FAILED: {sync_result.get('message')}"
+        # Versioned dataset-repo publish (Phase 4 hand-off).
+        if push_to_hub or self._world._backend_state.get("push_to_hub", False):
+            push_result = recorder.push_to_hub(tags=["strands-robots", "sim"])
+            if push_result and push_result.get("status") == "success":
+                extra += "\nPushed to HuggingFace Hub"
+            elif push_result:
+                extra += f"\npush_to_hub FAILED: {push_result.get('message')}"
+
         self._world._backend_state["dataset_recorder"] = None
         self._world._backend_state["trajectory"] = []
 
         text = (
             f"Episode saved to LeRobotDataset\n"
             f"{repo_id} -- {frame_count} frames, {episode_count} episode(s)\n"
-            f"Local: {root}"
+            f"Local: {root}{extra}"
         )
-        if push_result and push_result.get("status") == "success":
-            text += "\nPushed to HuggingFace Hub"
 
         return {"status": "success", "content": [{"text": text}]}
+
+    def stream_dataset(self, repo_id: str, **kwargs):
+        """Open a streaming reader for a LeRobotDataset — read frames straight
+        from the Hub (or a local root) with no full materialization.
+
+        This is the in-process counterpart to ``start_recording`` /
+        ``stop_recording``: where those WRITE a dataset, ``stream_dataset``
+        READS one back lazily for eval / replay / inspection (Phase 3 of the
+        physical-AI data loop). Training scripts can instead use
+        ``python -m lerobot.scripts.train dataset.streaming=true`` which uses
+        the same underlying StreamingLeRobotDataset (deep-dive Appendix D).
+
+        Args:
+            repo_id: HF dataset id (e.g. ``"lerobot/svla_so100_pickplace"``) or
+                a local repo_id paired with ``root=``.
+            **kwargs: Forwarded to
+                :meth:`StreamingDatasetReader.open` — e.g. ``root``,
+                ``delta_timestamps``, ``episodes``, ``shuffle``, ``buffer_size``,
+                ``max_num_shards``, ``drop_videos`` (proprio-only, torchcodec-free).
+
+        Returns:
+            A :class:`~strands_robots.streaming_dataset.StreamingDatasetReader`.
+
+        Example:
+            reader = sim.stream_dataset(
+                "local/agent_demo", root="/tmp/strands_agent_dataset",
+                delta_timestamps={"observation.state": [-0.0667, 0.0],
+                                  "action": [0.0, 0.0667]},
+                shuffle=False,
+            )
+            for frame in reader:
+                ...
+        """
+        from strands_robots.streaming_dataset import StreamingDatasetReader
+
+        return StreamingDatasetReader.open(repo_id, **kwargs)
 
     def get_recording_status(self) -> dict[str, Any]:
         """Returns success in every lifecycle state (no world / not

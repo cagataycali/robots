@@ -15,6 +15,7 @@ The localhost mesh dev preset (``STRANDS_MESH_LOCAL_DEV``) is covered in
 
 from __future__ import annotations
 
+import re
 import tomllib
 from pathlib import Path
 
@@ -57,10 +58,17 @@ class TestLerobotExtraIncludesFeetech:
         with open(_REPO_ROOT / "pyproject.toml", "rb") as f:
             data = tomllib.load(f)
         lerobot_extra = data["project"]["optional-dependencies"]["lerobot"]
-        # Exactly one lerobot pin, and it must carry the [feetech] marker so
-        # scservo_sdk is installed for Feetech-based customers' first run.
-        joined = " ".join(lerobot_extra)
-        assert "lerobot[feetech]" in joined, f"[lerobot] extra must request lerobot[feetech]; got {lerobot_extra!r}"
+        # The lerobot pin must carry the `feetech` extra so scservo_sdk is
+        # installed for Feetech-based customers' first run. The pin may co-list
+        # other extras (e.g. `lerobot[feetech,dataset]` for the streaming data
+        # loop), so assert `feetech` is a member of the extras set rather than
+        # matching the brittle literal `lerobot[feetech]`.
+        markers = re.findall(r"lerobot\[([^\]]+)\]", " ".join(lerobot_extra))
+        assert markers, f"[lerobot] extra must pin lerobot[...]; got {lerobot_extra!r}"
+        extras = {e.strip() for marker in markers for e in marker.split(",")}
+        assert "feetech" in extras, (
+            f"[lerobot] extra must request the `feetech` extra (scservo_sdk); got {lerobot_extra!r}"
+        )
 
 
 class TestMolmoact2Extra:
