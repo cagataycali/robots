@@ -12,6 +12,7 @@ Usage:
 
 from __future__ import annotations
 
+import importlib
 import logging
 import os
 import platform
@@ -62,6 +63,37 @@ def _skip(msg: str) -> str:
     return f"  SKIP  {msg}"
 
 
+def _resolve_version(import_name: str, dist_name: str) -> str:
+    """Resolve a package version, preferring installed distribution metadata.
+
+    Neither ``strands_robots`` nor ``strands`` exposes a module-level
+    ``__version__`` attribute, so reading ``module.__version__`` yields a
+    useless placeholder. The authoritative version lives in the installed
+    distribution metadata (``pyproject.toml`` -> wheel/egg-info), which
+    ``importlib.metadata.version`` reads. Fall back to a module ``__version__``
+    attribute only if metadata lookup fails (e.g. running from a source tree
+    that was never installed).
+
+    Args:
+        import_name: Importable module name (e.g. ``"strands_robots"``).
+        dist_name: Installed distribution name (e.g. ``"strands-robots"``).
+
+    Returns:
+        A version string, or ``"unknown"`` if neither source resolves one.
+    """
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        return version(dist_name)
+    except PackageNotFoundError:
+        pass
+    try:
+        module = importlib.import_module(import_name)
+    except ImportError:
+        return "unknown"
+    return str(getattr(module, "__version__", "unknown"))
+
+
 def check_python_version() -> str:
     """Python >= 3.12 required."""
     v = sys.version_info
@@ -76,12 +108,10 @@ def check_python_version() -> str:
 def check_strands_robots_version() -> str:
     """strands-robots importable and version."""
     try:
-        import strands_robots
-
-        ver = getattr(strands_robots, "__version__", "unknown")
-        return _pass(f"strands-robots {ver}")
+        importlib.import_module("strands_robots")
     except ImportError as e:
         return _fail(f"strands-robots not importable: {e}", fix='uv pip install "strands-robots[sim-mujoco]"')
+    return _pass(f"strands-robots {_resolve_version('strands_robots', 'strands-robots')}")
 
 
 def check_mujoco() -> str:
@@ -224,12 +254,10 @@ def check_sim_smoke() -> str:
 def check_strands_agents() -> str:
     """strands-agents importable (needed for Agent(tools=[robot]))."""
     try:
-        import strands
-
-        ver = getattr(strands, "__version__", "?")
-        return _pass(f"strands-agents {ver}")
+        import strands  # noqa: F401
     except ImportError:
         return _fail("strands-agents not importable", fix='uv pip install "strands-agents>=1.0"')
+    return _pass(f"strands-agents {_resolve_version('strands', 'strands-agents')}")
 
 
 def check_mesh() -> str:

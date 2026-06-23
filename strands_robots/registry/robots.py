@@ -160,11 +160,20 @@ _FIXED_PREFIX_WIDTH = _NAME_WIDTH + 1 + _CAT_WIDTH + 1 + _JOINTS_WIDTH + 1 + _SI
 def format_robot_table(max_width: int = 100) -> str:
     """Human-readable table of all robots for CLI/tool output.
 
+    The ``Sim`` and ``Real`` columns hold the ASCII token ``"yes"`` when the
+    robot supports that mode and are left blank otherwise. The output is
+    pure ASCII so it aligns correctly in any monospace terminal and is safe
+    to embed in logs and tool responses.
+
     Args:
         max_width: Target terminal width. The ``Description`` column is
             truncated with an ellipsis to fit. Pass a large value (e.g.
             ``1000``) to disable truncation entirely. Default 100 is safe
             for a typical 100-column terminal.
+
+    Returns:
+        Multi-line string: a header row, a rule, one row per robot grouped
+        by category, then a totals footer.
     """
     desc_width = max(20, max_width - _FIXED_PREFIX_WIDTH)
 
@@ -177,13 +186,13 @@ def format_robot_table(max_width: int = 100) -> str:
         f"Description"
     )
     rule_width = min(max(max_width, len(header)), _FIXED_PREFIX_WIDTH + desc_width)
-    lines = [header, "─" * rule_width]
+    lines = [header, "-" * rule_width]
 
     for cat in ["arm", "bimanual", "hand", "humanoid", "expressive", "mobile", "mobile_manip", "aerial"]:
         by_cat = list_robots_by_category()
         for r in by_cat.get(cat, []):
-            sim = "✅" if r["has_sim"] else "  "
-            real = "✅" if r["has_real"] else "  "
+            sim = "yes" if r["has_sim"] else ""
+            real = "yes" if r["has_real"] else ""
             joints = str(r["joints"]) if r["joints"] else "?"
             desc = r["description"] or ""
             if len(desc) > desc_width:
