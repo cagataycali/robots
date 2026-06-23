@@ -98,6 +98,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "RobotDeviceDriver": ("strands_robots.device_connect", "RobotDeviceDriver"),
     "SimulationDeviceDriver": ("strands_robots.device_connect", "SimulationDeviceDriver"),
     "ReachyMiniDriver": ("strands_robots.device_connect", "ReachyMiniDriver"),
+    "StreamingDatasetReader": ("strands_robots.streaming_dataset", "StreamingDatasetReader"),
 }
 
 __all__ = [
@@ -130,6 +131,7 @@ __all__ = [
     "RobotDeviceDriver",
     "SimulationDeviceDriver",
     "ReachyMiniDriver",
+    "StreamingDatasetReader",
 ]
 
 
