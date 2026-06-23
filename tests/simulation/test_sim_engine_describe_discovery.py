@@ -1,8 +1,9 @@
-"""AX-2 regression test: SimEngine.describe() discovery surface.
+"""SimEngine.describe() exposes a single-call discovery surface.
 
-Verifies the discovery surface so agents can learn an engine's contract in a
-single call instead of probe-and-fail. Pre-fix, describe() does not exist and
-these assertions fail with AttributeError.
+Verifies that describe() lets a caller learn an engine's contract in one call
+(its robots, cameras, world state, and the core method set) instead of
+probe-and-fail. Covers the abstract base class via a minimal concrete engine
+and the live MuJoCo engine.
 
 Also pins the no-alias rule: the registry must NOT export a duplicate
 ``get_robot_info`` name. The canonical accessor is ``get_robot``; agents learn

@@ -1,16 +1,13 @@
-"""AX-1 regression test: robot_name optional across get_robot_state-family methods.
+"""robot_name is optional and inferred across the get_robot_state family.
 
-This test MUST FAIL before the fix and PASS after it.
+Pins a consistent contract: get_observation, send_action, get_robot_state,
+run_policy, and start_policy all accept ``robot_name=None`` and infer the robot
+when exactly one exists in the world. A caller who learns one signature can
+transfer it to the others.
 
-The inconsistency: get_observation(robot_name=None) works (infers single robot),
-but get_robot_state(robot_name) requires the arg. An agent (or human) who learns
-one signature cannot transfer to the other.
-
-Fix: a shared _resolve_single_robot(robot_name) helper that resolves None when
-exactly one robot exists, and raises ValueError listing candidates when ambiguous.
-
-Applied to: get_robot_state, run_policy, start_policy.
-Already correct: get_observation, send_action (default to None).
+The shared ``_resolve_single_robot(robot_name)`` helper resolves None to the
+sole robot's name and raises ValueError listing candidates when the choice is
+ambiguous (more than one robot) or impossible (no robots).
 """
 
 import os
@@ -25,7 +22,7 @@ def single_robot_sim():
     """Create a sim with exactly ONE robot (so100)."""
     from strands_robots.simulation.mujoco.simulation import MuJoCoSimEngine
 
-    sim = MuJoCoSimEngine(tool_name="test_ax1_single")
+    sim = MuJoCoSimEngine(tool_name="test_single_robot")
     sim.create_world()
     result = sim.add_robot("alice", data_config="so100")
     assert result["status"] == "success", f"add_robot failed: {result}"
@@ -38,7 +35,7 @@ def two_robot_sim():
     """Create a sim with TWO robots (both so100, different names)."""
     from strands_robots.simulation.mujoco.simulation import MuJoCoSimEngine
 
-    sim = MuJoCoSimEngine(tool_name="test_ax1_multi")
+    sim = MuJoCoSimEngine(tool_name="test_two_robots")
     sim.create_world()
     r1 = sim.add_robot("alice", data_config="so100")
     assert r1["status"] == "success", f"add_robot alice failed: {r1}"
@@ -52,7 +49,7 @@ class TestGetRobotStateOptional:
     """get_robot_state() should work without robot_name when exactly one robot."""
 
     def test_single_robot_no_arg(self, single_robot_sim):
-        """Core AX-1: single-robot sim -> get_robot_state() (no arg) succeeds."""
+        """Single-robot sim -> get_robot_state() with no arg succeeds."""
         result = single_robot_sim.get_robot_state()
         assert result["status"] == "success", f"Expected success, got: {result}"
         # Should contain joint state
@@ -118,7 +115,7 @@ class TestStartPolicyOptional:
 
 
 class TestRobotFactoryEntryPoint:
-    """AX-4 verification: Robot("so100", mode="sim") -> get_robot_state() works."""
+    """Robot("so100", mode="sim") -> get_robot_state() works with no arg."""
 
     def test_robot_factory_get_state_no_arg(self):
         """Robot('so100') factory -> get_robot_state() just works."""
@@ -157,7 +154,7 @@ class TestResolveSingleRobotHelper:
         """None + no robots -> ValueError."""
         from strands_robots.simulation.mujoco.simulation import MuJoCoSimEngine
 
-        sim = MuJoCoSimEngine(tool_name="test_ax1_empty")
+        sim = MuJoCoSimEngine(tool_name="test_no_robots")
         sim.create_world()
         try:
             with pytest.raises(ValueError, match="[Nn]o robot"):
