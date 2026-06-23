@@ -12,7 +12,12 @@ from strands_robots.registry import (
     list_robots,
     resolve_name,
 )
-from strands_robots.robot import Robot, _auto_detect_mode
+from strands_robots.robot import (
+    Robot,
+    _attach_device_connect,
+    _auto_detect_mode,
+    _run_device_connect_foreground,
+)
 
 
 class TestResolveNames:
@@ -1201,8 +1206,6 @@ class TestRunDeviceConnectAsciiOutput:
         Ctrl+C) so the loop exits on the first tick, and ``os._exit`` is patched
         to a sentinel raise so the test process survives.
         """
-        import strands_robots.robot as robot_mod
-
         instance = types.SimpleNamespace(
             _peer_id=peer_id,
             _peer_type="sim",
@@ -1223,7 +1226,7 @@ class TestRunDeviceConnectAsciiOutput:
         monkeypatch.setattr(os, "_exit", _fake_exit)
 
         with pytest.raises(_ExitCalled):
-            robot_mod._run_device_connect_foreground(instance)
+            _run_device_connect_foreground(instance)
         return capsys.readouterr().out
 
     def test_foreground_output_is_ascii_only(self, monkeypatch, capsys):
@@ -1249,8 +1252,6 @@ class TestRunDeviceConnectAsciiOutput:
         A running built-in mesh must be stopped and detached so two Zenoh
         presence systems do not run in one process.
         """
-        import strands_robots.robot as robot_mod
-
         stopped = []
 
         class _Mesh:
@@ -1265,7 +1266,7 @@ class TestRunDeviceConnectAsciiOutput:
 
         monkeypatch.setattr(os, "_exit", lambda code: (_ for _ in ()).throw(_ExitCalled()))
         with pytest.raises(_ExitCalled):
-            robot_mod._run_device_connect_foreground(instance)
+            _run_device_connect_foreground(instance)
 
         assert stopped == [True], "built-in mesh was not stopped"
         assert instance.mesh is None, "mesh reference not detached"
@@ -1275,19 +1276,15 @@ class TestAttachDeviceConnectBindsRun:
     """``_attach_device_connect`` wires a callable ``.run()`` onto the instance."""
 
     def test_run_is_bound_and_callable(self):
-        import strands_robots.robot as robot_mod
-
         instance = types.SimpleNamespace()
-        robot_mod._attach_device_connect(instance, "so100", "sim", peer_id="p1")
+        _attach_device_connect(instance, "so100", "sim", peer_id="p1")
         assert callable(instance.run)
         assert instance._peer_id == "p1"
         assert instance._peer_type == "sim"
 
     def test_real_mode_marks_peer_type_robot(self):
-        import strands_robots.robot as robot_mod
-
         instance = types.SimpleNamespace()
-        robot_mod._attach_device_connect(instance, "so100", "real", peer_id=None)
+        _attach_device_connect(instance, "so100", "real", peer_id=None)
         assert instance._peer_type == "robot"
         # A peer id is synthesized from the canonical name when none is given.
         assert instance._peer_id.startswith("so100-")
@@ -1396,8 +1393,6 @@ class TestRobotFactoryErrorBranches:
     def test_device_connect_init_failure_keeps_process_alive(self, monkeypatch, capsys):
         """A failure inside ``init_device_connect_sync`` is logged and the
         foreground loop still reports the device online (best-effort)."""
-        import strands_robots.robot as robot_mod
-
         instance = types.SimpleNamespace(_peer_id="so100-dc", _peer_type="sim", mesh=None)
 
         monkeypatch.setattr(
@@ -1412,7 +1407,7 @@ class TestRobotFactoryErrorBranches:
         monkeypatch.setattr(os, "_exit", lambda code: (_ for _ in ()).throw(_ExitCalled()))
 
         with pytest.raises(_ExitCalled):
-            robot_mod._run_device_connect_foreground(instance)
+            _run_device_connect_foreground(instance)
 
         out = capsys.readouterr().out
         assert "so100-dc is online" in out
