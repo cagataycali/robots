@@ -67,8 +67,7 @@ class TestLerobotExtraIncludesFeetech:
         assert markers, f"[lerobot] extra must pin lerobot[...]; got {lerobot_extra!r}"
         extras = {e.strip() for marker in markers for e in marker.split(",")}
         assert "feetech" in extras, (
-            f"[lerobot] extra must request the `feetech` extra (scservo_sdk); "
-            f"got {lerobot_extra!r}"
+            f"[lerobot] extra must request the `feetech` extra (scservo_sdk); got {lerobot_extra!r}"
         )
 
 
