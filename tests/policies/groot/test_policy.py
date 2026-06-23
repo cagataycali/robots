@@ -520,12 +520,42 @@ class TestUnpackActions:
     def test_maps(self):
         p = _make_policy(action_mapping=ActionMapping(actions={"left_arm": "j", "left_hand": "g"}), mmc=GR1_MMC)
         acts = p._unpack_actions({"left_arm": np.ones((1, 16, 7)), "left_hand": np.ones((1, 16, 6))})
-        assert len(acts) == 16 and acts[0]["j"].shape == (7,) and acts[0]["g"].shape == (6,)
+        assert len(acts) == 16
+        # C1: per-tick values are python list[float], never raw np.ndarray, so
+        # they match every other provider and survive cross-provider float()/len().
+        assert acts[0]["j"] == [1.0] * 7 and acts[0]["g"] == [1.0] * 6
+        assert isinstance(acts[0]["j"], list) and isinstance(acts[0]["j"][0], float)
 
     def test_unmapped(self):
         p = _make_policy(action_mapping=ActionMapping(actions={"left_arm": "j"}), mmc=GR1_MMC)
         acts = p._unpack_actions({"left_arm": np.ones((1, 4, 7)), "waist": np.ones((1, 4, 3))})
         assert "unmapped.waist" in acts[0]
+        assert acts[0]["unmapped.waist"] == [1.0, 1.0, 1.0]
+        assert isinstance(acts[0]["unmapped.waist"], list)
+
+    def test_scalar_dof_becomes_python_float(self):
+        # A 1-element per-DOF vector stays a 1-element list (vectors never collapse
+        # to a bare scalar); a genuinely 0-D element coerces to a python float.
+        p = _make_policy(action_mapping=ActionMapping(actions={"single_arm": "arm"}))
+        acts = p._unpack_actions({"single_arm": np.ones((1, 3, 1))})
+        assert acts[0]["arm"] == [1.0] and isinstance(acts[0]["arm"], list)
+
+    def test_local_service_parity(self):
+        # C1 acceptance: feed an identical raw action chunk through both the LOCAL
+        # (_unpack_actions) and SERVICE (_unpack_service_actions) paths and assert
+        # byte-equivalent python-typed output.
+        p = _make_policy(action_mapping=ActionMapping(actions={"left_arm": "j", "left_hand": "g"}), mmc=GR1_MMC)
+        chunk = {
+            "left_arm": np.arange(2 * 7, dtype=np.float64).reshape(1, 2, 7),
+            "left_hand": np.arange(2 * 6, dtype=np.float64).reshape(1, 2, 6),
+            "waist": np.arange(2 * 3, dtype=np.float64).reshape(1, 2, 3),
+        }
+        local = p._unpack_actions(chunk)
+        service = p._unpack_service_actions(chunk)
+        assert local == service
+        for step in local:
+            for v in step.values():
+                assert isinstance(v, list) and all(isinstance(x, float) for x in v)
 
     def test_empty(self):
         assert _make_policy(action_mapping=ActionMapping())._unpack_actions({}) == []

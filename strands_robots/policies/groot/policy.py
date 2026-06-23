@@ -239,6 +239,27 @@ def _parse_action_mapping(flat: dict[str, str]) -> ActionMapping:
     return ActionMapping(actions={k.removeprefix("action."): v for k, v in flat.items()})
 
 
+def _coerce_action_row(row: Any) -> float | list[float]:
+    """Coerce a per-timestep action element to a python scalar or list.
+
+    Both the local and service unpack paths emit per-tick actuator dicts that
+    must satisfy the ``Policy.get_actions() -> list[dict]`` contract shared by
+    every provider: per-joint values are python ``float`` (0-D) or
+    ``list[float]`` (vector), never raw ``np.ndarray``. Routing both paths
+    through this single helper guarantees byte-equivalent typed output.
+
+    Args:
+        row: One indexed element of a (horizon, ...) action array - typically a
+            0-D or 1-D ``np.ndarray``, but any value exposing ``tolist`` works.
+
+    Returns:
+        ``float`` for a scalar (0-D) element, ``list[float]`` for a vector.
+    """
+    if hasattr(row, "tolist"):
+        return row.tolist()
+    return float(row) if np.ndim(row) == 0 else list(row)
+
+
 # Gr00tPolicy
 
 
@@ -728,10 +749,10 @@ class Gr00tPolicy(Policy):
             step: dict[str, Any] = {}
             for model_key, robot_key in self._action_mapping.actions.items():
                 if model_key in squeezed:
-                    step[robot_key] = squeezed[model_key][t]
+                    step[robot_key] = _coerce_action_row(squeezed[model_key][t])
             for model_key in squeezed:
                 if model_key not in mapped_keys:
-                    step[f"unmapped.{model_key}"] = squeezed[model_key][t]
+                    step[f"unmapped.{model_key}"] = _coerce_action_row(squeezed[model_key][t])
             actions.append(step)
 
         return actions
@@ -856,12 +877,10 @@ class Gr00tPolicy(Policy):
                 step: dict[str, Any] = {}
                 for model_key, robot_key in self._action_mapping.actions.items():
                     if model_key in normalized:
-                        row = normalized[model_key][t]
-                        step[robot_key] = row.tolist() if hasattr(row, "tolist") else list(row)
+                        step[robot_key] = _coerce_action_row(normalized[model_key][t])
                 for model_key in normalized:
                     if model_key not in mapped_keys:
-                        row = normalized[model_key][t]
-                        step[f"unmapped.{model_key}"] = row.tolist() if hasattr(row, "tolist") else list(row)
+                        step[f"unmapped.{model_key}"] = _coerce_action_row(normalized[model_key][t])
                 actions.append(step)
             return actions
 
@@ -870,8 +889,7 @@ class Gr00tPolicy(Policy):
         for t in range(horizon):
             step = {}
             for k, v in normalized.items():
-                row = v[t]
-                step[k] = row.tolist() if hasattr(row, "tolist") else list(row)
+                step[k] = _coerce_action_row(v[t])
             actions.append(step)
         return actions
 
