@@ -71,7 +71,11 @@
                 "lerobot",
                 "allenai"
             ],
-            "is_hf_default": true
+            "is_hf_default": true,
+            "trainer": {
+                "module": "strands_robots.training.lerobot",
+                "class": "LerobotTrainer"
+            }
         },
         "cosmos3": {
             "module": "strands_robots.policies.cosmos3",
