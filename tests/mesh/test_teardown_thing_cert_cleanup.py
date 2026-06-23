@@ -48,7 +48,7 @@ class FakeIoT:
         principals = self._principals
 
         class _Pager:
-            def paginate(self_inner, **kw):
+            def paginate(self, **kw):
                 # Two pages to prove pagination is actually consumed.
                 mid = len(principals) // 2
                 yield {"principals": principals[:mid]}
