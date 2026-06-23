@@ -105,3 +105,97 @@ def test_decode_pose_trajectory_rejects_bad_shape():
         decode_pose_trajectory(np.zeros((4, 8), dtype=np.float32), np.eye(4), rotation_dim=6)
     with pytest.raises(ValueError, match="initial_pose must be"):
         decode_pose_trajectory(np.zeros((4, 9), dtype=np.float32), np.eye(3), rotation_dim=6)
+
+
+class TestProjectToSO3:
+    """``_project_to_so3`` must always return a proper rotation (det == +1).
+
+    The decoded ``rot6d`` columns are not perfectly orthonormal, so the RoboLab
+    server normalizes them onto ``SO(3)`` before composing the trajectory. The
+    determinant-+1 guard is the load-bearing part: without it an improper input
+    (a reflection, det == -1) would pass straight through as a reflection,
+    silently flipping the predicted end-effector orientation handed to IK.
+    """
+
+    def test_reflection_input_is_corrected_to_proper_rotation(self):
+        # An improper matrix (a rotation composed with a Z-flip) has det == -1.
+        from strands_robots.policies.cosmos3.action_decode import _project_to_so3
+
+        theta = 0.4
+        rot = np.array(
+            [[np.cos(theta), -np.sin(theta), 0.0], [np.sin(theta), np.cos(theta), 0.0], [0.0, 0.0, 1.0]],
+            dtype=np.float32,
+        )
+        improper = rot @ np.diag([1.0, 1.0, -1.0]).astype(np.float32)
+        assert np.linalg.det(improper) < 0  # precondition: input is a reflection
+
+        proj = _project_to_so3(improper)
+        # The guard flips it onto SO(3): det == +1 and orthonormal.
+        assert float(np.linalg.det(proj)) == pytest.approx(1.0, abs=1e-5)
+        np.testing.assert_allclose(proj @ proj.T, np.eye(3), atol=1e-5)
+
+    def test_proper_rotation_passes_through_unchanged(self):
+        # A clean rotation (det already +1) must be returned essentially as-is.
+        from strands_robots.policies.cosmos3.action_decode import _project_to_so3
+
+        theta = 0.6
+        rot = np.array(
+            [[np.cos(theta), -np.sin(theta), 0.0], [np.sin(theta), np.cos(theta), 0.0], [0.0, 0.0, 1.0]],
+            dtype=np.float32,
+        )
+        assert np.linalg.det(rot) > 0  # precondition: already proper
+        proj = _project_to_so3(rot)
+        assert float(np.linalg.det(proj)) == pytest.approx(1.0, abs=1e-5)
+        np.testing.assert_allclose(proj, rot, atol=1e-5)
+
+
+class TestDecodePoseDelta:
+    """``decode_pose_delta`` is the public per-step primitive used by the
+    closed-loop sim bridge (``sim_ik.decode_cosmos_chunk_to_targets``) to
+    re-anchor each step on the arm's achieved pose. It decodes one de-normalized
+    ``[translation(3), rot6d(6)]`` row into a ``(4, 4)`` homogeneous delta.
+    """
+
+    def test_identity_step_is_identity_transform(self):
+        from strands_robots.policies.cosmos3.action_decode import decode_pose_delta
+
+        # Zero translation + rot6d identity ([1,0,0, 0,1,0]) -> 4x4 identity.
+        step = np.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0], dtype=np.float32)
+        delta = decode_pose_delta(step, rotation_dim=6)
+        assert delta.shape == (4, 4)
+        np.testing.assert_allclose(delta, np.eye(4), atol=1e-6)
+
+    def test_translation_and_rotation_are_decoded_into_delta(self):
+        from strands_robots.policies.cosmos3.action_decode import decode_pose_delta
+
+        # +90 deg about Z as rot6d (first two rotated basis columns) + a translation.
+        step = np.array([0.1, -0.2, 0.3, 0.0, 1.0, 0.0, -1.0, 0.0, 0.0], dtype=np.float32)
+        delta = decode_pose_delta(step, rotation_dim=6)
+        np.testing.assert_allclose(delta[:3, 3], [0.1, -0.2, 0.3], atol=1e-6)
+        rot = delta[:3, :3]
+        # Proper, orthonormal rotation (the SO(3) projection ran).
+        assert float(np.linalg.det(rot)) == pytest.approx(1.0, abs=1e-5)
+        np.testing.assert_allclose(rot @ rot.T, np.eye(3), atol=1e-5)
+        # +90 deg about Z maps world +X -> +Y.
+        np.testing.assert_allclose(rot @ np.array([1.0, 0.0, 0.0]), [0.0, 1.0, 0.0], atol=1e-5)
+
+    def test_delta_matches_one_trajectory_step(self):
+        # decode_pose_trajectory composes T_{i+1} = T_i @ delta_T; the single-step
+        # primitive must agree with that composition from an identity anchor.
+        from strands_robots.policies.cosmos3.action_decode import decode_pose_delta
+
+        step = np.array([0.02, 0.01, -0.03, 0.0, 1.0, 0.0, -1.0, 0.0, 0.0], dtype=np.float32)
+        traj = decode_pose_trajectory(step[None, :], np.eye(4, dtype=np.float32), rotation_dim=6)
+        np.testing.assert_allclose(traj[1], decode_pose_delta(step, rotation_dim=6), atol=1e-6)
+
+    def test_rejects_wrong_length_step(self):
+        from strands_robots.policies.cosmos3.action_decode import decode_pose_delta
+
+        with pytest.raises(ValueError, match="pose_step must be"):
+            decode_pose_delta(np.zeros(8, dtype=np.float32), rotation_dim=6)
+
+    def test_rejects_non_1d_step(self):
+        from strands_robots.policies.cosmos3.action_decode import decode_pose_delta
+
+        with pytest.raises(ValueError, match="pose_step must be"):
+            decode_pose_delta(np.zeros((1, 9), dtype=np.float32), rotation_dim=6)
