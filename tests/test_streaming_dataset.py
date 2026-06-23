@@ -33,7 +33,10 @@ class _FakeStreaming:
 def test_open_forwards_supported_kwargs(monkeypatch):
     monkeypatch.setattr(sd, "StreamingLeRobotDataset", _FakeStreaming, raising=False)
     r = sd.StreamingDatasetReader.open(
-        "org/ds", buffer_size=256, shuffle=False, max_num_shards=8,
+        "org/ds",
+        buffer_size=256,
+        shuffle=False,
+        max_num_shards=8,
         validate_deltas=False,
     )
     assert r.dataset.repo_id == "org/ds"
@@ -56,9 +59,7 @@ def test_open_drops_unknown_kwargs(monkeypatch):
             yield {}
 
     monkeypatch.setattr(sd, "StreamingLeRobotDataset", _Narrow, raising=False)
-    r = sd.StreamingDatasetReader.open(
-        "org/ds", buffer_size=999, shuffle=True, validate_deltas=False
-    )
+    r = sd.StreamingDatasetReader.open("org/ds", buffer_size=999, shuffle=True, validate_deltas=False)
     assert r.dataset.repo_id == "org/ds"
 
 
@@ -158,9 +159,7 @@ def test_sync_to_bucket_builds_cli(tmp_path, monkeypatch):
     assert res["status"] == "success"
     assert res["bucket_uri"] == "hf://buckets/my-org/robot-fave/run-021"
     assert any(c[:3] == ["hf", "buckets", "create"] for c in calls)
-    assert any(
-        c[:2] == ["hf", "sync"] and c[-1].startswith("hf://buckets/") for c in calls
-    )
+    assert any(c[:2] == ["hf", "sync"] and c[-1].startswith("hf://buckets/") for c in calls)
 
 
 def test_sync_to_bucket_requires_meta(tmp_path, monkeypatch):
@@ -184,6 +183,63 @@ def test_sync_to_bucket_missing_hf_cli(tmp_path, monkeypatch):
     assert "hf` CLI" in res["message"] or "hf CLI" in res["message"]
 
 
+def _guard_recorder(tmp_path, monkeypatch):
+    """Recorder whose hf CLI + meta/ guards pass, so validation runs and any
+    subprocess call would be a security regression (the fake raises)."""
+    (tmp_path / "meta").mkdir()
+    rec = _recorder(tmp_path)
+    import shutil
+
+    monkeypatch.setattr(shutil, "which", lambda _: "/usr/bin/hf")
+
+    def boom(*a, **k):  # subprocess must never run with a rejected target
+        raise AssertionError(f"subprocess.run reached with {a!r}")
+
+    monkeypatch.setattr(subprocess, "run", boom)
+    return rec
+
+
+@pytest.mark.parametrize(
+    "bucket",
+    [
+        "../escape",
+        "org/../escape",
+        "my-org/robot;rm -rf /",
+        "my-org/robot fave",
+        "a/b/c",  # too many path segments
+        "$(whoami)",
+        "-leading-dash",
+        "",
+    ],
+)
+def test_sync_to_bucket_rejects_unsafe_bucket(tmp_path, monkeypatch, bucket):
+    """Agent-reachable bucket names with traversal / metacharacters / extra
+    segments must be rejected before any `hf` subprocess (LLM input safety)."""
+    rec = _guard_recorder(tmp_path, monkeypatch)
+    res = rec.sync_to_bucket(bucket)
+    assert res["status"] == "error"
+    assert "bucket" in res["message"]
+
+
+@pytest.mark.parametrize(
+    "run_id",
+    [
+        "../escape",
+        "sub/dir",
+        "run;rm -rf /",
+        "run id",
+        "$(id)",
+    ],
+)
+def test_sync_to_bucket_rejects_unsafe_run_id(tmp_path, monkeypatch, run_id):
+    """run_id reaches the hf:// URI + argv; reject traversal/metacharacters
+    and any path separator before constructing the destination."""
+    rec = _guard_recorder(tmp_path, monkeypatch)
+    res = rec.sync_to_bucket("my-org/robot-fave", run_id=run_id)
+    assert res["status"] == "error"
+    assert "run_id" in res["message"]
+
+
 # ── stream_dataset facade ──────────────────────────────────────────────────
 
 
@@ -199,14 +255,10 @@ def test_recording_mixin_stream_dataset_delegates(monkeypatch):
         captured["kw"] = kw
         return "READER"
 
-    monkeypatch.setattr(
-        sd.StreamingDatasetReader, "open", staticmethod(fake_open), raising=True
-    )
+    monkeypatch.setattr(sd.StreamingDatasetReader, "open", staticmethod(fake_open), raising=True)
 
     mixin = RecordingMixin()
-    out = mixin.stream_dataset(
-        "org/ds", root="/tmp/x", shuffle=False, drop_videos=True
-    )
+    out = mixin.stream_dataset("org/ds", root="/tmp/x", shuffle=False, drop_videos=True)
     assert out == "READER"
     assert captured["repo_id"] == "org/ds"
     assert captured["kw"]["root"] == "/tmp/x"
@@ -258,9 +310,7 @@ def test_dyld_shim_sets_env_and_skips_reexec_when_unsafe(monkeypatch, tmp_path):
     monkeypatch.setattr(_dyld, "_find_ffmpeg_lib_dir", lambda: str(tmp_path))
     # Under pytest, _is_safe_to_reexec() is False → must NOT call os.execv.
     called = {"execv": False}
-    monkeypatch.setattr(
-        _dyld.os, "execv", lambda *a: called.__setitem__("execv", True)
-    )
+    monkeypatch.setattr(_dyld.os, "execv", lambda *a: called.__setitem__("execv", True))
 
     with pytest.warns(RuntimeWarning):
         result = _dyld.ensure_ffmpeg_on_dyld_path()
@@ -280,8 +330,6 @@ def test_dyld_shim_noop_when_already_set(monkeypatch, tmp_path):
     monkeypatch.setattr(_dyld, "_find_ffmpeg_lib_dir", lambda: str(tmp_path))
     monkeypatch.setenv(_dyld._DYLD_VAR, str(tmp_path))  # already present
     called = {"execv": False}
-    monkeypatch.setattr(
-        _dyld.os, "execv", lambda *a: called.__setitem__("execv", True)
-    )
+    monkeypatch.setattr(_dyld.os, "execv", lambda *a: called.__setitem__("execv", True))
     assert _dyld.ensure_ffmpeg_on_dyld_path() is True
     assert called["execv"] is False

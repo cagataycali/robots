@@ -22,12 +22,24 @@ Usage:
 
 import functools
 import logging
+import re
 import sys
 from typing import Any
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+# Allowlist patterns for HF Storage Bucket sync targets. Both `bucket` and
+# `run_id` reach the `hf` CLI argv and the `hf://buckets/...` URI; they are
+# agent-reachable via stop_recording(bucket=, run_id=) dispatched through the
+# simulation action layer, so they MUST be validated before any subprocess /
+# URI interpolation (AGENTS.md > LLM Input Safety). `bucket` is "name" or
+# "org/name"; `run_id` is a single path segment. Neither may contain shell
+# metacharacters, path-traversal (".."), or separators beyond the one allowed
+# bucket "org/name" slash.
+_BUCKET_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)?$")
+_RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 # Lazy check for LeRobot availability
 # We must NOT import lerobot at module level because it pulls in
@@ -633,8 +645,8 @@ class DatasetRecorder:
 
     def sync_to_bucket(
         self,
-        bucket: str,                  # "my-org/robot-fave"
-        run_id: str | None = None,    # subpath; defaults to dataset name
+        bucket: str,  # "my-org/robot-fave"
+        run_id: str | None = None,  # subpath; defaults to dataset name
         *,
         create: bool = True,
         private: bool = True,
@@ -647,6 +659,13 @@ class DatasetRecorder:
         only changed chunks (content-defined chunking). Requires the ``hf`` CLI
         (huggingface_hub>=1.x) and ``hf auth login``.
 
+        ``bucket`` and ``run_id`` are validated against an allowlist before any
+        subprocess or URI interpolation: ``bucket`` must be ``"name"`` or
+        ``"org/name"`` and ``run_id`` a single path segment, both restricted to
+        ``[A-Za-z0-9._-]`` (no path traversal or shell metacharacters). This
+        path is agent-reachable via ``stop_recording(bucket=, run_id=)``. A
+        rejected value returns ``{"status": "error", ...}`` without running ``hf``.
+
         See reports/STREAMING_DATA_LOOP_DEEP_DIVE.md Appendix A.1 (shard layout
         is already Xet/bucket-friendly at the 100 MB default) and F.2 (meta/
         MUST ship or downstream loses normalization stats).
@@ -658,8 +677,15 @@ class DatasetRecorder:
         if shutil.which("hf") is None:
             return {
                 "status": "error",
-                "message": "`hf` CLI not found. pip install -U huggingface_hub "
-                "(>=1.x) and run `hf auth login`.",
+                "message": "`hf` CLI not found. pip install -U huggingface_hub (>=1.x) and run `hf auth login`.",
+            }
+
+        if not _BUCKET_RE.match(bucket):
+            return {
+                "status": "error",
+                "message": f"invalid bucket {bucket!r}: must match "
+                "'name' or 'org/name' using [A-Za-z0-9._-] (no path traversal "
+                "or shell metacharacters).",
             }
 
         local_root = str(self.dataset.root)
@@ -672,12 +698,18 @@ class DatasetRecorder:
             }
 
         run_id = run_id or self.dataset.repo_id.split("/")[-1]
+        if not _RUN_ID_RE.match(run_id):
+            return {
+                "status": "error",
+                "message": f"invalid run_id {run_id!r}: must be a single path "
+                "segment using [A-Za-z0-9._-] (no '/', path traversal, or shell "
+                "metacharacters).",
+            }
         dest = f"hf://buckets/{bucket}/{run_id}"
 
         if create:
             cp = subprocess.run(
-                ["hf", "buckets", "create", bucket]
-                + (["--private"] if private else []),
+                ["hf", "buckets", "create", bucket] + (["--private"] if private else []),
                 capture_output=True,
                 text=True,
             )

@@ -50,6 +50,7 @@ if TYPE_CHECKING:
         list_backends,
         register_backend,
     )
+    from strands_robots.streaming_dataset import StreamingDatasetReader
     from strands_robots.tools.gr00t_inference import gr00t_inference
     from strands_robots.tools.lerobot_calibrate import lerobot_calibrate
     from strands_robots.tools.lerobot_camera import lerobot_camera

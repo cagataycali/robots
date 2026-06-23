@@ -15,13 +15,15 @@ Design mirrors ``dataset_recorder.py``:
     0.5.0->0.5.2; streaming is newer and still changing — upstream has a
     multi-thread prefetch TODO).
 """
+
 from __future__ import annotations
 
 import functools
 import inspect
 import logging
 import sys
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +40,7 @@ def has_streaming_dataset() -> bool:
         return False
 
 
-def _get_streaming_cls():
+def _get_streaming_cls() -> Any:
     """Return StreamingLeRobotDataset, honoring a test-injected module override."""
     this_module = sys.modules[__name__]
     mock_cls = getattr(this_module, "StreamingLeRobotDataset", None)
@@ -72,7 +74,7 @@ class StreamingDatasetReader:
             ...  # raw tensors; normalize via reader.meta.stats if needed
     """
 
-    def __init__(self, dataset):
+    def __init__(self, dataset: Any) -> None:
         self.dataset = dataset
 
     @classmethod
@@ -94,22 +96,18 @@ class StreamingDatasetReader:
         return_uint8: bool = True,  # halves frame bandwidth; policies normalize
         validate_deltas: bool = True,  # parity with materialized path (App. A.2)
         drop_videos: bool = False,  # proprio-only streaming (no torchcodec)
-    ) -> "StreamingDatasetReader":
+    ) -> StreamingDatasetReader:
         StreamingCls = _get_streaming_cls()
-        init_sig = inspect.signature(StreamingCls.__init__).parameters
+        init_sig = inspect.signature(StreamingCls).parameters
         # If the constructor accepts **kwargs, every candidate is forwardable.
-        accepts_var_kw = any(
-            p.kind is inspect.Parameter.VAR_KEYWORD for p in init_sig.values()
-        )
+        accepts_var_kw = any(p.kind is inspect.Parameter.VAR_KEYWORD for p in init_sig.values())
 
         # Proprio-only: strip video keys from delta_timestamps so video decode
         # (torchcodec) is never invoked — lets constrained edge devices stream
         # state/action without a torchcodec wheel (App. C.2).
         if drop_videos and delta_timestamps:
             delta_timestamps = {
-                k: v
-                for k, v in delta_timestamps.items()
-                if not k.startswith("observation.images.")
+                k: v for k, v in delta_timestamps.items() if not k.startswith("observation.images.")
             } or None
 
         kwargs: dict[str, Any] = {"repo_id": repo_id}
@@ -148,15 +146,13 @@ class StreamingDatasetReader:
             try:
                 from lerobot.datasets.feature_utils import check_delta_timestamps
 
-                check_delta_timestamps(
-                    delta_timestamps, ds.fps, tolerance_s, raise_value_error=True
-                )
+                check_delta_timestamps(delta_timestamps, ds.fps, tolerance_s, raise_value_error=True)
             except ImportError:
                 logger.debug("check_delta_timestamps unavailable; skipping grid check")
 
         return cls(ds)
 
-    def dataloader(self, batch_size: int = 64, num_workers: int = 0, **kw):
+    def dataloader(self, batch_size: int = 64, num_workers: int = 0, **kw: Any) -> Any:
         """torch DataLoader over the streamed (Iterable) dataset.
 
         WARNING (verified upstream): StreamingLeRobotDataset is an
@@ -174,26 +170,24 @@ class StreamingDatasetReader:
 
         if kw.pop("shuffle", None):
             logger.warning("Ignoring shuffle=True: streaming shuffles internally.")
-        return torch.utils.data.DataLoader(
-            self.dataset, batch_size=batch_size, num_workers=num_workers, **kw
-        )
+        return torch.utils.data.DataLoader(self.dataset, batch_size=batch_size, num_workers=num_workers, **kw)
 
     @property
-    def num_frames(self):
+    def num_frames(self) -> Any:
         return self.dataset.num_frames
 
     @property
-    def num_episodes(self):
+    def num_episodes(self) -> Any:
         return self.dataset.num_episodes
 
     @property
-    def fps(self):
+    def fps(self) -> Any:
         return self.dataset.fps
 
     @property
-    def meta(self):
+    def meta(self) -> Any:
         """Dataset metadata (incl. .stats for normalization). Always local."""
         return self.dataset.meta
 
-    def __iter__(self):
+    def __iter__(self) -> Any:
         return iter(self.dataset)
