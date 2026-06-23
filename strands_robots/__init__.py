@@ -160,6 +160,19 @@ if _importlib_util.find_spec("mujoco") is not None:
         pass
 
 
+# Auto-configure the macOS dyld search path so torchcodec can find Homebrew's
+# ffmpeg with zero user setup — making ``sim.stream_dataset(...)`` video decode
+# work out of the box. No-op off macOS, without torchcodec, or when already set.
+# May re-exec the interpreter ONCE on a plain script run (guarded; never in
+# Jupyter/REPL/pytest). Opt out with STRANDS_ROBOTS_NO_DYLD_SHIM=1. See _dyld.py.
+try:
+    from strands_robots._dyld import ensure_ffmpeg_on_dyld_path
+
+    ensure_ffmpeg_on_dyld_path()
+except Exception:  # noqa: BLE001 - never let the shim block import
+    pass
+
+
 def __getattr__(name: str) -> Any:  # noqa: N807
     """Lazy-load heavy modules on first attribute access.
 

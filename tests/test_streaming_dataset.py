@@ -7,6 +7,7 @@ proprio-only ``drop_videos`` path, delta-grid validation, and the bucket-sync
 CLI construction + meta/ guard.
 """
 
+import os
 import subprocess
 
 import pytest
@@ -211,3 +212,76 @@ def test_recording_mixin_stream_dataset_delegates(monkeypatch):
     assert captured["kw"]["root"] == "/tmp/x"
     assert captured["kw"]["shuffle"] is False
     assert captured["kw"]["drop_videos"] is True
+
+
+# ── macOS dyld shim ────────────────────────────────────────────────────────
+
+
+def test_dyld_shim_noop_off_macos(monkeypatch):
+    """On non-macOS the shim is a pure no-op (returns False, no env change)."""
+    from strands_robots import _dyld
+
+    monkeypatch.setattr(_dyld.sys, "platform", "linux")
+    monkeypatch.delenv(_dyld._DYLD_VAR, raising=False)
+    assert _dyld.ensure_ffmpeg_on_dyld_path() is False
+    assert _dyld._DYLD_VAR not in os.environ
+
+
+def test_dyld_shim_opt_out(monkeypatch):
+    from strands_robots import _dyld
+
+    monkeypatch.setattr(_dyld.sys, "platform", "darwin")
+    monkeypatch.setenv(_dyld._OPT_OUT_ENV, "1")
+    assert _dyld.ensure_ffmpeg_on_dyld_path() is False
+
+
+def test_dyld_shim_noop_without_torchcodec(monkeypatch):
+    from strands_robots import _dyld
+
+    monkeypatch.setattr(_dyld.sys, "platform", "darwin")
+    monkeypatch.delenv(_dyld._OPT_OUT_ENV, raising=False)
+    monkeypatch.setattr(_dyld, "_torchcodec_installed", lambda: False)
+    assert _dyld.ensure_ffmpeg_on_dyld_path() is False
+
+
+def test_dyld_shim_sets_env_and_skips_reexec_when_unsafe(monkeypatch, tmp_path):
+    """When torchcodec + ffmpeg are present but it's NOT safe to re-exec
+    (e.g. under pytest), the shim sets DYLD for child procs and does NOT
+    re-exec — it warns instead."""
+    from strands_robots import _dyld
+
+    monkeypatch.setattr(_dyld.sys, "platform", "darwin")
+    monkeypatch.delenv(_dyld._OPT_OUT_ENV, raising=False)
+    monkeypatch.delenv(_dyld._GUARD_ENV, raising=False)
+    monkeypatch.delenv(_dyld._DYLD_VAR, raising=False)
+    monkeypatch.setattr(_dyld, "_torchcodec_installed", lambda: True)
+    monkeypatch.setattr(_dyld, "_find_ffmpeg_lib_dir", lambda: str(tmp_path))
+    # Under pytest, _is_safe_to_reexec() is False → must NOT call os.execv.
+    called = {"execv": False}
+    monkeypatch.setattr(
+        _dyld.os, "execv", lambda *a: called.__setitem__("execv", True)
+    )
+
+    with pytest.warns(RuntimeWarning):
+        result = _dyld.ensure_ffmpeg_on_dyld_path()
+
+    assert result is False
+    assert called["execv"] is False  # never re-exec under pytest
+    # but child-process env IS set
+    assert str(tmp_path) in os.environ[_dyld._DYLD_VAR]
+
+
+def test_dyld_shim_noop_when_already_set(monkeypatch, tmp_path):
+    from strands_robots import _dyld
+
+    monkeypatch.setattr(_dyld.sys, "platform", "darwin")
+    monkeypatch.delenv(_dyld._OPT_OUT_ENV, raising=False)
+    monkeypatch.setattr(_dyld, "_torchcodec_installed", lambda: True)
+    monkeypatch.setattr(_dyld, "_find_ffmpeg_lib_dir", lambda: str(tmp_path))
+    monkeypatch.setenv(_dyld._DYLD_VAR, str(tmp_path))  # already present
+    called = {"execv": False}
+    monkeypatch.setattr(
+        _dyld.os, "execv", lambda *a: called.__setitem__("execv", True)
+    )
+    assert _dyld.ensure_ffmpeg_on_dyld_path() is True
+    assert called["execv"] is False
