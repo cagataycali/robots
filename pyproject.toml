@@ -405,9 +405,15 @@ ignore_missing_imports = true
 
 # Device Connect drivers - thin wrappers over the untyped device_connect_edge
 # SDK; their RPC handlers return dicts that bubble Any (same posture as tools.*).
+# disallow_untyped_defs stays relaxed because the SDK's @rpc/@emit/@on
+# decorators are themselves untyped (they make decorated methods "untyped" to
+# mypy, which the global config cannot see through). disallow_any_generics is
+# enabled to keep the public dict/list/Callable surfaces fully parameterized
+# rather than silently bare (which a developer's IDE/strict mypy would flag).
 [[tool.mypy.overrides]]
 module = ["strands_robots.device_connect.*"]
 disallow_untyped_defs = false
+disallow_any_generics = true
 warn_return_any = false
 
 # @tool decorator injects runtime signatures mypy cannot check

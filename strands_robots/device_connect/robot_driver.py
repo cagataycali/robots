@@ -6,6 +6,7 @@ structured RPCs and events via Device Connect's DeviceDriver interface.
 
 import asyncio
 import logging
+from typing import Any
 
 from device_connect_edge.drivers import (
     DeviceDriver,
@@ -67,7 +68,7 @@ class RobotDeviceDriver(DeviceDriver):
         policy_provider: str = "mock",
         duration: float = 30.0,
         policy_port: int = 0,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Execute a VLA task instruction on the robot.
 
         Args:
@@ -96,7 +97,7 @@ class RobotDeviceDriver(DeviceDriver):
         )
 
     @rpc()
-    async def stop(self) -> dict:
+    async def stop(self) -> dict[str, Any]:
         """Stop the currently running task."""
         caller = get_rpc_source_device()
         if not is_authorized_caller(caller, scope="rpc"):
@@ -104,12 +105,12 @@ class RobotDeviceDriver(DeviceDriver):
         return self._robot.stop_task()
 
     @rpc()
-    async def getStatus(self) -> dict:
+    async def getStatus(self) -> dict[str, Any]:
         """Get current task execution status."""
         return self._robot.get_task_status()
 
     @rpc()
-    async def getFeatures(self) -> dict:
+    async def getFeatures(self) -> dict[str, Any]:
         """Get robot observation and action features."""
         get_features = getattr(self._robot, "get_features", None)
         if callable(get_features):
@@ -118,7 +119,7 @@ class RobotDeviceDriver(DeviceDriver):
         return {"features": {}, "note": "get_features unavailable on this robot"}
 
     @rpc()
-    async def getState(self) -> dict:
+    async def getState(self) -> dict[str, Any]:
         """Get current robot state (joints, task info).
 
         Returns joint positions and task state if a task is running.
@@ -166,7 +167,7 @@ class RobotDeviceDriver(DeviceDriver):
         pass
 
     @emit()
-    async def streamStep(self, step: int, observation: dict, action: dict):
+    async def streamStep(self, step: int, observation: dict[str, Any], action: dict[str, Any]) -> None:
         """Emitted for each VLA inference step (high frequency).
 
         Args:
@@ -186,7 +187,7 @@ class RobotDeviceDriver(DeviceDriver):
         pass
 
     @on(event_name="emergencyStop")
-    async def onEmergencyStop(self, device_id: str, event_name: str, payload: dict):
+    async def onEmergencyStop(self, device_id: str, event_name: str, payload: dict[str, Any]) -> None:
         """React to emergencyStop from an authorized safety controller.
 
         Security hardening: only act on emergency-stop events whose source is

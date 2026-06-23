@@ -11,6 +11,7 @@ import asyncio
 import logging
 import math
 import re
+from typing import Any
 
 from device_connect_edge.drivers import DeviceDriver, emit, on, rpc
 from device_connect_edge.types import DeviceIdentity, DeviceStatus
@@ -50,8 +51,8 @@ class ReachyMiniDriver(DeviceDriver):
         self._host = host
         self._prefix = prefix
         self._api_port = api_port
-        self._latest_joints: dict | None = None
-        self._latest_imu: dict | None = None
+        self._latest_joints: dict[str, Any] | None = None
+        self._latest_imu: dict[str, Any] | None = None
         self._hw: WebSocketLink | ZenohLink | None = None
 
     @property
@@ -94,7 +95,7 @@ class ReachyMiniDriver(DeviceDriver):
 
     # ── Helpers ────────────────────────────────────────────────
 
-    async def _send_cmd(self, cmd: dict) -> None:
+    async def _send_cmd(self, cmd: dict[str, Any]) -> None:
         """Send a real-time command via the active hardware link."""
         if self._hw is None:
             raise RuntimeError("Reachy Mini hardware link not connected")
@@ -111,7 +112,7 @@ class ReachyMiniDriver(DeviceDriver):
         x: float = 0,
         y: float = 0,
         z: float = 0,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Set head pose instantly.
 
         Args:
@@ -126,7 +127,7 @@ class ReachyMiniDriver(DeviceDriver):
         return {"status": "success", "pitch": pitch, "roll": roll, "yaw": yaw}
 
     @rpc()
-    async def antennas(self, left: float = 0, right: float = 0) -> dict:
+    async def antennas(self, left: float = 0, right: float = 0) -> dict[str, Any]:
         """Set antenna angles.
 
         Args:
@@ -137,7 +138,7 @@ class ReachyMiniDriver(DeviceDriver):
         return {"status": "success", "left": left, "right": right}
 
     @rpc()
-    async def body(self, yaw: float = 0) -> dict:
+    async def body(self, yaw: float = 0) -> dict[str, Any]:
         """Set body yaw angle.
 
         Args:
@@ -149,7 +150,7 @@ class ReachyMiniDriver(DeviceDriver):
     # ── Sensor RPCs (cached from transport subscription) ───────
 
     @rpc()
-    async def getJoints(self) -> dict:
+    async def getJoints(self) -> dict[str, Any]:
         """Get current joint positions (head + antennas)."""
         d = self._latest_joints
         if d is not None:
@@ -163,7 +164,7 @@ class ReachyMiniDriver(DeviceDriver):
         return {"status": "error", "reason": "no joint data"}
 
     @rpc()
-    async def getImu(self) -> dict:
+    async def getImu(self) -> dict[str, Any]:
         """Get IMU data (accelerometer, gyroscope, quaternion, temperature)."""
         d = self._latest_imu
         if d is not None:
@@ -179,7 +180,7 @@ class ReachyMiniDriver(DeviceDriver):
     # ── Motor RPCs (Zenoh via transport) ───────────────────────
 
     @rpc()
-    async def enableMotors(self, motor_ids: str = "") -> dict:
+    async def enableMotors(self, motor_ids: str = "") -> dict[str, Any]:
         """Enable motors (torque on).
 
         Args:
@@ -190,7 +191,7 @@ class ReachyMiniDriver(DeviceDriver):
         return {"status": "success", "enabled": motor_ids or "all"}
 
     @rpc()
-    async def disableMotors(self, motor_ids: str = "") -> dict:
+    async def disableMotors(self, motor_ids: str = "") -> dict[str, Any]:
         """Disable motors (torque off).
 
         Args:
@@ -203,7 +204,7 @@ class ReachyMiniDriver(DeviceDriver):
     # ── Move RPCs (REST) ──────────────────────────────────────
 
     @rpc()
-    async def playMove(self, move_name: str, library: str = "emotions") -> dict:
+    async def playMove(self, move_name: str, library: str = "emotions") -> dict[str, Any]:
         """Play a recorded move from the HuggingFace library.
 
         Args:
@@ -223,7 +224,7 @@ class ReachyMiniDriver(DeviceDriver):
         return {"status": "success", "move": move_name, "result": result}
 
     @rpc()
-    async def listMoves(self, library: str = "emotions") -> dict:
+    async def listMoves(self, library: str = "emotions") -> dict[str, Any]:
         """List available recorded moves.
 
         Args:
@@ -241,7 +242,7 @@ class ReachyMiniDriver(DeviceDriver):
     # ── Expression RPCs (Zenoh animations via transport) ───────
 
     @rpc()
-    async def nod(self) -> dict:
+    async def nod(self) -> dict[str, Any]:
         """Nod the head (yes gesture)."""
         for _ in range(3):
             await self._send_cmd({"head_pose": rpy_to_pose(15, 0, 0)})
@@ -252,7 +253,7 @@ class ReachyMiniDriver(DeviceDriver):
         return {"status": "success", "expression": "nod"}
 
     @rpc()
-    async def shake(self) -> dict:
+    async def shake(self) -> dict[str, Any]:
         """Shake the head (no gesture)."""
         for _ in range(3):
             await self._send_cmd({"head_pose": rpy_to_pose(0, 0, 25)})
@@ -263,7 +264,7 @@ class ReachyMiniDriver(DeviceDriver):
         return {"status": "success", "expression": "shake"}
 
     @rpc()
-    async def happy(self) -> dict:
+    async def happy(self) -> dict[str, Any]:
         """Happy antenna wiggle expression."""
         for _ in range(4):
             await self._send_cmd({"antennas_joint_positions": [math.radians(60), math.radians(-60)]})
@@ -276,7 +277,7 @@ class ReachyMiniDriver(DeviceDriver):
     # ── Lifecycle RPCs (REST) ─────────────────────────────────
 
     @rpc()
-    async def wakeUp(self) -> dict:
+    async def wakeUp(self) -> dict[str, Any]:
         """Wake up the robot (enable motors + play wake animation)."""
         result = await asyncio.to_thread(
             api,
@@ -288,7 +289,7 @@ class ReachyMiniDriver(DeviceDriver):
         return {"status": "success", "result": result}
 
     @rpc()
-    async def sleep(self) -> dict:
+    async def sleep(self) -> dict[str, Any]:
         """Put robot to sleep (play sleep animation + disable motors)."""
         result = await asyncio.to_thread(
             api,
@@ -300,7 +301,7 @@ class ReachyMiniDriver(DeviceDriver):
         return {"status": "success", "result": result}
 
     @rpc()
-    async def stopMotion(self) -> dict:
+    async def stopMotion(self) -> dict[str, Any]:
         """Stop all current motion."""
         result = await asyncio.to_thread(
             api,
@@ -312,7 +313,7 @@ class ReachyMiniDriver(DeviceDriver):
         return {"status": "success", "result": result}
 
     @rpc()
-    async def getDaemonStatus(self) -> dict:
+    async def getDaemonStatus(self) -> dict[str, Any]:
         """Get daemon status, motor state, and control frequency."""
         result = await asyncio.to_thread(
             api,
@@ -325,7 +326,7 @@ class ReachyMiniDriver(DeviceDriver):
     # ── Events ────────────────────────────────────────────────
 
     @emit()
-    async def emergencyStop(self, reason: str = ""):
+    async def emergencyStop(self, reason: str = "") -> None:
         """Emitted when this device triggers an emergency stop.
 
         Args:
@@ -334,7 +335,7 @@ class ReachyMiniDriver(DeviceDriver):
         pass
 
     @on(event_name="emergencyStop")
-    async def onEmergencyStop(self, device_id: str, event_name: str, payload: dict):
+    async def onEmergencyStop(self, device_id: str, event_name: str, payload: dict[str, Any]) -> None:
         """React to emergencyStop - disable motors and stop motion."""
         logger.warning("Emergency stop received from %s - disabling motors", device_id)
         await self.stopMotion()

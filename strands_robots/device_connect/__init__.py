@@ -19,6 +19,7 @@ import logging
 import os
 import threading
 import uuid
+from typing import Any
 
 from device_connect_edge import DeviceRuntime
 
@@ -203,7 +204,7 @@ def init_device_connect_sync(
     return runtime
 
 
-def _build_heartbeat(robot, peer_type: str) -> dict:
+def _build_heartbeat(robot: Any, peer_type: str) -> dict[str, Any]:
     """Build heartbeat payload with robot-specific metadata."""
     data = {
         "peer_type": peer_type,

@@ -17,6 +17,10 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# Sensor callbacks receive a JSON-decoded frame (dict) and return nothing.
+JointsCallback = Callable[[dict[str, Any]], None]
+ImuCallback = Callable[[dict[str, Any]], None]
+
 
 def resolve_host(host: str) -> str:
     """Resolve hostname to IP address."""
@@ -127,7 +131,7 @@ def _emit_insecure_tls_warning(kind: str) -> None:
 # ── REST API ─────────────────────────────────────────────────────
 
 
-def api(host: str, port: int, path: str, method: str = "GET", data: dict | None = None) -> dict:
+def api(host: str, port: int, path: str, method: str = "GET", data: dict[str, Any] | None = None) -> dict[str, Any]:
     """Call Reachy Mini daemon REST API."""
     import urllib.error
     import urllib.request
@@ -161,7 +165,7 @@ def api(host: str, port: int, path: str, method: str = "GET", data: dict | None 
 
 def rpy_to_pose(
     pitch_deg: float, roll_deg: float, yaw_deg: float, x_mm: float = 0, y_mm: float = 0, z_mm: float = 0
-) -> list:
+) -> list[list[float]]:
     """Convert RPY (degrees) + XYZ (mm) to 4x4 pose matrix."""
     p, r, y = math.radians(pitch_deg), math.radians(roll_deg), math.radians(yaw_deg)
     cr, sr = math.cos(r), math.sin(r)
@@ -175,7 +179,7 @@ def rpy_to_pose(
     ]
 
 
-def identity_pose() -> list:
+def identity_pose() -> list[list[float]]:
     """Return a 4x4 identity pose matrix."""
     return [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]
 
@@ -187,7 +191,7 @@ class HardwareLink(ABC):
     """Abstract interface for real-time I/O with Reachy Mini hardware."""
 
     @abstractmethod
-    async def start(self, on_joints: Callable, on_imu: Callable) -> None:
+    async def start(self, on_joints: JointsCallback, on_imu: ImuCallback) -> None:
         """Begin receiving sensor data and enable command sending."""
 
     @abstractmethod
@@ -195,7 +199,7 @@ class HardwareLink(ABC):
         """Tear down the connection."""
 
     @abstractmethod
-    async def send_cmd(self, cmd: dict) -> None:
+    async def send_cmd(self, cmd: dict[str, Any]) -> None:
         """Send a real-time command to the robot."""
 
 
@@ -206,7 +210,7 @@ class ZenohLink(HardwareLink):
         self._transport = transport
         self._prefix = prefix
 
-    async def start(self, on_joints: Callable, on_imu: Callable) -> None:
+    async def start(self, on_joints: JointsCallback, on_imu: ImuCallback) -> None:
         async def _on_joints(data: bytes, _reply=None):
             try:
                 on_joints(json.loads(data.decode()))
@@ -225,7 +229,7 @@ class ZenohLink(HardwareLink):
     async def stop(self) -> None:
         pass  # Transport teardown handled by DeviceRuntime
 
-    async def send_cmd(self, cmd: dict) -> None:
+    async def send_cmd(self, cmd: dict[str, Any]) -> None:
         await self._transport.publish(f"{self._prefix}/command", json.dumps(cmd).encode())
 
 
@@ -243,9 +247,9 @@ class WebSocketLink(HardwareLink):
         self._host = host
         self._port = port
         self._ws: Any = None
-        self._read_task: asyncio.Task | None = None
+        self._read_task: asyncio.Task[None] | None = None
 
-    async def start(self, on_joints: Callable, on_imu: Callable) -> None:
+    async def start(self, on_joints: JointsCallback, on_imu: ImuCallback) -> None:
         import websockets
 
         # Security hardening: authenticate to the daemon when a token is
@@ -271,7 +275,7 @@ class WebSocketLink(HardwareLink):
         self._ws = await websockets.connect(_url, **_connect_kwargs)
         self._read_task = asyncio.create_task(self._read_loop(on_joints, on_imu))
 
-    async def _read_loop(self, on_joints: Callable, on_imu: Callable) -> None:
+    async def _read_loop(self, on_joints: JointsCallback, on_imu: ImuCallback) -> None:
         async for raw in self._ws:
             try:
                 msg = json.loads(raw)
@@ -289,7 +293,7 @@ class WebSocketLink(HardwareLink):
         if self._ws:
             await self._ws.close()
 
-    async def send_cmd(self, cmd: dict) -> None:
+    async def send_cmd(self, cmd: dict[str, Any]) -> None:
         if not self._ws:
             return
         for key, fn in self._WS_CMD_MAP.items():

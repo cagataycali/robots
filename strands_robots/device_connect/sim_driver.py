@@ -5,6 +5,7 @@ state as structured RPCs and events via Device Connect's DeviceDriver interface.
 """
 
 import logging
+from typing import Any
 
 from device_connect_edge.drivers import (
     DeviceDriver,
@@ -71,7 +72,7 @@ class SimulationDeviceDriver(DeviceDriver):
         policy_provider: str = "mock",
         duration: float = 30.0,
         robot_name: str = "",
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Execute a policy on a simulated robot.
 
         Args:
@@ -109,7 +110,7 @@ class SimulationDeviceDriver(DeviceDriver):
         )
 
     @rpc()
-    async def stop(self) -> dict:
+    async def stop(self) -> dict[str, Any]:
         """Stop all running policies."""
         caller = get_rpc_source_device()
         if not is_authorized_caller(caller, scope="rpc"):
@@ -122,19 +123,19 @@ class SimulationDeviceDriver(DeviceDriver):
         return {"status": "success", "content": [{"text": "All policies stopped"}]}
 
     @rpc()
-    async def getStatus(self) -> dict:
+    async def getStatus(self) -> dict[str, Any]:
         """Get simulation state and running policies."""
         if hasattr(self._sim, "get_state"):
             return self._sim.get_state()
         return {"status": "idle"}
 
     @rpc()
-    async def getFeatures(self) -> dict:
+    async def getFeatures(self) -> dict[str, Any]:
         """Get simulation features (joints, actuators, cameras)."""
         return self._sim.get_features()
 
     @rpc()
-    async def step(self, n_steps: int = 1) -> dict:
+    async def step(self, n_steps: int = 1) -> dict[str, Any]:
         """Step simulation physics forward.
 
         Args:
@@ -146,7 +147,7 @@ class SimulationDeviceDriver(DeviceDriver):
         return self._sim.step(n_steps)
 
     @rpc()
-    async def reset(self) -> dict:
+    async def reset(self) -> dict[str, Any]:
         """Reset simulation to initial state."""
         caller = get_rpc_source_device()
         if not is_authorized_caller(caller, scope="rpc"):
@@ -187,7 +188,7 @@ class SimulationDeviceDriver(DeviceDriver):
         pass
 
     @on(event_name="emergencyStop")
-    async def onEmergencyStop(self, device_id: str, event_name: str, payload: dict):
+    async def onEmergencyStop(self, device_id: str, event_name: str, payload: dict[str, Any]) -> None:
         """React to emergencyStop from an authorized safety controller.
 
         Security hardening: only act on emergency-stop events whose source is
@@ -243,7 +244,9 @@ class SimulationDeviceDriver(DeviceDriver):
                     logger.debug("observationUpdate skipped for %s: %s", name, e)
 
     @emit()
-    async def stateUpdate(self, sim_time: float = 0.0, step_count: int = 0, running_policies: dict | None = None):
+    async def stateUpdate(
+        self, sim_time: float = 0.0, step_count: int = 0, running_policies: dict[str, Any] | None = None
+    ) -> None:
         """Periodic simulation state update.
 
         Args:
@@ -255,8 +258,8 @@ class SimulationDeviceDriver(DeviceDriver):
 
     @emit()
     async def observationUpdate(
-        self, robot_name: str = "", sim_time: float = 0.0, step_count: int = 0, joints: dict | None = None
-    ):
+        self, robot_name: str = "", sim_time: float = 0.0, step_count: int = 0, joints: dict[str, float] | None = None
+    ) -> None:
         """Periodic per-robot observation with joint positions.
 
         Args:

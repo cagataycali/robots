@@ -130,7 +130,7 @@ def is_authorized_caller(caller: str | None, *, scope: str = "rpc") -> bool:
     return _matches(caller, patterns)
 
 
-def authz_error(caller: str | None, function: str) -> dict:
+def authz_error(caller: str | None, function: str) -> dict[str, str]:
     """Standard structured rejection for an unauthorized RPC call."""
     logger.warning("Rejected unauthorized Device Connect RPC %s from caller=%r", function, caller)
     return {
