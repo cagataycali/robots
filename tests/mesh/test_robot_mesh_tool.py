@@ -318,3 +318,93 @@ def test_send_to_local_peer_does_not_use_target_as_gateway(fake_no_local):
     mesh_b.send.assert_not_called()
     args = mesh_a.send.call_args
     assert args.args[0] == "beta"  # outbound target unchanged
+
+
+# --- mesh-path dispatch-error contract -----------------------------------
+# AGENTS.md: an agent tool must convert a backend failure into an error dict
+# (status="error") and must never let the exception propagate past dispatch.
+# It must also audit the failure with success=False so the forensic trail is
+# complete. These pin the Zenoh mesh-path actuation actions (tell/send/
+# broadcast/stop/emergency_stop), distinct from the Device Connect dispatcher.
+
+
+def _audit_capture(monkeypatch):
+    """Patch the tool's audit hook and return the captured call list.
+
+    Each entry is the (action, target, success, detail) tuple the tool logs.
+    """
+    calls: list[tuple[str, str, bool, str]] = []
+
+    def _spy(action, target, success, detail):
+        calls.append((action, target, success, detail))
+
+    monkeypatch.setattr(
+        "strands_robots.tools.robot_mesh._audit_tool_action",
+        _spy,
+    )
+    return calls
+
+
+def test_tell_dispatch_error_returns_error_dict_and_audits(fake_local_mesh, monkeypatch):
+    calls = _audit_capture(monkeypatch)
+    fake_local_mesh.tell.side_effect = RuntimeError("transport down")
+
+    out = _strands_call(action="tell", target="peer-b", instruction="go")
+
+    assert out["status"] == "error"
+    assert "dispatch error" in out["content"][0]["text"]
+    assert "RuntimeError" in out["content"][0]["text"]
+    # failure path audited with success=False
+    assert calls and calls[-1][0] == "tell"
+    assert calls[-1][2] is False
+
+
+def test_send_dispatch_error_returns_error_dict_and_audits(fake_local_mesh, monkeypatch):
+    calls = _audit_capture(monkeypatch)
+    fake_local_mesh.send.side_effect = RuntimeError("link reset")
+
+    out = _strands_call(action="send", target="peer-b", command='{"action": "status"}')
+
+    assert out["status"] == "error"
+    assert "dispatch error" in out["content"][0]["text"]
+    assert calls and calls[-1][0] == "send"
+    assert calls[-1][2] is False
+
+
+def test_broadcast_dispatch_error_returns_error_dict_and_audits(fake_local_mesh, monkeypatch):
+    calls = _audit_capture(monkeypatch)
+    fake_local_mesh.broadcast.side_effect = RuntimeError("no peers reachable")
+
+    out = _strands_call(action="broadcast", command='{"action": "status"}')
+
+    assert out["status"] == "error"
+    assert "dispatch error" in out["content"][0]["text"]
+    # broadcast audits against the wildcard target
+    assert calls and calls[-1][0] == "broadcast"
+    assert calls[-1][1] == "*"
+    assert calls[-1][2] is False
+
+
+def test_stop_dispatch_error_returns_error_dict_and_audits(fake_local_mesh, monkeypatch):
+    calls = _audit_capture(monkeypatch)
+    fake_local_mesh.send.side_effect = RuntimeError("stop unack")
+
+    out = _strands_call(action="stop", target="peer-b")
+
+    assert out["status"] == "error"
+    assert "dispatch error" in out["content"][0]["text"]
+    assert calls and calls[-1][0] == "stop"
+    assert calls[-1][2] is False
+
+
+def test_emergency_stop_dispatch_error_returns_error_dict_and_audits(fake_local_mesh, monkeypatch):
+    calls = _audit_capture(monkeypatch)
+    fake_local_mesh.emergency_stop.side_effect = RuntimeError("e-stop bus fault")
+
+    out = _strands_call(action="emergency_stop")
+
+    assert out["status"] == "error"
+    assert "dispatch error" in out["content"][0]["text"]
+    assert calls and calls[-1][0] == "emergency_stop"
+    assert calls[-1][1] == "*"
+    assert calls[-1][2] is False
