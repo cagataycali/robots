@@ -1291,3 +1291,177 @@ class TestAttachDeviceConnectBindsRun:
         assert instance._peer_type == "robot"
         # A peer id is synthesized from the canonical name when none is given.
         assert instance._peer_id.startswith("so100-")
+
+
+class TestRobotFactoryErrorBranches:
+    """Pin the error/enrichment branches of the ``Robot()`` factory.
+
+    These exercise paths that the happy-path tests skip: a non-string mode
+    reaching the final ``ValueError``, ``create_world`` reporting an in-band
+    ``status=error`` (vs raising), the sim mesh-attach success assignment, and
+    the best-effort mesh/Device-Connect enrichment on the hardware path.
+    """
+
+    def test_non_string_mode_raises_value_error(self):
+        """A non-string mode passes through ``_normalize_mode`` unchanged and
+        lands on the final ``ValueError`` rather than crashing earlier."""
+        pytest.importorskip("mujoco")
+        with pytest.raises(ValueError, match="Invalid mode"):
+            Robot("so100", mode=123)
+
+    def test_create_world_status_error_raises_with_message(self):
+        """When ``create_world`` returns ``status=error`` (not an exception),
+        the factory raises ``RuntimeError`` surfacing the backend message."""
+        pytest.importorskip("mujoco")
+        from unittest.mock import patch
+
+        from strands_robots.simulation.mujoco.simulation import Simulation as SimImpl
+
+        original = SimImpl._dispatch_action
+
+        def fake_dispatch(self, action, params):
+            if action == "create_world":
+                return {"status": "error", "content": [{"text": "mjcf compile failed"}]}
+            return original(self, action, params)
+
+        with patch.object(SimImpl, "_dispatch_action", fake_dispatch):
+            with pytest.raises(RuntimeError, match="Failed to create sim world.*mjcf compile failed"):
+                Robot("so100")
+
+    def test_create_world_status_error_empty_content_falls_back_to_repr(self):
+        """An error result with no content still raises, using the raw result
+        as the message rather than crashing on the empty content list."""
+        pytest.importorskip("mujoco")
+        from unittest.mock import patch
+
+        from strands_robots.simulation.mujoco.simulation import Simulation as SimImpl
+
+        original = SimImpl._dispatch_action
+
+        def fake_dispatch(self, action, params):
+            if action == "create_world":
+                return {"status": "error", "content": []}
+            return original(self, action, params)
+
+        with patch.object(SimImpl, "_dispatch_action", fake_dispatch):
+            with pytest.raises(RuntimeError, match="Failed to create sim world"):
+                Robot("so100")
+
+    def test_sim_mesh_success_assigns_mesh_and_peer_id(self, monkeypatch):
+        """When ``init_mesh`` returns a mesh, the factory attaches it and copies
+        the peer id onto the returned Simulation."""
+        pytest.importorskip("mujoco")
+        import types as _types
+
+        fake_mesh = _types.SimpleNamespace(peer_id="sim-peer-xyz", stop=lambda: None)
+        # init_mesh is imported inside the factory from strands_robots.mesh.
+        monkeypatch.setattr("strands_robots.mesh.init_mesh", lambda *a, **k: fake_mesh)
+
+        sim = Robot("so100", mode="sim")
+        try:
+            assert sim.mesh is fake_mesh
+            assert sim.peer_id == "sim-peer-xyz"
+        finally:
+            sim.destroy()
+
+    def test_real_mode_non_mujoco_backend_is_accepted(self):
+        """In ``mode='real'`` a non-mujoco ``backend`` is ignored (hardware uses
+        direct servo control), so construction proceeds to the hardware class."""
+        from unittest.mock import MagicMock, patch
+
+        sentinel = MagicMock()
+        with (
+            patch("strands_robots.robot.get_hardware_type", return_value="so100_follower"),
+            patch("strands_robots.hardware_robot.Robot", return_value=sentinel) as mock_hw,
+        ):
+            result = Robot("so100", mode="real", backend="isaac")
+        mock_hw.assert_called_once()
+        assert result is sentinel
+
+    def test_real_mode_mesh_failure_is_best_effort(self):
+        """A mesh-init failure on the hardware path must be swallowed (logged),
+        not propagated - the user asked for a hardware robot, mesh is enrichment."""
+        from unittest.mock import MagicMock, patch
+
+        sentinel = MagicMock()
+        with (
+            patch("strands_robots.robot.get_hardware_type", return_value="so100_follower"),
+            patch("strands_robots.hardware_robot.Robot", return_value=sentinel),
+            patch("strands_robots.mesh.init_mesh", side_effect=RuntimeError("zenoh router down")),
+        ):
+            # Must not raise despite the mesh failure.
+            result = Robot("so100", mode="real")
+        assert result is sentinel
+
+    def test_device_connect_init_failure_keeps_process_alive(self, monkeypatch, capsys):
+        """A failure inside ``init_device_connect_sync`` is logged and the
+        foreground loop still reports the device online (best-effort)."""
+        import strands_robots.robot as robot_mod
+
+        instance = types.SimpleNamespace(_peer_id="so100-dc", _peer_type="sim", mesh=None)
+
+        monkeypatch.setattr(
+            "strands_robots.device_connect.init_device_connect_sync",
+            lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no broker")),
+        )
+        monkeypatch.setattr("time.sleep", lambda _s: (_ for _ in ()).throw(KeyboardInterrupt()))
+
+        class _ExitCalled(Exception):
+            pass
+
+        monkeypatch.setattr(os, "_exit", lambda code: (_ for _ in ()).throw(_ExitCalled()))
+
+        with pytest.raises(_ExitCalled):
+            robot_mod._run_device_connect_foreground(instance)
+
+        out = capsys.readouterr().out
+        assert "so100-dc is online" in out
+
+    def test_auto_mode_without_hardware_resolves_to_sim(self, monkeypatch):
+        """``mode='auto'`` with no env override and no detected hardware routes
+        through ``_auto_detect_mode`` and lands on the safe sim default."""
+        pytest.importorskip("mujoco")
+        monkeypatch.delenv("STRANDS_ROBOT_MODE", raising=False)
+        monkeypatch.setattr("strands_robots.robot._auto_detect_mode", lambda _c: "sim")
+
+        sim = Robot("so100", mode="auto")
+        try:
+            from strands_robots.simulation import Simulation
+
+            assert isinstance(sim, Simulation)
+        finally:
+            sim.destroy()
+
+    def test_sim_mesh_failure_is_best_effort(self, monkeypatch):
+        """A mesh-init failure on the sim path is swallowed; the Simulation is
+        still returned (mesh is enrichment, not a precondition)."""
+        pytest.importorskip("mujoco")
+        monkeypatch.setattr(
+            "strands_robots.mesh.init_mesh",
+            lambda *a, **k: (_ for _ in ()).throw(RuntimeError("zenoh router down")),
+        )
+
+        sim = Robot("so100", mode="sim")
+        try:
+            assert sim is not None
+            # The failed mesh attach leaves no mesh wired on the instance.
+            assert getattr(sim, "mesh", None) is None
+        finally:
+            sim.destroy()
+
+    def test_real_mode_mesh_success_assigns_mesh_and_peer_id(self):
+        """When ``init_mesh`` returns a mesh on the hardware path, the factory
+        attaches it and copies the peer id onto the hardware instance."""
+        import types as _types
+        from unittest.mock import MagicMock, patch
+
+        sentinel = MagicMock()
+        fake_mesh = _types.SimpleNamespace(peer_id="hw-peer-7", stop=lambda: None)
+        with (
+            patch("strands_robots.robot.get_hardware_type", return_value="so100_follower"),
+            patch("strands_robots.hardware_robot.Robot", return_value=sentinel),
+            patch("strands_robots.mesh.init_mesh", return_value=fake_mesh),
+        ):
+            result = Robot("so100", mode="real")
+        assert result.mesh is fake_mesh
+        assert result.peer_id == "hw-peer-7"
