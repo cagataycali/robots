@@ -299,37 +299,84 @@ class LerobotTrainer(Trainer):
         )
 
     def _parse_log(self, log_path: str) -> dict[str, Any]:
-        """Extract a 'RUNNING != learning' verdict from the train log tail.
+        """Extract a 'RUNNING != learning' verdict from the train log.
 
-        lerobot logs lines like ``... step:200 ... loss:0.123 ...``. We grab the
-        last step/loss we can find. Best-effort; returns {} if unreadable.
+        Parses lerobot's MetricsTracker line, whose exact format (verified vs
+        lerobot 0.5.x ``utils/logging_utils.py::MetricsTracker.__str__``) is::
+
+            step:1.2K smpl:4.9K ep:8 epch:2.00 loss:0.123 ...
+
+        - ``step`` / ``smpl`` / ``ep`` are run through ``format_big_number`` so
+          they carry K/M/B/T/Q suffixes (``step:1.2K``); we expand them back.
+        - ``loss`` is the AverageMeter avg, formatted ``:.3f``.
+
+        We take the LAST occurrence of each (newest). ``learning`` is True when
+        we saw a finite loss; ``liveness_ok`` is True when we saw a step line at
+        all (the booted-but-idle job that the vla-ft MCP flags returns False).
+        Best-effort; returns ``{}`` if the log is unreadable.
         """
         latest_step: int | None = None
         latest_loss: float | None = None
+        latest_epoch: float | None = None
         try:
             with open(log_path, encoding="utf-8", errors="ignore") as f:
                 for line in f:
-                    for tok in line.replace(",", " ").split():
-                        if tok.startswith("step:"):
+                    if "step:" not in line:
+                        continue
+                    for tok in line.split():
+                        key, _, val = tok.partition(":")
+                        if not val:
+                            continue
+                        if key == "step":
+                            n = _expand_big_number(val)
+                            if n is not None:
+                                latest_step = int(n)
+                        elif key == "loss":
                             try:
-                                latest_step = int(tok.split(":", 1)[1])
+                                latest_loss = float(val)
                             except ValueError:
                                 pass
-                        elif tok.startswith("loss:"):
+                        elif key == "epch":
                             try:
-                                latest_loss = float(tok.split(":", 1)[1])
+                                latest_epoch = float(val)
                             except ValueError:
                                 pass
         except OSError:
             return {}
+
         metrics: dict[str, Any] = {}
         if latest_step is not None:
             metrics["latest_step"] = latest_step
+        if latest_epoch is not None:
+            metrics["latest_epoch"] = latest_epoch
         if latest_loss is not None:
+            import math
+
             metrics["latest_loss"] = latest_loss
-            metrics["learning"] = latest_loss == latest_loss  # not NaN
+            metrics["learning"] = math.isfinite(latest_loss)
         metrics["liveness_ok"] = latest_step is not None
         return metrics
+
+
+def _expand_big_number(token: str) -> float | None:
+    """Invert lerobot's ``format_big_number`` (e.g. ``"1.2K" -> 1200``).
+
+    Suffixes (lerobot ``utils.py``): "" K M B T Q (powers of 1000). Returns the
+    numeric value, or None if the token isn't a recognised big-number string.
+    """
+    suffixes = {"": 1, "K": 1e3, "M": 1e6, "B": 1e9, "T": 1e12, "Q": 1e15}
+    token = token.strip()
+    if not token:
+        return None
+    suffix = token[-1].upper()
+    if suffix in suffixes and suffix != "" and not token[-1].isdigit():
+        body, mult = token[:-1], suffixes[suffix]
+    else:
+        body, mult = token, 1
+    try:
+        return float(body) * mult
+    except ValueError:
+        return None
 
 
 def _auto_device() -> str:
