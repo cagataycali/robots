@@ -144,6 +144,13 @@ class Gr00tTrainer(Trainer):
         if spec.steps <= 0:
             problems.append(f"steps must be > 0, got {spec.steps}")
 
+        if spec.num_nodes > 1:
+            problems.append(
+                f"num_nodes={spec.num_nodes}: multi-node GR00T needs a per-node "
+                "rendezvous launcher; this in-process trainer runs single-node only. "
+                "Run one Gr00tTrainer per node under your own launcher, or use num_nodes=1."
+            )
+
         root = self._resolve_groot_root(spec)
         if not root:
             problems.append(
@@ -424,7 +431,7 @@ class Gr00tTrainer(Trainer):
             train_error = e
             logger.error("Gr00tTrainer in-process run failed: %s", e)
 
-        ckpt = self._latest_checkpoint(spec.output_dir)
+        ckpt = self.latest_checkpoint(spec.output_dir)
         if train_error is not None:
             return TrainResult(
                 status="error",
@@ -439,7 +446,7 @@ class Gr00tTrainer(Trainer):
             message=f"GR00T fine-tune complete (in-process); log: {log_path}",
         )
 
-    def _latest_checkpoint(self, output_dir: str) -> str | None:
+    def latest_checkpoint(self, output_dir: str) -> str | None:
         """GR00T (HF Trainer) writes ``checkpoint-<step>`` dirs in output_dir."""
         if not os.path.isdir(output_dir):
             return None

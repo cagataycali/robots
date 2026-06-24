@@ -117,6 +117,18 @@ class TestLifecycle:
         res = t.train(spec)
         assert t.export(spec, res.checkpoint_dir) == res.checkpoint_dir
 
+    def test_latest_checkpoint_after_train(self, spec):
+        # MockTrainer writes checkpoints/last; latest_checkpoint must find it.
+        t = create_trainer("mock")
+        res = t.train(spec)
+        ckpt = t.latest_checkpoint(spec.output_dir)
+        assert ckpt is not None
+        assert ckpt == res.checkpoint_dir
+
+    def test_latest_checkpoint_none_before_train(self, tmp_path):
+        t = create_trainer("mock")
+        assert t.latest_checkpoint(str(tmp_path / "never_trained")) is None
+
     def test_status_reports_learning(self, spec):
         t = create_trainer("mock")
         res = t.train(spec)
