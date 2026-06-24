@@ -1460,3 +1460,77 @@ class TestRobotFactoryErrorBranches:
             result = Robot("so100", mode="real")
         assert result.mesh is fake_mesh
         assert result.peer_id == "hw-peer-7"
+
+
+class TestHardwareSendActionTeleopContract:
+    """Pin the TeleopMixin host contract on hardware Robot.
+
+    Regression: ``TeleopMixin._teleop_loop`` calls ``self.send_action(action,
+    robot_name=...)``. The MuJoCo Simulation host defines ``send_action`` but
+    the hardware ``Robot`` originally did NOT (it only wrapped an inner lerobot
+    robot whose ``send_action`` is ``self.robot.send_action``). So
+    ``Robot('so101', mode='real').attach_teleop(...).teleoperate()`` would have
+    raised ``AttributeError`` mid-loop. This pins that hardware Robot now
+    satisfies the contract directly: ensures connect, delegates to the inner
+    robot, ignores ``robot_name`` (single device), and returns a status dict
+    (never raises) so the hot teleop loop stays alive.
+
+    Per AGENTS.md > Review Learnings (#85): pin regression tests for fixes.
+    """
+
+    def _make_hw_robot(self, *, connected: bool):
+        from unittest.mock import MagicMock, patch
+
+        from strands_robots import Robot
+        from strands_robots.hardware_robot import Robot as HwRobot
+
+        inner = MagicMock(name="lerobot_robot_instance")
+        inner.name = "so_follower"
+        inner.config = MagicMock()
+        inner.config.cameras = {}
+        inner.is_connected = connected
+        inner.send_action = MagicMock(return_value=None)
+        inner.connect = MagicMock(name="connect")
+
+        with patch(
+            "lerobot.robots.utils.make_robot_from_config",
+            return_value=inner,
+        ):
+            r = Robot("so101", mode="real", port="/dev/null")
+        assert isinstance(r, HwRobot)
+        return r, inner
+
+    def test_send_action_delegates_when_connected(self):
+        pytest.importorskip("lerobot.robots.so_follower")
+        r, inner = self._make_hw_robot(connected=True)
+        res = r.send_action({"shoulder.pos": 0.5}, robot_name="ignored")
+        assert res["status"] == "success"
+        inner.send_action.assert_called_once_with({"shoulder.pos": 0.5})
+        # Already connected -> no lazy connect call.
+        inner.connect.assert_not_called()
+
+    def test_send_action_lazy_connects_first(self):
+        pytest.importorskip("lerobot.robots.so_follower")
+        r, inner = self._make_hw_robot(connected=False)
+        res = r.send_action({"j.pos": 1.0})
+        assert res["status"] == "success"
+        inner.connect.assert_called_once_with(False)  # calibrate=False
+        inner.send_action.assert_called_once_with({"j.pos": 1.0})
+
+    def test_send_action_returns_error_status_never_raises(self):
+        pytest.importorskip("lerobot.robots.so_follower")
+        r, inner = self._make_hw_robot(connected=True)
+        inner.send_action.side_effect = RuntimeError("motor stalled")
+        res = r.send_action({"j.pos": 1.0})  # must NOT raise
+        assert res["status"] == "error"
+        assert "motor stalled" in res["content"][0]["text"]
+
+    def test_hardware_robot_satisfies_teleop_mixin(self):
+        """Hardware Robot is a TeleopMixin and exposes the loop entrypoints."""
+        pytest.importorskip("lerobot.robots.so_follower")
+        from strands_robots.teleop_mixin import TeleopMixin
+
+        r, _ = self._make_hw_robot(connected=True)
+        assert isinstance(r, TeleopMixin)
+        for m in ("attach_teleop", "teleoperate", "stop_teleoperate", "send_action"):
+            assert callable(getattr(r, m, None)), f"missing {m}"

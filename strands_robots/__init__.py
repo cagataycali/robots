@@ -51,6 +51,7 @@ if TYPE_CHECKING:
         register_backend,
     )
     from strands_robots.streaming_dataset import StreamingDatasetReader
+    from strands_robots.teleoperator import Teleoperator
     from strands_robots.tools.gr00t_inference import gr00t_inference
     from strands_robots.tools.lerobot_calibrate import lerobot_calibrate
     from strands_robots.tools.lerobot_camera import lerobot_camera
@@ -72,6 +73,7 @@ from strands_robots.policies import MockPolicy, Policy, create_policy  # noqa: F
 _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     # Hardware robot
     "Robot": ("strands_robots.robot", "Robot"),
+    "Teleoperator": ("strands_robots.teleoperator", "Teleoperator"),
     "list_robots": ("strands_robots.registry", "list_robots"),
     "get_robot": ("strands_robots.registry", "get_robot"),
     # Policies
@@ -111,6 +113,7 @@ __all__ = [
     "create_policy",
     # Lazy-loaded
     "Robot",
+    "Teleoperator",
     "Gr00tPolicy",
     "Simulation",
     "SimWorld",
