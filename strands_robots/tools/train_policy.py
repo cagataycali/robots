@@ -200,6 +200,14 @@ def train_policy(
             return _ok(f"[{provider}] spec is valid and launchable.")
 
         if action == "export":
+            # Gate on validate() FIRST, like train/validate - export consumes the
+            # same agent-supplied spec (output_dir + extra reach trainer.export),
+            # so it must not run with unvalidated input (path traversal, a leading
+            # '-', or an arbitrary extra key). validate() runs _security_problems
+            # plus the backend's own spec checks, fail-closed.
+            problems = trainer.validate(spec)
+            if problems:
+                return _err("validation problems (nothing exported):\n  - " + "\n  - ".join(problems))
             ckpt = trainer.latest_checkpoint(output_dir)
             if not ckpt:
                 return _err(f"no checkpoint found under {output_dir} to export")
