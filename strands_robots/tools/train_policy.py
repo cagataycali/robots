@@ -113,6 +113,21 @@ def train_policy(
     Returns:
         ``{status, content:[{text}], ...}``. For ``train``: includes
         ``checkpoint_dir``, ``metrics``, ``job_id``.
+
+    Dependencies (per provider - the base ``[lerobot]`` extra is not always
+    enough):
+        - ``lerobot_local`` + ACT/diffusion: ``pip install 'strands-robots[lerobot]'``.
+        - ``lerobot_local`` + ``smolvla``/``pi0``/``pi05``: needs lerobot's
+          ``[smolvla]``/``[pi]`` extra, which pins ``transformers==5.3.0``. A
+          newer transformers crashes the VLA import (``non-default argument
+          'backbone_cfg' follows default argument``) - pin it.
+        - ``groot``/``cosmos3``: run in their own checkout + venv; point
+          ``extra['groot_root']``/``GR00T_ROOT`` or
+          ``extra['cosmos_root']``/``COSMOS_ROOT`` at it. The trainer launches
+          the native pipeline as a subprocess, so it uses THAT interpreter.
+        - torchcodec's ``.so`` must match the installed torch build exactly; a
+          torch nightly load-fails a stable torchcodec (``undefined symbol``)
+          and lerobot silently yields zero frames. See docs/training/overview.md.
     """
     try:
         if action == "list":
@@ -125,7 +140,9 @@ def train_policy(
             res = trainer.status(job_id)
             return {
                 "status": "success" if res.status != "error" else "error",
-                "content": [{"text": f"[{provider}] job {job_id}: {res.status}\n{res.message}\nmetrics: {res.metrics}"}],
+                "content": [
+                    {"text": f"[{provider}] job {job_id}: {res.status}\n{res.message}\nmetrics: {res.metrics}"}
+                ],
                 "metrics": res.metrics,
             }
 
@@ -170,8 +187,7 @@ def train_policy(
                 return _err(f"no checkpoint found under {output_dir} to export")
             exported = trainer.export(spec, ckpt)
             return _ok(
-                f"[{provider}] exported loadable artifact:\n{exported}\n"
-                f"Load it with: create_policy('{exported}')",
+                f"[{provider}] exported loadable artifact:\n{exported}\nLoad it with: create_policy('{exported}')",
                 exported_model=exported,
             )
 
@@ -184,23 +200,23 @@ def train_policy(
                 return _err(f"[{provider}] training failed: {res.message}")
             return {
                 "status": "success",
-                "content": [{
-                    "text": (
-                        f"[{provider}] {res.message}\n"
-                        f"job_id: {res.job_id}\n"
-                        f"checkpoint_dir: {res.checkpoint_dir}\n"
-                        f"metrics: {res.metrics}\n"
-                        f"Load the result with: create_policy('{res.checkpoint_dir}')"
-                    )
-                }],
+                "content": [
+                    {
+                        "text": (
+                            f"[{provider}] {res.message}\n"
+                            f"job_id: {res.job_id}\n"
+                            f"checkpoint_dir: {res.checkpoint_dir}\n"
+                            f"metrics: {res.metrics}\n"
+                            f"Load the result with: create_policy('{res.checkpoint_dir}')"
+                        )
+                    }
+                ],
                 "job_id": res.job_id,
                 "checkpoint_dir": res.checkpoint_dir,
                 "metrics": res.metrics,
             }
 
-        return _err(
-            f"Unknown action: {action}. Valid: train, validate, status, export, list"
-        )
+        return _err(f"Unknown action: {action}. Valid: train, validate, status, export, list")
 
     except Exception as e:  # noqa: BLE001 - tool boundary: report, don't crash the agent
         logger.exception("train_policy failed")

@@ -12,7 +12,7 @@ import pytest
 lerobot = pytest.importorskip("lerobot")
 pytest.importorskip("mujoco")
 
-from strands_robots.training import TrainSpec, create_trainer
+from strands_robots.training import TrainSpec, create_trainer  # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -25,13 +25,18 @@ def recorded_dataset(tmp_path_factory):
     sim = Robot("so100", mesh=False)
     sim.add_camera(name="front", position=[0.5, 0.0, 0.4], target=[0.2, 0, 0.05])
     start = sim.start_recording(
-        repo_id="local/e2e", root=root, fps=30,
-        task="pick up the red cube", overwrite=True,
+        repo_id="local/e2e",
+        root=root,
+        fps=30,
+        task="pick up the red cube",
+        overwrite=True,
     )
     assert start["status"] == "success", start
     sim.run_policy(
-        robot_name="so100", policy_object=MockPolicy(),
-        instruction="pick up the red cube", n_steps=20,
+        robot_name="so100",
+        policy_object=MockPolicy(),
+        instruction="pick up the red cube",
+        n_steps=20,
     )
     stop = sim.stop_recording()
     assert stop["status"] == "success", stop
@@ -48,7 +53,9 @@ def test_record_train_load_loop(recorded_dataset, tmp_path):
         dataset_root=recorded_dataset,
         base_model="",  # ACT from scratch - smallest CPU path
         output_dir=out,
-        steps=2, save_freq=2, global_batch_size=2,
+        steps=2,
+        save_freq=2,
+        global_batch_size=2,
         extra={"policy_type": "act", "num_workers": 0},
     )
 

@@ -71,7 +71,8 @@ class TestValidate:
         problems = Cosmos3Trainer().validate(spec)
         assert any("needs a recipe TOML" in p for p in problems)
 
-    def test_missing_cosmos_root(self, spec):
+    def test_missing_cosmos_root(self, spec, monkeypatch):
+        monkeypatch.delenv("COSMOS_ROOT", raising=False)
         spec.extra.pop("cosmos_root")
         problems = Cosmos3Trainer().validate(spec)
         assert any("cosmos-framework checkout not found" in p for p in problems)
@@ -97,7 +98,7 @@ class TestBuildCommand:
     def test_hydra_tail_overrides_after_dashdash(self, spec):
         cmd = Cosmos3Trainer().build_command(spec)
         assert "--" in cmd
-        tail = cmd[cmd.index("--") + 1:]
+        tail = cmd[cmd.index("--") + 1 :]
         assert "trainer.max_iter=1000" in tail
         assert "checkpoint.save_iter=500" in tail
         assert "optimizer.lr=0.0002" in tail
@@ -107,13 +108,13 @@ class TestBuildCommand:
     def test_multinode_hsdp_override(self, spec):
         spec.num_nodes = 4
         cmd = Cosmos3Trainer().build_command(spec)
-        tail = cmd[cmd.index("--") + 1:]
+        tail = cmd[cmd.index("--") + 1 :]
         assert "model.config.parallelism.data_parallel_replicate_degree=4" in tail
 
     def test_extra_hydra_passthrough(self, spec):
         spec.extra["dataloader_train.dataloader.datasets.droid.dataset.use_filter_dict"] = "True"
         cmd = Cosmos3Trainer().build_command(spec)
-        tail = cmd[cmd.index("--") + 1:]
+        tail = cmd[cmd.index("--") + 1 :]
         assert any("use_filter_dict=True" in t for t in tail)
 
 

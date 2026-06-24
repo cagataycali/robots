@@ -5,7 +5,6 @@ groot_root with a stub launch_finetune.py for the happy-path command tests).
 """
 
 import json
-import os
 
 import pytest
 
@@ -64,7 +63,8 @@ class TestValidate:
         problems = Gr00tTrainer().validate(spec)
         assert any("embodiment is required" in p for p in problems)
 
-    def test_missing_groot_root(self, spec):
+    def test_missing_groot_root(self, spec, monkeypatch):
+        monkeypatch.delenv("GR00T_ROOT", raising=False)
         spec.extra.pop("groot_root")
         problems = Gr00tTrainer().validate(spec)
         assert any("Isaac-GR00T checkout not found" in p for p in problems)

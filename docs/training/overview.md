@@ -142,6 +142,33 @@ TrainSpec(..., num_gpus=8,
 # export(): DCP -> safetensors
 ```
 
+## Dependencies & extras (per provider)
+
+The base `strands-robots[lerobot]` extra is enough for **ACT / diffusion from
+scratch**, but VLA post-tunes pull in policy-specific stacks. Install the extra
+that matches your `extra["policy_type"]` / provider — verified on an L40S GPU:
+
+| Provider / policy | Install | Notes |
+|---|---|---|
+| `lerobot_local` + ACT / diffusion | `pip install 'strands-robots[lerobot]'` | works out of the box (torch + torchcodec + datasets) |
+| `lerobot_local` + `smolvla` | `pip install 'lerobot[smolvla]==0.5.1'` | **needs `transformers==5.3.0`** (lerobot's pinned `[smolvla]` extra). A newer transformers (e.g. 5.12) crashes smolvla import with `non-default argument 'backbone_cfg' follows default argument`. Pin it. |
+| `lerobot_local` + `pi0` / `pi05` | `pip install 'lerobot[pi]==0.5.1'` | same `transformers==5.3.0` pin via lerobot's `[pi]` extra |
+| `groot` | Isaac-GR00T checkout + its own venv (`omegaconf`, `tyro`, …); point `extra["groot_root"]` / `GR00T_ROOT` at it | launched as a subprocess, so it uses GR00T's interpreter, not ours |
+| `cosmos3` | cosmos-framework checkout (`uv sync --group=cu130-train`); point `extra["cosmos_root"]` / `COSMOS_ROOT` at it | torchrun-driven; same subprocess-interpreter rule |
+
+> **torchcodec / torch ABI:** the lerobot training dataloader decodes video via
+> `torchcodec`, whose compiled `.so` must match the **exact** installed torch
+> build. A torch *nightly* (e.g. `2.12.0.dev`) load-fails a stable-built
+> torchcodec with `undefined symbol: ...MessageLogger` even when ffmpeg is
+> present — and lerobot silently swallows the per-shard decode error, so
+> training fails with a generic non-zero exit. Pin `torch` + `torchcodec`
+> together (verified-good combo: `torch==2.10.0+cu128` + `torchcodec==0.10.0`).
+
+> **Subprocess interpreter:** `LerobotTrainer` / `Gr00tTrainer` / `Cosmos3Trainer`
+> accept a `python_executable=` argument (defaults to `sys.executable`). Set it
+> to a venv that has the provider's deps if your agent process runs in a
+> different environment — the training pipeline runs in that interpreter.
+
 ## See also
 
 - [Recording](../recording.md) - produce the dataset.
