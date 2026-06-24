@@ -1,7 +1,9 @@
-"""Tests for LerobotTrainer: factory wiring, validate, and command building.
+"""Tests for LerobotTrainer: factory wiring, validate, and config building.
 
-These are pure/offline (no GPU, no actual lerobot_train launch). The real
-end-to-end sim->train->load is exercised separately.
+These are pure/offline (no GPU, no actual training launch). The trainer now
+runs lerobot IN-PROCESS (no subprocess), so the build step produces a typed
+``TrainPipelineConfig`` object rather than an argv list. The real end-to-end
+sim->train->load is exercised separately (test_lerobot_e2e.py).
 """
 
 import json
@@ -10,6 +12,9 @@ import pytest
 
 from strands_robots.training import TrainSpec, create_trainer
 from strands_robots.training.lerobot import LerobotTrainer
+
+# build_config() touches lerobot dataclasses, so those tests need lerobot.
+lerobot = pytest.importorskip("lerobot")
 
 
 @pytest.fixture
@@ -44,6 +49,12 @@ class TestFactoryWiring:
         t = create_trainer("lerobot")
         assert isinstance(t, LerobotTrainer)
 
+    def test_python_executable_kwarg_is_accepted_but_ignored(self):
+        # Back-compat: old callers passed python_executable for the subprocess.
+        # It must not raise; training is now in-process so it's simply ignored.
+        t = LerobotTrainer(device="cpu", python_executable="/usr/bin/python3")
+        assert isinstance(t, LerobotTrainer)
+
 
 class TestValidate:
     def test_clean(self, spec):
@@ -65,63 +76,81 @@ class TestValidate:
         problems = LerobotTrainer().validate(spec)
         assert any("val_episodes" in p for p in problems)
 
+    def test_multi_node_rejected(self, spec):
+        spec.num_nodes = 2
+        problems = LerobotTrainer().validate(spec)
+        assert any("multi-node" in p for p in problems)
 
-class TestBuildCommand:
-    def test_single_gpu_core_flags(self, spec):
-        cmd = LerobotTrainer(device="cpu").build_command(spec)
-        joined = " ".join(cmd)
-        assert "-m lerobot.scripts.lerobot_train" in joined
-        assert "--dataset.repo_id=local" in cmd
-        assert f"--dataset.root={spec.dataset_root}" in cmd
-        assert "--policy.type=act" in cmd
-        assert "--policy.device=cpu" in cmd
-        assert "--policy.push_to_hub=false" in cmd
-        assert "--steps=200" in cmd
-        assert "--batch_size=8" in cmd
-        assert "--save_freq=100" in cmd
-        assert "--wandb.enable=false" in cmd
-        assert "--policy.pretrained_path=lerobot/act_aloha_sim" in cmd
 
-    def test_multi_gpu_uses_accelerate(self, spec):
-        spec.num_gpus = 4
-        cmd = LerobotTrainer(device="cuda").build_command(spec)
-        assert cmd[0] == "accelerate"
-        assert "--multi_gpu" in cmd
-        assert "--num_processes=4" in cmd
-        assert "-m" in cmd and "lerobot.scripts.lerobot_train" in cmd
+class TestBuildConfig:
+    """build_config() yields a typed TrainPipelineConfig (no argv strings)."""
 
-    def test_lora_flags(self, spec):
+    def test_core_fields(self, spec):
+        cfg = LerobotTrainer(device="cpu").build_config(spec)
+        # dataset
+        assert cfg.dataset.repo_id == "local"
+        assert cfg.dataset.root == spec.dataset_root
+        # policy
+        assert cfg.policy.type == "act"
+        assert cfg.policy.device == "cpu"
+        assert cfg.policy.push_to_hub is False
+        assert str(cfg.policy.pretrained_path) == "lerobot/act_aloha_sim"
+        # training knobs
+        assert cfg.steps == 200
+        assert cfg.batch_size == 8
+        assert cfg.save_freq == 100
+        assert cfg.wandb.enable is False
+        # no PEFT for full fine-tune
+        assert cfg.peft is None
+
+    def test_lora_builds_peft_config(self, spec):
         spec.method = "lora"
         spec.lora_r = 16
         spec.lora_target_modules = "q_proj,v_proj"
-        cmd = LerobotTrainer(device="cpu").build_command(spec)
-        assert "--peft.method_type=LORA" in cmd
-        assert "--peft.r=16" in cmd
-        assert "--peft.target_modules=q_proj,v_proj" in cmd
+        cfg = LerobotTrainer(device="cpu").build_config(spec)
+        assert cfg.peft is not None
+        assert cfg.peft.method_type == "LORA"
+        assert cfg.peft.r == 16
+        assert cfg.peft.target_modules == "q_proj,v_proj"
+        # policy must be flagged to actually wrap with PEFT
+        assert cfg.policy.use_peft is True
 
-    def test_expert_only_flag(self, spec):
+    def test_expert_only_sets_policy_flag(self, spec):
+        # use a policy type that exposes train_expert_only
+        spec.extra["policy_type"] = "pi0"
         spec.method = "expert_only"
-        cmd = LerobotTrainer(device="cpu").build_command(spec)
-        assert "--policy.train_expert_only=true" in cmd
+        cfg = LerobotTrainer(device="cpu").build_config(spec)
+        assert getattr(cfg.policy, "train_expert_only", None) is True
 
-    def test_val_split_episodes_flag(self, spec):
+    def test_val_split_episodes(self, spec):
         spec.val_episodes = 2  # total 10 -> train on [0..7]
-        cmd = LerobotTrainer(device="cpu").build_command(spec)
-        ep_flags = [c for c in cmd if c.startswith("--dataset.episodes=")]
-        assert ep_flags
-        assert ep_flags[0] == "--dataset.episodes=[0, 1, 2, 3, 4, 5, 6, 7]"
+        cfg = LerobotTrainer(device="cpu").build_config(spec)
+        assert cfg.dataset.episodes == [0, 1, 2, 3, 4, 5, 6, 7]
 
-    def test_seed_and_jobname_and_passthrough(self, spec):
+    def test_seed_and_jobname(self, spec):
         spec.seed = 42
         spec.extra["job_name"] = "my_run"
-        spec.extra["num_workers"] = 4  # arbitrary passthrough
-        cmd = LerobotTrainer(device="cpu").build_command(spec)
-        assert "--seed=42" in cmd
-        assert "--job_name=my_run" in cmd
-        assert "--num_workers=4" in cmd
-        # consumed keys must NOT leak as flags
-        assert not any(c.startswith("--policy_type=") for c in cmd)
-        assert not any(c.startswith("--job_name=strands_ft") for c in cmd)
+        cfg = LerobotTrainer(device="cpu").build_config(spec)
+        assert cfg.seed == 42
+        assert cfg.job_name == "my_run"
+
+    def test_typed_passthrough_known_field(self, spec):
+        # a real top-level TrainPipelineConfig field is applied via setattr
+        spec.extra["num_workers"] = 0
+        cfg = LerobotTrainer(device="cpu").build_config(spec)
+        assert cfg.num_workers == 0
+
+    def test_dotted_passthrough_subconfig(self, spec):
+        # dotted extra resolves to a sub-config (dataset.video_backend)
+        spec.extra["dataset.video_backend"] = "pyav"
+        cfg = LerobotTrainer(device="cpu").build_config(spec)
+        assert cfg.dataset.video_backend == "pyav"
+
+    def test_unknown_extra_is_ignored_not_injected(self, spec, caplog):
+        # An unknown key must NOT become a flag / attribute; it's dropped safely.
+        spec.extra["totally_made_up_flag"] = "x; rm -rf /"
+        cfg = LerobotTrainer(device="cpu").build_config(spec)
+        assert not hasattr(cfg, "totally_made_up_flag")
 
 
 class TestParseLog:

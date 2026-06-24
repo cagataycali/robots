@@ -149,7 +149,17 @@ lerobot = [
     # Declaring it here makes `sim.stream_dataset(...)` work out of the box
     # instead of pushing torchcodec/av plumbing onto user code. See
     # reports/STREAMING_DATA_LOOP_DEEP_DIVE.md Appendix C.
-    "lerobot[feetech,dataset]>=0.5.0,<0.6.0",
+    # [training] pulls accelerate (+ wandb) - the deps lerobot's train()
+    # needs. strands-robots now drives that train() IN-PROCESS (no subprocess),
+    # so accelerate MUST be resolvable here: single-GPU calls train(cfg)
+    # directly, multi-GPU uses accelerate.notebook_launcher (multiprocessing,
+    # not a shell command line). See strands_robots/training/lerobot.py.
+    "lerobot[feetech,dataset,training]>=0.5.0,<0.6.0",
+    # Pinned explicitly too (not just transitively via [training]) because the
+    # in-process trainer imports it directly for the multi-GPU launcher
+    # (accelerate.notebook_launcher). Range tracks lerobot's own
+    # [accelerate-dep] pin (>=1.14.0,<2.0.0) so the two co-resolve.
+    "accelerate>=1.14.0,<2.0.0",
     # torchcodec wheels are built against a specific torch C++ ABI, so the
     # version MUST track the resolved torch:
     #   torch 2.9  -> torchcodec 0.7

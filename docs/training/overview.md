@@ -30,7 +30,7 @@ and a single `--policy.type` flag can't express them:
 
 | Provider | Upstream entry point | Config surface | Launcher | HW floor |
 |----------|---------------------|----------------|----------|----------|
-| `lerobot_local` | `lerobot.scripts.lerobot_train` | draccus `--dotted.flags` | `python` / `accelerate launch` | 1 consumer GPU |
+| `lerobot_local` | `lerobot.scripts.lerobot_train.train(cfg)` | typed `TrainPipelineConfig` (in-process) | in-process / `accelerate.notebook_launcher` | 1 consumer GPU |
 | `groot` | Isaac-GR00T `launch_finetune.py` | `FinetuneConfig` (tyro) + `tune_*` flags | `python` / `torchrun` | 1 modern GPU |
 | `cosmos3` | `cosmos_framework.scripts.train` | TOML recipe + Hydra overrides; **DCP convert** + **safetensors export** | `torchrun` (HSDP) | 8×H100 80GB |
 
@@ -120,8 +120,33 @@ agent("Record 50 cube-pick episodes, then post-tune lerobot ACT on the dataset "
 
 ```python
 TrainSpec(..., method="lora", lora_r=16, extra={"policy_type": "pi05"})
-# -> lerobot_train --peft.method_type=LORA --peft.r=16 --policy.type=pi05
+# -> build_config() yields a typed TrainPipelineConfig:
+#      policy = make_policy_config("pi05"); policy.use_peft = True
+#      peft   = PeftConfig(method_type="LORA", r=16)
+#    then lerobot.scripts.lerobot_train.train(cfg) is called IN-PROCESS.
 ```
+
+**Runs in-process - no `subprocess`.** Unlike the GR00T / Cosmos3 backends
+(which run in their own checkout + venv via `python_executable=`), the
+LeRobot backend imports `lerobot` directly and calls its `train(cfg)`
+function in *this* interpreter. `build_config()` translates a `TrainSpec`
+into the typed `TrainPipelineConfig` dataclass tree that `train()` consumes;
+lerobot's `@parser.wrap()` short-circuits when handed a config instance, so
+**`sys.argv` is never read and no command line is assembled**. This removes
+the previous attack surface where caller-controlled `extra` keys were
+interpolated into a shell `argv` (`--{key}={value}`) for a spawned
+interpreter. Unknown `extra` keys are now applied via `setattr` onto the
+typed config only when a matching field exists, and ignored (with a warning)
+otherwise - they can never become an arbitrary process flag.
+
+Launcher selection stays shell-free:
+
+- **1 GPU / CPU** -> `train(cfg)` called directly (zero new processes).
+- **>1 GPU, 1 node** -> `accelerate.notebook_launcher(train, (cfg,),
+  num_processes=num_gpus)` (multiprocessing workers, not a command line).
+- **multi-node** (`num_nodes > 1`) -> rejected in `validate()` with a clear
+  message; genuine multi-node needs a per-node `torchrun`/`accelerate launch`
+  that this in-process trainer deliberately does not shell out to.
 
 ### GR00T (`groot`)
 
