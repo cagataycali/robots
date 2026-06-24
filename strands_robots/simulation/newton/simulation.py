@@ -577,6 +577,11 @@ class NewtonSimEngine(SimEngine):
 
         Uses an OpenGL-style camera frame (camera looks down its local -Z).
 
+        When ``up`` is parallel to the view axis (e.g. a top-down camera
+        directly above its target with the default world-up), an alternate up
+        vector is chosen so the basis stays well-defined instead of producing a
+        NaN quaternion.
+
         Args:
             eye: Camera position.
             target: Point the camera looks at.
@@ -584,14 +589,29 @@ class NewtonSimEngine(SimEngine):
 
         Returns:
             Quaternion as ``(x, y, z, w)`` for ``warp.quatf``.
+
+        Raises:
+            ValueError: If ``eye`` and ``target`` coincide, leaving the view
+                direction undefined.
         """
         e = np.asarray(eye, dtype=np.float64)
         t = np.asarray(target, dtype=np.float64)
         u = np.asarray(up, dtype=np.float64)
         f = t - e
-        f /= np.linalg.norm(f)
+        f_norm = np.linalg.norm(f)
+        if f_norm < 1e-9:
+            raise ValueError(f"look_at: eye and target coincide ({eye!r}); camera direction is undefined.")
+        f /= f_norm
         z = -f
         x = np.cross(u, z)
+        # When ``up`` is (near-)parallel to the view axis -- e.g. a top-down
+        # camera placed directly above its target with the default world-up --
+        # ``cross(up, z)`` collapses to ~0 and normalising it would yield a
+        # NaN quaternion (a silently garbage camera pose). Fall back to an
+        # alternate up vector that is guaranteed non-parallel to ``z``.
+        if np.linalg.norm(x) < 1e-6:
+            alt_up = np.array([1.0, 0.0, 0.0]) if abs(z[0]) < 0.9 else np.array([0.0, 1.0, 0.0])
+            x = np.cross(alt_up, z)
         x /= np.linalg.norm(x)
         y = np.cross(z, x)
         r = np.stack([x, y, z], axis=1)
