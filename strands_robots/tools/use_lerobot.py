@@ -255,6 +255,8 @@ def _describe_object(obj) -> dict[str, Any]:
             sig = inspect.signature(obj.__init__)
             info["init_params"] = [p for p in sig.parameters if p != "self"]
         except (ValueError, TypeError):
+            # Builtins / C-extension types expose no introspectable signature;
+            # skip init_params rather than failing the describe call.
             pass
 
     elif callable(obj):
@@ -268,6 +270,8 @@ def _describe_object(obj) -> dict[str, Any]:
                 for name, p in sig.parameters.items()
             }
         except (ValueError, TypeError):
+            # Builtins / C-extension callables expose no introspectable
+            # signature; describe them without a params map.
             pass
         if obj.__doc__:
             info["doc"] = obj.__doc__
@@ -298,7 +302,6 @@ def _is_image_array(arr) -> bool:
         return False
     if arr.ndim == 2:
         h, w = arr.shape
-        c = 1
     elif arr.ndim == 3:
         h, w, c = arr.shape
         if c not in (1, 3, 4):
@@ -326,7 +329,7 @@ def _array_to_image_block(arr) -> dict[str, Any] | None:
         if frame.dtype != np.uint8:
             if np.issubdtype(frame.dtype, np.floating):
                 fmax = float(frame.max()) if frame.size else 1.0
-                scale = 255.0 if fmax <= 1.0 else (255.0 / fmax if fmax > 0 else 1.0)
+                scale = 255.0 if fmax <= 1.0 else 255.0 / fmax
                 frame = np.clip(frame * scale, 0, 255).astype(np.uint8)
             else:
                 frame = np.clip(frame, 0, 255).astype(np.uint8)
@@ -420,6 +423,7 @@ def _serialize_value(value: Any, _seen: set | None = None, _depth: int = 0) -> A
         if isinstance(value, (np.floating,)):
             return float(value)
     except ImportError:
+        # numpy absent: fall through to the plain-Python serialization below.
         pass
 
     if isinstance(value, (list, tuple)):
@@ -476,7 +480,7 @@ def _serialize_result(result: Any) -> str:
 def use_lerobot(
     module: str = "__discovery__",
     method: str = "list_modules",
-    parameters: dict[str, Any] = None,
+    parameters: dict[str, Any] | None = None,
     label: str = "",
 ) -> dict[str, Any]:
     """Universal LeRobot access - call any lerobot module, class, or function dynamically.

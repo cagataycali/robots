@@ -29,10 +29,9 @@ import numpy as np
 import pytest
 
 import strands_robots.tools.use_lerobot as M
-from strands_robots.tools.use_lerobot import use_lerobot
 
 # The tool is wrapped by the Strands @tool decorator; call the raw function.
-_fn = use_lerobot.__wrapped__
+_fn = getattr(M.use_lerobot, "__wrapped__", None) or M.use_lerobot
 
 pytest.importorskip("lerobot", reason="use_lerobot requires the lerobot package")
 
@@ -221,6 +220,7 @@ def test_serializer_handles_numpy_scalars() -> None:
 
 def test_serializer_summarizes_large_arrays_structurally() -> None:
     out = M._serialize_value(np.zeros((2, 3, 64, 64)))
+    assert isinstance(out, dict)
     assert out["__ndarray__"] is True
     assert out["shape"] == [2, 3, 64, 64]
     # A 4D tensor is not pixel-dumped as text.
@@ -283,8 +283,12 @@ def test_small_frame_and_alpha_use_png() -> None:
     pytest.importorskip("cv2")
     small = (np.random.rand(100, 100, 3) * 255).astype(np.uint8)
     rgba = (np.random.rand(480, 640, 4) * 255).astype(np.uint8)
-    assert M._array_to_image_block(small)["image"]["format"] == "png"
-    assert M._array_to_image_block(rgba)["image"]["format"] == "png"
+    small_block = M._array_to_image_block(small)
+    rgba_block = M._array_to_image_block(rgba)
+    assert small_block is not None
+    assert rgba_block is not None
+    assert small_block["image"]["format"] == "png"
+    assert rgba_block["image"]["format"] == "png"
 
 
 def test_collect_images_finds_frames_in_dict() -> None:
