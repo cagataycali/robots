@@ -315,3 +315,243 @@ def test_deep_import_is_cached() -> None:
     # Idempotent: calling again must not raise and the marker persists.
     M._deep_import("lerobot.policies")
     assert "lerobot.policies" in M._DEEP_IMPORTED
+
+
+# ----------------------------------------------------------------------------
+# import resolution -- resolver-internal error classification
+# ----------------------------------------------------------------------------
+def test_empty_module_path_cannot_resolve() -> None:
+    """A blank dotted path resolves to nothing rather than crashing."""
+    with pytest.raises(M.LeRobotResolveError, match="Cannot resolve"):
+        M._import_from_lerobot("")
+
+
+def test_third_party_import_error_surfaces_real_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When a lerobot submodule fails to import because a *third-party* package
+    is missing, the resolver remembers and surfaces that real ImportError
+    (carried on ``real_error``) instead of a misleading 'cannot resolve'."""
+    real = importlib.import_module
+
+    def fake_import(name: str, *a: Any, **k: Any) -> Any:
+        if name == "lerobot.synthetic_thirdparty_gap":
+            raise ImportError("No module named 'absent_extra'", name="absent_extra")
+        return real(name, *a, **k)
+
+    monkeypatch.setattr(importlib, "import_module", fake_import)
+    with pytest.raises(M.LeRobotResolveError) as exc:
+        M._import_from_lerobot("synthetic_thirdparty_gap")
+    assert "failed to import" in str(exc.value)
+    assert exc.value.real_error is not None
+
+
+def test_non_import_error_during_import_surfaces_real_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A non-ImportError raised at module import time (e.g. a RuntimeError in a
+    module's top-level code) is also captured as the real error, not masked."""
+    real = importlib.import_module
+
+    def fake_import(name: str, *a: Any, **k: Any) -> Any:
+        if name == "lerobot.synthetic_runtime_boom":
+            raise RuntimeError("import-time boom")
+        return real(name, *a, **k)
+
+    monkeypatch.setattr(importlib, "import_module", fake_import)
+    with pytest.raises(M.LeRobotResolveError) as exc:
+        M._import_from_lerobot("synthetic_runtime_boom")
+    assert "failed to import" in str(exc.value)
+    assert isinstance(exc.value.real_error, RuntimeError)
+
+
+# ----------------------------------------------------------------------------
+# introspection -- describe across object kinds
+# ----------------------------------------------------------------------------
+def test_describe_plain_function_lists_params_and_doc() -> None:
+    """Describing a function reports its parameter defaults and docstring."""
+
+    def sample(a: int, b: int = 3) -> int:
+        """sample docstring"""
+        return a + b
+
+    info = M._describe_object(sample)
+    assert info["type"] == "function"
+    assert info["params"]["a"]["default"] == "REQUIRED"
+    assert info["params"]["b"]["default"] == "3"
+    assert info["doc"] == "sample docstring"
+
+
+def test_describe_module_lists_public_names() -> None:
+    """Describing a module enumerates its public names (and skips dunders)."""
+    import json as json_mod
+
+    info = M._describe_object(json_mod)
+    assert "dumps" in info["public_names"]
+    assert all(not n.startswith("_") for n in info["public_names"])
+
+
+def test_describe_plain_value_uses_value_branch() -> None:
+    """A non-class/callable/module value is described via its ``value`` field."""
+    info = M._describe_object(42)
+    assert info["type"] == "int"
+    assert info["value"] == "42"
+
+
+def test_describe_builtin_callable_skips_uninspectable_signature() -> None:
+    """A C-extension callable (``min``) whose signature is not introspectable
+    still yields a describe dict (with its docstring) -- no crash, no params
+    map. This pins the (ValueError, TypeError) carve-out in the callable
+    branch so signature-less builtins describe gracefully."""
+    info = M._describe_object(min)
+    assert info["type"] == "builtin_function_or_method"
+    assert info["doc"]  # docstring still surfaced
+    # min exposes no Python signature; the params map must be absent.
+    assert "params" not in info
+
+
+# ----------------------------------------------------------------------------
+# image encoding -- normalization + codec selection
+# ----------------------------------------------------------------------------
+def test_float_frame_normalized_and_encoded() -> None:
+    """Float images in [0,1] and in [0,255] both normalize to uint8 and encode."""
+    pytest.importorskip("cv2")
+    unit = np.random.rand(400, 400, 3).astype(np.float32)  # max <= 1.0
+    scaled = (np.random.rand(400, 400, 3) * 200).astype(np.float64)  # max > 1.0
+    assert M._array_to_image_block(unit) is not None
+    assert M._array_to_image_block(scaled) is not None
+
+
+def test_grayscale_frame_encodes() -> None:
+    """A 2D grayscale frame encodes without a channel conversion."""
+    pytest.importorskip("cv2")
+    gray = (np.random.rand(400, 400) * 255).astype(np.uint8)
+    block = M._array_to_image_block(gray)
+    assert block is not None
+    assert block["image"]["source"]["bytes"]
+
+
+def test_collect_images_finds_frames_in_list() -> None:
+    """Images one level inside a list are collected; non-images are ignored."""
+    pytest.importorskip("cv2")
+    items = [
+        (np.random.rand(64, 64, 3) * 255).astype(np.uint8),
+        "not an image",
+        (np.random.rand(64, 64, 3) * 255).astype(np.uint8),
+    ]
+    blocks: list[dict[str, Any]] = []
+    M._collect_images(items, blocks)
+    assert len(blocks) == 2
+
+
+# ----------------------------------------------------------------------------
+# serializer -- remaining value kinds
+# ----------------------------------------------------------------------------
+def test_serializer_passes_through_scalars_and_none() -> None:
+    assert M._serialize_value(None) is None
+    assert M._serialize_value(True) is True
+    assert M._serialize_value(7) == 7
+
+
+def test_serializer_caps_long_string() -> None:
+    """A string longer than the safety cap is truncated with a remainder note."""
+    out = M._serialize_value("a" * (M._MAX_STR + 10))
+    assert out.endswith("[+10 chars]")
+    assert len(out) < M._MAX_STR + 100
+
+
+def test_serializer_marks_image_arrays_not_pixel_dumped() -> None:
+    """An image-shaped array is summarized as an image, never dumped as pixels."""
+    out = M._serialize_value(np.zeros((64, 64, 3), dtype=np.uint8))
+    assert out["__ndarray__"] is True
+    assert out["is_image"] is True
+    assert "values" not in out
+
+
+def test_serializer_inlines_small_array_values() -> None:
+    """A tiny (<=64 element) non-image array inlines its values."""
+    out = M._serialize_value(np.array([1, 2, 3]))
+    assert out["values"] == [1, 2, 3]
+
+
+def test_serializer_truncates_large_list_and_dict() -> None:
+    """Oversized lists and dicts are truncated with a remainder marker."""
+    big_list = M._serialize_value(list(range(M._MAX_LIST_ITEMS + 5)))
+    assert "more items" in big_list[-1]
+    big_dict = M._serialize_value({str(i): i for i in range(M._MAX_DICT_ITEMS + 5)})
+    assert "more keys" in big_dict["__truncated__"]
+
+
+def test_serializer_expands_dataclass_fields() -> None:
+    """A dataclass instance serializes to a tagged dict of its fields."""
+    from dataclasses import dataclass
+
+    @dataclass
+    class Cfg:
+        x: int = 1
+        y: str = "z"
+
+    out = M._serialize_value(Cfg())
+    assert out["__dataclass__"] == "Cfg"
+    assert out["x"] == 1 and out["y"] == "z"
+
+
+# ----------------------------------------------------------------------------
+# dispatch -- callable results, label logging, error funnels
+# ----------------------------------------------------------------------------
+def test_dispatch_non_callable_target_returns_value(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Resolving to a non-callable attribute returns its serialized value."""
+    monkeypatch.setattr(M, "_import_from_lerobot", lambda path: 12345)
+    result = _fn(module="x.y", method="")
+    assert result["status"] == "success"
+    assert "12345" in _texts(result)
+
+
+def test_dispatch_attaches_image_blocks_and_logs_label(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A callable returning frames yields image content blocks; a label is
+    accepted (and logged) without changing the success contract."""
+    pytest.importorskip("cv2")
+
+    def resolver(path: str) -> Any:
+        def call() -> dict[str, Any]:
+            return {"front": (np.random.rand(480, 640, 3) * 255).astype(np.uint8)}
+
+        return call
+
+    monkeypatch.setattr(M, "_import_from_lerobot", resolver)
+    result = _fn(module="x.y", method="", label="grab a frame")
+    assert result["status"] == "success"
+    assert len(_images(result)) == 1
+    assert "image block(s) attached" in _texts(result)
+
+
+def test_dispatch_generic_exception_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A non-Type/Import error from the called target funnels to a clean error
+    result naming the exception type, never escaping past the dispatcher."""
+
+    def resolver(path: str) -> Any:
+        def call() -> Any:
+            raise ValueError("boom inside")
+
+        return call
+
+    monkeypatch.setattr(M, "_import_from_lerobot", resolver)
+    result = _fn(module="x.y", method="")
+    assert result["status"] == "error"
+    text = _texts(result)
+    _assert_ascii(text)
+    assert "ValueError" in text and "boom inside" in text
+
+
+def test_dispatch_import_error_suggests_install(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An ImportError raised while calling the target maps to an install hint."""
+
+    def resolver(path: str) -> Any:
+        def call() -> Any:
+            raise ImportError("optional dep gone")
+
+        return call
+
+    monkeypatch.setattr(M, "_import_from_lerobot", resolver)
+    result = _fn(module="x.y", method="")
+    assert result["status"] == "error"
+    text = _texts(result)
+    _assert_ascii(text)
+    assert "Import error" in text
+    assert "pip install lerobot" in text
