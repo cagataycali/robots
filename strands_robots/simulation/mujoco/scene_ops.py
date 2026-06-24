@@ -30,7 +30,10 @@ import logging
 from typing import Any
 
 from strands_robots.simulation.models import SimCamera, SimObject, SimRobot, SimWorld
-from strands_robots.simulation.mujoco.backend import _ensure_mujoco
+from strands_robots.simulation.mujoco.backend import (
+    _ensure_mujoco,
+    filter_mujoco_attach_noise,
+)
 from strands_robots.simulation.mujoco.spec_builder import SpecBuilder
 
 logger = logging.getLogger(__name__)
@@ -59,7 +62,8 @@ def _recompile_preserving_state(world: SimWorld, spec: Any) -> bool:
     """
     mj = _ensure_mujoco()
     try:
-        new_model, new_data = spec.recompile(world._model, world._data)
+        with filter_mujoco_attach_noise():
+            new_model, new_data = spec.recompile(world._model, world._data)
     except (ValueError, RuntimeError) as e:
         logger.error("spec.recompile failed: %s", e)
         return False
@@ -76,7 +80,8 @@ def _recompile_preserving_state(world: SimWorld, spec: Any) -> bool:
     # Keep the cached XML in sync with the spec for legacy readers (e.g.
     # load_scene + add_robot round-trip).
     try:
-        world._backend_state["xml"] = spec.to_xml()
+        with filter_mujoco_attach_noise():
+            world._backend_state["xml"] = spec.to_xml()
     except Exception as xml_err:
         logger.debug("spec.to_xml() failed: %s", xml_err)
 
@@ -131,7 +136,8 @@ def inject_robot_into_scene(
         return False
 
     try:
-        joint_names = SpecBuilder.attach_robot(spec, robot, robot_xml_path)
+        with filter_mujoco_attach_noise():
+            joint_names = SpecBuilder.attach_robot(spec, robot, robot_xml_path)
         robot.joint_names = joint_names
     except (ValueError, RuntimeError, OSError) as e:
         logger.error("Robot attach failed for '%s': %s", robot.name, e)
@@ -335,7 +341,8 @@ def eject_robot_from_scene(world: SimWorld, robot_name: str) -> bool:
     # already popped from ``world.robots`` by the caller).
     for robot in world.robots.values():
         # Re-discover joint names via the attach - they're stable per URDF.
-        joint_names = SpecBuilder.attach_robot(new_spec, robot, robot.urdf_path)
+        with filter_mujoco_attach_noise():
+            joint_names = SpecBuilder.attach_robot(new_spec, robot, robot.urdf_path)
         robot.joint_names = joint_names
 
     # Step 3: compile fresh and install. No spec.recompile(model, data)
@@ -343,7 +350,8 @@ def eject_robot_from_scene(world: SimWorld, robot_name: str) -> bool:
     # make sense across a scene rebuild, and forcing a fresh compile
     # avoids the attach/delete bug.
     try:
-        new_model = new_spec.compile()
+        with filter_mujoco_attach_noise():
+            new_model = new_spec.compile()
         new_data = mj.MjData(new_model)
     except (ValueError, RuntimeError) as e:
         logger.error("eject_robot: fresh compile failed: %s", e)
@@ -353,7 +361,8 @@ def eject_robot_from_scene(world: SimWorld, robot_name: str) -> bool:
     world._data = new_data
     world._backend_state["spec"] = new_spec
     try:
-        world._backend_state["xml"] = new_spec.to_xml()
+        with filter_mujoco_attach_noise():
+            world._backend_state["xml"] = new_spec.to_xml()
     except Exception as xml_err:
         logger.debug("spec.to_xml() failed: %s", xml_err)
 
@@ -411,7 +420,8 @@ def replace_scene_mjcf(world: SimWorld, xml: str) -> bool:
     new_spec = SpecBuilder.from_mjcf_string(xml)
     # Compile eagerly so malformed XML fails here rather than on the next
     # mj_step.
-    new_model = new_spec.compile()
+    with filter_mujoco_attach_noise():
+        new_model = new_spec.compile()
     new_data = mj.MjData(new_model)
 
     world._backend_state["spec"] = new_spec
@@ -426,7 +436,8 @@ def replace_scene_mjcf(world: SimWorld, xml: str) -> bool:
     mj.mj_forward(new_model, new_data)
 
     try:
-        world._backend_state["xml"] = new_spec.to_xml()
+        with filter_mujoco_attach_noise():
+            world._backend_state["xml"] = new_spec.to_xml()
     except Exception:
         pass
     return True
@@ -610,7 +621,8 @@ def patch_scene_mjcf(world: SimWorld, ops: list[dict[str, Any]]) -> int:
     # MjSpec doesn't expose a cheap deep-copy, but round-tripping through XML
     # is safe: it's the same canonical form used by the compiler.
     try:
-        backup_xml = spec.to_xml()
+        with filter_mujoco_attach_noise():
+            backup_xml = spec.to_xml()
     except Exception as e:  # pragma: no cover - spec.to_xml on brand-new specs is fine
         raise RuntimeError(f"failed to snapshot spec before patch: {e}") from e
 
@@ -633,7 +645,8 @@ def patch_scene_mjcf(world: SimWorld, ops: list[dict[str, Any]]) -> int:
         raise ValueError(f"patch op #{applied + 1} failed: {err}") from err
 
     # One recompile for the whole batch - preserves qpos/qvel for unchanged joints.
-    world._model, world._data = spec.recompile(world._model, world._data)
+    with filter_mujoco_attach_noise():
+        world._model, world._data = spec.recompile(world._model, world._data)
 
     # Forward pass so new bodies' xpos / xquat / cam_xmat are populated for
     # the very next render() or get_body_state() call. Same reasoning as
@@ -642,7 +655,8 @@ def patch_scene_mjcf(world: SimWorld, ops: list[dict[str, Any]]) -> int:
     mj.mj_forward(world._model, world._data)
 
     try:
-        world._backend_state["xml"] = spec.to_xml()
+        with filter_mujoco_attach_noise():
+            world._backend_state["xml"] = spec.to_xml()
     except Exception:
         pass
     return applied

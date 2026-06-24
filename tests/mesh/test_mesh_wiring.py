@@ -44,11 +44,14 @@ def patched_init_mesh(monkeypatch):
 
 
 def test_robot_factory_attaches_mesh_in_sim_mode(patched_init_mesh):
-    """Robot() with default mesh=True attaches the mesh produced by init_mesh."""
+    """Robot(..., mesh=True) attaches the mesh produced by init_mesh.
+
+    Mesh defaults to OFF now (quiet-by-default), so opting in is explicit.
+    """
     from strands_robots import Robot
 
     mock_init_mesh, fake_mesh = patched_init_mesh
-    sim = Robot("so100", mode="sim")
+    sim = Robot("so100", mode="sim", mesh=True)
     try:
         # init_mesh was called with the constructed sim and peer_type='sim'.
         assert mock_init_mesh.called

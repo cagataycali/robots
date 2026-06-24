@@ -178,7 +178,7 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
     cameras: dict[str, dict[str, Any]] | None = None,
     position: list[float] | None = None,
     data_config: str | None = None,
-    mesh: bool = True,
+    mesh: bool = False,
     peer_id: str | None = None,
     **kwargs: Any,
 ) -> Simulation | HardwareRobot:

@@ -71,20 +71,45 @@ def resolve_model(name: str, prefer_scene: bool = True) -> str | None:
     3. Asset manager (robot_descriptions - fallback for standard robots)
     """
     _log_configuration_once()
-    # 1+2. Check local/custom paths first (user overrides win)
-    local = resolve_urdf(name)
-    if local:
-        return local
 
-    # 3. Fall back to asset manager
-    if _HAS_ASSET_MANAGER:
-        path = resolve_model_path(name, prefer_scene=prefer_scene)
-        if path and path.exists():
-            return str(path)
-        if prefer_scene:
-            path = resolve_model_path(name, prefer_scene=False)
+    def _try(candidate: str) -> str | None:
+        # 1+2. Check local/custom paths first (user overrides win)
+        local = resolve_urdf(candidate)
+        if local:
+            return local
+        # 3. Fall back to asset manager
+        if _HAS_ASSET_MANAGER:
+            path = resolve_model_path(candidate, prefer_scene=prefer_scene)
             if path and path.exists():
                 return str(path)
+            if prefer_scene:
+                path = resolve_model_path(candidate, prefer_scene=False)
+                if path and path.exists():
+                    return str(path)
+        return None
+
+    found = _try(name)
+    if found:
+        return found
+
+    # Friction fix: callers (and LLMs) frequently guess a decorated variant
+    # like "so101_default", "so101_sim", or "so101_robot" when the registry
+    # key is just "so101". Strip a small set of common trailing qualifiers and
+    # retry once before giving up, so the natural guess resolves instead of
+    # forcing a list_urdfs round-trip.
+    for suffix in ("_default", "_sim", "_robot", "_arm"):
+        if name.endswith(suffix):
+            stripped = name[: -len(suffix)]
+            if stripped:
+                found = _try(stripped)
+                if found:
+                    logger.info(
+                        "resolve_model: '%s' not found; resolved via stripped "
+                        "name '%s'. Prefer the bare registry key.",
+                        name,
+                        stripped,
+                    )
+                    return found
 
     return None
 

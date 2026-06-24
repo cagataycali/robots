@@ -181,7 +181,11 @@ def resolve_model_path(
     """
     info = get_robot(name)
     if not info or "asset" not in info:
-        logger.warning("Unknown robot or no asset: %s", name)
+        # DEBUG, not WARNING: resolve_model() probes several candidate names
+        # (incl. suffix-stripped variants) and handles a None return cleanly,
+        # so a miss here is normal control flow -- not something the user
+        # needs to see on every add_robot.
+        logger.debug("Unknown robot or no asset: %s", name)
         return None
 
     asset = info["asset"]

@@ -183,3 +183,149 @@ def _can_render() -> bool:
         )
 
     return _rendering_available  # type: ignore[return-value]
+
+
+# ---------------------------------------------------------------------------
+# MuJoCo stderr-noise suppression
+# ---------------------------------------------------------------------------
+# When two scenes are merged via ``spec.attach()`` / ``spec.compile()`` MuJoCo
+# prints a block of benign "compiler option conflict" lines straight to the C
+# stderr (fd 2) -- e.g.::
+#
+#     WARNING: Attach conflict when attaching 'scene' to 'strands_sim', ...
+#     timestep: parent has 0.002, child has 0.005, keeping parent value
+#     iterations: parent has 100, child has 10, keeping parent value
+#     ...
+#
+# These are not actionable by the user (we intentionally keep the parent's
+# compiler options) and they spam the console on every add_robot / world
+# build. Because they originate in C, Python's ``warnings`` / ``logging`` can't
+# intercept them -- we have to filter the raw file descriptor.
+#
+# ``filter_mujoco_attach_noise()`` is a context manager that captures fd 2 for
+# the duration of the wrapped call, drops the known-benign lines, forwards
+# everything else through unchanged, and re-emits any dropped lines at DEBUG
+# level so they are still recoverable with STRANDS_ROBOTS_VERBOSE_MUJOCO=1.
+
+import contextlib as _contextlib
+import os as _os
+import re as _re
+import tempfile as _tempfile
+import threading as _threading
+
+# Lines we consider benign attach/compile chatter. Matched case-insensitively
+# against each captured stderr line.
+_MUJOCO_NOISE_PATTERNS = (
+    _re.compile(r"Attach conflict when attaching", _re.IGNORECASE),
+    _re.compile(r"^(timestep|iterations|ls_iterations|impratio|integrator|cone|"
+                r"jacobian|solver|tolerance|ls_tolerance|noslip_iterations|"
+                r"noslip_tolerance|ccd_iterations|ccd_tolerance|sdf_iterations|"
+                r"sdf_initpoints|gravity|wind|magnetic|density|viscosity):"
+                r".*(parent has|keeping parent value)", _re.IGNORECASE),
+    _re.compile(r"parent has .* child has .* keeping parent value", _re.IGNORECASE),
+)
+
+_noise_lock = _threading.Lock()
+
+
+def _is_mujoco_noise(line: str) -> bool:
+    stripped = line.strip()
+    if not stripped:
+        return False
+    return any(p.search(stripped) for p in _MUJOCO_NOISE_PATTERNS)
+
+
+import warnings as _warnings  # noqa: E402
+
+
+@_contextlib.contextmanager
+def filter_mujoco_attach_noise():
+    """Suppress MuJoCo's benign attach/compile spam.
+
+    MuJoCo emits "Attach conflict ... keeping parent value" chatter when two
+    scenes are merged. Depending on the MuJoCo build this surfaces either as a
+    Python ``UserWarning`` (from ``spec.to_xml()`` / ``compile()``) OR as raw
+    C-level writes to stderr (fd 2). We suppress BOTH:
+
+    * a ``warnings.catch_warnings`` filter drops the matching ``UserWarning``;
+    * an fd-2 capture drops the matching raw lines and forwards the rest.
+
+    No-op (yields immediately) when STRANDS_ROBOTS_VERBOSE_MUJOCO is truthy,
+    when fd 2 can't be captured (e.g. already redirected, no real stderr in
+    some test/Jupyter setups), or on any failure -- never let log hygiene
+    break a working sim.
+    """
+    if _os.getenv("STRANDS_ROBOTS_VERBOSE_MUJOCO", "").strip().lower() in (
+        "1", "true", "yes",
+    ):
+        yield
+        return
+
+    # Layer 1: drop the matching Python UserWarning regardless of fd capture.
+    _wctx = _warnings.catch_warnings()
+    _wctx.__enter__()
+    _warnings.filterwarnings(
+        "ignore",
+        message=r".*Attach conflict when attaching.*",
+        category=UserWarning,
+    )
+
+    # Layer 2: capture raw fd-2 writes. Need a real, dup-able stderr fd.
+    try:
+        orig_fd = sys.stderr.fileno()
+        saved_fd = _os.dup(orig_fd)
+    except (AttributeError, OSError, ValueError):
+        # No real fd (captured stderr / pytest capsys / Jupyter) -> warning
+        # filter still applies; just skip the fd capture.
+        try:
+            yield
+        finally:
+            _wctx.__exit__(None, None, None)
+        return
+
+    tmp = _tempfile.TemporaryFile(mode="w+b")
+    try:
+        with _noise_lock:
+            _os.dup2(tmp.fileno(), orig_fd)
+            try:
+                yield
+            finally:
+                # Flush C-side then restore the real stderr.
+                try:
+                    sys.stderr.flush()
+                except Exception:
+                    pass
+                _os.dup2(saved_fd, orig_fd)
+    finally:
+        # Replay captured output, dropping the known-benign noise lines.
+        try:
+            tmp.seek(0)
+            captured = tmp.read().decode(errors="replace")
+        except Exception:
+            captured = ""
+        finally:
+            tmp.close()
+            try:
+                _os.close(saved_fd)
+            except OSError:
+                pass
+
+        if captured:
+            kept, dropped = [], []
+            for line in captured.splitlines(keepends=True):
+                (dropped if _is_mujoco_noise(line) else kept).append(line)
+            if kept:
+                try:
+                    sys.stderr.write("".join(kept))
+                    sys.stderr.flush()
+                except Exception:
+                    pass
+            if dropped:
+                logger.debug(
+                    "Suppressed %d benign MuJoCo attach/compile line(s) "
+                    "(set STRANDS_ROBOTS_VERBOSE_MUJOCO=1 to see them):\n%s",
+                    len(dropped),
+                    "".join(dropped).rstrip(),
+                )
+        # Tear down the UserWarning filter last.
+        _wctx.__exit__(None, None, None)

@@ -287,6 +287,34 @@ class TestRobotManagement:
         result = sim_with_world.add_robot("nonexistent_model_xyz")
         assert result["status"] == "error"
 
+    def test_add_robot_name_optional_derives_from_urdf(self, sim_with_world, robot_xml_path):
+        """Friction fix: name= is optional; auto-derived from the URDF filename."""
+        result = sim_with_world.add_robot(urdf_path=robot_xml_path)
+        assert result["status"] == "success"
+        # Label derived from the URDF stem; robot is addressable under it.
+        assert len(sim_with_world._world.robots) == 1
+        derived = next(iter(sim_with_world._world.robots))
+        assert derived  # non-empty label
+
+    def test_add_robot_auto_numbers_on_collision(self, sim_with_world, robot_xml_path):
+        """Two no-name adds of the same model auto-dedupe instead of erroring."""
+        import os
+
+        stem = os.path.splitext(os.path.basename(robot_xml_path))[0]
+        r1 = sim_with_world.add_robot(urdf_path=robot_xml_path)
+        r2 = sim_with_world.add_robot(urdf_path=robot_xml_path)
+        assert r1["status"] == "success"
+        assert r2["status"] == "success"
+        names = set(sim_with_world._world.robots)
+        assert stem in names
+        assert f"{stem}_2" in names
+
+    def test_add_duplicate_explicit_name_lists_existing(self, sim_with_robot, robot_xml_path):
+        """Explicit duplicate name still errors, but names the existing robots."""
+        result = sim_with_robot.add_robot("arm1", urdf_path=robot_xml_path)
+        assert result["status"] == "error"
+        assert "arm1" in result["content"][0]["text"]
+
     def test_list_robots_empty(self, sim_with_world):
         # SimEngine ABC: list[str]
         assert sim_with_world.list_robots() == []

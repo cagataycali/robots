@@ -41,6 +41,26 @@ def test_resolve_model_unknown_returns_none():
     assert resolve_model("this_does_not_exist_xyz") is None
 
 
+def test_resolve_model_strips_common_suffix():
+    """Friction fix: 'panda_default'/'panda_sim' should resolve to 'panda'.
+
+    LLMs and humans frequently append a decorative qualifier to the bare
+    registry key. resolve_model() strips a small allow-list of suffixes and
+    retries once before returning None.
+    """
+    pytest.importorskip("mujoco")  # panda requires mujoco_menagerie
+    bare = resolve_model("panda")
+    assert bare is not None
+    for variant in ("panda_default", "panda_sim", "panda_robot", "panda_arm"):
+        assert resolve_model(variant) == bare, f"{variant} should resolve to panda"
+
+
+def test_resolve_model_strip_does_not_overreach():
+    """Stripping must not turn a genuinely-unknown name into a false hit."""
+    # 'this_does_not_exist_xyz_default' strips to a still-unknown base -> None.
+    assert resolve_model("this_does_not_exist_xyz_default") is None
+
+
 def test_resolve_urdf_unknown_returns_none():
     assert resolve_urdf("this_does_not_exist_xyz") is None
 

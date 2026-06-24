@@ -68,7 +68,10 @@ from strands_robots.simulation.model_registry import (
     register_urdf as _register_urdf,
 )
 from strands_robots.simulation.models import SimCamera, SimObject, SimRobot, SimStatus, SimWorld
-from strands_robots.simulation.mujoco.backend import _ensure_mujoco
+from strands_robots.simulation.mujoco.backend import (
+    _ensure_mujoco,
+    filter_mujoco_attach_noise,
+)
 from strands_robots.simulation.mujoco.physics import PhysicsMixin
 from strands_robots.simulation.mujoco.randomization import RandomizationMixin
 from strands_robots.simulation.mujoco.recording import RecordingMixin
@@ -420,7 +423,8 @@ class MuJoCoSimEngine(
             # contract produced by _compile_world for fresh worlds.
             spec = SpecBuilder.from_file(scene_path)
             self._world._backend_state["spec"] = spec
-            self._world._model = spec.compile()
+            with filter_mujoco_attach_noise():
+                self._world._model = spec.compile()
             self._world._data = mj.MjData(self._world._model)
             # Forward the freshly-allocated MjData so derived state
             # (xpos / xquat / xmat / sensor data) is populated. Without
@@ -441,7 +445,8 @@ class MuJoCoSimEngine(
 
             # Cache the canonical serialisation; legacy readers use this.
             try:
-                self._world._backend_state["xml"] = spec.to_xml()
+                with filter_mujoco_attach_noise():
+                    self._world._backend_state["xml"] = spec.to_xml()
             except Exception as xml_err:
                 logger.debug("spec.to_xml() on loaded scene failed: %s", xml_err)
 
@@ -565,7 +570,8 @@ class MuJoCoSimEngine(
         assert self._world is not None  # only called after create_world
         spec = SpecBuilder.build(self._world)
         self._world._backend_state["spec"] = spec
-        self._world._model = spec.compile()
+        with filter_mujoco_attach_noise():
+            self._world._model = spec.compile()
         self._world._data = mj.MjData(self._world._model)
         # Forward the freshly-allocated MjData so derived state
         # (xpos / xquat / xmat) is populated - same rationale as in
@@ -574,7 +580,8 @@ class MuJoCoSimEngine(
         # gradient because body transforms are zero-initialised.
         mj.mj_forward(self._world._model, self._world._data)
         try:
-            self._world._backend_state["xml"] = spec.to_xml()
+            with filter_mujoco_attach_noise():
+                self._world._backend_state["xml"] = spec.to_xml()
         except Exception as xml_err:
             # spec.to_xml() is best-effort - if it fails we still have a
             # valid compiled model. The cached XML is a convenience for
@@ -750,9 +757,34 @@ class MuJoCoSimEngine(
             robot.mesh = None
             robot.peer_id = ""
 
+    @staticmethod
+    def _unknown_model_msg(requested: str) -> str:
+        """Build a helpful 'no model found' error with close-match suggestions.
+
+        Friction fix: instead of a bare "use list_urdfs", we name the closest
+        known registry keys (difflib) so the caller can usually fix the typo
+        in-place without a discovery round-trip.
+        """
+        suggestions: list[str] = []
+        try:
+            import difflib
+
+            from strands_robots.registry import list_robots as _list_robots
+
+            known = [r.get("name", "") for r in _list_robots() if r.get("name")]
+            suggestions = difflib.get_close_matches(requested, known, n=3, cutoff=0.4)
+        except Exception:  # noqa: BLE001 - suggestions are best-effort
+            suggestions = []
+
+        msg = f"No model found for '{requested}'."
+        if suggestions:
+            msg += " Did you mean: " + ", ".join(suggestions) + "?"
+        msg += " Use action='list_urdfs' to see all available robots."
+        return msg
+
     def add_robot(
         self,
-        name: str,
+        name: str | None = None,
         urdf_path: str | None = None,
         data_config: str | None = None,
         position: list[float] | None = None,
@@ -764,13 +796,47 @@ class MuJoCoSimEngine(
         robot's bodies, actuators, assets, and sensors into the existing scene
         XML.  This preserves previously-created world state (gravity, objects,
         cameras, other robots).
+
+        ``name`` is the instance label used to address this robot later
+        (``run_policy(robot_name=...)``, ``get_robot_state``, etc.). It is
+        OPTIONAL: when omitted it is auto-derived from ``data_config`` (or the
+        URDF filename), with a numeric suffix appended if that label is already
+        taken -- so ``add_robot(data_config="so101")`` twice yields ``so101``
+        and ``so101_2`` instead of erroring.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         if err := self._require_no_running_policy("add_robot"):
             return err
+
+        # Auto-derive an instance label when the caller didn't supply one.
+        # Friction fix: ``name`` used to be required, so a natural
+        # ``add_robot(data_config="so101")`` failed with "requires parameter
+        # 'name'". Now the label defaults to the model name (deduped).
+        if not name:
+            import os as _os
+            base = (
+                data_config
+                or (_os.path.splitext(_os.path.basename(urdf_path))[0] if urdf_path else None)
+                or "robot"
+            )
+            name = base
+            i = 2
+            while name in self._world.robots:
+                name = f"{base}_{i}"
+                i += 1
+
         if name in self._world.robots:
-            return {"status": "error", "content": [{"text": f"Robot '{name}' already exists."}]}
+            taken = ", ".join(sorted(self._world.robots)) or "(none)"
+            return {
+                "status": "error",
+                "content": [{
+                    "text": (
+                        f"Robot '{name}' already exists. Pick a different "
+                        f"name, or omit name= to auto-number. Existing: {taken}."
+                    )
+                }],
+            }
 
         # Resolution precedence:
         #   1. explicit `urdf_path` (anything on disk).
@@ -786,9 +852,7 @@ class MuJoCoSimEngine(
                 return {
                     "status": "error",
                     "content": [
-                        {
-                            "text": f"No model found for '{data_config}'.\nUse action='list_urdfs' to see available robots"
-                        }
+                        {"text": self._unknown_model_msg(data_config)}
                     ],
                 }
         elif not resolved_path and name:
@@ -1358,7 +1422,8 @@ class MuJoCoSimEngine(
             try:
                 self._world._model, self._world._data = spec.recompile(self._world._model, self._world._data)
                 try:
-                    self._world._backend_state["xml"] = spec.to_xml()
+                    with filter_mujoco_attach_noise():
+                        self._world._backend_state["xml"] = spec.to_xml()
                 except Exception:
                     pass
             except (ValueError, RuntimeError) as e:
