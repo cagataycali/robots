@@ -99,7 +99,7 @@ class Gr00tTrainer(Trainer):
     # ---- ABC ---------------------------------------------------------------
 
     def validate(self, spec: TrainSpec) -> list[str]:
-        problems: list[str] = []
+        problems: list[str] = self._security_problems(spec)
 
         if not spec.dataset_root:
             problems.append("dataset_root is required")
@@ -231,7 +231,7 @@ class Gr00tTrainer(Trainer):
         logger.info("Gr00tTrainer launching: %s", " ".join(cmd))
         try:
             with open(log_path, "w", encoding="utf-8") as logf:
-                proc = subprocess.run(  # noqa: S603 - argv built from a vetted allowlist
+                proc = subprocess.run(  # noqa: S603 - argv values validated by validate()/_security_problems before train() builds the command; list form, no shell
                     cmd, cwd=parent, env=env,
                     stdout=logf, stderr=subprocess.STDOUT, check=False,
                 )

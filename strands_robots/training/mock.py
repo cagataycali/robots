@@ -29,7 +29,7 @@ class MockTrainer(Trainer):
 
     def validate(self, spec: TrainSpec) -> list[str]:
         """Pure preflight: dataset presence, method sanity, lora/expert clash."""
-        problems: list[str] = []
+        problems: list[str] = self._security_problems(spec)
 
         if not spec.dataset_root:
             problems.append("dataset_root is required")

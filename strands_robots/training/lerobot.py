@@ -17,6 +17,7 @@ Grounded against lerobot 0.5.x ``TrainPipelineConfig`` (the draccus config
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -115,7 +116,7 @@ class LerobotTrainer(Trainer):
     # ---- ABC ---------------------------------------------------------------
 
     def validate(self, spec: TrainSpec) -> list[str]:
-        problems: list[str] = []
+        problems: list[str] = self._security_problems(spec)
 
         if not spec.dataset_root:
             problems.append("dataset_root is required")
@@ -269,7 +270,7 @@ class LerobotTrainer(Trainer):
 
         try:
             with open(log_path, "w", encoding="utf-8") as logf:
-                proc = subprocess.run(  # noqa: S603 - cmd is built from a vetted allowlist
+                proc = subprocess.run(  # noqa: S603 - argv values validated by validate()/_security_problems before train() builds the command; list form, no shell
                     cmd, cwd=parent, env=env,
                     stdout=logf, stderr=subprocess.STDOUT, check=False,
                 )
@@ -332,15 +333,11 @@ class LerobotTrainer(Trainer):
                             if n is not None:
                                 latest_step = int(n)
                         elif key == "loss":
-                            try:
+                            with contextlib.suppress(ValueError):  # non-numeric loss token -> skip
                                 latest_loss = float(val)
-                            except ValueError:
-                                pass
                         elif key == "epch":
-                            try:
+                            with contextlib.suppress(ValueError):  # non-numeric epoch token -> skip
                                 latest_epoch = float(val)
-                            except ValueError:
-                                pass
         except OSError:
             return {}
 

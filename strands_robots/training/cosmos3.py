@@ -82,7 +82,7 @@ class Cosmos3Trainer(Trainer):
     # ---- ABC ---------------------------------------------------------------
 
     def validate(self, spec: TrainSpec) -> list[str]:
-        problems: list[str] = []
+        problems: list[str] = self._security_problems(spec)
 
         if not spec.dataset_root:
             problems.append("dataset_root is required")
@@ -143,7 +143,7 @@ class Cosmos3Trainer(Trainer):
         logger.info("Cosmos3Trainer converting base->DCP: %s", " ".join(cmd))
         env = dict(os.environ)
         env.setdefault("PYTHONUNBUFFERED", "1")
-        subprocess.run(cmd, cwd=root, env=env, check=True)  # noqa: S603
+        subprocess.run(cmd, cwd=root, env=env, check=True)  # noqa: S603 - argv values validated by validate()/_security_problems before train() builds the command; list form, no shell
 
     def convert_command(self, spec: TrainSpec) -> list[str]:
         """python -m cosmos_framework.scripts.convert_model_to_dcp <ckpt> -o <dcp>."""
@@ -209,7 +209,7 @@ class Cosmos3Trainer(Trainer):
         logger.info("Cosmos3Trainer exporting DCP->safetensors: %s", " ".join(cmd))
         env = dict(os.environ)
         env.setdefault("PYTHONUNBUFFERED", "1")
-        proc = subprocess.run(cmd, cwd=root, env=env, check=False)  # noqa: S603
+        proc = subprocess.run(cmd, cwd=root, env=env, check=False)  # noqa: S603 - argv values validated by validate()/_security_problems before train() builds the command; list form, no shell
         return out if proc.returncode == 0 else checkpoint_dir
 
     def export_command(self, spec: TrainSpec, checkpoint_dir: str, out: str) -> list[str]:
@@ -252,7 +252,7 @@ class Cosmos3Trainer(Trainer):
         logger.info("Cosmos3Trainer launching: %s", " ".join(cmd))
         try:
             with open(log_path, "w", encoding="utf-8") as logf:
-                proc = subprocess.run(  # noqa: S603 - argv built from a vetted allowlist
+                proc = subprocess.run(  # noqa: S603 - argv values validated by validate()/_security_problems before train() builds the command; list form, no shell
                     cmd, cwd=root, env=env,
                     stdout=logf, stderr=subprocess.STDOUT, check=False,
                 )

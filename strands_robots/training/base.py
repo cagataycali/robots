@@ -35,6 +35,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 
+from strands_robots.training._validate import validate_train_inputs
+
 
 @dataclass
 class TrainSpec:
@@ -177,6 +179,18 @@ class Trainer(ABC):
         spawn processes, or allocate GPUs - it powers a ``plan`` advisor that
         runs *before* anything expensive starts.
         """
+
+    def _security_problems(self, spec: TrainSpec) -> list[str]:
+        """Input-safety preflight shared by every backend (defense-in-depth).
+
+        Returns problems for any agent-supplied value that would be unsafe to
+        interpolate into a subprocess argv (path traversal / protected
+        directories, a leading ``-`` that parses as a flag, or an ``extra`` key
+        that would smuggle an arbitrary ``--flag``). Concrete :meth:`validate`
+        implementations MUST call this first so that the ``# noqa: S603``
+        subprocess sites are genuinely fed validated input.
+        """
+        return validate_train_inputs(spec)
 
     def prepare(self, spec: TrainSpec) -> None:
         """Optional one-time setup before :meth:`train`. Default no-op.
