@@ -72,9 +72,7 @@ class Cosmos3Trainer(Trainer):
 
     def _dcp_path(self, spec: TrainSpec) -> str:
         """Where prepare() writes (and train() reads) the DCP base checkpoint."""
-        return spec.extra.get(
-            "dcp_path", os.path.join(spec.output_dir, "_dcp_base")
-        )
+        return str(spec.extra.get("dcp_path", os.path.join(spec.output_dir, "_dcp_base")))
 
     def _nproc(self, spec: TrainSpec) -> int:
         return max(1, spec.num_gpus)
@@ -99,8 +97,7 @@ class Cosmos3Trainer(Trainer):
 
         if spec.method not in _SUPPORTED_METHODS:
             problems.append(
-                f"unsupported method '{spec.method}' for Cosmos3 "
-                f"(expected one of {sorted(_SUPPORTED_METHODS)})"
+                f"unsupported method '{spec.method}' for Cosmos3 (expected one of {sorted(_SUPPORTED_METHODS)})"
             )
         if spec.steps <= 0:
             problems.append(f"steps must be > 0, got {spec.steps}")
@@ -116,8 +113,7 @@ class Cosmos3Trainer(Trainer):
         root = self._resolve_cosmos_root(spec)
         if not root:
             problems.append(
-                "cosmos-framework checkout not found; set COSMOS_ROOT, pass "
-                "cosmos_root=..., or extra['cosmos_root']"
+                "cosmos-framework checkout not found; set COSMOS_ROOT, pass cosmos_root=..., or extra['cosmos_root']"
             )
         elif not os.path.isdir(os.path.join(root, "cosmos_framework")):
             problems.append(f"cosmos_framework package not found under cosmos_root={root}")
@@ -148,10 +144,12 @@ class Cosmos3Trainer(Trainer):
     def convert_command(self, spec: TrainSpec) -> list[str]:
         """python -m cosmos_framework.scripts.convert_model_to_dcp <ckpt> -o <dcp>."""
         return [
-            self.python_executable, "-m",
+            self.python_executable,
+            "-m",
             "cosmos_framework.scripts.convert_model_to_dcp",
             spec.base_model,
-            "-o", self._dcp_path(spec),
+            "-o",
+            self._dcp_path(spec),
         ]
 
     def build_command(self, spec: TrainSpec) -> list[str]:
@@ -161,7 +159,8 @@ class Cosmos3Trainer(Trainer):
             "torchrun",
             f"--nproc_per_node={nproc}",
             f"--nnodes={max(1, spec.num_nodes)}",
-            "-m", "cosmos_framework.scripts.train",
+            "-m",
+            "cosmos_framework.scripts.train",
         ]
         cmd = [*launcher, f"--sft-toml={spec.extra['sft_toml']}"]
 
@@ -175,9 +174,7 @@ class Cosmos3Trainer(Trainer):
         tail.append(f"dataloader_train.max_samples_per_batch={spec.global_batch_size}")
         # Multi-node HSDP: replicate degree = number of nodes.
         if spec.num_nodes > 1:
-            tail.append(
-                f"model.config.parallelism.data_parallel_replicate_degree={spec.num_nodes}"
-            )
+            tail.append(f"model.config.parallelism.data_parallel_replicate_degree={spec.num_nodes}")
         if spec.seed is not None:
             tail.append(f"trainer.seed={spec.seed}")
 
@@ -199,9 +196,7 @@ class Cosmos3Trainer(Trainer):
         unavailable, falls back to the default passthrough.
         """
         root = self._resolve_cosmos_root(spec)
-        out = spec.extra.get(
-            "export_dir", os.path.join(spec.output_dir, "_exported")
-        )
+        out = spec.extra.get("export_dir", os.path.join(spec.output_dir, "_exported"))
         if not root:
             return checkpoint_dir
         cmd = self.export_command(spec, checkpoint_dir, out)
@@ -215,7 +210,8 @@ class Cosmos3Trainer(Trainer):
     def export_command(self, spec: TrainSpec, checkpoint_dir: str, out: str) -> list[str]:
         """python -m cosmos_framework.scripts.export_model (DCP -> safetensors)."""
         return [
-            self.python_executable, "-m",
+            self.python_executable,
+            "-m",
             "cosmos_framework.scripts.export_model",
             f"--checkpoint-path={checkpoint_dir}",
             f"--output-dir={out}",
@@ -225,7 +221,8 @@ class Cosmos3Trainer(Trainer):
         problems = self.validate(spec)
         if problems:
             return TrainResult(
-                status="error", job_id="",
+                status="error",
+                job_id="",
                 message="validation failed: " + "; ".join(problems),
             )
 
@@ -237,7 +234,8 @@ class Cosmos3Trainer(Trainer):
             self.prepare(spec)
         except subprocess.CalledProcessError as e:
             return TrainResult(
-                status="error", job_id="",
+                status="error",
+                job_id="",
                 message=f"DCP conversion (prepare) failed: {e}",
             )
 
@@ -253,22 +251,31 @@ class Cosmos3Trainer(Trainer):
         try:
             with open(log_path, "w", encoding="utf-8") as logf:
                 proc = subprocess.run(  # noqa: S603 - argv values validated by validate()/_security_problems before train() builds the command; list form, no shell
-                    cmd, cwd=root, env=env,
-                    stdout=logf, stderr=subprocess.STDOUT, check=False,
+                    cmd,
+                    cwd=root,
+                    env=env,
+                    stdout=logf,
+                    stderr=subprocess.STDOUT,
+                    check=False,
                 )
         except FileNotFoundError as e:
             return TrainResult(
-                status="error", job_id=job_id,
+                status="error",
+                job_id=job_id,
                 message=f"torchrun not found ({e}); is cosmos-framework's train env active?",
             )
 
         ckpt = spec.output_dir
         if proc.returncode != 0:
             return TrainResult(
-                status="error", job_id=job_id, checkpoint_dir=ckpt,
+                status="error",
+                job_id=job_id,
+                checkpoint_dir=ckpt,
                 message=f"cosmos_framework.scripts.train exited {proc.returncode}; see {log_path}",
             )
         return TrainResult(
-            status="success", job_id=job_id, checkpoint_dir=ckpt,
+            status="success",
+            job_id=job_id,
+            checkpoint_dir=ckpt,
             message=f"Cosmos3 SFT complete; log: {log_path}",
         )

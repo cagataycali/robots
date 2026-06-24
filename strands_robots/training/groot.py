@@ -88,8 +88,7 @@ class Gr00tTrainer(Trainer):
 
     def _resolve_tune(self, spec: TrainSpec) -> dict[str, bool]:
         merged = dict(_DEFAULT_TUNE)
-        merged.update({k: bool(v) for k, v in (spec.tune or {}).items()
-                       if k in _DEFAULT_TUNE})
+        merged.update({k: bool(v) for k, v in (spec.tune or {}).items() if k in _DEFAULT_TUNE})
         # method=frozen_backbone => freeze llm+visual, keep projector/diffusion.
         if spec.method == "frozen_backbone":
             merged["llm"] = False
@@ -128,13 +127,11 @@ class Gr00tTrainer(Trainer):
         root = self._resolve_groot_root(spec)
         if not root:
             problems.append(
-                "Isaac-GR00T checkout not found; set GR00T_ROOT, pass "
-                "groot_root=..., or extra['groot_root']"
+                "Isaac-GR00T checkout not found; set GR00T_ROOT, pass groot_root=..., or extra['groot_root']"
             )
         elif not os.path.isfile(self._launch_script(root)):
             problems.append(
-                f"launch_finetune.py not found under groot_root={root} "
-                f"(expected {self._launch_script(root)})"
+                f"launch_finetune.py not found under groot_root={root} (expected {self._launch_script(root)})"
             )
 
         mcfg = spec.extra.get("modality_config_path")
@@ -184,9 +181,7 @@ class Gr00tTrainer(Trainer):
                 cmd.append(f"--random_rotation_angle={spec.augmentation['random_rotation_angle']}")
             if "color_jitter_params" in spec.augmentation:
                 # tyro takes color_jitter as nested; pass as JSON via extra config instead
-                cmd.append(
-                    f"--extra_augmentation_config={json.dumps(spec.augmentation)}"
-                )
+                cmd.append(f"--extra_augmentation_config={json.dumps(spec.augmentation)}")
 
         # Modality config (.py) registration.
         mcfg = spec.extra.get("modality_config_path")
@@ -209,7 +204,8 @@ class Gr00tTrainer(Trainer):
         problems = self.validate(spec)
         if problems:
             return TrainResult(
-                status="error", job_id="",
+                status="error",
+                job_id="",
                 message="validation failed: " + "; ".join(problems),
             )
 
@@ -232,23 +228,32 @@ class Gr00tTrainer(Trainer):
         try:
             with open(log_path, "w", encoding="utf-8") as logf:
                 proc = subprocess.run(  # noqa: S603 - argv values validated by validate()/_security_problems before train() builds the command; list form, no shell
-                    cmd, cwd=parent, env=env,
-                    stdout=logf, stderr=subprocess.STDOUT, check=False,
+                    cmd,
+                    cwd=parent,
+                    env=env,
+                    stdout=logf,
+                    stderr=subprocess.STDOUT,
+                    check=False,
                 )
         except FileNotFoundError as e:
             return TrainResult(
-                status="error", job_id=job_id,
+                status="error",
+                job_id=job_id,
                 message=f"launcher not found ({e}); is torchrun/python + Isaac-GR00T present?",
             )
 
         ckpt = self._latest_checkpoint(spec.output_dir)
         if proc.returncode != 0:
             return TrainResult(
-                status="error", job_id=job_id, checkpoint_dir=ckpt,
+                status="error",
+                job_id=job_id,
+                checkpoint_dir=ckpt,
                 message=f"launch_finetune.py exited {proc.returncode}; see {log_path}",
             )
         return TrainResult(
-            status="success", job_id=job_id, checkpoint_dir=ckpt,
+            status="success",
+            job_id=job_id,
+            checkpoint_dir=ckpt,
             message=f"GR00T fine-tune complete; log: {log_path}",
         )
 
@@ -257,17 +262,19 @@ class Gr00tTrainer(Trainer):
         if not os.path.isdir(output_dir):
             return None
         ckpts = [
-            d for d in os.listdir(output_dir)
-            if d.startswith("checkpoint-")
-            and os.path.isdir(os.path.join(output_dir, d))
+            d
+            for d in os.listdir(output_dir)
+            if d.startswith("checkpoint-") and os.path.isdir(os.path.join(output_dir, d))
         ]
         if not ckpts:
             return None
+
         # Highest step number wins.
         def _step(name: str) -> int:
             try:
                 return int(name.split("-", 1)[1])
             except (IndexError, ValueError):
                 return -1
+
         best = max(ckpts, key=_step)
         return os.path.join(output_dir, best)

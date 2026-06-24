@@ -132,15 +132,11 @@ class LerobotTrainer(Trainer):
         ptype = self._resolve_policy_type(spec)
         if ptype not in _LEROBOT_POLICY_TYPES:
             problems.append(
-                f"policy_type '{ptype}' is not LeRobot-native "
-                f"(expected one of {sorted(_LEROBOT_POLICY_TYPES)})"
+                f"policy_type '{ptype}' is not LeRobot-native (expected one of {sorted(_LEROBOT_POLICY_TYPES)})"
             )
 
         if spec.method not in _SUPPORTED_METHODS:
-            problems.append(
-                f"unsupported method '{spec.method}' "
-                f"(expected one of {sorted(_SUPPORTED_METHODS)})"
-            )
+            problems.append(f"unsupported method '{spec.method}' (expected one of {sorted(_SUPPORTED_METHODS)})")
         if spec.method == "lora" and spec.tune.get("expert_only"):
             problems.append("lora and expert_only are mutually exclusive (both freeze the VLM)")
 
@@ -150,9 +146,7 @@ class LerobotTrainer(Trainer):
         if spec.val_episodes is not None and spec.dataset_root:
             total = self._dataset_total_episodes(spec.dataset_root)
             if total is not None and spec.val_episodes >= total:
-                problems.append(
-                    f"val_episodes={spec.val_episodes} >= total_episodes={total}"
-                )
+                problems.append(f"val_episodes={spec.val_episodes} >= total_episodes={total}")
 
         # lerobot must be importable to actually train.
         try:
@@ -171,12 +165,14 @@ class LerobotTrainer(Trainer):
 
         if spec.num_gpus > 1:
             launcher = [
-                "accelerate", "launch",
+                "accelerate",
+                "launch",
                 "--multi_gpu",
                 f"--num_processes={spec.num_gpus}",
                 "--num_machines=1",
                 "--mixed_precision=bf16",
-                "-m", "lerobot.scripts.lerobot_train",
+                "-m",
+                "lerobot.scripts.lerobot_train",
             ]
         else:
             launcher = [self.python_executable, "-m", "lerobot.scripts.lerobot_train"]
@@ -238,7 +234,8 @@ class LerobotTrainer(Trainer):
         problems = self.validate(spec)
         if problems:
             return TrainResult(
-                status="error", job_id="",
+                status="error",
+                job_id="",
                 message="validation failed: " + "; ".join(problems),
             )
 
@@ -271,12 +268,17 @@ class LerobotTrainer(Trainer):
         try:
             with open(log_path, "w", encoding="utf-8") as logf:
                 proc = subprocess.run(  # noqa: S603 - argv values validated by validate()/_security_problems before train() builds the command; list form, no shell
-                    cmd, cwd=parent, env=env,
-                    stdout=logf, stderr=subprocess.STDOUT, check=False,
+                    cmd,
+                    cwd=parent,
+                    env=env,
+                    stdout=logf,
+                    stderr=subprocess.STDOUT,
+                    check=False,
                 )
         except FileNotFoundError as e:
             return TrainResult(
-                status="error", job_id=job_id,
+                status="error",
+                job_id=job_id,
                 message=f"launcher not found ({e}); is lerobot/accelerate installed?",
             )
 
@@ -288,14 +290,18 @@ class LerobotTrainer(Trainer):
 
         if proc.returncode != 0:
             return TrainResult(
-                status="error", job_id=job_id,
-                checkpoint_dir=ckpt_model_dir, metrics=metrics,
+                status="error",
+                job_id=job_id,
+                checkpoint_dir=ckpt_model_dir,
+                metrics=metrics,
                 message=f"lerobot_train exited {proc.returncode}; see {log_path}",
             )
 
         return TrainResult(
-            status="success", job_id=job_id,
-            checkpoint_dir=ckpt_model_dir, metrics=metrics,
+            status="success",
+            job_id=job_id,
+            checkpoint_dir=ckpt_model_dir,
+            metrics=metrics,
             message=f"lerobot_train complete; log: {log_path}",
         )
 

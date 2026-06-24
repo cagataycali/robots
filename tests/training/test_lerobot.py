@@ -129,6 +129,7 @@ class TestParseLog:
 
     def test_expand_big_number(self):
         from strands_robots.training.lerobot import _expand_big_number
+
         assert _expand_big_number("1.2K") == 1200.0
         assert _expand_big_number("2") == 2.0
         assert _expand_big_number("3M") == 3_000_000.0

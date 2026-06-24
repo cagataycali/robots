@@ -102,9 +102,7 @@ class TestLifecycle:
         assert isinstance(res, TrainResult)
         assert res.status == "success"
         assert res.job_id
-        assert res.checkpoint_dir and os.path.isfile(
-            os.path.join(res.checkpoint_dir, "config.json")
-        )
+        assert res.checkpoint_dir and os.path.isfile(os.path.join(res.checkpoint_dir, "config.json"))
         assert res.metrics["learning"] is True
 
     def test_train_refuses_invalid_spec(self, tmp_path):

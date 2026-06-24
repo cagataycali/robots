@@ -24,6 +24,7 @@ from __future__ import annotations
 import importlib
 import logging
 from collections.abc import Callable
+from typing import Any
 
 from strands_robots.registry.policies import get_policy_provider, list_policy_providers
 from strands_robots.training.base import Trainer
@@ -90,14 +91,16 @@ def import_trainer_class(provider: str) -> type[Trainer]:
     if cfg and "trainer" in cfg:
         tcfg = cfg["trainer"]
         mod = importlib.import_module(tcfg["module"])
-        return getattr(mod, tcfg["class"])
+        cls: type[Trainer] = getattr(mod, tcfg["class"])
+        return cls
 
     # Auto-discovery fallback: strands_robots.training.<provider>
     try:
         mod = importlib.import_module(f"strands_robots.training.{provider}")
         class_name = f"{provider.capitalize()}Trainer"
         if hasattr(mod, class_name):
-            return getattr(mod, class_name)
+            cls = getattr(mod, class_name)
+            return cls
         for attr_name in dir(mod):
             attr = getattr(mod, attr_name)
             if isinstance(attr, type) and issubclass(attr, Trainer) and attr is not Trainer:
@@ -107,13 +110,10 @@ def import_trainer_class(provider: str) -> type[Trainer]:
         # ValueError below so the caller gets the full "available trainers" list.
         pass
 
-    raise ValueError(
-        f"No trainer registered for provider '{provider}'. "
-        f"Available trainers: {list_trainers()}"
-    )
+    raise ValueError(f"No trainer registered for provider '{provider}'. Available trainers: {list_trainers()}")
 
 
-def create_trainer(provider: str, **kwargs) -> Trainer:
+def create_trainer(provider: str, **kwargs: Any) -> Trainer:
     """Create a :class:`Trainer` for a policy provider.
 
     The training-side peer of ``create_policy``. The provider name is the SAME
