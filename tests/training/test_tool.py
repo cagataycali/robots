@@ -19,6 +19,19 @@ def _text(res):
     return res["content"][0]["text"]
 
 
+def _json(res):
+    """Extract the structured ``{"json": ...}`` content block.
+
+    The tool returns the canonical ``{status, content:[...]}`` only — structured
+    fields (job_id / checkpoint_dir / metrics / exported_model) live in a json
+    content block, NOT as sibling keys of the result dict.
+    """
+    for block in res["content"]:
+        if "json" in block:
+            return block["json"]
+    raise AssertionError(f"no json content block in result: {res}")
+
+
 @pytest.fixture
 def dataset_root(tmp_path):
     meta = tmp_path / "meta"
@@ -74,10 +87,13 @@ class TestActions:
             steps=50,
         )
         assert res["status"] == "success", _text(res)
-        assert res["job_id"]
-        assert res["checkpoint_dir"]
-        assert res["metrics"]["learning"] is True
+        data = _json(res)
+        assert data["job_id"]
+        assert data["checkpoint_dir"]
+        assert data["metrics"]["learning"] is True
         assert "create_policy(" in _text(res)
+        # the result dict must NOT be extended beyond {status, content}
+        assert set(res.keys()) == {"status", "content"}
 
     def test_status_requires_job_id(self):
         res = train_policy(action="status", provider="mock")
@@ -87,7 +103,8 @@ class TestActions:
     def test_status_verdict(self):
         res = train_policy(action="status", provider="mock", job_id="mock-123")
         assert res["status"] == "success"
-        assert res["metrics"]["learning"] is True
+        assert _json(res)["metrics"]["learning"] is True
+        assert set(res.keys()) == {"status", "content"}
 
     def test_unknown_action(self, dataset_root, tmp_path):
         res = train_policy(

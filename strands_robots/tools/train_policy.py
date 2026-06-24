@@ -27,10 +27,17 @@ from strands_robots.training import TrainSpec, create_trainer, list_trainers
 logger = logging.getLogger(__name__)
 
 
-def _ok(text: str, **extra: Any) -> dict[str, Any]:
-    out = {"status": "success", "content": [{"text": text}]}
-    out.update(extra)
-    return out
+def _ok(text: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Canonical Strands tool result: ``{status, content:[...]}`` only.
+
+    Structured data goes INSIDE the content list as a ``{"json": ...}`` block -
+    NEVER as a sibling key of ``status``/``content`` (the result dict must not be
+    extended beyond the two-key convention).
+    """
+    content: list[dict[str, Any]] = [{"text": text}]
+    if data is not None:
+        content.append({"json": data})
+    return {"status": "success", "content": content}
 
 
 def _err(text: str) -> dict[str, Any]:
@@ -111,8 +118,11 @@ def train_policy(
         job_id: Job identifier for ``action="status"``.
 
     Returns:
-        ``{status, content:[{text}], ...}``. For ``train``: includes
-        ``checkpoint_dir``, ``metrics``, ``job_id``.
+        Canonical Strands result ``{status, content:[...]}`` (no sibling keys).
+        For ``train``/``status``/``export`` the structured fields
+        (``job_id``, ``checkpoint_dir``, ``exported_model``, ``metrics``) are in
+        a ``{"json": ...}`` block inside ``content``, alongside a human-readable
+        ``{"text": ...}`` block.
 
     Dependencies (per provider - the base ``[lerobot]`` extra is not always
     enough):
@@ -121,10 +131,11 @@ def train_policy(
           ``[smolvla]``/``[pi]`` extra, which pins ``transformers==5.3.0``. A
           newer transformers crashes the VLA import (``non-default argument
           'backbone_cfg' follows default argument``) - pin it.
-        - ``groot``/``cosmos3``: run in their own checkout + venv; point
-          ``extra['groot_root']``/``GR00T_ROOT`` or
-          ``extra['cosmos_root']``/``COSMOS_ROOT`` at it. The trainer launches
-          the native pipeline as a subprocess, so it uses THAT interpreter.
+        - ``groot``/``cosmos3``: install the upstream package into THIS
+          interpreter (the trainer imports it and calls its library functions
+          in-process - no subprocess). Point ``extra['groot_root']``/``GR00T_ROOT``
+          or ``extra['cosmos_root']``/``COSMOS_ROOT`` at the checkout for runtime
+          config/recipe resolution.
         - torchcodec's ``.so`` must match the installed torch build exactly; a
           torch nightly load-fails a stable torchcodec (``undefined symbol``)
           and lerobot silently yields zero frames. See docs/training/overview.md.
@@ -151,7 +162,6 @@ def train_policy(
                         }
                     },
                 ],
-                "metrics": res.metrics,
             }
 
         # All remaining actions need a spec.
@@ -196,7 +206,7 @@ def train_policy(
             exported = trainer.export(spec, ckpt)
             return _ok(
                 f"[{provider}] exported loadable artifact:\n{exported}\nLoad it with: create_policy('{exported}')",
-                exported_model=exported,
+                data={"provider": provider, "exported_model": exported},
             )
 
         if action == "train":
@@ -229,9 +239,6 @@ def train_policy(
                         }
                     },
                 ],
-                "job_id": res.job_id,
-                "checkpoint_dir": res.checkpoint_dir,
-                "metrics": res.metrics,
             }
 
         return _err(f"Unknown action: {action}. Valid: train, validate, status, export, list")
