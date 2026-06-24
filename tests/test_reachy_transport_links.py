@@ -18,8 +18,10 @@ import json
 import sys
 import unittest
 import urllib.error
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from strands_robots.device_connect import reachy_transport
 from strands_robots.device_connect.reachy_transport import (
     WebSocketLink,
     ZenohLink,
@@ -259,6 +261,39 @@ class TestRestApiErrorHandling(unittest.TestCase):
         with patch("urllib.request.urlopen", return_value=fake_resp):
             result = api("h", 8000, "/status")
         self.assertEqual(result, {"ok": True})
+
+
+class TestWebSocketLinkConnectKwargsTyping(unittest.TestCase):
+    """The WebSocket connect-kwargs dict must be statically well-typed.
+
+    ``WebSocketLink.start`` builds an untyped ``_connect_kwargs`` mapping and
+    ``**``-unpacks it into ``websockets.connect``. With the inline type stubs
+    shipped by recent ``websockets`` releases, an unannotated ``{}`` literal is
+    inferred as ``dict[str, dict[str, str]]`` (from its first assignment) and
+    fails every ``connect`` overload on the unpack. Annotating the dict as
+    ``dict[str, Any]`` keeps the call type-correct. This pins that contract so a
+    future edit cannot silently reintroduce the over-narrow inference.
+    """
+
+    def test_module_typechecks_against_websockets_stubs(self):
+        import subprocess
+
+        module_path = Path(reachy_transport.__file__)
+        result = subprocess.run(
+            [sys.executable, "-m", "mypy", str(module_path)],
+            capture_output=True,
+            text=True,
+        )
+        arg_type_errors = [
+            line for line in result.stdout.splitlines() if "reachy_transport.py" in line and "[arg-type]" in line
+        ]
+        self.assertEqual(
+            arg_type_errors,
+            [],
+            msg=(
+                "websockets.connect call must type-check cleanly; got arg-type errors:\n" + "\n".join(arg_type_errors)
+            ),
+        )
 
 
 def _restore_env(name, old):

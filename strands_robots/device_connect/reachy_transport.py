@@ -258,7 +258,7 @@ class WebSocketLink(HardwareLink):
         _extra_headers = {"Authorization": f"Bearer {_token}"} if _token else None
         if not _token:
             _warn_unauthenticated_once("WebSocket")
-        _connect_kwargs = {}
+        _connect_kwargs: dict[str, Any] = {}
         if _extra_headers:
             # websockets >=12 uses additional_headers; older uses extra_headers.
             try:
