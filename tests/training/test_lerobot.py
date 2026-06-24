@@ -320,13 +320,55 @@ class TestBuildConfigAdditionalBranches:
         # ACT has no train_expert_only attr; build must not crash and peft stays None.
         assert cfg.peft is None
 
-    def test_lora_alpha_passed_through(self, spec):
+    def test_lora_options_passed_through_when_supported(self, spec):
         pytest.importorskip("lerobot")
+        import dataclasses
+
+        from lerobot.configs.default import PeftConfig
+
+        supported = {f.name for f in dataclasses.fields(PeftConfig)}
+        if "lora_alpha" not in supported:
+            pytest.skip("installed lerobot PeftConfig has no lora_alpha field")
         spec.method = "lora"
         spec.lora_r = 8
         spec.lora_alpha = 32
         cfg = LerobotTrainer(device="cpu").build_config(spec)
+        assert cfg.peft.r == 8
         assert cfg.peft.lora_alpha == 32
+
+    def test_unsupported_lora_option_raises_actionable_error(self, spec, monkeypatch):
+        """A LoRA option the installed PeftConfig rejects must raise a clear
+        ValueError, not an opaque TypeError from the dataclass constructor.
+
+        Older lerobot releases in the supported range (e.g. 0.5.1) lack the
+        ``lora_alpha`` field, so forwarding it crashed build_config. Simulate
+        that drift by stripping the field, independent of the installed version.
+        """
+        pytest.importorskip("lerobot")
+        import dataclasses
+
+        from lerobot.configs.default import PeftConfig
+
+        kept = [f for f in dataclasses.fields(PeftConfig) if f.name != "lora_alpha"]
+
+        class _LegacyPeftConfig:
+            _names = {f.name for f in kept}
+
+            def __init__(self, **kwargs):
+                bad = set(kwargs) - self._names
+                if bad:
+                    raise TypeError(f"unexpected keyword argument {sorted(bad)}")
+                for k, v in kwargs.items():
+                    setattr(self, k, v)
+
+        _LegacyPeftConfig.__dataclass_fields__ = {f.name: f for f in kept}
+        monkeypatch.setattr("lerobot.configs.default.PeftConfig", _LegacyPeftConfig, raising=True)
+
+        spec.method = "lora"
+        spec.lora_r = 8
+        spec.lora_alpha = 32
+        with pytest.raises(ValueError, match="lora_alpha"):
+            LerobotTrainer(device="cpu").build_config(spec)
 
     def test_seed_set_on_config(self, spec):
         pytest.importorskip("lerobot")

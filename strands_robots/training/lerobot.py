@@ -258,6 +258,7 @@ class LerobotTrainer(Trainer):
         The in-process equivalent of :meth:`build_command`: constructs the
         dataclass tree ``train(cfg)`` consumes directly (no argv).
         """
+        import dataclasses
         from pathlib import Path
 
         from lerobot.configs.default import DatasetConfig, PeftConfig
@@ -291,6 +292,15 @@ class LerobotTrainer(Trainer):
                 peft_kwargs["lora_alpha"] = spec.lora_alpha
             if spec.lora_target_modules is not None:
                 peft_kwargs["target_modules"] = spec.lora_target_modules
+            supported = {f.name for f in dataclasses.fields(PeftConfig)}
+            unsupported = sorted(k for k in peft_kwargs if k not in supported)
+            if unsupported:
+                raise ValueError(
+                    f"The installed lerobot's PeftConfig does not support LoRA "
+                    f"option(s) {unsupported}; it accepts {sorted(supported)}. "
+                    "These options were requested via TrainSpec. Upgrade lerobot "
+                    "to a version that supports them, or drop them from the spec."
+                )
             peft_cfg = PeftConfig(**peft_kwargs)
             if hasattr(policy_cfg, "use_peft"):
                 policy_cfg.use_peft = True
