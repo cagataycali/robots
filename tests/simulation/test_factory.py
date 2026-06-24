@@ -17,12 +17,14 @@ from strands_robots.simulation.factory import (
 
 @pytest.fixture(autouse=True)
 def _clear_runtime():
-    """Each test starts with a clean runtime registry."""
+    """Each test starts with a clean runtime registry and plugin cache."""
     factory._runtime_registry.clear()
     factory._runtime_aliases.clear()
+    factory._PLUGIN_BACKENDS_CACHE = None
     yield
     factory._runtime_registry.clear()
     factory._runtime_aliases.clear()
+    factory._PLUGIN_BACKENDS_CACHE = None
 
 
 class _FakeSim:
@@ -172,3 +174,137 @@ class TestNewtonBackendRegistration:
         )
         with pytest.raises(ImportError, match="sim-newton"):
             create_simulation("newton")
+
+
+class _FakeEntryPoint:
+    """Minimal stand-in for an importlib.metadata.EntryPoint.
+
+    ``entry_points(group=...)`` returns objects with ``.name`` and ``.load()``;
+    that is the entire surface the factory touches, so we mock just those.
+    """
+
+    def __init__(self, name, target, *, raises=None):
+        self.name = name
+        self._target = target
+        self._raises = raises
+
+    def load(self):
+        if self._raises is not None:
+            raise self._raises
+        return self._target
+
+
+def _patch_entry_points(monkeypatch, eps):
+    """Patch the factory's ``entry_points`` to return ``eps`` for our group."""
+
+    def _fake_entry_points(*, group):
+        assert group == factory._ENTRY_POINT_GROUP
+        return list(eps)
+
+    monkeypatch.setattr(factory, "entry_points", _fake_entry_points)
+
+
+class _PluginSimA(_FakeSim):
+    pass
+
+
+class _PluginSimB(_FakeSim):
+    pass
+
+
+class TestEntryPointDiscovery:
+    def test_create_resolves_via_entry_point(self, monkeypatch):
+        _patch_entry_points(monkeypatch, [_FakeEntryPoint("plugin_sim", _PluginSimA)])
+        sim = create_simulation("plugin_sim", gpu_id=3)
+        assert isinstance(sim, _PluginSimA)
+        assert sim.kwargs == {"gpu_id": 3}
+
+    def test_list_backends_includes_plugins(self, monkeypatch):
+        _patch_entry_points(monkeypatch, [_FakeEntryPoint("plugin_sim", _PluginSimA)])
+        backends = list_backends()
+        assert "plugin_sim" in backends
+        assert "mujoco" in backends
+        assert backends == sorted(set(backends))
+
+    def test_aliases_via_multiple_entry_points(self, monkeypatch):
+        """Two entry-point names may point at the same class (newton/warp)."""
+        _patch_entry_points(
+            monkeypatch,
+            [
+                _FakeEntryPoint("newton_plugin", _PluginSimB),
+                _FakeEntryPoint("warp_plugin", _PluginSimB),
+            ],
+        )
+        assert isinstance(create_simulation("newton_plugin"), _PluginSimB)
+        assert isinstance(create_simulation("warp_plugin"), _PluginSimB)
+
+    def test_builtin_wins_over_plugin_of_same_name(self, monkeypatch):
+        """A plugin named ``mujoco`` must not shadow the built-in backend."""
+        pytest.importorskip("mujoco")
+        _patch_entry_points(monkeypatch, [_FakeEntryPoint("mujoco", _PluginSimA)])
+        sim = create_simulation("mujoco")
+        # Built-in resolves, not the plugin stand-in.
+        assert type(sim).__name__ == "MuJoCoSimEngine"
+        assert not isinstance(sim, _PluginSimA)
+        sim.cleanup()
+
+    def test_broken_plugin_is_skipped_not_fatal(self, monkeypatch):
+        """A plugin that fails to import is logged and skipped, others work."""
+        _patch_entry_points(
+            monkeypatch,
+            [
+                _FakeEntryPoint("broken", None, raises=RuntimeError("boom")),
+                _FakeEntryPoint("good", _PluginSimA),
+            ],
+        )
+        # Good plugin still resolves despite the broken sibling.
+        assert isinstance(create_simulation("good"), _PluginSimA)
+        # Broken one is simply absent.
+        assert "broken" not in factory._load_plugin_backends()
+
+    def test_discovery_is_cached(self, monkeypatch):
+        """Entry points are scanned at most once per process."""
+        calls = {"n": 0}
+
+        def _counting_entry_points(*, group):
+            calls["n"] += 1
+            return [_FakeEntryPoint("plugin_sim", _PluginSimA)]
+
+        monkeypatch.setattr(factory, "entry_points", _counting_entry_points)
+        list_backends()
+        list_backends()
+        create_simulation("plugin_sim")
+        assert calls["n"] == 1
+
+    def test_unknown_backend_lists_plugins_in_error(self, monkeypatch):
+        _patch_entry_points(monkeypatch, [_FakeEntryPoint("plugin_sim", _PluginSimA)])
+        with pytest.raises(ValueError) as exc_info:
+            create_simulation("nope_xyz")
+        msg = str(exc_info.value)
+        assert "mujoco" in msg
+        assert "plugin_sim" in msg
+
+    def test_unknown_known_plugin_name_suggests_install(self, monkeypatch):
+        """Known out-of-tree names surface a pip install hint when absent."""
+        _patch_entry_points(monkeypatch, [])
+        with pytest.raises(ValueError, match="strands-robots-sim") as exc_info:
+            create_simulation("isaac")
+        assert "pip install" in str(exc_info.value)
+
+
+class TestEntryPointLazyImport:
+    def test_no_eager_plugin_scan_on_import(self):
+        """Importing strands_robots.simulation must not scan entry points.
+
+        The plugin cache stays ``None`` until the first ``create_simulation``
+        / ``list_backends`` call, so installing a plugin never slows cold
+        ``import strands_robots.simulation``.
+        """
+        import importlib as _importlib
+
+        mod = _importlib.import_module("strands_robots.simulation.factory")
+        mod = _importlib.reload(mod)
+        try:
+            assert mod._PLUGIN_BACKENDS_CACHE is None
+        finally:
+            mod._PLUGIN_BACKENDS_CACHE = None

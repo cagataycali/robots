@@ -785,6 +785,26 @@ for action Y. Valid: [...]"*, missing required params produce *"Action X
 requires parameter Y."*, and vectors/dtypes are validated before MuJoCo sees
 them - so the agent learns the contract without crashing the process.
 
+**Third-party backends.** `create_simulation(name)` discovers backends beyond
+the built-in `mujoco`/`newton` registry via Python
+[entry points](https://packaging.python.org/en/latest/specifications/entry-points/).
+A sibling package - e.g. [`strands-robots-sim`](https://github.com/strands-labs/robots-sim),
+which ships the heavy Isaac Sim and Newton backends out-of-tree - registers its
+`SimEngine` subclasses under the `strands_robots.backends` group in its
+`pyproject.toml`, and they become available on `pip install` without patching
+this package:
+
+```toml
+[project.entry-points."strands_robots.backends"]
+isaac = "strands_robots_sim.isaac.simulation:IsaacSimulation"
+newton = "strands_robots_sim.newton.simulation:NewtonSimulation"
+warp = "strands_robots_sim.newton.simulation:NewtonSimulation"
+```
+
+Built-in backends always take precedence over plugins of the same name, plugin
+discovery is lazy (it never slows cold import), and `list_backends()` returns
+the merged builtin + plugin set.
+
 ## Mesh networking
 
 <p align="center">

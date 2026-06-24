@@ -21,6 +21,9 @@ Usage::
     from strands_robots.simulation.factory import register_backend
     register_backend("my_sim", lambda: MySimBackend, aliases=["custom"])
     sim = create_simulation("custom")
+
+Third-party packages may also register backends out-of-tree via the
+``strands_robots.backends`` entry-point group (see ``create_simulation``).
 """
 
 from __future__ import annotations
@@ -28,11 +31,16 @@ from __future__ import annotations
 import importlib
 import logging
 from collections.abc import Callable
+from importlib.metadata import entry_points
 from typing import Any
 
 from strands_robots.simulation.base import SimEngine
 
 logger = logging.getLogger(__name__)
+
+# Entry-point group third-party packages declare to register simulation
+# backends without patching this module. See ``_load_plugin_backends``.
+_ENTRY_POINT_GROUP = "strands_robots.backends"
 
 # Built-in backend registry (lazy loaders - no imports at module load)
 
@@ -61,10 +69,56 @@ _BUILTIN_ALIASES: dict[str, str] = {
 
 DEFAULT_BACKEND = "mujoco"
 
+# Suggested ``pip install`` hints surfaced in the "unknown backend" error so
+# users discover that heavy out-of-tree backends ship in the sibling
+# ``strands-robots-sim`` plugin package. Keyed by the entry-point name a
+# plugin is expected to register.
+_PLUGIN_INSTALL_HINTS: dict[str, str] = {
+    "isaac": "pip install 'strands-robots-sim[isaac]'",
+    "newton": "pip install 'strands-robots-sim[newton]'",
+    "warp": "pip install 'strands-robots-sim[newton]'",
+}
+
+# Plugin backends discovered via importlib.metadata entry points. Populated
+# lazily on the first ``create_simulation`` / ``list_backends`` call (NOT at
+# import time) so installing a plugin never slows cold ``import
+# strands_robots.simulation``. ``None`` means "not yet discovered".
+_PLUGIN_BACKENDS_CACHE: dict[str, type[SimEngine]] | None = None
+
 # Runtime registration (for user-defined backends not in built-ins)
 
 _runtime_registry: dict[str, Callable[[], type[SimEngine]]] = {}
 _runtime_aliases: dict[str, str] = {}
+
+
+def _load_plugin_backends() -> dict[str, type[SimEngine]]:
+    """Discover third-party backends registered via entry points.
+
+    Walks the ``strands_robots.backends`` entry-point group and loads each
+    advertised class. Results are cached after the first call so the
+    ``importlib.metadata`` scan and the plugin module imports happen at most
+    once per process (one-time lazy cache - no hot-reload after install).
+
+    A plugin that fails to import (missing heavy dependency, broken install)
+    is logged and skipped rather than crashing the factory, so a single bad
+    plugin can't take down ``create_simulation`` for the working backends.
+
+    Returns:
+        Mapping of entry-point name -> backend class. Aliases are expressed
+        as multiple entry-point names pointing at the same class (e.g.
+        ``newton`` and ``warp`` both resolve to ``NewtonSimulation``); no
+        dedup is applied so whichever requested name resolves cleanly.
+    """
+    global _PLUGIN_BACKENDS_CACHE
+    if _PLUGIN_BACKENDS_CACHE is None:
+        cache: dict[str, type[SimEngine]] = {}
+        for ep in entry_points(group=_ENTRY_POINT_GROUP):
+            try:
+                cache[ep.name] = ep.load()
+            except Exception as exc:  # noqa: BLE001 - one bad plugin must not break the factory
+                logger.warning("Failed to load simulation backend plugin %r: %s", ep.name, exc)
+        _PLUGIN_BACKENDS_CACHE = cache
+    return _PLUGIN_BACKENDS_CACHE
 
 
 def register_backend(
@@ -131,7 +185,13 @@ def register_backend(
 
 
 def list_backends() -> list[str]:
-    """List all available backend names (built-in + runtime-registered).
+    """List all available backend names (built-in + plugin + runtime).
+
+    Merges the built-in registry (and its aliases), entry-point plugin
+    backends discovered via ``importlib.metadata`` (see
+    ``create_simulation``), and any runtime-registered backends/aliases.
+    Discovering plugins triggers a one-time lazy scan of the
+    ``strands_robots.backends`` entry-point group.
 
     Returns:
         Sorted list of unique backend identifiers and aliases.
@@ -144,6 +204,7 @@ def list_backends() -> list[str]:
     names: set[str] = set()
     names.update(_BUILTIN_BACKENDS.keys())
     names.update(_BUILTIN_ALIASES.keys())
+    names.update(_load_plugin_backends().keys())
     names.update(_runtime_registry.keys())
     names.update(_runtime_aliases.keys())
     return sorted(names)
@@ -190,7 +251,19 @@ def _import_backend_class(name: str) -> type[SimEngine]:
         logger.debug("Loaded built-in backend: %s → %s.%s", name, module_path, class_name)
         return backend_cls
 
-    raise ValueError(f"Unknown simulation backend: {name!r}. Available: {', '.join(list_backends())}")
+    # 3. Entry-point plugins (third-party packages, e.g. strands-robots-sim).
+    #    Built-ins win over plugins of the same name (checked above), so a
+    #    conflicting plugin can never shadow "mujoco".
+    plugins = _load_plugin_backends()
+    if name in plugins:
+        plugin_cls = plugins[name]
+        logger.debug("Loaded plugin backend: %s → %s", name, plugin_cls.__name__)
+        return plugin_cls
+
+    available = ", ".join(list_backends())
+    hint = _PLUGIN_INSTALL_HINTS.get(name)
+    suffix = f" To install it: {hint}." if hint else ""
+    raise ValueError(f"Unknown simulation backend: {name!r}. Available: {available}.{suffix}")
 
 
 def create_simulation(
@@ -202,9 +275,36 @@ def create_simulation(
     This is the primary entry point for creating simulations.
     Backend classes are lazy-loaded on first call.
 
+    Resolution order for ``backend``:
+
+    1. Runtime-registered backends (see ``register_backend``).
+    2. Built-in backends (currently ``mujoco``, ``newton``). Built-ins always
+       win over entry-point plugins of the same name, so a third-party
+       plugin can never accidentally shadow a built-in backend.
+    3. Entry-point plugins. Third-party packages (e.g.
+       `strands-robots-sim <https://github.com/strands-labs/robots-sim>`_)
+       register heavy out-of-tree backends - Isaac Sim, Newton - by declaring
+       them under the ``strands_robots.backends`` entry-point group in their
+       ``pyproject.toml``::
+
+           [project.entry-points."strands_robots.backends"]
+           isaac = "strands_robots_sim.isaac.simulation:IsaacSimulation"
+           newton = "strands_robots_sim.newton.simulation:NewtonSimulation"
+           warp = "strands_robots_sim.newton.simulation:NewtonSimulation"
+
+       so they can be discovered on ``pip install`` without patching this
+       package. A plugin may map several entry-point names to the same class
+       (``newton`` and ``warp`` above) - whichever name is requested resolves
+       cleanly. Plugins are discovered lazily on the first
+       ``create_simulation`` / ``list_backends`` call (not at import time),
+       and a plugin that fails to import is logged and skipped rather than
+       crashing the factory. See the Python packaging spec for details:
+       https://packaging.python.org/en/latest/specifications/entry-points/
+
     Args:
         backend: Backend name or alias. Defaults to ``"mujoco"``.
             Built-in: ``"mujoco"`` (aliases: ``"mj"``, ``"mjc"``, ``"mjx"``).
+            May also be any entry-point plugin name (see above).
         **kwargs: Backend-specific keyword arguments passed to the
             constructor (e.g., ``tool_name``, ``timestep``).
 
@@ -212,7 +312,9 @@ def create_simulation(
         A ``SimEngine`` instance ready for ``create_world()``.
 
     Raises:
-        ValueError: If the backend name is not recognized.
+        ValueError: If the backend name is not recognized. The message lists
+            all available backends (built-in + plugin) and, for known
+            out-of-tree backends, a ``pip install`` hint.
         ImportError: If the backend's dependencies are missing
             (e.g., ``pip install mujoco``).
 
@@ -228,6 +330,9 @@ def create_simulation(
 
         # Pass kwargs to backend constructor
         sim = create_simulation("mujoco", tool_name="my_sim")
+
+        # Entry-point plugin (requires strands-robots-sim installed)
+        sim = create_simulation("isaac", gpu_id=0)
     """
     canonical = _resolve_name(backend)
     logger.info("Creating simulation: %s (resolved from %r)", canonical, backend)
