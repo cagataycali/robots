@@ -20,6 +20,7 @@ from strands_robots.training import TrainSpec
 from strands_robots.training.cosmos3 import (
     Cosmos3Trainer,
     _cosmos_worker,
+    _import_cosmos_module,
     _run_cosmos_launch,
 )
 
@@ -370,16 +371,14 @@ class TestOverridesExtras:
 class TestTrainEntrypointImportError:
     def test_train_import_failure_surfaced(self, spec, fake_cosmos, monkeypatch):
         # prepare() succeeds, but the train entrypoint import fails the preflight.
-        import strands_robots.training.cosmos3 as c3
-
-        real_import = c3._import_cosmos_module
+        real_import = _import_cosmos_module
 
         def flaky(qualname):
             if qualname == "scripts.train":
                 raise ImportError("no train module")
             return real_import(qualname)
 
-        monkeypatch.setattr(c3, "_import_cosmos_module", flaky)
+        monkeypatch.setattr("strands_robots.training.cosmos3._import_cosmos_module", flaky)
         result = Cosmos3Trainer().train(spec)
         assert result.status == "error"
         assert "no train module" in result.message
