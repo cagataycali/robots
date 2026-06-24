@@ -178,7 +178,7 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
     cameras: dict[str, dict[str, Any]] | None = None,
     position: list[float] | None = None,
     data_config: str | None = None,
-    mesh: bool = False,
+    mesh: bool | None = None,
     peer_id: str | None = None,
     **kwargs: Any,
 ) -> Simulation | HardwareRobot:
@@ -215,6 +215,12 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
         data_config: Data configuration name for observation/action schema.
                      Defaults to the canonical robot name. For multi-camera
                      setups, specify explicitly: ``data_config="so100_dualcam"``.
+        mesh: Attach a Zenoh fleet-coordination mesh. ``None`` (default) keeps
+              mesh OFF for a quiet bare ``Robot(...)`` but honours the
+              ``STRANDS_MESH=true`` opt-in. Pass ``True`` to force it on or
+              ``False`` to force it off; an explicit value always wins over the
+              env default. ``STRANDS_MESH=false`` is a hard kill switch.
+        peer_id: Optional mesh peer identifier. Auto-generated when omitted.
         **kwargs: Forwarded to the underlying backend constructor.
 
     Returns:
@@ -256,6 +262,16 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
 
     if mode == "auto":
         mode = _auto_detect_mode(canonical)
+
+    # Resolve the mesh opt-in. Mesh is OFF by default so a bare
+    # ``Robot("so100")`` is quiet and never spins up Zenoh/ACL/e-stop
+    # machinery. ``mesh=None`` (the default) means "consult the
+    # STRANDS_MESH env var": STRANDS_MESH=true opts in without a code
+    # change. An explicit ``mesh=True``/``mesh=False`` always wins over
+    # the env default. ``STRANDS_MESH=false`` remains a hard kill switch
+    # enforced in ``init_mesh`` regardless of this resolution.
+    if mesh is None:
+        mesh = os.getenv("STRANDS_MESH", "").strip().lower() in ("true", "1", "yes")
 
     # --- Simulation ---
     if mode == "sim":

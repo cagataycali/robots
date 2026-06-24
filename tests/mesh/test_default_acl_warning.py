@@ -90,11 +90,9 @@ def test_mtls_plus_default_acl_does_not_start(caplog, monkeypatch, stub_robot):
 
     # The operator-facing ERROR IS logged.
     error_msgs = [r.getMessage() for r in records if r.levelname == "ERROR"]
-    assert any("PERMISSIVE DEFAULT ACL ACTIVE UNDER MTLS" in m for m in error_msgs), (
-        f"expected ERROR breadcrumb; saw {error_msgs}"
-    )
+    assert any("Mesh did NOT start" in m for m in error_msgs), f"expected ERROR breadcrumb; saw {error_msgs}"
     # And the actionable paths are spelled out.
-    assert any("Mesh NOT STARTED" in m for m in error_msgs)
+    assert any("no access-control list configured" in m for m in error_msgs)
     assert any("STRANDS_MESH_ACCEPT_PERMISSIVE_ACL=1" in m for m in error_msgs)
 
 
@@ -106,9 +104,7 @@ def test_mtls_plus_default_acl_with_optin_logs_at_info(caplog, monkeypatch, stub
     monkeypatch.setenv("STRANDS_MESH_ACCEPT_PERMISSIVE_ACL", "1")
     records = _start_with_stub_session(stub_robot, caplog, level=logging.INFO)
     error_msgs = [r.getMessage() for r in records if r.levelname == "ERROR"]
-    assert not any("PERMISSIVE DEFAULT ACL ACTIVE" in m for m in error_msgs), (
-        f"opt-in should NOT log ERROR; saw {error_msgs}"
-    )
+    assert not any("Mesh did NOT start" in m for m in error_msgs), f"opt-in should NOT log ERROR; saw {error_msgs}"
     info_msgs = [r.getMessage() for r in records if r.levelname == "INFO"]
     assert any("permissive default ACL active" in m for m in info_msgs), (
         f"expected INFO-level ack on opt-in; saw {info_msgs}"
@@ -234,7 +230,7 @@ class TestF17PreSessionGate:
         assert m._running is False
         # The operator-facing ERROR was logged.
         error_msgs = [r.getMessage() for r in caplog.records if r.levelname == "ERROR"]
-        assert any("PERMISSIVE DEFAULT ACL ACTIVE UNDER MTLS" in msg for msg in error_msgs)
+        assert any("Mesh did NOT start" in msg for msg in error_msgs)
 
     def test_helper_returns_true_under_dangerous_combo(self, monkeypatch, stub_robot):
         """The helper itself returns True under mtls + permissive default

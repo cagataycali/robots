@@ -3279,18 +3279,18 @@ def init_mesh(
 ) -> Mesh | None:
     """Construct and start a Mesh for the given robot.
 
-    Returns None when mesh is disabled (STRANDS_MESH=false or mesh=False).
+    Returns None when mesh is disabled. ``STRANDS_MESH=false`` is a hard kill
+    switch and an explicit ``mesh=False`` both disable mesh; the env var only
+    forces mesh OFF, never ON (so an explicit opt-out is always honoured).
     """
-    # Mesh now defaults OFF (mesh=False) so a bare ``Robot("so101")`` is quiet
-    # and never spins up Zenoh/ACL/e-stop machinery the user didn't ask for.
-    # The STRANDS_MESH env var is an explicit override in BOTH directions:
-    #   STRANDS_MESH=true  -> force mesh ON  (opt in without code change)
-    #   STRANDS_MESH=false -> force mesh OFF (kill switch, wins over mesh=True)
+    # STRANDS_MESH=false is a hard kill switch: it disables mesh regardless of
+    # the ``mesh`` argument. An explicit ``mesh=False`` always wins too -- the
+    # env var only ever forces mesh OFF here, never ON, so a caller that
+    # explicitly opted out is honoured. The opt-in path (a bare ``Robot()``
+    # turning mesh ON via STRANDS_MESH=true) is resolved in the Robot factory.
     env = os.getenv("STRANDS_MESH", "").strip().lower()
     if env in ("false", "0", "no"):
         mesh = False
-    elif env in ("true", "1", "yes"):
-        mesh = True
     if not mesh:
         return None
 

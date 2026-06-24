@@ -1060,6 +1060,18 @@ class TestInitMeshFactory:
         result = init_mesh(FakeRobot(), peer_id="explicit-false", mesh=False)
         assert result is None
 
+    def test_env_true_does_not_force_on_over_explicit_false(self, monkeypatch, mock_session):
+        """init_mesh never forces mesh ON via env; explicit mesh=False wins.
+
+        STRANDS_MESH only ever forces mesh OFF inside init_mesh. The opt-in
+        (turning mesh ON from the env) is resolved in the Robot factory, so a
+        caller that explicitly passed mesh=False is always honoured here even
+        when STRANDS_MESH=true is set.
+        """
+        for val in ["true", "1", "yes", "TRUE"]:
+            monkeypatch.setenv("STRANDS_MESH", val)
+            assert init_mesh(FakeRobot(), peer_id="opt-out", mesh=False) is None
+
     def test_auto_peer_id_uniqueness(self, mock_session):
         """Auto-generated peer IDs should be unique across calls."""
         ids = set()

@@ -68,7 +68,7 @@ def test_multicast_enabled_emits_warning(monkeypatch, caplog):
     multicast_warnings = [r.getMessage() for r in caplog.records if _MULTICAST_MARKER in r.getMessage()]
     assert multicast_warnings, f"expected a multicast WARNING when STRANDS_MESH_MULTICAST=true, got: {caplog.messages}"
     msg = multicast_warnings[0]
-    assert "[safety]" in msg
+    assert "[safety:" in msg
     assert "224.0.0.224:7446" in msg
     assert "mc-on" in msg  # peer_id is interpolated
 
