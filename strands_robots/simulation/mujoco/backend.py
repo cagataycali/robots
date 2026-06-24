@@ -1,10 +1,15 @@
 """MuJoCo lazy import and GL backend configuration."""
 
+import contextlib
 import ctypes
 import logging
 import os
+import re
 import subprocess
 import sys
+import tempfile
+import threading
+import warnings
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -207,25 +212,23 @@ def _can_render() -> bool:
 # everything else through unchanged, and re-emits any dropped lines at DEBUG
 # level so they are still recoverable with STRANDS_ROBOTS_VERBOSE_MUJOCO=1.
 
-import contextlib as _contextlib
-import os as _os
-import re as _re
-import tempfile as _tempfile
-import threading as _threading
 
 # Lines we consider benign attach/compile chatter. Matched case-insensitively
 # against each captured stderr line.
 _MUJOCO_NOISE_PATTERNS = (
-    _re.compile(r"Attach conflict when attaching", _re.IGNORECASE),
-    _re.compile(r"^(timestep|iterations|ls_iterations|impratio|integrator|cone|"
-                r"jacobian|solver|tolerance|ls_tolerance|noslip_iterations|"
-                r"noslip_tolerance|ccd_iterations|ccd_tolerance|sdf_iterations|"
-                r"sdf_initpoints|gravity|wind|magnetic|density|viscosity):"
-                r".*(parent has|keeping parent value)", _re.IGNORECASE),
-    _re.compile(r"parent has .* child has .* keeping parent value", _re.IGNORECASE),
+    re.compile(r"Attach conflict when attaching", re.IGNORECASE),
+    re.compile(
+        r"^(timestep|iterations|ls_iterations|impratio|integrator|cone|"
+        r"jacobian|solver|tolerance|ls_tolerance|noslip_iterations|"
+        r"noslip_tolerance|ccd_iterations|ccd_tolerance|sdf_iterations|"
+        r"sdf_initpoints|gravity|wind|magnetic|density|viscosity):"
+        r".*(parent has|keeping parent value)",
+        re.IGNORECASE,
+    ),
+    re.compile(r"parent has .* child has .* keeping parent value", re.IGNORECASE),
 )
 
-_noise_lock = _threading.Lock()
+_noise_lock = threading.Lock()
 
 
 def _is_mujoco_noise(line: str) -> bool:
@@ -235,10 +238,7 @@ def _is_mujoco_noise(line: str) -> bool:
     return any(p.search(stripped) for p in _MUJOCO_NOISE_PATTERNS)
 
 
-import warnings as _warnings  # noqa: E402
-
-
-@_contextlib.contextmanager
+@contextlib.contextmanager
 def filter_mujoco_attach_noise():
     """Suppress MuJoCo's benign attach/compile spam.
 
@@ -255,16 +255,18 @@ def filter_mujoco_attach_noise():
     some test/Jupyter setups), or on any failure -- never let log hygiene
     break a working sim.
     """
-    if _os.getenv("STRANDS_ROBOTS_VERBOSE_MUJOCO", "").strip().lower() in (
-        "1", "true", "yes",
+    if os.getenv("STRANDS_ROBOTS_VERBOSE_MUJOCO", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
     ):
         yield
         return
 
     # Layer 1: drop the matching Python UserWarning regardless of fd capture.
-    _wctx = _warnings.catch_warnings()
+    _wctx = warnings.catch_warnings()
     _wctx.__enter__()
-    _warnings.filterwarnings(
+    warnings.filterwarnings(
         "ignore",
         message=r".*Attach conflict when attaching.*",
         category=UserWarning,
@@ -273,7 +275,7 @@ def filter_mujoco_attach_noise():
     # Layer 2: capture raw fd-2 writes. Need a real, dup-able stderr fd.
     try:
         orig_fd = sys.stderr.fileno()
-        saved_fd = _os.dup(orig_fd)
+        saved_fd = os.dup(orig_fd)
     except (AttributeError, OSError, ValueError):
         # No real fd (captured stderr / pytest capsys / Jupyter) -> warning
         # filter still applies; just skip the fd capture.
@@ -283,10 +285,10 @@ def filter_mujoco_attach_noise():
             _wctx.__exit__(None, None, None)
         return
 
-    tmp = _tempfile.TemporaryFile(mode="w+b")
+    tmp = tempfile.TemporaryFile(mode="w+b")
     try:
         with _noise_lock:
-            _os.dup2(tmp.fileno(), orig_fd)
+            os.dup2(tmp.fileno(), orig_fd)
             try:
                 yield
             finally:
@@ -295,7 +297,7 @@ def filter_mujoco_attach_noise():
                     sys.stderr.flush()
                 except Exception:
                     pass
-                _os.dup2(saved_fd, orig_fd)
+                os.dup2(saved_fd, orig_fd)
     finally:
         # Replay captured output, dropping the known-benign noise lines.
         try:
@@ -306,7 +308,7 @@ def filter_mujoco_attach_noise():
         finally:
             tmp.close()
             try:
-                _os.close(saved_fd)
+                os.close(saved_fd)
             except OSError:
                 pass
 

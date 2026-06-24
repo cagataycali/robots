@@ -104,8 +104,7 @@ def resolve_model(name: str, prefer_scene: bool = True) -> str | None:
                 found = _try(stripped)
                 if found:
                     logger.info(
-                        "resolve_model: '%s' not found; resolved via stripped "
-                        "name '%s'. Prefer the bare registry key.",
+                        "resolve_model: '%s' not found; resolved via stripped name '%s'. Prefer the bare registry key.",
                         name,
                         stripped,
                     )

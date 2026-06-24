@@ -280,3 +280,70 @@ class TestEnsureMujocoViewer:
             assert backend_mod._mujoco_viewer is None
         finally:
             self._restore_globals(saved)
+
+
+class TestMujocoNoiseFilter:
+    """Regression tests for the benign-attach-noise filter.
+
+    ``filter_mujoco_attach_noise`` and ``_is_mujoco_noise`` live in
+    ``strands_robots.simulation.mujoco.backend`` and depend on stdlib modules
+    (``contextlib``, ``os``, ``re``, ``tempfile``, ``threading``, ``warnings``)
+    imported at module top. These tests pin the matching contract and the
+    fd-2 capture round trip so the import wiring cannot silently regress.
+    """
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "Attach conflict when attaching 'scene' to 'strands_sim'",
+            "timestep: parent has 0.002, child has 0.005, keeping parent value",
+            "iterations: parent has 100, child has 10, keeping parent value",
+            "WARNING: parent has 0.002 child has 0.005 keeping parent value",
+        ],
+    )
+    def test_benign_lines_match(self, line):
+        assert backend_mod._is_mujoco_noise(line) is True
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "",
+            "   ",
+            "Segmentation fault in mj_step",
+            "RuntimeError: actuator index out of range",
+        ],
+    )
+    def test_real_errors_do_not_match(self, line):
+        assert backend_mod._is_mujoco_noise(line) is False
+
+    def test_verbose_env_disables_filtering(self, monkeypatch, capfd):
+        """STRANDS_ROBOTS_VERBOSE_MUJOCO=1 must pass all stderr through."""
+        monkeypatch.setenv("STRANDS_ROBOTS_VERBOSE_MUJOCO", "1")
+        with backend_mod.filter_mujoco_attach_noise():
+            print("Attach conflict when attaching scene", file=sys.stderr)
+        captured = capfd.readouterr()
+        assert "Attach conflict" in captured.err
+
+    def test_filter_drops_noise_keeps_real_errors(self, monkeypatch):
+        """End-to-end fd-2 capture: benign lines dropped, real lines kept.
+
+        Uses a real OS-level pipe as stderr so the fd-dup path actually runs
+        (capfd/capsys replace sys.stderr without a dup-able fileno, exercising
+        only the fallback branch).
+        """
+        monkeypatch.delenv("STRANDS_ROBOTS_VERBOSE_MUJOCO", raising=False)
+        r_fd, w_fd = os.pipe()
+        saved_stderr = sys.stderr
+        sys.stderr = os.fdopen(w_fd, "w")
+        try:
+            with backend_mod.filter_mujoco_attach_noise():
+                sys.stderr.write("Attach conflict when attaching scene\n")
+                sys.stderr.write("FATAL: actuator index out of range\n")
+                sys.stderr.flush()
+        finally:
+            sys.stderr.close()
+            sys.stderr = saved_stderr
+        output = os.read(r_fd, 65536).decode()
+        os.close(r_fd)
+        assert "Attach conflict" not in output
+        assert "FATAL: actuator index out of range" in output

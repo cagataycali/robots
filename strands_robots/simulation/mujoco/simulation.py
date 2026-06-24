@@ -814,12 +814,7 @@ class MuJoCoSimEngine(
         # ``add_robot(data_config="so101")`` failed with "requires parameter
         # 'name'". Now the label defaults to the model name (deduped).
         if not name:
-            import os as _os
-            base = (
-                data_config
-                or (_os.path.splitext(_os.path.basename(urdf_path))[0] if urdf_path else None)
-                or "robot"
-            )
+            base = data_config or (os.path.splitext(os.path.basename(urdf_path))[0] if urdf_path else None) or "robot"
             name = base
             i = 2
             while name in self._world.robots:
@@ -830,12 +825,14 @@ class MuJoCoSimEngine(
             taken = ", ".join(sorted(self._world.robots)) or "(none)"
             return {
                 "status": "error",
-                "content": [{
-                    "text": (
-                        f"Robot '{name}' already exists. Pick a different "
-                        f"name, or omit name= to auto-number. Existing: {taken}."
-                    )
-                }],
+                "content": [
+                    {
+                        "text": (
+                            f"Robot '{name}' already exists. Pick a different "
+                            f"name, or omit name= to auto-number. Existing: {taken}."
+                        )
+                    }
+                ],
             }
 
         # Resolution precedence:
@@ -851,9 +848,7 @@ class MuJoCoSimEngine(
             if not resolved_path:
                 return {
                     "status": "error",
-                    "content": [
-                        {"text": self._unknown_model_msg(data_config)}
-                    ],
+                    "content": [{"text": self._unknown_model_msg(data_config)}],
                 }
         elif not resolved_path and name:
             # deprecated fallback - try registry by instance name.
