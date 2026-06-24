@@ -35,8 +35,6 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 
-from strands_robots.training._validate import validate_train_inputs
-
 
 @dataclass
 class TrainSpec:
@@ -189,7 +187,14 @@ class Trainer(ABC):
         that would smuggle an arbitrary ``--flag``). Concrete :meth:`validate`
         implementations MUST call this first so that the ``# noqa: S603``
         subprocess sites are genuinely fed validated input.
+
+        Imported lazily here (not at module top) to break the
+        ``base ↔ _validate`` cyclic import that CodeQL flagged: ``_validate``
+        references :class:`TrainSpec` only under ``TYPE_CHECKING``, so the
+        runtime cycle is closed by deferring this import until first call.
         """
+        from strands_robots.training._validate import validate_train_inputs
+
         return validate_train_inputs(spec)
 
     def prepare(self, spec: TrainSpec) -> None:
