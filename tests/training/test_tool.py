@@ -186,11 +186,39 @@ class TestInputSafety:
     """Pin: agent-supplied values cannot smuggle subprocess flags or escape paths.
 
     ``train_policy`` is an agent ``@tool``; every value reaches a trainer's
-    ``build_command`` -> ``subprocess.run`` argv. ``validate()`` /
-    ``_security_problems`` must reject the injection vectors up front (AGENTS.md
-    Review Learnings #92, "LLM Input Safety"). These fail on pre-fix code where
-    the ``extra`` keys and path fields were interpolated raw.
+    native config / argv-parity helper (training runs in-process now, not via
+    subprocess). ``validate()`` / ``_security_problems`` must reject the
+    injection vectors up front (AGENTS.md Review Learnings #92, "LLM Input
+    Safety") for EVERY spec-consuming action, including export.
     """
+
+    def test_export_rejects_unsafe_extra_key(self, dataset_root, tmp_path):
+        # Regression: the export action must gate on validate() before calling
+        # trainer.export(spec, ...) - it consumes the same agent-supplied spec.
+        res = train_policy(
+            action="export",
+            provider="mock",
+            dataset_root=dataset_root,
+            base_model="m",
+            output_dir=str(tmp_path / "o"),
+            steps=10,
+            extra={"--evil-flag": "x"},
+        )
+        assert res["status"] == "error"
+        assert "not allowed" in _text(res)
+
+    def test_export_rejects_output_dir_traversal(self, dataset_root):
+        res = train_policy(
+            action="export",
+            provider="mock",
+            dataset_root=dataset_root,
+            base_model="m",
+            output_dir="../../etc/evil",
+            steps=10,
+        )
+        assert res["status"] == "error"
+        # path traversal / protected-dir check fires before any export work.
+        assert "validation problems" in _text(res)
 
     def test_extra_flag_key_rejected(self, dataset_root, tmp_path):
         res = train_policy(
