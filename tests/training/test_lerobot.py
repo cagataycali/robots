@@ -69,8 +69,9 @@ class TestValidate:
 class TestBuildCommand:
     def test_single_gpu_core_flags(self, spec):
         cmd = LerobotTrainer(device="cpu").build_command(spec)
-        joined = " ".join(cmd)
-        assert "-m lerobot.scripts.lerobot_train" in joined
+        # build_command is now a PURE argv-parity helper (no launcher prefix);
+        # the module path is the first token.
+        assert cmd[0] == "lerobot.scripts.lerobot_train"
         assert "--dataset.repo_id=local" in cmd
         assert f"--dataset.root={spec.dataset_root}" in cmd
         assert "--policy.type=act" in cmd
@@ -82,13 +83,15 @@ class TestBuildCommand:
         assert "--wandb.enable=false" in cmd
         assert "--policy.pretrained_path=lerobot/act_aloha_sim" in cmd
 
-    def test_multi_gpu_uses_accelerate(self, spec):
+    def test_build_command_is_launcher_free(self, spec):
+        # build_command is parity-only: it never prepends accelerate/torchrun/
+        # python. Multi-GPU is driven by elastic_launch in train(), not here.
         spec.num_gpus = 4
         cmd = LerobotTrainer(device="cuda").build_command(spec)
-        assert cmd[0] == "accelerate"
-        assert "--multi_gpu" in cmd
-        assert "--num_processes=4" in cmd
-        assert "-m" in cmd and "lerobot.scripts.lerobot_train" in cmd
+        assert cmd[0] == "lerobot.scripts.lerobot_train"
+        assert "accelerate" not in cmd
+        assert "torchrun" not in cmd
+        assert "python" not in cmd
 
     def test_lora_flags(self, spec):
         spec.method = "lora"
@@ -122,6 +125,43 @@ class TestBuildCommand:
         # consumed keys must NOT leak as flags
         assert not any(c.startswith("--policy_type=") for c in cmd)
         assert not any(c.startswith("--job_name=strands_ft") for c in cmd)
+
+
+class TestBuildConfig:
+    """build_config() yields lerobot's typed TrainPipelineConfig (the real lib path)."""
+
+    def test_builds_typed_config(self, spec):
+        pytest.importorskip("lerobot")
+        cfg = LerobotTrainer(device="cpu").build_config(spec)
+        assert cfg.dataset.repo_id == "local"
+        assert cfg.dataset.root == spec.dataset_root
+        assert cfg.policy.type == "act"
+        assert cfg.policy.device == "cpu"
+        assert cfg.policy.push_to_hub is False
+        assert str(cfg.policy.pretrained_path) == "lerobot/act_aloha_sim"
+        assert cfg.steps == 200
+        assert cfg.batch_size == 8
+        assert cfg.save_freq == 100
+        assert cfg.wandb.enable is False
+        assert cfg.peft is None
+
+    def test_lora_builds_peft(self, spec):
+        pytest.importorskip("lerobot")
+        spec.method = "lora"
+        spec.lora_r = 16
+        spec.lora_target_modules = "q_proj,v_proj"
+        cfg = LerobotTrainer(device="cpu").build_config(spec)
+        assert cfg.peft is not None
+        assert cfg.peft.method_type == "LORA"
+        assert cfg.peft.r == 16
+        assert cfg.peft.target_modules == "q_proj,v_proj"
+        assert cfg.policy.use_peft is True
+
+    def test_val_split_episodes(self, spec):
+        pytest.importorskip("lerobot")
+        spec.val_episodes = 2  # total 10 -> [0..7]
+        cfg = LerobotTrainer(device="cpu").build_config(spec)
+        assert cfg.dataset.episodes == [0, 1, 2, 3, 4, 5, 6, 7]
 
 
 class TestParseLog:
