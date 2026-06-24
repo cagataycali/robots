@@ -101,12 +101,19 @@ class TestActions:
         # it. It now uses the public latest_checkpoint() ABC method.
         out = str(tmp_path / "out")
         train_policy(
-            action="train", provider="mock", dataset_root=dataset_root,
-            base_model="mock/base", output_dir=out, steps=10,
+            action="train",
+            provider="mock",
+            dataset_root=dataset_root,
+            base_model="mock/base",
+            output_dir=out,
+            steps=10,
         )
         res = train_policy(
-            action="export", provider="mock", dataset_root=dataset_root,
-            base_model="mock/base", output_dir=out,
+            action="export",
+            provider="mock",
+            dataset_root=dataset_root,
+            base_model="mock/base",
+            output_dir=out,
         )
         assert res["status"] == "success", _text(res)
         assert _json(res)["exported_model"]
@@ -114,8 +121,11 @@ class TestActions:
 
     def test_export_without_checkpoint_errors(self, dataset_root, tmp_path):
         res = train_policy(
-            action="export", provider="mock", dataset_root=dataset_root,
-            base_model="mock/base", output_dir=str(tmp_path / "never"),
+            action="export",
+            provider="mock",
+            dataset_root=dataset_root,
+            base_model="mock/base",
+            output_dir=str(tmp_path / "never"),
         )
         assert res["status"] == "error"
         assert "no checkpoint" in _text(res)
