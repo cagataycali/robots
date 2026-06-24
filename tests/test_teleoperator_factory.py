@@ -12,6 +12,7 @@ import sys
 
 import pytest
 
+from strands_robots import teleoperator as teleop_mod
 from strands_robots.teleoperator import (
     Teleoperator,
     _build_teleop_config,
@@ -190,8 +191,6 @@ def test_ensure_registered_skips_subpackage_import_failures(monkeypatch, caplog,
     """A subpackage whose device SDK is missing (ImportError/OSError mid-walk)
     is skipped, not fatal - registration still completes for the rest."""
     import importlib as _il
-
-    import strands_robots.teleoperator as teleop_mod
 
     def _boom(name, *a, **k):
         raise ImportError(f"device sdk missing for {name}")
