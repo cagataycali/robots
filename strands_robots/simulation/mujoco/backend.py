@@ -314,6 +314,8 @@ def filter_mujoco_attach_noise():
             try:
                 os.close(saved_fd)
             except OSError:
+                # saved_fd may already be closed during teardown; cleanup is
+                # best-effort, so a double-close is safe to ignore.
                 pass
 
         if captured:
