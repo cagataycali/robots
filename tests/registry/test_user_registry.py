@@ -17,7 +17,6 @@ import pytest
 from strands_robots.registry import get_robot, list_robots, resolve_name
 from strands_robots.registry.user_registry import (
     _get_user_registry_path,
-    _invalidate_cache,
     _load_user_registry,
     get_user_robots,
     list_user_robots,
@@ -31,23 +30,6 @@ from strands_robots.utils import get_assets_dir, get_base_dir, resolve_asset_pat
 # (section)
 
 _MINIMAL_MJCF = '<mujoco><worldbody><body><geom size="0.1"/></body></worldbody></mujoco>'
-
-
-@pytest.fixture(autouse=True)
-def _isolate_registry(tmp_path, monkeypatch):
-    """Point STRANDS_BASE_DIR + STRANDS_ASSETS_DIR to temp dirs for every test.
-
-    ``STRANDS_BASE_DIR`` controls where ``user_robots.json`` lives.
-    ``STRANDS_ASSETS_DIR`` controls where robot asset directories live.
-    The two are independent - the base dir is not derived from the assets dir.
-    """
-    assets_dir = tmp_path / "assets"
-    assets_dir.mkdir()
-    monkeypatch.setenv("STRANDS_BASE_DIR", str(tmp_path))
-    monkeypatch.setenv("STRANDS_ASSETS_DIR", str(assets_dir))
-    _invalidate_cache()
-    yield
-    _invalidate_cache()
 
 
 def _make_robot(parent: Path, name: str = "test_bot", xml_name: str = "bot.xml") -> Path:
