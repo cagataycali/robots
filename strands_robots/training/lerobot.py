@@ -82,27 +82,16 @@ class LerobotTrainer(Trainer):
         policy_type: LeRobot policy type (default ``"act"``). Resolved from
             ``TrainSpec.extra['policy_type']`` if present, else this.
         device: Torch device string (default auto: cuda > mps > cpu).
-        python_executable: Deprecated / ignored. Kept only so existing callers
-            constructing ``LerobotTrainer(python_executable=...)`` don't break;
-            training now runs in THIS interpreter, so there is no child process
-            to point at a different Python.
     """
 
     def __init__(
         self,
         policy_type: str = "act",
         device: str | None = None,
-        python_executable: str | None = None,  # noqa: ARG002 - back-compat shim, ignored
         **kwargs: Any,
     ) -> None:
         self.policy_type = policy_type
         self.device = device or _auto_device()
-        if python_executable is not None:
-            logger.debug(
-                "LerobotTrainer(python_executable=%r) is ignored: training now runs "
-                "in-process (no subprocess).",
-                python_executable,
-            )
 
     @property
     def provider_name(self) -> str:

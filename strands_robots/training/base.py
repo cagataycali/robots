@@ -5,14 +5,22 @@ The :class:`Trainer` ABC is the training-side peer of
 hides *how a model produces actions*, ``Trainer`` hides *how a model is
 post-tuned* - and those pipelines genuinely differ per provider:
 
-* **LeRobot** - ``python -m lerobot.scripts.lerobot_train`` (draccus CLI),
-  ``accelerate launch`` for multi-GPU. HF-native checkpoints.
-* **GR00T N1.7** - ``gr00t/experiment/launch_finetune.py`` (a ``FinetuneConfig``
-  dataclass via tyro), ``torchrun`` for multi-GPU, ``tune_llm/visual/projector/
-  diffusion`` flags + a modality-config ``.py``.
-* **Cosmos3** - ``torchrun -m cosmos_framework.scripts.train --sft-toml=...``
-  (TOML recipe + Hydra overrides), an explicit **DCP checkpoint conversion**
-  prepare step, and a **DCP -> safetensors** export step. 8xH100 floor.
+All three are driven **as libraries, in-process** - the package is imported and
+its own function/config objects are used directly; no ``subprocess`` is spawned
+and no command line is assembled from caller input (multi-GPU uses torch's
+programmatic ``elastic_launch``, the API behind ``torchrun``, not the binary):
+
+* **LeRobot** - build a typed ``TrainPipelineConfig`` and call
+  ``lerobot.scripts.lerobot_train.train(cfg)`` directly; multi-GPU via
+  ``accelerate.notebook_launcher``. HF-native checkpoints.
+* **GR00T N1.7** - build a ``FinetuneConfig`` + ``Config`` and call
+  ``gr00t.experiment.experiment.run(config)`` directly (the body of GR00T's
+  ``launch_finetune.py``, minus the argv parse); ``tune_llm/visual/projector/
+  diffusion`` knobs + a modality-config ``.py``.
+* **Cosmos3** - import ``cosmos_framework.scripts.{convert_model_to_dcp,train,
+  export_model}`` and call their ``main()`` with a controlled argv list (TOML
+  recipe + Hydra overrides), an explicit **DCP checkpoint conversion** prepare
+  step, and a **DCP -> safetensors** export step. 8xH100 floor.
 
 All three nonetheless converge on:
 
@@ -153,7 +161,7 @@ class Trainer(ABC):
     "is it *really* learning?" for an in-flight job.
 
     Concrete trainers are thin adapters that translate a :class:`TrainSpec`
-    into their backend's native launch (a subprocess command, a config object,
+    into their backend's native launch (a config object, a function call,
     a TOML recipe) - they do NOT reimplement training.
     """
 

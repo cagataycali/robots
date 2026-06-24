@@ -31,8 +31,8 @@ and a single `--policy.type` flag can't express them:
 | Provider | Upstream entry point | Config surface | Launcher | HW floor |
 |----------|---------------------|----------------|----------|----------|
 | `lerobot_local` | `lerobot.scripts.lerobot_train.train(cfg)` | typed `TrainPipelineConfig` (in-process) | in-process / `accelerate.notebook_launcher` | 1 consumer GPU |
-| `groot` | Isaac-GR00T `launch_finetune.py` | `FinetuneConfig` (tyro) + `tune_*` flags | in-process (runpy) / `elastic_launch` | 1 modern GPU |
-| `cosmos3` | `cosmos_framework.scripts.train` | TOML recipe + Hydra overrides; **DCP convert** + **safetensors export** | in-process (runpy) / `elastic_launch` (HSDP) | 8×H100 80GB |
+| `groot` | `gr00t.experiment.experiment.run(config)` | `FinetuneConfig` object (in-process) | in-process call / `elastic_launch` | 1 modern GPU |
+| `cosmos3` | `cosmos_framework.scripts.{convert,train,export}.main()` | TOML recipe + Hydra overrides; **DCP convert** + **safetensors export** | imported `main()` / `elastic_launch` (HSDP) | 8×H100 80GB |
 
 The `Trainer` ABC hides all of that behind one lifecycle:
 
@@ -128,9 +128,12 @@ TrainSpec(..., method="lora", lora_r=16, extra={"policy_type": "pi05"})
 
 **Runs in-process - no `subprocess`.** The LeRobot backend imports
 `lerobot` directly and calls its `train(cfg)` function in *this*
-interpreter. (GR00T and Cosmos3 are also shell-free now - see below - but
-they run their upstream *scripts* via `runpy` from a separately-installed
-checkout, whereas lerobot is a first-class dependency we call as a library.) `build_config()` translates a `TrainSpec`
+interpreter. (GR00T and Cosmos3 are also library-driven now - see below - GR00T by
+building its `FinetuneConfig`/`Config` and calling `experiment.run`, Cosmos3
+by importing its scripts and calling their `main()` - both from a
+separately-installed checkout. None of the three spawn a subprocess.)
+
+`build_config()` translates a `TrainSpec`
 into the typed `TrainPipelineConfig` dataclass tree that `train()` consumes;
 lerobot's `@parser.wrap()` short-circuits when handed a config instance, so
 **`sys.argv` is never read and no command line is assembled**. This removes
@@ -155,10 +158,12 @@ Launcher selection stays shell-free:
 TrainSpec(..., embodiment="GR1",
           tune={"llm": False, "visual": False, "projector": True, "diffusion": True},
           extra={"groot_root": "/path/to/Isaac-GR00T"})
-# -> build_args() yields the flag LIST [--embodiment_tag=GR1,
-#    --tune_projector=true, ...]; launch_finetune.py is then run IN-PROCESS
-#    via runpy (single GPU) or torch elastic_launch workers (multi-GPU).
-#    No subprocess, no torchrun binary. Unsafe extra keys are dropped.
+# -> build_finetune_config() builds GR00T's own FinetuneConfig object, which
+#    _build_run_config() lowers into a gr00t Config; then
+#    gr00t.experiment.experiment.run(config) is called DIRECTLY in-process
+#    (single GPU) or in torch elastic_launch workers (multi-GPU). No argv,
+#    no subprocess, no torchrun binary. extra keys must be real
+#    FinetuneConfig fields (typed allowlist) or they're ignored.
 ```
 
 ### Cosmos3 (`cosmos3`)
@@ -167,10 +172,11 @@ TrainSpec(..., embodiment="GR1",
 TrainSpec(..., num_gpus=8,
           extra={"cosmos_root": "/path/to/cosmos-framework",
                  "sft_toml": "examples/toml/sft_config/action_policy_droid_repro.toml"})
-# All three stages run IN-PROCESS via runpy (no subprocess/torchrun binary):
-#   prepare(): cosmos_framework.scripts.convert_model_to_dcp
-#   train():   cosmos_framework.scripts.train via torch elastic_launch (HSDP)
-#   export():  cosmos_framework.scripts.export_model  (DCP -> safetensors)
+# All three stages IMPORT the cosmos module and call its main() in-process
+# (no subprocess/torchrun binary):
+#   prepare(): cosmos_framework.scripts.convert_model_to_dcp.main()
+#   train():   cosmos_framework.scripts.train.main() via elastic_launch (HSDP)
+#   export():  cosmos_framework.scripts.export_model.main() (DCP->safetensors)
 # Hydra tail overrides from extra are gated by a safe-key allowlist.
 ```
 

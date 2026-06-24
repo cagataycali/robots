@@ -1,38 +1,40 @@
 """In-process execution helpers for the training backends (no ``subprocess``).
 
-The trainers used to drive their upstream pipelines by assembling a string
-``argv`` (partly from caller-controlled ``TrainSpec.extra``) and handing it to
-``subprocess.run`` / the ``torchrun`` binary. Spawning interpreters on command
-lines built from external input is a needless injection / arbitrary-flag
-surface. This module replaces that with two primitives that keep the work in
-THIS Python process (or torch-managed worker processes), never a shell:
+The trainers drive their upstream pipelines by **importing the package and
+calling it** - never by spawning an interpreter on a command line built from
+caller input. This module provides the small, shared plumbing for that:
 
-* :func:`run_python_module` / :func:`run_python_path` - execute a module
-  (``python -m pkg.mod``) or a script file (``python script.py``) IN-PROCESS via
-  :mod:`runpy`, with a controlled ``argv`` **list** and captured output. This is
-  the exact semantics of the old single-process subprocess call, minus the
-  child interpreter and the shell.
+* :func:`call_callable` - run a Python callable (e.g. GR00T's
+  ``experiment.run`` or a per-worker entry) with output captured to a log file.
+  This is the purest form: build the upstream's own config object and hand it
+  to its own function. No argv at all.
+
+* :func:`call_module_main` - import a module and call its ``main()`` entry
+  point with a controlled ``argv`` **list** (for upstream CLIs whose only public
+  entry parses ``sys.argv`` - e.g. NVIDIA's internal ``cosmos_framework``
+  scripts). ``sys.argv`` / cwd / env are saved and restored around the call.
+  Still import-and-call: no ``subprocess``, no ``runpy`` re-execution of a file.
 
 * :func:`elastic_launch_callable` - multi-GPU single-node launch via torch's
-  programmatic :class:`torch.distributed.launcher.api.elastic_launch`, NOT the
-  ``torchrun`` binary. Workers are spawned by torch's elastic agent (Python
-  multiprocessing) and each calls a Python callable with arguments passed as
-  Python objects - there is no command line to inject into.
+  programmatic :class:`torch.distributed.launcher.api.elastic_launch` (the API
+  behind ``torchrun``). Workers are spawned by torch's elastic agent and each
+  calls a Python callable with arguments passed as Python objects - there is no
+  command line to inject into.
 
 Argument hygiene
 ----------------
 :func:`safe_flag_key` rejects passthrough keys that aren't a conservative
-``[A-Za-z0-9_.-]+`` so a stray ``extra`` entry can never smuggle extra tokens
-(spaces, shell metacharacters, leading dashes) into the argv list.
+``[A-Za-z0-9][A-Za-z0-9_.-]*`` so a stray ``extra`` entry can never smuggle
+extra tokens (spaces, shell metacharacters, leading dashes) into an argv list.
 """
 
 from __future__ import annotations
 
+import importlib
 import io
 import logging
 import os
 import re
-import runpy
 import sys
 from collections.abc import Callable
 from contextlib import redirect_stderr, redirect_stdout
@@ -102,7 +104,8 @@ class capture_to_file:
 
     The upstream pipelines log progress to stdout / the root logger; capturing
     them to a file preserves the per-run log the trainers parse for their
-    "RUNNING != learning" verdict, exactly as the old subprocess log did.
+    "RUNNING != learning" verdict, exactly as the old subprocess log did. With
+    ``log_path=None`` it is a no-op (used by non-rank-0 workers).
     """
 
     def __init__(self, log_path: str | None) -> None:
@@ -140,25 +143,80 @@ class capture_to_file:
                 self._stream.close()
 
 
-def _with_process_context(
-    argv: list[str],
-    cwd: str | None,
-    env: dict[str, str] | None,
-    body: Callable[[], None],
-) -> None:
-    """Run ``body`` with a temporarily-patched ``sys.argv`` / cwd / env, restored after.
+def call_callable(
+    fn: Callable[..., Any],
+    *args: Any,
+    log_path: str | None = None,
+    **kwargs: Any,
+) -> Any:
+    """Call a Python callable in-process, with output captured to ``log_path``.
 
-    This reproduces a child interpreter's view (its own argv, working dir, and
-    a few extra env vars) WITHOUT spawning one, then puts the process back
-    exactly as it was - so the upstream ``__main__`` argv parsers (tyro / hydra /
-    draccus) see the controlled argv list and nothing leaks into our process.
+    The purest "import the package and use it" path: the caller has already
+    built the upstream's own config object (e.g. GR00T's ``Config``) and just
+    needs its function (``experiment.run``) invoked here. No argv, no shell.
     """
+    with capture_to_file(log_path):
+        return fn(*args, **kwargs)
+
+
+def _restore_context(old_argv, old_cwd, prev_env, set_env_keys) -> None:
+    sys.argv = old_argv
+    try:
+        os.chdir(old_cwd)
+    except OSError:
+        pass
+    for k, v in prev_env.items():
+        os.environ[k] = v
+    for k in set_env_keys:
+        os.environ.pop(k, None)
+
+
+def call_module_main(
+    module: str,
+    argv: list[str],
+    *,
+    main_attr: str = "main",
+    cwd: str | None = None,
+    env: dict[str, str] | None = None,
+    log_path: str | None = None,
+) -> Any:
+    """Import ``module`` and call its ``main()`` with a controlled ``argv`` list.
+
+    For upstream packages whose only public entry point is an argv-parsing
+    ``main()`` (tyro / hydra / argparse) - e.g. NVIDIA's internal
+    ``cosmos_framework`` scripts. We **import** the module (so it runs as a
+    library, in this interpreter) and call its ``main`` callable; ``sys.argv``
+    is temporarily set to ``[module, *argv]`` (a LIST - never a shell string)
+    and restored afterwards, along with cwd and any extra env.
+
+    Args:
+        module: Dotted module path (e.g. ``"cosmos_framework.scripts.train"``).
+        argv: Argument tokens AFTER the program name (a LIST). Gate any
+            externally-derived tokens with :func:`safe_flag_key` first.
+        main_attr: Name of the entry callable on the module (default ``"main"``).
+        cwd: Working directory for the call (restored afterwards).
+        env: Extra environment variables for the call (restored afterwards).
+        log_path: If given, stdout/stderr + root-logger output are tee'd here.
+
+    Raises:
+        AttributeError: If the module exposes no ``main_attr`` callable - the
+            caller's contract with that upstream package is then unmet (we do
+            NOT silently fall back to re-executing the file).
+    """
+    mod = importlib.import_module(module)
+    main_fn = getattr(mod, main_attr, None)
+    if not callable(main_fn):
+        raise AttributeError(
+            f"{module}.{main_attr} is not callable; cannot drive this upstream "
+            f"entry point as a library. Expose a {main_attr}() in {module}."
+        )
+
     old_argv = sys.argv
     old_cwd = os.getcwd()
     set_env_keys: list[str] = []
     prev_env: dict[str, str] = {}
     try:
-        sys.argv = list(argv)
+        sys.argv = [module, *argv]
         if env:
             for k, v in env.items():
                 if k in os.environ:
@@ -168,82 +226,10 @@ def _with_process_context(
                 os.environ[k] = v
         if cwd:
             os.chdir(cwd)
-        body()
+        with capture_to_file(log_path):
+            return main_fn()
     finally:
-        sys.argv = old_argv
-        try:
-            os.chdir(old_cwd)
-        except OSError:
-            pass
-        for k, v in prev_env.items():
-            os.environ[k] = v
-        for k in set_env_keys:
-            os.environ.pop(k, None)
-
-
-def run_python_module(
-    module: str,
-    args: list[str],
-    *,
-    cwd: str | None = None,
-    env: dict[str, str] | None = None,
-    log_path: str | None = None,
-) -> None:
-    """Equivalent of ``python -m <module> <args...>`` run IN-PROCESS via runpy.
-
-    Args:
-        module: Dotted module path (e.g. ``"cosmos_framework.scripts.train"``).
-        args: Argument tokens (a LIST - never a shell string). ``sys.argv``
-            inside the module becomes ``[module, *args]``.
-        cwd: Working directory for the run (restored afterwards).
-        env: Extra environment variables to set for the run (restored afterwards).
-        log_path: If given, stdout/stderr + root-logger output are tee'd here.
-
-    Raises:
-        Whatever the module raises. ``SystemExit(0)`` is swallowed (a clean
-        ``sys.exit()`` from the module's ``__main__`` is success); a non-zero
-        ``SystemExit`` is re-raised so callers can detect failure.
-    """
-    argv = [module, *args]
-
-    def _body() -> None:
-        try:
-            runpy.run_module(module, run_name="__main__", alter_sys=True)
-        except SystemExit as se:  # a script calling sys.exit()
-            code = se.code if se.code is not None else 0
-            if code not in (0, None):
-                raise
-
-    with capture_to_file(log_path):
-        _with_process_context(argv, cwd, env, _body)
-
-
-def run_python_path(
-    script_path: str,
-    args: list[str],
-    *,
-    cwd: str | None = None,
-    env: dict[str, str] | None = None,
-    log_path: str | None = None,
-) -> None:
-    """Equivalent of ``python <script_path> <args...>`` run IN-PROCESS via runpy.
-
-    Same contract as :func:`run_python_module` but for a script FILE (used by
-    GR00T's ``gr00t/experiment/launch_finetune.py``, which lives in a checkout
-    and is run by path rather than as an installed module).
-    """
-    argv = [script_path, *args]
-
-    def _body() -> None:
-        try:
-            runpy.run_path(script_path, run_name="__main__")
-        except SystemExit as se:
-            code = se.code if se.code is not None else 0
-            if code not in (0, None):
-                raise
-
-    with capture_to_file(log_path):
-        _with_process_context(argv, cwd, env, _body)
+        _restore_context(old_argv, old_cwd, prev_env, set_env_keys)
 
 
 def elastic_launch_callable(

@@ -49,11 +49,6 @@ class TestFactoryWiring:
         t = create_trainer("lerobot")
         assert isinstance(t, LerobotTrainer)
 
-    def test_python_executable_kwarg_is_accepted_but_ignored(self):
-        # Back-compat: old callers passed python_executable for the subprocess.
-        # It must not raise; training is now in-process so it's simply ignored.
-        t = LerobotTrainer(device="cpu", python_executable="/usr/bin/python3")
-        assert isinstance(t, LerobotTrainer)
 
 
 class TestValidate:

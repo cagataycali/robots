@@ -1,9 +1,11 @@
-"""Tests for Gr00tTrainer: factory wiring, validate, argument building.
+"""Tests for Gr00tTrainer: factory wiring + validate.
 
-Offline/pure - does not require an Isaac-GR00T checkout to run (uses a fake
-groot_root with a stub launch_finetune.py for the happy-path arg tests). The
-trainer now runs launch_finetune.py IN-PROCESS (no subprocess / torchrun), so
-the build step returns a pure flag LIST (no launcher binary, no script path).
+The trainer now drives GR00T AS A LIBRARY (build FinetuneConfig + call
+gr00t.experiment.experiment.run), so the build step needs the real ``gr00t``
+package importable. Those config-building assertions live in the parity test
+(tests/training/test_native_parity.py), which runs only where GR00T_ROOT points
+at a real Isaac-GR00T checkout. Here we keep the offline/pure checks: factory
+wiring + validate (which only stat-checks the checkout layout, no import).
 """
 
 import json
@@ -24,10 +26,8 @@ def dataset_root(tmp_path):
 
 @pytest.fixture
 def fake_groot_root(tmp_path):
-    """A fake Isaac-GR00T checkout with a stub launch_finetune.py."""
-    script = tmp_path / "gr00t" / "experiment" / "launch_finetune.py"
-    script.parent.mkdir(parents=True)
-    script.write_text("# stub\n")
+    """A fake Isaac-GR00T checkout (just the package dir validate() stat-checks)."""
+    (tmp_path / "gr00t").mkdir()
     return str(tmp_path)
 
 
@@ -55,12 +55,6 @@ class TestFactoryWiring:
     def test_hardware_floor(self):
         assert create_trainer("groot").hardware_floor["min_gpus"] == 1
 
-    def test_python_executable_kwarg_is_accepted_but_ignored(self):
-        # Back-compat: old callers passed python_executable for the subprocess.
-        # It must not raise; the script is now run in-process so it's ignored.
-        t = Gr00tTrainer(python_executable="/usr/bin/python3")
-        assert isinstance(t, Gr00tTrainer)
-
 
 class TestValidate:
     def test_clean(self, spec):
@@ -76,6 +70,14 @@ class TestValidate:
         problems = Gr00tTrainer().validate(spec)
         assert any("Isaac-GR00T checkout not found" in p for p in problems)
 
+    def test_missing_gr00t_package(self, spec, tmp_path):
+        # groot_root exists but has no gr00t/ package dir.
+        empty = tmp_path / "empty_root"
+        empty.mkdir()
+        spec.extra["groot_root"] = str(empty)
+        problems = Gr00tTrainer().validate(spec)
+        assert any("gr00t package not found" in p for p in problems)
+
     def test_bad_modality_config_path(self, spec):
         spec.extra["modality_config_path"] = "/does/not/exist.py"
         problems = Gr00tTrainer().validate(spec)
@@ -87,72 +89,45 @@ class TestValidate:
         assert any("multi-node" in p for p in problems)
 
 
-class TestBuildArgs:
-    """build_args() returns the launch_finetune.py flag LIST (no launcher)."""
+class TestTuneResolution:
+    """Pure tune-dict resolution (no gr00t import needed)."""
 
-    def test_core_flags(self, spec):
-        args = Gr00tTrainer().build_args(spec)
-        # No launcher binary / script path - just the script's own flags.
-        assert not any(a in ("torchrun", "python") for a in args)
-        assert not any(a.endswith("launch_finetune.py") for a in args)
-        assert "--base_model_path=nvidia/GR00T-N1.5-3B" in args
-        assert f"--dataset_path={spec.dataset_root}" in args
-        assert "--embodiment_tag=GR1" in args
-        assert "--max_steps=500" in args
-        assert "--global_batch_size=32" in args
-        assert "--save_steps=100" in args
-        assert "--num_gpus=1" in args
+    def test_default_tune(self, spec):
+        tune = Gr00tTrainer()._resolve_tune(spec)
+        assert tune == {"llm": False, "visual": False, "projector": True, "diffusion": True}
 
-    def test_default_tune_flags(self, spec):
-        args = Gr00tTrainer().build_args(spec)
-        assert "--tune_llm=false" in args
-        assert "--tune_visual=false" in args
-        assert "--tune_projector=true" in args
-        assert "--tune_diffusion_model=true" in args
-
-    def test_custom_tune_dict(self, spec):
+    def test_custom_tune(self, spec):
         spec.tune = {"llm": True, "visual": True, "projector": False, "diffusion": False}
-        args = Gr00tTrainer().build_args(spec)
-        assert "--tune_llm=true" in args
-        assert "--tune_visual=true" in args
-        assert "--tune_projector=false" in args
-        assert "--tune_diffusion_model=false" in args
+        tune = Gr00tTrainer()._resolve_tune(spec)
+        assert tune == {"llm": True, "visual": True, "projector": False, "diffusion": False}
 
-    def test_frozen_backbone_method(self, spec):
+    def test_frozen_backbone_forces_backbone_off(self, spec):
         spec.method = "frozen_backbone"
-        spec.tune = {"llm": True, "visual": True}  # should be forced off
-        args = Gr00tTrainer().build_args(spec)
-        assert "--tune_llm=false" in args
-        assert "--tune_visual=false" in args
+        spec.tune = {"llm": True, "visual": True}
+        tune = Gr00tTrainer()._resolve_tune(spec)
+        assert tune["llm"] is False
+        assert tune["visual"] is False
+        # projector/diffusion keep their defaults
+        assert tune["projector"] is True
+        assert tune["diffusion"] is True
 
-    def test_num_gpus_flag_for_multi_gpu(self, spec):
-        # build_args is launcher-agnostic; the >1 case is handled by
-        # elastic_launch at train() time, but the script still gets --num_gpus.
-        spec.num_gpus = 4
-        args = Gr00tTrainer().build_args(spec)
-        assert "--num_gpus=4" in args
 
-    def test_resume_flag(self, spec):
-        spec.resume = True
-        args = Gr00tTrainer().build_args(spec)
-        assert "--resume_from_checkpoint" in args
+class TestBuildFinetuneConfig:
+    """build_finetune_config builds GR00T's real FinetuneConfig object.
 
-    def test_modality_config_and_safe_passthrough(self, spec, tmp_path):
-        mcfg = tmp_path / "modality.py"
-        mcfg.write_text("# modality\n")
-        spec.extra["modality_config_path"] = str(mcfg)
-        spec.extra["weight_decay"] = 1e-5
-        args = Gr00tTrainer().build_args(spec)
-        assert f"--modality_config_path={mcfg}" in args
-        assert "--weight_decay=1e-05" in args
-        # consumed keys must not leak
-        assert not any(a.startswith("--groot_root=") for a in args)
+    Requires the real ``gr00t`` package; skipped where it isn't importable
+    (laptops/CI without the Isaac-GR00T checkout). The argv/flag parity against
+    the real FinetuneConfig fields is covered by test_native_parity.py.
+    """
 
-    def test_unsafe_passthrough_key_is_dropped(self, spec):
-        # A key with shell metacharacters / spaces must NOT become a token.
-        spec.extra["evil key; rm -rf /"] = "boom"
-        spec.extra["--inject"] = "x"
-        args = Gr00tTrainer().build_args(spec)
-        assert not any("evil key" in a for a in args)
-        assert not any("rm -rf" in a for a in args)
-        assert not any(a.startswith("----inject") for a in args)
+    def test_builds_real_finetune_config(self, spec):
+        pytest.importorskip("gr00t")
+        cfg = Gr00tTrainer().build_finetune_config(spec)
+        assert cfg.base_model_path == "nvidia/GR00T-N1.5-3B"
+        assert cfg.dataset_path == spec.dataset_root
+        assert cfg.embodiment_tag == "GR1"
+        assert cfg.max_steps == 500
+        assert cfg.global_batch_size == 32
+        assert cfg.save_steps == 100
+        assert cfg.tune_projector is True
+        assert cfg.tune_diffusion_model is True
