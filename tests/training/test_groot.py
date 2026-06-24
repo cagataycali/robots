@@ -237,7 +237,7 @@ def _install_fake_gr00t(monkeypatch, run_recorder=None):
     exp_mod = _mod("gr00t.experiment.experiment")
 
     ft_mod.FinetuneConfig = _FakeFinetuneConfig
-    base_cfg.get_default_config = lambda: _FakeRunConfig()
+    base_cfg.get_default_config = _FakeRunConfig
     emb_mod.EmbodimentTag = _FakeEmbodimentTag
 
     def _run(config):
