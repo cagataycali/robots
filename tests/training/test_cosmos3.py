@@ -77,6 +77,33 @@ class TestValidate:
         problems = Cosmos3Trainer().validate(spec)
         assert any("cosmos-framework checkout not found" in p for p in problems)
 
+    @pytest.mark.parametrize("bad", ["/etc/cron.d/x", "/var/spool/cron/x", "/usr/lib/x"])
+    def test_export_dir_protected_dir_rejected(self, spec, bad):
+        # Regression: extra["export_dir"] is a WRITE target that reaches
+        # os.makedirs in export(); an agent-supplied protected-system-dir value
+        # must be rejected by validate() (the key-format allowlist alone does
+        # not guard the path value). See AGENTS.md #92 "LLM Input Safety".
+        spec.extra["export_dir"] = bad
+        problems = Cosmos3Trainer().validate(spec)
+        assert any("protected system directory" in p for p in problems)
+
+    def test_dcp_path_protected_dir_rejected(self, spec):
+        # dcp_path reaches os.makedirs in prepare() - same WRITE-path guard.
+        spec.extra["dcp_path"] = "/etc/dcp"
+        problems = Cosmos3Trainer().validate(spec)
+        assert any("protected system directory" in p for p in problems)
+
+    def test_export_dir_traversal_rejected(self, spec):
+        spec.extra["export_dir"] = "../../etc/x"
+        problems = Cosmos3Trainer().validate(spec)
+        assert any("traversal" in p for p in problems)
+
+    def test_path_value_extras_allow_safe_dirs(self, spec, tmp_path):
+        # A legitimate (non-protected) write target must NOT be flagged.
+        spec.extra["export_dir"] = str(tmp_path / "exp")
+        spec.extra["dcp_path"] = str(tmp_path / "dcp")
+        assert Cosmos3Trainer().validate(spec) == []
+
 
 class TestBuildOverrides:
     """build_overrides() yields the Hydra key=value LIST (no launcher/argv).

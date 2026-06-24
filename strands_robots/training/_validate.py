@@ -46,6 +46,17 @@ _FLAG_BOUND_FIELDS = ("dataset_root", "output_dir", "base_model", "embodiment")
 # ``..`` traversal, protected system directories).
 _PATH_FIELDS = ("dataset_root", "output_dir")
 
+# Path-typed ``extra`` keys whose VALUE is a filesystem WRITE target reaching
+# ``os.makedirs`` in a backend (cosmos ``export_dir`` -> export() output dir,
+# ``dcp_path`` -> prepare() DCP base dir). The key-FORMAT allowlist above passes
+# ``"export_dir"`` as a key, but does nothing for its value, so without this an
+# agent-supplied ``extra["export_dir"]="/etc/cron.d/x"`` would reach makedirs with
+# the protected-dir / ``..``-traversal guard turned off. Read-only path extras
+# (``cosmos_root``/``groot_root``/``sft_toml``/``modality_config_path``) are
+# deliberately excluded: the protected-dir block is a WRITE guard and would
+# reject legitimate reads from system locations.
+_PATH_VALUE_EXTRA_KEYS = ("export_dir", "dcp_path")
+
 
 def validate_train_inputs(spec: TrainSpec) -> list[str]:
     """Return a list of input-safety problems for a :class:`TrainSpec`.
@@ -80,5 +91,17 @@ def validate_train_inputs(spec: TrainSpec) -> list[str]:
                 f"(must match {_EXTRA_KEY_RE.pattern}: lowercase, "
                 f"no leading dash, no '=', no whitespace)"
             )
+
+    # Path-typed ``extra`` VALUES that reach a backend write path get the same
+    # audited filesystem guard as ``_PATH_FIELDS`` (the key-format check above
+    # only guards the key, not the path value).
+    extra = spec.extra or {}
+    for key in _PATH_VALUE_EXTRA_KEYS:
+        val = extra.get(key)
+        if val:
+            try:
+                validate_save_path(str(val), label=f"extra[{key!r}]")
+            except ValueError as e:
+                problems.append(str(e))
 
     return problems
