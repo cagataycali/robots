@@ -506,3 +506,88 @@ def test_get_recording_status_text_is_ascii_idle_and_recording(sim_with_two_robo
     assert [ch for ch in text if ord(ch) > 127] == [], f"non-ASCII in recording text: {text!r}"
     assert "[recording]" in text and "3 steps" in text
     sim._world._backend_state["recording"] = False
+
+
+# start_recording() pre-create branches - lerobot guidance, dataset-dir
+# resolution, and init-failure cleanup.
+#
+# These exercise the parts of start_recording that run BEFORE the LeRobot
+# dataset object is built: the missing-extra guard, the repo_id -> on-disk
+# dir resolution (local path vs HuggingFace cache), and the cleanup that runs
+# when the recorder constructor fails. They mock DatasetRecorder.create so
+# they pass with or without the lerobot extra installed.
+
+
+def test_start_recording_without_lerobot_points_at_mp4_fallback(sim_with_two_robots, monkeypatch):
+    """When the lerobot extra is absent, start_recording does not crash: it
+    returns an error that names the lerobot extra and the plain-MP4 fallback."""
+    import strands_robots.dataset_recorder as dr
+
+    monkeypatch.setattr(dr, "has_lerobot_dataset", lambda: False)
+
+    r = sim_with_two_robots.start_recording(repo_id="local/no_lerobot", task="t")
+    assert r["status"] == "error"
+    text = r["content"][0]["text"]
+    assert "lerobot" in text
+    assert "start_cameras_recording" in text
+
+
+def test_start_recording_resolves_namespaced_repo_id_under_hf_cache(sim_with_two_robots, monkeypatch, tmp_path):
+    """With root=None and a 'user/name' repo_id, the dataset dir resolves under
+    the HuggingFace lerobot cache. We pin this by pointing Path.home at a temp
+    dir, pre-seeding the resolved cache dir, and asserting overwrite=True wipes
+    exactly that resolved path."""
+    import strands_robots.dataset_recorder as dr
+    import strands_robots.simulation.mujoco.recording as rec
+
+    monkeypatch.setattr(dr, "has_lerobot_dataset", lambda: True)
+    monkeypatch.setattr(rec.Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setattr(dr.DatasetRecorder, "create", classmethod(lambda cls, **kw: object()))
+
+    cache_dir = tmp_path / ".cache" / "huggingface" / "lerobot" / "user" / "name"
+    cache_dir.mkdir(parents=True)
+    stale = cache_dir / "stale.txt"
+    stale.write_text("old")
+
+    r = sim_with_two_robots.start_recording(repo_id="user/name", root=None, overwrite=True)
+    assert r["status"] == "success"
+    # The resolved HF-cache dir (not cwd) was the one wiped by overwrite.
+    assert not stale.exists()
+
+
+def test_start_recording_resolves_bare_repo_id_as_local_path(sim_with_two_robots, monkeypatch, tmp_path):
+    """A repo_id with no namespace slash resolves to a local relative path
+    (Path(repo_id)), not the HF cache. Verified via the overwrite wipe."""
+    import strands_robots.dataset_recorder as dr
+
+    monkeypatch.setattr(dr, "has_lerobot_dataset", lambda: True)
+    monkeypatch.setattr(dr.DatasetRecorder, "create", classmethod(lambda cls, **kw: object()))
+    monkeypatch.chdir(tmp_path)
+
+    local_dir = tmp_path / "bare_local"
+    local_dir.mkdir()
+    stale = local_dir / "stale.txt"
+    stale.write_text("old")
+
+    r = sim_with_two_robots.start_recording(repo_id="bare_local", root=None, overwrite=True)
+    assert r["status"] == "success"
+    assert not stale.exists()
+
+
+def test_start_recording_recorder_init_failure_clears_recording_flag(sim_with_two_robots, monkeypatch, tmp_path):
+    """If the dataset recorder constructor raises, start_recording reports an
+    error AND resets the recording flag so the sim is not left wedged in a
+    half-armed recording state."""
+    import strands_robots.dataset_recorder as dr
+
+    monkeypatch.setattr(dr, "has_lerobot_dataset", lambda: True)
+
+    def _boom(cls, **kw):
+        raise RuntimeError("codec unavailable")
+
+    monkeypatch.setattr(dr.DatasetRecorder, "create", classmethod(_boom))
+
+    r = sim_with_two_robots.start_recording(repo_id="local/boom", root=str(tmp_path), overwrite=True)
+    assert r["status"] == "error"
+    assert "codec unavailable" in r["content"][0]["text"]
+    assert sim_with_two_robots._world._backend_state.get("recording") is False
