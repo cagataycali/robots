@@ -28,12 +28,32 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+def _import_streaming_cls() -> Any:
+    """Import StreamingLeRobotDataset, tolerant of lerobot's package layout.
+
+    lerobot 0.5.0's PyPI wheel ships ``lerobot/datasets/`` as a *namespace
+    package* (no ``__init__.py``), so ``from lerobot.datasets import
+    StreamingLeRobotDataset`` raises ImportError even though the class exists.
+    The submodule path always works and mirrors the sibling
+    ``dataset_recorder.py`` (``from lerobot.datasets.lerobot_dataset import
+    LeRobotDataset``). Try the submodule first, then fall back to the
+    package-level export for lerobot versions that do re-export it.
+    """
+    try:
+        from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
+
+        return StreamingLeRobotDataset
+    except (ImportError, ValueError, RuntimeError):
+        from lerobot.datasets import StreamingLeRobotDataset
+
+        return StreamingLeRobotDataset
+
+
 @functools.lru_cache(maxsize=1)
 def has_streaming_dataset() -> bool:
     """True if lerobot's StreamingLeRobotDataset is importable. Cached."""
     try:
-        from lerobot.datasets import StreamingLeRobotDataset  # noqa: F401
-
+        _import_streaming_cls()
         return True
     except (ImportError, ValueError, RuntimeError) as exc:
         logger.debug("StreamingLeRobotDataset unavailable: %s", exc)
@@ -47,9 +67,7 @@ def _get_streaming_cls() -> Any:
     if mock_cls is not None:
         return mock_cls
     try:
-        from lerobot.datasets import StreamingLeRobotDataset
-
-        return StreamingLeRobotDataset
+        return _import_streaming_cls()
     except (ImportError, ValueError, RuntimeError) as exc:
         raise ImportError(
             f"StreamingLeRobotDataset unavailable ({exc}). "

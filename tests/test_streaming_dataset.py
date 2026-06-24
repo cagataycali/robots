@@ -333,3 +333,59 @@ def test_dyld_shim_noop_when_already_set(monkeypatch, tmp_path):
     monkeypatch.setattr(_dyld.os, "execv", lambda *a: called.__setitem__("execv", True))
     assert _dyld.ensure_ffmpeg_on_dyld_path() is True
     assert called["execv"] is False
+
+
+# ---------------------------------------------------------------------------
+# Regression: lerobot 0.5.0's PyPI wheel ships ``lerobot/datasets/`` as a
+# *namespace package* (no __init__.py), so the package-level
+# ``from lerobot.datasets import StreamingLeRobotDataset`` raises ImportError
+# even though the class exists at the submodule path. Verified live on an
+# L40S box (lerobot 0.5.0): package import failed, submodule import worked.
+# _import_streaming_cls() must try the submodule FIRST. See streaming_dataset.py
+# _import_streaming_cls docstring + STREAMING_DATA_LOOP_DEEP_DIVE.md.
+# ---------------------------------------------------------------------------
+def test_import_streaming_cls_prefers_submodule_on_namespace_pkg(monkeypatch):
+    """Submodule import wins when the package-level export is absent (0.5.0)."""
+    import sys
+    import types
+
+    sentinel = type("StreamingLeRobotDataset", (), {})
+
+    # Fake package tree: lerobot.datasets is a namespace pkg WITHOUT the export,
+    # lerobot.datasets.streaming_dataset HAS the class.
+    pkg_lerobot = types.ModuleType("lerobot")
+    pkg_datasets = types.ModuleType("lerobot.datasets")  # no StreamingLeRobotDataset
+    mod_streaming = types.ModuleType("lerobot.datasets.streaming_dataset")
+    mod_streaming.StreamingLeRobotDataset = sentinel
+
+    monkeypatch.setitem(sys.modules, "lerobot", pkg_lerobot)
+    monkeypatch.setitem(sys.modules, "lerobot.datasets", pkg_datasets)
+    monkeypatch.setitem(
+        sys.modules, "lerobot.datasets.streaming_dataset", mod_streaming
+    )
+    # Ensure no test-injected override on our module shadows the real path.
+    monkeypatch.delattr(sd, "StreamingLeRobotDataset", raising=False)
+
+    assert sd._import_streaming_cls() is sentinel
+    assert sd._get_streaming_cls() is sentinel
+
+
+def test_import_streaming_cls_falls_back_to_package_export(monkeypatch):
+    """Future lerobot that DOES re-export at package level still resolves."""
+    import sys
+    import types
+
+    sentinel = type("StreamingLeRobotDataset", (), {})
+
+    pkg_lerobot = types.ModuleType("lerobot")
+    pkg_datasets = types.ModuleType("lerobot.datasets")
+    pkg_datasets.StreamingLeRobotDataset = sentinel  # package-level export present
+    # No submodule registered -> submodule import raises, fallback kicks in.
+    monkeypatch.setitem(sys.modules, "lerobot", pkg_lerobot)
+    monkeypatch.setitem(sys.modules, "lerobot.datasets", pkg_datasets)
+    monkeypatch.delitem(
+        sys.modules, "lerobot.datasets.streaming_dataset", raising=False
+    )
+    monkeypatch.delattr(sd, "StreamingLeRobotDataset", raising=False)
+
+    assert sd._import_streaming_cls() is sentinel
