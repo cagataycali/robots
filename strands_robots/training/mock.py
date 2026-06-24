@@ -36,10 +36,7 @@ class MockTrainer(Trainer):
         else:
             info = os.path.join(spec.dataset_root, "meta", "info.json")
             if not os.path.isfile(info):
-                problems.append(
-                    f"dataset_root is not a LeRobotDataset v3 root "
-                    f"(missing {info})"
-                )
+                problems.append(f"dataset_root is not a LeRobotDataset v3 root (missing {info})")
 
         if not spec.base_model:
             problems.append("base_model is required")
@@ -47,10 +44,7 @@ class MockTrainer(Trainer):
             problems.append("output_dir is required")
 
         if spec.method not in _SUPPORTED_METHODS:
-            problems.append(
-                f"unsupported method '{spec.method}' "
-                f"(expected one of {sorted(_SUPPORTED_METHODS)})"
-            )
+            problems.append(f"unsupported method '{spec.method}' (expected one of {sorted(_SUPPORTED_METHODS)})")
         if spec.method == "lora" and spec.tune.get("expert_only"):
             problems.append("lora and expert_only are mutually exclusive")
 

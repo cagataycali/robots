@@ -36,18 +36,24 @@ class TestActions:
 
     def test_validate_clean(self, dataset_root, tmp_path):
         res = train_policy(
-            action="validate", provider="mock",
-            dataset_root=dataset_root, base_model="m",
-            output_dir=str(tmp_path / "o"), steps=10,
+            action="validate",
+            provider="mock",
+            dataset_root=dataset_root,
+            base_model="m",
+            output_dir=str(tmp_path / "o"),
+            steps=10,
         )
         assert res["status"] == "success"
         assert "valid and launchable" in _text(res)
 
     def test_validate_reports_problems(self, tmp_path):
         res = train_policy(
-            action="validate", provider="mock",
-            dataset_root=str(tmp_path / "nope"), base_model="m",
-            output_dir=str(tmp_path / "o"), steps=0,
+            action="validate",
+            provider="mock",
+            dataset_root=str(tmp_path / "nope"),
+            base_model="m",
+            output_dir=str(tmp_path / "o"),
+            steps=0,
         )
         assert res["status"] == "error"
         assert "validation problems" in _text(res)
@@ -60,9 +66,12 @@ class TestActions:
     def test_train_mock_full_loop(self, dataset_root, tmp_path):
         out = str(tmp_path / "out")
         res = train_policy(
-            action="train", provider="mock",
-            dataset_root=dataset_root, base_model="mock/base",
-            output_dir=out, steps=50,
+            action="train",
+            provider="mock",
+            dataset_root=dataset_root,
+            base_model="mock/base",
+            output_dir=out,
+            steps=50,
         )
         assert res["status"] == "success", _text(res)
         assert res["job_id"]
@@ -82,8 +91,10 @@ class TestActions:
 
     def test_unknown_action(self, dataset_root, tmp_path):
         res = train_policy(
-            action="frobnicate", provider="mock",
-            dataset_root=dataset_root, base_model="m",
+            action="frobnicate",
+            provider="mock",
+            dataset_root=dataset_root,
+            base_model="m",
             output_dir=str(tmp_path / "o"),
         )
         assert res["status"] == "error"
@@ -94,9 +105,12 @@ class TestProviderRouting:
     def test_lerobot_validate_routes_to_lerobot(self, dataset_root, tmp_path):
         # non-native policy_type -> lerobot-specific validation message
         res = train_policy(
-            action="validate", provider="lerobot_local",
-            dataset_root=dataset_root, base_model="",
-            output_dir=str(tmp_path / "o"), steps=10,
+            action="validate",
+            provider="lerobot_local",
+            dataset_root=dataset_root,
+            base_model="",
+            output_dir=str(tmp_path / "o"),
+            steps=10,
             extra={"policy_type": "openvla"},
         )
         assert res["status"] == "error"
@@ -104,9 +118,12 @@ class TestProviderRouting:
 
     def test_groot_requires_embodiment(self, dataset_root, tmp_path):
         res = train_policy(
-            action="validate", provider="groot",
-            dataset_root=dataset_root, base_model="nvidia/GR00T-N1.5-3B",
-            output_dir=str(tmp_path / "o"), steps=10,
+            action="validate",
+            provider="groot",
+            dataset_root=dataset_root,
+            base_model="nvidia/GR00T-N1.5-3B",
+            output_dir=str(tmp_path / "o"),
+            steps=10,
             extra={"groot_root": "/tmp"},  # missing launch script -> also errors, but embodiment first
         )
         assert res["status"] == "error"
@@ -125,9 +142,12 @@ class TestInputSafety:
 
     def test_extra_flag_key_rejected(self, dataset_root, tmp_path):
         res = train_policy(
-            action="validate", provider="mock",
-            dataset_root=dataset_root, base_model="m",
-            output_dir=str(tmp_path / "o"), steps=10,
+            action="validate",
+            provider="mock",
+            dataset_root=dataset_root,
+            base_model="m",
+            output_dir=str(tmp_path / "o"),
+            steps=10,
             extra={"--evil-flag": "x"},
         )
         assert res["status"] == "error"
@@ -135,27 +155,36 @@ class TestInputSafety:
 
     def test_base_model_leading_dash_rejected(self, dataset_root, tmp_path):
         res = train_policy(
-            action="validate", provider="mock",
-            dataset_root=dataset_root, base_model="--config_path=/etc/passwd",
-            output_dir=str(tmp_path / "o"), steps=10,
+            action="validate",
+            provider="mock",
+            dataset_root=dataset_root,
+            base_model="--config_path=/etc/passwd",
+            output_dir=str(tmp_path / "o"),
+            steps=10,
         )
         assert res["status"] == "error"
         assert "must not start with '-'" in _text(res)
 
     def test_output_dir_protected_path_rejected(self, dataset_root):
         res = train_policy(
-            action="validate", provider="mock",
-            dataset_root=dataset_root, base_model="m",
-            output_dir="/etc/cron.d/evil", steps=10,
+            action="validate",
+            provider="mock",
+            dataset_root=dataset_root,
+            base_model="m",
+            output_dir="/etc/cron.d/evil",
+            steps=10,
         )
         assert res["status"] == "error"
         assert "protected system directory" in _text(res)
 
     def test_dataset_root_traversal_rejected(self, tmp_path):
         res = train_policy(
-            action="validate", provider="mock",
-            dataset_root="../../etc", base_model="m",
-            output_dir=str(tmp_path / "o"), steps=10,
+            action="validate",
+            provider="mock",
+            dataset_root="../../etc",
+            base_model="m",
+            output_dir=str(tmp_path / "o"),
+            steps=10,
         )
         assert res["status"] == "error"
         assert "path traversal" in _text(res)
@@ -163,9 +192,12 @@ class TestInputSafety:
     def test_legitimate_dotted_extra_key_allowed(self, dataset_root, tmp_path):
         # lerobot dotted flags / cosmos hydra paths must still pass the allowlist.
         res = train_policy(
-            action="validate", provider="mock",
-            dataset_root=dataset_root, base_model="m",
-            output_dir=str(tmp_path / "o"), steps=10,
+            action="validate",
+            provider="mock",
+            dataset_root=dataset_root,
+            base_model="m",
+            output_dir=str(tmp_path / "o"),
+            steps=10,
             extra={"dataset.episodes": "1", "num_workers": "4"},
         )
         assert res["status"] == "success", _text(res)
