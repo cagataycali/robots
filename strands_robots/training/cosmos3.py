@@ -49,7 +49,7 @@ _INSTALL_HINT = (
 )
 
 
-def _import_cosmos_module(qualname: str):
+def _import_cosmos_module(qualname: str) -> Any:
     """Import ``cosmos_framework.<qualname>`` or raise a helpful ImportError.
 
     ``qualname`` is e.g. ``scripts.convert_model_to_dcp`` /
@@ -235,7 +235,7 @@ class Cosmos3Trainer(Trainer):
         ``cosmos_root`` is unavailable.
         """
         root = self._resolve_cosmos_root(spec)
-        out = spec.extra.get("export_dir", os.path.join(spec.output_dir, "_exported"))
+        out: str = str(spec.extra.get("export_dir") or os.path.join(spec.output_dir, "_exported"))
         if not root:
             return checkpoint_dir
         os.makedirs(os.path.dirname(os.path.abspath(out)) or ".", exist_ok=True)
