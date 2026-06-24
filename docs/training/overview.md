@@ -31,8 +31,8 @@ and a single `--policy.type` flag can't express them:
 | Provider | Upstream entry point | Config surface | Launcher | HW floor |
 |----------|---------------------|----------------|----------|----------|
 | `lerobot_local` | `lerobot.scripts.lerobot_train.train(cfg)` | typed `TrainPipelineConfig` (in-process) | in-process / `accelerate.notebook_launcher` | 1 consumer GPU |
-| `groot` | Isaac-GR00T `launch_finetune.py` | `FinetuneConfig` (tyro) + `tune_*` flags | `python` / `torchrun` | 1 modern GPU |
-| `cosmos3` | `cosmos_framework.scripts.train` | TOML recipe + Hydra overrides; **DCP convert** + **safetensors export** | `torchrun` (HSDP) | 8×H100 80GB |
+| `groot` | Isaac-GR00T `launch_finetune.py` | `FinetuneConfig` (tyro) + `tune_*` flags | in-process (runpy) / `elastic_launch` | 1 modern GPU |
+| `cosmos3` | `cosmos_framework.scripts.train` | TOML recipe + Hydra overrides; **DCP convert** + **safetensors export** | in-process (runpy) / `elastic_launch` (HSDP) | 8×H100 80GB |
 
 The `Trainer` ABC hides all of that behind one lifecycle:
 
@@ -126,10 +126,11 @@ TrainSpec(..., method="lora", lora_r=16, extra={"policy_type": "pi05"})
 #    then lerobot.scripts.lerobot_train.train(cfg) is called IN-PROCESS.
 ```
 
-**Runs in-process - no `subprocess`.** Unlike the GR00T / Cosmos3 backends
-(which run in their own checkout + venv via `python_executable=`), the
-LeRobot backend imports `lerobot` directly and calls its `train(cfg)`
-function in *this* interpreter. `build_config()` translates a `TrainSpec`
+**Runs in-process - no `subprocess`.** The LeRobot backend imports
+`lerobot` directly and calls its `train(cfg)` function in *this*
+interpreter. (GR00T and Cosmos3 are also shell-free now - see below - but
+they run their upstream *scripts* via `runpy` from a separately-installed
+checkout, whereas lerobot is a first-class dependency we call as a library.) `build_config()` translates a `TrainSpec`
 into the typed `TrainPipelineConfig` dataclass tree that `train()` consumes;
 lerobot's `@parser.wrap()` short-circuits when handed a config instance, so
 **`sys.argv` is never read and no command line is assembled**. This removes
@@ -154,7 +155,10 @@ Launcher selection stays shell-free:
 TrainSpec(..., embodiment="GR1",
           tune={"llm": False, "visual": False, "projector": True, "diffusion": True},
           extra={"groot_root": "/path/to/Isaac-GR00T"})
-# -> launch_finetune.py --embodiment_tag=GR1 --tune_projector=true ...
+# -> build_args() yields the flag LIST [--embodiment_tag=GR1,
+#    --tune_projector=true, ...]; launch_finetune.py is then run IN-PROCESS
+#    via runpy (single GPU) or torch elastic_launch workers (multi-GPU).
+#    No subprocess, no torchrun binary. Unsafe extra keys are dropped.
 ```
 
 ### Cosmos3 (`cosmos3`)
@@ -163,8 +167,11 @@ TrainSpec(..., embodiment="GR1",
 TrainSpec(..., num_gpus=8,
           extra={"cosmos_root": "/path/to/cosmos-framework",
                  "sft_toml": "examples/toml/sft_config/action_policy_droid_repro.toml"})
-# prepare(): convert_model_to_dcp ; train(): torchrun ... --sft-toml=... ;
-# export(): DCP -> safetensors
+# All three stages run IN-PROCESS via runpy (no subprocess/torchrun binary):
+#   prepare(): cosmos_framework.scripts.convert_model_to_dcp
+#   train():   cosmos_framework.scripts.train via torch elastic_launch (HSDP)
+#   export():  cosmos_framework.scripts.export_model  (DCP -> safetensors)
+# Hydra tail overrides from extra are gated by a safe-key allowlist.
 ```
 
 ## See also

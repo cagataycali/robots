@@ -1,8 +1,10 @@
-"""Tests for Cosmos3Trainer: factory wiring, validate, prepare/train/export cmds.
+"""Tests for Cosmos3Trainer: factory wiring, validate, prepare/train/export args.
 
 Offline/pure - uses a fake cosmos_root + fake sft_toml; does not require the
-cosmos-framework env. Verifies the DCP-convert (prepare) and DCP->safetensors
-(export) command construction that distinguish Cosmos3 from the other backends.
+cosmos-framework env. The trainer now runs the cosmos scripts IN-PROCESS (no
+subprocess / torchrun), so the build steps return pure argument LISTs (no
+launcher binary). Verifies the DCP-convert (prepare) and DCP->safetensors
+(export) argument construction that distinguish Cosmos3 from the other backends.
 """
 
 import json
@@ -61,6 +63,12 @@ class TestFactoryWiring:
         assert floor["min_vram_gb"] == 80
         assert floor["multinode"] is True
 
+    def test_python_executable_kwarg_is_accepted_but_ignored(self):
+        # Back-compat: old callers passed python_executable for the subprocess.
+        # It must not raise; cosmos scripts now run in-process so it's ignored.
+        t = Cosmos3Trainer(python_executable="/usr/bin/python3")
+        assert isinstance(t, Cosmos3Trainer)
+
 
 class TestValidate:
     def test_clean(self, spec):
@@ -77,27 +85,29 @@ class TestValidate:
         assert any("cosmos-framework checkout not found" in p for p in problems)
 
 
-class TestConvertCommand:
+class TestConvertArgs:
     def test_dcp_convert(self, spec):
-        cmd = Cosmos3Trainer().convert_command(spec)
-        joined = " ".join(cmd)
-        assert "cosmos_framework.scripts.convert_model_to_dcp" in joined
-        assert "nvidia/Cosmos3-Nano" in cmd
-        assert "-o" in cmd
+        args = Cosmos3Trainer().convert_args(spec)
+        # No launcher / module token - just the convert script's own args.
+        assert "nvidia/Cosmos3-Nano" in args
+        assert "-o" in args
+        # the -o target is the dcp path
+        assert args[args.index("-o") + 1].endswith("_dcp_base")
 
 
-class TestBuildCommand:
-    def test_torchrun_and_sft_toml(self, spec):
-        cmd = Cosmos3Trainer().build_command(spec)
-        assert cmd[0] == "torchrun"
-        assert "--nproc_per_node=8" in cmd
-        assert "-m" in cmd and "cosmos_framework.scripts.train" in cmd
-        assert any(c.startswith("--sft-toml=") for c in cmd)
+class TestBuildArgs:
+    """build_args() returns the cosmos train arg LIST (no torchrun/module)."""
+
+    def test_sft_toml_and_no_launcher(self, spec):
+        args = Cosmos3Trainer().build_args(spec)
+        assert not any(a in ("torchrun", "-m", "python") for a in args)
+        assert not any("cosmos_framework.scripts.train" in a for a in args)
+        assert any(a.startswith("--sft-toml=") for a in args)
 
     def test_hydra_tail_overrides_after_dashdash(self, spec):
-        cmd = Cosmos3Trainer().build_command(spec)
-        assert "--" in cmd
-        tail = cmd[cmd.index("--") + 1:]
+        args = Cosmos3Trainer().build_args(spec)
+        assert "--" in args
+        tail = args[args.index("--") + 1:]
         assert "trainer.max_iter=1000" in tail
         assert "checkpoint.save_iter=500" in tail
         assert "optimizer.lr=0.0002" in tail
@@ -106,22 +116,28 @@ class TestBuildCommand:
 
     def test_multinode_hsdp_override(self, spec):
         spec.num_nodes = 4
-        cmd = Cosmos3Trainer().build_command(spec)
-        tail = cmd[cmd.index("--") + 1:]
+        args = Cosmos3Trainer().build_args(spec)
+        tail = args[args.index("--") + 1:]
         assert "model.config.parallelism.data_parallel_replicate_degree=4" in tail
 
-    def test_extra_hydra_passthrough(self, spec):
+    def test_safe_extra_hydra_passthrough(self, spec):
         spec.extra["dataloader_train.dataloader.datasets.droid.dataset.use_filter_dict"] = "True"
-        cmd = Cosmos3Trainer().build_command(spec)
-        tail = cmd[cmd.index("--") + 1:]
+        args = Cosmos3Trainer().build_args(spec)
+        tail = args[args.index("--") + 1:]
         assert any("use_filter_dict=True" in t for t in tail)
 
+    def test_unsafe_extra_key_is_dropped(self, spec):
+        # Hydra keys are dotted, but spaces/metacharacters must be rejected.
+        spec.extra["evil key=$(rm -rf /)"] = "x"
+        args = Cosmos3Trainer().build_args(spec)
+        assert not any("evil key" in a for a in args)
+        assert not any("rm -rf" in a for a in args)
 
-class TestExportCommand:
+
+class TestExportArgs:
     def test_dcp_to_safetensors(self, spec, tmp_path):
         out = str(tmp_path / "exported")
-        cmd = Cosmos3Trainer().export_command(spec, str(tmp_path / "ckpt"), out)
-        joined = " ".join(cmd)
-        assert "cosmos_framework.scripts.export_model" in joined
-        assert any(c.startswith("--checkpoint-path=") for c in cmd)
-        assert any(c.startswith("--output-dir=") for c in cmd)
+        args = Cosmos3Trainer().export_args(spec, str(tmp_path / "ckpt"), out)
+        assert any(a.startswith("--checkpoint-path=") for a in args)
+        assert any(a.startswith("--output-dir=") for a in args)
+        assert not any("cosmos_framework" in a for a in args)
