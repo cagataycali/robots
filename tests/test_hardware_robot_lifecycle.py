@@ -15,7 +15,10 @@ never touches ``_initialize_robot``/lerobot hardware drivers.
 from __future__ import annotations
 
 import asyncio
+import pkgutil
+import sys
 import threading
+import types
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
@@ -695,3 +698,129 @@ class TestStreamExecuteHappyPath:
         assert result["status"] == "error"
         assert "required" in result["content"][0]["text"]
         hw.cleanup()
+
+
+class TestEnsureLerobotRobotsRegistered:
+    """Behavior tests for ``_ensure_lerobot_robots_registered``.
+
+    This helper populates lerobot's ``RobotConfig`` choice registry by
+    walking every ``lerobot.robots`` subpackage (so robot types whose driver
+    lives in a shared module -- e.g. ``so101_follower`` in ``so_follower`` --
+    are discovered) and then invoking lerobot's third-party plugin loader.
+    The walk is driven entirely by ``pkgutil``/``importlib``/``sys.modules``,
+    so every branch is exercised with injected fakes and no real lerobot
+    driver imports, USB probes, or hardware.
+
+    The function is ``@functools.cache``d; ``cache_clear()`` runs before each
+    case so the walk actually re-executes.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _clear_cache(self):
+        import strands_robots.hardware_robot as hw
+
+        hw._ensure_lerobot_robots_registered.cache_clear()
+        yield
+        hw._ensure_lerobot_robots_registered.cache_clear()
+
+    @staticmethod
+    def _install_fake_lerobot_robots(monkeypatch, subpackages):
+        """Wire a fake ``lerobot.robots`` whose ``pkgutil`` walk yields
+        ``subpackages`` -- a list of ``(name, ispkg)`` tuples."""
+        import strands_robots.hardware_robot as hw
+
+        fake_robots = types.ModuleType("lerobot.robots")
+        fake_robots.__path__ = ["/fake/lerobot/robots"]  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, "lerobot.robots", fake_robots)
+
+        modinfo = [pkgutil.ModuleInfo(None, name, ispkg) for name, ispkg in subpackages]
+        monkeypatch.setattr(hw.pkgutil, "iter_modules", lambda path: iter(modinfo))
+        return fake_robots
+
+    def test_lerobot_robots_absent_and_lerobot_absent_is_debug(self, monkeypatch, caplog):
+        """lerobot wholly missing -> debug-level, no warning, returns cleanly."""
+        import strands_robots.hardware_robot as hw
+
+        monkeypatch.setitem(sys.modules, "lerobot.robots", None)
+        monkeypatch.setitem(sys.modules, "lerobot", None)
+        with caplog.at_level("WARNING"):
+            hw._ensure_lerobot_robots_registered()
+        assert not [r for r in caplog.records if r.levelname == "WARNING"]
+
+    def test_partial_install_warns(self, monkeypatch, caplog):
+        """lerobot present but lerobot.robots unimportable -> a warning fires."""
+        import strands_robots.hardware_robot as hw
+
+        # ``import lerobot.robots`` fails, but the ``import lerobot`` probe
+        # succeeds -> the partial-install warning branch.
+        monkeypatch.setitem(sys.modules, "lerobot.robots", None)
+        monkeypatch.setitem(sys.modules, "lerobot", types.ModuleType("lerobot"))
+        with caplog.at_level("WARNING"):
+            hw._ensure_lerobot_robots_registered()
+        assert any("partial install" in r.message for r in caplog.records)
+
+    def test_walks_subpackages_and_skips_failing_driver(self, monkeypatch):
+        """Each importable subpackage is imported; a driver whose import
+        raises ImportError/OSError is skipped without crashing the walk."""
+        import strands_robots.hardware_robot as hw
+
+        self._install_fake_lerobot_robots(
+            monkeypatch,
+            [("so_follower", True), ("unitree", True), ("_helpers", False)],
+        )
+        imported: list[str] = []
+
+        def fake_import(name):
+            imported.append(name)
+            if name.endswith("unitree"):
+                raise OSError("unitree_sdk2py USB probe failed")
+            return types.ModuleType(name)
+
+        monkeypatch.setattr(hw.importlib, "import_module", fake_import)
+        # Make the third-party plugin loader a no-op success.
+        plugins = types.ModuleType("lerobot.utils.import_utils")
+        plugins.register_third_party_plugins = lambda: None  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, "lerobot.utils.import_utils", plugins)
+
+        hw._ensure_lerobot_robots_registered()
+
+        # The package subpackages were imported; the non-package module was
+        # skipped by the ``is_pkg`` guard.
+        assert "lerobot.robots.so_follower" in imported
+        assert "lerobot.robots.unitree" in imported
+        assert "lerobot.robots._helpers" not in imported
+
+    def test_third_party_loader_missing_is_debug(self, monkeypatch, caplog):
+        """Older lerobot without ``register_third_party_plugins`` -> debug,
+        built-ins still registered, no warning."""
+        import strands_robots.hardware_robot as hw
+
+        self._install_fake_lerobot_robots(monkeypatch, [("so_follower", True)])
+        monkeypatch.setattr(hw.importlib, "import_module", lambda name: types.ModuleType(name))
+        # A module that lacks the attribute -> the ``from ... import`` raises
+        # ImportError -> the "loader unavailable" debug branch.
+        empty = types.ModuleType("lerobot.utils.import_utils")
+        monkeypatch.setitem(sys.modules, "lerobot.utils.import_utils", empty)
+
+        with caplog.at_level("WARNING"):
+            hw._ensure_lerobot_robots_registered()
+        assert not [r for r in caplog.records if r.levelname == "WARNING"]
+
+    def test_third_party_loader_failure_warns(self, monkeypatch, caplog):
+        """A broken third-party plugin loader degrades to a warning, not a
+        crash -- hardware init must survive plugin registration failures."""
+        import strands_robots.hardware_robot as hw
+
+        self._install_fake_lerobot_robots(monkeypatch, [("so_follower", True)])
+        monkeypatch.setattr(hw.importlib, "import_module", lambda name: types.ModuleType(name))
+
+        def boom():
+            raise OSError("plugin entry-point probe failed")
+
+        plugins = types.ModuleType("lerobot.utils.import_utils")
+        plugins.register_third_party_plugins = boom  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, "lerobot.utils.import_utils", plugins)
+
+        with caplog.at_level("WARNING"):
+            hw._ensure_lerobot_robots_registered()
+        assert any("third-party plugin registration failed" in r.message for r in caplog.records)
