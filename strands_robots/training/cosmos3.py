@@ -246,7 +246,7 @@ class Cosmos3Trainer(Trainer):
             )
             logger.info("Cosmos3Trainer exporting DCP->safetensors in-process (library call)")
             call_callable(export_mod.export_model, args)
-        except BaseException as e:  # noqa: BLE001 - export is best-effort; fall back
+        except Exception as e:  # noqa: BLE001 - export is best-effort; fall back
             logger.error("Cosmos3 export failed (%s); returning DCP checkpoint dir", e)
             return checkpoint_dir
         return out
@@ -266,7 +266,7 @@ class Cosmos3Trainer(Trainer):
         # prepare(): convert base -> DCP (idempotent, in-process library call).
         try:
             self.prepare(spec)
-        except BaseException as e:  # noqa: BLE001 - surface convert failure as result
+        except Exception as e:  # noqa: BLE001 - surface convert failure as result
             return TrainResult(
                 status="error",
                 job_id="",
@@ -292,7 +292,7 @@ class Cosmos3Trainer(Trainer):
             spec.steps,
         )
 
-        train_error: BaseException | None = None
+        train_error: Exception | None = None
         try:
             if nproc > 1 or spec.num_nodes > 1:
                 # Multi-GPU/-node: torch elastic agent spawns workers; each builds
@@ -309,7 +309,7 @@ class Cosmos3Trainer(Trainer):
                 )
             else:
                 _run_cosmos_launch(sft_toml, overrides, log_path=log_path)
-        except BaseException as e:  # noqa: BLE001 - convert ANY failure to a result
+        except Exception as e:  # noqa: BLE001 - convert ANY failure to a result
             train_error = e
             logger.error("Cosmos3Trainer in-process train failed: %s", e)
 

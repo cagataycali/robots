@@ -357,7 +357,7 @@ class LerobotTrainer(Trainer):
             spec.num_gpus,
         )
 
-        train_error: BaseException | None = None
+        train_error: Exception | None = None
         try:
             if spec.num_gpus and spec.num_gpus > 1:
                 elastic_launch_callable(
@@ -371,7 +371,7 @@ class LerobotTrainer(Trainer):
                 from lerobot.scripts.lerobot_train import train as lerobot_train
 
                 call_callable(lerobot_train, cfg, log_path=log_path)
-        except BaseException as e:  # noqa: BLE001 - convert ANY failure to a result
+        except Exception as e:  # noqa: BLE001 - convert ANY failure to a result
             train_error = e
             logger.error("LerobotTrainer in-process train failed: %s", e)
 
