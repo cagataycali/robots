@@ -26,16 +26,17 @@ import strands_robots.simulation as sim_pkg
 # Intentionally excludes the Mathematical Operators arrows (U+2190-21FF base
 # arrows are allowed in comments) but DOES include emoji-presentation arrows
 # such as U+25B6 (play) and the U+FE00-FE0F variation selectors that turn a
-# plain glyph into an emoji.
+# plain glyph into an emoji. The regional-indicator (flag) block
+# U+1F1E6-1F1FF is not listed separately: it already falls inside the
+# U+1F000-1FAFF range above, and CodeQL flags the duplicate as overlapping.
 _EMOJI = re.compile(
     "["
-    "\U0001f000-\U0001faff"  # supplemental symbols, pictographs, emoticons
+    "\U0001f000-\U0001faff"  # supplemental symbols, pictographs, emoticons, flags
     "\U00002600-\U000027bf"  # misc symbols + dingbats
     "\U00002300-\U000023ff"  # technical (stopwatch, hourglass, etc.)
     "\U00002b00-\U00002bff"  # arrows/stars emoji block
     "\U000025a0-\U000025ff"  # geometric shapes (play/stop emoji bases)
     "\U0000fe00-\U0000fe0f"  # variation selectors (orphan emoji markers)
-    "\U0001f1e6-\U0001f1ff"  # regional indicators (flags)
     "]"
 )
 
