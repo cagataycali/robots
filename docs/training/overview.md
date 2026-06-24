@@ -32,7 +32,7 @@ and a single `--policy.type` flag can't express them:
 |----------|---------------------|----------------|----------|----------|
 | `lerobot_local` | `lerobot.scripts.lerobot_train.train(cfg)` | typed `TrainPipelineConfig` (in-process) | in-process / `accelerate.notebook_launcher` | 1 consumer GPU |
 | `groot` | `gr00t.experiment.experiment.run(config)` | `FinetuneConfig` object (in-process) | in-process call / `elastic_launch` | 1 modern GPU |
-| `cosmos3` | `cosmos_framework.scripts.{convert,train,export}.main()` | TOML recipe + Hydra overrides; **DCP convert** + **safetensors export** | imported `main()` / `elastic_launch` (HSDP) | 8×H100 80GB |
+| `cosmos3` | `convert_model_to_dcp()` / `train.launch()` / `export_model()` | TOML recipe + Hydra override list; **DCP convert** + **safetensors export** | direct library calls / `elastic_launch` (HSDP) | 8×H100 80GB |
 
 The `Trainer` ABC hides all of that behind one lifecycle:
 
@@ -130,8 +130,9 @@ TrainSpec(..., method="lora", lora_r=16, extra={"policy_type": "pi05"})
 `lerobot` directly and calls its `train(cfg)` function in *this*
 interpreter. (GR00T and Cosmos3 are also library-driven now - see below - GR00T by
 building its `FinetuneConfig`/`Config` and calling `experiment.run`, Cosmos3
-by importing its scripts and calling their `main()` - both from a
-separately-installed checkout. None of the three spawn a subprocess.)
+by calling cosmos_framework's own functions (`convert_model_to_dcp` /
+`train.launch` / `export_model`) on typed `Args`/`Config` objects - both
+from a separately-installed checkout. None of the three spawn a subprocess.)
 
 `build_config()` translates a `TrainSpec`
 into the typed `TrainPipelineConfig` dataclass tree that `train()` consumes;
@@ -172,12 +173,16 @@ TrainSpec(..., embodiment="GR1",
 TrainSpec(..., num_gpus=8,
           extra={"cosmos_root": "/path/to/cosmos-framework",
                  "sft_toml": "examples/toml/sft_config/action_policy_droid_repro.toml"})
-# All three stages IMPORT the cosmos module and call its main() in-process
-# (no subprocess/torchrun binary):
-#   prepare(): cosmos_framework.scripts.convert_model_to_dcp.main()
-#   train():   cosmos_framework.scripts.train.main() via elastic_launch (HSDP)
-#   export():  cosmos_framework.scripts.export_model.main() (DCP->safetensors)
-# Hydra tail overrides from extra are gated by a safe-key allowlist.
+# All three stages call cosmos_framework's OWN library functions in-process
+# (verified against github.com/NVIDIA/cosmos-framework; no subprocess/torchrun):
+#   prepare(): convert_model_to_dcp(Args(checkpoint=CheckpointOverrides(...),
+#                                         output_path=<dcp>))
+#   train():   config = load_experiment_from_toml(sft_toml, extra_overrides=[...]);
+#              train.launch(config, args)  -- via elastic_launch for HSDP
+#   export():  export_model(Args(checkpoint=CheckpointOverrides(<dcp>),
+#                                output_dir=<hf>))
+# The Hydra override LIST (key.path=value) from extra is gated by a safe-key
+# allowlist; everything else is a typed Python object, not a command line.
 ```
 
 ## See also

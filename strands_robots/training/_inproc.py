@@ -9,12 +9,6 @@ caller input. This module provides the small, shared plumbing for that:
   This is the purest form: build the upstream's own config object and hand it
   to its own function. No argv at all.
 
-* :func:`call_module_main` - import a module and call its ``main()`` entry
-  point with a controlled ``argv`` **list** (for upstream CLIs whose only public
-  entry parses ``sys.argv`` - e.g. NVIDIA's internal ``cosmos_framework``
-  scripts). ``sys.argv`` / cwd / env are saved and restored around the call.
-  Still import-and-call: no ``subprocess``, no ``runpy`` re-execution of a file.
-
 * :func:`elastic_launch_callable` - multi-GPU single-node launch via torch's
   programmatic :class:`torch.distributed.launcher.api.elastic_launch` (the API
   behind ``torchrun``). Workers are spawned by torch's elastic agent and each
@@ -30,7 +24,6 @@ extra tokens (spaces, shell metacharacters, leading dashes) into an argv list.
 
 from __future__ import annotations
 
-import importlib
 import io
 import logging
 import os
@@ -157,79 +150,6 @@ def call_callable(
     """
     with capture_to_file(log_path):
         return fn(*args, **kwargs)
-
-
-def _restore_context(old_argv, old_cwd, prev_env, set_env_keys) -> None:
-    sys.argv = old_argv
-    try:
-        os.chdir(old_cwd)
-    except OSError:
-        pass
-    for k, v in prev_env.items():
-        os.environ[k] = v
-    for k in set_env_keys:
-        os.environ.pop(k, None)
-
-
-def call_module_main(
-    module: str,
-    argv: list[str],
-    *,
-    main_attr: str = "main",
-    cwd: str | None = None,
-    env: dict[str, str] | None = None,
-    log_path: str | None = None,
-) -> Any:
-    """Import ``module`` and call its ``main()`` with a controlled ``argv`` list.
-
-    For upstream packages whose only public entry point is an argv-parsing
-    ``main()`` (tyro / hydra / argparse) - e.g. NVIDIA's internal
-    ``cosmos_framework`` scripts. We **import** the module (so it runs as a
-    library, in this interpreter) and call its ``main`` callable; ``sys.argv``
-    is temporarily set to ``[module, *argv]`` (a LIST - never a shell string)
-    and restored afterwards, along with cwd and any extra env.
-
-    Args:
-        module: Dotted module path (e.g. ``"cosmos_framework.scripts.train"``).
-        argv: Argument tokens AFTER the program name (a LIST). Gate any
-            externally-derived tokens with :func:`safe_flag_key` first.
-        main_attr: Name of the entry callable on the module (default ``"main"``).
-        cwd: Working directory for the call (restored afterwards).
-        env: Extra environment variables for the call (restored afterwards).
-        log_path: If given, stdout/stderr + root-logger output are tee'd here.
-
-    Raises:
-        AttributeError: If the module exposes no ``main_attr`` callable - the
-            caller's contract with that upstream package is then unmet (we do
-            NOT silently fall back to re-executing the file).
-    """
-    mod = importlib.import_module(module)
-    main_fn = getattr(mod, main_attr, None)
-    if not callable(main_fn):
-        raise AttributeError(
-            f"{module}.{main_attr} is not callable; cannot drive this upstream "
-            f"entry point as a library. Expose a {main_attr}() in {module}."
-        )
-
-    old_argv = sys.argv
-    old_cwd = os.getcwd()
-    set_env_keys: list[str] = []
-    prev_env: dict[str, str] = {}
-    try:
-        sys.argv = [module, *argv]
-        if env:
-            for k, v in env.items():
-                if k in os.environ:
-                    prev_env[k] = os.environ[k]
-                else:
-                    set_env_keys.append(k)
-                os.environ[k] = v
-        if cwd:
-            os.chdir(cwd)
-        with capture_to_file(log_path):
-            return main_fn()
-    finally:
-        _restore_context(old_argv, old_cwd, prev_env, set_env_keys)
 
 
 def elastic_launch_callable(
