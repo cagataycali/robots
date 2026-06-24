@@ -37,7 +37,7 @@ dependencies = [
     "strands-agents>=1.0.0,<2.0.0",
     "numpy>=1.21.0,<3.0.0",
     "opencv-python-headless>=4.5.0,<5.0.0",
-    "Pillow>=8.0.0,<12.0.0",
+    "Pillow>=8.0.0,<13.0.0",
 ]
 
 [project.optional-dependencies]
@@ -257,7 +257,7 @@ all = [
     "strands-robots[molmoact2]",
 ]
 dev = [
-    "pytest>=6.0,<9.0.0",
+    "pytest>=6.0,<10.0.0",
     "pytest-cov>=4.0.0,<6.0.0",
     "ruff>=0.4.0,<1.0.0",
     "mypy>=1.0.0,<2.0.0",
@@ -284,12 +284,12 @@ packages = ["strands_robots"]
 installer = "uv"
 features = ["all"]
 dependencies = [
-    "pytest>=6.0,<9.0.0",
+    "pytest>=6.0,<10.0.0",
     "pytest-cov>=4.0.0,<6.0.0",
     "pytest-timeout>=2.0.0,<3.0.0",
     "ruff>=0.4.0,<1.0.0",
     "mypy>=1.0.0,<2.0.0",
-    "Pillow>=8.0.0,<12.0.0",
+    "Pillow>=8.0.0,<13.0.0",
     "requests>=2.28.0,<3.0.0",
     "msgpack>=1.0.0,<2.0.0",
     "pyzmq>=27.0.0,<28.0.0",
@@ -338,6 +338,13 @@ override-dependencies = [
     "torch>=2.2,<2.11; platform_machine != 'aarch64' or sys_platform != 'linux'",
     "torchvision>=0.26,<0.27; platform_machine == 'aarch64' and sys_platform == 'linux'",
     "torchvision<0.26; platform_machine != 'aarch64' or sys_platform != 'linux'",
+    # SECURITY: lerobot 0.5.1 transitively caps diffusers <0.36.0, which pins
+    # the resolution to 0.35.2 -- vulnerable to GHSA trust_remote_code bypass
+    # + TOCTOU RCE (fixed in 0.38.0). diffusers is only exercised by the
+    # cosmos3-diffusers extra (Cosmos3Policy backend="diffusers"); lerobot core
+    # does not import diffusers at runtime, so forcing >=0.38 past lerobot's
+    # conservative cap is safe and clears the Dependabot alerts.
+    "diffusers>=0.38.0",
 ]
 
 # Auto-select the right PyTorch wheel for the host accelerator. On NVIDIA
