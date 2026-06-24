@@ -295,7 +295,9 @@ def filter_mujoco_attach_noise():
                 # Flush C-side then restore the real stderr.
                 try:
                     sys.stderr.flush()
-                except Exception:
+                except (ValueError, OSError):
+                    # Best-effort flush; stderr may already be closed or
+                    # detached during interpreter teardown. Nothing to recover.
                     pass
                 os.dup2(saved_fd, orig_fd)
     finally:
@@ -303,7 +305,9 @@ def filter_mujoco_attach_noise():
         try:
             tmp.seek(0)
             captured = tmp.read().decode(errors="replace")
-        except Exception:
+        except OSError:
+            # Capture file unreadable (closed/truncated); treat as no output
+            # rather than masking the original yielded body with an I/O error.
             captured = ""
         finally:
             tmp.close()
@@ -320,7 +324,9 @@ def filter_mujoco_attach_noise():
                 try:
                     sys.stderr.write("".join(kept))
                     sys.stderr.flush()
-                except Exception:
+                except (ValueError, OSError):
+                    # Best-effort replay of kept lines; if stderr is gone the
+                    # captured noise is simply dropped. Nothing to recover.
                     pass
             if dropped:
                 logger.debug(

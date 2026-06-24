@@ -169,6 +169,8 @@ def test_robot_factory_env_opt_in_enables_mesh(monkeypatch):
             try:
                 sim.destroy()
             except Exception:
+                # Best-effort teardown: a destroy() hiccup during cleanup
+                # must not mask the assertion outcome under test.
                 pass
 
 
@@ -188,4 +190,6 @@ def test_robot_factory_explicit_false_beats_env_true(monkeypatch):
             try:
                 sim.destroy()
             except Exception:
+                # Best-effort teardown: a destroy() hiccup during cleanup
+                # must not mask the assertion outcome under test.
                 pass
