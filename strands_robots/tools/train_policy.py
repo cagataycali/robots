@@ -141,7 +141,15 @@ def train_policy(
             return {
                 "status": "success" if res.status != "error" else "error",
                 "content": [
-                    {"text": f"[{provider}] job {job_id}: {res.status}\n{res.message}\nmetrics: {res.metrics}"}
+                    {"text": f"[{provider}] job {job_id}: {res.status}\n{res.message}\nmetrics: {res.metrics}"},
+                    {
+                        "json": {
+                            "job_id": job_id,
+                            "provider": provider,
+                            "status": res.status,
+                            "metrics": dict(res.metrics),
+                        }
+                    },
                 ],
                 "metrics": res.metrics,
             }
@@ -209,7 +217,17 @@ def train_policy(
                             f"metrics: {res.metrics}\n"
                             f"Load the result with: create_policy('{res.checkpoint_dir}')"
                         )
-                    }
+                    },
+                    {
+                        "json": {
+                            "provider": provider,
+                            "job_id": res.job_id,
+                            "status": res.status,
+                            "checkpoint_dir": res.checkpoint_dir,
+                            "exported_model": res.exported_model,
+                            "metrics": dict(res.metrics),
+                        }
+                    },
                 ],
                 "job_id": res.job_id,
                 "checkpoint_dir": res.checkpoint_dir,
