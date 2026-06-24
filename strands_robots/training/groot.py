@@ -1,12 +1,14 @@
 """GR00T trainer — wrapper over Isaac-GR00T's ``launch_finetune``.
 
 GR00T N1.7 ships its own post-training pipeline (NOT lerobot): a
-``FinetuneConfig`` dataclass driven via tyro through
-``gr00t.experiment.launch_finetune``. We drive it as a Python library
-(``importlib.import_module(...).main(argv)``) — same interpreter, no nested
-``python`` invocation. Multi-GPU goes through :mod:`torch.distributed.run`
-(the same engine ``torchrun`` is), also invoked in-process — mirroring
-``examples/finetune.sh`` semantically without shell calls.
+``FinetuneConfig`` dataclass. ``launch_finetune.py`` is only a thin
+``__main__`` shim (build ``FinetuneConfig`` via tyro → lower to a ``Config``
+→ call ``experiment.run(config)``); it has NO reusable function. So we
+reproduce that translation here and call ``gr00t.experiment.experiment.run``
+DIRECTLY as a library — same interpreter, no argv, no nested ``python``.
+Multi-GPU uses torch's programmatic ``elastic_launch`` (the engine behind
+``torchrun``); each worker builds the ``Config`` and calls ``run`` — no
+``torchrun`` binary, no shell.
 
 This adapter translates a provider-agnostic
 :class:`~strands_robots.training.base.TrainSpec` into the ``launch_finetune``
@@ -35,7 +37,6 @@ library, NOT by invoking another interpreter.
 
 from __future__ import annotations
 
-import contextlib
 import importlib
 import importlib.util
 import json
@@ -44,6 +45,7 @@ import os
 import time
 from typing import Any
 
+from strands_robots.training._inproc import call_callable, elastic_launch_callable
 from strands_robots.training.base import Trainer, TrainResult, TrainSpec
 
 logger = logging.getLogger(__name__)
@@ -159,12 +161,13 @@ class Gr00tTrainer(Trainer):
         return problems
 
     def build_command(self, spec: TrainSpec) -> list[str]:
-        """Translate a TrainSpec into the launch_finetune argv (pure).
+        """PURE argv-parity helper — the launch_finetune CLI the config maps to.
 
-        Returned as a faithful argv list so the parity tests can assert flag
-        drift against the real ``FinetuneConfig``; at run time we hand the
-        same tail (the script + flags) to :mod:`torch.distributed.run` /
-        ``gr00t.experiment.launch_finetune.main`` in-process.
+        NOT used to launch training (``train()`` builds a ``FinetuneConfig`` +
+        ``Config`` and calls ``gr00t.experiment.experiment.run`` directly).
+        Retained so ``test_native_parity`` can assert our flag mapping against
+        the real ``FinetuneConfig`` dataclass fields, and as a readable
+        description of the equivalent command.
         """
         root = self._resolve_groot_root(spec)
         script = self._launch_script(root) if root else "launch_finetune.py"
@@ -220,18 +223,155 @@ class Gr00tTrainer(Trainer):
 
         return cmd
 
-    def _launch_argv(self, spec: TrainSpec) -> list[str]:
-        """Argv passed directly to ``launch_finetune.main`` (script arg stripped)."""
-        # ``build_command`` prepends either ['torchrun', ..., script] (multi-GPU)
-        # or ['python', script] (single-GPU); strip the launcher + script tokens
-        # to leave just the flags ``launch_finetune.main`` parses.
-        full = self.build_command(spec)
-        # Find the script token (ends with launch_finetune.py).
-        for i, tok in enumerate(full):
-            if tok.endswith("launch_finetune.py"):
-                return list(full[i + 1 :])
-        # Fallback: assume single-GPU layout [python, script, *flags].
-        return list(full[2:])
+    def build_finetune_config(self, spec: TrainSpec):
+        """Build GR00T's own ``FinetuneConfig`` object from a TrainSpec (pure).
+
+        Returns an instance of ``gr00t.configs.finetune_config.FinetuneConfig``
+        — the SAME typed object ``launch_finetune.py`` builds via tyro, but
+        constructed directly from Python values (no argv). Requires the gr00t
+        package importable.
+        """
+        FinetuneConfig = _import_groot_module("configs.finetune_config").FinetuneConfig
+
+        import dataclasses
+
+        tune = self._resolve_tune(spec)
+        kwargs: dict[str, Any] = {
+            "base_model_path": spec.base_model,
+            "dataset_path": spec.dataset_root,
+            "embodiment_tag": spec.embodiment,
+            "output_dir": spec.output_dir,
+            "max_steps": spec.steps,
+            "global_batch_size": spec.global_batch_size,
+            "learning_rate": spec.learning_rate,
+            "save_steps": spec.save_freq,
+            "num_gpus": spec.num_gpus,
+            "tune_llm": tune["llm"],
+            "tune_visual": tune["visual"],
+            "tune_projector": tune["projector"],
+            "tune_diffusion_model": tune["diffusion"],
+            "resume_from_checkpoint": spec.resume,
+        }
+        if spec.augmentation:
+            if "random_rotation_angle" in spec.augmentation:
+                kwargs["random_rotation_angle"] = spec.augmentation["random_rotation_angle"]
+            if "color_jitter_params" in spec.augmentation:
+                kwargs["color_jitter_params"] = spec.augmentation["color_jitter_params"]
+            extra_aug = {
+                k: v
+                for k, v in spec.augmentation.items()
+                if k not in ("random_rotation_angle", "color_jitter_params")
+            }
+            if extra_aug:
+                kwargs["extra_augmentation_config"] = json.dumps(extra_aug)
+        if spec.extra.get("modality_config_path"):
+            kwargs["modality_config_path"] = spec.extra["modality_config_path"]
+
+        # Passthrough: any other extra.* that is a REAL FinetuneConfig field
+        # (typed allowlist — an unknown key can never set an attribute).
+        valid_fields = {f.name for f in dataclasses.fields(FinetuneConfig)}
+        _consumed = {"groot_root", "master_port", "modality_config_path"}
+        for key, value in spec.extra.items():
+            if key in _consumed or key in kwargs:
+                continue
+            if key in valid_fields:
+                kwargs[key] = value
+            else:
+                logger.warning("Gr00tTrainer: ignoring extra '%s' (not a FinetuneConfig field).", key)
+        return FinetuneConfig(**kwargs)
+
+    def _build_run_config(self, ft_config):
+        """Lower a ``FinetuneConfig`` into the ``Config`` ``experiment.run`` consumes.
+
+        Mirrors the body of ``launch_finetune.py``'s ``__main__`` exactly
+        (verified against the Isaac-GR00T checkout), so calling ``run(config)``
+        is behaviourally identical to launching the script — minus the process
+        spawn and the tyro argv parse.
+        """
+        get_default_config = _import_groot_module("configs.base_config").get_default_config
+        EmbodimentTag = _import_groot_module("data.embodiment_tags").EmbodimentTag
+
+        ft_config.embodiment_tag = EmbodimentTag.resolve(ft_config.embodiment_tag)
+        embodiment_tag = ft_config.embodiment_tag.value
+
+        if ft_config.modality_config_path is not None:
+            self._load_modality_config(ft_config.modality_config_path)
+
+        dataset_paths = [p for p in ft_config.dataset_path.split(os.pathsep) if p]
+
+        config = get_default_config().load_dict(
+            {
+                "data": {
+                    "download_cache": False,
+                    "datasets": [
+                        {
+                            "dataset_paths": dataset_paths,
+                            "mix_ratio": 1.0,
+                            "embodiment_tag": embodiment_tag,
+                        }
+                    ],
+                }
+            }
+        )
+        config.load_config_path = None
+
+        config.model.tune_llm = ft_config.tune_llm
+        config.model.tune_visual = ft_config.tune_visual
+        config.model.tune_projector = ft_config.tune_projector
+        config.model.tune_diffusion_model = ft_config.tune_diffusion_model
+        config.model.state_dropout_prob = ft_config.state_dropout_prob
+        config.model.random_rotation_angle = ft_config.random_rotation_angle
+        config.model.color_jitter_params = ft_config.color_jitter_params
+        config.model.extra_augmentation_config = (
+            json.loads(ft_config.extra_augmentation_config) if ft_config.extra_augmentation_config else None
+        )
+        config.model.load_bf16 = False
+        config.model.reproject_vision = False
+        config.model.model_name = "nvidia/Cosmos-Reason2-2B"
+        config.model.backbone_trainable_params_fp32 = True
+        config.model.use_relative_action = True
+
+        config.training.experiment_name = ft_config.experiment_name
+        config.training.start_from_checkpoint = ft_config.base_model_path
+        config.training.optim = "adamw_torch"
+        config.training.global_batch_size = ft_config.global_batch_size
+        config.training.dataloader_num_workers = ft_config.dataloader_num_workers
+        config.training.learning_rate = ft_config.learning_rate
+        config.training.gradient_accumulation_steps = ft_config.gradient_accumulation_steps
+        config.training.output_dir = ft_config.output_dir
+        config.training.save_steps = ft_config.save_steps
+        config.training.save_total_limit = ft_config.save_total_limit
+        config.training.num_gpus = ft_config.num_gpus
+        config.training.use_wandb = ft_config.use_wandb
+        config.training.max_steps = ft_config.max_steps
+        config.training.weight_decay = ft_config.weight_decay
+        config.training.warmup_ratio = ft_config.warmup_ratio
+        config.training.wandb_project = ft_config.wandb_project
+
+        config.data.shard_size = ft_config.shard_size
+        config.data.episode_sampling_rate = ft_config.episode_sampling_rate
+        config.data.num_shards_per_epoch = ft_config.num_shards_per_epoch
+
+        config.training.save_only_model = ft_config.save_only_model
+        config.training.resume_from_checkpoint = ft_config.resume_from_checkpoint
+        config.training.skip_weight_loading = ft_config.skip_weight_loading
+
+        return config
+
+    @staticmethod
+    def _load_modality_config(modality_config_path: str) -> None:
+        """Register a user modality config (.py), mirroring launch_finetune.py."""
+        import sys
+        from pathlib import Path
+
+        path = Path(modality_config_path)
+        if path.exists() and path.suffix == ".py":
+            if str(path.parent) not in sys.path:
+                sys.path.append(str(path.parent))
+            importlib.import_module(path.stem)
+            logger.info("Loaded modality config: %s", path)
+        else:
+            raise FileNotFoundError(f"Modality config path does not exist: {modality_config_path}")
 
     def train(self, spec: TrainSpec) -> TrainResult:
         problems = self.validate(spec)
@@ -248,115 +388,57 @@ class Gr00tTrainer(Trainer):
 
         job_id = f"groot-{int(time.time())}"
         log_path = os.path.join(parent, f"{os.path.basename(spec.output_dir)}.{job_id}.log")
-        root = self._resolve_groot_root(spec)
 
-        # Single-GPU: pin one device so HF Trainer doesn't wrap in DataParallel
+        # Single-GPU: pin one device so HF Trainer doesn't DataParallel-wrap
         # (the StopIteration crash documented in examples/finetune.sh).
-        prev_env: dict[str, str | None] = {
-            "PYTHONUNBUFFERED": os.environ.get("PYTHONUNBUFFERED"),
-            "CUDA_VISIBLE_DEVICES": os.environ.get("CUDA_VISIBLE_DEVICES"),
-        }
-        os.environ["PYTHONUNBUFFERED"] = "1"
         if spec.num_gpus <= 1:
-            os.environ.setdefault("CUDA_VISIBLE_DEVICES", "0")
+            os.environ.setdefault("CUDA_VISIBLE_DEVICES", os.environ.get("CUDA_VISIBLE_DEVICES", "0"))
+        os.environ.setdefault("LOGURU_LEVEL", "INFO")
 
-        argv = self._launch_argv(spec)
-        prev_cwd = os.getcwd()
-        rc = 0
+        logger.info(
+            "Gr00tTrainer launching GR00T experiment.run() in-process: num_gpus=%d steps=%d",
+            spec.num_gpus,
+            spec.steps,
+        )
+
+        train_error: BaseException | None = None
         try:
-            if root and os.path.isdir(root):
-                os.chdir(root)
-
-            with (
-                open(log_path, "w", encoding="utf-8") as logf,
-                contextlib.redirect_stdout(logf),
-                contextlib.redirect_stderr(logf),
-            ):
-                if spec.num_gpus > 1:
-                    # Multi-GPU: drive torch.distributed.run in-process — the same
-                    # engine torchrun uses, no subprocess for the launcher itself.
-                    from torch.distributed import run as torch_run
-
-                    distributed_argv = [
-                        f"--nproc_per_node={spec.num_gpus}",
-                        f"--master_port={spec.extra.get('master_port', 29500)}",
-                        self._launch_script(root) if root else "launch_finetune.py",
-                        *argv,
-                    ]
-                    try:
-                        torch_run.main(distributed_argv)
-                    except SystemExit as se:
-                        rc = int(se.code) if se.code is not None else 0
-                else:
-                    # Single-GPU: import and call gr00t.experiment.launch_finetune
-                    # directly — no subprocess, no nested interpreter.
-                    mod = _import_groot_module("experiment.launch_finetune")
-                    main = getattr(mod, "main", None)
-                    if main is None:
-                        # Some Isaac-GR00T revisions name it differently; fall
-                        # back to running the module's __main__ block.
-                        spec_obj = importlib.util.find_spec("gr00t.experiment.launch_finetune")
-                        if spec_obj is None:
-                            raise ImportError(
-                                "gr00t.experiment.launch_finetune is not importable; "
-                                "is Isaac-GR00T installed in this interpreter?"
-                            )
-                        runpy = importlib.import_module("runpy")
-                        try:
-                            runpy.run_module(
-                                "gr00t.experiment.launch_finetune",
-                                run_name="__main__",
-                                alter_sys=True,
-                            )
-                        except SystemExit as se:
-                            rc = int(se.code) if se.code is not None else 0
-                    else:
-                        try:
-                            # tyro-driven entrypoints typically read sys.argv;
-                            # rewrite it for the duration of the call.
-                            import sys as _sys
-
-                            _saved = _sys.argv
-                            _sys.argv = ["launch_finetune", *argv]
-                            try:
-                                main()
-                            finally:
-                                _sys.argv = _saved
-                        except SystemExit as se:
-                            rc = int(se.code) if se.code is not None else 0
+            if spec.num_gpus and spec.num_gpus > 1:
+                # Multi-GPU: torch elastic agent spawns workers; each builds the
+                # FinetuneConfig + Config and calls experiment.run() — Python
+                # objects, no argv, no torchrun binary.
+                groot_root = self._resolve_groot_root(spec)
+                elastic_launch_callable(
+                    _groot_worker,
+                    nproc_per_node=spec.num_gpus,
+                    nnodes=1,
+                    run_id=job_id,
+                    fn_args=(groot_root, spec, log_path),
+                )
+            else:
+                ft_config = self.build_finetune_config(spec)
+                run_config = self._build_run_config(ft_config)
+                run = _import_groot_module("experiment.experiment").run
+                call_callable(run, run_config, log_path=log_path)
         except ImportError as e:
-            return TrainResult(
-                status="error",
-                job_id=job_id,
-                message=str(e),
-            )
-        except Exception as e:  # noqa: BLE001 — surface launcher errors
-            return TrainResult(
-                status="error",
-                job_id=job_id,
-                message=f"launch_finetune raised: {e}; see {log_path}",
-            )
-        finally:
-            os.chdir(prev_cwd)
-            for k, v in prev_env.items():
-                if v is None:
-                    os.environ.pop(k, None)
-                else:
-                    os.environ[k] = v
+            return TrainResult(status="error", job_id=job_id, message=str(e))
+        except BaseException as e:  # noqa: BLE001 — convert ANY failure to a result
+            train_error = e
+            logger.error("Gr00tTrainer in-process run failed: %s", e)
 
         ckpt = self._latest_checkpoint(spec.output_dir)
-        if rc != 0:
+        if train_error is not None:
             return TrainResult(
                 status="error",
                 job_id=job_id,
                 checkpoint_dir=ckpt,
-                message=f"launch_finetune exited {rc}; see {log_path}",
+                message=f"GR00T experiment.run() raised {type(train_error).__name__}: {train_error}; see {log_path}",
             )
         return TrainResult(
             status="success",
             job_id=job_id,
             checkpoint_dir=ckpt,
-            message=f"GR00T fine-tune complete; log: {log_path}",
+            message=f"GR00T fine-tune complete (in-process); log: {log_path}",
         )
 
     def _latest_checkpoint(self, output_dir: str) -> str | None:
@@ -379,3 +461,22 @@ class Gr00tTrainer(Trainer):
 
         best = max(ckpts, key=_step)
         return os.path.join(output_dir, best)
+
+
+def _groot_worker(groot_root: str | None, spec: TrainSpec, log_path: str) -> None:
+    """elastic_launch worker: build the GR00T Config and call run() in this worker.
+
+    Runs in a torch-spawned worker (one per GPU). torch sets RANK / LOCAL_RANK /
+    WORLD_SIZE; GR00T's experiment.run() + HF Trainer read those to shard. We do
+    NOT pin CUDA_VISIBLE_DEVICES here — each worker sees all devices and selects
+    by LOCAL_RANK. Only local rank 0 tees to the shared log file.
+    """
+    import os as _os
+
+    trainer = Gr00tTrainer(groot_root=groot_root)
+    ft_config = trainer.build_finetune_config(spec)
+    run_config = trainer._build_run_config(ft_config)
+    run = _import_groot_module("experiment.experiment").run
+
+    is_rank0 = _os.environ.get("LOCAL_RANK", "0") == "0"
+    call_callable(run, run_config, log_path=log_path if is_rank0 else None)
