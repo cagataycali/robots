@@ -95,6 +95,31 @@ class TestActions:
         # the result dict must NOT be extended beyond {status, content}
         assert set(res.keys()) == {"status", "content"}
 
+    def test_export_after_train_succeeds(self, dataset_root, tmp_path):
+        # Regression: export action used to reach a private _latest_checkpoint
+        # via getattr and silently fail for providers (mock/cosmos) that lacked
+        # it. It now uses the public latest_checkpoint() ABC method.
+        out = str(tmp_path / "out")
+        train_policy(
+            action="train", provider="mock", dataset_root=dataset_root,
+            base_model="mock/base", output_dir=out, steps=10,
+        )
+        res = train_policy(
+            action="export", provider="mock", dataset_root=dataset_root,
+            base_model="mock/base", output_dir=out,
+        )
+        assert res["status"] == "success", _text(res)
+        assert _json(res)["exported_model"]
+        assert set(res.keys()) == {"status", "content"}
+
+    def test_export_without_checkpoint_errors(self, dataset_root, tmp_path):
+        res = train_policy(
+            action="export", provider="mock", dataset_root=dataset_root,
+            base_model="mock/base", output_dir=str(tmp_path / "never"),
+        )
+        assert res["status"] == "error"
+        assert "no checkpoint" in _text(res)
+
     def test_status_requires_job_id(self):
         res = train_policy(action="status", provider="mock")
         assert res["status"] == "error"

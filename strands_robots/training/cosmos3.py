@@ -106,6 +106,25 @@ class Cosmos3Trainer(Trainer):
     def _nproc(self, spec: TrainSpec) -> int:
         return max(1, spec.num_gpus)
 
+    def latest_checkpoint(self, output_dir: str) -> str | None:
+        """Return the trained DCP checkpoint directory, or None.
+
+        cosmos_framework writes its training output (DCP shards) under
+        ``output_dir``; that directory is what ``export`` converts to HF
+        safetensors. We treat ``output_dir`` as the checkpoint once it exists
+        and is non-empty (the DCP base lives in the ``_dcp_base`` sibling, which
+        we exclude). Returns None before any training output appears.
+        """
+        if not os.path.isdir(output_dir):
+            return None
+        # Anything other than our own _dcp_base / _exported scratch dirs means
+        # training has written checkpoint state here.
+        entries = [
+            e for e in os.listdir(output_dir)
+            if e not in ("_dcp_base", "_exported") and not e.endswith(".log")
+        ]
+        return output_dir if entries else None
+
     def validate(self, spec: TrainSpec) -> list[str]:
         problems: list[str] = self._security_problems(spec)
 

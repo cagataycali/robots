@@ -5,14 +5,18 @@ The :class:`Trainer` ABC is the training-side peer of
 hides *how a model produces actions*, ``Trainer`` hides *how a model is
 post-tuned* - and those pipelines genuinely differ per provider:
 
-* **LeRobot** - ``python -m lerobot.scripts.lerobot_train`` (draccus CLI),
-  ``accelerate launch`` for multi-GPU. HF-native checkpoints.
-* **GR00T N1.7** - ``gr00t/experiment/launch_finetune.py`` (a ``FinetuneConfig``
-  dataclass via tyro), ``torchrun`` for multi-GPU, ``tune_llm/visual/projector/
-  diffusion`` flags + a modality-config ``.py``.
-* **Cosmos3** - ``torchrun -m cosmos_framework.scripts.train --sft-toml=...``
-  (TOML recipe + Hydra overrides), an explicit **DCP checkpoint conversion**
-  prepare step, and a **DCP -> safetensors** export step. 8xH100 floor.
+* **LeRobot** - build a ``TrainPipelineConfig`` and call
+  ``lerobot.scripts.lerobot_train.train(cfg)`` in-process. HF-native checkpoints.
+* **GR00T N1.7** - build a ``FinetuneConfig`` -> ``Config`` and call
+  ``gr00t.experiment.experiment.run(config)``; ``tune_llm/visual/projector/
+  diffusion`` knobs + a modality-config ``.py``.
+* **Cosmos3** - build the SFT ``Config`` via ``load_experiment_from_toml`` and
+  call ``cosmos_framework.scripts.train.launch(config, args)``; with an explicit
+  **DCP checkpoint conversion** prepare step and a **DCP -> safetensors** export
+  step. 8xH100 floor.
+
+All three run **in-process** (imported and called as libraries, no subprocess);
+multi-GPU goes through torch's programmatic ``elastic_launch``.
 
 All three nonetheless converge on:
 
@@ -62,8 +66,8 @@ class TrainSpec:
         global_batch_size: Batch summed across GPUs before grad accumulation.
         learning_rate: Initial LR.
         save_freq: Checkpoint cadence in steps.
-        num_gpus: GPUs on this node. ``>1`` selects the multi-GPU launcher
-            (``accelerate`` for lerobot, ``torchrun`` for groot/cosmos).
+        num_gpus: GPUs on this node. ``>1`` runs the backend under torch's
+            in-process ``elastic_launch`` (the engine behind ``torchrun``).
         num_nodes: Nodes for multi-node training (Cosmos HSDP /
             ``torchrun --nnodes``).
         resume: Resume from the latest checkpoint under ``output_dir`` when
@@ -148,13 +152,17 @@ class Trainer(ABC):
     """Abstract base class for post-tuning a policy of one provider family.
 
     Lifecycle: :meth:`validate` (pure preflight) -> :meth:`prepare` (optional
-    one-time setup) -> :meth:`train` (launch + manage) -> :meth:`export`
-    (produce a loadable artifact). :meth:`status` answers
-    "is it *really* learning?" for an in-flight job.
+    one-time setup) -> :meth:`train` (run + collect verdict) -> :meth:`export`
+    (produce a loadable artifact). :meth:`latest_checkpoint` discovers the
+    loadable artifact a run produced; :meth:`status` is an optional best-effort
+    verdict for backends that can poll a still-running job.
 
-    Concrete trainers are thin adapters that translate a :class:`TrainSpec`
-    into their backend's native launch (a subprocess command, a config object,
-    a TOML recipe) - they do NOT reimplement training.
+    Concrete trainers are thin adapters that **import the backend package and
+    call its own training function in-process** (LeRobot ``train(cfg)``, GR00T
+    ``experiment.run(config)``, Cosmos ``train.launch(config, args)``) - they do
+    NOT reimplement training and do NOT shell out to a subprocess. Multi-GPU is
+    driven via torch's programmatic ``elastic_launch`` (the engine behind
+    ``torchrun``), still in-process.
     """
 
     @property
@@ -182,11 +190,14 @@ class Trainer(ABC):
         """Input-safety preflight shared by every backend (defense-in-depth).
 
         Returns problems for any agent-supplied value that would be unsafe to
-        interpolate into a subprocess argv (path traversal / protected
-        directories, a leading ``-`` that parses as a flag, or an ``extra`` key
-        that would smuggle an arbitrary ``--flag``). Concrete :meth:`validate`
-        implementations MUST call this first so that the ``# noqa: S603``
-        subprocess sites are genuinely fed validated input.
+        feed into the backend's config (path traversal / protected directories,
+        a leading ``-`` that a backend's argv-parity helper would read as a
+        flag, or an ``extra`` key that would set an arbitrary config attribute /
+        Hydra override). Concrete :meth:`validate` implementations MUST call
+        this first so untrusted ``TrainSpec`` input is checked before any config
+        is built. (Training itself is in-process now - no subprocess argv - but
+        the ``extra`` escape hatch and path fields still reach backend internals,
+        so the gate remains.)
 
         Imported lazily here (not at module top) to break the
         ``base ↔ _validate`` cyclic import that CodeQL flagged: ``_validate``
@@ -208,27 +219,39 @@ class Trainer(ABC):
 
     @abstractmethod
     def train(self, spec: TrainSpec) -> TrainResult:
-        """Build and launch the backend's training, returning a result.
+        """Run the backend's training in-process and return the final result.
 
-        Responsible for: selecting the launcher (``python`` / ``accelerate
-        launch`` / ``torchrun``), mapping :class:`TrainSpec` to native flags,
-        wiring resume, and surfacing the checkpoint dir + a status. Long runs
-        SHOULD launch detached and return ``status="running"`` with a
-        ``job_id`` that :meth:`status` can poll.
+        Responsible for: building the backend's typed config from the
+        :class:`TrainSpec`, wiring resume, selecting single- vs multi-GPU
+        (``elastic_launch`` for ``num_gpus > 1``), invoking the backend's own
+        training function, and surfacing the checkpoint dir + metrics verdict.
+
+        Training is **synchronous**: this call blocks until the run finishes (or
+        raises) and returns a terminal ``TrainResult`` (``success``/``error``)
+        with ``metrics`` already populated - there is no detached job to poll.
+        ``status()`` exists only for backends that CAN report on a separately
+        launched, still-running job; the default returns an informative error.
+        Every implementation MUST call :meth:`validate` first and fail closed.
         """
 
     def status(self, job_id: str) -> TrainResult:
-        """Return a "RUNNING != learning" verdict for an in-flight job.
+        """Optional "RUNNING != learning" verdict for a separately launched job.
 
-        Default implementation returns an ``error`` result indicating the
-        backend does not implement status tracking. Backends override to parse
-        their training logs for ``latest_step`` / ``latest_loss`` / a
+        Because :meth:`train` is synchronous and already returns the full
+        ``metrics`` verdict, this is only meaningful for a job launched OUT of
+        band (e.g. a long cosmos run started under an external launcher) that a
+        caller wants to poll by id. Most backends do not track detached jobs, so
+        the default returns an informative ``error``. Backends that DO override
+        parse their training logs for ``latest_step`` / ``latest_loss`` / a
         ``learning`` boolean.
         """
         return TrainResult(
             status="error",
             job_id=job_id,
-            message=f"{self.provider_name}: status() not implemented",
+            message=(
+                f"{self.provider_name}: status() polling is not supported - "
+                "train() runs synchronously and already returns the metrics verdict."
+            ),
         )
 
     def export(self, spec: TrainSpec, checkpoint_dir: str) -> str:
@@ -241,6 +264,20 @@ class Trainer(ABC):
         accepts.
         """
         return checkpoint_dir
+
+    def latest_checkpoint(self, output_dir: str) -> str | None:
+        """Return the newest loadable checkpoint directory under ``output_dir``.
+
+        A loadable directory is one that ``export``/``create_policy`` can consume
+        (for HF-native backends, the saved model dir). Returns ``None`` when no
+        checkpoint exists yet, or when the backend writes no discoverable
+        checkpoint tree. Powers the ``export`` action (which needs a checkpoint
+        to convert) and resume logic.
+
+        Default returns ``None`` (no discovery). Backends that write a
+        predictable checkpoint layout override this. Pure / read-only (stat only).
+        """
+        return None
 
     @property
     def hardware_floor(self) -> dict[str, Any]:
