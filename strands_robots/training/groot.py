@@ -62,7 +62,7 @@ _INSTALL_HINT = (
 )
 
 
-def _import_groot_module(qualname: str):
+def _import_groot_module(qualname: str) -> Any:
     """Import ``gr00t.<qualname>`` or raise a helpful ImportError."""
     full = f"gr00t.{qualname}"
     try:
