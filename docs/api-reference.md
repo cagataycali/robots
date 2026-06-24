@@ -13,6 +13,7 @@ import strands_robots
 | Symbol | What | More |
 |--------|------|------|
 | `Robot(name, mode='sim', ...)` | Factory → `Simulation` or `HardwareRobot` | [Robot factory](getting-started/robot-factory.md) |
+| `Teleoperator(name, **kwargs)` | Factory → LeRobot teleoperator (leader arm, gamepad, keyboard, …) | [Teleoperation](hardware/teleoperation.md) |
 | `list_robots(category='all')` | Catalog query | [Robot catalog](robots/index.md) |
 | `Policy` | Policy ABC | [Policies](policies/overview.md) |
 | `MockPolicy` | Sinusoidal mock | [Policies](policies/overview.md) |

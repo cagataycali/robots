@@ -61,7 +61,21 @@ robot.cleanup()
 | `status` | - | - |
 | `stop` | - | - |
 
+## Teleoperation
+
+High-level: attach one or more LeRobot teleoperators and drive this robot
+directly. See **[Teleoperation](teleoperation.md)** for the full API and recipes.
+
+```python
+robot.attach_teleop("so101_leader", port="/dev/ttyACM1", id="leader")
+robot.teleoperate()                       # local drive; stop_teleoperate() to end
+robot.teleoperate(publish=True)           # drive + publish over the mesh
+```
+
 ## Mesh teleop
+
+Low-level transport primitives for streaming teleop actions between peers
+(`teleoperate(publish=True)` builds on `start_teleop_publish`):
 
 ```python
 robot.start_teleop_publish(teleoperator, device_name="leader", method="joint", hz=50)

@@ -40,6 +40,7 @@ nav:
   - Custom Policies: policies/custom-policies.md
 - Real Hardware:
   - Robot Control: hardware/robot-control.md
+  - Teleoperation: hardware/teleoperation.md
   - Tools: hardware/tools.md
 - Training:
   - Overview: training/overview.md

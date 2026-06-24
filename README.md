@@ -210,6 +210,36 @@ from strands_robots import create_policy
 policy = create_policy("lerobot/act_aloha_sim_transfer_cube_human")
 ```
 
+### Teleoperation (leader arms, gamepads, WASD)
+
+Drive any real robot - or a simulation - from one or more LeRobot
+teleoperators. `Teleoperator()` mirrors the `Robot()` factory; `attach_teleop()`
++ `teleoperate()` run the control loop.
+
+```python
+from strands_robots import Robot, Teleoperator
+
+# Leader arm -> follower arm (both speak {motor}.pos -> zero config)
+follower = Robot("so101", mode="real", port="/dev/ttyACM0")
+follower.attach_teleop("so101_leader", port="/dev/ttyACM1", id="leader")
+follower.teleoperate()                       # Ctrl+C or stop_teleoperate()
+
+# Earth Rover Mini+ with WASD keys (velocity keys -> zero config)
+rover = Robot("earthrover_mini_plus", mode="real", robot_ip="192.168.1.151")
+rover.attach_teleop("keyboard_rover")        # W/A/S/D
+rover.teleoperate(block=True, duration=30)
+
+# Cross-vocabulary or sim teleop -> supply a map_fn(action) -> action
+robot.attach_teleop("keyboard_ee", map_fn=my_ik)   # EE deltas -> joint .pos
+robot.teleoperate(publish=True)              # also stream over the mesh
+```
+
+17 teleoperators (`so100/so101/koch/omx/openarm` leaders, `bi_*` leaders,
+`gamepad`, `keyboard`, `keyboard_ee`, `keyboard_rover`, `phone`,
+`reachy2_teleoperator`, `unitree_g1`, homunculus arm/glove) drive 14 robots.
+Zero-config when action keys match; otherwise pass `map_fn`. Full matrix +
+recipes: [Teleoperation docs](https://strands-labs.github.io/robots/hardware/teleoperation/).
+
 ## Recording & streaming datasets
 
 The physical-AI data loop, end to end: **record** a LeRobotDataset from sim or
