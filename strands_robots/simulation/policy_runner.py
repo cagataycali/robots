@@ -552,21 +552,19 @@ class PolicyRunner:
         sim_time = self._maybe_sim_time()
         prefix = "Policy stopped" if stopped_early else "Policy complete"
         text = (
-            f"{prefix} on '{robot_name}'\n"
-            f"🧠 {type(policy).__name__} | 🎯 {instruction}\n"
-            f"⏱️ {elapsed:.1f}s | 📊 {step_count} steps"
+            f"{prefix} on '{robot_name}'\n{type(policy).__name__} | {instruction}\n{elapsed:.1f}s | {step_count} steps"
         )
         if sim_time is not None:
-            text += f" | 🕐 sim_t={sim_time:.3f}s"
+            text += f" | sim_t={sim_time:.3f}s"
         if writer is not None:
             assert video is not None and video_path is not None
             writer.close()
             if frame_count > 0 and os.path.exists(video_path):
                 file_kb = os.path.getsize(video_path) / 1024
                 text += (
-                    f"\n🎬 Video: {video_path}\n"
-                    f"📹 {frame_count} frames, {video.fps}fps, "
-                    f"{video.width}x{video.height} | 💾 {file_kb:.0f} KB"
+                    f"\nVideo: {video_path}\n"
+                    f"{frame_count} frames, {video.fps}fps, "
+                    f"{video.width}x{video.height} | {file_kb:.0f} KB"
                 )
             else:
                 # Log a loud warning so the user isn't blindsided by a silent
@@ -579,18 +577,18 @@ class PolicyRunner:
                     "remained valid throughout the rollout.",
                     video_path,
                 )
-                text += f"\n⚠️ Video requested but 0 frames captured ({video_path})"
+                text += f"\nVideo requested but 0 frames captured ({video_path})"
         # If every send_action call failed (all keys unresolved), the robot
         # never moved -- report this as an error rather than a false success.
         if _action_errors > 0 and _action_errors >= step_count and step_count > 0:
             text += (
-                f"\n\n⚠️ ALL {_action_errors} action steps had unresolved keys "
+                f"\n\nALL {_action_errors} action steps had unresolved keys "
                 f"-- the robot did not move. Check that the policy's output keys "
                 f"match the robot's actuator names."
             )
             return {"status": "error", "content": [{"text": text}]}
         if _action_errors > 0:
-            text += f"\n\n⚠️ {_action_errors}/{step_count} action steps had unresolved keys."
+            text += f"\n\n{_action_errors}/{step_count} action steps had unresolved keys."
         return {"status": "success", "content": [{"text": text}]}
 
     # replay(): replay a LeRobotDataset episode
@@ -678,7 +676,7 @@ class PolicyRunner:
             "content": [
                 {
                     "text": (
-                        f"▶️ Replayed episode {episode} from {repo_id} on '{resolved_robot}'\n"
+                        f"Replayed episode {episode} from {repo_id} on '{resolved_robot}'\n"
                         f"Frames: {frames_applied}/{episode_length} | "
                         f"Duration: {duration:.1f}s | Speed: {speed}x"
                     )
@@ -830,7 +828,7 @@ class PolicyRunner:
             "content": [
                 {
                     "text": (
-                        f"📊 Evaluation: {type(policy).__name__} on '{robot_name}'\n"
+                        f"Evaluation: {type(policy).__name__} on '{robot_name}'\n"
                         f"Episodes: {n_episodes} | Success: {n_success}/{n_episodes} "
                         f"({success_rate:.1%})\n"
                         f"Avg steps: {avg_steps:.0f}/{max_steps}"
@@ -1147,7 +1145,7 @@ class PolicyRunner:
             "content": [
                 {
                     "text": (
-                        f"📊 Benchmark: {spec_name} | policy {type(policy).__name__} on '{robot_name}'\n"
+                        f"Benchmark: {spec_name} | policy {type(policy).__name__} on '{robot_name}'\n"
                         f"Episodes: {n_episodes} | Success: {n_success} | Failure: {n_failure} "
                         f"({success_rate:.1%} success)\n"
                         f"Avg reward: {avg_reward:.2f} | Avg steps: {avg_steps:.0f}/{max_steps}"

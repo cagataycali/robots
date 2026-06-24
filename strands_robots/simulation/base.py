@@ -814,7 +814,7 @@ class SimEngine(ABC):
             "content": [
                 {
                     "text": (
-                        f"📋 Registered benchmark '{benchmark_name}' from {spec_path}\n"
+                        f"Registered benchmark '{benchmark_name}' from {spec_path}\n"
                         f"  class: {type(benchmark).__name__}\n"
                         f"  supported_robots: {benchmark.supported_robots or 'any'}\n"
                         f"  default_robot: {benchmark.default_robot}\n"

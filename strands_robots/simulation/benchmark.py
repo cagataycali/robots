@@ -309,7 +309,7 @@ def register_benchmark(name: str, benchmark: BenchmarkProtocol) -> None:
         if name in _BENCHMARK_REGISTRY:
             logger.warning("Overwriting existing benchmark registration: %s", name)
         _BENCHMARK_REGISTRY[name] = benchmark
-        logger.info("📋 Registered benchmark '%s' (%s)", name, type(benchmark).__name__)
+        logger.info("Registered benchmark '%s' (%s)", name, type(benchmark).__name__)
 
 
 def unregister_benchmark(name: str) -> BenchmarkProtocol | None:

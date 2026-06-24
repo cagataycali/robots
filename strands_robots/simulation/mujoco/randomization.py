@@ -91,13 +91,13 @@ class RandomizationMixin:
                     geom_name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_GEOM, i)
                     if geom_name and geom_name != "ground":
                         model.geom_rgba[i, :3] = rng.uniform(color_range[0], color_range[1], size=3)
-                changes.append(f"🎨 Colors: {model.ngeom} geoms randomized")
+                changes.append(f"Colors: {model.ngeom} geoms randomized")
 
             if randomize_lighting:
                 for i in range(model.nlight):
                     model.light_pos[i] += rng.uniform(-0.5, 0.5, size=3)
                     model.light_diffuse[i] = rng.uniform(0.3, 1.0, size=3)
-                changes.append(f"💡 Lighting: {model.nlight} lights randomized")
+                changes.append(f"Lighting: {model.nlight} lights randomized")
 
             if randomize_physics:
                 friction_scales = {}
@@ -114,7 +114,7 @@ class RandomizationMixin:
                         model.body_mass[i] *= s
                         mass_scales[bn] = s
                 changes.append(
-                    f"⚙️ Physics: {len(friction_scales)} geoms friction-scaled, {len(mass_scales)} bodies mass-scaled"
+                    f"Physics: {len(friction_scales)} geoms friction-scaled, {len(mass_scales)} bodies mass-scaled"
                 )
                 changes.append(f"   friction_scales={friction_scales}")
                 changes.append(f"   mass_scales={mass_scales}")
@@ -129,9 +129,9 @@ class RandomizationMixin:
                             noise = rng.uniform(-position_noise, position_noise, size=3)
                             data.qpos[qpos_addr : qpos_addr + 3] += noise
                 mj.mj_forward(model, data)
-                changes.append(f"📍 Positions: ±{position_noise}m noise on dynamic objects")
+                changes.append(f"Positions: ±{position_noise}m noise on dynamic objects")
 
         return {
             "status": "success",
-            "content": [{"text": "🎲 Domain Randomization applied:\n" + "\n".join(changes)}],
+            "content": [{"text": "Domain Randomization applied:\n" + "\n".join(changes)}],
         }

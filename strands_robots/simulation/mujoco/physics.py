@@ -133,7 +133,7 @@ class PhysicsMixin:
             "content": [
                 {
                     "text": (
-                        f"💾 State '{name}' saved\n"
+                        f"State '{name}' saved\n"
                         f"  t={self._world.sim_time:.4f}s, step={self._world.step_count}\n"
                         f"State vector: {state_size} floats\n"
                         f"Checkpoints: {list(self._world._checkpoints.keys())}"
@@ -172,7 +172,7 @@ class PhysicsMixin:
         return {
             "status": "success",
             "content": [
-                {"text": f"📂 State '{name}' restored (t={self._world.sim_time:.4f}s, step={self._world.step_count})"}
+                {"text": f"State '{name}' restored (t={self._world.sim_time:.4f}s, step={self._world.step_count})"}
             ],
         }
 
@@ -256,7 +256,7 @@ class PhysicsMixin:
             "content": [
                 {
                     "text": (
-                        f"💨 Force applied to '{body_name}' (body {body_id})\n"
+                        f"Force applied to '{body_name}' (body {body_id})\n"
                         f"Force: {f.tolist()} N\n"
                         f"Torque: {t.tolist()} N·m\n"
                         f"Point: {p.tolist()}"
@@ -378,9 +378,9 @@ class PhysicsMixin:
         }
 
         if hit:
-            text = f"🎯 Ray hit '{geom_name or geomid[0]}' at dist={dist:.4f}m, point={result['hit_point']}"
+            text = f"Ray hit '{geom_name or geomid[0]}' at dist={dist:.4f}m, point={result['hit_point']}"
         else:
-            text = "🎯 Ray: no intersection"
+            text = "Ray: no intersection"
 
         return {"status": "success", "content": [{"text": text}, {"json": result}]}
 
@@ -433,7 +433,7 @@ class PhysicsMixin:
         return {
             "status": "success",
             "content": [
-                {"text": f"🧮 Jacobian for {label}: pos={jacp.shape}, rot={jacr.shape}, nv={model.nv}"},
+                {"text": f"Jacobian for {label}: pos={jacp.shape}, rot={jacr.shape}, nv={model.nv}"},
                 {"json": {"jacp": jacp.tolist(), "jacr": jacr.tolist(), "nv": model.nv}},
             ],
         }
@@ -458,7 +458,7 @@ class PhysicsMixin:
         return {
             "status": "success",
             "content": [
-                {"text": f"⚡ Energy: potential={potential:.4f}J, kinetic={kinetic:.4f}J, total={total:.4f}J"},
+                {"text": f"Energy: potential={potential:.4f}J, kinetic={kinetic:.4f}J, total={total:.4f}J"},
                 {"json": {"potential": potential, "kinetic": kinetic, "total": total}},
             ],
         }
@@ -496,7 +496,7 @@ class PhysicsMixin:
         return {
             "status": "success",
             "content": [
-                {"text": f"🧮 Mass matrix: {nv}×{nv}, rank={rank}, cond={cond:.2e}"},
+                {"text": f"Mass matrix: {nv}×{nv}, rank={rank}, cond={cond:.2e}"},
                 {
                     "json": {
                         "shape": [nv, nv],
@@ -536,7 +536,7 @@ class PhysicsMixin:
         return {
             "status": "success",
             "content": [
-                {"text": f"🔄 Inverse dynamics: {len(forces)} joint forces computed"},
+                {"text": f"Inverse dynamics: {len(forces)} joint forces computed"},
                 {"json": {"qfrc_inverse": forces}},
             ],
         }
@@ -588,7 +588,7 @@ class PhysicsMixin:
         }
 
         text = (
-            f"🏷️ Body '{body_name}' (id={body_id}):\n"
+            f"Body '{body_name}' (id={body_id}):\n"
             f"  pos: [{pos[0]:.4f}, {pos[1]:.4f}, {pos[2]:.4f}]\n"
             f"  quat: [{quat[0]:.4f}, {quat[1]:.4f}, {quat[2]:.4f}, {quat[3]:.4f}]\n"
             f"  linvel: [{linvel[0]:.4f}, {linvel[1]:.4f}, {linvel[2]:.4f}]\n"
@@ -703,7 +703,7 @@ class PhysicsMixin:
 
             mj.mj_forward(model, data)
 
-        msg = f"🎯 Set {set_count}/{len(positions)} joint positions, FK updated"
+        msg = f"Set {set_count}/{len(positions)} joint positions, FK updated"
         if ignored:
             msg += f" (ignored: {ignored})"
         return {
@@ -799,7 +799,7 @@ class PhysicsMixin:
                 else:
                     ignored.append(jnt_name)
 
-        msg = f"💨 Set {set_count}/{len(velocities)} joint velocities"
+        msg = f"Set {set_count}/{len(velocities)} joint velocities"
         if ignored:
             msg += f" (ignored: {ignored})"
         return {
@@ -831,7 +831,7 @@ class PhysicsMixin:
                     "status": "error",
                     "content": [{"text": f"Sensor '{sensor_name}' not found. Model has no sensors."}],
                 }
-            return {"status": "success", "content": [{"text": "📡 No sensors in model."}]}
+            return {"status": "success", "content": [{"text": "No sensors in model."}]}
 
         # Lock while running mj_forward + reading sensordata so a policy
         # thread's mj_step can't mutate data between our forward pass and
@@ -864,7 +864,7 @@ class PhysicsMixin:
         if sensor_name and sensor_name not in sensors:
             return {"status": "error", "content": [{"text": f"Sensor '{sensor_name}' not found."}]}
 
-        lines = [f"📡 Sensors ({len(sensors)}/{model.nsensor}):"]
+        lines = [f"Sensors ({len(sensors)}/{model.nsensor}):"]
         for name, info in sensors.items():
             lines.append(f"{name}: {info['values']} (dim={info['dim']})")
 
@@ -919,7 +919,7 @@ class PhysicsMixin:
 
         return {
             "status": "success",
-            "content": [{"text": f"🔧 Body '{body_name}': {', '.join(changes)}"}],
+            "content": [{"text": f"Body '{body_name}': {', '.join(changes)}"}],
         }
 
     def set_geom_properties(
@@ -972,7 +972,7 @@ class PhysicsMixin:
 
         return {
             "status": "success",
-            "content": [{"text": f"🔧 Geom '{label}': {', '.join(changes)}"}],
+            "content": [{"text": f"Geom '{label}': {', '.join(changes)}"}],
         }
 
     # Contact Force Analysis
@@ -1013,9 +1013,9 @@ class PhysicsMixin:
                 )
 
         if not contacts:
-            return {"status": "success", "content": [{"text": "💥 No active contacts."}]}
+            return {"status": "success", "content": [{"text": "No active contacts."}]}
 
-        lines = [f"💥 {len(contacts)} contacts:"]
+        lines = [f"{len(contacts)} contacts:"]
         for c in contacts[:15]:
             lines.append(f"{c['geom1']} ↔ {c['geom2']}: normal={c['normal_force']:.3f}N, dist={c['distance']:.4f}m")
         if len(contacts) > 15:
@@ -1093,7 +1093,7 @@ class PhysicsMixin:
         return {
             "status": "success",
             "content": [
-                {"text": f"🎯 Multi-ray: {hit_count}/{len(directions)} hits from {origin}"},
+                {"text": f"Multi-ray: {hit_count}/{len(directions)} hits from {origin}"},
                 {"json": {"rays": results}},
             ],
         }
@@ -1132,7 +1132,7 @@ class PhysicsMixin:
                 return {
                     "status": "success",
                     "content": [
-                        {"text": f"🦴 FK for '{body_name}': pos={body_payload['position']}"},
+                        {"text": f"FK for '{body_name}': pos={body_payload['position']}"},
                         {"json": {"body": body_name, **body_payload}},
                     ],
                 }
@@ -1148,7 +1148,7 @@ class PhysicsMixin:
         return {
             "status": "success",
             "content": [
-                {"text": f"🦴 FK computed for {model.nbody} bodies"},
+                {"text": f"FK computed for {model.nbody} bodies"},
                 {"json": {"bodies": bodies}},
             ],
         }
@@ -1174,7 +1174,7 @@ class PhysicsMixin:
         return {
             "status": "success",
             "content": [
-                {"text": f"⚖️ Total mass: {total:.4f}kg ({len(bodies)} bodies with mass)"},
+                {"text": f"Total mass: {total:.4f}kg ({len(bodies)} bodies with mass)"},
                 {"json": {"total_mass": total, "bodies": bodies}},
             ],
         }
@@ -1212,9 +1212,9 @@ class PhysicsMixin:
         if output_path:
             with open(output_path, "w") as f:
                 f.write(xml)
-            return {"status": "success", "content": [{"text": f"📄 Model exported to {output_path}"}]}
+            return {"status": "success", "content": [{"text": f"Model exported to {output_path}"}]}
 
         return {
             "status": "success",
-            "content": [{"text": f"📄 Model XML ({len(xml)} chars):\n{xml[:2000]}{'...' if len(xml) > 2000 else ''}"}],
+            "content": [{"text": f"Model XML ({len(xml)} chars):\n{xml[:2000]}{'...' if len(xml) > 2000 else ''}"}],
         }
