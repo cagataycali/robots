@@ -459,6 +459,7 @@ def test_serializer_caps_long_string() -> None:
 def test_serializer_marks_image_arrays_not_pixel_dumped() -> None:
     """An image-shaped array is summarized as an image, never dumped as pixels."""
     out = M._serialize_value(np.zeros((64, 64, 3), dtype=np.uint8))
+    assert isinstance(out, dict)
     assert out["__ndarray__"] is True
     assert out["is_image"] is True
     assert "values" not in out
