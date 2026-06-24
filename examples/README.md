@@ -20,6 +20,8 @@ MUJOCO_GL=egl python examples/01_sim_hello_world.py
 | 03 | [`03_record_dataset.py`](03_record_dataset.py) | `start/stop_recording` | No | No |
 | 04 | [`04_mesh_peer_discovery.py`](04_mesh_peer_discovery.py) | `Mesh` + peer discovery | No | No |
 | 05 | [`05_agent_natural_language.py`](05_agent_natural_language.py) | `Agent` + `Robot` tool | No | No (needs LLM API) |
+| 06 | [`06_agent_collect_and_stream.py`](06_agent_collect_and_stream.py) | `Agent` record + `stream_dataset` | No | No (needs LLM API) |
+| 07 | [`07_post_tune_any_policy.py`](07_post_tune_any_policy.py) | `create_trainer` + `TrainSpec` (record→train→load) | No | No |
 
 ## What each example shows vs raw lerobot
 

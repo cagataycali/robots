@@ -11,7 +11,11 @@
                 "mock",
                 "random",
                 "test"
-            ]
+            ],
+            "trainer": {
+                "module": "strands_robots.training.mock",
+                "class": "MockTrainer"
+            }
         },
         "groot": {
             "module": "strands_robots.policies.groot",
@@ -41,7 +45,11 @@
             "model_id_overrides": [
                 "nvidia/gr00t",
                 "nvidia/groot"
-            ]
+            ],
+            "trainer": {
+                "module": "strands_robots.training.groot",
+                "class": "Gr00tTrainer"
+            }
         },
         "lerobot_local": {
             "module": "strands_robots.policies.lerobot_local",
@@ -67,7 +75,11 @@
                 "lerobot",
                 "allenai"
             ],
-            "is_hf_default": true
+            "is_hf_default": true,
+            "trainer": {
+                "module": "strands_robots.training.lerobot",
+                "class": "LerobotTrainer"
+            }
         },
         "cosmos3": {
             "module": "strands_robots.policies.cosmos3",
@@ -104,7 +116,11 @@
             "model_id_overrides": [
                 "nvidia/cosmos3",
                 "nvidia/cosmos3-nano-policy"
-            ]
+            ],
+            "trainer": {
+                "module": "strands_robots.training.cosmos3",
+                "class": "Cosmos3Trainer"
+            }
         },
         "moveit2": {
             "module": "strands_robots.policies.moveit2",
