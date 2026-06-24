@@ -84,6 +84,7 @@ from strands_robots.simulation.mujoco.scene_ops import (
 )
 from strands_robots.simulation.mujoco.spec_builder import SpecBuilder
 from strands_robots.simulation.policy_runner import CooperativeStop
+from strands_robots.teleop_mixin import TeleopMixin
 
 if TYPE_CHECKING:
     from strands_robots.policies import Policy
@@ -105,6 +106,7 @@ with open(_TOOL_SPEC_PATH) as _f:
 
 
 class MuJoCoSimEngine(
+    TeleopMixin,
     PhysicsMixin,
     RenderingMixin,
     RecordingMixin,
@@ -2690,6 +2692,13 @@ class MuJoCoSimEngine(
         # itself goes down - leaving the inverse order ("sim drops, robots
         # linger") would create zombie peer entries in remote ``get_peers``
         # results until their heartbeats expire.
+        # Stop any local teleoperation loop + disconnect attached devices
+        # (TeleopMixin) before mesh teardown. Best-effort.
+        if getattr(self, "_teleop_running", False) or getattr(self, "_teleops", None):
+            import contextlib as _cl
+
+            with _cl.suppress(Exception):
+                self.stop_teleoperate()
         if self._world is not None:
             for r in list(self._world.robots.values()):
                 self._detach_robot_from_mesh(r)

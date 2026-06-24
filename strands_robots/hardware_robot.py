@@ -35,6 +35,8 @@ from strands.tools.tools import AgentTool
 from strands.types._events import ToolResultEvent
 from strands.types.tools import ToolResult, ToolSpec, ToolUse
 
+from strands_robots.teleop_mixin import TeleopMixin
+
 if TYPE_CHECKING:
     from lerobot.robots.config import RobotConfig
     from lerobot.robots.robot import Robot as LeRobotRobot
@@ -208,7 +210,7 @@ class RobotTaskState:
     task_future: Future | None = None
 
 
-class Robot(AgentTool):
+class Robot(TeleopMixin, AgentTool):
     """Universal robot control with async task execution and status reporting."""
 
     def __init__(
@@ -1027,6 +1029,19 @@ class Robot(AgentTool):
             # Signal shutdown
             self._shutdown_event.set()
 
+            # Stop any local teleoperation loop + disconnect attached devices
+            # (TeleopMixin). Best-effort: a teleop teardown failure must not
+            # block the rest of hardware cleanup.
+            if getattr(self, "_teleop_running", False) or getattr(self, "_teleops", None):
+                try:
+                    self.stop_teleoperate()
+                except Exception as teleop_exc:  # noqa: BLE001
+                    logger.warning(
+                        "%s: stop_teleoperate() raised during cleanup: %s",
+                        self.tool_name_str,
+                        teleop_exc,
+                    )
+
             # Stop any running task
             if self._task_state.status == TaskStatus.RUNNING:
                 self.stop_task()
@@ -1102,6 +1117,42 @@ class Robot(AgentTool):
                 "error": str(e),
                 "is_connected": False,
                 "task_status": "error",
+            }
+
+    def send_action(
+        self,
+        action: dict[str, Any],
+        robot_name: str | None = None,  # noqa: ARG002 - single hardware robot; arg is for TeleopMixin parity with sim
+    ) -> dict[str, Any]:
+        """Apply a single action to the hardware robot (TeleopMixin contract).
+
+        Synchronous so it can be driven from the :class:`TeleopMixin` teleop
+        loop thread. Ensures the underlying lerobot robot is connected, then
+        delegates to ``self.robot.send_action``. ``robot_name`` is accepted
+        for parity with the multi-robot simulation host but ignored here - a
+        hardware ``Robot`` wraps exactly one device.
+
+        Args:
+            action: Flat ``{motor.pos: float}`` action dict (lerobot shape).
+            robot_name: Ignored (single robot). Present for mixin parity.
+
+        Returns:
+            Status dict (``success``/``error``) so the teleop loop can count
+            errors without exceptions tearing down the hot loop.
+        """
+        try:
+            if not getattr(self.robot, "is_connected", False):
+                # Lazy connect on first action. calibrate=False: a teleop
+                # session assumes the follower is already calibrated (same
+                # contract as the policy-run path).
+                self.robot.connect(False)
+            self.robot.send_action(action)
+            return {"status": "success", "content": [{"text": "ok"}]}
+        except Exception as e:  # noqa: BLE001 - surface as status, never kill the loop
+            logger.error("%s send_action failed: %s", self.tool_name_str, e)
+            return {
+                "status": "error",
+                "content": [{"text": f"{self.tool_name_str} send_action error: {e}"}],
             }
 
     async def stop(self) -> None:
