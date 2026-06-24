@@ -103,6 +103,8 @@ def import_trainer_class(provider: str) -> type[Trainer]:
             if isinstance(attr, type) and issubclass(attr, Trainer) and attr is not Trainer:
                 return attr
     except ImportError:
+        # No strands_robots.training.<provider> module; fall through to the
+        # ValueError below so the caller gets the full "available trainers" list.
         pass
 
     raise ValueError(

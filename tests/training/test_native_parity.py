@@ -39,7 +39,8 @@ def _flag_names(cmd):
 def test_groot_flags_match_real_finetune_config():
     """Every --flag we emit must be a real FinetuneConfig dataclass field."""
     cfg_path = os.path.join(GR00T_ROOT, "gr00t", "configs", "finetune_config.py")
-    src = open(cfg_path).read()
+    with open(cfg_path) as f:
+        src = f.read()
     tree = ast.parse(src)
     fields = set()
     for node in ast.walk(tree):
@@ -75,7 +76,8 @@ def test_groot_flags_match_real_finetune_config():
 def test_cosmos_train_accepts_sft_toml():
     """The real cosmos train.py must accept --sft-toml (our sole driver flag)."""
     train_py = os.path.join(COSMOS_ROOT, "cosmos_framework", "scripts", "train.py")
-    src = open(train_py).read()
+    with open(train_py) as f:
+        src = f.read()
     assert '"--sft-toml"' in src or "'--sft-toml'" in src, "real cosmos train.py no longer accepts --sft-toml"
 
     spec = TrainSpec(
