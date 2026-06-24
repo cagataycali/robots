@@ -207,3 +207,335 @@ class TestParseLog:
 
     def test_unreadable_log_returns_empty(self):
         assert LerobotTrainer(device="cpu")._parse_log("/no/such/log") == {}
+
+
+class TestDatasetTotalEpisodes:
+    """_dataset_total_episodes reads meta/info.json defensively."""
+
+    def test_reads_total_episodes(self, dataset_root):
+        assert LerobotTrainer()._dataset_total_episodes(dataset_root) == 10
+
+    def test_missing_info_json_returns_none(self, tmp_path):
+        assert LerobotTrainer()._dataset_total_episodes(str(tmp_path)) is None
+
+    def test_malformed_info_json_returns_none(self, tmp_path):
+        meta = tmp_path / "meta"
+        meta.mkdir()
+        (meta / "info.json").write_text("{not valid json")
+        assert LerobotTrainer()._dataset_total_episodes(str(tmp_path)) is None
+
+
+class TestCheckpointResolution:
+    """_resume_config_path (FILE) and latest_checkpoint (DIR) walk the lerobot
+    checkpoint layout ``<out>/checkpoints/<step|last>/pretrained_model/``."""
+
+    def test_no_checkpoints_dir(self, tmp_path):
+        out = str(tmp_path / "out")
+        assert LerobotTrainer()._resume_config_path(out) is None
+        assert LerobotTrainer().latest_checkpoint(out) is None
+
+    def test_prefers_last_symlink_dir(self, tmp_path):
+        out = tmp_path / "out"
+        last = out / "checkpoints" / "last" / "pretrained_model"
+        last.mkdir(parents=True)
+        (last / "train_config.json").write_text("{}")
+        cfg_file = LerobotTrainer()._resume_config_path(str(out))
+        assert cfg_file == str(last / "train_config.json")
+        # latest_checkpoint returns the loadable DIRECTORY (parent of the file)
+        assert LerobotTrainer().latest_checkpoint(str(out)) == str(last)
+
+    def test_falls_back_to_highest_numbered_step(self, tmp_path):
+        out = tmp_path / "out"
+        for step in ("000100", "000200"):
+            pm = out / "checkpoints" / step / "pretrained_model"
+            pm.mkdir(parents=True)
+            (pm / "train_config.json").write_text("{}")
+        # No "last" dir -> newest by sorted name wins (000200).
+        cfg_file = LerobotTrainer()._resume_config_path(str(out))
+        assert cfg_file.endswith("000200/pretrained_model/train_config.json")
+
+    def test_checkpoints_dir_without_configs_returns_none(self, tmp_path):
+        out = tmp_path / "out"
+        (out / "checkpoints" / "000100").mkdir(parents=True)
+        assert LerobotTrainer()._resume_config_path(str(out)) is None
+
+
+class TestValidateAdditionalBranches:
+    """Cover the remaining fail-closed validate() branches."""
+
+    def test_missing_dataset_root(self, spec):
+        spec.dataset_root = ""
+        problems = LerobotTrainer().validate(spec)
+        assert any("dataset_root is required" in p for p in problems)
+
+    def test_dataset_root_not_v3(self, spec, tmp_path):
+        spec.dataset_root = str(tmp_path / "empty")
+        (tmp_path / "empty").mkdir()
+        problems = LerobotTrainer().validate(spec)
+        assert any("not a LeRobotDataset v3 root" in p for p in problems)
+
+    def test_missing_output_dir(self, spec):
+        spec.output_dir = ""
+        problems = LerobotTrainer().validate(spec)
+        assert any("output_dir is required" in p for p in problems)
+
+    def test_unsupported_method(self, spec):
+        spec.method = "frozen_backbone"
+        problems = LerobotTrainer().validate(spec)
+        assert any("unsupported method" in p for p in problems)
+
+    def test_non_positive_steps(self, spec):
+        spec.steps = 0
+        problems = LerobotTrainer().validate(spec)
+        assert any("steps must be > 0" in p for p in problems)
+
+    def test_multinode_rejected(self, spec):
+        spec.num_nodes = 2
+        problems = LerobotTrainer().validate(spec)
+        assert any("multi-node lerobot" in p for p in problems)
+
+
+class TestBuildCommandResume:
+    def test_resume_appends_config_path(self, spec, tmp_path):
+        last = tmp_path / "out" / "checkpoints" / "last" / "pretrained_model"
+        last.mkdir(parents=True)
+        (last / "train_config.json").write_text("{}")
+        spec.output_dir = str(tmp_path / "out")
+        spec.resume = True
+        cmd = LerobotTrainer(device="cpu").build_command(spec)
+        assert "--resume=true" in cmd
+        assert any(c.startswith("--config_path=") for c in cmd)
+
+    def test_resume_without_checkpoint_omits_flags(self, spec):
+        spec.resume = True  # no checkpoint on disk
+        cmd = LerobotTrainer(device="cpu").build_command(spec)
+        assert "--resume=true" not in cmd
+
+
+class TestBuildConfigAdditionalBranches:
+    def test_expert_only_sets_flag(self, spec):
+        pytest.importorskip("lerobot")
+        spec.method = "expert_only"
+        cfg = LerobotTrainer(device="cpu").build_config(spec)
+        # ACT has no train_expert_only attr; build must not crash and peft stays None.
+        assert cfg.peft is None
+
+    def test_lora_alpha_passed_through(self, spec):
+        pytest.importorskip("lerobot")
+        spec.method = "lora"
+        spec.lora_r = 8
+        spec.lora_alpha = 32
+        cfg = LerobotTrainer(device="cpu").build_config(spec)
+        assert cfg.peft.lora_alpha == 32
+
+    def test_seed_set_on_config(self, spec):
+        pytest.importorskip("lerobot")
+        spec.seed = 123
+        cfg = LerobotTrainer(device="cpu").build_config(spec)
+        assert cfg.seed == 123
+
+    def test_dotted_extra_passthrough_sets_field(self, spec):
+        pytest.importorskip("lerobot")
+        spec.extra["num_workers"] = 0  # a real top-level TrainPipelineConfig field
+        cfg = LerobotTrainer(device="cpu").build_config(spec)
+        assert cfg.num_workers == 0
+
+    def test_unknown_extra_is_ignored(self, spec, caplog):
+        pytest.importorskip("lerobot")
+        spec.extra["definitely_not_a_field"] = "x"
+        with caplog.at_level("WARNING"):
+            cfg = LerobotTrainer(device="cpu").build_config(spec)
+        assert not hasattr(cfg, "definitely_not_a_field")
+        assert any("ignoring extra" in r.message for r in caplog.records)
+
+    def test_resume_sets_checkpoint_path(self, spec, tmp_path):
+        pytest.importorskip("lerobot")
+        last = tmp_path / "out" / "checkpoints" / "last" / "pretrained_model"
+        last.mkdir(parents=True)
+        (last / "train_config.json").write_text("{}")
+        spec.output_dir = str(tmp_path / "out")
+        spec.resume = True
+        cfg = LerobotTrainer(device="cpu").build_config(spec)
+        # checkpoint_path is pretrained_model.parent.parent == the "last" dir.
+        assert str(cfg.checkpoint_path) == str(last.parent)
+
+
+class TestResolveDotted:
+    def test_plain_key(self):
+        from strands_robots.training.lerobot import _resolve_dotted
+
+        class C:
+            pass
+
+        c = C()
+        assert _resolve_dotted(c, "steps") == (c, "steps")
+
+    def test_single_level_dotted(self):
+        from strands_robots.training.lerobot import _resolve_dotted
+
+        class Sub:
+            pass
+
+        class C:
+            pass
+
+        c = C()
+        c.dataset = Sub()
+        assert _resolve_dotted(c, "dataset.root") == (c.dataset, "root")
+
+    def test_missing_head_returns_none(self):
+        from strands_robots.training.lerobot import _resolve_dotted
+
+        class C:
+            pass
+
+        assert _resolve_dotted(C(), "nope.root") == (None, "root")
+
+    def test_multi_level_dotted_unsupported(self):
+        from strands_robots.training.lerobot import _resolve_dotted
+
+        class Sub:
+            pass
+
+        class C:
+            pass
+
+        c = C()
+        c.a = Sub()
+        # Only single-level dotting is wired; deeper paths bail out.
+        assert _resolve_dotted(c, "a.b.c") == (None, "b.c")
+
+
+class TestAutoDevice:
+    def test_cuda_preferred(self, monkeypatch):
+        import torch
+
+        from strands_robots.training.lerobot import _auto_device
+
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+        assert _auto_device() == "cuda"
+
+    def test_mps_when_no_cuda(self, monkeypatch):
+        import torch
+
+        from strands_robots.training.lerobot import _auto_device
+
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+        monkeypatch.setattr(torch.backends.mps, "is_available", lambda: True)
+        assert _auto_device() == "mps"
+
+    def test_cpu_fallback(self, monkeypatch):
+        import torch
+
+        from strands_robots.training.lerobot import _auto_device
+
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+        monkeypatch.setattr(torch.backends.mps, "is_available", lambda: False)
+        assert _auto_device() == "cpu"
+
+    def test_no_torch_falls_back_to_cpu(self, monkeypatch):
+        import builtins
+
+        from strands_robots.training.lerobot import _auto_device
+
+        real_import = builtins.__import__
+
+        def fake_import(name, *args, **kwargs):
+            if name == "torch":
+                raise ImportError("no torch")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+        assert _auto_device() == "cpu"
+
+
+class TestTrainOrchestration:
+    """train() control flow with lerobot's train() stubbed out (no real run)."""
+
+    def test_validation_failure_short_circuits(self, spec):
+        spec.steps = -1  # invalid
+        result = LerobotTrainer(device="cpu").train(spec)
+        assert result.status == "error"
+        assert "validation failed" in result.message
+        assert result.job_id == ""
+
+    def test_build_config_failure_is_caught(self, spec, monkeypatch):
+        trainer = LerobotTrainer(device="cpu")
+        monkeypatch.setattr(trainer, "validate", lambda s: [])
+
+        def boom(_s):
+            raise ValueError("bad config")
+
+        monkeypatch.setattr(trainer, "build_config", boom)
+        result = trainer.train(spec)
+        assert result.status == "error"
+        assert "failed to build lerobot TrainPipelineConfig" in result.message
+
+    def test_success_path_parses_metrics(self, spec, monkeypatch):
+        trainer = LerobotTrainer(device="cpu")
+        monkeypatch.setattr(trainer, "validate", lambda s: [])
+        monkeypatch.setattr(trainer, "build_config", lambda s: object())
+
+        import lerobot.scripts.lerobot_train as lt
+
+        def fake_train(cfg, **kw):
+            # lerobot tees stdout to the log; emit one MetricsTracker line.
+            print("step:2 smpl:4 ep:1 epch:1.00 loss:0.42")
+
+        monkeypatch.setattr(lt, "train", fake_train)
+        result = trainer.train(spec)
+        assert result.status == "success"
+        assert result.metrics["latest_step"] == 2
+        assert result.metrics["learning"] is True
+
+    def test_train_error_is_converted_to_result(self, spec, monkeypatch):
+        trainer = LerobotTrainer(device="cpu")
+        monkeypatch.setattr(trainer, "validate", lambda s: [])
+        monkeypatch.setattr(trainer, "build_config", lambda s: object())
+
+        import lerobot.scripts.lerobot_train as lt
+
+        def fake_train(cfg, **kw):
+            raise RuntimeError("CUDA OOM")
+
+        monkeypatch.setattr(lt, "train", fake_train)
+        result = trainer.train(spec)
+        assert result.status == "error"
+        assert "lerobot train raised RuntimeError" in result.message
+        assert "CUDA OOM" in result.message
+
+    def test_fresh_start_clears_stale_output_dir(self, spec, monkeypatch, tmp_path):
+        out = tmp_path / "stale_out"
+        out.mkdir()
+        sentinel = out / "leftover.txt"
+        sentinel.write_text("old")
+        spec.output_dir = str(out)
+        spec.resume = False
+
+        trainer = LerobotTrainer(device="cpu")
+        monkeypatch.setattr(trainer, "validate", lambda s: [])
+        monkeypatch.setattr(trainer, "build_config", lambda s: object())
+
+        import lerobot.scripts.lerobot_train as lt
+
+        monkeypatch.setattr(lt, "train", lambda cfg, **kw: None)
+        trainer.train(spec)
+        # Stale dir (no resumable checkpoint) is wiped before training.
+        assert not sentinel.exists()
+
+    def test_multi_gpu_uses_elastic_launch(self, spec, monkeypatch):
+        spec.num_gpus = 2
+        trainer = LerobotTrainer(device="cuda")
+        monkeypatch.setattr(trainer, "validate", lambda s: [])
+        monkeypatch.setattr(trainer, "build_config", lambda s: object())
+
+        calls = {}
+        import strands_robots.training.lerobot as mod
+
+        def fake_elastic(fn, **kw):
+            calls.update(kw)
+
+        monkeypatch.setattr(mod, "elastic_launch_callable", fake_elastic)
+        result = trainer.train(spec)
+        assert calls["nproc_per_node"] == 2
+        assert result.status == "success"
