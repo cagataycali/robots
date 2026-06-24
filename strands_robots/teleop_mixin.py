@@ -563,8 +563,15 @@ def _normalize_action(action: Any) -> ActionDict:
                 result[k] = float(v)
         return result
     if hasattr(action, "tolist"):
+        # ``tolist()`` flattens an ndarray/tensor to nested Python lists, but a
+        # numpy/torch *scalar* or 0-d array returns a bare Python number, not a
+        # list -- enumerating that raises ``'float' object is not iterable``.
+        # Treat a non-list result as a single-DOF scalar so a 1-DOF leader does
+        # not crash the teleop loop.
         arr = action.tolist()
-        return {f"j{i}": float(v) for i, v in enumerate(arr)}
+        if isinstance(arr, list):
+            return {f"j{i}": float(v) for i, v in enumerate(arr)}
+        return {"raw": float(arr)}
     return {"raw": float(action)}
 
 

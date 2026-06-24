@@ -155,6 +155,32 @@ def test_infer_method():
     assert _infer_method("phone") == "phone"
 
 
+def test_normalize_action_dict_and_array():
+    """Dict values are floated per-key; an array becomes positional j-keys."""
+    import numpy as np
+
+    from strands_robots.teleop_mixin import _normalize_action
+
+    assert _normalize_action({"shoulder.pos": np.float32(1.5)}) == {"shoulder.pos": 1.5}
+    assert _normalize_action(np.array([1.0, 2.0, 3.0])) == {"j0": 1.0, "j1": 2.0, "j2": 3.0}
+
+
+def test_normalize_action_scalar_does_not_crash():
+    """A numpy/torch scalar or 0-d array exposes ``tolist()`` that returns a
+    bare Python number, not a list. Enumerating that raises
+    ``'float' object is not iterable`` -- a 1-DOF leader must not crash the
+    teleop loop. Such a value normalizes to the single-DOF ``{"raw": ...}``
+    shape, matching the plain-Python-scalar fallback.
+    """
+    import numpy as np
+
+    from strands_robots.teleop_mixin import _normalize_action
+
+    assert _normalize_action(2.0) == {"raw": 2.0}
+    assert _normalize_action(np.float32(1.5)) == {"raw": 1.5}
+    assert _normalize_action(np.array(1.5)) == {"raw": 1.5}
+
+
 # ---------------------------------------------------------------------------
 # teleoperate loop
 # ---------------------------------------------------------------------------

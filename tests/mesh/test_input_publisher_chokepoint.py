@@ -78,3 +78,36 @@ def test_publisher_frame_count_matches_chokepoint_calls() -> None:
     # Frames the publisher claims it sent all went through the chokepoint.
     assert stats["frames"] == len(mesh.published)
     assert all(k == "strands/pub-2/input/gamepad" for k, _ in mesh.published)
+
+
+def test_normalize_action_dict_floats_each_value() -> None:
+    """A dict action keeps its keys, coercing every value to float."""
+    import numpy as np
+
+    out = InputPublisher._normalize_action({"shoulder.pos": np.float32(1.5), "j0": 2})
+    assert out == {"shoulder.pos": 1.5, "j0": 2.0}
+
+
+def test_normalize_action_array_becomes_positional_keys() -> None:
+    """A 1-D array action becomes positional ``jN`` keys."""
+    import numpy as np
+
+    assert InputPublisher._normalize_action(np.array([1.0, 2.0, 3.0])) == {
+        "j0": 1.0,
+        "j1": 2.0,
+        "j2": 3.0,
+    }
+
+
+def test_normalize_action_scalar_does_not_crash() -> None:
+    """A numpy/torch scalar or 0-d array exposes ``tolist()`` that returns a
+    bare Python number, not a list. Enumerating it raises
+    ``'float' object is not iterable``; a 1-DOF leader must not crash the
+    input stream. Such a value normalizes to the single-DOF ``{"raw": ...}``
+    shape, matching the plain-Python-scalar fallback.
+    """
+    import numpy as np
+
+    assert InputPublisher._normalize_action(2.0) == {"raw": 2.0}
+    assert InputPublisher._normalize_action(np.float32(1.5)) == {"raw": 1.5}
+    assert InputPublisher._normalize_action(np.array(1.5)) == {"raw": 1.5}
