@@ -119,10 +119,7 @@ class Cosmos3Trainer(Trainer):
             return None
         # Anything other than our own _dcp_base / _exported scratch dirs means
         # training has written checkpoint state here.
-        entries = [
-            e for e in os.listdir(output_dir)
-            if e not in ("_dcp_base", "_exported") and not e.endswith(".log")
-        ]
+        entries = [e for e in os.listdir(output_dir) if e not in ("_dcp_base", "_exported") and not e.endswith(".log")]
         return output_dir if entries else None
 
     def validate(self, spec: TrainSpec) -> list[str]:
