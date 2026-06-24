@@ -530,12 +530,13 @@ class TestTrainOrchestration:
         monkeypatch.setattr(trainer, "build_config", lambda s: object())
 
         calls = {}
-        import strands_robots.training.lerobot as mod
 
         def fake_elastic(fn, **kw):
             calls.update(kw)
 
-        monkeypatch.setattr(mod, "elastic_launch_callable", fake_elastic)
+        monkeypatch.setattr(
+            "strands_robots.training.lerobot.elastic_launch_callable", fake_elastic
+        )
         result = trainer.train(spec)
         assert calls["nproc_per_node"] == 2
         assert result.status == "success"
