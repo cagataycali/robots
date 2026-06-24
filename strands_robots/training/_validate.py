@@ -68,9 +68,7 @@ def validate_train_inputs(spec: TrainSpec) -> list[str]:
     for label in _FLAG_BOUND_FIELDS:
         val = getattr(spec, label, None)
         if isinstance(val, str) and val.startswith("-"):
-            problems.append(
-                f"{label} must not start with '-' (would inject a subprocess flag)"
-            )
+            problems.append(f"{label} must not start with '-' (would inject a subprocess flag)")
 
     # ``extra`` keys become backend-native flags - allowlist the key format.
     for key in spec.extra or {}:
