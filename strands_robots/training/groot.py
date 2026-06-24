@@ -223,7 +223,7 @@ class Gr00tTrainer(Trainer):
 
         return cmd
 
-    def build_finetune_config(self, spec: TrainSpec):
+    def build_finetune_config(self, spec: TrainSpec) -> Any:
         """Build GR00T's own ``FinetuneConfig`` object from a TrainSpec (pure).
 
         Returns an instance of ``gr00t.configs.finetune_config.FinetuneConfig``
@@ -258,9 +258,7 @@ class Gr00tTrainer(Trainer):
             if "color_jitter_params" in spec.augmentation:
                 kwargs["color_jitter_params"] = spec.augmentation["color_jitter_params"]
             extra_aug = {
-                k: v
-                for k, v in spec.augmentation.items()
-                if k not in ("random_rotation_angle", "color_jitter_params")
+                k: v for k, v in spec.augmentation.items() if k not in ("random_rotation_angle", "color_jitter_params")
             }
             if extra_aug:
                 kwargs["extra_augmentation_config"] = json.dumps(extra_aug)
@@ -280,7 +278,7 @@ class Gr00tTrainer(Trainer):
                 logger.warning("Gr00tTrainer: ignoring extra '%s' (not a FinetuneConfig field).", key)
         return FinetuneConfig(**kwargs)
 
-    def _build_run_config(self, ft_config):
+    def _build_run_config(self, ft_config: Any) -> Any:
         """Lower a ``FinetuneConfig`` into the ``Config`` ``experiment.run`` consumes.
 
         Mirrors the body of ``launch_finetune.py``'s ``__main__`` exactly

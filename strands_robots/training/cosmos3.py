@@ -341,9 +341,7 @@ def _run_cosmos_launch(sft_toml: str, overrides: list[str], *, log_path: str | N
     """
     import argparse
 
-    load_experiment_from_toml = _import_cosmos_module(
-        "configs.toml_config.sft_config"
-    ).load_experiment_from_toml
+    load_experiment_from_toml = _import_cosmos_module("configs.toml_config.sft_config").load_experiment_from_toml
     launch = _import_cosmos_module("scripts.train").launch
 
     config = load_experiment_from_toml(sft_toml, extra_overrides=overrides)
