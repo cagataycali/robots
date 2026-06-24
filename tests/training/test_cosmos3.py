@@ -78,13 +78,31 @@ class TestValidate:
         assert any("cosmos-framework checkout not found" in p for p in problems)
 
 
-class TestConvertCommand:
-    def test_dcp_convert(self, spec):
-        cmd = Cosmos3Trainer().convert_command(spec)
-        joined = " ".join(cmd)
-        assert "cosmos_framework.scripts.convert_model_to_dcp" in joined
-        assert "nvidia/Cosmos3-Nano" in cmd
-        assert "-o" in cmd
+class TestBuildOverrides:
+    """build_overrides() yields the Hydra key=value LIST (no launcher/argv).
+
+    prepare()/export() now call cosmos_framework's convert_model_to_dcp() /
+    export_model() DIRECTLY with typed Args objects (verified against upstream),
+    so there is no convert_command/export_command argv to assert anymore.
+    """
+
+    def test_core_overrides(self, spec):
+        ov = Cosmos3Trainer().build_overrides(spec)
+        assert all("=" in o and not o.startswith("-") for o in ov)
+        assert "trainer.max_iter=1000" in ov
+        assert "checkpoint.save_iter=500" in ov
+        assert "optimizer.lr=0.0002" in ov
+        assert any(o.startswith("checkpoint.load_path=") for o in ov)
+        assert "dataloader_train.max_samples_per_batch=8" in ov
+
+    def test_consumed_keys_not_leaked(self, spec):
+        spec.extra["dcp_path"] = "/tmp/dcp"
+        spec.extra["export_dir"] = "/tmp/exp"
+        ov = Cosmos3Trainer().build_overrides(spec)
+        assert not any(o.startswith("cosmos_root=") for o in ov)
+        assert not any(o.startswith("sft_toml=") for o in ov)
+        assert not any(o.startswith("dcp_path=") for o in ov)
+        assert not any(o.startswith("export_dir=") for o in ov)
 
 
 class TestBuildCommand:
@@ -116,13 +134,3 @@ class TestBuildCommand:
         cmd = Cosmos3Trainer().build_command(spec)
         tail = cmd[cmd.index("--") + 1 :]
         assert any("use_filter_dict=True" in t for t in tail)
-
-
-class TestExportCommand:
-    def test_dcp_to_safetensors(self, spec, tmp_path):
-        out = str(tmp_path / "exported")
-        cmd = Cosmos3Trainer().export_command(spec, str(tmp_path / "ckpt"), out)
-        joined = " ".join(cmd)
-        assert "cosmos_framework.scripts.export_model" in joined
-        assert any(c.startswith("--checkpoint-path=") for c in cmd)
-        assert any(c.startswith("--output-dir=") for c in cmd)

@@ -6,11 +6,13 @@ the :class:`Trainer` ABC has optional ``prepare``/``export`` hooks:
 * **prepare()** — the base HF checkpoint MUST be converted to PyTorch DCP
   (``cosmos_framework.scripts.convert_model_to_dcp``) before training.
   LeRobot/GR00T need no such step.
-* **train()** — drives ``cosmos_framework.scripts.train`` via ``torchrun``.
-  A TOML recipe selects a registered experiment + scalar knobs; ``TrainSpec``
-  fields become Hydra ``key.path=value`` tail overrides (which win over the
-  TOML). The ``torchrun`` distributed launcher is invoked from Python via
-  :mod:`torch.distributed.run` (no shell, no extra interpreter).
+* **train()** — builds the cosmos ``Config`` via
+  ``cosmos_framework.configs.toml_config.sft_config.load_experiment_from_toml``
+  (TOML recipe + a Hydra ``key.path=value`` override LIST) and calls
+  ``cosmos_framework.scripts.train.launch(config, args)`` DIRECTLY. (train.py
+  has no reusable ``main()`` — only ``launch`` — verified against upstream.)
+  Multi-GPU uses torch's programmatic ``elastic_launch`` (the engine behind
+  ``torchrun``); each worker calls ``launch`` — no shell, no torchrun binary.
 * **export()** — the trained DCP is converted back to HF safetensors via
   ``cosmos_framework.scripts.export_model`` so ``create_policy`` can consume
   it.
@@ -35,6 +37,7 @@ import os
 import time
 from typing import Any
 
+from strands_robots.training._inproc import call_callable, elastic_launch_callable
 from strands_robots.training.base import Trainer, TrainResult, TrainSpec
 
 logger = logging.getLogger(__name__)
@@ -147,9 +150,12 @@ class Cosmos3Trainer(Trainer):
     def prepare(self, spec: TrainSpec) -> None:
         """Convert the base HF checkpoint to DCP (required before training).
 
-        Skips if the DCP target already exists (idempotent). Drives
-        ``cosmos_framework.scripts.convert_model_to_dcp`` as a Python library
-        — same interpreter, no subprocess.
+        Skips if the DCP target already exists (idempotent). Calls
+        ``cosmos_framework.scripts.convert_model_to_dcp.convert_model_to_dcp``
+        DIRECTLY with a typed ``Args`` object — no subprocess, no argv.
+        Verified against github.com/NVIDIA/cosmos-framework:
+        ``convert_model_to_dcp(Args(checkpoint=CheckpointOverrides(
+        checkpoint_path=<hf>), output_path=<dcp>))``.
         """
         root = self._resolve_cosmos_root(spec)
         if not root:
@@ -159,117 +165,91 @@ class Cosmos3Trainer(Trainer):
             logger.info("Cosmos3 DCP base already present at %s; skipping convert", dcp)
             return
 
+        convert_mod = _import_cosmos_module("scripts.convert_model_to_dcp")
+        CheckpointOverrides = _import_cosmos_module("inference.common.args").CheckpointOverrides
+
         os.makedirs(os.path.dirname(os.path.abspath(dcp)) or ".", exist_ok=True)
-        logger.info("Cosmos3Trainer converting base->DCP: %s -> %s", spec.base_model, dcp)
-        mod = _import_cosmos_module("scripts.convert_model_to_dcp")
-        main = getattr(mod, "main", None) or getattr(mod, "convert", None)
-        if main is None:
-            raise ImportError("cosmos_framework.scripts.convert_model_to_dcp has no main()/convert() entrypoint")
-        prev_cwd = os.getcwd()
-        try:
-            if os.path.isdir(root):
-                os.chdir(root)
-            main([spec.base_model, "-o", dcp])
-        finally:
-            os.chdir(prev_cwd)
-
-    def convert_command(self, spec: TrainSpec) -> list[str]:
-        """Argv parity helper: what ``convert_model_to_dcp`` would be called with.
-
-        Used by parity tests + ``--dry-run`` previews. The trainer no longer
-        spawns a subprocess for the conversion — it imports the module — but
-        keeping a faithful argv lets the parity suite still assert flag drift.
-        """
-        return [
-            "python",
-            "-m",
-            "cosmos_framework.scripts.convert_model_to_dcp",
-            spec.base_model,
-            "-o",
-            self._dcp_path(spec),
-        ]
+        args = convert_mod.Args(
+            checkpoint=CheckpointOverrides(checkpoint_path=spec.base_model),
+            output_path=dcp,
+        )
+        logger.info("Cosmos3Trainer converting base->DCP in-process (library call)")
+        call_callable(convert_mod.convert_model_to_dcp, args)
 
     def build_command(self, spec: TrainSpec) -> list[str]:
-        """Argv for ``cosmos_framework.scripts.train`` (driven via torch.distributed.run).
+        """PURE argv-parity helper — the torchrun CLI the library call maps to.
 
-        Kept as an argv list for parity tests and dry-run preview; at run
-        time we invoke :mod:`torch.distributed.run` from Python instead of
-        spawning a ``torchrun`` subprocess.
+        NOT used to launch training (``train()`` builds the cosmos ``Config`` via
+        ``load_experiment_from_toml`` and calls ``train.launch(config, args)``
+        directly, under ``elastic_launch`` for multi-GPU). Retained so
+        ``test_native_parity`` can assert ``--sft-toml`` + module path against
+        the real cosmos ``train.py``, and as a human-readable description.
         """
         nproc = self._nproc(spec)
-        launcher = [
+        cmd = [
             "torchrun",
             f"--nproc_per_node={nproc}",
             f"--nnodes={max(1, spec.num_nodes)}",
             "-m",
             "cosmos_framework.scripts.train",
+            f"--sft-toml={spec.extra['sft_toml']}",
+            "--",
+            *self.build_overrides(spec),
         ]
-        cmd = [*launcher, f"--sft-toml={spec.extra['sft_toml']}"]
+        return cmd
 
-        # Everything after `--` is a Hydra tail override (wins over the TOML).
-        tail: list[str] = ["--"]
-        tail.append(f"trainer.max_iter={spec.steps}")
-        tail.append(f"checkpoint.save_iter={spec.save_freq}")
-        tail.append(f"optimizer.lr={spec.learning_rate}")
-        tail.append(f"checkpoint.load_path={self._dcp_path(spec)}")
-        tail.append(f"dataloader_train.max_samples_per_batch={spec.global_batch_size}")
+    def build_overrides(self, spec: TrainSpec) -> list[str]:
+        """Hydra ``key.path=value`` override LIST passed to load_experiment_from_toml.
+
+        A LIST of ``key=value`` strings (NOT argv flags / a shell line), applied
+        after the TOML so they win. Caller ``extra.*`` keys are gated by
+        ``validate()``'s allowlist so a stray entry can't inject tokens.
+        """
+        overrides = [
+            f"trainer.max_iter={spec.steps}",
+            f"checkpoint.save_iter={spec.save_freq}",
+            f"optimizer.lr={spec.learning_rate}",
+            f"checkpoint.load_path={self._dcp_path(spec)}",
+            f"dataloader_train.max_samples_per_batch={spec.global_batch_size}",
+        ]
         if spec.num_nodes > 1:
-            tail.append(f"model.config.parallelism.data_parallel_replicate_degree={spec.num_nodes}")
+            overrides.append(f"model.config.parallelism.data_parallel_replicate_degree={spec.num_nodes}")
         if spec.seed is not None:
-            tail.append(f"trainer.seed={spec.seed}")
-
-        _consumed = {"cosmos_root", "sft_toml", "dcp_path"}
+            overrides.append(f"trainer.seed={spec.seed}")
+        _consumed = {"cosmos_root", "sft_toml", "dcp_path", "export_dir", "rdzv_endpoint"}
         for key, value in spec.extra.items():
             if key in _consumed:
                 continue
-            tail.append(f"{key}={value}")
-
-        cmd.extend(tail)
-        return cmd
+            overrides.append(f"{key}={value}")
+        return overrides
 
     def export(self, spec: TrainSpec, checkpoint_dir: str) -> str:
-        """Convert the trained DCP checkpoint back to HF safetensors.
+        """Convert the trained DCP back to HF safetensors (in-process library call).
 
-        Drives ``cosmos_framework.scripts.export_model`` as a Python library.
-        Falls back to the input ``checkpoint_dir`` (default passthrough) if
-        ``cosmos_root`` is unavailable.
+        Calls ``cosmos_framework.scripts.export_model.export_model`` DIRECTLY
+        with a typed ``Args`` object. Verified against upstream:
+        ``export_model(Args(checkpoint=CheckpointOverrides(checkpoint_path=<dcp>),
+        output_dir=<hf>))``. Falls back to the passthrough if cosmos_root absent.
         """
         root = self._resolve_cosmos_root(spec)
         out: str = str(spec.extra.get("export_dir") or os.path.join(spec.output_dir, "_exported"))
         if not root:
             return checkpoint_dir
         os.makedirs(os.path.dirname(os.path.abspath(out)) or ".", exist_ok=True)
-        logger.info("Cosmos3Trainer exporting DCP->safetensors: %s -> %s", checkpoint_dir, out)
         try:
-            mod = _import_cosmos_module("scripts.export_model")
-            main = getattr(mod, "main", None) or getattr(mod, "export", None)
-            if main is None:
-                logger.warning(
-                    "cosmos_framework.scripts.export_model has no main()/export() entrypoint; "
-                    "falling back to checkpoint_dir"
-                )
-                return checkpoint_dir
-            prev_cwd = os.getcwd()
-            try:
-                if os.path.isdir(root):
-                    os.chdir(root)
-                main([f"--checkpoint-path={checkpoint_dir}", f"--output-dir={out}"])
-            finally:
-                os.chdir(prev_cwd)
-        except Exception as e:  # noqa: BLE001 — best-effort export; surface in log
-            logger.warning("Cosmos3 export failed: %s; falling back to %s", e, checkpoint_dir)
+            export_mod = _import_cosmos_module("scripts.export_model")
+            CheckpointOverrides = _import_cosmos_module("inference.common.args").CheckpointOverrides
+
+            args = export_mod.Args(
+                checkpoint=CheckpointOverrides(checkpoint_path=checkpoint_dir),
+                output_dir=out,
+            )
+            logger.info("Cosmos3Trainer exporting DCP->safetensors in-process (library call)")
+            call_callable(export_mod.export_model, args)
+        except BaseException as e:  # noqa: BLE001 - export is best-effort; fall back
+            logger.error("Cosmos3 export failed (%s); returning DCP checkpoint dir", e)
             return checkpoint_dir
         return out
-
-    def export_command(self, spec: TrainSpec, checkpoint_dir: str, out: str) -> list[str]:
-        """Argv parity helper for ``export_model`` (see :meth:`build_command`)."""
-        return [
-            "python",
-            "-m",
-            "cosmos_framework.scripts.export_model",
-            f"--checkpoint-path={checkpoint_dir}",
-            f"--output-dir={out}",
-        ]
 
     def train(self, spec: TrainSpec) -> TrainResult:
         problems = self.validate(spec)
@@ -283,122 +263,109 @@ class Cosmos3Trainer(Trainer):
         parent = os.path.dirname(os.path.abspath(spec.output_dir)) or "."
         os.makedirs(parent, exist_ok=True)
 
-        # prepare(): convert base -> DCP (idempotent), as a Python library call.
+        # prepare(): convert base -> DCP (idempotent, in-process library call).
         try:
             self.prepare(spec)
-        except ImportError as e:
-            return TrainResult(
-                status="error",
-                job_id="",
-                message=f"DCP conversion (prepare) failed: {e}",
-            )
-        except Exception as e:  # noqa: BLE001 — prepare is user-library code
+        except BaseException as e:  # noqa: BLE001 - surface convert failure as result
             return TrainResult(
                 status="error",
                 job_id="",
                 message=f"DCP conversion (prepare) failed: {e}",
             )
 
-        job_id = f"cosmos3-{int(time.time())}"
-        log_path = os.path.join(parent, f"{os.path.basename(spec.output_dir)}.{job_id}.log")
-        root = self._resolve_cosmos_root(spec)
-
-        # Verify the train entrypoint is importable BEFORE we spin up torchrun.
+        # Verify the train entrypoint imports BEFORE spinning up workers.
         try:
             _import_cosmos_module("scripts.train")
         except ImportError as e:
-            return TrainResult(
-                status="error",
-                job_id=job_id,
-                message=str(e),
-            )
+            return TrainResult(status="error", job_id=f"cosmos3-{int(time.time())}", message=str(e))
 
-        # Build the argv that torch.distributed.run will execute as if from a shell.
-        train_argv = self._distributed_argv(spec)
+        sft_toml = str(spec.extra["sft_toml"])
+        overrides = self.build_overrides(spec)
+        job_id = f"cosmos3-{int(time.time())}"
+        log_path = os.path.join(parent, f"{os.path.basename(spec.output_dir)}.{job_id}.log")
+        nproc = self._nproc(spec)
 
-        logger.info("Cosmos3Trainer launching (torch.distributed.run): %s", " ".join(train_argv))
-        prev_env = {k: os.environ.get(k) for k in ("PYTHONUNBUFFERED",)}
-        os.environ["PYTHONUNBUFFERED"] = "1"
-        prev_cwd = os.getcwd()
-        rc = 0
+        logger.info(
+            "Cosmos3Trainer launching train.launch() in-process: nproc=%d nnodes=%d steps=%d",
+            nproc,
+            max(1, spec.num_nodes),
+            spec.steps,
+        )
+
+        train_error: BaseException | None = None
         try:
-            if root and os.path.isdir(root):
-                os.chdir(root)
-            # Redirect stdout/stderr to log_path while torch.distributed.run executes.
-            with open(log_path, "w", encoding="utf-8") as logf:
-                import contextlib
-
-                from torch.distributed import run as torch_run
-
-                with contextlib.redirect_stdout(logf), contextlib.redirect_stderr(logf):
-                    try:
-                        torch_run.main(train_argv)
-                    except SystemExit as se:
-                        rc = int(se.code) if se.code is not None else 0
-        except ImportError as e:
-            return TrainResult(
-                status="error",
-                job_id=job_id,
-                message=f"torch.distributed.run not available ({e}); install torch with distributed support",
-            )
-        except Exception as e:  # noqa: BLE001 — surface launcher errors
-            return TrainResult(
-                status="error",
-                job_id=job_id,
-                message=f"cosmos_framework.scripts.train raised: {e}; see {log_path}",
-            )
-        finally:
-            os.chdir(prev_cwd)
-            for k, v in prev_env.items():
-                if v is None:
-                    os.environ.pop(k, None)
-                else:
-                    os.environ[k] = v
+            if nproc > 1 or spec.num_nodes > 1:
+                # Multi-GPU/-node: torch elastic agent spawns workers; each builds
+                # the cosmos Config and calls train.launch() — Python objects, no
+                # argv, no torchrun binary.
+                rdzv = str(spec.extra.get("rdzv_endpoint", "")) if spec.num_nodes > 1 else ""
+                elastic_launch_callable(
+                    _cosmos_worker,
+                    nproc_per_node=nproc,
+                    nnodes=max(1, spec.num_nodes),
+                    rdzv_endpoint=rdzv,
+                    run_id=job_id,
+                    fn_args=(sft_toml, overrides, log_path),
+                )
+            else:
+                _run_cosmos_launch(sft_toml, overrides, log_path=log_path)
+        except BaseException as e:  # noqa: BLE001 - convert ANY failure to a result
+            train_error = e
+            logger.error("Cosmos3Trainer in-process train failed: %s", e)
 
         ckpt = spec.output_dir
-        if rc != 0:
+        if train_error is not None:
             return TrainResult(
                 status="error",
                 job_id=job_id,
                 checkpoint_dir=ckpt,
-                message=f"cosmos_framework.scripts.train exited {rc}; see {log_path}",
+                message=f"cosmos_framework train.launch() raised {type(train_error).__name__}: {train_error}; see {log_path}",
             )
         return TrainResult(
             status="success",
             job_id=job_id,
             checkpoint_dir=ckpt,
-            message=f"Cosmos3 SFT complete; log: {log_path}",
+            message=f"Cosmos3 SFT complete (in-process); log: {log_path}",
         )
 
-    def _distributed_argv(self, spec: TrainSpec) -> list[str]:
-        """Build the argv for :func:`torch.distributed.run.main`.
 
-        Equivalent to the ``torchrun --nproc_per_node=N --nnodes=M -m
-        cosmos_framework.scripts.train ...`` argv, but consumed by
-        :mod:`torch.distributed.run` in-process (no subprocess for ``torchrun``
-        itself; it still spawns worker processes as torch.distributed requires).
-        """
-        nproc = self._nproc(spec)
-        argv: list[str] = [
-            f"--nproc_per_node={nproc}",
-            f"--nnodes={max(1, spec.num_nodes)}",
-            "-m",
-            "cosmos_framework.scripts.train",
-            f"--sft-toml={spec.extra['sft_toml']}",
-            "--",
-            f"trainer.max_iter={spec.steps}",
-            f"checkpoint.save_iter={spec.save_freq}",
-            f"optimizer.lr={spec.learning_rate}",
-            f"checkpoint.load_path={self._dcp_path(spec)}",
-            f"dataloader_train.max_samples_per_batch={spec.global_batch_size}",
-        ]
-        if spec.num_nodes > 1:
-            argv.append(f"model.config.parallelism.data_parallel_replicate_degree={spec.num_nodes}")
-        if spec.seed is not None:
-            argv.append(f"trainer.seed={spec.seed}")
-        _consumed = {"cosmos_root", "sft_toml", "dcp_path"}
-        for key, value in spec.extra.items():
-            if key in _consumed:
-                continue
-            argv.append(f"{key}={value}")
-        return argv
+def _run_cosmos_launch(sft_toml: str, overrides: list[str], *, log_path: str | None = None) -> None:
+    """Build the cosmos Config from TOML + overrides and call train.launch(config, args).
+
+    Mirrors ``cosmos_framework/scripts/train.py``'s ``__main__`` (which has NO
+    reusable ``main()``): it builds ``config`` via ``load_experiment_from_toml``
+    and calls ``launch(config, args)``. We construct the same argparse-shaped
+    ``args`` namespace with the non-deterministic, non-debug defaults the script
+    uses for a real run, so calling ``launch`` is behaviourally identical to the
+    CLI — minus the process spawn and argv parse.
+    """
+    import argparse
+
+    load_experiment_from_toml = _import_cosmos_module(
+        "configs.toml_config.sft_config"
+    ).load_experiment_from_toml
+    launch = _import_cosmos_module("scripts.train").launch
+
+    config = load_experiment_from_toml(sft_toml, extra_overrides=overrides)
+    args = argparse.Namespace(
+        sft_toml=sft_toml,
+        opts=list(overrides),
+        deterministic=False,
+        attach_vscode_debugger=False,
+        dryrun=False,
+        config=sft_toml,
+    )
+    call_callable(launch, config, args, log_path=log_path)
+
+
+def _cosmos_worker(sft_toml: str, overrides: list[str], log_path: str) -> None:
+    """elastic_launch worker: build the cosmos Config and call train.launch() here.
+
+    Runs in a torch-spawned worker (one per GPU). torch sets RANK / LOCAL_RANK /
+    WORLD_SIZE; cosmos's distributed.init() reads them. Only local rank 0 tees to
+    the shared log file to avoid interleaved writes.
+    """
+    import os as _os
+
+    is_rank0 = _os.environ.get("LOCAL_RANK", "0") == "0"
+    _run_cosmos_launch(sft_toml, overrides, log_path=log_path if is_rank0 else None)

@@ -2,13 +2,14 @@
 
 Every concrete :class:`~strands_robots.training.base.Trainer` translates a
 :class:`~strands_robots.training.base.TrainSpec` into its backend's native
-launch and hands the resulting argv to ``subprocess.run``. The ``train_policy``
+launch (a typed config object built from the spec). The ``train_policy``
 ``@tool`` lets an agent (LLM) populate that ``TrainSpec`` directly, so the
 path fields and the free-form ``extra`` dict are *untrusted input that reaches
 a subprocess*. Per ``AGENTS.md`` > Review Learnings (#92) > "LLM Input Safety",
-those values MUST be validated before they can become argv tokens - even in
-list form (no shell), because a value beginning with ``-`` parses as a *new
-flag* and an arbitrary ``extra`` key becomes an arbitrary ``--flag``.
+those values MUST be validated before they can become a config field or a flag
+token: a value beginning with ``-`` could parse as a *new flag* in the
+argv-parity helpers, and an arbitrary ``extra`` key could set an arbitrary
+config attribute / Hydra override.
 
 :func:`validate_train_inputs` is the single source of that check. It is invoked
 from every backend's :meth:`Trainer.validate`, which each backend's
