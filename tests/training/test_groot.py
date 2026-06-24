@@ -58,6 +58,11 @@ class TestValidate:
     def test_clean(self, spec):
         assert Gr00tTrainer().validate(spec) == []
 
+    def test_multi_node_rejected(self, spec):
+        spec.num_nodes = 2
+        problems = Gr00tTrainer().validate(spec)
+        assert any("multi-node" in p for p in problems)
+
     def test_embodiment_required(self, spec):
         spec.embodiment = None
         problems = Gr00tTrainer().validate(spec)

@@ -108,11 +108,14 @@ class LerobotTrainer(Trainer):
         except (OSError, ValueError, TypeError, json.JSONDecodeError):
             return None
 
-    def _latest_checkpoint(self, output_dir: str) -> str | None:
-        """Return the resumable ``train_config.json`` path, or None.
+    def _resume_config_path(self, output_dir: str) -> str | None:
+        """Return the resumable ``train_config.json`` FILE path, or None.
 
         lerobot writes checkpoints to ``<output_dir>/checkpoints/<step|last>/
-        pretrained_model/train_config.json``; resume needs the FILE path.
+        pretrained_model/train_config.json``; resume needs the FILE path (it
+        derives policy_dir/checkpoint_path from it). This is the resume-wiring
+        counterpart of the public :meth:`latest_checkpoint` (which returns the
+        loadable DIRECTORY for ``export``/``create_policy``).
         """
         ckpts = os.path.join(output_dir, "checkpoints")
         if not os.path.isdir(ckpts):
@@ -126,6 +129,17 @@ class LerobotTrainer(Trainer):
             if os.path.isfile(cfg):
                 candidates.append(cfg)
         return candidates[-1] if candidates else None
+
+    def latest_checkpoint(self, output_dir: str) -> str | None:
+        """Return the newest loadable ``pretrained_model`` directory, or None.
+
+        ABC contract: a directory ``create_policy``/``export`` can consume.
+        lerobot's loadable artifact is the ``pretrained_model`` dir that holds
+        ``model.safetensors`` + ``train_config.json``; we locate it from the
+        resume config file's parent.
+        """
+        cfg_file = self._resume_config_path(output_dir)
+        return os.path.dirname(cfg_file) if cfg_file else None
 
     def _val_split_episodes(self, spec: TrainSpec) -> list[int] | None:
         """Held-out validation split: train on the FIRST (total - N) episodes."""
@@ -227,7 +241,7 @@ class LerobotTrainer(Trainer):
         if eps is not None:
             cmd.append(f"--dataset.episodes=[{', '.join(map(str, eps))}]")
         if spec.resume:
-            ckpt_cfg = self._latest_checkpoint(spec.output_dir)
+            ckpt_cfg = self._resume_config_path(spec.output_dir)
             if ckpt_cfg:
                 cmd.append("--resume=true")
                 cmd.append(f"--config_path={ckpt_cfg}")
@@ -297,7 +311,7 @@ class LerobotTrainer(Trainer):
         if hasattr(cfg, "wandb") and hasattr(cfg.wandb, "enable"):
             cfg.wandb.enable = False
         if spec.resume:
-            ckpt_cfg = self._latest_checkpoint(spec.output_dir)
+            ckpt_cfg = self._resume_config_path(spec.output_dir)
             if ckpt_cfg:
                 cfg.checkpoint_path = Path(ckpt_cfg).parent.parent
 
@@ -333,7 +347,7 @@ class LerobotTrainer(Trainer):
 
         # Fresh-start hygiene: clear a stale output_dir with no resumable ckpt.
         if not spec.resume and os.path.isdir(spec.output_dir):
-            if self._latest_checkpoint(spec.output_dir) is None:
+            if self.latest_checkpoint(spec.output_dir) is None:
                 shutil.rmtree(spec.output_dir, ignore_errors=True)
 
         job_id = f"lerobot-{int(time.time())}"
@@ -375,8 +389,7 @@ class LerobotTrainer(Trainer):
             train_error = e
             logger.error("LerobotTrainer in-process train failed: %s", e)
 
-        ckpt_dir = self._latest_checkpoint(spec.output_dir)
-        ckpt_model_dir = os.path.dirname(ckpt_dir) if ckpt_dir else None  # .../pretrained_model
+        ckpt_model_dir = self.latest_checkpoint(spec.output_dir)  # loadable pretrained_model dir
         metrics = self._parse_log(log_path)
 
         if train_error is not None:

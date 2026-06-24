@@ -2,19 +2,19 @@
 
 Every concrete :class:`~strands_robots.training.base.Trainer` translates a
 :class:`~strands_robots.training.base.TrainSpec` into its backend's native
-launch (a typed config object built from the spec). The ``train_policy``
-``@tool`` lets an agent (LLM) populate that ``TrainSpec`` directly, so the
-path fields and the free-form ``extra`` dict are *untrusted input that reaches
-a subprocess*. Per ``AGENTS.md`` > Review Learnings (#92) > "LLM Input Safety",
-those values MUST be validated before they can become a config field or a flag
-token: a value beginning with ``-`` could parse as a *new flag* in the
-argv-parity helpers, and an arbitrary ``extra`` key could set an arbitrary
-config attribute / Hydra override.
+config object and runs it IN-PROCESS (imported and called as a library - no
+subprocess). The ``train_policy`` ``@tool`` lets an agent (LLM) populate that
+``TrainSpec`` directly, so the path fields and the free-form ``extra`` dict are
+*untrusted input that reaches backend internals*. Per ``AGENTS.md`` > Review
+Learnings (#92) > "LLM Input Safety", those values MUST be validated before they
+can become a config field, a Hydra override, or a token in a backend's
+argv-parity helper: a value beginning with ``-`` could read as a *new flag*, and
+an arbitrary ``extra`` key could set an arbitrary config attribute / override.
 
 :func:`validate_train_inputs` is the single source of that check. It is invoked
 from every backend's :meth:`Trainer.validate`, which each backend's
-:meth:`Trainer.train` calls (fail-closed) before building any command - so no
-subprocess can launch with unvalidated input regardless of the call path.
+:meth:`Trainer.train` calls (fail-closed) before building any config - so no
+run can start with unvalidated input regardless of the call path.
 """
 
 from __future__ import annotations
@@ -51,7 +51,8 @@ def validate_train_inputs(spec: TrainSpec) -> list[str]:
     """Return a list of input-safety problems for a :class:`TrainSpec`.
 
     An empty list means every agent-supplied value is safe to interpolate into
-    a subprocess argv. Pure and side-effect-free (read-only ``realpath`` only),
+    a backend config / argv-parity helper. Pure and side-effect-free
+    (read-only ``realpath`` only),
     so it is safe to call from :meth:`Trainer.validate`.
     """
     problems: list[str] = []
@@ -69,7 +70,7 @@ def validate_train_inputs(spec: TrainSpec) -> list[str]:
     for label in _FLAG_BOUND_FIELDS:
         val = getattr(spec, label, None)
         if isinstance(val, str) and val.startswith("-"):
-            problems.append(f"{label} must not start with '-' (would inject a subprocess flag)")
+            problems.append(f"{label} must not start with '-' (would parse as a stray flag)")
 
     # ``extra`` keys become backend-native flags - allowlist the key format.
     for key in spec.extra or {}:

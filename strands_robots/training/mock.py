@@ -56,6 +56,11 @@ class MockTrainer(Trainer):
     def _job_path(self, output_dir: str) -> str:
         return os.path.join(output_dir, "mock_job.json")
 
+    def latest_checkpoint(self, output_dir: str) -> str | None:
+        """Return the simulated checkpoint dir (``checkpoints/last``), or None."""
+        ckpt = os.path.join(output_dir, "checkpoints", "last")
+        return ckpt if os.path.isdir(ckpt) else None
+
     def train(self, spec: TrainSpec) -> TrainResult:
         """Simulate a training run: write a checkpoint stub + job record."""
         problems = self.validate(spec)

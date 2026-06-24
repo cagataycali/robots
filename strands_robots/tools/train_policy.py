@@ -11,8 +11,8 @@ This closes the physical-AI data loop from natural language:
     record  ->  train_policy(...)  ->  create_policy(<checkpoint>)  ->  run
 
 All training logic lives in ``strands_robots.training``; this file only parses
-agent input and formats output in the Strands ``{status, content:[{text}]}``
-convention.
+agent input and formats output in the Strands ``{status, content:[...]}``
+convention (structured fields live in a ``{"json": ...}`` content block).
 """
 
 from __future__ import annotations
@@ -200,7 +200,7 @@ def train_policy(
             return _ok(f"[{provider}] spec is valid and launchable.")
 
         if action == "export":
-            ckpt = getattr(trainer, "_latest_checkpoint", lambda _o: None)(output_dir)
+            ckpt = trainer.latest_checkpoint(output_dir)
             if not ckpt:
                 return _err(f"no checkpoint found under {output_dir} to export")
             exported = trainer.export(spec, ckpt)
