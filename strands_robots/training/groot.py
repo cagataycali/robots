@@ -399,7 +399,7 @@ class Gr00tTrainer(Trainer):
             spec.steps,
         )
 
-        train_error: BaseException | None = None
+        train_error: Exception | None = None
         try:
             if spec.num_gpus and spec.num_gpus > 1:
                 # Multi-GPU: torch elastic agent spawns workers; each builds the
@@ -420,7 +420,7 @@ class Gr00tTrainer(Trainer):
                 call_callable(run, run_config, log_path=log_path)
         except ImportError as e:
             return TrainResult(status="error", job_id=job_id, message=str(e))
-        except BaseException as e:  # noqa: BLE001 — convert ANY failure to a result
+        except Exception as e:  # noqa: BLE001 — convert ANY failure to a result
             train_error = e
             logger.error("Gr00tTrainer in-process run failed: %s", e)
 
