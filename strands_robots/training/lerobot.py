@@ -344,13 +344,17 @@ class LerobotTrainer(Trainer):
             cfg = self.build_config(spec)
         except Exception as e:  # noqa: BLE001 - config build is the typed boundary
             return TrainResult(
-                status="error", job_id=job_id,
+                status="error",
+                job_id=job_id,
                 message=f"failed to build lerobot TrainPipelineConfig: {e}",
             )
 
         logger.info(
             "LerobotTrainer launching in-process: policy=%s device=%s steps=%d num_gpus=%d",
-            self._resolve_policy_type(spec), self.device, spec.steps, spec.num_gpus,
+            self._resolve_policy_type(spec),
+            self.device,
+            spec.steps,
+            spec.num_gpus,
         )
 
         train_error: BaseException | None = None
@@ -377,14 +381,18 @@ class LerobotTrainer(Trainer):
 
         if train_error is not None:
             return TrainResult(
-                status="error", job_id=job_id,
-                checkpoint_dir=ckpt_model_dir, metrics=metrics,
+                status="error",
+                job_id=job_id,
+                checkpoint_dir=ckpt_model_dir,
+                metrics=metrics,
                 message=f"lerobot train raised {type(train_error).__name__}: {train_error}; see {log_path}",
             )
 
         return TrainResult(
-            status="success", job_id=job_id,
-            checkpoint_dir=ckpt_model_dir, metrics=metrics,
+            status="success",
+            job_id=job_id,
+            checkpoint_dir=ckpt_model_dir,
+            metrics=metrics,
             message=f"lerobot train complete (in-process); log: {log_path}",
         )
 
@@ -435,7 +443,7 @@ class LerobotTrainer(Trainer):
         return metrics
 
 
-def _resolve_dotted(cfg: Any, key: str):
+def _resolve_dotted(cfg: Any, key: str) -> tuple[Any, str]:
     """Map a (optionally dotted) extra key to (obj, attr) on the config tree."""
     if "." not in key:
         return cfg, key
