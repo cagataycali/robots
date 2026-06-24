@@ -1158,3 +1158,64 @@ class TestSimulationOutputIsAscii:
 
     def test_list_policies_running_output_is_ascii(self, sim_with_robot):
         assert self._texts(sim_with_robot.list_policies_running()).isascii()
+
+
+class TestUnknownModelSuggestions:
+    """The 'no model found' error names close registry matches (difflib).
+
+    When a caller asks for a robot model that does not exist, the sim should
+    not dead-end with a bare "use list_urdfs"; it suggests the closest known
+    registry keys so a typo can usually be fixed in-place without a discovery
+    round-trip. This pins that ergonomics contract.
+    """
+
+    def test_suggests_close_registry_matches_for_typo(self):
+        # 'so10x' is one edit away from the so100/so101 family.
+        msg = Simulation._unknown_model_msg("so10x")
+        assert "No model found for 'so10x'." in msg
+        assert "Did you mean:" in msg
+        assert "so101" in msg or "so100" in msg
+        assert "list_urdfs" in msg
+
+    def test_caps_suggestions_at_three(self):
+        # difflib is asked for at most 3 matches; the rendered list must not
+        # exceed that even when many registry keys are near.
+        msg = Simulation._unknown_model_msg("panda")
+        if "Did you mean:" in msg:
+            suggestions = msg.split("Did you mean:")[1].split("?")[0]
+            assert len([s for s in suggestions.split(",") if s.strip()]) <= 3
+
+    def test_no_suggestions_when_nothing_is_close(self):
+        # A string with no near neighbours omits the 'Did you mean' clause but
+        # still points at the discovery action.
+        msg = Simulation._unknown_model_msg("zzqqxx0000nope")
+        assert "No model found for 'zzqqxx0000nope'." in msg
+        assert "Did you mean:" not in msg
+        assert "list_urdfs" in msg
+
+    def test_falls_back_gracefully_when_registry_unavailable(self, monkeypatch):
+        # If the registry lookup raises, suggestions are best-effort: the
+        # message degrades to the bare form rather than propagating the error.
+        import strands_robots.registry as registry
+
+        def _boom():
+            raise RuntimeError("registry exploded")
+
+        monkeypatch.setattr(registry, "list_robots", _boom)
+        msg = Simulation._unknown_model_msg("anything")
+        assert "No model found for 'anything'." in msg
+        assert "Did you mean:" not in msg
+        assert "list_urdfs" in msg
+
+    def test_message_is_ascii_only(self):
+        # Error strings must stay ASCII (no emojis / smart punctuation).
+        assert Simulation._unknown_model_msg("so10x").isascii()
+
+    def test_add_robot_surfaces_suggestions_for_unknown_data_config(self, sim_with_world):
+        # End-to-end: an unknown data_config flows the suggestion message out
+        # through add_robot's error result.
+        result = sim_with_world.add_robot(name="arm", data_config="so10x")
+        assert result["status"] == "error"
+        text = result["content"][0]["text"]
+        assert "No model found for 'so10x'." in text
+        assert "list_urdfs" in text
