@@ -344,7 +344,14 @@ class PolicyRunner:
                 already flows through :meth:`evaluate`'s per-episode reseed.
 
         Returns:
-            ``{"status": "success"|"error", "content": [{"text": ...}]}``.
+            ``{"status": "success"|"error", "content": [{"text": ...},
+            {"json": {...}}]}``. The ``json`` block is agent-consumable and
+            carries the rollout facts as typed fields - ``robot_name``,
+            ``policy``, ``instruction``, ``n_steps``, ``elapsed_s``,
+            ``stopped_early``, ``action_errors``, ``video_path`` (``None`` when
+            no MP4 was written), ``video_frames`` and ``sim_time_s`` (when the
+            backend reports sim time) - so callers can self-correct without
+            regex-parsing the human-readable ``text``.
         """
         # A single rollout draws the policy's stochastic ops (VLA action-
         # chunk sampling, diffusion noise) from the unmanaged global RNG, so the
@@ -578,6 +585,32 @@ class PolicyRunner:
                     video_path,
                 )
                 text += f"\nVideo requested but 0 frames captured ({video_path})"
+        # Agent-consumable structured payload mirroring eval_policy()'s
+        # ``{"json": {...}}`` block. Without this an agent driving run_policy has
+        # to regex-parse the human-readable text to learn how many steps ran,
+        # whether a video was written, or whether the rollout actually moved the
+        # robot -- brittle and a documented AX friction point. The text block is
+        # retained verbatim for humans; the json block carries the same facts as
+        # typed fields for programmatic self-correction (deploy -> observe ->
+        # re-tune loops). Keys are stable: callers can rely on them.
+        payload: dict[str, Any] = {
+            "robot_name": robot_name,
+            "policy": type(policy).__name__,
+            "instruction": instruction,
+            "n_steps": step_count,
+            "elapsed_s": round(elapsed, 3),
+            "stopped_early": stopped_early,
+            "action_errors": _action_errors,
+            "video_path": None,
+            "video_frames": 0,
+        }
+        if sim_time is not None:
+            payload["sim_time_s"] = round(sim_time, 3)
+        if writer is not None and video is not None and video_path is not None:
+            wrote_video = frame_count > 0 and os.path.exists(video_path)
+            payload["video_path"] = video_path if wrote_video else None
+            payload["video_frames"] = frame_count
+
         # If every send_action call failed (all keys unresolved), the robot
         # never moved -- report this as an error rather than a false success.
         if _action_errors > 0 and _action_errors >= step_count and step_count > 0:
@@ -586,10 +619,10 @@ class PolicyRunner:
                 f"-- the robot did not move. Check that the policy's output keys "
                 f"match the robot's actuator names."
             )
-            return {"status": "error", "content": [{"text": text}]}
+            return {"status": "error", "content": [{"text": text}, {"json": payload}]}
         if _action_errors > 0:
             text += f"\n\n{_action_errors}/{step_count} action steps had unresolved keys."
-        return {"status": "success", "content": [{"text": text}]}
+        return {"status": "success", "content": [{"text": text}, {"json": payload}]}
 
     # replay(): replay a LeRobotDataset episode
 

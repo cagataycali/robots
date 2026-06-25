@@ -55,7 +55,22 @@ class TrainSpec:
             ``meta/info.json``). This is exactly what
             :class:`~strands_robots.dataset_recorder.DatasetRecorder` /
             ``Robot.stop_recording`` produce, so the ``record -> train`` loop
-            needs no conversion layer.
+            needs no conversion layer. When :attr:`dataset_repo_id` is set this
+            is optional and, if given, acts as a local cache root for the Hub
+            dataset (lerobot ``DatasetConfig.root``).
+        dataset_repo_id: Hugging Face Hub dataset id (``org/name``) to train
+            *from the Hub* instead of a local root. Required for
+            :attr:`streaming` of a Hub dataset (the 50-500 GB case that would
+            otherwise have to download in full first). When set, the backend
+            uses it as lerobot's ``DatasetConfig.repo_id`` and leaves
+            ``dataset_root`` as an optional local cache. Mutually sufficient
+            with ``dataset_root`` - supply exactly one as the data source.
+        streaming: Stream frames from the dataset instead of materializing it
+            (lerobot ``DatasetConfig.streaming`` -> ``StreamingLeRobotDataset``).
+            With :attr:`dataset_repo_id` this streams shards from the Hub with no
+            full download (bounded disk); with a local ``dataset_root`` it
+            streams from disk (bounded RAM). LeRobot-only; other backends ignore
+            it (tolerance rule).
         base_model: HF model id or local checkpoint path to post-tune *from*.
         output_dir: Directory for checkpoints, logs, and the final artifact.
         embodiment: Embodiment tag / robot id. Required by GR00T
@@ -96,9 +111,10 @@ class TrainSpec:
     """
 
     # --- universal ---
-    dataset_root: str
-    base_model: str
-    output_dir: str
+    dataset_root: str = ""
+    base_model: str = ""
+    output_dir: str = ""
+    dataset_repo_id: str | None = None
     embodiment: str | None = None
     steps: int = 10_000
     global_batch_size: int = 32
@@ -118,6 +134,7 @@ class TrainSpec:
     val_episodes: int | None = None
     augmentation: dict[str, Any] | None = None
     fps: int | None = None
+    streaming: bool = False
     # --- escape hatch ---
     extra: dict[str, Any] = field(default_factory=dict)
 

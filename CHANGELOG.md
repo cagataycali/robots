@@ -5,6 +5,30 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Added: stream a Hub dataset into the LeRobot trainer (no full download)
+
+`TrainSpec` and the `train_policy` tool gained a `streaming` flag and a
+`dataset_repo_id` field so a LeRobot post-tune can pull frames on the fly from a
+Hugging Face Hub dataset instead of materializing it locally first. Previously
+the only data source was a local `dataset_root`, so training a large dataset
+(BitRobot / HIW-500, ~50-500 GB) required downloading the whole thing before the
+first forward pass - blowing disk on an edge node and wasting wall-clock.
+
+- `TrainSpec.dataset_repo_id` (`org/name`) is an alternative data source to
+  `dataset_root`; when set, the LeRobot trainer uses it as
+  `DatasetConfig.repo_id` and treats `dataset_root` as an optional local cache.
+- `TrainSpec.streaming=True` selects lerobot's `StreamingLeRobotDataset`
+  (`--dataset.streaming=true`): bounded disk when streaming Hub shards, bounded
+  RAM when streaming a local root.
+- `LerobotTrainer.validate` now accepts either data source and rejects a
+  malformed `dataset_repo_id` (allowlisted `org/name` format) before it reaches
+  a Hub URL. Held-out `val_episodes` splitting is a no-op when streaming a Hub
+  dataset with no local cache (no local `meta/info.json` to count episodes).
+- Other trainers (GR00T, Cosmos3) ignore both fields per the `TrainSpec`
+  tolerance rule. Regression tests pin the argv-parity helper and the typed
+  `TrainPipelineConfig` for Hub-streaming, local-streaming, and local-root
+  paths, and fail on pre-fix code (which hardcoded `repo_id="local"`).
+
 ### Fixed: unified "no world" guard contract across the simulation facade
 
 Every world-touching method on the MuJoCo `Simulation` facade returns a
