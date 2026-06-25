@@ -438,3 +438,89 @@ def test_teleoperate_device_read_exception_counted_not_fatal():
         assert host._teleop_running is True
     finally:
         host.stop_teleoperate()
+
+
+# ---------------------------------------------------------------------------
+# fail-soft contracts: detach + stop must never crash on a flaky device
+# ---------------------------------------------------------------------------
+
+
+class RaisingDisconnectTeleop(FakeTeleop):
+    """Device whose disconnect() raises -- exercises best-effort cleanup."""
+
+    def disconnect(self) -> None:
+        self.disconnect_calls += 1
+        raise RuntimeError("usb handle already closed")
+
+
+def test_detach_unknown_name_returns_error():
+    """Detaching a name that was never attached is a structured error, not a crash."""
+    host = FakeHost()
+    host.attach_teleop(FakeTeleop({"a": 1.0}), name="leader")
+    res = host.detach_teleop("ghost")
+    assert res["status"] == "error"
+    assert "ghost" in res["content"][0]["text"]
+    # The real device is untouched by a failed lookup.
+    assert set(host._teleops) == {"leader"}
+
+
+def test_detach_disconnects_connected_device():
+    """A connected device is disconnected on detach (best-effort cleanup)."""
+    host = FakeHost()
+    dev = FakeTeleop({"a": 1.0})
+    host.attach_teleop(dev, name="leader")
+    dev.connect()
+    assert dev.is_connected is True
+
+    res = host.detach_teleop("leader")
+    assert res["status"] == "success"
+    assert dev.disconnect_calls == 1
+    assert dev.is_connected is False
+    assert host._teleops == {}
+
+
+def test_detach_survives_disconnect_exception():
+    """If a device's disconnect() raises, detach still completes successfully.
+
+    Cleanup is best-effort: the device is removed from the registry and the
+    detach reports success even though the underlying disconnect blew up.
+    """
+    host = FakeHost()
+    dev = RaisingDisconnectTeleop({"a": 1.0})
+    host.attach_teleop(dev, name="flaky")
+    dev.is_connected = True
+
+    res = host.detach_teleop("flaky")
+    assert res["status"] == "success"
+    assert "flaky" in res["content"][0]["text"]
+    assert dev.disconnect_calls == 1  # we tried
+    assert host._teleops == {}  # but still removed
+
+
+def test_detach_all_stops_running_loop():
+    """Detaching the last device while the loop runs tears the loop down."""
+    host = FakeHost()
+    host.attach_teleop(FakeTeleop({"a.pos": 1.0}), name="leader")
+    host.teleoperate(hz=200)
+    try:
+        assert _spin_until(lambda: host._teleop_running is True)
+        host.detach_teleop()  # detach all -> no devices left
+        assert host._teleops == {}
+        assert _spin_until(lambda: host._teleop_running is False)
+    finally:
+        host.stop_teleoperate()
+
+
+def test_stop_teleoperate_when_idle_is_safe():
+    """Stopping with no active loop is a no-op success (does not raise)."""
+    host = FakeHost()
+    res = host.stop_teleoperate()
+    assert res["status"] == "success"
+    assert "No active teleoperation" in res["content"][0]["text"]
+
+
+def test_bare_mixin_send_action_raises_not_implemented():
+    """A host that does not implement send_action() surfaces a clear error."""
+    mixin = TeleopMixin()
+    with pytest.raises(NotImplementedError, match="send_action"):
+        mixin.send_action({"a": 1.0})
