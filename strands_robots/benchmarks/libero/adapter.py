@@ -4131,9 +4131,9 @@ class _LiberoOSCController:
         #     action[..., -1] = action[..., -1] * -1.0
         #
         # Combined: ``gripper_out = -np.sign(2 * gripper_in - 1)``. Concretely:
-        #   gripper_in = 0.0 (RLDS close) → -sign(-1) = +1 (LIBERO close) ✓
+        #   gripper_in = 0.0 (RLDS close) → -sign(-1) = +1 (LIBERO close) [ok]
         #   gripper_in = 0.5             → -sign(0)  =  0 (no motion)
-        #   gripper_in = 1.0 (RLDS open)  → -sign(+1) = -1 (LIBERO open)  ✓
+        #   gripper_in = 1.0 (RLDS open)  → -sign(+1) = -1 (LIBERO open)  [ok]
         #
         # Pre-#168 we passed the raw model output to our OSC's
         # ``np.sign(gripper_value)`` directly. Since the model's typical

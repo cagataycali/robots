@@ -1718,7 +1718,7 @@ def _lifecycle(
 
 
 if __name__ == "__main__":
-    print("🐳 GR00T Inference Service Manager (Isaac-GR00T Native)")
+    print("GR00T Inference Service Manager (Isaac-GR00T Native)")
     print("Supports ZMQ, HTTP, and TensorRT inference modes")
     print()
     print("Examples:")

@@ -101,7 +101,7 @@ class SimulationDeviceDriver(DeviceDriver):
         if not is_safe_policy_provider(policy_provider):
             return {"status": "error", "reason": f"policy_provider not allowed: {policy_provider!r}"}
 
-        print(f"▶ Executing policy '{policy_provider}' on {name}: {instruction}", flush=True)
+        print(f"[policy] Executing '{policy_provider}' on {name}: {instruction}", flush=True)
         return self._sim.start_policy(
             robot_name=name,
             policy_provider=policy_provider,
@@ -115,7 +115,7 @@ class SimulationDeviceDriver(DeviceDriver):
         caller = get_rpc_source_device()
         if not is_authorized_caller(caller, scope="rpc"):
             return authz_error(caller, "stop")
-        print("⏹ Stop command received - stopping all policies", flush=True)
+        print("[policy] Stop command received - stopping all policies", flush=True)
         world = getattr(self._sim, "_world", None)
         if world:
             for robot in world.robots.values():
@@ -198,7 +198,7 @@ class SimulationDeviceDriver(DeviceDriver):
         if not is_authorized_caller(device_id, scope="estop"):
             logger.warning("Ignoring emergencyStop from unauthorized source %s", device_id)
             return
-        print(f"🛑 Emergency stop received from {device_id} - stopping all policies", flush=True)
+        print(f"[estop] Emergency stop received from {device_id} - stopping all policies", flush=True)
         world = getattr(self._sim, "_world", None)
         if world:
             for robot in world.robots.values():
