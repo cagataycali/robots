@@ -577,3 +577,175 @@ class TestF16DefaultACLShapeIsLoadBearing:
         )
         monkeypatch.setenv("STRANDS_MESH_ACL_FILE", str(strict))
         assert is_default_acl_in_use() is False
+
+
+# --- ACL structural shape validation -----------------------------------
+
+
+class TestACLShapeValidation:
+    """Per-element structural rejection by ``_validate_acl_shape``.
+
+    A malformed ACL is worse than no ACL: the operator believes role
+    separation is enforced when it is not, so the loader rejects a
+    structurally invalid file rather than silently shipping a gate Zenoh
+    will reject (or worse, mis-parse into a permissive posture). These
+    cases drive the file through the public :func:`resolve_acl` entry
+    point and pin the path-prefixed ``ValueError`` raised on the first
+    structural defect in the ``subjects`` / ``rules`` / ``policies``
+    blocks - the validation that runs only once those lists are
+    non-empty.
+    """
+
+    def _full_acl(self) -> dict:
+        """A minimal but fully-populated, valid ACL (passes validation).
+
+        Every mutation test below starts from this and breaks exactly one
+        field, so a regression that loosens a single check is caught in
+        isolation rather than masked by an already-empty list.
+        """
+        return {
+            "enabled": True,
+            "default_permission": "deny",
+            "subjects": [{"id": "ops", "cert_common_names": ["op-1"]}],
+            "rules": [
+                {
+                    "id": "r1",
+                    "key_exprs": ["strands/op/**"],
+                    "messages": ["put"],
+                    "flows": ["ingress"],
+                    "permission": "allow",
+                }
+            ],
+            "policies": [{"id": "p1", "rules": ["r1"], "subjects": ["ops"]}],
+        }
+
+    def _resolve(self, monkeypatch, tmp_path, data: dict):
+        path = tmp_path / "acl.json"
+        path.write_text(json.dumps(data))
+        monkeypatch.setenv("STRANDS_MESH_ACL_FILE", str(path))
+        ac._clear_acl_cache_for_test()
+        return ac.resolve_acl("strands")
+
+    def test_full_acl_validates(self, monkeypatch, tmp_path):
+        """The fully-populated baseline loads cleanly (guards against a test
+        whose 'valid' fixture is itself rejected, which would make every
+        negative case below pass vacuously)."""
+        loaded = self._resolve(monkeypatch, tmp_path, self._full_acl())
+        assert loaded["policies"][0]["id"] == "p1"
+        assert loaded["rules"][0]["permission"] == "allow"
+
+    def test_root_must_be_object(self, monkeypatch, tmp_path):
+        path = tmp_path / "acl.json"
+        path.write_text("[1, 2, 3]")
+        monkeypatch.setenv("STRANDS_MESH_ACL_FILE", str(path))
+        ac._clear_acl_cache_for_test()
+        with pytest.raises(ValueError, match="root must be an object"):
+            ac.resolve_acl("strands")
+
+    def test_top_level_field_must_be_list(self, monkeypatch, tmp_path):
+        data = self._full_acl()
+        data["rules"] = {"not": "a list"}
+        with pytest.raises(ValueError, match=r"'rules' must be a list, got dict"):
+            self._resolve(monkeypatch, tmp_path, data)
+
+    def test_subject_must_be_object(self, monkeypatch, tmp_path):
+        data = self._full_acl()
+        data["subjects"] = [123]
+        with pytest.raises(ValueError, match=r"subjects\[0\] must be an object"):
+            self._resolve(monkeypatch, tmp_path, data)
+
+    def test_subject_id_must_be_non_empty_string(self, monkeypatch, tmp_path):
+        data = self._full_acl()
+        data["subjects"][0]["id"] = ""
+        with pytest.raises(ValueError, match=r"subjects\[0\].id must be a non-empty string"):
+            self._resolve(monkeypatch, tmp_path, data)
+
+    def test_subject_interfaces_must_be_list(self, monkeypatch, tmp_path):
+        data = self._full_acl()
+        data["subjects"][0]["interfaces"] = "lo"
+        with pytest.raises(ValueError, match=r"interfaces must be a list"):
+            self._resolve(monkeypatch, tmp_path, data)
+
+    def test_subject_interfaces_empty_list_rejected(self, monkeypatch, tmp_path):
+        # Zenoh rejects ``[]`` with "Found empty interface value" - a silent
+        # total outage. The loader rejects it up front.
+        data = self._full_acl()
+        data["subjects"][0]["interfaces"] = []
+        with pytest.raises(ValueError, match=r"interfaces is an empty list"):
+            self._resolve(monkeypatch, tmp_path, data)
+
+    def test_subject_cert_common_names_must_be_list(self, monkeypatch, tmp_path):
+        # Common typo: cert_common_name (singular) -> a bare string.
+        data = self._full_acl()
+        data["subjects"][0]["cert_common_names"] = "op-1"
+        with pytest.raises(ValueError, match=r"cert_common_names must be a list"):
+            self._resolve(monkeypatch, tmp_path, data)
+
+    def test_subject_with_no_constraint_is_rejected_as_wildcard(self, monkeypatch, tmp_path):
+        # A subject carrying only an ``id`` maps to SubjectProperty::Wildcard
+        # on every dimension - "any peer on any link" - which silently
+        # widens an otherwise-restrictive ACL. Fail closed.
+        data = self._full_acl()
+        data["subjects"][0] = {"id": "wild"}
+        with pytest.raises(ValueError, match=r"has neither 'interfaces' nor 'cert_common_names'"):
+            self._resolve(monkeypatch, tmp_path, data)
+
+    def test_rule_must_be_object(self, monkeypatch, tmp_path):
+        data = self._full_acl()
+        data["rules"] = [42]
+        with pytest.raises(ValueError, match=r"rules\[0\] must be an object"):
+            self._resolve(monkeypatch, tmp_path, data)
+
+    def test_rule_id_must_be_non_empty_string(self, monkeypatch, tmp_path):
+        data = self._full_acl()
+        data["rules"][0]["id"] = ""
+        with pytest.raises(ValueError, match=r"rules\[0\].id must be a non-empty string"):
+            self._resolve(monkeypatch, tmp_path, data)
+
+    def test_rule_list_field_must_be_non_empty(self, monkeypatch, tmp_path):
+        data = self._full_acl()
+        data["rules"][0]["messages"] = []
+        with pytest.raises(ValueError, match=r"rules\[0='r1'\].messages must be a non-empty list"):
+            self._resolve(monkeypatch, tmp_path, data)
+
+    def test_rule_list_field_must_contain_only_strings(self, monkeypatch, tmp_path):
+        data = self._full_acl()
+        data["rules"][0]["key_exprs"] = ["ok", 7]
+        with pytest.raises(ValueError, match=r"rules\[0='r1'\].key_exprs must contain only strings"):
+            self._resolve(monkeypatch, tmp_path, data)
+
+    def test_rule_permission_must_be_allow_or_deny(self, monkeypatch, tmp_path):
+        data = self._full_acl()
+        data["rules"][0]["permission"] = "maybe"
+        with pytest.raises(ValueError, match=r"permission must be 'allow' or 'deny'"):
+            self._resolve(monkeypatch, tmp_path, data)
+
+    def test_policy_must_be_object(self, monkeypatch, tmp_path):
+        data = self._full_acl()
+        data["policies"] = ["not-an-object"]
+        with pytest.raises(ValueError, match=r"policies\[0\] must be an object"):
+            self._resolve(monkeypatch, tmp_path, data)
+
+    def test_policy_rules_must_be_non_empty_list(self, monkeypatch, tmp_path):
+        data = self._full_acl()
+        data["policies"][0]["rules"] = []
+        with pytest.raises(ValueError, match=r"policies\[0\].rules must be a non-empty list"):
+            self._resolve(monkeypatch, tmp_path, data)
+
+    def test_policy_subjects_must_be_non_empty_list(self, monkeypatch, tmp_path):
+        data = self._full_acl()
+        data["policies"][0]["subjects"] = []
+        with pytest.raises(ValueError, match=r"policies\[0\].subjects must be a non-empty list"):
+            self._resolve(monkeypatch, tmp_path, data)
+
+    def test_policy_references_unknown_rule_id(self, monkeypatch, tmp_path):
+        data = self._full_acl()
+        data["policies"][0]["rules"] = ["does-not-exist"]
+        with pytest.raises(ValueError, match=r"references unknown rule id 'does-not-exist'"):
+            self._resolve(monkeypatch, tmp_path, data)
+
+    def test_policy_references_unknown_subject_id(self, monkeypatch, tmp_path):
+        data = self._full_acl()
+        data["policies"][0]["subjects"] = ["ghost"]
+        with pytest.raises(ValueError, match=r"references unknown subject id 'ghost'"):
+            self._resolve(monkeypatch, tmp_path, data)
