@@ -124,10 +124,11 @@ RUN chmod +x /usr/local/bin/vera-entrypoint
 ENV VERA_CKPT_ROOT=/ckpts
 
 # PushT defaults (override via -e for other embodiments).
+# Default embodiment only — DO NOT set VERA_PORT/VERA_VIS_PORT here: the
+# entrypoint derives per-embodiment default ports (pusht 8820/8821,
+# mimicgen 8800/8801), and a baked ENV would shadow that ${VAR:-default} logic.
 ENV VERA_EMBODIMENT=pusht \
-    VERA_HOST=0.0.0.0 \
-    VERA_PORT=8820 \
-    VERA_VIS_PORT=8821
+    VERA_HOST=0.0.0.0
 
 EXPOSE 8820 8821 8800 8801
 
