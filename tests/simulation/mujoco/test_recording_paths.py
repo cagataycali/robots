@@ -591,3 +591,132 @@ def test_start_recording_recorder_init_failure_clears_recording_flag(sim_with_tw
     assert r["status"] == "error"
     assert "codec unavailable" in r["content"][0]["text"]
     assert sim_with_two_robots._world._backend_state.get("recording") is False
+
+
+@pytest.fixture
+def sim_with_one_robot():
+    """Single-robot sim for episode-boundary tests (clean, unprefixed joints)."""
+    from strands_robots.simulation import Simulation
+
+    tmpdir = tempfile.mkdtemp()
+    path = os.path.join(tmpdir, "test_arm.xml")
+    with open(path, "w") as f:
+        f.write(_ROBOT_XML)
+
+    s = Simulation()
+    s.create_world()
+    s.add_robot("arm", urdf_path=path)
+    s.step(5)
+    yield s
+    s.destroy()
+    shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+def test_save_episode_delimits_one_episode_per_rollout(sim_with_one_robot, tmp_path):
+    """Episode-boundary regression: ``save_episode`` after each ``run_policy``
+    rollout produces one LeRobotDataset episode per rollout.
+
+    Pre-fix the Simulation facade had no public episode-boundary primitive, so
+    N ``run_policy`` calls in a single recording session all appended into the
+    SAME buffer and ``stop_recording`` flushed them as a single
+    ``episode_index=0`` (e.g. 3 rollouts -> 1 long episode). Calling
+    ``save_episode`` between rollouts now writes each rollout as its own
+    episode with a distinct ``episode_index`` / length.
+    """
+    from strands_robots.dataset_recorder import has_lerobot_dataset
+
+    if not has_lerobot_dataset():
+        pytest.skip("lerobot not installed")
+
+    sim = sim_with_one_robot
+    root = str(tmp_path / "perep")
+    r = sim.start_recording(repo_id="local/perep", fps=20, root=root, overwrite=True)
+    assert r["status"] == "success", r
+
+    n_episodes = 3
+    for i in range(n_episodes):
+        rp = sim.run_policy(
+            robot_name="arm",
+            policy_provider="mock",
+            instruction=f"ep{i}",
+            n_steps=5,
+            control_frequency=20.0,
+            fast_mode=True,
+        )
+        assert rp["status"] == "success", rp
+        se = sim.save_episode()
+        assert se["status"] == "success", se
+        assert f"Episode {i + 1} saved" in se["content"][0]["text"]
+
+    r = sim.stop_recording()
+    assert r["status"] == "success", r
+
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+    ds = LeRobotDataset(repo_id="local/perep", root=root)
+    assert ds.meta.total_episodes == n_episodes, f"expected {n_episodes} episodes, got {ds.meta.total_episodes}"
+    # Each episode carries its own length and the frames partition cleanly.
+    lengths = [ds.meta.episodes[ep]["length"] for ep in range(n_episodes)]
+    assert all(length == 5 for length in lengths), f"episode lengths: {lengths}"
+    assert ds.meta.total_frames == sum(lengths) == n_episodes * 5
+
+
+def test_without_save_episode_rollouts_collapse_into_one_episode(sim_with_one_robot, tmp_path):
+    """Documents the contrast: WITHOUT ``save_episode`` between rollouts, all
+    frames land in a single episode. This pins the exact behaviour the boundary
+    primitive fixes - run_policy alone does not delimit episodes.
+    """
+    from strands_robots.dataset_recorder import has_lerobot_dataset
+
+    if not has_lerobot_dataset():
+        pytest.skip("lerobot not installed")
+
+    sim = sim_with_one_robot
+    root = str(tmp_path / "collapsed")
+    assert sim.start_recording(repo_id="local/collapsed", fps=20, root=root, overwrite=True)["status"] == "success"
+
+    for i in range(3):
+        sim.run_policy(
+            robot_name="arm",
+            policy_provider="mock",
+            instruction=f"ep{i}",
+            n_steps=5,
+            control_frequency=20.0,
+            fast_mode=True,
+        )
+    assert sim.stop_recording()["status"] == "success"
+
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+    ds = LeRobotDataset(repo_id="local/collapsed", root=root)
+    assert ds.meta.total_episodes == 1
+    assert ds.meta.total_frames == 15
+
+
+def test_save_episode_without_recording_is_graceful_error(sim_with_one_robot):
+    """save_episode outside an active recording session returns a structured
+    error (not a raise), pointing at the correct workflow."""
+    r = sim_with_one_robot.save_episode()
+    assert r["status"] == "error"
+    assert "not recording" in r["content"][0]["text"]
+
+
+def test_save_episode_empty_buffer_is_idempotent(sim_with_one_robot, tmp_path):
+    """Calling save_episode with no frames captured since the last boundary
+    succeeds with a 'no frames' message instead of tripping LeRobot's
+    'add frames before add_episode' guard - so loops can call it safely."""
+    from strands_robots.dataset_recorder import has_lerobot_dataset
+
+    if not has_lerobot_dataset():
+        pytest.skip("lerobot not installed")
+
+    sim = sim_with_one_robot
+    root = str(tmp_path / "empty")
+    assert sim.start_recording(repo_id="local/empty", fps=20, root=root, overwrite=True)["status"] == "success"
+
+    # No run_policy yet -> nothing buffered.
+    r = sim.save_episode()
+    assert r["status"] == "success"
+    assert "no frames" in r["content"][0]["text"]
+
+    sim.stop_recording()

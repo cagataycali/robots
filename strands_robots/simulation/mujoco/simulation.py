@@ -1105,6 +1105,20 @@ class MuJoCoSimEngine(
                     bodies.append(body_name)
         base["bodies"] = bodies
         base["methods"]["list_bodies"] = "(robot_name: str | None = None) -> dict (camera mount points)"
+        # Recording / dataset-collection surface (LeRobotDataset, [lerobot] extra).
+        # Exposed here so agents discover the explicit episode-boundary workflow
+        # (start_recording -> run_policy + save_episode per episode -> stop_recording)
+        # instead of guessing method names.
+        base["methods"]["start_recording"] = (
+            "(repo_id='local/sim_recording', task='', fps=30, root=None, "
+            "push_to_hub=False, vcodec='libsvtav1', overwrite=False) -> dict"
+        )
+        base["methods"]["save_episode"] = (
+            "() -> dict  (flush current rollout as one episode; call once per "
+            "run_policy to get N episodes instead of one merged episode)"
+        )
+        base["methods"]["stop_recording"] = "(push_to_hub=False, bucket=None, run_id=None) -> dict"
+        base["methods"]["get_recording_status"] = "() -> dict"
 
         if self._world is not None:
             base["sim_time"] = self._world.sim_time
@@ -2021,7 +2035,7 @@ class MuJoCoSimEngine(
                 "get_total_mass, get_sensor_data, get_jacobian, get_mass_matrix, inverse_dynamics, "
                 "forward_kinematics, save_state, load_state, set_body_properties, set_geom_properties; "
                 "[Scene MJCF] replace_scene_mjcf, patch_scene_mjcf, raycast, multi_raycast; "
-                "[Recording] start_recording, stop_recording, get_recording_status, "
+                "[Recording] start_recording, save_episode, stop_recording, get_recording_status, "
                 "start_cameras_recording, stop_cameras_recording, get_cameras_recording_status; "
                 "[Randomize] randomize; "
                 "[Registry] list_urdfs, register_urdf, get_features. "

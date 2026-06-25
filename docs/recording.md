@@ -17,11 +17,36 @@ sim.stop_recording()
 
 `start_recording` requires `[lerobot]`. Without it, use `start_cameras_recording` for plain MP4.
 
+## Multi-episode recording
+
+A recording session is one dataset; `run_policy` alone does **not** delimit
+episodes. To collect N episodes in one session, call `save_episode()` after each
+rollout to flush it as its own episode:
+
+```python
+sim.start_recording(repo_id="user/my_dataset", task="pick up the cube", fps=30)
+for _ in range(20):
+    sim.reset()
+    sim.run_policy(robot_name="so100", instruction="pick up the cube",
+                   policy_provider="mock", n_steps=60)
+    sim.save_episode()        # flush this rollout as one episode
+sim.stop_recording()          # flushes any trailing rollout automatically
+# -> 20 episodes, each with its own episode_index / length / from_index / to_index
+```
+
+Without the `save_episode()` call, all 20 rollouts append to the same buffer and
+`stop_recording` flushes them as a single `episode_index=0` (1200 steps in one
+episode). `save_episode` is idempotent on an empty buffer, so it is safe to call
+unconditionally inside a loop. LeRobot computes `stats.json` per episode and then
+aggregates, so per-rollout boundaries keep dataset statistics correct across the
+`reset()` teleport between rollouts.
+
 ## Recording paths
 
 | Method | Extra needed | Output |
 |--------|-------------|--------|
 | `start_recording` / `stop_recording` | `[lerobot]` | LeRobot v3 (parquet + MP4) |
+| `save_episode` | `[lerobot]` | Close current rollout as one episode (call once per `run_policy` for N episodes) |
 | `start_cameras_recording` / `stop_cameras_recording` | `[sim-mujoco]` alone | Plain MP4, no parquet |
 
 ## DatasetRecorder direct API

@@ -403,6 +403,106 @@ class RecordingMixin:
 
         return {"status": "success", "content": [{"text": text}]}
 
+    def save_episode(self) -> dict[str, Any]:
+        """Close the current episode and start a fresh one in the same session.
+
+        This is the explicit episode-boundary primitive for multi-episode
+        recording. The documented collection workflow is one ``run_policy``
+        call per episode:
+
+            sim.start_recording(repo_id=..., task=...)
+            for _ in range(n_episodes):
+                sim.run_policy(robot_name=..., n_steps=...)
+                sim.save_episode()   # flush this rollout as its own episode
+            sim.stop_recording()
+
+        Without this call, every ``run_policy`` rollout in a session appends to
+        the SAME buffer, so ``stop_recording`` flushes them as a single
+        ``episode_index=0`` (1200 steps land in one episode instead of N). Each
+        ``save_episode`` writes the buffered frames as a distinct episode with
+        its own ``episode_index`` / ``length`` / ``from_index`` / ``to_index``
+        and resets the per-episode frame buffer; ``stop_recording`` flushes any
+        trailing rollout automatically, so a final ``save_episode`` is optional.
+
+        Per-episode stats (LeRobot computes ``stats.json`` per episode, then
+        aggregates) stay correct because each rollout's frames are isolated to
+        their own episode rather than being mixed across mid-session
+        ``reset()`` teleports.
+
+        Idempotent on an empty buffer: when no frames have been captured since
+        the last boundary (or since ``start_recording``), it succeeds with a
+        "no frames to flush" message rather than tripping LeRobot's
+        "add frames before add_episode" guard, so callers can invoke it
+        unconditionally inside a loop.
+
+        Returns:
+            Standard status dict. On success the ``content`` text reports the
+            episode index and frame count; a structured ``status="error"`` is
+            returned when no recording is active or the underlying flush fails.
+        """
+        if self._world is None or not self._world._backend_state.get("recording", False):
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            "save_episode: not recording. Call start_recording first, "
+                            "then run_policy (once per episode) -> save_episode -> stop_recording."
+                        )
+                    }
+                ],
+            }
+
+        recorder = self._world._backend_state.get("dataset_recorder", None)
+        if recorder is None:
+            return {"status": "error", "content": [{"text": "No dataset recorder active."}]}
+
+        pending = getattr(recorder, "episode_frame_count", 0)
+        if pending <= 0:
+            return {
+                "status": "success",
+                "content": [
+                    {
+                        "text": (
+                            "save_episode: no frames to flush (buffer empty). Run a policy "
+                            "while recording before closing an episode."
+                        )
+                    }
+                ],
+            }
+
+        save_result = recorder.save_episode()
+        if isinstance(save_result, dict) and save_result.get("status") == "error":
+            # The recorder marks itself closed on a failed flush (the LeRobot
+            # episode buffer is in an undefined state); drop it so callers do
+            # not keep appending into a poisoned recorder.
+            self._world._backend_state["recording"] = False
+            self._world._backend_state["dataset_recorder"] = None
+            self._world._backend_state["trajectory"] = []
+            return {
+                "status": "error",
+                "content": [{"text": f"save_episode failed: {save_result.get('message')}"}],
+            }
+
+        # Reset the in-memory trajectory mirror so get_recording_status reports
+        # the NEXT episode from zero (matching the recorder's per-episode reset).
+        self._world._backend_state["trajectory"] = []
+
+        episode = save_result.get("episode")
+        ep_frames = save_result.get("episode_frames")
+        total = save_result.get("total_frames")
+        return {
+            "status": "success",
+            "content": [
+                {
+                    "text": (
+                        f"Episode {episode} saved -- {ep_frames} frames "
+                        f"({total} total across dataset). Buffer reset for the next episode."
+                    )
+                }
+            ],
+        }
+
     def stream_dataset(self, repo_id: str, **kwargs):
         """Open a streaming reader for a LeRobotDataset — read frames straight
         from the Hub (or a local root) with no full materialization.
