@@ -41,11 +41,13 @@ Available embodiments: ``pusht``, ``mimicgen`` (Wave 1) · ``allegro``, ``droid`
 from .client import VeraWebsocketClient
 from .config import VeraConfig
 from .provider import VeraPolicy
-from .server_runner import VeraServerRunner
+from .server_runner import DockerServerRunner, VeraServerRunner, make_server_runner
 
 __all__ = [
     "VeraPolicy",
     "VeraConfig",
     "VeraWebsocketClient",
     "VeraServerRunner",
+    "DockerServerRunner",
+    "make_server_runner",
 ]

@@ -258,3 +258,66 @@ class TestGetActionsRoundtrip:
         p = VeraPolicy(embodiment="pusht", auto_launch_server=False, client=client, motion_plan_scale=1.25)
         p.get_actions_sync(_obs(), "")
         assert client.configure_calls and client.configure_calls[0]["motion_plan_scale"] == 1.25
+
+
+# --------------------------------------------------------------------------- #
+# Docker server runner — list-arg `docker run` construction (no shell strings)
+# --------------------------------------------------------------------------- #
+class TestDockerServerRunner:
+    def test_server_mode_selects_docker_runner(self):
+        from strands_robots.policies.vera.server_runner import (
+            DockerServerRunner,
+            VeraServerRunner,
+            make_server_runner,
+        )
+
+        sub = make_server_runner(VeraConfig(embodiment="pusht", server_mode="subprocess"))
+        dock = make_server_runner(VeraConfig(embodiment="pusht", server_mode="docker"))
+        assert isinstance(sub, VeraServerRunner)
+        assert isinstance(dock, DockerServerRunner)
+
+    def test_unknown_mode_raises(self):
+        from strands_robots.policies.vera.server_runner import make_server_runner
+
+        with pytest.raises(ValueError, match="unknown server_mode"):
+            make_server_runner(VeraConfig(embodiment="pusht", server_mode="k8s"))
+
+    def test_docker_run_command_is_list_args(self, monkeypatch):
+        from strands_robots.policies.vera import server_runner as sr
+
+        # Stub `which("docker")` so the command builds without docker installed.
+        monkeypatch.setattr(sr, "_port_open", lambda *a, **k: False)
+        runner = sr.DockerServerRunner(
+            VeraConfig(
+                embodiment="pusht",
+                server_mode="docker",
+                ckpt_root="/data/vera-ckpts",
+                docker_image="strands-vera-server:latest",
+                docker_gpus="all",
+            )
+        )
+        monkeypatch.setattr(runner, "_docker", lambda: "/usr/bin/docker")
+        cmd = runner._build_run_command()
+        assert isinstance(cmd, list) and all(isinstance(t, str) for t in cmd)
+        assert cmd[:2] == ["/usr/bin/docker", "run"]
+        assert "--gpus" in cmd and cmd[cmd.index("--gpus") + 1] == "all"
+        assert "-v" in cmd and "/data/vera-ckpts:/ckpts:ro" in cmd
+        assert "-p" in cmd and "8820:8820" in cmd
+        assert "8821:8821" in cmd  # vis port published
+        assert cmd[-1] == "strands-vera-server:latest"
+        # embodiment + port wired via env to the container entrypoint
+        assert "VERA_EMBODIMENT=pusht" in cmd
+        assert "VERA_PORT=8820" in cmd
+
+    def test_docker_container_name_default(self):
+        cfg = VeraConfig(embodiment="mimicgen", server_mode="docker")
+        assert cfg.docker_container_name == "vera-server-mimicgen"
+
+    def test_docker_env_overrides(self, monkeypatch):
+        monkeypatch.setenv("VERA_SERVER_MODE", "docker")
+        monkeypatch.setenv("VERA_DOCKER_IMAGE", "myreg/vera:dev")
+        monkeypatch.setenv("VERA_DOCKER_GPUS", "device=0")
+        cfg = VeraConfig(embodiment="pusht")
+        assert cfg.server_mode == "docker"
+        assert cfg.docker_image == "myreg/vera:dev"
+        assert cfg.docker_gpus == "device=0"

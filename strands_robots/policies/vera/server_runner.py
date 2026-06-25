@@ -168,3 +168,182 @@ class VeraServerRunner:
                     logger.error("VERA server unresponsive to SIGKILL")
         self._proc = None
         logger.info("VERA server stopped")
+
+
+class DockerServerRunner:
+    """Launch and supervise the VERA policy server as a **Docker container**.
+
+    This eliminates the need to install VERA's heavy / conflicting GPU stack
+    (torch 2.6 / CUDA 12.4 + VGGT) into the host robots venv: the server runs
+    inside ``strands-vera-server`` (see ``docker/Dockerfile``) and the provider
+    connects over the same websocket protocol. Checkpoints are bind-mounted
+    read-only from the host ``ckpt_root`` to ``/ckpts`` in the container.
+
+    All ``docker`` invocations use **list args** (no shell strings).
+
+    Args:
+        config: The :class:`~strands_robots.policies.vera.config.VeraConfig`
+            (``docker_image``, ``docker_container_name``, ``docker_gpus``,
+            ``ckpt_root``, ports, embodiment).
+    """
+
+    def __init__(self, config: VeraConfig) -> None:
+        self.config = config
+        self._started_container = False
+
+    # -- helpers ------------------------------------------------------------
+
+    @staticmethod
+    def _docker() -> str:
+        from shutil import which
+
+        exe = which("docker")
+        if exe is None:
+            raise RuntimeError(
+                "docker not found on PATH. Install Docker + the NVIDIA Container "
+                "Toolkit, or use server_mode='subprocess' with a local VERA install."
+            )
+        return exe
+
+    def _container_name(self) -> str:
+        return self.config.docker_container_name or f"vera-server-{self.config.embodiment}"
+
+    def _container_running(self) -> bool:
+        import subprocess
+
+        name = self._container_name()
+        out = subprocess.run(  # noqa: S603 - list args, no shell
+            [self._docker(), "ps", "--filter", f"name=^{name}$", "--format", "{{.Names}}"],
+            capture_output=True,
+            text=True,
+        )
+        return name in out.stdout.split()
+
+    def _build_run_command(self) -> list[str]:
+        """Assemble the ``docker run`` argv as a list (no shell string)."""
+        cfg = self.config
+        name = self._container_name()
+        cmd: list[str] = [
+            self._docker(),
+            "run",
+            "-d",
+            "--rm",
+            "--name",
+            name,
+            "--gpus",
+            str(cfg.docker_gpus),
+            "-p",
+            f"{cfg.server_port}:{cfg.server_port}",
+        ]
+        if cfg.vis_port:
+            cmd += ["-p", f"{cfg.vis_port}:{cfg.vis_port}"]
+        if cfg.ckpt_root is not None:
+            cmd += ["-v", f"{cfg.ckpt_root}:/ckpts:ro"]
+        # Env overlay consumed by the container entrypoint.
+        cmd += ["-e", f"VERA_EMBODIMENT={cfg.embodiment}"]
+        cmd += ["-e", f"VERA_PORT={cfg.server_port}"]
+        cmd += ["-e", f"VERA_VIS_PORT={cfg.vis_port or 0}"]
+        cmd += ["-e", "VERA_HOST=0.0.0.0"]
+        if cfg.text_prompt:
+            cmd += ["-e", f"VERA_TEXT_PROMPT={cfg.text_prompt}"]
+        if cfg.sample_steps is not None:
+            cmd += ["-e", f"VERA_SAMPLE_STEPS={cfg.sample_steps}"]
+        if not cfg.teacache:
+            cmd += ["-e", "VERA_NO_TEACACHE=1"]
+        if cfg.docker_extra_args:
+            cmd += list(cfg.docker_extra_args)
+        cmd += [cfg.docker_image]
+        return cmd
+
+    # -- lifecycle ----------------------------------------------------------
+
+    def is_running(self) -> bool:
+        return self._container_running()
+
+    def start(self) -> None:
+        """Start the container (idempotent) and block until its websocket is up."""
+        import subprocess
+
+        cfg = self.config
+
+        if _port_open(cfg.host, cfg.server_port):
+            logger.info("VERA server already listening on %s:%s; reusing", cfg.host, cfg.server_port)
+            return
+        if self._container_running():
+            logger.info("VERA container %s already running; waiting for readiness", self._container_name())
+        else:
+            cmd = self._build_run_command()
+            logger.info("starting VERA container: %s", " ".join(cmd))
+            res = subprocess.run(cmd, capture_output=True, text=True)  # noqa: S603 - list args
+            if res.returncode != 0:
+                raise RuntimeError(f"failed to start VERA container (exit {res.returncode}):\n{res.stderr.strip()}")
+            self._started_container = True
+            logger.info("VERA container started: %s", res.stdout.strip()[:12])
+
+        self._wait_until_ready()
+
+    def _wait_until_ready(self) -> None:
+        """Poll the websocket port until ready, or raise on timeout / container exit."""
+        cfg = self.config
+        deadline = time.monotonic() + cfg.server_ready_timeout
+        while time.monotonic() < deadline:
+            if self._started_container and not self._container_running():
+                logs = self._tail_logs()
+                raise RuntimeError(
+                    f"VERA container {self._container_name()} exited before becoming ready. Last logs:\n{logs}"
+                )
+            if _port_open(cfg.host, cfg.server_port):
+                logger.info("VERA server ready on %s:%s", cfg.host, cfg.server_port)
+                return
+            time.sleep(2.0)
+        self.stop()
+        raise TimeoutError(
+            f"VERA container did not become ready on {cfg.host}:{cfg.server_port} "
+            f"within {cfg.server_ready_timeout:.0f}s (WAN model load can be slow — "
+            f"raise server_ready_timeout / VERA_SERVER_READY_TIMEOUT)."
+        )
+
+    def _tail_logs(self, lines: int = 40) -> str:
+        import subprocess
+
+        try:
+            out = subprocess.run(  # noqa: S603 - list args
+                [self._docker(), "logs", "--tail", str(lines), self._container_name()],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            return (out.stdout + out.stderr).strip()
+        except Exception as e:  # noqa: BLE001
+            return f"(could not read container logs: {e})"
+
+    def stop(self) -> None:
+        """Stop the container we started (leaves a pre-existing one running)."""
+        import subprocess
+
+        if not self._started_container:
+            return
+        name = self._container_name()
+        try:
+            subprocess.run(  # noqa: S603 - list args
+                [self._docker(), "stop", name], capture_output=True, text=True, timeout=30
+            )
+            logger.info("VERA container %s stopped", name)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("failed to stop VERA container %s: %s", name, e)
+        self._started_container = False
+
+
+def make_server_runner(config: VeraConfig):
+    """Return the right server runner for ``config.server_mode``.
+
+    ``"subprocess"`` (default) launches ``python -m vera.server...`` locally;
+    ``"docker"`` runs the ``strands-vera-server`` container. Both expose the
+    same ``start()`` / ``stop()`` / ``is_running()`` interface.
+    """
+    mode = (config.server_mode or "subprocess").lower()
+    if mode == "docker":
+        return DockerServerRunner(config)
+    if mode == "subprocess":
+        return VeraServerRunner(config)
+    raise ValueError(f"unknown server_mode {config.server_mode!r}; use 'subprocess' or 'docker'")

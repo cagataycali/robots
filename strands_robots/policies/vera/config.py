@@ -112,6 +112,12 @@ class VeraConfig:
     auto_launch_server: bool = True
     server_ready_timeout: float = 600.0
     python_executable: str | None = None
+    # --- server launch mode -------------------------------------------------
+    server_mode: str = "subprocess"  # "subprocess" | "docker"
+    docker_image: str = "strands-vera-server:latest"
+    docker_container_name: str | None = None  # default: vera-server-<embodiment>
+    docker_gpus: str = "all"  # --gpus value (e.g. "all" or "device=0")
+    docker_extra_args: list[str] | None = None  # extra `docker run` args (list, no shell)
 
     def __post_init__(self) -> None:
         # Apply per-embodiment port defaults when not explicitly set.
@@ -147,6 +153,17 @@ class VeraConfig:
             self.motion_plan_scale = _env_float("VERA_MOTION_PLAN_SCALE")
         if self.python_executable is None:
             self.python_executable = _env("VERA_PYTHON")
+        _sm = _env("VERA_SERVER_MODE")
+        if _sm:
+            self.server_mode = _sm
+        _di = _env("VERA_DOCKER_IMAGE")
+        if _di:
+            self.docker_image = _di
+        _dg = _env("VERA_DOCKER_GPUS")
+        if _dg:
+            self.docker_gpus = _dg
+        if self.docker_container_name is None:
+            self.docker_container_name = _env("VERA_DOCKER_CONTAINER") or f"vera-server-{self.embodiment}"
 
         # Coerce string paths to Path (defensive — callers may pass str).
         if self.algo_config is not None and not isinstance(self.algo_config, Path):

@@ -44,7 +44,7 @@ from strands_robots.policies.base import Policy
 
 from .client import VeraWebsocketClient
 from .config import VeraConfig
-from .server_runner import VeraServerRunner
+from .server_runner import VeraServerRunner, make_server_runner
 
 logger = logging.getLogger(__name__)
 
@@ -118,6 +118,9 @@ class VeraPolicy(Policy):
         dynamics_run_id: str | None = None,
         tracker_backend: str | None = None,
         motion_plan_scale: float | None = None,
+        server_mode: str = "subprocess",
+        docker_image: str | None = None,
+        docker_gpus: str | None = None,
         host: str = "127.0.0.1",
         image_keys: list[str] | None = None,
         action_mapping: dict[str, str] | None = None,
@@ -139,6 +142,9 @@ class VeraPolicy(Policy):
             dynamics_run_id=dynamics_run_id,
             tracker_backend=tracker_backend,
             motion_plan_scale=motion_plan_scale,
+            server_mode=server_mode,
+            docker_image=docker_image or "strands-vera-server:latest",
+            docker_gpus=docker_gpus or "all",
         )
         self.image_keys = list(image_keys) if image_keys else None
         self.action_mapping = dict(action_mapping) if action_mapping else None
@@ -148,7 +154,7 @@ class VeraPolicy(Policy):
         self._client = client or VeraWebsocketClient(self.config.host, self.config.server_port)
         self._runner = server_runner
         if self._runner is None and self.config.auto_launch_server:
-            self._runner = VeraServerRunner(self.config)
+            self._runner = make_server_runner(self.config)
 
         # Episode state (mirrors VERA's RemotePolicy).
         self._server_meta: dict[str, Any] | None = None

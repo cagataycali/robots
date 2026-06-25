@@ -210,7 +210,10 @@
                 "motion_plan_scale",
                 "image_keys",
                 "action_mapping",
-                "prompt"
+                "prompt",
+                "server_mode",
+                "docker_image",
+                "docker_gpus"
             ],
             "defaults": {
                 "embodiment": "pusht",
