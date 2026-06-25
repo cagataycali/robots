@@ -261,3 +261,239 @@ def test_augment_observation_noop_when_injection_disabled(mj_sim):
     )
     out = adapter.augment_observation(mj_sim, {"existing": 1})
     assert out == {"existing": 1}
+
+
+# ---------------------------------------------------------------------------
+# Fail-soft fallback contract for the MuJoCo-backed state readers.
+#
+# ``_read_eef_pose`` promises a split-source read (position from the gripper
+# site, orientation from the wrist body) that degrades per-axis to
+# ``sim.get_body_state`` and ultimately to ``(None, None)`` - never raising,
+# so a single bad lookup only drops one observation key instead of aborting
+# the eval. ``_read_gripper_qpos`` promises an all-or-nothing read that bails
+# to ``None`` (so the caller falls back to its legacy single-joint path) on
+# any failure. The happy-path tests above use a fully resolvable model; these
+# pin the degrade branches that fire on broken / partial / non-RoboSuite
+# scenes, which the cached-asset-gated suite leaves uncovered.
+# ---------------------------------------------------------------------------
+
+
+class _FallbackSim(SimEngine):
+    """SimEngine whose ``_world`` carries arbitrary model/data plus a
+    pluggable ``get_body_state`` so tests can drive the fallback branch.
+
+    ``get_body_state`` is provided here (unlike ``_MjSim`` above, which omits
+    it to force the direct path) so the body-state fallback is exercised. Pass
+    ``gbs=None`` to make the fallback itself raise, pinning the
+    "fallback also fails" degrade to ``(None, None)``.
+    """
+
+    def __init__(self, model, data, gbs=None) -> None:
+        self._world = _MjWorld(model, data)
+        self._gbs = gbs
+
+    def get_body_state(self, body_name):
+        if self._gbs is None:
+            raise RuntimeError("get_body_state unavailable")
+        return self._gbs(body_name)
+
+    def create_world(self, timestep=None, gravity=None, ground_plane=True):
+        return {"status": "success"}
+
+    def destroy(self):
+        return {"status": "success"}
+
+    def reset(self):
+        return {"status": "success"}
+
+    def step(self, n_steps: int = 1):
+        return {"status": "success"}
+
+    def get_state(self):
+        return {}
+
+    def add_robot(self, name, **kw):
+        return {"status": "success"}
+
+    def remove_robot(self, name):
+        return {"status": "success"}
+
+    def list_robots(self):
+        return []
+
+    def robot_joint_names(self, robot_name):
+        return []
+
+    def add_object(self, name, **kw):
+        return {"status": "success"}
+
+    def remove_object(self, name):
+        return {"status": "success"}
+
+    def get_observation(self, robot_name=None, *, skip_images=False):
+        return {}
+
+    def send_action(self, action, robot_name=None, n_substeps=1):
+        return {"status": "success"}
+
+    def physics_timestep(self):
+        return 0.002
+
+    def render(self, camera_name="default", width=640, height=480):
+        return {"status": "success", "content": []}
+
+
+def _body_state_payload(pos, quat):
+    """Shape a ``get_body_state`` success payload the way the MuJoCo backend
+    does: a ``content`` list whose last block carries the ``json`` dict."""
+    return {
+        "status": "success",
+        "content": [
+            {"text": "Body 'x'"},
+            {"json": {"position": list(pos), "quaternion": list(quat)}},
+        ],
+    }
+
+
+def test_read_eef_pose_unresolvable_names_fall_back_to_body_state(mj_sim):
+    """When neither the site nor the body name resolves in the model, the
+    reader degrades to ``sim.get_body_state`` and returns its pose - the
+    documented fallback for non-RoboSuite scenes lacking the canonical site."""
+    captured = {}
+
+    def gbs(body_name):
+        captured["body_name"] = body_name
+        return _body_state_payload([1.0, 2.0, 3.0], [1.0, 0.0, 0.0, 0.0])
+
+    # Real model, but names that do not exist in it -> both direct lookups
+    # return -1 and the reader must use the fallback.
+    adapter = LiberoAdapter.from_text(
+        _PICK_CUBE_BDDL,
+        install_cameras=False,
+        auto_generate_scene=False,
+        eef_body_name="no_such_body",
+        eef_state_site_name="no_such_site",
+    )
+    sim = _FallbackSim(mj_sim._world._model, mj_sim._world._data, gbs=gbs)
+
+    pos, quat = adapter._read_eef_pose(sim)
+    assert pos == [1.0, 2.0, 3.0]
+    assert quat == [1.0, 0.0, 0.0, 0.0]
+    # The fallback is queried for the configured EEF body name.
+    assert captured["body_name"] == "no_such_body"
+
+
+def test_read_eef_pose_mixes_direct_site_with_fallback_quat(mj_sim):
+    """A partial resolve (site present, body absent) mixes sources per-axis:
+    position comes from the direct site read, orientation from the body-state
+    fallback. This is the documented "each axis populated by whichever source
+    succeeded first" contract, not an all-or-nothing switch."""
+    sid = mujoco.mj_name2id(mj_sim._world._model, mujoco.mjtObj.mjOBJ_SITE, "gripper0_grip_site")
+    site_gt = np.array(mj_sim._world._data.site_xpos[sid])
+
+    def gbs(body_name):
+        return _body_state_payload([9.0, 9.0, 9.0], [0.0, 1.0, 0.0, 0.0])
+
+    adapter = LiberoAdapter.from_text(
+        _PICK_CUBE_BDDL,
+        install_cameras=False,
+        auto_generate_scene=False,
+        eef_body_name="no_such_body",  # body lookup fails -> quat from fallback
+        eef_state_site_name="gripper0_grip_site",  # site resolves -> pos direct
+    )
+    sim = _FallbackSim(mj_sim._world._model, mj_sim._world._data, gbs=gbs)
+
+    pos, quat = adapter._read_eef_pose(sim)
+    # Position tracks the real site read, NOT the fallback's [9, 9, 9].
+    np.testing.assert_allclose(pos, site_gt, atol=1e-6)
+    # Orientation comes from the fallback because the body name is unresolvable.
+    assert quat == [0.0, 1.0, 0.0, 0.0]
+
+
+def test_read_eef_pose_returns_none_pair_when_everything_fails():
+    """No resolvable model and a failing ``get_body_state`` yields
+    ``(None, None)`` rather than raising - the caller then injects no EEF
+    state keys for that step."""
+    adapter = LiberoAdapter.from_text(
+        _PICK_CUBE_BDDL,
+        install_cameras=False,
+        auto_generate_scene=False,
+        eef_body_name="robot0_right_hand",
+        eef_state_site_name="gripper0_grip_site",
+    )
+    # Non-mujoco "model"/"data" objects: mj_name2id raises TypeError, caught
+    # internally; the fallback then raises too (gbs=None).
+    sim = _FallbackSim(object(), object(), gbs=None)
+    assert adapter._read_eef_pose(sim) == (None, None)
+
+
+def test_read_gripper_qpos_none_when_joint_lookup_raises():
+    """A model object that ``mj_name2id`` cannot consume (TypeError) is caught
+    and the gripper read bails to ``None`` so the caller's legacy single-joint
+    fallback takes over - the read never propagates the error."""
+    adapter = LiberoAdapter.from_text(
+        _PICK_CUBE_BDDL,
+        install_cameras=False,
+        auto_generate_scene=False,
+        state_gripper_joint_names=["gripper0_finger_joint1", "gripper0_finger_joint2"],
+    )
+    sim = _FallbackSim(object(), object())
+    assert adapter._read_gripper_qpos(sim) is None
+
+
+def test_read_gripper_qpos_none_when_qpos_index_fails(mj_sim):
+    """With a real model but a data object lacking ``qpos``, the joint names
+    resolve yet the per-finger qpos read raises IndexError/AttributeError,
+    which is caught and collapses the whole read to ``None``."""
+
+    class _NoQposData:
+        pass
+
+    adapter = LiberoAdapter.from_text(
+        _PICK_CUBE_BDDL,
+        install_cameras=False,
+        auto_generate_scene=False,
+        state_gripper_joint_names=["gripper0_finger_joint1", "gripper0_finger_joint2"],
+    )
+    sim = _FallbackSim(mj_sim._world._model, _NoQposData())
+    assert adapter._read_gripper_qpos(sim) is None
+
+
+def test_read_gripper_qpos_none_when_no_joint_names_configured(mj_sim):
+    """An empty ``state_gripper_joint_names`` (e.g. a scene with no gripper)
+    short-circuits to ``None`` before any model lookup."""
+    adapter = LiberoAdapter.from_text(
+        _PICK_CUBE_BDDL,
+        install_cameras=False,
+        auto_generate_scene=False,
+        state_gripper_joint_names=[],
+    )
+    assert adapter._read_gripper_qpos(mj_sim) is None
+
+
+def test_read_eef_pose_inner_array_read_failure_falls_back(mj_sim):
+    """When the site/body NAMES resolve against the model but the per-array
+    read (``data.site_xpos`` / ``data.xquat``) raises - e.g. a data object
+    that lacks those arrays - each inner read is caught and the reader
+    degrades to the body-state fallback rather than propagating the error."""
+
+    class _NoArraysData:
+        pass
+
+    def gbs(body_name):
+        return _body_state_payload([5.0, 5.0, 5.0], [0.0, 0.0, 1.0, 0.0])
+
+    adapter = LiberoAdapter.from_text(
+        _PICK_CUBE_BDDL,
+        install_cameras=False,
+        auto_generate_scene=False,
+        eef_body_name="robot0_right_hand",  # resolves in model -> name2id ok
+        eef_state_site_name="gripper0_grip_site",  # resolves in model -> name2id ok
+    )
+    # Real model (name lookups succeed) but a data object without site_xpos /
+    # xquat (the array reads raise AttributeError, caught internally).
+    sim = _FallbackSim(mj_sim._world._model, _NoArraysData(), gbs=gbs)
+
+    pos, quat = adapter._read_eef_pose(sim)
+    assert pos == [5.0, 5.0, 5.0]
+    assert quat == [0.0, 0.0, 1.0, 0.0]
