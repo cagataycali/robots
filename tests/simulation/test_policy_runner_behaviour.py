@@ -519,3 +519,94 @@ class TestVideoFinalization:
         assert "frames" in text
         assert "30fps" in text
         assert video_path.exists() and video_path.stat().st_size > 0
+
+
+def _json_block(result: dict) -> dict:
+    """Extract the agent-consumable ``{"json": {...}}`` content block."""
+    return next(c["json"] for c in result["content"] if isinstance(c, dict) and "json" in c)
+
+
+class TestRunPolicyStructuredResult:
+    """run_policy / PolicyRunner.run must return an agent-consumable
+    ``{"json": {...}}`` content block alongside the human-readable text, so a
+    caller can read n_steps / video_path / action_errors as typed fields
+    instead of regex-parsing prose. Mirrors eval_policy()'s json block.
+    """
+
+    def test_run_emits_structured_json_block(self, sim_with_robot):
+        policy = MockPolicy()
+        policy.set_robot_state_keys(sim_with_robot.robot_joint_names("alice"))
+        runner = PolicyRunner(sim_with_robot)
+        result = runner.run(
+            "alice",
+            policy,
+            instruction="pick up cube",
+            duration=0.1,
+            control_frequency=50,
+            fast_mode=True,
+        )
+        assert result["status"] == "success", result
+        payload = _json_block(result)
+        assert payload["robot_name"] == "alice"
+        assert payload["policy"] == "MockPolicy"
+        assert payload["instruction"] == "pick up cube"
+        # 0.1s @ 50 Hz -> 5 control steps.
+        assert payload["n_steps"] == 5
+        assert payload["action_errors"] == 0
+        assert payload["stopped_early"] is False
+        assert payload["elapsed_s"] >= 0.0
+        # No video requested -> path is None, zero frames.
+        assert payload["video_path"] is None
+        assert payload["video_frames"] == 0
+
+    def test_json_reports_written_video_path(self, sim_with_robot, tmp_path, monkeypatch):
+        policy = MockPolicy()
+        policy.set_robot_state_keys(sim_with_robot.robot_joint_names("alice"))
+        monkeypatch.setattr(
+            sim_with_robot,
+            "render",
+            lambda *a, **k: TestVideoFinalization._png_render_result(),
+        )
+        video_path = tmp_path / "rollout.mp4"
+        runner = PolicyRunner(sim_with_robot)
+        result = runner.run(
+            "alice",
+            policy,
+            duration=0.2,
+            control_frequency=50,
+            fast_mode=True,
+            video=VideoConfig(path=str(video_path), fps=30, width=16, height=16),
+        )
+        assert result["status"] == "success", result
+        payload = _json_block(result)
+        assert payload["video_path"] == str(video_path)
+        assert payload["video_frames"] > 0
+
+    def test_json_video_path_none_when_no_frames(self, sim_with_robot, tmp_path, monkeypatch):
+        policy = MockPolicy()
+        policy.set_robot_state_keys(sim_with_robot.robot_joint_names("alice"))
+        # Probe passes but in-loop frames never decode -> 0 frames written.
+        calls = {"n": 0}
+
+        def render(*a, **k):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return TestVideoFinalization._png_render_result()
+            return {"status": "success", "content": [{"text": "no image"}]}
+
+        monkeypatch.setattr(sim_with_robot, "render", render)
+        video_path = tmp_path / "empty.mp4"
+        runner = PolicyRunner(sim_with_robot)
+        result = runner.run(
+            "alice",
+            policy,
+            duration=0.1,
+            control_frequency=50,
+            fast_mode=True,
+            video=VideoConfig(path=str(video_path), fps=30, width=16, height=16),
+        )
+        assert result["status"] == "success", result
+        payload = _json_block(result)
+        # Recording was requested but produced no frames -> path None.
+        assert payload["video_path"] is None
+        assert payload["video_frames"] == 0

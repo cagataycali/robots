@@ -416,7 +416,12 @@ class SimEngine(ABC):
                 kwargs per the #300 contract, so forwarding is always safe.
 
         Returns:
-            Standard status dict.
+            Standard status dict with an agent-consumable ``{"json": {...}}``
+            content block alongside the human-readable ``text``. The json block
+            carries the rollout facts as typed fields (``n_steps``,
+            ``elapsed_s``, ``stopped_early``, ``action_errors``, ``video_path``,
+            ``video_frames``, ...) so callers can self-correct programmatically
+            without parsing the text. Mirrors :meth:`eval_policy`.
         """
         from strands_robots.policies import create_policy
 
