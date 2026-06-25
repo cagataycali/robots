@@ -192,7 +192,13 @@ lerobot = [
 # `lerobot[feetech]>=0.5.2` directly and the git-source step drops away.
 molmoact2 = [
     "strands-robots[lerobot]",
-    "transformers>=4.46",
+    # Mirror lerobot's own [molmoact2] dep pins exactly. The transformers
+    # floor MUST match lerobot[transformers-dep] (>=5.4.0,<5.6.0): MolmoAct2's
+    # modeling/processor code uses transformers 5.4+ APIs, and a looser floor
+    # (e.g. >=4.46) lets a resolver pick an incompatible transformers that
+    # imports fine -- passing the importability guard in molmoact2.build_policy
+    # -- then dead-ends deep inside lerobot model construction.
+    "transformers>=5.4.0,<5.6.0",
     "peft>=0.18.0,<1.0.0",
     "scipy>=1.14.0,<2.0.0",
 ]
