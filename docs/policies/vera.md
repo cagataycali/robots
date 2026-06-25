@@ -63,6 +63,17 @@ sim.run_policy(
   + Jacobian IDM, served from the container, ~2 s/chunk on an L40S.</figcaption>
 </figure>
 
+The **MimicGen → Panda** path drives a real 7-DoF arm: the WAN planner + Jacobian
+IDM emit 6-DoF end-effector deltas, and the provider's IK bridge solves them onto
+the Panda's joints (auto-discovering the end-effector frame — no manual wiring).
+See [`examples/vera_mimicgen_panda/`](https://github.com/strands-labs/robots/tree/main/examples/vera_mimicgen_panda).
+
+<figure markdown>
+  ![VERA MimicGen Panda rollout](../assets/vera/mimicgen_panda.gif)
+  <figcaption>VERA MimicGen policy on a Franka Panda — WAN dream + AllTracker +
+  Jacobian IDM → eef-deltas → VERA IK bridge → joint targets → MuJoCo.</figcaption>
+</figure>
+
 ## Embodiments
 
 From VERA's `adapter_factory._EMBODIMENTS`:
@@ -97,7 +108,9 @@ hf download sizhe-lester-li/VERA --local-dir ./vera-ckpts   # ~42 GB full; ~4 GB
 export VERA_CKPT_ROOT=$PWD/vera-ckpts
 ```
 
-MimicGen additionally needs the **frozen WAN 2.1 base** (text-enc + VAE + CLIP):
+MimicGen additionally needs the **frozen WAN 2.1 base** (text-enc + VAE + CLIP).
+Its IDM uses the **AllTracker** point tracker, which the container bundles
+(cloned at build time; weights auto-download). The WAN base:
 
 ```bash
 hf download Wan-AI/Wan2.1-T2V-1.3B --local-dir ./Wan2.1-T2V-1.3B

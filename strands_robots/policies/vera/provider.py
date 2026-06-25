@@ -57,6 +57,28 @@ def _is_image_value(value: Any) -> bool:
     return arr.ndim == 3 and arr.shape[-1] == 3
 
 
+def _resize_frame(frame: np.ndarray, width: int) -> np.ndarray:
+    """Resize a ``(H, W, 3) uint8`` frame to ``(width, width, 3)`` (square).
+
+    The VERA WAN/DFoT planner expects each view at a fixed per-view width
+    (``VeraConfig.render_width``); the sim may render at any resolution, so the
+    provider resizes here so ``sum(view_widths)`` matches the concatenated rgb.
+    Uses PIL (Pillow is already a sim dep) to avoid a hard cv2 dependency.
+    """
+    if frame.shape[0] == width and frame.shape[1] == width:
+        return frame
+    try:
+        from PIL import Image
+
+        return np.asarray(Image.fromarray(frame).resize((width, width), Image.BILINEAR), dtype=np.uint8)
+    except Exception:
+        # Nearest-neighbour numpy fallback (no PIL): index-based resample.
+        h, w = frame.shape[:2]
+        ys = (np.linspace(0, h - 1, width)).astype(np.int64)
+        xs = (np.linspace(0, w - 1, width)).astype(np.int64)
+        return np.ascontiguousarray(frame[ys][:, xs])
+
+
 def _to_uint8_frame(value: Any) -> np.ndarray:
     """Coerce a camera frame to a contiguous ``(H, W, 3) uint8`` array."""
     arr = np.asarray(value)
@@ -359,22 +381,21 @@ class VeraPolicy(Policy):
                 "VeraPolicy requires at least one camera frame in the observation "
                 f"(keys: {list(observation_dict)}); none look like (H, W, 3) images."
             )
-        frames = [_to_uint8_frame(observation_dict[k]) for k in view_keys]
+        rw = int(self.config.render_width or 128)
+        frames = [_resize_frame(_to_uint8_frame(observation_dict[k]), rw) for k in view_keys]
         if len(frames) == 1:
             return frames[0]
-        # Width-concat across views (server's documented layout).
-        h = min(f.shape[0] for f in frames)
-        frames = [f[:h] for f in frames]
+        # Width-concat across views, each already render_width wide.
         return np.ascontiguousarray(np.concatenate(frames, axis=1))
 
     def _infer(self, observation_dict: dict[str, Any], instruction: str, meta: dict[str, Any]) -> np.ndarray:
         """Pack the rolling context window and call the server's ``infer``."""
         view_keys = self._resolve_view_keys(observation_dict, meta)
         context_rgb = np.stack(list(self._window), axis=0)  # (T, H, W, 3) uint8
-        # Per-view widths: split the concatenated width evenly across views.
-        total_w = context_rgb.shape[2]
+        # Each view was resized to render_width before concat, so view_widths is
+        # simply render_width per view (sum == concatenated rgb width).
         n_views = max(1, len(view_keys))
-        per_w = total_w // n_views
+        per_w = int(self.config.render_width or (context_rgb.shape[2] // n_views))
         view_widths = [per_w] * n_views
         req: dict[str, Any] = {
             "context_rgb": context_rgb,
@@ -508,16 +529,62 @@ class VeraPolicy(Policy):
         ee_frame = self._ee_frame_name
         if mj_model is None or ee_frame is None:
             return None
-        # Current joint configuration as the IK seed.
+        # Current joint configuration as the IK seed. mink.Configuration works in
+        # FULL model qpos space (nq), which includes non-robot DOFs (e.g. free
+        # bodies). Seed from the model rest pose (qpos0) and write the robot's
+        # joint values into their qpos addresses, so IK perturbs only the arm.
         keys = self._robot_state_keys
         if not keys:
             return None
-        q = []
+        addr = self._joint_qpos_addr(mj_model)  # {state_key: qpos_index}
+        try:
+            import numpy as _np
+
+            q_full = _np.array(mj_model.qpos0, dtype=_np.float64).copy()
+        except Exception:
+            q_full = np.zeros(int(mj_model.nq), dtype=np.float64)
         for k in keys:
             if k not in observation_dict:
                 return None
-            q.append(float(np.asarray(observation_dict[k]).reshape(-1)[0]))
-        return mj_model, ee_frame, np.asarray(q, dtype=np.float64)
+            val = float(np.asarray(observation_dict[k]).reshape(-1)[0])
+            if k in addr:
+                q_full[addr[k]] = val
+        return mj_model, ee_frame, q_full
+
+    def _joint_qpos_addr(self, mj_model: Any) -> dict[str, int]:
+        """Map each robot_state_key -> its qpos address in the full model.
+
+        Robot joints are namespaced in the compiled model (``<ns>/<joint>``);
+        ``robot_state_keys`` are unqualified. Match by suffix so the IK seed and
+        output read/write the correct qpos slots regardless of other DOFs (free
+        bodies, multiple robots) present in the scene. Cached per model id.
+        """
+        cache = getattr(self, "_qpos_addr_cache", None)
+        if cache is not None and cache[0] is id(mj_model):
+            return cache[1]
+
+        addr: dict[str, int] = {}
+        # Real MjModel: map robot_state_keys -> qpos addresses by (namespaced)
+        # joint name. Falls back to a positional identity map when the model
+        # lacks MuJoCo joint introspection (e.g. a test stub) — state_key i -> i.
+        try:
+            import mujoco
+
+            for j in range(int(mj_model.njnt)):
+                name = mujoco.mj_id2name(mj_model, mujoco.mjtObj.mjOBJ_JOINT, j)
+                if not name:
+                    continue
+                short = name.split("/")[-1]
+                qadr = int(mj_model.jnt_qposadr[j])
+                for k in self._robot_state_keys:
+                    if k in (short, name):
+                        addr[k] = qadr
+        except (AttributeError, ImportError, TypeError):
+            addr = {}
+        if not addr:
+            addr = {k: i for i, k in enumerate(self._robot_state_keys)}
+        self._qpos_addr_cache = (id(mj_model), addr)
+        return addr
 
     def _ensure_ik_bridge(self, mj_model: Any, ee_frame: str):
         """Lazily build (and cache) the MinkIKBridge."""
@@ -571,21 +638,23 @@ class VeraPolicy(Policy):
         qpos = np.asarray(result["qpos"], dtype=np.float32)  # [T, nq]
         grip = result.get("gripper")
         keys = self._robot_state_keys
-        # Identify a gripper joint name on the robot (if any) to receive the
-        # binarized gripper command; otherwise the gripper column is dropped.
-        gripper_key = next((k for k in keys if "gripper" in k.lower() or "finger" in k.lower()), None)
-        joint_keys = [k for k in keys if k != gripper_key]
+        addr = self._joint_qpos_addr(mj_model)
+        # Gripper: a robot joint whose name hints at the gripper receives the
+        # binarized gripper command (IK does not solve the gripper DOFs).
+        gripper_keys = [k for k in keys if "gripper" in k.lower() or "finger" in k.lower()]
+        arm_keys = [k for k in keys if k not in gripper_keys]
 
         dicts: list[dict[str, Any]] = []
         for t in range(qpos.shape[0]):
             row = qpos[t]
-            n = min(len(joint_keys), row.shape[0])
-            d: dict[str, Any] = {joint_keys[i]: float(row[i]) for i in range(n)}
-            if gripper_key is not None and grip is not None and t < len(grip):
+            # Read each arm joint back from its qpos address (robust to free bodies).
+            d: dict[str, Any] = {k: float(row[addr[k]]) for k in arm_keys if k in addr and addr[k] < row.shape[0]}
+            if grip is not None and t < len(grip):
                 gval = float(grip[t])
                 if gripper_is_raw:
                     gval = 1.0 if gval > 0.5 else 0.0
-                d[gripper_key] = gval
+                for gk in gripper_keys:
+                    d[gk] = gval
             dicts.append(d)
         logger.debug(
             "VeraPolicy IK: %d steps, tracking mean=%.1fmm max=%.1fmm",

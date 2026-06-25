@@ -22,6 +22,18 @@ Embodiment = Literal["pusht", "mimicgen", "allegro", "droid"]
 
 # Per-embodiment default ports (policy, viz) — match the VERA examples
 # (PushT uses 8820/8821; everything else uses 8800/8801).
+# Per-embodiment per-view render width the VERA WAN/DFoT planner expects. The
+# server does NOT advertise this (image_resolution is None); it is the client's
+# job to send each view at this width (matching VERA's own RemotePolicy
+# render_size). pusht: single 252-wide view (PushTImageEnv default); mimicgen:
+# 128/view (run_mimicgen_eval default); droid/allegro follow upstream eval.
+_DEFAULT_RENDER_WIDTH: dict[str, int] = {
+    "pusht": 252,
+    "mimicgen": 128,
+    "droid": 128,
+    "allegro": 128,
+}
+
 _DEFAULT_PORTS: dict[str, tuple[int, int]] = {
     "pusht": (8820, 8821),
     "mimicgen": (8800, 8801),
@@ -99,6 +111,7 @@ class VeraConfig:
     host: str = "127.0.0.1"
     server_port: int | None = None
     vis_port: int | None = None
+    render_width: int | None = None  # per-view width sent to the server (per-embodiment default)
     algo_config: Path | None = None
     dynamics_run_id: str | None = None
     text_prompt: str | None = None
@@ -128,6 +141,9 @@ class VeraConfig:
         if self.vis_port is None:
             env_vis = _env_int("VERA_VIS_PORT")
             self.vis_port = env_vis if env_vis is not None else default_vis
+
+        if self.render_width is None:
+            self.render_width = _env_int("VERA_RENDER_WIDTH") or _DEFAULT_RENDER_WIDTH.get(self.embodiment, 128)
 
         # Environment overrides (deploy/CI win over code defaults).
         if self.algo_config is None:

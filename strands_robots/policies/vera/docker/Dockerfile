@@ -84,6 +84,24 @@ RUN pip install --no-build-isolation -e ".[idm,video]"
 # path, so an import-compat shim is sufficient and avoids a version collision.
 RUN pip install colorama "setuptools==69.5.1" torch-fidelity
 
+# --- AllTracker (MimicGen/droid motion tracker) -----------------------------
+# VERA's WAN planner uses the AllTracker point tracker for eef-delta embodiments
+# (mimicgen, droid). It is a sibling-import repo (no packaging): clone it and put
+# its PARENT dir on the path via VERA_ALLTRACKER_ROOT so `import alltracker.*`
+# resolves. The reference weights auto-download from HF at first use. Its
+# requirements re-pin torch/lightning/opencv — install only the few extras it
+# actually needs at inference, letting PIP_CONSTRAINT keep the NGC torch.
+ARG ALLTRACKER_REPO=https://github.com/aharley/alltracker.git
+ARG ALLTRACKER_REF=e7553135e7b361590dbccd10e2b274b024f41cd6
+RUN git clone "${ALLTRACKER_REPO}" /opt/third_party/alltracker && \
+    git -C /opt/third_party/alltracker checkout "${ALLTRACKER_REF}"
+RUN pip install opencv-python einops scikit-image prettytable
+# Both paths needed: /opt/third_party for VERA's `import alltracker.utils.*`,
+# and the alltracker dir itself (appended LAST so it can't shadow vera/strands
+# modules) for alltracker's own flat `import utils.misc` / `import nets.*`.
+ENV VERA_ALLTRACKER_ROOT=/opt/third_party
+ENV PYTHONPATH=${PYTHONPATH}:/opt/third_party/alltracker
+
 # Install the torchmetrics compat shim as an auto-imported sitecustomize so it
 # applies to every interpreter start (the server subprocess included).
 COPY strands_robots/policies/vera/docker/sitecustomize_vera.py /opt/vera-shim/sitecustomize.py
