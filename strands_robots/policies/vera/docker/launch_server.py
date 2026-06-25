@@ -11,7 +11,12 @@ Usage (from entrypoint.sh):
 import runpy
 import sys
 
-import wandb_offline_resolve  # noqa: F401 — import side effect patches download_checkpoint
+import wandb_offline_resolve
+
+# Patch download_checkpoint to resolve the IDM wandb-run-id against the locally
+# mounted checkpoints before the server module is imported (idempotent; the module
+# also self-installs on import, this explicit call documents the ordering contract).
+wandb_offline_resolve.install()
 
 # Hand the remaining argv to the server module as if it were invoked with -m.
 sys.argv = ["vera.server.start_vera_server", *sys.argv[1:]]

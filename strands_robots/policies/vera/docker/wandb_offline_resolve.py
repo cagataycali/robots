@@ -124,8 +124,11 @@ def install(ckpt_root: str | None = None) -> None:
 
         if hasattr(mpl, "download_checkpoint"):
             mpl.download_checkpoint = _patched
-    except Exception:
-        pass
+    except Exception as exc:
+        # motion_policy_loading may not be importable in every server build; the
+        # primary checkpoint_utils patch above already covers the common path, so a
+        # missing by-name re-import is non-fatal. Log at debug for diagnosability.
+        log.debug("[offline-resolve] motion_policy_loading patch skipped: %s", exc)
     log.info("[offline-resolve] download_checkpoint patched (local-first, wandb-fallback)")
 
 

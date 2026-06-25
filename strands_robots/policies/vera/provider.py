@@ -48,8 +48,6 @@ from .server_runner import VeraServerRunner, make_server_runner
 
 logger = logging.getLogger(__name__)
 
-_IMAGE_KEY_HINTS = ("image", "rgb", "cam")
-
 
 def _is_image_value(value: Any) -> bool:
     """Heuristic: is this observation value a camera frame ``(H, W, 3)``?"""
