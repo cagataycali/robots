@@ -1095,6 +1095,17 @@ class MuJoCoSimEngine(
                     cameras.append(cam_name)
         base["cameras"] = cameras
 
+        bodies: list[str] = []
+        if self._world is not None and self._world._model is not None:
+            mj = self._mj
+            model = self._world._model
+            for i in range(model.nbody):
+                body_name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, i)
+                if body_name:
+                    bodies.append(body_name)
+        base["bodies"] = bodies
+        base["methods"]["list_bodies"] = "(robot_name: str | None = None) -> dict (camera mount points)"
+
         if self._world is not None:
             base["sim_time"] = self._world.sim_time
             base["world_created"] = True
@@ -1140,6 +1151,77 @@ class MuJoCoSimEngine(
             text += f"{jnt}: pos={vals['position']:.4f}, vel={vals['velocity']:.4f}\n"
 
         return {"status": "success", "content": [{"text": text}, {"json": {"state": state}}]}
+
+    def list_bodies(self, robot_name: str | None = None) -> dict[str, Any]:
+        """List MuJoCo body names available as camera/sensor mount points.
+
+        This is the discovery surface for ``add_camera(parent_body=...)``.
+        Robot bodies are namespaced ``<robot>/<body>`` (e.g. ``so101/gripper``
+        is the canonical wrist-camera mount for SO101/SO100 arms). Without this
+        action an agent has to guess the body name, mount a camera against a
+        non-existent body, read the failure, and retry -- a wasted turn. Call
+        ``list_bodies`` first to resolve the exact mount point deterministically.
+
+        Args:
+            robot_name: When set, return only that robot's bodies (its
+                namespace prefix). When omitted, return every body in the
+                world (the global ``world`` body plus all robots/objects).
+
+        Returns:
+            ``{"status", "content": [{"text"}, {"json": {"bodies": [...]}}]}``.
+            ``bodies`` is the ordered list of body names; the ``text`` block
+            mirrors it for human display. When ``robot_name`` is given the
+            json also carries ``"gripper_body"`` -- the best-guess gripper/
+            end-effector mount (a body whose short name contains ``gripper``,
+            ``hand``, ``ee``, or ``tool``), or ``null`` if none matches.
+        """
+        if self._world is None or self._world._model is None or self._world._data is None:
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
+
+        mj = self._mj
+        model = self._world._model
+
+        prefix = ""
+        if robot_name is not None:
+            if robot_name not in self._world.robots:
+                return {
+                    "status": "error",
+                    "content": [
+                        {
+                            "text": (
+                                f"list_bodies: robot '{robot_name}' not found. "
+                                f"Known robots: {list(self._world.robots.keys())}"
+                            )
+                        }
+                    ],
+                }
+            prefix = self._world.robots[robot_name].namespace or ""
+
+        bodies = [
+            name
+            for i in range(model.nbody)
+            if (name := mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, i)) and (not prefix or name.startswith(prefix))
+        ]
+
+        json_payload: dict[str, Any] = {"bodies": bodies}
+        if robot_name is not None:
+            gripper_body: str | None = None
+            for name in bodies:
+                short = name.rsplit("/", 1)[-1].lower()
+                if any(tok in short for tok in ("gripper", "hand", "ee", "tool")):
+                    gripper_body = name
+                    break
+            json_payload["gripper_body"] = gripper_body
+
+        text = (
+            f"Bodies ({len(bodies)}): {bodies}\n"
+            "Use any of these as add_camera(parent_body=...) to mount a "
+            "wrist/gripper camera."
+        )
+        if robot_name is not None and json_payload.get("gripper_body"):
+            text += f"\nGripper/EEF mount: '{json_payload['gripper_body']}'"
+
+        return {"status": "success", "content": [{"text": text}, {"json": json_payload}]}
 
     # Object Management
 
@@ -1297,9 +1379,10 @@ class MuJoCoSimEngine(
         gripper such as ``"so101/gripper"``), the camera is attached TO that
         body and rides along with it -- this is how a realistic wrist/gripper
         camera is modelled for SO101/SO100-style data collection. In this
-        mode ``position`` and ``target`` are in the body's LOCAL frame. Use
-        ``list_robots`` / ``get_robot_state`` to discover body names; robot
-        bodies are namespaced ``<robot>/<body>``.
+        mode ``position`` and ``target`` are in the body's LOCAL frame. Call
+        ``list_bodies`` (optionally with ``robot_name``) to discover valid
+        mount points before placing a camera; robot bodies are namespaced
+        ``<robot>/<body>`` (e.g. ``so101/gripper`` is the SO101 wrist mount).
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -1358,7 +1441,8 @@ class MuJoCoSimEngine(
                         {
                             "text": (
                                 f"add_camera: parent_body '{parent_body}' not found. "
-                                f"Robot bodies are namespaced '<robot>/<body>'. Available bodies: {available}"
+                                f"Robot bodies are namespaced '<robot>/<body>'. "
+                                f"Call list_bodies to discover mount points. Available bodies: {available}"
                             )
                         }
                     ],
@@ -1925,9 +2009,9 @@ class MuJoCoSimEngine(
                 "(direct path or auto-resolve from data_config name), add objects, run VLA policies, "
                 "render cameras, record trajectories, domain randomize. "
                 "Same Policy ABC as real robot control - sim and real with zero code changes. "
-                "Actions (61 total): "
+                "Actions (62 total): "
                 "[World] create_world, load_scene, reset, get_state, destroy, export_xml; "
-                "[Robots] add_robot, remove_robot, list_robots, get_robot_state; "
+                "[Robots] add_robot, remove_robot, list_robots, get_robot_state, list_bodies; "
                 "[Objects] add_object, remove_object, move_object, list_objects; "
                 "[Cameras] add_camera, remove_camera; "
                 "[Policy] run_policy, start_policy, stop_policy, eval_policy, replay_episode, list_policies_running; "

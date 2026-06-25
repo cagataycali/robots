@@ -487,6 +487,75 @@ class TestCameraManagement:
         assert sim_with_robot._world.cameras["wrist"].parent_body == "arm1/base"
 
 
+class TestListBodies:
+    """list_bodies is the discovery surface for add_camera(parent_body=...).
+
+    Before it existed, the add_camera docstring pointed agents at list_robots
+    / get_robot_state to find mount points -- but those return robot names and
+    joint names, never body names. An agent had to guess a body (e.g.
+    ``Fixed_Jaw``), mount against a non-existent body, read the failure, and
+    retry. These tests pin the deterministic discovery path that removes the
+    wasted turn.
+    """
+
+    def test_list_bodies_no_world_errors(self, sim):
+        result = sim.list_bodies()
+        assert result["status"] == "error"
+        assert "No world" in result["content"][0]["text"]
+
+    def test_list_bodies_global_lists_every_body(self, sim_with_robot):
+        result = sim_with_robot.list_bodies()
+        assert result["status"] == "success"
+        bodies = result["content"][1]["json"]["bodies"]
+        # world body + the robot's namespaced bodies are all present.
+        assert "world" in bodies
+        assert "arm1/base" in bodies
+        assert "arm1/link1" in bodies
+
+    def test_list_bodies_scoped_to_robot_excludes_world(self, sim_with_robot):
+        result = sim_with_robot.list_bodies(robot_name="arm1")
+        assert result["status"] == "success"
+        payload = result["content"][1]["json"]
+        bodies = payload["bodies"]
+        assert "world" not in bodies
+        assert all(b.startswith("arm1/") for b in bodies)
+        # gripper_body is reported (None here -- the test arm has no gripper-like body).
+        assert "gripper_body" in payload
+
+    def test_list_bodies_unknown_robot_errors_with_known_names(self, sim_with_robot):
+        result = sim_with_robot.list_bodies(robot_name="ghost")
+        assert result["status"] == "error"
+        text = result["content"][0]["text"]
+        assert "ghost" in text
+        assert "arm1" in text
+
+    def test_discovered_body_mounts_camera_without_guessing(self, sim_with_robot):
+        """End-to-end: list_bodies -> pick a body -> add_camera succeeds on the
+        first attempt, with no failed-then-recovered round trip."""
+        bodies = sim_with_robot.list_bodies(robot_name="arm1")["content"][1]["json"]["bodies"]
+        mount = bodies[0]
+        result = sim_with_robot.add_camera(
+            "wrist",
+            position=[0.0, 0.0, 0.1],
+            target=[0.0, 0.0, 0.0],
+            parent_body=mount,
+        )
+        assert result["status"] == "success"
+        assert sim_with_robot._world.cameras["wrist"].parent_body == mount
+
+    def test_list_bodies_dispatches_via_action_string(self, sim_with_robot):
+        """The action is wired through the agent-tool dispatcher, not just the
+        Python method."""
+        result = sim_with_robot(action="list_bodies", robot_name="arm1")
+        assert result["status"] == "success"
+        assert "arm1/base" in result["content"][1]["json"]["bodies"]
+
+    def test_describe_advertises_bodies_and_list_bodies_method(self, sim_with_robot):
+        described = sim_with_robot.describe()
+        assert "arm1/base" in described["bodies"]
+        assert "list_bodies" in described["methods"]
+
+
 # Scene Injection (XML round-trip)
 
 

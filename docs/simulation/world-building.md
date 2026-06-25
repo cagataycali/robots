@@ -44,6 +44,17 @@ for i in range(5):
 
 Free cameras look from `position` toward `target` (`fov=60.0`, `width=640`, `height=480`). Robot-URDF cameras (wrist, etc.) are auto-discovered on `add_robot` - no `add_camera` needed.
 
+To mount a camera ON a moving body (a realistic wrist/gripper view that rides with the arm), pass `parent_body`. Body names are namespaced `<robot>/<body>`; discover the exact mount point with `list_bodies` instead of guessing:
+
+```python
+bodies = sim.list_bodies(robot_name="so101")["content"][1]["json"]
+mount = bodies["gripper_body"]          # e.g. "so101/gripper" -- the wrist mount
+sim.add_camera(name="wrist", parent_body=mount,
+               position=[0.0, 0.0, 0.05], target=[0.0, 0.0, 0.1])  # local frame
+```
+
+`list_bodies()` (no `robot_name`) lists every body in the world; with `robot_name` it scopes to that robot and also returns `gripper_body`, the best-guess end-effector mount.
+
 ## Multi-robot policies
 
 ```python
