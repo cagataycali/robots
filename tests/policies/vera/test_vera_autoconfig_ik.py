@@ -4,6 +4,27 @@ import sys
 import types
 
 import numpy as np
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _restore_mujoco():
+    """Snapshot and restore ``sys.modules['mujoco']`` around each test.
+
+    These tests install a *fake* ``mujoco`` module (no MjSpec) so ee-frame
+    discovery can run without the real package. Without restoring it, the fake
+    leaks into ``sys.modules`` and poisons every later test that does
+    ``import mujoco`` (e.g. tests/policies/wbc/test_torque_harness.py, which
+    calls ``mujoco.MjSpec``). Save/restore keeps the fake strictly local.
+    """
+    saved = sys.modules.get("mujoco")
+    try:
+        yield
+    finally:
+        if saved is not None:
+            sys.modules["mujoco"] = saved
+        else:
+            sys.modules.pop("mujoco", None)
 
 
 def _install_fake_mujoco(bodies, sites, parent_map):
