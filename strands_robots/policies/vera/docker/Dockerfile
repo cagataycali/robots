@@ -89,6 +89,14 @@ RUN pip install colorama "setuptools==69.5.1" torch-fidelity
 COPY strands_robots/policies/vera/docker/sitecustomize_vera.py /opt/vera-shim/sitecustomize.py
 ENV PYTHONPATH=/opt/vera-shim:${PYTHONPATH}
 
+# Offline checkpoint resolver + launcher (used for MimicGen/droid whose IDM loads
+# by wandb run-id; the resolver maps run-id -> mounted ckpt via provenance.json
+# so the server boots without wandb network access). entrypoint.sh runs
+# launch_server.py when USE_OFFLINE_RESOLVE=1.
+COPY strands_robots/policies/vera/docker/wandb_offline_resolve.py /opt/wandb_offline_resolve.py
+COPY strands_robots/policies/vera/docker/launch_server.py /opt/launch_server.py
+ENV PYTHONPATH=/opt:${PYTHONPATH}
+
 # PushT sim deps (Wave-1): lightweight, all on PyPI. The MimicGen sim stack
 # (robomimic/robosuite/mimicgen) is heavier and robomimic 0.5.0 is git-only, so
 # it is opt-in via --build-arg INSTALL_MIMICGEN_SIM=1.
