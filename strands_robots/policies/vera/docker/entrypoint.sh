@@ -7,7 +7,7 @@
 # server. Keeps the host-side VeraPolicy provider trivial: it just connects to
 # ws://<host>:<port> — no checkpoint path juggling on the client.
 #
-# MimicGen specifics (see docker/AUDIT_FIXES.md):
+# MimicGen specifics (see docs/policies/vera.md):
 #   * the hosted algo_config.yaml uses OmegaConf env interpolation:
 #       text_encoder/vae/clip ckpt_path = ${oc.env:VERA_WAN_CKPT_ROOT}/...
 #       dit/flow_decoder      ckpt_path = ${oc.env:VERA_MIMICGEN_CKPT_DIR}/...

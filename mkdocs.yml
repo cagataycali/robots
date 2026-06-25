@@ -33,6 +33,7 @@ nav:
   - Overview: policies/overview.md
   - GR00T: policies/groot.md
   - Cosmos 3: policies/cosmos3.md
+  - VERA: policies/vera.md
   - cuRobo: policies/curobo.md
   - MoveIt2: policies/moveit2.md
   - WBC (Whole-Body-Control): policies/wbc.md

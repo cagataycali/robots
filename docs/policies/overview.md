@@ -7,7 +7,7 @@ description: The Policy ABC and the providers that ship - MockPolicy, Gr00tPolic
 ```python
 from strands_robots.policies import create_policy, list_providers
 
-print(list_providers())   # ['cosmos3', 'groot', 'lerobot_local', 'mock', ...]
+print(list_providers())   # ['cosmos3', 'groot', 'lerobot_local', 'mock', 'vera', ...]
 
 policy = create_policy("mock")                                                     # always works, no model
 policy = create_policy("groot", port=5555, data_config="so100_dualcam")
@@ -23,6 +23,7 @@ policy = create_policy("cosmos3", embodiment="droid", port=8000)
 | `groot` | `Gr00tPolicy` | `groot-service` | NVIDIA GR00T N1.5/N1.6/N1.7 over ZMQ |
 | `lerobot_local` | `LerobotLocalPolicy` | `lerobot` | HF LeRobot in-process (ACT, Pi0, SmolVLA, …) |
 | `cosmos3` | `Cosmos3Policy` | `cosmos3-service` | NVIDIA Cosmos 3 VLA over WebSocket |
+| `vera` | `VeraPolicy` | `vera` | MIT VERA video-to-action (DFoT/WAN planner + Jacobian IDM) over a containerized GPU server |
 | `curobo` | `CuroboPolicy` | `curobo` | NVIDIA cuRobo collision-aware planning, in-process CUDA |
 | `moveit2` | `MoveIt2Policy` | `moveit2` | MoveIt2 motion planning over a ROS 2 sidecar (ZMQ), no in-venv ROS 2 deps |
 
