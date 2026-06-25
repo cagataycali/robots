@@ -175,6 +175,34 @@ provider maps each `D`-vector to robot actuator names (gripper binarized per the
 server's `gripper_dim_index`/`gripper_is_raw`), coercing to python floats per the
 `Policy` ABC.
 
+## QA the rollouts with a Cosmos 3 reasoner (closed loop)
+
+VERA *generates* video-grounded actions; [NVIDIA Cosmos 3](https://github.com/cagataycali/strands-cosmos)
+*reads* video and reasons in text — so it makes a natural **automated QA critic**
+for rollouts. Serve the reasoner, then have it grade a rollout MP4:
+
+```bash
+uv pip install "strands-cosmos[cosmos3]"
+# serve Cosmos3-Nano on :8000 (vLLM + vllm-cosmos3); see strands-cosmos `c3-serve-reason`
+python examples/vera_mimicgen_panda/critique_with_cosmos3.py     examples/vera_mimicgen_panda/artifacts/mimicgen_panda.mp4
+```
+
+```python
+from strands import Agent
+from strands_cosmos import Cosmos3ReasonerModel
+
+agent = Agent(model=Cosmos3ReasonerModel(base_url="http://localhost:8000/v1"))
+print(agent("Grade this robot rollout — is the motion smooth and purposeful, "
+            "any bugs? <video>/tmp/vera-critique/mimicgen_panda.mp4</video>"))
+```
+
+This closed `generate → reason → fix` loop surfaced (and fixed) real issues in
+the MimicGen→Panda example: an initial **jittery** critique drove the
+`ik_smoothing` EMA knob, and a **"the arm is static"** critique root-caused a
+near-singular default start pose with the motion off-camera — fixed with a
+tabletop-ready seed pose + camera framing. The reasoner's verdict moved
+**NEEDS-WORK → PASS**.
+
 ## Testing
 
 ```bash

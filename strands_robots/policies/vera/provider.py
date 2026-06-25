@@ -140,6 +140,7 @@ class VeraPolicy(Policy):
         dynamics_run_id: str | None = None,
         tracker_backend: str | None = None,
         motion_plan_scale: float | None = None,
+        ik_smoothing: float = 0.0,
         server_mode: str = "subprocess",
         docker_image: str | None = None,
         docker_gpus: str | None = None,
@@ -185,6 +186,8 @@ class VeraPolicy(Policy):
         self._ee_frame_name: str | None = None  # e.g. "hand" / "attachment_site"
         self._ee_frame_type: str = "body"
         self._rotation_dim: int = 3  # axis-angle by default; 6 = rot6d
+        self._ik_smoothing: float = float(ik_smoothing)
+        self._ik_prev_q: dict[str, float] = {}
         self._translation_scale: float = 1.0
         self._ik_bridge: Any = None  # lazily built MinkIKBridge
         self._sim_namespace: str | None = None  # robot namespace for ee-frame scoping
@@ -302,6 +305,7 @@ class VeraPolicy(Policy):
         """Clear local context + queue and reset the server's episode state."""
         self._window.clear()
         self._queue.clear()
+        self._ik_prev_q = {}
         self._session = str(uuid.uuid4())
         reset_info: dict[str, Any] = {"session_id": self._session, "reason": "eval_episode"}
         if seed is not None:
@@ -649,6 +653,15 @@ class VeraPolicy(Policy):
             row = qpos[t]
             # Read each arm joint back from its qpos address (robust to free bodies).
             d: dict[str, Any] = {k: float(row[addr[k]]) for k in arm_keys if k in addr and addr[k] < row.shape[0]}
+            # EMA smoothing across steps to damp IK jitter (Cosmos3 reasoner
+            # flagged jittery Panda motion). alpha in [0,1); 0 disables.
+            a_sm = self._ik_smoothing
+            if a_sm > 0.0:
+                for jk in list(d):
+                    prev = self._ik_prev_q.get(jk)
+                    if prev is not None:
+                        d[jk] = (1.0 - a_sm) * d[jk] + a_sm * prev
+                    self._ik_prev_q[jk] = d[jk]
             if grip is not None and t < len(grip):
                 gval = float(grip[t])
                 if gripper_is_raw:

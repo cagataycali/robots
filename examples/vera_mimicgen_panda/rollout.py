@@ -77,9 +77,23 @@ def _build_scene(robot: str = "panda", mesh: bool = False):
         name="green_block", shape="box", position=[0.45, 0.10, 0.025],
         size=[0.03, 0.03, 0.02], color=[0.2, 0.8, 0.2, 1], mass=0.08,
     )
-    # Camera names match MimicGen's view keys (scene + wrist).
-    sim.add_camera(name="agentview_image", position=[0.9, 0.0, 0.5], target=[0.45, 0.0, 0.05])
-    sim.add_camera(name="robot0_eye_in_hand_image", position=[0.4, 0.0, 0.6], target=[0.45, 0.0, 0.05])
+    # Seed a natural Panda "ready" pose. The default all-zeros config is a
+    # near-singular straight-up pose that sits half out of frame — a Cosmos3
+    # reasoner pass on an earlier rollout flagged the arm as "static" purely
+    # because the (large) motion happened off-camera. A tabletop-ready pose
+    # keeps the arm in view so the rollout reads as purposeful manipulation.
+    ready = {
+        "joint1": 0.0, "joint2": -0.4, "joint3": 0.0, "joint4": -2.0,
+        "joint5": 0.0, "joint6": 1.6, "joint7": 0.8,
+    }
+    try:
+        sim.send_action(ready, robot_name=robot, n_substeps=200)
+    except Exception:
+        pass  # best-effort; rollout still runs from the default pose
+    # Camera names match MimicGen's view keys (scene + wrist), framed on the
+    # tabletop workspace so the arm + both blocks are visible.
+    sim.add_camera(name="agentview_image", position=[1.1, 0.0, 0.7], target=[0.4, 0.0, 0.15])
+    sim.add_camera(name="robot0_eye_in_hand_image", position=[0.5, 0.0, 0.8], target=[0.45, 0.0, 0.05])
     return sim
 
 
@@ -94,6 +108,7 @@ def main() -> int:
     p.add_argument("--control-frequency", type=float, default=20.0, help="MimicGen runs ~20 Hz.")
     p.add_argument("--action-horizon", type=int, default=10, help="MimicGen exec chunk = 10.")
     p.add_argument("--robot", default="panda", help="Arm asset (Panda == MimicGen robot).")
+    p.add_argument("--ik-smoothing", type=float, default=0.4, help="EMA on IK joint targets (0=off; damps jitter).")
     p.add_argument(
         "--record",
         metavar="MP4",
@@ -121,6 +136,7 @@ def main() -> int:
         "embodiment": "mimicgen",
         "host": args.host,
         "server_port": args.port,
+        "ik_smoothing": args.ik_smoothing,
         # The sim's bind_policy_sim_context hook hands the MjModel + namespace to
         # the provider, which auto-discovers the Panda end-effector frame and
         # configures the IK bridge — eef-deltas become joint targets, no manual

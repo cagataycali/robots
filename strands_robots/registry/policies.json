@@ -213,7 +213,8 @@
                 "prompt",
                 "server_mode",
                 "docker_image",
-                "docker_gpus"
+                "docker_gpus",
+                "ik_smoothing"
             ],
             "defaults": {
                 "embodiment": "pusht",

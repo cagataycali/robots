@@ -124,3 +124,87 @@ def test_provider_ik_path_emits_joint_keys():
     # joint keys present (subset of robot joints)
     assert any(k.startswith("joint_") for k in d), d
     print("✅ provider eef_delta IK path -> joint keys:", list(d.keys()))
+
+
+def test_ik_smoothing_ema_damps_targets():
+    """ik_smoothing EMA blends consecutive IK joint targets toward the previous
+    value (jitter damping that the Cosmos3 reasoner loop motivated)."""
+    import asyncio
+
+    import numpy as np
+
+    from strands_robots.policies.vera.provider import VeraPolicy
+
+    class _M:
+        nq = 7
+
+    class FakeBridge:
+        model = _M()
+
+        def __init__(self):
+            self._t = 0
+
+        def ee_pose(self, qpos):
+            T = np.eye(4)
+            return T
+
+        def solve(self, target_pose, q_init):
+            # Alternate joint0 between 0 and 1 each step -> maximal raw jitter.
+            self._t += 1
+            q = np.asarray(q_init, float).copy()
+            q[0] = float(self._t % 2)
+            return q
+
+    class FakeClient:
+        def __init__(self, meta, chunk):
+            self._m = meta
+            self._c = {"action": np.asarray(chunk, np.float32)}
+
+        def get_server_metadata(self):
+            return self._m
+
+        def reset(self, i):
+            pass
+
+        def configure(self, p):
+            return {}
+
+        def infer(self, r):
+            return self._c
+
+        def close(self):
+            pass
+
+    meta = {
+        "action_space": "eef_delta",
+        "context_frames": 1,
+        "gripper_dim_index": 6,
+        "gripper_is_raw": True,
+        "view_keys": ["image"],
+    }
+    # 4-step chunk -> raw joint0 would be 1,0,1,0 (max jitter)
+    chunk = [[0.1, 0, 0, 0, 0, 0, 1.0]] * 4
+    joints = [f"joint_{i}" for i in range(6)] + ["gripper"]
+
+    def _run(alpha):
+        p = VeraPolicy(client=FakeClient(meta, chunk), auto_launch_server=False, ik_smoothing=alpha)
+        p._runner = None
+        p.set_robot_state_keys(joints)
+        p._mj_model = FakeBridge.model
+        p._ee_frame_name = "hand"
+        p._ik_bridge = FakeBridge()
+        obs = {"image": np.zeros((8, 8, 3), np.uint8), **{j: 0.0 for j in joints}}
+        # one get_actions returns the first action; drain the queue for the chunk
+        seq = []
+        for _ in range(4):
+            out = asyncio.run(p.get_actions(obs, "pick"))
+            if out:
+                seq.append(out[0].get("joint_0", 0.0))
+        return seq
+
+    raw = _run(0.0)
+    smoothed = _run(0.6)
+    raw_var = np.var(raw)
+    smoothed_var = np.var(smoothed)
+    assert smoothed_var < raw_var, f"EMA should reduce variance: raw={raw_var} smoothed={smoothed_var}"
+    print(f"✅ ik_smoothing damps jitter: raw_var={raw_var:.3f} -> smoothed_var={smoothed_var:.3f}")
