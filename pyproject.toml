@@ -245,6 +245,21 @@ device-connect = [
     "device-connect-edge>=0.2.0",
     "device-connect-agent-tools>=0.1.0",
 ]
+vera = [
+    "vera @ git+https://github.com/sizhe-li/VERA.git",
+    "websockets>=14",
+    "msgpack>=1",
+    "numpy>=1.24",
+]
+vera-sim = [
+    "gymnasium==0.29.1",
+    "gym-pusht==0.1.5",
+    "robomimic==0.5.0",
+    "robosuite==1.4.1",
+    "mimicgen==1.0.0",
+    "mujoco>=3.5.0",
+    "imageio",
+]
 all = [
     "strands-robots[groot-service]",
     "strands-robots[moveit2]",
@@ -273,6 +288,9 @@ Documentation = "https://github.com/strands-labs/robots#readme"
 Repository = "https://github.com/strands-labs/robots.git"
 Issues = "https://github.com/strands-labs/robots/issues"
 Changelog = "https://github.com/strands-labs/robots/releases"
+
+[tool.hatch.metadata]
+allow-direct-references = true  # VERA is a git-only dependency (see the 'vera' extra)
 
 [tool.hatch.version]
 source = "vcs"

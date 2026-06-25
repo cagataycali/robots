@@ -189,6 +189,46 @@
                 "wbc",
                 "sonic"
             ]
+        },
+        "vera": {
+            "module": "strands_robots.policies.vera",
+            "class": "VeraPolicy",
+            "description": "MIT VERA video-to-action (two-stage planner + Jacobian IDM) via vera.server websocket",
+            "requires": [],
+            "config_keys": [
+                "embodiment",
+                "host",
+                "server_port",
+                "vis_port",
+                "algo_config",
+                "text_prompt",
+                "ckpt_root",
+                "auto_launch_server",
+                "n_action_steps",
+                "dynamics_run_id",
+                "tracker_backend",
+                "motion_plan_scale",
+                "image_keys",
+                "action_mapping",
+                "prompt"
+            ],
+            "defaults": {
+                "embodiment": "pusht",
+                "host": "127.0.0.1"
+            },
+            "shorthands": [
+                "vera"
+            ],
+            "url_patterns": [
+                "^vera://"
+            ],
+            "hf_orgs": [
+                "sizhe-lester-li"
+            ],
+            "model_id_overrides": [
+                "sizhe-lester-li/VERA",
+                "sizhe-lester-li/vera"
+            ]
         }
     }
 }
