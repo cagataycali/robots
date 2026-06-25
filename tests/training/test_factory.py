@@ -147,3 +147,53 @@ class TestSpecTolerance:
         """The **kwargs-style tolerance rule: unknown extras are ignored."""
         spec.extra = {"some_future_flag": "value", "another": 123}
         assert create_trainer("mock").validate(spec) == []
+
+
+class TestAutoDiscoveryFallback:
+    """Resolution-order step 2 of ``import_trainer_class``: when a provider has
+    no ``trainer`` block in policies.json, the factory falls back to importing
+    ``strands_robots.training.<provider>`` and resolving a Trainer subclass.
+    """
+
+    def test_resolves_named_provider_trainer_class(self, monkeypatch):
+        """A module exposing ``<Provider>Trainer`` is resolved by name."""
+        import sys
+        import types
+
+        mod = types.ModuleType("strands_robots.training.autoprov")
+
+        class AutoprovTrainer(MockTrainer):
+            pass
+
+        mod.AutoprovTrainer = AutoprovTrainer
+        monkeypatch.setitem(sys.modules, "strands_robots.training.autoprov", mod)
+
+        assert import_trainer_class("autoprov") is AutoprovTrainer
+        assert isinstance(create_trainer("autoprov"), AutoprovTrainer)
+
+    def test_scans_for_first_trainer_subclass_when_name_mismatched(self, monkeypatch):
+        """When no ``<Provider>Trainer`` exists, the first Trainer subclass wins."""
+        import sys
+        import types
+
+        mod = types.ModuleType("strands_robots.training.scanprov")
+
+        class CustomBackendTrainer(MockTrainer):
+            pass
+
+        mod.CustomBackendTrainer = CustomBackendTrainer
+        monkeypatch.setitem(sys.modules, "strands_robots.training.scanprov", mod)
+
+        assert import_trainer_class("scanprov") is CustomBackendTrainer
+
+    def test_importable_module_without_trainer_raises(self, monkeypatch):
+        """A module that imports cleanly but exposes no Trainer subclass still
+        raises ValueError with the available-trainers list (not ImportError)."""
+        import sys
+        import types
+
+        mod = types.ModuleType("strands_robots.training.emptyprov")
+        monkeypatch.setitem(sys.modules, "strands_robots.training.emptyprov", mod)
+
+        with pytest.raises(ValueError, match="No trainer registered"):
+            import_trainer_class("emptyprov")
