@@ -418,6 +418,10 @@ indent-style = "space"
 
 [tool.mypy]
 python_version = "3.12"
+# The VERA docker/ scripts run INSIDE the strands-vera-server container
+# (they import vera / torchmetrics / omegaconf, present only in that image),
+# so exclude them from the host-side mypy run.
+exclude = "strands_robots/policies/vera/docker/"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true

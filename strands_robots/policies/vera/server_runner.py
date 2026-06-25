@@ -94,7 +94,7 @@ class VeraServerRunner:
         cfg = self.config
 
         # Already serving (ours or someone else's) — reuse it.
-        if _port_open(cfg.host, cfg.server_port):
+        if _port_open(cfg.host, int(cfg.server_port or 0)):
             logger.info("VERA server already listening on %s:%s; reusing", cfg.host, cfg.server_port)
             return
 
@@ -139,7 +139,7 @@ class VeraServerRunner:
                     f"Check the [vera.server] log lines above; common causes are "
                     f"missing checkpoints (set VERA_CKPT_ROOT / ckpt_root) or CUDA OOM."
                 )
-            if _port_open(cfg.host, cfg.server_port):
+            if _port_open(cfg.host, int(cfg.server_port or 0)):
                 logger.info("VERA server ready on %s:%s", cfg.host, cfg.server_port)
                 return
             time.sleep(1.0)
@@ -280,7 +280,7 @@ class DockerServerRunner:
 
         cfg = self.config
 
-        if _port_open(cfg.host, cfg.server_port):
+        if _port_open(cfg.host, int(cfg.server_port or 0)):
             logger.info("VERA server already listening on %s:%s; reusing", cfg.host, cfg.server_port)
             return
         if self._container_running():
@@ -306,7 +306,7 @@ class DockerServerRunner:
                 raise RuntimeError(
                     f"VERA container {self._container_name()} exited before becoming ready. Last logs:\n{logs}"
                 )
-            if _port_open(cfg.host, cfg.server_port):
+            if _port_open(cfg.host, int(cfg.server_port or 0)):
                 logger.info("VERA server ready on %s:%s", cfg.host, cfg.server_port)
                 return
             time.sleep(2.0)

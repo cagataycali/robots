@@ -70,7 +70,9 @@ def _resize_frame(frame: np.ndarray, width: int) -> np.ndarray:
     try:
         from PIL import Image
 
-        return np.asarray(Image.fromarray(frame).resize((width, width), Image.BILINEAR), dtype=np.uint8)
+        return np.asarray(
+            Image.fromarray(frame).resize((width, width), getattr(Image, "Resampling", Image).BILINEAR), dtype=np.uint8
+        )
     except Exception:
         # Nearest-neighbour numpy fallback (no PIL): index-based resample.
         h, w = frame.shape[:2]
@@ -193,7 +195,7 @@ class VeraPolicy(Policy):
         self._sim_namespace: str | None = None  # robot namespace for ee-frame scoping
         self._warned_unbound: bool = False
 
-        self._client = client or VeraWebsocketClient(self.config.host, self.config.server_port)
+        self._client = client or VeraWebsocketClient(self.config.host, int(self.config.server_port or 0))
         self._runner = server_runner
         if self._runner is None and self.config.auto_launch_server:
             self._runner = make_server_runner(self.config)
