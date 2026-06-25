@@ -146,3 +146,110 @@ def test_rotate_cascades_and_discards_past_cap(monkeypatch, tmp_path):
     assert (tmp_path / "mesh_audit.jsonl.2").read_text(encoding="utf-8") == "gen1"
     assert not (tmp_path / "mesh_audit.jsonl.3").exists()
     assert not log.exists()
+
+
+# --- _rotate_log_if_needed: symlink + fail-soft cascade branches -----------
+
+
+def test_rotate_discards_symlinked_overflow_without_following_it(monkeypatch, tmp_path, caplog):
+    """An overflow rotated log that is a SYMLINK is unlinked, never followed.
+
+    When a rotation past ``max_files`` lands on a numbered suffix that an
+    attacker has pre-created as a symlink, the cascade deletes the link inode
+    -- it must not traverse the link and redirect the delete onto the link
+    target (a co-tenant file, ``/dev/null``, etc.). ``Path.unlink`` removes
+    the link rather than following it, so the target survives untouched, and
+    a forensic WARNING records the discard.
+    """
+    monkeypatch.setenv("STRANDS_MESH_AUDIT_MAX_BYTES", "10")
+    monkeypatch.setenv("STRANDS_MESH_AUDIT_MAX_FILES", "1")
+    log = tmp_path / "mesh_audit.jsonl"
+    log.write_text("gen0", encoding="utf-8")
+    # max_files=1: the cascade visits suffix ".1", and since 1 + 1 > 1 that
+    # slot is past the cap and gets discarded. Plant ".1" as a symlink to a
+    # precious co-tenant file to prove the discard never follows the link.
+    precious = tmp_path / "precious_cotenant.txt"
+    precious.write_text("do-not-touch", encoding="utf-8")
+    overflow_link = tmp_path / "mesh_audit.jsonl.1"
+    overflow_link.symlink_to(precious)
+
+    with caplog.at_level("WARNING"):
+        audit._rotate_log_if_needed(log, current_size=1000)
+
+    # The discarded symlink was removed and then recreated as a regular file
+    # by the active-log rename (active -> .1); it must no longer be a symlink.
+    assert not overflow_link.is_symlink()
+    # The link target is fully intact -- the discard deleted the link inode,
+    # never truncated or redirected onto the target.
+    assert precious.exists()
+    assert precious.read_text(encoding="utf-8") == "do-not-touch"
+    assert "discarding symlinked rotated log" in caplog.text
+    # The cascade still completed: active -> .1 (now a regular file).
+    assert overflow_link.is_file()
+    assert overflow_link.read_text(encoding="utf-8") == "gen0"
+    assert not log.exists()
+
+
+def test_rotate_is_failsoft_when_cascade_replace_raises(monkeypatch, tmp_path, caplog):
+    """A mid-cascade ``os.replace`` failure (e.g. EXDEV) is logged, not raised.
+
+    Audit rotation runs on the safety hot path under ``_WRITE_LOCK``; a
+    cross-device-rename or permission error while shuffling numbered suffixes
+    must degrade to a WARNING rather than propagate and crash the writer.
+    """
+    monkeypatch.setenv("STRANDS_MESH_AUDIT_MAX_BYTES", "10")
+    monkeypatch.setenv("STRANDS_MESH_AUDIT_MAX_FILES", "3")
+    log = tmp_path / "mesh_audit.jsonl"
+    log.write_text("gen0", encoding="utf-8")
+    rotated_one = tmp_path / "mesh_audit.jsonl.1"
+    rotated_one.write_text("gen1", encoding="utf-8")
+
+    real_replace = audit.os.replace
+
+    def _replace_fails_on_cascade(src, dst):
+        # Fail the cascade step (.1 -> .2) but let the final active -> .1
+        # rename through so we can prove the function pressed on.
+        if str(src).endswith("mesh_audit.jsonl.1"):
+            raise OSError("simulated EXDEV during cascade")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(audit.os, "replace", _replace_fails_on_cascade)
+
+    with caplog.at_level("WARNING"):
+        # Must not raise.
+        audit._rotate_log_if_needed(log, current_size=1000)
+
+    assert "rotation cascade failed" in caplog.text
+    # The active log still rotated to .1 despite the cascade hiccup.
+    assert rotated_one.read_text(encoding="utf-8") == "gen0"
+    assert not log.exists()
+
+
+def test_rotate_is_failsoft_when_active_rename_raises(monkeypatch, tmp_path, caplog):
+    """A failure renaming the active log to ``.1`` is logged, not raised.
+
+    The final ``os.replace(active, active.1)`` is the last step of rotation.
+    If it fails (full disk, EACCES) the audit subsystem must stay alive: the
+    next write recreates/appends rather than crashing safety.
+    """
+    monkeypatch.setenv("STRANDS_MESH_AUDIT_MAX_BYTES", "10")
+    monkeypatch.setenv("STRANDS_MESH_AUDIT_MAX_FILES", "3")
+    log = tmp_path / "mesh_audit.jsonl"
+    log.write_text("active-bytes" * 4, encoding="utf-8")
+
+    real_replace = audit.os.replace
+
+    def _replace_fails_on_active(src, dst):
+        if str(src).endswith("mesh_audit.jsonl"):
+            raise OSError("simulated ENOSPC renaming active log")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(audit.os, "replace", _replace_fails_on_active)
+
+    with caplog.at_level("WARNING"):
+        audit._rotate_log_if_needed(log, current_size=1000)
+
+    assert "could not rotate" in caplog.text
+    # Active log untouched (rename failed) -- no .1 was created.
+    assert log.exists()
+    assert not (tmp_path / "mesh_audit.jsonl.1").exists()
