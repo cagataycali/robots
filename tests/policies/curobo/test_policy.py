@@ -878,3 +878,135 @@ class TestCuroboNoneResultRaises:
                 instruction="",
                 target_joints={"j0": 0.1, "j1": -0.2, "j2": 99.0},
             )
+
+
+class TestCuroboInstructionGoalFallback:
+    """Pin the LLM-driven JSON-in-instruction goal fallback.
+
+    For agent workflows (``Robot.start_task(..., policy_provider="curobo")``),
+    the goal is not always supplied as structured kwargs - an LLM may pack it
+    into the natural-language ``instruction`` as a JSON snippet. The documented
+    contract: when neither ``target_pose`` nor ``target_joints`` is passed as a
+    kwarg, the policy parses a ``{...}`` payload out of the instruction. When no
+    parseable goal exists anywhere, it raises ``ValueError`` rather than
+    planning toward an empty goal.
+    """
+
+    def test_target_joints_parsed_from_instruction_drives_plan(self) -> None:
+        """A JSON ``target_joints`` payload embedded in the instruction (no
+        kwargs) reaches the planner and yields a non-empty trajectory."""
+        stub = _StubMotionGen(ndof=3, horizon=6)
+        p = CuroboPolicy(motion_gen=stub, action_horizon=4)
+        actions = asyncio.run(
+            p.get_actions(
+                {"observation.state": [0.0, 0.0, 0.0]},
+                'please move the arm {"target_joints": {"j0": 0.5, "j1": -0.2, "j2": 0.1}}',
+            )
+        )
+        # Goal was parsed and a plan ran (joint-space -> plan_single_js on the
+        # legacy stub) producing action dicts.
+        assert actions, "instruction-parsed goal produced no actions"
+        assert stub.plan_calls and stub.plan_calls[0][0] == "plan_single_js"
+
+    def test_target_pose_parsed_from_instruction_drives_plan(self) -> None:
+        """A JSON ``target_pose`` payload embedded in the instruction reaches
+        the Cartesian planning path."""
+        stub = _StubMotionGen(ndof=6, horizon=5)
+        p = CuroboPolicy(motion_gen=stub, action_horizon=4)
+        actions = asyncio.run(
+            p.get_actions(
+                {"observation.state": [0.0] * 6},
+                'go here {"target_pose": [0.4, 0.0, 0.4, 1.0, 0.0, 0.0, 0.0]}',
+            )
+        )
+        assert actions
+        assert stub.plan_calls and stub.plan_calls[0][0] == "plan_single"
+
+    def test_instruction_without_json_raises_value_error(self) -> None:
+        """A plain instruction with no JSON goal and no kwargs is a missing
+        goal - raise rather than plan toward nothing."""
+        p = CuroboPolicy(motion_gen=_StubMotionGen())
+        with pytest.raises(ValueError, match="requires at least one of"):
+            asyncio.run(p.get_actions({"observation.state": [0.0] * 6}, "just move the arm"))
+
+    def test_parse_target_no_json_returns_none(self) -> None:
+        assert CuroboPolicy._parse_target("move the gripper down") == (None, None)
+
+    def test_parse_target_empty_or_non_string_returns_none(self) -> None:
+        assert CuroboPolicy._parse_target("") == (None, None)
+        assert CuroboPolicy._parse_target(None) == (None, None)  # type: ignore[arg-type]
+
+    def test_parse_target_malformed_json_returns_none(self) -> None:
+        """A ``{...}`` that is not valid JSON degrades to no-goal, not a crash."""
+        assert CuroboPolicy._parse_target("do this {not: valid, json}") == (None, None)
+
+    def test_parse_target_non_dict_payload_returns_none(self) -> None:
+        """A JSON value that parses but is not an object (e.g. a bare list in
+        braces is not valid JSON; a scalar object body) yields no goal."""
+        # ``{"x"}`` is invalid JSON -> JSONDecodeError branch; a parsed
+        # non-dict cannot arise from a ``{...}`` match, so the dict-shape
+        # guard is exercised via a payload whose goal keys are absent.
+        assert CuroboPolicy._parse_target('noise {"unrelated": 1} tail') == (None, None)
+
+    def test_parse_target_ignores_wrongly_typed_goal_fields(self) -> None:
+        """``target_pose`` that is not a list and ``target_joints`` that is not
+        a dict are ignored (returned as None) so a malformed payload does not
+        smuggle a bad goal past validation."""
+        tp, tj = CuroboPolicy._parse_target('x {"target_pose": "not-a-list", "target_joints": [1, 2]}')
+        assert tp is None
+        assert tj is None
+
+
+class TestCuroboJointStateExtraction:
+    """Pin ``_extract_joint_state`` - the start-configuration reader.
+
+    The policy reads ``observation.state`` as the planner's start joint
+    configuration. It must accept plain lists, numpy arrays, and torch
+    tensors (anything with ``tolist()``), return ``None`` when absent, and
+    degrade to ``None`` (planner uses its own retract config) rather than
+    crash on an unconvertible value.
+    """
+
+    def test_missing_state_returns_none(self) -> None:
+        p = CuroboPolicy(motion_gen=_StubMotionGen())
+        assert p._extract_joint_state({}) is None
+
+    def test_list_state_returned_as_float_list(self) -> None:
+        p = CuroboPolicy(motion_gen=_StubMotionGen())
+        assert p._extract_joint_state({"observation.state": [1, 2, 3]}) == [1.0, 2.0, 3.0]
+
+    def test_numpy_state_converted_to_float_list(self) -> None:
+        np = pytest.importorskip("numpy")
+        p = CuroboPolicy(motion_gen=_StubMotionGen())
+        out = p._extract_joint_state({"observation.state": np.array([0.1, 0.2, 0.3])})
+        assert out is not None
+        assert out == pytest.approx([0.1, 0.2, 0.3])
+        assert all(isinstance(x, float) for x in out)
+
+    def test_unconvertible_state_degrades_to_none(self) -> None:
+        """A non-iterable ``observation.state`` must not crash planning - the
+        policy logs and lets the planner fall back to its retract config."""
+        p = CuroboPolicy(motion_gen=_StubMotionGen())
+        assert p._extract_joint_state({"observation.state": object()}) is None
+
+
+class TestCuroboGoalValidationErrorBranches:
+    """Pin the up-front goal validators' error branches directly.
+
+    These guard agent-supplied goal payloads (regex-allowlisted joint names,
+    finite numeric pose elements) before they reach cuRobo. The kwargs-path
+    tests cover the happy and NaN/inf cases; these pin the type-error branches
+    that a malformed LLM payload can trigger.
+    """
+
+    def test_non_iterable_target_pose_rejected(self) -> None:
+        with pytest.raises(ValueError, match="must be a 7-element list"):
+            CuroboPolicy._validate_target_pose(42)
+
+    def test_non_numeric_pose_element_rejected(self) -> None:
+        with pytest.raises(ValueError, match=r"target_pose\[6\] must be a number"):
+            CuroboPolicy._validate_target_pose([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, "x"])
+
+    def test_non_numeric_joint_value_rejected(self) -> None:
+        with pytest.raises(ValueError, match="must be a number"):
+            CuroboPolicy._validate_target_joints({"j0": "not-a-number"})
