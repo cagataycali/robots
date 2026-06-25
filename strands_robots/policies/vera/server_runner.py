@@ -232,6 +232,7 @@ class DockerServerRunner:
             name,
             "--gpus",
             str(cfg.docker_gpus),
+            "--ipc=host",  # PyTorch needs ample shared memory for dataloader/CUDA
             "-p",
             f"{cfg.server_port}:{cfg.server_port}",
         ]

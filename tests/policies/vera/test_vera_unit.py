@@ -301,6 +301,7 @@ class TestDockerServerRunner:
         assert isinstance(cmd, list) and all(isinstance(t, str) for t in cmd)
         assert cmd[:2] == ["/usr/bin/docker", "run"]
         assert "--gpus" in cmd and cmd[cmd.index("--gpus") + 1] == "all"
+        assert "--ipc=host" in cmd
         assert "-v" in cmd and "/data/vera-ckpts:/ckpts:ro" in cmd
         assert "-p" in cmd and "8820:8820" in cmd
         assert "8821:8821" in cmd  # vis port published

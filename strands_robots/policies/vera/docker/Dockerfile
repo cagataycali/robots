@@ -71,11 +71,42 @@ RUN sed -i -E 's/^(\s*)"torch==2\.6\.0".*/\1"torch",/' pyproject.toml && \
 # Install VERA + the two model-stage extras (idm pulls VGGT git dep) and the sim
 # extra used by the PushT/MimicGen env runners. `--no-build-isolation` lets the
 # build see the NGC torch. flash-attn is optional (WAN falls back to SDPA).
-RUN pip install --no-build-isolation -e ".[idm,video]" && \
-    pip install -e ".[eval]"
+RUN pip install --no-build-isolation -e ".[idm,video]"
+
+# VERA runtime dep fixups (upstream under-pins these; the NGC base ships newer
+# versions whose internal APIs VERA's eval-metrics code predates):
+#   - colorama: imported by vera.utils.print_utils but not declared.
+#   - setuptools<70: VERA imports `pkg_resources.packaging` (removed in 70+).
+#   - torch-fidelity: populates FrechetInceptionDistance at torchmetrics.image.
+# We KEEP the NGC torchmetrics (ABI-clean with lightning) and instead re-expose
+# the pre-1.x lpip symbols VERA's DFoT planner imports (NoTrainLpips /_valid_img)
+# via a sitecustomize shim — these are eval-only metrics, not on the inference
+# path, so an import-compat shim is sufficient and avoids a version collision.
+RUN pip install colorama "setuptools==69.5.1" torch-fidelity
+
+# Install the torchmetrics compat shim as an auto-imported sitecustomize so it
+# applies to every interpreter start (the server subprocess included).
+COPY strands_robots/policies/vera/docker/sitecustomize_vera.py /opt/vera-shim/sitecustomize.py
+ENV PYTHONPATH=/opt/vera-shim:${PYTHONPATH}
+
+# PushT sim deps (Wave-1): lightweight, all on PyPI. The MimicGen sim stack
+# (robomimic/robosuite/mimicgen) is heavier and robomimic 0.5.0 is git-only, so
+# it is opt-in via --build-arg INSTALL_MIMICGEN_SIM=1.
+RUN pip install "gymnasium==0.29.1" "gym-pusht==0.1.5" "mujoco>=3.5.0" imageio imageio-ffmpeg
+
+ARG INSTALL_MIMICGEN_SIM=0
+RUN if [ "${INSTALL_MIMICGEN_SIM}" = "1" ]; then \
+        pip install "robosuite==1.4.1" "mimicgen==1.0.0" && \
+        pip install "git+https://github.com/ARISE-Initiative/robomimic.git@v0.3.0" ; \
+    else \
+        echo "skipping MimicGen sim stack (set --build-arg INSTALL_MIMICGEN_SIM=1 to include)" ; \
+    fi
 
 # Sanity: VERA + torch import and CUDA bindings are intact after install.
-RUN python -c "import torch, vera; print('torch', torch.__version__, 'cuda', torch.version.cuda)"
+RUN python -c "import warnings; warnings.simplefilter('error', UserWarning); \
+    import torch, vera, vera.server.start_vera_server; \
+    from vera.idm.dfot.dfot_motion_policy import DFoTMotionPolicy; \
+    print('sanity OK: torch', torch.__version__, 'cuda', torch.version.cuda, '| DFoT + server import clean')"
 
 # --- entrypoint -------------------------------------------------------------
 COPY strands_robots/policies/vera/docker/entrypoint.sh /usr/local/bin/vera-entrypoint

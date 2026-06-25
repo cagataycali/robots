@@ -7,6 +7,7 @@ mounted checkpoint (provenance.json match) instead of hitting the network.
 Usage (from entrypoint.sh):
     python /opt/launch_server.py --embodiment mimicgen --port 8800 [...]
 """
+
 import runpy
 import sys
 

@@ -35,6 +35,7 @@ See entrypoint.sh.
 
 No edits to the VERA source tree are required.
 """
+
 from __future__ import annotations
 
 import glob
@@ -61,8 +62,8 @@ def _index_local_ckpts(ckpt_root: str) -> dict[str, Path]:
         ckpt_dir = Path(prov).parent
         if not (ckpt_dir / "model.ckpt").exists():
             continue
-        index[run] = ckpt_dir                       # full "entity/project/run_id"
-        index[run.split("/")[-1]] = ckpt_dir        # trailing run_id only
+        index[run] = ckpt_dir  # full "entity/project/run_id"
+        index[run.split("/")[-1]] = ckpt_dir  # trailing run_id only
     return index
 
 
@@ -77,16 +78,21 @@ def install(ckpt_root: str | None = None) -> None:
 
     index = _index_local_ckpts(ckpt_root)
     if index:
-        log.info("[offline-resolve] indexed %d local ckpt run ids under %s: %s",
-                 len(index), ckpt_root, sorted({v.name for v in index.values()}))
+        log.info(
+            "[offline-resolve] indexed %d local ckpt run ids under %s: %s",
+            len(index),
+            ckpt_root,
+            sorted({v.name for v in index.values()}),
+        )
     else:
-        log.warning("[offline-resolve] no local provenance.json ckpts found under %s; "
-                    "wandb will be used (online required)", ckpt_root)
+        log.warning(
+            "[offline-resolve] no local provenance.json ckpts found under %s; wandb will be used (online required)",
+            ckpt_root,
+        )
 
     _orig_download = cu.download_checkpoint
 
-    def _patched(run_path, download_dir, option="latest", return_config=False,
-                 force_redownload=False):  # noqa: ANN001 - match original signature
+    def _patched(run_path, download_dir, option="latest", return_config=False, force_redownload=False):  # noqa: ANN001 - match original signature
         key = run_path if run_path in index else run_path.split("/")[-1]
         local_dir = index.get(key)
         if local_dir is not None and not force_redownload:
@@ -100,19 +106,22 @@ def install(ckpt_root: str | None = None) -> None:
             if sidecar.exists():
                 try:
                     from omegaconf import OmegaConf
+
                     cfg_dict = OmegaConf.to_container(OmegaConf.load(sidecar), resolve=True)  # type: ignore[assignment]
                 except Exception as e:
                     log.warning("[offline-resolve] failed to read %s: %s", sidecar, e)
             return ckpt, cfg_dict
         # Unknown run id -> fall back to the real (wandb) implementation.
         log.info("[offline-resolve] %s not local; falling back to wandb", run_path)
-        return _orig_download(run_path, download_dir, option=option,
-                              return_config=return_config, force_redownload=force_redownload)
+        return _orig_download(
+            run_path, download_dir, option=option, return_config=return_config, force_redownload=force_redownload
+        )
 
     cu.download_checkpoint = _patched
     # The symbol is also imported by-name into motion_policy_loading at import time.
     try:
         import vera.policy.motion_policy_loading as mpl
+
         if hasattr(mpl, "download_checkpoint"):
             mpl.download_checkpoint = _patched
     except Exception:
