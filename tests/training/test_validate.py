@@ -17,6 +17,8 @@ in the boundary surfaces immediately and independently of any backend.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from strands_robots.training import TrainSpec
@@ -29,7 +31,7 @@ def _spec(tmp_path, **overrides) -> TrainSpec:
     Defaults resolve to real tmp paths so the audited path check passes,
     letting each test isolate a single vector via ``overrides``.
     """
-    base = {
+    base: dict[str, Any] = {
         "dataset_root": str(tmp_path / "data"),
         "base_model": "lerobot/act_aloha",
         "output_dir": str(tmp_path / "out"),
