@@ -1,26 +1,27 @@
 # syntax=docker/dockerfile:1.7
 #
 # VERA policy-server container — runs `vera.server.start_vera_server` with VERA's
-# full GPU stack (PyTorch 2.6 / CUDA 12.4 + VGGT IDM backbone) isolated from the
+# full GPU stack (PyTorch 2.6 / CUDA 12.x + VGGT IDM backbone) isolated from the
 # host robots venv. The strands-robots `VeraPolicy` provider connects to this
 # container over the websocket protocol (default :8820 PushT / :8800 MimicGen),
 # so the host never installs VERA's heavy/conflicting deps.
 #
-# Build:
+# Build (from the strands-robots repo root):
 #   docker build -f strands_robots/policies/vera/docker/Dockerfile \
 #       -t strands-vera-server:latest .
 #
-# Run (PushT, checkpoints + repo mounted from host):
-#   docker run --rm --gpus all \
+# Run (PushT, checkpoints mounted from host):
+#   docker run --rm --gpus all --ipc=host \
 #       -p 8820:8820 -p 8821:8821 \
-#       -v /path/to/vera-ckpts:/ckpts:ro \
+#       -v /abs/path/vera-ckpts:/ckpts:ro \
 #       -e VERA_EMBODIMENT=pusht \
 #       strands-vera-server:latest
 #
-# VERA targets Python 3.11 + torch 2.6 (cu124). The NGC PyTorch base ships a
-# matching CUDA 12.4 runtime + cuDNN + flash-attn-friendly toolchain.
+# The NGC PyTorch base ships an optimized torch 2.6 (CUDA 12.x) build. VERA pins
+# `torch==2.6.0`; we strip that exact pin at build time so VERA composes with the
+# NGC torch (ABI-compatible) instead of pip clobbering it with a stock wheel.
 
-ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:24.10-py3
+ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:25.01-py3
 FROM ${BASE_IMAGE}
 
 # --- system deps (sim + video IO) -------------------------------------------
@@ -40,8 +41,20 @@ ENV MUJOCO_GL=egl \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
+# Protect the NGC-optimized torch/torchvision/numpy from being replaced by stock
+# wheels: capture their installed versions into a pip constraints file that every
+# subsequent install must respect.
+RUN python - <<'PY' > /opt/ngc-constraints.txt
+import importlib.metadata as m
+for pkg in ("torch", "torchvision", "numpy"):
+    try:
+        print(f"{pkg}=={m.version(pkg)}")
+    except m.PackageNotFoundError:
+        pass
+PY
+ENV PIP_CONSTRAINT=/opt/ngc-constraints.txt
+
 # --- VERA (cloned from source, pinned by build arg) -------------------------
-# Pin to a commit/tag for reproducibility; override with --build-arg VERA_REF=…
 ARG VERA_REPO=https://github.com/sizhe-li/VERA.git
 ARG VERA_REF=main
 WORKDIR /opt
@@ -49,11 +62,20 @@ RUN git clone "${VERA_REPO}" vera-src && \
     cd vera-src && git checkout "${VERA_REF}"
 
 WORKDIR /opt/vera-src
-# Install VERA + the two model-stage extras (idm pulls VGGT git dep) + sim extra
-# for the PushT/MimicGen env runners used by the example rollouts. torch is
-# already provided by the NGC base; let pip respect it.
+# Drop VERA's exact `torch==2.6.0` pin so the NGC torch (2.6.0a, CUDA 12.x,
+# ABI-compatible) is kept. The constraints file above keeps torch/vision/numpy
+# fixed to the NGC versions for all transitive deps too.
+RUN sed -i -E 's/^(\s*)"torch==2\.6\.0".*/\1"torch",/' pyproject.toml && \
+    sed -i -E 's/"torchvision[^"]*"/"torchvision"/' pyproject.toml
+
+# Install VERA + the two model-stage extras (idm pulls VGGT git dep) and the sim
+# extra used by the PushT/MimicGen env runners. `--no-build-isolation` lets the
+# build see the NGC torch. flash-attn is optional (WAN falls back to SDPA).
 RUN pip install --no-build-isolation -e ".[idm,video]" && \
     pip install -e ".[eval]"
+
+# Sanity: VERA + torch import and CUDA bindings are intact after install.
+RUN python -c "import torch, vera; print('torch', torch.__version__, 'cuda', torch.version.cuda)"
 
 # --- entrypoint -------------------------------------------------------------
 COPY strands_robots/policies/vera/docker/entrypoint.sh /usr/local/bin/vera-entrypoint

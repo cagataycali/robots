@@ -239,11 +239,24 @@ class DockerServerRunner:
             cmd += ["-p", f"{cfg.vis_port}:{cfg.vis_port}"]
         if cfg.ckpt_root is not None:
             cmd += ["-v", f"{cfg.ckpt_root}:/ckpts:ro"]
+        # WAN base (frozen Wan2.1-T2V-1.3B) — REQUIRED for mimicgen/omni, unused for
+        # pusht. Mounted read-only at /wan; the container's algo_config reads it via
+        # ${oc.env:VERA_WAN_CKPT_ROOT}. Falls back to the ckpt root (harmless no-op
+        # bind) so pusht works without the separate download.
+        wan_root = cfg.wan_ckpt_root or cfg.ckpt_root
+        if wan_root is not None:
+            cmd += ["-v", f"{wan_root}:/wan:ro"]
         # Env overlay consumed by the container entrypoint.
         cmd += ["-e", f"VERA_EMBODIMENT={cfg.embodiment}"]
         cmd += ["-e", f"VERA_PORT={cfg.server_port}"]
         cmd += ["-e", f"VERA_VIS_PORT={cfg.vis_port or 0}"]
         cmd += ["-e", "VERA_HOST=0.0.0.0"]
+        cmd += ["-e", "VERA_WAN_CKPT_ROOT=/wan"]
+        cmd += ["-e", "VERA_MIMICGEN_CKPT_DIR=/ckpts/mimicgen-wan-1.3b"]
+        # IDM checkpoint (wandb run id). When unset, the entrypoint defaults
+        # mimicgen to the PROVEN run 37oa162u; pass an explicit override through.
+        if cfg.dynamics_run_id:
+            cmd += ["-e", f"VERA_DYNAMICS_RUN_ID={cfg.dynamics_run_id}"]
         if cfg.text_prompt:
             cmd += ["-e", f"VERA_TEXT_PROMPT={cfg.text_prompt}"]
         if cfg.sample_steps is not None:

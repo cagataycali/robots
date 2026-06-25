@@ -103,6 +103,7 @@ class VeraConfig:
     dynamics_run_id: str | None = None
     text_prompt: str | None = None
     ckpt_root: Path | None = None
+    wan_ckpt_root: Path | None = None  # frozen Wan2.1-T2V-1.3B base (mimicgen/omni); env VERA_WAN_CKPT_ROOT
     sample_steps: int | None = None
     n_action_steps: int | None = None
     tracker_backend: str | None = None
@@ -143,6 +144,9 @@ class VeraConfig:
                 "VERA_MIMICGEN_CKPT_DIR" if self.embodiment == "mimicgen" else "",
             )
             self.ckpt_root = Path(cr) if cr else None
+        if self.wan_ckpt_root is None:
+            wr = _env("VERA_WAN_CKPT_ROOT")
+            self.wan_ckpt_root = Path(wr) if wr else None
         if self.sample_steps is None:
             self.sample_steps = _env_int("VERA_SAMPLE_STEPS")
         if self.n_action_steps is None:
@@ -170,6 +174,8 @@ class VeraConfig:
             self.algo_config = Path(self.algo_config)
         if self.ckpt_root is not None and not isinstance(self.ckpt_root, Path):
             self.ckpt_root = Path(self.ckpt_root)
+        if self.wan_ckpt_root is not None and not isinstance(self.wan_ckpt_root, Path):
+            self.wan_ckpt_root = Path(self.wan_ckpt_root)
 
     @property
     def server_uri(self) -> str:
@@ -180,6 +186,10 @@ class VeraConfig:
         env: dict[str, str] = {}
         if self.ckpt_root is not None:
             env["VERA_CKPT_ROOT"] = str(self.ckpt_root)
+        if self.wan_ckpt_root is not None:
+            env["VERA_WAN_CKPT_ROOT"] = str(self.wan_ckpt_root)
         if self.tracker_backend is not None:
             env["VERA_TRACKER_BACKEND"] = self.tracker_backend
+        if self.dynamics_run_id is not None:
+            env["VERA_DYNAMICS_RUN_ID"] = str(self.dynamics_run_id)
         return env
