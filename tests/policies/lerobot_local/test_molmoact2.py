@@ -395,3 +395,76 @@ class TestBuildPolicy:
         msg = str(excinfo.value)
         assert "strands-robots[molmoact2]" in msg
         assert "PR #3604" in msg
+
+
+class TestBuildPolicyDependencyGuard:
+    """``build_policy`` must guard its auxiliary deps up front with an error that
+    names the ``strands-robots[molmoact2]`` extra.
+
+    Without the guard the first missing dep (e.g. ``transformers``) only surfaces
+    deep inside lerobot's own model construction, where ``require_package``
+    raises ``'transformers' is required ... pip install 'lerobot[transformers-dep]'``
+    -- a dead end for a caller who installed ``strands-robots[molmoact2]`` and
+    never touched lerobot's extras directly. The guard turns that into an
+    actionable, correctly-attributed error before any heavy import runs.
+    """
+
+    def test_missing_dep_raises_naming_strands_extra(self, monkeypatch):
+        """A missing runtime dep aborts with the strands-robots extra in the hint."""
+        called: list[tuple[str, str | None]] = []
+
+        def fake_require_optional(module_name, *, pip_install=None, extra=None, purpose=""):
+            called.append((module_name, extra))
+            if module_name == "transformers":
+                raise ImportError(
+                    f"'{module_name}' is required for {purpose}\n"
+                    "Install with:\n"
+                    f"  pip install 'strands-robots[{extra}]'\n"
+                    f"  pip install {pip_install or module_name}"
+                )
+
+        monkeypatch.setattr(molmoact2, "require_optional", fake_require_optional)
+
+        with pytest.raises(ImportError) as exc:
+            molmoact2.build_policy(
+                "allenai/MolmoAct2-SO100_101",
+                device="cpu",
+                norm_tag="t",
+                inference_action_mode="continuous",
+                image_keys=None,
+                embodiment_spec=None,
+            )
+
+        msg = str(exc.value)
+        assert "strands-robots[molmoact2]" in msg
+        assert "transformers" in msg
+        # The guard runs before any heavy torch/lerobot import: transformers is
+        # the first dep checked, so the failure is attributed to it directly.
+        assert called[0] == ("transformers", "molmoact2")
+
+    def test_all_runtime_deps_are_guarded(self, monkeypatch):
+        """Every auxiliary dep is checked against the molmoact2 extra up front."""
+        checked: list[tuple[str, str | None]] = []
+
+        def fake_require_optional(module_name, *, pip_install=None, extra=None, purpose=""):
+            checked.append((module_name, extra))
+            # Return after recording so the guard loop completes; then stop the
+            # heavy build by failing the first lerobot import deterministically.
+
+        monkeypatch.setattr(molmoact2, "require_optional", fake_require_optional)
+        # Make the post-guard lerobot import fail predictably so the test does
+        # not reach real model construction.
+        monkeypatch.setattr(molmoact2, "auto_norm_tag", lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("stop")))
+
+        with pytest.raises((RuntimeError, ImportError)):
+            molmoact2.build_policy(
+                "repo",
+                device="cpu",
+                norm_tag="t",
+                inference_action_mode="continuous",
+                image_keys=None,
+                embodiment_spec=None,
+            )
+
+        assert [name for name, _ in checked] == list(molmoact2._MOLMOACT2_RUNTIME_DEPS)
+        assert all(extra == "molmoact2" for _, extra in checked)

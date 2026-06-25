@@ -43,9 +43,18 @@ import json
 import logging
 from typing import Any
 
+from ...utils import require_optional
+
 logger = logging.getLogger(__name__)
 
 MOLMOACT2_TYPE = "molmoact2"
+
+#: Auxiliary runtime deps the MolmoAct2 modeling/processor code imports on top of
+#: lerobot core. They ship in the ``strands-robots[molmoact2]`` extra. lerobot's
+#: own ``require_package`` raises pointing at ``lerobot[transformers-dep]`` deep
+#: inside model construction, which is a dead end for a strands-robots caller --
+#: guard them up front so the error names the extra actually installed from.
+_MOLMOACT2_RUNTIME_DEPS = ("transformers", "peft", "scipy")
 
 # Sensible default camera feature keys (match the ``so_real`` / ``so101``
 # embodiments' obs_rename targets). Overridable via ``image_keys=``.
@@ -224,7 +233,16 @@ def build_policy(
 
     Returns:
         Tuple ``(policy, preprocessor, postprocessor, config)``.
+
+    Raises:
+        ImportError: If an auxiliary MolmoAct2 dep (transformers/peft/scipy) is
+            missing, with an install hint naming the ``strands-robots[molmoact2]``
+            extra (rather than lerobot's internal extra, which a strands-robots
+            caller never installed from).
     """
+    for _dep in _MOLMOACT2_RUNTIME_DEPS:
+        require_optional(_dep, extra="molmoact2", purpose="MolmoAct2 inference")
+
     import torch
 
     try:
