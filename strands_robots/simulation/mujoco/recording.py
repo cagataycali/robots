@@ -284,6 +284,13 @@ class RecordingMixin:
         idempotent - calling when not recording succeeds with a
         'Was not recording' message so callers can safely call it unconditionally.
 
+        Returns a structured ``status="error"`` when the recording captured no
+        frames (the dataset would contain only ``meta/info.json``), rather than
+        silently writing an empty dataset. Only ``run_policy`` feeds the active
+        recorder (via its ``on_frame`` hook); ``eval_policy`` / ``evaluate`` /
+        ``replay_episode`` and bare ``step`` loops do not, so recording around
+        those produces zero frames and is reported as an error.
+
         Args:
             output_path: Unused legacy arg (kept for back-compat).
             push_to_hub: Publish to a versioned HF *dataset* repo (the finished
@@ -303,7 +310,62 @@ class RecordingMixin:
         if recorder is None:
             return {"status": "error", "content": [{"text": "No dataset recorder active."}]}
 
-        recorder.save_episode()
+        # Save the trailing (unsaved) episode, then guard against an empty
+        # dataset. ``episode_frame_count`` is the frames captured since the last
+        # save_episode; ``frame_count`` is the monotonic total across the
+        # dataset. Three cases:
+        #
+        #   1. Unsaved frames pending (episode_frame_count > 0): flush them with
+        #      save_episode. If LeRobot rejects the flush, surface the error.
+        #   2. No pending frames but the dataset already has some (callers that
+        #      save per-episode and call stop_recording last): nothing to flush,
+        #      just finalize - calling save_episode here would hit LeRobot's
+        #      "add frames before add_episode" guard on the empty buffer and
+        #      wrongly fail an otherwise-complete dataset.
+        #   3. Nothing ever captured (frame_count == 0): fail loudly instead of
+        #      writing a 0-frame dataset. This happens when the rollout was
+        #      driven by eval_policy / evaluate / replay_episode or a bare step
+        #      loop - none of which feed the active recorder (only run_policy's
+        #      on_frame hook calls add_frame). Previously stop_recording reported
+        #      success with "0 frames, 0 episode(s)", silently producing a
+        #      dataset with only meta/info.json (no parquet/video).
+        pending = getattr(recorder, "episode_frame_count", 0)
+        captured = getattr(recorder, "frame_count", 0)
+        if pending > 0:
+            save_result = recorder.save_episode()
+            if isinstance(save_result, dict) and save_result.get("status") == "error":
+                self._world._backend_state["dataset_recorder"] = None
+                self._world._backend_state["trajectory"] = []
+                return {
+                    "status": "error",
+                    "content": [
+                        {
+                            "text": (
+                                "stop_recording failed to save the final episode "
+                                f"({pending} pending frames). save_episode: "
+                                f"{save_result.get('message')}"
+                            )
+                        }
+                    ],
+                }
+        elif captured == 0:
+            self._world._backend_state["dataset_recorder"] = None
+            self._world._backend_state["trajectory"] = []
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            "stop_recording captured no frames - dataset would be empty "
+                            "(0 frames). Frames are written only by run_policy(...) while "
+                            "recording is active (its on_frame hook calls add_frame). "
+                            "eval_policy / evaluate / replay_episode and bare step loops do "
+                            "NOT feed the recorder. To record a dataset: start_recording -> "
+                            "run_policy (once per episode) -> stop_recording."
+                        )
+                    }
+                ],
+            }
 
         repo_id = recorder.repo_id
         frame_count = recorder.frame_count
