@@ -76,6 +76,15 @@ class TestNormalizeSize:
     def test_mesh_returns_zeros(self):
         assert _normalize_size("mesh", [0.1, 0.2, 0.3]) == [0.0, 0.0, 0.0]
 
+    def test_ellipsoid_halves_all_three_full_extents(self):
+        # An ellipsoid's three full diameters become per-axis radii (each /2).
+        assert _normalize_size("ellipsoid", [0.1, 0.2, 0.3]) == [0.05, 0.1, 0.15]
+
+    def test_ellipsoid_falls_back_to_default_radii_when_size_too_short(self):
+        # A malformed (<3 component) size must not raise; it falls back to the
+        # documented 0.05 default extents (-> 0.025 per-axis radius).
+        assert _normalize_size("ellipsoid", []) == [0.025, 0.025, 0.025]
+
     def test_unknown_shape_raises(self):
         with pytest.raises(ValueError, match="Cannot normalize size"):
             _normalize_size("hyperboloid", [1.0])
@@ -347,6 +356,113 @@ class TestMutation:
         assert SpecBuilder.remove_camera(spec, "c") is True
         new_model, _ = spec.recompile(model, data)
         assert mujoco.mj_name2id(new_model, mujoco.mjtObj.mjOBJ_CAMERA, "c") < 0
+
+
+# Mesh-shaped objects + robot-owned camera skip
+
+
+# A minimal but valid closed tetrahedron OBJ usable as a MuJoCo mesh asset.
+_TETRA_OBJ = """\
+v 0 0 0
+v 0.1 0 0
+v 0 0.1 0
+v 0 0 0.1
+f 1 3 2
+f 1 2 4
+f 1 4 3
+f 2 3 4
+"""
+
+
+@pytest.fixture
+def tetra_mesh_path(tmp_path):
+    path = tmp_path / "tetra.obj"
+    path.write_text(_TETRA_OBJ)
+    return str(path)
+
+
+class TestMeshObjects:
+    """``shape="mesh"`` SimObjects: build() must register the mesh asset and
+    add_object must reference it by ``meshname`` instead of a primitive size.
+
+    This is the only path that turns a user-supplied mesh file into a geom; a
+    regression here silently drops custom-mesh objects from every scene.
+    """
+
+    def test_static_mesh_object_registers_asset_and_compiles(self, tetra_mesh_path):
+        w = SimWorld()
+        w.objects["widget"] = SimObject(
+            name="widget",
+            shape="mesh",
+            mesh_path=tetra_mesh_path,
+            position=[0, 0, 0.2],
+            is_static=True,
+            color=[0.2, 0.6, 0.9, 1.0],
+        )
+        model = SpecBuilder.build(w).compile()
+
+        # The mesh asset was registered under the documented ``mesh_<name>`` id.
+        assert model.nmesh == 1
+        assert mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_MESH, 0) == "mesh_widget"
+        # The object's body exists and carries a mesh geom (not a primitive).
+        bid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "widget")
+        assert bid >= 0
+        gid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "widget_geom")
+        assert gid >= 0
+        assert int(model.geom_type[gid]) == int(mujoco.mjtGeom.mjGEOM_MESH)
+        # A static mesh has no freejoint, so the model has no DOFs.
+        assert model.nq == 0
+
+    def test_dynamic_mesh_object_gets_freejoint(self, tetra_mesh_path):
+        w = SimWorld()
+        w.objects["m"] = SimObject(
+            name="m",
+            shape="mesh",
+            mesh_path=tetra_mesh_path,
+            position=[0, 0, 0.3],
+            is_static=False,
+            mass=0.3,
+        )
+        model = SpecBuilder.build(w).compile()
+        # A dynamic body carries a 7-DOF freejoint (3 translation + 4 quat).
+        assert model.nq == 7
+        assert model.nmesh == 1
+
+
+class TestEllipsoidObject:
+    """An ellipsoid SimObject compiles to a single ellipsoid geom whose
+    half-extents are the per-axis radii from ``_normalize_size``."""
+
+    def test_ellipsoid_object_compiles_with_expected_radii(self):
+        w = SimWorld()
+        w.objects["egg"] = SimObject(
+            name="egg",
+            shape="ellipsoid",
+            size=[0.1, 0.2, 0.3],
+            position=[0, 0, 0.5],
+            is_static=True,
+        )
+        model = SpecBuilder.build(w).compile()
+        gid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "egg_geom")
+        assert gid >= 0
+        assert int(model.geom_type[gid]) == int(mujoco.mjtGeom.mjGEOM_ELLIPSOID)
+        # geom_size holds the per-axis radii (full extents halved).
+        assert np.allclose(model.geom_size[gid], [0.05, 0.1, 0.15])
+
+
+class TestRobotOwnedCameraSkip:
+    """A camera whose ``origin_robot`` is set was discovered inside a robot's
+    URDF and is re-introduced by ``spec.attach``; build() must NOT re-add it at
+    the top level or the attach would collide at compile time (see add_robot)."""
+
+    def test_origin_robot_camera_is_skipped_world_camera_kept(self):
+        w = SimWorld()
+        w.cameras["robotcam"] = SimCamera(name="robotcam", origin_robot="so101")
+        w.cameras["worldcam"] = SimCamera(name="worldcam", position=[1, 0, 1], target=[0, 0, 0])
+        model = SpecBuilder.build(w).compile()
+        names = {mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_CAMERA, i) for i in range(model.ncam)}
+        assert "worldcam" in names
+        assert "robotcam" not in names
 
 
 # attach_robot
