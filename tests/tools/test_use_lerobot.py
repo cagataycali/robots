@@ -556,3 +556,123 @@ def test_dispatch_import_error_suggests_install(monkeypatch: pytest.MonkeyPatch)
     _assert_ascii(text)
     assert "Import error" in text
     assert "pip install lerobot" in text
+
+
+# ----------------------------------------------------------------------------
+# security guards: the dispatcher must refuse dangerous calls
+# ----------------------------------------------------------------------------
+# use_lerobot exposes the whole lerobot package to an LLM-driven agent. Two
+# allowlists keep prompt-injected calls from spawning training subprocesses or
+# pushing to the Hugging Face Hub: a blocked-module-prefix check and a
+# blocked-method-name check. Both run only after the target resolves to a
+# callable, so they are asserted with a resolver stub (no lerobot internals,
+# no hardware). A regression that drops either guard would let a call under
+# "lerobot.scripts" or a "push_to_hub" method through silently.
+def test_blocked_module_prefix_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A callable under a restricted module namespace (lerobot.scripts spawns
+    training subprocesses) is refused before it is ever called."""
+    called = {"n": 0}
+
+    def resolver(path: str) -> Any:
+        def spawn(**kwargs: Any) -> None:
+            called["n"] += 1  # must never run
+
+        return spawn
+
+    monkeypatch.setattr(M, "_import_from_lerobot", resolver)
+    # method="" so the resolved callable is the dispatch target directly.
+    result = _fn(module="scripts.lerobot_train", method="")
+    assert result["status"] == "error"
+    text = _texts(result)
+    _assert_ascii(text)
+    assert "Blocked" in text
+    assert "lerobot.scripts" in text
+    assert called["n"] == 0, "blocked target must not be invoked"
+
+
+def test_blocked_module_prefix_check_respects_explicit_lerobot_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The prefix check normalizes both bare ('scripts...') and fully-qualified
+    ('lerobot.scripts...') module paths, so a caller cannot bypass it by
+    spelling out the 'lerobot.' prefix themselves."""
+    monkeypatch.setattr(M, "_import_from_lerobot", lambda path: lambda **kw: None)
+    result = _fn(module="lerobot.common.datasets.push.foo", method="")
+    assert result["status"] == "error"
+    assert "Blocked" in _texts(result)
+
+
+def test_blocked_method_name_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A method whose name has a dangerous side effect (push_to_hub uploads to
+    the Hub) is refused even on an otherwise-safe module."""
+    called = {"n": 0}
+
+    def resolver(path: str) -> Any:
+        class Dataset:
+            def push_to_hub(self) -> None:
+                called["n"] += 1  # must never run
+
+        return Dataset()
+
+    monkeypatch.setattr(M, "_import_from_lerobot", resolver)
+    result = _fn(module="datasets.lerobot_dataset.LeRobotDataset", method="push_to_hub")
+    assert result["status"] == "error"
+    text = _texts(result)
+    _assert_ascii(text)
+    assert "Blocked" in text
+    assert "push_to_hub" in text
+    assert called["n"] == 0, "blocked method must not be invoked"
+
+
+def test_safe_method_on_unblocked_module_is_allowed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The guards are an allowlist, not a blanket denial: an ordinary method on
+    an unrestricted module still dispatches and returns its result."""
+
+    def resolver(path: str) -> Any:
+        class Thing:
+            def num_frames(self) -> int:
+                return 42
+
+        return Thing()
+
+    monkeypatch.setattr(M, "_import_from_lerobot", resolver)
+    result = _fn(module="datasets.lerobot_dataset.LeRobotDataset", method="num_frames")
+    assert result["status"] == "success"
+    assert "42" in _texts(result)
+
+
+# ----------------------------------------------------------------------------
+# TypeError signature hint: bad kwargs get an actionable expected-signature
+# ----------------------------------------------------------------------------
+def test_type_error_reports_expected_signature(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A wrong-kwargs TypeError surfaces with the introspected parameter list so
+    the agent can self-correct (the dispatcher re-introspects the target)."""
+
+    def resolver(path: str) -> Any:
+        def needs_args(repo_id: str, fps: int = 30) -> None:
+            raise TypeError("needs_args() got an unexpected keyword argument 'bogus'")
+
+        return needs_args
+
+    monkeypatch.setattr(M, "_import_from_lerobot", resolver)
+    result = _fn(module="datasets.create", method="", parameters={"bogus": 1})
+    assert result["status"] == "error"
+    text = _texts(result)
+    _assert_ascii(text)
+    assert "TypeError" in text
+    assert "Expected signature" in text
+    assert "repo_id" in text and "fps" in text
+
+
+def test_type_error_without_introspectable_signature_falls_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the target raises TypeError but exposes no introspectable signature
+    (a C builtin like range), the dispatcher still reports the error instead of
+    crashing in the signature-formatting fallback."""
+    monkeypatch.setattr(M, "_import_from_lerobot", lambda path: range)
+    result = _fn(module="builtins.range", method="", parameters={"bogus": 1})
+    assert result["status"] == "error"
+    text = _texts(result)
+    _assert_ascii(text)
+    assert "TypeError" in text
