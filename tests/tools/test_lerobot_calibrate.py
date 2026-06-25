@@ -435,3 +435,85 @@ def test_delete_success_message_is_ascii(populated: Path) -> None:
     text = result["content"][0]["text"]
     _assert_ascii(text)
     assert "Successfully deleted:" in text
+
+
+# --- Fail-soft error branches (filesystem faults must not raise) -----------
+
+
+def test_save_calibration_returns_false_when_path_is_a_directory(tmp_path: Path) -> None:
+    """A blocked write target makes save_calibration report failure, not raise."""
+    mgr = LeRobotCalibrationManager(tmp_path)
+    # Occupy the target file path with a directory so open(..., "w") fails.
+    mgr.get_calibration_path("robots", "so101", "arm1").mkdir(parents=True)
+    assert mgr.save_calibration("robots", "so101", "arm1", _calib(2)) is False
+
+
+def test_delete_calibration_returns_false_when_unlink_fails(tmp_path: Path) -> None:
+    """delete_calibration fails soft (False) when the entry cannot be unlinked."""
+    mgr = LeRobotCalibrationManager(tmp_path)
+    # A directory at the calibration path exists() True but unlink() raises.
+    mgr.get_calibration_path("robots", "so101", "arm1").mkdir(parents=True)
+    assert mgr.calibration_exists("robots", "so101", "arm1") is True
+    assert mgr.delete_calibration("robots", "so101", "arm1") is False
+
+
+def test_get_calibration_info_returns_none_when_read_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A read fault while gathering info yields None rather than propagating."""
+    mgr = LeRobotCalibrationManager(tmp_path)
+    mgr.save_calibration("robots", "so101", "arm1", _calib(2))
+
+    def _boom(*_args: Any, **_kwargs: Any) -> None:
+        raise OSError("simulated read failure")
+
+    monkeypatch.setattr(mgr, "load_calibration", _boom)
+    assert mgr.get_calibration_info("robots", "so101", "arm1") is None
+
+
+def test_backup_returns_failure_when_destination_blocked(tmp_path: Path) -> None:
+    """backup_calibrations reports (False, error, 0) when the dest tree is blocked."""
+    mgr = LeRobotCalibrationManager(tmp_path)
+    mgr.save_calibration("teleoperators", "so101_leader", "blue_arm", _calib(3))
+    out = tmp_path / "backup_dest"
+    out.mkdir()
+    # A file where the per-type subdir must be created forces mkdir to fail.
+    (out / "teleoperators").write_text("not a directory")
+
+    success, message, count = mgr.backup_calibrations(output_dir=out)
+    assert success is False
+    assert count == 0
+    assert message  # carries the underlying OS error text
+
+
+def test_restore_returns_failure_when_destination_blocked(tmp_path: Path) -> None:
+    """restore_calibrations reports failure when a destination path is occupied."""
+    backup = tmp_path / "backup_src"
+    (backup / "robots" / "m1").mkdir(parents=True)
+    (backup / "robots" / "m1" / "arm.json").write_text('{"shoulder": {"id": 1}}')
+
+    mgr = LeRobotCalibrationManager(tmp_path / "live")
+    # Block the destination model directory with a regular file.
+    (mgr.base_path / "robots" / "m1").write_text("block")
+
+    success, message, count = mgr.restore_calibrations(backup)
+    assert success is False
+    assert count == 0
+    assert message
+
+
+def test_list_filters_out_nonmatching_model(populated: Path) -> None:
+    """A device_model filter on list omits other models and counts only matches."""
+    result = lerobot_calibrate(action="list", device_model="so101_follower", base_path=str(populated))
+    assert result["status"] == "success"
+    text = result["content"][0]["text"]
+    # so101_follower has two calibrations; the teleoperator model must be hidden.
+    assert "so101_follower" in text
+    assert "so101_leader" not in text
+    assert result["count"] == 2
+
+
+def test_list_marks_unreadable_calibration_without_failing(populated: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """When a calibration's info cannot be read, list still succeeds and flags it."""
+    monkeypatch.setattr(LeRobotCalibrationManager, "get_calibration_info", lambda *_a, **_k: None)
+    result = lerobot_calibrate(action="list", base_path=str(populated))
+    assert result["status"] == "success"
+    assert "error reading file" in result["content"][0]["text"]

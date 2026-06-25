@@ -395,3 +395,119 @@ class TestBuildPolicy:
         msg = str(excinfo.value)
         assert "strands-robots[molmoact2]" in msg
         assert "PR #3604" in msg
+
+
+class TestBuildPolicyDependencyGuard:
+    """``build_policy`` must guard its auxiliary deps up front with an error that
+    names the ``strands-robots[molmoact2]`` extra AND lists every missing dep.
+
+    Without the guard the first missing dep (e.g. ``transformers``) only surfaces
+    deep inside lerobot's own model construction, where ``require_package``
+    raises ``'transformers' is required ... pip install 'lerobot[transformers-dep]'``
+    -- a dead end for a caller who installed ``strands-robots[molmoact2]`` and
+    never touched lerobot's extras directly. The guard turns that into an
+    actionable, correctly-attributed error before any heavy import runs.
+
+    The guard uses ``require_optionals`` (plural), which probes ALL deps and
+    reports every missing one at once -- so a partially-provisioned env (e.g.
+    transformers present but peft and scipy both absent) is fixed in a single
+    install instead of one reinstall-and-retry per missing dep.
+    """
+
+    def test_missing_dep_raises_naming_strands_extra(self, monkeypatch):
+        """A missing runtime dep aborts with the strands-robots extra in the hint."""
+        seen: list[object] = []
+
+        def fake_require_optionals(module_names, *, extra=None, purpose=""):
+            seen.append((tuple(module_names), extra))
+            raise ImportError(
+                f"'transformers' is required for {purpose}\n"
+                "Install with:\n"
+                f"  pip install 'strands-robots[{extra}]'\n"
+                "  pip install transformers"
+            )
+
+        monkeypatch.setattr(molmoact2, "require_optionals", fake_require_optionals)
+
+        with pytest.raises(ImportError) as exc:
+            molmoact2.build_policy(
+                "allenai/MolmoAct2-SO100_101",
+                device="cpu",
+                norm_tag="t",
+                inference_action_mode="continuous",
+                image_keys=None,
+                embodiment_spec=None,
+            )
+
+        msg = str(exc.value)
+        assert "strands-robots[molmoact2]" in msg
+        assert "transformers" in msg
+        # The guard runs before any heavy torch/lerobot import, against the
+        # molmoact2 extra, and covers the full runtime-dep set in one call.
+        assert seen[0] == (molmoact2._MOLMOACT2_RUNTIME_DEPS, "molmoact2")
+
+    def test_all_runtime_deps_guarded_in_one_call(self, monkeypatch):
+        """Every auxiliary dep is gated against the molmoact2 extra in a single call."""
+        seen: list[object] = []
+
+        def fake_require_optionals(module_names, *, extra=None, purpose=""):
+            seen.append((tuple(module_names), extra))
+
+        monkeypatch.setattr(molmoact2, "require_optionals", fake_require_optionals)
+        # Make the post-guard lerobot import fail predictably so the test does
+        # not reach real model construction.
+        monkeypatch.setattr(molmoact2, "auto_norm_tag", lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("stop")))
+
+        with pytest.raises((RuntimeError, ImportError)):
+            molmoact2.build_policy(
+                "repo",
+                device="cpu",
+                norm_tag="t",
+                inference_action_mode="continuous",
+                image_keys=None,
+                embodiment_spec=None,
+            )
+
+        assert len(seen) == 1, "deps must be gated in one aggregate call, not a loop"
+        names, extra = seen[0]
+        assert names == molmoact2._MOLMOACT2_RUNTIME_DEPS
+        assert extra == "molmoact2"
+
+    def test_reports_every_missing_dep_at_once(self, monkeypatch):
+        """Regression: a partial env (peft + scipy both missing) names BOTH in one error.
+
+        Pre-fix the guard looped ``require_optional`` and raised on the first
+        missing dep only, so a caller fixed peft, re-ran the heavy load path, and
+        only then learned scipy was also missing -- a reinstall treadmill. The
+        aggregate guard must surface every missing dep in a single message.
+        """
+        import strands_robots.utils as u
+
+        absent = {"peft", "scipy"}
+        real_import = u.importlib.import_module
+
+        def fake_import(name, *a, **k):
+            if name.split(".")[0] in absent:
+                raise ImportError(f"no module named {name}")
+            return real_import(name, *a, **k)
+
+        monkeypatch.setattr(u.importlib, "import_module", fake_import)
+        # Drop any cached real peft/scipy so the probe actually fails.
+        for mod in list(u._lazy_modules):
+            if mod in absent:
+                del u._lazy_modules[mod]
+
+        with pytest.raises(ImportError) as exc:
+            molmoact2.build_policy(
+                "allenai/MolmoAct2-SO100_101",
+                device="cpu",
+                norm_tag="t",
+                inference_action_mode="continuous",
+                image_keys=None,
+                embodiment_spec=None,
+            )
+
+        msg = str(exc.value)
+        assert "peft" in msg
+        assert "scipy" in msg
+        assert "strands-robots[molmoact2]" in msg

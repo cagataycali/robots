@@ -16,6 +16,7 @@
         "remove_robot",
         "list_robots",
         "get_robot_state",
+        "list_bodies",
         "add_object",
         "remove_object",
         "move_object",

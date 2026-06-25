@@ -1447,3 +1447,148 @@ class TestDiscoverModelStateDof:
         p._discover_model_state_dof(SO100_MMC)
         # Neither source produced anything; no exception escaped.
         assert p._model_state_dof == {}
+
+
+# (section)
+# _init_mappings orchestration + _get_modality_configs branch coverage
+# (section)
+
+
+class _MappingPolicy:
+    """Precise stub local-policy for ``_init_mappings`` / ``_get_modality_configs``.
+
+    Attribute presence is controlled exactly (unlike MagicMock, which
+    auto-creates every attribute) so each modality-config source - direct
+    ``modality_configs`` (N1.6/N1.7), the wrapped ``.policy.modality_configs``,
+    and the singular ``modality_config`` (N1.5) - can be exercised in
+    isolation. Carries no normalizer/processor so DOF discovery is a clean
+    no-op (the mapping orchestration under test does not depend on it).
+    """
+
+    def __init__(self, *, direct=None, wrapped=None, n15=None):
+        if direct is not None:
+            self.modality_configs = direct
+        if wrapped is not None:
+            inner = _MappingPolicy(direct=wrapped)
+            self.policy = inner
+        if n15 is not None:
+            self.modality_config = n15
+
+
+def _mapping_policy(
+    *,
+    version="n1.6",
+    local_policy=None,
+    raw_obs=None,
+    raw_action=None,
+    language_override=None,
+    data_config="so100",
+):
+    """Build a Gr00tPolicy bypassing __init__ with just the mapping inputs set."""
+    p = Gr00tPolicy.__new__(Gr00tPolicy)
+    p._groot_version = version
+    p.data_config = DATA_CONFIG_MAP[data_config]
+    p.data_config_name = data_config
+    p._strict_keys = False
+    p._local_policy = local_policy
+    p._raw_obs_mapping = raw_obs
+    p._raw_action_mapping = raw_action
+    p._language_key_override = language_override
+    p._model_state_dof = {}
+    p._obs_mapping = None
+    p._action_mapping = None
+    return p
+
+
+class TestGetModalityConfigs:
+    """Exercise the version-specific :meth:`Gr00tPolicy._get_modality_configs`
+    branches: the direct N1.6/N1.7 attribute, the wrapped ``.policy`` fallback,
+    the singular N1.5 ``modality_config``, and the absent-source None result.
+    No Isaac-GR00T install required.
+    """
+
+    def test_direct_attribute_n16(self):
+        """N1.6/N1.7 read ``modality_configs`` straight off the policy object."""
+        p = _mapping_policy(version="n1.6", local_policy=_MappingPolicy(direct=SO100_MMC))
+        assert p._get_modality_configs() is SO100_MMC
+
+    def test_wrapped_policy_fallback(self):
+        """When the policy exposes no direct configs, the wrapped ``.policy``
+        inner object is consulted (PolicyWrapper / SimPolicyWrapper)."""
+        p = _mapping_policy(version="n1.7", local_policy=_MappingPolicy(wrapped=GR1_MMC))
+        assert p._get_modality_configs() is GR1_MMC
+
+    def test_n15_singular_attribute(self):
+        """N1.5 stores the config under the singular ``modality_config`` name."""
+        p = _mapping_policy(version="n1.5", local_policy=_MappingPolicy(n15=SO100_MMC))
+        assert p._get_modality_configs() is SO100_MMC
+
+    def test_returns_none_when_no_source(self):
+        """A policy exposing neither configs attribute yields None (not a raise)."""
+        p = _mapping_policy(version="n1.6", local_policy=_MappingPolicy())
+        assert p._get_modality_configs() is None
+
+
+class TestInitMappings:
+    """Exercise :meth:`Gr00tPolicy._init_mappings` - the orchestration that
+    turns a loaded model's modality configs plus any user-supplied mappings
+    into validated ``ObservationMapping`` / ``ActionMapping`` objects. The
+    parse/auto-infer helpers are covered individually elsewhere; this pins how
+    ``_init_mappings`` wires them together, applies a language override, and
+    short-circuits on missing inputs. No Isaac-GR00T install required.
+    """
+
+    def test_auto_infers_both_mappings(self):
+        """With no raw mappings, obs+action mappings are auto-inferred from the
+        data config and the model's modality configs."""
+        p = _mapping_policy(local_policy=_MappingPolicy(direct=SO100_MMC))
+        p._init_mappings()
+        assert p._obs_mapping is not None
+        assert p._obs_mapping.video == {"webcam": "webcam"}
+        assert p._obs_mapping.state["single_arm"] == "single_arm"
+        assert p._action_mapping is not None
+        assert p._action_mapping.actions["single_arm"] == "single_arm"
+
+    def test_parses_explicit_raw_mappings(self):
+        """User-supplied raw obs/action mappings are parsed (not auto-inferred)
+        and survive validation against the model configs."""
+        p = _mapping_policy(
+            local_policy=_MappingPolicy(direct=SO100_MMC),
+            raw_obs={"cam": "video.webcam", "arm": "state.single_arm"},
+            raw_action={"action.single_arm": "arm"},
+        )
+        p._init_mappings()
+        assert p._obs_mapping.video == {"cam": "webcam"}
+        assert p._obs_mapping.state == {"arm": "single_arm"}
+        assert p._action_mapping.actions == {"single_arm": "arm"}
+
+    def test_language_key_override_applied(self):
+        """A language_key override replaces the auto-resolved key while keeping
+        the inferred video/state maps, and must validate against the model."""
+        mmc = _mock_mmc(language_keys=["task", "instruction"])
+        p = _mapping_policy(
+            local_policy=_MappingPolicy(direct=mmc),
+            language_override="instruction",
+        )
+        p._init_mappings()
+        assert p._obs_mapping.language_key == "instruction"
+        # The video/state maps are still the auto-inferred ones.
+        assert p._obs_mapping.video == {"webcam": "webcam"}
+
+    def test_no_local_policy_is_noop(self):
+        """Without a loaded local policy, mapping init returns without touching
+        the (still-None) resolved mappings."""
+        p = _mapping_policy(local_policy=None)
+        p._init_mappings()
+        assert p._obs_mapping is None
+        assert p._action_mapping is None
+
+    def test_missing_modality_configs_warns_and_returns(self, caplog):
+        """A policy that exposes no modality configs aborts mapping init with a
+        warning rather than crashing on a None config."""
+        p = _mapping_policy(local_policy=_MappingPolicy())
+        with caplog.at_level("WARNING"):
+            p._init_mappings()
+        assert p._obs_mapping is None
+        assert p._action_mapping is None
+        assert "modality configs" in caplog.text

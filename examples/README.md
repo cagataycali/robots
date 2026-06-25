@@ -22,6 +22,7 @@ MUJOCO_GL=egl python examples/01_sim_hello_world.py
 | 05 | [`05_agent_natural_language.py`](05_agent_natural_language.py) | `Agent` + `Robot` tool | No | No (needs LLM API) |
 | 06 | [`06_agent_collect_and_stream.py`](06_agent_collect_and_stream.py) | `Agent` record + `stream_dataset` | No | No (needs LLM API) |
 | 07 | [`07_post_tune_any_policy.py`](07_post_tune_any_policy.py) | `create_trainer` + `TrainSpec` (record→train→load) | No | No |
+| -- | [`vla_g1_workflow.py`](vla_g1_workflow.py) | VLA-on-G1: record -> GR00T fine-tune -> WBC deploy | No | Optional (tune) |
 | — | [`vera_pusht_mujoco/`](vera_pusht_mujoco/) | VERA video-to-action (`run_policy` + containerized GPU server) | No | **Yes** (server) |
 | — | [`vera_mimicgen_panda/`](vera_mimicgen_panda/) | VERA MimicGen → Panda (eef-delta + IK bridge) | No | **Yes** (server) |
 

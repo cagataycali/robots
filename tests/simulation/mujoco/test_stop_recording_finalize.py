@@ -28,19 +28,33 @@ from strands_robots.simulation.mujoco.simulation import Simulation  # noqa: E402
 class _FakeRecorder:
     """Minimal stand-in for ``DatasetRecorder`` capturing orchestration order."""
 
-    def __init__(self, *, sync_result=None, push_result=None):
+    def __init__(
+        self,
+        *,
+        sync_result=None,
+        push_result=None,
+        save_result=None,
+        frame_count=7,
+        episode_frame_count=7,
+    ):
         self.repo_id = "local/finalize_test"
-        self.frame_count = 7
+        self.frame_count = frame_count
+        # Frames captured since the last save_episode (the pending trailing
+        # episode). stop_recording only flushes a final save_episode when this
+        # is > 0; see RecordingMixin.stop_recording.
+        self.episode_frame_count = episode_frame_count
         self.episode_count = 1
         self.root = "/tmp/finalize_test"
         self.calls: list[str] = []
         self._sync_result = sync_result
         self._push_result = push_result
+        self._save_result = save_result
         self.sync_args: tuple | None = None
         self.push_tags = None
 
     def save_episode(self):
         self.calls.append("save_episode")
+        return self._save_result
 
     def finalize(self):
         self.calls.append("finalize")
@@ -139,3 +153,91 @@ class TestStopRecordingFinalize:
         result = recording_sim.stop_recording(push_to_hub=True)
         assert result["status"] == "success"
         assert "push_to_hub FAILED: auth denied" in result["content"][0]["text"]
+
+
+class TestStopRecordingEmptyDataset:
+    """stop_recording must fail loudly when no frames were captured, but must
+    NOT fail a dataset that was filled via per-episode save_episode.
+
+    Regression for the silent empty-dataset bug. A recording driven by a path
+    that never feeds the dataset recorder (eval_policy / evaluate /
+    replay_episode / a bare step loop - only run_policy's on_frame hook calls
+    add_frame) leaves the recorder with zero frames. Previously stop_recording
+    called save_episode unconditionally, discarded its error return, and
+    reported success with "0 frames, 0 episode(s)", producing a dataset with
+    only meta/info.json (no parquet/video).
+
+    The fix distinguishes three cases by frame counters:
+      1. pending unsaved frames -> flush them (save_episode), surface errors;
+      2. no pending frames but dataset non-empty -> finalize only (do not
+         re-call save_episode on an empty buffer);
+      3. nothing ever captured -> structured error, no empty dataset.
+    """
+
+    def test_empty_recording_reports_error(self, recording_sim):
+        # frame_count == 0 and no pending frames -> loud empty-dataset error.
+        rec = _FakeRecorder(frame_count=0, episode_frame_count=0)
+        _arm(recording_sim, rec)
+        result = recording_sim.stop_recording()
+        assert result["status"] == "error"
+        text = result["content"][0]["text"]
+        assert "captured no frames" in text
+        assert "0 frames" in text
+        # actionable guidance: point to the only path that records frames.
+        assert "run_policy" in text
+        # save_episode must NOT be called on the empty buffer.
+        assert rec.calls == []
+
+    def test_empty_recording_does_not_finalize_or_upload(self, recording_sim):
+        rec = _FakeRecorder(
+            frame_count=0,
+            episode_frame_count=0,
+            push_result={"status": "success"},
+        )
+        _arm(recording_sim, rec, push_to_hub=True)
+        result = recording_sim.stop_recording(push_to_hub=True)
+        assert result["status"] == "error"
+        # No finalize / no upload after an empty recording.
+        assert rec.calls == []
+        assert "finalize" not in rec.calls
+        assert "push_to_hub" not in rec.calls
+
+    def test_empty_recording_clears_state_for_clean_retry(self, recording_sim):
+        rec = _FakeRecorder(frame_count=0, episode_frame_count=0)
+        _arm(recording_sim, rec)
+        recording_sim.stop_recording()
+        # Recorder + buffer cleared so a subsequent stop is the idempotent no-op.
+        assert recording_sim._world._backend_state["dataset_recorder"] is None
+        assert recording_sim._world._backend_state["recording"] is False
+        second = recording_sim.stop_recording()
+        assert second["status"] == "success"
+        assert "Was not recording" in second["content"][0]["text"]
+
+    def test_trailing_save_episode_failure_is_surfaced(self, recording_sim):
+        # Pending frames exist but the final save_episode flush fails.
+        rec = _FakeRecorder(
+            frame_count=12,
+            episode_frame_count=12,
+            save_result={"status": "error", "message": "writer broke"},
+        )
+        _arm(recording_sim, rec)
+        result = recording_sim.stop_recording()
+        assert result["status"] == "error"
+        text = result["content"][0]["text"]
+        assert "final episode" in text
+        assert "writer broke" in text
+        # Flush was attempted; no finalize/upload after a failed flush.
+        assert rec.calls == ["save_episode"]
+
+    def test_dataset_filled_per_episode_finalizes_without_re_saving(self, recording_sim):
+        # Caller saved each episode already (episode_frame_count == 0) and the
+        # dataset has frames. stop_recording must finalize WITHOUT calling
+        # save_episode again - the previous bug re-saved the empty buffer and
+        # wrongly errored an otherwise-complete dataset.
+        rec = _FakeRecorder(frame_count=90, episode_frame_count=0)
+        _arm(recording_sim, rec)
+        result = recording_sim.stop_recording()
+        assert result["status"] == "success"
+        assert rec.calls == ["finalize"]
+        assert "save_episode" not in rec.calls
+        assert "90 frames" in result["content"][0]["text"]

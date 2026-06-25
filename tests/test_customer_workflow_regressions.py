@@ -98,6 +98,39 @@ class TestMolmoact2Extra:
         assert "peft" in joined
         assert "scipy" in joined
 
+    def test_molmoact2_transformers_pin_matches_lerobot(self):
+        """The transformers pin must match lerobot's [transformers-dep] floor.
+
+        MolmoAct2's modeling/processor code uses transformers 5.4+ APIs.
+        ``molmoact2.build_policy`` guards the dep with an importability-only
+        check (``require_optional``), which a too-loose floor (e.g. the old
+        ``>=4.46``) silently defeats: a resolver can pick transformers 4.x,
+        the import succeeds, the guard passes, then model construction dead-ends
+        deep inside lerobot. The pin must therefore carry lerobot's own floor
+        (``>=5.4.0``) and an upper bound so a future incompatible major cannot
+        slip through.
+        """
+        from packaging.requirements import Requirement
+        from packaging.version import Version
+
+        specs = self._extras()["molmoact2"]
+        transformers_req = next(
+            (Requirement(s) for s in specs if Requirement(s).name == "transformers"),
+            None,
+        )
+        assert transformers_req is not None, "[molmoact2] must pin transformers"
+        spec = transformers_req.specifier
+        # Floor must be at least lerobot's transformers-dep floor (5.4.0).
+        assert not spec.contains(Version("4.46")), (
+            f"transformers floor too loose: {spec} admits 4.46, which lacks the "
+            "transformers 5.4+ APIs MolmoAct2 needs (matches lerobot[transformers-dep])"
+        )
+        assert spec.contains(Version("5.4.0")), f"transformers pin {spec} must admit 5.4.0 (lerobot's molmoact2 floor)"
+        # An upper bound must exist so an incompatible future major is excluded.
+        assert any(s.operator in ("<", "<=", "==", "~=") for s in spec), (
+            f"transformers pin {spec} must carry an upper bound"
+        )
+
     def test_molmoact2_extra_has_no_git_url(self):
         # PyPI rejects direct-reference (git+) deps in a published package's
         # dependency table; the git-source pin must stay in docs/error hints.

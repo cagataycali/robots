@@ -20,7 +20,7 @@ from __future__ import annotations
 import builtins
 import random
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -6928,3 +6928,166 @@ class TestWriteLiberoArmHomeQpos:
 
         # Arm home pose still landed despite the unnamed joint.
         assert data.qpos[0:7] == list(home)
+
+
+class TestCanonicalStateLockContract:
+    """``_apply_canonical_state`` must mutate ``data.qpos / qvel / time``
+    under ``sim._lock`` when the sim exposes one.
+
+    The method docstring promises it "Holds ``sim._lock`` if the sim
+    exposes one to match the locking contract of :meth:`Simulation.reset`
+    and :meth:`Simulation.send_action` - prevents racing a worker holding
+    a stale qpos pointer." MuJoCo ``mjData`` is not thread-safe: a 50Hz
+    control worker reading ``qpos`` concurrently with a between-episode
+    canonical-state write would observe a torn pose. These tests pin that
+    each of the three branches (init-state, keyframe, snapshot-restore)
+    enters the lock exactly once AND completes its ``mj_forward`` (the last
+    derived-state refresh) while the lock is still held - so removing the
+    ``with lock:`` guard fails the suite.
+    """
+
+    class _LockSpy:
+        """Context-manager lock that records entry count + held state."""
+
+        def __init__(self) -> None:
+            self.enter_count = 0
+            self.held = False
+
+        def __enter__(self) -> TestCanonicalStateLockContract._LockSpy:
+            self.enter_count += 1
+            self.held = True
+            return self
+
+        def __exit__(self, *exc: object) -> Literal[False]:
+            self.held = False
+            return False
+
+    @staticmethod
+    def _mj_recording_lock_state(lock: TestCanonicalStateLockContract._LockSpy):
+        """mujoco stub whose mj_forward / mj_resetDataKeyframe record
+        whether ``lock`` was held at call time."""
+        forward_held: list[bool] = []
+        keyframe_held: list[bool] = []
+
+        class _Mj:
+            @staticmethod
+            def mj_forward(model: Any, data: Any) -> None:  # noqa: ARG004
+                forward_held.append(lock.held)
+
+            @staticmethod
+            def mj_resetDataKeyframe(model: Any, data: Any, key: int) -> None:  # noqa: ARG004
+                keyframe_held.append(lock.held)
+
+        return _Mj(), forward_held, keyframe_held
+
+    @staticmethod
+    def _make_data(nq: int, nv: int):
+        class _D:
+            def __init__(self) -> None:
+                self.qpos = np.zeros(nq, dtype=np.float64)
+                self.qvel = np.zeros(nv, dtype=np.float64)
+                self.time = 0.0
+
+        return _D()
+
+    def test_init_state_branch_mutates_under_lock(self):
+        """Branch 1 (init_states): the direct qpos/qvel/time write + its
+        mj_forward run inside ``sim._lock`` (entered once)."""
+        nq, nv = 4, 4
+        state = np.array([0.5] + list(range(1, nq + 1)) + list(range(10, 10 + nv)), dtype=np.float64)
+        adapter = LiberoAdapter.from_text(
+            PICK_CUBE_BDDL,
+            install_cameras=False,
+            auto_generate_scene=False,
+            init_states=state,
+        )
+
+        class _Model:
+            nq_ = nq
+            nv_ = nv
+
+            def __init__(self) -> None:
+                self.nq = nq
+                self.nv = nv
+                self.na = 0
+                self.nkey = 0
+
+        sim = FakeSim(data_config="panda")
+        sim._world._model = _Model()  # type: ignore[attr-defined]
+        sim._world._data = self._make_data(nq, nv)  # type: ignore[attr-defined]
+        lock = self._LockSpy()
+        sim._lock = lock  # type: ignore[attr-defined]
+
+        mj, forward_held, _ = self._mj_recording_lock_state(lock)
+        with patch.dict("sys.modules", {"mujoco": mj}):
+            adapter._apply_canonical_state(sim, random.Random(0))
+
+        # The init-state write landed.
+        np.testing.assert_array_equal(sim._world._data.qpos, state[1 : 1 + nq])  # type: ignore[attr-defined]
+        # Lock entered exactly once and mj_forward ran while it was held.
+        assert lock.enter_count == 1
+        assert forward_held == [True]
+
+    def test_keyframe_branch_mutates_under_lock(self):
+        """Branch 2 (keyframe): mj_resetDataKeyframe + mj_forward both run
+        inside ``sim._lock`` (entered once)."""
+        adapter = LiberoAdapter.from_text(
+            PICK_CUBE_BDDL,
+            install_cameras=False,
+            auto_generate_scene=False,
+        )
+
+        class _Model:
+            nkey = 1
+
+        sim = FakeSim(data_config="panda")
+        sim._world._model = _Model()  # type: ignore[attr-defined]
+        sim._world._data = self._make_data(4, 4)  # type: ignore[attr-defined]
+        lock = self._LockSpy()
+        sim._lock = lock  # type: ignore[attr-defined]
+
+        mj, forward_held, keyframe_held = self._mj_recording_lock_state(lock)
+        with patch.dict("sys.modules", {"mujoco": mj}):
+            adapter._apply_canonical_state(sim, random.Random(0))
+
+        # Lock entered once; both the keyframe reset and the forward ran
+        # while it was held.
+        assert lock.enter_count == 1
+        assert keyframe_held == [True]
+        assert forward_held == [True]
+
+    def test_snapshot_restore_branch_mutates_under_lock(self):
+        """Branch 3 (snapshot-restore): the np.copyto restore + mj_forward
+        run inside ``sim._lock`` (entered once) on a subsequent episode."""
+        adapter = LiberoAdapter.from_text(
+            PICK_CUBE_BDDL,
+            install_cameras=False,
+            auto_generate_scene=False,
+        )
+
+        class _Model:
+            nkey = 0
+
+        # Pre-seed a snapshot so this counts as episode 2+ (restore path).
+        adapter._canonical_qpos = np.array([10.0, 20.0, 30.0], dtype=np.float64)
+        adapter._canonical_qvel = np.array([1.1, 2.2], dtype=np.float64)
+
+        sim = FakeSim(data_config="panda")
+        sim._world._model = _Model()  # type: ignore[attr-defined]
+        data = self._make_data(3, 2)
+        data.qpos = np.array([99.0, 99.0, 99.0], dtype=np.float64)
+        data.qvel = np.array([9.9, 9.9], dtype=np.float64)
+        sim._world._data = data  # type: ignore[attr-defined]
+        lock = self._LockSpy()
+        sim._lock = lock  # type: ignore[attr-defined]
+
+        mj, forward_held, _ = self._mj_recording_lock_state(lock)
+        with patch.dict("sys.modules", {"mujoco": mj}):
+            adapter._apply_canonical_state(sim, random.Random(0))
+
+        # Restore landed (99.0 -> canonical snapshot).
+        assert list(sim._world._data.qpos) == [10.0, 20.0, 30.0]  # type: ignore[attr-defined]
+        assert list(sim._world._data.qvel) == [1.1, 2.2]  # type: ignore[attr-defined]
+        # Lock entered once; mj_forward ran while held.
+        assert lock.enter_count == 1
+        assert forward_held == [True]
