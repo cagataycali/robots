@@ -1,0 +1,149 @@
+"""Zero-config IK: ee-frame auto-discovery + set_sim_context (no real mujoco)."""
+
+import sys
+import types
+
+import numpy as np
+
+
+def _install_fake_mujoco(bodies, sites, parent_map):
+    """Install a fake 'mujoco' module so ee_frame.discover_ee_frame runs offline.
+    bodies/sites: list[str] names (id = index). parent_map: {body_id: parent_id}."""
+    mj = types.ModuleType("mujoco")
+
+    class mjtObj:
+        mjOBJ_SITE = 1
+        mjOBJ_BODY = 2
+
+    mj.mjtObj = mjtObj
+    _names = {mjtObj.mjOBJ_SITE: sites, mjtObj.mjOBJ_BODY: bodies}
+
+    def mj_id2name(model, obj_type, i):
+        arr = _names[obj_type]
+        return arr[i] if 0 <= i < len(arr) else None
+
+    mj.mj_id2name = mj_id2name
+    sys.modules["mujoco"] = mj
+
+    class Model:
+        nsite = len(sites)
+        nbody = len(bodies)
+        body_parentid = [parent_map.get(i, 0) for i in range(len(bodies))]
+
+    return Model()
+
+
+def test_discover_prefers_attachment_site():
+    from strands_robots.policies.vera import ee_frame
+
+    # panda-like: world, link0..7, hand bodies + attachment_site
+    bodies = ["world", "panda/link0", "panda/link1", "panda/hand"]
+    sites = ["panda/attachment_site"]
+    model = _install_fake_mujoco(bodies, sites, {1: 0, 2: 1, 3: 2})
+    found = ee_frame.discover_ee_frame(model, "panda/")
+    assert found == ("panda/attachment_site", "site"), found
+    print("✅ discovers attachment_site:", found)
+
+
+def test_discover_falls_back_to_hand_body():
+    import importlib
+
+    from strands_robots.policies.vera import ee_frame
+
+    importlib.reload(ee_frame)
+    bodies = ["world", "panda/link0", "panda/hand"]
+    sites = []  # no site -> body hint 'hand'
+    model = _install_fake_mujoco(bodies, sites, {1: 0, 2: 1})
+    found = ee_frame.discover_ee_frame(model, "panda/")
+    assert found == ("panda/hand", "body"), found
+    print("✅ falls back to hand body:", found)
+
+
+def test_discover_leaf_body_when_no_hints():
+    import importlib
+
+    from strands_robots.policies.vera import ee_frame
+
+    importlib.reload(ee_frame)
+    # generic arm: link0->link1->link2 (leaf), no hint names
+    bodies = ["world", "arm/link0", "arm/link1", "arm/link2"]
+    sites = []
+    model = _install_fake_mujoco(bodies, sites, {1: 0, 2: 1, 3: 2})
+    found = ee_frame.discover_ee_frame(model, "arm/")
+    assert found == ("arm/link2", "body"), found
+    print("✅ leaf body fallback:", found)
+
+
+def test_set_sim_context_autoconfigures_for_eef_delta():
+    """VeraPolicy.set_sim_context auto-discovers + configures IK for eef_delta."""
+    import importlib
+
+    from strands_robots.policies.vera import ee_frame
+
+    importlib.reload(ee_frame)
+    bodies = ["world", "panda/link0", "panda/hand"]
+    sites = ["panda/attachment_site"]
+    model = _install_fake_mujoco(bodies, sites, {1: 0, 2: 1})
+
+    from strands_robots.policies.vera.provider import VeraPolicy
+
+    class FakeClient:
+        def get_server_metadata(self):
+            return {"action_space": "eef_delta", "view_keys": ["image"]}
+
+        def reset(self, i):
+            pass
+
+        def configure(self, p):
+            return {}
+
+        def close(self):
+            pass
+
+        def infer(self, r):
+            return {"action": np.zeros((1, 7), np.float32)}
+
+    p = VeraPolicy(client=FakeClient(), auto_launch_server=False)
+    p._runner = None
+    # simulate the sim handshake order: server meta first, then sim context
+    p._ensure_started()
+    p.set_sim_context(model, "panda/")
+    assert p._ee_frame_name == "panda/attachment_site", p._ee_frame_name
+    assert p._ee_frame_type == "site"
+    print("✅ set_sim_context auto-configured IK:", p._ee_frame_name, p._ee_frame_type)
+
+
+def test_no_autoconfig_for_joint_position():
+    """joint_position embodiment: set_sim_context must NOT configure IK."""
+    import importlib
+
+    from strands_robots.policies.vera import ee_frame
+
+    importlib.reload(ee_frame)
+    bodies = ["world", "allegro/palm"]
+    sites = []
+    model = _install_fake_mujoco(bodies, sites, {1: 0})
+    from strands_robots.policies.vera.provider import VeraPolicy
+
+    class FakeClient:
+        def get_server_metadata(self):
+            return {"action_space": "joint_position", "view_keys": ["image"]}
+
+        def reset(self, i):
+            pass
+
+        def configure(self, p):
+            return {}
+
+        def close(self):
+            pass
+
+        def infer(self, r):
+            return {"action": np.zeros((1, 16), np.float32)}
+
+    p = VeraPolicy(client=FakeClient(), auto_launch_server=False)
+    p._runner = None
+    p._ensure_started()
+    p.set_sim_context(model, "allegro/")
+    assert p._ee_frame_name is None, "should NOT auto-config IK for joint_position"
+    print("✅ joint_position: no IK auto-config (correct)")

@@ -151,6 +151,23 @@ class VeraPolicy(Policy):
         self.prompt = prompt
         self._robot_state_keys: list[str] = []
 
+        # --- action binding / IK state ------------------------------------
+        # For eef_delta / cartesian_delta embodiments (mimicgen / droid) the
+        # server returns a 6-DoF end-effector DELTA, not joint targets. To drive
+        # a MuJoCo arm we must IK each delta into joint-space targets keyed by the
+        # robot's real joint names. The IK bridge is built lazily on first use
+        # from a MjModel + ee_frame supplied via get_actions(**kwargs) or set on
+        # the policy (set_ik_target). joint_position embodiments (allegro) need
+        # NO IK: the action columns map directly onto robot_state_keys.
+        self._mj_model: Any = None  # mujoco.MjModel (injected)
+        self._ee_frame_name: str | None = None  # e.g. "hand" / "attachment_site"
+        self._ee_frame_type: str = "body"
+        self._rotation_dim: int = 3  # axis-angle by default; 6 = rot6d
+        self._translation_scale: float = 1.0
+        self._ik_bridge: Any = None  # lazily built MinkIKBridge
+        self._sim_namespace: str | None = None  # robot namespace for ee-frame scoping
+        self._warned_unbound: bool = False
+
         self._client = client or VeraWebsocketClient(self.config.host, self.config.server_port)
         self._runner = server_runner
         if self._runner is None and self.config.auto_launch_server:
@@ -159,7 +176,7 @@ class VeraPolicy(Policy):
         # Episode state (mirrors VERA's RemotePolicy).
         self._server_meta: dict[str, Any] | None = None
         self._window: deque[np.ndarray] = deque()
-        self._queue: deque[np.ndarray] = deque()
+        self._queue: deque[dict[str, Any]] = deque()  # robot-actuator dicts, ready to send
         self._session = str(uuid.uuid4())
         self._started = False
 
@@ -175,6 +192,89 @@ class VeraPolicy(Policy):
 
     def set_robot_state_keys(self, robot_state_keys: list[str]) -> None:
         self._robot_state_keys = list(robot_state_keys)
+
+    def set_ik_target(
+        self,
+        mj_model: Any,
+        ee_frame_name: str,
+        ee_frame_type: str = "body",
+        *,
+        rotation_dim: int | None = None,
+        translation_scale: float | None = None,
+    ) -> None:
+        """Configure the IK bridge for eef/cartesian-delta embodiments.
+
+        Required to drive a MuJoCo arm with ``mimicgen``/``droid`` (the server
+        emits end-effector deltas, not joint targets). Not needed for
+        ``allegro`` (joint_position) or ``pusht`` (planar). Resets any existing
+        bridge so a later model/frame change rebuilds it.
+
+        Args:
+            mj_model: The arm's ``mujoco.MjModel``.
+            ee_frame_name: End-effector frame the IK tracks (e.g. ``"hand"``).
+            ee_frame_type: ``"body"`` | ``"site"`` | ``"geom"``.
+            rotation_dim: Override the delta rotation encoding (3=axis-angle,
+                6=rot6d). Defaults to the embodiment's convention.
+            translation_scale: Optional scale on the translation delta.
+        """
+        self._mj_model = mj_model
+        self._ee_frame_name = ee_frame_name
+        self._ee_frame_type = ee_frame_type
+        if rotation_dim is not None:
+            self._rotation_dim = int(rotation_dim)
+        if translation_scale is not None:
+            self._translation_scale = float(translation_scale)
+        self._ik_bridge = None  # force rebuild
+
+    def autoconfigure_ik(self, mj_model: Any, namespace: str | None = None, *, force: bool = False) -> bool:
+        """Zero-config IK setup: discover the ee-frame from the MjModel.
+
+        Called by the simulation alongside ``set_robot_state_keys`` so eef/
+        cartesian-delta embodiments (mimicgen / droid) need NO manual wiring.
+        Discovers an end-effector frame (site/body) from the compiled model
+        (namespace-scoped) and configures the IK target. Idempotent: skips when
+        already configured unless ``force``. Picks the rotation encoding from the
+        server's ``action_space`` once the metadata handshake has happened
+        (``cartesian_delta`` => axis-angle dim 3; ``eef_delta`` => axis-angle dim 3
+        by default — override via ``set_ik_target(rotation_dim=...)``).
+
+        Returns:
+            True when an ee-frame was resolved + configured, else False.
+        """
+        if mj_model is None:
+            return False
+        if self._ee_frame_name is not None and not force:
+            return True  # already configured (explicit or prior auto)
+        from .ee_frame import discover_ee_frame
+
+        found = discover_ee_frame(mj_model, namespace)
+        if found is None:
+            return False
+        frame_name, frame_type = found
+        self.set_ik_target(mj_model, frame_name, frame_type)
+        logger.info(
+            "VeraPolicy: auto-configured IK target ee=%s/%s (namespace=%s)",
+            frame_type,
+            frame_name,
+            namespace,
+        )
+        return True
+
+    def set_sim_context(self, mj_model: Any, namespace: str | None = None) -> None:
+        """Hook the simulation calls (next to set_robot_state_keys) to pass the
+        world model + this robot's namespace. Triggers IK auto-config for
+        eef/cartesian-delta embodiments; a no-op for joint_position / pos.
+
+        Safe to call before the server handshake — auto-config is also retried
+        lazily on first eef-delta infer if the action_space turns out to need it.
+        """
+        self._mj_model = mj_model
+        self._sim_namespace = namespace
+        # If we already know the action space and it needs IK, configure now.
+        meta = self._server_meta or {}
+        action_space = str(meta.get("action_space", "")).lower()
+        if action_space in ("eef_delta", "cartesian_delta", "cartesian_position", "eef_pose"):
+            self.autoconfigure_ik(mj_model, namespace)
 
     def reset(self, seed: int | None = None) -> None:
         """Clear local context + queue and reset the server's episode state."""
@@ -209,13 +309,17 @@ class VeraPolicy(Policy):
 
         if not self._queue:
             chunk = self._infer(observation_dict, instruction, meta)
-            for row in chunk:
-                self._queue.append(np.asarray(row, dtype=np.float32))
+            # Convert the raw [H, D] chunk into a queue of robot-actuator dicts.
+            # Routing depends on the server's action_space:
+            #   joint_position  -> map columns directly onto robot joints
+            #   eef/cartesian_delta -> IK the whole chunk to joint targets
+            #   pos / unknown   -> column-name passthrough (action_mapping/raw)
+            for action_dict in self._chunk_to_action_dicts(chunk, observation_dict, meta):
+                self._queue.append(action_dict)
 
         if not self._queue:
             return []
-        action_vec = self._queue.popleft()
-        return [self._vector_to_action_dict(action_vec, meta)]
+        return [self._queue.popleft()]
 
     # -- internals ----------------------------------------------------------
 
@@ -286,14 +390,88 @@ class VeraPolicy(Policy):
             action = action[None, :]
         return action
 
-    def _action_column_names(self, action_dim: int, meta: dict[str, Any]) -> list[str]:
-        """Names for the ``D`` action columns (mapped or server-default)."""
-        names = [f"action_{i}" for i in range(action_dim)]
-        if self.action_mapping:
-            names = [self.action_mapping.get(n, n) for n in names]
-        return names
+    # -- action binding -----------------------------------------------------
 
-    def _vector_to_action_dict(self, vec: np.ndarray, meta: dict[str, Any]) -> dict[str, Any]:
+    def _chunk_to_action_dicts(
+        self, chunk: np.ndarray, observation_dict: dict[str, Any], meta: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        """Convert a raw ``[H, D]`` VERA chunk into a list of robot-actuator dicts.
+
+        Routes on the server's ``action_space`` so each provider output maps onto
+        the robot's REAL joint/actuator names (what ``send_action`` resolves) —
+        never bare ``action_i`` keys (which the sim drops as unresolved):
+
+        * ``joint_position`` (allegro): columns map directly onto
+          ``robot_state_keys`` (positional joint targets).
+        * ``eef_delta`` / ``cartesian_delta`` (mimicgen / droid): the chunk is a
+          6-DoF end-effector delta — IK the whole chunk to joint targets keyed by
+          ``robot_state_keys`` (needs ``set_ik_target`` / a ``mj_model`` kwarg).
+        * ``pos`` / unknown: keep server column names (or ``action_mapping``).
+        """
+        chunk = np.asarray(chunk, dtype=np.float32)
+        if chunk.ndim == 1:
+            chunk = chunk[None, :]
+        action_space = str(meta.get("action_space", "")).lower()
+        gripper_idx = int(meta.get("gripper_dim_index", -1))
+        gripper_is_raw = bool(meta.get("gripper_is_raw", True))
+
+        # eef / cartesian delta -> IK to joints
+        if action_space in ("eef_delta", "cartesian_delta", "cartesian_position", "eef_pose"):
+            ik_dicts = self._ik_chunk_to_action_dicts(chunk, observation_dict, meta, gripper_idx, gripper_is_raw)
+            if ik_dicts is not None:
+                return ik_dicts
+            # IK not configured -> fall through to (warned) raw mapping so the
+            # failure is loud + the caller can still inspect the output.
+
+        # joint_position -> direct column->joint binding
+        if action_space in ("joint_position", "joint_velocity", "pos") or self._robot_state_keys:
+            return [self._vector_to_action_dict(row, meta, gripper_idx, gripper_is_raw) for row in chunk]
+
+        # unknown -> raw column names (+ optional action_mapping)
+        return [self._vector_to_action_dict(row, meta, gripper_idx, gripper_is_raw) for row in chunk]
+
+    def _action_column_names(self, action_dim: int, meta: dict[str, Any]) -> list[str]:
+        """Resolve action-column names, binding to the robot's joints when possible.
+
+        Priority: explicit ``action_mapping`` > robot joint names
+        (``robot_state_keys``, the names ``send_action`` resolves) > server
+        default ``action_{i}`` (last-resort; warned once — the sim would drop it).
+        """
+        # 1) explicit caller-provided rename.
+        if self.action_mapping:
+            base = [f"action_{i}" for i in range(action_dim)]
+            return [self.action_mapping.get(n, n) for n in base]
+
+        # 2) bind to the robot's real joint names. For positional action spaces
+        #    column i is joint i. When the action carries a trailing gripper that
+        #    the robot's joint list does not, keep extra columns as action_i.
+        keys = list(self._robot_state_keys)
+        if keys and len(keys) >= action_dim:
+            return keys[:action_dim]
+        if keys and len(keys) < action_dim:
+            # joints + (gripper / extra) columns: bind what we can, name the rest.
+            extra = [f"action_{i}" for i in range(len(keys), action_dim)]
+            return keys + extra
+
+        # 3) nothing to bind to -> raw names; warn ONCE (these get dropped by the
+        #    sim's send_action as unresolved keys -> robot won't move).
+        if not self._warned_unbound:
+            logger.warning(
+                "VeraPolicy: no robot_state_keys set and no action_mapping; emitting "
+                "raw 'action_i' keys which the simulator will treat as UNRESOLVED "
+                "(robot will not move). Call set_robot_state_keys(...) (the sim does "
+                "this automatically before rollout) or pass action_mapping=..."
+            )
+            self._warned_unbound = True
+        return [f"action_{i}" for i in range(action_dim)]
+
+    def _vector_to_action_dict(
+        self,
+        vec: np.ndarray,
+        meta: dict[str, Any],
+        gripper_idx: int | None = None,
+        gripper_is_raw: bool | None = None,
+    ) -> dict[str, Any]:
         """Map one ``D``-vector to ``{actuator_name: float}`` (gripper binarized).
 
         Honours the server's ``gripper_dim_index`` + ``gripper_is_raw`` contract:
@@ -301,8 +479,10 @@ class VeraPolicy(Policy):
         """
         vec = np.asarray(vec, dtype=np.float32).ravel()
         names = self._action_column_names(vec.shape[0], meta)
-        gripper_idx = int(meta.get("gripper_dim_index", -1))
-        gripper_is_raw = bool(meta.get("gripper_is_raw", True))
+        if gripper_idx is None:
+            gripper_idx = int(meta.get("gripper_dim_index", -1))
+        if gripper_is_raw is None:
+            gripper_is_raw = bool(meta.get("gripper_is_raw", True))
         out: dict[str, Any] = {}
         for i, name in enumerate(names):
             val = float(vec[i])
@@ -310,6 +490,110 @@ class VeraPolicy(Policy):
                 val = 1.0 if val > 0.5 else 0.0
             out[name] = val
         return out
+
+    # -- eef/cartesian-delta IK --------------------------------------------
+
+    def _resolve_ik_inputs(self, observation_dict: dict[str, Any]) -> tuple[Any, str, np.ndarray] | None:
+        """Gather (mj_model, ee_frame, q_init) for IK, or None when unavailable.
+
+        ``mj_model`` / ``ee_frame`` come from ``set_ik_target`` (preferred) or
+        from per-call kwargs the sim may pass. ``q_init`` is the robot's current
+        joint configuration, read from the observation in ``robot_state_keys``
+        order (the same keys the sim seeds the policy with).
+        """
+        mj_model = self._mj_model
+        # Lazy zero-config: if a model is present but no ee-frame yet, discover it.
+        if mj_model is not None and self._ee_frame_name is None:
+            self.autoconfigure_ik(mj_model, self._sim_namespace)
+        ee_frame = self._ee_frame_name
+        if mj_model is None or ee_frame is None:
+            return None
+        # Current joint configuration as the IK seed.
+        keys = self._robot_state_keys
+        if not keys:
+            return None
+        q = []
+        for k in keys:
+            if k not in observation_dict:
+                return None
+            q.append(float(np.asarray(observation_dict[k]).reshape(-1)[0]))
+        return mj_model, ee_frame, np.asarray(q, dtype=np.float64)
+
+    def _ensure_ik_bridge(self, mj_model: Any, ee_frame: str):
+        """Lazily build (and cache) the MinkIKBridge."""
+        if self._ik_bridge is None:
+            from .sim_ik import MinkIKBridge
+
+            self._ik_bridge = MinkIKBridge(mj_model, ee_frame, self._ee_frame_type)
+        return self._ik_bridge
+
+    def _ik_chunk_to_action_dicts(
+        self,
+        chunk: np.ndarray,
+        observation_dict: dict[str, Any],
+        meta: dict[str, Any],
+        gripper_idx: int,
+        gripper_is_raw: bool,
+    ) -> list[dict[str, Any]] | None:
+        """IK an eef/cartesian-delta chunk into joint-keyed action dicts.
+
+        Returns ``None`` (so the caller can fall back + warn) when the IK target
+        is not configured (no mj_model/ee_frame, or q_init unreadable).
+        """
+        inputs = self._resolve_ik_inputs(observation_dict)
+        if inputs is None:
+            if not self._warned_unbound:
+                logger.warning(
+                    "VeraPolicy: action_space=%r emits end-effector DELTAS, but no IK "
+                    "target is configured (mj_model + ee_frame). Call "
+                    "policy.set_ik_target(mj_model, ee_frame_name=...) before rollout "
+                    "(mimicgen/droid). Falling back to raw action_i keys, which the "
+                    "simulator will DROP as unresolved (robot will not move).",
+                    meta.get("action_space"),
+                )
+                self._warned_unbound = True
+            return None
+
+        mj_model, ee_frame, q_init = inputs
+        bridge = self._ensure_ik_bridge(mj_model, ee_frame)
+        from .sim_ik import decode_vera_delta_chunk_to_targets
+
+        has_gripper = gripper_idx is not None and gripper_idx >= 0
+        result = decode_vera_delta_chunk_to_targets(
+            chunk,
+            bridge,
+            q_init,
+            rotation_dim=self._rotation_dim,
+            has_gripper=has_gripper,
+            gripper_dim_index=gripper_idx if has_gripper else -1,
+            translation_scale=self._translation_scale,
+        )
+        qpos = np.asarray(result["qpos"], dtype=np.float32)  # [T, nq]
+        grip = result.get("gripper")
+        keys = self._robot_state_keys
+        # Identify a gripper joint name on the robot (if any) to receive the
+        # binarized gripper command; otherwise the gripper column is dropped.
+        gripper_key = next((k for k in keys if "gripper" in k.lower() or "finger" in k.lower()), None)
+        joint_keys = [k for k in keys if k != gripper_key]
+
+        dicts: list[dict[str, Any]] = []
+        for t in range(qpos.shape[0]):
+            row = qpos[t]
+            n = min(len(joint_keys), row.shape[0])
+            d: dict[str, Any] = {joint_keys[i]: float(row[i]) for i in range(n)}
+            if gripper_key is not None and grip is not None and t < len(grip):
+                gval = float(grip[t])
+                if gripper_is_raw:
+                    gval = 1.0 if gval > 0.5 else 0.0
+                d[gripper_key] = gval
+            dicts.append(d)
+        logger.debug(
+            "VeraPolicy IK: %d steps, tracking mean=%.1fmm max=%.1fmm",
+            len(dicts),
+            result["tracking_error"]["mean_mm"],
+            result["tracking_error"]["max_mm"],
+        )
+        return dicts
 
     def close(self) -> None:
         """Close the client and stop the managed server subprocess."""

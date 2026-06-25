@@ -185,6 +185,17 @@ class SimEngine(ABC):
         """
         ...
 
+    def bind_policy_sim_context(self, policy: Any, robot_name: str) -> None:
+        """Give a policy the backend sim context it needs to close the loop.
+
+        Default no-op. The MuJoCo engine overrides this to hand policies that
+        opt in (e.g. ``VeraPolicy.set_sim_context``) the compiled ``MjModel`` +
+        the robot's namespace, so eef/cartesian-delta policies can auto-configure
+        their IK end-effector frame with zero manual wiring. Policies that don't
+        expose ``set_sim_context`` are unaffected.
+        """
+        return None
+
     # Object management
 
     @abstractmethod
@@ -443,6 +454,7 @@ class SimEngine(ABC):
         else:
             policy = create_policy(policy_provider, **(policy_config or {}))
         policy.set_robot_state_keys(self.robot_joint_names(robot_name))
+        self.bind_policy_sim_context(policy, robot_name)
 
         on_frame = self._make_run_policy_hook(robot_name, instruction)
 
@@ -591,6 +603,7 @@ class SimEngine(ABC):
 
             policy = create_policy(policy_provider, **(policy_config or {}))
         policy.set_robot_state_keys(self.robot_joint_names(resolved_robot))
+        self.bind_policy_sim_context(policy, resolved_robot)
 
         return PolicyRunner(self).evaluate(
             resolved_robot,
@@ -729,6 +742,7 @@ class SimEngine(ABC):
 
         policy = create_policy(policy_provider, **(policy_config or {}))
         policy.set_robot_state_keys(self.robot_joint_names(resolved_robot))
+        self.bind_policy_sim_context(policy, resolved_robot)
 
         return PolicyRunner(self).evaluate(
             resolved_robot,

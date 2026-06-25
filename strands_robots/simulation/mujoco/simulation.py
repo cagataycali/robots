@@ -1054,6 +1054,27 @@ class MuJoCoSimEngine(
             return []
         return list(self._world.robots[robot_name].joint_names)
 
+    def bind_policy_sim_context(self, policy: Any, robot_name: str) -> None:
+        """Hand the compiled MjModel + robot namespace to policies that opt in.
+
+        Enables zero-config IK for eef/cartesian-delta policies (e.g.
+        ``VeraPolicy``): the policy auto-discovers its end-effector frame from
+        the model scoped to this robot's namespace. No-op for policies without
+        ``set_sim_context``; never fails a rollout on a binding error.
+        """
+        ctx = getattr(policy, "set_sim_context", None)
+        if not callable(ctx):
+            return
+        if self._world is None or self._world._model is None:
+            return
+        if robot_name not in self._world.robots:
+            return
+        namespace = self._world.robots[robot_name].namespace or ""
+        try:
+            ctx(self._world._model, namespace)
+        except Exception as exc:  # noqa: BLE001 - non-fatal (mirrors set_robot_state_keys)
+            logger.debug("bind_policy_sim_context(%s) failed: %s", robot_name, exc)
+
     def list_robots_info(self) -> dict[str, Any]:
         """Agent-tool action: pretty-printed robot listing.
 
@@ -2304,6 +2325,7 @@ class MuJoCoSimEngine(
         for rname, pol in policies.items():
             try:
                 pol.set_robot_state_keys(self.robot_joint_names(rname))
+                self.bind_policy_sim_context(pol, rname)
             except Exception as exc:  # noqa: BLE001 - non-fatal, mirrors run_policy defensiveness
                 logger.debug("set_robot_state_keys(%s) failed: %s", rname, exc)
 
