@@ -38,6 +38,7 @@ import contextlib
 import json
 import logging
 import os
+import re
 import shutil
 import time
 from typing import TYPE_CHECKING, Any
@@ -66,6 +67,11 @@ _LEROBOT_POLICY_TYPES = {
 }
 
 _SUPPORTED_METHODS = {"full", "lora", "expert_only"}
+
+# Hugging Face Hub dataset id: ``org/name`` (each segment alnum plus ._-). Used
+# to gate the agent-supplied ``dataset_repo_id`` before it becomes lerobot's
+# ``DatasetConfig.repo_id`` (which load_dataset/HfApi feed to a Hub URL).
+_HUB_REPO_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
 class LerobotTrainer(Trainer):
@@ -141,9 +147,32 @@ class LerobotTrainer(Trainer):
         cfg_file = self._resume_config_path(output_dir)
         return os.path.dirname(cfg_file) if cfg_file else None
 
+    def _dataset_source(self, spec: TrainSpec) -> tuple[str, str | None]:
+        """Resolve (repo_id, root) for lerobot's ``DatasetConfig``.
+
+        Two mutually sufficient data sources, mirroring lerobot's own model:
+
+        * Hub dataset (``spec.dataset_repo_id`` set) -> ``repo_id`` is the Hub
+          id; ``root`` is the optional local cache dir (``spec.dataset_root`` or
+          ``None``). With ``streaming=True`` lerobot streams shards from the Hub
+          without a full download - the 50-500 GB disk-blowup fix.
+        * Local v3 root (``spec.dataset_root`` only) -> ``repo_id="local"`` and
+          ``root`` is the dataset path, unchanged from the record->train loop.
+        """
+        if spec.dataset_repo_id:
+            return spec.dataset_repo_id, (spec.dataset_root or None)
+        return "local", spec.dataset_root
+
     def _val_split_episodes(self, spec: TrainSpec) -> list[int] | None:
-        """Held-out validation split: train on the FIRST (total - N) episodes."""
+        """Held-out validation split: train on the FIRST (total - N) episodes.
+
+        Requires a local ``meta/info.json`` to know the episode count, so it is
+        a no-op for a Hub dataset with no local cache (``dataset_repo_id`` set,
+        ``dataset_root`` empty) - the full Hub dataset is used in that case.
+        """
         if spec.val_episodes is None:
+            return None
+        if not spec.dataset_root:
             return None
         total = self._dataset_total_episodes(spec.dataset_root)
         if total is not None and 0 < spec.val_episodes < total:
@@ -155,8 +184,18 @@ class LerobotTrainer(Trainer):
     def validate(self, spec: TrainSpec) -> list[str]:
         problems: list[str] = self._security_problems(spec)
 
-        if not spec.dataset_root:
-            problems.append("dataset_root is required")
+        # Data source: either a local v3 root, or a Hub repo id (streaming the
+        # 50-500 GB case without a full download). Exactly one must be present.
+        if spec.dataset_repo_id:
+            if not _HUB_REPO_ID_RE.match(spec.dataset_repo_id):
+                problems.append(
+                    f"dataset_repo_id '{spec.dataset_repo_id}' is not a valid Hub id "
+                    "(expected 'org/name', alnum/._- segments)"
+                )
+            # dataset_root is optional here (local cache root); if given, it need
+            # not yet contain meta/info.json (the Hub provides metadata).
+        elif not spec.dataset_root:
+            problems.append("a data source is required: set dataset_root (local v3) or dataset_repo_id (Hub)")
         elif not os.path.isfile(os.path.join(spec.dataset_root, "meta", "info.json")):
             problems.append(
                 f"dataset_root is not a LeRobotDataset v3 root "
@@ -211,10 +250,10 @@ class LerobotTrainer(Trainer):
         human-readable description of the equivalent command.
         """
         ptype = self._resolve_policy_type(spec)
+        repo_id, root = self._dataset_source(spec)
         cmd = [
             "lerobot.scripts.lerobot_train",
-            "--dataset.repo_id=local",
-            f"--dataset.root={spec.dataset_root}",
+            f"--dataset.repo_id={repo_id}",
             f"--policy.type={ptype}",
             f"--policy.device={self.device}",
             "--policy.push_to_hub=false",
@@ -225,6 +264,10 @@ class LerobotTrainer(Trainer):
             f"--save_freq={spec.save_freq}",
             "--wandb.enable=false",
         ]
+        if root:
+            cmd.insert(2, f"--dataset.root={root}")
+        if spec.streaming:
+            cmd.append("--dataset.streaming=true")
         if spec.base_model:
             cmd.append(f"--policy.pretrained_path={spec.base_model}")
         if spec.seed is not None:
@@ -277,11 +320,15 @@ class LerobotTrainer(Trainer):
         if spec.method == "expert_only" and hasattr(policy_cfg, "train_expert_only"):
             policy_cfg.train_expert_only = True
 
-        dataset_cfg = DatasetConfig(
-            repo_id="local",
-            root=spec.dataset_root,
-            episodes=self._val_split_episodes(spec),
-        )
+        repo_id, root = self._dataset_source(spec)
+        dataset_kwargs: dict[str, Any] = {
+            "repo_id": repo_id,
+            "root": root,
+            "episodes": self._val_split_episodes(spec),
+        }
+        if spec.streaming:
+            dataset_kwargs["streaming"] = True
+        dataset_cfg = DatasetConfig(**dataset_kwargs)
 
         peft_cfg = None
         if spec.method == "lora":

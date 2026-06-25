@@ -88,7 +88,9 @@ supports and **ignores the rest** (the same tolerance rule as
 
 | Field | Meaning | Notes |
 |-------|---------|-------|
-| `dataset_root` | LeRobotDataset v3 root | required; has `meta/info.json` |
+| `dataset_root` | LeRobotDataset v3 root | a data source; has `meta/info.json` (optional when `dataset_repo_id` is set) |
+| `dataset_repo_id` | Hub dataset id `org/name` | alternative data source; train from the Hub (lerobot) |
+| `streaming` | stream frames, no full materialize | lerobot `StreamingLeRobotDataset`; bounded disk (Hub) / RAM (local) |
 | `base_model` | HF id / local ckpt to tune from | required for GR00T & Cosmos |
 | `method` | `full` \| `lora` \| `expert_only` \| `frozen_backbone` | `lora`+`expert_only` are mutually exclusive |
 | `tune` | `{llm,visual,projector,diffusion}` | GR00T only |
@@ -122,6 +124,30 @@ agent("Record 50 cube-pick episodes, then post-tune lerobot ACT on the dataset "
 TrainSpec(..., method="lora", lora_r=16, extra={"policy_type": "pi05"})
 # -> lerobot_train --peft.method_type=LORA --peft.r=16 --policy.type=pi05
 ```
+
+#### Streaming a large Hub dataset (no full download)
+
+Real datasets (BitRobot / HIW-500, ~50-500 GB) do not fit on a single edge node.
+Point the trainer at a Hub dataset id and stream it - lerobot pulls shards on
+the fly via `StreamingLeRobotDataset`, so disk stays bounded and the first
+forward pass starts without waiting for a full download:
+
+```python
+TrainSpec(
+    dataset_repo_id="org/hiw_500",   # train from the Hub, not a local root
+    streaming=True,                  # -> --dataset.streaming=true
+    base_model="lerobot/act_aloha_sim",
+    output_dir="/tmp/ft_out",
+    extra={"policy_type": "act"},
+)
+# -> lerobot_train --dataset.repo_id=org/hiw_500 --dataset.streaming=true ...
+```
+
+`dataset_root` is optional here - if given it is used as a local cache root.
+`streaming=True` also works with a local `dataset_root` (streams from disk with
+bounded RAM). Held-out `val_episodes` splitting needs a local `meta/info.json`
+to count episodes, so it is a no-op when streaming a Hub dataset with no local
+cache (the full Hub dataset is used).
 
 ### GR00T (`groot`)
 

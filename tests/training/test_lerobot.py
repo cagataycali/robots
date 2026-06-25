@@ -266,7 +266,7 @@ class TestValidateAdditionalBranches:
     def test_missing_dataset_root(self, spec):
         spec.dataset_root = ""
         problems = LerobotTrainer().validate(spec)
-        assert any("dataset_root is required" in p for p in problems)
+        assert any("a data source is required" in p for p in problems)
 
     def test_dataset_root_not_v3(self, spec, tmp_path):
         spec.dataset_root = str(tmp_path / "empty")
@@ -580,3 +580,131 @@ class TestTrainOrchestration:
         result = trainer.train(spec)
         assert calls["nproc_per_node"] == 2
         assert result.status == "success"
+
+
+class TestStreamingAndHubSource:
+    """Hub-repo + streaming data source (the 50-500 GB no-download fix).
+
+    A LeRobotDataset can be trained either from a local v3 root (the
+    record->train loop) OR streamed from the Hub by ``dataset_repo_id`` without
+    a full local download. ``streaming`` selects lerobot's
+    ``StreamingLeRobotDataset``. These tests pin both the argv-parity helper and
+    the typed-config path against real lerobot.
+    """
+
+    def test_hub_repo_id_validates_without_local_root(self, tmp_path):
+        # No local v3 root present; a Hub repo id is a sufficient data source.
+        spec = TrainSpec(
+            dataset_root="",
+            dataset_repo_id="lerobot/aloha_sim_transfer_cube_human",
+            base_model="",
+            output_dir=str(tmp_path / "out"),
+            streaming=True,
+            extra={"policy_type": "act"},
+        )
+        assert LerobotTrainer().validate(spec) == []
+
+    def test_invalid_hub_repo_id_rejected(self, tmp_path):
+        spec = TrainSpec(
+            dataset_repo_id="not a repo id!!",
+            base_model="",
+            output_dir=str(tmp_path / "out"),
+            extra={"policy_type": "act"},
+        )
+        problems = LerobotTrainer().validate(spec)
+        assert any("not a valid Hub id" in p for p in problems)
+
+    def test_no_data_source_is_rejected(self, tmp_path):
+        spec = TrainSpec(
+            dataset_root="",
+            base_model="",
+            output_dir=str(tmp_path / "out"),
+            extra={"policy_type": "act"},
+        )
+        problems = LerobotTrainer().validate(spec)
+        assert any("a data source is required" in p for p in problems)
+
+    def test_build_command_streams_from_hub(self, tmp_path):
+        spec = TrainSpec(
+            dataset_root="",
+            dataset_repo_id="lerobot/aloha_sim_transfer_cube_human",
+            base_model="",
+            output_dir=str(tmp_path / "out"),
+            streaming=True,
+            extra={"policy_type": "act"},
+        )
+        cmd = LerobotTrainer(device="cpu").build_command(spec)
+        assert "--dataset.repo_id=lerobot/aloha_sim_transfer_cube_human" in cmd
+        # No local root flag when streaming purely from the Hub.
+        assert not any(c.startswith("--dataset.root=") for c in cmd)
+        assert "--dataset.streaming=true" in cmd
+
+    def test_build_command_local_root_keeps_repo_id_local(self, dataset_root, tmp_path):
+        spec = TrainSpec(
+            dataset_root=dataset_root,
+            base_model="",
+            output_dir=str(tmp_path / "out"),
+            extra={"policy_type": "act"},
+        )
+        cmd = LerobotTrainer(device="cpu").build_command(spec)
+        assert "--dataset.repo_id=local" in cmd
+        assert f"--dataset.root={dataset_root}" in cmd
+        # streaming defaults off -> no flag.
+        assert not any("streaming" in c for c in cmd)
+
+    def test_build_config_streams_from_hub(self, tmp_path):
+        pytest.importorskip("lerobot")
+        spec = TrainSpec(
+            dataset_root="",
+            dataset_repo_id="lerobot/aloha_sim_transfer_cube_human",
+            base_model="",
+            output_dir=str(tmp_path / "out"),
+            streaming=True,
+            extra={"policy_type": "act"},
+        )
+        cfg = LerobotTrainer(device="cpu").build_config(spec)
+        assert cfg.dataset.repo_id == "lerobot/aloha_sim_transfer_cube_human"
+        assert cfg.dataset.root is None
+        assert cfg.dataset.streaming is True
+
+    def test_build_config_local_streaming(self, dataset_root, tmp_path):
+        pytest.importorskip("lerobot")
+        spec = TrainSpec(
+            dataset_root=dataset_root,
+            base_model="",
+            output_dir=str(tmp_path / "out"),
+            streaming=True,
+            extra={"policy_type": "act"},
+        )
+        cfg = LerobotTrainer(device="cpu").build_config(spec)
+        assert cfg.dataset.repo_id == "local"
+        assert cfg.dataset.root == dataset_root
+        assert cfg.dataset.streaming is True
+
+    def test_local_cache_root_with_hub_repo_id(self, tmp_path):
+        # Hub id + a local cache root: repo_id is the Hub id, root is the cache.
+        cache = str(tmp_path / "cache")
+        spec = TrainSpec(
+            dataset_root=cache,
+            dataset_repo_id="lerobot/aloha_sim_transfer_cube_human",
+            base_model="",
+            output_dir=str(tmp_path / "out"),
+            streaming=True,
+            extra={"policy_type": "act"},
+        )
+        repo_id, root = LerobotTrainer()._dataset_source(spec)
+        assert repo_id == "lerobot/aloha_sim_transfer_cube_human"
+        assert root == cache
+
+    def test_val_episodes_noop_without_local_root(self, tmp_path):
+        # No local meta/info.json to count episodes -> use the full Hub dataset.
+        spec = TrainSpec(
+            dataset_root="",
+            dataset_repo_id="lerobot/aloha_sim_transfer_cube_human",
+            base_model="",
+            output_dir=str(tmp_path / "out"),
+            streaming=True,
+            val_episodes=2,
+            extra={"policy_type": "act"},
+        )
+        assert LerobotTrainer()._val_split_episodes(spec) is None

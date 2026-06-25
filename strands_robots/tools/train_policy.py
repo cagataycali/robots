@@ -49,6 +49,8 @@ def train_policy(
     action: str = "train",
     provider: str = "lerobot_local",
     dataset_root: str | None = None,
+    dataset_repo_id: str | None = None,
+    streaming: bool = False,
     base_model: str = "",
     output_dir: str | None = None,
     embodiment: str | None = None,
@@ -90,7 +92,15 @@ def train_policy(
             ``"cosmos3"`` (NVIDIA Cosmos3), or ``"mock"``. Same name as the
             inference provider in ``create_policy``.
         dataset_root: Path to a LeRobotDataset v3 root (has ``meta/info.json``) -
-            exactly what ``Robot.stop_recording`` writes.
+            exactly what ``Robot.stop_recording`` writes. Optional when
+            ``dataset_repo_id`` is set (then it is the local cache root).
+        dataset_repo_id: Hugging Face Hub dataset id (``org/name``) to train from
+            the Hub instead of a local root - required to ``streaming`` a large
+            (50-500 GB) Hub dataset without downloading it in full. lerobot only.
+        streaming: Stream frames instead of materializing the dataset (lerobot
+            ``StreamingLeRobotDataset``). With ``dataset_repo_id`` this streams
+            Hub shards with bounded disk; with a local ``dataset_root`` it
+            streams from disk with bounded RAM. lerobot only; ignored elsewhere.
         base_model: HF id or local checkpoint to post-tune from. For GR00T this
             is required (``--base_model_path``); ACT-from-scratch leaves it "".
         output_dir: Where checkpoints + logs go.
@@ -165,14 +175,16 @@ def train_policy(
             }
 
         # All remaining actions need a spec.
-        if not dataset_root or not output_dir:
-            return _err("dataset_root and output_dir are required")
+        if not (dataset_root or dataset_repo_id) or not output_dir:
+            return _err("a data source (dataset_root or dataset_repo_id) and output_dir are required")
 
         trainer = create_trainer(provider)
         spec = TrainSpec(
-            dataset_root=dataset_root,
+            dataset_root=dataset_root or "",
+            dataset_repo_id=dataset_repo_id,
+            streaming=streaming,
             base_model=base_model,
-            output_dir=output_dir,
+            output_dir=output_dir or "",
             embodiment=embodiment,
             steps=steps,
             global_batch_size=batch_size,

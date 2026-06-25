@@ -40,7 +40,7 @@ _EXTRA_KEY_RE = re.compile(r"^[a-z][a-z0-9_.]*$")
 # vector: ``base_model="--config_path=/etc/passwd"`` would otherwise parse as a
 # separate flag. An interior ``=`` is harmless (the token stays single, no
 # shell) and is legitimate for HF revision refs, so it is NOT rejected.
-_FLAG_BOUND_FIELDS = ("dataset_root", "output_dir", "base_model", "embodiment")
+_FLAG_BOUND_FIELDS = ("dataset_root", "output_dir", "base_model", "embodiment", "dataset_repo_id")
 
 # Path-like fields additionally get the audited filesystem check (null bytes,
 # ``..`` traversal, protected system directories).
