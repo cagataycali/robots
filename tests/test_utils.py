@@ -2,7 +2,7 @@
 
 import pytest
 
-from strands_robots.utils import require_optional
+from strands_robots.utils import require_optional, require_optionals
 
 
 class TestRequireOptional:
@@ -103,3 +103,53 @@ class TestGetSearchPaths:
 
         paths = get_search_paths()
         assert len(paths) == len(set(paths))
+
+
+class TestRequireOptionals:
+    """Tests for require_optionals - aggregate multi-dep gate.
+
+    Unlike require_optional in a loop (which raises on the FIRST missing dep and
+    hides the rest), require_optionals reports EVERY missing dep in one error so
+    a partially-provisioned environment is fixed in a single install.
+    """
+
+    def test_all_present_returns_none(self):
+        """When every module is importable the gate passes silently."""
+        assert require_optionals(["json", "os.path"]) is None
+
+    def test_lists_every_missing_module(self):
+        """A single error must name ALL missing deps, not just the first."""
+        with pytest.raises(ImportError) as exc:
+            require_optionals(["nope_aaa_xyz", "nope_bbb_xyz", "nope_ccc_xyz"])
+        msg = str(exc.value)
+        assert "nope_aaa_xyz" in msg
+        assert "nope_bbb_xyz" in msg
+        assert "nope_ccc_xyz" in msg
+
+    def test_reports_only_the_missing_ones(self):
+        """Present deps are not named; only the absent ones surface."""
+        with pytest.raises(ImportError) as exc:
+            require_optionals(["json", "nope_present_mix_xyz"])
+        msg = str(exc.value)
+        assert "nope_present_mix_xyz" in msg
+        assert "json" not in msg
+
+    def test_pip_install_line_lists_all_missing(self):
+        """The bare ``pip install`` hint concatenates every missing module."""
+        with pytest.raises(ImportError, match=r"pip install nope_d1_xyz nope_d2_xyz"):
+            require_optionals(["nope_d1_xyz", "nope_d2_xyz"])
+
+    def test_error_includes_extra_and_purpose(self):
+        """extra and purpose flow into the message like require_optional."""
+        with pytest.raises(ImportError) as exc:
+            require_optionals(["nope_extra_xyz"], extra="my-extra", purpose="testing")
+        msg = str(exc.value)
+        assert "strands-robots[my-extra]" in msg
+        assert "for testing" in msg
+
+    def test_singular_vs_plural_phrasing(self):
+        """One missing dep reads 'is required'; many read 'are required'."""
+        with pytest.raises(ImportError, match="is required"):
+            require_optionals(["nope_single_xyz"])
+        with pytest.raises(ImportError, match="are required"):
+            require_optionals(["nope_two_a_xyz", "nope_two_b_xyz"])

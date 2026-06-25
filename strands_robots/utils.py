@@ -53,6 +53,59 @@ def require_optional(
         raise ImportError("\n".join(parts)) from None
 
 
+def require_optionals(
+    module_names: list[str] | tuple[str, ...],
+    *,
+    extra: str | None = None,
+    purpose: str = "",
+) -> None:
+    """Require several optional dependencies, reporting ALL missing ones at once.
+
+    Unlike calling :func:`require_optional` in a loop -- which raises on the
+    FIRST missing module and hides the rest -- this probes every name and, if
+    any are absent, raises a single ``ImportError`` naming every missing module.
+    That lets a caller in a partially-provisioned environment fix all of them in
+    one install instead of discovering them one reinstall at a time (each retry
+    of a heavy load path is expensive).
+
+    Present modules are imported and cached (same as :func:`require_optional`),
+    so a follow-up ``require_optional`` for any of them is free.
+
+    Args:
+        module_names: Dotted module names to require (e.g. ``("transformers",
+            "peft", "scipy")``).
+        extra: ``pyproject.toml`` extras group naming where the deps ship
+            (e.g. ``"molmoact2"``); shown in the install hint.
+        purpose: Human-readable description shown in the error message.
+
+    Raises:
+        ImportError: If one or more modules are missing, listing every missing
+            module and an actionable install instruction.
+    """
+    missing: list[str] = []
+    for name in module_names:
+        if name in _lazy_modules:
+            continue
+        try:
+            _lazy_modules[name] = importlib.import_module(name)
+        except ImportError:
+            missing.append(name)
+
+    if not missing:
+        return
+
+    joined = ", ".join(f"'{m}'" for m in missing)
+    label = "is required" if len(missing) == 1 else "are required"
+    parts = [f"{joined} {label}"]
+    if purpose:
+        parts[0] += f" for {purpose}"
+    parts.append("Install with:")
+    if extra:
+        parts.append(f"  pip install 'strands-robots[{extra}]'")
+    parts.append(f"  pip install {' '.join(missing)}")
+    raise ImportError("\n".join(parts)) from None
+
+
 #
 # Path resolution - single source of truth for all strands-robots paths
 #

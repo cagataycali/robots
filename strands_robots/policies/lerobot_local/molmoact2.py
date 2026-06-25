@@ -43,7 +43,7 @@ import json
 import logging
 from typing import Any
 
-from ...utils import require_optional
+from ...utils import require_optionals
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +53,8 @@ MOLMOACT2_TYPE = "molmoact2"
 #: lerobot core. They ship in the ``strands-robots[molmoact2]`` extra. lerobot's
 #: own ``require_package`` raises pointing at ``lerobot[transformers-dep]`` deep
 #: inside model construction, which is a dead end for a strands-robots caller --
-#: guard them up front so the error names the extra actually installed from.
+#: guard them up front (all at once) so the error names the extra actually
+#: installed from and lists EVERY missing dep, not just the first.
 _MOLMOACT2_RUNTIME_DEPS = ("transformers", "peft", "scipy")
 
 # Sensible default camera feature keys (match the ``so_real`` / ``so101``
@@ -235,13 +236,13 @@ def build_policy(
         Tuple ``(policy, preprocessor, postprocessor, config)``.
 
     Raises:
-        ImportError: If an auxiliary MolmoAct2 dep (transformers/peft/scipy) is
-            missing, with an install hint naming the ``strands-robots[molmoact2]``
-            extra (rather than lerobot's internal extra, which a strands-robots
-            caller never installed from).
+        ImportError: If any auxiliary MolmoAct2 dep (transformers/peft/scipy) is
+            missing. The error lists EVERY missing dep at once (not just the
+            first) and names the ``strands-robots[molmoact2]`` extra -- rather
+            than lerobot's internal extra, which a strands-robots caller never
+            installed from -- so a partial env is fixed in one install.
     """
-    for _dep in _MOLMOACT2_RUNTIME_DEPS:
-        require_optional(_dep, extra="molmoact2", purpose="MolmoAct2 inference")
+    require_optionals(_MOLMOACT2_RUNTIME_DEPS, extra="molmoact2", purpose="MolmoAct2 inference")
 
     import torch
 
