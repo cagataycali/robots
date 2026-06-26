@@ -847,6 +847,113 @@ class TestViewer:
         result = sim.close_viewer()
         assert result["status"] == "success"
 
+    def test_open_viewer_reports_when_mujoco_viewer_unavailable(self, sim_with_world, monkeypatch):
+        """With a world but no importable ``mujoco.viewer`` backend, open_viewer
+        returns an actionable error instead of raising."""
+        import strands_robots.simulation.mujoco.backend as backend_mod
+
+        monkeypatch.setattr(backend_mod, "_mujoco_viewer", None)
+        result = sim_with_world.open_viewer()
+        assert result["status"] == "error"
+        assert "viewer not available" in result["content"][0]["text"].lower()
+
+    def test_open_viewer_launches_passive_and_close_releases_handle(self, sim_with_world, monkeypatch):
+        """open_viewer launches a passive viewer on the live model/data and keeps
+        the handle; close_viewer then closes that handle and clears it."""
+        import strands_robots.simulation.mujoco.backend as backend_mod
+
+        launched: dict[str, object] = {}
+
+        class _FakeHandle:
+            def __init__(self) -> None:
+                self.closed = False
+
+            def close(self) -> None:
+                self.closed = True
+
+        class _FakeViewer:
+            @staticmethod
+            def launch_passive(model, data):
+                launched["model"] = model
+                launched["data"] = data
+                return _FakeHandle()
+
+        monkeypatch.setattr(backend_mod, "_mujoco_viewer", _FakeViewer)
+
+        result = sim_with_world.open_viewer()
+        assert result["status"] == "success"
+        assert "viewer opened" in result["content"][0]["text"].lower()
+        # Launched against the live world's model/data, not copies.
+        assert launched["model"] is sim_with_world._world._model
+        assert launched["data"] is sim_with_world._world._data
+
+        handle = sim_with_world._viewer_handle
+        assert handle is not None
+
+        close_result = sim_with_world.close_viewer()
+        assert close_result["status"] == "success"
+        assert handle.closed is True
+        assert sim_with_world._viewer_handle is None
+
+    def test_open_viewer_does_not_relaunch_when_already_open(self, sim_with_world, monkeypatch):
+        """A second open_viewer call reports the existing viewer rather than
+        launching a second one (which would leak the first handle)."""
+        import strands_robots.simulation.mujoco.backend as backend_mod
+
+        launches = {"n": 0}
+
+        class _FakeViewer:
+            @staticmethod
+            def launch_passive(model, data):
+                launches["n"] += 1
+                return object()
+
+        monkeypatch.setattr(backend_mod, "_mujoco_viewer", _FakeViewer)
+
+        assert sim_with_world.open_viewer()["status"] == "success"
+        second = sim_with_world.open_viewer()
+        assert second["status"] == "success"
+        assert "already open" in second["content"][0]["text"].lower()
+        assert launches["n"] == 1
+
+    def test_open_viewer_surfaces_launch_failure_without_retaining_handle(self, sim_with_world, monkeypatch):
+        """When launch_passive raises (e.g. no display), open_viewer returns a
+        structured error and leaves no half-open handle behind."""
+        import strands_robots.simulation.mujoco.backend as backend_mod
+
+        class _FakeViewer:
+            @staticmethod
+            def launch_passive(model, data):
+                raise RuntimeError("no display available")
+
+        monkeypatch.setattr(backend_mod, "_mujoco_viewer", _FakeViewer)
+
+        result = sim_with_world.open_viewer()
+        assert result["status"] == "error"
+        assert "viewer failed" in result["content"][0]["text"].lower()
+        assert sim_with_world._viewer_handle is None
+
+    def test_close_viewer_swallows_handle_close_error(self, sim_with_world, monkeypatch):
+        """close_viewer must not propagate an exception raised by handle.close();
+        the handle is cleared regardless so the sim is never wedged open."""
+        import strands_robots.simulation.mujoco.backend as backend_mod
+
+        class _BadHandle:
+            def close(self) -> None:
+                raise RuntimeError("boom")
+
+        class _FakeViewer:
+            @staticmethod
+            def launch_passive(model, data):
+                return _BadHandle()
+
+        monkeypatch.setattr(backend_mod, "_mujoco_viewer", _FakeViewer)
+
+        assert sim_with_world.open_viewer()["status"] == "success"
+        result = sim_with_world.close_viewer()
+        assert result["status"] == "success"
+        assert sim_with_world._viewer_handle is None
+
 
 # Error Paths
 
