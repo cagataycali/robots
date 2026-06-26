@@ -222,3 +222,124 @@ class TestBaseHooks:
         result = engine.save_episode()
         assert result["status"] == "error"
         assert "does not support dataset recording" in result["content"][0]["text"]
+
+
+class TestMultiEpisodeErrorAbort:
+    """A failure mid-loop aborts early and reports episodes completed so far.
+
+    ``_run_episodes`` aborts on any of three failures - a rollout error, a
+    dataset episode-flush error, or an inter-episode reset error - returning a
+    structured error that names the failing episode, carries the underlying
+    message, and never starts the remaining rollouts.
+    """
+
+    @staticmethod
+    def _ok_rollout(_self, *_a, **_k):
+        return {"status": "success", "content": [{"json": {"n_steps": 5}}]}
+
+    def test_rollout_failure_aborts_remaining_episodes(self, sim, monkeypatch):
+        from strands_robots.simulation import policy_runner as pr_mod
+
+        calls = {"n": 0}
+
+        def fake_run(_self, *_a, **_k):
+            calls["n"] += 1
+            if calls["n"] == 2:
+                return {"status": "error", "content": [{"text": "boom: rollout exploded"}]}
+            return {"status": "success", "content": [{"json": {"n_steps": 5}}]}
+
+        monkeypatch.setattr(pr_mod.PolicyRunner, "run", fake_run)
+
+        result = sim.run_policy("arm1", n_steps=5, n_episodes=3)
+
+        assert result["status"] == "error"
+        payload = _json(result)
+        assert payload["n_episodes_requested"] == 3
+        # Episode 0 succeeded; episode 1 failed and is recorded; episode 2 never ran.
+        assert payload["n_episodes_completed"] == 2
+        assert calls["n"] == 2
+        assert payload["episodes"][0].get("status") != "error"
+        assert payload["episodes"][1]["status"] == "error"
+        # Only episode 0's steps count toward the aggregate.
+        assert payload["total_steps"] == 5
+        text = result["content"][0]["text"]
+        assert "Episode 1 rollout failed" in text
+        assert "aborting remaining 1 episode(s)" in text
+        # The underlying rollout message is surfaced (exercises _first_text).
+        assert "boom: rollout exploded" in text
+        text.encode("ascii")  # ASCII-only contract
+
+    def test_save_episode_failure_aborts(self, sim, monkeypatch):
+        from strands_robots.simulation import policy_runner as pr_mod
+
+        monkeypatch.setattr(pr_mod.PolicyRunner, "run", self._ok_rollout)
+        # Pretend a recording is active so the loop attempts an episode flush,
+        # then make that flush fail.
+        monkeypatch.setattr(type(sim), "_is_recording", lambda _self: True)
+        monkeypatch.setattr(
+            type(sim),
+            "save_episode",
+            lambda _self: {"status": "error", "content": [{"text": "disk full"}]},
+        )
+
+        result = sim.run_policy("arm1", n_steps=5, n_episodes=3)
+
+        assert result["status"] == "error"
+        payload = _json(result)
+        # Aborts right after episode 0's failed flush; nothing was saved.
+        assert payload["n_episodes_completed"] == 1
+        assert payload["episodes_saved"] == 0
+        assert "disk full" in payload["episodes"][0]["save_episode_error"]
+        text = result["content"][0]["text"]
+        assert "save_episode failed after episode 0" in text
+        assert "disk full" in text
+        text.encode("ascii")
+
+    def test_reset_failure_between_episodes_aborts(self, sim, monkeypatch):
+        from strands_robots.simulation import policy_runner as pr_mod
+
+        monkeypatch.setattr(pr_mod.PolicyRunner, "run", self._ok_rollout)
+        monkeypatch.setattr(
+            type(sim),
+            "reset",
+            lambda _self: {"status": "error", "content": [{"text": "reset boom"}]},
+        )
+
+        # reset_between defaults to True, so the post-episode-0 reset runs and fails.
+        result = sim.run_policy("arm1", n_steps=5, n_episodes=2)
+
+        assert result["status"] == "error"
+        payload = _json(result)
+        assert payload["n_episodes_completed"] == 1
+        text = result["content"][0]["text"]
+        assert "reset() failed after episode 0" in text
+        assert "reset boom" in text
+        text.encode("ascii")
+
+    def test_final_episode_reset_failure_is_not_reached(self, sim, monkeypatch):
+        # The last episode must NOT trigger an inter-episode reset, so a failing
+        # reset on a single-iteration-past-last is never invoked: a clean
+        # 2-episode run with reset_between=False completes despite a broken reset.
+        from strands_robots.simulation import policy_runner as pr_mod
+
+        monkeypatch.setattr(pr_mod.PolicyRunner, "run", self._ok_rollout)
+        monkeypatch.setattr(
+            type(sim),
+            "reset",
+            lambda _self: {"status": "error", "content": [{"text": "should not be called"}]},
+        )
+
+        result = sim.run_policy("arm1", n_steps=5, n_episodes=2, reset_between=False)
+
+        assert result["status"] == "success"
+        assert _json(result)["n_episodes_completed"] == 2
+
+    def test_first_text_returns_empty_when_no_text_block(self):
+        # The abort messages call _first_text on the failing result; when that
+        # result carries no human-readable text (only json, or empty), the
+        # helper degrades to "" rather than raising, so the aggregate message
+        # still renders.
+        assert SimEngine._first_text({"content": []}) == ""
+        assert SimEngine._first_text({"content": [{"json": {"k": 1}}]}) == ""
+        assert SimEngine._first_text({}) == ""
+        assert SimEngine._first_text({"content": [{"text": "hello"}]}) == "hello"
