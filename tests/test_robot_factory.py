@@ -1046,6 +1046,134 @@ class TestRealModeConfigDiscovery:
         assert hasattr(cfg, target_field)
 
 
+class TestMinimalConfigContractBranches:
+    """Pin the kwarg-resolution contract branches of ``_create_minimal_config``
+    that the happy-path tests never reach.
+
+    ``_create_minimal_config`` resolves a lerobot ``RobotConfig`` subclass and
+    decides, per kwarg, whether to forward / drop / reject it. Four documented
+    branches were previously unexercised: future-proof forwarding of a
+    dataclass-declared field outside the cross-robot allowlist (#294), the
+    explicit-``id`` diagnostic when a config lacks an ``id`` field (#292), the
+    fail-loud TypeError when lerobot hands back a non-dataclass config class,
+    and the ValueError wrap when the resolved dataclass refuses construction.
+    """
+
+    def test_future_proof_forwards_dataclass_field_not_in_allowlist(self):
+        """A kwarg outside the cross-robot allowlist but declared on the target
+        dataclass is forwarded verbatim (#294 -- "zero strands_robots changes
+        for new lerobot fields").
+
+        ``earthrover_mini_plus`` declares ``sdk_url``, which is NOT in
+        ``_FORWARDABLE_KWARGS``. Pre-existing coverage of this branch relied on
+        SO101, whose dataclass has no allowlist-external field, so the test
+        skipped and the branch went unverified. Using a robot that actually
+        carries such a field pins the forward (value preserved, not dropped).
+        """
+        pytest.importorskip("lerobot.robots.earthrover_mini_plus")
+
+        import dataclasses
+
+        from lerobot.robots.config import RobotConfig
+
+        from strands_robots.hardware_robot import (
+            _FORWARDABLE_KWARGS,
+            _ensure_lerobot_robots_registered,
+        )
+        from strands_robots.hardware_robot import Robot as HwRobot
+
+        _ensure_lerobot_robots_registered()
+        cfg_cls = RobotConfig.get_choice_class("earthrover_mini_plus")
+        fields = {f.name for f in dataclasses.fields(cfg_cls)}
+        # Guard the premise: sdk_url must be a real, allowlist-external field.
+        assert "sdk_url" in fields
+        assert "sdk_url" not in set(_FORWARDABLE_KWARGS) | {"id", "cameras"}
+
+        hw = HwRobot.__new__(HwRobot)
+        hw.tool_name_str = "earthrover_fwd"
+        cfg = hw._create_minimal_config("earthrover_mini_plus", cameras={}, sdk_url="http://example:9000")
+        assert cfg.sdk_url == "http://example:9000"
+
+    def test_explicit_id_kwarg_warns_when_config_lacks_id_field(self, monkeypatch, caplog):
+        """#292: every lerobot RobotConfig declares ``id`` today, so an explicit
+        ``id=`` is normally consumed to namespace calibration files. If a future
+        config drops the field, silently discarding the operator's ``id=`` would
+        misnamespace calibration with no signal -- so the branch emits a named
+        warning. Pin it with a synthetic id-less config.
+        """
+        import dataclasses
+        import logging
+
+        pytest.importorskip("lerobot")
+        from lerobot.robots.config import RobotConfig
+
+        from strands_robots.hardware_robot import Robot as HwRobot
+
+        @dataclasses.dataclass
+        class _NoIdConfig:
+            cameras: dict = dataclasses.field(default_factory=dict)
+
+        monkeypatch.setattr(RobotConfig, "get_choice_class", lambda robot_type: _NoIdConfig)
+
+        hw = HwRobot.__new__(HwRobot)
+        hw.tool_name_str = "no_id_robot"
+        with caplog.at_level(logging.WARNING, logger="strands_robots.hardware_robot"):
+            cfg = hw._create_minimal_config("fake_robot", cameras={}, id="left_arm")
+
+        # Config still builds (the explicit id is simply not applied).
+        assert isinstance(cfg, _NoIdConfig)
+        warnings = [r.getMessage() for r in caplog.records if "does not declare an 'id'" in r.getMessage()]
+        assert any("left_arm" in m for m in warnings), (
+            f"expected a warning naming the unusable explicit id; got {warnings}"
+        )
+
+    def test_non_dataclass_config_class_raises_typeerror(self, monkeypatch):
+        """If lerobot returns a non-dataclass config class, kwarg filtering via
+        ``dataclasses.fields`` is impossible -- fail loud with a TypeError that
+        names the offending class rather than blindly forwarding every kwarg
+        (AGENTS.md > Key Conventions: no silent defaults on error).
+        """
+        pytest.importorskip("lerobot")
+        from lerobot.robots.config import RobotConfig
+
+        from strands_robots.hardware_robot import Robot as HwRobot
+
+        class _NotADataclass:
+            pass
+
+        monkeypatch.setattr(RobotConfig, "get_choice_class", lambda robot_type: _NotADataclass)
+
+        hw = HwRobot.__new__(HwRobot)
+        hw.tool_name_str = "weird_robot"
+        with pytest.raises(TypeError, match="non-dataclass config class"):
+            hw._create_minimal_config("weird_robot", cameras={})
+
+    def test_config_construction_failure_wrapped_as_value_error(self, monkeypatch):
+        """A dataclass that refuses construction (e.g. a required field that no
+        forwarded kwarg satisfies) must surface as a ValueError naming the
+        config class and the assembled config_data, not a raw TypeError leaking
+        the dataclass internals.
+        """
+        import dataclasses
+
+        pytest.importorskip("lerobot")
+        from lerobot.robots.config import RobotConfig
+
+        from strands_robots.hardware_robot import Robot as HwRobot
+
+        @dataclasses.dataclass
+        class _RequiresArg:
+            required_field: int  # no default -> construction fails when absent
+            id: str = "default"
+
+        monkeypatch.setattr(RobotConfig, "get_choice_class", lambda robot_type: _RequiresArg)
+
+        hw = HwRobot.__new__(HwRobot)
+        hw.tool_name_str = "needs_arg_robot"
+        with pytest.raises(ValueError, match="Failed to construct _RequiresArg"):
+            hw._create_minimal_config("needs_arg_robot", cameras={})
+
+
 class TestHardwareConfigV040Followups:
     """v0.4.0 hardware_robot follow-up bundle (#389) - PR #276 review trail."""
 
