@@ -627,9 +627,27 @@ class DatasetRecorder:
             tags: Optional tags for the dataset
             private: Upload as private dataset
 
+        Refuses to publish an empty dataset (no frames written or no episode
+        saved). Pushing then would create a Hub repo containing only
+        ``meta/info.json`` (no parquet, no video) and silently pollute the
+        namespace. The ``stop_recording`` facade has its own empty-dataset
+        guard; this protects the direct-API path (and any caller that reaches
+        ``push_to_hub`` after a rollout that never fed the recorder).
+
         Returns:
-            Dict with push status
+            Dict with push status. ``status="error"`` (no Hub call made) when
+            the dataset is empty.
         """
+        if self.frame_count == 0 or self.episode_count == 0:
+            msg = (
+                f"refusing to push empty dataset {self.dataset.repo_id} "
+                f"({self.frame_count} frames, {self.episode_count} episodes) - "
+                "would create a Hub repo with only meta/info.json. Record frames "
+                "with add_frame and flush at least one episode with save_episode "
+                "before push_to_hub."
+            )
+            logger.error("push_to_hub aborted: %s", msg)
+            return {"status": "error", "message": msg}
         try:
             self.dataset.push_to_hub(tags=tags, private=private)
             logger.info("Dataset pushed to hub: %s", self.dataset.repo_id)

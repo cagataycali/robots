@@ -395,9 +395,43 @@ def test_push_to_hub_success_and_failure():
             raise RuntimeError("network down")
 
     bad = DatasetRecorder(dataset=_BadPush(_state_action_features(["j1"], ["j1"])))
+    bad.episode_count = 1
+    bad.frame_count = 10
     err = bad.push_to_hub()
     assert err["status"] == "error"
     assert "network down" in err["message"]
+
+
+def test_push_to_hub_refuses_empty_dataset_no_frames():
+    """A recorder that captured no frames must not hit the Hub.
+
+    Regression: push_to_hub used to publish unconditionally, so a rollout that
+    never fed the recorder (e.g. driven by eval_policy / a bare step loop)
+    produced a Hub repo containing only meta/info.json. The guard now returns a
+    structured error and makes no Hub call.
+    """
+    ds = _CapturingDataset(_state_action_features(["j1"], ["j1"]))
+    rec = DatasetRecorder(dataset=ds)
+    # frame_count and episode_count are 0 by construction.
+    result = rec.push_to_hub(tags=["sim"])
+
+    assert result["status"] == "error"
+    assert "empty dataset" in result["message"]
+    assert ds.pushed is None  # the underlying dataset.push_to_hub was never called
+
+
+def test_push_to_hub_refuses_frames_without_saved_episode():
+    """Frames buffered but no episode flushed is still an empty dataset on disk."""
+    ds = _CapturingDataset(_state_action_features(["j1"], ["j1"]))
+    rec = DatasetRecorder(dataset=ds)
+    rec.frame_count = 30
+    rec.episode_count = 0  # save_episode was never called (or it failed)
+
+    result = rec.push_to_hub()
+
+    assert result["status"] == "error"
+    assert "empty dataset" in result["message"]
+    assert ds.pushed is None
 
 
 def test_repo_id_root_and_repr_properties():
