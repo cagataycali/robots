@@ -385,7 +385,17 @@ def resolve_policy_class_by_name(policy_type: str) -> type[Any]:
         from lerobot.policies.factory import get_policy_class
 
         return get_policy_class(policy_type)
-    except (ImportError, AttributeError, RuntimeError):
+    except (ImportError, AttributeError, RuntimeError, TypeError):
+        # ``lerobot.policies.factory`` eagerly imports every optional policy
+        # config module (groot, ...).  A config that is malformed under the
+        # installed transformers - e.g. GR00TN15Config declares a
+        # ``field(init=False)`` without a default, which transformers 5.x
+        # (where PretrainedConfig is itself a dataclass) rejects with
+        # "non-default argument 'backbone_cfg' follows default argument
+        # 'problem_type'" - raises TypeError at import time, not ImportError.
+        # That is still just "this resolution strategy is unavailable", so
+        # fall through to the remaining strategies and the clean ImportError
+        # below rather than leaking an unrelated TypeError to the caller.
         pass
 
     # Strategy 4: PreTrainedPolicy - only if it's NOT abstract

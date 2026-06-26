@@ -1010,6 +1010,36 @@ class TestPolicyResolution:
         with pytest.raises((ImportError, ValueError)):
             resolve_policy_class_by_name("nonexistent_policy_type_xyz")
 
+    def test_resolve_policy_class_by_name_degrades_when_factory_import_raises_typeerror(self, monkeypatch):
+        """A broken optional lerobot policy config must not leak a TypeError.
+
+        ``lerobot.policies.factory`` eagerly imports every optional policy
+        config module. Under transformers 5.x (where ``PretrainedConfig`` is a
+        dataclass) a config such as ``GR00TN15Config`` - which declares a
+        ``field(init=False)`` without a default - fails to build at import
+        time with ``TypeError: non-default argument 'backbone_cfg' follows
+        default argument 'problem_type'``. ``resolve_policy_class_by_name``
+        must treat that strategy as unavailable and surface a clean
+        ``ImportError``, never the raw ``TypeError``.
+        """
+        import sys
+
+        lerobot_stub = types.ModuleType("lerobot")
+        lerobot_stub.__path__ = []  # type: ignore[attr-defined]
+        policies_stub = types.ModuleType("lerobot.policies")
+        policies_stub.__path__ = []  # type: ignore[attr-defined]
+
+        class _BrokenFactory(types.ModuleType):
+            def __getattr__(self, name):
+                raise TypeError("non-default argument 'backbone_cfg' follows default argument 'problem_type'")
+
+        monkeypatch.setitem(sys.modules, "lerobot", lerobot_stub)
+        monkeypatch.setitem(sys.modules, "lerobot.policies", policies_stub)
+        monkeypatch.setitem(sys.modules, "lerobot.policies.factory", _BrokenFactory("lerobot.policies.factory"))
+
+        with pytest.raises(ImportError):
+            resolve_policy_class_by_name("nonexistent_policy_type_xyz")
+
     def test_resolve_from_hub_raises_without_type(self):
 
         with pytest.raises((ValueError, ImportError, Exception)):
