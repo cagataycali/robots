@@ -226,3 +226,158 @@ def test_hook_lambda_stamps_version_description():
 
     desc = lam.create_function.call_args.kwargs["Description"]
     assert f"[v{b._PROVISIONING_HOOK_VERSION}]" in desc
+
+
+# --- Idempotent reuse + force-update + role-propagation retry ------------
+#
+# _ensure_provisioning_hook_lambda must (a) reuse an existing function and
+# only replace its code under force_update, (b) warn on a stale version tag
+# so drift is visible, and (c) survive the IAM role-propagation race that
+# makes create_function transiently reject a freshly-created role.
+
+
+def _hook_lambda_client():
+    """A MagicMock Lambda client wired with the exception types the code uses."""
+    lam = MagicMock()
+    lam.exceptions.ResourceNotFoundException = type("RNF", (Exception,), {})
+    lam.exceptions.InvalidParameterValueException = type("IPV", (Exception,), {})
+    return lam
+
+
+def _current_version_function(arn):
+    return {
+        "Configuration": {
+            "FunctionArn": arn,
+            "Description": f"strands-mesh hook [v{b._PROVISIONING_HOOK_VERSION}]",
+        }
+    }
+
+
+def test_hook_lambda_reuses_existing_without_force_update():
+    """Existing, current-version function is skipped (not recreated/updated)."""
+    arn = "arn:aws:lambda:us-east-1:123456789012:function:strands-mesh-provisioning-hook"
+    lam = _hook_lambda_client()
+    lam.get_function.return_value = _current_version_function(arn)
+    acct = b.BootstrappedAccount(region="us-east-1", account_id="123456789012")
+
+    result = b._ensure_provisioning_hook_lambda(lam, "arn:aws:iam::123456789012:role/hook", acct)
+
+    assert result == arn
+    assert f"lambda:{b.PROVISIONING_HOOK_LAMBDA_NAME}" in acct.skipped
+    lam.create_function.assert_not_called()
+    lam.update_function_code.assert_not_called()
+
+
+def test_hook_lambda_warns_on_stale_version(caplog):
+    """A version-tag mismatch on an existing function logs a drift warning."""
+    arn = "arn:aws:lambda:us-east-1:123456789012:function:strands-mesh-provisioning-hook"
+    lam = _hook_lambda_client()
+    lam.get_function.return_value = {"Configuration": {"FunctionArn": arn, "Description": "strands-mesh hook [v0]"}}
+    acct = b.BootstrappedAccount(region="us-east-1", account_id="123456789012")
+
+    with caplog.at_level("WARNING"):
+        result = b._ensure_provisioning_hook_lambda(lam, "arn:aws:iam::123456789012:role/hook", acct)
+
+    assert result == arn
+    assert any("stale version" in r.message for r in caplog.records)
+
+
+def test_hook_lambda_force_update_replaces_code_and_config():
+    """force_update rewrites code + configuration and records an update."""
+    arn = "arn:aws:lambda:us-east-1:123456789012:function:strands-mesh-provisioning-hook"
+    lam = _hook_lambda_client()
+    lam.get_function.return_value = _current_version_function(arn)
+    acct = b.BootstrappedAccount(region="us-east-1", account_id="123456789012")
+
+    result = b._ensure_provisioning_hook_lambda(lam, "arn:aws:iam::123456789012:role/hook", acct, force_update=True)
+
+    assert result == arn
+    lam.update_function_code.assert_called_once()
+    lam.update_function_configuration.assert_called_once()
+    assert f"lambda:{b.PROVISIONING_HOOK_LAMBDA_NAME} (updated)" in acct.created
+    assert f"lambda:{b.PROVISIONING_HOOK_LAMBDA_NAME}" not in acct.skipped
+
+
+def test_hook_lambda_retries_until_role_is_assumable(monkeypatch):
+    """create_function is retried with backoff while the new role propagates."""
+    arn = "arn:aws:lambda:us-east-1:123456789012:function:strands-mesh-provisioning-hook"
+    lam = _hook_lambda_client()
+    lam.get_function.side_effect = lam.exceptions.ResourceNotFoundException()
+    role_err = lam.exceptions.InvalidParameterValueException(
+        "The role defined for the function cannot be assumed by Lambda."
+    )
+    lam.create_function.side_effect = [role_err, role_err, {"FunctionArn": arn}]
+    sleeps: list = []
+    monkeypatch.setattr(b.time, "sleep", lambda s: sleeps.append(s))
+    acct = b.BootstrappedAccount(region="us-east-1", account_id="123456789012")
+
+    result = b._ensure_provisioning_hook_lambda(lam, "arn:aws:iam::123456789012:role/hook", acct)
+
+    assert result == arn
+    assert lam.create_function.call_count == 3
+    assert len(sleeps) == 2  # slept once per transient failure, not after success
+    assert f"lambda:{b.PROVISIONING_HOOK_LAMBDA_NAME}" in acct.created
+
+
+def test_hook_lambda_reraises_non_role_parameter_error(monkeypatch):
+    """A non-role InvalidParameterValue is a real error and must not be retried."""
+    import pytest
+
+    lam = _hook_lambda_client()
+    lam.get_function.side_effect = lam.exceptions.ResourceNotFoundException()
+    lam.create_function.side_effect = lam.exceptions.InvalidParameterValueException(
+        "Runtime python3.12 is not supported"
+    )
+    monkeypatch.setattr(b.time, "sleep", lambda _s: None)
+    acct = b.BootstrappedAccount(region="us-east-1", account_id="123456789012")
+
+    with pytest.raises(lam.exceptions.InvalidParameterValueException):
+        b._ensure_provisioning_hook_lambda(lam, "arn:aws:iam::123456789012:role/hook", acct)
+    lam.create_function.assert_called_once()
+
+
+def test_hook_lambda_raises_after_retry_exhaustion(monkeypatch):
+    """If the role never becomes assumable, a clear RuntimeError is raised."""
+    lam = _hook_lambda_client()
+    lam.get_function.side_effect = lam.exceptions.ResourceNotFoundException()
+    lam.create_function.side_effect = lam.exceptions.InvalidParameterValueException(
+        "The role defined for the function cannot be assumed by Lambda."
+    )
+    monkeypatch.setattr(b.time, "sleep", lambda _s: None)
+    acct = b.BootstrappedAccount(region="us-east-1", account_id="123456789012")
+
+    import pytest
+
+    with pytest.raises(RuntimeError, match="Provisioning-hook Lambda create failed after retries"):
+        b._ensure_provisioning_hook_lambda(lam, "arn:aws:iam::123456789012:role/hook", acct)
+    assert lam.create_function.call_count == 6
+
+
+# --- IoT invoke-permission grant (idempotent) ---------------------------
+
+
+def test_grant_invoke_permission_added_once():
+    """The IoT service principal is granted invoke and the grant is recorded."""
+    lam = _hook_lambda_client()
+    lam.exceptions.ResourceConflictException = type("RCE", (Exception,), {})
+    acct = b.BootstrappedAccount(region="us-east-1", account_id="123456789012")
+
+    b._grant_iot_invoke_provisioning_hook(lam, "arn:aws:lambda:us-east-1:123456789012:function:hook", acct)
+
+    kwargs = lam.add_permission.call_args.kwargs
+    assert kwargs["Principal"] == "iot.amazonaws.com"
+    assert kwargs["Action"] == "lambda:InvokeFunction"
+    assert "lambda-permission:provisioning-hook-invoke" in acct.created
+
+
+def test_grant_invoke_permission_is_idempotent():
+    """A pre-existing statement (ResourceConflict) is skipped, not an error."""
+    lam = _hook_lambda_client()
+    lam.exceptions.ResourceConflictException = type("RCE", (Exception,), {})
+    lam.add_permission.side_effect = lam.exceptions.ResourceConflictException()
+    acct = b.BootstrappedAccount(region="us-east-1", account_id="123456789012")
+
+    b._grant_iot_invoke_provisioning_hook(lam, "arn:aws:lambda:us-east-1:123456789012:function:hook", acct)
+
+    assert "lambda-permission:provisioning-hook-invoke" in acct.skipped
+    assert "lambda-permission:provisioning-hook-invoke" not in acct.created
