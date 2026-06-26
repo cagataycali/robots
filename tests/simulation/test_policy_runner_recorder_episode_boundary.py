@@ -131,8 +131,7 @@ class TestRecorderEpisodeBoundary:
 
         # The fix: save_episode must fire exactly once per evaluate iteration.
         assert rec.episode_count == 3, (
-            f"Expected 3 episode boundaries, got {rec.episode_count}. "
-            f"Save calls: {rec.save_calls}"
+            f"Expected 3 episode boundaries, got {rec.episode_count}. Save calls: {rec.save_calls}"
         )
         assert len(rec.save_calls) == 3
         # Each boundary must have flushed some frames (not the empty-buffer
