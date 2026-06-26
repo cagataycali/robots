@@ -179,13 +179,13 @@ class TestPathResolution:
         assert result.is_dir()  # created if needed
 
     def test_get_base_dir_default(self, tmp_path, monkeypatch):
-        import strands_robots.utils as utils
+        from strands_robots.utils import get_base_dir
 
         monkeypatch.delenv("STRANDS_BASE_DIR", raising=False)
         default = tmp_path / "sr_default"
-        monkeypatch.setattr(utils, "DEFAULT_BASE_DIR", default)
+        monkeypatch.setattr("strands_robots.utils.DEFAULT_BASE_DIR", default)
 
-        result = utils.get_base_dir()
+        result = get_base_dir()
         assert result == default
         assert result.is_dir()
 
@@ -200,13 +200,13 @@ class TestPathResolution:
         assert result.is_dir()
 
     def test_get_assets_dir_default(self, tmp_path, monkeypatch):
-        import strands_robots.utils as utils
+        from strands_robots.utils import get_assets_dir
 
         monkeypatch.delenv("STRANDS_ASSETS_DIR", raising=False)
         default = tmp_path / "sr_default"
-        monkeypatch.setattr(utils, "DEFAULT_BASE_DIR", default)
+        monkeypatch.setattr("strands_robots.utils.DEFAULT_BASE_DIR", default)
 
-        result = utils.get_assets_dir()
+        result = get_assets_dir()
         assert result == default / "assets"
         assert result.is_dir()
 
@@ -216,17 +216,17 @@ class TestPathResolution:
         The base dir must stay at its default even when assets are relocated, so
         user-level metadata (e.g. user_robots.json) lands predictably.
         """
-        import strands_robots.utils as utils
+        from strands_robots.utils import get_assets_dir, get_base_dir
 
         assets_target = tmp_path / "elsewhere_assets"
         base_default = tmp_path / "sr_default"
         monkeypatch.setenv("STRANDS_ASSETS_DIR", str(assets_target))
         monkeypatch.delenv("STRANDS_BASE_DIR", raising=False)
-        monkeypatch.setattr(utils, "DEFAULT_BASE_DIR", base_default)
+        monkeypatch.setattr("strands_robots.utils.DEFAULT_BASE_DIR", base_default)
 
-        assert utils.get_assets_dir() == assets_target
+        assert get_assets_dir() == assets_target
         # Base dir is unaffected by the assets override.
-        assert utils.get_base_dir() == base_default
+        assert get_base_dir() == base_default
 
     def test_resolve_asset_path_none_uses_default_name(self, tmp_path, monkeypatch):
         from strands_robots.utils import resolve_asset_path
