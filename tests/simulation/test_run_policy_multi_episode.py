@@ -105,6 +105,24 @@ def _json(result: dict) -> dict:
     raise AssertionError(f"no json block in result: {result}")
 
 
+def _patch_runner(monkeypatch, run_fn):
+    """Patch ``PolicyRunner.run`` on the class ``run_policy`` actually instantiates.
+
+    ``SimEngine.run_policy`` builds ``runner = PolicyRunner(self)`` from the
+    ``PolicyRunner`` symbol bound in its OWN module namespace. Patching the name
+    imported from elsewhere (e.g. ``policy_runner.PolicyRunner``) silently misses
+    that instance whenever another test has reloaded the ``policy_runner`` module:
+    the reload rebinds ``sys.modules[...policy_runner].PolicyRunner`` to a fresh
+    class object while ``base`` keeps its original import, so the two diverge and
+    the real rollout runs unpatched. Resolving the class from the live module that
+    owns ``run_policy`` keeps the seam effective regardless of such reloads.
+    """
+    import sys
+
+    runner_module = sys.modules[SimEngine.run_policy.__module__]
+    monkeypatch.setattr(runner_module.PolicyRunner, "run", run_fn)
+
+
 class TestMultiEpisodeRollout:
     def test_n_episodes_runs_multiple_rollouts(self, sim):
         result = sim.run_policy("arm1", n_steps=5, n_episodes=3, control_frequency=50.0)
@@ -238,8 +256,6 @@ class TestMultiEpisodeErrorAbort:
         return {"status": "success", "content": [{"json": {"n_steps": 5}}]}
 
     def test_rollout_failure_aborts_remaining_episodes(self, sim, monkeypatch):
-        from strands_robots.simulation import policy_runner as pr_mod
-
         calls = {"n": 0}
 
         def fake_run(_self, *_a, **_k):
@@ -248,7 +264,7 @@ class TestMultiEpisodeErrorAbort:
                 return {"status": "error", "content": [{"text": "boom: rollout exploded"}]}
             return {"status": "success", "content": [{"json": {"n_steps": 5}}]}
 
-        monkeypatch.setattr(pr_mod.PolicyRunner, "run", fake_run)
+        _patch_runner(monkeypatch, fake_run)
 
         result = sim.run_policy("arm1", n_steps=5, n_episodes=3)
 
@@ -270,9 +286,7 @@ class TestMultiEpisodeErrorAbort:
         text.encode("ascii")  # ASCII-only contract
 
     def test_save_episode_failure_aborts(self, sim, monkeypatch):
-        from strands_robots.simulation import policy_runner as pr_mod
-
-        monkeypatch.setattr(pr_mod.PolicyRunner, "run", self._ok_rollout)
+        _patch_runner(monkeypatch, self._ok_rollout)
         # Pretend a recording is active so the loop attempts an episode flush,
         # then make that flush fail.
         monkeypatch.setattr(type(sim), "_is_recording", lambda _self: True)
@@ -296,9 +310,7 @@ class TestMultiEpisodeErrorAbort:
         text.encode("ascii")
 
     def test_reset_failure_between_episodes_aborts(self, sim, monkeypatch):
-        from strands_robots.simulation import policy_runner as pr_mod
-
-        monkeypatch.setattr(pr_mod.PolicyRunner, "run", self._ok_rollout)
+        _patch_runner(monkeypatch, self._ok_rollout)
         monkeypatch.setattr(
             type(sim),
             "reset",
@@ -320,9 +332,7 @@ class TestMultiEpisodeErrorAbort:
         # The last episode must NOT trigger an inter-episode reset, so a failing
         # reset on a single-iteration-past-last is never invoked: a clean
         # 2-episode run with reset_between=False completes despite a broken reset.
-        from strands_robots.simulation import policy_runner as pr_mod
-
-        monkeypatch.setattr(pr_mod.PolicyRunner, "run", self._ok_rollout)
+        _patch_runner(monkeypatch, self._ok_rollout)
         monkeypatch.setattr(
             type(sim),
             "reset",
