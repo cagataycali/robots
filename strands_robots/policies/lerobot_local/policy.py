@@ -60,6 +60,9 @@ def clear_model_cache() -> int:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
     except (RuntimeError, AssertionError):
+        # Best-effort GPU memory release: the entries are already evicted, so a
+        # failure here (no live CUDA context, driver hiccup) must not turn a
+        # successful cache clear into an error. Swallow and report the count.
         pass
     return n
 
