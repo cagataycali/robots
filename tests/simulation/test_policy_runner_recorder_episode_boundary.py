@@ -89,6 +89,7 @@ def _attach_recorder(sim: Simulation, frames_per_episode: int = 5) -> _StubRecor
     a non-empty buffer when it fires.
     """
     rec = _StubRecorder()
+    assert sim._world is not None
     sim._world._backend_state["dataset_recorder"] = rec
     return rec
 

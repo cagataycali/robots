@@ -302,7 +302,10 @@ class PolicyRunner:
         actions and ``add_frame`` was never called).
         """
         try:
-            recorder = self.sim._world._backend_state.get("dataset_recorder")
+            world = getattr(self.sim, "_world", None)
+            if world is None:
+                return
+            recorder = world._backend_state.get("dataset_recorder")
         except AttributeError:
             return
         if recorder is None:
