@@ -12,6 +12,7 @@ Architecture:
 """
 
 import logging
+import threading
 import time
 from collections import deque
 from typing import Any
@@ -24,6 +25,43 @@ from .processor import ProcessorBridge
 from .resolution import resolve_policy_class_by_name, resolve_policy_class_from_hub
 
 logger = logging.getLogger(__name__)
+
+
+# Process-level cache of loaded underlying models, keyed by the load-determining
+# inputs. Loading a VLA checkpoint (e.g. MolmoAct2 SO-100/101 = 1295 weight
+# files) reads gigabytes from disk and uploads them to the GPU - on the order of
+# 100s per load. Re-instantiating ``LerobotLocalPolicy`` for the same checkpoint
+# (the common multi-episode / per-rollout ``create_policy`` pattern) would pay
+# that cost every time. Caching the built nn.Module here lets repeated
+# instances share one resident model.
+#
+# Contract: the cached object is the SAME live nn.Module shared across every
+# wrapper that requests the same key. LeRobot policies hold per-episode mutable
+# state (action queue, temporal-ensemble buffers) which ``Policy.reset()`` (and
+# thus ``PolicyRunner`` between episodes) clears - so SEQUENTIAL reuse is safe.
+# Two wrappers driving the SAME checkpoint+device CONCURRENTLY would share that
+# state; opt out with ``cache_model=False`` for that (rare) case. Call
+# :func:`clear_model_cache` to evict and free the held GPU/CPU memory.
+_MODEL_CACHE: dict[tuple[Any, ...], Any] = {}
+_MODEL_CACHE_LOCK = threading.Lock()
+
+
+def clear_model_cache() -> int:
+    """Evict all cached lerobot_local models, freeing their held memory.
+
+    Returns:
+        Number of cache entries evicted. Best-effort releases the CUDA caching
+        allocator afterwards so freed GPU memory is returned to the driver.
+    """
+    with _MODEL_CACHE_LOCK:
+        n = len(_MODEL_CACHE)
+        _MODEL_CACHE.clear()
+    try:
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except (RuntimeError, AssertionError):
+        pass
+    return n
 
 
 class LerobotLocalPolicy(Policy):
@@ -91,6 +129,7 @@ class LerobotLocalPolicy(Policy):
         inference_action_mode: str = "continuous",
         camera_key_map: dict[str, str] | None = None,
         strict_keys: bool = False,
+        cache_model: bool = True,
         **kwargs,
     ):
         self.pretrained_name_or_path = pretrained_name_or_path
@@ -123,6 +162,12 @@ class LerobotLocalPolicy(Policy):
         # camera_key_map covers them). Defaults to False (positional fallback
         # with a warning), preserving zero-config ergonomics.
         self.strict_keys = strict_keys
+        # When True (default), the loaded underlying model is cached at
+        # process level and shared by later instances with the same load
+        # key (see _MODEL_CACHE). Set False to force a private load (e.g.
+        # concurrent rollouts of the same checkpoint that must not share
+        # per-episode model state).
+        self.cache_model = cache_model
         # MolmoAct2-specific knobs. MolmoAct2 SO-100/101 checkpoints are
         # transformers-native (no lerobot draccus `type`), so they take a
         # dedicated load path (see lerobot_local.molmoact2). These are inert
@@ -347,6 +392,29 @@ class LerobotLocalPolicy(Policy):
 
     # Model loading
 
+    def _model_cache_key(self, namespace: str, *extra: Any) -> tuple[Any, ...] | None:
+        """Build the process-cache key for the underlying model load.
+
+        Returns ``None`` when caching is disabled or there is no checkpoint
+        path to key on (a from-scratch / parameterless policy), which makes the
+        cache a transparent no-op for those cases.
+        """
+        if not self.cache_model or not self.pretrained_name_or_path:
+            return None
+        return (namespace, self.pretrained_name_or_path, self.requested_device, *extra)
+
+    def _cache_get(self, key: tuple[Any, ...] | None) -> Any:
+        if key is None:
+            return None
+        with _MODEL_CACHE_LOCK:
+            return _MODEL_CACHE.get(key)
+
+    def _cache_put(self, key: tuple[Any, ...] | None, value: Any) -> None:
+        if key is None:
+            return
+        with _MODEL_CACHE_LOCK:
+            _MODEL_CACHE[key] = value
+
     def _load_model(self) -> None:
         """Load the LeRobot model from pretrained path.
 
@@ -384,16 +452,31 @@ class LerobotLocalPolicy(Policy):
         logger.info("Loading %s...", self.pretrained_name_or_path)
         start = time.time()
 
-        # Resolve the correct policy class
-        if self.policy_type:
-            PolicyClass = resolve_policy_class_by_name(self.policy_type)
+        # Reuse a process-cached model when one was already built for this
+        # (path, policy_type, device) - skips the expensive from_pretrained
+        # weight read + GPU upload on repeat instantiation. The resolved
+        # policy_type is cached alongside the module so a hit needs no hub call.
+        cache_key = self._model_cache_key("generic", self.policy_type)
+        cached = self._cache_get(cache_key)
+        if cached is not None:
+            self._policy, self.policy_type = cached
+            logger.info(
+                "Reusing cached %s for %s (skipped from_pretrained)",
+                type(self._policy).__name__,
+                self.pretrained_name_or_path,
+            )
         else:
-            PolicyClass, self.policy_type = resolve_policy_class_from_hub(self.pretrained_name_or_path)
+            # Resolve the correct policy class
+            if self.policy_type:
+                PolicyClass = resolve_policy_class_by_name(self.policy_type)
+            else:
+                PolicyClass, self.policy_type = resolve_policy_class_from_hub(self.pretrained_name_or_path)
 
-        self._policy = PolicyClass.from_pretrained(self.pretrained_name_or_path)
-        assert self._policy is not None
+            self._policy = PolicyClass.from_pretrained(self.pretrained_name_or_path)
+            assert self._policy is not None
 
-        self._policy.eval()
+            self._policy.eval()
+            self._cache_put(cache_key, (self._policy, self.policy_type))
 
         # Resolve device: prefer user-requested, then config.device, fallback to first param
         if self.requested_device:
@@ -555,6 +638,23 @@ class LerobotLocalPolicy(Policy):
         logger.info("Loading MolmoAct2 (transformers-native) from %s...", self.pretrained_name_or_path)
         start = time.time()
 
+        # Reuse a process-cached MolmoAct2 model when one was already built for
+        # this checkpoint+device+load-knobs. The model weights (1295 files for
+        # the SO-100/101 checkpoint) are the expensive part; the config and
+        # pre/post processors are rebuilt cheaply so the returned tuple is
+        # self-consistent. norm_tag / inference_action_mode / image_keys /
+        # embodiment / dims are part of the key because they shape the processors
+        # (and thus must match the cached weights' intended pipeline).
+        model_cache_key = self._model_cache_key(
+            "molmoact2",
+            self._molmoact2_norm_tag,
+            self._molmoact2_inference_action_mode,
+            tuple(self._molmoact2_image_keys or ()),
+            repr(self._embodiment_spec),
+            state_dim,
+            action_dim,
+        )
+        cached_model = self._cache_get(model_cache_key)
         policy, preprocessor, postprocessor, cfg = _molmoact2.build_policy(
             self.pretrained_name_or_path,
             device=self.requested_device,
@@ -564,7 +664,10 @@ class LerobotLocalPolicy(Policy):
             embodiment_spec=self._embodiment_spec,
             state_dim=state_dim,
             action_dim=action_dim,
+            prebuilt_policy=cached_model,
         )
+        if cached_model is None:
+            self._cache_put(model_cache_key, policy)
 
         self._policy = policy
         self._device = next(policy.parameters()).device

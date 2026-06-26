@@ -41,8 +41,46 @@ LerobotLocalPolicy(
     inference_action_mode="continuous",  # "continuous" | "discrete"
     camera_key_map=None,                 # {robot_cam_name: policy_image_key}
     strict_keys=False,                   # raise instead of positional camera fallback
+    cache_model=True,                    # reuse a process-cached model across instances
 )
 ```
+
+## Model caching
+
+Loading a checkpoint reads its weights from disk and uploads them to the
+device. For a large VLA (MolmoAct2 SO-100/101 ships 1295 weight files) that is
+on the order of a minute or more per load. Eval/rollout drivers that build a
+fresh policy per call - e.g. ``create_policy("lerobot_local", ...)`` inside a
+per-episode loop - would otherwise pay that full load cost every time.
+
+By default (`cache_model=True`) the loaded underlying model is cached at
+process level, keyed by `(pretrained_name_or_path, policy_type, device)` (plus
+the MolmoAct2 normalisation/processor knobs). Re-instantiating the policy for
+the same checkpoint reuses the resident model and skips the weight load:
+
+```python
+from strands_robots.policies import create_policy
+from strands_robots.policies.lerobot_local import clear_model_cache
+
+# First build loads the weights; subsequent builds for the same checkpoint
+# reuse the resident model (no reload).
+p1 = create_policy("lerobot_local", pretrained_name_or_path="allenai/MolmoAct2-SO100_101", device="cuda")
+p2 = create_policy("lerobot_local", pretrained_name_or_path="allenai/MolmoAct2-SO100_101", device="cuda")
+
+clear_model_cache()  # evict cached models and free their GPU/CPU memory
+```
+
+The cached object is the same live module shared by every instance with the
+same key. LeRobot policies carry per-episode state (action queue, temporal
+ensemble buffers) that `Policy.reset()` clears between episodes, so sequential
+reuse - including `Simulation.eval_policy` and per-rollout drivers - is safe.
+Pass `cache_model=False` to force a private load when driving two rollouts of
+the same checkpoint+device concurrently, and call `clear_model_cache()` to
+release the held memory.
+
+For multi-episode evaluation, prefer a single `Simulation.eval_policy(..., 
+n_episodes=N)` (or `run_policy(..., policy_object=loaded)`) call, which loads
+the policy once and reuses it across episodes regardless of this cache.
 
 ## Supported models
 

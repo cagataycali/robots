@@ -1444,6 +1444,7 @@ class TestLoadModelDeviceMove:
         policy._input_features = {}
         policy.processor_overrides = {}
         policy.actions_per_step = 1
+        policy.cache_model = False
 
         mock_policy = _load_model_with_mocks(policy, param_device="meta", bridge_active=False)
 
@@ -1462,6 +1463,7 @@ class TestLoadModelDeviceMove:
         policy._input_features = {}
         policy.processor_overrides = {}
         policy.actions_per_step = 1
+        policy.cache_model = False
 
         mock_policy = _load_model_with_mocks(policy, param_device="cpu", bridge_active=False)
 
@@ -1484,6 +1486,7 @@ class TestLoadModelPostprocessorWarning:
         policy._input_features = {}
         policy.processor_overrides = {}
         policy.actions_per_step = 1
+        policy.cache_model = False
         return policy
 
     def test_warns_without_postprocessor(self, caplog):

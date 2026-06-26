@@ -272,6 +272,7 @@ def build_policy(
     embodiment_spec: Any | None,
     state_dim: int = 6,
     action_dim: int = 6,
+    prebuilt_policy: Any | None = None,
 ) -> tuple[Any, Any, Any, Any]:
     """Build a MolmoAct2 policy + its pre/post processor pipelines.
 
@@ -284,6 +285,11 @@ def build_policy(
         embodiment_spec: Embodiment spec used to derive image keys when not given.
         state_dim: observation.state dimensionality (SO arms = 6).
         action_dim: action dimensionality (SO arms = 6).
+        prebuilt_policy: An already-loaded MolmoAct2 policy to reuse instead
+            of constructing (and reading the checkpoint weights) again. The
+            cheap config + pre/post processors are still rebuilt fresh so
+            the returned tuple is self-consistent; only the expensive weight
+            load is skipped. Used by LerobotLocalPolicy's model cache.
 
     Returns:
         Tuple ``(policy, preprocessor, postprocessor, config)``.
@@ -361,10 +367,15 @@ def build_policy(
         output_features=output_features,
     )
 
-    policy_cls = get_policy_class(MOLMOACT2_TYPE)
-    policy = policy_cls(cfg)
-    policy.to(resolved_device)
-    policy.eval()
+    if prebuilt_policy is not None:
+        # Reuse the already-resident model; skip the expensive weight load.
+        policy = prebuilt_policy
+        logger.info("molmoact2: reusing prebuilt policy on %s (skipped weight load)", resolved_device)
+    else:
+        policy_cls = get_policy_class(MOLMOACT2_TYPE)
+        policy = policy_cls(cfg)
+        policy.to(resolved_device)
+        policy.eval()
 
     # Public dispatcher -> make_molmoact2_pre_post_processors(cfg) under the hood.
     preprocessor, postprocessor = make_pre_post_processors(cfg)
