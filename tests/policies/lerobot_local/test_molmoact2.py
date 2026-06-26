@@ -433,15 +433,26 @@ class TestBuildPolicy:
         assert "lerobot >= 0.5.2" not in msg
 
     def test_transitive_dep_failure_in_factory_import_names_real_dep(self, monkeypatch):
-        """Same discrimination for the second guard (lerobot.policies.factory)."""
+        """Same discrimination for the second guard (lerobot.policies.factory).
+
+        The first guard (``from lerobot.configs import FeatureType, PolicyFeature``)
+        is stubbed so this test isolates the SECOND guard's discrimination. Those
+        symbols are only re-exported from ``lerobot.configs`` on lerobot >= 0.5.2;
+        on lerobot 0.5.1 (the latest PyPI release) ``lerobot.configs`` is a
+        namespace package without them, so the real first-guard import would fail
+        first and mask the factory-guard behaviour under test.
+        """
         pytest.importorskip("lerobot")
         import builtins
+        import types
 
         real_import = builtins.__import__
 
         def blocked_import(name, *args, **kwargs):
             if name == "lerobot.policies.factory":
                 raise ModuleNotFoundError("No module named 'qwen_vl_utils'", name="qwen_vl_utils")
+            if name == "lerobot.configs":
+                return types.SimpleNamespace(FeatureType=object, PolicyFeature=object)
             return real_import(name, *args, **kwargs)
 
         monkeypatch.setattr(builtins, "__import__", blocked_import)
