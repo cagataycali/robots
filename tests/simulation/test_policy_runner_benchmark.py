@@ -345,6 +345,13 @@ class TestAugmentObservationHook:
             def set_robot_state_keys(self, keys):
                 self.robot_state_keys = list(keys)
 
+            def set_control_frequency(self, hz):
+                # PolicyRunner now announces the loop's control rate to every
+                # policy before the rollout (RTC latency->step conversion). This
+                # double only verifies the observation-augmentation hook, so it
+                # records the rate to honor the contract without acting on it.
+                self.control_frequency = hz
+
             def get_actions(self, obs, instruction):
                 captured.append(dict(obs))
                 return [{"j0": 0.0, "j1": 0.0}]
