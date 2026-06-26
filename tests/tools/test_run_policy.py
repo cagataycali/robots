@@ -24,9 +24,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
-
-import pytest
 
 from strands_robots.tools.run_policy import run_policy as run_policy_tool
 
@@ -272,9 +269,7 @@ class TestParquetTruth:
         # Simulate the historical fabrication: 20 requested, 1 actually saved.
         _write_info_json(ds, total_episodes=1, total_frames=1140)
         result = run_policy(sim, n_episodes=20, n_steps=60, dataset_root=str(ds))
-        assert result["status"] == "error", (
-            "Mismatch between requested and parquet-actual MUST flip status to error"
-        )
+        assert result["status"] == "error", "Mismatch between requested and parquet-actual MUST flip status to error"
         payload = result["content"][1]["json"]
         assert payload["n_episodes_requested"] == 20
         assert payload["n_episodes_actual"] == 1
@@ -340,9 +335,7 @@ class TestRecordingLifecycle:
         assert sim.run_policy_calls == []
         assert sim.stop_recording_calls == []
 
-    def test_recording_disabled_when_simulation_lacks_start_recording(
-        self, tmp_path: Path
-    ) -> None:
+    def test_recording_disabled_when_simulation_lacks_start_recording(self, tmp_path: Path) -> None:
         sim = _NoRecordingSim()
         result = run_policy(
             sim,

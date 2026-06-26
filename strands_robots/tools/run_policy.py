@@ -263,11 +263,13 @@ def run_policy(
                     "content": [{"text": f"Episode {ep + 1} raised: {e!r}"}],
                 }
 
-            episodes.append({
-                "index": ep,
-                "status": rollout.get("status", "error"),
-                "text": (rollout.get("content") or [{}])[0].get("text", "")[:500],
-            })
+            episodes.append(
+                {
+                    "index": ep,
+                    "status": rollout.get("status", "error"),
+                    "text": (rollout.get("content") or [{}])[0].get("text", "")[:500],
+                }
+            )
 
             # Per-episode parquet boundary. PR #716 wired this helper inside
             # PolicyRunner.evaluate() / _evaluate_with_spec(), but bare
@@ -323,13 +325,10 @@ def run_policy(
 
     # ---- 6. Build payload ----------------------------------------------
     n_ok = sum(1 for e in episodes if e["status"] == "success")
-    summary_line = (
-        f"run_policy: {n_ok}/{n_episodes} episodes ok"
-        + (
-            f" | parquet-truth: total_episodes={n_actual_eps}, total_frames={n_actual_frames}"
-            if dataset_root is not None
-            else ""
-        )
+    summary_line = f"run_policy: {n_ok}/{n_episodes} episodes ok" + (
+        f" | parquet-truth: total_episodes={n_actual_eps}, total_frames={n_actual_frames}"
+        if dataset_root is not None
+        else ""
     )
     if warnings_:
         summary_line += f" | warnings={len(warnings_)}"
