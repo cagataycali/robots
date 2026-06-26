@@ -5,6 +5,35 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Added: `async_rtc` chunk pipeline for `run_policy` (overlap inference with execution)
+
+`run_policy` / `PolicyRunner.run` drove policies through a synchronous
+chunk-then-drain loop: query the policy, fully execute the returned action
+chunk, then re-query. Inference and execution never overlapped, so a
+chunk-emitting VLA (pi0, SmolVLA, MolmoAct2) showed a per-seam stall in sim that
+it would NOT show on real hardware, where an async controller hides inference
+latency behind chunk execution. RTC's seam blending worked, but its second
+benefit - latency masking - was invisible in sim, making sim timing diverge from
+real-hardware timing and RTC-tuned policies look worse than they are.
+
+- `run_policy` and `PolicyRunner.run` accept `async_rtc: bool = False`. When
+  `True`, the next `get_actions` is fired on a single background worker once the
+  current chunk is ~50% drained (using a fresh mid-execution observation) and
+  atomically swapped in when the chunk runs out. A policy whose inference
+  latency is at most the chunk's execution window then pays (almost) zero
+  visible stall at the seam.
+- Provider-agnostic: the runner only schedules the inference/execution overlap;
+  it never touches the policy's RTC machinery, so RTC-capable policies still
+  blend the seam internally via their own prev-chunk state.
+- Thread-safe by construction: the policy is invoked from at most one thread at
+  a time (a new prefetch is only submitted after the previous one is consumed),
+  the sim is only ever touched from the calling thread, and the runner blocks on
+  any in-flight inference before returning so no background thread touches the
+  policy or sim after `run_policy` exits.
+- Backward compatible: `async_rtc=False` (default) keeps the exact synchronous
+  loop. Most useful at real-time pacing (`fast_mode=False`) with multi-step
+  chunks, where there is an execution window to hide inference behind.
+
 ### Fixed: `reset()` during recording flushes the buffered rollout as an episode
 
 A `run_policy` + `reset` data-collection loop silently merged every rollout into

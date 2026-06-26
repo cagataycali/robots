@@ -90,7 +90,7 @@ Robot-URDF cameras are auto-discovered on `add_robot`.
 
 | Action | Key params |
 |--------|-----------|
-| `run_policy` | `robot_name` (required), `policy_provider="mock"`, `policy_config={}`, `policy_object=None`, `instruction=""`, `duration=10.0`, `control_frequency=50.0`, `action_horizon=8`, `n_steps=None`, `seed=None` |
+| `run_policy` | `robot_name` (required), `policy_provider="mock"`, `policy_config={}`, `policy_object=None`, `instruction=""`, `duration=10.0`, `control_frequency=50.0`, `action_horizon=8`, `n_steps=None`, `seed=None`, `async_rtc=False` |
 | `start_policy` | same args, async/non-blocking |
 | `stop_policy` | `robot_name` (optional, defaults to `""`) |
 | `list_policies_running` | - |
@@ -100,6 +100,8 @@ Robot-URDF cameras are auto-discovered on `add_robot`.
 The step horizon is given either as `duration` (seconds) or as `n_steps` (`duration = n_steps / control_frequency`; `n_steps` wins when both are set, and the legacy `max_steps` is an alias for `n_steps`). A non-positive `n_steps` or `control_frequency` is rejected up front with a structured `status="error"` dict naming the bad parameter - `start_policy` validates synchronously before the background rollout starts, so a malformed horizon never returns a false "started" success.
 
 Pass `seed=` to `run_policy` / `start_policy` for a reproducible single rollout: it reseeds Python / NumPy / torch / cuDNN and forwards `policy.reset(seed=...)`, so a stochastic policy (VLA action-chunk sampling, diffusion noise) produces the same trajectory on re-run of the same scene. Without a seed the rollout draws from the process-global RNG and can differ run to run. `eval_policy` already seeds per episode via the same mechanism.
+
+Pass `async_rtc=True` to `run_policy` to overlap policy inference with action execution: while the current action chunk drains, the next `get_actions` is computed on a background worker and atomically swapped in when the chunk runs out (latency masking). The default `False` keeps the synchronous chunk-then-drain loop. This is most useful for chunk-emitting VLA / flow-matching policies (pi0, SmolVLA, MolmoAct2) where it makes sim per-step timing track real-hardware behaviour; see [LeRobot Local -> RTC](../policies/lerobot-local.md#synchronous-vs-async-chunk-execution-in-sim).
 
 `run_policy` returns a `{"json": {...}}` content block alongside the human-readable `text`, mirroring `eval_policy`. The json block carries the rollout facts as typed fields - `robot_name`, `policy`, `instruction`, `n_steps`, `elapsed_s`, `stopped_early`, `action_errors`, `video_path` (`None` when no MP4 was written), `video_frames` and `sim_time_s` (when the backend reports it) - so an agent can read the outcome programmatically (did it move? how many steps? where is the video?) without regex-parsing the prose.
 | `replay_episode` | `repo_id`, `robot_name=None`, `episode=0` |

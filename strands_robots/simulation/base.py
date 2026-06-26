@@ -380,6 +380,7 @@ class SimEngine(ABC):
         seed: int | None = None,
         n_episodes: int = 1,
         reset_between: bool = True,
+        async_rtc: bool = False,
     ) -> dict[str, Any]:
         """Run a policy loop in the simulation (blocking).
 
@@ -446,6 +447,16 @@ class SimEngine(ABC):
                 initial state between episodes (default ``True``). The reset
                 never fires after the final episode. Set ``False`` to chain
                 episodes from the end state of the previous one.
+            async_rtc: When ``True``, overlap policy inference with action
+                execution so the next action chunk is computed in the
+                background while the current chunk is still draining (latency
+                masking). ``False`` (default) keeps the synchronous
+                chunk-then-drain loop. Forwarded verbatim to
+                :meth:`PolicyRunner.run`; see its docstring for the full
+                contract (provider-agnostic, RTC-policy seam blending, thread
+                safety). Most useful for chunk-emitting VLA/flow-matching
+                policies (pi0, pi0.5, SmolVLA, MolmoAct2) where it makes sim
+                per-step timing track real-hardware behaviour.
 
         Returns:
             Standard status dict with an agent-consumable ``{"json": {...}}``
@@ -509,6 +520,7 @@ class SimEngine(ABC):
                 control_substeps=control_substeps,
                 policy_kwargs=policy_kwargs,
                 seed=seed,
+                async_rtc=async_rtc,
             )
 
         # Multi-episode path: one rollout per episode, flushing a dataset
@@ -531,6 +543,7 @@ class SimEngine(ABC):
             seed=seed,
             n_episodes=n_episodes,
             reset_between=reset_between,
+            async_rtc=async_rtc,
         )
 
     def _run_episodes(
@@ -551,6 +564,7 @@ class SimEngine(ABC):
         seed: int | None,
         n_episodes: int,
         reset_between: bool,
+        async_rtc: bool = False,
     ) -> dict[str, Any]:
         """Run ``n_episodes`` sequential rollouts; shared multi-episode driver.
 
@@ -584,6 +598,7 @@ class SimEngine(ABC):
                 control_substeps=control_substeps,
                 policy_kwargs=policy_kwargs,
                 seed=ep_seed,
+                async_rtc=async_rtc,
             )
             ep_json = self._extract_json_payload(result)
             ep_record: dict[str, Any] = {"episode": ep, **ep_json}

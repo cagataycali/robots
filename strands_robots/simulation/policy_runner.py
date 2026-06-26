@@ -290,6 +290,7 @@ class PolicyRunner:
         control_substeps: int | None = None,
         policy_kwargs: dict[str, Any] | None = None,
         seed: int | None = None,
+        async_rtc: bool = False,
     ) -> dict[str, Any]:
         """Run ``policy`` on ``robot_name`` for ``duration`` seconds.
 
@@ -342,6 +343,26 @@ class PolicyRunner:
                 on the next. ``None`` (default) leaves RNG state untouched,
                 preserving historical behaviour. Multi-episode reproducibility
                 already flows through :meth:`evaluate`'s per-episode reseed.
+            async_rtc: When ``True``, overlap policy inference with action
+                execution via a single background worker (latency masking).
+                While the current action chunk drains, the next
+                ``get_actions()`` is fired once the chunk is ~50% consumed,
+                using a fresh mid-execution observation, and atomically swapped
+                in when the current chunk runs out. A policy whose inference
+                latency is at most the chunk's execution time then pays
+                (almost) zero visible stall at the chunk seam - the same way an
+                async real-time controller hides inference latency on real
+                hardware. RTC-capable policies (pi0, pi0.5, SmolVLA, MolmoAct2)
+                blend the seam internally through their own prev-chunk state
+                (``rtc_config.execution_horizon``); this flag only schedules the
+                overlap and never touches the policy's RTC machinery, so it is
+                provider-agnostic. ``False`` (default) keeps the historical
+                synchronous chunk-then-drain loop, which is correct for
+                single-step policies and any policy whose ``get_actions`` reads
+                live sim state. The policy object is only ever invoked from the
+                single background worker (never concurrently), and the runner
+                blocks on any in-flight inference before returning so no thread
+                touches the policy or sim after :meth:`run` exits.
 
         Returns:
             ``{"status": "success"|"error", "content": [{"text": ...},
@@ -473,78 +494,155 @@ class PolicyRunner:
                 max_onframe_failures if max_onframe_failures is not None else _MAX_CONSECUTIVE_ONFRAME_FAILURES
             )
             consecutive_onframe_failures = 0
-            while step_count < total_steps:
-                observation = self.sim.get_observation(robot_name=robot_name, skip_images=_skip_images)
 
+            # Per-action execution body shared by BOTH the synchronous loop and
+            # the async-RTC pipeline so they send, record, count and pace
+            # identically - only the chunk-ACQUISITION strategy differs between
+            # the two paths.
+            def _apply(observation: dict[str, Any], action_dict: dict[str, Any]) -> None:
+                nonlocal step_count, _action_errors, consecutive_onframe_failures
+                nonlocal frame_count, next_frame_step
+
+                _send_result = self.sim.send_action(action_dict, robot_name=robot_name, n_substeps=n_substeps)
+                if isinstance(_send_result, dict) and _send_result.get("status") == "error":
+                    _action_errors += 1
+
+                if on_frame is not None:
+                    try:
+                        on_frame(step_count, observation, action_dict)
+                        consecutive_onframe_failures = 0
+                    except CooperativeStop:
+                        # Backend (e.g. MuJoCo) signalled a graceful stop.
+                        raise
+                    except Exception as e:
+                        # on_frame is user-provided telemetry - never fatal
+                        # *per call*. But if it fails on every step, a 500-
+                        # step episode completes "successfully" with zero
+                        # frames recorded and the dataset is silently empty.
+                        # Count consecutive failures and fail the episode
+                        # after ``onframe_failure_limit`` in a row. See GH #117.
+                        consecutive_onframe_failures += 1
+                        logger.warning(
+                            "on_frame hook failed (%d/%d consecutive): %s",
+                            consecutive_onframe_failures,
+                            onframe_failure_limit,
+                            e,
+                        )
+                        if consecutive_onframe_failures >= onframe_failure_limit:
+                            raise RuntimeError(
+                                f"on_frame hook failed {onframe_failure_limit} times in a row; "
+                                f"aborting episode to avoid silent dataset corruption. "
+                                f"Last error: {e!r}"
+                            ) from e
+
+                step_count += 1
+
+                if writer is not None and step_count >= next_frame_step:
+                    assert video is not None  # for mypy: writer only set when video.enabled
+                    frame = self.sim.render(
+                        camera_name=video.camera or "default",
+                        width=video.width,
+                        height=video.height,
+                    )
+                    # sim.render() returns {status, content:[{text},{image:{source:{bytes}}}]}
+                    # Decode the PNG bytes from the content block and hand an ndarray
+                    # to imageio. Silently skips when the PNG decode fails rather than
+                    # aborting the whole rollout (renderer errors shouldn't kill training).
+                    img_arr = _extract_frame_ndarray(frame)
+                    if img_arr is not None:
+                        writer.append_data(img_arr)
+                        frame_count += 1
+                    next_frame_step += frame_interval
+
+                if not fast_mode:
+                    time.sleep(action_sleep)
+
+            def _query_chunk(observation: dict[str, Any]) -> list[dict[str, Any]]:
+                # Resolve ONE action chunk from the policy. Never truncate below
+                # the policy's own intended chunk size: a model trained for
+                # N-step open-loop replay (policy.actions_per_step == N) must
+                # have its full chunk consumed; clamping to a smaller
+                # action_horizon drops the tail of every chunk and forces an
+                # out-of-distribution re-query (see LerobotLocalPolicy
+                # auto-detect of config.n_action_steps).
                 coro_or_result = policy.get_actions(observation, instruction, **_policy_kwargs)
                 actions = _resolve_coroutine(coro_or_result)
-
-                # Never truncate below the policy's own intended chunk size.
-                # A model trained for N-step open-loop replay
-                # (policy.actions_per_step == N) must have its full chunk
-                # consumed; clamping to a smaller action_horizon drops the
-                # tail of every chunk and forces an out-of-distribution
-                # re-query (see LerobotLocalPolicy auto-detect of
-                # config.n_action_steps).
                 _chunk = max(action_horizon, getattr(policy, "actions_per_step", 1))
-                for action_dict in actions[:_chunk]:
-                    if step_count >= total_steps:
-                        break
+                return list(actions[:_chunk])
 
-                    _send_result = self.sim.send_action(action_dict, robot_name=robot_name, n_substeps=n_substeps)
-                    if isinstance(_send_result, dict) and _send_result.get("status") == "error":
-                        _action_errors += 1
+            if async_rtc:
+                # Async chunk pipeline: overlap inference for chunk N+1 with the
+                # EXECUTION of chunk N. While the current chunk drains we fire
+                # the next get_actions() on a single background worker using a
+                # mid-execution ("horizon-shifted") observation, then atomically
+                # swap it in when the current chunk runs out. A policy whose
+                # inference latency is <= the chunk's execution time pays
+                # (almost) zero visible stall at the seam - exactly how an async
+                # real-time controller hides latency on real hardware. RTC
+                # policies blend the seam internally via their own prev-chunk
+                # state, so the runner only schedules the overlap (it never
+                # touches the policy's RTC machinery). The policy is invoked from
+                # AT MOST one thread at a time (a new prefetch is only submitted
+                # after the previous one has been consumed), and the sim is only
+                # ever touched from THIS thread, so there is no MuJoCo data race.
+                from concurrent.futures import Future, ThreadPoolExecutor
 
-                    if on_frame is not None:
-                        try:
-                            on_frame(step_count, observation, action_dict)
-                            consecutive_onframe_failures = 0
-                        except CooperativeStop:
-                            # Backend (e.g. MuJoCo) signalled a graceful stop.
-                            # Break both loops and return a normal success result.
-                            raise
-                        except Exception as e:
-                            # on_frame is user-provided telemetry - never fatal
-                            # *per call*. But if it fails on every step, a 500-
-                            # step episode completes "successfully" with zero
-                            # frames recorded and the dataset is silently empty.
-                            # Count consecutive failures and fail the episode
-                            # after ``onframe_failure_limit`` in a row. See GH #117.
-                            consecutive_onframe_failures += 1
-                            logger.warning(
-                                "on_frame hook failed (%d/%d consecutive): %s",
-                                consecutive_onframe_failures,
-                                onframe_failure_limit,
-                                e,
-                            )
-                            if consecutive_onframe_failures >= onframe_failure_limit:
-                                raise RuntimeError(
-                                    f"on_frame hook failed {onframe_failure_limit} times in a row; "
-                                    f"aborting episode to avoid silent dataset corruption. "
-                                    f"Last error: {e!r}"
-                                ) from e
+                executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="rtc-prefetch")
+                try:
+                    cur_obs = self.sim.get_observation(robot_name=robot_name, skip_images=_skip_images)
+                    cur_chunk = _query_chunk(cur_obs)
+                    if not cur_chunk:
+                        raise RuntimeError("policy returned an empty action chunk; cannot run rollout")
+                    idx = 0
+                    prefetch_trigger = max(1, len(cur_chunk) // 2)
+                    prefetch: Future[list[dict[str, Any]]] | None = None
+                    prefetch_obs: dict[str, Any] | None = None
 
-                    step_count += 1
+                    while step_count < total_steps:
+                        if idx >= len(cur_chunk):
+                            # Current chunk drained -> swap in the next chunk.
+                            if prefetch is not None:
+                                # Atomic swap. Blocks ONLY if inference is still
+                                # in flight (it ran slower than chunk execution);
+                                # otherwise the result is already waiting and the
+                                # seam is invisible.
+                                cur_chunk = prefetch.result()
+                                if prefetch_obs is not None:
+                                    cur_obs = prefetch_obs
+                                prefetch = None
+                                prefetch_obs = None
+                            else:
+                                # Chunk was too short to trigger a prefetch;
+                                # fall back to a synchronous re-query.
+                                cur_obs = self.sim.get_observation(robot_name=robot_name, skip_images=_skip_images)
+                                cur_chunk = _query_chunk(cur_obs)
+                            if not cur_chunk:
+                                raise RuntimeError("policy returned an empty action chunk; cannot continue rollout")
+                            idx = 0
+                            prefetch_trigger = max(1, len(cur_chunk) // 2)
+                            continue
 
-                    if writer is not None and step_count >= next_frame_step:
-                        assert video is not None  # for mypy: writer only set when video.enabled
-                        frame = self.sim.render(
-                            camera_name=video.camera or "default",
-                            width=video.width,
-                            height=video.height,
-                        )
-                        # sim.render() returns {status, content:[{text},{image:{source:{bytes}}}]}
-                        # Decode the PNG bytes from the content block and hand an ndarray
-                        # to imageio. Silently skips when the PNG decode fails rather than
-                        # aborting the whole rollout (renderer errors shouldn't kill training).
-                        img_arr = _extract_frame_ndarray(frame)
-                        if img_arr is not None:
-                            writer.append_data(img_arr)
-                            frame_count += 1
-                        next_frame_step += frame_interval
+                        # Fire the next inference once we are ~50% through the
+                        # current chunk, on a fresh mid-chunk observation.
+                        if prefetch is None and idx >= prefetch_trigger:
+                            prefetch_obs = self.sim.get_observation(robot_name=robot_name, skip_images=_skip_images)
+                            prefetch = executor.submit(_query_chunk, prefetch_obs)
 
-                    if not fast_mode:
-                        time.sleep(action_sleep)
+                        _apply(cur_obs, cur_chunk[idx])
+                        idx += 1
+                finally:
+                    # Wait for any in-flight inference so no background thread
+                    # touches the policy/sim after run() returns (the caller may
+                    # immediately reset() or destroy() the world).
+                    executor.shutdown(wait=True)
+            else:
+                while step_count < total_steps:
+                    observation = self.sim.get_observation(robot_name=robot_name, skip_images=_skip_images)
+                    chunk = _query_chunk(observation)
+                    for action_dict in chunk:
+                        if step_count >= total_steps:
+                            break
+                        _apply(observation, action_dict)
 
         except CooperativeStop:
             stopped_early = True

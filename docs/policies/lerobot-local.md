@@ -229,6 +229,46 @@ policy = create_policy("lerobot_local", pretrained_name_or_path="lerobot/pi0_so1
                         rtc_enabled=True, rtc_execution_horizon=16, rtc_max_guidance_weight=1.0)
 ```
 
+Real-Time Chunking does two things. First, **seam blending**: each new action
+chunk is denoised conditioned on the still-unexecuted tail of the previous
+chunk (`rtc_execution_horizon`), so the trajectory has no discontinuity where
+one chunk hands off to the next. Second, on real hardware, it lets **inference
+overlap execution**: the controller fires the next inference while the current
+chunk is still being executed, so the model's latency is hidden behind motion
+rather than appearing as a stall at the seam.
+
+### Synchronous vs async chunk execution in sim
+
+`run_policy` / `PolicyRunner.run` accept an `async_rtc` flag controlling which
+of those two RTC benefits the sim reproduces:
+
+| `async_rtc` | Behaviour | Use when |
+| --- | --- | --- |
+| `False` (default) | Query the policy, fully drain the returned chunk, then re-query. Seam blending still works, but inference and execution do **not** overlap. | Single-step policies, deterministic regression runs, or any policy whose `get_actions` reads live sim state. |
+| `True` | While the current chunk drains, fire the next `get_actions` on a single background worker once the chunk is ~50% consumed (using a fresh mid-execution observation), then atomically swap it in. A policy whose inference latency is at most the chunk's execution window pays (almost) zero visible stall at the seam. | Chunk-emitting VLA / flow-matching policies (pi0, pi0.5, pi0-FAST, SmolVLA, MolmoAct2) where you want sim per-step timing to track real-hardware behaviour, or to benchmark a streaming controller. |
+
+```python
+# Default sync loop - inference shows up as a per-seam stall in sim.
+sim.run_policy(robot_name="so101", policy_provider="lerobot_local",
+               policy_config={"pretrained_name_or_path": "lerobot/pi0_so100", "rtc_enabled": True},
+               action_horizon=8)
+
+# Async pipeline - the next chunk is computed in the background while the
+# current one executes, so inference latency is masked (same as real hardware).
+sim.run_policy(robot_name="so101", policy_provider="lerobot_local",
+               policy_config={"pretrained_name_or_path": "lerobot/pi0_so100", "rtc_enabled": True},
+               action_horizon=8, async_rtc=True)
+```
+
+`async_rtc` is provider-agnostic: it only schedules the inference/execution
+overlap and never touches the policy's RTC machinery, so RTC-capable policies
+still blend the seam internally. The runner invokes the policy from at most one
+thread at a time and blocks on any in-flight inference before returning, so it
+introduces no data race. Masking only helps when there is execution to hide
+behind, so the benefit is largest at real-time pacing (`fast_mode=False`) with
+multi-step chunks; with `fast_mode=True` and near-instant physics there is
+little execution window to overlap.
+
 ## See also
 
 - [Policy providers](../policies/overview.md)
