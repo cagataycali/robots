@@ -3436,6 +3436,113 @@ class TestInstallActionController:
         assert adapter._action_controller_error is not None
         assert "action_controller" not in sim._world._backend_state
 
+    def test_nonclash_import_error_degrades_even_in_strict_mode(self, caplog, monkeypatch):
+        """#522: A NON-clash ``ImportError``/``AttributeError`` that escapes
+        ``from_sim``'s own classification (e.g. a missing native library such
+        as ``libcuda.so.1`` surfacing as an ``ImportError``) is treated as an
+        absent optional dependency, NOT the fixable numba/coverage clash. It
+        degrades gracefully even when ``strict_action_controller=True`` (the
+        default): records ``_action_controller_error``, logs a WARNING, and
+        returns without raising. Requiring robosuite/EGL as a hard dependency
+        would break installs without the optional extras."""
+        import logging
+
+        from strands_robots.benchmarks.libero.adapter import _LiberoOSCController
+
+        pytest.importorskip("mujoco")
+        adapter = LiberoAdapter.from_text(
+            PICK_CUBE_BDDL,
+            scene_path="/some/scene.xml",
+            install_cameras=False,
+            auto_generate_scene=False,
+            # Strict mode (default): a degrade condition must STILL not raise.
+        )
+        sim = FakeSim(data_config="panda")
+
+        def _boom(*_args, **_kwargs):
+            raise ImportError("libcuda.so.1: cannot open shared object file")
+
+        monkeypatch.setattr(_LiberoOSCController, "from_sim", staticmethod(_boom))
+
+        with caplog.at_level(logging.WARNING, logger="strands_robots.benchmarks.libero.adapter"):
+            adapter._install_action_controller(sim)  # must NOT raise
+
+        assert adapter._action_controller_error is not None
+        assert "dependencies unavailable" in adapter._action_controller_error
+        warned = any("_install_action_controller" in r.message and "no-op" in r.message for r in caplog.records)
+        assert warned, f"expected degrade WARNING; got {[r.message for r in caplog.records]}"
+        assert "action_controller" not in sim._world._backend_state
+
+    def test_unexpected_install_error_raises_in_strict_mode(self, monkeypatch):
+        """#522: An UNEXPECTED exception class (neither Import/Attribute nor a
+        ``_ControllerDependencyMissing``/``_ControllerInstallError``) escaping
+        ``from_sim`` is treated like a fixable install failure:
+        ``strict_action_controller`` (the default) re-raises it as a
+        ``_ControllerInstallError`` so the eval surfaces a structured error
+        instead of silently scoring ``success_rate=0`` with every action
+        dropped."""
+        from strands_robots.benchmarks.libero.adapter import (
+            _ControllerInstallError,
+            _LiberoOSCController,
+        )
+
+        pytest.importorskip("mujoco")
+        adapter = LiberoAdapter.from_text(
+            PICK_CUBE_BDDL,
+            scene_path="/some/scene.xml",
+            install_cameras=False,
+            auto_generate_scene=False,
+        )
+        sim = FakeSim(data_config="panda")
+
+        def _boom(*_args, **_kwargs):
+            raise RuntimeError("OSC controller_factory exploded unexpectedly")
+
+        monkeypatch.setattr(_LiberoOSCController, "from_sim", staticmethod(_boom))
+
+        with pytest.raises(_ControllerInstallError) as excinfo:
+            adapter._install_action_controller(sim)
+
+        # The original exception type is preserved in the surfaced message.
+        assert "unexpected OSC controller install failure" in str(excinfo.value)
+        assert "RuntimeError" in str(excinfo.value)
+        assert adapter._action_controller_error is not None
+        assert "action_controller" not in sim._world._backend_state
+
+    def test_unexpected_install_error_degrades_in_non_strict_mode(self, caplog, monkeypatch):
+        """#522: The same unexpected exception class with
+        ``strict_action_controller=False`` records the failure on
+        ``_action_controller_error``, logs a WARNING, and returns without
+        raising - the opt-out best-effort path for callers that accept
+        no-op'd actions over an aborted eval."""
+        import logging
+
+        from strands_robots.benchmarks.libero.adapter import _LiberoOSCController
+
+        pytest.importorskip("mujoco")
+        adapter = LiberoAdapter.from_text(
+            PICK_CUBE_BDDL,
+            scene_path="/some/scene.xml",
+            install_cameras=False,
+            auto_generate_scene=False,
+            strict_action_controller=False,
+        )
+        sim = FakeSim(data_config="panda")
+
+        def _boom(*_args, **_kwargs):
+            raise RuntimeError("OSC controller_factory exploded unexpectedly")
+
+        monkeypatch.setattr(_LiberoOSCController, "from_sim", staticmethod(_boom))
+
+        with caplog.at_level(logging.WARNING, logger="strands_robots.benchmarks.libero.adapter"):
+            adapter._install_action_controller(sim)  # must NOT raise
+
+        assert adapter._action_controller_error is not None
+        assert "unexpected OSC controller install failure" in adapter._action_controller_error
+        warned = any("_install_action_controller" in r.message and "no-op" in r.message for r in caplog.records)
+        assert warned, f"expected WARNING; got {[r.message for r in caplog.records]}"
+        assert "action_controller" not in sim._world._backend_state
+
     def test_is_numba_coverage_clash_detection(self):
         """#522: ``_is_numba_coverage_clash`` recognises the coverage>=7
         signature both directly and through the exception chain (the
