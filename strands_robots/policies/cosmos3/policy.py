@@ -112,6 +112,16 @@ class Cosmos3Policy(Policy):
         observation_mapping: ``{robot_obs_key: "observation/<server_key>"}``.
             Maps robot camera + state keys onto the server's OpenPI keys.
             When ``None``, a default mapping is used (see :meth:`_default_obs_mapping`).
+            The mapping MUST cover the embodiment's **full** camera set
+            (:attr:`Cosmos3Embodiment.camera_keys`): the RoboLab server composes
+            its conditioning from all declared views and rejects a partial
+            observation. For the DROID embodiment (``joint_pos``/RoboArena) that
+            is all three keys - ``observation/wrist_image_left``,
+            ``observation/exterior_image_1_left``, and
+            ``observation/exterior_image_2_left``. A mapping that omits any
+            required key (or whose source camera is absent at runtime) raises a
+            client-side ``ValueError`` naming the missing keys, before any
+            request reaches the server.
         action_mapping: ``{action_column_name: robot_actuator_name}``. Renames
             the embodiment's action-layout columns to robot actuator names.
             Keys are validated against the active layout at construction.
@@ -146,7 +156,10 @@ class Cosmos3Policy(Policy):
 
     Notes:
         * This policy needs camera frames **and** robot state in the
-          observation - ``requires_images`` is ``True``.
+          observation - ``requires_images`` is ``True``. Every camera key in
+          the embodiment's :attr:`~Cosmos3Embodiment.camera_keys` must be
+          mapped and present (the DROID embodiment requires all three RoboArena
+          views); a partial set fails fast client-side.
         * Latency is chunked (a diffusion policy), not 500 Hz servo. One
           inference returns a chunk of ~``action_chunk_size`` steps.
         * The predicted world video/sound (diffusers backend) are surfaced on
@@ -403,11 +416,31 @@ class Cosmos3Policy(Policy):
         if self.action_space == "joint_pos":
             self._attach_joint_state(robot_obs, obs)
 
-        # requires_images guard: Cosmos 3 conditions on at least one camera
-        # frame. If the obs_mapping named cameras but none were present in the
-        # runtime observation, fail fast with an actionable message instead of
-        # sending an image-less request the server will reject opaquely.
-        if not any(k.startswith("observation/") and _is_image_key(k) for k in obs):
+        # Camera-set guard: the served embodiment conditions on a fixed set of
+        # camera frames, and the RoboLab server hard-requires the *full* set -
+        # e.g. the DROID joint_pos / RoboArena path composes its views from all
+        # three keys (wrist_image_left + exterior_image_1_left +
+        # exterior_image_2_left) and rejects a partial observation server-side
+        # with an opaque error. Validate every required key is present *before*
+        # sending so a partial observation_mapping (or a camera missing at
+        # runtime) fails fast client-side, naming exactly which keys are missing
+        # instead of an opaque server-side rejection (AGENTS.md key convention
+        # #6: no opaque server-side failures; fail fast with a clear message).
+        required = list(self.embodiment.camera_keys)
+        if required:
+            missing = [k for k in required if k not in obs]
+            if missing:
+                covered = sorted({v for v in self._obs_mapping.values() if _is_image_key(v)})
+                raise ValueError(
+                    f"Cosmos3Policy(embodiment={self.embodiment.name!r}, "
+                    f"action_space={self.action_space!r}) requires camera frames "
+                    f"for: {required}. Missing: {missing}. observation_mapping "
+                    f"covered: {covered}. Available observation keys: "
+                    f"{sorted(robot_obs)}. Map a sim camera to each required key."
+                )
+        elif not any(k.startswith("observation/") and _is_image_key(k) for k in obs):
+            # Degenerate embodiment with no declared camera_keys: still enforce
+            # requires_images (always True) - at least one camera frame.
             raise ValueError(
                 "Cosmos3Policy requires at least one camera frame, but none of the "
                 f"mapped camera keys {sorted(self._obs_mapping)} were found in the "

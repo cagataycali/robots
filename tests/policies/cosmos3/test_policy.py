@@ -215,8 +215,78 @@ def test_requires_images_guard_raises_without_camera():
     p.set_robot_state_keys([f"joint_{i}" for i in range(7)] + ["gripper"])
     obs = {f"joint_{i}": 0.1 * i for i in range(7)}
     obs["gripper"] = 0.5  # state only, no camera
-    with pytest.raises(ValueError, match="requires at least one camera"):
+    with pytest.raises(ValueError, match="requires camera frames for"):
         asyncio.run(p.get_actions(obs, "go"))
+
+
+def test_partial_camera_mapping_raises_client_side():
+    """A partial observation_mapping (2 of DROID's 3 views) must fail fast
+    client-side naming the missing key - not send a partial obs that the
+    RoboLab server rejects with an opaque RuntimeError."""
+    client = FakeClient(_droid_chunk())
+    p = Cosmos3Policy(
+        embodiment="droid",
+        client=client,
+        observation_mapping={
+            "front": "observation/wrist_image_left",
+            "exterior": "observation/exterior_image_1_left",
+            # observation/exterior_image_2_left intentionally unmapped
+        },
+    )
+    p.set_robot_state_keys([f"joint_{i}" for i in range(7)] + ["gripper"])
+    img = np.zeros((360, 640, 3), dtype=np.uint8)
+    obs = {"front": img, "exterior": img}
+    for i in range(7):
+        obs[f"joint_{i}"] = 0.1 * i
+    obs["gripper"] = 0.5
+    with pytest.raises(ValueError) as exc:
+        asyncio.run(p.get_actions(obs, "pick up the red cube"))
+    msg = str(exc.value)
+    # Names the missing key explicitly and reports the action space.
+    assert "observation/exterior_image_2_left" in msg
+    assert "Missing:" in msg
+    assert "joint_pos" in msg
+    # The partial obs was NOT forwarded to the server.
+    assert client.last_obs is None
+
+
+def test_camera_present_in_mapping_but_absent_at_runtime_raises():
+    """All three views are mapped, but one source camera is missing from the
+    runtime observation - still fails fast naming the missing server key."""
+    client = FakeClient(_droid_chunk())
+    p = Cosmos3Policy(
+        embodiment="droid",
+        client=client,
+        observation_mapping={
+            "wrist": "observation/wrist_image_left",
+            "ext1": "observation/exterior_image_1_left",
+            "ext2": "observation/exterior_image_2_left",
+        },
+    )
+    p.set_robot_state_keys([f"joint_{i}" for i in range(7)] + ["gripper"])
+    img = np.zeros((360, 640, 3), dtype=np.uint8)
+    obs = {"wrist": img, "ext1": img}  # ext2 camera absent at runtime
+    for i in range(7):
+        obs[f"joint_{i}"] = 0.1 * i
+    obs["gripper"] = 0.5
+    with pytest.raises(ValueError, match="observation/exterior_image_2_left"):
+        asyncio.run(p.get_actions(obs, "go"))
+    assert client.last_obs is None
+
+
+def test_full_camera_set_passes():
+    """The full DROID camera triple satisfies the guard and reaches the server."""
+    client = FakeClient(_droid_chunk())
+    p = Cosmos3Policy(embodiment="droid", client=client)
+    p.set_robot_state_keys([f"joint_{i}" for i in range(7)] + ["gripper"])
+    asyncio.run(p.get_actions(_obs_with_state_and_images(), "go"))
+    assert client.last_obs is not None
+    for key in (
+        "observation/wrist_image_left",
+        "observation/exterior_image_1_left",
+        "observation/exterior_image_2_left",
+    ):
+        assert key in client.last_obs
 
 
 def test_robot_panda_sugar_applies_builtin_mapping():

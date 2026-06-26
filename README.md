@@ -534,6 +534,25 @@ chunk = policy.get_actions_sync(observation, "pick up the cube")
 # chunk == [{"joint_0": .., ..., "gripper": ..}, ...]  (one dict per timestep)
 ```
 
+The `droid` embodiment (`joint_pos`/RoboArena) conditions on **all three**
+camera views and the server rejects a partial observation. Your
+`observation_mapping` must map a sim/robot camera onto each of
+`observation/wrist_image_left`, `observation/exterior_image_1_left`, and
+`observation/exterior_image_2_left`; an incomplete mapping raises an actionable
+client-side `ValueError` naming the missing keys before any request is sent
+(other embodiments such as `umi`/`av`/`bridge` need only `observation/image`):
+
+```python
+policy = create_policy(
+    "cosmos3", embodiment="droid", port=8000,
+    observation_mapping={
+        "wrist":     "observation/wrist_image_left",
+        "exterior":  "observation/exterior_image_1_left",
+        "exterior2": "observation/exterior_image_2_left",
+    },
+)
+```
+
 **4. Roll out in MuJoCo** - the `droid` embodiment drives a Franka/DROID-class
 arm, so use the `franka` (or `panda`) sim asset:
 
