@@ -675,9 +675,29 @@ class PolicyRunner:
         frames_applied = 0
         start_time = time.time()
 
+        # Replay only consumes the recorded action vector, which lives in the
+        # dataset's parquet column store. A real LeRobotDataset's __getitem__
+        # decodes every camera's video for the frame - wasted work here (the
+        # decoded frames are discarded), and it raises a raw exception when the
+        # video decoder (torchcodec / pyav) is unavailable or an MP4 is
+        # unreadable, breaking replay()'s documented "returns a status dict"
+        # contract for a dataset whose actions are perfectly readable. Read
+        # from ``ds.hf_dataset`` (columns only, no video decode) when present;
+        # fall back to ``ds[idx]`` for dataset objects without a column store.
+        frame_source: Any = ds
+        hf_dataset = getattr(ds, "hf_dataset", None)
+        if hf_dataset is not None:
+            frame_source = hf_dataset
+
         for frame_idx in range(episode_length):
             step_start = time.time()
-            frame = ds[episode_start + frame_idx]
+            try:
+                frame = frame_source[episode_start + frame_idx]
+            except Exception as e:  # noqa: BLE001 - decoder/library errors are opaque
+                return {
+                    "status": "error",
+                    "content": [{"text": (f"Failed to read frame {episode_start + frame_idx} from '{repo_id}': {e}")}],
+                }
 
             action_vals = frame.get("action") if isinstance(frame, dict) else None
             if action_vals is None:

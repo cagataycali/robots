@@ -131,6 +131,77 @@ def test_replay_with_action_vector_larger_than_joint_count(monkeypatch):
     assert r["status"] == "success"
 
 
+def test_replay_reads_actions_without_video_decode(monkeypatch):
+    """replay() must read actions from the parquet column store, not the full
+    ``__getitem__`` that decodes per-frame video.
+
+    A real ``LeRobotDataset.__getitem__`` decodes every camera's video for the
+    frame; replay only needs the recorded action vector. When the video decoder
+    (torchcodec / pyav) is unavailable, ``ds[idx]`` raises a raw exception even
+    though the action column is perfectly readable -- breaking replay()'s
+    documented "returns a status dict" contract. replay() must prefer
+    ``ds.hf_dataset`` (columns only, no video decode) and succeed.
+    """
+
+    class _VideoDecodeBroken:
+        """ds[idx] raises (video decode), but the action column is readable."""
+
+        fps = 30
+
+        class _Columns:
+            def __getitem__(self, idx):
+                return {"action": [0.1 * idx, 0.2, 0.3]}
+
+        def __init__(self):
+            self.hf_dataset = self._Columns()
+
+        def __len__(self):
+            return 3
+
+        def __getitem__(self, idx):
+            raise RuntimeError("Could not load libtorchcodec (video decode failed)")
+
+    def loader(repo_id, episode, root):
+        return _VideoDecodeBroken(), 0, 3
+
+    sim = _MinimalSim(robots=["r0"])
+
+    import strands_robots.dataset_recorder as dr
+
+    monkeypatch.setattr(dr, "load_lerobot_episode", loader, raising=False)
+
+    r = PolicyRunner(sim).replay(repo_id="fake/brokenvideo", speed=100.0)
+    assert r["status"] == "success"
+    assert r["content"][1]["json"]["frames_applied"] == 3
+
+
+def test_replay_frame_read_failure_returns_error_dict(monkeypatch):
+    """A dataset with no column store whose frame read fails must still return a
+    clean status dict (not raise) per replay()'s documented contract."""
+
+    class _NoColumnStoreBroken:
+        fps = 30
+
+        def __len__(self):
+            return 2
+
+        def __getitem__(self, idx):
+            raise RuntimeError("corrupt frame")
+
+    def loader(repo_id, episode, root):
+        return _NoColumnStoreBroken(), 0, 2
+
+    sim = _MinimalSim(robots=["r0"])
+
+    import strands_robots.dataset_recorder as dr
+
+    monkeypatch.setattr(dr, "load_lerobot_episode", loader, raising=False)
+
+    r = PolicyRunner(sim).replay(repo_id="fake/corrupt", speed=100.0)
+    assert r["status"] == "error"
+    assert "corrupt frame" in r["content"][0]["text"]
+
+
 def test_replay_action_none_advances_physics(monkeypatch):
     """Dataset frames with no 'action' key → physics step, still advance."""
 
