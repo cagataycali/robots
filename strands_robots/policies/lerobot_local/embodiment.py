@@ -77,6 +77,58 @@ def reconcile_dim(values: list[float], expected_dim: int, dim_policy: str, *, la
     raise ValueError(f"Unknown dim_policy {dim_policy!r}; expected 'strict'|'pad'|'truncate'.")
 
 
+def _convert_joint_vector(
+    values: list[float],
+    *,
+    to_model: bool,
+    gripper_index: int = -1,
+    gripper_joint_range: list[float] | None = None,
+) -> list[float]:
+    """Convert an ordered joint vector between sim units (radians + gripper joint
+    range) and the LeRobot SO-arm training units (arm degrees, gripper 0..100).
+
+    Shared by :class:`EmbodimentMap` (action side) and ``PackStateProcessorStep``
+    (state side) so both directions use one implementation.
+
+    * ``to_model=True``  sim -> model: arm radians -> degrees; gripper joint
+      radians -> 0..100.
+    * ``to_model=False`` model -> sim: arm degrees -> radians; gripper 0..100 ->
+      joint radians.
+
+    The gripper column (``gripper_index``) maps against ``gripper_joint_range``
+    because the SO-arm gripper uses ``MotorNormMode.RANGE_0_100`` (0..100), not
+    degrees - see ``lerobot/robots/so_follower/so_follower.py``.
+
+    Args:
+        values: Ordered joint values.
+        to_model: Conversion direction (see above).
+        gripper_index: Index of the gripper column, or -1 for none.
+        gripper_joint_range: ``[min, max]`` radians of the sim gripper joint;
+            empty/None treats the gripper like an arm joint (deg<->rad).
+
+    Returns:
+        A new list of converted values (input is not mutated).
+    """
+    out = list(values)
+    rad_per_deg = float(np.pi) / 180.0
+    grange = gripper_joint_range or []
+    for i, v in enumerate(out):
+        if i == gripper_index and len(grange) == 2:
+            lo, hi = float(grange[0]), float(grange[1])
+            span = hi - lo
+            if span == 0.0:
+                continue
+            if to_model:
+                out[i] = (float(v) - lo) / span * 100.0  # joint rad -> 0..100
+            else:
+                out[i] = lo + (float(v) / 100.0) * span  # 0..100 -> joint rad
+        elif to_model:
+            out[i] = float(v) / rad_per_deg  # radians -> degrees
+        else:
+            out[i] = float(v) * rad_per_deg  # degrees -> radians
+    return out
+
+
 # Registered pipeline step: pack scalar joint obs -> observation.state
 
 
@@ -126,6 +178,12 @@ def register_pack_state_step() -> type | None:
         state_keys: list[str] = field(default_factory=list)
         expected_dim: int = 0
         dim_policy: str = "strict"
+        # Sim->model unit conversion (see EmbodimentMap). "degrees" => the sim's
+        # radian joints are converted to the model's training units (arm
+        # degrees, gripper 0..100) before packing observation.state.
+        state_units: str = "native"
+        gripper_index: int = -1
+        gripper_joint_range: list[float] = field(default_factory=list)
 
         def observation(self, observation: dict[str, Any]) -> dict[str, Any]:
             if "observation.state" in observation:
@@ -149,6 +207,18 @@ def register_pack_state_step() -> type | None:
                 # No declared state keys present; leave obs alone so a clearer
                 # downstream error (or a state-less policy) can handle it.
                 return observation
+
+            # Convert sim units (radians + gripper joint range) to the model's
+            # training units (arm degrees, gripper 0..100) BEFORE packing, so the
+            # model conditions on state in the space it was trained on. No-op
+            # unless state_units == "degrees". See so_follower.py MotorNormMode.
+            if self.state_units == "degrees":
+                vals = _convert_joint_vector(
+                    vals,
+                    to_model=True,
+                    gripper_index=self.gripper_index,
+                    gripper_joint_range=self.gripper_joint_range,
+                )
 
             target = self.expected_dim or len(vals)
             vals = reconcile_dim(vals, target, self.dim_policy, label="observation.state")
@@ -197,6 +267,24 @@ class EmbodimentMap:
     state_keys: list[str] = field(default_factory=list)
     action_keys: list[str] = field(default_factory=list)
     dim_policy: str = "strict"
+    # Unit conventions for state/action vectors. The MuJoCo sim expresses
+    # revolute joints in RADIANS, but LeRobot SO-arm checkpoints (so100/so101,
+    # MolmoAct2 etc.) are trained on the driver's MotorNormMode: arm joints in
+    # DEGREES and the gripper in RANGE_0_100. "native" = no conversion (the
+    # default; real-hardware *_real maps already speak the driver units).
+    # "degrees" = arm columns are degrees + the gripper column is 0..100; the
+    # policy converts deg<->rad and 0..100<->the gripper joint range when packing
+    # state (model<-sim) and emitting actions (model->sim). See so_follower.py
+    # (MotorNormMode.DEGREES for the arm, RANGE_0_100 for the gripper).
+    state_units: str = "native"
+    action_units: str = "native"
+    # Index of the gripper column in state_keys/action_keys (RANGE_0_100, not a
+    # degree joint). -1 = no special gripper column. SO arms = 5 (the 6th key).
+    gripper_index: int = -1
+    # The sim gripper joint's [min, max] radians, used to map the model's
+    # 0..100 gripper command onto the joint range (and back). Empty = treat the
+    # gripper like an arm joint (deg<->rad). SO arms: [-0.175, 1.745].
+    gripper_joint_range: list[float] = field(default_factory=list)
 
     def validate(self, input_features: dict[str, Any], output_features: dict[str, Any]) -> None:
         """Fail-fast validation against the model's declared features.
@@ -236,6 +324,55 @@ class EmbodimentMap:
                     f"Embodiment '{self.name}': {len(self.action_keys)} action_keys but model "
                     f"action dim is {adim}. Action mapping would mis-index."
                 )
+
+    def _convert_vector(self, values: list[float], *, to_model: bool) -> list[float]:
+        """Convert an ordered joint vector between sim (radians / sim units) and
+        the model's training units (degrees + gripper RANGE_0_100).
+
+        Applies only when ``units == "degrees"``; otherwise returns ``values``
+        unchanged. Direction:
+
+        * ``to_model=True``  sim -> model: arm radians -> degrees; gripper joint
+          radians -> 0..100.
+        * ``to_model=False`` model -> sim: arm degrees -> radians; gripper 0..100
+          -> joint radians.
+
+        The gripper column (``gripper_index``) is mapped against
+        ``gripper_joint_range`` because the SO-arm gripper uses
+        ``MotorNormMode.RANGE_0_100`` (0..100), not degrees - see
+        ``lerobot/robots/so_follower/so_follower.py``.
+
+        Args:
+            values: Ordered joint values (length matches state_keys/action_keys).
+            to_model: Conversion direction (see above).
+
+        Returns:
+            A new list of converted values (input is not mutated).
+        """
+        return _convert_joint_vector(
+            values,
+            to_model=to_model,
+            gripper_index=self.gripper_index,
+            gripper_joint_range=self.gripper_joint_range,
+        )
+
+    def sim_state_to_model(self, values: list[float]) -> list[float]:
+        """Convert a sim state vector into the model's training units.
+
+        No-op unless ``state_units == "degrees"``.
+        """
+        if self.state_units != "degrees":
+            return list(values)
+        return self._convert_vector(values, to_model=True)
+
+    def model_action_to_sim(self, values: list[float]) -> list[float]:
+        """Convert a model action vector into sim (radian) units.
+
+        No-op unless ``action_units == "degrees"``.
+        """
+        if self.action_units != "degrees":
+            return list(values)
+        return self._convert_vector(values, to_model=False)
 
     def expected_state_dim(self, input_features: dict[str, Any]) -> int:
         """Return the model's declared state dim, or len(state_keys) if absent."""

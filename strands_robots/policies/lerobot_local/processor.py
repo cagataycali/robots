@@ -345,6 +345,9 @@ class ProcessorBridge:
                     state_keys=list(embodiment.state_keys),
                     expected_dim=expected_dim,
                     dim_policy=embodiment.dim_policy,
+                    state_units=embodiment.state_units,
+                    gripper_index=embodiment.gripper_index,
+                    gripper_joint_range=list(embodiment.gripper_joint_range),
                 ),
             )
 

@@ -1619,11 +1619,24 @@ class LerobotLocalPolicy(Policy):
                 "Call set_robot_state_keys() before inference."
             )
 
+        # Convert the model's action units to sim units when the embodiment
+        # declares them. SO-arm checkpoints (so100/so101, MolmoAct2) emit joint
+        # targets in the LeRobot driver convention (arm DEGREES + gripper
+        # RANGE_0_100), but the MuJoCo sim joints are RADIANS -- feeding the raw
+        # degree values straight in saturates the radian joint limits and the
+        # arm freezes. EmbodimentMap.model_action_to_sim is a no-op when
+        # action_units == "native" (the default / real-hardware path).
+        emb = self._embodiment
+        convert = emb is not None and getattr(emb, "action_units", "native") != "native"
+
         result = []
         for action_values in actions_list:
-            action_dict = {}
-            for index, key in enumerate(self.robot_state_keys):
-                action_dict[key] = float(action_values[index]) if index < len(action_values) else 0.0
+            vals = [
+                float(action_values[i]) if i < len(action_values) else 0.0 for i in range(len(self.robot_state_keys))
+            ]
+            if convert:
+                vals = emb.model_action_to_sim(vals)
+            action_dict = {key: vals[index] for index, key in enumerate(self.robot_state_keys)}
             result.append(action_dict)
 
         return result

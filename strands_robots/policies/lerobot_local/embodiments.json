@@ -49,7 +49,15 @@
         "5",
         "6"
       ],
-      "dim_policy": "pad"
+      "dim_policy": "pad",
+      "state_units": "degrees",
+      "action_units": "degrees",
+      "gripper_index": 5,
+      "gripper_joint_range": [
+        -0.175,
+        1.745
+      ],
+      "__units_note__": "SO-arm checkpoints (MolmoAct2 etc.) emit arm joints in DEGREES + gripper RANGE_0_100 (lerobot so_follower MotorNormMode); the MuJoCo sim joints are RADIANS, so the policy converts deg<->rad and 0..100<->gripper joint range. gripper_joint_range is the sim joint6 [min,max] rad."
     },
     "so100": {
       "__note__": "SIM: trs_so_arm100/so_arm100.xml uses capitalized named joints (NOT 1..6 like so101).",
@@ -73,7 +81,15 @@
         "Wrist_Roll",
         "Jaw"
       ],
-      "dim_policy": "pad"
+      "dim_policy": "pad",
+      "state_units": "degrees",
+      "action_units": "degrees",
+      "gripper_index": 5,
+      "gripper_joint_range": [
+        -0.175,
+        1.745
+      ],
+      "__units_note__": "SO-arm checkpoints (MolmoAct2 etc.) emit arm joints in DEGREES + gripper RANGE_0_100 (lerobot so_follower MotorNormMode); the MuJoCo sim joints are RADIANS, so the policy converts deg<->rad and 0..100<->gripper joint range. gripper_joint_range is the sim joint6 [min,max] rad."
     },
     "so_real": {
       "__note__": "REAL hardware: lerobot SOFollower (so100_follower/so101_follower). _motors_ft -> '<motor>.pos'. Applies to both so100 & so101 physical arms (identical motor set).",
