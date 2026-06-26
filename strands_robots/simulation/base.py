@@ -19,6 +19,7 @@ Usage::
 from __future__ import annotations
 
 import logging
+import os
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
@@ -377,6 +378,8 @@ class SimEngine(ABC):
         control_substeps: int | None = None,
         policy_kwargs: dict[str, Any] | None = None,
         seed: int | None = None,
+        n_episodes: int = 1,
+        reset_between: bool = True,
     ) -> dict[str, Any]:
         """Run a policy loop in the simulation (blocking).
 
@@ -425,6 +428,24 @@ class SimEngine(ABC):
                 This is the local-sim analogue of the mesh ``tell()`` path,
                 which already forwards these keys. VLA providers ignore unknown
                 kwargs per the #300 contract, so forwarding is always safe.
+            n_episodes: Number of sequential episode rollouts to run in this
+                single call (default ``1`` - the historical single-rollout
+                behaviour, unchanged). When ``> 1``, each episode runs one
+                rollout for the configured horizon, then a dataset episode
+                boundary is flushed via :meth:`save_episode` (only when a
+                recording is active) so the dataset ends up with N correctly
+                delimited episodes instead of one merged episode. This is the
+                first-class multi-episode collection API; it removes the need
+                for a manual ``for _ in range(n): run_policy(); save_episode();
+                reset()`` loop. ``seed`` (when set) is offset per episode
+                (``seed + i``) for reproducible-yet-distinct rollouts, and
+                ``video`` (when set) is written per episode to a path with
+                ``_ep{i}`` inserted before the extension so episodes do not
+                overwrite one another.
+            reset_between: When running multiple episodes, reset the sim to its
+                initial state between episodes (default ``True``). The reset
+                never fires after the final episode. Set ``False`` to chain
+                episodes from the end state of the previous one.
 
         Returns:
             Standard status dict with an agent-consumable ``{"json": {...}}``
@@ -445,6 +466,12 @@ class SimEngine(ABC):
         if horizon_error is not None:
             return horizon_error
 
+        if not isinstance(n_episodes, int) or n_episodes < 1:
+            return {
+                "status": "error",
+                "content": [{"text": f"run_policy: n_episodes must be a positive integer, got {n_episodes!r}."}],
+            }
+
         if robot_name not in self.list_robots():
             return {
                 "status": "error",
@@ -461,9 +488,35 @@ class SimEngine(ABC):
         policy.set_robot_state_keys(self.robot_joint_names(robot_name))
         self.bind_policy_sim_context(policy, robot_name)
 
-        on_frame = self._make_run_policy_hook(robot_name, instruction)
+        runner = PolicyRunner(self)
 
-        return PolicyRunner(self).run(
+        # Single-episode fast path: byte-for-byte the historical behaviour
+        # (no reset, no episode-boundary flush). n_episodes defaults to 1 so
+        # existing callers are completely unaffected.
+        if n_episodes == 1:
+            on_frame = self._make_run_policy_hook(robot_name, instruction)
+            return runner.run(
+                robot_name,
+                policy,
+                instruction=instruction,
+                duration=duration,
+                control_frequency=control_frequency,
+                action_horizon=action_horizon,
+                fast_mode=fast_mode,
+                video=VideoConfig.from_dict(video),
+                on_frame=on_frame,
+                max_onframe_failures=max_onframe_failures,
+                control_substeps=control_substeps,
+                policy_kwargs=policy_kwargs,
+                seed=seed,
+            )
+
+        # Multi-episode path: one rollout per episode, flushing a dataset
+        # episode boundary (save_episode) when recording and resetting between
+        # episodes. Replaces the brittle manual
+        # ``for _ in range(n): run_policy(); save_episode(); reset()`` loop.
+        return self._run_episodes(
+            runner,
             robot_name,
             policy,
             instruction=instruction,
@@ -471,13 +524,209 @@ class SimEngine(ABC):
             control_frequency=control_frequency,
             action_horizon=action_horizon,
             fast_mode=fast_mode,
-            video=VideoConfig.from_dict(video),
-            on_frame=on_frame,
+            video=video,
             max_onframe_failures=max_onframe_failures,
             control_substeps=control_substeps,
             policy_kwargs=policy_kwargs,
             seed=seed,
+            n_episodes=n_episodes,
+            reset_between=reset_between,
         )
+
+    def _run_episodes(
+        self,
+        runner: PolicyRunner,
+        robot_name: str,
+        policy: Policy,
+        *,
+        instruction: str,
+        duration: float,
+        control_frequency: float,
+        action_horizon: int,
+        fast_mode: bool,
+        video: dict[str, Any] | None,
+        max_onframe_failures: int | None,
+        control_substeps: int | None,
+        policy_kwargs: dict[str, Any] | None,
+        seed: int | None,
+        n_episodes: int,
+        reset_between: bool,
+    ) -> dict[str, Any]:
+        """Run ``n_episodes`` sequential rollouts; shared multi-episode driver.
+
+        Behind :meth:`run_policy` when ``n_episodes > 1``. Per episode it:
+        (1) runs one rollout for the configured horizon, (2) flushes a dataset
+        episode boundary via :meth:`save_episode` when a recording is active,
+        and (3) resets the sim between episodes unless ``reset_between`` is
+        ``False`` - so a single call yields N correctly delimited dataset
+        episodes instead of one merged episode. Aborts early (returning a
+        structured error with the episodes completed so far) if a rollout, an
+        episode flush, or a reset fails.
+        """
+        episodes: list[dict[str, Any]] = []
+        episodes_saved = 0
+        total_steps = 0
+        for ep in range(n_episodes):
+            ep_seed = None if seed is None else seed + ep
+            ep_video = self._episode_video_config(video, ep)
+            on_frame = self._make_run_policy_hook(robot_name, instruction)
+            result = runner.run(
+                robot_name,
+                policy,
+                instruction=instruction,
+                duration=duration,
+                control_frequency=control_frequency,
+                action_horizon=action_horizon,
+                fast_mode=fast_mode,
+                video=ep_video,
+                on_frame=on_frame,
+                max_onframe_failures=max_onframe_failures,
+                control_substeps=control_substeps,
+                policy_kwargs=policy_kwargs,
+                seed=ep_seed,
+            )
+            ep_json = self._extract_json_payload(result)
+            ep_record: dict[str, Any] = {"episode": ep, **ep_json}
+            total_steps += int(ep_json.get("n_steps", 0) or 0)
+
+            if result.get("status") == "error":
+                ep_record["status"] = "error"
+                episodes.append(ep_record)
+                return self._episodes_result(
+                    episodes,
+                    episodes_saved,
+                    total_steps,
+                    n_episodes,
+                    status="error",
+                    extra=(
+                        f"Episode {ep} rollout failed; aborting remaining "
+                        f"{n_episodes - ep - 1} episode(s). {self._first_text(result)}"
+                    ),
+                )
+
+            # Flush this rollout as its own dataset episode when recording.
+            if self._is_recording():
+                save = self.save_episode()
+                if save.get("status") == "error":
+                    ep_record["save_episode_error"] = self._first_text(save)
+                    episodes.append(ep_record)
+                    return self._episodes_result(
+                        episodes,
+                        episodes_saved,
+                        total_steps,
+                        n_episodes,
+                        status="error",
+                        extra=f"save_episode failed after episode {ep}: {self._first_text(save)}",
+                    )
+                episodes_saved += 1
+                ep_record["saved"] = True
+
+            episodes.append(ep_record)
+
+            # Reset between episodes - never after the last one.
+            if reset_between and ep < n_episodes - 1:
+                reset_result = self.reset()
+                if reset_result.get("status") == "error":
+                    return self._episodes_result(
+                        episodes,
+                        episodes_saved,
+                        total_steps,
+                        n_episodes,
+                        status="error",
+                        extra=f"reset() failed after episode {ep}: {self._first_text(reset_result)}",
+                    )
+
+        return self._episodes_result(episodes, episodes_saved, total_steps, n_episodes, status="success")
+
+    @staticmethod
+    def _first_text(result: dict[str, Any]) -> str:
+        """First human-readable ``text`` block from a status dict ("" if none)."""
+        for blk in result.get("content", []) or []:
+            if isinstance(blk, dict):
+                text = blk.get("text")
+                if isinstance(text, str):
+                    return text
+        return ""
+
+    @staticmethod
+    def _extract_json_payload(result: dict[str, Any]) -> dict[str, Any]:
+        """First agent-consumable ``{"json": {...}}`` block ({} if none)."""
+        for blk in result.get("content", []) or []:
+            if isinstance(blk, dict) and isinstance(blk.get("json"), dict):
+                return dict(blk["json"])
+        return {}
+
+    @staticmethod
+    def _episode_video_config(video: dict[str, Any] | None, episode: int) -> VideoConfig | None:
+        """Per-episode :class:`VideoConfig` with ``_ep{i}`` in the filename.
+
+        Multi-episode runs reuse one ``video`` config; without templating every
+        episode would overwrite the same MP4. Inserts ``_ep{episode}`` before
+        the extension so each episode gets a distinct file. Passes through
+        unchanged when no video path is set.
+        """
+        if not video or not video.get("path"):
+            return VideoConfig.from_dict(video)
+        templated = dict(video)
+        root, ext = os.path.splitext(str(video["path"]))
+        templated["path"] = f"{root}_ep{episode}{ext or '.mp4'}"
+        return VideoConfig.from_dict(templated)
+
+    def _episodes_result(
+        self,
+        episodes: list[dict[str, Any]],
+        episodes_saved: int,
+        total_steps: int,
+        n_episodes: int,
+        *,
+        status: str,
+        extra: str = "",
+    ) -> dict[str, Any]:
+        """Aggregate per-episode records into one ``run_policy`` status dict.
+
+        Mirrors the single-rollout result shape: a human-readable ``text``
+        block plus an agent-consumable ``{"json": {...}}`` block carrying typed
+        aggregate fields (``n_episodes_completed``, ``episodes_saved``,
+        ``total_steps``, per-episode list, ``video_paths``).
+        """
+        completed = len(episodes)
+        video_paths = [e["video_path"] for e in episodes if e.get("video_path")]
+        text = (
+            f"Multi-episode run_policy: {completed}/{n_episodes} episode(s) completed, "
+            f"{episodes_saved} flushed to dataset, {total_steps} total steps."
+        )
+        if extra:
+            text += f"\n{extra}"
+        payload: dict[str, Any] = {
+            "n_episodes_requested": n_episodes,
+            "n_episodes_completed": completed,
+            "episodes_saved": episodes_saved,
+            "total_steps": total_steps,
+            "episodes": episodes,
+            "video_paths": video_paths,
+        }
+        return {"status": status, "content": [{"text": text}, {"json": payload}]}
+
+    def _is_recording(self) -> bool:
+        """Whether a dataset-recording session is active.
+
+        Backends that support LeRobot dataset recording override this; the base
+        returns ``False`` so the multi-episode :meth:`run_policy` loop only
+        flushes episode boundaries on backends that actually record.
+        """
+        return False
+
+    def save_episode(self) -> dict[str, Any]:
+        """Flush the current recording episode and begin a fresh one.
+
+        Backends that support dataset recording override this (see the MuJoCo
+        ``RecordingMixin``). The base has no recorder, so it returns a
+        structured error rather than pretending to flush.
+        """
+        return {
+            "status": "error",
+            "content": [{"text": "save_episode: this backend does not support dataset recording."}],
+        }
 
     def start_policy(
         self,
@@ -895,7 +1144,7 @@ class SimEngine(ABC):
                 "get_robot_state": "(robot_name: str) -> dict",
                 "get_observation": "(robot_name: str | None = None, *, skip_images: bool = False) -> dict",
                 "send_action": "(action: dict, robot_name: str | None = None, n_substeps: int = 1) -> dict",
-                "run_policy": "(robot_name: str, policy_provider='mock', ...) -> dict",
+                "run_policy": "(robot_name: str, policy_provider='mock', n_episodes=1, reset_between=True, ...) -> dict",
                 "start_policy": "(robot_name: str, policy_provider='mock', ...) -> dict",
                 "list_robots": "() -> list[str]",
                 "render": "(camera_name='default', width=None, height=None) -> dict",

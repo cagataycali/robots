@@ -19,9 +19,30 @@ sim.stop_recording()
 
 ## Multi-episode recording
 
-A recording session is one dataset; `run_policy` alone does **not** delimit
-episodes. To collect N episodes in one session, call `save_episode()` after each
-rollout to flush it as its own episode:
+A recording session is one dataset. The simplest way to collect N episodes in
+one session is `run_policy(n_episodes=N)` - it runs N rollouts back-to-back,
+flushes a dataset episode boundary after each, and resets the sim between
+episodes for you:
+
+```python
+sim.start_recording(repo_id="user/my_dataset", task="pick up the cube", fps=30)
+sim.run_policy(robot_name="so100", instruction="pick up the cube",
+               policy_provider="mock", n_steps=60, n_episodes=20)
+sim.stop_recording()
+# -> 20 episodes, each with its own episode_index / length / from_index / to_index
+```
+
+`n_steps` (or `duration`) is the per-episode horizon. `reset_between=False`
+chains episodes from the previous end state instead of resetting. When a `seed`
+is given it is offset per episode (`seed + i`) for reproducible-yet-distinct
+rollouts, and a `video={...}` config is written per episode to a path with
+`_ep{i}` inserted before the extension so episodes do not overwrite one another.
+The aggregate result carries `n_episodes_completed`, `episodes_saved`,
+`total_steps`, and a per-episode list in its `{"json": {...}}` block.
+
+If you need full control over each rollout (different instructions, custom
+randomization, conditional logic between episodes), drive the loop yourself and
+call `save_episode()` after each rollout to flush it as its own episode:
 
 ```python
 sim.start_recording(repo_id="user/my_dataset", task="pick up the cube", fps=30)
@@ -31,7 +52,6 @@ for _ in range(20):
                    policy_provider="mock", n_steps=60)
     sim.save_episode()        # flush this rollout as one episode
 sim.stop_recording()          # flushes any trailing rollout automatically
-# -> 20 episodes, each with its own episode_index / length / from_index / to_index
 ```
 
 `save_episode` is idempotent on an empty buffer, so it is safe to call
@@ -56,7 +76,7 @@ sim.stop_recording()          # flushes any trailing rollout automatically
 # -> 20 episodes
 ```
 
-Without either an explicit `save_episode()` or a `reset()` between rollouts, all
+Without `n_episodes`, an explicit `save_episode()`, or a `reset()` between rollouts, all
 20 rollouts append to the same buffer and `stop_recording` flushes them as a
 single `episode_index=0` (1200 steps in one episode). To DISCARD a partial
 rollout instead of flushing it on the next `reset()`, call

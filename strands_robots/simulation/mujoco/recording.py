@@ -32,6 +32,15 @@ class RecordingMixin:
         default_width: int
         default_height: int
 
+    def _is_recording(self) -> bool:
+        """True when a dataset-recording session is active.
+
+        Overrides :meth:`SimEngine._is_recording` so the multi-episode
+        ``run_policy`` loop flushes an episode boundary after each rollout
+        only while a recording is open.
+        """
+        return self._world is not None and bool(self._world._backend_state.get("recording", False))
+
     def start_recording(
         self,
         repo_id: str = "local/sim_recording",

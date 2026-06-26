@@ -1136,7 +1136,9 @@ class MuJoCoSimEngine(
         )
         base["methods"]["save_episode"] = (
             "() -> dict  (flush current rollout as one episode; call once per "
-            "run_policy to get N episodes instead of one merged episode)"
+            "run_policy to get N episodes instead of one merged episode. For "
+            "the common case prefer run_policy(n_episodes=N) which flushes a "
+            "boundary per episode automatically)"
         )
         base["methods"]["stop_recording"] = "(push_to_hub=False, bucket=None, run_id=None) -> dict"
         base["methods"]["get_recording_status"] = "() -> dict"
@@ -2283,6 +2285,8 @@ class MuJoCoSimEngine(
         control_substeps: int | None = None,
         policy_kwargs: dict[str, Any] | None = None,
         seed: int | None = None,
+        n_episodes: int = 1,
+        reset_between: bool = True,
     ) -> dict[str, Any]:
         """MuJoCo ``run_policy`` override: pre-flight world check + graceful stop.
 
@@ -2293,6 +2297,12 @@ class MuJoCoSimEngine(
 
         forwards ``n_steps`` / ``max_steps`` to the base so LLM callers
         can specify horizon in steps rather than wall-clock seconds.
+
+        ``n_episodes`` / ``reset_between`` are forwarded to
+        :meth:`SimEngine.run_policy` for first-class multi-episode dataset
+        collection: ``n_episodes > 1`` runs that many rollouts back-to-back,
+        flushing a ``save_episode`` boundary after each (when recording) and
+        resetting between episodes. See :meth:`SimEngine.run_policy`.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -2320,6 +2330,8 @@ class MuJoCoSimEngine(
                 control_substeps=control_substeps,
                 policy_kwargs=policy_kwargs,
                 seed=seed,
+                n_episodes=n_episodes,
+                reset_between=reset_between,
             )
         finally:
             if self._world is not None and robot_name in self._world.robots:
