@@ -1140,3 +1140,93 @@ def test_create_builds_features_from_joints_and_cameras(monkeypatch):
     features = _FakeDatasetVcodecCreate.last_create_kwargs["features"]
     assert features["observation.state"]["names"] == ["shoulder", "elbow"]
     assert features["observation.images.top"]["shape"] == (3, 240, 320)
+
+
+# camera_key_map remap + camera-key-mismatch diagnostic
+#
+# Regression coverage for the silent data-loss mode where a policy declares
+# image_keys (e.g. "image"/"wrist_image") that never match the names the
+# sim/hardware camera streams emit (e.g. "front_camera"/"wrist_camera"): every
+# image frame is stripped and the dataset records zero video columns with no
+# error. The recorder now (a) accepts a camera_key_map remap and (b) warns once
+# when all observed cameras are dropped.
+
+
+def test_add_frame_camera_key_map_remaps_observed_to_declared():
+    """camera_key_map rewrites an observed stream name to the declared schema key."""
+    feats = {"observation.images.image": {"dtype": "video"}}
+    ds = _CapturingDataset(feats)
+    rec = DatasetRecorder(dataset=ds, camera_key_map={"front_camera": "image"})
+
+    img = np.zeros((2, 2, 3), dtype=np.uint8)
+    rec.add_frame(observation={"front_camera": img}, action={}, task="t")
+
+    frame = ds.frames[0]
+    assert "observation.images.image" in frame
+    assert "observation.images.front_camera" not in frame
+
+
+def test_add_frame_camera_key_map_accepts_fully_qualified_keys():
+    """camera_key_map entries may be written as observation.images.* keys."""
+    feats = {"observation.images.wrist_image": {"dtype": "video"}}
+    ds = _CapturingDataset(feats)
+    rec = DatasetRecorder(
+        dataset=ds,
+        camera_key_map={"observation.images.wrist_camera": "observation.images.wrist_image"},
+    )
+
+    img = np.zeros((2, 2, 3), dtype=np.uint8)
+    rec.add_frame(observation={"wrist_camera": img}, action={}, task="t")
+
+    frame = ds.frames[0]
+    assert "observation.images.wrist_image" in frame
+    assert "observation.images.wrist_camera" not in frame
+
+
+def test_add_frame_warns_once_when_no_camera_matches(caplog):
+    """All observed cameras stripped (none declared) -> one loud diagnostic."""
+    feats = {"observation.images.image": {"dtype": "video"}}
+    ds = _CapturingDataset(feats)
+    rec = DatasetRecorder(dataset=ds)
+
+    img = np.zeros((2, 2, 3), dtype=np.uint8)
+    with caplog.at_level(logging.WARNING):
+        rec.add_frame(observation={"front_camera": img}, action={}, task="t")
+        rec.add_frame(observation={"front_camera": img}, action={}, task="t")
+
+    mismatch = [r for r in caplog.records if "match the declared image features" in r.message]
+    assert len(mismatch) == 1  # warned once, not per frame
+    # The message names the offending observed and declared keys + the remedy.
+    assert "front_camera" in mismatch[0].getMessage()
+    assert "image" in mismatch[0].getMessage()
+    assert "camera_key_map" in mismatch[0].getMessage()
+    # The image data was still dropped (no remap supplied).
+    assert "observation.images.front_camera" not in ds.frames[0]
+
+
+def test_add_frame_no_mismatch_warning_on_partial_strip(caplog):
+    """A partial strip (one camera matches) is the normal 'ignore extra' path."""
+    feats = {"observation.images.declared": {"dtype": "video"}}
+    ds = _CapturingDataset(feats)
+    rec = DatasetRecorder(dataset=ds)
+
+    img = np.zeros((2, 2, 3), dtype=np.uint8)
+    with caplog.at_level(logging.WARNING):
+        rec.add_frame(observation={"declared": img, "ghost": img}, action={}, task="t")
+
+    assert not [r for r in caplog.records if "match the declared image features" in r.message]
+    assert "observation.images.declared" in ds.frames[0]
+    assert "observation.images.ghost" not in ds.frames[0]
+
+
+def test_add_frame_no_mismatch_warning_when_remap_resolves_it(caplog):
+    """With a remap that resolves the mismatch, no diagnostic is emitted."""
+    feats = {"observation.images.image": {"dtype": "video"}}
+    ds = _CapturingDataset(feats)
+    rec = DatasetRecorder(dataset=ds, camera_key_map={"front_camera": "image"})
+
+    img = np.zeros((2, 2, 3), dtype=np.uint8)
+    with caplog.at_level(logging.WARNING):
+        rec.add_frame(observation={"front_camera": img}, action={}, task="t")
+
+    assert not [r for r in caplog.records if "match the declared image features" in r.message]

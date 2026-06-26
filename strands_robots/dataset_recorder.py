@@ -97,7 +97,13 @@ class DatasetRecorder:
     Works for both real hardware (robot.py) and simulation (simulation.py).
     """
 
-    def __init__(self, dataset, task: str = "", strict: bool = True):
+    def __init__(
+        self,
+        dataset,
+        task: str = "",
+        strict: bool = True,
+        camera_key_map: dict[str, str] | None = None,
+    ):
         self.dataset = dataset
         self.default_task = task
         self.frame_count = 0
@@ -108,6 +114,40 @@ class DatasetRecorder:
         self._closed = False
         self._cached_state_keys: list[str] | None = None
         self._cached_action_keys: list[str] | None = None
+        # Optional remap of observed camera stream names -> declared schema
+        # names. Keys/values are bare camera names (no "observation.images."
+        # prefix); a leading prefix on either side is tolerated and stripped.
+        # Lets callers reconcile a policy's declared image_keys (e.g. "image",
+        # "wrist_image") with differently-named sim/hardware streams (e.g.
+        # "front_camera", "wrist_camera") instead of silently dropping frames.
+        self.camera_key_map = self._normalize_camera_key_map(camera_key_map)
+        # One-shot guard so the camera-key-mismatch diagnostic is logged once
+        # per recorder instead of every control step (50Hz would flood logs).
+        self._warned_camera_mismatch = False
+
+    @staticmethod
+    def _normalize_camera_key_map(camera_key_map: dict[str, str] | None) -> dict[str, str]:
+        """Normalize a camera key remap to bare-name -> bare-name form.
+
+        Accepts entries written either as bare camera names ("front_camera")
+        or as fully-qualified feature keys ("observation.images.front_camera")
+        on EITHER side, and strips the "observation.images." prefix so the map
+        can be applied uniformly against bare camera names in add_frame.
+
+        Args:
+            camera_key_map: Caller-supplied remap, or None.
+
+        Returns:
+            A dict mapping observed bare camera name -> declared bare camera
+            name (empty dict when no map was supplied).
+        """
+        prefix = "observation.images."
+        normalized: dict[str, str] = {}
+        for src, dst in (camera_key_map or {}).items():
+            src_bare = src[len(prefix) :] if src.startswith(prefix) else src
+            dst_bare = dst[len(prefix) :] if dst.startswith(prefix) else dst
+            normalized[src_bare] = dst_bare
+        return normalized
 
     @classmethod
     def create(
@@ -129,6 +169,7 @@ class DatasetRecorder:
         video_backend: str = "auto",
         video_width: int = 640,
         video_height: int = 480,
+        camera_key_map: dict[str, str] | None = None,
     ) -> "DatasetRecorder":
         """Create a new DatasetRecorder with auto-detected features.
 
@@ -148,6 +189,12 @@ class DatasetRecorder:
             streaming_encoding: Stream-encode video during capture
             image_writer_threads: Threads for writing image frames
             video_backend: Video backend for encoding ("auto" for HW encoder auto-detect)
+            camera_key_map: Optional remap of observed camera stream names to the
+                declared schema names (e.g. {"front_camera": "image",
+                "wrist_camera": "wrist_image"}). Bare names or fully-qualified
+                "observation.images.*" keys are accepted on either side. Use it
+                when a policy declares image_keys that differ from the names the
+                sim/hardware streams emit, otherwise those frames are dropped.
         """
         # Lazy import - this is where we actually need lerobot
         LeRobotDatasetCls = _get_lerobot_dataset_class()
@@ -206,7 +253,7 @@ class DatasetRecorder:
             create_kwargs["video_backend"] = video_backend
         dataset = LeRobotDatasetCls.create(**create_kwargs)
 
-        recorder = cls(dataset=dataset, task=task)
+        recorder = cls(dataset=dataset, task=task, camera_key_map=camera_key_map)
         logger.info("DatasetRecorder ready: %s", repo_id)
         return recorder
 
@@ -220,6 +267,7 @@ class DatasetRecorder:
         streaming_encoding: bool = True,
         image_writer_threads: int = 4,
         video_backend: str = "auto",
+        camera_key_map: dict[str, str] | None = None,
     ) -> "DatasetRecorder":
         """Resume recording into an EXISTING LeRobotDataset (append episodes).
 
@@ -245,6 +293,8 @@ class DatasetRecorder:
             streaming_encoding: Stream-encode video during capture.
             image_writer_threads: Threads for writing image frames.
             video_backend: Video backend for encoding.
+            camera_key_map: Optional remap of observed camera stream names to
+                the declared schema names (see create()).
 
         Returns:
             A DatasetRecorder wrapping the resumed dataset.
@@ -283,7 +333,7 @@ class DatasetRecorder:
             resume_kwargs["video_backend"] = video_backend
 
         dataset = LeRobotDatasetCls.resume(**resume_kwargs)
-        recorder = cls(dataset=dataset, task=task)
+        recorder = cls(dataset=dataset, task=task, camera_key_map=camera_key_map)
         # Seed counters from the existing dataset so reporting reflects totals.
         try:
             recorder.episode_count = int(dataset.meta.total_episodes)
@@ -480,11 +530,26 @@ class DatasetRecorder:
         frame["task"] = task or self.default_task or "untitled"
 
         # Reconcile camera keys between frame and feature schema
+        declared_cam_keys = {k for k in self.dataset.features if k.startswith("observation.images.")}
+
+        # Apply the caller-supplied remap FIRST (observed stream name -> declared
+        # schema name). This is the explicit escape hatch for the case where a
+        # policy declares image_keys (e.g. "image"/"wrist_image") that differ
+        # from the names the sim/hardware streams emit (e.g. "front_camera"/
+        # "wrist_camera"). Without it those frames are stripped below and the
+        # dataset records no image columns.
+        if self.camera_key_map:
+            prefix = "observation.images."
+            for cam_key in [k for k in list(frame.keys()) if k.startswith(prefix)]:
+                bare = cam_key[len(prefix) :]
+                mapped = self.camera_key_map.get(bare)
+                if mapped is not None and mapped != bare:
+                    frame[f"{prefix}{mapped}"] = frame.pop(cam_key)
+
         # Normalize namespaced camera keys (e.g. "arm0/wrist_cam" → "arm0__wrist_cam")
         # to match the schema declared in _build_features. MuJoCo uses "/" as a
         # namespace separator for multi-robot cameras, but LeRobot feature names
         # cannot contain "/" (reserved for nested-feature addressing).
-        declared_cam_keys = {k for k in self.dataset.features if k.startswith("observation.images.")}
         frame_cam_keys = {k for k in list(frame.keys()) if k.startswith("observation.images.")}
         for cam_key in frame_cam_keys:
             normalized = cam_key.replace("/", "__")
@@ -497,8 +562,35 @@ class DatasetRecorder:
         # LeRobot tolerates absent columns and the episode simply won't have that
         # camera's data.
         frame_cam_keys_final = {k for k in frame if k.startswith("observation.images.")}
-        for extra in frame_cam_keys_final - declared_cam_keys:
+        stripped_cam_keys = frame_cam_keys_final - declared_cam_keys
+        for extra in stripped_cam_keys:
             del frame[extra]
+
+        # Surface the silent data-loss case: camera frames arrived but NONE of
+        # them matched a declared schema key, so every image is being dropped
+        # and the dataset will record zero image columns. This is the
+        # "image_keys never match the streams" failure mode that otherwise
+        # produces episodes with no video and no error. Warn once per recorder
+        # (50Hz would flood) with the observed-vs-declared keys and the
+        # camera_key_map remedy. A PARTIAL strip (some cameras matched) is left
+        # quiet - that is the normal "ignore an extra debug camera" path.
+        if (
+            not self._warned_camera_mismatch
+            and stripped_cam_keys
+            and declared_cam_keys
+            and not (frame_cam_keys_final & declared_cam_keys)
+        ):
+            self._warned_camera_mismatch = True
+            logger.warning(
+                "DatasetRecorder: none of the observed camera streams %s match the "
+                "declared image features %s - all image frames are being dropped and "
+                "this dataset will have no video. Pass camera_key_map={observed: declared} "
+                "to remap (e.g. {%r: %r}), or declare cameras with names matching the streams.",
+                sorted(k[len("observation.images.") :] for k in stripped_cam_keys),
+                sorted(k[len("observation.images.") :] for k in declared_cam_keys),
+                next(iter(sorted(stripped_cam_keys)))[len("observation.images.") :],
+                next(iter(sorted(declared_cam_keys)))[len("observation.images.") :],
+            )
 
         # Add to dataset
         try:
