@@ -116,14 +116,19 @@ COPY strands_robots/policies/vera/docker/launch_server.py /opt/launch_server.py
 ENV PYTHONPATH=/opt:${PYTHONPATH}
 
 # PushT sim deps (Wave-1): lightweight, all on PyPI. The MimicGen sim stack
-# (robomimic/robosuite/mimicgen) is heavier and robomimic 0.5.0 is git-only, so
+# (robomimic/robosuite/mimicgen) is heavier and robomimic 0.5.0 is git-only AND
+# hard-pins huggingface_hub/transformers/diffusers to versions that break the
+# NGC base + WAN planner — so install it --no-deps + only its missing runtime deps. So
 # it is opt-in via --build-arg INSTALL_MIMICGEN_SIM=1.
 RUN pip install "gymnasium==0.29.1" "gym-pusht==0.1.5" "mujoco>=3.5.0" imageio imageio-ffmpeg
 
 ARG INSTALL_MIMICGEN_SIM=0
 RUN if [ "${INSTALL_MIMICGEN_SIM}" = "1" ]; then \
-        pip install "robosuite==1.4.1" "mimicgen==1.0.0" && \
-        pip install "git+https://github.com/ARISE-Initiative/robomimic.git@v0.3.0" ; \
+        pip install "robosuite==1.4.1" && \
+        pip install --no-deps "git+https://github.com/ARISE-Initiative/robomimic.git@v0.5.0" && \
+        git clone --depth 1 -b v1.0.0 https://github.com/NVlabs/mimicgen.git /opt/mimicgen-src && \
+        pip install --no-deps -e /opt/mimicgen-src && \
+        pip install egl_probe tensorboard tensorboardX "mujoco==3.5.0" ; \
     else \
         echo "skipping MimicGen sim stack (set --build-arg INSTALL_MIMICGEN_SIM=1 to include)" ; \
     fi

@@ -629,14 +629,21 @@ class VeraPolicy(Policy):
         bridge = self._ensure_ik_bridge(mj_model, ee_frame)
         from .sim_ik import decode_vera_delta_chunk_to_targets
 
-        has_gripper = gripper_idx is not None and gripper_idx >= 0
+        # Gripper presence: VERA uses gripper_dim_index == -1 to mean "the gripper
+        # is the LAST column" (Python-style index), NOT "no gripper". Detect a
+        # gripper column from the chunk width vs the pose dims (3 trans + rot):
+        # any trailing column beyond the pose block is the gripper.
+        pose_dims = 3 + self._rotation_dim
+        chunk_dim = int(chunk.shape[1]) if chunk.ndim == 2 else len(chunk)
+        has_gripper = chunk_dim > pose_dims
+        eff_gripper_idx = gripper_idx if (gripper_idx is not None and gripper_idx >= 0) else (chunk_dim - 1)
         result = decode_vera_delta_chunk_to_targets(
             chunk,
             bridge,
             q_init,
             rotation_dim=self._rotation_dim,
             has_gripper=has_gripper,
-            gripper_dim_index=gripper_idx if has_gripper else -1,
+            gripper_dim_index=eff_gripper_idx if has_gripper else -1,
             translation_scale=self._translation_scale,
         )
         qpos = np.asarray(result["qpos"], dtype=np.float32)  # [T, nq]
