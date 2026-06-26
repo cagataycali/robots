@@ -1634,7 +1634,9 @@ class LerobotLocalPolicy(Policy):
             vals = [
                 float(action_values[i]) if i < len(action_values) else 0.0 for i in range(len(self.robot_state_keys))
             ]
-            if convert:
+            # `convert` already implies `emb is not None`; the explicit guard lets
+            # the type checker narrow `emb` from `EmbodimentMap | None` at the call.
+            if convert and emb is not None:
                 vals = emb.model_action_to_sim(vals)
             action_dict = {key: vals[index] for index, key in enumerate(self.robot_state_keys)}
             result.append(action_dict)
