@@ -396,6 +396,108 @@ class TestBuildPolicy:
         assert "strands-robots[molmoact2]" in msg
         assert "PR #3604" in msg
 
+    def test_transitive_dep_failure_names_real_dep_not_lerobot(self, monkeypatch):
+        """A missing *transitive* dep must surface THAT dep, not a lerobot hint.
+
+        When importing ``lerobot.configs`` fails because a package it pulls in
+        is missing (``ModuleNotFoundError`` whose ``name`` is the transitive
+        package, e.g. ``einops``), telling the caller to reinstall lerobot from
+        source is a dead end -- lerobot is fine; the missing package is the fix.
+        The error must name the real package and how to install it.
+        """
+        pytest.importorskip("lerobot")
+        import builtins
+
+        real_import = builtins.__import__
+
+        def blocked_import(name, *args, **kwargs):
+            if name == "lerobot.configs":
+                raise ModuleNotFoundError("No module named 'einops'", name="einops")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", blocked_import)
+        with pytest.raises(ImportError) as excinfo:
+            molmoact2.build_policy(
+                "repo",
+                device="cpu",
+                norm_tag="t",
+                inference_action_mode="continuous",
+                image_keys=["observation.images.cam"],
+                embodiment_spec=None,
+            )
+        msg = str(excinfo.value)
+        assert "einops" in msg
+        assert "pip install einops" in msg
+        # Must NOT misattribute to an outdated lerobot.
+        assert "PR #3604" not in msg
+        assert "lerobot >= 0.5.2" not in msg
+
+    def test_transitive_dep_failure_in_factory_import_names_real_dep(self, monkeypatch):
+        """Same discrimination for the second guard (lerobot.policies.factory)."""
+        pytest.importorskip("lerobot")
+        import builtins
+
+        real_import = builtins.__import__
+
+        def blocked_import(name, *args, **kwargs):
+            if name == "lerobot.policies.factory":
+                raise ModuleNotFoundError("No module named 'qwen_vl_utils'", name="qwen_vl_utils")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", blocked_import)
+        with pytest.raises(ImportError) as excinfo:
+            molmoact2.build_policy(
+                "repo",
+                device="cpu",
+                norm_tag="t",
+                inference_action_mode="continuous",
+                image_keys=["observation.images.cam"],
+                embodiment_spec=None,
+            )
+        msg = str(excinfo.value)
+        assert "qwen_vl_utils" in msg
+        assert "PR #3604" not in msg
+
+
+class TestFactoryImportErrorTranslation:
+    """Unit-level coverage of the import-error discriminator.
+
+    ``_factory_import_error`` maps a caught ``ImportError`` to the actionable
+    remedy by inspecting ``ImportError.name``: a missing/old lerobot keeps the
+    from-source version hint; a missing transitive dependency names that
+    package instead.
+    """
+
+    def test_transitive_dep_named(self):
+        exc = ModuleNotFoundError("No module named 'einops'", name="einops")
+        msg = str(molmoact2._factory_import_error(exc))
+        assert "einops" in msg
+        assert "pip install einops" in msg
+        assert "PR #3604" not in msg
+
+    def test_missing_lerobot_module_keeps_version_hint(self):
+        exc = ModuleNotFoundError("No module named 'lerobot'", name="lerobot")
+        msg = str(molmoact2._factory_import_error(exc))
+        assert "PR #3604" in msg
+        assert "strands-robots[molmoact2]" in msg
+
+    def test_missing_lerobot_symbol_keeps_version_hint(self):
+        # Old lerobot: module present, FeatureType symbol absent. ``from
+        # lerobot.configs import FeatureType`` reports name="lerobot.configs".
+        exc = ImportError(
+            "cannot import name 'FeatureType' from 'lerobot.configs'",
+            name="lerobot.configs",
+        )
+        msg = str(molmoact2._factory_import_error(exc))
+        assert "PR #3604" in msg
+
+    def test_no_name_falls_back_to_version_hint(self):
+        # Defensive: an ImportError with no ``.name`` keeps the lerobot hint
+        # rather than emitting a misleading "None is not installed".
+        msg = str(molmoact2._factory_import_error(ImportError("opaque")))
+        assert "PR #3604" in msg
+        assert "None" not in msg
+
 
 class TestBuildPolicyDependencyGuard:
     """``build_policy`` must guard its auxiliary deps up front with an error that

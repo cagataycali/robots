@@ -57,6 +57,59 @@ MOLMOACT2_TYPE = "molmoact2"
 #: installed from and lists EVERY missing dep, not just the first.
 _MOLMOACT2_RUNTIME_DEPS = ("transformers", "peft", "scipy")
 
+#: Install hint for when lerobot itself is too old / absent. MolmoAct2Policy and
+#: the ``lerobot.configs`` feature symbols only exist in lerobot >= 0.5.2 (merged
+#: in lerobot PR #3604), which is not yet on PyPI -- so the fix is a from-source
+#: install. This is NOT the right advice when a *transitive* dependency is the
+#: thing missing (see ``_factory_import_error``).
+_LEROBOT_VERSION_HINT = (
+    "MolmoAct2 requires lerobot >= 0.5.2 (PR #3604), which is not yet on "
+    "PyPI (latest release 0.5.1 lacks MolmoAct2Policy). Install the extra "
+    "plus lerobot from source:\n"
+    "  uv pip install 'strands-robots[molmoact2]' "
+    "'lerobot[feetech] @ git+https://github.com/huggingface/lerobot.git'\n"
+    "On Jetson/aarch64, add --no-build-isolation if pyav fails to build."
+)
+
+
+def _factory_import_error(exc: ImportError) -> ImportError:
+    """Translate a failed lerobot-factory import into an actionable error.
+
+    ``build_policy`` imports feature symbols from ``lerobot.configs`` and the
+    policy entry points from ``lerobot.policies.factory``. A failure there has
+    two distinct causes that need *different* fixes:
+
+    * lerobot itself is too old or absent -- the ``lerobot`` package is missing,
+      or the MolmoAct2-era symbols it should expose are not there yet. The fix
+      is a lerobot >= 0.5.2 from-source install (:data:`_LEROBOT_VERSION_HINT`).
+    * a *transitive* dependency that the factory pulls in is missing -- here
+      ``exc.name`` names a non-lerobot package. The fix is to install THAT
+      package; telling the caller to reinstall lerobot is a dead end that sends
+      a partially-provisioned env chasing the wrong remedy.
+
+    The missing module is identified via ``ImportError.name``: a missing
+    ``lerobot`` module reports ``"lerobot"``; a missing symbol from an existing
+    ``lerobot.configs`` reports ``"lerobot.configs"`` (both treated as
+    lerobot-too-old); a missing transitive dependency reports its own top-level
+    name (e.g. ``"einops"``).
+
+    Args:
+        exc: The ``ImportError`` raised while importing the lerobot factory.
+
+    Returns:
+        An ``ImportError`` whose message names the real remedy. The caller
+        should ``raise ... from exc`` to preserve the original traceback.
+    """
+    missing = getattr(exc, "name", None)
+    if missing and missing != "lerobot" and not missing.startswith("lerobot."):
+        return ImportError(
+            f"MolmoAct2 inference needs '{missing}', which is not installed "
+            "(it is imported transitively by lerobot's policy factory).\n"
+            f"  pip install {missing}"
+        )
+    return ImportError(_LEROBOT_VERSION_HINT)
+
+
 # Sensible default camera feature keys (match the ``so_real`` / ``so101``
 # embodiments' obs_rename targets). Overridable via ``image_keys=``.
 DEFAULT_IMAGE_KEYS = ["observation.images.image", "observation.images.wrist_image"]
@@ -240,7 +293,10 @@ def build_policy(
             missing. The error lists EVERY missing dep at once (not just the
             first) and names the ``strands-robots[molmoact2]`` extra -- rather
             than lerobot's internal extra, which a strands-robots caller never
-            installed from -- so a partial env is fixed in one install.
+            installed from -- so a partial env is fixed in one install. If the
+            lerobot policy factory fails to import, the error distinguishes an
+            outdated/absent lerobot from a missing transitive dependency and
+            names the real remedy (see :func:`_factory_import_error`).
     """
     require_optionals(_MOLMOACT2_RUNTIME_DEPS, extra="molmoact2", purpose="MolmoAct2 inference")
 
@@ -249,14 +305,7 @@ def build_policy(
     try:
         from lerobot.configs import FeatureType, PolicyFeature
     except ImportError as exc:
-        raise ImportError(
-            "MolmoAct2 requires lerobot >= 0.5.2 (PR #3604), which is not yet on "
-            "PyPI (latest release 0.5.1 lacks MolmoAct2Policy). Install the extra "
-            "plus lerobot from source:\n"
-            "  uv pip install 'strands-robots[molmoact2]' "
-            "'lerobot[feetech] @ git+https://github.com/huggingface/lerobot.git'\n"
-            "On Jetson/aarch64, add --no-build-isolation if pyav fails to build."
-        ) from exc
+        raise _factory_import_error(exc) from exc
 
     # Use lerobot's PUBLIC factory API rather than importing the molmoact2
     # config/processor classes directly:
@@ -278,14 +327,7 @@ def build_policy(
             make_pre_post_processors,
         )
     except ImportError as exc:
-        raise ImportError(
-            "MolmoAct2 requires lerobot >= 0.5.2 (PR #3604), which is not yet on "
-            "PyPI (latest release 0.5.1 lacks MolmoAct2Policy). Install the extra "
-            "plus lerobot from source:\n"
-            "  uv pip install 'strands-robots[molmoact2]' "
-            "'lerobot[feetech] @ git+https://github.com/huggingface/lerobot.git'\n"
-            "On Jetson/aarch64, add --no-build-isolation if pyav fails to build."
-        ) from exc
+        raise _factory_import_error(exc) from exc
 
     resolved_device = device or ("cuda" if torch.cuda.is_available() else "cpu")
     resolved_tag = auto_norm_tag(pretrained_name_or_path, norm_tag)
