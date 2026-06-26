@@ -640,6 +640,12 @@ class PolicyRunner:
                     observation = self.sim.get_observation(robot_name=robot_name, skip_images=_skip_images)
                     chunk = _query_chunk(observation)
                     for action_dict in chunk:
+                        # A chunk holds multiple actions and `_apply` advances
+                        # `step_count` once per action (via nonlocal), so this inner
+                        # guard is required to stop mid-chunk instead of overrunning
+                        # `total_steps`; the outer `while` only re-checks on chunk
+                        # boundaries. (Static analysis flags it as always-false because
+                        # it cannot see `step_count` mutate through the `_apply` closure.)
                         if step_count >= total_steps:
                             break
                         _apply(observation, action_dict)
