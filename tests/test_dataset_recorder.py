@@ -950,3 +950,193 @@ def test_resume_tolerates_unreadable_meta_counters(monkeypatch):
 
     assert recorder.episode_count == 0
     assert recorder.frame_count == 0
+
+
+# ---------------------------------------------------------------------------
+# DatasetRecorder.create() -- the new-dataset entry point.
+#
+# create() builds a LeRobotDataset from auto-detected features and must route
+# the requested vcodec across LeRobot versions exactly as resume() does:
+#   * 0.5.0/0.5.1: create(..., vcodec="libsvtav1")
+#   * 0.5.2+:      create(..., camera_encoder=VideoEncoderConfig(vcodec=...))
+# It also forwards the optional streaming_encoding / image_writer_threads /
+# video_backend kwargs only when the installed create() signature declares them,
+# and returns a recorder bound to the created dataset and default task. These
+# tests inject fake LeRobotDataset classes whose ``create`` classmethods expose
+# different signatures, so the real body runs without lerobot installed.
+
+
+class _FakeDatasetVcodecCreate:
+    """create() accepts the legacy ``vcodec=`` kwarg directly (0.5.0/0.5.1)."""
+
+    last_create_kwargs: dict = {}
+
+    def __init__(self, repo_id, root=None) -> None:
+        self.repo_id = repo_id
+        self.root = root
+
+    @classmethod
+    def create(
+        cls,
+        repo_id,
+        fps=30,
+        root=None,
+        robot_type="unknown",
+        features=None,
+        use_videos=True,
+        image_writer_threads=4,
+        vcodec="libsvtav1",
+        streaming_encoding=True,
+    ):
+        cls.last_create_kwargs = {
+            "repo_id": repo_id,
+            "fps": fps,
+            "root": root,
+            "robot_type": robot_type,
+            "features": features,
+            "use_videos": use_videos,
+            "image_writer_threads": image_writer_threads,
+            "vcodec": vcodec,
+            "streaming_encoding": streaming_encoding,
+        }
+        return cls(repo_id, root=root)
+
+
+class _FakeDatasetCameraEncoderCreate:
+    """create() takes ``camera_encoder=`` (0.5.2+) plus backend kwargs."""
+
+    last_create_kwargs: dict = {}
+
+    def __init__(self, repo_id, root=None) -> None:
+        self.repo_id = repo_id
+        self.root = root
+
+    @classmethod
+    def create(
+        cls,
+        repo_id,
+        fps=30,
+        root=None,
+        robot_type="unknown",
+        features=None,
+        use_videos=True,
+        image_writer_threads=4,
+        camera_encoder=None,
+        streaming_encoding=True,
+        video_backend="auto",
+    ):
+        cls.last_create_kwargs = {
+            "repo_id": repo_id,
+            "features": features,
+            "image_writer_threads": image_writer_threads,
+            "camera_encoder": camera_encoder,
+            "streaming_encoding": streaming_encoding,
+            "video_backend": video_backend,
+        }
+        return cls(repo_id, root=root)
+
+
+def test_create_passes_vcodec_directly_when_supported(monkeypatch):
+    """When create() takes ``vcodec=``, the recorder forwards it as-is and does
+    not synthesize a camera_encoder; backend kwargs absent from the signature
+    are not sent."""
+    _patch_lerobot_dataset(monkeypatch, _FakeDatasetVcodecCreate)
+    recorder = DatasetRecorder.create(
+        "user/data", fps=50, root="/tmp/ds", joint_names=["j1", "j2"], vcodec="libx264", task="pick"
+    )
+
+    sent = _FakeDatasetVcodecCreate.last_create_kwargs
+    assert sent["vcodec"] == "libx264"
+    assert sent["repo_id"] == "user/data"
+    assert sent["fps"] == 50
+    assert sent["streaming_encoding"] is True
+    # camera_encoder / video_backend are NOT in this signature -> not sent.
+    assert "camera_encoder" not in sent
+    assert "video_backend" not in sent
+    assert recorder.default_task == "pick"
+    assert recorder.dataset.repo_id == "user/data"
+
+
+def test_create_wraps_vcodec_in_camera_encoder_on_052(monkeypatch):
+    """On 0.5.2+ (camera_encoder= kwarg), the vcodec is wrapped in a
+    VideoEncoderConfig and the backend kwargs are forwarded."""
+    constructed = _install_video_encoder_config(monkeypatch)
+    _patch_lerobot_dataset(monkeypatch, _FakeDatasetCameraEncoderCreate)
+    DatasetRecorder.create("user/data", joint_names=["j1"], vcodec="libsvtav1", video_backend="pyav")
+
+    sent = _FakeDatasetCameraEncoderCreate.last_create_kwargs
+    assert sent["video_backend"] == "pyav"
+    assert sent["image_writer_threads"] == 4
+    # vcodec must have been wrapped, not passed raw.
+    assert "vcodec" not in sent
+    assert len(constructed) == 1
+    assert sent["camera_encoder"] is constructed[0]
+    assert constructed[0].vcodec == "libsvtav1"
+
+
+def test_create_warns_when_video_encoder_config_missing(monkeypatch, caplog):
+    """If create() wants camera_encoder= but VideoEncoderConfig can't be
+    imported, the recorder warns and proceeds with camera_encoder unset rather
+    than crashing the recording setup."""
+    import sys
+
+    monkeypatch.setitem(sys.modules, "lerobot.configs.video", None)
+    _patch_lerobot_dataset(monkeypatch, _FakeDatasetCameraEncoderCreate)
+
+    with caplog.at_level("WARNING"):
+        DatasetRecorder.create("user/data", joint_names=["j1"], vcodec="libsvtav1")
+
+    sent = _FakeDatasetCameraEncoderCreate.last_create_kwargs
+    assert sent["camera_encoder"] is None
+    assert any("VideoEncoderConfig" in rec.message for rec in caplog.records)
+
+
+def test_create_forwards_optional_kwargs_only_when_supported(monkeypatch):
+    """A minimal create() lacking streaming_encoding / video_backend must not be
+    handed those kwargs (version-tolerant forwarding, no TypeError)."""
+
+    class _FakeDatasetMinimalCreate:
+        last_create_kwargs: dict = {}
+
+        def __init__(self, repo_id, root=None) -> None:
+            self.repo_id = repo_id
+            self.root = root
+
+        @classmethod
+        def create(
+            cls,
+            repo_id,
+            fps=30,
+            root=None,
+            robot_type="unknown",
+            features=None,
+            use_videos=True,
+            image_writer_threads=4,
+            vcodec="libsvtav1",
+        ):
+            cls.last_create_kwargs = {"repo_id": repo_id, "vcodec": vcodec}
+            return cls(repo_id, root=root)
+
+    _patch_lerobot_dataset(monkeypatch, _FakeDatasetMinimalCreate)
+    recorder = DatasetRecorder.create("user/data", joint_names=["j1"])
+
+    sent = _FakeDatasetMinimalCreate.last_create_kwargs
+    assert sent == {"repo_id": "user/data", "vcodec": "libsvtav1"}
+    assert recorder.dataset.repo_id == "user/data"
+
+
+def test_create_builds_features_from_joints_and_cameras(monkeypatch):
+    """create() derives the LeRobot ``features`` schema from joint_names and
+    camera_keys and hands it to the underlying dataset constructor."""
+    _patch_lerobot_dataset(monkeypatch, _FakeDatasetVcodecCreate)
+    DatasetRecorder.create(
+        "user/data",
+        joint_names=["shoulder", "elbow"],
+        camera_keys=["top"],
+        video_height=240,
+        video_width=320,
+    )
+
+    features = _FakeDatasetVcodecCreate.last_create_kwargs["features"]
+    assert features["observation.state"]["names"] == ["shoulder", "elbow"]
+    assert features["observation.images.top"]["shape"] == (3, 240, 320)
