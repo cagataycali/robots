@@ -168,3 +168,64 @@ def test_no_autoconfig_for_joint_position():
     p.set_sim_context(model, "allegro/")
     assert p._ee_frame_name is None, "should NOT auto-config IK for joint_position"
     print("✅ joint_position: no IK auto-config (correct)")
+
+
+def test_discover_without_namespace_scopes_whole_model():
+    """namespace=None discovers across the whole model (unscoped).
+
+    With no namespace the scoping/basename helpers must accept every name as-is,
+    so a TCP-like site is still found in a single-robot world that ships no
+    ``<robot>/`` prefix.
+    """
+    from strands_robots.policies.vera import ee_frame
+
+    bodies = ["world", "link0", "hand"]
+    sites = ["attachment_site"]
+    model = _install_fake_mujoco(bodies, sites, {1: 0, 2: 1})
+    found = ee_frame.discover_ee_frame(model)  # namespace defaults to None
+    assert found == ("attachment_site", "site"), found
+
+
+def test_discover_returns_none_when_mujoco_unimportable(monkeypatch):
+    """When ``mujoco`` is not importable, discovery degrades to None.
+
+    The IK target is only meaningful with the sim stack present; a missing
+    ``mujoco`` must not raise out of discovery — the caller falls back to an
+    explicit frame.
+    """
+    from strands_robots.policies.vera import ee_frame
+
+    monkeypatch.setitem(sys.modules, "mujoco", None)
+    assert ee_frame.discover_ee_frame(object(), "panda/") is None
+
+
+def test_discover_returns_none_when_no_bodies_in_namespace():
+    """No hinted site/body and no in-namespace body -> warn and return None.
+
+    Nothing under the ``panda/`` namespace means the leaf-body fallback has no
+    candidates, so discovery returns None rather than picking an out-of-namespace
+    body.
+    """
+    from strands_robots.policies.vera import ee_frame
+
+    bodies = ["world"]  # only the world body; nothing under 'panda/'
+    sites = []
+    model = _install_fake_mujoco(bodies, sites, {})
+    assert ee_frame.discover_ee_frame(model, "panda/") is None
+
+
+def test_discover_returns_none_when_chain_has_no_leaf():
+    """A cyclic parent chain yields no leaf body -> discovery returns None.
+
+    If every in-namespace body is some other in-namespace body's parent there is
+    no kinematic-chain tail to mount a tool on, so discovery declines instead of
+    guessing.
+    """
+    from strands_robots.policies.vera import ee_frame
+
+    # Two namespaced bodies that are each other's parent: no leaf exists, and
+    # neither name carries a tool/site hint.
+    bodies = ["robot/a", "robot/b"]
+    sites = []
+    model = _install_fake_mujoco(bodies, sites, {0: 1, 1: 0})
+    assert ee_frame.discover_ee_frame(model, "robot/") is None
