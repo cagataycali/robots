@@ -23,6 +23,7 @@ extra; the missing-dependency path is asserted precisely *because* it is absent.
 from __future__ import annotations
 
 import importlib
+import sys
 from typing import Any
 
 import numpy as np
@@ -676,3 +677,93 @@ def test_type_error_without_introspectable_signature_falls_back(
     text = _texts(result)
     _assert_ascii(text)
     assert "TypeError" in text
+
+
+# ----------------------------------------------------------------------------
+# Graceful degradation: optional deps absent or an image codec refuses a frame
+#
+# use_lerobot is the agent's primary, blind access path into lerobot. When an
+# optional dependency (lerobot / numpy / cv2) is missing, or an image codec
+# refuses a frame, the tool must degrade to a structured error or a clean
+# structural result -- never raise past the dispatcher or emit a half-built
+# content block. These pin that contract by simulating each dependency as
+# absent via ``sys.modules[name] = None``, which makes the corresponding
+# ``import`` raise ImportError exactly as it would on a host without the extra.
+# ----------------------------------------------------------------------------
+
+
+def test_discovery_reports_clean_error_when_lerobot_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Discovery surfaces a structured 'not installed' error -- not a
+    traceback -- when the lerobot package cannot be imported."""
+    monkeypatch.setitem(sys.modules, "lerobot", None)
+    result = _fn(module="__discovery__")
+    assert result["status"] == "error"
+    text = _texts(result)
+    _assert_ascii(text)
+    assert "lerobot not installed" in text
+
+
+def test_is_image_array_false_without_numpy(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Image detection returns False (not an exception) when numpy is absent."""
+    monkeypatch.setitem(sys.modules, "numpy", None)
+    assert M._is_image_array(object()) is False
+
+
+def test_serialize_value_survives_without_numpy(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The serializer still renders plain-Python structures when numpy is
+    absent, falling through its numpy fast-path instead of raising."""
+    payload = [1, "two", {"three": 3}]
+    monkeypatch.setitem(sys.modules, "numpy", None)
+    assert M._serialize_value(payload) == [1, "two", {"three": 3}]
+
+
+def test_array_to_image_block_none_without_cv2(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Without cv2 there is no encoder, so the image block is dropped (None)
+    rather than crashing result assembly."""
+    frame = np.zeros((400, 400, 3), dtype=np.uint8)
+    monkeypatch.setitem(sys.modules, "cv2", None)
+    assert M._array_to_image_block(frame) is None
+
+
+def test_array_to_image_block_falls_back_to_png_when_jpeg_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A large opaque frame prefers JPEG, but when the JPEG encoder refuses the
+    frame the encoder retries as PNG instead of yielding nothing."""
+    import cv2
+
+    real_imencode = cv2.imencode
+
+    def fake_imencode(ext: str, img: Any, *args: Any) -> tuple[bool, Any]:
+        if ext == ".jpg":
+            return False, np.empty(0, dtype=np.uint8)
+        return real_imencode(ext, img, *args)
+
+    monkeypatch.setattr(cv2, "imencode", fake_imencode)
+    frame = np.zeros((400, 400, 3), dtype=np.uint8)  # > 320x240 -> JPEG preferred
+    block = M._array_to_image_block(frame)
+    assert block is not None
+    assert block["image"]["format"] == "png"
+
+
+def test_array_to_image_block_none_when_encoder_refuses_frame(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If every codec refuses the frame, the encoder yields None instead of a
+    malformed content block."""
+    import cv2
+
+    monkeypatch.setattr(cv2, "imencode", lambda *a, **k: (False, np.empty(0, dtype=np.uint8)))
+    frame = np.zeros((64, 64, 3), dtype=np.uint8)  # small -> PNG path
+    assert M._array_to_image_block(frame) is None
+
+
+def test_collect_images_stops_at_depth_limit() -> None:
+    """Image collection does not recurse past two container levels, so a frame
+    nested too deep is ignored rather than walked indefinitely."""
+    blocks: list[dict[str, Any]] = []
+    frame = np.zeros((64, 64, 3), dtype=np.uint8)
+    M._collect_images(frame, blocks, _depth=3)
+    assert blocks == []
