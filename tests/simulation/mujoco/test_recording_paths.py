@@ -720,3 +720,117 @@ def test_save_episode_empty_buffer_is_idempotent(sim_with_one_robot, tmp_path):
     assert "no frames" in r["content"][0]["text"]
 
     sim.stop_recording()
+
+
+def test_reset_flushes_pending_recording_episode(sim_with_one_robot, tmp_path):
+    """Episode-boundary regression: ``reset()`` during an active recording
+    flushes the buffered rollout as its own episode.
+
+    A ``run_policy`` + ``reset`` collection loop (the natural multi-episode
+    pattern, since ``n_episodes`` is an ``eval_policy`` param, not a
+    ``run_policy`` one) must not silently merge every rollout into a single
+    ``episode_index=0``. Pre-fix the recorder buffered all N rollouts together
+    and ``stop_recording`` flushed them as ONE giant episode
+    (``total_episodes == 1`` for 20 rollouts). ``reset()`` now flushes the
+    pending frames as an episode boundary first, so the dataset records one
+    episode per rollout with clean ``from_index``/``to_index`` ranges.
+    """
+    from strands_robots.dataset_recorder import has_lerobot_dataset
+
+    if not has_lerobot_dataset():
+        pytest.skip("lerobot not installed")
+
+    sim = sim_with_one_robot
+    root = str(tmp_path / "reset_flush")
+    r = sim.start_recording(repo_id="local/reset_flush", fps=20, root=root, overwrite=True)
+    assert r["status"] == "success", r
+
+    n_episodes = 4
+    for i in range(n_episodes):
+        rp = sim.run_policy(
+            robot_name="arm",
+            policy_provider="mock",
+            instruction=f"ep{i}",
+            n_steps=5,
+            control_frequency=20.0,
+            fast_mode=True,
+        )
+        assert rp["status"] == "success", rp
+        # reset() between rollouts is the episode boundary - it flushes the
+        # buffered frames and reports the saved episode in its message.
+        rr = sim.reset()
+        assert rr["status"] == "success", rr
+        assert f"Episode {i + 1} saved" in rr["content"][0]["text"]
+
+    # The final reset already flushed the last rollout, so stop_recording has
+    # nothing left to flush and just finalizes.
+    r = sim.stop_recording()
+    assert r["status"] == "success", r
+
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+    ds = LeRobotDataset(repo_id="local/reset_flush", root=root)
+    assert ds.meta.total_episodes == n_episodes, f"expected {n_episodes} episodes, got {ds.meta.total_episodes}"
+    lengths = [ds.meta.episodes[ep]["length"] for ep in range(n_episodes)]
+    assert all(length == 5 for length in lengths), f"episode lengths: {lengths}"
+    assert ds.meta.total_frames == sum(lengths) == n_episodes * 5
+
+
+def test_reset_without_recording_does_not_flush(sim_with_one_robot):
+    """``reset()`` outside an active recording session behaves exactly as
+    before - a plain world reset with no episode-flush note. Guards against the
+    auto-flush leaking into the non-recording path.
+    """
+    sim = sim_with_one_robot
+    sim.run_policy(
+        robot_name="arm",
+        policy_provider="mock",
+        n_steps=3,
+        control_frequency=20.0,
+        fast_mode=True,
+    )
+    r = sim.reset()
+    assert r["status"] == "success", r
+    assert r["content"][0]["text"] == "Reset to initial state."
+
+
+def test_reset_empty_buffer_during_recording_does_not_create_episode(sim_with_one_robot, tmp_path):
+    """A ``reset()`` while recording but with NO buffered frames (e.g. two
+    resets in a row, or a reset right after start_recording) must not flush a
+    spurious empty episode - save_episode is a no-op on an empty buffer.
+    """
+    from strands_robots.dataset_recorder import has_lerobot_dataset
+
+    if not has_lerobot_dataset():
+        pytest.skip("lerobot not installed")
+
+    sim = sim_with_one_robot
+    root = str(tmp_path / "reset_empty")
+    assert sim.start_recording(repo_id="local/reset_empty", fps=20, root=root, overwrite=True)["status"] == "success"
+
+    # reset with empty buffer -> plain reset, no flush note.
+    r1 = sim.reset()
+    assert r1["status"] == "success"
+    assert r1["content"][0]["text"] == "Reset to initial state."
+
+    sim.run_policy(
+        robot_name="arm",
+        policy_provider="mock",
+        n_steps=5,
+        control_frequency=20.0,
+        fast_mode=True,
+    )
+    # First reset after a rollout flushes episode 1.
+    r2 = sim.reset()
+    assert "Episode 1 saved" in r2["content"][0]["text"]
+    # Second consecutive reset has nothing buffered -> no new episode.
+    r3 = sim.reset()
+    assert r3["content"][0]["text"] == "Reset to initial state."
+
+    assert sim.stop_recording()["status"] == "success"
+
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+    ds = LeRobotDataset(repo_id="local/reset_empty", root=root)
+    assert ds.meta.total_episodes == 1, f"expected 1 episode, got {ds.meta.total_episodes}"
+    assert ds.meta.total_frames == 5

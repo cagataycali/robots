@@ -34,12 +34,33 @@ sim.stop_recording()          # flushes any trailing rollout automatically
 # -> 20 episodes, each with its own episode_index / length / from_index / to_index
 ```
 
-Without the `save_episode()` call, all 20 rollouts append to the same buffer and
-`stop_recording` flushes them as a single `episode_index=0` (1200 steps in one
-episode). `save_episode` is idempotent on an empty buffer, so it is safe to call
+`save_episode` is idempotent on an empty buffer, so it is safe to call
 unconditionally inside a loop. LeRobot computes `stats.json` per episode and then
 aggregates, so per-rollout boundaries keep dataset statistics correct across the
 `reset()` teleport between rollouts.
+
+`reset()` is itself an episode boundary during a recording: if frames are
+buffered when you call it, `reset()` flushes them as their own episode before
+re-initializing the world (it reports the saved episode in its result text).
+This means a bare `run_policy` + `reset` collection loop already produces one
+episode per rollout - the explicit `save_episode()` is optional when you reset
+between rollouts:
+
+```python
+sim.start_recording(repo_id="user/my_dataset", task="pick up the cube", fps=30)
+for _ in range(20):
+    sim.run_policy(robot_name="so100", instruction="pick up the cube",
+                   policy_provider="mock", n_steps=60)
+    sim.reset()               # flushes this rollout as one episode, then resets
+sim.stop_recording()          # flushes any trailing rollout automatically
+# -> 20 episodes
+```
+
+Without either an explicit `save_episode()` or a `reset()` between rollouts, all
+20 rollouts append to the same buffer and `stop_recording` flushes them as a
+single `episode_index=0` (1200 steps in one episode). To DISCARD a partial
+rollout instead of flushing it on the next `reset()`, call
+`clear_episode_buffer()` first.
 
 ## Recording paths
 

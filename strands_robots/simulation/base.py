@@ -899,7 +899,7 @@ class SimEngine(ABC):
                 "start_policy": "(robot_name: str, policy_provider='mock', ...) -> dict",
                 "list_robots": "() -> list[str]",
                 "render": "(camera_name='default', width=None, height=None) -> dict",
-                "reset": "() -> dict",
+                "reset": "() -> dict  # during recording, flushes the buffered rollout as one episode before resetting",
                 "step": "(n_steps: int = 1) -> dict",
             },
             "note": (

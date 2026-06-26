@@ -5,6 +5,34 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: `reset()` during recording flushes the buffered rollout as an episode
+
+A `run_policy` + `reset` data-collection loop silently merged every rollout into
+a single `episode_index=0`: `meta/info.json` reported `total_episodes: 1` and the
+episodes parquet held one row even after N distinct rollouts, because the
+recorder buffered all rollouts together and only `stop_recording` flushed them.
+Downstream training/eval that slices by episode then saw one giant episode
+instead of N. `run_policy` alone does not delimit episodes, and `reset` (the
+natural between-rollout boundary, since `n_episodes` is an `eval_policy` param,
+not a `run_policy` one) did not either.
+
+- `Simulation.reset()` now flushes a pending recording episode before
+  re-initializing the world: when a recording is active and the recorder has
+  buffered frames, `reset` calls `save_episode()` first and reports the saved
+  episode in its result text. This mirrors `stop_recording`, which already
+  auto-flushes the trailing episode.
+- `save_episode()` remains the explicit boundary primitive; it is a no-op on an
+  empty buffer, so `reset` calls that are not preceded by recorded frames (two
+  resets in a row, a reset right after `start_recording`, or `eval_policy`'s
+  internal per-episode resets, which do not feed the recorder) create no
+  spurious empty episodes.
+- To DISCARD a partial rollout instead of flushing it, call
+  `clear_episode_buffer()` before `reset()`.
+- Regression tests pin one-episode-per-rollout for a `run_policy` + `reset`
+  loop, the empty-buffer no-op, and the unchanged non-recording reset path; they
+  fail on pre-fix code (`total_episodes == 1`).
+
+
 ### Added: stream a Hub dataset into the LeRobot trainer (no full download)
 
 `TrainSpec` and the `train_policy` tool gained a `streaming` flag and a

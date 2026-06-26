@@ -1603,6 +1603,33 @@ class MuJoCoSimEngine(
         # reset during a running policy races mj_step -> SEGFAULT risk
         if err := self._require_no_running_policy("reset"):
             return err
+
+        # A reset re-initializes the world, which is the start of a new
+        # rollout. If a recording is active with buffered (unsaved) frames,
+        # flush them as their own episode BEFORE the teleport mixes the next
+        # rollout into the same buffer. Without this, a run_policy + reset
+        # collection loop silently merges every rollout into a single
+        # episode_index=0 (total_episodes stuck at 1) - a data-integrity bug
+        # for downstream training/eval that slices by episode. This mirrors
+        # stop_recording, which already auto-flushes the trailing episode.
+        # save_episode() is a no-op on an empty buffer, so resets that are not
+        # preceded by recorded frames (e.g. eval_policy's internal per-episode
+        # resets, which do not feed the recorder) are unaffected. To DISCARD a
+        # partial rollout instead of flushing it, call clear_episode_buffer()
+        # before reset().
+        flush_note = ""
+        if self._world._backend_state.get("recording", False):
+            recorder = self._world._backend_state.get("dataset_recorder")
+            pending = getattr(recorder, "episode_frame_count", 0) if recorder is not None else 0
+            if pending > 0:
+                save_result = self.save_episode()
+                if save_result.get("status") != "success":
+                    # save_episode failed -> the recorder poisoned itself and
+                    # the facade already cleared the recording flag. Surface
+                    # the failure rather than resetting into an undefined state.
+                    return save_result
+                flush_note = save_result["content"][0]["text"] + " "
+
         mj = self._mj
         with self._lock:
             mj.mj_resetData(self._world._model, self._world._data)
@@ -1614,7 +1641,7 @@ class MuJoCoSimEngine(
             for r in self._world.robots.values():
                 r.policy_running = False
                 r.policy_steps = 0
-        return {"status": "success", "content": [{"text": "Reset to initial state."}]}
+        return {"status": "success", "content": [{"text": f"{flush_note}Reset to initial state."}]}
 
     def get_state(self) -> dict[str, Any]:
         if self._world is None or self._world._model is None or self._world._data is None:
