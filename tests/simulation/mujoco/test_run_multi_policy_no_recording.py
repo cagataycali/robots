@@ -276,3 +276,56 @@ def test_run_multi_policy_cooperative_stop_ends_early(sim_two_robots):
     # Running flags are cleared on the way out regardless of early stop.
     for name in ("alpha", "beta"):
         assert sim._world.robots[name].policy_running is False
+
+
+class _ChunkedCounter(Policy):
+    """Chunk-emitting policy that declares the ``ChunkedPolicy`` contract.
+
+    Unlike ``_ChunkCounter`` it exposes ``actions_per_step`` (its trained chunk
+    length) and ``supports_rtc``, so the synchronized loop must consume the full
+    chunk before re-querying - exactly as the single-policy runner does.
+    """
+
+    requires_images = False
+
+    def __init__(self, actions_per_step: int = 10):
+        self.actions_per_step = actions_per_step
+        self.supports_rtc = False
+        self.calls = 0
+        self._keys: list[str] | None = None
+
+    def set_robot_state_keys(self, keys):
+        self._keys = list(keys)
+
+    @property
+    def provider_name(self) -> str:
+        return "chunked_counter"
+
+    async def get_actions(self, obs, instruction=""):
+        self.calls += 1
+        keys = self._keys or ["shoulder_pan", "shoulder_lift", "elbow"]
+        return [{k: 0.02 * (j + 1) for k in keys} for j in range(self.actions_per_step)]
+
+
+def test_run_multi_policy_honors_policy_chunk_length_over_smaller_horizon(sim_two_robots):
+    """A chunk-emitting policy keeps its full trained chunk in the synchronized loop.
+
+    With ``actions_per_step=10`` and a smaller ``action_horizon=2`` over 20
+    steps, each policy must run inference exactly twice (ceil(20/10)) - the loop
+    consumes ``max(action_horizon, actions_per_step) == 10`` actions per chunk,
+    matching ``run_policy``. Before the shared chunk-length rule, the loop
+    truncated to ``action_horizon`` alone (re-query every 2 steps -> 10 calls),
+    dropping the chunk tail and forcing out-of-distribution re-queries that the
+    single-policy runner never makes.
+    """
+    sim = sim_two_robots
+    pa, pb = _ChunkedCounter(actions_per_step=10), _ChunkedCounter(actions_per_step=10)
+    r = sim.run_multi_policy(
+        policies={"alpha": pa, "beta": pb},
+        n_steps=20,
+        control_frequency=50.0,
+        action_horizon=2,
+    )
+    assert r["status"] == "success", r
+    assert pa.calls == 2
+    assert pb.calls == 2

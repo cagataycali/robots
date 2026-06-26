@@ -34,7 +34,7 @@ Usage::
     register_policy("my_provider", lambda: MyPolicy, aliases=["my"])
 """
 
-from strands_robots.policies.base import Policy
+from strands_robots.policies.base import ChunkedPolicy, Policy, resolve_chunk_length
 
 # Cosmos3Policy is import-safe: it depends only on numpy. The WebSocket
 # client uses a self-contained msgpack+websockets transport (no
@@ -50,6 +50,8 @@ from strands_robots.policies.mock import MockPolicy
 
 __all__ = [
     "Policy",
+    "ChunkedPolicy",
+    "resolve_chunk_length",
     "MockPolicy",
     "Cosmos3Policy",
     "create_policy",

@@ -2381,7 +2381,13 @@ class MuJoCoSimEngine(
                 returned chunk before re-querying it (open-loop chunk
                 execution, mirrors ``run_policy``). Either a single int applied
                 to all robots, or a ``{robot_name: horizon}`` mapping for
-                per-robot control. A robot's policy is only re-queried when its
+                per-robot control. The effective per-robot chunk length is
+                ``max(action_horizon, policy.actions_per_step)`` (see
+                ``strands_robots.policies.resolve_chunk_length``): a
+                chunk-emitting policy keeps its full trained chunk even when
+                ``action_horizon`` is smaller, identical to ``run_policy``, so a
+                model is never re-queried out-of-distribution in one driver but
+                not the other. A robot's policy is only re-queried when its
                 action queue drains - so an expensive VLA emitting a 30-action
                 chunk with ``action_horizon=30`` runs inference ~once per 30
                 steps instead of every step. Physics still advances ONE step per
@@ -2396,6 +2402,7 @@ class MuJoCoSimEngine(
         import numpy as np
 
         from strands_robots._async_utils import _resolve_coroutine
+        from strands_robots.policies.base import resolve_chunk_length
 
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -2538,8 +2545,15 @@ class MuJoCoSimEngine(
                         pol_obs.update(camera_imgs)
                         coro = pol.get_actions(pol_obs, instr_map[rname])
                         acts = _resolve_coroutine(coro)
-                        # Buffer up to this robot's horizon; re-query when drained.
-                        for a in acts[: horizon_map[rname]]:
+                        # Buffer the policy's chunk; re-query only when drained.
+                        # Size the chunk via the shared ChunkedPolicy rule so a
+                        # chunk-emitting policy (actions_per_step == N) keeps its
+                        # full trained chunk here exactly as the single-policy
+                        # runner does - clamping to action_horizon alone would
+                        # drop the chunk tail and force an out-of-distribution
+                        # re-query for one driver but not the other.
+                        _chunk = resolve_chunk_length(pol, horizon_map[rname])
+                        for a in acts[:_chunk]:
                             action_queues[rname].append(a)
                     if not action_queues[rname]:
                         # A policy yielded no actions (empty chunk) -- emitting an

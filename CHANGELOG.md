@@ -5,6 +5,40 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Internal Refactor: unified chunk-length rule across all policy runners (`ChunkedPolicy`)
+
+A chunk-emitting policy (ACT, diffusion, pi0, SmolVLA, MolmoAct2) returns N
+actions per `get_actions` call and expects all N consumed open-loop before a
+re-query. Three consumers sized that chunk independently and had drifted: the
+single-policy `PolicyRunner.run` and the multi-episode eval loop consumed
+`max(action_horizon, policy.actions_per_step)`, but the synchronized
+`run_multi_policy` loop truncated to `action_horizon` alone. A chunk-emitting
+policy driven through `run_multi_policy` therefore had its chunk tail dropped
+and was re-queried out-of-distribution (e.g. an `actions_per_step=30` policy run
+with the default `action_horizon=8` re-queried every 8 steps instead of 30),
+diverging from `run_policy` for the same policy.
+
+- New `ChunkedPolicy` runtime-checkable `Protocol` in
+  `strands_robots.policies.base` declares the chunk introspection contract
+  (`actions_per_step: int`, `supports_rtc: bool`). Consumers can branch on
+  `isinstance(policy, ChunkedPolicy)` and a type checker rejects a non-chunked
+  policy where a chunked one is required.
+- New `resolve_chunk_length(policy, action_horizon)` helper centralizes the one
+  chunk-sizing rule (`max(action_horizon, actions_per_step)`, single-action
+  policies default to 1). `PolicyRunner.run`, the multi-episode eval loop, and
+  `run_multi_policy` now all route through it, so the rule can no longer drift
+  per consumer.
+- `run_multi_policy` now honours a policy's `actions_per_step`, matching
+  `run_policy`. A chunk-emitting policy keeps its full trained chunk in the
+  synchronized multi-robot loop.
+- `LerobotLocalPolicy` exposes `supports_rtc` publicly (over its internal RTC
+  state) so it satisfies the `ChunkedPolicy` contract; `actions_per_step` was
+  already public.
+- Behaviour is unchanged for single-action policies (`mock` and friends) and
+  for `run_policy`, whose chunk sizing was already correct. `ChunkedPolicy` and
+  `resolve_chunk_length` are exported from `strands_robots.policies`.
+
+
 ### Added: `async_rtc` chunk pipeline for `run_policy` (overlap inference with execution)
 
 `run_policy` / `PolicyRunner.run` drove policies through a synchronous

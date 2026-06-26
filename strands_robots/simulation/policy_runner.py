@@ -42,6 +42,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from strands_robots._async_utils import _resolve_coroutine
+from strands_robots.policies.base import resolve_chunk_length
 from strands_robots.utils import require_optional
 
 if TYPE_CHECKING:
@@ -567,7 +568,7 @@ class PolicyRunner:
                 # auto-detect of config.n_action_steps).
                 coro_or_result = policy.get_actions(observation, instruction, **_policy_kwargs)
                 actions = _resolve_coroutine(coro_or_result)
-                _chunk = max(action_horizon, getattr(policy, "actions_per_step", 1))
+                _chunk = resolve_chunk_length(policy, action_horizon)
                 return list(actions[:_chunk])
 
             if async_rtc:
@@ -1194,7 +1195,7 @@ class PolicyRunner:
                     # Degenerate policy - advance physics so loop terminates.
                     self.sim.step(n_steps=1)
                 else:
-                    _chunk = max(action_horizon, getattr(policy, "actions_per_step", 1))
+                    _chunk = resolve_chunk_length(policy, action_horizon)
                     for action_in_chunk in actions[:_chunk]:
                         if steps >= max_steps:
                             break

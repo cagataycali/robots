@@ -24,7 +24,7 @@ non-VLA reference implementation.
 import asyncio
 import concurrent.futures
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 
 class Policy(ABC):
@@ -172,3 +172,78 @@ class Policy(ABC):
     def provider_name(self) -> str:
         """Get provider name for identification."""
         pass
+
+
+@runtime_checkable
+class ChunkedPolicy(Protocol):
+    """Introspection contract for policies that emit ACTION CHUNKS.
+
+    A *chunked* policy returns more than one action per
+    :meth:`Policy.get_actions` call: a model trained for N-step open-loop replay
+    (ACT, diffusion, pi0, SmolVLA, MolmoAct2) emits a length-N chunk that a
+    consumer executes before re-querying. The chunk PRODUCER is the existing
+    async :meth:`Policy.get_actions` - this protocol deliberately does NOT add a
+    second chunk-producing method (that would split one contract across two
+    code paths); it only surfaces the metadata a consumer needs to drive an
+    already-produced chunk correctly.
+
+    Every consumer of a chunk (the single-policy runner, the multi-episode eval
+    loop, and the synchronized multi-robot loop) must size the chunk the same
+    way - see :func:`resolve_chunk_length`. Routing all of them through one
+    helper that reads this contract keeps a chunk-emitting policy from being
+    truncated differently depending on which loop happens to drive it.
+
+    The protocol is ``runtime_checkable`` so a consumer can branch on
+    ``isinstance(policy, ChunkedPolicy)`` and a type checker rejects a
+    non-chunked policy where a chunked one is required.
+
+    Attributes:
+        actions_per_step: Number of actions the policy intends a consumer to
+            execute open-loop from one ``get_actions`` chunk before re-querying
+            (the policy's trained chunk length). Truncating below this drops the
+            chunk tail and forces an out-of-distribution re-query.
+        supports_rtc: Whether the policy blends chunk seams internally via
+            Real-Time Chunking - it carries prev-chunk state across re-queries
+            so consecutive chunks join smoothly. Introspection only; a consumer
+            never has to drive RTC, the policy does it inside ``get_actions``.
+    """
+
+    actions_per_step: int
+    supports_rtc: bool
+
+
+def resolve_chunk_length(policy: "Policy", action_horizon: int) -> int:
+    """Effective number of actions to consume from one ``get_actions`` chunk.
+
+    Centralizes the single chunk-length rule every consumer must apply
+    identically: consume ``max(action_horizon, policy.actions_per_step)``
+    actions before re-querying. A policy trained for N-step open-loop replay
+    (``actions_per_step == N``) must have its FULL chunk consumed; clamping to a
+    smaller ``action_horizon`` drops the chunk tail and forces an
+    out-of-distribution re-query. Policies that do not declare
+    ``actions_per_step`` (single-action providers such as ``MockPolicy``) behave
+    as a 1-action chunk, so the result is just ``max(action_horizon, 1)``.
+
+    Before this helper existed each consumer inlined the same
+    ``max(action_horizon, getattr(policy, "actions_per_step", 1))`` expression,
+    and they drifted: the synchronized multi-robot loop truncated to
+    ``action_horizon`` alone, silently dropping a chunk-emitting policy's tail
+    while the single-policy runner consumed the full chunk.
+
+    Args:
+        policy: Any policy. Its chunk length is read from the optional
+            :class:`ChunkedPolicy` ``actions_per_step`` attribute; a policy that
+            does not declare it is treated as single-action.
+        action_horizon: Consumer-requested actions per chunk (clamped to >= 1).
+
+    Returns:
+        The number of leading chunk actions to execute before re-querying.
+    """
+    intended = getattr(policy, "actions_per_step", 1)
+    try:
+        intended_int = int(intended)
+    except (TypeError, ValueError):
+        intended_int = 1
+    if intended_int < 1:
+        intended_int = 1
+    return max(int(action_horizon), 1, intended_int)

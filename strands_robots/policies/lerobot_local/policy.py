@@ -207,6 +207,21 @@ class LerobotLocalPolicy(Policy):
     def provider_name(self) -> str:
         return "lerobot_local"
 
+    @property
+    def supports_rtc(self) -> bool:
+        """Whether Real-Time Chunking is active for the loaded policy.
+
+        Surfaces the internal RTC state as the public ``ChunkedPolicy`` contract
+        attribute (see ``strands_robots.policies.base.ChunkedPolicy``). ``True``
+        only after a flow-matching policy with an enabled ``rtc_config`` has been
+        loaded - it carries prev-chunk state across re-queries to blend chunk
+        seams internally, so a consumer never has to drive RTC itself. Returns
+        ``False`` before a model is loaded or for non-flow-matching policies
+        (ACT, diffusion), which still emit chunks (``actions_per_step``) but do
+        not blend seams.
+        """
+        return self._rtc_enabled
+
     def reset(self, seed: int | None = None) -> None:
         """Reset policy state between episodes.
 
