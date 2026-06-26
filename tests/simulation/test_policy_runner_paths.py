@@ -159,7 +159,10 @@ def test_replay_reads_actions_without_video_decode(monkeypatch):
             return 3
 
         def __getitem__(self, idx):
-            raise RuntimeError("Could not load libtorchcodec (video decode failed)")
+            # __getitem__ failing a row lookup raises LookupError (the
+            # standard exception for indexing failures); the real decoder
+            # error is carried in the message. replay() catches it broadly.
+            raise LookupError("Could not load libtorchcodec (video decode failed)")
 
     def loader(repo_id, episode, root):
         return _VideoDecodeBroken(), 0, 3
@@ -186,7 +189,8 @@ def test_replay_frame_read_failure_returns_error_dict(monkeypatch):
             return 2
 
         def __getitem__(self, idx):
-            raise RuntimeError("corrupt frame")
+            # Failed row lookup -> LookupError (standard for __getitem__).
+            raise LookupError("corrupt frame")
 
     def loader(repo_id, episode, root):
         return _NoColumnStoreBroken(), 0, 2
