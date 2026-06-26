@@ -564,7 +564,7 @@ class VeraPolicy(Policy):
         bodies, multiple robots) present in the scene. Cached per model id.
         """
         cache = getattr(self, "_qpos_addr_cache", None)
-        if cache is not None and cache[0] is id(mj_model):
+        if cache is not None and cache[0] == id(mj_model):
             return cache[1]
 
         addr: dict[str, int] = {}
