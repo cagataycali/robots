@@ -385,6 +385,39 @@ class RecordingMixin:
         # — streaming/training downstream needs it (App. F.2).
         recorder.finalize()
 
+        # #708 - parquet-truth gate. The recorder's ``episode_count`` is the
+        # author-side bookkeeping (incremented by every ``save_episode`` call).
+        # The dataset's own ``meta.total_episodes`` / parquet rowcount is what
+        # downstream consumers (HF hub, training loaders, audit tools) trust.
+        # If they disagree, the on-disk dataset is the source of truth (Law-7
+        # in AGENTS.md: parquet num_rows > meta/info.json > markdown). Surface
+        # the mismatch in the returned payload so the caller — and any CI that
+        # parses the status dict — can fail loudly instead of shipping a
+        # silent-collapse dataset.
+        parquet_episode_count: int | None = None
+        episode_count_mismatch: bool = False
+        episode_count_mismatch_orig: int = episode_count
+        try:
+            ds_meta = getattr(getattr(recorder, "dataset", None), "meta", None)
+            if ds_meta is not None:
+                parquet_episode_count = int(getattr(ds_meta, "total_episodes", 0))
+                if parquet_episode_count != episode_count:
+                    episode_count_mismatch = True
+                    logger.warning(
+                        "stop_recording: recorder.episode_count=%d but "
+                        "dataset.meta.total_episodes=%d. Trust the parquet. "
+                        "(#708 silent-collapse gate)",
+                        episode_count,
+                        parquet_episode_count,
+                    )
+                    # The parquet is the ground truth - report it as the
+                    # canonical episode_count downstream. Stash the original
+                    # recorder.episode_count so the text payload can name both.
+                    episode_count_mismatch_orig = episode_count
+                    episode_count = parquet_episode_count
+        except Exception as e:  # noqa: BLE001 - never fail finalize on a probe
+            logger.debug("episode_count gate probe failed: %s", e)
+
         extra = ""
         # Bucket sync (Phase 1/2): mutable, Xet-deduped collection dump.
         if bucket:
@@ -404,13 +437,40 @@ class RecordingMixin:
         self._world._backend_state["dataset_recorder"] = None
         self._world._backend_state["trajectory"] = []
 
+        # #708 - if recorder.episode_count and parquet disagree, surface
+        # it in the human-readable text too so an operator scanning the
+        # status log sees the gate firing.
+        if episode_count_mismatch:
+            text_episode_note = (
+                f"\n[#708 gate] recorder reported {episode_count_mismatch_orig} "
+                f"episodes but parquet has {episode_count}. Trusting parquet."
+            )
+        else:
+            text_episode_note = ""
+
         text = (
             f"Episode saved to LeRobotDataset\n"
-            f"{repo_id} -- {frame_count} frames, {episode_count} episode(s)\n"
+            f"{repo_id} -- {frame_count} frames, {episode_count} episode(s)"
+            f"{text_episode_note}\n"
             f"Local: {root}{extra}"
         )
 
-        return {"status": "success", "content": [{"text": text}]}
+        return {
+            "status": "success",
+            "content": [
+                {"text": text},
+                {
+                    "json": {
+                        "repo_id": repo_id,
+                        "frame_count": frame_count,
+                        "episode_count": episode_count,
+                        "parquet_episode_count": parquet_episode_count,
+                        "episode_count_mismatch": episode_count_mismatch,
+                        "root": root,
+                    }
+                },
+            ],
+        }
 
     def save_episode(self) -> dict[str, Any]:
         """Close the current episode and start a fresh one in the same session.

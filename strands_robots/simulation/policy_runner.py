@@ -274,6 +274,55 @@ class PolicyRunner:
             return max(1, round((1.0 / control_frequency) / dt))
         return 1
 
+    # ------------------------------------------------------------------
+    # Recorder per-episode boundary (issue #708)
+    # ------------------------------------------------------------------
+    #
+    # The dataset_recorder attached to ``_world._backend_state`` keeps a single
+    # open LeRobot episode buffer. ``add_frame`` appends to that buffer; only
+    # ``save_episode`` rolls over to a new episode and bumps
+    # ``episode_count``. ``stop_recording`` flushes the last open episode but
+    # has no idea how many episodes the caller intended.
+    #
+    # Without this helper, every ``for ep in range(n_episodes):`` loop in
+    # ``evaluate`` / ``_evaluate_with_spec`` records ONE giant episode of
+    # ``n_episodes * max_steps`` frames into the dataset. The agent sees
+    # ``total_episodes=1`` in the parquet meta but a status=OK summary
+    # because the recorder did receive frames. (#708 — silent collapse.)
+    #
+    # Calling this at the end of each policy-runner episode forces a per-
+    # episode boundary in the recorded dataset. Skipped silently when no
+    # recorder is attached (eval without recording is the common case).
+    def _finalize_recorder_episode(self) -> None:
+        """Roll the attached dataset_recorder over to a new episode.
+
+        Called at end of each rollout iteration in ``evaluate`` and
+        ``_evaluate_with_spec``. No-op when no recorder is attached or when
+        the episode buffer is empty (e.g. degenerate policy returned no
+        actions and ``add_frame`` was never called).
+        """
+        try:
+            recorder = self.sim._world._backend_state.get("dataset_recorder")
+        except AttributeError:
+            return
+        if recorder is None:
+            return
+        # Don't flush an empty buffer - LeRobot raises on save_episode with
+        # zero frames, and a degenerate rollout still counts as "no data" for
+        # this episode rather than an error.
+        pending = getattr(recorder, "episode_frame_count", 0)
+        if pending <= 0:
+            return
+        try:
+            result = recorder.save_episode()
+            if isinstance(result, dict) and result.get("status") != "success":
+                logger.warning(
+                    "Per-episode save_episode returned non-success: %s",
+                    result.get("message", result),
+                )
+        except Exception as e:  # noqa: BLE001 - recorder errors must not abort eval
+            logger.warning("Per-episode save_episode raised: %s", e)
+
     # run(): blocking policy execution
     def run(
         self,
@@ -970,6 +1019,10 @@ class PolicyRunner:
                     break
 
             results.append({"episode": ep, "steps": steps, "success": success})
+            # #708 - roll the attached recorder over to a new episode so the
+            # dataset records per-episode boundaries rather than collapsing
+            # every rollout into one mega-episode.
+            self._finalize_recorder_episode()
 
         n_success = sum(1 for r in results if r["success"])
         success_rate = n_success / max(n_episodes, 1)
@@ -1285,6 +1338,8 @@ class PolicyRunner:
                     "info": last_info,
                 }
             )
+            # #708 - same per-episode recorder boundary as evaluate().
+            self._finalize_recorder_episode()
 
         n_success = sum(1 for r in results if r["success"])
         n_failure = sum(1 for r in results if r["failure"])
