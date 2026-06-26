@@ -133,3 +133,82 @@ def test_chunked_policy_accepts_property_backed_attrs() -> None:
 @pytest.mark.parametrize("horizon,chunk,expected", [(8, 50, 50), (8, 1, 8), (1, 1, 1), (30, 30, 30)])
 def test_resolve_chunk_length_matrix(horizon: int, chunk: int, expected: int) -> None:
     assert resolve_chunk_length(MockChunkedPolicy(actions_per_step=chunk), horizon) == expected
+
+
+class MockRtcPolicy(Policy):
+    """Weight-free RTC policy: trained chunk of ``actions_per_step`` but a
+    smaller ``execution_horizon`` re-query interval.
+
+    Mirrors a flow-matching policy (pi0/SmolVLA) that emits a long chunk yet
+    must be re-queried every ``execution_horizon`` steps so it can blend the
+    previous chunk's unexecuted tail into the next one.
+    """
+
+    requires_images = False
+
+    def __init__(self, actions_per_step: int = 50, execution_horizon: int = 10) -> None:
+        self.actions_per_step = actions_per_step
+        self.supports_rtc = True
+        self._execution_horizon = execution_horizon
+        self.calls = 0
+        self._keys: list[str] = []
+
+    @property
+    def provider_name(self) -> str:
+        return "mock_rtc"
+
+    @property
+    def execution_horizon(self) -> int:
+        return self._execution_horizon
+
+    def set_robot_state_keys(self, robot_state_keys: list[str]) -> None:
+        self._keys = list(robot_state_keys)
+
+    async def get_actions(
+        self, observation_dict: dict[str, Any], instruction: str, **kwargs: Any
+    ) -> list[dict[str, Any]]:
+        self.calls += 1
+        keys = self._keys or ["j0", "j1", "j2"]
+        return [{k: 0.0 for k in keys} for _ in range(self.actions_per_step)]
+
+
+def test_execution_horizon_defaults_to_actions_per_step() -> None:
+    """A non-RTC chunked policy executes its full trained chunk per query."""
+    assert MockChunkedPolicy(actions_per_step=30).execution_horizon == 30
+
+
+def test_execution_horizon_single_action_default() -> None:
+    """A single-action policy has a one-action execution horizon."""
+    assert MockPolicy().execution_horizon == 1
+
+
+def test_resolve_chunk_length_rtc_uses_execution_horizon() -> None:
+    """RTC re-queries at execution_horizon, NOT the full trained chunk.
+
+    Regression for the silent ``max(action_horizon, actions_per_step)`` collide:
+    a policy trained for a 50-step chunk but with a 10-step RTC execution
+    horizon must be re-queried every 10 steps so its cross-chunk blending
+    engages. The old rule consumed all 50 and the blend never ran.
+    """
+    pol = MockRtcPolicy(actions_per_step=50, execution_horizon=10)
+    assert pol.execution_horizon == 10
+    assert pol.actions_per_step == 50
+    assert resolve_chunk_length(pol, action_horizon=8) == 10
+
+
+def test_resolve_chunk_length_rtc_ignores_user_horizon() -> None:
+    """The user cannot stretch an RTC policy's re-query interval.
+
+    Even a huge ``action_horizon`` must not push the interval past the policy's
+    execution horizon - otherwise ``prev_chunk_left_over`` stays empty and RTC
+    degrades to open-loop replay.
+    """
+    pol = MockRtcPolicy(actions_per_step=50, execution_horizon=10)
+    assert resolve_chunk_length(pol, action_horizon=999) == 10
+
+
+def test_resolve_chunk_length_nonrtc_unaffected_by_execution_horizon() -> None:
+    """Non-RTC chunked policies still consume the larger of horizon and chunk."""
+    pol = MockChunkedPolicy(actions_per_step=50)
+    assert resolve_chunk_length(pol, action_horizon=8) == 50
+    assert resolve_chunk_length(pol, action_horizon=80) == 80

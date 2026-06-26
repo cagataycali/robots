@@ -229,6 +229,28 @@ class LerobotLocalPolicy(Policy):
         """
         return self._rtc_enabled
 
+    @property
+    def execution_horizon(self) -> int:
+        """Actions the SIM executes from one chunk before re-querying.
+
+        Overrides :attr:`Policy.execution_horizon` to separate the inference-time
+        re-query budget from the trained chunk length (``actions_per_step``):
+
+        * RTC active -> the RTC execution horizon (``rtc_execution_horizon``,
+          default 10). The policy is re-queried mid-chunk so it blends the
+          unexecuted tail of the previous chunk (``prev_chunk_left_over``) into
+          the next - the whole point of Real-Time Chunking. Re-querying only
+          after the full trained chunk drains keeps that tail empty and silently
+          collapses RTC to open-loop replay.
+        * otherwise -> ``actions_per_step`` (the trained chunk, consumed whole).
+
+        Falls back to ``actions_per_step`` when RTC is enabled but the horizon
+        was never resolved (defensive; ``_init_rtc`` always sets it).
+        """
+        if self._rtc_enabled and self._rtc_execution_horizon:
+            return max(1, int(self._rtc_execution_horizon))
+        return max(1, int(self.actions_per_step))
+
     def reset(self, seed: int | None = None) -> None:
         """Reset policy state between episodes.
 
@@ -937,13 +959,16 @@ class LerobotLocalPolicy(Policy):
         # Estimate inference delay - how many steps were consumed while computing
         inference_delay = self._estimate_inference_delay()
 
-        # Store leftover for next RTC call (unconsumed portion of this chunk)
-        # The delay represents steps already consumed, so leftover starts after
-        # the steps we'll actually return
-        steps_to_consume = min(
-            max(self.actions_per_step, inference_delay + self.actions_per_step),
-            action_chunk.shape[0],
-        )
+        # Store leftover for next RTC call (unconsumed portion of this chunk).
+        # The consumer executes ``execution_horizon`` actions before re-querying
+        # (see Policy.execution_horizon / resolve_chunk_length), so the tail past
+        # that point - shifted by the steps already burned during inference - is
+        # what carries into the next chunk as ``prev_chunk_left_over``. Keying
+        # this on the full trained chunk (actions_per_step) emptied the tail
+        # whenever the chunk was consumed whole, so cross-chunk blending never
+        # engaged.
+        exec_horizon = self._rtc_execution_horizon or self.actions_per_step
+        steps_to_consume = min(inference_delay + max(1, int(exec_horizon)), action_chunk.shape[0])
         if steps_to_consume < action_chunk.shape[0]:
             self._rtc_prev_chunk = action_chunk[steps_to_consume:].detach()
         else:
@@ -1620,21 +1645,28 @@ class LerobotLocalPolicy(Policy):
             action_tensor: Raw action tensor from policy.select_action().
 
         Returns:
-            List of action dicts, length capped by actions_per_step.
+            List of action dicts, length capped by execution_horizon
+            (== actions_per_step except under RTC, where it is the RTC
+            execution horizon - the consumer re-queries at that interval).
 
         Raises:
             RuntimeError: If robot_state_keys is empty.
         """
         action_array = action_tensor.cpu().numpy()
 
-        # Normalize tensor shape to a list of 1D action arrays
+        # Normalize tensor shape to a list of 1D action arrays. Cap the chunk
+        # at execution_horizon (the re-query interval the consumer drives, via
+        # resolve_chunk_length) rather than the raw trained chunk length: under
+        # RTC these differ (execution_horizon << actions_per_step) and emitting
+        # more than the consumer will execute is wasted work past the seam.
+        _cap = self.execution_horizon
         if action_array.ndim == 1:
             actions_list = [action_array]
         elif action_array.ndim == 2:
-            actions_list = [action_array[i] for i in range(min(len(action_array), self.actions_per_step))]
+            actions_list = [action_array[i] for i in range(min(len(action_array), _cap))]
         elif action_array.ndim == 3:
             # Batched: take first batch element, then slice horizon
-            actions_list = [action_array[0, i] for i in range(min(action_array.shape[1], self.actions_per_step))]
+            actions_list = [action_array[0, i] for i in range(min(action_array.shape[1], _cap))]
         else:
             actions_list = [action_array.flatten()]
 

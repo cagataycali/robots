@@ -1280,6 +1280,47 @@ class TestRTCInference:
         assert policy._rtc_prev_chunk is not None
         assert policy._rtc_prev_chunk.dim() == 2
 
+    def test_predict_with_rtc_leftover_keyed_on_execution_horizon(self):
+        """Leftover is the chunk tail past execution_horizon, not actions_per_step.
+
+        Regression: when the consumer drained the FULL trained chunk
+        (actions_per_step == chunk length) the old bookkeeping set steps_to_consume
+        to the whole chunk, so ``_rtc_prev_chunk`` was always ``None`` and the
+        cross-chunk blend never received a previous-chunk tail. With the
+        execution-horizon contract the consumer re-queries every
+        execution_horizon steps, so the tail past that point must carry over.
+        """
+        policy = _make_policy()
+        policy._rtc_enabled = True
+        policy._rtc_execution_horizon = 10
+        policy._rtc_prev_chunk = None
+        policy.actions_per_step = 20  # full trained chunk == chunk length below
+
+        mock_policy = MagicMock()
+        mock_policy.predict_action_chunk.return_value = torch.randn(1, 20, 6)
+        policy._policy = mock_policy
+
+        policy._predict_with_rtc({})
+
+        # delay ~= 0 on the first call -> leftover starts at execution_horizon.
+        assert policy._rtc_prev_chunk is not None
+        assert policy._rtc_prev_chunk.shape == (10, 6)
+
+    def test_execution_horizon_prefers_rtc_over_actions_per_step(self):
+        """execution_horizon is the RTC horizon while RTC is active."""
+        policy = _make_policy()
+        policy.actions_per_step = 50
+        policy._rtc_enabled = True
+        policy._rtc_execution_horizon = 10
+        assert policy.execution_horizon == 10
+
+    def test_execution_horizon_falls_back_to_chunk_without_rtc(self):
+        """Without RTC, execution_horizon is the trained chunk length."""
+        policy = _make_policy()
+        policy.actions_per_step = 50
+        policy._rtc_enabled = False
+        assert policy.execution_horizon == 50
+
     def test_predict_with_rtc_tracks_latency(self):
         """RTC should track inference latency for delay estimation."""
         policy = _make_policy()

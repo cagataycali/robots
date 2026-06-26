@@ -237,6 +237,20 @@ overlap execution**: the controller fires the next inference while the current
 chunk is still being executed, so the model's latency is hidden behind motion
 rather than appearing as a stall at the seam.
 
+### Re-query interval: `execution_horizon`
+
+The SIM consumes `policy.execution_horizon` actions from each chunk before
+re-querying - the single source of truth for the re-query rate. For an RTC
+policy this is `rtc_execution_horizon` (default 10), **not** the trained chunk
+length (`actions_per_step`, auto-detected from the model, e.g. 50). Re-querying
+mid-chunk is what lets the policy receive its previous chunk's unexecuted tail
+(`prev_chunk_left_over`) and blend the seam; draining the full trained chunk
+first leaves that tail empty and silently degrades RTC to open-loop replay. The
+policy decides this interval - a caller-supplied `action_horizon` is ignored for
+RTC policies (it cannot stretch the interval and break blending). For non-RTC
+policies `execution_horizon == actions_per_step` and the consumer still takes
+`max(action_horizon, actions_per_step)` so the trained chunk is never truncated.
+
 ### Synchronous vs async chunk execution in sim
 
 `run_policy` / `PolicyRunner.run` accept an `async_rtc` flag controlling which
@@ -244,7 +258,7 @@ of those two RTC benefits the sim reproduces:
 
 | `async_rtc` | Behaviour | Use when |
 | --- | --- | --- |
-| `False` (default) | Query the policy, fully drain the returned chunk, then re-query. Seam blending still works, but inference and execution do **not** overlap. | Single-step policies, deterministic regression runs, or any policy whose `get_actions` reads live sim state. |
+| `False` (default) | Query the policy, drain `execution_horizon` actions (the full chunk for non-RTC; `rtc_execution_horizon` for RTC), then re-query. Seam blending works because the RTC policy is re-queried mid-chunk, but inference and execution do **not** overlap. | Single-step policies, deterministic regression runs, or any policy whose `get_actions` reads live sim state. |
 | `True` | While the current chunk drains, fire the next `get_actions` on a single background worker once the chunk is ~50% consumed (using a fresh mid-execution observation), then atomically swap it in. A policy whose inference latency is at most the chunk's execution window pays (almost) zero visible stall at the seam. | Chunk-emitting VLA / flow-matching policies (pi0, pi0.5, pi0-FAST, SmolVLA, MolmoAct2) where you want sim per-step timing to track real-hardware behaviour, or to benchmark a streaming controller. |
 
 ```python

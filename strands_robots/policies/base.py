@@ -168,6 +168,40 @@ class Policy(ABC):
         return True
 
     @property
+    def execution_horizon(self) -> int:
+        """Number of actions the SIM consumes from one ``get_actions`` chunk before re-querying.
+
+        This is the SINGLE source of truth for the re-query interval; a chunk
+        consumer (the single-policy runner, the multi-episode eval loop, the
+        synchronized multi-robot loop) reads it via
+        :func:`resolve_chunk_length` and never inspects ``actions_per_step``
+        directly. Distinguishing the re-query interval from the trained chunk
+        length is what makes Real-Time Chunking (RTC) actually engage:
+
+        * **RTC policy** -> the RTC ``execution_horizon`` (typically << the
+          trained chunk). The policy is re-queried mid-chunk so it can blend
+          the unexecuted tail of the previous chunk (``prev_chunk_left_over``)
+          into the next one. Re-querying only after the full trained chunk
+          drains leaves that tail permanently empty and silently degrades RTC
+          to plain open-loop replay.
+        * **chunked open-loop** (ACT, diffusion, pi0/SmolVLA without RTC) ->
+          ``actions_per_step`` (the trained chunk; truncating drops its tail
+          and forces an out-of-distribution re-query).
+        * **single-step** (``MockPolicy``, classical planners) -> ``1``.
+
+        The default derives from ``actions_per_step`` (``1`` when undeclared),
+        so a single-step or chunked open-loop policy needs no override; only a
+        policy with an inference-time budget distinct from its trained chunk
+        (RTC) overrides this.
+        """
+        intended = getattr(self, "actions_per_step", 1)
+        try:
+            intended_int = int(intended)
+        except (TypeError, ValueError):
+            intended_int = 1
+        return max(1, intended_int)
+
+    @property
     @abstractmethod
     def provider_name(self) -> str:
         """Get provider name for identification."""
@@ -215,35 +249,56 @@ class ChunkedPolicy(Protocol):
 def resolve_chunk_length(policy: "Policy", action_horizon: int) -> int:
     """Effective number of actions to consume from one ``get_actions`` chunk.
 
-    Centralizes the single chunk-length rule every consumer must apply
-    identically: consume ``max(action_horizon, policy.actions_per_step)``
-    actions before re-querying. A policy trained for N-step open-loop replay
-    (``actions_per_step == N``) must have its FULL chunk consumed; clamping to a
-    smaller ``action_horizon`` drops the chunk tail and forces an
-    out-of-distribution re-query. Policies that do not declare
-    ``actions_per_step`` (single-action providers such as ``MockPolicy``) behave
-    as a 1-action chunk, so the result is just ``max(action_horizon, 1)``.
+    Centralizes the single re-query rule every consumer must apply identically.
+    The number of actions consumed before re-querying is the policy's
+    :attr:`Policy.execution_horizon` - the single source of truth - never
+    ``actions_per_step`` read directly. How ``action_horizon`` interacts with it
+    depends on whether the policy carries cross-chunk state (RTC):
+
+    * **RTC policy** (``supports_rtc`` is true): the policy hard-decides the
+      interval and is re-queried at exactly its ``execution_horizon`` so it can
+      blend the unexecuted tail of the previous chunk into the next one. A
+      caller-supplied ``action_horizon`` must NOT stretch (or shrink) this
+      interval - doing so leaves ``prev_chunk_left_over`` empty and silently
+      degrades RTC to plain open-loop replay. ``action_horizon`` is ignored.
+    * **non-RTC** (open-loop chunked or single-step): consume
+      ``max(action_horizon, execution_horizon)`` so a model trained for N-step
+      replay (``execution_horizon == actions_per_step == N``) keeps its FULL
+      chunk - clamping to a smaller ``action_horizon`` drops the chunk tail and
+      forces an out-of-distribution re-query. Single-action providers
+      (``MockPolicy``) have ``execution_horizon == 1`` so the result is just
+      ``max(action_horizon, 1)``.
 
     Before this helper existed each consumer inlined the same
-    ``max(action_horizon, getattr(policy, "actions_per_step", 1))`` expression,
-    and they drifted: the synchronized multi-robot loop truncated to
-    ``action_horizon`` alone, silently dropping a chunk-emitting policy's tail
-    while the single-policy runner consumed the full chunk.
+    ``max(action_horizon, getattr(policy, "actions_per_step", 1))`` expression
+    and they drifted; worse, all of them keyed off ``actions_per_step``, so an
+    RTC policy was re-queried only after its full trained chunk drained and its
+    cross-chunk blending never engaged.
 
     Args:
-        policy: Any policy. Its chunk length is read from the optional
-            :class:`ChunkedPolicy` ``actions_per_step`` attribute; a policy that
-            does not declare it is treated as single-action.
+        policy: Any policy. The re-query interval is read from
+            :attr:`Policy.execution_horizon` (falling back to a raw
+            ``actions_per_step`` attribute for duck-typed objects that are not
+            ``Policy`` subclasses); a policy that declares neither is treated as
+            single-action.
         action_horizon: Consumer-requested actions per chunk (clamped to >= 1).
+            Ignored for RTC policies, which decide their own interval.
 
     Returns:
         The number of leading chunk actions to execute before re-querying.
     """
-    intended = getattr(policy, "actions_per_step", 1)
+    horizon = getattr(policy, "execution_horizon", None)
+    if horizon is None:
+        # Duck-typed object that is not a ``Policy`` subclass (no
+        # execution_horizon property): fall back to its raw chunk length.
+        horizon = getattr(policy, "actions_per_step", 1)
     try:
-        intended_int = int(intended)
+        horizon_int = 1 if horizon is None else int(horizon)
     except (TypeError, ValueError):
-        intended_int = 1
-    if intended_int < 1:
-        intended_int = 1
-    return max(int(action_horizon), 1, intended_int)
+        horizon_int = 1
+    if horizon_int < 1:
+        horizon_int = 1
+    if getattr(policy, "supports_rtc", False):
+        # RTC owns the interval; action_horizon cannot override it.
+        return horizon_int
+    return max(int(action_horizon), 1, horizon_int)
