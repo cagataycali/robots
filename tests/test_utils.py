@@ -153,3 +153,116 @@ class TestRequireOptionals:
             require_optionals(["nope_single_xyz"])
         with pytest.raises(ImportError, match="are required"):
             require_optionals(["nope_two_a_xyz", "nope_two_b_xyz"])
+
+
+# Path-resolution tests (get_base_dir / get_assets_dir / resolve_asset_path)
+
+
+class TestPathResolution:
+    """Tests for the path-resolution helpers.
+
+    These functions decide where ALL strands-robots user data, assets, and
+    model files land. They honour two env-var overrides whose contracts differ:
+    ``STRANDS_BASE_DIR`` relocates the entire base dir, while
+    ``STRANDS_ASSETS_DIR`` relocates ONLY the assets subdir and must never move
+    the base dir (so user-level metadata stays in a predictable location).
+    """
+
+    def test_get_base_dir_honors_env_override(self, tmp_path, monkeypatch):
+        from strands_robots.utils import get_base_dir
+
+        target = tmp_path / "custom_base"
+        monkeypatch.setenv("STRANDS_BASE_DIR", str(target))
+
+        result = get_base_dir()
+        assert result == target
+        assert result.is_dir()  # created if needed
+
+    def test_get_base_dir_default(self, tmp_path, monkeypatch):
+        import strands_robots.utils as utils
+
+        monkeypatch.delenv("STRANDS_BASE_DIR", raising=False)
+        default = tmp_path / "sr_default"
+        monkeypatch.setattr(utils, "DEFAULT_BASE_DIR", default)
+
+        result = utils.get_base_dir()
+        assert result == default
+        assert result.is_dir()
+
+    def test_get_assets_dir_honors_env_override(self, tmp_path, monkeypatch):
+        from strands_robots.utils import get_assets_dir
+
+        target = tmp_path / "custom_assets"
+        monkeypatch.setenv("STRANDS_ASSETS_DIR", str(target))
+
+        result = get_assets_dir()
+        assert result == target
+        assert result.is_dir()
+
+    def test_get_assets_dir_default(self, tmp_path, monkeypatch):
+        import strands_robots.utils as utils
+
+        monkeypatch.delenv("STRANDS_ASSETS_DIR", raising=False)
+        default = tmp_path / "sr_default"
+        monkeypatch.setattr(utils, "DEFAULT_BASE_DIR", default)
+
+        result = utils.get_assets_dir()
+        assert result == default / "assets"
+        assert result.is_dir()
+
+    def test_assets_env_does_not_move_base_dir(self, tmp_path, monkeypatch):
+        """Documented contract: STRANDS_ASSETS_DIR moves ONLY the assets dir.
+
+        The base dir must stay at its default even when assets are relocated, so
+        user-level metadata (e.g. user_robots.json) lands predictably.
+        """
+        import strands_robots.utils as utils
+
+        assets_target = tmp_path / "elsewhere_assets"
+        base_default = tmp_path / "sr_default"
+        monkeypatch.setenv("STRANDS_ASSETS_DIR", str(assets_target))
+        monkeypatch.delenv("STRANDS_BASE_DIR", raising=False)
+        monkeypatch.setattr(utils, "DEFAULT_BASE_DIR", base_default)
+
+        assert utils.get_assets_dir() == assets_target
+        # Base dir is unaffected by the assets override.
+        assert utils.get_base_dir() == base_default
+
+    def test_resolve_asset_path_none_uses_default_name(self, tmp_path, monkeypatch):
+        from strands_robots.utils import resolve_asset_path
+
+        monkeypatch.setenv("STRANDS_ASSETS_DIR", str(tmp_path))
+
+        result = resolve_asset_path(None, default_name="g1")
+        assert result == tmp_path / "g1"
+
+    def test_resolve_asset_path_relative_under_assets(self, tmp_path, monkeypatch):
+        from strands_robots.utils import resolve_asset_path
+
+        monkeypatch.setenv("STRANDS_ASSETS_DIR", str(tmp_path))
+
+        result = resolve_asset_path("robot/model.xml")
+        assert result == tmp_path / "robot" / "model.xml"
+
+    def test_resolve_asset_path_absolute_returned_as_is(self, tmp_path, monkeypatch):
+        from strands_robots.utils import resolve_asset_path
+
+        monkeypatch.setenv("STRANDS_ASSETS_DIR", str(tmp_path / "assets"))
+        absolute = tmp_path / "outside" / "model.xml"
+
+        result = resolve_asset_path(absolute)
+        assert result == absolute
+        # An absolute input escapes the assets sandbox by design.
+        assert not str(result).startswith(str(tmp_path / "assets"))
+
+    def test_resolve_asset_path_expands_tilde(self, tmp_path, monkeypatch):
+        from strands_robots.utils import resolve_asset_path
+
+        monkeypatch.setenv("STRANDS_ASSETS_DIR", str(tmp_path / "assets"))
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+
+        result = resolve_asset_path("~/models/policy.pt")
+        # ~ expands to an absolute home path, so it is returned as-is, not
+        # joined under the assets dir.
+        assert result == tmp_path / "home" / "models" / "policy.pt"
+        assert not str(result).startswith(str(tmp_path / "assets"))
