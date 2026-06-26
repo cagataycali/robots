@@ -34,6 +34,7 @@ def test_all_lists_every_lazy_import_name() -> None:
         "lerobot_train",
         "pose_tool",
         "robot_mesh",
+        "run_policy",
         "serial_tool",
         "train_policy",
         "use_lerobot",
