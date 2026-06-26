@@ -1,16 +1,18 @@
-"""Real-solver coverage for the VERA eef-delta IK bridge (``sim_ik``).
+"""Real-solver accuracy regression for the VERA eef-delta IK bridge (``sim_ik``).
 
-The other VERA IK tests deliberately use a ``FakeBridge`` + fake ``mujoco`` so
-they run in the light base env. That leaves the actual closed-loop kinematics
-untested: ``MinkIKBridge`` (mink + mujoco construction, forward kinematics, and
-the differential-IK solve loop), the ``qpsolvers`` backend auto-selection, and
-the chunk decoder driving a *real* solver. These tests build a minimal 3-DoF
-planar arm with ``mujoco`` and exercise that real path end to end, so a
-regression in the solver math, frame-task wiring, or solver-resolution contract
-is caught locally instead of only on hardware.
+This module exercises the *real* closed-loop kinematics that only run with the
+``sim-mujoco`` extra installed: :class:`MinkIKBridge` forward kinematics and the
+differential-IK solve loop against a genuine ``mink`` + ``mujoco`` stack, plus
+the chunk decoder driving that real solver. It ``importorskip``s on ``mujoco`` /
+``mink`` / ``qpsolvers`` so it skips cleanly on a clean-install image.
+
+The bridge's *dependency-free* surface (QP-backend selection, the install hint,
+the missing-``mink`` import guard, ``delta_to_matrix`` dispatch, and the decoder
+input validation) is covered without any sim stack in
+``test_sim_ik_solver_selection.py`` and ``test_sim_ik_bridge_solve_loop.py``, so
+those contracts are guarded in plain CI; here we pin the geometry that needs the
+real solver.
 """
-
-import sys
 
 import numpy as np
 import pytest
@@ -100,58 +102,3 @@ def test_decode_chunk_through_real_bridge_tracks_closed_loop(bridge):
     assert track["max_mm"] >= track["mean_mm"] >= 0.0
     # A real, non-singular arm tracks 1 cm steps to well under a millimetre.
     assert track["max_mm"] < 2.0, track
-
-
-def test_resolve_qp_solver_auto_and_explicit():
-    """Auto-selection returns an installed backend; an explicitly requested,
-    installed backend is honoured verbatim."""
-    auto = sim_ik._resolve_qp_solver(None)
-    from qpsolvers import available_solvers
-
-    assert auto in available_solvers
-    # daqp is pinned by mink and present in the sim extra.
-    assert sim_ik._resolve_qp_solver("daqp") == "daqp"
-
-
-def test_resolve_qp_solver_rejects_uninstalled_backend():
-    """An explicit, not-installed backend fails loudly (no silent fallback)."""
-    with pytest.raises(ValueError, match="not installed"):
-        sim_ik._resolve_qp_solver("definitely-not-a-real-solver")
-
-
-def test_resolve_qp_solver_raises_when_no_backend_available(monkeypatch):
-    """When qpsolvers reports zero backends, the bridge refuses to proceed."""
-    monkeypatch.setattr("qpsolvers.available_solvers", [])
-    with pytest.raises(RuntimeError, match="No qpsolvers backend"):
-        sim_ik._resolve_qp_solver(None)
-
-
-def test_resolve_qp_solver_missing_qpsolvers_gives_install_hint(monkeypatch):
-    """If qpsolvers itself is absent, the error carries the actionable hint."""
-    monkeypatch.setitem(sys.modules, "qpsolvers", None)
-    with pytest.raises(ImportError) as ei:
-        sim_ik._resolve_qp_solver(None)
-    assert "sim-mujoco" in str(ei.value)
-
-
-def test_delta_to_matrix_dispatches_rot6d_and_rejects_bad_dim():
-    """delta_to_matrix routes rotation_dim 6 -> rot6d and rejects other dims."""
-    rot6d = np.array([1, 0, 0, 0, 1, 0], dtype=np.float64)
-    assert np.allclose(sim_ik.delta_to_matrix(rot6d, 6), np.eye(3), atol=1e-6)
-    with pytest.raises(ValueError, match="unsupported rotation_dim"):
-        sim_ik.delta_to_matrix(np.zeros(4), 4)
-
-
-def test_decode_rejects_non_2d_chunk_and_short_pose_block(bridge):
-    """The decoder validates chunk shape and pose-dim sufficiency up front."""
-    with pytest.raises(ValueError, match=r"\[T, D\]"):
-        sim_ik.decode_vera_delta_chunk_to_targets(np.zeros((2, 3, 7)), bridge, np.zeros(bridge.model.nq))
-    # rotation_dim=6 needs >= 9 pose dims; a 4-wide chunk (3 pose + gripper) is short.
-    with pytest.raises(ValueError, match="pose dims"):
-        sim_ik.decode_vera_delta_chunk_to_targets(
-            np.zeros((2, 4), dtype=np.float64),
-            bridge,
-            np.zeros(bridge.model.nq),
-            rotation_dim=6,
-            has_gripper=True,
-        )
