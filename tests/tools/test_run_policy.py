@@ -4,10 +4,10 @@ Pins the contract that closes the
 `#708 <https://github.com/strands-labs/robots/issues/708>`_ fabrication
 vector:
 
-* The tool MUST iterate exactly ``n_episodes`` times — it owns the loop
-  and never delegates iteration counting to an LLM narrating "20/20 ✅".
+* The tool MUST iterate exactly ``n_episodes`` times - it owns the loop
+  and never delegates iteration counting to an LLM narrating "20/20".
 * When ``dataset_root`` is supplied, the tool MUST drive a complete
-  ``start_recording`` → per-episode boundary → ``stop_recording`` cycle.
+  ``start_recording`` -> per-episode boundary -> ``stop_recording`` cycle.
 * The returned payload MUST carry parquet-truth (``total_episodes`` /
   ``total_frames`` read from ``meta/info.json`` on disk) so a verifier
   can catch silent collapse before status=OK propagates.
@@ -15,7 +15,7 @@ vector:
   non-int ``n_steps``) MUST fail loudly with a structured error.
 
 Mirrors the style of ``tests/simulation/test_policy_runner_behaviour.py``
-but stays at the unit-test layer — no MuJoCo, no LeRobot — so this file
+but stays at the unit-test layer - no MuJoCo, no LeRobot - so this file
 is fast and self-contained.
 """
 
@@ -36,7 +36,7 @@ def _unwrap(t: Any) -> Any:
     # strands.tools.decorator.tool wraps the function in a
     # DecoratedFunctionTool instance whose underlying callable is on
     # _tool_func. Older snapshots used original_function /
-    # __wrapped__ — keep both paths so this test file is resilient to
+    # __wrapped__ - keep both paths so this test file is resilient to
     # SDK churn.
     for attr in ("_tool_func", "original_function", "__wrapped__", "func"):
         target = getattr(t, attr, None)
@@ -84,7 +84,7 @@ class _FakeSim:
 
 
 class _NoRecordingSim:
-    """Simulation stand-in WITHOUT recording surface — exercises the
+    """Simulation stand-in WITHOUT recording surface - exercises the
     ``hasattr`` guard in run_policy."""
 
     def __init__(self) -> None:
@@ -154,7 +154,7 @@ class TestValidation:
 
 class TestEpisodeLoop:
     def test_invokes_run_policy_exactly_n_times_without_recording(self) -> None:
-        """No dataset_root → smoke-test mode, no recording, but N rollouts."""
+        """No dataset_root -> smoke-test mode, no recording, but N rollouts."""
         sim = _FakeSim()
         result = run_policy(
             sim,
@@ -223,7 +223,7 @@ class TestEpisodeLoop:
         assert seeds == [None, None]
 
     def test_continues_after_episode_error_and_records_failure(self) -> None:
-        """One bad episode must NOT abort the loop — partial success is reported."""
+        """One bad episode must NOT abort the loop - partial success is reported."""
         sim = _FakeSim()
         call_count = {"n": 0}
 
@@ -236,7 +236,7 @@ class TestEpisodeLoop:
         sim.run_policy = flaky  # type: ignore[method-assign]
 
         result = run_policy(sim, n_episodes=3, n_steps=5)
-        # Mixed outcomes → status=error so a verifier doesn't false-OK.
+        # Mixed outcomes -> status=error so a verifier doesn't false-OK.
         assert result["status"] == "error"
         payload = result["content"][1]["json"]
         assert payload["n_episodes_requested"] == 3
@@ -312,7 +312,7 @@ class TestRecordingLifecycle:
 
         result = run_policy(sim, n_episodes=2, n_steps=5, dataset_root=str(ds))
         assert result["status"] == "error"
-        # The dataset MUST have been closed — even on full failure.
+        # The dataset MUST have been closed - even on full failure.
         assert len(sim.stop_recording_calls) == 1
 
     def test_surfaces_start_recording_failure(self, tmp_path: Path) -> None:

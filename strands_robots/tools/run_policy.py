@@ -1,4 +1,4 @@
-"""Multi-episode policy rollout — Strands Agent ``@tool`` wrapper.
+"""Multi-episode policy rollout - Strands Agent ``@tool`` wrapper.
 
 Closes the fabrication vector identified in
 `strands-labs/robots#708 <https://github.com/strands-labs/robots/issues/708>`_:
@@ -6,17 +6,17 @@ Closes the fabrication vector identified in
 The existing ``Robot``/``Simulation`` AgentTool surface exposes a
 **single-rollout** ``run_policy`` action (one ``duration``/``n_steps`` call
 => one trajectory). When a human asks an LLM agent to "run 20 episodes of
-60 steps each", the LLM has no ``n_episodes`` knob to turn — it must
+60 steps each", the LLM has no ``n_episodes`` knob to turn - it must
 improvise. The historical failure mode (audited across 47 molmoact-e2e
 runs, 16 falsely marked OK) is that the LLM dispatches **one** giant
-``run_policy`` call, then **narrates** "20/20 episodes complete ✅" — the
-recorder sees one mega-episode of ``20×60=1200`` frames and writes
+``run_policy`` call, then **narrates** "20/20 episodes complete" - the
+recorder sees one mega-episode of ``20x60=1200`` frames and writes
 ``info.json:total_episodes=1``.
 
 PR #716 fixed the *recorder* side (per-episode ``save_episode`` boundaries
 are now wired in ``PolicyRunner.evaluate`` / ``_evaluate_with_spec``). This
 tool fixes the *exposure* side: it surfaces ``n_episodes`` explicitly and
-drives the episode loop in deterministic Python — no LLM in the loop.
+drives the episode loop in deterministic Python - no LLM in the loop.
 
 The tool also returns **parquet-truth**, not agent self-report: after the
 final ``stop_recording`` it reads ``meta/info.json:total_episodes`` from
@@ -28,12 +28,12 @@ Design notes (the contract this tool pins):
 
 * ``simulation`` is a **Python handle**, not an LLM-supplied string. Pass
   the live ``Simulation`` (or ``Robot``-compatible engine) constructed by
-  the orchestrator. LLMs cannot synthesize this argument, by design — the
+  the orchestrator. LLMs cannot synthesize this argument, by design - the
   tool is meant to be invoked from a deterministic outer loop in a
   scripted runner (the pattern voted in HB#349). Mesh-clients drive it
   through normal Python wiring.
 * ``n_episodes`` is a required, validated integer. There is no fallback,
-  no "infer from duration", no per-episode self-report — the loop iterates
+  no "infer from duration", no per-episode self-report - the loop iterates
   exactly ``n_episodes`` times, and the parquet-truth gate at the end
   catches any divergence.
 * The episode loop calls ``simulation.run_policy(...)`` per iteration and
@@ -42,13 +42,13 @@ Design notes (the contract this tool pins):
   row. The trailing ``stop_recording`` flushes the final episode and
   closes the dataset.
 * Recording is OPTIONAL. When ``dataset_root`` is provided we drive a full
-  ``start_recording`` → ``stop_recording`` cycle and report parquet-truth
+  ``start_recording`` -> ``stop_recording`` cycle and report parquet-truth
   (``total_episodes``, ``total_frames``). When ``dataset_root`` is omitted
-  we still run the N-episode loop but skip recording — useful for smoke
+  we still run the N-episode loop but skip recording - useful for smoke
   tests where the goal is just to exercise the policy.
 
 See ``strands-labs/robots#708`` for the full root-cause analysis and the
-e2e_agent_test.py fix history (HB#352 → #716 → this tool).
+e2e_agent_test.py fix history (HB#352 -> #716 -> this tool).
 """
 
 from __future__ import annotations
@@ -122,18 +122,18 @@ def run_policy(
     seed: int | None = None,
     policy_kwargs: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Roll out a policy for ``n_episodes`` × ``n_steps`` with per-episode parquet boundaries.
+    """Roll out a policy for ``n_episodes`` x ``n_steps`` with per-episode parquet boundaries.
 
     Pass-through wrapper around :meth:`Simulation.run_policy` that owns the
     multi-episode loop and the recording lifecycle, so an LLM agent never
     has to improvise either. Closes the #708 fabrication vector by:
 
-    1. **Explicit ``n_episodes``** — the loop iterates exactly N times,
+    1. **Explicit ``n_episodes``** - the loop iterates exactly N times,
        no narrated counts.
-    2. **Per-episode ``save_episode``** — each rollout lands in its own
+    2. **Per-episode ``save_episode``** - each rollout lands in its own
        parquet row via ``PolicyRunner._finalize_recorder_episode``
        (wired by PR #716).
-    3. **Parquet-truth return** — final payload carries
+    3. **Parquet-truth return** - final payload carries
        ``total_episodes`` / ``total_frames`` read from
        ``meta/info.json`` AFTER ``stop_recording`` returns, NOT
        self-reported by the loop. Mismatch with ``n_episodes`` is surfaced
@@ -141,7 +141,7 @@ def run_policy(
 
     Args:
         simulation: Live ``Simulation`` (or compatible) handle.
-            Constructed by the orchestrator — pass through a Python
+            Constructed by the orchestrator - pass through a Python
             partial / closure, not from agent text. LLMs cannot
             synthesize this argument, which is the point: the episode
             loop runs in deterministic Python.
@@ -152,7 +152,7 @@ def run_policy(
             ``"groot"`` / ``"molmoact2"`` / ...).
         policy_config: Provider-specific kwargs forwarded verbatim.
         instruction: Natural-language instruction for the policy.
-        n_episodes: Number of reset → rollout episodes. MUST be a
+        n_episodes: Number of reset -> rollout episodes. MUST be a
             positive int. There is no "guess from duration" fallback.
         n_steps: Hard cap on control steps per episode. Forwarded to
             ``run_policy`` as ``n_steps``.
@@ -160,11 +160,11 @@ def run_policy(
         action_horizon: Actions consumed per policy call before
             re-querying.
         fast_mode: Skip real-time sleep between steps (default True for
-            rollouts — wall-clock pacing slows headless eval).
+            rollouts - wall-clock pacing slows headless eval).
         dataset_root: When set, the tool drives the full recording
-            cycle: ``start_recording(root=dataset_root, ...)`` → N
-            rollouts with per-episode save_episode → ``stop_recording``
-            → parquet-truth read. When ``None`` the loop runs without
+            cycle: ``start_recording(root=dataset_root, ...)`` -> N
+            rollouts with per-episode save_episode -> ``stop_recording``
+            -> parquet-truth read. When ``None`` the loop runs without
             recording (smoke-test mode).
         dataset_repo_id: Forwarded to ``start_recording``.
         dataset_task: Task label forwarded to ``start_recording``.
@@ -195,7 +195,7 @@ def run_policy(
         return _err(
             "run_policy: `simulation` is required (pass the live Simulation/Robot "
             "handle from the orchestrator). LLMs cannot synthesize this argument "
-            "— that is the point: the episode loop must run in deterministic Python. "
+            "- that is the point: the episode loop must run in deterministic Python. "
             "See #708 for the fabrication vector this tool closes."
         )
 
@@ -232,7 +232,7 @@ def run_policy(
             overwrite=True,
         )
         if start_result.get("status") != "success":
-            # Surface the engine's own error verbatim — it already explains
+            # Surface the engine's own error verbatim - it already explains
             # missing extras, world not loaded, etc.
             return start_result
         recording_started = True
@@ -308,7 +308,7 @@ def run_policy(
         truth = _read_parquet_truth(dataset_root)
         if not truth.get("info_present"):
             warnings_.append(
-                f"meta/info.json missing under {dataset_root!r} — cannot "
+                f"meta/info.json missing under {dataset_root!r} - cannot "
                 "verify episode count from parquet truth. "
                 f"({truth.get('error', 'no error reported')})"
             )
@@ -358,7 +358,7 @@ def _finalize_episode(simulation: Any) -> None:
     PR #716 added this helper as the canonical per-episode boundary on
     ``PolicyRunner`` (it reads the active recorder out of
     ``sim._world._backend_state["dataset_recorder"]`` and calls its
-    ``save_episode``). Bare ``run_policy`` does not invoke it — it assumes
+    ``save_episode``). Bare ``run_policy`` does not invoke it - it assumes
     the caller owns episode framing. Since this tool *is* the caller, we
     delegate to the same helper to keep the boundary logic in one place
     and to inherit its tolerance for absent/empty buffers and save errors.
