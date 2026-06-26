@@ -231,6 +231,7 @@ policy = create_policy("lerobot_local", pretrained_name_or_path="lerobot/pi0_so1
 
 ## See also
 
+- [MolmoAct2 (SO-100/101)](molmoact2.md) - action contract, units, and motion diagnostics
 - [Policy providers](../policies/overview.md)
 - [Training](../training/overview.md)
 - [GR00T](groot.md)

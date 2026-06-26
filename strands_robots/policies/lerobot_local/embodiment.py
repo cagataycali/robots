@@ -129,6 +129,110 @@ def _convert_joint_vector(
     return out
 
 
+# Action diagnostics
+
+
+def diagnose_action_dim(n_action_values: int, n_action_keys: int, *, name: str = "") -> str | None:
+    """Return a warning message when a model action vector mis-matches the
+    embodiment's declared actuator count, else ``None``.
+
+    The local policy maps a model's action tensor onto robot actuators by index
+    (``LerobotLocalPolicy._tensor_to_action_dicts``). When the model emits FEWER
+    values than the embodiment declares actuator keys, the unmatched actuators
+    are zero-filled -- which silently freezes those joints and looks exactly like
+    "the policy runs but the robot does not move". When it emits MORE, the extra
+    trailing values are dropped. Either case is almost always an
+    embodiment/checkpoint mismatch the operator wants surfaced, not swallowed.
+
+    Args:
+        n_action_values: Length of the model's per-step action vector.
+        n_action_keys: Number of declared actuator keys (``robot_state_keys``).
+        name: Embodiment name for the message (optional).
+
+    Returns:
+        A human-readable warning string, or ``None`` when the dims match.
+    """
+    if n_action_values == n_action_keys:
+        return None
+    label = f" '{name}'" if name else ""
+    if n_action_values < n_action_keys:
+        missing = n_action_keys - n_action_values
+        return (
+            f"Policy action dim {n_action_values} < embodiment{label} actuator count "
+            f"{n_action_keys}: the {missing} unmatched actuator(s) are zero-filled and will "
+            f"not move. Check the embodiment's action_keys order/count against the "
+            f"checkpoint's action dimension."
+        )
+    extra = n_action_values - n_action_keys
+    return (
+        f"Policy action dim {n_action_values} > embodiment{label} actuator count "
+        f"{n_action_keys}: {extra} trailing action value(s) are dropped. Check the "
+        f"embodiment's action_keys against the checkpoint's action dimension."
+    )
+
+
+class ZeroActionMonitor:
+    """Detect a policy that keeps emitting near-zero actions (no robot motion).
+
+    Even with correct action dims and units, a misconfigured obs/rename pipeline
+    (a dropped camera key, an all-zero ``observation.state``) makes a VLA emit
+    effectively-zero actions every step: the robot "runs the policy" but never
+    moves. This monitor watches the per-step action magnitude and emits ONE
+    warning when it stays below ``threshold`` for ``patience`` consecutive steps,
+    pointing the operator at the embodiment / rename config.
+
+    Stateful but dependency-free (no torch/lerobot) so it is unit-testable in
+    isolation. Call :meth:`update` once per inference step and :meth:`reset` on
+    episode reset.
+
+    Attributes:
+        threshold: Max-abs action magnitude below which a step counts as
+            near-zero.
+        patience: Consecutive near-zero steps required before warning.
+    """
+
+    def __init__(self, threshold: float = 1e-3, patience: int = 10) -> None:
+        if threshold < 0:
+            raise ValueError(f"threshold must be >= 0, got {threshold}")
+        if patience < 1:
+            raise ValueError(f"patience must be >= 1, got {patience}")
+        self.threshold = threshold
+        self.patience = patience
+        self._streak = 0
+        self._warned = False
+
+    def update(self, max_abs_action: float) -> str | None:
+        """Record one step's max-abs action magnitude.
+
+        Args:
+            max_abs_action: ``max(abs(action))`` for this inference step.
+
+        Returns:
+            A warning string exactly once -- on the step where the near-zero
+            streak first reaches ``patience`` -- and ``None`` otherwise. A single
+            above-threshold step clears the streak and re-arms the warning.
+        """
+        if max_abs_action >= self.threshold:
+            self._streak = 0
+            self._warned = False
+            return None
+        self._streak += 1
+        if self._streak >= self.patience and not self._warned:
+            self._warned = True
+            return (
+                f"Policy emitted near-zero actions (max abs < {self.threshold:g}) for "
+                f"{self._streak} consecutive steps: the robot will not move. This usually "
+                f"means the observation never reached the model -- check the embodiment's "
+                f"obs_rename / camera keys and that observation.state is populated."
+            )
+        return None
+
+    def reset(self) -> None:
+        """Reset streak + warned state (call on episode reset)."""
+        self._streak = 0
+        self._warned = False
+
+
 # Registered pipeline step: pack scalar joint obs -> observation.state
 
 
@@ -461,6 +565,8 @@ def load_embodiment(embodiment: str | EmbodimentMap | dict) -> EmbodimentMap:
 __all__ = [
     "EmbodimentMap",
     "EMBODIMENT_MAP",
+    "ZeroActionMonitor",
+    "diagnose_action_dim",
     "load_embodiment",
     "reconcile_dim",
     "register_pack_state_step",

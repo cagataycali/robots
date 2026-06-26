@@ -21,6 +21,7 @@ import numpy as np
 import torch
 
 from .. import Policy
+from .embodiment import ZeroActionMonitor, diagnose_action_dim
 from .processor import ProcessorBridge
 from .resolution import resolve_policy_class_by_name, resolve_policy_class_from_hub
 
@@ -200,6 +201,12 @@ class LerobotLocalPolicy(Policy):
         self._rtc_last_inference_time: float = 0.0
         self._rtc_last_log_time: float = 0.0
 
+        # Action diagnostics: surface a model<->embodiment action-dim mismatch
+        # (zero-filled actuators) and a persistent near-zero action stream
+        # (robot "runs the policy" but never moves) instead of swallowing them.
+        self._zero_action_monitor = ZeroActionMonitor()
+        self._action_dim_warned = False
+
         if pretrained_name_or_path:
             self._load_model()
 
@@ -238,6 +245,9 @@ class LerobotLocalPolicy(Policy):
         self._rtc_latency_history.clear()
         self._rtc_last_inference_time = 0.0
         self._rtc_last_log_time = 0.0
+        # Re-arm action diagnostics for the next episode.
+        self._zero_action_monitor.reset()
+        self._action_dim_warned = False
 
     def set_robot_state_keys(self, robot_state_keys: list[str]) -> None:
         """Set robot state keys for observation→tensor mapping.
@@ -1618,6 +1628,24 @@ class LerobotLocalPolicy(Policy):
                 "Cannot convert action tensor to dicts: robot_state_keys is empty. "
                 "Call set_robot_state_keys() before inference."
             )
+
+        # Diagnostics (issue: MolmoAct2 "runs but does not move in MuJoCo").
+        # Surface two silent failure modes instead of swallowing them:
+        #   1. action-dim mismatch -> unmatched actuators get zero-filled below
+        #      (the for-loop's `else 0.0`), freezing those joints.
+        #   2. a persistent near-zero action stream -> the robot never moves even
+        #      though the policy "runs" every step.
+        emb_name = self._embodiment.name if self._embodiment is not None else ""
+        n_values = len(actions_list[0]) if actions_list else 0
+        if not self._action_dim_warned:
+            dim_msg = diagnose_action_dim(n_values, len(self.robot_state_keys), name=emb_name)
+            if dim_msg:
+                logger.warning("lerobot_local: %s", dim_msg)
+                self._action_dim_warned = True
+        max_abs = float(np.abs(action_array).max()) if action_array.size else 0.0
+        zero_msg = self._zero_action_monitor.update(max_abs)
+        if zero_msg:
+            logger.warning("lerobot_local: %s", zero_msg)
 
         # Convert the model's action units to sim units when the embodiment
         # declares them. SO-arm checkpoints (so100/so101, MolmoAct2) emit joint
