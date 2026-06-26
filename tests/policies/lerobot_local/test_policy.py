@@ -1651,3 +1651,78 @@ class TestFixupPreprocessedBatch:
         val = torch.zeros((1, 2), dtype=torch.float32)
         out = policy._fixup_preprocessed_batch({"observation.state": val})
         assert out["observation.state"].shape == (1, 2)
+
+
+# (section)
+# Tests: RTC inference-delay uses the loop's control frequency
+# (section)
+
+
+def _make_rtc_policy(chunk_steps=50, action_dim=6):
+    """Loaded policy wired for the RTC path with a fixed-size action chunk."""
+    policy = _make_loaded_policy(action_dim=action_dim, include_images=False)
+    policy._rtc_enabled = True
+    policy._rtc_execution_horizon = 10
+    policy.actions_per_step = 1
+    chunk = torch.zeros((1, chunk_steps, action_dim))
+    policy._policy.predict_action_chunk = MagicMock(return_value=chunk)
+    return policy
+
+
+class TestRtcInferenceDelay:
+    """RTC delay estimation must scale with the real control frequency.
+
+    ``_estimate_inference_delay`` returns ``int(p95_latency * fps)``: the number
+    of action steps consumed while the policy was computing the next chunk. If
+    ``fps`` is not the loop's actual control rate, the chunk-seam slice is wrong
+    at every other frequency (delay under-counted at >30Hz, jerky / oscillating
+    output). The control rate is plumbed via ``Policy.set_control_frequency``.
+    """
+
+    def test_estimate_inference_delay_scales_linearly_with_fps(self):
+        policy = _make_loaded_policy(include_images=False)
+        policy._rtc_latency_history.extend([0.1] * 10)  # p95 == 0.1s
+        assert policy._estimate_inference_delay(fps=30.0) == 3
+        assert policy._estimate_inference_delay(fps=60.0) == 6
+        assert policy._estimate_inference_delay(fps=120.0) == 12
+
+    def test_estimate_inference_delay_empty_history_is_zero(self):
+        policy = _make_loaded_policy(include_images=False)
+        assert policy._estimate_inference_delay(fps=200.0) == 0
+
+    def test_predict_with_rtc_uses_set_control_frequency(self):
+        """Regression: at 90Hz the delay (and chunk slice) must reflect 90Hz,
+        not the hardcoded 30Hz default. Pre-fix this returned the 30Hz slice
+        regardless of control_frequency."""
+        policy = _make_rtc_policy(chunk_steps=50)
+        policy._rtc_latency_history.extend([0.1] * 20)  # p95 == 0.1s
+        policy.set_control_frequency(90.0)
+
+        usable = policy._predict_with_rtc({})
+
+        # delay = int(0.1 * 90) = 9 -> usable_start = 9 -> 50 - 9 = 41 steps.
+        # At the buggy 30Hz default delay would be 3 -> 47 steps.
+        assert usable.shape[0] == 50 - 9
+
+    def test_predict_with_rtc_30hz_matches_legacy_slice(self):
+        """At 30Hz the result is unchanged from the historical behaviour."""
+        policy = _make_rtc_policy(chunk_steps=50)
+        policy._rtc_latency_history.extend([0.1] * 20)
+        policy.set_control_frequency(30.0)
+        usable = policy._predict_with_rtc({})
+        assert usable.shape[0] == 50 - 3
+
+    def test_predict_with_rtc_warns_once_when_frequency_unset(self, caplog):
+        """RTC without a known control rate falls back to 30Hz but MUST warn
+        loudly (once), never silently assume the rate."""
+        policy = _make_rtc_policy(chunk_steps=50)
+        policy._rtc_latency_history.extend([0.1] * 20)
+        assert policy.control_frequency is None
+
+        with caplog.at_level("WARNING"):
+            policy._predict_with_rtc({})
+            policy._predict_with_rtc({})
+
+        warnings = [r for r in caplog.records if "control_frequency unknown" in r.message]
+        assert len(warnings) == 1, "fallback must warn exactly once per policy"
+        assert policy._rtc_freq_warned is True

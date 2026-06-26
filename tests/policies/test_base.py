@@ -190,3 +190,39 @@ def test_mock_policy_action_values_are_json_native_floats():
             )
     # JSON round-trip is the canonical proof of native-value compliance.
     json.dumps(actions)
+
+
+class TestControlFrequency:
+    """``Policy.set_control_frequency`` / ``control_frequency`` contract.
+
+    The control rate is how a latency-sensitive provider converts wall-clock
+    inference latency into a count of consumed action steps (RTC). The runtime
+    sets it before the loop; until then it is ``None`` so providers can detect
+    "not told yet" rather than silently assuming a rate.
+    """
+
+    def test_default_control_frequency_is_none(self):
+        assert _IdentityPolicy().control_frequency is None
+
+    def test_set_control_frequency_sets_attribute(self):
+        p = _IdentityPolicy()
+        p.set_control_frequency(90.0)
+        assert p.control_frequency == 90.0
+
+    def test_set_control_frequency_coerces_to_float(self):
+        p = _IdentityPolicy()
+        p.set_control_frequency(50)
+        assert isinstance(p.control_frequency, float)
+        assert p.control_frequency == 50.0
+
+    @pytest.mark.parametrize("bad", [0, -1, -30.0])
+    def test_set_control_frequency_rejects_non_positive(self, bad):
+        p = _IdentityPolicy()
+        with pytest.raises(ValueError, match="must be positive"):
+            p.set_control_frequency(bad)
+
+    def test_control_frequency_is_per_instance(self):
+        a, b = _IdentityPolicy(), _IdentityPolicy()
+        a.set_control_frequency(120.0)
+        assert a.control_frequency == 120.0
+        assert b.control_frequency is None

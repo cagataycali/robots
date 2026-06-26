@@ -49,6 +49,37 @@ class Policy(ABC):
     ``MockPolicy`` for the canonical reference.
     """
 
+    #: Control rate (Hz) at which the consumer loop executes the actions this
+    #: policy returns. Set by the runtime (e.g. ``PolicyRunner``) via
+    #: :meth:`set_control_frequency` BEFORE the rollout loop starts, so
+    #: latency-sensitive providers can convert wall-clock inference latency into
+    #: a count of action steps consumed during inference (Real-Time Chunking).
+    #: ``None`` means the runtime has not told the policy its clock yet -
+    #: providers that need it MUST warn loudly and fall back rather than
+    #: silently assuming a rate (a wrong assumed rate corrupts RTC blending at
+    #: every control frequency except the assumed one).
+    control_frequency: float | None = None
+
+    def set_control_frequency(self, hz: float) -> None:
+        """Tell the policy the control rate (Hz) of the executing loop.
+
+        The runtime that drives the policy (``PolicyRunner.run`` / ``evaluate``)
+        calls this once before the rollout loop so providers that estimate an
+        inference delay in *action steps* (Real-Time Chunking) can convert their
+        measured wall-clock latency into the correct number of steps. Without
+        it, such providers fall back to a hardcoded rate and silently mis-blend
+        chunks at any other control frequency.
+
+        Args:
+            hz: Positive control frequency in Hz.
+
+        Raises:
+            ValueError: If ``hz`` is not strictly positive.
+        """
+        if hz <= 0:
+            raise ValueError(f"control_frequency must be positive, got {hz}")
+        self.control_frequency = float(hz)
+
     @abstractmethod
     async def get_actions(
         self, observation_dict: dict[str, Any], instruction: str, **kwargs: Any

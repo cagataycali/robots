@@ -456,6 +456,12 @@ class PolicyRunner:
         # Normalise the per-call goal payload once. Forwarded verbatim to every
         # get_actions() call; an empty dict is the historical (no-kwargs) path.
         _policy_kwargs = policy_kwargs or {}
+        # Tell the policy the loop's control rate BEFORE the rollout so
+        # latency-sensitive providers (RTC) convert wall-clock inference
+        # latency into the correct number of consumed action steps. Without
+        # this they fall back to a hardcoded rate and mis-blend the chunk
+        # seam at any other frequency.
+        policy.set_control_frequency(control_frequency)
         # Initialize BEFORE try so CooperativeStop never sees unbound names.
         start_time = time.time()
         step_count = 0
@@ -944,6 +950,7 @@ class PolicyRunner:
         # Step physics for the full control period per action, same derivation
         # as run(). The default n_substeps=1 made eval rollouts under-step.
         n_substeps = self._control_substeps(control_frequency, control_substeps)
+        policy.set_control_frequency(control_frequency)
         results: list[dict[str, Any]] = []
         for ep in range(n_episodes):
             self.sim.reset()
@@ -1043,6 +1050,7 @@ class PolicyRunner:
         _skip_images = not getattr(policy, "requires_images", True)
         # Full control-period substeps per action (see run() / evaluate()).
         n_substeps = self._control_substeps(control_frequency, control_substeps)
+        policy.set_control_frequency(control_frequency)
         # #168: seed Python / NumPy / torch / cuDNN once before
         # the episode loop so policy stochastic ops (e.g. attention
         # dropout, sampling temperature) are reproducible across re-runs
