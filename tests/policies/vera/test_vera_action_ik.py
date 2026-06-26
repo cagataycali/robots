@@ -67,11 +67,41 @@ def test_delta_decode_accumulates_translation():
     )
     qpos = out["qpos"]
     assert qpos.shape == (3, 7), qpos.shape
-    # re-anchored: each step adds +0.1 x -> 0.1, 0.2, 0.3
+    # Re-anchored, with robosuite OSC_POSE scaling: the normalized [-1,1] action
+    # is scaled by output_max (translation *= 0.05 m) before IK. So each +0.1
+    # normalized x-step is +0.005 m -> accumulates 0.005, 0.010, 0.015.
     xs = qpos[:, 0]
-    assert np.allclose(xs, [0.1, 0.2, 0.3], atol=1e-6), xs
+    assert np.allclose(xs, [0.005, 0.010, 0.015], atol=1e-6), xs
     assert out["gripper"].tolist() == [1.0, 0.0, 1.0]
     print("✅ delta decode re-anchors translation:", xs.tolist(), "grip:", out["gripper"].tolist())
+
+
+def test_osc_scaling_full_action_is_5cm_translation():
+    """Regression (#osc-scale): a full normalized OSC translation (=1.0) must map
+    to robosuite output_max = 0.05 m, NOT be treated as a 1 m metric step. Before
+    the fix the raw [-1,1] value was used directly, producing ~0.4 m IK targets
+    that are unreachable for a tabletop Panda (track err > 1 m) so the arm never
+    descended to the object."""
+    bridge = FakeBridge()
+    chunk = np.array([[1.0, 0, 0, 0, 0, 0, 0.0]], dtype=np.float32)  # full +x, 1 step
+    out = sim_ik.decode_vera_delta_chunk_to_targets(
+        chunk, bridge, np.zeros(7), rotation_dim=3, has_gripper=True, gripper_dim_index=6
+    )
+    # full normalized x action (1.0) * OSC output_max (0.05) = 0.05 m
+    assert np.allclose(out["qpos"][0, 0], 0.05, atol=1e-6), out["qpos"][0, 0]
+
+
+def test_osc_scaling_gripper_dim_index_minus_one_is_last_column():
+    """Regression (#gripper-drop): gripper_dim_index == -1 means the LAST column
+    (Python negative index), NOT 'no gripper'. The provider previously dropped
+    the gripper whenever the server reported -1, so the gripper never actuated."""
+    bridge = FakeBridge()
+    chunk = np.array([[0.0, 0, 0, 0, 0, 0, 1.0]], dtype=np.float32)
+    out = sim_ik.decode_vera_delta_chunk_to_targets(
+        chunk, bridge, np.zeros(7), rotation_dim=3, has_gripper=True, gripper_dim_index=-1
+    )
+    assert out["gripper"] is not None
+    assert out["gripper"].tolist() == [1.0], out["gripper"]
 
 
 def test_provider_ik_path_emits_joint_keys():

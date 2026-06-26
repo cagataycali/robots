@@ -256,12 +256,27 @@ def decode_vera_delta_chunk_to_targets(
     qpos_list: list[np.ndarray] = []
     err_list: list[float] = []
     for step in pose_block:
-        trans = step[:3] * float(translation_scale)
-        rot = step[3 : 3 + rotation_dim]
-        delta = np.eye(4, dtype=np.float64)
-        delta[:3, :3] = delta_to_matrix(rot, rotation_dim)
-        delta[:3, 3] = trans
-        target = achieved @ delta  # re-anchor on the realized pose
+        # Robosuite OSC_POSE maps the policy's [-1,1] action to metric deltas via
+        # output_max: translation *= 0.05 m, rotation *= 0.5 rad (control_delta=true,
+        # input_max=1). VERA emits these normalized OSC actions, so we apply the
+        # same scaling before IK -- without it the raw [-1,1] values are treated as
+        # ~0.4 m steps, producing unreachable IK targets (track err > 1 m) and the
+        # arm never descends to the object. translation_scale composes on top of
+        # the OSC position scale for callers that need a further tweak.
+        _OSC_POS_SCALE = 0.05
+        _OSC_ROT_SCALE = 0.5
+        trans = step[:3] * (_OSC_POS_SCALE * float(translation_scale))
+        rot = step[3 : 3 + rotation_dim] * _OSC_ROT_SCALE
+        # VERA/MimicGen eef_delta follows robosuite OSC_POSE: translation deltas
+        # are in the WORLD/base frame (added to the EE position), not the tool
+        # frame. Rotation deltas premultiply (world-frame) the current EE
+        # orientation. Composing translation in the tool frame (achieved @ delta)
+        # rotates a "move down" command by the gripper's orientation, so the arm
+        # barely descends -- the cube never gets reached. Apply world-frame.
+        rot_delta = delta_to_matrix(rot, rotation_dim)
+        target = np.eye(4, dtype=np.float64)
+        target[:3, :3] = rot_delta @ achieved[:3, :3]  # world-frame rotation delta
+        target[:3, 3] = achieved[:3, 3] + trans  # world-frame translation delta
         q = ik_bridge.solve(target, q)
         achieved_new = ik_bridge.ee_pose(q)
         err_list.append(float(np.linalg.norm(achieved_new[:3, 3] - target[:3, 3])))
