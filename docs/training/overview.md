@@ -100,7 +100,7 @@ supports and **ignores the rest** (the same tolerance rule as
 | `extra["groot_root"]` | Isaac-GR00T checkout | GR00T |
 | `extra["sft_toml"]` / `extra["cosmos_root"]` | recipe + checkout | Cosmos |
 | `extra["relative_actions"]` | train pi0-family with delta actions | lerobot `--policy.use_relative_actions=true` (pi0/pi05/pi0_fast) |
-| `extra["sample_weighting"]` | RA-BC / per-sample loss weighting dict | lerobot `--sample_weighting.*` |
+| `extra["sample_weighting"]` | RA-BC per-sample loss weighting dict | lerobot `--use_rabc=true --rabc_*` |
 
 ## From an agent (natural language)
 
@@ -131,9 +131,10 @@ TrainSpec(..., method="lora", lora_r=16, extra={"policy_type": "pi05"})
 
 Reward-Aligned Behavior Cloning reweights the per-sample loss so high-quality
 demonstrations dominate - the technique behind the strongest behavior-cloning
-ablations on long-horizon manipulation. lerobot drives it from
-`TrainPipelineConfig.sample_weighting` (a typed `SampleWeightingConfig` that the
-train loop turns into a `SampleWeighter`). Surface it through `extra`:
+ablations on long-horizon manipulation. lerobot drives it from flat
+`TrainPipelineConfig` fields (`use_rabc` plus `rabc_progress_path`,
+`rabc_kappa`, `rabc_epsilon`, `rabc_head_mode`). Surface it through `extra`
+with a friendly grouped dict that maps onto those fields:
 
 ```python
 TrainSpec(
@@ -142,21 +143,22 @@ TrainSpec(
     output_dir="/tmp/ft_out",
     extra={
         "policy_type": "pi05",
-        "sample_weighting": {       # -> typed SampleWeightingConfig
+        "sample_weighting": {       # type='rabc' sets use_rabc=true
             "type": "rabc",
-            "kappa": 0.01,          # hard threshold for high-quality samples
-            "head_mode": "sparse",  # which progress head to read
+            "kappa": 0.01,          # -> rabc_kappa (high-quality threshold)
+            "head_mode": "sparse",  # -> rabc_head_mode (progress head)
             # "progress_path": "hf://datasets/org/ds/sarm_progress.parquet",
         },
     },
 )
-# -> lerobot_train --sample_weighting.type=rabc --sample_weighting.kappa=0.01 ...
+# -> lerobot_train --use_rabc=true --rabc_kappa=0.01 --rabc_head_mode=sparse ...
 ```
 
-The dict keys mirror lerobot's `SampleWeightingConfig` fields (`type`,
-`progress_path`, `head_mode`, `kappa`, `epsilon`, `extra_params`); an unknown
-key raises an actionable error naming the supported set. Omit
-`sample_weighting` entirely for standard (uniform) behavior cloning.
+The friendly keys map to lerobot's flat fields - `type` gates `use_rabc`,
+`kappa` -> `rabc_kappa`, `epsilon` -> `rabc_epsilon`, `head_mode` ->
+`rabc_head_mode`, `progress_path` -> `rabc_progress_path`. An unknown key (or a
+`type` other than `rabc`) raises an actionable error naming the accepted set.
+Omit `sample_weighting` entirely for standard (uniform) behavior cloning.
 
 #### Relative (delta) actions
 

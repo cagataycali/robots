@@ -75,6 +75,23 @@ _SUPPORTED_METHODS = {"full", "lora", "expert_only"}
 # pre/post processors). Other policy types have no such field.
 _RELATIVE_ACTION_POLICY_TYPES = {"pi0", "pi05", "pi0_fast"}
 
+# RA-BC (Reward-Aligned Behavior Cloning) is the only sample-weighting scheme
+# lerobot ships, and it lives as FLAT fields on ``TrainPipelineConfig`` (not a
+# nested config object): ``use_rabc`` plus ``rabc_progress_path``,
+# ``rabc_kappa``, ``rabc_epsilon``, ``rabc_head_mode`` (see
+# ``lerobot/configs/train.py`` in lerobot >=0.5.0,<0.6.0). The agent-facing
+# ``extra['sample_weighting']`` dict groups these under friendly keys; this map
+# translates each friendly key to its real lerobot field. ``type`` is the gate:
+# ``type='rabc'`` flips ``use_rabc=True`` (no other scheme exists yet).
+_SAMPLE_WEIGHTING_FIELD_MAP = {
+    "progress_path": "rabc_progress_path",
+    "kappa": "rabc_kappa",
+    "epsilon": "rabc_epsilon",
+    "head_mode": "rabc_head_mode",
+}
+# Friendly keys accepted in ``extra['sample_weighting']`` (``type`` + the map).
+_SAMPLE_WEIGHTING_KEYS = {"type", *_SAMPLE_WEIGHTING_FIELD_MAP}
+
 # Hugging Face Hub dataset id: ``org/name`` (each segment alnum plus ._-). Used
 # to gate the agent-supplied ``dataset_repo_id`` before it becomes lerobot's
 # ``DatasetConfig.repo_id`` (which load_dataset/HfApi feed to a Hub URL).
@@ -207,14 +224,16 @@ class LerobotTrainer(Trainer):
         return bool(spec.extra.get("relative_actions", False))
 
     def _sample_weighting_dict(self, spec: TrainSpec) -> dict[str, Any] | None:
-        """Resolve the RA-BC / sample-weighting spec from ``extra['sample_weighting']``.
+        """Resolve the RA-BC sample-weighting spec from ``extra['sample_weighting']``.
 
-        RA-BC (Reward-Aligned Behavior Cloning) and other per-sample loss
-        weighting strategies are surfaced through the ``extra`` escape hatch as a
-        single ``sample_weighting`` dict whose keys mirror lerobot's
-        :class:`lerobot.utils.sample_weighting.SampleWeightingConfig`
-        (``type``, ``progress_path``, ``head_mode``, ``kappa``, ``epsilon``,
-        ``extra_params``). Example::
+        RA-BC (Reward-Aligned Behavior Cloning) per-sample loss weighting is
+        surfaced through the ``extra`` escape hatch as a single
+        ``sample_weighting`` dict with friendly keys (``type``,
+        ``progress_path``, ``head_mode``, ``kappa``, ``epsilon``). lerobot
+        configures RA-BC via FLAT fields on ``TrainPipelineConfig``
+        (``use_rabc`` + ``rabc_*``); :data:`_SAMPLE_WEIGHTING_FIELD_MAP` maps the
+        friendly keys onto those, and ``type='rabc'`` flips ``use_rabc=True``.
+        Example::
 
             extra={"sample_weighting": {"type": "rabc", "kappa": 0.01,
                                         "head_mode": "sparse"}}
@@ -228,8 +247,7 @@ class LerobotTrainer(Trainer):
             return None
         if not isinstance(sw, dict):
             raise ValueError(
-                "extra['sample_weighting'] must be a dict of SampleWeightingConfig "
-                "fields, e.g. {'type': 'rabc', 'kappa': 0.01}"
+                "extra['sample_weighting'] must be a dict of RA-BC fields, e.g. {'type': 'rabc', 'kappa': 0.01}"
             )
         return sw
 
@@ -280,8 +298,7 @@ class LerobotTrainer(Trainer):
         sw = spec.extra.get("sample_weighting")
         if sw is not None and not isinstance(sw, dict):
             problems.append(
-                "extra['sample_weighting'] must be a dict of SampleWeightingConfig "
-                "fields, e.g. {'type': 'rabc', 'kappa': 0.01}"
+                "extra['sample_weighting'] must be a dict of RA-BC fields, e.g. {'type': 'rabc', 'kappa': 0.01}"
             )
         elif isinstance(sw, dict):
             for k, v in sw.items():
@@ -364,8 +381,10 @@ class LerobotTrainer(Trainer):
                 cmd.append(f"--config_path={ckpt_cfg}")
         sw = self._sample_weighting_dict(spec)
         if sw is not None:
-            for field_name, value in sw.items():
-                cmd.append(f"--sample_weighting.{field_name}={value}")
+            cmd.append("--use_rabc=true")
+            for key, field_name in _SAMPLE_WEIGHTING_FIELD_MAP.items():
+                if key in sw:
+                    cmd.append(f"--{field_name}={sw[key]}")
         _consumed = {"policy_type", "job_name", "relative_actions", "sample_weighting"}
         for key, value in spec.extra.items():
             if key in _consumed:
@@ -457,24 +476,44 @@ class LerobotTrainer(Trainer):
             if ckpt_cfg:
                 cfg.checkpoint_path = Path(ckpt_cfg).parent.parent
 
-        # RA-BC / sample weighting: build lerobot's typed SampleWeightingConfig
-        # from the extra['sample_weighting'] dict and attach it. lerobot's
-        # train loop turns a non-None cfg.sample_weighting into a SampleWeighter
-        # (make_sample_weighter) that reweights the per-sample loss.
+        # RA-BC sample weighting: lerobot configures RA-BC via FLAT fields on
+        # TrainPipelineConfig (use_rabc + rabc_*), which its train loop turns
+        # into a per-sample loss reweighting. Map the friendly
+        # extra['sample_weighting'] dict onto those real fields; type='rabc'
+        # gates use_rabc=True. Fail fast on unknown keys (mapped against the
+        # accepted set) and on any mapped field the installed lerobot lacks.
         sw = self._sample_weighting_dict(spec)
         if sw is not None:
-            from lerobot.utils.sample_weighting import SampleWeightingConfig
-
-            supported = {f.name for f in dataclasses.fields(SampleWeightingConfig)}
-            unsupported = sorted(k for k in sw if k not in supported)
+            unsupported = sorted(k for k in sw if k not in _SAMPLE_WEIGHTING_KEYS)
             if unsupported:
                 raise ValueError(
-                    f"The installed lerobot's SampleWeightingConfig does not support "
-                    f"field(s) {unsupported}; it accepts {sorted(supported)}. These "
-                    "were requested via extra['sample_weighting']. Upgrade lerobot or "
-                    "drop them from the spec."
+                    f"extra['sample_weighting'] does not support field(s) "
+                    f"{unsupported}; accepted keys are {sorted(_SAMPLE_WEIGHTING_KEYS)}."
                 )
-            cfg.sample_weighting = SampleWeightingConfig(**sw)
+            sw_type = sw.get("type", "rabc")
+            if sw_type != "rabc":
+                raise ValueError(
+                    f"extra['sample_weighting']['type'] must be 'rabc' "
+                    f"(the only scheme lerobot ships), got {sw_type!r}."
+                )
+            if not hasattr(cfg, "use_rabc"):
+                raise ValueError(
+                    "The installed lerobot does not expose RA-BC (no 'use_rabc' on "
+                    "TrainPipelineConfig); upgrade lerobot or drop "
+                    "extra['sample_weighting']."
+                )
+            cfg.use_rabc = True
+            for key, field_name in _SAMPLE_WEIGHTING_FIELD_MAP.items():
+                if key not in sw:
+                    continue
+                if not hasattr(cfg, field_name):
+                    raise ValueError(
+                        f"The installed lerobot's TrainPipelineConfig has no "
+                        f"'{field_name}' field (requested via "
+                        f"extra['sample_weighting']['{key}']); upgrade lerobot or "
+                        "drop it from the spec."
+                    )
+                setattr(cfg, field_name, sw[key])
 
         # Typed passthrough for remaining extra.* (gated by validate()'s key
         # allowlist). Only set attributes that exist on the typed config tree;
