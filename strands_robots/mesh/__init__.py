@@ -32,6 +32,7 @@ from strands_robots.mesh.core import (
     init_mesh,
 )
 from strands_robots.mesh.input import InputPublisher, InputReceiver
+from strands_robots.mesh.ros_bridge import RosBridgedRobot
 from strands_robots.mesh.session import (
     clear_peers,
     current_session,
@@ -49,6 +50,7 @@ __all__ = [
     "Mesh",
     "InputPublisher",
     "InputReceiver",
+    "RosBridgedRobot",
     # Factory & registry
     "init_mesh",
     "get_local_robots",

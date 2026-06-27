@@ -131,3 +131,54 @@ is missing, `ros2_bridge=True` raises a clear `ImportError` at construction;
 stays lightweight. The bridge node is torn down cleanly on `destroy()`.
 
 See `examples/ros2/sim_bridge_demo.py` for a runnable end-to-end script.
+
+## Mesh bridge: a ROS 2 robot as a first-class strands Robot
+
+`use_ros` is the low-level surface. For mobile bases that expose the usual
+`cmd_vel` / odometry / scan topic trio, `RosBridgedRobot` wraps that wiring so a
+remote ROS 2 robot drives like any other strands robot - the same
+`Agent(tools=[robot])` pattern used for simulated and hardware arms.
+
+```python
+from strands import Agent
+from strands_robots.mesh import RosBridgedRobot
+
+turtle = RosBridgedRobot.from_ros(
+    node_name="turtlesim",
+    cmd_vel_topic="/turtle1/cmd_vel",
+    odom_topic="/turtle1/pose",
+    odom_type="turtlesim/msg/Pose",  # optional; auto-resolved when omitted
+)
+
+# Direct, programmatic control:
+turtle.drive(linear=1.0, duration=1.5)   # hold the command for 1.5 s
+print(turtle.get_pose())                 # one odom/pose sample
+turtle.stop()
+
+# Or hand the robot to an agent - its capabilities become named tools
+# (drive_turtlesim, get_pose_turtlesim, ...):
+agent = Agent(tools=turtle.tools)
+agent("drive forward for two seconds, then tell me the pose")
+```
+
+The bridge is intentionally thin: every method forwards to `use_ros`, so it
+inherits the same in-process rclpy backend and input validation. Construct it
+freely without a ROS 2 environment present - errors surface only when a method
+is actually called and `rclpy` is unavailable.
+
+| Method | ROS 2 action | Notes |
+|--------|--------------|-------|
+| `drive(linear, angular, duration=, count=)` | publish `Twist` to `cmd_vel_topic` | `duration` holds the command at `publish_rate` Hz |
+| `stop()` | publish zero `Twist` | |
+| `get_pose()` | echo `odom_topic` | |
+| `get_scan()` | echo `scan_topic` | error when no `scan_topic` configured |
+| `.tools` | - | per-instance named agent tools |
+
+See `examples/ros2/turtlebot_demo.py` for an end-to-end agent driving a turtle
+in `turtlesim` through the mesh bridge.
+
+![Agent driving a turtle via the ROS 2 mesh bridge](assets/ros2_mesh_bridge_turtle.gif)
+
+The trail above is a turtle in `turtlesim` driven entirely through
+`RosBridgedRobot.drive(...)` - the velocity commands are published over ROS 2 by
+the mesh bridge, and the pose is read back through the same bridge.
