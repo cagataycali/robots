@@ -378,7 +378,12 @@ class TestBuildPolicy:
         real_import = builtins.__import__
 
         def blocked_import(name, *args, **kwargs):
-            if name == "lerobot.configs":
+            # The first import guard pulls FeatureType/PolicyFeature from the
+            # lerobot.configs package; the concrete submodule moved to
+            # lerobot.configs.types in 0.5.2+. Block the whole configs subtree
+            # so this guard stays pinned to the import target wherever inside
+            # lerobot.configs it lives.
+            if name == "lerobot.configs" or name.startswith("lerobot.configs."):
                 raise ImportError("no configs")
             return real_import(name, *args, **kwargs)
 
