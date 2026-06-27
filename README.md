@@ -917,6 +917,45 @@ deny-by-default IoT policy scoping, and a safety audit log.
 Install with `uv pip install "strands-robots[mesh-iot]"`. See the
 [Configuration](#configuration) matrix for the `STRANDS_MESH_*` knobs.
 
+## ROS 2 interoperability
+
+strands-robots speaks ROS 2 from four complementary angles - a Strands agent can
+observe, command, *be*, and *expose* a ROS 2 system. Full guide:
+[ROS 2 Integration](https://strandsagents.com) / `docs/ros2-integration.md`.
+
+![A Strands agent driving a closed-loop square in turtlesim via use_ros](docs/assets/use_ros_agent_square.gif)
+
+*A Strands agent (Claude Opus via Amazon Bedrock) given the `use_ros` tool drives
+a real ROS 2 `turtlesim` in a closed-loop square - reading pose, correcting
+heading, re-driving - over 43 in-process tool calls. Runnable:
+`examples/ros2/use_ros/`.*
+
+| Surface | What it does | Backend | Needs sourced ROS 2 |
+|---------|--------------|---------|---------------------|
+| **`use_ros`** | List/echo/publish topics, call services on any ROS 2 graph | in-process `rclpy` | yes |
+| **`use_rtps`** | Join a graph as a DDS peer and **act as a robot** (publish topics a real stack consumes) | pure `cyclonedds` (pip) | **no** - macOS/CI/Jetson, all distros |
+| **`RosBridgedRobot`** | Drive a `cmd_vel`/odom ROS 2 base as a first-class strands `Robot` | `use_ros` | yes |
+| **`SimEngine(ros2_bridge=True)`** | Publish a running MuJoCo sim's `joint_states` + camera `image_raw` so rviz/nav2/agents can subscribe | `rclpy` | yes |
+
+```python
+# Observe + command a live ROS 2 graph, in plain English:
+from strands import Agent
+from strands_robots.tools import use_ros
+Agent(tools=[use_ros])("list the topics, drive /turtle1 forward, confirm the pose changed")
+
+# Or expose a simulation as a ROS 2 node any tool can subscribe to:
+from strands_robots.simulation import Simulation
+sim = Simulation(ros2_bridge=True)
+sim.create_world(); sim.add_robot("so101")
+sim.step(10)   # publishes /so101/joint_states + camera image_raw on the ROS 2 domain
+```
+
+`rclpy` ships with a sourced ROS 2 distro (not on PyPI). The `[ros2]` extra adds
+only the pip-installable `cyclonedds` binding that `use_rtps` uses - so the
+pure-RTPS path needs no ROS install at all. Every surface degrades to a clear,
+structured error when its backend is unavailable; the default install never
+touches ROS 2.
+
 ## Configuration
 
 ### Environment variables

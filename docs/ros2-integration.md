@@ -20,6 +20,29 @@ agent = Agent(tools=[use_ros])
 agent("list the ROS 2 topics, then drive /turtle1 forward and confirm its pose changed")
 ```
 
+![A Strands agent driving a closed-loop square in turtlesim via use_ros](assets/use_ros_agent_square.gif)
+
+*A Strands agent (Claude Opus via Amazon Bedrock) given the `use_ros` tool drives
+a real ROS 2 `turtlesim` in a closed-loop square - reading pose, correcting
+heading, and re-driving - over 43 in-process `use_ros` calls. See
+[`examples/ros2/use_ros/`](https://github.com/strands-labs/robots/tree/main/examples/ros2/use_ros).*
+
+## ROS 2 surfaces at a glance
+
+strands-robots meets ROS 2 from four complementary angles - pick by what you
+have and what you want to do:
+
+| Surface | Role | Backend | Needs sourced ROS 2 | Use it to |
+|---------|------|---------|---------------------|-----------|
+| **`use_ros`** tool | client / observer + commander | in-process `rclpy` | yes | List/echo/publish topics, call services on any ROS 2 graph - full type coverage |
+| **`use_rtps`** tool | participant / **act as a robot** | pure `cyclonedds` (pip) | **no** | Join a graph as a DDS peer and publish topics a real stack consumes; works on macOS/CI/Jetson, all distros |
+| **`RosBridgedRobot`** | a ROS 2 robot as a strands `Robot` | `use_ros` | yes | `drive()`/`get_pose()` a `cmd_vel`/odom base with the same `Agent(tools=[robot])` UX as sim/hardware |
+| **`SimEngine(ros2_bridge=True)`** | the **simulation as a ROS node** | `rclpy` | yes | Publish a running MuJoCo sim's `joint_states` + camera `image_raw` so rviz/nav2/agents can subscribe |
+
+The first three are documented below; the sim bridge has its own section. The
+`use_rtps` pure-RTPS path (no rclpy, every ROS 2 distro) is on the
+[Pure-RTPS ROS 2](rtps-integration.md) page.
+
 ## Requirements
 
 The tool needs `rclpy` and `rosidl_runtime_py` importable in the same
@@ -85,6 +108,22 @@ use_ros(action="service_call", service="/spawn",
         type="turtlesim/srv/Spawn",
         fields={"x": 3.0, "y": 3.0, "name": "t2"})
 ```
+
+## Try it live
+
+A reproducible, one-command showcase drives a real `turtlesim` through every
+`use_ros` action (in-process rclpy, closed sense->act->sense loop), and a second
+service runs a Strands Agent that draws the square above from a plain-English
+prompt:
+
+```bash
+cd examples/ros2/use_ros
+docker compose run --build --rm showcase   # every action; exits 0 iff the turtle moved
+docker compose run --build --rm agent      # a Strands Agent drives a closed-loop square
+```
+
+Captured runs are in `examples/ros2/use_ros/sample_output.txt` and
+`agent_sample_output.txt`.
 
 ## Safety
 
