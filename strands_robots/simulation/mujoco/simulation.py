@@ -166,7 +166,8 @@ class MuJoCoSimEngine(
             **kwargs: Forwarded to ``AgentTool.__init__`` for subclass
                 compatibility.
         """
-        super().__init__(ros2_bridge=ros2_bridge, ros2_domain=ros2_domain)
+        super().__init__()
+        self._init_ros_bridge(ros2_bridge=ros2_bridge, ros2_domain=ros2_domain)
         self.tool_name_str = tool_name
         self.default_timestep = default_timestep
         self.default_width = default_width

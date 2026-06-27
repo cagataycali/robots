@@ -181,9 +181,9 @@ def test_sim_ros_bridge_shutdown_destroys_node(fake_ros: dict[str, Any]) -> None
 class _FakeEngine(SimEngine):
     """Minimal concrete engine exercising the telemetry helper only."""
 
-    def __init__(self, observation: dict[str, Any], **kwargs: Any) -> None:
-        super().__init__(**kwargs)
+    def __init__(self, observation: dict[str, Any], *, ros2_bridge: bool = False, ros2_domain: int = 0) -> None:
         self._obs = observation
+        self._init_ros_bridge(ros2_bridge=ros2_bridge, ros2_domain=ros2_domain)
 
     def list_robots(self) -> list[str]:
         return ["so101"]
@@ -258,3 +258,23 @@ def test_enabling_bridge_without_rclpy_raises(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(utils_mod, "_lazy_modules", {}, raising=False)
     with pytest.raises(ImportError):
         _FakeEngine({}, ros2_bridge=True)
+
+
+def test_publish_telemetry_safe_without_bridge_init(fake_ros: dict[str, Any]) -> None:
+    """Telemetry hooks tolerate a subclass that never called ``_init_ros_bridge``.
+
+    The simulation ABC defines no ``__init__``, so a lightweight subclass (or a
+    backend constructed via an unusual path) may never initialize the bridge
+    attributes. ``step`` calls ``_publish_ros_telemetry`` unconditionally, so it
+    - and ``_shutdown_ros_bridge`` - must be safe no-ops in that case rather
+    than raising ``AttributeError`` on a missing ``_ros_bridge``.
+    """
+
+    class _Uninitialized(_FakeEngine):
+        def __init__(self) -> None:  # deliberately skips _init_ros_bridge
+            self._obs = {"shoulder_pan": 0.0, "elbow": 0.0}
+
+    engine = _Uninitialized()
+    engine._publish_ros_telemetry()  # must not raise
+    engine._shutdown_ros_bridge()  # must not raise
+    assert fake_ros["nodes"] == []
