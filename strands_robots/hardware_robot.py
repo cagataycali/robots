@@ -36,6 +36,7 @@ from strands.types._events import ToolResultEvent
 from strands.types.tools import ToolResult, ToolSpec, ToolUse
 
 from strands_robots.teleop_mixin import TeleopMixin
+from strands_robots.utils import require_optional
 
 if TYPE_CHECKING:
     from lerobot.robots.config import RobotConfig
@@ -281,6 +282,16 @@ class Robot(TeleopMixin, AgentTool):
         self.mesh: Any = None
         self.peer_id: str | None = None
 
+        # Validate the ROS 2 bridge precondition (transport + its optional
+        # dependency) BEFORE _initialize_robot imports lerobot. Otherwise, in an
+        # environment without the [lerobot] extra, _initialize_robot raises a
+        # lerobot ImportError first and masks the documented
+        # "pip install 'strands-robots[ros2]'" hint that the operator who set
+        # ros2_bridge=True actually needs to see. require_optional caches the
+        # module, so the real bridge construction in _init_ros_bridge pays nothing.
+        if ros2_bridge:
+            self._check_ros2_bridge_deps(ros2_transport=ros2_transport)
+
         # Initialize robot using lerobot's abstraction
         self.robot = self._initialize_robot(robot, cameras, **kwargs)
 
@@ -321,6 +332,37 @@ class Robot(TeleopMixin, AgentTool):
     # ------------------------------------------------------------------
     # ROS 2 telemetry bridge (opt-in) - mirror of SimEngine(ros2_bridge=...)
     # ------------------------------------------------------------------
+    @staticmethod
+    def _check_ros2_bridge_deps(*, ros2_transport: str) -> None:
+        """Validate the ROS 2 bridge transport and its optional dependency.
+
+        Called from ``__init__`` BEFORE ``_initialize_robot`` (which imports
+        lerobot) so that, when ``ros2_bridge=True``, an invalid transport or a
+        missing ``rclpy`` / ``cyclonedds`` surfaces its documented
+        ``pip install 'strands-robots[ros2]'`` error immediately - rather than
+        being masked by the lerobot ImportError ``_initialize_robot`` raises
+        first in an environment without the ``[lerobot]`` extra.
+        ``require_optional`` caches the resolved module, so constructing the
+        real bridge later in ``_init_ros_bridge`` costs nothing extra.
+
+        Args:
+            ros2_transport: ``"rclpy"`` or ``"rtps"``.
+
+        Raises:
+            ValueError: If ``ros2_transport`` is not ``"rclpy"`` or ``"rtps"``.
+            ImportError: If the transport's optional dependency is missing.
+        """
+        if ros2_transport not in ("rclpy", "rtps"):
+            raise ValueError(f"ros2_transport must be 'rclpy' or 'rtps', got {ros2_transport!r}")
+        if ros2_transport == "rtps":
+            require_optional(
+                "cyclonedds",
+                extra="ros2",
+                purpose="the pure-RTPS hardware bridge (Robot ros2_transport='rtps')",
+            )
+        else:
+            require_optional("rclpy", extra="ros2", purpose="the ROS 2 telemetry bridge (ros2_bridge=True)")
+
     def _init_ros_bridge(
         self,
         *,

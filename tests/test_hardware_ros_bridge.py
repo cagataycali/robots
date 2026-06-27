@@ -304,6 +304,51 @@ def test_enabling_bridge_without_rclpy_raises_importerror(monkeypatch: pytest.Mo
         _make_robot({"j0.pos": 0.0}, ros2_bridge=True)
 
 
+def _raise_lerobot_missing(self: Any, *args: Any, **kwargs: Any) -> Any:
+    """Stand-in for _initialize_robot in an environment without the [lerobot] extra."""
+    raise ImportError("No module named 'lerobot'")
+
+
+def test_rclpy_importerror_beats_lerobot_when_both_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """ros2_bridge=True must report the rclpy [ros2] hint, not a lerobot error.
+
+    Regression for the constructor ordering bug: _initialize_robot (which imports
+    lerobot) used to run BEFORE the ROS 2 dependency check, so a fresh install
+    without the [lerobot] extra surfaced "No module named 'lerobot'" and masked
+    the documented "pip install 'strands-robots[ros2]'" hint the operator who set
+    ros2_bridge=True actually needs. The precondition check must win.
+    """
+    monkeypatch.setattr(utils_mod, "_lazy_modules", {}, raising=False)
+    monkeypatch.setitem(sys.modules, "rclpy", None)
+    monkeypatch.setattr(HwRobot, "_initialize_robot", _raise_lerobot_missing)
+    with pytest.raises(ImportError) as exc:
+        HwRobot(tool_name="arm", robot="so101", ros2_bridge=True)
+    message = str(exc.value)
+    assert "rclpy" in message
+    assert "strands-robots[ros2]" in message
+    assert "lerobot" not in message
+
+
+def test_cyclonedds_importerror_beats_lerobot_for_rtps_transport(monkeypatch: pytest.MonkeyPatch) -> None:
+    """ros2_transport='rtps' must report the cyclonedds [ros2] hint, not lerobot."""
+    monkeypatch.setattr(utils_mod, "_lazy_modules", {}, raising=False)
+    monkeypatch.setitem(sys.modules, "cyclonedds", None)
+    monkeypatch.setattr(HwRobot, "_initialize_robot", _raise_lerobot_missing)
+    with pytest.raises(ImportError) as exc:
+        HwRobot(tool_name="arm", robot="so101", ros2_bridge=True, ros2_transport="rtps")
+    message = str(exc.value)
+    assert "cyclonedds" in message
+    assert "strands-robots[ros2]" in message
+    assert "lerobot" not in message
+
+
+def test_invalid_transport_rejected_before_lerobot_import(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An invalid ros2_transport raises ValueError before _initialize_robot runs."""
+    monkeypatch.setattr(HwRobot, "_initialize_robot", _raise_lerobot_missing)
+    with pytest.raises(ValueError, match="ros2_transport"):
+        HwRobot(tool_name="arm", robot="so101", ros2_bridge=True, ros2_transport="zenoh")
+
+
 # --- full duplex: inbound /<robot>/joint_command -> send_action -------------
 
 
