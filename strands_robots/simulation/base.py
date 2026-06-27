@@ -89,6 +89,58 @@ class SimEngine(ABC):
         sim.destroy()
     """
 
+    def __init__(self, *, ros2_bridge: bool = False, ros2_domain: int = 0, **kwargs: Any) -> None:
+        """Initialize the engine, optionally bridging telemetry onto ROS 2.
+
+        Args:
+            ros2_bridge: When True, publish per-robot ``joint_states`` and
+                camera ``image_raw`` on a ROS 2 domain every :meth:`step`, so
+                external ROS 2 nodes can subscribe to the running simulation.
+                Requires ``rclpy`` (system ROS 2 / the official docker image);
+                an :class:`ImportError` is raised at construction if it is
+                missing. Defaults to False - the sim never touches ROS 2.
+            ros2_domain: ROS 2 domain id (``ROS_DOMAIN_ID``) to publish on.
+            **kwargs: Forwarded up the MRO (e.g. to ``AgentTool``).
+        """
+        super().__init__(**kwargs)
+        self._ros2_bridge_enabled = bool(ros2_bridge)
+        self._ros2_domain = int(ros2_domain)
+        self._ros_bridge: Any = None
+        if self._ros2_bridge_enabled:
+            from strands_robots.simulation.ros_bridge import SimRosBridge
+
+            self._ros_bridge = SimRosBridge(domain_id=self._ros2_domain)
+
+    def _publish_ros_telemetry(self, *, skip_images: bool = False) -> None:
+        """Publish joint_states (and camera images) for every robot once.
+
+        No-op when the ROS 2 bridge is disabled. Called by backends from
+        :meth:`step` after the physics tick. Per-robot failures (e.g. a camera
+        that did not render) never interrupt the simulation loop.
+        """
+        bridge = self._ros_bridge
+        if bridge is None:
+            return
+        for robot in self.list_robots():
+            obs = self.get_observation(robot, skip_images=skip_images)
+            names = self.robot_joint_names(robot)
+            positions = [obs[j] for j in names if j in obs and isinstance(obs[j], (int, float))]
+            bridge.publish_joint_states(robot, names, positions)
+            if skip_images:
+                continue
+            for key, value in obs.items():
+                if key in names:
+                    continue
+                if hasattr(value, "ndim") and getattr(value, "ndim", 0) == 3:
+                    bridge.publish_image(robot, key, value)
+
+    def _shutdown_ros_bridge(self) -> None:
+        """Tear down the ROS 2 bridge if one is active. Safe to call repeatedly."""
+        bridge = self._ros_bridge
+        if bridge is not None:
+            bridge.shutdown()
+            self._ros_bridge = None
+
     def _resolve_single_robot(self, robot_name: str | None) -> str:
         """Resolve an optional robot name to a concrete one.
 
