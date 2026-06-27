@@ -63,7 +63,7 @@ def test_discover_prefers_attachment_site():
     model = _install_fake_mujoco(bodies, sites, {1: 0, 2: 1, 3: 2})
     found = ee_frame.discover_ee_frame(model, "panda/")
     assert found == ("panda/attachment_site", "site"), found
-    print("✅ discovers attachment_site:", found)
+    print("discovers attachment_site:", found)
 
 
 def test_discover_falls_back_to_hand_body():
@@ -77,7 +77,7 @@ def test_discover_falls_back_to_hand_body():
     model = _install_fake_mujoco(bodies, sites, {1: 0, 2: 1})
     found = ee_frame.discover_ee_frame(model, "panda/")
     assert found == ("panda/hand", "body"), found
-    print("✅ falls back to hand body:", found)
+    print("falls back to hand body:", found)
 
 
 def test_discover_leaf_body_when_no_hints():
@@ -92,7 +92,7 @@ def test_discover_leaf_body_when_no_hints():
     model = _install_fake_mujoco(bodies, sites, {1: 0, 2: 1, 3: 2})
     found = ee_frame.discover_ee_frame(model, "arm/")
     assert found == ("arm/link2", "body"), found
-    print("✅ leaf body fallback:", found)
+    print("leaf body fallback:", found)
 
 
 def test_set_sim_context_autoconfigures_for_eef_delta():
@@ -131,7 +131,7 @@ def test_set_sim_context_autoconfigures_for_eef_delta():
     p.set_sim_context(model, "panda/")
     assert p._ee_frame_name == "panda/attachment_site", p._ee_frame_name
     assert p._ee_frame_type == "site"
-    print("✅ set_sim_context auto-configured IK:", p._ee_frame_name, p._ee_frame_type)
+    print("set_sim_context auto-configured IK:", p._ee_frame_name, p._ee_frame_type)
 
 
 def test_no_autoconfig_for_joint_position():
@@ -167,7 +167,7 @@ def test_no_autoconfig_for_joint_position():
     p._ensure_started()
     p.set_sim_context(model, "allegro/")
     assert p._ee_frame_name is None, "should NOT auto-config IK for joint_position"
-    print("✅ joint_position: no IK auto-config (correct)")
+    print("joint_position: no IK auto-config (correct)")
 
 
 def test_discover_without_namespace_scopes_whole_model():

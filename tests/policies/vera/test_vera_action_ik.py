@@ -13,7 +13,7 @@ def test_rot6d_orthonormal():
     R2 = sim_ik.rot6d_to_matrix([0.3, 1, 0.1, 0, 0.2, 1])
     assert np.allclose(R2.T @ R2, np.eye(3), atol=1e-5), "not orthonormal"
     assert abs(np.linalg.det(R2) - 1.0) < 1e-5, "det != 1"
-    print("✅ rot6d_to_matrix orthonormal + det=1")
+    print("rot6d_to_matrix orthonormal + det=1")
 
 
 def test_axis_angle():
@@ -23,7 +23,7 @@ def test_axis_angle():
     assert np.allclose(R, exp, atol=1e-6), R
     # zero rotation -> identity
     assert np.allclose(sim_ik.axis_angle_to_matrix([0, 0, 0]), np.eye(3))
-    print("✅ axis_angle_to_matrix correct")
+    print("axis_angle_to_matrix correct")
 
 
 class FakeBridge:
@@ -73,7 +73,7 @@ def test_delta_decode_accumulates_translation():
     xs = qpos[:, 0]
     assert np.allclose(xs, [0.005, 0.010, 0.015], atol=1e-6), xs
     assert out["gripper"].tolist() == [1.0, 0.0, 1.0]
-    print("✅ delta decode re-anchors translation:", xs.tolist(), "grip:", out["gripper"].tolist())
+    print("delta decode re-anchors translation:", xs.tolist(), "grip:", out["gripper"].tolist())
 
 
 def test_osc_scaling_full_action_is_5cm_translation():
@@ -153,7 +153,7 @@ def test_provider_ik_path_emits_joint_keys():
     assert "gripper" in d, f"no gripper: {d}"
     # joint keys present (subset of robot joints)
     assert any(k.startswith("joint_") for k in d), d
-    print("✅ provider eef_delta IK path -> joint keys:", list(d.keys()))
+    print("provider eef_delta IK path -> joint keys:", list(d.keys()))
 
 
 def test_ik_smoothing_ema_damps_targets():
@@ -237,4 +237,4 @@ def test_ik_smoothing_ema_damps_targets():
     raw_var = np.var(raw)
     smoothed_var = np.var(smoothed)
     assert smoothed_var < raw_var, f"EMA should reduce variance: raw={raw_var} smoothed={smoothed_var}"
-    print(f"✅ ik_smoothing damps jitter: raw_var={raw_var:.3f} -> smoothed_var={smoothed_var:.3f}")
+    print(f"ik_smoothing damps jitter: raw_var={raw_var:.3f} -> smoothed_var={smoothed_var:.3f}")

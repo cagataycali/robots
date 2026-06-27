@@ -61,7 +61,7 @@ def test_joint_position_binds_to_joints():
     d = out[0]
     assert set(d.keys()) == set(joints), f"keys not bound to joints: {d.keys()}"
     assert "action_0" not in d, "raw action_i leaked!"
-    print("✅ joint_position -> joint keys:", list(d.keys()))
+    print("joint_position -> joint keys:", list(d.keys()))
 
 
 # --- 2) gripper binarization preserved ---
@@ -80,7 +80,7 @@ def test_gripper_binarized():
     obs = {"image": np.zeros((8, 8, 3), np.uint8), "a": 0.0, "b": 0.0, "gripper": 0.0}
     out = run(p, obs)
     assert out[0]["gripper"] == 1.0, f"gripper not binarized: {out[0]}"
-    print("✅ gripper binarized:", out[0])
+    print("gripper binarized:", out[0])
 
 
 # --- 3) eef_delta with NO ik target -> warns + falls back (no crash) ---
@@ -99,7 +99,7 @@ def test_eef_delta_without_ik_falls_back():
     out = run(p, obs)
     # falls back to raw mapping (warned); should not crash, returns dicts
     assert out, "no actions on fallback"
-    print("✅ eef_delta w/o IK falls back (warned), keys:", list(out[0].keys()))
+    print("eef_delta w/o IK falls back (warned), keys:", list(out[0].keys()))
 
 
 # --- 4) action_mapping override still wins ---
@@ -120,4 +120,4 @@ def test_action_mapping_override():
     obs = {"image": np.zeros((8, 8, 3), np.uint8), "wrong1": 0.0, "wrong2": 0.0}
     out = run(p, obs)
     assert set(out[0].keys()) == {"x", "y"}, f"action_mapping ignored: {out[0]}"
-    print("✅ action_mapping override wins:", list(out[0].keys()))
+    print("action_mapping override wins:", list(out[0].keys()))

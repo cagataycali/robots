@@ -93,7 +93,7 @@ class TestVideoCameraPreValidation:
         )
         assert r["status"] == "success", r
         text = r["content"][0]["text"]
-        assert "🎬 Video" in text or "Video:" in text, text
+        assert "Video:" in text, text
         assert video_path.exists() and video_path.stat().st_size > 0
 
 

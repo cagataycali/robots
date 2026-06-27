@@ -218,7 +218,7 @@ class FakeSim(SimEngine):
                 "content": [{"text": f"add_camera: camera '{name}' already exists. Remove it first."}],
             }
         self._world.cameras[name] = kwargs
-        return {"status": "success", "content": [{"text": f"📷 Camera '{name}' added"}]}
+        return {"status": "success", "content": [{"text": f"Camera '{name}' added"}]}
 
 
 # Construction

@@ -1,4 +1,4 @@
-"""Regression: no ``strands_robots`` module may embed emoji in source strings.
+"""Regression: no ``strands_robots`` module or test module may embed emoji.
 
 AGENTS.md forbids emoji in code, logs, and error messages: agents read these
 strings programmatically, emoji are tokenizer noise, and they render
@@ -68,3 +68,37 @@ def test_no_emoji_in_package_sources() -> None:
                     f"{path.relative_to(_PACKAGE_DIR.parent)}:{lineno}: U+{ord(cp[0]):04X} {line.strip()[:80]!r}"
                 )
     assert not offenders, "emoji found in strands_robots sources:\n" + "\n".join(offenders)
+
+
+# The test tree itself is held to the same bar. A half-applied emoji sweep is
+# easy to spot in production code but slips through in test files: prod stops
+# emitting a glyph, yet an assertion (or a debug ``print``) still pins it. The
+# package-only scan above cannot catch that, so scan ``tests/`` too. This guard
+# would have failed when ``test_policy_runner.py`` still asserted ``"X Video:"``
+# against output the engine is forbidden to emit.
+_TESTS_DIR = Path(__file__).resolve().parent
+
+
+def _test_sources() -> list[Path]:
+    return sorted(p for p in _TESTS_DIR.rglob("*.py") if "__pycache__" not in p.parts)
+
+
+def test_test_sources_discovered() -> None:
+    """Guard: the scan walked the whole test tree, not just the top level."""
+    sources = _test_sources()
+    assert len(sources) > 50
+    rel_dirs = {p.relative_to(_TESTS_DIR).parts[0] for p in sources if p.parent != _TESTS_DIR}
+    assert {"simulation", "policies", "benchmarks"} <= rel_dirs
+
+
+def test_no_emoji_in_test_sources() -> None:
+    """No test module may embed emoji in assertions, fixtures, or debug prints."""
+    offenders: list[str] = []
+    for path in _test_sources():
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            for match in _EMOJI.finditer(line):
+                cp = match.group()
+                offenders.append(
+                    f"{path.relative_to(_TESTS_DIR.parent)}:{lineno}: U+{ord(cp[0]):04X} {line.strip()[:80]!r}"
+                )
+    assert not offenders, "emoji found in test sources:\n" + "\n".join(offenders)

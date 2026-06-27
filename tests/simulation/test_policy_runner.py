@@ -310,8 +310,8 @@ def test_run_policy_video_writes_mp4(tmp_path: Path) -> None:
 
     text_blocks = [c.get("text", "") for c in result.get("content", []) if isinstance(c, dict)]
     summary = "\n".join(text_blocks)
-    assert "🎬 Video:" in summary, f"no video summary in output: {summary}"
-    assert "📹" in summary and "frames" in summary, f"frame count missing: {summary}"
+    assert "Video:" in summary, f"no video summary in output: {summary}"
+    assert "frames" in summary, f"frame count missing: {summary}"
 
 
 def test_extract_frame_ndarray_handles_render_shape() -> None:
