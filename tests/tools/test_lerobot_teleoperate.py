@@ -205,10 +205,19 @@ def test_build_start_record_argv_matches_lerobot_record_fields() -> None:
     """
     pytest.importorskip("lerobot.scripts.lerobot_record")
     import dataclasses
+    import typing
 
-    from lerobot.configs.dataset import DatasetRecordConfig
-    from lerobot.robots import RobotConfig
     from lerobot.scripts.lerobot_record import RecordConfig
+
+    # Resolve the nested config classes from RecordConfig's own type hints rather
+    # than hardcoding their module paths. lerobot relocates these dataclasses
+    # between releases (DatasetRecordConfig and RobotConfig have lived under
+    # different modules across 0.5.x), so importing a fixed path breaks whenever
+    # the layout drifts. Following RecordConfig's resolved annotations keeps the
+    # field-drift cross-check pinned to whatever lerobot is installed.
+    record_hints = typing.get_type_hints(RecordConfig)
+    DatasetRecordConfig = record_hints["dataset"]
+    RobotConfig = record_hints["robot"]
 
     dataset_fields = {f.name for f in dataclasses.fields(DatasetRecordConfig)}
     record_fields = {f.name for f in dataclasses.fields(RecordConfig)}
