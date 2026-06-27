@@ -222,11 +222,15 @@ def test_timeout_surfaces_as_structured_error(monkeypatch: pytest.MonkeyPatch) -
 
 
 def test_type_resolution_failure_is_structured(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A valid-shaped type naming a package that is not installed is an ordinary
+    # agent input (e.g. an LLM-hallucinated type). rosidl_runtime_py.get_message
+    # resolves it via importlib.import_module, which raises ModuleNotFoundError
+    # (a subclass of ImportError) - the real production failure mode, not KeyError.
     def boom(*a: Any, **k: Any) -> Any:
-        raise KeyError("geometry_msgs/msg/Nope")
+        raise ModuleNotFoundError("No module named 'nonexistent_pkg'")
 
     monkeypatch.setattr(ros_mod, "_publish", boom)
-    result = use_ros(action="publish", topic="/cmd", type="geometry_msgs/msg/Nope")
+    result = use_ros(action="publish", topic="/cmd", type="nonexistent_pkg/msg/Foo")
     assert result["status"] == "error"
     assert "publish failed" in _texts(result)
 
