@@ -447,7 +447,7 @@ ignore_missing_imports = false
 
 # Third-party libs without type stubs
 [[tool.mypy.overrides]]
-module = ["lerobot.*", "gr00t.*", "draccus.*", "msgpack.*", "websockets", "websockets.*", "zmq.*", "huggingface_hub.*", "serial.*", "psutil.*", "torch.*", "torchvision.*", "transformers.*", "einops.*", "robot_descriptions.*", "mujoco.*", "imageio.*", "libero.*", "zenoh.*", "boto3", "boto3.*", "awscrt", "awscrt.*", "awsiot", "awsiot.*", "botocore.*", "strands_robots.policies.cosmos3._msgpack_numpy", "diffusers", "diffusers.*", "accelerate", "accelerate.*", "openpi_client", "openpi_client.*", "openpi_server", "openpi_server.*", "openpi", "openpi.*", "device_connect_edge", "device_connect_edge.*", "device_connect_agent_tools", "device_connect_agent_tools.*", "rclpy", "rclpy.*", "rosidl_runtime_py", "rosidl_runtime_py.*", "moveit", "moveit.*", "moveit_configs_utils", "moveit_configs_utils.*", "geometry_msgs", "geometry_msgs.*", "mink", "mink.*", "qpsolvers", "qpsolvers.*", "onnxruntime", "onnxruntime.*"]
+module = ["lerobot.*", "gr00t.*", "draccus.*", "msgpack.*", "websockets", "websockets.*", "zmq.*", "huggingface_hub.*", "serial.*", "psutil.*", "torch.*", "torchvision.*", "transformers.*", "einops.*", "robot_descriptions.*", "mujoco.*", "imageio.*", "libero.*", "zenoh.*", "boto3", "boto3.*", "awscrt", "awscrt.*", "awsiot", "awsiot.*", "botocore.*", "strands_robots.policies.cosmos3._msgpack_numpy", "diffusers", "diffusers.*", "accelerate", "accelerate.*", "openpi_client", "openpi_client.*", "openpi_server", "openpi_server.*", "openpi", "openpi.*", "device_connect_edge", "device_connect_edge.*", "device_connect_agent_tools", "device_connect_agent_tools.*", "rclpy", "rclpy.*", "cyclonedds", "cyclonedds.*", "rosidl_runtime_py", "rosidl_runtime_py.*", "moveit", "moveit.*", "moveit_configs_utils", "moveit_configs_utils.*", "geometry_msgs", "geometry_msgs.*", "mink", "mink.*", "qpsolvers", "qpsolvers.*", "onnxruntime", "onnxruntime.*"]
 ignore_missing_imports = true
 
 # Device Connect drivers - thin wrappers over the untyped device_connect_edge
@@ -481,6 +481,14 @@ disallow_untyped_defs = false
 module = ["strands_robots.robot"]
 disallow_untyped_defs = false
 warn_return_any = false
+
+# RTPS IDL bundle - cyclonedds IdlStruct uses metaclass keyword args (typename=)
+# that mypy reads as __init_subclass__ kwargs on object. The classes are dynamic
+# by construction (DDS type registration), so relax call-arg checking here.
+[[tool.mypy.overrides]]
+module = ["strands_robots.rtps.idl"]
+disable_error_code = ["call-arg"]
+disallow_untyped_defs = false
 
 # __init__.py has lazy import helpers
 [[tool.mypy.overrides]]
@@ -533,4 +541,5 @@ markers = [
     "curobo: requires NVIDIA cuRobo + a CUDA-capable GPU. Run with: pytest -m curobo (set CUROBO_LIVE=1)",
     "wbc: requires onnxruntime + a downloaded GR00T-WBC (SONIC) checkpoint + mujoco. Run with: pytest -m wbc (set WBC_LIVE=1)",
     "molmoact2: requires lerobot >= 0.5.2 (from source) + the [molmoact2] extra (transformers, peft, scipy). Run with: pytest -m molmoact2",
+    "rtps: requires cyclonedds ([ros2] extra) + a live ROS 2 peer (e.g. turtlesim) on the DDS domain. Run with: RTPS_LIVE=1 pytest -m rtps",
 ]

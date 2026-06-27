@@ -373,6 +373,7 @@ AgentTool returning `{"status", "content"}`.
 | `serial_tool` | Low-level Feetech servo / raw serial communication |
 | `robot_mesh` | Coordinate robots over the Zenoh mesh (`tell`, `broadcast`, E-STOP) |
 | `use_ros` | Bridge to any ROS 2 graph - list/echo/publish topics, call services (in-process rclpy) |
+| `use_rtps` | Join a ROS 2 graph as a DDS participant - publish/echo topics, act as a robot (pure cyclonedds, no rclpy, all ROS 2 distros) |
 
 <details>
 <summary><b>Robot tool actions</b></summary>

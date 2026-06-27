@@ -11,6 +11,7 @@ from strands_robots.tools import (
     gr00t_inference,   # see GR00T page
     robot_mesh,        # see multi-robot page
     use_ros,           # see ROS 2 integration page
+    use_rtps,          # see Pure-RTPS ROS 2 page
 )
 # All return {"status": ..., "content": [{"text": "..."}]}
 ```
@@ -29,6 +30,7 @@ from strands_robots.tools import (
 | `gr00t_inference` | `"start_container"`, … | GR00T container lifecycle - see [GR00T](../policies/groot.md) |
 | `robot_mesh` | `"tell"`, `"broadcast"`, `"emergency_stop"` | Agent-driven mesh ops - see [Multi-robot](../mesh.md) |
 | `use_ros` | `"list_topics"`, `"echo"`, `"publish"`, `"service_call"`, `"info"` | Bridge to any ROS 2 robot/sim - see [ROS 2 integration](../ros2-integration.md) |
+| `use_rtps` | `"types"`, `"advertise"`, `"publish"`, `"subscribe"`, `"echo"` | Join a ROS 2 graph over pure RTPS (no rclpy) - see [Pure-RTPS ROS 2](../rtps-integration.md) |
 
 Parse results via `result["content"][0]["text"]`, not custom keys like `result["ports"]`.
 
