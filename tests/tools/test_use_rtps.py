@@ -317,3 +317,130 @@ def test_backend_available_import_error_returns_false(monkeypatch: pytest.Monkey
 
     monkeypatch.setattr(builtins, "__import__", _fail)
     assert rtps_mod._RtpsBackend().available() is False
+
+
+# Backend DDS-entity caching contract --------------------------------------
+#
+# The action-dispatch tests above stub ``_backend.writer`` / ``_backend.reader``
+# so they never reach the real get-or-create factories. These tests drive the
+# real ``_RtpsBackend`` methods with fake ``cyclonedds`` submodules injected
+# into ``sys.modules`` (cyclonedds is not installed), exercising the documented
+# contract: one shared DomainParticipant, and writers/readers cached per
+# (topic, type) so repeated calls reuse the same DDS entity.
+
+
+@dataclasses.dataclass
+class _EntityRecorder:
+    """Records every DDS entity the backend constructs via the fake modules."""
+
+    participants: list[Any] = dataclasses.field(default_factory=list)
+    topics: list[Any] = dataclasses.field(default_factory=list)
+    writers: list[Any] = dataclasses.field(default_factory=list)
+    readers: list[Any] = dataclasses.field(default_factory=list)
+
+
+@pytest.fixture
+def rtps_entities(monkeypatch: pytest.MonkeyPatch) -> _EntityRecorder:
+    """Inject fake ``cyclonedds`` submodules + IDL resolvers; record construction.
+
+    Returns the recorder so a test can assert how many participants/topics/etc.
+    the backend created. No real DDS or cyclonedds wheel is involved.
+    """
+    import sys
+    import types
+
+    rec = _EntityRecorder()
+
+    class _FakeParticipant:
+        def __init__(self) -> None:
+            rec.participants.append(self)
+
+    class _FakeTopic:
+        def __init__(self, participant: Any, name: str, idl_cls: Any) -> None:
+            self.participant = participant
+            self.name = name
+            self.idl_cls = idl_cls
+            rec.topics.append(self)
+
+    class _FakeDataWriter:
+        def __init__(self, participant: Any, topic: Any) -> None:
+            self.participant = participant
+            self.topic = topic
+            rec.writers.append(self)
+
+    class _FakeDataReader:
+        def __init__(self, participant: Any, topic: Any) -> None:
+            self.participant = participant
+            self.topic = topic
+            rec.readers.append(self)
+
+    def _mod(name: str, **attrs: Any) -> types.ModuleType:
+        m = types.ModuleType(name)
+        for key, value in attrs.items():
+            setattr(m, key, value)
+        monkeypatch.setitem(sys.modules, name, m)
+        return m
+
+    _mod("cyclonedds")
+    _mod("cyclonedds.domain", DomainParticipant=_FakeParticipant)
+    _mod("cyclonedds.topic", Topic=_FakeTopic)
+    _mod("cyclonedds.pub", DataWriter=_FakeDataWriter)
+    _mod("cyclonedds.sub", DataReader=_FakeDataReader)
+
+    # The factories resolve the IDL class + mangle the topic name from the real
+    # modules; pin them so the test is independent of the shipped IDL bundle.
+    import strands_robots.rtps.idl as idl_mod
+    import strands_robots.rtps.mangling as mangling_mod
+
+    monkeypatch.setattr(idl_mod, "get_type", lambda ros_type: _Twist)
+    monkeypatch.setattr(mangling_mod, "dds_topic_name", lambda topic: f"rt{topic}")
+    return rec
+
+
+def test_participant_created_once_and_shared(rtps_entities: _EntityRecorder) -> None:
+    backend = rtps_mod._RtpsBackend()
+    first = backend._participant_obj()
+    second = backend._participant_obj()
+    assert first is second  # one shared presence on the graph
+
+
+def test_writer_get_or_create_caches_per_topic_type(rtps_entities: _EntityRecorder) -> None:
+    backend = rtps_mod._RtpsBackend()
+
+    w1 = backend.writer("/turtle1/cmd_vel", "geometry_msgs/msg/Twist")
+    w1_again = backend.writer("/turtle1/cmd_vel", "geometry_msgs/msg/Twist")
+    w2 = backend.writer("/other", "geometry_msgs/msg/Twist")
+
+    # Same (topic, type) reuses the cached writer; a new key builds a new one.
+    assert w1 is w1_again
+    assert w2 is not w1
+    assert len(rtps_entities.writers) == 2
+    # One participant shared across both writers.
+    assert len(rtps_entities.participants) == 1
+    assert w1.participant is w2.participant
+    # Topic was built with the mangled name and the resolved IDL class.
+    assert w1.topic.name == "rt/turtle1/cmd_vel"
+    assert w1.topic.idl_cls is _Twist
+
+
+def test_reader_get_or_create_caches_per_topic_type(rtps_entities: _EntityRecorder) -> None:
+    backend = rtps_mod._RtpsBackend()
+
+    r1 = backend.reader("/turtle1/cmd_vel", "geometry_msgs/msg/Twist")
+    r1_again = backend.reader("/turtle1/cmd_vel", "geometry_msgs/msg/Twist")
+    r2 = backend.reader("/other", "geometry_msgs/msg/Twist")
+
+    assert r1 is r1_again
+    assert r2 is not r1
+    assert len(rtps_entities.readers) == 2
+    assert len(rtps_entities.participants) == 1
+    assert r1.topic.name == "rt/turtle1/cmd_vel"
+
+
+def test_writer_and_reader_share_one_participant(rtps_entities: _EntityRecorder) -> None:
+    backend = rtps_mod._RtpsBackend()
+    writer = backend.writer("/cmd_vel", "geometry_msgs/msg/Twist")
+    reader = backend.reader("/cmd_vel", "geometry_msgs/msg/Twist")
+    # A single DomainParticipant backs both directions of the participant.
+    assert len(rtps_entities.participants) == 1
+    assert writer.participant is reader.participant
