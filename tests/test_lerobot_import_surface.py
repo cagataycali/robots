@@ -1,0 +1,109 @@
+"""Regression: every ``lerobot`` symbol ``strands_robots`` imports must resolve.
+
+``strands_robots`` integrates LeRobot through 45 deferred imports (policy
+inference, dataset recording, teleoperation, motor buses). Every one of them is
+lazy: it lives inside a function body, a ``try`` block, or a method, never at
+module top level (so optional-dep absence does not break ``import
+strands_robots``). The flip side is that a plain ``import strands_robots`` -- or
+any test that only imports the package -- exercises NONE of these import
+statements. A LeRobot release that renames or moves a symbol therefore stays
+invisible until the exact code path runs, which for several paths only happens
+on GPU or attached hardware.
+
+This guard closes that gap statically. It parses every module under the
+``strands_robots`` package, collects each ``from lerobot... import NAME`` and
+``import lerobot...`` statement, imports the referenced LeRobot module, and
+asserts the named symbol exists. A renamed/removed LeRobot attribute fails here,
+in the fast unit suite, instead of at runtime in a deferred branch.
+
+The scan is conservative: a LeRobot submodule that cannot be imported in the
+current environment (an optional extra is absent) is skipped rather than failed,
+so the guard never turns an optional-dependency gap into a red test. It only
+asserts on symbols belonging to modules that successfully import.
+"""
+
+from __future__ import annotations
+
+import ast
+import importlib
+from pathlib import Path
+
+import pytest
+
+import strands_robots
+
+pytest.importorskip("lerobot", reason="lerobot not installed - pip install 'strands-robots[lerobot]'")
+
+_PACKAGE_DIR = Path(strands_robots.__file__).resolve().parent
+
+
+def _python_sources() -> list[Path]:
+    return sorted(p for p in _PACKAGE_DIR.rglob("*.py") if "__pycache__" not in p.parts)
+
+
+def _collect_lerobot_imports() -> list[tuple[str, str | None, Path, int]]:
+    """Return ``(module, symbol, file, lineno)`` for every lerobot import.
+
+    ``symbol`` is ``None`` for plain ``import lerobot.foo`` statements (only the
+    module needs to resolve). Star imports are skipped (no single symbol to
+    check).
+    """
+    found: list[tuple[str, str | None, Path, int]] = []
+    for f in _python_sources():
+        try:
+            tree = ast.parse(f.read_text(encoding="utf-8"))
+        except (SyntaxError, UnicodeDecodeError):
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                if not node.module or not node.module.startswith("lerobot"):
+                    continue
+                for alias in node.names:
+                    if alias.name == "*":
+                        continue
+                    found.append((node.module, alias.name, f, node.lineno))
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name == "lerobot" or alias.name.startswith("lerobot."):
+                        found.append((alias.name, None, f, node.lineno))
+    return found
+
+
+def test_scan_found_lerobot_imports() -> None:
+    """Meta-guard: the scan must actually find lerobot imports.
+
+    If a refactor moves the imports or the AST walk regresses, this catches the
+    guard silently becoming a no-op.
+    """
+    imports = _collect_lerobot_imports()
+    assert len(imports) > 20, f"expected many lerobot imports, found {len(imports)}"
+
+
+def test_imported_lerobot_symbols_resolve() -> None:
+    """Every imported lerobot symbol must exist in the installed lerobot.
+
+    Modules that cannot be imported in this environment (missing optional
+    extra) are skipped; only symbols from importable modules are asserted.
+    """
+    drift: list[str] = []
+    module_cache: dict[str, object | None] = {}
+
+    for module, symbol, f, lineno in _collect_lerobot_imports():
+        if module not in module_cache:
+            try:
+                module_cache[module] = importlib.import_module(module)
+            except Exception:  # noqa: BLE001 - optional extra absent: skip, do not fail
+                module_cache[module] = None
+        mod = module_cache[module]
+        if mod is None:
+            continue
+        if symbol is None:
+            continue  # plain `import lerobot.x` already validated by import_module
+        if not hasattr(mod, symbol):
+            rel = f.relative_to(_PACKAGE_DIR.parent)
+            drift.append(f"  {rel}:{lineno}: `from {module} import {symbol}` - symbol not found")
+
+    assert not drift, (
+        "lerobot API drift: strands_robots imports symbols that no longer exist in the "
+        f"installed lerobot ({len(drift)} broken):\n" + "\n".join(drift)
+    )

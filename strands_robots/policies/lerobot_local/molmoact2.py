@@ -309,7 +309,7 @@ def build_policy(
     import torch
 
     try:
-        from lerobot.configs import FeatureType, PolicyFeature
+        from lerobot.configs.types import FeatureType, PolicyFeature
     except ImportError as exc:
         raise _factory_import_error(exc) from exc
 

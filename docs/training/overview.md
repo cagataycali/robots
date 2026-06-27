@@ -100,6 +100,7 @@ supports and **ignores the rest** (the same tolerance rule as
 | `extra["groot_root"]` | Isaac-GR00T checkout | GR00T |
 | `extra["sft_toml"]` / `extra["cosmos_root"]` | recipe + checkout | Cosmos |
 | `extra["relative_actions"]` | train pi0-family with delta actions | lerobot `--policy.use_relative_actions=true` (pi0/pi05/pi0_fast) |
+| `extra["sample_weighting"]` | RA-BC per-sample loss weighting dict | lerobot `--use_rabc=true --rabc_*` |
 
 ## From an agent (natural language)
 
@@ -125,6 +126,39 @@ agent("Record 50 cube-pick episodes, then post-tune lerobot ACT on the dataset "
 TrainSpec(..., method="lora", lora_r=16, extra={"policy_type": "pi05"})
 # -> lerobot_train --peft.method_type=LORA --peft.r=16 --policy.type=pi05
 ```
+
+#### RA-BC sample weighting (reward-aligned behavior cloning)
+
+Reward-Aligned Behavior Cloning reweights the per-sample loss so high-quality
+demonstrations dominate - the technique behind the strongest behavior-cloning
+ablations on long-horizon manipulation. lerobot drives it from flat
+`TrainPipelineConfig` fields (`use_rabc` plus `rabc_progress_path`,
+`rabc_kappa`, `rabc_epsilon`, `rabc_head_mode`). Surface it through `extra`
+with a friendly grouped dict that maps onto those fields:
+
+```python
+TrainSpec(
+    dataset_root="/data/folding_v3",
+    base_model="lerobot/pi05_base",
+    output_dir="/tmp/ft_out",
+    extra={
+        "policy_type": "pi05",
+        "sample_weighting": {       # type='rabc' sets use_rabc=true
+            "type": "rabc",
+            "kappa": 0.01,          # -> rabc_kappa (high-quality threshold)
+            "head_mode": "sparse",  # -> rabc_head_mode (progress head)
+            # "progress_path": "hf://datasets/org/ds/sarm_progress.parquet",
+        },
+    },
+)
+# -> lerobot_train --use_rabc=true --rabc_kappa=0.01 --rabc_head_mode=sparse ...
+```
+
+The friendly keys map to lerobot's flat fields - `type` gates `use_rabc`,
+`kappa` -> `rabc_kappa`, `epsilon` -> `rabc_epsilon`, `head_mode` ->
+`rabc_head_mode`, `progress_path` -> `rabc_progress_path`. An unknown key (or a
+`type` other than `rabc`) raises an actionable error naming the accepted set.
+Omit `sample_weighting` entirely for standard (uniform) behavior cloning.
 
 #### Relative (delta) actions
 
