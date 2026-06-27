@@ -139,6 +139,8 @@ class MuJoCoSimEngine(
         default_height: int = 480,
         mesh: bool = False,
         peer_id: str | None = None,
+        ros2_bridge: bool = False,
+        ros2_domain: int = 0,
         **kwargs,
     ):
         """Construct a MuJoCo Simulation AgentTool.
@@ -165,6 +167,7 @@ class MuJoCoSimEngine(
                 compatibility.
         """
         super().__init__()
+        self._init_ros_bridge(ros2_bridge=ros2_bridge, ros2_domain=ros2_domain)
         self.tool_name_str = tool_name
         self.default_timestep = default_timestep
         self.default_width = default_width
@@ -1594,6 +1597,7 @@ class MuJoCoSimEngine(
                 self._world.sim_time = self._world._data.time
                 self._world.step_count += batch
             remaining -= batch
+        self._publish_ros_telemetry()
         return {
             "status": "success",
             "content": [{"text": f"+{n_steps} steps | t={self._world.sim_time:.4f}s | total={self._world.step_count}"}],
@@ -2929,9 +2933,13 @@ class MuJoCoSimEngine(
         # results until their heartbeats expire.
         # Stop any local teleoperation loop + disconnect attached devices
         # (TeleopMixin) before mesh teardown. Best-effort.
-        if getattr(self, "_teleop_running", False) or getattr(self, "_teleops", None):
-            import contextlib as _cl
+        # Tear down the ROS 2 telemetry bridge (if any) before other teardown
+        # so external subscribers see the node leave cleanly.
+        import contextlib as _cl
 
+        with _cl.suppress(Exception):
+            self._shutdown_ros_bridge()
+        if getattr(self, "_teleop_running", False) or getattr(self, "_teleops", None):
             with _cl.suppress(Exception):
                 self.stop_teleoperate()
         if self._world is not None:

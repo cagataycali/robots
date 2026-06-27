@@ -97,6 +97,41 @@ malformed names from reaching the ROS 2 client library. Backend and timeout
 failures are returned as structured `{"status": "error"}` results rather than
 raised exceptions.
 
+## Sim bridge: publish a simulation on a ROS 2 domain
+
+The simulator can advertise its own live state on ROS 2. Construct any
+`SimEngine` (e.g. `Simulation()`) with `ros2_bridge=True` and it spins up an
+internal `rclpy` node that publishes, per robot, after every `step()`:
+
+| Topic | Type | Content |
+|-------|------|---------|
+| `/<robot>/joint_states` | `sensor_msgs/msg/JointState` | joint names + positions |
+| `/<robot>/<camera>/image_raw` | `sensor_msgs/msg/Image` (`rgb8`) | one frame per attached camera |
+
+```python
+from strands_robots.simulation import Simulation
+
+sim = Simulation(ros2_bridge=True, ros2_domain=0)
+sim.create_world()
+sim.add_robot("so101")
+sim.step(10)   # publishes /so101/joint_states (+ camera image_raw) on domain 0
+```
+
+External ROS 2 nodes - and the agent's own `use_ros` calls - then see the
+running simulation:
+
+```bash
+ros2 topic list | grep so101          # /so101/joint_states, /so101/<cam>/image_raw
+ros2 topic echo /so101/joint_states   # live joint positions, updated every step
+```
+
+`rclpy` is an optional, system-provided dependency (the `[ros2]` extra). When it
+is missing, `ros2_bridge=True` raises a clear `ImportError` at construction;
+`ros2_bridge=False` (the default) never touches ROS 2, so the base sim install
+stays lightweight. The bridge node is torn down cleanly on `destroy()`.
+
+See `examples/ros2/sim_bridge_demo.py` for a runnable end-to-end script.
+
 ## Mesh bridge: a ROS 2 robot as a first-class strands Robot
 
 `use_ros` is the low-level surface. For mobile bases that expose the usual

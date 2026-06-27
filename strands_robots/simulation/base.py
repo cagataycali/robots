@@ -89,6 +89,75 @@ class SimEngine(ABC):
         sim.destroy()
     """
 
+    def _init_ros_bridge(self, *, ros2_bridge: bool = False, ros2_domain: int = 0) -> None:
+        """Initialize the optional ROS 2 telemetry bridge state.
+
+        Backends that accept a ``ros2_bridge`` flag call this once from their
+        own ``__init__``. It is intentionally a plain method rather than an ABC
+        ``__init__`` override: the simulation interface imposes no base-class
+        constructor contract, so lightweight subclasses and test doubles need
+        not thread ``super().__init__()`` through just to satisfy the ABC.
+
+        Args:
+            ros2_bridge: When True, publish per-robot ``joint_states`` and
+                camera ``image_raw`` on a ROS 2 domain every :meth:`step`, so
+                external ROS 2 nodes can subscribe to the running simulation.
+                Requires ``rclpy`` (system ROS 2 / the official docker image);
+                an :class:`ImportError` is raised here if it is missing.
+                Defaults to False - the sim never touches ROS 2.
+            ros2_domain: ROS 2 domain id (``ROS_DOMAIN_ID``) to publish on.
+        """
+        self._ros2_bridge_enabled = bool(ros2_bridge)
+        self._ros2_domain = int(ros2_domain)
+        self._ros_bridge: Any = None
+        if self._ros2_bridge_enabled:
+            from strands_robots.simulation.ros_bridge import SimRosBridge
+
+            self._ros_bridge = SimRosBridge(domain_id=self._ros2_domain)
+
+    def _publish_ros_telemetry(self, *, skip_images: bool = False) -> None:
+        """Publish joint_states (and camera images) for every robot once.
+
+        No-op when the ROS 2 bridge is disabled or was never initialized.
+        Called by backends from :meth:`step` after the physics tick. Per-robot
+        failures (e.g. a camera that did not render) never interrupt the loop.
+        """
+        bridge = getattr(self, "_ros_bridge", None)
+        if bridge is None:
+            return
+        for robot in self.list_robots():
+            # Per-robot guard: a transient render/observation failure on one
+            # robot (e.g. EGL/GL context loss, a camera that produced no frame)
+            # must not interrupt the loop or crash the caller's step(). Publish
+            # what succeeds, log-and-continue on the rest - this is the contract
+            # the docstring promises on the hot ros2_bridge=True path.
+            try:
+                obs = self.get_observation(robot, skip_images=skip_images)
+                names = self.robot_joint_names(robot)
+                positions = [obs[j] for j in names if j in obs and isinstance(obs[j], (int, float))]
+                bridge.publish_joint_states(robot, names, positions)
+                if skip_images:
+                    continue
+                for key, value in obs.items():
+                    if key in names:
+                        continue
+                    if hasattr(value, "ndim") and getattr(value, "ndim", 0) == 3:
+                        bridge.publish_image(robot, key, value)
+            except Exception:
+                logger.warning(
+                    "ROS 2 telemetry publish failed for robot %r; skipping this robot for this step",
+                    robot,
+                    exc_info=True,
+                )
+                continue
+
+    def _shutdown_ros_bridge(self) -> None:
+        """Tear down the ROS 2 bridge if one is active. Safe to call repeatedly."""
+        bridge = getattr(self, "_ros_bridge", None)
+        if bridge is not None:
+            bridge.shutdown()
+            self._ros_bridge = None
+
     def _resolve_single_robot(self, robot_name: str | None) -> str:
         """Resolve an optional robot name to a concrete one.
 
