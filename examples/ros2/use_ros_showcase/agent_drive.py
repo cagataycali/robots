@@ -25,7 +25,7 @@ import time
 from strands import Agent
 from strands.models import BedrockModel
 
-from strands_robots.tools import use_ros
+from strands_robots.tools.use_ros import use_ros
 
 
 def pose() -> tuple[float, float, float] | None:

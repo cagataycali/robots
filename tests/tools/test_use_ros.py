@@ -239,3 +239,41 @@ def test_unknown_action_errors() -> None:
     result = use_ros(action="warp_drive")
     assert result["status"] == "error"
     assert "unknown action" in _texts(result)
+
+
+def test_showcase_examples_import_tool_from_concrete_module() -> None:
+    """Example scripts that *call* ``use_ros`` import it from its defining module.
+
+    ``strands_robots.tools`` re-exports tools lazily via module ``__getattr__``,
+    and the package contains a like-named submodule (``strands_robots/tools/
+    use_ros.py``). The package-level form ``from strands_robots.tools import
+    use_ros`` is valid at runtime, but static analysers cannot see the lazy
+    re-export and resolve the name to the *submodule* object instead. When such
+    a script then calls ``use_ros(...)`` directly, that reads as calling a
+    module (non-callable) and is reported as an error.
+
+    Example scripts that invoke a tool as a plain function must therefore import
+    it from its concrete module (``from strands_robots.tools.use_ros import
+    use_ros``), so the name unambiguously resolves to the callable tool.
+    """
+    import re
+    from pathlib import Path
+
+    showcase_dir = Path(__file__).resolve().parents[2] / "examples" / "ros2" / "use_ros_showcase"
+    scripts = sorted(showcase_dir.glob("*.py"))
+    assert scripts, f"no example scripts found under {showcase_dir}"
+
+    bad_import = re.compile(r"^\s*from\s+strands_robots\.tools\s+import\s+.*\buse_ros\b", re.MULTILINE)
+    direct_call = re.compile(r"\buse_ros\s*\(")
+
+    offenders: list[str] = []
+    for script in scripts:
+        text = script.read_text(encoding="utf-8")
+        if direct_call.search(text) and bad_import.search(text):
+            offenders.append(script.name)
+
+    assert not offenders, (
+        f"example scripts call use_ros() but import it from the package re-export: {offenders}. "
+        "Import it from its concrete module instead: "
+        "'from strands_robots.tools.use_ros import use_ros'."
+    )
