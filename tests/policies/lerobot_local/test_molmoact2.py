@@ -416,7 +416,9 @@ class TestBuildPolicy:
         real_import = builtins.__import__
 
         def blocked_import(name, *args, **kwargs):
-            if name == "lerobot.configs":
+            # Block the configs subtree: the actual import target is
+            # lerobot.configs.types since the 0.5.2 migration.
+            if name == "lerobot.configs" or name.startswith("lerobot.configs."):
                 raise ModuleNotFoundError("No module named 'einops'", name="einops")
             return real_import(name, *args, **kwargs)
 
@@ -456,7 +458,9 @@ class TestBuildPolicy:
         def blocked_import(name, *args, **kwargs):
             if name == "lerobot.policies.factory":
                 raise ModuleNotFoundError("No module named 'qwen_vl_utils'", name="qwen_vl_utils")
-            if name == "lerobot.configs":
+            # Stub the configs subtree so the first guard passes and we
+            # isolate the factory guard.
+            if name == "lerobot.configs" or name.startswith("lerobot.configs."):
                 return types.SimpleNamespace(FeatureType=object, PolicyFeature=object)
             return real_import(name, *args, **kwargs)
 
