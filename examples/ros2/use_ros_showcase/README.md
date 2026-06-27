@@ -6,6 +6,35 @@ CLI, no code-generation. It exercises every action and captures real data,
 including a closed **sense -> act -> sense** loop and the structured-error
 contracts.
 
+## A Strands agent driving the turtle (natural language -> motion)
+
+`agent_drive.py` hands the `use_ros` tool to a Bedrock-backed Strands agent
+(`global.anthropic.claude-opus-4-8`) and asks it, in plain English, to "draw a
+square". The agent autonomously issues **9 `use_ros` tool calls** (4 sides, 3
+turns, stop, echo) and reports the final pose - all in-process through rclpy.
+
+![A Strands agent drawing a square in turtlesim via use_ros](../../../docs/assets/use_ros_agent_turtle.gif)
+
+```
+pose BEFORE: (5.54, 5.54, 0.0)
+=== AGENT DRIVING (square) ===   [model: global.anthropic.claude-opus-4-8 via Amazon Bedrock]
+Side 1: Tool #1: use_ros   Turn 1: Tool #2: use_ros   ...   Stop: Tool #8   Echo: Tool #9
+"Square complete! Final pose: x=5.35, y=6.73, theta~2.84 rad, velocities at zero."
+pose AFTER: (5.35, 6.73, 2.84)
+```
+
+Full transcript in [`agent_sample_output.txt`](./agent_sample_output.txt); the
+recording above is the live turtlesim canvas captured while the agent drove.
+
+```bash
+# inside a sourced ROS 2 env with turtlesim running:
+export AWS_BEARER_TOKEN_BEDROCK=...   # or any boto3 credential chain
+pip install strands-agents
+python3 agent_drive.py
+```
+
+## Run it
+
 ## Run it
 
 ```bash

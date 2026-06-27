@@ -98,6 +98,13 @@ docker compose run --build --rm showcase   # exits 0 iff the turtle moved
 
 See `examples/ros2/use_ros_showcase/` (a captured run is in `sample_output.txt`).
 
+A Bedrock-backed Strands agent can drive the turtle from a natural-language
+prompt - it issues the `use_ros` calls itself:
+
+![A Strands agent drawing a square in turtlesim via use_ros](assets/use_ros_agent_turtle.gif)
+
+See `examples/ros2/use_ros_showcase/agent_drive.py`.
+
 ## Safety
 
 Agent-supplied topic, service, and type names are validated against an
