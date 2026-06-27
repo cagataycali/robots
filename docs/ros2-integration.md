@@ -86,6 +86,18 @@ use_ros(action="service_call", service="/spawn",
         fields={"x": 3.0, "y": 3.0, "name": "t2"})
 ```
 
+## Try it live
+
+A reproducible showcase drives a real `turtlesim` through every `use_ros` action
+(in-process rclpy, closed sense->act->sense loop) in one command:
+
+```bash
+cd examples/ros2/use_ros_showcase
+docker compose run --build --rm showcase   # exits 0 iff the turtle moved
+```
+
+See `examples/ros2/use_ros_showcase/` (a captured run is in `sample_output.txt`).
+
 ## Safety
 
 Agent-supplied topic, service, and type names are validated against an

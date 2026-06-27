@@ -1,0 +1,15 @@
+# One-command live showcase of the use_ros tool against a real turtlesim.
+#
+#   cd examples/ros2/use_ros_showcase
+#   docker compose run --build --rm showcase
+#
+# Builds ros:jazzy + turtlesim + strands-agents, starts a real turtlesim node,
+# and exercises every use_ros action in-process through rclpy - including a
+# closed sense->act->sense loop that drives the turtle and reads the new pose
+# back. Exits 0 iff the turtle moved.
+services:
+  showcase:
+    build:
+      context: ../../..
+      dockerfile: examples/ros2/use_ros_showcase/Dockerfile
+    command: ["bash", "examples/ros2/use_ros_showcase/run_showcase.sh"]
