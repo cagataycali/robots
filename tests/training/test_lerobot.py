@@ -789,7 +789,8 @@ class TestSampleWeightingRABC:
         )
 
     def test_build_config_attaches_typed_sample_weighting(self, dataset_root, tmp_path):
-        from lerobot.utils.sample_weighting import SampleWeightingConfig
+        swm = pytest.importorskip("lerobot.utils.sample_weighting")
+        SampleWeightingConfig = swm.SampleWeightingConfig
 
         cfg = LerobotTrainer(device="cpu").build_config(self._rabc_spec(dataset_root, tmp_path))
         assert isinstance(cfg.sample_weighting, SampleWeightingConfig)
@@ -817,6 +818,7 @@ class TestSampleWeightingRABC:
         assert cfg.sample_weighting is None
 
     def test_unsupported_field_raises_actionable_error(self, dataset_root, tmp_path):
+        pytest.importorskip("lerobot.utils.sample_weighting")
         spec = self._rabc_spec(dataset_root, tmp_path)
         spec.extra["sample_weighting"] = {"type": "rabc", "bogus_field": 1}
         with pytest.raises(ValueError, match="SampleWeightingConfig does not support"):
