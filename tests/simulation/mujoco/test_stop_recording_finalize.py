@@ -18,6 +18,8 @@ These tests drive a fake recorder so the contract is pinned without the
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 pytest.importorskip("mujoco")
@@ -36,6 +38,7 @@ class _FakeRecorder:
         save_result=None,
         frame_count=7,
         episode_frame_count=7,
+        meta_total_episodes=None,
     ):
         self.repo_id = "local/finalize_test"
         self.frame_count = frame_count
@@ -51,6 +54,12 @@ class _FakeRecorder:
         self._save_result = save_result
         self.sync_args: tuple | None = None
         self.push_tags = None
+        # stop_recording's #708 parquet-truth gate reads
+        # ``recorder.dataset.meta.total_episodes`` as the ground truth. Only
+        # expose ``dataset`` when a caller wants to exercise that gate so the
+        # other tests keep the no-dataset (gate-skipped) path.
+        if meta_total_episodes is not None:
+            self.dataset = SimpleNamespace(meta=SimpleNamespace(total_episodes=meta_total_episodes))
 
     def save_episode(self):
         self.calls.append("save_episode")
@@ -241,3 +250,82 @@ class TestStopRecordingEmptyDataset:
         assert rec.calls == ["finalize"]
         assert "save_episode" not in rec.calls
         assert "90 frames" in result["content"][0]["text"]
+
+
+class TestStopRecordingParquetTruthGate:
+    """stop_recording reconciles the recorder's episode bookkeeping against the
+    on-disk dataset (the #708 silent-collapse gate).
+
+    ``recorder.episode_count`` is author-side bookkeeping incremented by every
+    ``save_episode`` call. The dataset's own ``meta.total_episodes`` (backed by
+    the parquet rowcount) is what downstream consumers - the HF hub, training
+    loaders, audit tooling - actually trust. When they disagree the on-disk
+    dataset wins, and stop_recording must surface the divergence in both the
+    structured JSON payload and the human-readable text so a caller (or CI that
+    parses the status dict) can fail loudly instead of shipping a dataset whose
+    episodes silently collapsed.
+
+    When the recorder exposes no ``dataset`` handle (e.g. a backend without the
+    ``lerobot`` extra) the gate is skipped and the recorder's own count stands.
+    """
+
+    def test_episode_count_matches_parquet_reports_no_mismatch(self, recording_sim):
+        # recorder.episode_count == dataset.meta.total_episodes -> gate is quiet.
+        rec = _FakeRecorder(meta_total_episodes=1)  # episode_count defaults to 1
+        _arm(recording_sim, rec)
+        result = recording_sim.stop_recording()
+        assert result["status"] == "success"
+        payload = result["content"][1]["json"]
+        assert payload["parquet_episode_count"] == 1
+        assert payload["episode_count_mismatch"] is False
+        assert payload["episode_count"] == 1
+        # No gate banner in the human-readable text when counts agree.
+        assert "#708 gate" not in result["content"][0]["text"]
+
+    def test_episode_count_mismatch_trusts_parquet_and_surfaces_divergence(self, recording_sim):
+        # recorder thinks it saved 5 episodes but the parquet only has 3:
+        # the on-disk dataset is the source of truth, so the reported
+        # episode_count must collapse to 3 and the divergence must be flagged.
+        rec = _FakeRecorder(meta_total_episodes=3)
+        rec.episode_count = 5
+        _arm(recording_sim, rec)
+        result = recording_sim.stop_recording()
+        assert result["status"] == "success"
+        payload = result["content"][1]["json"]
+        # parquet wins: the canonical episode_count is the on-disk value.
+        assert payload["parquet_episode_count"] == 3
+        assert payload["episode_count"] == 3
+        assert payload["episode_count_mismatch"] is True
+        # The divergence is named in the human-readable text (both counts).
+        text = result["content"][0]["text"]
+        assert "#708 gate" in text
+        assert "5 episodes" in text
+        assert "parquet has 3" in text
+
+    def test_missing_dataset_handle_skips_gate(self, recording_sim):
+        # No ``dataset`` attribute (no lerobot extra) -> gate is skipped, the
+        # recorder's own count stands, and parquet_episode_count stays None.
+        rec = _FakeRecorder()  # meta_total_episodes=None -> no .dataset attr
+        assert not hasattr(rec, "dataset")
+        _arm(recording_sim, rec)
+        result = recording_sim.stop_recording()
+        assert result["status"] == "success"
+        payload = result["content"][1]["json"]
+        assert payload["parquet_episode_count"] is None
+        assert payload["episode_count_mismatch"] is False
+        assert "#708 gate" not in result["content"][0]["text"]
+
+    def test_parquet_probe_failure_never_aborts_finalize(self, recording_sim):
+        # A broken meta probe (total_episodes that cannot be coerced to int)
+        # must be swallowed: the gate is best-effort and must never fail an
+        # otherwise-complete finalize. The recorder's own count then stands.
+        rec = _FakeRecorder(meta_total_episodes=1)
+        rec.dataset.meta.total_episodes = "not-a-number"
+        _arm(recording_sim, rec)
+        result = recording_sim.stop_recording()
+        assert result["status"] == "success"
+        assert "finalize" in rec.calls
+        payload = result["content"][1]["json"]
+        # Probe failed before assigning -> stays at the safe defaults.
+        assert payload["parquet_episode_count"] is None
+        assert payload["episode_count_mismatch"] is False
