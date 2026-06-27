@@ -26,7 +26,7 @@ def _ros_pose() -> tuple[float, float, float] | None:
     try:
         out = subprocess.run(
             ["bash", "-lc", "source /opt/ros/jazzy/setup.bash && "
-             "timeout 5 ros2 topic echo --once /turtle1/pose"],
+             + "timeout 5 ros2 topic echo --once /turtle1/pose"],
             capture_output=True, text=True, timeout=15,
         ).stdout
     except subprocess.TimeoutExpired:

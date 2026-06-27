@@ -11,7 +11,6 @@ from typing import Any
 
 import pytest
 
-import strands_robots.mesh.rtps_robot as robot_mod
 from strands_robots.mesh.rtps_robot import RtpsRobot
 
 
@@ -27,7 +26,7 @@ class _Recorder:
 @pytest.fixture
 def rec(monkeypatch: pytest.MonkeyPatch) -> _Recorder:
     recorder = _Recorder()
-    monkeypatch.setattr(robot_mod, "use_rtps", recorder)
+    monkeypatch.setattr("strands_robots.mesh.rtps_robot.use_rtps", recorder)
     return recorder
 
 
