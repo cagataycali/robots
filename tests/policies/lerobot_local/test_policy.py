@@ -150,6 +150,58 @@ class TestAutoDetectActionsPerStep:
         policy._auto_detect_actions_per_step()
         assert policy.actions_per_step == 1
 
+    def _policy_with_ensemble(self, coeff, n_action_steps=100, actions_per_step=1):
+        """A checkpoint that enables temporal ensembling (e.g. ACT folding).
+
+        Mirrors LeRobot's ACTConfig: ``temporal_ensemble_coeff`` is set and
+        ``n_action_steps`` is the full chunk (100). LeRobot forces
+        ``n_action_steps == 1`` internally when ensembling, but the config still
+        advertises the chunk size, so the detector must route on the coeff.
+        """
+        policy = _make_policy(actions_per_step=actions_per_step)
+        mock_lerobot_policy = MagicMock()
+        mock_lerobot_policy.config = types.SimpleNamespace(n_action_steps=n_action_steps, temporal_ensemble_coeff=coeff)
+        policy._policy = mock_lerobot_policy
+        return policy
+
+    def test_ensembling_checkpoint_keeps_per_step_path(self):
+        """temporal_ensemble_coeff set -> stay at actions_per_step=1.
+
+        Regression: previously the detector bumped actions_per_step to
+        config.n_action_steps (100 for ACT) for EVERY checkpoint, which routes
+        get_actions() through predict_action_chunk() and silently bypasses the
+        temporal ensembler. An ensembling checkpoint must stay per-step so
+        select_action() runs the ensembler.
+        """
+        policy = self._policy_with_ensemble(0.01)
+        assert policy.actions_per_step == 1
+        policy._auto_detect_actions_per_step()
+        assert policy.actions_per_step == 1  # NOT auto-bumped to 100
+
+    def test_ensembling_overrides_explicit_chunk_with_warning(self, caplog):
+        """Explicit actions_per_step > 1 on an ensembling checkpoint is
+
+        overridden to 1 with a loud warning - chunk replay and ensembling are
+        mutually exclusive, and silently dropping the smoothing is the bug.
+        """
+        import logging
+
+        policy = self._policy_with_ensemble(0.01, actions_per_step=8)
+        with caplog.at_level(logging.WARNING):
+            policy._auto_detect_actions_per_step()
+        assert policy.actions_per_step == 1
+        assert any(
+            "temporal ensembling" in r.message and "actions_per_step" in r.message
+            for r in caplog.records
+            if r.levelno == logging.WARNING
+        )
+
+    def test_non_ensembling_act_still_chunk_replays(self):
+        """temporal_ensemble_coeff=None -> open-loop chunk replay (unchanged)."""
+        policy = self._policy_with_ensemble(None, n_action_steps=100)
+        policy._auto_detect_actions_per_step()
+        assert policy.actions_per_step == 100
+
 
 # (section)
 # Tests: set_robot_state_keys
@@ -570,6 +622,31 @@ class TestGetActions:
         policy._policy.name = "act"
 
         actions = policy.get_actions_sync({}, "test")
+
+        policy._policy.select_action.assert_called_once()
+        policy._policy.predict_action_chunk.assert_not_called()
+        assert len(actions) == 1
+
+    def test_ensembling_act_routes_to_select_action_end_to_end(self):
+        """ACT ensembling checkpoint: detection -> get_actions runs select_action.
+
+        Regression for the silent ensembling-disable bug. The checkpoint
+        advertises n_action_steps=100 and temporal_ensemble_coeff=0.01. Before
+        the fix, auto-detect bumped actions_per_step to 100 and get_actions()
+        called predict_action_chunk() (bypassing the ensembler). After the fix,
+        actions_per_step stays 1 and get_actions() calls select_action() so the
+        temporal ensembler runs.
+        """
+        policy = _make_loaded_policy(action_dim=3, include_images=False)
+        policy.set_robot_state_keys(["a", "b", "c"])
+        policy._policy.name = "act"
+        policy._policy.config = types.SimpleNamespace(n_action_steps=100, temporal_ensemble_coeff=0.01)
+
+        # Simulate the load-time regime selection.
+        policy._auto_detect_actions_per_step()
+        assert policy.actions_per_step == 1
+
+        actions = policy.get_actions_sync({}, "fold the shirt")
 
         policy._policy.select_action.assert_called_once()
         policy._policy.predict_action_chunk.assert_not_called()

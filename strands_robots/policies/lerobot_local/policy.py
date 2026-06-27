@@ -643,33 +643,71 @@ class LerobotLocalPolicy(Policy):
         self._init_rtc()
 
     def _auto_detect_actions_per_step(self) -> None:
-        """Adopt the model's intended open-loop chunk size when left at default.
+        """Select the inference regime the loaded checkpoint was trained for.
 
-        Many LeRobot policies declare ``config.n_action_steps`` - the number of
-        actions the model emits per inference call that it was trained to replay
-        open-loop before requerying observation (e.g. MolmoAct2 SO-100/101 = 30,
-        ACT = 100, Diffusion = 32). The default ``actions_per_step=1`` is a
-        closed-loop receding-horizon convention: it returns one action per call
-        and re-queries vision every step. For a model trained on N-step chunk
-        replay, that puts inference out of the training distribution - the policy
-        sees state where its training had it after 1 step, not N - and the
-        distribution shift compounds every chunk.
+        Two mutually exclusive regimes exist, and the wrong one degrades motion:
 
-        When ``actions_per_step`` is still at the default ``1`` and the loaded
-        model exposes ``config.n_action_steps > 1``, adopt that value so the
-        chunk is consumed as trained. An explicit ``actions_per_step > 1`` from
-        the caller is always respected. Logged at INFO so the change is visible.
+        Temporal ensembling (``config.temporal_ensemble_coeff is not None``):
+            LeRobot applies the ensembler inside ``select_action()`` on a fresh
+            chunk every step (a receding-horizon, per-step operation - see
+            ``ACTPolicy.select_action``). ``predict_action_chunk()`` returns the
+            RAW chunk and BYPASSES the ensembler entirely. So an ensembling
+            checkpoint MUST be driven one step at a time via ``select_action()``;
+            replaying its chunk open-loop silently discards the smoothing the
+            checkpoint was trained to produce (jerky motion). We therefore keep
+            ``actions_per_step=1`` for these checkpoints, and if a caller pinned
+            ``actions_per_step > 1`` we override it with a loud warning rather
+            than quietly throwing the ensembling away.
+
+        Open-loop chunk replay (``temporal_ensemble_coeff is None``):
+            Many policies declare ``config.n_action_steps`` - the number of
+            actions emitted per inference that the model was trained to replay
+            open-loop before requerying observation (e.g. MolmoAct2 SO-100/101 =
+            30, ACT = 100, Diffusion = 32). The default ``actions_per_step=1`` is
+            a closed-loop convention that re-queries every step; for a chunk-
+            trained model that is out of distribution and the shift compounds
+            every chunk. When left at the default ``1`` we adopt
+            ``n_action_steps`` so the chunk is consumed as trained. An explicit
+            ``actions_per_step > 1`` from the caller is respected here.
+
+        Logged at INFO so the active regime is always visible.
         """
+        config = getattr(self._policy, "config", None)
+        ensemble_coeff = getattr(config, "temporal_ensemble_coeff", None)
+        if ensemble_coeff is not None:
+            # Ensembling regime: must run per-step through select_action().
+            if self.actions_per_step != 1:
+                logger.warning(
+                    "lerobot_local: %s checkpoint enables temporal ensembling "
+                    "(temporal_ensemble_coeff=%s) but actions_per_step=%d was "
+                    "set explicitly. Open-loop chunk replay and temporal "
+                    "ensembling are mutually exclusive - chunk replay bypasses "
+                    "the ensembler and discards the motion smoothing the "
+                    "checkpoint was trained for. Overriding to actions_per_step="
+                    "1 so ensembling is honored via select_action().",
+                    type(self._policy).__name__,
+                    ensemble_coeff,
+                    self.actions_per_step,
+                )
+                self.actions_per_step = 1
+            logger.info(
+                "lerobot_local: %s temporal ensembling ON "
+                "(temporal_ensemble_coeff=%s) - driving per-step via "
+                "select_action().",
+                type(self._policy).__name__,
+                ensemble_coeff,
+            )
+            return
         if self.actions_per_step != 1:
             return  # caller pinned an explicit horizon - never override it
-        config = getattr(self._policy, "config", None)
         n_action_steps = getattr(config, "n_action_steps", None)
         if isinstance(n_action_steps, int) and n_action_steps > 1:
             self.actions_per_step = n_action_steps
             logger.info(
-                "lerobot_local: auto-set actions_per_step=%d from "
-                "%s.config.n_action_steps (model's trained open-loop chunk "
-                "size). Pass actions_per_step explicitly to override.",
+                "lerobot_local: open-loop chunk replay - auto-set "
+                "actions_per_step=%d from %s.config.n_action_steps (model's "
+                "trained open-loop chunk size). Pass actions_per_step "
+                "explicitly to override.",
                 n_action_steps,
                 type(self._policy).__name__,
             )
