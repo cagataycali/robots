@@ -703,7 +703,24 @@ class LerobotTrainer(Trainer):
         # sample weighting.
         sw = self._sample_weighting_dict(spec)
         if sw is not None:
-            from lerobot.utils.sample_weighting import SampleWeightingConfig
+            # RA-BC sample weighting is a lerobot >= 0.5.2 surface (the nested
+            # SampleWeightingConfig on TrainPipelineConfig). Gate on its presence
+            # FIRST so an older lerobot yields an actionable ValueError instead of
+            # a raw ModuleNotFoundError from the import below.
+            if not hasattr(cfg, "sample_weighting"):
+                raise ValueError(
+                    "The installed lerobot does not expose sample weighting (no "
+                    "'sample_weighting' on TrainPipelineConfig); requires lerobot "
+                    ">= 0.5.2, or drop extra['sample_weighting']."
+                )
+            try:
+                from lerobot.utils.sample_weighting import SampleWeightingConfig
+            except ImportError as exc:
+                raise ValueError(
+                    "The installed lerobot does not expose sample weighting (no "
+                    "'lerobot.utils.sample_weighting'); requires lerobot >= 0.5.2, "
+                    "or drop extra['sample_weighting']."
+                ) from exc
 
             unsupported = sorted(k for k in sw if k not in _SAMPLE_WEIGHTING_KEYS)
             if unsupported:
@@ -716,12 +733,6 @@ class LerobotTrainer(Trainer):
                 raise ValueError(
                     f"extra['sample_weighting']['type'] must be one of "
                     f"{sorted(_SAMPLE_WEIGHTING_TYPES)} (the schemes lerobot ships), got {sw_type!r}."
-                )
-            if not hasattr(cfg, "sample_weighting"):
-                raise ValueError(
-                    "The installed lerobot does not expose sample weighting (no "
-                    "'sample_weighting' on TrainPipelineConfig); requires lerobot "
-                    ">= 0.5.2, or drop extra['sample_weighting']."
                 )
             cfg.sample_weighting = SampleWeightingConfig(**sw)
 

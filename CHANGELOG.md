@@ -41,6 +41,11 @@ the `lerobot.rewards` package and sample weighting moved to a nested
   `epsilon`) map 1:1 onto the config fields; `type` accepts `rabc` or `uniform`.
 - `compute_rabc_weights`, `load_reward_model`, and `reward_progress` are exported
   from `strands_robots.training`.
+- Both RA-BC consumption (`extra['sample_weighting']`) and SARM reward-model
+  training degrade gracefully on a lerobot older than 0.5.2: `build_config`
+  raises an actionable "requires lerobot >= 0.5.2" `ValueError` instead of
+  leaking a raw `ModuleNotFoundError`, and the lerobot-0.5.2-only tests skip
+  (via `importorskip`) so the suite is green on the published lerobot.
 
 
 ### Internal Refactor: unified chunk-length rule across all policy runners (`ChunkedPolicy`)

@@ -792,7 +792,7 @@ class TestSampleWeightingRABC:
         )
 
     def test_build_config_sets_nested_sample_weighting(self, dataset_root, tmp_path):
-        pytest.importorskip("lerobot")
+        pytest.importorskip("lerobot.utils.sample_weighting")
         cfg = LerobotTrainer(device="cpu").build_config(self._rabc_spec(dataset_root, tmp_path))
         assert cfg.sample_weighting is not None
         assert cfg.sample_weighting.type == "rabc"
@@ -800,11 +800,22 @@ class TestSampleWeightingRABC:
         assert cfg.sample_weighting.head_mode == "sparse"
 
     def test_build_config_forwards_progress_path(self, dataset_root, tmp_path):
-        pytest.importorskip("lerobot")
+        pytest.importorskip("lerobot.utils.sample_weighting")
         spec = self._rabc_spec(dataset_root, tmp_path)
         spec.extra["sample_weighting"]["progress_path"] = "/tmp/sarm_progress.parquet"
         cfg = LerobotTrainer(device="cpu").build_config(spec)
         assert cfg.sample_weighting.progress_path == "/tmp/sarm_progress.parquet"
+
+    def test_build_config_old_lerobot_raises_actionable(self, dataset_root, tmp_path, monkeypatch):
+        # On a lerobot without the nested sample-weighting surface, build_config
+        # must raise an actionable ValueError ("requires lerobot >= 0.5.2"), not
+        # leak the raw ImportError from the internal SampleWeightingConfig import.
+        pytest.importorskip("lerobot.utils.sample_weighting")
+        import sys
+
+        monkeypatch.setitem(sys.modules, "lerobot.utils.sample_weighting", None)
+        with pytest.raises(ValueError, match="requires lerobot >= 0.5.2"):
+            LerobotTrainer(device="cpu").build_config(self._rabc_spec(dataset_root, tmp_path))
 
     def test_build_command_emits_nested_flags(self, dataset_root, tmp_path):
         cmd = LerobotTrainer(device="cpu").build_command(self._rabc_spec(dataset_root, tmp_path))
@@ -817,7 +828,7 @@ class TestSampleWeightingRABC:
         assert not any(c.startswith("--use_rabc") or c.startswith("--rabc_") for c in cmd)
 
     def test_no_sample_weighting_leaves_it_unset(self, dataset_root, tmp_path):
-        pytest.importorskip("lerobot")
+        pytest.importorskip("lerobot.utils.sample_weighting")
         spec = TrainSpec(
             dataset_root=dataset_root,
             base_model="",
@@ -829,14 +840,14 @@ class TestSampleWeightingRABC:
         assert cfg.sample_weighting is None
 
     def test_unsupported_field_raises_actionable_error(self, dataset_root, tmp_path):
-        pytest.importorskip("lerobot")
+        pytest.importorskip("lerobot.utils.sample_weighting")
         spec = self._rabc_spec(dataset_root, tmp_path)
         spec.extra["sample_weighting"] = {"type": "rabc", "bogus_field": 1}
         with pytest.raises(ValueError, match="does not support field"):
             LerobotTrainer(device="cpu").build_config(spec)
 
     def test_unsupported_type_raises_actionable_error(self, dataset_root, tmp_path):
-        pytest.importorskip("lerobot")
+        pytest.importorskip("lerobot.utils.sample_weighting")
         spec = self._rabc_spec(dataset_root, tmp_path)
         spec.extra["sample_weighting"] = {"type": "boltzmann", "kappa": 0.02}
         with pytest.raises(ValueError, match="must be one of"):
