@@ -378,7 +378,12 @@ class TestBuildPolicy:
         real_import = builtins.__import__
 
         def blocked_import(name, *args, **kwargs):
-            if name == "lerobot.configs":
+            # The first import guard pulls FeatureType/PolicyFeature from the
+            # lerobot.configs package; the concrete submodule moved to
+            # lerobot.configs.types in 0.5.2+. Block the whole configs subtree
+            # so this guard stays pinned to the import target wherever inside
+            # lerobot.configs it lives.
+            if name == "lerobot.configs" or name.startswith("lerobot.configs."):
                 raise ImportError("no configs")
             return real_import(name, *args, **kwargs)
 
@@ -411,7 +416,9 @@ class TestBuildPolicy:
         real_import = builtins.__import__
 
         def blocked_import(name, *args, **kwargs):
-            if name == "lerobot.configs":
+            # Block the configs subtree: the actual import target is
+            # lerobot.configs.types since the 0.5.2 migration.
+            if name == "lerobot.configs" or name.startswith("lerobot.configs."):
                 raise ModuleNotFoundError("No module named 'einops'", name="einops")
             return real_import(name, *args, **kwargs)
 
@@ -451,7 +458,9 @@ class TestBuildPolicy:
         def blocked_import(name, *args, **kwargs):
             if name == "lerobot.policies.factory":
                 raise ModuleNotFoundError("No module named 'qwen_vl_utils'", name="qwen_vl_utils")
-            if name == "lerobot.configs":
+            # Stub the configs subtree so the first guard passes and we
+            # isolate the factory guard.
+            if name == "lerobot.configs" or name.startswith("lerobot.configs."):
                 return types.SimpleNamespace(FeatureType=object, PolicyFeature=object)
             return real_import(name, *args, **kwargs)
 
