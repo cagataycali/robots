@@ -99,6 +99,7 @@ supports and **ignores the rest** (the same tolerance rule as
 | `extra["policy_type"]` | lerobot `--policy.type` | act/diffusion/smolvla/pi0/pi05/... |
 | `extra["groot_root"]` | Isaac-GR00T checkout | GR00T |
 | `extra["sft_toml"]` / `extra["cosmos_root"]` | recipe + checkout | Cosmos |
+| `extra["relative_actions"]` | train pi0-family with delta actions | lerobot `--policy.use_relative_actions=true` (pi0/pi05/pi0_fast) |
 
 ## From an agent (natural language)
 
@@ -124,6 +125,31 @@ agent("Record 50 cube-pick episodes, then post-tune lerobot ACT on the dataset "
 TrainSpec(..., method="lora", lora_r=16, extra={"policy_type": "pi05"})
 # -> lerobot_train --peft.method_type=LORA --peft.r=16 --policy.type=pi05
 ```
+
+#### Relative (delta) actions
+
+Predicting actions as deltas from the current robot state - rather than
+absolute targets - is part of the strongest manipulation ablations. lerobot
+implements it as a matched processor pair built from
+`config.use_relative_actions`: a `RelativeActionsProcessorStep` encodes
+target->delta at train time, and the inverse `AbsoluteActionsProcessorStep`
+decodes delta->target at inference. Both are saved into the checkpoint's
+pre/post processors, so deployment via `lerobot_local` (which loads the saved
+processor pipeline) restores the inverse decode automatically - no separate
+inference-side wiring is needed.
+
+```python
+TrainSpec(
+    dataset_root="/data/folding_v3",
+    base_model="lerobot/pi05_base",
+    output_dir="/tmp/ft_out",
+    extra={"policy_type": "pi05", "relative_actions": True},
+)
+# -> lerobot_train --policy.type=pi05 --policy.use_relative_actions=true ...
+```
+
+Only `pi0` / `pi05` / `pi0_fast` expose `use_relative_actions`; the flag is
+rejected (not silently ignored) for any other policy type.
 
 #### Streaming a large Hub dataset (no full download)
 

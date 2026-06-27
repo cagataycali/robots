@@ -708,3 +708,58 @@ class TestStreamingAndHubSource:
             extra={"policy_type": "act"},
         )
         assert LerobotTrainer()._val_split_episodes(spec) is None
+
+
+class TestRelativeActions:
+    """relative_actions wiring: extra['relative_actions'] -> policy.use_relative_actions.
+
+    Relative-action training (predict deltas from current state) is part of the
+    strongest manipulation ablations. lerobot implements it as a matched
+    processor pair built from ``config.use_relative_actions`` and saved into the
+    checkpoint's pre/post processors, so the inference-side inverse decode is
+    restored automatically by lerobot_local. Before the fix the flag had no
+    wiring: passing it via extra fell through the generic passthrough (no
+    matching top-level config field) and was silently dropped, so relative-action
+    training was unreachable and unsupported policies failed silently.
+    """
+
+    def _pi0_spec(self, dataset_root, tmp_path, ptype="pi0"):
+        return TrainSpec(
+            dataset_root=dataset_root,
+            base_model="",
+            output_dir=str(tmp_path / "out"),
+            steps=200,
+            extra={"policy_type": ptype, "relative_actions": True},
+        )
+
+    def test_build_config_sets_use_relative_actions(self, dataset_root, tmp_path):
+        cfg = LerobotTrainer(device="cpu").build_config(self._pi0_spec(dataset_root, tmp_path))
+        assert cfg.policy.use_relative_actions is True
+
+    def test_build_command_emits_flag(self, dataset_root, tmp_path):
+        cmd = LerobotTrainer(device="cpu").build_command(self._pi0_spec(dataset_root, tmp_path))
+        assert "--policy.use_relative_actions=true" in cmd
+        # Must not leak as a bare top-level flag.
+        assert not any(c.startswith("--relative_actions=") for c in cmd)
+
+    def test_default_off_leaves_flag_false(self, dataset_root, tmp_path):
+        spec = TrainSpec(
+            dataset_root=dataset_root,
+            base_model="",
+            output_dir=str(tmp_path / "out"),
+            steps=200,
+            extra={"policy_type": "pi0"},
+        )
+        cfg = LerobotTrainer(device="cpu").build_config(spec)
+        assert cfg.policy.use_relative_actions is False
+        assert not any("use_relative_actions" in c for c in LerobotTrainer(device="cpu").build_command(spec))
+
+    def test_validate_rejects_unsupported_policy(self, dataset_root, tmp_path):
+        spec = self._pi0_spec(dataset_root, tmp_path, ptype="act")
+        problems = LerobotTrainer().validate(spec)
+        assert any("relative_actions is not supported" in p for p in problems)
+
+    def test_validate_accepts_pi_family(self, dataset_root, tmp_path):
+        for ptype in ("pi0", "pi05", "pi0_fast"):
+            spec = self._pi0_spec(dataset_root, tmp_path, ptype=ptype)
+            assert LerobotTrainer().validate(spec) == []

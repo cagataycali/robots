@@ -68,6 +68,13 @@ _LEROBOT_POLICY_TYPES = {
 
 _SUPPORTED_METHODS = {"full", "lora", "expert_only"}
 
+# LeRobot policy types whose config exposes ``use_relative_actions`` (the
+# relative-action processor pair: a RelativeActionsProcessorStep on the input
+# side and the matching AbsoluteActionsProcessorStep on the output side, both
+# built from ``config.use_relative_actions`` and saved into the checkpoint's
+# pre/post processors). Other policy types have no such field.
+_RELATIVE_ACTION_POLICY_TYPES = {"pi0", "pi05", "pi0_fast"}
+
 # Hugging Face Hub dataset id: ``org/name`` (each segment alnum plus ._-). Used
 # to gate the agent-supplied ``dataset_repo_id`` before it becomes lerobot's
 # ``DatasetConfig.repo_id`` (which load_dataset/HfApi feed to a Hub URL).
@@ -179,6 +186,26 @@ class LerobotTrainer(Trainer):
             return list(range(0, total - spec.val_episodes))
         return None
 
+    def _relative_actions(self, spec: TrainSpec) -> bool:
+        """Whether to train with relative (delta) actions (``extra['relative_actions']``).
+
+        Relative-action training predicts deltas from the current robot state
+        instead of absolute targets - part of the strongest manipulation
+        ablations. lerobot implements it as a matched processor pair built from
+        ``config.use_relative_actions``: a ``RelativeActionsProcessorStep`` on
+        the input side (encode target->delta at train time) and the inverse
+        ``AbsoluteActionsProcessorStep`` on the output side (decode delta->target
+        at inference). Both are saved into the checkpoint's pre/post processors,
+        so deployment via ``lerobot_local`` (which loads the saved processor
+        pipeline) restores the inverse decode automatically - no separate
+        inference-side wiring is needed.
+
+        Only ``pi0`` / ``pi05`` / ``pi0_fast`` expose ``use_relative_actions``;
+        :meth:`validate` rejects the flag for any other policy type rather than
+        letting it become a silent no-op.
+        """
+        return bool(spec.extra.get("relative_actions", False))
+
     # ---- ABC ---------------------------------------------------------------
 
     def validate(self, spec: TrainSpec) -> list[str]:
@@ -215,6 +242,13 @@ class LerobotTrainer(Trainer):
             problems.append(f"unsupported method '{spec.method}' (expected one of {sorted(_SUPPORTED_METHODS)})")
         if spec.method == "lora" and spec.tune.get("expert_only"):
             problems.append("lora and expert_only are mutually exclusive (both freeze the VLM)")
+
+        if self._relative_actions(spec) and ptype not in _RELATIVE_ACTION_POLICY_TYPES:
+            problems.append(
+                f"relative_actions is not supported by policy_type '{ptype}' "
+                f"(only {sorted(_RELATIVE_ACTION_POLICY_TYPES)} expose use_relative_actions); "
+                "drop extra['relative_actions'] or pick a pi0-family policy"
+            )
 
         if spec.steps <= 0:
             problems.append(f"steps must be > 0, got {spec.steps}")
@@ -280,6 +314,8 @@ class LerobotTrainer(Trainer):
                 cmd.append(f"--peft.target_modules={spec.lora_target_modules}")
         elif spec.method == "expert_only":
             cmd.append("--policy.train_expert_only=true")
+        if self._relative_actions(spec):
+            cmd.append("--policy.use_relative_actions=true")
         eps = self._val_split_episodes(spec)
         if eps is not None:
             cmd.append(f"--dataset.episodes=[{', '.join(map(str, eps))}]")
@@ -288,7 +324,7 @@ class LerobotTrainer(Trainer):
             if ckpt_cfg:
                 cmd.append("--resume=true")
                 cmd.append(f"--config_path={ckpt_cfg}")
-        _consumed = {"policy_type", "job_name"}
+        _consumed = {"policy_type", "job_name", "relative_actions"}
         for key, value in spec.extra.items():
             if key in _consumed:
                 continue
@@ -319,6 +355,13 @@ class LerobotTrainer(Trainer):
             policy_cfg.pretrained_path = Path(spec.base_model)
         if spec.method == "expert_only" and hasattr(policy_cfg, "train_expert_only"):
             policy_cfg.train_expert_only = True
+        if self._relative_actions(spec):
+            if not hasattr(policy_cfg, "use_relative_actions"):
+                raise ValueError(
+                    f"relative_actions requested but policy_type '{ptype}' has no "
+                    f"use_relative_actions field (supported: {sorted(_RELATIVE_ACTION_POLICY_TYPES)})"
+                )
+            policy_cfg.use_relative_actions = True
 
         repo_id, root = self._dataset_source(spec)
         dataset_kwargs: dict[str, Any] = {
@@ -375,7 +418,7 @@ class LerobotTrainer(Trainer):
         # Typed passthrough for remaining extra.* (gated by validate()'s key
         # allowlist). Only set attributes that exist on the typed config tree;
         # unknown keys are ignored (never become an arbitrary flag).
-        _consumed = {"policy_type", "job_name"}
+        _consumed = {"policy_type", "job_name", "relative_actions"}
         for key, value in spec.extra.items():
             if key in _consumed:
                 continue
