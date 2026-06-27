@@ -2,8 +2,9 @@
 
 Builds a typed :class:`lerobot.configs.train.TrainPipelineConfig` and calls
 lerobot's ``train(cfg)`` **directly in this interpreter** for any LeRobot-native
-policy type (act, diffusion, smolvla, pi0, pi05, ...). The training *logic* is
-entirely lerobot's; this adapter only translates a provider-agnostic
+policy type (act, diffusion, smolvla, pi0, pi05, ...) OR reward-model type
+(sarm, ...). The training *logic* is entirely lerobot's; this adapter only
+translates a provider-agnostic
 :class:`~strands_robots.training.base.TrainSpec` into the config object, manages
 resume, and parses the run for a status verdict.
 
@@ -13,8 +14,18 @@ lerobot's entry point is a plain function ``train(cfg)`` whose ``@parser.wrap()`
 decorator (lerobot ``configs/parser.py``) short-circuits when the first
 positional arg is **already** a ``TrainPipelineConfig`` instance - it uses that
 object verbatim and never reads ``sys.argv``. So we build the config as typed
-Python objects (``make_policy_config`` + ``DatasetConfig`` + ``PeftConfig``) and
-hand it straight to ``train(cfg)``. No shell, no argv, no second interpreter.
+Python objects (``make_policy_config`` / ``make_reward_model_config`` +
+``DatasetConfig`` + ``PeftConfig``) and hand it straight to ``train(cfg)``. No
+shell, no argv, no second interpreter.
+
+Reward models vs policies
+--------------------------
+A reward model - e.g. SARM (Stage-Aware Reward Model), the model behind RA-BC -
+trains through the SAME ``train(cfg)`` entry point as a policy, but populates
+``cfg.reward_model`` instead of ``cfg.policy``; lerobot then follows its
+``TrainPipelineConfig.is_reward_model_training`` path. Request it via
+``TrainSpec.extra['reward_model']`` (a dict of friendly fields). Requires
+lerobot >= 0.5.2 (the ``lerobot.rewards`` package).
 
 Launcher selection (still no shell):
     * 1 GPU / CPU    -> call ``train(cfg)`` directly in-process.
@@ -29,7 +40,7 @@ the exact draccus CLI the typed config corresponds to and powers the
 ``test_native_parity`` drift check. It is NOT used to launch anything.
 
 Grounded against lerobot 0.5.x ``TrainPipelineConfig`` / ``DatasetConfig`` /
-``PeftConfig``.
+``PeftConfig`` / ``SampleWeightingConfig`` / ``RewardModelConfig``.
 """
 
 from __future__ import annotations
@@ -75,22 +86,30 @@ _SUPPORTED_METHODS = {"full", "lora", "expert_only"}
 # pre/post processors). Other policy types have no such field.
 _RELATIVE_ACTION_POLICY_TYPES = {"pi0", "pi05", "pi0_fast"}
 
-# RA-BC (Reward-Aligned Behavior Cloning) is the only sample-weighting scheme
-# lerobot ships, and it lives as FLAT fields on ``TrainPipelineConfig`` (not a
-# nested config object): ``use_rabc`` plus ``rabc_progress_path``,
-# ``rabc_kappa``, ``rabc_epsilon``, ``rabc_head_mode`` (see
-# ``lerobot/configs/train.py`` in lerobot >=0.5.0,<0.6.0). The agent-facing
-# ``extra['sample_weighting']`` dict groups these under friendly keys; this map
-# translates each friendly key to its real lerobot field. ``type`` is the gate:
-# ``type='rabc'`` flips ``use_rabc=True`` (no other scheme exists yet).
-_SAMPLE_WEIGHTING_FIELD_MAP = {
-    "progress_path": "rabc_progress_path",
-    "kappa": "rabc_kappa",
-    "epsilon": "rabc_epsilon",
-    "head_mode": "rabc_head_mode",
-}
-# Friendly keys accepted in ``extra['sample_weighting']`` (``type`` + the map).
-_SAMPLE_WEIGHTING_KEYS = {"type", *_SAMPLE_WEIGHTING_FIELD_MAP}
+# RA-BC (Reward-Aligned Behavior Cloning) is surfaced to the agent through the
+# ``extra['sample_weighting']`` dict. lerobot >= 0.5.2 configures sample
+# weighting via a NESTED ``SampleWeightingConfig`` on ``TrainPipelineConfig``
+# (``cfg.sample_weighting``), replacing the flat ``use_rabc`` / ``rabc_*``
+# fields of earlier 0.5.x. The friendly keys map 1:1 onto that config's fields,
+# so the validated dict is forwarded to ``SampleWeightingConfig(**dict)``.
+# ``type`` selects the scheme: lerobot ships ``rabc`` and ``uniform``.
+_SAMPLE_WEIGHTING_KEYS = {"type", "progress_path", "head_mode", "kappa", "epsilon"}
+_SAMPLE_WEIGHTING_TYPES = {"rabc", "uniform"}
+
+# LeRobot reward-model types (``--reward_model.type`` / make_reward_model_config
+# keys). A reward model - e.g. SARM (Stage-Aware Reward Model), the model behind
+# RA-BC - trains through the SAME ``lerobot_train.train(cfg)`` entry point as a
+# policy, but populates ``cfg.reward_model`` instead of ``cfg.policy``
+# (``TrainPipelineConfig.is_reward_model_training``). Requires lerobot >= 0.5.2
+# (the ``lerobot.rewards`` package).
+_LEROBOT_REWARD_MODEL_TYPES = {"sarm", "reward_classifier", "robometer", "topreward"}
+
+# SARM annotation modes (configuration_sarm.SARMConfig.annotation_mode):
+# ``single_stage`` needs NO annotations (linear progress over the episode).
+_SARM_ANNOTATION_MODES = {"single_stage", "dense_only", "dual"}
+
+# Friendly keys accepted in ``extra['reward_model']``.
+_REWARD_MODEL_KEYS = {"type", "annotation_mode", "image_key", "state_key"}
 
 # Hugging Face Hub dataset id: ``org/name`` (each segment alnum plus ._-). Used
 # to gate the agent-supplied ``dataset_repo_id`` before it becomes lerobot's
@@ -99,11 +118,12 @@ _HUB_REPO_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9
 
 
 class LerobotTrainer(Trainer):
-    """Post-tune a LeRobot-native policy by calling ``lerobot`` train in-process.
+    """Post-tune a LeRobot-native policy or reward model by calling ``lerobot`` train in-process.
 
     Args:
         policy_type: LeRobot policy type (default ``"act"``). Resolved from
-            ``TrainSpec.extra['policy_type']`` if present, else this.
+            ``TrainSpec.extra['policy_type']`` if present, else this. Ignored for
+            reward-model runs (``TrainSpec.extra['reward_model']`` is set).
         device: Torch device string (default auto: cuda > mps > cpu).
     """
 
@@ -129,6 +149,38 @@ class LerobotTrainer(Trainer):
 
     def _resolve_policy_type(self, spec: TrainSpec) -> str:
         return str(spec.extra.get("policy_type", self.policy_type))
+
+    def _reward_model_dict(self, spec: TrainSpec) -> dict[str, Any] | None:
+        """Resolve the reward-model spec from ``extra['reward_model']``.
+
+        When present, this run trains a lerobot *reward model* (e.g. SARM) rather
+        than a policy: :meth:`build_config` populates ``cfg.reward_model`` and
+        leaves ``cfg.policy`` unset, and ``lerobot_train`` follows its
+        ``is_reward_model_training`` path. The dict carries friendly keys
+        (``type``, ``annotation_mode``, ``image_key``, ``state_key``) forwarded to
+        ``make_reward_model_config``. Returns the dict unchanged, or ``None`` when
+        not requested. Raises ``ValueError`` if present but not a dict (caught by
+        ``train`` and surfaced as an error result).
+        """
+        rm = spec.extra.get("reward_model")
+        if rm is None:
+            return None
+        if not isinstance(rm, dict):
+            raise ValueError(
+                "extra['reward_model'] must be a dict of reward-model fields, "
+                "e.g. {'type': 'sarm', 'annotation_mode': 'single_stage'}"
+            )
+        return rm
+
+    def _reward_model_type(self, rm: dict[str, Any]) -> str:
+        return str(rm.get("type", "sarm"))
+
+    def _run_type_label(self, spec: TrainSpec) -> str:
+        """Human-readable description of what this run trains (for logs)."""
+        rm = spec.extra.get("reward_model")
+        if isinstance(rm, dict):
+            return f"reward_model:{self._reward_model_type(rm)}"
+        return f"policy:{self._resolve_policy_type(spec)}"
 
     def _dataset_total_episodes(self, dataset_root: str) -> int | None:
         info = os.path.join(dataset_root, "meta", "info.json")
@@ -166,7 +218,9 @@ class LerobotTrainer(Trainer):
         ABC contract: a directory ``create_policy``/``export`` can consume.
         lerobot's loadable artifact is the ``pretrained_model`` dir that holds
         ``model.safetensors`` + ``train_config.json``; we locate it from the
-        resume config file's parent.
+        resume config file's parent. For reward-model runs this is the directory
+        :func:`~strands_robots.training.reward.compute_rabc_weights` consumes as
+        ``reward_model_path``.
         """
         cfg_file = self._resume_config_path(output_dir)
         return os.path.dirname(cfg_file) if cfg_file else None
@@ -230,13 +284,13 @@ class LerobotTrainer(Trainer):
         surfaced through the ``extra`` escape hatch as a single
         ``sample_weighting`` dict with friendly keys (``type``,
         ``progress_path``, ``head_mode``, ``kappa``, ``epsilon``). lerobot
-        configures RA-BC via FLAT fields on ``TrainPipelineConfig``
-        (``use_rabc`` + ``rabc_*``); :data:`_SAMPLE_WEIGHTING_FIELD_MAP` maps the
-        friendly keys onto those, and ``type='rabc'`` flips ``use_rabc=True``.
-        Example::
+        >= 0.5.2 configures it via a nested ``SampleWeightingConfig`` on
+        ``TrainPipelineConfig`` (``cfg.sample_weighting``); the friendly keys map
+        1:1 onto that config's fields. Example::
 
             extra={"sample_weighting": {"type": "rabc", "kappa": 0.01,
-                                        "head_mode": "sparse"}}
+                                        "head_mode": "sparse",
+                                        "progress_path": "/path/sarm_progress.parquet"}}
 
         Returns the dict unchanged, or ``None`` when not requested. Raises
         ``ValueError`` if the value is present but not a dict (caught by
@@ -277,6 +331,49 @@ class LerobotTrainer(Trainer):
         if not spec.output_dir:
             problems.append("output_dir is required")
 
+        # A run trains EITHER a policy or a reward model (SARM et al.); the two
+        # paths validate differently. extra['reward_model'] selects reward-model
+        # training (cfg.reward_model) over the default policy path (cfg.policy).
+        rm = spec.extra.get("reward_model")
+        if rm is not None and not isinstance(rm, dict):
+            problems.append(
+                "extra['reward_model'] must be a dict of reward-model fields, "
+                "e.g. {'type': 'sarm', 'annotation_mode': 'single_stage'}"
+            )
+            rm = None
+        if isinstance(rm, dict):
+            problems.extend(self._validate_reward_model(spec, rm))
+        else:
+            problems.extend(self._validate_policy(spec))
+
+        if spec.steps <= 0:
+            problems.append(f"steps must be > 0, got {spec.steps}")
+
+        if spec.num_nodes > 1:
+            problems.append(
+                f"num_nodes={spec.num_nodes}: multi-node lerobot needs a per-node "
+                "launcher and cannot run in-process; use num_nodes=1."
+            )
+
+        if spec.val_episodes is not None and spec.dataset_root:
+            total = self._dataset_total_episodes(spec.dataset_root)
+            if total is not None and spec.val_episodes >= total:
+                problems.append(f"val_episodes={spec.val_episodes} >= total_episodes={total}")
+
+        # lerobot must be importable to actually train.
+        try:
+            import importlib.util
+
+            if importlib.util.find_spec("lerobot.scripts.lerobot_train") is None:
+                problems.append("lerobot is not installed (no lerobot.scripts.lerobot_train)")
+        except Exception:  # noqa: BLE001
+            problems.append("lerobot is not installed")
+
+        return problems
+
+    def _validate_policy(self, spec: TrainSpec) -> list[str]:
+        """Policy-training preflight (the default, ``cfg.policy`` path)."""
+        problems: list[str] = []
         ptype = self._resolve_policy_type(spec)
         if ptype not in _LEROBOT_POLICY_TYPES:
             problems.append(
@@ -304,30 +401,61 @@ class LerobotTrainer(Trainer):
             for k, v in sw.items():
                 if isinstance(v, str) and v.startswith("-"):
                     problems.append(f"sample_weighting['{k}'] must not start with '-' (would parse as a stray flag)")
+        return problems
 
-        if spec.steps <= 0:
-            problems.append(f"steps must be > 0, got {spec.steps}")
+    def _validate_reward_model(self, spec: TrainSpec, rm: dict[str, Any]) -> list[str]:
+        """Reward-model training preflight (the ``cfg.reward_model`` path).
 
-        if spec.num_nodes > 1:
+        A reward-model run is fresh, full-parameter training of e.g. SARM; the
+        policy-only knobs (RA-BC sample weighting, relative actions, LoRA /
+        expert-only) are meaningless for it and are rejected rather than silently
+        ignored. RA-BC in particular is the *downstream consumer* of a trained
+        SARM (its progress parquet weights POLICY training), so combining it with
+        reward-model training is a pipeline-ordering mistake worth naming.
+        """
+        problems: list[str] = []
+        rtype = self._reward_model_type(rm)
+        if rtype not in _LEROBOT_REWARD_MODEL_TYPES:
             problems.append(
-                f"num_nodes={spec.num_nodes}: multi-node lerobot needs a per-node "
-                "launcher and cannot run in-process; use num_nodes=1."
+                f"reward_model type '{rtype}' is not LeRobot-native "
+                f"(expected one of {sorted(_LEROBOT_REWARD_MODEL_TYPES)})"
+            )
+        unknown = sorted(k for k in rm if k not in _REWARD_MODEL_KEYS)
+        if unknown:
+            problems.append(
+                f"extra['reward_model'] does not support field(s) {unknown}; "
+                f"accepted keys are {sorted(_REWARD_MODEL_KEYS)}."
+            )
+        if rtype == "sarm":
+            am = rm.get("annotation_mode")
+            if am is not None and am not in _SARM_ANNOTATION_MODES:
+                problems.append(
+                    f"reward_model annotation_mode '{am}' is invalid (expected one of {sorted(_SARM_ANNOTATION_MODES)})"
+                )
+        for k, v in rm.items():
+            if isinstance(v, str) and v.startswith("-"):
+                problems.append(f"reward_model['{k}'] must not start with '-' (would parse as a stray flag)")
+
+        if spec.extra.get("sample_weighting") is not None:
+            problems.append(
+                "extra['sample_weighting'] (RA-BC) weights POLICY training; it does not apply to "
+                "reward-model training. Train the reward model first, then feed its progress parquet "
+                "to a policy run via extra['sample_weighting']['progress_path']."
+            )
+        if self._relative_actions(spec):
+            problems.append("relative_actions applies to policy training, not reward-model training")
+        if spec.method != "full":
+            problems.append(
+                f"method '{spec.method}' applies to policy training; reward-model training uses method='full'"
             )
 
-        if spec.val_episodes is not None and spec.dataset_root:
-            total = self._dataset_total_episodes(spec.dataset_root)
-            if total is not None and spec.val_episodes >= total:
-                problems.append(f"val_episodes={spec.val_episodes} >= total_episodes={total}")
+        import importlib.util
 
-        # lerobot must be importable to actually train.
-        try:
-            import importlib.util
-
-            if importlib.util.find_spec("lerobot.scripts.lerobot_train") is None:
-                problems.append("lerobot is not installed (no lerobot.scripts.lerobot_train)")
-        except Exception:  # noqa: BLE001
-            problems.append("lerobot is not installed")
-
+        if importlib.util.find_spec("lerobot.rewards") is None:
+            problems.append(
+                "the installed lerobot has no reward-model support (no 'lerobot.rewards'); "
+                "requires lerobot >= 0.5.2 (install from source)"
+            )
         return problems
 
     def build_command(self, spec: TrainSpec) -> list[str]:
@@ -338,70 +466,177 @@ class LerobotTrainer(Trainer):
         can assert our field mapping matches lerobot's real CLI, and as a
         human-readable description of the equivalent command.
         """
-        ptype = self._resolve_policy_type(spec)
+        rm = self._reward_model_dict(spec)
         repo_id, root = self._dataset_source(spec)
-        cmd = [
-            "lerobot.scripts.lerobot_train",
-            f"--dataset.repo_id={repo_id}",
-            f"--policy.type={ptype}",
-            f"--policy.device={self.device}",
-            "--policy.push_to_hub=false",
-            f"--output_dir={spec.output_dir}",
-            f"--job_name={spec.extra.get('job_name', 'strands_ft')}",
-            f"--steps={spec.steps}",
-            f"--batch_size={spec.global_batch_size}",
-            f"--save_freq={spec.save_freq}",
-            "--wandb.enable=false",
-        ]
+        cmd = ["lerobot.scripts.lerobot_train", f"--dataset.repo_id={repo_id}"]
         if root:
-            cmd.insert(2, f"--dataset.root={root}")
+            cmd.append(f"--dataset.root={root}")
+        if rm is not None:
+            cmd.extend(self._reward_model_command_flags(rm))
+        else:
+            ptype = self._resolve_policy_type(spec)
+            cmd.append(f"--policy.type={ptype}")
+            cmd.append(f"--policy.device={self.device}")
+            cmd.append("--policy.push_to_hub=false")
+        cmd.extend(
+            [
+                f"--output_dir={spec.output_dir}",
+                f"--job_name={spec.extra.get('job_name', 'strands_ft')}",
+                f"--steps={spec.steps}",
+                f"--batch_size={spec.global_batch_size}",
+                f"--save_freq={spec.save_freq}",
+                "--wandb.enable=false",
+            ]
+        )
         if spec.streaming:
             cmd.append("--dataset.streaming=true")
-        if spec.base_model:
-            cmd.append(f"--policy.pretrained_path={spec.base_model}")
         if spec.seed is not None:
             cmd.append(f"--seed={spec.seed}")
-        if spec.method == "lora":
-            cmd.append("--peft.method_type=LORA")
-            if spec.lora_r is not None:
-                cmd.append(f"--peft.r={spec.lora_r}")
-            if spec.lora_target_modules is not None:
-                cmd.append(f"--peft.target_modules={spec.lora_target_modules}")
-        elif spec.method == "expert_only":
-            cmd.append("--policy.train_expert_only=true")
-        if self._relative_actions(spec):
-            cmd.append("--policy.use_relative_actions=true")
         eps = self._val_split_episodes(spec)
         if eps is not None:
             cmd.append(f"--dataset.episodes=[{', '.join(map(str, eps))}]")
+        if rm is None:
+            if spec.base_model:
+                cmd.append(f"--policy.pretrained_path={spec.base_model}")
+            if spec.method == "lora":
+                cmd.append("--peft.method_type=LORA")
+                if spec.lora_r is not None:
+                    cmd.append(f"--peft.r={spec.lora_r}")
+                if spec.lora_target_modules is not None:
+                    cmd.append(f"--peft.target_modules={spec.lora_target_modules}")
+            elif spec.method == "expert_only":
+                cmd.append("--policy.train_expert_only=true")
+            if self._relative_actions(spec):
+                cmd.append("--policy.use_relative_actions=true")
+            sw = self._sample_weighting_dict(spec)
+            if sw is not None:
+                for key in ("type", "progress_path", "head_mode", "kappa", "epsilon"):
+                    if key in sw:
+                        cmd.append(f"--sample_weighting.{key}={sw[key]}")
         if spec.resume:
             ckpt_cfg = self._resume_config_path(spec.output_dir)
             if ckpt_cfg:
                 cmd.append("--resume=true")
                 cmd.append(f"--config_path={ckpt_cfg}")
-        sw = self._sample_weighting_dict(spec)
-        if sw is not None:
-            cmd.append("--use_rabc=true")
-            for key, field_name in _SAMPLE_WEIGHTING_FIELD_MAP.items():
-                if key in sw:
-                    cmd.append(f"--{field_name}={sw[key]}")
-        _consumed = {"policy_type", "job_name", "relative_actions", "sample_weighting"}
+        _consumed = {"policy_type", "job_name", "relative_actions", "sample_weighting", "reward_model"}
         for key, value in spec.extra.items():
             if key in _consumed:
                 continue
             cmd.append(f"--{key}={value}")
         return cmd
 
+    def _reward_model_command_flags(self, rm: dict[str, Any]) -> list[str]:
+        """argv-parity flags for a reward-model run (``--reward_model.*``)."""
+        rtype = self._reward_model_type(rm)
+        flags = [f"--reward_model.type={rtype}", f"--reward_model.device={self.device}"]
+        for key in ("annotation_mode", "image_key", "state_key"):
+            if key in rm:
+                flags.append(f"--reward_model.{key}={rm[key]}")
+        return flags
+
     def build_config(self, spec: TrainSpec) -> TrainPipelineConfig:
         """Build lerobot's typed ``TrainPipelineConfig`` from a TrainSpec (pure).
 
         The in-process equivalent of :meth:`build_command`: constructs the
-        dataclass tree ``train(cfg)`` consumes directly (no argv).
+        dataclass tree ``train(cfg)`` consumes directly (no argv). Dispatches to
+        the reward-model path when ``extra['reward_model']`` is set, else the
+        default policy path.
         """
+        rm = self._reward_model_dict(spec)
+        if rm is not None:
+            return self._build_reward_model_config(spec, rm)
+        return self._build_policy_config(spec)
+
+    def _build_dataset_config(self, spec: TrainSpec) -> Any:
+        """Shared ``DatasetConfig`` for both the policy and reward-model paths."""
+        from lerobot.configs.default import DatasetConfig
+
+        repo_id, root = self._dataset_source(spec)
+        dataset_kwargs: dict[str, Any] = {
+            "repo_id": repo_id,
+            "root": root,
+            "episodes": self._val_split_episodes(spec),
+        }
+        if spec.streaming:
+            dataset_kwargs["streaming"] = True
+        return DatasetConfig(**dataset_kwargs)
+
+    def _apply_common_config(self, cfg: TrainPipelineConfig, spec: TrainSpec) -> None:
+        """Wire seed / wandb / resume - identical for policy and reward runs."""
+        from pathlib import Path
+
+        if spec.seed is not None:
+            cfg.seed = spec.seed
+        if hasattr(cfg, "wandb") and hasattr(cfg.wandb, "enable"):
+            cfg.wandb.enable = False
+        if spec.resume:
+            ckpt_cfg = self._resume_config_path(spec.output_dir)
+            if ckpt_cfg:
+                cfg.checkpoint_path = Path(ckpt_cfg).parent.parent
+
+    def _apply_extra_passthrough(self, cfg: TrainPipelineConfig, spec: TrainSpec) -> None:
+        """Typed passthrough for remaining ``extra.*`` keys (validate()-gated).
+
+        Only sets attributes that exist on the typed config tree; unknown keys
+        are ignored (never become an arbitrary flag).
+        """
+        _consumed = {"policy_type", "job_name", "relative_actions", "sample_weighting", "reward_model"}
+        for key, value in spec.extra.items():
+            if key in _consumed:
+                continue
+            target, attr = _resolve_dotted(cfg, key)
+            if target is not None and hasattr(target, attr):
+                setattr(target, attr, value)
+            else:
+                logger.warning("LerobotTrainer: ignoring extra '%s' (no matching config field).", key)
+
+    def _build_reward_model_config(self, spec: TrainSpec, rm: dict[str, Any]) -> TrainPipelineConfig:
+        """Build a reward-model ``TrainPipelineConfig`` (``cfg.reward_model`` set).
+
+        SARM and the other reward models share lerobot's ``train(cfg)`` loop; the
+        config sets ``reward_model`` (and leaves ``policy`` unset) so lerobot
+        follows its ``is_reward_model_training`` branch.
+        """
+        from pathlib import Path
+
+        from lerobot.configs.train import TrainPipelineConfig
+        from lerobot.rewards import make_reward_model_config
+
+        rtype = self._reward_model_type(rm)
+        reward_kwargs: dict[str, Any] = {"device": self.device}
+        for key in ("annotation_mode", "image_key", "state_key"):
+            if key in rm:
+                reward_kwargs[key] = rm[key]
+        try:
+            reward_cfg = make_reward_model_config(rtype, **reward_kwargs)
+        except TypeError as e:
+            raise ValueError(f"reward_model type '{rtype}' rejected field(s) {sorted(reward_kwargs)}: {e}") from e
+        if hasattr(reward_cfg, "push_to_hub"):
+            reward_cfg.push_to_hub = False
+        if spec.base_model and hasattr(reward_cfg, "pretrained_path"):
+            reward_cfg.pretrained_path = spec.base_model
+
+        cfg = TrainPipelineConfig(
+            dataset=self._build_dataset_config(spec),
+            policy=None,
+            reward_model=reward_cfg,
+            output_dir=Path(spec.output_dir) if spec.output_dir else None,
+            job_name=str(spec.extra.get("job_name", "strands_ft")),
+            steps=spec.steps,
+            batch_size=spec.global_batch_size,
+            save_freq=spec.save_freq,
+            resume=spec.resume,
+        )
+        self._apply_common_config(cfg, spec)
+        self._apply_extra_passthrough(cfg, spec)
+        return cfg
+
+    def _build_policy_config(self, spec: TrainSpec) -> TrainPipelineConfig:
+        """Build a policy ``TrainPipelineConfig`` (``cfg.policy`` set)."""
         import dataclasses
         from pathlib import Path
 
-        from lerobot.configs.default import DatasetConfig, PeftConfig
+        from lerobot.configs.default import PeftConfig
         from lerobot.configs.train import TrainPipelineConfig
         from lerobot.policies.factory import make_policy_config
 
@@ -423,16 +658,6 @@ class LerobotTrainer(Trainer):
                     f"use_relative_actions field (supported: {sorted(_RELATIVE_ACTION_POLICY_TYPES)})"
                 )
             policy_cfg.use_relative_actions = True
-
-        repo_id, root = self._dataset_source(spec)
-        dataset_kwargs: dict[str, Any] = {
-            "repo_id": repo_id,
-            "root": root,
-            "episodes": self._val_split_episodes(spec),
-        }
-        if spec.streaming:
-            dataset_kwargs["streaming"] = True
-        dataset_cfg = DatasetConfig(**dataset_kwargs)
 
         peft_cfg = None
         if spec.method == "lora":
@@ -457,7 +682,7 @@ class LerobotTrainer(Trainer):
                 policy_cfg.use_peft = True
 
         cfg = TrainPipelineConfig(
-            dataset=dataset_cfg,
+            dataset=self._build_dataset_config(spec),
             policy=policy_cfg,
             output_dir=Path(spec.output_dir) if spec.output_dir else None,
             job_name=str(spec.extra.get("job_name", "strands_ft")),
@@ -467,23 +692,19 @@ class LerobotTrainer(Trainer):
             resume=spec.resume,
             peft=peft_cfg,
         )
-        if spec.seed is not None:
-            cfg.seed = spec.seed
-        if hasattr(cfg, "wandb") and hasattr(cfg.wandb, "enable"):
-            cfg.wandb.enable = False
-        if spec.resume:
-            ckpt_cfg = self._resume_config_path(spec.output_dir)
-            if ckpt_cfg:
-                cfg.checkpoint_path = Path(ckpt_cfg).parent.parent
+        self._apply_common_config(cfg, spec)
 
-        # RA-BC sample weighting: lerobot configures RA-BC via FLAT fields on
-        # TrainPipelineConfig (use_rabc + rabc_*), which its train loop turns
-        # into a per-sample loss reweighting. Map the friendly
-        # extra['sample_weighting'] dict onto those real fields; type='rabc'
-        # gates use_rabc=True. Fail fast on unknown keys (mapped against the
-        # accepted set) and on any mapped field the installed lerobot lacks.
+        # RA-BC sample weighting: lerobot >= 0.5.2 configures it via a NESTED
+        # SampleWeightingConfig on TrainPipelineConfig (cfg.sample_weighting),
+        # which its train loop turns into a per-sample loss reweighting. The
+        # friendly extra['sample_weighting'] keys map 1:1 onto that config's
+        # fields, so the validated dict is forwarded verbatim. Fail fast on
+        # unknown keys, an unsupported scheme, or a lerobot too old to expose
+        # sample weighting.
         sw = self._sample_weighting_dict(spec)
         if sw is not None:
+            from lerobot.utils.sample_weighting import SampleWeightingConfig
+
             unsupported = sorted(k for k in sw if k not in _SAMPLE_WEIGHTING_KEYS)
             if unsupported:
                 raise ValueError(
@@ -491,42 +712,20 @@ class LerobotTrainer(Trainer):
                     f"{unsupported}; accepted keys are {sorted(_SAMPLE_WEIGHTING_KEYS)}."
                 )
             sw_type = sw.get("type", "rabc")
-            if sw_type != "rabc":
+            if sw_type not in _SAMPLE_WEIGHTING_TYPES:
                 raise ValueError(
-                    f"extra['sample_weighting']['type'] must be 'rabc' "
-                    f"(the only scheme lerobot ships), got {sw_type!r}."
+                    f"extra['sample_weighting']['type'] must be one of "
+                    f"{sorted(_SAMPLE_WEIGHTING_TYPES)} (the schemes lerobot ships), got {sw_type!r}."
                 )
-            if not hasattr(cfg, "use_rabc"):
+            if not hasattr(cfg, "sample_weighting"):
                 raise ValueError(
-                    "The installed lerobot does not expose RA-BC (no 'use_rabc' on "
-                    "TrainPipelineConfig); upgrade lerobot or drop "
-                    "extra['sample_weighting']."
+                    "The installed lerobot does not expose sample weighting (no "
+                    "'sample_weighting' on TrainPipelineConfig); requires lerobot "
+                    ">= 0.5.2, or drop extra['sample_weighting']."
                 )
-            cfg.use_rabc = True
-            for key, field_name in _SAMPLE_WEIGHTING_FIELD_MAP.items():
-                if key not in sw:
-                    continue
-                if not hasattr(cfg, field_name):
-                    raise ValueError(
-                        f"The installed lerobot's TrainPipelineConfig has no "
-                        f"'{field_name}' field (requested via "
-                        f"extra['sample_weighting']['{key}']); upgrade lerobot or "
-                        "drop it from the spec."
-                    )
-                setattr(cfg, field_name, sw[key])
+            cfg.sample_weighting = SampleWeightingConfig(**sw)
 
-        # Typed passthrough for remaining extra.* (gated by validate()'s key
-        # allowlist). Only set attributes that exist on the typed config tree;
-        # unknown keys are ignored (never become an arbitrary flag).
-        _consumed = {"policy_type", "job_name", "relative_actions", "sample_weighting"}
-        for key, value in spec.extra.items():
-            if key in _consumed:
-                continue
-            target, attr = _resolve_dotted(cfg, key)
-            if target is not None and hasattr(target, attr):
-                setattr(target, attr, value)
-            else:
-                logger.warning("LerobotTrainer: ignoring extra '%s' (no matching config field).", key)
+        self._apply_extra_passthrough(cfg, spec)
         return cfg
 
     def train(self, spec: TrainSpec) -> TrainResult:
@@ -564,8 +763,8 @@ class LerobotTrainer(Trainer):
             )
 
         logger.info(
-            "LerobotTrainer launching in-process: policy=%s device=%s steps=%d num_gpus=%d",
-            self._resolve_policy_type(spec),
+            "LerobotTrainer launching in-process: %s device=%s steps=%d num_gpus=%d",
+            self._run_type_label(spec),
             self.device,
             spec.steps,
             spec.num_gpus,

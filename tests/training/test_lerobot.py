@@ -766,16 +766,17 @@ class TestRelativeActions:
 
 
 class TestSampleWeightingRABC:
-    """RA-BC sample-weighting wiring: extra['sample_weighting'] -> flat rabc fields.
+    """RA-BC sample-weighting wiring: extra['sample_weighting'] -> nested SampleWeightingConfig.
 
     Regression for the folding recipe's headline ablation (HQ + RA-BC + relative
-    actions). lerobot configures RA-BC through FLAT fields on
-    ``TrainPipelineConfig`` (``use_rabc`` + ``rabc_progress_path`` /
-    ``rabc_kappa`` / ``rabc_epsilon`` / ``rabc_head_mode``), so the trainer maps
-    the friendly ``sample_weighting`` dict onto those. Before the fix the key
-    fell through the generic passthrough (set as a raw top-level ``dict`` that
-    lerobot's train loop never reads, and build_command emitted a single
-    ``--sample_weighting={...}`` flag) so RA-BC was unreachable.
+    actions). lerobot >= 0.5.2 configures RA-BC through a NESTED
+    ``SampleWeightingConfig`` on ``TrainPipelineConfig`` (``cfg.sample_weighting``,
+    fields ``type`` / ``progress_path`` / ``head_mode`` / ``kappa`` / ``epsilon``),
+    replacing the flat ``use_rabc`` / ``rabc_*`` fields of earlier 0.5.x. The
+    trainer forwards the friendly ``sample_weighting`` dict (whose keys match
+    those fields 1:1) into that config. Before this migration the trainer set the
+    removed flat fields and raised "no 'use_rabc'" against lerobot 0.5.2, so RA-BC
+    was unreachable.
     """
 
     def _rabc_spec(self, dataset_root, tmp_path):
@@ -790,22 +791,32 @@ class TestSampleWeightingRABC:
             },
         )
 
-    def test_build_config_sets_flat_rabc_fields(self, dataset_root, tmp_path):
+    def test_build_config_sets_nested_sample_weighting(self, dataset_root, tmp_path):
         pytest.importorskip("lerobot")
         cfg = LerobotTrainer(device="cpu").build_config(self._rabc_spec(dataset_root, tmp_path))
-        assert cfg.use_rabc is True
-        assert cfg.rabc_kappa == 0.02
-        assert cfg.rabc_head_mode == "sparse"
+        assert cfg.sample_weighting is not None
+        assert cfg.sample_weighting.type == "rabc"
+        assert cfg.sample_weighting.kappa == 0.02
+        assert cfg.sample_weighting.head_mode == "sparse"
 
-    def test_build_command_emits_flat_flags(self, dataset_root, tmp_path):
+    def test_build_config_forwards_progress_path(self, dataset_root, tmp_path):
+        pytest.importorskip("lerobot")
+        spec = self._rabc_spec(dataset_root, tmp_path)
+        spec.extra["sample_weighting"]["progress_path"] = "/tmp/sarm_progress.parquet"
+        cfg = LerobotTrainer(device="cpu").build_config(spec)
+        assert cfg.sample_weighting.progress_path == "/tmp/sarm_progress.parquet"
+
+    def test_build_command_emits_nested_flags(self, dataset_root, tmp_path):
         cmd = LerobotTrainer(device="cpu").build_command(self._rabc_spec(dataset_root, tmp_path))
-        assert "--use_rabc=true" in cmd
-        assert "--rabc_kappa=0.02" in cmd
-        assert "--rabc_head_mode=sparse" in cmd
-        # The dict must NOT leak through as a single flag nor a nested one.
-        assert not any(c.startswith("--sample_weighting") for c in cmd)
+        assert "--sample_weighting.type=rabc" in cmd
+        assert "--sample_weighting.kappa=0.02" in cmd
+        assert "--sample_weighting.head_mode=sparse" in cmd
+        # The dict must NOT leak through as one top-level flag, and the removed
+        # flat <= 0.5.1 fields must NOT be emitted.
+        assert not any(c == "--sample_weighting" or c.startswith("--sample_weighting=") for c in cmd)
+        assert not any(c.startswith("--use_rabc") or c.startswith("--rabc_") for c in cmd)
 
-    def test_no_sample_weighting_leaves_rabc_off(self, dataset_root, tmp_path):
+    def test_no_sample_weighting_leaves_it_unset(self, dataset_root, tmp_path):
         pytest.importorskip("lerobot")
         spec = TrainSpec(
             dataset_root=dataset_root,
@@ -815,7 +826,7 @@ class TestSampleWeightingRABC:
             extra={"policy_type": "act"},
         )
         cfg = LerobotTrainer(device="cpu").build_config(spec)
-        assert cfg.use_rabc is False
+        assert cfg.sample_weighting is None
 
     def test_unsupported_field_raises_actionable_error(self, dataset_root, tmp_path):
         pytest.importorskip("lerobot")
@@ -828,7 +839,7 @@ class TestSampleWeightingRABC:
         pytest.importorskip("lerobot")
         spec = self._rabc_spec(dataset_root, tmp_path)
         spec.extra["sample_weighting"] = {"type": "boltzmann", "kappa": 0.02}
-        with pytest.raises(ValueError, match="must be 'rabc'"):
+        with pytest.raises(ValueError, match="must be one of"):
             LerobotTrainer(device="cpu").build_config(spec)
 
     def test_validate_rejects_non_dict(self, dataset_root, tmp_path):
@@ -840,5 +851,104 @@ class TestSampleWeightingRABC:
     def test_validate_rejects_leading_dash_value(self, dataset_root, tmp_path):
         spec = self._rabc_spec(dataset_root, tmp_path)
         spec.extra["sample_weighting"] = {"type": "rabc", "progress_path": "-x"}
+        problems = LerobotTrainer().validate(spec)
+        assert any("must not start with '-'" in p for p in problems)
+
+
+class TestRewardModelTraining:
+    """SARM reward-model training: extra['reward_model'] -> cfg.reward_model.
+
+    The *producing* half of RA-BC. A reward model (SARM) trains through the SAME
+    ``lerobot_train.train(cfg)`` entry point as a policy, but populates
+    ``cfg.reward_model`` (and leaves ``cfg.policy`` unset) so lerobot follows its
+    ``is_reward_model_training`` path. Requires lerobot >= 0.5.2 (the
+    ``lerobot.rewards`` package). Before this, ``sarm`` was rejected outright -
+    there was no reward-model path in ``LerobotTrainer`` at all.
+    """
+
+    def _sarm_spec(self, dataset_root, tmp_path, **rm):
+        reward_model = {"type": "sarm", "annotation_mode": "single_stage"}
+        reward_model.update(rm)
+        return TrainSpec(
+            dataset_root=dataset_root,
+            base_model="",
+            output_dir=str(tmp_path / "sarm_out"),
+            steps=200,
+            extra={"reward_model": reward_model},
+        )
+
+    def test_validate_accepts_sarm(self, dataset_root, tmp_path):
+        pytest.importorskip("lerobot.rewards")
+        spec = self._sarm_spec(dataset_root, tmp_path, image_key="observation.images.base")
+        assert LerobotTrainer().validate(spec) == []
+
+    def test_build_config_targets_reward_model(self, dataset_root, tmp_path):
+        pytest.importorskip("lerobot.rewards")
+        spec = self._sarm_spec(dataset_root, tmp_path, image_key="observation.images.base")
+        cfg = LerobotTrainer(device="cpu").build_config(spec)
+        # cfg.reward_model is set, cfg.policy is not -> lerobot's reward path.
+        assert cfg.is_reward_model_training is True
+        assert cfg.policy is None
+        assert cfg.reward_model.type == "sarm"
+        assert cfg.reward_model.annotation_mode == "single_stage"
+        assert cfg.reward_model.image_key == "observation.images.base"
+
+    def test_build_command_emits_reward_model_flags(self, dataset_root, tmp_path):
+        spec = self._sarm_spec(dataset_root, tmp_path, image_key="observation.images.base")
+        cmd = LerobotTrainer(device="cpu").build_command(spec)
+        assert "--reward_model.type=sarm" in cmd
+        assert "--reward_model.annotation_mode=single_stage" in cmd
+        assert "--reward_model.image_key=observation.images.base" in cmd
+        # A reward-model run does not train a policy -> no --policy.* flags.
+        assert not any(c.startswith("--policy.") for c in cmd)
+
+    def test_validate_rejects_unknown_reward_type(self, dataset_root, tmp_path):
+        spec = self._sarm_spec(dataset_root, tmp_path, type="not_a_reward_model")
+        problems = LerobotTrainer().validate(spec)
+        assert any("is not LeRobot-native" in p for p in problems)
+
+    def test_validate_rejects_bad_annotation_mode(self, dataset_root, tmp_path):
+        spec = self._sarm_spec(dataset_root, tmp_path, annotation_mode="bogus")
+        problems = LerobotTrainer().validate(spec)
+        assert any("annotation_mode" in p and "invalid" in p for p in problems)
+
+    def test_validate_rejects_unknown_reward_field(self, dataset_root, tmp_path):
+        spec = self._sarm_spec(dataset_root, tmp_path)
+        spec.extra["reward_model"]["bogus"] = 1
+        problems = LerobotTrainer().validate(spec)
+        assert any("does not support field" in p for p in problems)
+
+    def test_validate_rejects_sample_weighting_combo(self, dataset_root, tmp_path):
+        # RA-BC weights POLICY training; pairing it with a reward-model run is a
+        # pipeline-ordering mistake (train SARM first, THEN weight a policy).
+        spec = self._sarm_spec(dataset_root, tmp_path)
+        spec.extra["sample_weighting"] = {"type": "rabc"}
+        problems = LerobotTrainer().validate(spec)
+        assert any("RA-BC" in p and "POLICY" in p for p in problems)
+
+    def test_validate_rejects_relative_actions_combo(self, dataset_root, tmp_path):
+        spec = self._sarm_spec(dataset_root, tmp_path)
+        spec.extra["relative_actions"] = True
+        problems = LerobotTrainer().validate(spec)
+        assert any("relative_actions applies to policy training" in p for p in problems)
+
+    def test_validate_rejects_non_full_method(self, dataset_root, tmp_path):
+        spec = self._sarm_spec(dataset_root, tmp_path)
+        spec.method = "lora"
+        problems = LerobotTrainer().validate(spec)
+        assert any("reward-model training uses method='full'" in p for p in problems)
+
+    def test_validate_rejects_non_dict_reward_model(self, dataset_root, tmp_path):
+        spec = TrainSpec(
+            dataset_root=dataset_root,
+            output_dir=str(tmp_path / "out"),
+            steps=200,
+            extra={"reward_model": "sarm"},
+        )
+        problems = LerobotTrainer().validate(spec)
+        assert any("reward_model" in p and "dict" in p for p in problems)
+
+    def test_validate_rejects_leading_dash_value(self, dataset_root, tmp_path):
+        spec = self._sarm_spec(dataset_root, tmp_path, image_key="-x")
         problems = LerobotTrainer().validate(spec)
         assert any("must not start with '-'" in p for p in problems)

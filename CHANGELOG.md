@@ -5,6 +5,44 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Feature: SARM reward-model training + the RA-BC production loop (`training`)
+
+Closes the *producing* half of Reward-Aligned Behavior Cloning: `strands-robots`
+could already *consume* a SARM progress parquet (RA-BC sample weighting) but
+could not *produce* one. `LerobotTrainer` now trains a reward model and a new
+`strands_robots.training.reward` module computes the progress weights and serves
+the trained model for inference, so the full SARM -> RA-BC -> policy loop is a
+sequence of strands calls. Grounded against lerobot >= 0.5.2, where SARM moved to
+the `lerobot.rewards` package and sample weighting moved to a nested
+`SampleWeightingConfig`.
+
+- `LerobotTrainer` trains a reward model (SARM) when
+  `TrainSpec.extra['reward_model']` is set: it builds `cfg.reward_model`
+  (and leaves `cfg.policy` unset) so lerobot follows its
+  `is_reward_model_training` path through the same in-process `train(cfg)`.
+  The dict accepts `type` (default `sarm`), `annotation_mode`
+  (`single_stage` / `dense_only` / `dual`), `image_key`, and `state_key`.
+  Policy-only knobs (`sample_weighting`, `relative_actions`, non-`full`
+  `method`) are rejected on a reward-model run rather than silently ignored.
+- New `compute_rabc_weights(reward_model_path, dataset_root|dataset_repo_id, ...)`
+  runs a trained SARM over a dataset in-process and returns the path to the
+  produced `sarm_progress.parquet` - the file RA-BC sample weighting consumes.
+  Running in-process avoids the always-on Hub upload of lerobot's CLI entry
+  point.
+- New `load_reward_model(model_path, reward_type='sarm', device=...)` +
+  `reward_progress(model, batch)` expose a trained reward model for inference,
+  returning a dense task-progress score in `[0, 1]` as plain floats (usable as
+  an eval-time success/score signal).
+- RA-BC sample weighting now targets lerobot's nested `SampleWeightingConfig`
+  (`cfg.sample_weighting`) instead of the flat `use_rabc` / `rabc_*` fields,
+  which lerobot >= 0.5.2 removed. Without this the `extra['sample_weighting']`
+  path raised "no 'use_rabc'" against current lerobot and RA-BC was unreachable.
+  The friendly keys (`type` / `progress_path` / `head_mode` / `kappa` /
+  `epsilon`) map 1:1 onto the config fields; `type` accepts `rabc` or `uniform`.
+- `compute_rabc_weights`, `load_reward_model`, and `reward_progress` are exported
+  from `strands_robots.training`.
+
+
 ### Internal Refactor: unified chunk-length rule across all policy runners (`ChunkedPolicy`)
 
 A chunk-emitting policy (ACT, diffusion, pi0, SmolVLA, MolmoAct2) returns N

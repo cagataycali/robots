@@ -100,7 +100,8 @@ supports and **ignores the rest** (the same tolerance rule as
 | `extra["groot_root"]` | Isaac-GR00T checkout | GR00T |
 | `extra["sft_toml"]` / `extra["cosmos_root"]` | recipe + checkout | Cosmos |
 | `extra["relative_actions"]` | train pi0-family with delta actions | lerobot `--policy.use_relative_actions=true` (pi0/pi05/pi0_fast) |
-| `extra["sample_weighting"]` | RA-BC per-sample loss weighting dict | lerobot `--use_rabc=true --rabc_*` |
+| `extra["sample_weighting"]` | RA-BC per-sample loss weighting dict | lerobot `cfg.sample_weighting` (`--sample_weighting.*`) |
+| `extra["reward_model"]` | train a reward model (SARM) instead of a policy | lerobot `cfg.reward_model` (`--reward_model.*`); requires lerobot >= 0.5.2 |
 
 ## From an agent (natural language)
 
@@ -129,12 +130,13 @@ TrainSpec(..., method="lora", lora_r=16, extra={"policy_type": "pi05"})
 
 #### RA-BC sample weighting (reward-aligned behavior cloning)
 
-Reward-Aligned Behavior Cloning reweights the per-sample loss so high-quality
-demonstrations dominate - the technique behind the strongest behavior-cloning
-ablations on long-horizon manipulation. lerobot drives it from flat
-`TrainPipelineConfig` fields (`use_rabc` plus `rabc_progress_path`,
-`rabc_kappa`, `rabc_epsilon`, `rabc_head_mode`). Surface it through `extra`
-with a friendly grouped dict that maps onto those fields:
+Reward-Aligned Behavior Cloning reweights the per-sample loss so high-progress
+demonstration frames dominate - the technique behind the strongest
+behavior-cloning ablations on long-horizon manipulation. lerobot >= 0.5.2 drives
+it from a nested `SampleWeightingConfig` on `TrainPipelineConfig`
+(`cfg.sample_weighting`, with fields `type` / `progress_path` / `head_mode` /
+`kappa` / `epsilon`). Surface it through `extra` with a friendly dict whose keys
+match those fields 1:1:
 
 ```python
 TrainSpec(
@@ -143,22 +145,85 @@ TrainSpec(
     output_dir="/tmp/ft_out",
     extra={
         "policy_type": "pi05",
-        "sample_weighting": {       # type='rabc' sets use_rabc=true
-            "type": "rabc",
-            "kappa": 0.01,          # -> rabc_kappa (high-quality threshold)
-            "head_mode": "sparse",  # -> rabc_head_mode (progress head)
-            # "progress_path": "hf://datasets/org/ds/sarm_progress.parquet",
+        "sample_weighting": {
+            "type": "rabc",          # scheme: "rabc" or "uniform"
+            "kappa": 0.01,           # high-progress threshold
+            "head_mode": "sparse",   # SARM progress head ("sparse"/"dense")
+            "progress_path": "/tmp/ft_out/sarm_progress.parquet",
         },
     },
 )
-# -> lerobot_train --use_rabc=true --rabc_kappa=0.01 --rabc_head_mode=sparse ...
+# -> lerobot_train --sample_weighting.type=rabc --sample_weighting.kappa=0.01 \
+#                  --sample_weighting.head_mode=sparse \
+#                  --sample_weighting.progress_path=/tmp/ft_out/sarm_progress.parquet ...
 ```
 
-The friendly keys map to lerobot's flat fields - `type` gates `use_rabc`,
-`kappa` -> `rabc_kappa`, `epsilon` -> `rabc_epsilon`, `head_mode` ->
-`rabc_head_mode`, `progress_path` -> `rabc_progress_path`. An unknown key (or a
-`type` other than `rabc`) raises an actionable error naming the accepted set.
+The friendly keys are forwarded verbatim into `SampleWeightingConfig`. An
+unknown key, an unsupported `type` (lerobot ships `rabc` and `uniform`), or a
+lerobot too old to expose `cfg.sample_weighting` each raise an actionable error.
 Omit `sample_weighting` entirely for standard (uniform) behavior cloning.
+
+The `progress_path` parquet is produced from a trained SARM reward model - see
+the SARM production loop below.
+
+#### SARM reward model + the RA-BC production loop
+
+RA-BC needs a per-frame *progress* signal (`sarm_progress.parquet`). SARM
+(Stage-Aware Reward Model) learns that signal from demonstrations; lerobot
+>= 0.5.2 trains it through the SAME `train(cfg)` entry point as a policy, but on
+`cfg.reward_model` instead of `cfg.policy`. The full producing loop is three
+strands calls:
+
+```python
+from strands_robots.training import (
+    create_trainer, TrainSpec, compute_rabc_weights,
+)
+
+trainer = create_trainer("lerobot_local")
+
+# 1. TRAIN a SARM reward model (single_stage needs no annotations).
+trainer.train(TrainSpec(
+    dataset_root="/data/folding_v3",
+    output_dir="/tmp/sarm_out",
+    steps=5000,
+    extra={"reward_model": {
+        "type": "sarm",
+        "annotation_mode": "single_stage",
+        "image_key": "observation.images.base",
+    }},
+))
+
+# 2. COMPUTE per-frame RA-BC progress weights from the trained SARM.
+progress = compute_rabc_weights(
+    reward_model_path=trainer.latest_checkpoint("/tmp/sarm_out"),
+    dataset_root="/data/folding_v3",
+)
+
+# 3. TRAIN the policy with RA-BC pointed at the produced parquet.
+trainer.train(TrainSpec(
+    dataset_root="/data/folding_v3",
+    base_model="lerobot/pi05_base",
+    output_dir="/tmp/ft_out",
+    steps=20000,
+    extra={"policy_type": "pi05",
+           "sample_weighting": {"type": "rabc", "progress_path": progress}},
+))
+```
+
+`extra["reward_model"]` accepts `type` (default `sarm`), `annotation_mode`
+(`single_stage` / `dense_only` / `dual`), `image_key`, and `state_key`. The
+policy-only knobs (`sample_weighting`, `relative_actions`, non-`full` `method`)
+are rejected on a reward-model run rather than silently ignored.
+
+A trained SARM can also be queried for a dense task-progress score in `[0, 1]`
+(e.g. as an eval-time signal):
+
+```python
+from strands_robots.training import load_reward_model, reward_progress
+
+model = load_reward_model("/tmp/sarm_out/checkpoints/last/pretrained_model")
+scores = reward_progress(model, batch)   # list[float], one per batch element
+```
 
 #### Relative (delta) actions
 
