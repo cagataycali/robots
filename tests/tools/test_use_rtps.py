@@ -10,6 +10,7 @@ error-return contract are exercised middleware-free.
 from __future__ import annotations
 
 import dataclasses
+import json
 from typing import Any
 
 import pytest
@@ -185,3 +186,134 @@ def test_unknown_action_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     result = use_rtps(action="warp_drive")
     assert result["status"] == "error"
     assert "unknown action" in _texts(result)
+
+
+# subscribe / echo (the read-side participant path) -------------------------
+
+
+class _FakeReader:
+    """DataReader stub: yields a fixed batch per ``take`` call, then empties.
+
+    Mirrors the cyclonedds ``DataReader.take(N=...)`` contract closely enough to
+    drive the echo poll loop without a live DDS graph.
+    """
+
+    def __init__(self, batches: list[list[Any]]) -> None:
+        self._batches = list(batches)
+
+    def take(self, N: int) -> list[Any]:
+        return self._batches.pop(0) if self._batches else []
+
+
+@pytest.fixture
+def with_reader(monkeypatch: pytest.MonkeyPatch):
+    """Patch the backend available + reader factory; return a setter for batches."""
+    monkeypatch.setattr(rtps_mod._backend, "available", lambda: True)
+    monkeypatch.setattr(rtps_mod.time, "sleep", lambda *_: None)
+
+    def _install(batches: list[list[Any]]) -> _FakeReader:
+        reader = _FakeReader(batches)
+        monkeypatch.setattr(rtps_mod._backend, "reader", lambda topic, type: reader)
+        return reader
+
+    return _install
+
+
+def test_subscribe_creates_reader(with_reader) -> None:
+    with_reader([])
+    result = use_rtps(action="subscribe", topic="/turtle1/cmd_vel", type="geometry_msgs/msg/Twist")
+    assert result["status"] == "success"
+    assert "subscribed to /turtle1/cmd_vel" in _texts(result)
+    _ascii_only(result)
+
+
+def test_echo_returns_samples_as_dicts(with_reader) -> None:
+    # Two single-sample batches force the partial-take + poll-again branch.
+    with_reader([[_Twist(linear=_Vec3(x=2.0))], [_Twist(angular=_Vec3(z=1.5))]])
+    result = use_rtps(
+        action="echo",
+        topic="/turtle1/cmd_vel",
+        type="geometry_msgs/msg/Twist",
+        count=2,
+        timeout=5.0,
+    )
+    assert result["status"] == "success"
+    text = _texts(result)
+    assert "echo /turtle1/cmd_vel" in text
+    # Samples were recursively converted to nested plain dicts.
+    payload = json.loads(text.split("):\n", 1)[1])
+    assert payload[0]["linear"]["x"] == 2.0
+    assert payload[1]["angular"]["z"] == 1.5
+    _ascii_only(result)
+
+
+def test_echo_times_out_with_empty_samples(with_reader) -> None:
+    with_reader([])  # reader never yields
+    result = use_rtps(
+        action="echo",
+        topic="/cmd_vel",
+        type="geometry_msgs/msg/Twist",
+        count=1,
+        timeout=0.0,  # deadline already reached -> no spin, empty result
+    )
+    assert result["status"] == "success"
+    text = _texts(result)
+    assert json.loads(text.split("):\n", 1)[1]) == []
+
+
+def test_echo_requires_topic_and_type(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(rtps_mod._backend, "available", lambda: True)
+    result = use_rtps(action="echo", topic="/cmd_vel")
+    assert result["status"] == "error"
+    assert "echo requires topic and type" in _texts(result)
+
+
+def test_advertise_requires_topic_and_type(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(rtps_mod._backend, "available", lambda: True)
+    result = use_rtps(action="advertise", topic="/cmd_vel")
+    assert result["status"] == "error"
+    assert "advertise requires topic and type" in _texts(result)
+
+
+# Pure helpers --------------------------------------------------------------
+
+
+def test_sample_to_dict_handles_nested_lists_and_scalars() -> None:
+    sample = _Twist(linear=_Vec3(x=1.0, y=2.0), angular=_Vec3(z=3.0))
+    out = rtps_mod._sample_to_dict([sample, 7])
+    assert out[0]["linear"] == {"x": 1.0, "y": 2.0, "z": 0.0}
+    assert out[0]["angular"]["z"] == 3.0
+    assert out[1] == 7  # scalars pass through unchanged
+
+
+def test_resolve_field_types_falls_back_when_hints_unresolvable(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _boom(_cls: Any) -> dict[str, Any]:
+        raise NameError("unresolved forward ref")
+
+    monkeypatch.setattr(rtps_mod.typing, "get_type_hints", _boom)
+    resolved = rtps_mod._resolve_field_types(_Vec3)
+    # Falls back to the raw dataclasses Field.type (a string under future-annotations).
+    assert set(resolved) == {"x", "y", "z"}
+
+
+# Real backend availability probe (no monkeypatch on available) -------------
+
+
+def test_backend_available_false_without_cyclonedds() -> None:
+    # cyclonedds is not installed in this environment; the real probe returns
+    # False rather than raising, so the tool degrades to a clear status message.
+    assert rtps_mod._RtpsBackend().available() is False
+
+
+def test_backend_available_import_error_returns_false(monkeypatch: pytest.MonkeyPatch) -> None:
+    import builtins
+
+    real_import = builtins.__import__
+
+    def _fail(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name == "strands_robots.rtps.idl" or name.endswith("rtps.idl"):
+            raise ImportError("simulated missing idl module")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _fail)
+    assert rtps_mod._RtpsBackend().available() is False
