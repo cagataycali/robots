@@ -365,3 +365,134 @@ class TestDecoratorSurface:
         # DecoratedFunctionTool exposes tool_name + a callable underlying func.
         assert hasattr(value, "tool_name")
         assert hasattr(value, "_tool_func") or callable(value)
+
+
+# --------------------------------------------------------------------------
+# Per-episode finalize resilience
+# --------------------------------------------------------------------------
+
+
+class TestFinalizeResilience:
+    """The per-episode parquet boundary must never abort an in-flight rollout.
+
+    When recording is active, ``run_policy`` delegates the per-episode
+    ``save_episode`` boundary to ``PolicyRunner._finalize_recorder_episode``.
+    That delegation is best-effort by contract: a missing ``PolicyRunner``
+    import, a construction failure, or a save error must be logged and
+    swallowed so a transient recorder fault never tears down an N-episode
+    rollout mid-way. These tests pin that the loop still completes all N
+    episodes and the dataset is still closed in each failure mode.
+    """
+
+    def test_finalize_swallows_policyrunner_import_error(self, tmp_path: Path, monkeypatch: Any) -> None:
+        import sys
+
+        sim = _FakeSim()
+        ds = tmp_path / "ds"
+        _write_info_json(ds, total_episodes=2, total_frames=24)
+        # Force `from ...policy_runner import PolicyRunner` to raise ImportError:
+        # a None entry in sys.modules makes the `from ... import` statement fail.
+        monkeypatch.setitem(sys.modules, "strands_robots.simulation.policy_runner", None)
+
+        result = run_policy(sim, n_episodes=2, n_steps=5, dataset_root=str(ds))
+
+        # Import failure is non-fatal: both rollouts ran and the dataset closed.
+        assert len(sim.run_policy_calls) == 2
+        assert len(sim.stop_recording_calls) == 1
+        assert result["status"] == "success"
+
+    def test_finalize_swallows_policyrunner_construction_error(self, tmp_path: Path, monkeypatch: Any) -> None:
+        import strands_robots.simulation.policy_runner as pr_mod
+
+        sim = _FakeSim()
+        ds = tmp_path / "ds"
+        _write_info_json(ds, total_episodes=1, total_frames=12)
+
+        class _BoomRunner:
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
+                raise RuntimeError("cannot bind PolicyRunner to this engine")
+
+        monkeypatch.setattr(pr_mod, "PolicyRunner", _BoomRunner)
+
+        result = run_policy(sim, n_episodes=1, n_steps=5, dataset_root=str(ds))
+
+        assert len(sim.run_policy_calls) == 1
+        assert len(sim.stop_recording_calls) == 1
+        assert result["status"] == "success"
+
+    def test_finalize_swallows_save_episode_error(self, tmp_path: Path, monkeypatch: Any) -> None:
+        import strands_robots.simulation.policy_runner as pr_mod
+
+        sim = _FakeSim()
+        ds = tmp_path / "ds"
+        _write_info_json(ds, total_episodes=1, total_frames=12)
+
+        class _FlakyRunner:
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
+                pass
+
+            def _finalize_recorder_episode(self) -> None:
+                raise RuntimeError("save_episode failed: disk full")
+
+        monkeypatch.setattr(pr_mod, "PolicyRunner", _FlakyRunner)
+
+        result = run_policy(sim, n_episodes=1, n_steps=5, dataset_root=str(ds))
+
+        # A per-episode save error is swallowed; the rollout still completes.
+        assert len(sim.run_policy_calls) == 1
+        assert len(sim.stop_recording_calls) == 1
+        assert result["status"] == "success"
+
+
+# --------------------------------------------------------------------------
+# stop_recording fault tolerance + corrupt parquet-truth metadata
+# --------------------------------------------------------------------------
+
+
+class TestStopRecordingFaultTolerance:
+    def test_non_success_stop_recording_is_logged_not_raised(self, tmp_path: Path) -> None:
+        """A failing ``stop_recording`` in the finally block must not crash.
+
+        The tool logs the non-success result and proceeds to read
+        parquet-truth from ``meta/info.json`` (which is sync-flushed
+        independently of the recorder's stop path).
+        """
+        sim = _FakeSim()
+        ds = tmp_path / "ds"
+        _write_info_json(ds, total_episodes=1, total_frames=12)
+
+        def bad_stop(**kwargs: Any) -> dict[str, Any]:
+            return {"status": "error", "content": [{"text": "flush failed"}]}
+
+        sim.stop_recording = bad_stop  # type: ignore[method-assign]
+
+        result = run_policy(sim, n_episodes=1, n_steps=5, dataset_root=str(ds))
+
+        # Parquet-truth still resolved from info.json despite the stop failure.
+        payload = result["content"][1]["json"]
+        assert payload["n_episodes_actual"] == 1
+        assert payload["n_frames_actual"] == 12
+        assert result["status"] == "success"
+
+
+class TestCorruptParquetTruth:
+    def test_corrupt_info_json_is_surfaced_as_warning_not_traceback(self, tmp_path: Path) -> None:
+        """A malformed ``meta/info.json`` MUST degrade to a structured warning.
+
+        ``_read_parquet_truth`` swallows ``json.JSONDecodeError`` / ``OSError``
+        and returns ``info_present=False`` with the error repr, so the verifier
+        sees "cannot verify episode count" rather than a stack trace.
+        """
+        sim = _FakeSim()
+        ds = tmp_path / "ds"
+        meta = ds / "meta"
+        meta.mkdir(parents=True)
+        (meta / "info.json").write_text("{ this is not valid json ")
+
+        result = run_policy(sim, n_episodes=1, n_steps=5, dataset_root=str(ds))
+
+        payload = result["content"][1]["json"]
+        assert payload["n_episodes_actual"] == -1
+        assert any("info.json missing" in w for w in payload["warnings"])
+        # Cannot confirm the count -> status must not be a false OK.
+        assert result["status"] == "error"
