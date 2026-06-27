@@ -206,6 +206,33 @@ class LerobotTrainer(Trainer):
         """
         return bool(spec.extra.get("relative_actions", False))
 
+    def _sample_weighting_dict(self, spec: TrainSpec) -> dict[str, Any] | None:
+        """Resolve the RA-BC / sample-weighting spec from ``extra['sample_weighting']``.
+
+        RA-BC (Reward-Aligned Behavior Cloning) and other per-sample loss
+        weighting strategies are surfaced through the ``extra`` escape hatch as a
+        single ``sample_weighting`` dict whose keys mirror lerobot's
+        :class:`lerobot.utils.sample_weighting.SampleWeightingConfig`
+        (``type``, ``progress_path``, ``head_mode``, ``kappa``, ``epsilon``,
+        ``extra_params``). Example::
+
+            extra={"sample_weighting": {"type": "rabc", "kappa": 0.01,
+                                        "head_mode": "sparse"}}
+
+        Returns the dict unchanged, or ``None`` when not requested. Raises
+        ``ValueError`` if the value is present but not a dict (caught by
+        ``train`` and surfaced as an error result).
+        """
+        sw = spec.extra.get("sample_weighting")
+        if sw is None:
+            return None
+        if not isinstance(sw, dict):
+            raise ValueError(
+                "extra['sample_weighting'] must be a dict of SampleWeightingConfig "
+                "fields, e.g. {'type': 'rabc', 'kappa': 0.01}"
+            )
+        return sw
+
     # ---- ABC ---------------------------------------------------------------
 
     def validate(self, spec: TrainSpec) -> list[str]:
@@ -249,6 +276,17 @@ class LerobotTrainer(Trainer):
                 f"(only {sorted(_RELATIVE_ACTION_POLICY_TYPES)} expose use_relative_actions); "
                 "drop extra['relative_actions'] or pick a pi0-family policy"
             )
+
+        sw = spec.extra.get("sample_weighting")
+        if sw is not None and not isinstance(sw, dict):
+            problems.append(
+                "extra['sample_weighting'] must be a dict of SampleWeightingConfig "
+                "fields, e.g. {'type': 'rabc', 'kappa': 0.01}"
+            )
+        elif isinstance(sw, dict):
+            for k, v in sw.items():
+                if isinstance(v, str) and v.startswith("-"):
+                    problems.append(f"sample_weighting['{k}'] must not start with '-' (would parse as a stray flag)")
 
         if spec.steps <= 0:
             problems.append(f"steps must be > 0, got {spec.steps}")
@@ -324,7 +362,11 @@ class LerobotTrainer(Trainer):
             if ckpt_cfg:
                 cmd.append("--resume=true")
                 cmd.append(f"--config_path={ckpt_cfg}")
-        _consumed = {"policy_type", "job_name", "relative_actions"}
+        sw = self._sample_weighting_dict(spec)
+        if sw is not None:
+            for field_name, value in sw.items():
+                cmd.append(f"--sample_weighting.{field_name}={value}")
+        _consumed = {"policy_type", "job_name", "relative_actions", "sample_weighting"}
         for key, value in spec.extra.items():
             if key in _consumed:
                 continue
@@ -415,10 +457,29 @@ class LerobotTrainer(Trainer):
             if ckpt_cfg:
                 cfg.checkpoint_path = Path(ckpt_cfg).parent.parent
 
+        # RA-BC / sample weighting: build lerobot's typed SampleWeightingConfig
+        # from the extra['sample_weighting'] dict and attach it. lerobot's
+        # train loop turns a non-None cfg.sample_weighting into a SampleWeighter
+        # (make_sample_weighter) that reweights the per-sample loss.
+        sw = self._sample_weighting_dict(spec)
+        if sw is not None:
+            from lerobot.utils.sample_weighting import SampleWeightingConfig
+
+            supported = {f.name for f in dataclasses.fields(SampleWeightingConfig)}
+            unsupported = sorted(k for k in sw if k not in supported)
+            if unsupported:
+                raise ValueError(
+                    f"The installed lerobot's SampleWeightingConfig does not support "
+                    f"field(s) {unsupported}; it accepts {sorted(supported)}. These "
+                    "were requested via extra['sample_weighting']. Upgrade lerobot or "
+                    "drop them from the spec."
+                )
+            cfg.sample_weighting = SampleWeightingConfig(**sw)
+
         # Typed passthrough for remaining extra.* (gated by validate()'s key
         # allowlist). Only set attributes that exist on the typed config tree;
         # unknown keys are ignored (never become an arbitrary flag).
-        _consumed = {"policy_type", "job_name", "relative_actions"}
+        _consumed = {"policy_type", "job_name", "relative_actions", "sample_weighting"}
         for key, value in spec.extra.items():
             if key in _consumed:
                 continue

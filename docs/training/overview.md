@@ -100,6 +100,7 @@ supports and **ignores the rest** (the same tolerance rule as
 | `extra["groot_root"]` | Isaac-GR00T checkout | GR00T |
 | `extra["sft_toml"]` / `extra["cosmos_root"]` | recipe + checkout | Cosmos |
 | `extra["relative_actions"]` | train pi0-family with delta actions | lerobot `--policy.use_relative_actions=true` (pi0/pi05/pi0_fast) |
+| `extra["sample_weighting"]` | RA-BC / per-sample loss weighting dict | lerobot `--sample_weighting.*` |
 
 ## From an agent (natural language)
 
@@ -125,6 +126,37 @@ agent("Record 50 cube-pick episodes, then post-tune lerobot ACT on the dataset "
 TrainSpec(..., method="lora", lora_r=16, extra={"policy_type": "pi05"})
 # -> lerobot_train --peft.method_type=LORA --peft.r=16 --policy.type=pi05
 ```
+
+#### RA-BC sample weighting (reward-aligned behavior cloning)
+
+Reward-Aligned Behavior Cloning reweights the per-sample loss so high-quality
+demonstrations dominate - the technique behind the strongest behavior-cloning
+ablations on long-horizon manipulation. lerobot drives it from
+`TrainPipelineConfig.sample_weighting` (a typed `SampleWeightingConfig` that the
+train loop turns into a `SampleWeighter`). Surface it through `extra`:
+
+```python
+TrainSpec(
+    dataset_root="/data/folding_v3",
+    base_model="lerobot/pi05_base",
+    output_dir="/tmp/ft_out",
+    extra={
+        "policy_type": "pi05",
+        "sample_weighting": {       # -> typed SampleWeightingConfig
+            "type": "rabc",
+            "kappa": 0.01,          # hard threshold for high-quality samples
+            "head_mode": "sparse",  # which progress head to read
+            # "progress_path": "hf://datasets/org/ds/sarm_progress.parquet",
+        },
+    },
+)
+# -> lerobot_train --sample_weighting.type=rabc --sample_weighting.kappa=0.01 ...
+```
+
+The dict keys mirror lerobot's `SampleWeightingConfig` fields (`type`,
+`progress_path`, `head_mode`, `kappa`, `epsilon`, `extra_params`); an unknown
+key raises an actionable error naming the supported set. Omit
+`sample_weighting` entirely for standard (uniform) behavior cloning.
 
 #### Relative (delta) actions
 

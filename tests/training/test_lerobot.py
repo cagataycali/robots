@@ -763,3 +763,73 @@ class TestRelativeActions:
         for ptype in ("pi0", "pi05", "pi0_fast"):
             spec = self._pi0_spec(dataset_root, tmp_path, ptype=ptype)
             assert LerobotTrainer().validate(spec) == []
+
+
+class TestSampleWeightingRABC:
+    """RA-BC / sample-weighting wiring: extra['sample_weighting'] -> cfg.sample_weighting.
+
+    Regression for the folding recipe's headline ablation (HQ + RA-BC + relative
+    actions). Before the fix, the ``sample_weighting`` extra key fell through the
+    generic passthrough loop and was set on the config as a raw ``dict`` (not the
+    typed ``SampleWeightingConfig`` lerobot's train loop expects), and
+    build_command emitted a single ``--sample_weighting={...}`` flag instead of
+    the nested ``--sample_weighting.<field>=<value>`` draccus form.
+    """
+
+    def _rabc_spec(self, dataset_root, tmp_path):
+        return TrainSpec(
+            dataset_root=dataset_root,
+            base_model="",
+            output_dir=str(tmp_path / "out"),
+            steps=200,
+            extra={
+                "policy_type": "act",
+                "sample_weighting": {"type": "rabc", "kappa": 0.02, "head_mode": "sparse"},
+            },
+        )
+
+    def test_build_config_attaches_typed_sample_weighting(self, dataset_root, tmp_path):
+        from lerobot.utils.sample_weighting import SampleWeightingConfig
+
+        cfg = LerobotTrainer(device="cpu").build_config(self._rabc_spec(dataset_root, tmp_path))
+        assert isinstance(cfg.sample_weighting, SampleWeightingConfig)
+        assert cfg.sample_weighting.type == "rabc"
+        assert cfg.sample_weighting.kappa == 0.02
+        assert cfg.sample_weighting.head_mode == "sparse"
+
+    def test_build_command_emits_nested_flags(self, dataset_root, tmp_path):
+        cmd = LerobotTrainer(device="cpu").build_command(self._rabc_spec(dataset_root, tmp_path))
+        assert "--sample_weighting.type=rabc" in cmd
+        assert "--sample_weighting.kappa=0.02" in cmd
+        assert "--sample_weighting.head_mode=sparse" in cmd
+        # The dict must NOT leak through as a single flag.
+        assert not any(c.startswith("--sample_weighting=") for c in cmd)
+
+    def test_no_sample_weighting_leaves_config_default(self, dataset_root, tmp_path):
+        spec = TrainSpec(
+            dataset_root=dataset_root,
+            base_model="",
+            output_dir=str(tmp_path / "out"),
+            steps=200,
+            extra={"policy_type": "act"},
+        )
+        cfg = LerobotTrainer(device="cpu").build_config(spec)
+        assert cfg.sample_weighting is None
+
+    def test_unsupported_field_raises_actionable_error(self, dataset_root, tmp_path):
+        spec = self._rabc_spec(dataset_root, tmp_path)
+        spec.extra["sample_weighting"] = {"type": "rabc", "bogus_field": 1}
+        with pytest.raises(ValueError, match="SampleWeightingConfig does not support"):
+            LerobotTrainer(device="cpu").build_config(spec)
+
+    def test_validate_rejects_non_dict(self, dataset_root, tmp_path):
+        spec = self._rabc_spec(dataset_root, tmp_path)
+        spec.extra["sample_weighting"] = "rabc"
+        problems = LerobotTrainer().validate(spec)
+        assert any("sample_weighting" in p and "dict" in p for p in problems)
+
+    def test_validate_rejects_leading_dash_value(self, dataset_root, tmp_path):
+        spec = self._rabc_spec(dataset_root, tmp_path)
+        spec.extra["sample_weighting"] = {"type": "rabc", "progress_path": "-x"}
+        problems = LerobotTrainer().validate(spec)
+        assert any("must not start with '-'" in p for p in problems)
