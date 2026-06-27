@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Any
 # without it installed raises a clear, actionable error rather than a bare
 # ModuleNotFoundError, matching the require_optional() convention used elsewhere.
 try:
-    from dataclasses import dataclass
+    from dataclasses import dataclass, field
 
     from cyclonedds.idl import IdlStruct
     from cyclonedds.idl.annotations import keylist  # noqa: F401  (re-exported for msg defs)
@@ -75,8 +75,8 @@ if _HAVE_CYCLONEDDS:
 
     @dataclass
     class Twist(IdlStruct, typename="geometry_msgs::msg::dds_::Twist_"):
-        linear: Vector3 = Vector3()  # noqa: RUF009 - ROS msg default is a zero Vector3
-        angular: Vector3 = Vector3()  # noqa: RUF009
+        linear: Vector3 = field(default_factory=Vector3)
+        angular: Vector3 = field(default_factory=Vector3)
 
     @dataclass
     class Point(IdlStruct, typename="geometry_msgs::msg::dds_::Point_"):
@@ -93,8 +93,8 @@ if _HAVE_CYCLONEDDS:
 
     @dataclass
     class Pose(IdlStruct, typename="geometry_msgs::msg::dds_::Pose_"):
-        position: Point = Point()  # noqa: RUF009
-        orientation: Quaternion = Quaternion()  # noqa: RUF009
+        position: Point = field(default_factory=Point)
+        orientation: Quaternion = field(default_factory=Quaternion)
 
     REGISTRY.update(
         {
