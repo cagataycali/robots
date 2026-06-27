@@ -5,6 +5,32 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Refactor: unify the rclpy + RTPS hardware ROS 2 bridges under `RosTelemetryBase`
+
+The two hardware ROS 2 transports now share a single source of truth for the
+wire contract. Previously `HardwareRosBridge` (rclpy) subclassed
+`RosTelemetryBridge` while the pure-RTPS bridge was a parallel implementation
+that re-derived the topic names, name sanitization, and inbound `joint_command`
+parsing independently - so the "byte-identical topics" guarantee depended on two
+codepaths staying in sync by hand.
+
+- New `strands_robots.ros_telemetry.RosTelemetryBase` owns the transport-agnostic
+  contract: topic names (`joint_states_topic` / `image_topic` /
+  `joint_command_topic`), the `_safe` segment sanitizer, robot-name resolution,
+  and `joint_command` -> `send_action` dispatch. `RosTelemetryBridge` (and its
+  `SimRosBridge` / `HardwareRosBridge` subclasses) and the RTPS bridge now all
+  derive from it, so the rclpy and cyclonedds transports are identical on the
+  ROS 2 graph by construction rather than by convention.
+- The pure-RTPS bridge class is renamed `RtpsHardwareBridge` -> `HardwareRtpsBridge`
+  to match its rclpy sibling `HardwareRosBridge` (both `Hardware*Bridge`). The
+  module path (`strands_robots.hardware_rtps_bridge`) and the public
+  top-level export are unchanged except for the class name; `Robot(...,
+  ros2_transport="rtps")` selection is unaffected.
+
+No wire behavior changes: published topics, message layouts, and the
+`joint_command` contract are identical before and after.
+
+
 ### Feature: zero-config robot discovery from `robot_descriptions` (`registry`)
 
 `Robot("iiwa14", mode="sim")` (and every other MJCF robot shipped by

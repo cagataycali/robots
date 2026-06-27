@@ -1,12 +1,14 @@
 """Pure-RTPS (cyclonedds) hardware bridge - a real robot on ROS 2, no rclpy.
 
 This is the rclpy-free sibling of
-:class:`strands_robots.hardware_ros_bridge.HardwareRosBridge`. It exposes the
-exact same ROS 2 topics for a physical
-:class:`strands_robots.hardware_robot.Robot` - byte-compatible on the wire with
-the rclpy bridge and with real ROS 2 nodes - but speaks DDS/RTPS directly
-through the pip-installable ``cyclonedds`` binding instead of a sourced ROS 2
-distro:
+:class:`strands_robots.hardware_ros_bridge.HardwareRosBridge`. Both derive from
+:class:`strands_robots.ros_telemetry.RosTelemetryBase` - the single source of
+truth for the ROS 2 topic names and the inbound ``joint_command`` contract - so
+they are byte-compatible on the wire by construction. ``HardwareRtpsBridge``
+exposes the exact same ROS 2 topics for a physical
+:class:`strands_robots.hardware_robot.Robot` - and to real ROS 2 nodes - but
+speaks DDS/RTPS directly through the pip-installable ``cyclonedds`` binding
+instead of a sourced ROS 2 distro:
 
 * **publish** (outbound) - ``/<robot>/joint_states``
   (``sensor_msgs/msg/JointState``) and, per camera,
@@ -15,7 +17,7 @@ distro:
   (``sensor_msgs/msg/JointState``) forwarded into
   ``robot.send_action({motor.pos: float})`` over a background poll thread, so an
   external ROS 2 stack can drive the physical arm. Full duplex, same contract as
-  the rclpy bridge.
+  the rclpy bridge (shared via :class:`~strands_robots.ros_telemetry.RosTelemetryBase`).
 
 Why this exists alongside ``HardwareRosBridge``: ``rclpy`` needs a *sourced ROS 2
 distro* (apt / RoboStack / docker), which is heavy and version-pinned (Humble vs
@@ -41,6 +43,7 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any
 
+from strands_robots.ros_telemetry import RosTelemetryBase
 from strands_robots.utils import require_optional
 
 if TYPE_CHECKING:
@@ -56,13 +59,15 @@ _JOINT_STATE_TYPE = "sensor_msgs/msg/JointState"
 _IMAGE_TYPE = "sensor_msgs/msg/Image"
 
 
-class RtpsHardwareBridge:
+class HardwareRtpsBridge(RosTelemetryBase):
     """Full-duplex hardware ROS 2 bridge over pure RTPS (cyclonedds, no rclpy).
 
-    Wire-compatible with :class:`~strands_robots.hardware_ros_bridge.HardwareRosBridge`:
-    same topics, same ``sensor_msgs`` types, same ``joint_command`` -> ``send_action``
-    contract. Differs only in the transport (cyclonedds RTPS vs rclpy) and in
-    type coverage (bounded by the local IDL bundle).
+    The rclpy-free sibling of
+    :class:`~strands_robots.hardware_ros_bridge.HardwareRosBridge`. Both derive
+    from :class:`~strands_robots.ros_telemetry.RosTelemetryBase`, so they share
+    the topic names and the ``joint_command`` -> ``send_action`` contract and are
+    wire-compatible by construction; they differ only in transport (cyclonedds
+    RTPS vs rclpy) and in type coverage (bounded by the local IDL bundle).
 
     Args:
         robot: The hardware ``Robot`` to drive on inbound commands. When
@@ -125,20 +130,10 @@ class RtpsHardwareBridge:
         if self._enable_commands:
             name = command_robot_name or self._resolve_robot_name(robot)
             self._command_robot_name = self._safe(name)
-            self._command_reader = self._make_reader(f"/{self._command_robot_name}/joint_command", self._JointState)
+            self._command_reader = self._make_reader(self.joint_command_topic(name), self._JointState)
             self._start_poll()
 
     # -- helpers ----------------------------------------------------------
-
-    @staticmethod
-    def _safe(name: str) -> str:
-        """Map a robot/camera name to a valid ROS 2 topic segment."""
-        return "".join(c if (c.isalnum() or c == "_") else "_" for c in name).strip("_") or "robot"
-
-    @staticmethod
-    def _resolve_robot_name(robot: Any) -> str:
-        inner = getattr(robot, "robot", None)
-        return getattr(inner, "name", None) or getattr(robot, "tool_name_str", None) or "robot"
 
     def _make_writer(self, ros_topic: str, idl_cls: Any) -> Any:
         from cyclonedds.pub import DataWriter
@@ -163,7 +158,7 @@ class RtpsHardwareBridge:
         hardware ``Robot`` telemetry path is transport-agnostic.
         """
         if self._joint_writer is None:
-            self._joint_writer = self._make_writer(f"/{self._safe(robot)}/joint_states", self._JointState)
+            self._joint_writer = self._make_writer(self.joint_states_topic(robot), self._JointState)
         msg = self._JointState(
             header=self._header(self._safe(robot)),
             name=list(names),
@@ -180,8 +175,7 @@ class RtpsHardwareBridge:
         key = f"{robot}/{camera}"
         writer = self._image_writers.get(key)
         if writer is None:
-            topic = f"/{self._safe(robot)}/{self._safe(camera)}/image_raw"
-            writer = self._make_writer(topic, self._Image)
+            writer = self._make_writer(self.image_topic(robot, camera), self._Image)
             self._image_writers[key] = writer
         height, width = int(image.shape[0]), int(image.shape[1])
         msg = self._Image(
@@ -209,33 +203,15 @@ class RtpsHardwareBridge:
     def _on_command(self, msg: Any) -> None:
         """Forward an inbound ``joint_command`` JointState to ``send_action``.
 
-        Identical contract to the rclpy bridge: zip ``name``/``position`` into a
-        flat ``{motor.pos: float}`` action; reject mismatched/empty messages
-        rather than partially applying; surface (never raise) ``send_action``
-        errors.
+        Delegates to :meth:`RosTelemetryBase._drive_from_command` (shared with
+        the rclpy bridge): zip ``name``/``position`` into a flat
+        ``{motor.pos: float}`` action; reject mismatched messages rather than
+        partially applying; surface (never raise) ``send_action`` errors.
+        ``skip_empty=True`` because cyclonedds ``take()`` may surface a wholly
+        empty sample (DDS dispose / keep-alive) that is not a real actuation
+        request, so it is dropped quietly rather than warned on.
         """
-        names = list(getattr(msg, "name", []) or [])
-        positions = list(getattr(msg, "position", []) or [])
-        # cyclonedds take() may surface invalid/empty samples (DDS dispose or
-        # keep-alive); a wholly empty command is not a real actuation request,
-        # so skip it quietly rather than warning on a non-event.
-        if not names and not positions:
-            return
-        if not names or len(names) != len(positions):
-            logger.warning(
-                "RtpsHardwareBridge: ignoring joint_command with name/position length mismatch (%d vs %d)",
-                len(names),
-                len(positions),
-            )
-            return
-        action = {name: float(pos) for name, pos in zip(names, positions)}
-        try:
-            result = self._robot.send_action(action)  # type: ignore[union-attr]
-        except Exception:
-            logger.warning("RtpsHardwareBridge: send_action raised on joint_command; arm not moved", exc_info=True)
-            return
-        if isinstance(result, dict) and result.get("status") == "error":
-            logger.warning("RtpsHardwareBridge: send_action rejected joint_command: %s", result)
+        self._drive_from_command(self._robot, msg, skip_empty=True)
 
     def _poll_loop(self) -> None:
         """Poll the command reader and dispatch new samples to ``_on_command``.
@@ -248,7 +224,7 @@ class RtpsHardwareBridge:
                 for sample in self._command_reader.take(N=10):
                     self._on_command(sample)
             except Exception:
-                logger.debug("RtpsHardwareBridge: command poll raised", exc_info=True)
+                logger.debug("HardwareRtpsBridge: command poll raised", exc_info=True)
             self._stop.wait(self._poll_period)
 
     def _start_poll(self) -> None:
@@ -262,7 +238,7 @@ class RtpsHardwareBridge:
         )
         self._poll_thread.start()
         logger.info(
-            "RtpsHardwareBridge: driving %r from /%s/joint_command (cyclonedds, no rclpy)",
+            "HardwareRtpsBridge: driving %r from /%s/joint_command (cyclonedds, no rclpy)",
             self._command_robot_name,
             self._command_robot_name,
         )
@@ -285,6 +261,6 @@ class RtpsHardwareBridge:
 
     def __repr__(self) -> str:
         return (
-            f"RtpsHardwareBridge(robot={self._robot_name!r}, domain_id={self._domain_id}, "
+            f"HardwareRtpsBridge(robot={self._robot_name!r}, domain_id={self._domain_id}, "
             f"enable_commands={self._enable_commands})"
         )

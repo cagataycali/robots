@@ -110,52 +110,25 @@ class HardwareRosBridge(RosTelemetryBridge):
             self._command_robot_name = self._safe(name)
             self._command_sub = self._node.create_subscription(
                 self._JointState,
-                f"/{self._command_robot_name}/joint_command",
+                self.joint_command_topic(name),
                 self._on_command,
                 self._qos_depth,
             )
             self._start_spin()
-
-    @staticmethod
-    def _resolve_robot_name(robot: Any) -> str:
-        """Namespace inbound commands under the same name we publish under.
-
-        Mirrors ``Robot._publish_ros_telemetry``: the lerobot device ``.name``
-        (e.g. ``so101``) is preferred, falling back to the strands tool name, so
-        ``joint_command`` and ``joint_states`` share one namespace.
-        """
-        inner = getattr(robot, "robot", None)
-        return getattr(inner, "name", None) or getattr(robot, "tool_name_str", None) or "robot"
 
     # -- inbound: drive the arm from /<robot>/joint_command ----------------
 
     def _on_command(self, msg: Any) -> None:
         """Forward an inbound ``joint_command`` JointState to ``send_action``.
 
-        The message's ``name``/``position`` arrays are zipped into the flat
-        ``{motor.pos: float}`` action dict the hardware ``Robot`` accepts - the
-        exact shape this bridge publishes in ``joint_states``. A mismatched- or
-        zero-length message is rejected with a warning rather than partially
-        applied, so a malformed command never drives the arm to a surprising
-        pose.
+        Delegates to :meth:`RosTelemetryBase._drive_from_command` (shared with
+        the RTPS bridge): the message's ``name``/``position`` arrays are zipped
+        into the flat ``{motor.pos: float}`` action dict the hardware ``Robot``
+        accepts - the exact shape this bridge publishes in ``joint_states`` - and
+        a mismatched/empty message is rejected rather than partially applied, so
+        a malformed command never drives the arm to a surprising pose.
         """
-        names = list(getattr(msg, "name", []) or [])
-        positions = list(getattr(msg, "position", []) or [])
-        if not names or len(names) != len(positions):
-            logger.warning(
-                "HardwareRosBridge: ignoring joint_command with name/position length mismatch (%d vs %d)",
-                len(names),
-                len(positions),
-            )
-            return
-        action = {name: float(pos) for name, pos in zip(names, positions)}
-        try:
-            result = self._robot.send_action(action)  # type: ignore[union-attr]
-        except Exception:
-            logger.warning("HardwareRosBridge: send_action raised on joint_command; arm not moved", exc_info=True)
-            return
-        if isinstance(result, dict) and result.get("status") == "error":
-            logger.warning("HardwareRosBridge: send_action rejected joint_command: %s", result)
+        self._drive_from_command(self._robot, msg)
 
     # -- command spin thread ----------------------------------------------
 

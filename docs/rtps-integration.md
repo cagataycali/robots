@@ -137,9 +137,12 @@ ros2 topic pub --once /so101/joint_command sensor_msgs/msg/JointState \
 
 The trade-off is the same as `use_rtps`: type coverage is bounded by the IDL
 bundle (joint_states + image_raw are in; anything else needs the rclpy backend).
-The bridge is implemented by `strands_robots.hardware_rtps_bridge.RtpsHardwareBridge`,
-the rclpy-free sibling of `HardwareRosBridge`; both present the identical
-`publish_joint_states` / `publish_image` / inbound-`joint_command` surface.
+The bridge is implemented by `strands_robots.hardware_rtps_bridge.HardwareRtpsBridge`,
+the rclpy-free sibling of `HardwareRosBridge`. Both derive from
+`strands_robots.ros_telemetry.RosTelemetryBase`, which owns the topic names and the
+inbound `joint_command` parsing, so the two transports are byte-identical on the wire
+by construction; they present the identical `publish_joint_states` / `publish_image` /
+inbound-`joint_command` surface.
 
 ## Safety
 

@@ -386,7 +386,7 @@ class Robot(TeleopMixin, AgentTool):
 
         * ``"rclpy"`` (default) - :class:`~strands_robots.hardware_ros_bridge.HardwareRosBridge`,
           full ``sensor_msgs`` fidelity, needs a sourced ROS 2 distro.
-        * ``"rtps"`` - :class:`~strands_robots.hardware_rtps_bridge.RtpsHardwareBridge`,
+        * ``"rtps"`` - :class:`~strands_robots.hardware_rtps_bridge.HardwareRtpsBridge`,
           pure cyclonedds (a pip wheel, no rclpy / no sourced distro), type
           coverage bounded by the local IDL bundle.
 
@@ -415,9 +415,9 @@ class Robot(TeleopMixin, AgentTool):
         # joint_states under (lerobot device .name, falling back to the tool
         # name) so a controller can echo our names straight back.
         if ros2_transport == "rtps":
-            from strands_robots.hardware_rtps_bridge import RtpsHardwareBridge
+            from strands_robots.hardware_rtps_bridge import HardwareRtpsBridge
 
-            self._ros_bridge = RtpsHardwareBridge(
+            self._ros_bridge = HardwareRtpsBridge(
                 self,
                 domain_id=self._ros2_domain,
                 enable_commands=bool(ros2_commands),

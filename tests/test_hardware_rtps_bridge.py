@@ -1,4 +1,4 @@
-"""Behavior tests for the pure-RTPS hardware bridge (``RtpsHardwareBridge``).
+"""Behavior tests for the pure-RTPS hardware bridge (``HardwareRtpsBridge``).
 
 ``cyclonedds`` is an optional pip dependency, so these tests inject a fake
 ``cyclonedds`` (domain/pub/sub/topic) into ``sys.modules`` to exercise the
@@ -167,9 +167,9 @@ class _FakeRobot:
 
 
 def _bridge(robot=None, **kw):
-    from strands_robots.hardware_rtps_bridge import RtpsHardwareBridge
+    from strands_robots.hardware_rtps_bridge import HardwareRtpsBridge
 
-    return RtpsHardwareBridge(robot, **kw)  # type: ignore[arg-type]
+    return HardwareRtpsBridge(robot, **kw)  # type: ignore[arg-type]
 
 
 def test_publish_joint_states_uses_mangled_topic_and_fields(fake_cyclonedds: dict[str, Any]) -> None:
@@ -241,7 +241,7 @@ def test_shutdown_is_idempotent(fake_cyclonedds: dict[str, Any]) -> None:
 def test_missing_cyclonedds_raises_importerror(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(utils_mod, "_lazy_modules", {}, raising=False)
     monkeypatch.setitem(sys.modules, "cyclonedds", None)
-    from strands_robots.hardware_rtps_bridge import RtpsHardwareBridge
+    from strands_robots.hardware_rtps_bridge import HardwareRtpsBridge
 
     with pytest.raises(ImportError):
-        RtpsHardwareBridge(_FakeRobot())  # type: ignore[arg-type]
+        HardwareRtpsBridge(_FakeRobot())  # type: ignore[arg-type]
