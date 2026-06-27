@@ -223,6 +223,7 @@ class Robot(TeleopMixin, AgentTool):
         control_frequency: float = 50.0,
         ros2_bridge: bool = False,
         ros2_domain: int = 0,
+        ros2_commands: bool = True,
         **kwargs: Any,
     ) -> None:
         """Initialize Robot with async capabilities.
@@ -245,6 +246,11 @@ class Robot(TeleopMixin, AgentTool):
                 missing. Defaults to False - the robot never touches ROS 2,
                 so disabling the bridge is simply the default (opt-in).
             ros2_domain: ROS 2 domain id (``ROS_DOMAIN_ID``) to publish on.
+            ros2_commands: When True (default), the bridge also subscribes to
+                ``/<robot>/joint_command`` and forwards inbound messages to
+                ``send_action`` so an external ROS 2 stack can drive the real
+                arm (full duplex). Set False for a read-only telemetry bridge.
+                Ignored unless ``ros2_bridge=True``.
             **kwargs: Robot-specific parameters (port, etc.)
         """
         super().__init__()
@@ -298,12 +304,12 @@ class Robot(TeleopMixin, AgentTool):
         # ``SimEngine(ros2_bridge=...)`` so a real arm and its digital twin look
         # identical on the ROS 2 graph. Initialized last so a bridge ImportError
         # surfaces only when the operator explicitly asked for it.
-        self._init_ros_bridge(ros2_bridge=ros2_bridge, ros2_domain=ros2_domain)
+        self._init_ros_bridge(ros2_bridge=ros2_bridge, ros2_domain=ros2_domain, ros2_commands=ros2_commands)
 
     # ------------------------------------------------------------------
     # ROS 2 telemetry bridge (opt-in) - mirror of SimEngine(ros2_bridge=...)
     # ------------------------------------------------------------------
-    def _init_ros_bridge(self, *, ros2_bridge: bool = False, ros2_domain: int = 0) -> None:
+    def _init_ros_bridge(self, *, ros2_bridge: bool = False, ros2_domain: int = 0, ros2_commands: bool = True) -> None:
         """Initialize the optional ROS 2 telemetry bridge state.
 
         Plain method (not part of an ``__init__`` contract) so the lightweight
@@ -311,11 +317,16 @@ class Robot(TeleopMixin, AgentTool):
         through. When ``ros2_bridge`` is True, a
         :class:`~strands_robots.hardware_ros_bridge.HardwareRosBridge` is created
         eagerly so a missing ``rclpy`` fails fast at construction rather than
-        mid-task.
+        mid-task. The bridge is bound to ``self`` so that, with
+        ``ros2_commands=True``, inbound ``/<robot>/joint_command`` messages are
+        forwarded to ``self.send_action`` - full duplex, the real arm both
+        publishes telemetry and is drivable from the ROS 2 graph.
 
         Args:
-            ros2_bridge: Enable publishing this robot's observation on ROS 2.
+            ros2_bridge: Enable the ROS 2 bridge for this robot.
             ros2_domain: ROS 2 domain id (``ROS_DOMAIN_ID``) to publish on.
+            ros2_commands: When True (default), also subscribe to
+                ``joint_command`` and drive the arm; False for read-only.
         """
         self._ros2_bridge_enabled = bool(ros2_bridge)
         self._ros2_domain = int(ros2_domain)
@@ -324,7 +335,16 @@ class Robot(TeleopMixin, AgentTool):
             from strands_robots.hardware_ros_bridge import HardwareRosBridge
 
             node = f"strands_hardware_{self.tool_name_str}"
-            self._ros_bridge = HardwareRosBridge(domain_id=self._ros2_domain, node_name=node)
+            # Bind self so the bridge can drive the arm on inbound commands.
+            # command_robot_name is pinned to the same namespace we publish
+            # joint_states under (lerobot device .name, falling back to the
+            # tool name) so a controller can echo our names straight back.
+            self._ros_bridge = HardwareRosBridge(
+                self,
+                domain_id=self._ros2_domain,
+                node_name=node,
+                enable_commands=bool(ros2_commands),
+            )
 
     def _publish_ros_telemetry(self, observation: dict[str, Any], *, skip_images: bool = False) -> None:
         """Publish one ``joint_states`` (+ camera ``image_raw``) for ``observation``.

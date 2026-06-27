@@ -38,7 +38,7 @@ have and what you want to do:
 | **`use_rtps`** tool | participant / **act as a robot** | pure `cyclonedds` (pip) | **no** | Join a graph as a DDS peer and publish topics a real stack consumes; works on macOS/CI/Jetson, all distros |
 | **`RosBridgedRobot`** | a ROS 2 robot as a strands `Robot` | `use_ros` | yes | `drive()`/`get_pose()` a `cmd_vel`/odom base with the same `Agent(tools=[robot])` UX as sim/hardware |
 | **`SimEngine(ros2_bridge=True)`** | the **simulation as a ROS node** | `rclpy` | yes | Publish a running MuJoCo sim's `joint_states` + camera `image_raw` so rviz/nav2/agents can subscribe |
-| **`Robot(ros2_bridge=True)`** | a **real robot as a ROS node** | `rclpy` | yes | Publish a physical arm's live `joint_states` + camera `image_raw` so rviz/nav2/agents subscribe to the hardware - symmetric to the sim bridge |
+| **`Robot(ros2_bridge=True)`** | a **real robot as a ROS node** (full duplex) | `rclpy` | yes | Publish a physical arm's live `joint_states` + camera `image_raw` so rviz/nav2/agents subscribe to the hardware, **and** subscribe to `joint_command` to drive the arm - symmetric to the sim bridge, plus an inbound command path the sim does not need |
 
 The first three are documented below; the sim bridge has its own section. The
 `use_rtps` pure-RTPS path (no rclpy, every ROS 2 distro) is on the
@@ -183,10 +183,23 @@ subclasses of the same `RosTelemetryBridge`, so a physical arm and its digital
 twin publish **identical topics** - a simulated robot and the real one it
 mirrors are indistinguishable on the ROS 2 graph:
 
-| Topic | Type | Content |
-|-------|------|---------|
-| `/<robot>/joint_states` | `sensor_msgs/msg/JointState` | joint names + positions |
-| `/<robot>/<camera>/image_raw` | `sensor_msgs/msg/Image` (`rgb8`) | one frame per camera |
+| Topic | Direction | Type | Content |
+|-------|-----------|------|---------|
+| `/<robot>/joint_states` | published | `sensor_msgs/msg/JointState` | joint names + positions, every control step |
+| `/<robot>/<camera>/image_raw` | published | `sensor_msgs/msg/Image` (`rgb8`) | one frame per camera |
+| `/<robot>/joint_command` | **subscribed** | `sensor_msgs/msg/JointState` | inbound `name`/`position` -> `send_action`, drives the real arm |
+
+The first two are **outbound telemetry** (shared, byte-identical, with the sim
+bridge). The third is the **inbound command** surface that makes the hardware
+bridge *full duplex*: an external ROS 2 node (a teleop joystick node, MoveIt, a
+trajectory replayer, or the agent's own `use_ros(action="publish", ...)`) can
+publish a `JointState` to `/<robot>/joint_command` and the bridge forwards each
+message straight into `Robot.send_action({motor.pos: float})`. Because the
+command topic carries the *same* joint names the bridge publishes in
+`joint_states`, a controller can echo our names straight back to drive the arm.
+The sim sibling does not subscribe - a simulation is driven by its physics
+engine; only the real arm is the thing on the graph an external controller can
+physically move.
 
 ```python
 from strands_robots import Robot
@@ -198,6 +211,16 @@ arm = Robot("so101", mode="real", ros2_bridge=True, ros2_domain=0)
 # Or publish the current observation on demand without starting a task:
 arm.publish_ros_observation()                 # joints + cameras
 arm.publish_ros_observation(skip_images=True)  # joints only (opt out of cameras)
+
+# Full duplex: with the default ros2_commands=True the bridge also subscribes to
+# /so101/joint_command and forwards each message into Robot.send_action, so an
+# external ROS 2 node can drive the real arm:
+#
+#   ros2 topic pub --once /so101/joint_command sensor_msgs/msg/JointState \
+#     '{name: ["shoulder_pan.pos", "elbow.pos"], position: [0.1, -0.2]}'
+#
+# For a read-only telemetry bridge (no inbound control), opt out:
+arm_ro = Robot("so101", mode="real", ros2_bridge=True, ros2_commands=False)
 ```
 
 External ROS 2 nodes - rviz, nav2, or the agent's own `use_ros` calls - then see
@@ -212,7 +235,10 @@ The bridge is **opt-in**: `ros2_bridge=False` (the default) never touches ROS 2,
 so a robot only becomes a ROS 2 device when an operator explicitly asks for it -
 the same safety stance as `Robot(mode="sim")` being the default. When `rclpy` is
 missing, `ros2_bridge=True` raises a clear `ImportError` at construction. The
-bridge node is torn down cleanly on `cleanup()`/`stop()`.
+inbound command path is on by default (`ros2_commands=True`); set
+`ros2_commands=False` for a read-only telemetry bridge that publishes but cannot
+be driven. A daemon thread spins the node so inbound commands are serviced
+concurrently with publishing, and it is torn down cleanly on `cleanup()`/`stop()`.
 
 See `examples/ros2/hardware_bridge_demo.py` for a runnable end-to-end script.
 
