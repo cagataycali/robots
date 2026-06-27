@@ -13,7 +13,9 @@ eagerly. These tests pin the observable behavior of that loader:
   without an optional extra get a clear, recoverable failure).
 """
 
+import ast
 import warnings
+from pathlib import Path
 
 import pytest
 
@@ -102,3 +104,44 @@ class TestMissingDependencyContract:
             strands_robots._LAZY_IMPORTS.pop(sentinel, None)
             # The failed access must not leave a cached entry behind.
             assert sentinel not in vars(strands_robots)
+
+
+class TestStaticExportContract:
+    """Every ``__all__`` name must be statically resolvable.
+
+    CodeQL's ``py/undefined-export`` (and most type-checkers) require that a
+    name listed in ``__all__`` is defined in the module namespace by static
+    analysis. The package resolves heavy symbols lazily via ``__getattr__``,
+    which is invisible to a static analyzer, so each lazy name is also imported
+    inside an ``if TYPE_CHECKING:`` block. This test pins that contract: a lazy
+    symbol added to ``_LAZY_IMPORTS``/``__all__`` without a matching
+    ``TYPE_CHECKING`` import would otherwise only be caught later by CodeQL.
+    """
+
+    @staticmethod
+    def _type_checking_imported_names() -> set[str]:
+        source = Path(strands_robots.__file__).read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        names: set[str] = set()
+        for node in ast.walk(tree):
+            # Match the top-level ``if TYPE_CHECKING:`` guard.
+            if isinstance(node, ast.If):
+                test = node.test
+                is_type_checking = (isinstance(test, ast.Name) and test.id == "TYPE_CHECKING") or (
+                    isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING"
+                )
+                if not is_type_checking:
+                    continue
+                for stmt in ast.walk(node):
+                    if isinstance(stmt, ast.ImportFrom):
+                        for alias in stmt.names:
+                            names.add(alias.asname or alias.name)
+        return names
+
+    def test_every_lazy_name_has_a_type_checking_import(self):
+        type_checking_names = self._type_checking_imported_names()
+        missing = sorted(name for name in strands_robots._LAZY_IMPORTS if name not in type_checking_names)
+        assert not missing, (
+            "Lazy symbols missing a TYPE_CHECKING import (CodeQL py/undefined-export "
+            f"will flag these as exported-but-undefined): {missing}"
+        )

@@ -37,6 +37,8 @@ if TYPE_CHECKING:
         init_device_connect,
         init_device_connect_sync,
     )
+    from strands_robots.hardware_ros_bridge import HardwareRosBridge
+    from strands_robots.hardware_rtps_bridge import RtpsHardwareBridge
     from strands_robots.policies.groot import Gr00tPolicy
     from strands_robots.registry import (
         get_robot,
