@@ -320,3 +320,73 @@ def test_watch_rejects_leading_special_char(monkeypatch):
             r = _call("watch", target=bad)
         assert r["status"] == "error", f"watch must reject leading-special target {bad!r}"
     m.on_stream.assert_not_called()
+
+
+# --- matcher truth-table: pin the full fail-closed contract ------------
+#
+# ``_ke_matches`` is the subscribe authorization gate: it decides whether a
+# requested key expression is permitted by an allowlist entry. A regression
+# that makes it match too liberally is a cross-peer telemetry-leak; one that
+# makes it match too narrowly silently breaks legitimate observation. The
+# cases below pin every supported pattern shape AND the fail-closed fallbacks
+# (a no-wildcard literal only matches its exact target; ``**/**`` matches any
+# non-empty target; an unsupported shape returns False) so the contract is
+# locked branch-for-branch.
+@pytest.mark.parametrize(
+    ("pattern", "target", "expected"),
+    [
+        # exact equality
+        ("**/presence", "**/presence", True),
+        ("strands/peer/state", "strands/peer/state", True),
+        # ``**/**`` is the match-anything wildcard for any non-empty target
+        ("**/**", "presence", True),
+        ("**/**", "a/b/c/d", True),
+        ("**/**", "", False),  # empty target is fail-closed at the top guard
+        # ``**/MIDDLE/**`` boundary matching (no substring leaks)
+        ("**/safety/**", "safety", True),
+        ("**/safety/**", "a/safety", True),
+        ("**/safety/**", "a/safety/event", True),
+        ("**/safety/**", "a/b/safety/c", True),
+        ("**/safety/**", "unsafety", False),  # substring must not leak through
+        ("**/safety/**", "a/unsafety/x", False),
+        # leading ``**/`` (zero or more leading segments)
+        ("**/presence", "presence", True),
+        ("**/presence", "robot1/presence", True),
+        ("**/presence", "fakepresence", False),  # boundary, not substring
+        # trailing ``/**`` (prefix plus any deeper segments)
+        ("a/safety/**", "a/safety", True),
+        ("a/safety/**", "a/safety/estop", True),
+        ("a/safety/**", "a/safety-extra", False),  # boundary, not prefix-substring
+        # segment-level single ``*`` (exactly one non-empty segment)
+        ("strands/*/stream", "strands/peer-b/stream", True),
+        ("strands/*/stream", "strands/a/b/stream", False),  # too many segments
+        ("strands/*/stream", "strands//stream", False),  # empty segment
+        # no-wildcard literal: matches ONLY its exact target, else fail-closed
+        ("strands/presence", "strands/other", False),
+        ("strands/presence", "strands/presence/deep", False),
+        # unsupported / exotic shapes fall through to fail-closed False
+        ("a/**/b", "a/x/b", False),
+        ("", "anything", False),  # empty pattern, non-empty target
+    ],
+)
+def test_ke_matches_truth_table(pattern, target, expected):
+    assert rmt._ke_matches(pattern, target) is expected
+
+
+def test_ke_matches_double_doublestar_is_match_anything():
+    """``**/**`` permits any non-empty target but stays fail-closed on empty."""
+    assert rmt._ke_matches("**/**", "x") is True
+    assert rmt._ke_matches("**/**", "deep/nested/topic") is True
+    assert rmt._ke_matches("**/**", "") is False
+
+
+def test_ke_matches_literal_pattern_is_fail_closed():
+    """A no-wildcard allowlist entry authorizes only its exact target.
+
+    This is the fall-through branch: no leading/trailing ``**`` and no
+    segment ``*`` means the only way through is exact equality (handled
+    earlier); any other literal target must be rejected.
+    """
+    assert rmt._ke_matches("strands/presence", "strands/presence") is True
+    assert rmt._ke_matches("strands/presence", "strands/health") is False
+    assert rmt._ke_matches("strands/presence", "other") is False
