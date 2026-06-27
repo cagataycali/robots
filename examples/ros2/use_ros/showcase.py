@@ -29,7 +29,7 @@ import json
 import sys
 import time
 
-from strands_robots.tools.use_ros import use_ros
+from strands_robots.tools import use_ros
 
 
 def run(**kw: object) -> dict:
