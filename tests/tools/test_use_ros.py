@@ -1,24 +1,25 @@
 """Behavior tests for the ``use_ros`` agent tool.
 
-The tool bridges a Strands agent to a ROS 2 graph through one of two backends
-(native ``rclpy`` or ``docker exec`` into a ROS 2 container). These tests run
-with NO ROS 2 installed: the subprocess-facing helpers (``_run_cli`` /
-``_run_python``) and ``_detect_mode`` are patched, so every action-dispatch
-branch, the agent-input validation, and the no-backend error path are exercised
-hardware- and ROS-free.
+The tool bridges a Strands agent to a ROS 2 graph **entirely in-process through
+``rclpy``** - there is no ``ros2`` CLI shelling and no generated-code snippets.
+These tests run with NO ROS 2 installed: the rclpy-facing helpers
+(``_list_topics`` / ``_echo`` / ``_publish`` / ``_service_call`` / ...) and the
+backend-availability probe are monkeypatched, so every action-dispatch branch,
+the agent-input validation, the no-backend error path, and the structured
+error-return contract are exercised hardware- and ROS-free.
 
-It also pins two contracts the reference sketch got wrong:
+It also pins package-wide contracts:
 
-* No emoji / non-ASCII in any returned ``text`` (package-wide rule).
-* Field payloads survive as JSON: a ``bool``/``None`` value must NOT be pasted
-  into the generated helper as a bare ``true``/``false``/``null`` token (a
-  Python ``NameError``); it is round-tripped via ``json.loads`` instead.
+* No emoji / non-ASCII in any returned ``text``.
+* ``fields`` payloads (bool / None / nested) are passed straight through to the
+  rclpy helper as a real Python dict - never serialised into source - so types
+  are preserved by construction.
+* Backend errors surface as a structured ``{"status": "error"}`` result, never
+  a raised exception.
 """
 
 from __future__ import annotations
 
-import json
-import re
 from typing import Any
 
 import pytest
@@ -27,8 +28,7 @@ import strands_robots.tools.use_ros as ros_mod
 
 # Reference the tool via a module-local alias rather than a second `from`
 # import: the tests monkeypatch module internals through `ros_mod`, so the
-# module object is the single source of truth and a dual import of the same
-# module is avoided.
+# module object is the single source of truth and a dual import is avoided.
 use_ros = ros_mod.use_ros
 
 
@@ -39,6 +39,12 @@ def _texts(result: dict[str, Any]) -> str:
 def _ascii_only(result: dict[str, Any]) -> None:
     text = _texts(result)
     assert text.isascii(), f"non-ASCII in tool output: {text!r}"
+
+
+@pytest.fixture(autouse=True)
+def _backend_available(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Default every test to a present rclpy backend; opt out where needed."""
+    monkeypatch.setattr(ros_mod._backend, "available", lambda: True)
 
 
 # Validation ----------------------------------------------------------------
@@ -64,57 +70,42 @@ def test_invalid_service_rejected() -> None:
     assert "invalid service" in _texts(result)
 
 
-# Status / listings ---------------------------------------------------------
+# Status --------------------------------------------------------------------
 
 
-def test_status_reports_docker_backend(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(ros_mod, "_detect_mode", lambda: "docker")
+def test_status_reports_rclpy_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(ros_mod._backend, "available", lambda: True)
     result = use_ros(action="status")
     assert result["status"] == "success"
-    assert "backend: docker" in _texts(result)
-    assert f"container={ros_mod.ROS2_DOCKER_CONTAINER}" in _texts(result)
+    assert "backend: rclpy (in-process)" in _texts(result)
     _ascii_only(result)
 
 
 def test_status_reports_none_backend(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(ros_mod, "_detect_mode", lambda: "none")
+    monkeypatch.setattr(ros_mod._backend, "available", lambda: False)
     result = use_ros(action="status")
+    assert result["status"] == "success"
     assert "backend: none" in _texts(result)
+    assert "ROS 2" in _texts(result)
+    _ascii_only(result)
+
+
+# Listings ------------------------------------------------------------------
 
 
 def test_list_topics_passes_through(monkeypatch: pytest.MonkeyPatch) -> None:
-    captured: dict[str, Any] = {}
-
-    def fake_cli(args: list[str], timeout: float = 10.0) -> dict[str, Any]:
-        captured["args"] = args
-        return {"ok": True, "data": "/turtle1/cmd_vel [geometry_msgs/msg/Twist]"}
-
-    monkeypatch.setattr(ros_mod, "_run_cli", fake_cli)
+    monkeypatch.setattr(ros_mod, "_list_topics", lambda: "/turtle1/cmd_vel [geometry_msgs/msg/Twist]")
     result = use_ros(action="list_topics")
     assert result["status"] == "success"
-    assert captured["args"] == ["topic", "list", "-t"]
     assert "/turtle1/cmd_vel" in _texts(result)
+    _ascii_only(result)
 
 
 def test_list_nodes_and_services(monkeypatch: pytest.MonkeyPatch) -> None:
-    seen: list[list[str]] = []
-
-    def fake_cli(args: list[str], timeout: float = 10.0) -> dict[str, Any]:
-        seen.append(args)
-        return {"ok": True, "data": "ok"}
-
-    monkeypatch.setattr(ros_mod, "_run_cli", fake_cli)
-    assert use_ros(action="list_nodes")["status"] == "success"
-    assert use_ros(action="list_services")["status"] == "success"
-    assert ["node", "list"] in seen
-    assert ["service", "list", "-t"] in seen
-
-
-def test_list_topics_surfaces_backend_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(ros_mod, "_run_cli", lambda args, timeout=10.0: {"ok": False, "err": "boom"})
-    result = use_ros(action="list_topics")
-    assert result["status"] == "error"
-    assert "boom" in _texts(result)
+    monkeypatch.setattr(ros_mod, "_list_nodes", lambda: "/turtlesim")
+    monkeypatch.setattr(ros_mod, "_list_services", lambda: "/spawn [turtlesim/srv/Spawn]")
+    assert "/turtlesim" in _texts(use_ros(action="list_nodes"))
+    assert "/spawn" in _texts(use_ros(action="list_services"))
 
 
 # info ----------------------------------------------------------------------
@@ -126,17 +117,18 @@ def test_info_requires_target() -> None:
     assert "requires topic or service" in _texts(result)
 
 
-def test_info_tries_kinds_and_returns_first_hit(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fake_cli(args: list[str], timeout: float = 10.0) -> dict[str, Any]:
-        # topic info has no data; node info has data.
-        if args[0] == "node":
-            return {"ok": True, "data": "node details"}
-        return {"ok": True, "data": ""}
-
-    monkeypatch.setattr(ros_mod, "_run_cli", fake_cli)
-    result = use_ros(action="info", topic="/some_node")
+def test_info_returns_hit(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(ros_mod, "_info", lambda target: f"topic info {target}:\n  publishers: 1")
+    result = use_ros(action="info", topic="/turtle1/pose")
     assert result["status"] == "success"
-    assert "node info /some_node" in _texts(result)
+    assert "topic info /turtle1/pose" in _texts(result)
+
+
+def test_info_miss_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(ros_mod, "_info", lambda target: None)
+    result = use_ros(action="info", topic="/nope")
+    assert result["status"] == "error"
+    assert "no info for /nope" in _texts(result)
 
 
 # echo ----------------------------------------------------------------------
@@ -147,26 +139,23 @@ def test_echo_requires_topic() -> None:
 
 
 def test_echo_autoresolves_type_and_returns_samples(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        ros_mod,
-        "_run_cli",
-        lambda args, timeout=10.0: {"ok": True, "data": "/turtle1/pose [turtlesim/msg/Pose]"},
-    )
+    monkeypatch.setattr(ros_mod, "_resolve_topic_type", lambda topic: "turtlesim/msg/Pose")
     samples = [{"x": 5.5, "y": 1.0}, {"x": 6.0, "y": 1.0}]
 
-    def fake_py(code: str, timeout: float = 30.0) -> dict[str, Any]:
-        assert "turtlesim/msg/Pose" in code  # auto-resolved type reached the helper
-        return {"ok": True, "data": {"samples": samples, "count": 2}}
+    def fake_echo(topic: str, msg_type: str, timeout: float, count: int) -> list[dict[str, Any]]:
+        assert msg_type == "turtlesim/msg/Pose"  # auto-resolved type reached the helper
+        return samples
 
-    monkeypatch.setattr(ros_mod, "_run_python", fake_py)
+    monkeypatch.setattr(ros_mod, "_echo", fake_echo)
     result = use_ros(action="echo", topic="/turtle1/pose", count=2)
     assert result["status"] == "success"
     assert "turtlesim/msg/Pose" in _texts(result)
     assert "5.5" in _texts(result)
+    _ascii_only(result)
 
 
 def test_echo_unresolvable_type_errors(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(ros_mod, "_run_cli", lambda args, timeout=10.0: {"ok": True, "data": "/other [x/msg/Y]"})
+    monkeypatch.setattr(ros_mod, "_resolve_topic_type", lambda topic: None)
     result = use_ros(action="echo", topic="/turtle1/pose")
     assert result["status"] == "error"
     assert "cannot resolve type" in _texts(result)
@@ -179,21 +168,28 @@ def test_publish_requires_topic_and_type() -> None:
     assert use_ros(action="publish", topic="/cmd_vel")["status"] == "error"
 
 
-def test_publish_dispatches_and_reports(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(ros_mod, "_run_python", lambda code, timeout=30.0: {"ok": True})
+def test_publish_dispatches_with_real_dict(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_publish(topic, msg_type, fields, count, rate) -> None:
+        captured.update(topic=topic, msg_type=msg_type, fields=fields, count=count)
+
+    monkeypatch.setattr(ros_mod, "_publish", fake_publish)
     result = use_ros(
         action="publish",
         topic="/turtle1/cmd_vel",
         type="geometry_msgs/msg/Twist",
-        fields={"linear": {"x": 2.0}},
+        fields={"linear": {"x": 2.0}, "enabled": True, "tag": None},
         count=3,
     )
     assert result["status"] == "success"
     assert "published 3 message(s) to /turtle1/cmd_vel" in _texts(result)
+    # The payload reaches the rclpy helper as a real Python dict with types intact.
+    assert captured["fields"] == {"linear": {"x": 2.0}, "enabled": True, "tag": None}
 
 
 def test_service_call_returns_response(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(ros_mod, "_run_python", lambda code, timeout=30.0: {"ok": True, "data": {"name": "t2"}})
+    monkeypatch.setattr(ros_mod, "_service_call", lambda service, srv_type, fields, timeout: {"name": "t2"})
     result = use_ros(
         action="service_call",
         service="/spawn",
@@ -204,86 +200,38 @@ def test_service_call_returns_response(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "t2" in _texts(result)
 
 
-# exec_raw ------------------------------------------------------------------
+# Error / no-backend contracts ----------------------------------------------
 
 
-def test_exec_raw_rejects_shell_metacharacters() -> None:
-    result = use_ros(action="exec_raw", command="topic list; rm -rf /")
+def test_no_backend_error_is_actionable(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(ros_mod._backend, "available", lambda: False)
+    result = use_ros(action="list_topics")
     assert result["status"] == "error"
-    assert "forbidden shell metacharacters" in _texts(result)
+    assert "ROS 2" in _texts(result) and "rclpy" in _texts(result)
+    _ascii_only(result)
 
 
-def test_exec_raw_splits_and_runs(monkeypatch: pytest.MonkeyPatch) -> None:
-    captured: dict[str, Any] = {}
+def test_timeout_surfaces_as_structured_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom(*a: Any, **k: Any) -> Any:
+        raise TimeoutError("service /spawn not available within 5.0s")
 
-    def fake_cli(args: list[str], timeout: float = 10.0) -> dict[str, Any]:
-        captured["args"] = args
-        return {"ok": True, "data": "done"}
-
-    monkeypatch.setattr(ros_mod, "_run_cli", fake_cli)
-    result = use_ros(action="exec_raw", command="topic list -t")
-    assert result["status"] == "success"
-    assert captured["args"] == ["topic", "list", "-t"]
+    monkeypatch.setattr(ros_mod, "_service_call", boom)
+    result = use_ros(action="service_call", service="/spawn", type="turtlesim/srv/Spawn")
+    assert result["status"] == "error"
+    assert "not available" in _texts(result)
 
 
-# unknown / no-backend ------------------------------------------------------
+def test_type_resolution_failure_is_structured(monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom(*a: Any, **k: Any) -> Any:
+        raise KeyError("geometry_msgs/msg/Nope")
+
+    monkeypatch.setattr(ros_mod, "_publish", boom)
+    result = use_ros(action="publish", topic="/cmd", type="geometry_msgs/msg/Nope")
+    assert result["status"] == "error"
+    assert "publish failed" in _texts(result)
 
 
 def test_unknown_action_errors() -> None:
     result = use_ros(action="warp_drive")
     assert result["status"] == "error"
     assert "unknown action" in _texts(result)
-
-
-def test_no_backend_error_is_actionable(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(ros_mod, "_detect_mode", lambda: "none")
-    # _run_cli consults _detect_mode; with no backend it must name the remedy.
-    out = ros_mod._run_cli(["topic", "list"])
-    assert out["ok"] is False
-    assert "[ros2] extra" in out["err"] and "docker" in out["err"]
-
-
-def test_mode_override_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(ros_mod, "ROS2_MODE_OVERRIDE", "docker")
-    assert ros_mod._detect_mode() == "docker"
-
-
-# Regression: JSON field payload must not be pasted as Python source ---------
-
-
-def _extract_set_fields_expr(snippet: str) -> str:
-    """Pull the expression passed as the 2nd arg of set_message_fields(...)."""
-    m = re.search(r"set_message_fields\([^,]+,\s*(.+)\)\s*$", snippet, re.MULTILINE)
-    assert m, f"set_message_fields call not found in:\n{snippet}"
-    return m.group(1)
-
-
-@pytest.mark.parametrize(
-    "fields",
-    [
-        {"data": True},
-        {"enabled": False, "name": "t2"},
-        {"value": None},
-        {"linear": {"x": 2.0}, "angular": {"z": 1.5}},
-    ],
-)
-def test_publish_snippet_preserves_json_types(fields: dict[str, Any]) -> None:
-    """The payload round-trips through json.loads, not bare true/false/null.
-
-    Pasting ``json.dumps(fields)`` directly into the helper source emits bare
-    ``true``/``false``/``null`` tokens that raise ``NameError`` at runtime. The
-    fix embeds the payload as a JSON *string* and parses it. Evaluating the
-    extracted expression in a namespace that defines ONLY ``json`` reproduces
-    the original dict; the broken form would raise ``NameError``.
-    """
-    snippet = ros_mod._snippet_publish("/t", "geometry_msgs/msg/Twist", fields, count=1, rate=10.0)
-    expr = _extract_set_fields_expr(snippet)
-    recovered = eval(expr, {"json": json})  # noqa: S307 - controlled expr from our own generator
-    assert recovered == fields
-
-
-def test_service_snippet_preserves_json_types() -> None:
-    fields = {"x": 3.0, "active": True, "label": None}
-    snippet = ros_mod._snippet_service_call("/spawn", "turtlesim/srv/Spawn", fields, timeout=5.0)
-    expr = _extract_set_fields_expr(snippet)
-    assert eval(expr, {"json": json}) == fields  # noqa: S307

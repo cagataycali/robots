@@ -251,18 +251,15 @@ device-connect = [
     "device-connect-edge>=0.2.0",
     "device-connect-agent-tools>=0.1.0",
 ]
-# ROS 2 bridge for the use_ros tool (strands_robots/tools/use_ros.py). The
-# tool has two backends and BOTH work without anything in this extra:
-#   * docker  - forwards commands to a running ROS 2 container (ros:jazzy etc.)
-#               via `docker exec`; nothing is installed on the host. This is the
-#               default on macOS / Jetson dev loops (set ROS2_DOCKER_CONTAINER).
-#   * native  - uses an already-sourced system ROS 2 (rclpy + rosidl_runtime_py).
-# The core ROS 2 client libraries (rclpy, rosidl_runtime_py) are NOT distributed
-# on PyPI - they ship with a system ROS 2 install (apt / RoboStack / the docker
-# image) and cannot be `pip install`ed. So, like the [curobo] extra, this stays
-# minimal: it pulls only the pip-installable cyclonedds Python binding (a DDS
-# RMW the native backend can use). Installing this extra does NOT by itself
-# provision native mode - source a real ROS 2 distro, or use the docker backend.
+# ROS 2 bridge for the use_ros tool (strands_robots/tools/use_ros.py). The tool
+# runs entirely in-process through rclpy - no `ros2` CLI shelling, no docker. It
+# needs `rclpy` + `rosidl_runtime_py` importable in the interpreter, which means
+# a sourced system ROS 2 distro (e.g. `source /opt/ros/jazzy/setup.bash`).
+# Those core client libraries are NOT distributed on PyPI - they ship with the
+# system ROS 2 install (apt / RoboStack / conda) and cannot be `pip install`ed.
+# So, like the [curobo] extra, this stays minimal: it pulls only the
+# pip-installable cyclonedds Python binding (a DDS RMW rclpy can use). Installing
+# this extra does NOT by itself provision ROS 2 - source a real distro first.
 ros2 = [
     "cyclonedds>=0.10.2,<1.0.0",
 ]
@@ -450,7 +447,7 @@ ignore_missing_imports = false
 
 # Third-party libs without type stubs
 [[tool.mypy.overrides]]
-module = ["lerobot.*", "gr00t.*", "draccus.*", "msgpack.*", "websockets", "websockets.*", "zmq.*", "huggingface_hub.*", "serial.*", "psutil.*", "torch.*", "torchvision.*", "transformers.*", "einops.*", "robot_descriptions.*", "mujoco.*", "imageio.*", "libero.*", "zenoh.*", "boto3", "boto3.*", "awscrt", "awscrt.*", "awsiot", "awsiot.*", "botocore.*", "strands_robots.policies.cosmos3._msgpack_numpy", "diffusers", "diffusers.*", "accelerate", "accelerate.*", "openpi_client", "openpi_client.*", "openpi_server", "openpi_server.*", "openpi", "openpi.*", "device_connect_edge", "device_connect_edge.*", "device_connect_agent_tools", "device_connect_agent_tools.*", "rclpy", "rclpy.*", "moveit", "moveit.*", "moveit_configs_utils", "moveit_configs_utils.*", "geometry_msgs", "geometry_msgs.*", "mink", "mink.*", "qpsolvers", "qpsolvers.*", "onnxruntime", "onnxruntime.*"]
+module = ["lerobot.*", "gr00t.*", "draccus.*", "msgpack.*", "websockets", "websockets.*", "zmq.*", "huggingface_hub.*", "serial.*", "psutil.*", "torch.*", "torchvision.*", "transformers.*", "einops.*", "robot_descriptions.*", "mujoco.*", "imageio.*", "libero.*", "zenoh.*", "boto3", "boto3.*", "awscrt", "awscrt.*", "awsiot", "awsiot.*", "botocore.*", "strands_robots.policies.cosmos3._msgpack_numpy", "diffusers", "diffusers.*", "accelerate", "accelerate.*", "openpi_client", "openpi_client.*", "openpi_server", "openpi_server.*", "openpi", "openpi.*", "device_connect_edge", "device_connect_edge.*", "device_connect_agent_tools", "device_connect_agent_tools.*", "rclpy", "rclpy.*", "rosidl_runtime_py", "rosidl_runtime_py.*", "moveit", "moveit.*", "moveit_configs_utils", "moveit_configs_utils.*", "geometry_msgs", "geometry_msgs.*", "mink", "mink.*", "qpsolvers", "qpsolvers.*", "onnxruntime", "onnxruntime.*"]
 ignore_missing_imports = true
 
 # Device Connect drivers - thin wrappers over the untyped device_connect_edge

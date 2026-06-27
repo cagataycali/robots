@@ -372,7 +372,7 @@ AgentTool returning `{"status", "content"}`.
 | `pose_tool` | Store, recall, and execute named robot poses |
 | `serial_tool` | Low-level Feetech servo / raw serial communication |
 | `robot_mesh` | Coordinate robots over the Zenoh mesh (`tell`, `broadcast`, E-STOP) |
-| `use_ros` | Bridge to any ROS 2 graph - list/echo/publish topics, call services (native rclpy or docker backend) |
+| `use_ros` | Bridge to any ROS 2 graph - list/echo/publish topics, call services (in-process rclpy) |
 
 <details>
 <summary><b>Robot tool actions</b></summary>

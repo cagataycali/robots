@@ -1,13 +1,16 @@
 ---
-description: use_ros - bridge a Strands agent to any ROS 2 graph (topics, services) over native rclpy or a docker container, with dynamic message-type resolution.
+description: use_ros - bridge a Strands agent to any ROS 2 graph (topics, services) in-process through rclpy, with dynamic message-type resolution.
 ---
 
 # ROS 2 integration
 
 `use_ros` gives a Strands agent one structured entry point into any ROS 2 graph
-on the host or LAN - listing and echoing topics, publishing messages, and
-calling services - without shelling out to the `ros2` CLI by hand or
-hard-coding message types.
+reachable from the interpreter - listing and echoing topics, publishing
+messages, and calling services - **entirely in-process through `rclpy`**. There
+is no `ros2` CLI shelling and no generated-code snippets: every action calls the
+ROS 2 client library directly, so message types are real Python classes, errors
+are real exceptions, and a single long-lived node/executor is reused across
+calls.
 
 ```python
 from strands import Agent
@@ -17,54 +20,51 @@ agent = Agent(tools=[use_ros])
 agent("list the ROS 2 topics, then drive /turtle1 forward and confirm its pose changed")
 ```
 
-## Backends
+## Requirements
 
-The backend is auto-detected; override it with the `ROS2_MODE` environment
-variable (`native` | `docker` | `none`).
-
-| Mode | When | How it runs |
-|------|------|-------------|
-| `native` | `rclpy` is importable in this interpreter | Runs the `ros2` CLI and small in-process `rclpy` helpers directly |
-| `docker` | No host ROS 2, but a container has it sourced | Forwards every command via `docker exec` into `ROS2_DOCKER_CONTAINER` (default `ros-dev`) |
-| `none` | Neither is available | Every action returns a clear error naming the `[ros2]` extra and the docker fallback |
-
-The ROS 2 client libraries (`rclpy`, `rosidl_runtime_py`) are not on PyPI - they
-ship with a system ROS 2 install (apt / RoboStack / the official docker images).
-The docker backend needs nothing installed on the host: point a container at
-your DDS domain and go.
+The tool needs `rclpy` and `rosidl_runtime_py` importable in the same
+interpreter that runs the agent. These ship with a sourced system ROS 2 distro
+and are **not** on PyPI, so they cannot be `pip install`ed and are not pinned in
+`pyproject.toml`. Source a ROS 2 environment before launching the agent:
 
 ```bash
-# Dev loop with zero host install (macOS, Jetson, CI):
-docker run -d --name ros-dev --net host ros:jazzy tail -f /dev/null
-export ROS2_MODE=docker ROS2_DOCKER_CONTAINER=ros-dev
+source /opt/ros/jazzy/setup.bash   # or your distro / RoboStack / conda env
 ```
 
-Relevant environment variables:
+When `rclpy` is not importable, every action returns a clear, actionable error
+naming the remedy (it never raises). Check the active backend with
+`use_ros(action="status")`, which reports either `rclpy (in-process)` or `none`.
 
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `ROS2_MODE` | auto | Force `native`, `docker`, or `none` |
-| `ROS2_DOCKER_CONTAINER` | `ros-dev` | Container name for the docker backend |
-| `ROS2_DOCKER_SETUP` | `/opt/ros/jazzy/setup.bash` | Sourced inside the container before each command |
+The `[ros2]` extra is minimal and optional - it only pulls the pip-installable
+`cyclonedds` DDS RMW binding. It does **not** provision ROS 2 by itself; you
+still need a real sourced distro.
+
+```bash
+pip install 'strands-robots[ros2]'   # optional cyclonedds RMW binding only
+```
 
 ## Actions
 
 | Action | Required args | Returns |
 |--------|---------------|---------|
-| `status` | - | Active backend (and container name in docker mode) |
+| `status` | - | Whether the in-process rclpy backend is available |
 | `list_topics` | - | Topics with their message types |
 | `list_nodes` | - | Node names |
 | `list_services` | - | Services with their types |
-| `info` | `topic` or `service` | Topic/node/service details |
+| `info` | `topic` or `service` | Topic (type + pub/sub counts) or service (type) details |
 | `echo` | `topic` (type auto-resolved) | N samples as JSON |
 | `publish` | `topic`, `type` | Publishes N messages built from `fields` |
 | `service_call` | `service`, `type` | Service response as JSON |
-| `exec_raw` | `command` | Output of an arbitrary `ros2 <args>` command |
 
-Message and service types are resolved dynamically through `rosidl_runtime_py`,
-so any interface installed in the ROS 2 environment works with no static
-registry. Field payloads are plain JSON dicts applied with `set_message_fields`
-(the standard ROS 2 idiom); booleans and `null` are preserved.
+Graph introspection (`list_*`, `info`, `echo` type auto-resolution) uses the
+rclpy node API directly (`get_topic_names_and_types`, `get_node_names_and_namespaces`,
+`get_service_names_and_types`, `count_publishers`/`count_subscribers`). Message
+and service types are resolved dynamically through `rosidl_runtime_py`
+(`get_message` / `get_service`), so any interface installed in the ROS 2
+environment works with no static registry. Field payloads are plain Python
+dicts applied with `set_message_fields` (the standard ROS 2 idiom) - passed
+straight to rclpy, never serialised through source, so booleans and `null` are
+preserved by construction.
 
 ## Examples
 
@@ -89,8 +89,10 @@ use_ros(action="service_call", service="/spawn",
 ## Safety
 
 Agent-supplied topic, service, and type names are validated against an
-allowlist before reaching the subprocess layer (alphanumerics plus `_ / ~ {}`
-for names; `pkg/msg/Name` or `pkg/srv/Name` for types). The `exec_raw` escape
-hatch additionally rejects shell metacharacters. Native mode passes argv without
-a shell, and docker mode shlex-quotes every token, so neither path interpolates
-untrusted strings into a shell.
+allowlist before reaching the rclpy graph/type API (alphanumerics plus
+`_ / ~ {}` for names; `pkg/msg/Name` or `pkg/srv/Name` for types). Because the
+tool never constructs a shell command or generates source, there is no
+command-injection or `eval` surface to defend - the validation simply keeps
+malformed names from reaching the ROS 2 client library. Backend and timeout
+failures are returned as structured `{"status": "error"}` results rather than
+raised exceptions.
