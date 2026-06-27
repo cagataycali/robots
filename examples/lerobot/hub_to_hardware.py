@@ -101,6 +101,7 @@ DEFAULT_MODEL_ID = "global.anthropic.claude-opus-4-8"  # ← verify in AWS conso
 # Agent construction
 # ---------------------------------------------------------------------------
 
+
 def _build_bedrock_model(model_id: str, region: str | None) -> Any | None:
     """Construct a Strands BedrockModel client.
 
@@ -136,7 +137,9 @@ def _build_bedrock_model(model_id: str, region: str | None) -> Any | None:
             "BedrockModel(%s, region=%s) init failed: %s. Falling back to "
             "Strands' default. Common causes: model not enabled in this AWS "
             "account, wrong region, or stale model ID - check the Bedrock console.",
-            model_id, region or "<unset>", exc,
+            model_id,
+            region or "<unset>",
+            exc,
         )
         return None
 
@@ -152,6 +155,7 @@ def build_agent(
 ) -> Any:
     """Build the Strands agent with the right tool set for the run."""
     from strands import Agent
+
     from strands_robots import (
         Robot,
         robot_mesh,
@@ -160,10 +164,7 @@ def build_agent(
     robot_kwargs: dict[str, Any] = {"data_config": "so100_dualcam"}
     if mode == "real":
         if not port:
-            raise SystemExit(
-                "--mode real requires --port (e.g. /dev/ttyACM0). "
-                "Hardware paths can't be guessed safely."
-            )
+            raise SystemExit("--mode real requires --port (e.g. /dev/ttyACM0). Hardware paths can't be guessed safely.")
         robot_kwargs.update(
             port=port,
             cameras={
@@ -185,18 +186,11 @@ def build_agent(
 
     if policy == "groot":
         from strands_robots import gr00t_inference
+
         tools.append(gr00t_inference)
 
-    resolved_model_id = (
-        model_id
-        or os.environ.get("STRANDS_BEDROCK_MODEL_ID")
-        or DEFAULT_MODEL_ID
-    )
-    resolved_region = (
-        aws_region
-        or os.environ.get("AWS_REGION")
-        or os.environ.get("AWS_DEFAULT_REGION")
-    )
+    resolved_model_id = model_id or os.environ.get("STRANDS_BEDROCK_MODEL_ID") or DEFAULT_MODEL_ID
+    resolved_region = aws_region or os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
     model = _build_bedrock_model(resolved_model_id, resolved_region)
 
     agent = Agent(model=model, tools=tools) if model else Agent(tools=tools)
@@ -212,6 +206,7 @@ def build_agent(
 # ---------------------------------------------------------------------------
 # Step 2: Record a demonstration
 # ---------------------------------------------------------------------------
+
 
 def record_demonstration(
     agent: Any,
@@ -254,9 +249,7 @@ def record_demonstration(
     else:
         leader_port = getattr(agent, "_leader_port", None)
         if not leader_port:
-            raise SystemExit(
-                "Hardware recording requires --leader-port (e.g. /dev/ttyACM1)"
-            )
+            raise SystemExit("Hardware recording requires --leader-port (e.g. /dev/ttyACM1)")
         prompt = (
             f"Record one demonstration of '{task}' on the SO-101, "
             f"with the leader on {leader_port}. Write the dataset "
@@ -269,6 +262,7 @@ def record_demonstration(
 # ---------------------------------------------------------------------------
 # Step 3: Run a policy on the robot
 # ---------------------------------------------------------------------------
+
 
 def run_policy(
     agent: Any,
@@ -286,10 +280,7 @@ def run_policy(
 
     elif policy == "groot":
         if not checkpoint:
-            raise SystemExit(
-                "--policy groot requires --checkpoint <hf_repo>, "
-                "e.g. nvidia/GR00T-N1.7-LIBERO"
-            )
+            raise SystemExit("--policy groot requires --checkpoint <hf_repo>, e.g. nvidia/GR00T-N1.7-LIBERO")
         prompt = (
             f"Use gr00t_inference lifecycle='full' to bring up the GR00T "
             f"container on port 5555 with checkpoint {checkpoint}. Then "
@@ -300,8 +291,7 @@ def run_policy(
     elif policy == "lerobot_local":
         if not checkpoint:
             raise SystemExit(
-                "--policy lerobot_local requires --checkpoint <hf_repo>, "
-                "e.g. lerobot/act_aloha_sim_transfer_cube_human"
+                "--policy lerobot_local requires --checkpoint <hf_repo>, e.g. lerobot/act_aloha_sim_transfer_cube_human"
             )
         if os.environ.get("STRANDS_TRUST_REMOTE_CODE") != "1":
             raise SystemExit(
@@ -328,6 +318,7 @@ def run_policy(
 # Step 5: Mesh broadcast
 # ---------------------------------------------------------------------------
 
+
 def broadcast_to_mesh(agent: Any, instruction: str = "go to home pose") -> Any:
     """Discover mesh peers and broadcast a command to all of them."""
     prompt = (
@@ -341,6 +332,7 @@ def broadcast_to_mesh(agent: Any, instruction: str = "go to home pose") -> Any:
 # ---------------------------------------------------------------------------
 # Cleanup
 # ---------------------------------------------------------------------------
+
 
 def cleanup(agent: Any, *, policy: str) -> None:
     """Tear down any long-running resources the workflow started."""
@@ -367,6 +359,7 @@ def cleanup(agent: Any, *, policy: str) -> None:
 # Entry point
 # ---------------------------------------------------------------------------
 
+
 def parse_args(argv: list[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         prog="hub_to_hardware",
@@ -389,8 +382,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument(
         "--checkpoint",
         default=None,
-        help="HF repo for the policy checkpoint "
-             "(required for --policy groot or lerobot_local).",
+        help="HF repo for the policy checkpoint (required for --policy groot or lerobot_local).",
     )
 
     # LLM knobs
@@ -398,56 +390,65 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--model-id",
         default=None,
         help=f"Bedrock model ID to drive the agent. Default: {DEFAULT_MODEL_ID}. "
-             f"Override here or via STRANDS_BEDROCK_MODEL_ID. Verify the exact "
-             f"ID against your AWS Bedrock console.",
+        f"Override here or via STRANDS_BEDROCK_MODEL_ID. Verify the exact "
+        f"ID against your AWS Bedrock console.",
     )
     p.add_argument(
         "--aws-region",
         default=None,
         help="AWS region for Bedrock. If unset, resolves from AWS_REGION / "
-             "AWS_DEFAULT_REGION env vars or ~/.aws/config (boto3's standard chain).",
+        "AWS_DEFAULT_REGION env vars or ~/.aws/config (boto3's standard chain).",
     )
 
     # Hardware knobs
     p.add_argument(
-        "--port", default=None,
+        "--port",
+        default=None,
         help="USB device of the SO-101 follower (--mode real only).",
     )
     p.add_argument(
-        "--leader-port", default=None,
+        "--leader-port",
+        default=None,
         help="USB device of the SO-101 leader arm (--mode real only).",
     )
 
     # Recording knobs
     p.add_argument(
-        "--hf-user", default=None,
+        "--hf-user",
+        default=None,
         help="HF username for the dataset repo. If unset, the dataset stays local.",
     )
     p.add_argument(
-        "--dataset-name", default="strands-cube-pick",
+        "--dataset-name",
+        default="strands-cube-pick",
         help="Dataset name under <hf-user>. Default: strands-cube-pick.",
     )
     p.add_argument(
-        "--num-steps", type=int, default=1000,
-        help="Number of policy steps to record in the demonstration "
-             "(default: 1000, ≈ 33s of data at 30fps).",
+        "--num-steps",
+        type=int,
+        default=1000,
+        help="Number of policy steps to record in the demonstration (default: 1000, ≈ 33s of data at 30fps).",
     )
     p.add_argument(
-        "--instruction", default="pick up the red cube",
+        "--instruction",
+        default="pick up the red cube",
         help="Natural-language task instruction.",
     )
     p.add_argument(
-        "--clean-cache", action="store_true",
+        "--clean-cache",
+        action="store_true",
         help="Delete the local LeRobotDataset cache for this repo before recording.",
     )
 
     # Skip flags
     p.add_argument(
-        "--skip-record", action="store_true",
+        "--skip-record",
+        action="store_true",
         help="Skip the recording step (Step 2).",
     )
     p.add_argument(
-        "--skip-mesh", action="store_true",
+        "--skip-mesh",
+        action="store_true",
         help="Skip the mesh broadcast step (Step 5).",
     )
 
@@ -471,14 +472,11 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     push_to_hub = bool(args.hf_user)
-    repo_id = (
-        f"{args.hf_user}/{args.dataset_name}"
-        if push_to_hub
-        else f"local/{args.dataset_name}"
-    )
+    repo_id = f"{args.hf_user}/{args.dataset_name}" if push_to_hub else f"local/{args.dataset_name}"
 
     if args.clean_cache:
         import shutil
+
         cache_dir = Path.home() / ".cache" / "huggingface" / "lerobot" / repo_id
         if cache_dir.exists():
             logger.info("Removing cache at %s", cache_dir)
@@ -486,7 +484,11 @@ def main(argv: list[str] | None = None) -> int:
 
     logger.info(
         "Starting workflow (mode=%s, policy=%s, push_to_hub=%s, repo=%s, num_steps=%d)",
-        args.mode, args.policy, push_to_hub, repo_id, args.num_steps,
+        args.mode,
+        args.policy,
+        push_to_hub,
+        repo_id,
+        args.num_steps,
     )
 
     banner("Step 1: Build the agent")

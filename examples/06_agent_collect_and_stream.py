@@ -48,13 +48,13 @@ reader = sim.stream_dataset(
     shuffle=False,
 )
 
-print(f"\nStreaming {reader.num_episodes} episode(s), "
-      f"{reader.num_frames} frames @ {reader.fps} fps")
+print(f"\nStreaming {reader.num_episodes} episode(s), {reader.num_frames} frames @ {reader.fps} fps")
 print(f"cameras: {reader.meta.video_keys}")
 for i, frame in enumerate(reader):
     cams = {k: tuple(frame[k].shape) for k in frame if k.startswith("observation.images.")}
-    print(f"  frame {i}: state{tuple(frame['observation.state'].shape)} "
-          f"action{tuple(frame['action'].shape)} cams={cams}")
+    print(
+        f"  frame {i}: state{tuple(frame['observation.state'].shape)} action{tuple(frame['action'].shape)} cams={cams}"
+    )
     if i >= 2:
         break
 

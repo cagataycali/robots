@@ -59,6 +59,48 @@ So a model action of `[30, 30, 30, 30, 30, 50]` (degrees / 0..100) maps to
 Without this conversion, `30.0` is interpreted as 30 radians, which saturates the
 joint's `[-pi, pi]`-scale limit and the arm appears frozen.
 
+### Calibration mid-point (`joint_mids`)
+
+LeRobot's `MotorNormMode.DEGREES` is **mid-point-centered**: the value a
+checkpoint trains on is the angular displacement from each motor's calibration
+mid-point, not the absolute joint angle. Ground truth
+(`lerobot/motors/motors_bus.py`, `_normalize` / `_unnormalize`):
+
+```python
+mid = (range_min + range_max) / 2          # calibration mid, encoder ticks
+degrees = (raw - mid) * 360 / max_res      # reported state/action
+```
+
+On real hardware this is correct automatically because the driver owns the
+conversion and knows each servo's calibration mid. In sim, `qpos = 0` (the MJCF
+home pose) is generally **not** the calibration mid, so the absolute
+`deg = rad * 180/pi` conversion is offset per joint from the training
+distribution. After LeRobot's `MIN_MAX` state normalization that offset can push
+`observation.state` outside the dataset range, degrading the policy in sim while
+the same checkpoint works on the arm.
+
+Supply the per-joint mid-points (in degrees, aligned to `state_keys` /
+`action_keys`) via `joint_mids` so the conversion mid-centers like
+`motors_bus`. The gripper column (`gripper_index`) is exempt (RANGE_0_100 has no
+mid). Empty (the default) treats every mid as `0` -- i.e. sim `qpos = 0` is
+assumed to coincide with the calibration mid, preserving the prior
+absolute-degrees behavior:
+
+```json
+"so101": {
+  "state_units": "degrees",
+  "action_units": "degrees",
+  "gripper_index": 5,
+  "gripper_joint_range": [-0.175, 1.745],
+  "joint_mids": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+}
+```
+
+Populate `joint_mids` from the calibration the checkpoint was trained against
+(`mid = (range_min + range_max) / 2` per motor, expressed as a sim-frame joint
+angle in degrees). Leave it empty only when the sim home pose already coincides
+with the calibration mid.
+
 Pass `embodiment="so101"` to the policy (or `"so100"`, `"so_real"` for hardware):
 
 ```python

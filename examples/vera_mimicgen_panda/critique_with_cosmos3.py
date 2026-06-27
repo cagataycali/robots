@@ -7,6 +7,7 @@ Requires a Cosmos3-Nano reasoner serving on :8000 (see strands-cosmos
 `c3-serve-reason`). Videos must live under an allowed workspace
 (/tmp/vera-critique or COSMOS_VIDEO_WORKSPACE, or set COSMOS_WORKSPACE).
 """
+
 import os
 import shutil
 import sys

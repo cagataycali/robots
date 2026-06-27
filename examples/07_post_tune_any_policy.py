@@ -23,7 +23,7 @@ os.environ.setdefault("MUJOCO_GL", "cgl")  # macOS offscreen GL
 from strands_robots import MockPolicy, Robot, create_policy
 from strands_robots.training import TrainSpec, create_trainer
 
-PROVIDER = "lerobot_local"      # swap -> "groot" / "cosmos3" (only this changes)
+PROVIDER = "lerobot_local"  # swap -> "groot" / "cosmos3" (only this changes)
 DATASET_ROOT = "/tmp/strands_post_tune_ds"
 OUTPUT_DIR = "/tmp/strands_post_tune_ft"
 
@@ -31,12 +31,17 @@ OUTPUT_DIR = "/tmp/strands_post_tune_ft"
 sim = Robot("so100", mesh=False)
 sim.add_camera(name="front", position=[0.5, 0.0, 0.4], target=[0.2, 0, 0.05])
 sim.start_recording(
-    repo_id="local/post_tune_demo", root=DATASET_ROOT,
-    fps=30, task="pick up the red cube", overwrite=True,
+    repo_id="local/post_tune_demo",
+    root=DATASET_ROOT,
+    fps=30,
+    task="pick up the red cube",
+    overwrite=True,
 )
 sim.run_policy(
-    robot_name="so100", policy_object=MockPolicy(),
-    instruction="pick up the red cube", n_steps=60,
+    robot_name="so100",
+    policy_object=MockPolicy(),
+    instruction="pick up the red cube",
+    n_steps=60,
 )
 sim.stop_recording()
 print(f"Recorded LeRobotDataset -> {DATASET_ROOT}")
@@ -46,13 +51,15 @@ print(f"Recorded LeRobotDataset -> {DATASET_ROOT}")
 trainer = create_trainer(PROVIDER, device="cpu")
 spec = TrainSpec(
     dataset_root=DATASET_ROOT,
-    base_model="",                       # ACT from scratch (smallest CPU path)
+    base_model="",  # ACT from scratch (smallest CPU path)
     output_dir=OUTPUT_DIR,
-    steps=2, save_freq=2, global_batch_size=2,
+    steps=2,
+    save_freq=2,
+    global_batch_size=2,
     extra={"policy_type": "act", "num_workers": 0},
 )
 
-problems = trainer.validate(spec)        # pure preflight - launch nothing if bad
+problems = trainer.validate(spec)  # pure preflight - launch nothing if bad
 if problems:
     raise SystemExit("Spec invalid:\n  - " + "\n  - ".join(problems))
 
@@ -70,5 +77,4 @@ print(f"exported artifact: {exported}")
 os.environ.setdefault("STRANDS_TRUST_REMOTE_CODE", "1")
 policy = create_policy(exported, device="cpu")
 print(f"loaded trained policy: {type(policy).__name__} (provider={policy.provider_name})")
-print("\nLoop closed: record -> train -> export -> load. "
-      "Swap PROVIDER to 'groot'/'cosmos3' to retarget the same flow.")
+print("\nLoop closed: record -> train -> export -> load. Swap PROVIDER to 'groot'/'cosmos3' to retarget the same flow.")

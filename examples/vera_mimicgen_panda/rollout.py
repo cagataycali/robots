@@ -70,12 +70,20 @@ def _build_scene(robot: str = "panda", mesh: bool = False):
     sim = Robot(robot, mesh=mesh)
     # MimicGen 2-block stacking props.
     sim.add_object(
-        name="red_block", shape="box", position=[0.45, -0.05, 0.025],
-        size=[0.025, 0.025, 0.025], color=[0.9, 0.2, 0.2, 1], mass=0.05,
+        name="red_block",
+        shape="box",
+        position=[0.45, -0.05, 0.025],
+        size=[0.025, 0.025, 0.025],
+        color=[0.9, 0.2, 0.2, 1],
+        mass=0.05,
     )
     sim.add_object(
-        name="green_block", shape="box", position=[0.45, 0.10, 0.025],
-        size=[0.03, 0.03, 0.02], color=[0.2, 0.8, 0.2, 1], mass=0.08,
+        name="green_block",
+        shape="box",
+        position=[0.45, 0.10, 0.025],
+        size=[0.03, 0.03, 0.02],
+        color=[0.2, 0.8, 0.2, 1],
+        mass=0.08,
     )
     # Seed a natural Panda "ready" pose. The default all-zeros config is a
     # near-singular straight-up pose that sits half out of frame — a Cosmos3
@@ -83,8 +91,13 @@ def _build_scene(robot: str = "panda", mesh: bool = False):
     # because the (large) motion happened off-camera. A tabletop-ready pose
     # keeps the arm in view so the rollout reads as purposeful manipulation.
     ready = {
-        "joint1": 0.0, "joint2": -0.4, "joint3": 0.0, "joint4": -2.0,
-        "joint5": 0.0, "joint6": 1.6, "joint7": 0.8,
+        "joint1": 0.0,
+        "joint2": -0.4,
+        "joint3": 0.0,
+        "joint4": -2.0,
+        "joint5": 0.0,
+        "joint6": 1.6,
+        "joint7": 0.8,
     }
     try:
         sim.send_action(ready, robot_name=robot, n_substeps=200)
@@ -98,9 +111,7 @@ def _build_scene(robot: str = "panda", mesh: bool = False):
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
-    )
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--host", default="127.0.0.1", help="VERA server host.")
     p.add_argument("--port", type=int, default=8800, help="VERA MimicGen ws port.")
     p.add_argument("--instruction", default="stack the red block on the green block")
@@ -116,9 +127,10 @@ def main() -> int:
         help="Record the rollout to this MP4 (set '' to disable).",
     )
     p.add_argument(
-        "--server-mode", choices=["subprocess", "docker", "attach"], default="attach",
-        help="attach (default): connect to a running server; docker/subprocess: "
-        "let the provider manage it.",
+        "--server-mode",
+        choices=["subprocess", "docker", "attach"],
+        default="attach",
+        help="attach (default): connect to a running server; docker/subprocess: let the provider manage it.",
     )
     p.add_argument("--ckpt-root", default=None, help="VERA checkpoint root (docker/subprocess modes).")
     p.add_argument("--mesh", action="store_true", help="Higher-fidelity mesh rendering.")
@@ -157,8 +169,7 @@ def main() -> int:
         video = {"path": str(out), "fps": 20, "camera": "agentview_image", "width": 512, "height": 512}
         print(f"Recording rollout -> {out}")
 
-    print(f"Rolling out VERA MimicGen -> {args.robot} for {args.n_steps} steps "
-          f"(server={args.server_mode}) ...")
+    print(f"Rolling out VERA MimicGen -> {args.robot} for {args.n_steps} steps (server={args.server_mode}) ...")
     result = sim.run_policy(
         robot_name=args.robot,
         policy_provider="vera",

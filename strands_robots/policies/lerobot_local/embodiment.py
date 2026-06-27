@@ -83,6 +83,7 @@ def _convert_joint_vector(
     to_model: bool,
     gripper_index: int = -1,
     gripper_joint_range: list[float] | None = None,
+    joint_mids: list[float] | None = None,
 ) -> list[float]:
     """Convert an ordered joint vector between sim units (radians + gripper joint
     range) and the LeRobot SO-arm training units (arm degrees, gripper 0..100).
@@ -99,12 +100,31 @@ def _convert_joint_vector(
     because the SO-arm gripper uses ``MotorNormMode.RANGE_0_100`` (0..100), not
     degrees - see ``lerobot/robots/so_follower/so_follower.py``.
 
+    LeRobot's ``MotorNormMode.DEGREES`` is **mid-point-centered**: the value a
+    checkpoint trains on is the angular displacement from each motor's
+    calibration mid-point, not the absolute joint angle (ground truth:
+    ``lerobot/motors/motors_bus.py`` ``_normalize`` / ``_unnormalize`` ->
+    ``mid = (range_min + range_max) / 2``; reported degrees = ``(val - mid) *
+    360 / max_res``). When ``joint_mids`` is supplied (per-joint mid offsets in
+    degrees, aligned to ``values``), the arm conversion subtracts the mid going
+    to the model and adds it back coming from the model, so the packed
+    ``observation.state`` matches the distribution the checkpoint was trained on
+    rather than being offset by each joint's mid. When ``joint_mids`` is empty
+    (the default), the mid is treated as zero -- i.e. the sim ``qpos = 0`` is
+    assumed to coincide with the calibration mid (absolute ``deg = rad *
+    180/pi``), preserving the prior behavior.
+
     Args:
         values: Ordered joint values.
         to_model: Conversion direction (see above).
         gripper_index: Index of the gripper column, or -1 for none.
         gripper_joint_range: ``[min, max]`` radians of the sim gripper joint;
             empty/None treats the gripper like an arm joint (deg<->rad).
+        joint_mids: Per-joint calibration mid-points in DEGREES, aligned to
+            ``values``. Subtracted from arm columns when ``to_model`` and added
+            back otherwise, matching ``motors_bus`` DEGREES mid-centering. The
+            gripper column (``gripper_index``) is exempt (RANGE_0_100 has no
+            mid). Empty/None / out-of-range indices use a mid of ``0.0``.
 
     Returns:
         A new list of converted values (input is not mutated).
@@ -112,6 +132,7 @@ def _convert_joint_vector(
     out = list(values)
     rad_per_deg = float(np.pi) / 180.0
     grange = gripper_joint_range or []
+    mids = joint_mids or []
     for i, v in enumerate(out):
         if i == gripper_index and len(grange) == 2:
             lo, hi = float(grange[0]), float(grange[1])
@@ -122,10 +143,12 @@ def _convert_joint_vector(
                 out[i] = (float(v) - lo) / span * 100.0  # joint rad -> 0..100
             else:
                 out[i] = lo + (float(v) / 100.0) * span  # 0..100 -> joint rad
-        elif to_model:
-            out[i] = float(v) / rad_per_deg  # radians -> degrees
         else:
-            out[i] = float(v) * rad_per_deg  # degrees -> radians
+            mid = float(mids[i]) if i < len(mids) else 0.0
+            if to_model:
+                out[i] = float(v) / rad_per_deg - mid  # radians -> mid-centered degrees
+            else:
+                out[i] = (float(v) + mid) * rad_per_deg  # mid-centered degrees -> radians
     return out
 
 
@@ -288,6 +311,10 @@ def register_pack_state_step() -> type | None:
         state_units: str = "native"
         gripper_index: int = -1
         gripper_joint_range: list[float] = field(default_factory=list)
+        # Per-joint calibration mid-points in DEGREES (aligned to state_keys);
+        # subtracted from arm columns so observation.state is mid-centered like
+        # lerobot motors_bus DEGREES mode. Empty = mid 0 (prior behavior).
+        joint_mids: list[float] = field(default_factory=list)
 
         def observation(self, observation: dict[str, Any]) -> dict[str, Any]:
             if "observation.state" in observation:
@@ -322,6 +349,7 @@ def register_pack_state_step() -> type | None:
                     to_model=True,
                     gripper_index=self.gripper_index,
                     gripper_joint_range=self.gripper_joint_range,
+                    joint_mids=self.joint_mids,
                 )
 
             target = self.expected_dim or len(vals)
@@ -389,6 +417,18 @@ class EmbodimentMap:
     # 0..100 gripper command onto the joint range (and back). Empty = treat the
     # gripper like an arm joint (deg<->rad). SO arms: [-0.175, 1.745].
     gripper_joint_range: list[float] = field(default_factory=list)
+    # Per-joint calibration mid-points in DEGREES, aligned to state_keys /
+    # action_keys. LeRobot's MotorNormMode.DEGREES is mid-point-centered: a
+    # checkpoint conditions on (joint_angle - calibration_mid), not the absolute
+    # angle (ground truth: lerobot/motors/motors_bus.py mid = (min + max) / 2).
+    # The sim expresses absolute angles, so without the mid the packed
+    # observation.state is offset per joint from the training distribution and
+    # can fall outside the dataset MIN_MAX range after normalization -> OOD.
+    # When set, the "degrees" conversion subtracts the mid (sim -> model) and
+    # adds it back (model -> sim). The gripper column (gripper_index) is exempt
+    # (RANGE_0_100). Empty (default) = mid 0, i.e. sim qpos=0 is assumed to be
+    # the calibration mid (the prior absolute-degrees behavior).
+    joint_mids: list[float] = field(default_factory=list)
 
     def validate(self, input_features: dict[str, Any], output_features: dict[str, Any]) -> None:
         """Fail-fast validation against the model's declared features.
@@ -458,6 +498,7 @@ class EmbodimentMap:
             to_model=to_model,
             gripper_index=self.gripper_index,
             gripper_joint_range=self.gripper_joint_range,
+            joint_mids=self.joint_mids,
         )
 
     def sim_state_to_model(self, values: list[float]) -> list[float]:
