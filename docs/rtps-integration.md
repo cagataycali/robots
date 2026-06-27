@@ -100,6 +100,14 @@ See `examples/ros2/rtps_turtle_demo.py` for an end-to-end script, and
 `tests_integ/tools/test_use_rtps_live.py` for the gated live test that drives a
 real `turtlesim` from a bare participant (`RTPS_LIVE=1 pytest -m rtps`).
 
+For a fully reproducible, self-contained cross-process proof (real turtlesim
+node + our publisher, one command), see `examples/ros2/rtps_proof/`:
+
+```bash
+cd examples/ros2/rtps_proof
+docker compose run --build --rm proof   # exits 0 iff the turtle moved
+```
+
 ## Safety
 
 Agent-supplied topic and type names are validated against an allowlist before
