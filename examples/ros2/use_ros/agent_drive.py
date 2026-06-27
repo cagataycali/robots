@@ -26,11 +26,11 @@ from __future__ import annotations
 import json
 import os
 import time
+from collections.abc import Callable
+from typing import Any
 
 from strands import Agent
 from strands.models import BedrockModel
-
-from typing import Any, Callable
 
 from strands_robots.tools.use_ros import use_ros as _use_ros_tool
 

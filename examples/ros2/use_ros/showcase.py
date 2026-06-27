@@ -28,8 +28,8 @@ from __future__ import annotations
 import json
 import sys
 import time
-
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from strands_robots.tools.use_ros import use_ros as _use_ros_tool
 
@@ -73,14 +73,24 @@ def main() -> int:
 
     # Closed sense -> act -> sense loop.
     before = run(action="echo", topic="/turtle1/pose", count=1, timeout=3.0)
-    run(action="publish", topic="/turtle1/cmd_vel", type="geometry_msgs/msg/Twist",
-        fields={"linear": {"x": 2.0}, "angular": {"z": 1.8}}, count=20, rate=10.0)
+    run(
+        action="publish",
+        topic="/turtle1/cmd_vel",
+        type="geometry_msgs/msg/Twist",
+        fields={"linear": {"x": 2.0}, "angular": {"z": 1.8}},
+        count=20,
+        rate=10.0,
+    )
     time.sleep(0.4)
     after = run(action="echo", topic="/turtle1/pose", count=1, timeout=3.0)
 
     # Service call: spawn a second turtle, then confirm it joined the graph.
-    run(action="service_call", service="/spawn", type="turtlesim/srv/Spawn",
-        fields={"x": 2.0, "y": 2.0, "theta": 0.0, "name": "t2"})
+    run(
+        action="service_call",
+        service="/spawn",
+        type="turtlesim/srv/Spawn",
+        fields={"x": 2.0, "y": 2.0, "theta": 0.0, "name": "t2"},
+    )
     time.sleep(0.5)
     run(action="list_topics")
 

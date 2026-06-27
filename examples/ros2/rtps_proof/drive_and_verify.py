@@ -25,13 +25,18 @@ def _ros_pose() -> tuple[float, float, float] | None:
     """Read turtlesim's (x, y, theta) via the ros2 CLI - the ground truth."""
     try:
         out = subprocess.run(
-            ["bash", "-lc", "source /opt/ros/jazzy/setup.bash && "
-             + "timeout 5 ros2 topic echo --once /turtle1/pose"],
-            capture_output=True, text=True, timeout=15,
+            ["bash", "-lc", "source /opt/ros/jazzy/setup.bash && " + "timeout 5 ros2 topic echo --once /turtle1/pose"],
+            capture_output=True,
+            text=True,
+            timeout=15,
         ).stdout
     except subprocess.TimeoutExpired:
         return None
-    g = lambda k: (m.group(1) if (m := re.search(rf"{k}:\s*([-0-9.]+)", out)) else None)
+
+    def g(k: str) -> str | None:
+        m = re.search(rf"{k}:\s*([-0-9.]+)", out)
+        return m.group(1) if m else None
+
     x, y, th = g("x"), g("y"), g("theta")
     if None in (x, y, th):
         return None
