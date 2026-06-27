@@ -204,6 +204,55 @@ class TestPolicyRunnerEvaluate:
         )
         assert result["status"] == "error"
 
+    def test_evaluate_degenerate_policy_advances_and_terminates(self, sim_with_robot):
+        """An empty-chunk policy must not hang: each query advances exactly one
+        physics step, the episode ends at max_steps, and with no success
+        predicate the run reports zero successes instead of spinning forever."""
+        policy = _EmptyActionPolicy()
+        policy.set_robot_state_keys(sim_with_robot.robot_joint_names("alice"))
+        runner = PolicyRunner(sim_with_robot)
+
+        result = runner.evaluate(
+            "alice",
+            policy,
+            n_episodes=1,
+            max_steps=4,
+            success_fn=None,
+        )
+        assert result["status"] == "success"
+        payload = result["content"][-1]["json"]
+        assert payload["success_rate"] == 0.0
+        assert payload["episodes"][0]["steps"] == 4
+        assert payload["episodes"][0]["success"] is False
+
+    def test_evaluate_degenerate_policy_succeeds_on_post_step_obs(self, sim_with_robot):
+        """Even with an empty action chunk, a success predicate that holds on
+        the post-step observation marks the episode solved on the first query
+        and stops early (steps == 1)."""
+        policy = _EmptyActionPolicy()
+        policy.set_robot_state_keys(sim_with_robot.robot_joint_names("alice"))
+        runner = PolicyRunner(sim_with_robot)
+
+        seen: list[dict] = []
+
+        def always_success(obs: dict) -> bool:
+            seen.append(obs)
+            return True
+
+        result = runner.evaluate(
+            "alice",
+            policy,
+            n_episodes=1,
+            max_steps=5,
+            success_fn=always_success,
+        )
+        assert result["status"] == "success"
+        payload = result["content"][-1]["json"]
+        assert payload["success_rate"] == 1.0
+        assert payload["episodes"][0]["steps"] == 1
+        assert payload["episodes"][0]["success"] is True
+        assert seen, "success_fn must be evaluated on the post-step observation"
+
 
 # require_default_robot / _maybe_sim_time
 
@@ -370,6 +419,23 @@ class _ConstantTargetPolicy(MockPolicy):
         if not self.robot_state_keys:
             self.robot_state_keys = list(observation_dict.keys())
         return [{k: self._target for k in self.robot_state_keys}]
+
+
+class _EmptyActionPolicy(MockPolicy):
+    """Degenerate policy that always returns an empty action chunk.
+
+    Exercises the no-hang guard in :meth:`PolicyRunner.evaluate`: an empty
+    chunk must still advance exactly one physics step per query (so episodes
+    terminate at ``max_steps`` instead of spinning forever), and the success
+    predicate is evaluated against the post-step observation.
+    """
+
+    @property
+    def provider_name(self) -> str:
+        return "empty"
+
+    async def get_actions(self, observation_dict, instruction, **kwargs):
+        return []
 
 
 class TestControlSubsteps:
