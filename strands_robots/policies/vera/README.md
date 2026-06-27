@@ -7,9 +7,9 @@ install — only the tiny `websockets`+`msgpack` client transport.
 
 ```python
 from strands_robots.policies import create_policy
-policy = create_policy("vera", embodiment="pusht", server_mode="docker",
+policy = create_policy("vera", embodiment="mimicgen", server_mode="docker",
                        ckpt_root="/abs/path/vera-ckpts")
-chunk = policy.get_actions_sync(observation, "push the T to the goal")
+chunk = policy.get_actions_sync(observation, "stack the red block on the green block")
 ```
 
 ## Layout
@@ -31,7 +31,7 @@ vera/
 → **[`docs/policies/vera.md`](../../../docs/policies/vera.md)** — embodiments,
 checkpoints, server setup, configuration, wire protocol, testing.
 
-→ **Example:** [`examples/vera_pusht_mujoco/`](../../../examples/vera_pusht_mujoco/)
-(end-to-end MuJoCo rollout + video).
+→ **Example:** [`examples/vera_mimicgen_panda/`](../../../examples/vera_mimicgen_panda/)
+(end-to-end MuJoCo rollout + video: WAN planner + Jacobian IDM -> eef-delta -> IK -> Panda).
 
 → **Container:** [`docker/README.md`](docker/README.md).

@@ -19,6 +19,12 @@ from pathlib import Path
 from typing import Literal
 
 Embodiment = Literal["pusht", "mimicgen", "allegro", "droid"]
+# "mimicgen" is the working, faithful embodiment end-to-end (eef-delta -> IK
+# onto a real arm). "pusht" is experimental: its server runs, but VERA's IDM
+# "du" action path for pusht is not wired end-to-end upstream (documented in
+# VERA's configurations/dataset/pusht.yaml), so it validates the
+# provider -> server -> action plumbing rather than producing a solving
+# rollout. "allegro"/"droid" are code-present but checkpoint-absent (Wave 2).
 
 # Per-embodiment default ports (policy, viz) — match the VERA examples
 # (PushT uses 8820/8821; everything else uses 8800/8801).

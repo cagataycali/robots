@@ -41,7 +41,6 @@ def critique(path: str) -> str:
 
 def main() -> int:
     videos = sys.argv[1:] or [
-        "docs/assets/vera/pusht_rollout.mp4",
         "docs/assets/vera/mimicgen_panda.mp4",
     ]
     for v in videos:

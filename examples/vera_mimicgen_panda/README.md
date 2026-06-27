@@ -51,4 +51,3 @@ so the provider:
 ## See also
 
 - Provider docs: [`docs/policies/vera.md`](../../docs/policies/vera.md)
-- PushT example (task-space, no IK): [`../vera_pusht_mujoco/`](../vera_pusht_mujoco/)

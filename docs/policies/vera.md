@@ -1,5 +1,5 @@
 ---
-description: VERA video-to-action policy (two-stage DFoT/WAN planner + Jacobian IDM) over a containerized GPU server. PushT + MimicGen, MuJoCo rollouts, IK for eef-delta arms.
+description: VERA video-to-action policy (two-stage DFoT/WAN planner + Jacobian IDM) over a containerized GPU server. MimicGen MuJoCo rollouts with IK for eef-delta arms.
 ---
 
 # VERA policy provider
@@ -32,36 +32,15 @@ host venv (numpy>=2)                 vera-server container (torch 2.6 / CUDA)
 from strands_robots.policies import create_policy
 
 # Attach to a running server (see "Server" below) ...
-policy = create_policy("vera", embodiment="pusht", auto_launch_server=False)
-chunk = policy.get_actions_sync(observation, "push the T to the goal")
+policy = create_policy("vera", embodiment="mimicgen", auto_launch_server=False)
+chunk = policy.get_actions_sync(observation, "stack the red block on the green block")
 
 # ... or let the provider manage the container for you:
 policy = create_policy(
-    "vera", embodiment="pusht",
+    "vera", embodiment="mimicgen",
     server_mode="docker", ckpt_root="/abs/path/vera-ckpts",
 )
 ```
-
-In a MuJoCo `Simulation` (see the
-[`vera_pusht_mujoco`](https://github.com/strands-labs/robots/tree/main/examples/vera_pusht_mujoco)
-example):
-
-```python
-sim.run_policy(
-    robot_name="dynamixel_2r",          # 2-DoF pusher proxy for PushT's 2-D action
-    policy_provider="vera",
-    policy_config={"embodiment": "pusht", "image_keys": ["image"]},
-    instruction="push the T to the goal",
-    n_steps=80, control_frequency=10.0, action_horizon=3,
-    video={"path": "pusht_rollout.mp4", "fps": 10, "camera": "image"},
-)
-```
-
-<figure markdown>
-  ![VERA PushT rollout](../assets/vera/pusht_rollout.gif)
-  <figcaption>VERA PushT policy driving a planar pusher in MuJoCo — DFoT planner
-  + Jacobian IDM, served from the container, ~2 s/chunk on an L40S.</figcaption>
-</figure>
 
 The **MimicGen → Panda** path drives a real 7-DoF arm: the WAN planner + Jacobian
 IDM emit 6-DoF end-effector deltas, and the provider's IK bridge solves them onto
@@ -80,14 +59,19 @@ From VERA's `adapter_factory._EMBODIMENTS`:
 
 | Embodiment | action_space | dims | views | control | ports (policy/viz) | checkpoints |
 |------------|--------------|:----:|-------|:-------:|:------------------:|-------------|
-| **pusht** | `velocity` (planar) | 2, no gripper | `image` | 10 Hz | 8820 / 8821 | ✅ Wave-1 (local) |
+| **pusht** | `velocity` (planar) | 2, no gripper | `image` | 10 Hz | 8820 / 8821 | experimental — IDM du path not wired end-to-end upstream |
 | **mimicgen** | `eef_delta` | 7 (6-DoF + grip) | `agentview_image`, `robot0_eye_in_hand_image` | 20 Hz | 8800 / 8801 | ✅ Wave-1 (+WAN base) |
 | **allegro** | `joint_position` | 16 | 12 cameras | 15 Hz | 8802 / 8803 | 🔜 Wave-2 (code only) |
 | **droid** | `cartesian_delta` | 7 | `varied_1`,`varied_2`,`hand` | 15 Hz | 8804 / 8805 | 🔜 Wave-2 (code only) |
 
-**Today, end-to-end:** `pusht` (single-view, DFoT, no tracker) and `mimicgen`
-(WAN planner; needs the frozen WAN base + a motion tracker). `allegro`/`droid`
-are code-present but checkpoint-absent upstream (Wave 2).
+**Today, end-to-end:** `mimicgen` (WAN planner; needs the frozen WAN base + a
+motion tracker) is the working, faithful embodiment — it exercises the whole
+eef-delta → IK path onto a real arm. `pusht`'s server runs, but its IDM `du`
+action path is **not wired end-to-end upstream** (VERA's own
+`configurations/dataset/pusht.yaml` documents this gap), so it validates the
+provider → server → action plumbing rather than producing a solving rollout —
+treat it as experimental. `allegro`/`droid` are code-present but
+checkpoint-absent upstream (Wave 2).
 
 ### The "generalist" claim, accurately
 
@@ -124,11 +108,6 @@ The server holds the GPU and the two-stage model. Run it as a container:
 
 ```bash
 docker build -f strands_robots/policies/vera/docker/Dockerfile -t strands-vera-server:latest .
-
-# PushT (serves ws on :8820)
-docker run --rm --gpus all --ipc=host -p 8820:8820 \
-    -v "$VERA_CKPT_ROOT":/ckpts:ro -e VERA_EMBODIMENT=pusht \
-    strands-vera-server:latest
 
 # MimicGen (serves ws on :8800; needs the WAN base + offline resolver)
 docker run --rm --gpus all --ipc=host -p 8800:8800 \
@@ -217,7 +196,7 @@ VERA_LIVE=1 hatch run test-integ tests_integ/policies/vera/
 
 ```bash
 pip install 'strands-robots[vera]'        # provider + the VERA git dep (subprocess mode)
-pip install 'strands-robots[vera-sim]'    # + PushT/MimicGen sim deps for the examples
+pip install 'strands-robots[vera-sim]'    # + MimicGen sim deps for the example (also pulls the experimental PushT env)
 ```
 
 For the **docker** path the host needs only `websockets` + `msgpack` (the client
