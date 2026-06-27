@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import sys
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from types import ModuleType
 from typing import Any
@@ -172,6 +173,33 @@ class _FakeLeRobot:
         self.sent_actions.append(action)
 
 
+# Every Robot built by ``_make_robot`` is tracked here so an autouse teardown can
+# stop its command spin thread even when a test does not shut the robot down
+# itself. The fake ``rclpy.spin_once`` returns immediately, so a command bridge
+# left running busy-spins a daemon thread for the rest of the session; a few
+# such leaks starve slower, CPU-bound tests on a loaded runner. Unconditional
+# teardown keeps the suite hermetic regardless of any single test's omission.
+_BUILT_ROBOTS: list[HwRobot] = []
+
+
+def _shutdown_built_robots() -> None:
+    """Tear down every robot built via ``_make_robot`` (stops command threads)."""
+    while _BUILT_ROBOTS:
+        _BUILT_ROBOTS.pop()._shutdown_ros_bridge()
+
+
+def _live_command_threads() -> int:
+    """Count live hardware-bridge command spin threads (named ``*_ros_cmd``)."""
+    return sum(1 for t in threading.enumerate() if t.is_alive() and t.name.endswith("_ros_cmd"))
+
+
+@pytest.fixture(autouse=True)
+def _reap_bridge_threads() -> Any:
+    """Reap any command spin thread a test forgot to shut down."""
+    yield
+    _shutdown_built_robots()
+
+
 def _make_robot(observation: dict[str, Any], *, ros2_bridge: bool = False, ros2_domain: int = 0) -> HwRobot:
     """Build a Robot via __new__ and wire only what the bridge path touches."""
     hw = HwRobot.__new__(HwRobot)
@@ -184,6 +212,7 @@ def _make_robot(observation: dict[str, Any], *, ros2_bridge: bool = False, ros2_
     hw.peer_id = None
     hw.robot = _FakeLeRobot(observation)
     hw._init_ros_bridge(ros2_bridge=ros2_bridge, ros2_domain=ros2_domain)
+    _BUILT_ROBOTS.append(hw)
     return hw
 
 
@@ -445,3 +474,29 @@ def test_robot_with_commands_drives_arm_end_to_end(fake_ros: dict[str, Any]) -> 
     # The action reached the underlying lerobot device via Robot.send_action.
     assert hw.robot.sent_actions == [{"j0.pos": 0.25, "j1.pos": 0.75}]
     hw._shutdown_ros_bridge()
+
+
+def test_make_robot_command_bridges_do_not_leak_spin_threads(fake_ros: dict[str, Any]) -> None:
+    """A bridge robot left un-shut-down must not leak its command spin thread.
+
+    ``ros2_commands`` defaults to True, so ``Robot(ros2_bridge=True)`` starts a
+    daemon thread that services inbound ``joint_command`` callbacks. Under the
+    fake ``rclpy`` whose ``spin_once`` returns immediately, that thread busy-spins
+    until its stop event is set. If a test builds such a robot and never shuts it
+    down, the thread would run for the rest of the session and starve slower,
+    CPU-bound tests on a loaded runner. The autouse teardown must reap every
+    robot built via ``_make_robot`` so one test's omission cannot leak threads.
+    """
+    before = _live_command_threads()
+    for _ in range(3):
+        # commands on by default -> each starts a command spin thread, and none
+        # of these are shut down explicitly here.
+        _make_robot({"j0.pos": 0.0}, ros2_bridge=True)
+    assert _live_command_threads() == before + 3
+
+    # The teardown the autouse fixture runs must stop every tracked thread.
+    _shutdown_built_robots()
+    deadline = time.monotonic() + 2.0
+    while _live_command_threads() > before and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert _live_command_threads() == before
