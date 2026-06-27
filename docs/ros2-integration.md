@@ -221,6 +221,10 @@ arm.publish_ros_observation(skip_images=True)  # joints only (opt out of cameras
 #
 # For a read-only telemetry bridge (no inbound control), opt out:
 arm_ro = Robot("so101", mode="real", ros2_bridge=True, ros2_commands=False)
+
+# rclpy-free: run the SAME bridge over pure cyclonedds (no sourced ROS 2
+# distro). Byte-identical topics; type coverage bounded by the IDL bundle.
+arm_rtps = Robot("so101", mode="real", ros2_bridge=True, ros2_transport="rtps")
 ```
 
 External ROS 2 nodes - rviz, nav2, or the agent's own `use_ros` calls - then see

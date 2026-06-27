@@ -224,6 +224,7 @@ class Robot(TeleopMixin, AgentTool):
         ros2_bridge: bool = False,
         ros2_domain: int = 0,
         ros2_commands: bool = True,
+        ros2_transport: str = "rclpy",
         **kwargs: Any,
     ) -> None:
         """Initialize Robot with async capabilities.
@@ -251,6 +252,12 @@ class Robot(TeleopMixin, AgentTool):
                 ``send_action`` so an external ROS 2 stack can drive the real
                 arm (full duplex). Set False for a read-only telemetry bridge.
                 Ignored unless ``ros2_bridge=True``.
+            ros2_transport: Which ROS 2 backend the bridge uses:
+                ``"rclpy"`` (default) - full ``sensor_msgs`` fidelity, needs a
+                sourced ROS 2 distro; ``"rtps"`` - pure cyclonedds (a single
+                pip wheel, no rclpy / no sourced distro), type coverage bounded
+                by the local IDL bundle (joint_states + image_raw). Both emit
+                byte-identical topics. Ignored unless ``ros2_bridge=True``.
             **kwargs: Robot-specific parameters (port, etc.)
         """
         super().__init__()
@@ -304,41 +311,79 @@ class Robot(TeleopMixin, AgentTool):
         # ``SimEngine(ros2_bridge=...)`` so a real arm and its digital twin look
         # identical on the ROS 2 graph. Initialized last so a bridge ImportError
         # surfaces only when the operator explicitly asked for it.
-        self._init_ros_bridge(ros2_bridge=ros2_bridge, ros2_domain=ros2_domain, ros2_commands=ros2_commands)
+        self._init_ros_bridge(
+            ros2_bridge=ros2_bridge,
+            ros2_domain=ros2_domain,
+            ros2_commands=ros2_commands,
+            ros2_transport=ros2_transport,
+        )
 
     # ------------------------------------------------------------------
     # ROS 2 telemetry bridge (opt-in) - mirror of SimEngine(ros2_bridge=...)
     # ------------------------------------------------------------------
-    def _init_ros_bridge(self, *, ros2_bridge: bool = False, ros2_domain: int = 0, ros2_commands: bool = True) -> None:
+    def _init_ros_bridge(
+        self,
+        *,
+        ros2_bridge: bool = False,
+        ros2_domain: int = 0,
+        ros2_commands: bool = True,
+        ros2_transport: str = "rclpy",
+    ) -> None:
         """Initialize the optional ROS 2 telemetry bridge state.
 
         Plain method (not part of an ``__init__`` contract) so the lightweight
         test doubles that build a ``Robot`` via ``__new__`` need not thread it
-        through. When ``ros2_bridge`` is True, a
-        :class:`~strands_robots.hardware_ros_bridge.HardwareRosBridge` is created
-        eagerly so a missing ``rclpy`` fails fast at construction rather than
-        mid-task. The bridge is bound to ``self`` so that, with
+        through. When ``ros2_bridge`` is True, the selected bridge is created
+        eagerly so a missing backend dependency fails fast at construction
+        rather than mid-task. The bridge is bound to ``self`` so that, with
         ``ros2_commands=True``, inbound ``/<robot>/joint_command`` messages are
         forwarded to ``self.send_action`` - full duplex, the real arm both
         publishes telemetry and is drivable from the ROS 2 graph.
 
+        Two transports, byte-identical on the wire:
+
+        * ``"rclpy"`` (default) - :class:`~strands_robots.hardware_ros_bridge.HardwareRosBridge`,
+          full ``sensor_msgs`` fidelity, needs a sourced ROS 2 distro.
+        * ``"rtps"`` - :class:`~strands_robots.hardware_rtps_bridge.RtpsHardwareBridge`,
+          pure cyclonedds (a pip wheel, no rclpy / no sourced distro), type
+          coverage bounded by the local IDL bundle.
+
         Args:
             ros2_bridge: Enable the ROS 2 bridge for this robot.
-            ros2_domain: ROS 2 domain id (``ROS_DOMAIN_ID``) to publish on.
+            ros2_domain: ROS 2 / DDS domain id to publish on.
             ros2_commands: When True (default), also subscribe to
                 ``joint_command`` and drive the arm; False for read-only.
+            ros2_transport: ``"rclpy"`` or ``"rtps"`` (see above).
+
+        Raises:
+            ValueError: If ``ros2_transport`` is not ``"rclpy"`` or ``"rtps"``.
         """
         self._ros2_bridge_enabled = bool(ros2_bridge)
         self._ros2_domain = int(ros2_domain)
+        self._ros2_transport = ros2_transport
         self._ros_bridge: Any = None
-        if self._ros2_bridge_enabled:
+        if not self._ros2_bridge_enabled:
+            return
+
+        if ros2_transport not in ("rclpy", "rtps"):
+            raise ValueError(f"ros2_transport must be 'rclpy' or 'rtps', got {ros2_transport!r}")
+
+        # Bind self so the bridge can drive the arm on inbound commands.
+        # command_robot_name is pinned to the same namespace we publish
+        # joint_states under (lerobot device .name, falling back to the tool
+        # name) so a controller can echo our names straight back.
+        if ros2_transport == "rtps":
+            from strands_robots.hardware_rtps_bridge import RtpsHardwareBridge
+
+            self._ros_bridge = RtpsHardwareBridge(
+                self,
+                domain_id=self._ros2_domain,
+                enable_commands=bool(ros2_commands),
+            )
+        else:
             from strands_robots.hardware_ros_bridge import HardwareRosBridge
 
             node = f"strands_hardware_{self.tool_name_str}"
-            # Bind self so the bridge can drive the arm on inbound commands.
-            # command_robot_name is pinned to the same namespace we publish
-            # joint_states under (lerobot device .name, falling back to the
-            # tool name) so a controller can echo our names straight back.
             self._ros_bridge = HardwareRosBridge(
                 self,
                 domain_id=self._ros2_domain,
@@ -1253,6 +1298,9 @@ class Robot(TeleopMixin, AgentTool):
                 "is_calibrated": is_calibrated,
                 "cameras": camera_status,
                 "ros2_bridge": bool(getattr(self, "_ros_bridge", None) is not None),
+                "ros2_transport": getattr(self, "_ros2_transport", "rclpy")
+                if getattr(self, "_ros_bridge", None) is not None
+                else None,
                 "task_status": self._task_state.status.value,
                 "current_instruction": self._task_state.instruction,
                 "task_duration": self._task_state.duration,

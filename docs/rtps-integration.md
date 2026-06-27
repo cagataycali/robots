@@ -47,7 +47,10 @@ over-DDS protocol and are a focused follow-up.
 
 To publish a message you must own its type definition locally, so `use_rtps`
 ships a curated IDL bundle (`strands_robots.rtps.idl`) of the common ROS 2
-messages, registered under their ROS 2 type strings. List them with
+messages, registered under their ROS 2 type strings: the `geometry_msgs`
+primitives (`Twist`/`Pose`/...) plus the `sensor_msgs` `JointState` and `Image`
+(with their `std_msgs/Header` + `builtin_interfaces/Time` chain) that the
+rclpy-free hardware bridge publishes. List them with
 `use_rtps(action="types")`. Arbitrary custom messages are out of scope until
 cyclonedds-python's dynamic (XTypes) support matures - use `use_ros` (rclpy) for
 those.
@@ -107,6 +110,36 @@ node + our publisher, one command), see `examples/ros2/rtps_proof/`:
 cd examples/ros2/rtps_proof
 docker compose run --build --rm proof   # exits 0 iff the turtle moved
 ```
+
+## Hardware bridge over pure RTPS (no rclpy)
+
+`Robot(ros2_bridge=True)` defaults to the rclpy backend (`ros2_transport="rclpy"`,
+full `sensor_msgs` fidelity, needs a sourced ROS 2 distro). Pass
+`ros2_transport="rtps"` to run the **same bridge over pure cyclonedds** instead -
+a single pip wheel, no rclpy and no sourced distro:
+
+```python
+from strands_robots import Robot
+
+# rclpy-free: publishes /so101/joint_states (+ camera image_raw) and subscribes
+# /so101/joint_command -> send_action, all over cyclonedds RTPS.
+arm = Robot("so101", mode="real", ros2_bridge=True, ros2_transport="rtps")
+```
+
+The two transports emit byte-identical topics, so a real ROS 2 node (or
+`ros2 topic echo` / `ros2 topic pub`) cannot tell them apart on the wire:
+
+```bash
+ros2 topic echo /so101/joint_states     # decodes the cyclonedds-published JointState
+ros2 topic pub --once /so101/joint_command sensor_msgs/msg/JointState \
+  '{name: ["shoulder_pan.pos"], position: [0.1]}'   # drives the arm
+```
+
+The trade-off is the same as `use_rtps`: type coverage is bounded by the IDL
+bundle (joint_states + image_raw are in; anything else needs the rclpy backend).
+The bridge is implemented by `strands_robots.hardware_rtps_bridge.RtpsHardwareBridge`,
+the rclpy-free sibling of `HardwareRosBridge`; both present the identical
+`publish_joint_states` / `publish_image` / inbound-`joint_command` surface.
 
 ## Safety
 
