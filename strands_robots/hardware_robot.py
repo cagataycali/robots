@@ -221,6 +221,8 @@ class Robot(TeleopMixin, AgentTool):
         action_horizon: int = 8,
         data_config: str | Any | None = None,
         control_frequency: float = 50.0,
+        ros2_bridge: bool = False,
+        ros2_domain: int = 0,
         **kwargs: Any,
     ) -> None:
         """Initialize Robot with async capabilities.
@@ -233,6 +235,16 @@ class Robot(TeleopMixin, AgentTool):
             action_horizon: Actions per inference step
             data_config: Data configuration (for GR00T compatibility)
             control_frequency: Control loop frequency in Hz (default: 50Hz)
+            ros2_bridge: When True, publish this robot's live observation
+                (``joint_states`` + one ``image_raw`` per camera) on a ROS 2
+                domain so external ROS 2 nodes can subscribe to the physical
+                robot, and the agent's own ``use_ros`` calls reach the same
+                graph. The symmetric counterpart of ``SimEngine(ros2_bridge=...)``
+                for real hardware. Requires ``rclpy`` (system ROS 2 / the
+                official docker image); an ImportError is raised here if it is
+                missing. Defaults to False - the robot never touches ROS 2,
+                so disabling the bridge is simply the default (opt-in).
+            ros2_domain: ROS 2 domain id (``ROS_DOMAIN_ID``) to publish on.
             **kwargs: Robot-specific parameters (port, etc.)
         """
         super().__init__()
@@ -281,6 +293,121 @@ class Robot(TeleopMixin, AgentTool):
 
         if data_config:
             logger.info("Data config: %s", data_config)
+
+        # Optional ROS 2 telemetry bridge - opt-in, mirrors the simulation's
+        # ``SimEngine(ros2_bridge=...)`` so a real arm and its digital twin look
+        # identical on the ROS 2 graph. Initialized last so a bridge ImportError
+        # surfaces only when the operator explicitly asked for it.
+        self._init_ros_bridge(ros2_bridge=ros2_bridge, ros2_domain=ros2_domain)
+
+    # ------------------------------------------------------------------
+    # ROS 2 telemetry bridge (opt-in) - mirror of SimEngine(ros2_bridge=...)
+    # ------------------------------------------------------------------
+    def _init_ros_bridge(self, *, ros2_bridge: bool = False, ros2_domain: int = 0) -> None:
+        """Initialize the optional ROS 2 telemetry bridge state.
+
+        Plain method (not part of an ``__init__`` contract) so the lightweight
+        test doubles that build a ``Robot`` via ``__new__`` need not thread it
+        through. When ``ros2_bridge`` is True, a
+        :class:`~strands_robots.hardware_ros_bridge.HardwareRosBridge` is created
+        eagerly so a missing ``rclpy`` fails fast at construction rather than
+        mid-task.
+
+        Args:
+            ros2_bridge: Enable publishing this robot's observation on ROS 2.
+            ros2_domain: ROS 2 domain id (``ROS_DOMAIN_ID``) to publish on.
+        """
+        self._ros2_bridge_enabled = bool(ros2_bridge)
+        self._ros2_domain = int(ros2_domain)
+        self._ros_bridge: Any = None
+        if self._ros2_bridge_enabled:
+            from strands_robots.hardware_ros_bridge import HardwareRosBridge
+
+            node = f"strands_hardware_{self.tool_name_str}"
+            self._ros_bridge = HardwareRosBridge(domain_id=self._ros2_domain, node_name=node)
+
+    def _publish_ros_telemetry(self, observation: dict[str, Any], *, skip_images: bool = False) -> None:
+        """Publish one ``joint_states`` (+ camera ``image_raw``) for ``observation``.
+
+        No-op when the ROS 2 bridge is disabled or was never initialized
+        (``getattr`` guard so test doubles built via ``__new__`` are safe). A
+        publish failure never interrupts the control loop: the lerobot
+        observation is the source of truth, the ROS 2 mirror is best-effort.
+
+        Joint scalars (``<motor>.pos`` floats / numpy 0-d) become the
+        ``JointState`` ``name``/``position`` arrays (sorted for determinism);
+        ``(H, W, 3)`` arrays become per-camera ``image_raw`` frames.
+        """
+        bridge = getattr(self, "_ros_bridge", None)
+        if bridge is None:
+            return
+        robot_name = getattr(self.robot, "name", None) or self.tool_name_str
+        try:
+            joints: list[tuple[str, float]] = []
+            images: list[tuple[str, Any]] = []
+            for key, value in observation.items():
+                ndim = getattr(value, "ndim", None)
+                if isinstance(value, bool):
+                    continue
+                if isinstance(value, (int, float)) or ndim == 0:
+                    joints.append((key, float(value)))
+                elif not skip_images and ndim == 3 and getattr(value, "shape", (0, 0, 0))[2] == 3:
+                    images.append((key, value))
+            joints.sort(key=lambda kv: kv[0])
+            bridge.publish_joint_states(robot_name, [k for k, _ in joints], [v for _, v in joints])
+            for camera, frame in images:
+                bridge.publish_image(robot_name, camera, frame)
+        except Exception:
+            logger.warning(
+                "ROS 2 telemetry publish failed for %r; skipping this step",
+                self.tool_name_str,
+                exc_info=True,
+            )
+
+    def publish_ros_observation(self, *, skip_images: bool = False) -> dict[str, Any]:
+        """Read the robot's current observation once and publish it on ROS 2.
+
+        On-demand counterpart to the per-step publishing inside a running task:
+        lets an agent turn an idle, connected robot into a live ROS 2 device
+        without starting a control task. Requires ``ros2_bridge=True`` at
+        construction.
+
+        Args:
+            skip_images: When True, publish ``joint_states`` only (opt out of
+                the heavier camera ``image_raw`` topics).
+
+        Returns:
+            ``{"status": "success", ...}`` on publish, or
+            ``{"status": "error", "content": [...]}`` when the bridge is
+            disabled - tools never raise past dispatch.
+        """
+        if getattr(self, "_ros_bridge", None) is None:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            f"{self.tool_name_str}: ROS 2 bridge is disabled. "
+                            "Construct the robot with ros2_bridge=True to publish telemetry."
+                        )
+                    }
+                ],
+            }
+        observation = self.robot.get_observation()
+        self._publish_ros_telemetry(observation, skip_images=skip_images)
+        return {
+            "status": "success",
+            "content": [{"text": f"{self.tool_name_str}: published observation on ROS 2 domain {self._ros2_domain}"}],
+        }
+
+    def _shutdown_ros_bridge(self) -> None:
+        """Tear down the ROS 2 bridge if one is active. Safe to call repeatedly."""
+        bridge = getattr(self, "_ros_bridge", None)
+        if bridge is not None:
+            try:
+                bridge.shutdown()
+            finally:
+                self._ros_bridge = None
 
     def _initialize_robot(
         self, robot: LeRobotRobot | RobotConfig | str, cameras: dict[str, dict[str, Any]] | None, **kwargs: Any
@@ -705,6 +832,10 @@ class Robot(TeleopMixin, AgentTool):
                 # Get observation from robot
                 observation = await asyncio.to_thread(self.robot.get_observation)
 
+                # Mirror the live observation on ROS 2 (no-op unless the bridge
+                # is enabled). Best-effort: never blocks or breaks the loop.
+                self._publish_ros_telemetry(observation)
+
                 # Get actions from policy
                 robot_actions = await policy_instance.get_actions(observation, instruction)
 
@@ -1064,6 +1195,9 @@ class Robot(TeleopMixin, AgentTool):
                         mesh_exc,
                     )
 
+            # Tear down the ROS 2 telemetry bridge if one was created.
+            self._shutdown_ros_bridge()
+
             logger.info(f"{self.tool_name_str} cleanup completed")
 
         except Exception as e:
@@ -1098,6 +1232,7 @@ class Robot(TeleopMixin, AgentTool):
                 "is_connected": is_connected,
                 "is_calibrated": is_calibrated,
                 "cameras": camera_status,
+                "ros2_bridge": bool(getattr(self, "_ros_bridge", None) is not None),
                 "task_status": self._task_state.status.value,
                 "current_instruction": self._task_state.instruction,
                 "task_duration": self._task_state.duration,

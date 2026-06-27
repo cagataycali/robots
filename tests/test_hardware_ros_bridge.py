@@ -1,0 +1,276 @@
+"""Behavior tests for the hardware ROS 2 telemetry bridge.
+
+``rclpy`` is a system-provided, non-PyPI dependency, so these tests inject a
+fake ``rclpy`` + ``sensor_msgs.msg`` into ``sys.modules`` to exercise the
+publisher wiring with NO ROS 2 installed - the same approach the simulation
+bridge tests use. They assert that:
+
+* :class:`HardwareRosBridge` is a thin, symmetric sibling of
+  :class:`SimRosBridge`: both subclass
+  :class:`~strands_robots.ros_telemetry.RosTelemetryBridge` and produce
+  identical topics/messages, differing only in their default node name.
+* The hardware :class:`~strands_robots.hardware_robot.Robot` publishes its live
+  observation (joint scalars -> ``joint_states``, ``(H, W, 3)`` arrays ->
+  per-camera ``image_raw``) when ``ros2_bridge=True``, and is a no-op when the
+  bridge is disabled.
+* ``publish_ros_observation`` reads the robot once and publishes on demand, and
+  reports a clean error (never raises) when the bridge is off.
+* Enabling the bridge with no ``rclpy`` raises a clear :class:`ImportError`.
+"""
+
+from __future__ import annotations
+
+import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from types import ModuleType
+from typing import Any
+
+import numpy as np
+import pytest
+
+import strands_robots.utils as utils_mod
+from strands_robots.hardware_robot import Robot as HwRobot
+from strands_robots.hardware_robot import RobotTaskState
+from strands_robots.hardware_ros_bridge import HardwareRosBridge
+from strands_robots.ros_telemetry import RosTelemetryBridge
+from strands_robots.simulation.ros_bridge import SimRosBridge
+
+
+class _FakePublisher:
+    def __init__(self, topic: str) -> None:
+        self.topic = topic
+        self.messages: list[Any] = []
+
+    def publish(self, msg: Any) -> None:
+        self.messages.append(msg)
+
+
+class _FakeClock:
+    def now(self) -> Any:
+        return self
+
+    def to_msg(self) -> str:
+        return "stamp"
+
+
+class _FakeNode:
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.publishers: list[_FakePublisher] = []
+        self.destroyed = False
+
+    def get_clock(self) -> _FakeClock:
+        return _FakeClock()
+
+    def create_publisher(self, _msg_type: Any, topic: str, _depth: int) -> _FakePublisher:
+        pub = _FakePublisher(topic)
+        self.publishers.append(pub)
+        return pub
+
+    def destroy_node(self) -> None:
+        self.destroyed = True
+
+
+class _Header:
+    def __init__(self) -> None:
+        self.stamp: Any = None
+        self.frame_id: str = ""
+
+
+class _JointState:
+    def __init__(self) -> None:
+        self.header = _Header()
+        self.name: list[str] = []
+        self.position: list[float] = []
+
+
+class _Image:
+    def __init__(self) -> None:
+        self.header = _Header()
+        self.height = 0
+        self.width = 0
+        self.encoding = ""
+        self.is_bigendian = 0
+        self.step = 0
+        self.data = b""
+
+
+@pytest.fixture
+def fake_ros(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    """Inject a fake rclpy + sensor_msgs.msg and clear require_optional's cache."""
+    state: dict[str, Any] = {"inited": False, "shutdown": False, "nodes": []}
+
+    rclpy = ModuleType("rclpy")
+    rclpy.ok = lambda: state["inited"]  # type: ignore[attr-defined]
+
+    def _init() -> None:
+        state["inited"] = True
+
+    def _shutdown() -> None:
+        state["shutdown"] = True
+        state["inited"] = False
+
+    def _create_node(name: str) -> _FakeNode:
+        node = _FakeNode(name)
+        state["nodes"].append(node)
+        return node
+
+    rclpy.init = _init  # type: ignore[attr-defined]
+    rclpy.shutdown = _shutdown  # type: ignore[attr-defined]
+    rclpy.create_node = _create_node  # type: ignore[attr-defined]
+
+    sensor_pkg = ModuleType("sensor_msgs")
+    sensor_msg = ModuleType("sensor_msgs.msg")
+    sensor_msg.JointState = _JointState  # type: ignore[attr-defined]
+    sensor_msg.Image = _Image  # type: ignore[attr-defined]
+
+    monkeypatch.setitem(sys.modules, "rclpy", rclpy)
+    monkeypatch.setitem(sys.modules, "sensor_msgs", sensor_pkg)
+    monkeypatch.setitem(sys.modules, "sensor_msgs.msg", sensor_msg)
+    monkeypatch.setattr(utils_mod, "_lazy_modules", {}, raising=False)
+    return state
+
+
+class _FakeLeRobot:
+    """Minimal connected lerobot Robot serving a mixed observation."""
+
+    def __init__(self, observation: dict[str, Any]) -> None:
+        self.name = "fake_arm"
+        self.robot_type = "fake_arm"
+        self._obs = observation
+
+    def get_observation(self) -> dict[str, Any]:
+        return self._obs
+
+
+def _make_robot(observation: dict[str, Any], *, ros2_bridge: bool = False, ros2_domain: int = 0) -> HwRobot:
+    """Build a Robot via __new__ and wire only what the bridge path touches."""
+    hw = HwRobot.__new__(HwRobot)
+    hw.tool_name_str = "test_arm"
+    hw.data_config = None
+    hw._task_state = RobotTaskState()
+    hw._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="test_arm_executor")
+    hw._shutdown_event = threading.Event()
+    hw.mesh = None
+    hw.peer_id = None
+    hw.robot = _FakeLeRobot(observation)
+    hw._init_ros_bridge(ros2_bridge=ros2_bridge, ros2_domain=ros2_domain)
+    return hw
+
+
+# --- bridge symmetry --------------------------------------------------------
+
+
+def test_bridges_are_symmetric_subclasses() -> None:
+    assert issubclass(SimRosBridge, RosTelemetryBridge)
+    assert issubclass(HardwareRosBridge, RosTelemetryBridge)
+    assert SimRosBridge.default_node_name == "strands_sim"
+    assert HardwareRosBridge.default_node_name == "strands_hardware"
+
+
+def test_hardware_bridge_default_node_name(fake_ros: dict[str, Any]) -> None:
+    HardwareRosBridge()
+    assert fake_ros["nodes"][0].name == "strands_hardware"
+
+
+def test_hardware_bridge_publishes_identically_to_sim(fake_ros: dict[str, Any]) -> None:
+    """Same robot/joints -> byte-identical JointState topic + fields on both."""
+    hw = HardwareRosBridge()
+    sim = SimRosBridge()
+    hw.publish_joint_states("so101", ["shoulder_pan", "elbow"], [0.1, 0.2])
+    sim.publish_joint_states("so101", ["shoulder_pan", "elbow"], [0.1, 0.2])
+
+    (hw_pub,) = fake_ros["nodes"][0].publishers
+    (sim_pub,) = fake_ros["nodes"][1].publishers
+    assert hw_pub.topic == sim_pub.topic == "/so101/joint_states"
+    (hw_msg,) = hw_pub.messages
+    (sim_msg,) = sim_pub.messages
+    assert hw_msg.name == sim_msg.name == ["shoulder_pan", "elbow"]
+    assert hw_msg.position == sim_msg.position == [0.1, 0.2]
+
+
+def test_hardware_bridge_sets_domain_env(fake_ros: dict[str, Any]) -> None:
+    import os
+
+    HardwareRosBridge(domain_id=11)
+    assert os.environ["ROS_DOMAIN_ID"] == "11"
+
+
+# --- Robot wiring -----------------------------------------------------------
+
+
+def test_robot_publishes_joint_states_and_images(fake_ros: dict[str, Any]) -> None:
+    obs = {
+        "shoulder_pan.pos": 0.5,
+        "elbow.pos": -0.2,
+        "front": np.zeros((4, 5, 3), dtype=np.uint8),
+        "enabled": True,  # bool must NOT be treated as a joint scalar
+    }
+    hw = _make_robot(obs, ros2_bridge=True, ros2_domain=3)
+    hw._publish_ros_telemetry(hw.robot.get_observation())
+
+    node = fake_ros["nodes"][0]
+    joint_pub = next(p for p in node.publishers if p.topic == "/fake_arm/joint_states")
+    image_pub = next(p for p in node.publishers if p.topic == "/fake_arm/front/image_raw")
+    (joint_msg,) = joint_pub.messages
+    # Sorted joint keys; bool 'enabled' excluded.
+    assert joint_msg.name == ["elbow.pos", "shoulder_pan.pos"]
+    assert joint_msg.position == [-0.2, 0.5]
+    (image_msg,) = image_pub.messages
+    assert (image_msg.height, image_msg.width, image_msg.encoding) == (4, 5, "rgb8")
+
+
+def test_robot_skip_images_publishes_joints_only(fake_ros: dict[str, Any]) -> None:
+    obs = {"j0.pos": 0.0, "cam": np.zeros((2, 2, 3), dtype=np.uint8)}
+    hw = _make_robot(obs, ros2_bridge=True)
+    hw._publish_ros_telemetry(hw.robot.get_observation(), skip_images=True)
+    topics = {p.topic for p in fake_ros["nodes"][0].publishers}
+    assert topics == {"/fake_arm/joint_states"}
+
+
+def test_robot_telemetry_noop_when_disabled() -> None:
+    """Bridge off: publishing is a silent no-op and creates no rclpy node."""
+    hw = _make_robot({"j0.pos": 1.0}, ros2_bridge=False)
+    assert hw._ros_bridge is None
+    hw._publish_ros_telemetry(hw.robot.get_observation())  # must not raise
+
+
+def test_robot_telemetry_noop_without_bridge_attr() -> None:
+    """A Robot built without _init_ros_bridge still no-ops (getattr guard)."""
+    hw = HwRobot.__new__(HwRobot)
+    hw.tool_name_str = "bare"
+    hw.robot = _FakeLeRobot({"j0.pos": 1.0})
+    hw._publish_ros_telemetry({"j0.pos": 1.0})  # no _ros_bridge attribute
+
+
+def test_publish_ros_observation_on_demand(fake_ros: dict[str, Any]) -> None:
+    hw = _make_robot({"j0.pos": 0.7}, ros2_bridge=True, ros2_domain=2)
+    result = hw.publish_ros_observation()
+    assert result["status"] == "success"
+    joint_pub = next(p for p in fake_ros["nodes"][0].publishers if p.topic == "/fake_arm/joint_states")
+    assert joint_pub.messages[-1].position == [0.7]
+
+
+def test_publish_ros_observation_errors_when_disabled() -> None:
+    hw = _make_robot({"j0.pos": 0.7}, ros2_bridge=False)
+    result = hw.publish_ros_observation()
+    assert result["status"] == "error"
+    assert "ros2_bridge=True" in result["content"][0]["text"]
+
+
+def test_shutdown_destroys_node_and_is_idempotent(fake_ros: dict[str, Any]) -> None:
+    hw = _make_robot({"j0.pos": 0.0}, ros2_bridge=True)
+    node = fake_ros["nodes"][0]
+    hw._shutdown_ros_bridge()
+    assert node.destroyed is True
+    assert hw._ros_bridge is None
+    hw._shutdown_ros_bridge()  # idempotent
+
+
+def test_enabling_bridge_without_rclpy_raises_importerror(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No fake_ros fixture: require_optional cannot find rclpy -> ImportError."""
+    monkeypatch.setattr(utils_mod, "_lazy_modules", {}, raising=False)
+    monkeypatch.setitem(sys.modules, "rclpy", None)
+    with pytest.raises(ImportError):
+        _make_robot({"j0.pos": 0.0}, ros2_bridge=True)
